@@ -3,7 +3,9 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # PostgreSQL
-    DATABASE_URL: str = "postgresql+asyncpg://swissjob:swissjob_dev_2024@postgres:5432/swissjobhunter"
+    DATABASE_URL: str = (
+        "postgresql+asyncpg://swissjob:swissjob_dev_2024@postgres:5432/swissjobhunter"
+    )
 
     # Redis
     REDIS_URL: str = "redis://redis:6379/0"
@@ -26,6 +28,17 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # Scheduler
+    SCHEDULER_ENABLED: bool = True
+    SCHEDULER_FETCH_INTERVAL_MINUTES: int = 30
+
+    # Provider API Keys (empty = provider disabled)
+    JSEARCH_RAPIDAPI_KEY: str = ""
+    ADZUNA_APP_ID: str = ""
+    ADZUNA_APP_KEY: str = ""
+    JOOBLE_API_KEY: str = ""
+    CAREERJET_AFFID: str = ""
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

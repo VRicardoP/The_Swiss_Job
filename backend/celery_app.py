@@ -21,4 +21,8 @@ celery_app.conf.update(
     task_default_queue="default",
 )
 
-celery_app.conf.include = ["tasks.example_task"]
+celery_app.conf.include = [
+    "tasks.example_task",
+    "tasks.fetch_tasks",
+    "tasks.maintenance_tasks",
+]

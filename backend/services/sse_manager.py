@@ -61,9 +61,7 @@ class SSEManager:
     def get_active_connections(self) -> dict:
         """Return count of active connections per user (for monitoring)."""
         return {
-            str(uid): len(queues)
-            for uid, queues in self._connections.items()
-            if queues
+            str(uid): len(queues) for uid, queues in self._connections.items() if queues
         }
 
     @staticmethod

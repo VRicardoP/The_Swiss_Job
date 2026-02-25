@@ -37,7 +37,10 @@ class User(Base):
     )
 
     profile: Mapped["UserProfile"] = relationship(  # noqa: F821
-        "UserProfile", back_populates="user", uselist=False, cascade="all, delete-orphan"
+        "UserProfile",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:

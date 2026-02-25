@@ -81,9 +81,7 @@ async def register(
 
 @router.post("/login", response_model=AuthResponse)
 @limiter.limit("5/minute")
-async def login(
-    request: Request, body: UserLogin, db: AsyncSession = Depends(get_db)
-):
+async def login(request: Request, body: UserLogin, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 

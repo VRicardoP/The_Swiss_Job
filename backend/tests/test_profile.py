@@ -62,9 +62,7 @@ class TestProfileDeleteAll:
         assert "deleted_at" in data
 
         # Verify user is gone from DB
-        result = await db_session.execute(
-            select(User).where(User.email == email)
-        )
+        result = await db_session.execute(select(User).where(User.email == email))
         assert result.scalar_one_or_none() is None
 
     async def test_delete_cascades_profile(

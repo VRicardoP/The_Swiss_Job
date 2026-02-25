@@ -28,7 +28,9 @@ async def export_user_data(
         id=current_user.id,
         email=current_user.email,
         is_active=current_user.is_active,
-        plan=current_user.plan.value if hasattr(current_user.plan, "value") else str(current_user.plan),
+        plan=current_user.plan.value
+        if hasattr(current_user.plan, "value")
+        else str(current_user.plan),
         created_at=current_user.created_at,
         last_login=current_user.last_login,
         gdpr_consent=current_user.gdpr_consent,

@@ -18,9 +18,7 @@ class ComplianceEngine:
     async def can_scrape(self, source_key: str) -> bool:
         """Check is_allowed + robots_txt_ok for a source."""
         result = await self.db.execute(
-            select(SourceCompliance).where(
-                SourceCompliance.source_key == source_key
-            )
+            select(SourceCompliance).where(SourceCompliance.source_key == source_key)
         )
         source = result.scalar_one_or_none()
         if source is None:
@@ -30,9 +28,7 @@ class ComplianceEngine:
     async def report_block(self, source_key: str, status_code: int) -> None:
         """Record a block event. If N consecutive blocks → kill-switch."""
         result = await self.db.execute(
-            select(SourceCompliance).where(
-                SourceCompliance.source_key == source_key
-            )
+            select(SourceCompliance).where(SourceCompliance.source_key == source_key)
         )
         source = result.scalar_one_or_none()
         if source is None:

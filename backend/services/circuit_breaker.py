@@ -44,12 +44,14 @@ class CircuitBreaker:
         self._failure_count = 0
         self._last_failure_time: float = 0
         self._success_count = 0
+        self._half_open_pending = False
 
     @property
     def state(self) -> CircuitState:
         if self._state == CircuitState.OPEN:
             if time.monotonic() - self._last_failure_time >= self.recovery_timeout:
                 self._state = CircuitState.HALF_OPEN
+                self._half_open_pending = False
         return self._state
 
     async def call(self, coro: Callable[[], Awaitable[T]]) -> T:
@@ -61,6 +63,12 @@ class CircuitBreaker:
                 time.monotonic() - self._last_failure_time
             )
             raise CircuitBreakerOpen(self.name, max(retry_after, 0))
+
+        # In HALF_OPEN, allow only one probe call at a time
+        if current_state == CircuitState.HALF_OPEN:
+            if self._half_open_pending:
+                raise CircuitBreakerOpen(self.name, 0)
+            self._half_open_pending = True
 
         try:
             result = await coro()
@@ -74,6 +82,7 @@ class CircuitBreaker:
         """Record a successful call."""
         self._failure_count = 0
         self._success_count += 1
+        self._half_open_pending = False
         if self._state == CircuitState.HALF_OPEN:
             self._state = CircuitState.CLOSED
 
@@ -81,6 +90,7 @@ class CircuitBreaker:
         """Record a failed call."""
         self._failure_count += 1
         self._last_failure_time = time.monotonic()
+        self._half_open_pending = False
         if self._failure_count >= self.failure_threshold:
             self._state = CircuitState.OPEN
 
@@ -89,6 +99,7 @@ class CircuitBreaker:
         self._state = CircuitState.CLOSED
         self._failure_count = 0
         self._success_count = 0
+        self._half_open_pending = False
 
     def get_status(self) -> dict:
         """Return current status for monitoring."""

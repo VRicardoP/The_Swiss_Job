@@ -146,6 +146,69 @@ class TestCircuitBreaker:
         assert status["name"] == "my_source"
         assert status["state"] == "closed"
 
+    async def test_half_open_allows_only_one_probe(self):
+        """HALF_OPEN allows one probe; failure re-opens the circuit."""
+        cb = CircuitBreaker(name="test", failure_threshold=1, recovery_timeout=0)
+
+        async def fail():
+            raise ValueError("boom")
+
+        # Trip the breaker
+        with pytest.raises(ValueError):
+            await cb.call(fail)
+
+        assert cb.state == CircuitState.HALF_OPEN
+
+        # Probe call is allowed (fails → re-opens)
+        # Use long timeout so circuit stays OPEN after re-trip
+        cb.recovery_timeout = 300
+        with pytest.raises(ValueError):
+            await cb.call(fail)
+
+        assert cb.state == CircuitState.OPEN
+
+    async def test_half_open_rejects_concurrent_probes(self):
+        """While a probe is pending in HALF_OPEN, additional calls are rejected."""
+        cb = CircuitBreaker(name="test", failure_threshold=1, recovery_timeout=0)
+
+        async def fail():
+            raise ValueError("boom")
+
+        with pytest.raises(ValueError):
+            await cb.call(fail)
+
+        assert cb.state == CircuitState.HALF_OPEN
+
+        # Simulate a probe already in-flight
+        cb._half_open_pending = True
+
+        with pytest.raises(CircuitBreakerOpen):
+
+            async def succeed():
+                return "ok"
+
+            await cb.call(succeed)
+
+    async def test_half_open_success_clears_pending(self):
+        """A successful probe closes the circuit and clears pending flag."""
+        cb = CircuitBreaker(name="test", failure_threshold=1, recovery_timeout=0)
+
+        async def fail():
+            raise ValueError("boom")
+
+        async def succeed():
+            return "ok"
+
+        with pytest.raises(ValueError):
+            await cb.call(fail)
+
+        assert cb.state == CircuitState.HALF_OPEN
+
+        result = await cb.call(succeed)
+        assert result == "ok"
+        assert cb.state == CircuitState.CLOSED
+        assert cb._half_open_pending is False
+
 
 # --- SSEManager ---
 

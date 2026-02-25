@@ -35,6 +35,27 @@ async def setup_db():
 
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Add tsvector column + trigger + GIN index (not created by create_all)
+        await conn.execute(
+            text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS search_vector tsvector")
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_jobs_search_vector "
+                "ON jobs USING GIN (search_vector)"
+            )
+        )
+        await conn.execute(text("DROP TRIGGER IF EXISTS tsvector_update_jobs ON jobs"))
+        await conn.execute(
+            text(
+                "CREATE TRIGGER tsvector_update_jobs "
+                "BEFORE INSERT OR UPDATE OF title, description, company "
+                "ON jobs FOR EACH ROW EXECUTE FUNCTION "
+                "tsvector_update_trigger("
+                "search_vector, 'pg_catalog.simple', "
+                "title, description, company)"
+            )
+        )
     yield
     # Clean data but keep tables (don't drop_all which destroys the schema)
     async with test_engine.begin() as conn:

@@ -36,9 +36,7 @@ class SourceCompliance(Base):
     auto_disable_on_block: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False
     )
-    consecutive_blocks: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
+    consecutive_blocks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

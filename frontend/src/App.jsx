@@ -1,15 +1,13 @@
+import { Routes, Route } from 'react-router-dom'
+import SearchPage from './pages/SearchPage'
+import JobDetailPage from './pages/JobDetailPage'
+
 function App() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold text-gray-900 mb-4">
-          SwissJobHunter
-        </h1>
-        <p className="text-lg text-gray-600">
-          AI-powered job search for Switzerland
-        </p>
-      </div>
-    </div>
+    <Routes>
+      <Route path="/" element={<SearchPage />} />
+      <Route path="/job/:hash" element={<JobDetailPage />} />
+    </Routes>
   )
 }
 

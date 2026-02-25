@@ -7,15 +7,22 @@ from slowapi.errors import RateLimitExceeded
 
 from config import settings
 from core.rate_limit import limiter
+from providers import log_provider_status
+from services.scheduler import scheduler, setup_schedules
 from routers.auth import router as auth_router
+from routers.jobs import router as jobs_router
 from routers.profile import router as profile_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    log_provider_status()
+    setup_schedules()
+    scheduler.start()
     yield
     # Shutdown
+    scheduler.shutdown()
 
 
 app = FastAPI(
@@ -39,6 +46,7 @@ app.add_middleware(
 
 # Routers
 app.include_router(auth_router)
+app.include_router(jobs_router)
 app.include_router(profile_router)
 
 

@@ -27,9 +27,7 @@ class JobMatcher:
         if cls._model is None:
             from sentence_transformers import SentenceTransformer
 
-            cls._model = SentenceTransformer(
-                "paraphrase-multilingual-MiniLM-L12-v2"
-            )
+            cls._model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
         return cls._model
 
     @staticmethod
