@@ -25,4 +25,5 @@ celery_app.conf.include = [
     "tasks.example_task",
     "tasks.fetch_tasks",
     "tasks.maintenance_tasks",
+    "tasks.embedding_tasks",
 ]

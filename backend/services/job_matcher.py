@@ -6,6 +6,8 @@ Model loading is deferred until first use (lazy singleton).
 
 import numpy as np
 
+from config import settings
+
 # Default scoring weights (user can customize via profile.score_weights)
 DEFAULT_WEIGHTS = {
     "embedding": 0.40,
@@ -27,7 +29,9 @@ class JobMatcher:
         if cls._model is None:
             from sentence_transformers import SentenceTransformer
 
-            cls._model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+            cls._model = SentenceTransformer(
+                settings.EMBEDDING_MODEL_NAME, device=settings.EMBEDDING_DEVICE
+            )
         return cls._model
 
     @staticmethod
@@ -51,7 +55,9 @@ class JobMatcher:
     def encode_batch(self, texts: list[str]) -> np.ndarray:
         """Encode a batch of texts. Returns (N, 384) array."""
         model = self._get_model()
-        return model.encode(texts, normalize_embeddings=True, batch_size=64)
+        return model.encode(
+            texts, normalize_embeddings=True, batch_size=settings.EMBEDDING_BATCH_SIZE
+        )
 
     @staticmethod
     def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:

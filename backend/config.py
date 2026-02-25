@@ -33,6 +33,18 @@ class Settings(BaseSettings):
     SCHEDULER_ENABLED: bool = True
     SCHEDULER_FETCH_INTERVAL_MINUTES: int = 30
 
+    # Embedding model
+    EMBEDDING_MODEL_NAME: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    EMBEDDING_DEVICE: str = "cpu"
+    EMBEDDING_BATCH_SIZE: int = 64
+
+    # CV upload
+    CV_MAX_SIZE_MB: int = 10
+    CV_ALLOWED_TYPES: list[str] = [
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ]
+
     # Provider API Keys (empty = provider disabled)
     JSEARCH_RAPIDAPI_KEY: str = ""
     ADZUNA_APP_ID: str = ""

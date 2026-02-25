@@ -15,10 +15,20 @@ from schemas.job import (
     SalaryStats,
     SourceInfo,
 )
-from schemas.profile import DeleteConfirmation, ProfileData, UserExport
+from schemas.profile import (
+    CVDeleteResponse,
+    CVUploadResponse,
+    DeleteConfirmation,
+    ProfileData,
+    ProfileResponse,
+    ProfileUpdate,
+    UserExport,
+)
 
 __all__ = [
     "AuthResponse",
+    "CVDeleteResponse",
+    "CVUploadResponse",
     "DeleteConfirmation",
     "JobBrief",
     "JobCreate",
@@ -26,6 +36,8 @@ __all__ = [
     "JobSearchResponse",
     "JobStats",
     "ProfileData",
+    "ProfileResponse",
+    "ProfileUpdate",
     "SalaryStats",
     "SourceInfo",
     "TokenRefresh",
