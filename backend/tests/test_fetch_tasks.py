@@ -58,7 +58,7 @@ class TestFetchPipeline:
         mock_providers.return_value = []
 
         with patch(
-            "tasks.fetch_tasks.async_session",
+            "tasks.fetch_tasks.task_session",
             new=_mock_session_factory(db_session),
         ):
             summary = await _fetch_providers_async()
@@ -77,7 +77,7 @@ class TestFetchPipeline:
         mock_providers.return_value = [_make_mock_provider("test_src", jobs)]
 
         with patch(
-            "tasks.fetch_tasks.async_session",
+            "tasks.fetch_tasks.task_session",
             new=_mock_session_factory(db_session),
         ):
             summary = await _fetch_providers_async()
@@ -102,7 +102,7 @@ class TestFetchPipeline:
         mock_providers.return_value = [failing, working]
 
         with patch(
-            "tasks.fetch_tasks.async_session",
+            "tasks.fetch_tasks.task_session",
             new=_mock_session_factory(db_session),
         ):
             summary = await _fetch_providers_async()
@@ -128,7 +128,7 @@ class TestFetchPipeline:
         mock_providers.return_value = [_make_mock_provider("test_src", jobs)]
 
         with patch(
-            "tasks.fetch_tasks.async_session",
+            "tasks.fetch_tasks.task_session",
             new=_mock_session_factory(db_session),
         ):
             summary = await _fetch_providers_async()
@@ -144,7 +144,7 @@ class TestFetchPipeline:
         mock_providers.return_value = [_make_mock_provider("src1", [job])]
 
         with patch(
-            "tasks.fetch_tasks.async_session",
+            "tasks.fetch_tasks.task_session",
             new=_mock_session_factory(db_session),
         ):
             # First fetch - new

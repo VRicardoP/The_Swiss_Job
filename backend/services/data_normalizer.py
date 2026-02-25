@@ -24,6 +24,32 @@ PERIOD_MULTIPLIER: dict[str, int] = {
     "hourly": 2080,  # Standard Swiss working hours/year
 }
 
+# Map raw provider values to valid enum values
+PERIOD_ALIASES: dict[str, str] = {
+    "year": "yearly",
+    "annual": "yearly",
+    "annually": "yearly",
+    "per_year": "yearly",
+    "month": "monthly",
+    "per_month": "monthly",
+    "hour": "hourly",
+    "per_hour": "hourly",
+    "yearly": "yearly",
+    "monthly": "monthly",
+    "hourly": "hourly",
+}
+
+SENIORITY_VALID = {"intern", "junior", "mid", "senior", "lead", "head", "director"}
+
+CONTRACT_VALID = {
+    "full_time",
+    "part_time",
+    "contract",
+    "internship",
+    "apprenticeship",
+    "temporary",
+}
+
 # ---------------------------------------------------------------------------
 # Seniority patterns (checked in priority order: most senior first)
 # ---------------------------------------------------------------------------
@@ -115,10 +141,29 @@ class DataNormalizer:
     @staticmethod
     def normalize(job: dict) -> dict:
         """Run all normalization steps on a job dict."""
+        job = DataNormalizer.sanitize_enums(job)
         job = DataNormalizer.normalize_salary(job)
         job = DataNormalizer.detect_language(job)
         job = DataNormalizer.infer_seniority(job)
         job = DataNormalizer.infer_contract_type(job)
+        return job
+
+    @staticmethod
+    def sanitize_enums(job: dict) -> dict:
+        """Map raw provider enum values to valid DB enum values."""
+        period = job.get("salary_period")
+        if period:
+            mapped = PERIOD_ALIASES.get(period.lower())
+            job["salary_period"] = mapped  # None if unknown → won't break insert
+
+        seniority = job.get("seniority")
+        if seniority and seniority not in SENIORITY_VALID:
+            job["seniority"] = None
+
+        contract = job.get("contract_type")
+        if contract and contract not in CONTRACT_VALID:
+            job["contract_type"] = None
+
         return job
 
     # ------------------------------------------------------------------

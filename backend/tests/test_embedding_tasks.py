@@ -64,7 +64,7 @@ class TestGenerateProfileEmbedding:
             db_session, cv_text="Python developer with 5 years experience"
         )
 
-        with patch("database.async_session", _mock_session_factory(db_session)):
+        with patch("database.task_session", _mock_session_factory(db_session)):
             result = await _generate_profile_embedding_async(user_id)
 
         assert result["status"] == "success"
@@ -74,7 +74,7 @@ class TestGenerateProfileEmbedding:
     async def test_profile_not_found(self, MockMatcher, db_session):
         fake_id = str(uuid.uuid4())
 
-        with patch("database.async_session", _mock_session_factory(db_session)):
+        with patch("database.task_session", _mock_session_factory(db_session)):
             result = await _generate_profile_embedding_async(fake_id)
 
         assert result["status"] == "error"
@@ -84,7 +84,7 @@ class TestGenerateProfileEmbedding:
     async def test_no_cv_text(self, MockMatcher, db_session):
         user_id = await _create_user_with_profile(db_session, cv_text=None)
 
-        with patch("database.async_session", _mock_session_factory(db_session)):
+        with patch("database.task_session", _mock_session_factory(db_session)):
             result = await _generate_profile_embedding_async(user_id)
 
         assert result["status"] == "error"
@@ -103,7 +103,7 @@ class TestGenerateProfileEmbedding:
             skills=["Python", "FastAPI"],
         )
 
-        with patch("database.async_session", _mock_session_factory(db_session)):
+        with patch("database.task_session", _mock_session_factory(db_session)):
             await _generate_profile_embedding_async(user_id)
 
         # Verify the encoded text contains title + cv_text + skills
@@ -134,7 +134,7 @@ class TestGenerateJobEmbeddings:
             db_session.add(job)
         await db_session.commit()
 
-        with patch("database.async_session", _mock_session_factory(db_session)):
+        with patch("database.task_session", _mock_session_factory(db_session)):
             result = await _generate_job_embeddings_async(batch_size=100)
 
         assert result["status"] == "success"
@@ -142,7 +142,7 @@ class TestGenerateJobEmbeddings:
 
     @patch("services.job_matcher.JobMatcher")
     async def test_empty_returns_zero(self, MockMatcher, db_session):
-        with patch("database.async_session", _mock_session_factory(db_session)):
+        with patch("database.task_session", _mock_session_factory(db_session)):
             result = await _generate_job_embeddings_async(batch_size=100)
 
         assert result["status"] == "success"

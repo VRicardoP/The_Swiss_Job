@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from celery_app import celery_app
-from database import async_session
+from database import task_session
 from providers import get_all_providers
 from services.data_normalizer import DataNormalizer
 from services.deduplicator import Deduplicator
@@ -40,7 +40,7 @@ async def _fetch_providers_async() -> dict[str, Any]:
         "errors": 0,
     }
 
-    async with async_session() as db:
+    async with task_session() as db:
         repo = JobRepository(db)
 
         for provider in providers:
@@ -61,11 +61,9 @@ async def _fetch_providers_async() -> dict[str, Any]:
 
                         # Upsert (exact dedup via ON CONFLICT on hash)
                         is_new = await repo.upsert_job(job)
-                        summary["fetched"] += 1
 
                         if is_new:
                             # Check for cross-source fuzzy duplicate
-                            # Use job["source"] (stored in DB) not provider name
                             canonical = await Deduplicator.find_fuzzy_duplicate(
                                 db, job["fuzzy_hash"], job["source"]
                             )
@@ -77,7 +75,13 @@ async def _fetch_providers_async() -> dict[str, Any]:
                         else:
                             summary["updated"] += 1
 
-                    except (KeyError, ValueError, TypeError) as e:
+                        # Commit per-job to avoid transaction poisoning
+                        await db.commit()
+                        summary["fetched"] += 1
+
+                    except Exception as e:
+                        # Rollback poisoned transaction before continuing
+                        await db.rollback()
                         summary["errors"] += 1
                         logger.error("Error processing job from %s: %s", source, e)
 
@@ -86,8 +90,6 @@ async def _fetch_providers_async() -> dict[str, Any]:
             except Exception as e:
                 summary["errors"] += 1
                 logger.error("Provider %s failed: %s", source, e)
-
-        await db.commit()
 
     logger.info("Fetch complete: %s", summary)
     return summary

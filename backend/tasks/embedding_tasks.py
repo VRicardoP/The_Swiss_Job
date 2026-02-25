@@ -29,14 +29,14 @@ async def _generate_profile_embedding_async(user_id: str) -> dict[str, Any]:
 
     from sqlalchemy import select
 
-    from database import async_session
+    from database import task_session
     from models.user_profile import UserProfile
     from services.job_matcher import JobMatcher
 
     uid = uuid_mod.UUID(user_id)
     matcher = JobMatcher()
 
-    async with async_session() as db:
+    async with task_session() as db:
         result = await db.execute(select(UserProfile).where(UserProfile.user_id == uid))
         profile = result.scalar_one_or_none()
 
@@ -90,13 +90,13 @@ async def _generate_job_embeddings_async(batch_size: int) -> dict[str, Any]:
     """Async implementation: batch encode jobs without embeddings."""
     from sqlalchemy import select
 
-    from database import async_session
+    from database import task_session
     from models.job import Job
     from services.job_matcher import JobMatcher
 
     matcher = JobMatcher()
 
-    async with async_session() as db:
+    async with task_session() as db:
         stmt = (
             select(Job)
             .where(

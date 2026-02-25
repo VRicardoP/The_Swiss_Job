@@ -15,10 +15,37 @@ from main import app
 # Disable rate limiting in tests
 limiter.enabled = False
 
-test_engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+# Use a separate test database to avoid wiping production data
+_base_url = settings.DATABASE_URL.rsplit("/", 1)[0]
+_test_db_url = _base_url + "/swissjobhunter_test"
+
+test_engine = create_async_engine(_test_db_url, poolclass=NullPool)
 TestSessionLocal = async_sessionmaker(
     test_engine, class_=AsyncSession, expire_on_commit=False
 )
+
+
+@pytest.fixture(scope="session", autouse=True)
+async def _ensure_test_db():
+    """Create test database + pgvector extension if they don't exist."""
+    from sqlalchemy.ext.asyncio import create_async_engine as _cae
+
+    admin_engine = _cae(_base_url + "/swissjobhunter", isolation_level="AUTOCOMMIT")
+    async with admin_engine.connect() as conn:
+        exists = await conn.scalar(
+            text(
+                "SELECT 1 FROM pg_database WHERE datname = 'swissjobhunter_test'"
+            )
+        )
+        if not exists:
+            await conn.execute(text("CREATE DATABASE swissjobhunter_test"))
+    await admin_engine.dispose()
+
+    # Enable pgvector in the test DB
+    vec_engine = _cae(_test_db_url, isolation_level="AUTOCOMMIT")
+    async with vec_engine.connect() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    await vec_engine.dispose()
 
 
 async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
