@@ -1,7 +1,10 @@
 const BASE = "/api/v1";
 
 function getAuthHeaders() {
-  const token = localStorage.getItem("swissjob_token");
+  const token =
+    typeof localStorage !== "undefined"
+      ? localStorage.getItem("swissjob_token")
+      : null;
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -83,5 +86,32 @@ export const profileApi = {
 
   deleteCV() {
     return authRequest("/profile/cv", { method: "DELETE" });
+  },
+};
+
+export const authApi = {
+  register(email, password, gdpr_consent) {
+    return request("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ email, password, gdpr_consent }),
+    });
+  },
+
+  login(email, password) {
+    return request("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+  },
+
+  refresh(refresh_token) {
+    return request("/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token }),
+    });
+  },
+
+  getMe() {
+    return authRequest("/auth/me");
   },
 };
