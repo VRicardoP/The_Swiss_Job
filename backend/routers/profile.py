@@ -7,12 +7,13 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from core.security import get_current_user
+from core.security import get_current_user, verify_password
 from database import get_db
 from models.user import User
 from schemas.profile import (
     CVDeleteResponse,
     CVUploadResponse,
+    DeleteAccountRequest,
     DeleteConfirmation,
     ProfileData,
     ProfileResponse,
@@ -202,10 +203,20 @@ async def export_user_data(
 
 @router.delete("/delete-all", response_model=DeleteConfirmation)
 async def delete_all_user_data(
+    body: DeleteAccountRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """GDPR right to erasure: delete user account and all associated data."""
+    """GDPR right to erasure: delete user account and all associated data.
+
+    Requires password re-entry for confirmation.
+    """
+    if not verify_password(body.password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Incorrect password",
+        )
+
     user_id = current_user.id
     now = datetime.now(timezone.utc)
 

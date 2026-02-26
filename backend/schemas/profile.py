@@ -121,6 +121,12 @@ class UserExport(BaseModel):
     exported_at: datetime
 
 
+class DeleteAccountRequest(BaseModel):
+    """Request body for account deletion — requires password confirmation."""
+
+    password: str = Field(..., min_length=1)
+
+
 class DeleteConfirmation(BaseModel):
     message: str
     user_id: uuid.UUID

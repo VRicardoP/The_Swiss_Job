@@ -31,7 +31,7 @@ export default function JobCard({ job }) {
     >
       <div className="flex gap-3">
         {/* Company initial */}
-        <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-lg font-semibold text-gray-500">
+        <div className="shrink-0 w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-lg font-semibold text-gray-500">
           {initial}
         </div>
 

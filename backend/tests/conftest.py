@@ -33,9 +33,7 @@ async def _ensure_test_db():
     admin_engine = _cae(_base_url + "/swissjobhunter", isolation_level="AUTOCOMMIT")
     async with admin_engine.connect() as conn:
         exists = await conn.scalar(
-            text(
-                "SELECT 1 FROM pg_database WHERE datname = 'swissjobhunter_test'"
-            )
+            text("SELECT 1 FROM pg_database WHERE datname = 'swissjobhunter_test'")
         )
         if not exists:
             await conn.execute(text("CREATE DATABASE swissjobhunter_test"))
@@ -106,3 +104,24 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 def random_email() -> str:
     return f"test-{uuid.uuid4().hex[:8]}@example.com"
+
+
+@pytest.fixture
+async def redis_client():
+    """Provide a Redis connection for SSE tests (same host as app cache)."""
+    import redis.asyncio as aioredis
+
+    client = aioredis.from_url(settings.REDIS_URL, decode_responses=False)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def sse_manager(redis_client):
+    """Provide a started SSEManager with small queue for overflow tests."""
+    from services.sse_manager import SSEManager
+
+    mgr = SSEManager(redis_client, queue_maxsize=10)
+    await mgr.start()
+    yield mgr
+    await mgr.stop()

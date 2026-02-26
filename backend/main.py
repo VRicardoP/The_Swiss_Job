@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 
+import redis.asyncio as aioredis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -9,6 +10,7 @@ from config import settings
 from core.rate_limit import limiter
 from providers import log_provider_status
 from services.scheduler import scheduler, setup_schedules
+from services.sse_manager import SSEManager
 from routers.auth import router as auth_router
 from routers.jobs import router as jobs_router
 from routers.profile import router as profile_router
@@ -16,13 +18,23 @@ from routers.profile import router as profile_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # Startup — SSE Manager (Redis pub/sub)
+    redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=False)
+    sse = SSEManager(redis_client, queue_maxsize=settings.SSE_QUEUE_MAXSIZE)
+    await sse.start()
+    app.state.sse_manager = sse
+    app.state.redis_client = redis_client
+
     log_provider_status()
     setup_schedules()
     scheduler.start()
+
     yield
+
     # Shutdown
     scheduler.shutdown()
+    await sse.stop()
+    await redis_client.aclose()
 
 
 app = FastAPI(

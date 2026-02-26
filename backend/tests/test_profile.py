@@ -8,20 +8,23 @@ from models.user import User
 from tests.conftest import random_email
 
 
-async def register_and_get_token(client: AsyncClient) -> tuple[str, str]:
-    """Helper: register a user and return (access_token, email)."""
+_TEST_PASSWORD = "TestPass123!"
+
+
+async def register_and_get_token(client: AsyncClient) -> tuple[str, str, str]:
+    """Helper: register a user and return (access_token, email, password)."""
     email = random_email()
     resp = await client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "TestPass123!", "gdpr_consent": True},
+        json={"email": email, "password": _TEST_PASSWORD, "gdpr_consent": True},
     )
     assert resp.status_code == 201
-    return resp.json()["access_token"], email
+    return resp.json()["access_token"], email, _TEST_PASSWORD
 
 
 class TestProfileExport:
     async def test_export_returns_user_data(self, client: AsyncClient):
-        token, email = await register_and_get_token(client)
+        token, email, _pw = await register_and_get_token(client)
         resp = await client.get(
             "/api/v1/profile/export",
             headers={"Authorization": f"Bearer {token}"},
@@ -51,10 +54,12 @@ class TestProfileDeleteAll:
     async def test_delete_removes_user(
         self, client: AsyncClient, db_session: AsyncSession
     ):
-        token, email = await register_and_get_token(client)
-        resp = await client.delete(
+        token, email, password = await register_and_get_token(client)
+        resp = await client.request(
+            "DELETE",
             "/api/v1/profile/delete-all",
             headers={"Authorization": f"Bearer {token}"},
+            json={"password": password},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -68,7 +73,7 @@ class TestProfileDeleteAll:
     async def test_delete_cascades_profile(
         self, client: AsyncClient, db_session: AsyncSession
     ):
-        token, _email = await register_and_get_token(client)
+        token, _email, password = await register_and_get_token(client)
 
         # Get user_id before deletion
         me_resp = await client.get(
@@ -77,9 +82,11 @@ class TestProfileDeleteAll:
         )
         user_id = me_resp.json()["id"]
 
-        resp = await client.delete(
+        resp = await client.request(
+            "DELETE",
             "/api/v1/profile/delete-all",
             headers={"Authorization": f"Bearer {token}"},
+            json={"password": password},
         )
         assert resp.status_code == 200
 
@@ -94,13 +101,34 @@ class TestProfileDeleteAll:
         resp = await client.delete("/api/v1/profile/delete-all")
         assert resp.status_code == 401
 
-    async def test_token_invalid_after_delete(self, client: AsyncClient):
-        token, _email = await register_and_get_token(client)
+    async def test_delete_wrong_password(self, client: AsyncClient):
+        token, _email, _password = await register_and_get_token(client)
+        resp = await client.request(
+            "DELETE",
+            "/api/v1/profile/delete-all",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"password": "WrongPassword!"},
+        )
+        assert resp.status_code == 403
+        assert "Incorrect password" in resp.json()["detail"]
 
-        # Delete account
+    async def test_delete_missing_password(self, client: AsyncClient):
+        token, _email, _password = await register_and_get_token(client)
         resp = await client.delete(
             "/api/v1/profile/delete-all",
             headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 422
+
+    async def test_token_invalid_after_delete(self, client: AsyncClient):
+        token, _email, password = await register_and_get_token(client)
+
+        # Delete account
+        resp = await client.request(
+            "DELETE",
+            "/api/v1/profile/delete-all",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"password": password},
         )
         assert resp.status_code == 200
 

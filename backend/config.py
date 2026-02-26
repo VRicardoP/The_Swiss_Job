@@ -45,6 +45,9 @@ class Settings(BaseSettings):
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ]
 
+    # SSE
+    SSE_QUEUE_MAXSIZE: int = 100
+
     # Provider API Keys (empty = provider disabled)
     JSEARCH_RAPIDAPI_KEY: str = ""
     ADZUNA_APP_ID: str = ""
