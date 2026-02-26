@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
@@ -13,7 +14,10 @@ from services.scheduler import scheduler, setup_schedules
 from services.sse_manager import SSEManager
 from routers.auth import router as auth_router
 from routers.jobs import router as jobs_router
+from routers.match import router as match_router
 from routers.profile import router as profile_router
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -24,6 +28,13 @@ async def lifespan(app: FastAPI):
     await sse.start()
     app.state.sse_manager = sse
     app.state.redis_client = redis_client
+
+    # Preload embedding model to avoid latency spike on first request (TD-16)
+    logger.info("Preloading embedding model...")
+    from services.job_matcher import JobMatcher
+
+    JobMatcher._get_model()
+    logger.info("Embedding model loaded")
 
     log_provider_status()
     setup_schedules()
@@ -59,6 +70,7 @@ app.add_middleware(
 # Routers
 app.include_router(auth_router)
 app.include_router(jobs_router)
+app.include_router(match_router)
 app.include_router(profile_router)
 
 

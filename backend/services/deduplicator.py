@@ -116,3 +116,32 @@ class Deduplicator:
         result = await db.execute(stmt)
         row = result.scalar_one_or_none()
         return row
+
+    @staticmethod
+    async def find_semantic_duplicates(
+        db: AsyncSession, job: Job, threshold: float = 0.95
+    ) -> list[str]:
+        """Find jobs with embedding cosine similarity > threshold.
+
+        Uses pgvector cosine distance: distance < (1 - threshold).
+        Returns list of canonical job hashes (oldest first).
+        """
+        if job.embedding is None:
+            return []
+
+        max_distance = 1.0 - threshold
+
+        stmt = (
+            select(Job.hash)
+            .where(
+                Job.hash != job.hash,
+                Job.is_active.is_(True),
+                Job.duplicate_of.is_(None),
+                Job.embedding.is_not(None),
+                Job.embedding.cosine_distance(job.embedding) < max_distance,
+            )
+            .order_by(Job.first_seen_at.asc())
+            .limit(1)
+        )
+        result = await db.execute(stmt)
+        return list(result.scalars().all())

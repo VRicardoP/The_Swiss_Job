@@ -22,14 +22,29 @@ def fetch_providers(self) -> dict[str, Any]:
     Celery tasks must be synchronous — async work runs via asyncio.run().
     """
     try:
-        return asyncio.run(_fetch_providers_async())
+        result = asyncio.run(_fetch_providers_async())
+
+        # Chain: generate embeddings for newly ingested jobs
+        if result.get("new", 0) > 0:
+            from tasks.embedding_tasks import generate_job_embeddings
+
+            generate_job_embeddings.delay(batch_size=100)
+            logger.info(
+                "Dispatched generate_job_embeddings for %d new jobs", result["new"]
+            )
+
+        return result
     except Exception as exc:
         logger.error("fetch_providers failed: %s", exc)
         raise self.retry(exc=exc, countdown=300)
 
 
 async def _fetch_providers_async() -> dict[str, Any]:
-    """Async implementation of the fetch pipeline."""
+    """Async implementation of the fetch pipeline.
+
+    Uses savepoints (begin_nested) per-job to isolate failures without
+    poisoning the entire transaction. Commits once per provider batch.
+    """
     providers = get_all_providers()
     summary: dict[str, Any] = {
         "providers": 0,
@@ -51,43 +66,41 @@ async def _fetch_providers_async() -> dict[str, Any]:
 
                 for job in jobs:
                     try:
-                        # Enrich with DataNormalizer
-                        job = DataNormalizer.normalize(job)
+                        # Savepoint per-job: only rolls back this job on failure
+                        async with db.begin_nested():
+                            job = DataNormalizer.normalize(job)
 
-                        # Compute fuzzy hash for cross-source dedup
-                        job["fuzzy_hash"] = Deduplicator.compute_fuzzy_hash(
-                            job["title"], job["company"]
-                        )
-
-                        # Upsert (exact dedup via ON CONFLICT on hash)
-                        is_new = await repo.upsert_job(job)
-
-                        if is_new:
-                            # Check for cross-source fuzzy duplicate
-                            canonical = await Deduplicator.find_fuzzy_duplicate(
-                                db, job["fuzzy_hash"], job["source"]
+                            job["fuzzy_hash"] = Deduplicator.compute_fuzzy_hash(
+                                job["title"], job["company"]
                             )
-                            if canonical:
-                                await repo.mark_duplicate(job["hash"], canonical)
-                                summary["dupes"] += 1
-                            else:
-                                summary["new"] += 1
-                        else:
-                            summary["updated"] += 1
 
-                        # Commit per-job to avoid transaction poisoning
-                        await db.commit()
-                        summary["fetched"] += 1
+                            is_new = await repo.upsert_job(job)
+
+                            if is_new:
+                                canonical = await Deduplicator.find_fuzzy_duplicate(
+                                    db, job["fuzzy_hash"], job["source"]
+                                )
+                                if canonical:
+                                    await repo.mark_duplicate(job["hash"], canonical)
+                                    summary["dupes"] += 1
+                                else:
+                                    summary["new"] += 1
+                            else:
+                                summary["updated"] += 1
+
+                            summary["fetched"] += 1
 
                     except Exception as e:
-                        # Rollback poisoned transaction before continuing
-                        await db.rollback()
+                        # Savepoint rolled back automatically by begin_nested()
                         summary["errors"] += 1
                         logger.error("Error processing job from %s: %s", source, e)
 
+                # Commit once per provider (all successful savepoints)
+                await db.commit()
                 summary["providers"] += 1
 
             except Exception as e:
+                await db.rollback()
                 summary["errors"] += 1
                 logger.error("Provider %s failed: %s", source, e)
 

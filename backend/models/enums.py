@@ -36,3 +36,10 @@ class ContractType(str, enum.Enum):
     internship = "internship"
     apprenticeship = "apprenticeship"
     temporary = "temporary"
+
+
+class MatchFeedback(str, enum.Enum):
+    thumbs_up = "thumbs_up"
+    thumbs_down = "thumbs_down"
+    applied = "applied"
+    dismissed = "dismissed"

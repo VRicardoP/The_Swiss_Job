@@ -131,5 +131,11 @@ async def _generate_job_embeddings_async(batch_size: int) -> dict[str, Any]:
 
         await db.commit()
 
-        logger.info("Generated embeddings for %d jobs", len(jobs))
+        # Chain: run semantic dedup after embedding generation
+        from tasks.maintenance_tasks import dedup_semantic_batch
+
+        dedup_semantic_batch.delay(batch_size=200)
+        logger.info(
+            "Generated embeddings for %d jobs, dispatched semantic dedup", len(jobs)
+        )
         return {"status": "success", "processed": len(jobs)}

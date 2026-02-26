@@ -48,6 +48,21 @@ class Settings(BaseSettings):
     # SSE
     SSE_QUEUE_MAXSIZE: int = 100
 
+    # AI Matching
+    MATCH_STAGE1_TOP_N: int = 50
+    MATCH_DEFAULT_TOP_K: int = 20
+    SEMANTIC_DEDUP_THRESHOLD: float = 0.95
+
+    # Groq LLM
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_RERANK_MODEL: str = "llama-3.1-8b-instant"
+    GROQ_RERANK_BATCH_SIZE: int = 10
+    GROQ_RERANK_TEMPERATURE: float = 0.2
+    GROQ_RERANK_MAX_TOKENS: int = 2048
+    GROQ_CACHE_TTL_DAYS: int = 7
+    MATCH_LLM_RERANK_TOP_N: int = 20
+
     # Provider API Keys (empty = provider disabled)
     JSEARCH_RAPIDAPI_KEY: str = ""
     ADZUNA_APP_ID: str = ""

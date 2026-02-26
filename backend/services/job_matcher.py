@@ -10,8 +10,8 @@ from config import settings
 
 # Default scoring weights (user can customize via profile.score_weights)
 DEFAULT_WEIGHTS = {
-    "embedding": 0.40,
-    "salary": 0.20,
+    "embedding": 0.35,
+    "salary": 0.25,
     "location": 0.15,
     "recency": 0.15,
     "llm": 0.10,
