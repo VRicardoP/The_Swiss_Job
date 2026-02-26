@@ -17,6 +17,12 @@ export default function Navbar() {
           {token ? (
             <>
               <Link
+                to="/match"
+                className="text-sm text-gray-600 hover:text-gray-900"
+              >
+                Matches
+              </Link>
+              <Link
                 to="/profile"
                 className="text-gray-600 hover:text-gray-900"
               >

@@ -5,6 +5,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import SearchPage from './pages/SearchPage'
 import JobDetailPage from './pages/JobDetailPage'
 import ProfilePage from './pages/ProfilePage'
+import MatchPage from './pages/MatchPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 
@@ -24,6 +25,14 @@ function App() {
           element={
             <ProtectedRoute>
               <ProfilePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/match"
+          element={
+            <ProtectedRoute>
+              <MatchPage />
             </ProtectedRoute>
           }
         />

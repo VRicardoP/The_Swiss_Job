@@ -115,3 +115,44 @@ export const authApi = {
     return authRequest("/auth/me");
   },
 };
+
+export const matchApi = {
+  analyze(topK = 20) {
+    return authRequest("/match/analyze", {
+      method: "POST",
+      body: JSON.stringify({ top_k: topK }),
+    });
+  },
+
+  getResults(params = {}) {
+    const qs = new URLSearchParams();
+    if (params.limit) qs.set("limit", params.limit);
+    if (params.offset !== undefined) qs.set("offset", params.offset);
+    const query = qs.toString();
+    return authRequest(`/match/results${query ? `?${query}` : ""}`);
+  },
+
+  getHistory(params = {}) {
+    const qs = new URLSearchParams();
+    if (params.limit) qs.set("limit", params.limit);
+    if (params.offset !== undefined) qs.set("offset", params.offset);
+    const query = qs.toString();
+    return authRequest(`/match/history${query ? `?${query}` : ""}`);
+  },
+
+  submitFeedback(jobHash, feedback) {
+    return authRequest(`/match/${jobHash}/feedback`, {
+      method: "POST",
+      body: JSON.stringify({ feedback }),
+    });
+  },
+
+  submitImplicit(jobHash, action, durationMs = null) {
+    const body = { action };
+    if (durationMs !== null) body.duration_ms = durationMs;
+    return authRequest(`/match/${jobHash}/implicit`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+};
