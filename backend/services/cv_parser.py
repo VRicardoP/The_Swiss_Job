@@ -16,19 +16,31 @@ class CVParser:
 
     SKILL_PATTERNS: list[str] = [
         # Programming languages
-        r"\b(Python|Java|JavaScript|TypeScript|C\+\+|C#|Go|Rust|Ruby|PHP|Swift|Kotlin|Scala|R)\b",
-        # Frameworks
-        r"\b(React|Angular|Vue|Django|FastAPI|Spring|Node\.js|\.NET|Flask|Rails|Express)\b",
-        # Data / Cloud / Infra
-        r"\b(SQL|PostgreSQL|MongoDB|Redis|Elasticsearch|Kafka|Docker|Kubernetes|AWS|Azure|GCP|Terraform)\b",
-        # AI / ML
-        r"\b(Machine Learning|Deep Learning|NLP|Computer Vision|TensorFlow|PyTorch|Pandas|Spark)\b",
-        # Swiss-relevant
-        r"\b(SAP|ABAP|Fiori|UBS|Credit Suisse|Swisscom)\b",
+        r"\b(Python|JavaScript|TypeScript|Java|C\+\+|C#|Go|Golang|Rust|Ruby|PHP|Swift|Kotlin|Scala|R|Dart|Lua|Perl|Haskell|Elixir|Clojure)\b",
+        # Frontend
+        r"\b(React|Angular|Vue\.js|Vue|Next\.js|Nuxt\.js|Svelte|TailwindCSS|Tailwind|HTML|CSS|Sass|SCSS|Webpack|Vite)\b",
+        # Mobile
+        r"\b(React Native|Flutter|iOS|Android|SwiftUI|Jetpack Compose)\b",
+        # Backend / Frameworks
+        r"\b(Node\.js|Django|FastAPI|Flask|Spring Boot|Spring|Laravel|Express|Rails|ASP\.NET|\.NET|Nest\.js|Gin|Fiber)\b",
+        # Data / ML / AI
+        r"\b(Machine Learning|Deep Learning|Data Science|NLP|Computer Vision|TensorFlow|PyTorch|Pandas|Spark|Hadoop|Airflow|dbt|Snowflake|Databricks|Power BI|Tableau|LLM|LangChain|OpenAI)\b",
+        # Databases & Messaging
+        r"\b(SQL|PostgreSQL|MySQL|MongoDB|Redis|Elasticsearch|Oracle|SQLite|Cassandra|DynamoDB|Neo4j|Kafka|RabbitMQ)\b",
+        # Cloud & DevOps
+        r"\b(Docker|Kubernetes|AWS|Azure|GCP|Terraform|Ansible|CI/CD|Jenkins|GitHub Actions|GitLab CI|ArgoCD|Helm|Prometheus|Grafana|Datadog|Cloudflare)\b",
+        # Tools & Platforms
+        r"\b(Git|Linux|Jira|Confluence|Figma|GraphQL|REST API|gRPC|Microservices|API Gateway)\b",
+        # Swiss-relevant (enterprise & finance)
+        r"\b(SAP|ABAP|Fiori|S/4HANA|ServiceNow|Salesforce)\b",
+        # Security
+        r"\b(Cybersecurity|Penetration Testing|SIEM|OAuth|SSO)\b",
         # Languages (natural)
         r"\b(Deutsch|Fran[cç]ais|English|Italiano|German|French|Italian|Romansch)\b",
         # Methodologies
-        r"\b(Scrum|Agile|Kanban|ITIL|Prince2|PMP|Lean|Six Sigma|DevOps|CI/CD)\b",
+        r"\b(Scrum|Agile|Kanban|ITIL|Prince2|PMP|Lean|Six Sigma|DevOps|SRE)\b",
+        # Roles / Specialties
+        r"\b(QA|Blockchain|Product Manager|Scrum Master|Data Engineer|ML Engineer|Solution Architect)\b",
     ]
 
     @staticmethod
