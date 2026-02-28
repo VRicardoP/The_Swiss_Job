@@ -6,6 +6,9 @@ import SearchPage from './pages/SearchPage'
 import JobDetailPage from './pages/JobDetailPage'
 import ProfilePage from './pages/ProfilePage'
 import MatchPage from './pages/MatchPage'
+import PipelinePage from './pages/PipelinePage'
+import SavedSearchesPage from './pages/SavedSearchesPage'
+import OnboardingPage from './pages/OnboardingPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 
@@ -33,6 +36,30 @@ function App() {
           element={
             <ProtectedRoute>
               <MatchPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/pipeline"
+          element={
+            <ProtectedRoute>
+              <PipelinePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/searches"
+          element={
+            <ProtectedRoute>
+              <SavedSearchesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/onboarding"
+          element={
+            <ProtectedRoute>
+              <OnboardingPage />
             </ProtectedRoute>
           }
         />

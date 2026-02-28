@@ -63,6 +63,14 @@ class Settings(BaseSettings):
     GROQ_CACHE_TTL_DAYS: int = 7
     MATCH_LLM_RERANK_TOP_N: int = 20
 
+    # Scraper schedule
+    SCHEDULER_SCRAPER_INTERVAL_HOURS: int = 6
+
+    # Alerts & Saved Searches
+    ALERTS_MAX_PUSH_PER_DAY: int = 10
+    ALERTS_MIN_SCORE_THRESHOLD: int = 50
+    SCHEDULER_SEARCH_INTERVAL_MINUTES: int = 60
+
     # Provider API Keys (empty = provider disabled)
     JSEARCH_RAPIDAPI_KEY: str = ""
     ADZUNA_APP_ID: str = ""

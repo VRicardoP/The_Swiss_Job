@@ -116,6 +116,87 @@ export const authApi = {
   },
 };
 
+export const applicationsApi = {
+  list(params = {}) {
+    const qs = new URLSearchParams();
+    if (params.status) qs.set("status", params.status);
+    if (params.limit) qs.set("limit", params.limit);
+    if (params.offset !== undefined) qs.set("offset", params.offset);
+    const query = qs.toString();
+    return authRequest(`/applications${query ? `?${query}` : ""}`);
+  },
+
+  create(jobHash, notes = null) {
+    const body = { job_hash: jobHash };
+    if (notes) body.notes = notes;
+    return authRequest("/applications", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  update(id, data) {
+    return authRequest(`/applications/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  },
+
+  remove(id) {
+    return authRequest(`/applications/${id}`, { method: "DELETE" });
+  },
+
+  stats() {
+    return authRequest("/applications/stats");
+  },
+};
+
+export const searchesApi = {
+  list(params = {}) {
+    const qs = new URLSearchParams();
+    if (params.limit) qs.set("limit", params.limit);
+    if (params.offset !== undefined) qs.set("offset", params.offset);
+    const query = qs.toString();
+    return authRequest(`/searches${query ? `?${query}` : ""}`);
+  },
+
+  create(data) {
+    return authRequest("/searches", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  update(id, data) {
+    return authRequest(`/searches/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  },
+
+  remove(id) {
+    return authRequest(`/searches/${id}`, { method: "DELETE" });
+  },
+
+  run(id) {
+    return authRequest(`/searches/${id}/run`, { method: "POST" });
+  },
+};
+
+export const notificationsApi = {
+  list(params = {}) {
+    const qs = new URLSearchParams();
+    if (params.limit) qs.set("limit", params.limit);
+    if (params.offset !== undefined) qs.set("offset", params.offset);
+    const query = qs.toString();
+    return authRequest(`/notifications${query ? `?${query}` : ""}`);
+  },
+
+  markRead(id) {
+    return authRequest(`/notifications/${id}/read`, { method: "PUT" });
+  },
+};
+
 export const matchApi = {
   analyze(topK = 20) {
     return authRequest("/match/analyze", {

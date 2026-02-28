@@ -48,10 +48,29 @@ def setup_schedules() -> None:
         replace_existing=True,
     )
 
+    # Run saved searches every N minutes
+    scheduler.add_job(
+        _dispatch_saved_searches,
+        IntervalTrigger(minutes=settings.SCHEDULER_SEARCH_INTERVAL_MINUTES),
+        id="run_saved_searches",
+        replace_existing=True,
+    )
+
+    # Scrapers: every N hours
+    scheduler.add_job(
+        _dispatch_fetch_scrapers,
+        IntervalTrigger(hours=settings.SCHEDULER_SCRAPER_INTERVAL_HOURS),
+        id="fetch_scrapers",
+        replace_existing=True,
+    )
+
     logger.info(
-        "Scheduler configured: fetch every %d min, dedup daily 04:00, "
-        "URL check weekly Sun 03:00",
+        "Scheduler configured: fetch every %d min, scrapers every %d h, "
+        "dedup daily 04:00, URL check weekly Sun 03:00, "
+        "saved searches every %d min",
         settings.SCHEDULER_FETCH_INTERVAL_MINUTES,
+        settings.SCHEDULER_SCRAPER_INTERVAL_HOURS,
+        settings.SCHEDULER_SEARCH_INTERVAL_MINUTES,
     )
 
 
@@ -68,3 +87,13 @@ def _dispatch_dedup_semantic() -> None:
 def _dispatch_check_urls() -> None:
     celery_app.send_task("tasks.check_job_urls")
     logger.debug("Dispatched tasks.check_job_urls")
+
+
+def _dispatch_saved_searches() -> None:
+    celery_app.send_task("tasks.search_tasks.run_saved_searches")
+    logger.debug("Dispatched tasks.search_tasks.run_saved_searches")
+
+
+def _dispatch_fetch_scrapers() -> None:
+    celery_app.send_task("tasks.scraping.fetch_scrapers")
+    logger.debug("Dispatched tasks.scraping.fetch_scrapers")

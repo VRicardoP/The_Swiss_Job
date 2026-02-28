@@ -1,3 +1,10 @@
+from schemas.applications import (
+    ApplicationCreate,
+    ApplicationResponse,
+    ApplicationsListResponse,
+    ApplicationStatsResponse,
+    ApplicationUpdate,
+)
 from schemas.auth import (
     AuthResponse,
     TokenRefresh,
@@ -15,6 +22,10 @@ from schemas.job import (
     SalaryStats,
     SourceInfo,
 )
+from schemas.notifications import (
+    NotificationListResponse,
+    NotificationResponse,
+)
 from schemas.profile import (
     CVDeleteResponse,
     CVUploadResponse,
@@ -24,8 +35,19 @@ from schemas.profile import (
     ProfileUpdate,
     UserExport,
 )
+from schemas.saved_searches import (
+    SavedSearchCreate,
+    SavedSearchListResponse,
+    SavedSearchResponse,
+    SavedSearchUpdate,
+)
 
 __all__ = [
+    "ApplicationCreate",
+    "ApplicationResponse",
+    "ApplicationsListResponse",
+    "ApplicationStatsResponse",
+    "ApplicationUpdate",
     "AuthResponse",
     "CVDeleteResponse",
     "CVUploadResponse",
@@ -35,10 +57,16 @@ __all__ = [
     "JobResponse",
     "JobSearchResponse",
     "JobStats",
+    "NotificationListResponse",
+    "NotificationResponse",
     "ProfileData",
     "ProfileResponse",
     "ProfileUpdate",
     "SalaryStats",
+    "SavedSearchCreate",
+    "SavedSearchListResponse",
+    "SavedSearchResponse",
+    "SavedSearchUpdate",
     "SourceInfo",
     "TokenRefresh",
     "TokenResponse",

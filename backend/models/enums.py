@@ -43,3 +43,20 @@ class MatchFeedback(str, enum.Enum):
     thumbs_down = "thumbs_down"
     applied = "applied"
     dismissed = "dismissed"
+
+
+class ApplicationStatus(str, enum.Enum):
+    saved = "saved"
+    applied = "applied"
+    phone_screen = "phone_screen"
+    technical = "technical"
+    interview = "interview"
+    offer = "offer"
+    rejected = "rejected"
+    withdrawn = "withdrawn"
+
+
+class NotifyFrequency(str, enum.Enum):
+    realtime = "realtime"
+    daily = "daily"
+    weekly = "weekly"

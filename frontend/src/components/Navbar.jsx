@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import useAuthStore from "../stores/authStore";
 import { useLogout } from "../hooks/useAuth";
+import NotificationBell from "./NotificationBell";
 
 export default function Navbar() {
   const token = useAuthStore((s) => s.token);
@@ -8,7 +9,7 @@ export default function Navbar() {
 
   return (
     <nav className="sticky top-0 z-40 border-b border-gray-200 bg-white">
-      <div className="mx-auto flex h-12 max-w-2xl items-center justify-between px-4">
+      <div className="mx-auto flex h-12 max-w-5xl items-center justify-between px-4">
         <Link to="/" className="text-lg font-bold text-gray-900">
           SwissJob
         </Link>
@@ -22,6 +23,19 @@ export default function Navbar() {
               >
                 Matches
               </Link>
+              <Link
+                to="/pipeline"
+                className="text-sm text-gray-600 hover:text-gray-900"
+              >
+                Pipeline
+              </Link>
+              <Link
+                to="/searches"
+                className="text-sm text-gray-600 hover:text-gray-900"
+              >
+                Alerts
+              </Link>
+              <NotificationBell />
               <Link
                 to="/profile"
                 className="text-gray-600 hover:text-gray-900"
