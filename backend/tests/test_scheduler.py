@@ -11,6 +11,8 @@ class TestScheduler:
         with patch("services.scheduler.settings") as mock_settings:
             mock_settings.SCHEDULER_ENABLED = True
             mock_settings.SCHEDULER_FETCH_INTERVAL_MINUTES = 30
+            mock_settings.SCHEDULER_SEARCH_INTERVAL_MINUTES = 60
+            mock_settings.SCHEDULER_SCRAPER_INTERVAL_HOURS = 6
 
             # Clear any existing jobs
             scheduler.remove_all_jobs()
@@ -20,6 +22,8 @@ class TestScheduler:
             assert "fetch_providers" in job_ids
             assert "dedup_semantic" in job_ids
             assert "check_job_urls" in job_ids
+            assert "run_saved_searches" in job_ids
+            assert "fetch_scrapers" in job_ids
 
             scheduler.remove_all_jobs()
 
@@ -28,6 +32,8 @@ class TestScheduler:
         with patch("services.scheduler.settings") as mock_settings:
             mock_settings.SCHEDULER_ENABLED = True
             mock_settings.SCHEDULER_FETCH_INTERVAL_MINUTES = 45
+            mock_settings.SCHEDULER_SEARCH_INTERVAL_MINUTES = 60
+            mock_settings.SCHEDULER_SCRAPER_INTERVAL_HOURS = 6
 
             scheduler.remove_all_jobs()
             setup_schedules()
