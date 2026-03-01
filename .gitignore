@@ -34,6 +34,9 @@ docker-compose.override.yml
 *.swo
 *~
 
+# Claude Code
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -42,6 +45,9 @@ Thumbs.db
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Ruff
+.ruff_cache/
 
 # Capacitor native projects (generated per-developer)
 frontend/ios/
