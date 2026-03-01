@@ -165,9 +165,7 @@ async def _execute_single_search(db, search, settings) -> int:
     bind=True,
     max_retries=1,
 )
-def run_single_saved_search(
-    self, search_id: str, user_id: str
-) -> dict[str, Any]:
+def run_single_saved_search(self, search_id: str, user_id: str) -> dict[str, Any]:
     """Run a single saved search manually (triggered from API)."""
     try:
         return asyncio.run(_run_single_async(search_id, user_id))

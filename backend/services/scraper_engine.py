@@ -12,6 +12,7 @@ from abc import abstractmethod
 import httpx
 from bs4 import BeautifulSoup
 
+from config import settings
 from services.circuit_breaker import CircuitBreakerOpen
 from services.job_service import BaseJobProvider
 
@@ -129,7 +130,7 @@ class BaseScraper(BaseJobProvider):
         async with httpx.AsyncClient(
             headers=self.DEFAULT_HEADERS,
             follow_redirects=True,
-            timeout=20.0,
+            timeout=settings.SCRAPER_HTTPX_TIMEOUT,
         ) as client:
             for page in range(1, self.MAX_PAGES + 1):
                 url = self.build_listing_url(page, query)
@@ -234,7 +235,9 @@ class BaseScraper(BaseJobProvider):
 
                     try:
                         response = await page.goto(
-                            url, wait_until="networkidle", timeout=30000
+                            url,
+                            wait_until="networkidle",
+                            timeout=settings.SCRAPER_PLAYWRIGHT_TIMEOUT_MS,
                         )
                     except Exception as e:
                         logger.error(

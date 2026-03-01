@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Link } from "react-router-dom";
 
 const SOURCE_COLORS = {
@@ -48,7 +49,7 @@ function formatSalary(min, max) {
   return `bis ${fmt(max)} CHF`;
 }
 
-export default function MatchCard({ match, onFeedback, onImplicit }) {
+function MatchCard({ match, onFeedback, onImplicit }) {
   const sourceColor =
     SOURCE_COLORS[match.job_source] || "bg-gray-100 text-gray-700";
   const salary = formatSalary(match.job_salary_min, match.job_salary_max);
@@ -218,3 +219,5 @@ export default function MatchCard({ match, onFeedback, onImplicit }) {
     </div>
   );
 }
+
+export default memo(MatchCard);

@@ -72,7 +72,9 @@ class TestApplicationsCRUD:
         assert data["total"] == 0
         assert data["data"] == []
 
-    async def test_create_application(self, client: AsyncClient, db_session: AsyncSession):
+    async def test_create_application(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
         token, _ = await _register_and_get_token(client)
         job_hash = await _insert_job(db_session)
 
@@ -272,9 +274,7 @@ class TestApplicationsCRUD:
         # applied_at should not change (already set)
         assert resp2.json()["applied_at"] == first_applied_at
 
-    async def test_user_isolation(
-        self, client: AsyncClient, db_session: AsyncSession
-    ):
+    async def test_user_isolation(self, client: AsyncClient, db_session: AsyncSession):
         """Users cannot see each other's applications."""
         token_a, _ = await _register_and_get_token(client)
         token_b, _ = await _register_and_get_token(client)
@@ -309,9 +309,7 @@ class TestApplicationStats:
         assert data["by_status"] == {}
         assert data["conversion_rates"] == {}
 
-    async def test_stats_with_data(
-        self, client: AsyncClient, db_session: AsyncSession
-    ):
+    async def test_stats_with_data(self, client: AsyncClient, db_session: AsyncSession):
         token, _ = await _register_and_get_token(client)
         h1 = await _insert_job(db_session, idx=10)
         h2 = await _insert_job(db_session, idx=11)

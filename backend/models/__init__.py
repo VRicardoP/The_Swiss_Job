@@ -8,6 +8,7 @@ from models.enums import (
     Seniority,
     UserPlan,
 )
+from models.generated_document import GeneratedDocument
 from models.job import Job
 from models.job_application import JobApplication
 from models.match_result import MatchResult
@@ -20,6 +21,7 @@ from models.user_profile import UserProfile
 __all__ = [
     "ApplicationStatus",
     "ContractType",
+    "GeneratedDocument",
     "Job",
     "JobApplication",
     "MatchFeedback",

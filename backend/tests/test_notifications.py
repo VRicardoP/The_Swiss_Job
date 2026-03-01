@@ -71,9 +71,7 @@ class TestNotificationHistory:
         assert data["unread_count"] == 0
         assert data["data"] == []
 
-    async def test_list_with_data(
-        self, client: AsyncClient, db_session: AsyncSession
-    ):
+    async def test_list_with_data(self, client: AsyncClient, db_session: AsyncSession):
         token, _ = await _register_and_get_token(client)
         user_id = await _get_user_id(client, token)
 
@@ -86,9 +84,7 @@ class TestNotificationHistory:
         assert data["total"] == 2
         assert data["unread_count"] == 1
 
-    async def test_list_pagination(
-        self, client: AsyncClient, db_session: AsyncSession
-    ):
+    async def test_list_pagination(self, client: AsyncClient, db_session: AsyncSession):
         token, _ = await _register_and_get_token(client)
         user_id = await _get_user_id(client, token)
 
@@ -104,9 +100,7 @@ class TestNotificationHistory:
         assert data["total"] == 5
         assert len(data["data"]) == 2
 
-    async def test_user_isolation(
-        self, client: AsyncClient, db_session: AsyncSession
-    ):
+    async def test_user_isolation(self, client: AsyncClient, db_session: AsyncSession):
         token_a, _ = await _register_and_get_token(client)
         token_b, _ = await _register_and_get_token(client)
         user_a = await _get_user_id(client, token_a)

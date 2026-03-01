@@ -1,4 +1,4 @@
-"""Tests for all 5 scraper normalize_job + parse_listing_page methods."""
+"""Tests for all 7 scraper normalize_job + parse_listing_page methods."""
 
 from pathlib import Path
 
@@ -8,7 +8,9 @@ from scrapers.financejobs import FinancejobsScraper
 from scrapers.gastrojob import GastrojobScraper
 from scrapers.medjobs import MedJobsScraper
 from scrapers.myscience import MyScienceScraper
+from scrapers.schuljobs import SchulJobsScraper
 from scrapers.stelle_admin import StelleAdminScraper
+from scrapers.tes import TESScraper
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -61,7 +63,10 @@ class TestMyScienceScraper:
         assert stubs[0]["company"] == "ETH Zurich"
         assert stubs[0]["location"] == "Zurich"
         assert "detail_url" in stubs[0]
-        assert "/jobs/id69242-research_scientist-eth_zurich-zurich" in stubs[0]["detail_url"]
+        assert (
+            "/jobs/id69242-research_scientist-eth_zurich-zurich"
+            in stubs[0]["detail_url"]
+        )
 
     def test_parse_listing_page_empty(self):
         soup = BeautifulSoup("<html><body></body></html>", "lxml")
@@ -297,3 +302,183 @@ class TestStelleAdminScraper:
 
     def test_fetch_details_disabled(self):
         assert StelleAdminScraper.FETCH_DETAILS is False
+
+
+# ---------------------------------------------------------------------------
+# TES.com
+# ---------------------------------------------------------------------------
+
+
+class TestTESScraper:
+    def test_source_name(self):
+        assert TESScraper().get_source_name() == "tes"
+
+    def test_parse_listing_page(self):
+        html = (FIXTURES / "tes_listing.html").read_text()
+        soup = BeautifulSoup(html, "lxml")
+        stubs = TESScraper().parse_listing_page(soup)
+        assert len(stubs) == 3
+        assert stubs[0]["title"] == "Director of Co-Curricular Learning"
+        assert stubs[0]["company"] == "Collège Alpin Beau Soleil SA"
+        assert stubs[0]["location"] == "Switzerland"
+        assert "/jobs/vacancy/" in stubs[0]["url"]
+        assert stubs[0]["salary_original"] == "CHF 90000 - CHF 120000 per year"
+        assert stubs[0]["employment_type"] == "Full Time"
+        assert stubs[0]["logo"].endswith("beau-soleil-logo.png")
+        # Second job has no salary
+        assert stubs[1]["salary_original"] is None
+        # Third job has no logo
+        assert stubs[2]["logo"] is None
+
+    def test_parse_listing_page_empty(self):
+        soup = BeautifulSoup("<html><body></body></html>", "lxml")
+        assert TESScraper().parse_listing_page(soup) == []
+
+    def test_normalize_job(self):
+        raw = {
+            "title": "Primary Teacher",
+            "company": "Zurich International School",
+            "url": "https://www.tes.com/jobs/vacancy/primary-teacher-123",
+            "location": "Zurich, Switzerland",
+            "description": "Teach Year 3 students in our British curriculum school.",
+            "employment_type": "Full Time",
+            "salary_original": "CHF 90000 per year",
+        }
+        result = TESScraper().normalize_job(raw)
+        _assert_normalized(result, "tes")
+        assert result["title"] == "Primary Teacher"
+        assert result["company"] == "Zurich International School"
+
+    def test_normalize_job_minimal(self):
+        raw = {
+            "title": "Teacher",
+            "company": "",
+            "url": "https://www.tes.com/jobs/vacancy/teacher-999",
+        }
+        result = TESScraper().normalize_job(raw)
+        _assert_normalized(result, "tes")
+
+    def test_fetch_details_disabled(self):
+        assert TESScraper.FETCH_DETAILS is False
+
+    def test_page_size_one(self):
+        assert TESScraper.PAGE_SIZE == 1
+
+
+# ---------------------------------------------------------------------------
+# schuljobs.ch
+# ---------------------------------------------------------------------------
+
+
+class TestSchulJobsScraper:
+    def test_source_name(self):
+        assert SchulJobsScraper().get_source_name() == "schuljobs"
+
+    def test_parse_listing_page(self):
+        html = (FIXTURES / "schuljobs_listing.html").read_text()
+        soup = BeautifulSoup(html, "lxml")
+        stubs = SchulJobsScraper().parse_listing_page(soup)
+        assert len(stubs) == 3
+        assert stubs[0]["title"] == "Primarlehrperson Zyklus 2"
+        assert stubs[0]["company"] == "Tagesschule. Für das Kind"
+        assert stubs[0]["canton"] == "ZH"
+        assert stubs[0]["location"] == "Zürich"
+        assert "J954885" in stubs[0]["detail_url"]
+        # Third job has relative URL
+        assert stubs[2]["detail_url"].startswith("https://")
+
+    def test_parse_listing_page_empty(self):
+        soup = BeautifulSoup("<html><body></body></html>", "lxml")
+        assert SchulJobsScraper().parse_listing_page(soup) == []
+
+    def test_parse_job_detail(self):
+        html = (FIXTURES / "schuljobs_detail.html").read_text()
+        soup = BeautifulSoup(html, "lxml")
+        detail = SchulJobsScraper().parse_job_detail(soup)
+        assert detail["title"] == "Primarlehrperson Zyklus 2"
+        assert detail["company"] == "Tagesschule. Für das Kind"
+        assert detail["location"] == "Zürich"
+        assert detail["canton"] == "ZH"
+        assert detail["employment_type"] == "PART_TIME"
+        assert "Primarlehrer" in detail["description"]
+        assert detail["logo"].endswith("fuerdaskind.png")
+
+    def test_normalize_job(self):
+        raw = {
+            "title": "Primarlehrperson Zyklus 2",
+            "company": "Tagesschule. Für das Kind",
+            "url": "https://www.schuljobs.ch/job/primarlehrperson/J954885",
+            "location": "Zürich",
+            "canton": "ZH",
+            "description": "Wir suchen eine Primarlehrperson für Zyklus 2.",
+            "employment_type": "PART_TIME",
+        }
+        result = SchulJobsScraper().normalize_job(raw)
+        _assert_normalized(result, "schuljobs")
+        assert result["title"] == "Primarlehrperson Zyklus 2"
+        assert result["canton"] == "ZH"
+
+    def test_normalize_job_minimal(self):
+        raw = {
+            "title": "Lehrperson",
+            "url": "https://www.schuljobs.ch/job/lp/J000001",
+        }
+        result = SchulJobsScraper().normalize_job(raw)
+        _assert_normalized(result, "schuljobs")
+
+    def test_fetch_details_enabled(self):
+        assert SchulJobsScraper.FETCH_DETAILS is True
+
+    def test_parse_listing_page_ajax_fragment(self):
+        """Verify parse_listing_page works on AJAX HTML fragments (no <html> wrapper)."""
+        html_fragment = """
+        <article class="jobs-job">
+          <div>
+            <h3>
+              <a class="js-joboffer-detail"
+                 href="https://www.schuljobs.ch/job/schulleiter-in/J970200">
+                Schulleiter/in 80-100%
+              </a>
+            </h3>
+            <p>BE · Bern · Bildungsdirektion Bern</p>
+          </div>
+        </article>
+        <article class="jobs-job">
+          <div>
+            <h3>
+              <a class="js-joboffer-detail"
+                 href="https://www.schuljobs.ch/job/logopaedin/J970201">
+                Logopädin 60%
+              </a>
+            </h3>
+            <p>AG · Aarau · Schule Aarau</p>
+          </div>
+        </article>
+        """
+        soup = BeautifulSoup(html_fragment, "lxml")
+        stubs = SchulJobsScraper().parse_listing_page(soup)
+        assert len(stubs) == 2
+        assert stubs[0]["title"] == "Schulleiter/in 80-100%"
+        assert stubs[0]["company"] == "Bildungsdirektion Bern"
+        assert stubs[0]["canton"] == "BE"
+        assert stubs[1]["title"] == "Logopädin 60%"
+        assert stubs[1]["canton"] == "AG"
+
+    def test_searchhash_extraction(self):
+        """Verify searchhash can be extracted from initial page HTML."""
+        html = """
+        <html><body>
+        <section class="js-list-result" data-searchhash="abc123def" data-total="100">
+        </section>
+        <a class="btn btn-more-jobs js-btn-scroll" data-nextpage="2">
+          Weitere Jobs anzeigen …
+        </a>
+        </body></html>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        result_list = soup.select_one("[data-searchhash]")
+        assert result_list is not None
+        assert result_list.get("data-searchhash") == "abc123def"
+        btn = soup.select_one("[data-nextpage]")
+        assert btn is not None
+        assert int(btn.get("data-nextpage")) == 2

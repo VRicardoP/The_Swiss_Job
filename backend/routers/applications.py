@@ -102,7 +102,9 @@ async def list_applications(
     return ApplicationsListResponse(data=data, total=total, by_status=by_status)
 
 
-@router.post("", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_application(
     body: ApplicationCreate,
     current_user: User = Depends(get_current_user),
@@ -194,9 +196,7 @@ async def get_application_stats(
             }
         )
         if applied > 0:
-            conversion_rates["applied_to_interview"] = round(
-                interviews / applied, 3
-            )
+            conversion_rates["applied_to_interview"] = round(interviews / applied, 3)
 
         offers = by_status.get(ApplicationStatus.offer.value, 0)
         if interviews > 0:

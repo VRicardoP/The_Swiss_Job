@@ -10,14 +10,16 @@ from services.job_service import BaseJobProvider
 
 
 class TestProviderRegistry:
-    def test_get_provider_names_has_14(self):
+    def test_get_provider_names_has_16(self):
         names = get_provider_names()
-        assert len(names) == 14
+        assert len(names) == 16
         assert "jobicy" in names
         assert "remotive" in names
         assert "jooble" in names
         assert "careerjet" in names
         assert "ostjob" in names
+        assert "zebis" in names
+        assert "publicjobs" in names
 
     def test_get_provider_known(self):
         provider = get_provider("jobicy")
@@ -61,7 +63,7 @@ class TestProviderRegistry:
 
     def test_log_provider_status_returns_all_providers(self):
         status = log_provider_status()
-        assert len(status) == 14
+        assert len(status) == 16
         # Free providers should be enabled
         assert status["jobicy"] == "enabled"
         assert status["remotive"] == "enabled"

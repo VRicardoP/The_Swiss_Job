@@ -58,7 +58,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: swissjob-worker
-    command: celery -A celery_app worker -l info -Q default,scraping,ai
+    command: celery -A celery_app worker -l info -Q default,scraping,ai --concurrency=4 -P prefork
     volumes:
       - ./backend:/app
     env_file:

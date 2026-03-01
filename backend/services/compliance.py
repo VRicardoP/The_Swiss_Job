@@ -3,10 +3,8 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from models.source_compliance import SourceCompliance
-
-# Block threshold: after this many consecutive blocks, auto-disable the source
-BLOCK_THRESHOLD = 3
 
 
 class ComplianceEngine:
@@ -40,7 +38,7 @@ class ComplianceEngine:
 
         if (
             source.auto_disable_on_block
-            and source.consecutive_blocks >= BLOCK_THRESHOLD
+            and source.consecutive_blocks >= settings.COMPLIANCE_BLOCK_THRESHOLD
         ):
             source.is_allowed = False
 

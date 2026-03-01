@@ -71,6 +71,34 @@ class Settings(BaseSettings):
     ALERTS_MIN_SCORE_THRESHOLD: int = 50
     SCHEDULER_SEARCH_INTERVAL_MINUTES: int = 60
 
+    # Database pool (TD-20)
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_RECYCLE: int = 1800
+    DB_POOL_PRE_PING: bool = True
+
+    # Celery task pool (smaller, disposable)
+    DB_TASK_POOL_SIZE: int = 2
+    DB_TASK_MAX_OVERFLOW: int = 3
+
+    # Parallel fetch (TD-18)
+    FETCH_CONCURRENCY: int = 5
+
+    # Groq concurrency (TD-22)
+    GROQ_CONCURRENCY: int = 2
+
+    # Document generation
+    GROQ_DOC_TEMPERATURE: float = 0.4
+    GROQ_DOC_MAX_TOKENS: int = 4096
+    GROQ_DOC_CACHE_TTL_HOURS: int = 24
+
+    # Compliance (TD-06)
+    COMPLIANCE_BLOCK_THRESHOLD: int = 3
+
+    # Scraper defaults (TD-06)
+    SCRAPER_HTTPX_TIMEOUT: float = 20.0
+    SCRAPER_PLAYWRIGHT_TIMEOUT_MS: int = 30000
+
     # Provider API Keys (empty = provider disabled)
     JSEARCH_RAPIDAPI_KEY: str = ""
     ADZUNA_APP_ID: str = ""

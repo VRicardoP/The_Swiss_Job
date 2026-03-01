@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Link } from "react-router-dom";
 
 const SOURCE_COLORS = {
@@ -19,7 +20,7 @@ function formatSalary(min, max) {
   return `bis ${fmt(max)} CHF`;
 }
 
-export default function JobCard({ job }) {
+function JobCard({ job }) {
   const salary = formatSalary(job.salary_min_chf, job.salary_max_chf);
   const colorClass = SOURCE_COLORS[job.source] || "bg-gray-100 text-gray-700";
   const initial = job.company ? job.company[0].toUpperCase() : "?";
@@ -86,3 +87,5 @@ export default function JobCard({ job }) {
     </Link>
   );
 }
+
+export default memo(JobCard);

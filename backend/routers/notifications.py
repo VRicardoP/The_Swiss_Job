@@ -27,7 +27,9 @@ router = APIRouter(prefix="/api/v1/notifications", tags=["notifications"])
 @router.get("/stream")
 async def notification_stream(
     request: Request,
-    token: str = Query(..., description="JWT access token (EventSource can't send headers)"),
+    token: str = Query(
+        ..., description="JWT access token (EventSource can't send headers)"
+    ),
 ):
     """SSE stream for real-time notifications.
 

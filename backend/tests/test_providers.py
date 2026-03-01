@@ -1,4 +1,4 @@
-"""Tests for all 14 provider normalize_job methods."""
+"""Tests for all 16 provider normalize_job methods."""
 
 import xml.etree.ElementTree as ET
 
@@ -11,10 +11,12 @@ from providers.jobicy import JobicyProvider
 from providers.jooble import JoobleProvider
 from providers.jsearch import JSearchProvider
 from providers.ostjob import OstjobProvider
+from providers.publicjobs import PublicJobsProvider
 from providers.remoteok import RemoteOKProvider
 from providers.remotive import RemotiveProvider
 from providers.swisstechjobs import SwissTechJobsProvider
 from providers.weworkremotely import WeWorkRemotelyProvider
+from providers.zebis import ZebisProvider
 from providers.zentraljob import ZentraljobProvider
 
 
@@ -508,3 +510,108 @@ class TestCareerjetProvider:
         raw = {"title": "Dev", "company": "", "url": "https://x.com/12"}
         result = CareerjetProvider().normalize_job(raw)
         _assert_normalized(result, "careerjet")
+
+
+# ---------------------------------------------------------------------------
+# zebis.ch (RSS)
+# ---------------------------------------------------------------------------
+
+DC_NS = "http://purl.org/dc/elements/1.1/"
+
+
+class TestZebisProvider:
+    def test_source_name(self):
+        assert ZebisProvider().get_source_name() == "zebis"
+
+    def test_normalize_job(self):
+        item = ET.Element("item")
+        ET.SubElement(item, "title").text = "Klassenlehrperson (80 %)"
+        ET.SubElement(
+            item, "link"
+        ).text = "https://www.zebis.ch/stellen/klassenlehrperson-80"
+        ET.SubElement(item, "description").text = (
+            "<p><strong>Schule Kilchberg</strong></p>"
+            "<p>Kilchberg ist eine attraktive Gemeinde am Zürichsee.</p>"
+        )
+        ET.SubElement(item, "pubDate").text = "27.2.2026"
+        dc_creator = ET.SubElement(item, f"{{{DC_NS}}}creator")
+        dc_creator.text = "kundendienst_14364"
+        ET.SubElement(
+            item, "guid"
+        ).text = "https://www.zebis.ch/stellen/klassenlehrperson-80"
+        result = ZebisProvider().normalize_job(item)
+        _assert_normalized(result, "zebis")
+        assert result["title"] == "Klassenlehrperson (80 %)"
+        assert result["company"] == "Schule Kilchberg"
+        assert result["remote"] is False
+        assert result["employment_type"] == "80 %"
+
+    def test_normalize_job_no_employer_in_description(self):
+        item = ET.Element("item")
+        ET.SubElement(item, "title").text = "Lehrperson Sek I"
+        ET.SubElement(item, "link").text = "https://www.zebis.ch/stellen/lehrperson"
+        ET.SubElement(
+            item, "description"
+        ).text = "<p>Wir suchen eine engagierte Lehrperson.</p>"
+        result = ZebisProvider().normalize_job(item)
+        _assert_normalized(result, "zebis")
+        assert result["company"] == "Unknown"
+
+    def test_normalize_job_minimal(self):
+        item = ET.Element("item")
+        ET.SubElement(item, "title").text = "Lehrperson"
+        ET.SubElement(item, "link").text = "https://www.zebis.ch/stellen/lp"
+        result = ZebisProvider().normalize_job(item)
+        _assert_normalized(result, "zebis")
+
+    def test_normalize_job_title_with_percentage(self):
+        item = ET.Element("item")
+        ET.SubElement(
+            item, "title"
+        ).text = "Fachlehrperson im gestalterischen Bereich, Pensum 50 %"
+        ET.SubElement(item, "link").text = "https://www.zebis.ch/stellen/fach"
+        ET.SubElement(
+            item, "description"
+        ).text = "<p><strong>Schule Giswil</strong></p><p>Description here.</p>"
+        result = ZebisProvider().normalize_job(item)
+        _assert_normalized(result, "zebis")
+        assert result["company"] == "Schule Giswil"
+        # No parenthesized workload → employment_type is None
+        assert result["employment_type"] is None
+
+
+# ---------------------------------------------------------------------------
+# publicjobs.ch (SvelteKit JSON)
+# ---------------------------------------------------------------------------
+
+
+class TestPublicJobsProvider:
+    def test_source_name(self):
+        assert PublicJobsProvider().get_source_name() == "publicjobs"
+
+    def test_normalize_job(self):
+        raw = {
+            "title": "Primarlehrer/in",
+            "company": "Stadt Bern",
+            "url": "https://www.publicjobs.ch/jobs/primarlehrer-bern",
+            "location": "Bern",
+            "canton": "BE",
+            "description": "Wir suchen eine Primarlehrperson für die 3. Klasse.",
+            "employment_type": "80% - 100%",
+            "logo": "https://www.publicjobs.ch/logos/bern.png",
+        }
+        result = PublicJobsProvider().normalize_job(raw)
+        _assert_normalized(result, "publicjobs")
+        assert result["title"] == "Primarlehrer/in"
+        assert result["company"] == "Stadt Bern"
+        assert result["canton"] == "BE"
+        assert result["employment_type"] == "80% - 100%"
+
+    def test_normalize_job_minimal(self):
+        raw = {
+            "title": "Lehrer",
+            "company": "",
+            "url": "https://www.publicjobs.ch/jobs/lehrer",
+        }
+        result = PublicJobsProvider().normalize_job(raw)
+        _assert_normalized(result, "publicjobs")

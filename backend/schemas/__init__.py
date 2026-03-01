@@ -5,6 +5,12 @@ from schemas.applications import (
     ApplicationStatsResponse,
     ApplicationUpdate,
 )
+from schemas.documents import (
+    DocType,
+    DocumentListResponse,
+    GenerateDocumentRequest,
+    GeneratedDocumentResponse,
+)
 from schemas.auth import (
     AuthResponse,
     TokenRefresh,
@@ -48,6 +54,10 @@ __all__ = [
     "ApplicationsListResponse",
     "ApplicationStatsResponse",
     "ApplicationUpdate",
+    "DocType",
+    "DocumentListResponse",
+    "GenerateDocumentRequest",
+    "GeneratedDocumentResponse",
     "AuthResponse",
     "CVDeleteResponse",
     "CVUploadResponse",

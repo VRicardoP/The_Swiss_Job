@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
     name="tasks.ai.generate_profile_embedding",
     bind=True,
     max_retries=2,
+    soft_time_limit=150,
+    time_limit=180,
 )
 def generate_profile_embedding(self, user_id: str) -> dict[str, Any]:
     """Generate embedding for a user's CV text and store it."""
@@ -56,7 +58,7 @@ async def _generate_profile_embedding_async(user_id: str) -> dict[str, Any]:
             parts.append(" ".join(profile.skills))
         combined_text = " ".join(parts)
 
-        embedding = matcher.encode(combined_text)
+        embedding = await asyncio.to_thread(matcher.encode, combined_text)
         profile.cv_embedding = embedding.tolist()
         await db.commit()
 
@@ -76,6 +78,8 @@ async def _generate_profile_embedding_async(user_id: str) -> dict[str, Any]:
     name="tasks.ai.generate_job_embeddings",
     bind=True,
     max_retries=2,
+    soft_time_limit=150,
+    time_limit=180,
 )
 def generate_job_embeddings(self, batch_size: int = 100) -> dict[str, Any]:
     """Generate embeddings for jobs that don't have one yet."""
@@ -124,7 +128,7 @@ async def _generate_job_embeddings_async(batch_size: int) -> dict[str, Any]:
             for j in jobs
         ]
 
-        embeddings = matcher.encode_batch(texts)
+        embeddings = await asyncio.to_thread(matcher.encode_batch, texts)
 
         for job, emb in zip(jobs, embeddings):
             job.embedding = emb.tolist()

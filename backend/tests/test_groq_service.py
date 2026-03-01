@@ -198,6 +198,7 @@ class TestGroqServiceRerank:
             mock_settings.GROQ_RERANK_TEMPERATURE = 0.2
             mock_settings.GROQ_RERANK_MAX_TOKENS = 2048
             mock_settings.GROQ_CACHE_TTL_DAYS = 7
+            mock_settings.GROQ_CONCURRENCY = 2
 
             results = await svc.rerank_jobs(
                 profile_text="Developer",
@@ -231,6 +232,7 @@ class TestGroqServiceCache:
             mock_settings.GROQ_RERANK_TEMPERATURE = 0.2
             mock_settings.GROQ_RERANK_MAX_TOKENS = 2048
             mock_settings.GROQ_CACHE_TTL_DAYS = 7
+            mock_settings.GROQ_CONCURRENCY = 2
 
             results = await svc.rerank_jobs(
                 profile_text="Developer",
@@ -260,6 +262,7 @@ class TestGroqServiceCache:
             mock_settings.GROQ_RERANK_TEMPERATURE = 0.2
             mock_settings.GROQ_RERANK_MAX_TOKENS = 2048
             mock_settings.GROQ_CACHE_TTL_DAYS = 7
+            mock_settings.GROQ_CONCURRENCY = 2
 
             results = await svc.rerank_jobs(
                 profile_text="Developer",

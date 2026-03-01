@@ -19,6 +19,12 @@ celery_app.conf.update(
         "tasks.ai.*": {"queue": "ai"},
     },
     task_default_queue="default",
+    # Task safety (TD-19)
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
+    task_soft_time_limit=300,
+    task_time_limit=360,
+    worker_max_tasks_per_child=200,
 )
 
 celery_app.conf.include = [

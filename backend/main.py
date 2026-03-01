@@ -14,6 +14,7 @@ from services.scheduler import scheduler, setup_schedules
 from services.sse_manager import SSEManager
 from routers.applications import router as applications_router
 from routers.auth import router as auth_router
+from routers.documents import router as documents_router
 from routers.jobs import router as jobs_router
 from routers.match import router as match_router
 from routers.notifications import router as notifications_router
@@ -73,6 +74,7 @@ app.add_middleware(
 # Routers
 app.include_router(applications_router)
 app.include_router(auth_router)
+app.include_router(documents_router)
 app.include_router(jobs_router)
 app.include_router(match_router)
 app.include_router(notifications_router)

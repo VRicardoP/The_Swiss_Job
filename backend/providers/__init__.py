@@ -13,10 +13,12 @@ from providers.jobicy import JobicyProvider
 from providers.jooble import JoobleProvider
 from providers.jsearch import JSearchProvider
 from providers.ostjob import OstjobProvider
+from providers.publicjobs import PublicJobsProvider
 from providers.remoteok import RemoteOKProvider
 from providers.remotive import RemotiveProvider
 from providers.swisstechjobs import SwissTechJobsProvider
 from providers.weworkremotely import WeWorkRemotelyProvider
+from providers.zebis import ZebisProvider
 from providers.zentraljob import ZentraljobProvider
 
 logger = logging.getLogger(__name__)
@@ -36,7 +38,9 @@ _PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {
     "remotive": RemotiveProvider,
     "swisstechjobs": SwissTechJobsProvider,
     "weworkremotely": WeWorkRemotelyProvider,
+    "zebis": ZebisProvider,
     "zentraljob": ZentraljobProvider,
+    "publicjobs": PublicJobsProvider,
 }
 
 # Providers that require API keys — skip instantiation if key is empty

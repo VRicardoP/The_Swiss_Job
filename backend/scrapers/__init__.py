@@ -4,7 +4,9 @@ from scrapers.financejobs import FinancejobsScraper
 from scrapers.gastrojob import GastrojobScraper
 from scrapers.medjobs import MedJobsScraper
 from scrapers.myscience import MyScienceScraper
+from scrapers.schuljobs import SchulJobsScraper
 from scrapers.stelle_admin import StelleAdminScraper
+from scrapers.tes import TESScraper
 from services.scraper_engine import BaseScraper
 
 _SCRAPER_CLASSES: dict[str, type[BaseScraper]] = {
@@ -13,6 +15,8 @@ _SCRAPER_CLASSES: dict[str, type[BaseScraper]] = {
     "financejobs": FinancejobsScraper,
     "medjobs": MedJobsScraper,
     "stelle_admin": StelleAdminScraper,
+    "tes": TESScraper,
+    "schuljobs": SchulJobsScraper,
 }
 
 

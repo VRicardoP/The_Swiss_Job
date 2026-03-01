@@ -1,6 +1,8 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { jobsApi } from "../config/api";
+import useAuthStore from "../stores/authStore";
+import DocumentGenerator from "../components/DocumentGenerator";
 
 function formatSalary(min, max) {
   if (!min && !max) return null;
@@ -25,6 +27,7 @@ function formatDate(iso) {
 export default function JobDetailPage() {
   const { hash } = useParams();
   const navigate = useNavigate();
+  const token = useAuthStore((s) => s.token);
 
   const { data: job, isLoading, isError, error } = useQuery({
     queryKey: ["job", hash],
@@ -179,6 +182,15 @@ export default function JobDetailPage() {
           >
             Apply on {job.source}
           </a>
+        )}
+
+        {/* AI Document Generator (authenticated users only) */}
+        {token && (
+          <DocumentGenerator
+            jobHash={hash}
+            jobTitle={job.title}
+            jobCompany={job.company}
+          />
         )}
       </main>
     </div>

@@ -5,6 +5,7 @@ llama-3.3-70b-versatile for heavier tasks (CV adaptation in Fase 3+).
 Groq SDK is synchronous — calls are wrapped in run_in_threadpool.
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -106,10 +107,10 @@ class GroqService:
             for i in range(0, len(candidates), batch_size)
         ]
 
-        all_results: list[dict] = []
         skills_text = ", ".join(profile_skills) if profile_skills else "Not specified"
+        sem = asyncio.Semaphore(settings.GROQ_CONCURRENCY)
 
-        for batch_idx, batch in enumerate(batches):
+        async def _process_batch(batch_idx: int, batch: list[dict]) -> list[dict]:
             jobs_for_prompt = [
                 {
                     "index": i,
@@ -139,34 +140,41 @@ class GroqService:
                 "Respond ONLY with the JSON array."
             )
 
-            # Check cache
             cache_key = self._cache_key(user_prompt)
             cached = await self._get_cached(cache_key)
             if cached is not None:
                 logger.debug("Groq cache hit for batch %d", batch_idx + 1)
                 batch_results = cached
             else:
-                try:
-                    response = await self.get_chat_response(
-                        user_message=user_prompt,
-                        system_prompt=RERANK_SYSTEM_PROMPT,
-                        model=settings.GROQ_RERANK_MODEL,
-                        temperature=settings.GROQ_RERANK_TEMPERATURE,
-                        max_tokens=settings.GROQ_RERANK_MAX_TOKENS,
-                    )
-                    batch_results = self._parse_llm_response(response, len(batch))
-                    await self._set_cached(cache_key, batch_results)
-                except Exception:
-                    logger.exception(
-                        "Groq rerank failed for batch %d/%d",
-                        batch_idx + 1,
-                        len(batches),
-                    )
-                    batch_results = self._fallback_results(len(batch))
+                async with sem:
+                    try:
+                        response = await self.get_chat_response(
+                            user_message=user_prompt,
+                            system_prompt=RERANK_SYSTEM_PROMPT,
+                            model=settings.GROQ_RERANK_MODEL,
+                            temperature=settings.GROQ_RERANK_TEMPERATURE,
+                            max_tokens=settings.GROQ_RERANK_MAX_TOKENS,
+                        )
+                        batch_results = self._parse_llm_response(response, len(batch))
+                        await self._set_cached(cache_key, batch_results)
+                    except Exception:
+                        logger.exception(
+                            "Groq rerank failed for batch %d/%d",
+                            batch_idx + 1,
+                            len(batches),
+                        )
+                        batch_results = self._fallback_results(len(batch))
 
-            # Remap indices to global positions
             for r in batch_results:
                 r["global_index"] = r.get("index", 0) + (batch_idx * batch_size)
+            return batch_results
+
+        batch_results_list = await asyncio.gather(
+            *[_process_batch(i, b) for i, b in enumerate(batches)]
+        )
+
+        all_results: list[dict] = []
+        for batch_results in batch_results_list:
             all_results.extend(batch_results)
 
         return all_results

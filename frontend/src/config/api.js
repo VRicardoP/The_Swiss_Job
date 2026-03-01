@@ -197,6 +197,30 @@ export const notificationsApi = {
   },
 };
 
+export const documentsApi = {
+  generate(jobHash, docType, language = "en") {
+    return authRequest("/documents/generate", {
+      method: "POST",
+      body: JSON.stringify({
+        job_hash: jobHash,
+        doc_type: docType,
+        language,
+      }),
+    });
+  },
+
+  listForJob(jobHash, docType = null) {
+    const qs = new URLSearchParams();
+    if (docType) qs.set("doc_type", docType);
+    const query = qs.toString();
+    return authRequest(`/documents/${jobHash}${query ? `?${query}` : ""}`);
+  },
+
+  remove(documentId) {
+    return authRequest(`/documents/${documentId}`, { method: "DELETE" });
+  },
+};
+
 export const matchApi = {
   analyze(topK = 20) {
     return authRequest("/match/analyze", {

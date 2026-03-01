@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, Enum, String, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -7,6 +10,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
 from models.enums import UserPlan
+
+if TYPE_CHECKING:
+    from models.user_profile import UserProfile
 
 
 class User(Base):
@@ -36,7 +42,7 @@ class User(Base):
         DateTime(timezone=True), nullable=True
     )
 
-    profile: Mapped["UserProfile"] = relationship(  # noqa: F821
+    profile: Mapped[UserProfile] = relationship(
         "UserProfile",
         back_populates="user",
         uselist=False,

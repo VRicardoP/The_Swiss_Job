@@ -91,7 +91,7 @@ class BaseJobProvider(ABC):
         ...
 
     @abstractmethod
-    def normalize_job(self, raw: dict) -> dict:
+    def normalize_job(self, raw: Any) -> dict:
         """Transform a raw API/scraper response into the unified job schema."""
         ...
 
@@ -116,12 +116,20 @@ class BaseJobProvider(ABC):
         raw = f"{title.strip().lower()}|{company.strip().lower()}|{url.strip()}"
         return hashlib.md5(raw.encode()).hexdigest()
 
+    # Required fields in every normalized job dict
+    _REQUIRED_FIELDS = {"hash", "source", "title", "company", "url"}
+
     def _process_raw_jobs(self, raw_jobs: list) -> list[dict]:
-        """Normalize a list of raw items, cache valid ones."""
+        """Normalize a list of raw items, validate schema, cache valid ones."""
         results: list[dict] = []
         for raw in raw_jobs:
             try:
                 job = self.normalize_job(raw)
+                missing = self._REQUIRED_FIELDS - job.keys()
+                if missing:
+                    raise ValueError(f"missing required fields: {missing}")
+                if not job["title"] or not job["url"]:
+                    raise ValueError("title and url must be non-empty")
                 self._cache.set(job["hash"], job)
                 results.append(job)
             except (KeyError, ValueError, TypeError, AttributeError, IndexError) as e:

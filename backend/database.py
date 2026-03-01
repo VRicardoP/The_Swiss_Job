@@ -6,7 +6,14 @@ from sqlalchemy.orm import DeclarativeBase
 
 from config import settings
 
-engine = create_async_engine(settings.DATABASE_URL, echo=False)
+engine = create_async_engine(
+    settings.DATABASE_URL,
+    echo=False,
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
+    pool_recycle=settings.DB_POOL_RECYCLE,
+    pool_pre_ping=settings.DB_POOL_PRE_PING,
+)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -27,7 +34,12 @@ async def task_session():
     The module-level engine is bound to the first loop and cannot be reused.
     This creates a disposable engine per task invocation.
     """
-    task_engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    task_engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=False,
+        pool_size=settings.DB_TASK_POOL_SIZE,
+        max_overflow=settings.DB_TASK_MAX_OVERFLOW,
+    )
     factory = async_sessionmaker(
         task_engine, class_=AsyncSession, expire_on_commit=False
     )

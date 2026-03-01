@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSearchStore } from "../stores/searchStore";
 import { useJobSearch } from "../hooks/useJobSearch";
 import JobCard from "../components/JobCard";
@@ -46,7 +46,10 @@ export default function SearchPage() {
     return () => observer.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  const jobs = data?.pages.flatMap((page) => page.data) ?? [];
+  const jobs = useMemo(
+    () => data?.pages.flatMap((page) => page.data) ?? [],
+    [data?.pages],
+  );
   const total = data?.pages[0]?.total ?? 0;
 
   return (

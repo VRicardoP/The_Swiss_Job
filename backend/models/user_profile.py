@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, func
@@ -8,6 +11,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
 from models.enums import RemotePreference
+
+if TYPE_CHECKING:
+    from models.user import User
 
 
 class UserProfile(Base):
@@ -45,7 +51,7 @@ class UserProfile(Base):
         nullable=False,
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="profile")  # noqa: F821
+    user: Mapped[User] = relationship("User", back_populates="profile")
 
     def __repr__(self) -> str:
         return f"<UserProfile user_id={self.user_id}>"

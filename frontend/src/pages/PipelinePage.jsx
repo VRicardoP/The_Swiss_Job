@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
   useApplications,
@@ -44,7 +44,7 @@ function StatusBadge({ status }) {
   );
 }
 
-function ApplicationCard({ app, onAdvance, onReject, onDelete }) {
+const ApplicationCard = memo(function ApplicationCard({ app, onAdvance, onReject, onDelete }) {
   const next = NEXT_STATUS[app.status];
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
@@ -75,6 +75,12 @@ function ApplicationCard({ app, onAdvance, onReject, onDelete }) {
             Reject
           </button>
         )}
+        <Link
+          to={`/job/${app.job_hash}`}
+          className="text-xs text-green-600 hover:underline"
+        >
+          AI Docs
+        </Link>
         <button
           onClick={() => onDelete(app.id)}
           className="ml-auto text-xs text-gray-400 hover:text-red-500"
@@ -84,13 +90,34 @@ function ApplicationCard({ app, onAdvance, onReject, onDelete }) {
       </div>
     </div>
   );
-}
+});
 
 export default function PipelinePage() {
   const { data, isLoading, error } = useApplications({ limit: 200 });
   const { data: stats } = useApplicationStats();
   const updateApp = useUpdateApplication();
   const deleteApp = useDeleteApplication();
+
+  const handleAdvance = useCallback(
+    (id, newStatus) => {
+      updateApp.mutate({ id, data: { status: newStatus } });
+    },
+    [updateApp],
+  );
+
+  const handleReject = useCallback(
+    (id) => {
+      updateApp.mutate({ id, data: { status: "rejected" } });
+    },
+    [updateApp],
+  );
+
+  const handleDelete = useCallback(
+    (id) => {
+      deleteApp.mutate(id);
+    },
+    [deleteApp],
+  );
 
   if (isLoading) {
     return (
@@ -109,19 +136,6 @@ export default function PipelinePage() {
   }
 
   const applications = data?.data || [];
-  const byStatus = data?.by_status || {};
-
-  function handleAdvance(id, newStatus) {
-    updateApp.mutate({ id, data: { status: newStatus } });
-  }
-
-  function handleReject(id) {
-    updateApp.mutate({ id, data: { status: "rejected" } });
-  }
-
-  function handleDelete(id) {
-    deleteApp.mutate(id);
-  }
 
   return (
     <div className="mx-auto max-w-7xl p-4">
