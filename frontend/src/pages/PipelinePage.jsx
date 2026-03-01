@@ -185,7 +185,7 @@ export default function PipelinePage() {
             return (
               <div
                 key={col.key}
-                className={`min-w-[220px] flex-shrink-0 rounded-lg ${col.color} p-2`}
+                className={`min-w-[220px] shrink-0 rounded-lg ${col.color} p-2`}
               >
                 <div className="mb-2 flex items-center justify-between">
                   <h3 className="text-sm font-medium text-gray-700">

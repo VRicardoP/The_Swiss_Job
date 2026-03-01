@@ -87,7 +87,7 @@ export default function JobDetailPage() {
           </button>
 
           <div className="flex gap-3 items-start">
-            <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-xl font-semibold text-gray-500">
+            <div className="shrink-0 w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-xl font-semibold text-gray-500">
               {initial}
             </div>
             <div className="min-w-0">
