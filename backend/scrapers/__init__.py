@@ -10,10 +10,10 @@ from scrapers.tes import TESScraper
 from services.scraper_engine import BaseScraper
 
 _SCRAPER_CLASSES: dict[str, type[BaseScraper]] = {
-    "myscience": MyScienceScraper,
+    # "myscience": MyScienceScraper,  # temporarily disabled
     "gastrojob": GastrojobScraper,
-    "financejobs": FinancejobsScraper,
-    "medjobs": MedJobsScraper,
+    # "financejobs": FinancejobsScraper,  # temporarily disabled
+    # "medjobs": MedJobsScraper,  # temporarily disabled
     "stelle_admin": StelleAdminScraper,
     "tes": TESScraper,
     "schuljobs": SchulJobsScraper,

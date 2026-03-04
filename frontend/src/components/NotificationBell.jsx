@@ -23,7 +23,7 @@ export default function NotificationBell() {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setOpen(!open)}
-        className="relative text-gray-600 hover:text-gray-900"
+        className="relative text-text-secondary hover:text-swiss-red transition-colors duration-200"
         aria-label="Notifications"
       >
         <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -35,16 +35,16 @@ export default function NotificationBell() {
           />
         </svg>
         {unreadCount > 0 && (
-          <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+          <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-swiss-red text-[10px] font-bold text-white">
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 top-8 z-50 w-72 rounded-lg border border-gray-200 bg-white shadow-lg">
-          <div className="border-b border-gray-100 px-3 py-2">
-            <span className="text-sm font-medium text-gray-700">Notifications</span>
+        <div className="absolute right-0 top-8 z-50 w-72 bg-surface rounded-xl shadow-dropdown border border-border animate-scale-in">
+          <div className="border-b border-border-light px-3 py-2">
+            <span className="text-sm font-bold text-text-primary">Notifications</span>
           </div>
           <div className="max-h-64 overflow-y-auto">
             {notifications?.data?.length > 0 ? (
@@ -54,16 +54,16 @@ export default function NotificationBell() {
                   onClick={() => {
                     if (!n.is_read) markRead.mutate(n.id);
                   }}
-                  className={`w-full border-b border-gray-50 px-3 py-2 text-left hover:bg-gray-50 ${
-                    n.is_read ? "opacity-60" : ""
+                  className={`w-full border-b border-border-light px-3 py-2 text-left hover:bg-surface-secondary transition-colors duration-150 ${
+                    n.is_read ? "opacity-60" : "bg-swiss-red-50"
                   }`}
                 >
-                  <p className="text-sm font-medium text-gray-800">{n.title}</p>
-                  <p className="text-xs text-gray-500 line-clamp-2">{n.body}</p>
+                  <p className="text-sm font-semibold text-text-primary">{n.title}</p>
+                  <p className="text-xs text-text-secondary line-clamp-2">{n.body}</p>
                 </button>
               ))
             ) : (
-              <p className="px-3 py-4 text-center text-sm text-gray-400">
+              <p className="px-3 py-4 text-center text-sm text-text-tertiary">
                 No notifications yet
               </p>
             )}

@@ -27,14 +27,14 @@ function scoreTextColor(value) {
 function ScoreBar({ label, value }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="w-20 text-xs text-gray-500 capitalize">{label}</span>
-      <div className="h-1.5 flex-1 rounded-full bg-gray-200">
+      <span className="w-20 text-xs text-text-tertiary capitalize">{label}</span>
+      <div className="h-2 flex-1 rounded-full bg-surface-tertiary">
         <div
-          className={`h-1.5 rounded-full ${scoreColor(value)}`}
+          className={`h-2 rounded-full ${scoreColor(value)}`}
           style={{ width: `${Math.min(value, 100)}%` }}
         />
       </div>
-      <span className="w-8 text-right text-xs text-gray-600">
+      <span className="w-8 text-right text-xs text-text-secondary">
         {Math.round(value)}
       </span>
     </div>
@@ -65,11 +65,25 @@ function MatchCard({ match, onFeedback, onImplicit }) {
     onFeedback?.({ jobHash: match.job_hash, feedback });
   }
 
+  const scoreBgColor =
+    match.score_final > 70
+      ? "bg-success-light"
+      : match.score_final > 40
+        ? "bg-warning-light"
+        : "bg-error-light";
+
+  const scoreTxtColor =
+    match.score_final > 70
+      ? "text-success"
+      : match.score_final > 40
+        ? "text-warning"
+        : "text-error";
+
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 transition-shadow hover:shadow-md">
+    <div className="bg-surface rounded-xl shadow-card hover:shadow-card-hover p-5 transition-all duration-200">
       {/* Header: company initial + title + score */}
       <div className="flex gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-lg font-semibold text-gray-500">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-swiss-red-light text-lg font-bold text-swiss-red">
           {initial}
         </div>
 
@@ -79,11 +93,24 @@ function MatchCard({ match, onFeedback, onImplicit }) {
               <Link
                 to={`/job/${match.job_hash}`}
                 onClick={handleJobClick}
-                className="block truncate text-sm font-semibold text-gray-900 hover:text-blue-600"
+                className="block truncate text-[15px] font-semibold text-text-primary hover:text-swiss-red"
+                title={match.job_title_en ? match.job_title : undefined}
               >
-                {match.job_title}
+                {match.job_title_en || match.job_title}
               </Link>
-              <p className="truncate text-xs text-gray-500">
+              {match.job_title_en && (
+                <span
+                  className="inline-flex items-center gap-0.5 text-[10px] text-text-tertiary"
+                  title={`Original: ${match.job_title}`}
+                >
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
+                  </svg>
+                  Translated from {match.job_language?.toUpperCase()}
+                </span>
+              )}
+              <p className="truncate text-sm text-text-secondary">
                 {match.job_company}
                 {match.job_location && ` · ${match.job_location}`}
               </p>
@@ -91,10 +118,10 @@ function MatchCard({ match, onFeedback, onImplicit }) {
 
             {/* Final score */}
             <div
-              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-opacity-10 ${scoreColor(match.score_final)}`}
+              className={`flex w-14 h-14 shrink-0 items-center justify-center rounded-full ${scoreBgColor}`}
             >
               <span
-                className={`text-lg font-bold ${scoreTextColor(match.score_final)}`}
+                className={`text-lg font-bold ${scoreTxtColor}`}
               >
                 {Math.round(match.score_final)}
               </span>
@@ -104,12 +131,12 @@ function MatchCard({ match, onFeedback, onImplicit }) {
           {/* Source + salary badges */}
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             <span
-              className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium ${sourceColor}`}
+              className="inline-block rounded-full px-2 py-0.5 text-[10px] font-medium bg-surface-tertiary text-text-secondary"
             >
               {match.job_source}
             </span>
             {salary && (
-              <span className="text-xs font-medium text-gray-700">
+              <span className="text-sm font-semibold text-swiss-red">
                 {salary}
               </span>
             )}
@@ -119,12 +146,12 @@ function MatchCard({ match, onFeedback, onImplicit }) {
 
       {/* Score breakdown */}
       <div className="mt-3 space-y-1">
-        <ScoreBar label="Skills" value={match.scores.embedding} />
-        <ScoreBar label="Salary" value={match.scores.salary} />
-        <ScoreBar label="Location" value={match.scores.location} />
-        <ScoreBar label="Recency" value={match.scores.recency} />
+        <ScoreBar label="Skills" value={match.scores.embedding * 100} />
+        <ScoreBar label="Salary" value={match.scores.salary * 100} />
+        <ScoreBar label="Location" value={match.scores.location * 100} />
+        <ScoreBar label="Recency" value={match.scores.recency * 100} />
         {match.scores.llm > 0 && (
-          <ScoreBar label="AI" value={match.scores.llm} />
+          <ScoreBar label="AI" value={match.scores.llm * 100} />
         )}
       </div>
 
@@ -135,7 +162,7 @@ function MatchCard({ match, onFeedback, onImplicit }) {
           {match.matching_skills.map((skill) => (
             <span
               key={skill}
-              className="inline-block rounded bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-700"
+              className="inline-block rounded-full bg-success-light px-2 py-0.5 text-[10px] font-medium text-success"
             >
               {skill}
             </span>
@@ -143,7 +170,7 @@ function MatchCard({ match, onFeedback, onImplicit }) {
           {match.missing_skills.map((skill) => (
             <span
               key={skill}
-              className="inline-block rounded bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500"
+              className="inline-block rounded-full bg-surface-tertiary px-2 py-0.5 text-[10px] font-medium text-text-tertiary line-through"
             >
               {skill}
             </span>
@@ -153,20 +180,20 @@ function MatchCard({ match, onFeedback, onImplicit }) {
 
       {/* LLM explanation */}
       {match.explanation && (
-        <p className="mt-2 text-xs leading-relaxed text-gray-600">
+        <p className="mt-2 text-xs leading-relaxed text-text-secondary">
           {match.explanation}
         </p>
       )}
 
       {/* Feedback buttons */}
-      <div className="mt-3 flex items-center gap-2 border-t border-gray-100 pt-3">
+      <div className="mt-3 flex items-center gap-2 border-t border-border-light pt-3">
         <button
           type="button"
           onClick={() => handleFeedback("thumbs_up")}
-          className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+          className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
             match.feedback === "thumbs_up"
-              ? "bg-green-100 text-green-700"
-              : "bg-gray-50 text-gray-500 hover:bg-green-50 hover:text-green-600"
+              ? "bg-success-light text-success"
+              : "bg-surface-secondary text-text-tertiary hover:scale-105"
           }`}
         >
           <svg
@@ -187,10 +214,10 @@ function MatchCard({ match, onFeedback, onImplicit }) {
         <button
           type="button"
           onClick={() => handleFeedback("thumbs_down")}
-          className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+          className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
             match.feedback === "thumbs_down"
-              ? "bg-red-100 text-red-700"
-              : "bg-gray-50 text-gray-500 hover:bg-red-50 hover:text-red-600"
+              ? "bg-error-light text-error"
+              : "bg-surface-secondary text-text-tertiary hover:scale-105"
           }`}
         >
           <svg
@@ -211,7 +238,7 @@ function MatchCard({ match, onFeedback, onImplicit }) {
         <Link
           to={`/job/${match.job_hash}`}
           onClick={handleJobClick}
-          className="ml-auto text-xs text-blue-600 hover:underline"
+          className="ml-auto text-xs text-swiss-red font-medium hover:underline"
         >
           View details
         </Link>

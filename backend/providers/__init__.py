@@ -29,14 +29,14 @@ _PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {
     "arbeitnow": ArbeitnowProvider,
     "careerjet": CareerjetProvider,
     "himalayas": HimalayasProvider,
-    "ictjobs": ICTJobsProvider,
+    # "ictjobs": ICTJobsProvider,  # temporarily disabled
     "jobicy": JobicyProvider,
     "jooble": JoobleProvider,
     "jsearch": JSearchProvider,
     "ostjob": OstjobProvider,
     "remoteok": RemoteOKProvider,
     "remotive": RemotiveProvider,
-    "swisstechjobs": SwissTechJobsProvider,
+    # "swisstechjobs": SwissTechJobsProvider,  # temporarily disabled
     "weworkremotely": WeWorkRemotelyProvider,
     "zebis": ZebisProvider,
     "zentraljob": ZentraljobProvider,

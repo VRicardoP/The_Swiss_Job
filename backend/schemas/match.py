@@ -39,6 +39,8 @@ class MatchResultResponse(BaseModel):
 
     # Denormalized job fields for display
     job_title: str | None = None
+    job_title_en: str | None = None
+    job_language: str | None = None
     job_company: str | None = None
     job_location: str | None = None
     job_url: str | None = None

@@ -8,14 +8,14 @@ import {
 } from "../hooks/useApplications";
 
 const COLUMNS = [
-  { key: "saved", label: "Saved", color: "bg-gray-100" },
-  { key: "applied", label: "Applied", color: "bg-blue-50" },
-  { key: "phone_screen", label: "Phone Screen", color: "bg-yellow-50" },
-  { key: "technical", label: "Technical", color: "bg-orange-50" },
-  { key: "interview", label: "Interview", color: "bg-purple-50" },
-  { key: "offer", label: "Offer", color: "bg-green-50" },
-  { key: "rejected", label: "Rejected", color: "bg-red-50" },
-  { key: "withdrawn", label: "Withdrawn", color: "bg-gray-50" },
+  { key: "saved", label: "Saved", border: "border-t-text-tertiary" },
+  { key: "applied", label: "Applied", border: "border-t-info" },
+  { key: "phone_screen", label: "Phone Screen", border: "border-t-warning" },
+  { key: "technical", label: "Technical", border: "border-t-warning" },
+  { key: "interview", label: "Interview", border: "border-t-swiss-red" },
+  { key: "offer", label: "Offer", border: "border-t-success" },
+  { key: "rejected", label: "Rejected", border: "border-t-error" },
+  { key: "withdrawn", label: "Withdrawn", border: "border-t-text-tertiary" },
 ];
 
 const NEXT_STATUS = {
@@ -28,14 +28,14 @@ const NEXT_STATUS = {
 
 function StatusBadge({ status }) {
   const colors = {
-    saved: "bg-gray-200 text-gray-700",
-    applied: "bg-blue-200 text-blue-800",
-    phone_screen: "bg-yellow-200 text-yellow-800",
-    technical: "bg-orange-200 text-orange-800",
-    interview: "bg-purple-200 text-purple-800",
-    offer: "bg-green-200 text-green-800",
-    rejected: "bg-red-200 text-red-800",
-    withdrawn: "bg-gray-200 text-gray-600",
+    saved: "bg-surface-tertiary text-text-secondary",
+    applied: "bg-info-light text-info",
+    phone_screen: "bg-warning-light text-warning",
+    technical: "bg-warning-light text-warning",
+    interview: "bg-swiss-red-light text-swiss-red",
+    offer: "bg-success-light text-success",
+    rejected: "bg-error-light text-error",
+    withdrawn: "bg-surface-tertiary text-text-tertiary",
   };
   return (
     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${colors[status] || ""}`}>
@@ -47,22 +47,22 @@ function StatusBadge({ status }) {
 const ApplicationCard = memo(function ApplicationCard({ app, onAdvance, onReject, onDelete }) {
   const next = NEXT_STATUS[app.status];
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
-      <p className="text-sm font-medium text-gray-900 line-clamp-1">
+    <div className="bg-surface rounded-xl shadow-xs hover:shadow-card p-4 transition-all duration-200">
+      <p className="text-sm font-medium text-text-primary line-clamp-1">
         {app.job_title || "Untitled"}
       </p>
-      <p className="text-xs text-gray-500">{app.job_company || "Unknown"}</p>
+      <p className="text-xs text-text-secondary">{app.job_company || "Unknown"}</p>
       {app.job_location && (
-        <p className="text-xs text-gray-400">{app.job_location}</p>
+        <p className="text-xs text-text-tertiary">{app.job_location}</p>
       )}
       {app.notes && (
-        <p className="mt-1 text-xs text-gray-500 italic line-clamp-2">{app.notes}</p>
+        <p className="mt-1 text-xs text-text-secondary italic line-clamp-2">{app.notes}</p>
       )}
       <div className="mt-2 flex items-center gap-1">
         {next && (
           <button
             onClick={() => onAdvance(app.id, next)}
-            className="rounded bg-blue-500 px-2 py-0.5 text-xs text-white hover:bg-blue-600"
+            className="rounded-full bg-swiss-red px-2 py-0.5 text-xs text-white hover:bg-swiss-red-hover"
           >
             {next.replace("_", " ")}
           </button>
@@ -70,20 +70,20 @@ const ApplicationCard = memo(function ApplicationCard({ app, onAdvance, onReject
         {app.status !== "rejected" && app.status !== "withdrawn" && (
           <button
             onClick={() => onReject(app.id)}
-            className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-600 hover:bg-red-200"
+            className="rounded-full bg-error-light px-2 py-0.5 text-xs text-error hover:opacity-80"
           >
             Reject
           </button>
         )}
         <Link
           to={`/job/${app.job_hash}`}
-          className="text-xs text-green-600 hover:underline"
+          className="text-xs text-swiss-red hover:underline"
         >
           AI Docs
         </Link>
         <button
           onClick={() => onDelete(app.id)}
-          className="ml-auto text-xs text-gray-400 hover:text-red-500"
+          className="ml-auto text-xs text-text-tertiary hover:text-error"
         >
           Remove
         </button>
@@ -122,7 +122,7 @@ export default function PipelinePage() {
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-swiss-red" />
       </div>
     );
   }
@@ -130,7 +130,7 @@ export default function PipelinePage() {
   if (error) {
     return (
       <div className="mx-auto max-w-2xl p-6">
-        <p className="text-red-600">Error: {error.message}</p>
+        <p className="text-error">Error: {error.message}</p>
       </div>
     );
   }
@@ -141,8 +141,8 @@ export default function PipelinePage() {
     <div className="mx-auto max-w-7xl p-4">
       {/* Header */}
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Pipeline</h1>
-        <Link to="/match" className="text-sm text-blue-600 hover:underline">
+        <h1 className="text-2xl font-bold text-text-primary tracking-tight">Pipeline</h1>
+        <Link to="/match" className="text-sm text-swiss-red font-medium hover:underline">
           Find matches
         </Link>
       </div>
@@ -153,11 +153,11 @@ export default function PipelinePage() {
           {Object.entries(stats.by_status).map(([status, count]) => (
             <div key={status} className="flex items-center gap-1">
               <StatusBadge status={status} />
-              <span className="text-sm font-medium text-gray-700">{count}</span>
+              <span className="text-sm font-medium text-text-primary">{count}</span>
             </div>
           ))}
           {stats.conversion_rates?.saved_to_applied !== undefined && (
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-text-secondary">
               Conversion: {(stats.conversion_rates.saved_to_applied * 100).toFixed(0)}%
             </span>
           )}
@@ -166,10 +166,10 @@ export default function PipelinePage() {
 
       {applications.length === 0 ? (
         <div className="mt-20 text-center">
-          <p className="text-lg text-gray-500">No applications yet</p>
-          <p className="mt-1 text-sm text-gray-400">
+          <p className="text-lg text-text-tertiary">No applications yet</p>
+          <p className="mt-1 text-sm text-text-tertiary">
             Save jobs from the{" "}
-            <Link to="/match" className="text-blue-600 hover:underline">
+            <Link to="/match" className="text-swiss-red hover:underline">
               Matches
             </Link>{" "}
             page to start tracking.
@@ -185,13 +185,13 @@ export default function PipelinePage() {
             return (
               <div
                 key={col.key}
-                className={`min-w-[220px] shrink-0 rounded-lg ${col.color} p-2`}
+                className={`min-w-[220px] shrink-0 bg-surface-secondary rounded-xl border-t-4 ${col.border} p-2`}
               >
                 <div className="mb-2 flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-gray-700">
+                  <h3 className="text-sm font-medium text-text-primary">
                     {col.label}
                   </h3>
-                  <span className="rounded-full bg-white px-2 py-0.5 text-xs text-gray-500">
+                  <span className="bg-surface rounded-full shadow-xs px-2 py-0.5 text-xs text-text-secondary">
                     {items.length}
                   </span>
                 </div>

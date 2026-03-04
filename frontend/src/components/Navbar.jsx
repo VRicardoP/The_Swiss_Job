@@ -8,9 +8,13 @@ export default function Navbar() {
   const logout = useLogout();
 
   return (
-    <nav className="sticky top-0 z-40 border-b border-gray-200 bg-white">
-      <div className="mx-auto flex h-12 max-w-5xl items-center justify-between px-4">
-        <Link to="/" className="text-lg font-bold text-gray-900">
+    <nav className="sticky top-0 z-40 h-16 bg-surface/80 backdrop-blur-lg border-b border-border shadow-xs">
+      <div className="mx-auto flex h-full max-w-6xl items-center justify-between px-4">
+        <Link to="/" className="flex items-center gap-2 text-lg font-bold text-text-primary">
+          <svg className="h-7 w-7" viewBox="0 0 32 32" fill="none">
+            <rect width="32" height="32" rx="6" className="fill-swiss-red" />
+            <path d="M10 16h12M16 10v12" stroke="white" strokeWidth="3.5" strokeLinecap="round" />
+          </svg>
           SwissJob
         </Link>
 
@@ -19,26 +23,26 @@ export default function Navbar() {
             <>
               <Link
                 to="/match"
-                className="text-sm text-gray-600 hover:text-gray-900"
+                className="text-sm text-text-secondary hover:text-swiss-red transition-colors duration-200"
               >
                 Matches
               </Link>
               <Link
                 to="/pipeline"
-                className="text-sm text-gray-600 hover:text-gray-900"
+                className="text-sm text-text-secondary hover:text-swiss-red transition-colors duration-200"
               >
                 Pipeline
               </Link>
               <Link
                 to="/searches"
-                className="text-sm text-gray-600 hover:text-gray-900"
+                className="text-sm text-text-secondary hover:text-swiss-red transition-colors duration-200"
               >
                 Alerts
               </Link>
               <NotificationBell />
               <Link
                 to="/profile"
-                className="text-gray-600 hover:text-gray-900"
+                className="w-8 h-8 rounded-full bg-surface-tertiary flex items-center justify-center hover:bg-swiss-red-light transition-colors duration-200"
               >
                 <svg
                   className="h-5 w-5"
@@ -56,7 +60,7 @@ export default function Navbar() {
               </Link>
               <button
                 onClick={logout}
-                className="text-sm text-gray-500 hover:text-gray-900"
+                className="text-sm text-text-tertiary hover:text-swiss-red transition-colors duration-200"
               >
                 Logout
               </button>
@@ -65,13 +69,13 @@ export default function Navbar() {
             <>
               <Link
                 to="/login"
-                className="text-sm text-gray-600 hover:text-gray-900"
+                className="text-sm text-text-secondary hover:text-swiss-red transition-colors"
               >
                 Login
               </Link>
               <Link
                 to="/register"
-                className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+                className="bg-swiss-red hover:bg-swiss-red-hover text-white rounded-full px-5 py-2 text-sm font-semibold transition-all duration-200 shadow-xs"
               >
                 Register
               </Link>

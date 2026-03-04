@@ -9,13 +9,23 @@ function getAuthHeaders() {
 }
 
 async function request(path, options = {}) {
+  const { headers: optHeaders, ...rest } = options;
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...options.headers },
-    ...options,
+    ...rest,
+    headers: { "Content-Type": "application/json", ...optHeaders },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    const err = new Error(body.detail || res.statusText);
+    const detail = body.detail;
+    const message =
+      typeof detail === "string"
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((e) => e.msg || JSON.stringify(e)).join("; ")
+          : detail
+            ? JSON.stringify(detail)
+            : res.statusText;
+    const err = new Error(message);
     err.status = res.status;
     throw err;
   }

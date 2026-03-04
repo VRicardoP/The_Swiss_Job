@@ -36,22 +36,22 @@ export default function JobDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-300 border-t-gray-900" />
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-swiss-red" />
       </div>
     );
   }
 
   if (isError) {
     return (
-      <div className="min-h-screen bg-gray-50 p-4">
+      <div className="min-h-screen p-4">
         <button
           onClick={() => navigate(-1)}
-          className="text-sm text-gray-600 mb-4 hover:text-gray-900"
+          className="text-sm text-text-secondary hover:text-swiss-red transition-colors mb-4"
         >
           &larr; Back
         </button>
-        <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
+        <div className="bg-error-light text-error rounded-xl p-4 text-sm">
           {error.status === 404 ? "Job not found." : `Error: ${error.message}`}
         </div>
       </div>
@@ -62,13 +62,13 @@ export default function JobDetailPage() {
   const initial = job.company ? job.company[0].toUpperCase() : "?";
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 shadow-sm">
-        <div className="max-w-2xl mx-auto px-4 py-3">
+      <header className="bg-surface shadow-card rounded-b-xl">
+        <div className="max-w-3xl mx-auto px-4 py-4">
           <button
             onClick={() => navigate(-1)}
-            className="text-sm text-gray-600 hover:text-gray-900 mb-2 flex items-center gap-1"
+            className="text-sm text-text-secondary hover:text-swiss-red transition-colors mb-3 flex items-center gap-1"
           >
             <svg
               className="w-4 h-4"
@@ -87,12 +87,12 @@ export default function JobDetailPage() {
           </button>
 
           <div className="flex gap-3 items-start">
-            <div className="shrink-0 w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-xl font-semibold text-gray-500">
+            <div className="shrink-0 w-14 h-14 rounded-xl bg-swiss-red-light flex items-center justify-center text-xl font-bold text-swiss-red">
               {initial}
             </div>
             <div className="min-w-0">
-              <h1 className="text-lg font-bold text-gray-900">{job.title}</h1>
-              <p className="text-sm text-gray-600">
+              <h1 className="text-2xl font-bold text-text-primary tracking-tight">{job.title}</h1>
+              <p className="text-sm text-text-secondary">
                 {job.company}
                 {job.location && ` · ${job.location}`}
                 {job.canton && ` (${job.canton})`}
@@ -102,33 +102,33 @@ export default function JobDetailPage() {
 
           {/* Badges */}
           <div className="mt-3 flex flex-wrap gap-1.5">
-            <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-surface-tertiary text-text-secondary">
               {job.source}
             </span>
             {job.is_remote && (
-              <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-info-light text-info">
                 Remote
               </span>
             )}
             {job.language && (
-              <span className="px-2 py-0.5 rounded text-xs font-medium bg-sky-100 text-sky-700">
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-info-light text-info">
                 {job.language.toUpperCase()}
               </span>
             )}
             {job.seniority && (
-              <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-warning-light text-warning">
                 {job.seniority}
               </span>
             )}
             {job.contract_type && (
-              <span className="px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700">
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-success-light text-success">
                 {job.contract_type}
               </span>
             )}
           </div>
 
           {salary && (
-            <p className="mt-2 text-sm font-semibold text-gray-900">
+            <p className="mt-2 text-lg font-bold text-swiss-red">
               {salary}
             </p>
           )}
@@ -136,26 +136,28 @@ export default function JobDetailPage() {
       </header>
 
       {/* Body */}
-      <main className="max-w-2xl mx-auto px-4 py-4">
+      <main className="max-w-3xl mx-auto px-4 py-6">
         {/* Description */}
         {job.description && (
-          <div
-            className="prose prose-sm max-w-none text-gray-700"
-            dangerouslySetInnerHTML={{ __html: job.description }}
-          />
+          <div className="bg-surface p-6 rounded-xl shadow-card">
+            <div
+              className="prose prose-sm prose-headings:text-text-primary prose-p:text-text-secondary prose-a:text-swiss-red max-w-none"
+              dangerouslySetInnerHTML={{ __html: job.description }}
+            />
+          </div>
         )}
 
         {/* Tags */}
         {job.tags && job.tags.length > 0 && (
           <div className="mt-6">
-            <h3 className="text-xs font-medium text-gray-500 uppercase mb-2">
+            <h3 className="text-xs font-medium text-text-tertiary uppercase mb-2">
               Skills
             </h3>
             <div className="flex flex-wrap gap-1.5">
               {job.tags.map((tag) => (
                 <span
                   key={tag}
-                  className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-600"
+                  className="px-2.5 py-0.5 rounded-full text-xs bg-surface-tertiary text-text-secondary"
                 >
                   {tag}
                 </span>
@@ -165,7 +167,7 @@ export default function JobDetailPage() {
         )}
 
         {/* Timestamps */}
-        <div className="mt-6 text-xs text-gray-400 space-y-0.5">
+        <div className="mt-6 text-xs text-text-tertiary space-y-0.5">
           {job.published_at && <p>Published: {formatDate(job.published_at)}</p>}
           {job.first_seen_at && (
             <p>First seen: {formatDate(job.first_seen_at)}</p>
@@ -178,7 +180,7 @@ export default function JobDetailPage() {
             href={job.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-6 block w-full text-center rounded-lg bg-gray-900 px-4 py-3 text-sm font-medium text-white hover:bg-gray-800"
+            className="mt-6 block w-full text-center bg-swiss-red hover:bg-swiss-red-hover rounded-xl px-4 py-3 text-base font-semibold text-white shadow-card hover:shadow-card-hover transition-all duration-200"
           >
             Apply on {job.source}
           </a>

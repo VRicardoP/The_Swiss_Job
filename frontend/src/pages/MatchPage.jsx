@@ -60,30 +60,30 @@ export default function MatchPage() {
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-300 border-t-gray-900" />
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-swiss-red" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="mx-auto max-w-2xl p-4 pb-20">
+    <div className="min-h-screen">
+      <div className="mx-auto max-w-3xl p-4 pb-20">
         {/* Header */}
         <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-gray-900">AI Matches</h1>
-          <Link to="/" className="text-sm text-blue-600 hover:underline">
+          <h1 className="text-2xl font-bold text-text-primary tracking-tight">AI Matches</h1>
+          <Link to="/" className="text-sm text-swiss-red font-medium hover:underline">
             Back to search
           </Link>
         </div>
 
         {/* CV warning */}
         {!hasCvEmbedding && (
-          <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-4">
-            <p className="text-sm text-yellow-800">
+          <div className="mb-4 bg-warning-light border border-warning/20 rounded-xl p-4">
+            <p className="text-sm text-warning">
               Upload your CV to enable AI matching.{" "}
               <Link
                 to="/profile"
-                className="font-medium text-yellow-900 underline"
+                className="text-swiss-red font-medium underline"
               >
                 Go to Profile
               </Link>
@@ -97,18 +97,18 @@ export default function MatchPage() {
             type="button"
             onClick={handleAnalyze}
             disabled={!hasCvEmbedding || analyze.isPending}
-            className="w-full rounded-lg bg-gray-900 px-4 py-3 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+            className="w-full bg-swiss-red hover:bg-swiss-red-hover rounded-xl px-4 py-3 text-base font-semibold text-white shadow-card hover:shadow-card-hover transition-all duration-200 disabled:opacity-50"
           >
             {analyze.isPending ? "Analyzing..." : "Find Matches"}
           </button>
           {analyze.isSuccess && (
-            <p className="mt-2 text-center text-sm text-green-600">
+            <p className="mt-2 text-center text-sm text-success font-medium">
               Found {analyze.data.results_count} matches from{" "}
               {analyze.data.total_candidates} candidates.
             </p>
           )}
           {analyze.isError && (
-            <div className="mt-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+            <div className="mt-2 bg-error-light text-error rounded-xl p-3 text-sm">
               {analyze.error.message}
             </div>
           )}
@@ -116,14 +116,14 @@ export default function MatchPage() {
 
         {/* Results error */}
         {isError && (
-          <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
+          <div className="bg-error-light text-error rounded-xl p-4 text-sm">
             Error loading results: {error.message}
           </div>
         )}
 
         {/* Results count */}
         {!isError && matches.length > 0 && (
-          <p className="mb-3 text-xs text-gray-500">
+          <p className="mb-3 text-sm text-text-secondary font-medium">
             {total} match{total !== 1 ? "es" : ""}
           </p>
         )}
@@ -143,7 +143,7 @@ export default function MatchPage() {
         {/* Empty state */}
         {!isError && !resultsLoading && matches.length === 0 && (
           <div className="py-12 text-center">
-            <p className="text-gray-500">
+            <p className="text-text-tertiary">
               {hasCvEmbedding
                 ? 'No matches yet. Click "Find Matches" to start.'
                 : "Upload your CV to get AI-powered job matches."}

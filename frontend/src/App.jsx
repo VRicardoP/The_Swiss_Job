@@ -17,7 +17,7 @@ const RegisterPage = lazy(() => import('./pages/RegisterPage'))
 function PageLoader() {
   return (
     <div className="flex min-h-[60vh] items-center justify-center">
-      <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-300 border-t-gray-900" />
+      <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-swiss-red" />
     </div>
   )
 }
@@ -26,10 +26,11 @@ function App() {
   useAuthHydration()
 
   return (
-    <>
+    <div className="flex min-h-screen flex-col bg-surface-secondary">
       <Navbar />
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
+      <main className="flex-1">
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
           <Route path="/" element={<SearchPage />} />
           <Route path="/job/:hash" element={<JobDetailPage />} />
           <Route path="/login" element={<LoginPage />} />
@@ -74,9 +75,10 @@ function App() {
               </ProtectedRoute>
             }
           />
-        </Routes>
-      </Suspense>
-    </>
+          </Routes>
+        </Suspense>
+      </main>
+    </div>
   )
 }
 

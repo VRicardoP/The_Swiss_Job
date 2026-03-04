@@ -26,17 +26,17 @@ function SearchCard({ search, onToggle, onRun, onDelete }) {
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
+    <div className="bg-surface shadow-card rounded-xl hover:shadow-card-hover transition-all p-4">
       <div className="flex items-start justify-between">
         <div>
-          <h3 className="font-medium text-gray-900">{search.name}</h3>
-          <p className="mt-1 text-xs text-gray-500">
+          <h3 className="font-medium text-text-primary">{search.name}</h3>
+          <p className="mt-1 text-xs text-text-secondary">
             {Object.entries(search.filters || {})
               .filter(([, v]) => v)
               .map(([k, v]) => `${k}: ${v}`)
               .join(", ") || "No filters"}
           </p>
-          <div className="mt-1 flex items-center gap-2 text-xs text-gray-400">
+          <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
             <span>Min score: {search.min_score}</span>
             <span>Freq: {search.notify_frequency}</span>
             <span>Matches: {search.total_matches}</span>
@@ -45,10 +45,10 @@ function SearchCard({ search, onToggle, onRun, onDelete }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => onToggle(search.id, !search.is_active)}
-            className={`rounded px-2 py-1 text-xs font-medium ${
+            className={`rounded-full px-2 py-1 text-xs font-medium ${
               search.is_active
-                ? "bg-green-100 text-green-700"
-                : "bg-gray-100 text-gray-500"
+                ? "bg-success-light text-success"
+                : "bg-surface-tertiary text-text-tertiary"
             }`}
           >
             {search.is_active ? "Active" : "Paused"}
@@ -59,13 +59,13 @@ function SearchCard({ search, onToggle, onRun, onDelete }) {
         <button
           onClick={handleRun}
           disabled={running}
-          className="rounded bg-blue-500 px-3 py-1 text-xs text-white hover:bg-blue-600 disabled:opacity-50"
+          className="rounded-full bg-swiss-red px-3 py-1 text-xs text-white hover:bg-swiss-red-hover disabled:opacity-50"
         >
           {running ? "Running..." : "Run now"}
         </button>
         <button
           onClick={() => onDelete(search.id)}
-          className="rounded bg-red-50 px-3 py-1 text-xs text-red-600 hover:bg-red-100"
+          className="rounded-full bg-error-light px-3 py-1 text-xs text-error hover:text-error/80"
         >
           Delete
         </button>
@@ -126,15 +126,15 @@ export default function SavedSearchesPage() {
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-swiss-red" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="mx-auto max-w-2xl p-6">
-        <p className="text-red-600">Error: {error.message}</p>
+      <div className="mx-auto max-w-3xl p-6">
+        <p className="text-error">Error: {error.message}</p>
       </div>
     );
   }
@@ -142,12 +142,12 @@ export default function SavedSearchesPage() {
   const searches = data?.data || [];
 
   return (
-    <div className="mx-auto max-w-2xl p-4">
+    <div className="mx-auto max-w-3xl p-4">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Saved Searches</h1>
+        <h1 className="text-2xl font-bold text-text-primary tracking-tight">Saved Searches</h1>
         <button
           onClick={() => setShowForm(!showForm)}
-          className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
+          className="rounded-full bg-swiss-red px-5 py-1.5 text-sm font-semibold text-white hover:bg-swiss-red-hover shadow-xs transition-all duration-200"
         >
           {showForm ? "Cancel" : "New Search"}
         </button>
@@ -156,9 +156,9 @@ export default function SavedSearchesPage() {
       {showForm && (
         <form
           onSubmit={handleCreate}
-          className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4"
+          className="mb-4 bg-surface shadow-card rounded-xl border border-border p-4"
         >
-          <p className="mb-2 text-xs text-gray-500">
+          <p className="mb-2 text-xs text-text-secondary">
             Saves current search filters from the home page.
           </p>
           <input
@@ -166,11 +166,11 @@ export default function SavedSearchesPage() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Search name..."
-            className="mb-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+            className="mb-2 w-full rounded-xl border border-border bg-surface-secondary px-3 py-2 text-sm focus:border-swiss-red focus:outline-none"
           />
           <div className="mb-2 flex gap-3">
             <div className="flex-1">
-              <label className="mb-1 block text-xs text-gray-600">
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-text-tertiary">
                 Min Score
               </label>
               <input
@@ -179,17 +179,17 @@ export default function SavedSearchesPage() {
                 onChange={(e) => setMinScore(Number(e.target.value))}
                 min={0}
                 max={100}
-                className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                className="w-full rounded-xl border border-border bg-surface-secondary px-3 py-1.5 text-sm focus:border-swiss-red focus:outline-none"
               />
             </div>
             <div className="flex-1">
-              <label className="mb-1 block text-xs text-gray-600">
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-text-tertiary">
                 Alert Frequency
               </label>
               <select
                 value={frequency}
                 onChange={(e) => setFrequency(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                className="w-full rounded-xl border border-border bg-surface-secondary px-3 py-1.5 text-sm focus:border-swiss-red focus:outline-none"
               >
                 {FREQ_OPTIONS.map((f) => (
                   <option key={f} value={f}>
@@ -202,7 +202,7 @@ export default function SavedSearchesPage() {
           <button
             type="submit"
             disabled={createSearch.isPending || !name.trim()}
-            className="w-full rounded-lg bg-blue-600 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+            className="w-full rounded-xl bg-swiss-red py-2 text-sm font-semibold text-white hover:bg-swiss-red-hover disabled:opacity-50"
           >
             {createSearch.isPending ? "Saving..." : "Save Search"}
           </button>
@@ -211,10 +211,10 @@ export default function SavedSearchesPage() {
 
       {searches.length === 0 ? (
         <div className="mt-20 text-center">
-          <p className="text-lg text-gray-500">No saved searches</p>
-          <p className="mt-1 text-sm text-gray-400">
+          <p className="text-lg text-text-tertiary">No saved searches</p>
+          <p className="mt-1 text-sm text-text-tertiary">
             Set filters on the{" "}
-            <Link to="/" className="text-blue-600 hover:underline">
+            <Link to="/" className="text-swiss-red hover:underline">
               Search
             </Link>{" "}
             page, then save them here for alerts.

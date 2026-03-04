@@ -53,22 +53,37 @@ export default function SearchPage() {
   const total = data?.pages[0]?.total ?? 0;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen">
       {/* Sticky header */}
-      <header className="sticky top-12 z-30 bg-white border-b border-gray-200 shadow-sm">
-        <div className="max-w-2xl mx-auto px-4 py-3">
+      <header className="sticky top-16 z-30 bg-surface/80 backdrop-blur-lg border-b border-border shadow-xs">
+        <div className="max-w-3xl mx-auto px-4 py-3">
           <div className="flex gap-2">
-            <input
-              type="text"
-              defaultValue={q}
-              onChange={(e) => debouncedSetQ(e.target.value)}
-              placeholder="Search jobs..."
-              className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900"
-            />
+            <div className="relative flex-1">
+              <svg
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                />
+              </svg>
+              <input
+                type="text"
+                defaultValue={q}
+                onChange={(e) => debouncedSetQ(e.target.value)}
+                placeholder="Search jobs..."
+                className="w-full border border-border rounded-xl bg-surface-secondary pl-10 pr-4 py-2.5 text-sm placeholder:text-text-tertiary focus:outline-none focus:border-swiss-red focus:ring-2 focus:ring-swiss-red/20 transition-all"
+              />
+            </div>
             <select
               value={sort}
               onChange={(e) => setSort(e.target.value)}
-              className="rounded-lg border border-gray-300 px-2 py-2 text-sm"
+              className="rounded-xl border border-border bg-surface-secondary px-2 py-2.5 text-sm"
             >
               <option value="newest">Newest</option>
               <option value="oldest">Oldest</option>
@@ -77,11 +92,11 @@ export default function SearchPage() {
             </select>
             <button
               onClick={() => setFiltersOpen(true)}
-              className="rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50"
+              className="rounded-xl border border-border px-3 py-2.5 text-sm hover:bg-swiss-red-light hover:text-swiss-red hover:border-swiss-red/20 transition-all duration-200"
               aria-label="Open filters"
             >
               <svg
-                className="w-5 h-5 text-gray-600"
+                className="w-5 h-5"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -96,7 +111,7 @@ export default function SearchPage() {
             </button>
           </div>
           {!isLoading && (
-            <p className="mt-1.5 text-xs text-gray-500">
+            <p className="mt-1.5 text-sm text-text-secondary font-medium">
               {total} job{total !== 1 ? "s" : ""} found
             </p>
           )}
@@ -104,22 +119,22 @@ export default function SearchPage() {
       </header>
 
       {/* Content */}
-      <main className="max-w-2xl mx-auto px-4 py-4 space-y-3">
+      <main className="max-w-3xl mx-auto px-4 py-4 space-y-3">
         {isLoading && (
           <div className="flex justify-center py-12">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-300 border-t-gray-900" />
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-swiss-red" />
           </div>
         )}
 
         {isError && (
-          <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
+          <div className="bg-error-light text-error rounded-xl p-4 text-sm">
             Error loading jobs: {error.message}
           </div>
         )}
 
         {!isLoading && !isError && jobs.length === 0 && (
           <div className="text-center py-12">
-            <p className="text-gray-500">No jobs found. Try adjusting your filters.</p>
+            <p className="text-text-tertiary">No jobs found. Try adjusting your filters.</p>
           </div>
         )}
 
@@ -132,7 +147,7 @@ export default function SearchPage() {
 
         {isFetchingNextPage && (
           <div className="flex justify-center py-4">
-            <div className="h-6 w-6 animate-spin rounded-full border-3 border-gray-300 border-t-gray-900" />
+            <div className="h-6 w-6 animate-spin rounded-full border-3 border-border border-t-swiss-red" />
           </div>
         )}
       </main>

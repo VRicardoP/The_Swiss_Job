@@ -22,6 +22,7 @@ from schemas.match import (
 from services.groq_service import GroqService
 from services.job_matcher import DEFAULT_WEIGHTS
 from services.match_service import MatchService
+from services.translation_service import SKIP_LANGUAGES, TranslationService
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +74,43 @@ async def analyze_matches(
     )
 
 
-def _build_results_response(results: list[dict], total: int, weights: dict):
-    """Build MatchResultsResponse from service results."""
+async def _build_results_response(
+    results: list[dict],
+    total: int,
+    weights: dict,
+    groq: GroqService | None = None,
+):
+    """Build MatchResultsResponse from service results, with title translations."""
+    # Batch-translate non-EN/ES titles
+    translations: dict[str, str] = {}
+    if groq:
+        titles_with_lang = [
+            {"title": item["job"].title or "", "language": item["job"].language or ""}
+            for item in results
+        ]
+        translator = TranslationService(groq)
+        translations = await translator.translate_titles(titles_with_lang)
+
     data = []
     for item in results:
         match = item["match"]
         job = item["job"]
+
+        original_title = job.title or ""
+        lang = (job.language or "").lower()
+        translated = translations.get(original_title)
+        # Only set job_title_en when translation actually differs from original
+        is_translated = (
+            translated
+            and translated != original_title
+            and lang not in SKIP_LANGUAGES
+        )
+        job_title_en = translated if is_translated else None
+        # Detect language for indicator when DB field is empty
+        job_language = job.language
+        if is_translated and not job_language:
+            job_language = TranslationService._detect_language(original_title) or None
+
         data.append(
             MatchResultResponse(
                 id=match.id,
@@ -97,6 +129,8 @@ def _build_results_response(results: list[dict], total: int, weights: dict):
                 feedback=match.feedback,
                 created_at=match.created_at,
                 job_title=job.title,
+                job_title_en=job_title_en,
+                job_language=job_language,
                 job_company=job.company,
                 job_location=job.location,
                 job_url=job.url,
@@ -116,6 +150,7 @@ def _build_results_response(results: list[dict], total: int, weights: dict):
 
 @router.get("/results", response_model=MatchResultsResponse)
 async def get_match_results(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     limit: int = Query(20, ge=1, le=100),
@@ -136,11 +171,13 @@ async def get_match_results(
         else DEFAULT_WEIGHTS
     )
 
-    return _build_results_response(results, total, weights)
+    groq = _get_groq(request)
+    return await _build_results_response(results, total, weights, groq)
 
 
 @router.get("/history", response_model=MatchResultsResponse)
 async def get_match_history(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     limit: int = Query(20, ge=1, le=100),
@@ -161,7 +198,8 @@ async def get_match_history(
         else DEFAULT_WEIGHTS
     )
 
-    return _build_results_response(results, total, weights)
+    groq = _get_groq(request)
+    return await _build_results_response(results, total, weights, groq)
 
 
 @router.post("/{job_hash}/feedback", response_model=MatchFeedbackResponse)

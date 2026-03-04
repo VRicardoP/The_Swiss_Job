@@ -28,20 +28,20 @@ function JobCard({ job }) {
   return (
     <Link
       to={`/job/${job.hash}`}
-      className="block bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition-shadow"
+      className="block bg-surface rounded-xl shadow-card hover:shadow-card-hover hover:-translate-y-0.5 p-5 transition-all duration-200"
     >
       <div className="flex gap-3">
         {/* Company initial */}
-        <div className="shrink-0 w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-lg font-semibold text-gray-500">
+        <div className="shrink-0 w-11 h-11 rounded-xl bg-swiss-red-light flex items-center justify-center text-lg font-bold text-swiss-red">
           {initial}
         </div>
 
         <div className="min-w-0 flex-1">
           {/* Title + company */}
-          <h3 className="text-sm font-semibold text-gray-900 truncate">
+          <h3 className="text-[15px] font-semibold text-text-primary truncate">
             {job.title}
           </h3>
-          <p className="text-xs text-gray-500 truncate">
+          <p className="text-sm text-text-secondary truncate">
             {job.company}
             {job.canton && ` · ${job.canton}`}
             {job.is_remote && " · Remote"}
@@ -49,7 +49,7 @@ function JobCard({ job }) {
 
           {/* Snippet */}
           {job.description_snippet && (
-            <p className="mt-1 text-xs text-gray-600 line-clamp-2">
+            <p className="mt-1 text-sm text-text-secondary leading-relaxed line-clamp-2">
               {job.description_snippet}
             </p>
           )}
@@ -57,27 +57,27 @@ function JobCard({ job }) {
           {/* Badges + salary */}
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <span
-              className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${colorClass}`}
+              className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-surface-tertiary text-text-secondary`}
             >
               {job.source}
             </span>
             {job.language && (
-              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-medium bg-sky-100 text-sky-700">
+              <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-info-light text-info">
                 {job.language.toUpperCase()}
               </span>
             )}
             {job.seniority && (
-              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
+              <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-warning-light text-warning">
                 {job.seniority}
               </span>
             )}
             {job.contract_type && (
-              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-700">
+              <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-success-light text-success">
                 {job.contract_type}
               </span>
             )}
             {salary && (
-              <span className="ml-auto text-xs font-medium text-gray-700">
+              <span className="ml-auto text-sm font-semibold text-swiss-red">
                 {salary}
               </span>
             )}

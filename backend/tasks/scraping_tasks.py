@@ -10,6 +10,7 @@ from typing import Any
 
 from celery_app import celery_app
 from database import task_session
+from scrapers import get_all_scrapers
 from services.data_normalizer import DataNormalizer
 from services.deduplicator import Deduplicator
 from services.job_repository import JobRepository
@@ -42,8 +43,6 @@ def fetch_scrapers(self) -> dict[str, Any]:
 
 async def _fetch_scrapers_async() -> dict[str, Any]:
     """Async implementation — sequential scraper execution."""
-    from scrapers import get_all_scrapers
-
     scrapers = get_all_scrapers()
     summary = {
         "scrapers": 0,

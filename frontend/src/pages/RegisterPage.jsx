@@ -22,24 +22,34 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-[calc(100vh-3rem)] items-center justify-center bg-gray-50 px-4">
+    <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center bg-gray-50 px-4">
       <div className="w-full max-w-sm">
-        <h1 className="mb-6 text-center text-2xl font-bold text-gray-900">
+        <div className="flex justify-center mb-6">
+          <svg className="h-12 w-12" viewBox="0 0 32 32" fill="none">
+            <rect width="32" height="32" rx="6" className="fill-swiss-red" />
+            <path d="M10 16h12M16 10v12" stroke="white" strokeWidth="3.5" strokeLinecap="round" />
+          </svg>
+        </div>
+
+        <h1 className="mb-2 text-center text-2xl font-bold text-text-primary tracking-tight">
           Create your account
         </h1>
+        <p className="mb-6 text-center text-sm text-text-secondary">
+          Get started with SwissJob
+        </p>
 
         <form
           onSubmit={handleSubmit}
-          className="space-y-4 rounded-lg border border-gray-200 bg-white p-6"
+          className="space-y-5 bg-surface shadow-card rounded-2xl p-8"
         >
           {register.isError && (
-            <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
+            <div className="rounded-xl bg-error-light p-3 text-sm text-error">
               {register.error.message}
             </div>
           )}
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-text-tertiary">
               Email
             </label>
             <input
@@ -47,13 +57,13 @@ export default function RegisterPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+              className="w-full rounded-xl border border-border bg-surface-secondary px-4 py-3 focus:border-swiss-red focus:ring-2 focus:ring-swiss-red/20 focus:outline-none transition-all"
               placeholder="you@example.com"
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-text-tertiary">
               Password
             </label>
             <input
@@ -62,7 +72,7 @@ export default function RegisterPage() {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={8}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+              className="w-full rounded-xl border border-border bg-surface-secondary px-4 py-3 focus:border-swiss-red focus:ring-2 focus:ring-swiss-red/20 focus:outline-none transition-all"
               placeholder="Min 8 characters"
             />
           </div>
@@ -72,9 +82,9 @@ export default function RegisterPage() {
               type="checkbox"
               checked={gdprConsent}
               onChange={(e) => setGdprConsent(e.target.checked)}
-              className="mt-0.5 rounded border-gray-300"
+              className="mt-0.5 rounded border-border accent-swiss-red"
             />
-            <span className="text-sm text-gray-600">
+            <span className="text-sm text-text-secondary">
               I consent to the processing of my personal data in accordance with
               GDPR regulations.
             </span>
@@ -83,15 +93,15 @@ export default function RegisterPage() {
           <button
             type="submit"
             disabled={!canSubmit}
-            className="w-full rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+            className="w-full rounded-xl bg-swiss-red hover:bg-swiss-red-hover px-4 py-3 text-sm font-semibold text-white shadow-xs hover:shadow-card transition-all duration-200 disabled:opacity-50"
           >
             {register.isPending ? "Creating account..." : "Create account"}
           </button>
         </form>
 
-        <p className="mt-4 text-center text-sm text-gray-600">
+        <p className="mt-6 text-center text-sm text-text-secondary">
           Already have an account?{" "}
-          <Link to="/login" className="text-blue-600 hover:underline">
+          <Link to="/login" className="text-swiss-red font-medium hover:underline">
             Sign in
           </Link>
         </p>

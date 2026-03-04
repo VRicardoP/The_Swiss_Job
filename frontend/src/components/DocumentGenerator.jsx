@@ -20,7 +20,7 @@ function MarkdownRenderer({ content }) {
     )
     .replace(
       /^## (.+)$/gm,
-      '<h2 class="text-lg font-bold mt-5 mb-2 border-b border-gray-200 pb-1">$1</h2>',
+      '<h2 class="text-lg font-bold mt-5 mb-2 border-b border-border pb-1">$1</h2>',
     )
     .replace(
       /^# (.+)$/gm,
@@ -30,11 +30,11 @@ function MarkdownRenderer({ content }) {
     .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>")
     .replace(
       /^- (.+)$/gm,
-      '<li class="ml-4 list-disc text-sm text-gray-700">$1</li>',
+      '<li class="ml-4 list-disc text-sm text-text-primary">$1</li>',
     )
     .replace(
       /\n\n/g,
-      '</p><p class="text-sm text-gray-700 mt-2 leading-relaxed">',
+      '</p><p class="text-sm text-text-primary mt-2 leading-relaxed">',
     )
     .replace(/\n/g, "<br/>");
 
@@ -42,7 +42,7 @@ function MarkdownRenderer({ content }) {
     <div
       className="max-w-none"
       dangerouslySetInnerHTML={{
-        __html: `<p class="text-sm text-gray-700 leading-relaxed">${html}</p>`,
+        __html: `<p class="text-sm text-text-primary leading-relaxed">${html}</p>`,
       }}
     />
   );
@@ -87,22 +87,22 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany }) {
   const docs = existingDocs?.data || [];
 
   return (
-    <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4">
-      <h3 className="mb-3 text-sm font-semibold text-gray-900">
+    <div className="mt-6 bg-surface rounded-xl shadow-card p-4">
+      <h3 className="mb-3 text-base font-bold text-text-primary">
         AI Document Generator
       </h3>
 
       {/* Language selector */}
       <div className="mb-3 flex items-center gap-2">
-        <span className="text-xs text-gray-500">Language:</span>
+        <span className="text-xs text-text-secondary">Language:</span>
         {LANGUAGES.map((lang) => (
           <button
             key={lang.code}
             onClick={() => setLanguage(lang.code)}
-            className={`rounded px-2 py-0.5 text-xs font-medium ${
+            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
               language === lang.code
-                ? "bg-gray-900 text-white"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                ? "bg-swiss-red text-white"
+                : "bg-surface-tertiary text-text-secondary hover:bg-swiss-red-light hover:text-swiss-red transition-all duration-200"
             }`}
           >
             {lang.label}
@@ -115,7 +115,7 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany }) {
         <button
           onClick={() => handleGenerate("cv")}
           disabled={generateDoc.isPending}
-          className="flex-1 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          className="flex-1 bg-swiss-red hover:bg-swiss-red-hover rounded-xl px-4 py-2 text-sm font-semibold text-white transition-all duration-200 disabled:opacity-50"
         >
           {generateDoc.isPending && generateDoc.variables?.docType === "cv"
             ? "Generating CV..."
@@ -124,7 +124,7 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany }) {
         <button
           onClick={() => handleGenerate("cover_letter")}
           disabled={generateDoc.isPending}
-          className="flex-1 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+          className="flex-1 bg-text-primary hover:bg-text-primary/90 rounded-xl px-4 py-2 text-sm font-semibold text-white transition-all duration-200 disabled:opacity-50"
         >
           {generateDoc.isPending &&
           generateDoc.variables?.docType === "cover_letter"
@@ -135,22 +135,22 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany }) {
 
       {/* Error */}
       {generateDoc.isError && (
-        <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+        <div className="mb-3 bg-error-light text-error rounded-xl p-3 text-sm">
           {generateDoc.error.message}
         </div>
       )}
 
       {/* Preview */}
       {activeDoc && (
-        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+        <div className="bg-surface-secondary rounded-xl p-4">
           <div className="mb-3 flex items-center justify-between">
-            <span className="text-xs font-medium uppercase text-gray-500">
+            <span className="text-xs font-medium uppercase text-text-secondary">
               {activeDoc.doc_type === "cv" ? "Tailored CV" : "Cover Letter"}{" "}
               Preview
             </span>
             <button
               onClick={handleDownloadPDF}
-              className="flex items-center gap-1 rounded bg-gray-900 px-3 py-1 text-xs font-medium text-white hover:bg-gray-800"
+              className="flex items-center gap-1 bg-swiss-red hover:bg-swiss-red-hover rounded-xl px-3 py-1 text-xs font-medium text-white transition-all duration-200"
             >
               Download PDF
             </button>
@@ -164,18 +164,18 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany }) {
       {/* Previously generated documents */}
       {docs.length > 0 && (
         <div className="mt-4">
-          <h4 className="mb-2 text-xs font-medium uppercase text-gray-500">
+          <h4 className="mb-2 text-xs font-medium uppercase text-text-secondary">
             Previously Generated
           </h4>
           <div className="space-y-1">
             {docs.map((doc) => (
               <div
                 key={doc.id}
-                className="flex items-center justify-between rounded bg-gray-50 px-3 py-2"
+                className="flex items-center justify-between rounded-lg bg-surface-secondary px-3 py-2 border border-border-light"
               >
                 <button
                   onClick={() => setActiveDoc(doc)}
-                  className="text-xs text-blue-600 hover:underline"
+                  className="text-xs text-swiss-red hover:underline"
                 >
                   {doc.doc_type === "cv" ? "CV" : "Cover Letter"}
                   {doc.language && ` (${doc.language.toUpperCase()})`}
@@ -184,7 +184,7 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany }) {
                 </button>
                 <button
                   onClick={() => deleteDoc.mutate(doc.id)}
-                  className="text-xs text-gray-400 hover:text-red-500"
+                  className="text-xs text-error hover:text-error/80"
                 >
                   Delete
                 </button>
