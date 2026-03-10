@@ -232,10 +232,10 @@ export const documentsApi = {
 };
 
 export const matchApi = {
-  analyze(topK = 20) {
+  analyze() {
     return authRequest("/match/analyze", {
       method: "POST",
-      body: JSON.stringify({ top_k: topK }),
+      body: JSON.stringify({}),
     });
   },
 

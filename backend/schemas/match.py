@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class MatchAnalyzeRequest(BaseModel):
     """Request body for POST /api/v1/match/analyze."""
 
-    top_k: int = Field(default=20, ge=1, le=100)
+    min_score: float = Field(default=35.0, ge=0, le=100)
 
 
 class MatchScoreBreakdown(BaseModel):

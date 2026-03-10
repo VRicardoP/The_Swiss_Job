@@ -44,15 +44,15 @@ async def analyze_matches(
 ):
     """Trigger AI matching pipeline for the current user.
 
-    Stage 1: pgvector cosine similarity (top 50)
+    Stage 1: pgvector cosine similarity on ALL active jobs
     Stage 2: Multi-factor scoring (embedding + salary + location + recency)
-    Stage 3: LLM re-ranking via Groq (if API key configured)
+    Stage 3: LLM re-ranking via Groq (if API key configured) — top-K only
     """
     groq = _get_groq(request)
     service = MatchService(db, groq=groq)
     result = await service.run_matching(
         user_id=current_user.id,
-        top_k=body.top_k,
+        min_score=body.min_score,
     )
 
     if result.get("status") == "no_embedding":

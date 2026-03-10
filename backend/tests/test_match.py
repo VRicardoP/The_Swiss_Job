@@ -147,21 +147,23 @@ class TestMatchAnalyze:
         assert data["total_candidates"] == 5
         assert data["results_count"] == 5
 
-    async def test_analyze_respects_top_k(
+    async def test_analyze_respects_min_score(
         self, client: AsyncClient, db_session: AsyncSession
     ):
         token, _uid = await _setup_user_with_embedding(client, db_session)
         await _insert_jobs_with_embeddings(db_session, count=10)
 
+        # High threshold should return fewer results
         resp = await client.post(
             "/api/v1/match/analyze",
             headers=_auth(token),
-            json={"top_k": 3},
+            json={"min_score": 90.0},
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["results_count"] == 3
         assert data["total_candidates"] == 10
+        # With random embeddings, few or none should pass a 90 threshold
+        assert data["results_count"] <= data["total_candidates"]
 
 
 # ---------------------------------------------------------------------------

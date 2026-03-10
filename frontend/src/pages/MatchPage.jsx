@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   useAnalyze,
@@ -9,14 +9,17 @@ import {
 import { useProfile } from "../hooks/useProfile";
 import MatchCard from "../components/MatchCard";
 
+const PAGE_SIZE = 20;
+
 export default function MatchPage() {
   const { data: profile, isLoading: profileLoading } = useProfile();
+  const [limit, setLimit] = useState(PAGE_SIZE);
   const {
     data: results,
     isLoading: resultsLoading,
     isError,
     error,
-  } = useMatchResults();
+  } = useMatchResults(limit, 0);
   const analyze = useAnalyze();
   const submitFeedback = useSubmitFeedback();
   const submitImplicit = useSubmitImplicit();
@@ -43,10 +46,16 @@ export default function MatchPage() {
   const hasCvEmbedding = profile?.has_cv_embedding;
   const matches = results?.data ?? [];
   const total = results?.total ?? 0;
+  const hasMore = matches.length < total;
   const isLoading = profileLoading || resultsLoading;
 
   function handleAnalyze() {
-    analyze.mutate(20);
+    setLimit(PAGE_SIZE);
+    analyze.mutate();
+  }
+
+  function handleLoadMore() {
+    setLimit((prev) => prev + PAGE_SIZE);
   }
 
   function handleFeedback({ jobHash, feedback }) {
@@ -57,7 +66,7 @@ export default function MatchPage() {
     submitImplicit.mutate({ jobHash, action, durationMs });
   }
 
-  if (isLoading) {
+  if (isLoading && matches.length === 0) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-swiss-red" />
@@ -124,7 +133,7 @@ export default function MatchPage() {
         {/* Results count */}
         {!isError && matches.length > 0 && (
           <p className="mb-3 text-sm text-text-secondary font-medium">
-            {total} match{total !== 1 ? "es" : ""}
+            Showing {matches.length} of {total} match{total !== 1 ? "es" : ""}
           </p>
         )}
 
@@ -139,6 +148,20 @@ export default function MatchPage() {
             />
           ))}
         </div>
+
+        {/* Load more */}
+        {hasMore && (
+          <div className="mt-6 text-center">
+            <button
+              type="button"
+              onClick={handleLoadMore}
+              disabled={resultsLoading}
+              className="rounded-xl border border-border bg-surface px-6 py-2.5 text-sm font-medium text-text-secondary hover:bg-surface-hover transition-colors disabled:opacity-50"
+            >
+              {resultsLoading ? "Loading..." : `Load more (${total - matches.length} remaining)`}
+            </button>
+          </div>
+        )}
 
         {/* Empty state */}
         {!isError && !resultsLoading && matches.length === 0 && (

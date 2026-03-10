@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, cast, func, or_
 from sqlalchemy.dialects.postgresql import ENUM, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -78,3 +78,16 @@ class Job(Base):
 
     def __repr__(self) -> str:
         return f"<Job hash={self.hash} source={self.source} title={self.title!r}>"
+
+    @staticmethod
+    def exclude_student_conditions():
+        """Permanent filter: exclude intern/apprenticeship roles."""
+        return [
+            or_(cast(Job.seniority, String) != "intern", Job.seniority.is_(None)),
+            or_(
+                cast(Job.contract_type, String).notin_(
+                    ["internship", "apprenticeship"]
+                ),
+                Job.contract_type.is_(None),
+            ),
+        ]

@@ -39,10 +39,11 @@ async def search_jobs(
     offset: int = Query(0, ge=0),
 ):
     """Search jobs with full-text search and structured filters."""
-    # Base conditions: only active, non-duplicate jobs
+    # Base conditions: only active, non-duplicate, non-student jobs
     conditions = [
         Job.is_active.is_(True),
         Job.duplicate_of.is_(None),
+        *Job.exclude_student_conditions(),
     ]
 
     # Full-text search via tsvector

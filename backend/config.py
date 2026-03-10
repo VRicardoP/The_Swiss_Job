@@ -49,8 +49,8 @@ class Settings(BaseSettings):
     SSE_QUEUE_MAXSIZE: int = 100
 
     # AI Matching
-    MATCH_STAGE1_TOP_N: int = 50
-    MATCH_DEFAULT_TOP_K: int = 20
+    MATCH_SCORE_THRESHOLD: float = 35.0  # minimum score to qualify as a match
+    MATCH_LLM_RERANK_TOP: int = 50  # how many top candidates get LLM re-ranking
     SEMANTIC_DEDUP_THRESHOLD: float = 0.95
 
     # Groq LLM

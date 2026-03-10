@@ -4,7 +4,7 @@ import { matchApi } from "../config/api";
 export function useAnalyze() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (topK) => matchApi.analyze(topK),
+    mutationFn: () => matchApi.analyze(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["match-results"] }),
   });
 }

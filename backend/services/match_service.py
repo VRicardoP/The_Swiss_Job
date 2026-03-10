@@ -1,8 +1,11 @@
 """MatchService — orchestrates the 3-stage AI matching pipeline.
 
-Stage 1: pgvector cosine similarity to find top-N candidates (fast, DB-level)
+Stage 1: pgvector cosine similarity on ALL active jobs (full catalogue scan)
 Stage 2: Multi-factor scoring (embedding + salary + location + recency)
-Stage 3: LLM re-ranking via Groq (score_llm + explanation)
+Stage 3: LLM re-ranking via Groq (top N only) — score_llm + explanation
+
+Results are filtered by a minimum score threshold and persisted.
+Jobs previously dismissed or thumbs-downed are excluded from new runs.
 """
 
 import logging
@@ -21,6 +24,9 @@ from services.job_matcher import DEFAULT_WEIGHTS, JobMatcher
 
 logger = logging.getLogger(__name__)
 
+# Feedback values that exclude a job from future match runs
+_NEGATIVE_FEEDBACK = {"dismissed", "thumbs_down"}
+
 
 class MatchService:
     """Orchestrates the full matching pipeline for a user."""
@@ -33,7 +39,7 @@ class MatchService:
     async def run_matching(
         self,
         user_id: uuid.UUID,
-        top_k: int = 20,
+        min_score: float = settings.MATCH_SCORE_THRESHOLD,
     ) -> dict:
         """Run the complete matching pipeline for a user.
 
@@ -49,37 +55,62 @@ class MatchService:
         # TD-11: per-user configurable weights
         weights = profile.score_weights or DEFAULT_WEIGHTS
 
-        # Stage 1: pgvector cosine similarity — top N candidates
+        # Load dismissed job hashes so they don't reappear
+        excluded_hashes = await self._get_excluded_hashes(user_id)
+
+        # Stage 1: fetch ALL active jobs with embeddings, ordered by cosine similarity
         candidates = await self._stage1_vector_search(
-            profile.cv_embedding, top_n=settings.MATCH_STAGE1_TOP_N
+            profile.cv_embedding, excluded_hashes
         )
 
         if not candidates:
             return {"status": "no_jobs", "total_candidates": 0, "results_count": 0}
 
-        # Stage 2: multi-factor scoring (without LLM)
+        total_candidates = len(candidates)
+
+        # Stage 2: multi-factor scoring on ALL candidates
         scored = self._stage2_multifactor_score(
             profile=profile,
             candidates=candidates,
             weights=weights,
         )
 
-        # Stage 3: LLM re-ranking (top candidates only)
-        top_results = scored[:top_k]
-        if self.groq and self.groq.is_available:
-            top_results = await self._stage3_llm_rerank(
+        # Filter by minimum score threshold
+        qualified = [r for r in scored if r["score_final"] >= min_score]
+
+        if not qualified:
+            # Still persist an empty set (clears old results)
+            await self._save_results(user_id, [])
+            return {
+                "status": "no_jobs",
+                "total_candidates": total_candidates,
+                "results_count": 0,
+            }
+
+        # Stage 3: LLM re-ranking (top N candidates only)
+        llm_top = settings.MATCH_LLM_RERANK_TOP
+        if self.groq and self.groq.is_available and len(qualified) > 0:
+            # Only send top N to LLM, keep the rest as-is
+            head = qualified[:llm_top]
+            tail = qualified[llm_top:]
+
+            head = await self._stage3_llm_rerank(
                 profile=profile,
-                scored_results=top_results,
+                scored_results=head,
                 weights=weights,
             )
 
-        # Persist results (replace previous matches for this user)
-        await self._save_results(user_id, top_results)
+            # Merge and re-sort: LLM-ranked head + unranked tail
+            qualified = head + tail
+            qualified.sort(key=lambda x: x["score_final"], reverse=True)
+
+        # Persist ALL results above threshold (replace previous)
+        await self._save_results(user_id, qualified)
 
         return {
             "status": "success",
-            "total_candidates": len(candidates),
-            "results_count": len(top_results),
+            "total_candidates": total_candidates,
+            "results_count": len(qualified),
         }
 
     async def get_results(
@@ -175,19 +206,38 @@ class MatchService:
         )
         return result.scalar_one_or_none()
 
+    async def _get_excluded_hashes(self, user_id: uuid.UUID) -> set[str]:
+        """Load job hashes that the user dismissed or thumbs-downed."""
+        stmt = (
+            select(MatchResult.job_hash)
+            .where(
+                MatchResult.user_id == user_id,
+                MatchResult.feedback.in_(_NEGATIVE_FEEDBACK),
+            )
+        )
+        result = await self.db.execute(stmt)
+        return {row[0] for row in result.all()}
+
     async def _stage1_vector_search(
-        self, profile_embedding: list, top_n: int = 50
+        self, profile_embedding: list, excluded_hashes: set[str] | None = None
     ) -> list[Job]:
-        """Use pgvector cosine distance operator to find similar jobs."""
+        """Fetch ALL active jobs with embeddings, ordered by cosine similarity.
+
+        Jobs with hashes in excluded_hashes are skipped (previously dismissed).
+        """
+        conditions = [
+            Job.is_active.is_(True),
+            Job.duplicate_of.is_(None),
+            Job.embedding.is_not(None),
+            *Job.exclude_student_conditions(),
+        ]
+        if excluded_hashes:
+            conditions.append(Job.hash.not_in(excluded_hashes))
+
         stmt = (
             select(Job)
-            .where(
-                Job.is_active.is_(True),
-                Job.duplicate_of.is_(None),
-                Job.embedding.is_not(None),
-            )
+            .where(*conditions)
             .order_by(Job.embedding.cosine_distance(profile_embedding))
-            .limit(top_n)
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
@@ -332,7 +382,21 @@ class MatchService:
         user_id: uuid.UUID,
         results: list[dict],
     ) -> None:
-        """Persist match results, replacing previous ones for this user."""
+        """Persist match results, replacing previous ones for this user.
+
+        Preserves feedback from previous runs: if a job_hash already had
+        positive feedback (thumbs_up, applied), it is carried over.
+        """
+        # Load existing positive feedback to preserve
+        prev_stmt = select(MatchResult.job_hash, MatchResult.feedback).where(
+            MatchResult.user_id == user_id,
+            MatchResult.feedback.is_not(None),
+            MatchResult.feedback.not_in(_NEGATIVE_FEEDBACK),
+        )
+        prev_rows = (await self.db.execute(prev_stmt)).all()
+        prev_feedback = {row[0]: row[1] for row in prev_rows}
+
+        # Delete all previous results
         await self.db.execute(delete(MatchResult).where(MatchResult.user_id == user_id))
 
         for r in results:
@@ -349,6 +413,7 @@ class MatchService:
                 explanation=r.get("explanation"),
                 matching_skills=r["matching_skills"],
                 missing_skills=r["missing_skills"],
+                feedback=prev_feedback.get(job.hash),
             )
             self.db.add(match)
 
