@@ -15,32 +15,30 @@ class CVParser:
     """Stateless CV text extraction. All methods are static."""
 
     SKILL_PATTERNS: list[str] = [
-        # Programming languages
-        r"\b(Python|JavaScript|TypeScript|Java|C\+\+|C#|Go|Golang|Rust|Ruby|PHP|Swift|Kotlin|Scala|R|Dart|Lua|Perl|Haskell|Elixir|Clojure)\b",
-        # Frontend
-        r"\b(React|Angular|Vue\.js|Vue|Next\.js|Nuxt\.js|Svelte|TailwindCSS|Tailwind|HTML|CSS|Sass|SCSS|Webpack|Vite)\b",
-        # Mobile
-        r"\b(React Native|Flutter|iOS|Android|SwiftUI|Jetpack Compose)\b",
-        # Backend / Frameworks
-        r"\b(Node\.js|Django|FastAPI|Flask|Spring Boot|Spring|Laravel|Express|Rails|ASP\.NET|\.NET|Nest\.js|Gin|Fiber)\b",
-        # Data / ML / AI
-        r"\b(Machine Learning|Deep Learning|Data Science|NLP|Computer Vision|TensorFlow|PyTorch|Pandas|Spark|Hadoop|Airflow|dbt|Snowflake|Databricks|Power BI|Tableau|LLM|LangChain|OpenAI)\b",
-        # Databases & Messaging
-        r"\b(SQL|PostgreSQL|MySQL|MongoDB|Redis|Elasticsearch|Oracle|SQLite|Cassandra|DynamoDB|Neo4j|Kafka|RabbitMQ)\b",
-        # Cloud & DevOps
-        r"\b(Docker|Kubernetes|AWS|Azure|GCP|Terraform|Ansible|CI/CD|Jenkins|GitHub Actions|GitLab CI|ArgoCD|Helm|Prometheus|Grafana|Datadog|Cloudflare)\b",
-        # Tools & Platforms
-        r"\b(Git|Linux|Jira|Confluence|Figma|GraphQL|REST API|gRPC|Microservices|API Gateway)\b",
-        # Swiss-relevant (enterprise & finance)
-        r"\b(SAP|ABAP|Fiori|S/4HANA|ServiceNow|Salesforce)\b",
-        # Security
-        r"\b(Cybersecurity|Penetration Testing|SIEM|OAuth|SSO)\b",
-        # Languages (natural)
-        r"\b(Deutsch|Fran[cç]ais|English|Italiano|German|French|Italian|Romansch)\b",
-        # Methodologies
-        r"\b(Scrum|Agile|Kanban|ITIL|Prince2|PMP|Lean|Six Sigma|DevOps|SRE)\b",
-        # Roles / Specialties
-        r"\b(QA|Blockchain|Product Manager|Scrum Master|Data Engineer|ML Engineer|Solution Architect)\b",
+        # Idiomas y nivel
+        r"\b(English|Spanish|Japanese|French|Russian|Bilingual|Multilingual|Native English|Native Speaker|IELTS)\b",
+        # Certificaciones educativas y lingüísticas
+        r"\b(CELTA|TEFL|TESOL|IPGCE|JLPT|Cambridge|Pearson|British Council|Google Educator|SEN)\b",
+        # Contenido, editorial y localización
+        r"\b(Content Editor|Content Writer|Copy Editor|Proofreader|Copywriter|Localisation Specialist|Localization Specialist|Linguistic Quality Assurance|LQA|MTPE|Post-editor|Post-editing|Technical Writer|Documentation Specialist|Blog Editor|Educational Content)\b",
+        # IA — evaluación de datos y anotación
+        r"\b(RLHF|AI Trainer|AI Evaluator|Content Evaluator|Data Annotator|Data Annotation|Search Quality Rater|Quality Rater|Prompt Engineer)\b",
+        # RRHH, L&D y People Operations
+        r"\b(Instructional Designer|Instructional Design|eLearning|e-learning|Learning and Development|L&D|Talent Acquisition|HR Coordinator|HR Administrator|HR Officer|Onboarding Specialist|Training Coordinator|People Operations|People Partner|Payroll|HRIS|Workday|BambooHR)\b",
+        # Administración y operaciones
+        r"\b(Virtual Assistant|Executive Assistant|Administrative Coordinator|Operations Coordinator|Project Coordinator|Office Manager|Event Coordinator|Remote Assistant)\b",
+        # Plataformas EdTech y herramientas de autoría
+        r"\b(Google Classroom|Education Perfect|Moodle|Canvas|Blackboard|Articulate Rise|Articulate Storyline|SDL Trados|CAT Tool|LMS)\b",
+        # Customer Success y relaciones con clientes
+        r"\b(Customer Success|Customer Support|Customer Experience|Client Relations|VIP Relations|Concierge|Guest Experience)\b",
+        # Herramientas de productividad y negocio
+        r"\b(Google Workspace|Microsoft Office|HubSpot|CRM|Asana|Trello|Notion|ClickUp|Zoom|Skype)\b",
+        # Hostelería y gestión hotelera
+        r"\b(Hospitality|Hotel Management|Front Office|Opera PMS|BOSS|Revenue Management|Health and Safety)\b",
+        # Organismos internacionales y ONGs
+        r"\b(United Nations|UNESCO|UNICEF|ILO|UNOG|OECD|NGO|Programme Assistant|Documentation Assistant|Language Assistant)\b",
+        # Metodologías de gestión de proyectos
+        r"\b(PMP|CAPM|Prince2|Agile|Scrum|Project Management)\b",
     ]
 
     @staticmethod

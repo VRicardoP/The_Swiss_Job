@@ -30,7 +30,7 @@ class JSearchProvider(BaseJobProvider):
             "x-rapidapi-key": api_key,
         }
         params: dict[str, str | int] = {
-            "query": query or "software developer",
+            "query": query or "content editor OR localization specialist OR proofreader OR RLHF OR virtual assistant OR HR coordinator OR instructional designer OR customer success",
             "page": 1,
             "num_pages": 3,
             "country": "ch",

@@ -10,10 +10,10 @@ const CANTONS = [
 
 const LANGUAGES = ["de", "fr", "en", "it"];
 
-const SENIORITY = ["intern", "junior", "mid", "senior", "lead", "head"];
+const SENIORITY = ["mid", "senior", "lead", "head", "director"];
 
 const CONTRACT_TYPES = [
-  "full_time", "part_time", "contract", "freelance", "temporary", "apprenticeship",
+  "full_time", "part_time", "contract", "temporary",
 ];
 
 export default function FilterPanel() {

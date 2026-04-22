@@ -174,9 +174,9 @@ export default function OnboardingPage() {
       {/* Step 1: Confirm Skills */}
       {step === 1 && (
         <div className="bg-surface shadow-card rounded-2xl p-8">
-          <h2 className="mb-2 text-lg font-medium text-text-primary">Confirm your skills</h2>
+          <h2 className="mb-2 text-lg font-medium text-text-primary">Confirm your skills & certifications</h2>
           <p className="mb-4 text-sm text-text-secondary">
-            Add or remove skills to improve your match quality.
+            Add or remove skills, languages, tools, and certifications to improve your match quality.
           </p>
           <div className="mb-3 flex flex-wrap gap-2">
             {skills.map((s) => (
@@ -202,7 +202,7 @@ export default function OnboardingPage() {
               type="text"
               value={newSkill}
               onChange={(e) => setNewSkill(e.target.value)}
-              placeholder="Add skill..."
+              placeholder="Add skill, language, tool, certification..."
               className="flex-1 rounded-xl border border-border bg-surface-secondary px-3 py-2 text-sm focus:border-swiss-red focus:outline-none"
             />
             <button

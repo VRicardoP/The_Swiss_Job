@@ -6,41 +6,76 @@ from config import settings
 from services.job_service import BaseJobProvider
 from providers.adzuna import AdzunaProvider
 from providers.arbeitnow import ArbeitnowProvider
+from providers.authenticjobs import AuthenticJobsProvider
 from providers.careerjet import CareerjetProvider
+from providers.dailyremote import DailyRemoteProvider
+from providers.euremotejobs import EURemoteJobsProvider
 from providers.himalayas import HimalayasProvider
 from providers.ictjobs import ICTJobsProvider
+from providers.impactpool import ImpactPoolProvider
 from providers.jobicy import JobicyProvider
+from providers.jobspresso import JobspressoProvider
 from providers.jooble import JoobleProvider
 from providers.jsearch import JSearchProvider
 from providers.ostjob import OstjobProvider
+from providers.proz import ProzProvider
 from providers.publicjobs import PublicJobsProvider
+from providers.reliefweb import ReliefWebProvider
+from providers.remoteco import RemoteCoProvider
 from providers.remoteok import RemoteOKProvider
 from providers.remotive import RemotiveProvider
 from providers.swisstechjobs import SwissTechJobsProvider
+from providers.translatorscafe import TranslatorsCafeProvider
 from providers.weworkremotely import WeWorkRemotelyProvider
+from providers.workingnomads import WorkingNomadsProvider
 from providers.zebis import ZebisProvider
 from providers.zentraljob import ZentraljobProvider
+from providers.globaljobs import GlobalJobsProvider
+from providers.untalent import UNTalentProvider
+from providers.undpjobs import UNDPJobsProvider
+from providers.ilojobs import ILOJobsProvider
 
 logger = logging.getLogger(__name__)
 
 # Registry: source_name → provider class
 _PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {
+    # Agregadores generales
     "adzuna": AdzunaProvider,
     "arbeitnow": ArbeitnowProvider,
     "careerjet": CareerjetProvider,
-    "himalayas": HimalayasProvider,
-    # "ictjobs": ICTJobsProvider,  # temporarily disabled
-    "jobicy": JobicyProvider,
     "jooble": JoobleProvider,
     "jsearch": JSearchProvider,
-    "ostjob": OstjobProvider,
-    "remoteok": RemoteOKProvider,
+    # Portales remote generalistas
     "remotive": RemotiveProvider,
-    # "swisstechjobs": SwissTechJobsProvider,  # temporarily disabled
     "weworkremotely": WeWorkRemotelyProvider,
-    "zebis": ZebisProvider,
+    "workingnomads": WorkingNomadsProvider,
+    "dailyremote": DailyRemoteProvider,
+    "euremotejobs": EURemoteJobsProvider,
+    "remoteco": RemoteCoProvider,
+    "jobspresso": JobspressoProvider,
+    "authenticjobs": AuthenticJobsProvider,
+    # Localización y contenido lingüístico
+    "proz": ProzProvider,
+    "translatorscafe": TranslatorsCafeProvider,
+    # Organismos internacionales y ONGs
+    # "reliefweb": ReliefWebProvider,     # API v2 requiere appname registrado en apidoc.reliefweb.int
+    # "impactpool": ImpactPoolProvider,   # Feed RSS eliminado (404)
+    # Portales suizos
+    "ostjob": OstjobProvider,
     "zentraljob": ZentraljobProvider,
     "publicjobs": PublicJobsProvider,
+    "zebis": ZebisProvider,
+    # Organismos internacionales adicionales
+    "globaljobs": GlobalJobsProvider,
+    # "untalent": UNTalentProvider,       # Requiere token de autenticación (no es pública)
+    # "undpjobs": UNDPJobsProvider,       # Feed RSS devuelve HTML, no XML
+    # "ilojobs": ILOJobsProvider,         # Feed WordPress devuelve HTML con entidades inválidas
+    # Desactivados temporalmente (tech-only, bajo valor para el perfil actual)
+    # "himalayas": HimalayasProvider,
+    # "jobicy": JobicyProvider,
+    # "remoteok": RemoteOKProvider,
+    # "ictjobs": ICTJobsProvider,
+    # "swisstechjobs": SwissTechJobsProvider,
 }
 
 # Providers that require API keys — skip instantiation if key is empty

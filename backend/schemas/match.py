@@ -77,7 +77,7 @@ class MatchFeedbackResponse(BaseModel):
 
     status: str
     job_hash: str
-    feedback: str
+    feedback: str | None
 
 
 class ImplicitFeedbackRequest(BaseModel):

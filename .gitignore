@@ -55,3 +55,8 @@ frontend/android/
 
 # Alembic
 backend/alembic/versions/*.pyc
+
+# Datos personales / CVs de usuarios (no subir al repo)
+cv.json
+cv.md
+ANALISIS_MAESTRO_EMPLEABILIDAD_*.md

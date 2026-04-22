@@ -153,10 +153,15 @@ async def get_match_results(
     request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=3000),
     offset: int = Query(0, ge=0),
+    translate: bool = Query(True),
 ):
-    """Get latest AI match results for the current user."""
+    """Get latest AI match results for the current user.
+
+    translate=false omite la traducción de títulos (útil para carga masiva
+    de categorización donde las traducciones no son necesarias).
+    """
     service = MatchService(db)
     results, total = await service.get_results(
         user_id=current_user.id,
@@ -171,7 +176,7 @@ async def get_match_results(
         else DEFAULT_WEIGHTS
     )
 
-    groq = _get_groq(request)
+    groq = _get_groq(request) if translate else None
     return await _build_results_response(results, total, weights, groq)
 
 
@@ -228,6 +233,59 @@ async def submit_feedback(
         job_hash=job_hash,
         feedback=body.feedback,
     )
+
+
+@router.delete("/{job_hash}/feedback", response_model=MatchFeedbackResponse)
+async def clear_feedback(
+    job_hash: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Elimina el feedback explícito de un resultado (deselección)."""
+    service = MatchService(db)
+    result = await service.clear_feedback(
+        user_id=current_user.id,
+        job_hash=job_hash,
+    )
+
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Match result not found for this job",
+        )
+
+    return MatchFeedbackResponse(
+        status="success",
+        job_hash=job_hash,
+        feedback=None,
+    )
+
+
+@router.get("/saved", response_model=MatchResultsResponse)
+async def get_saved_jobs(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """Devuelve los empleos marcados como 'Good' (thumbs_up o applied)."""
+    service = MatchService(db)
+    results, total = await service.get_saved_jobs(
+        user_id=current_user.id,
+        limit=limit,
+        offset=offset,
+    )
+
+    await db.refresh(current_user, ["profile"])
+    weights = (
+        current_user.profile.score_weights
+        if current_user.profile and current_user.profile.score_weights
+        else DEFAULT_WEIGHTS
+    )
+
+    groq = _get_groq(request)
+    return await _build_results_response(results, total, weights, groq)
 
 
 @router.post("/{job_hash}/implicit", response_model=ImplicitFeedbackResponse)

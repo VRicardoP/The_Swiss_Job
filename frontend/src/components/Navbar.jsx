@@ -28,6 +28,12 @@ export default function Navbar() {
                 Matches
               </Link>
               <Link
+                to="/saved"
+                className="text-sm text-text-secondary hover:text-swiss-red transition-colors duration-200"
+              >
+                Saved
+              </Link>
+              <Link
                 to="/pipeline"
                 className="text-sm text-text-secondary hover:text-swiss-red transition-colors duration-200"
               >

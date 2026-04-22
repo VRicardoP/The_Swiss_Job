@@ -243,6 +243,7 @@ export const matchApi = {
     const qs = new URLSearchParams();
     if (params.limit) qs.set("limit", params.limit);
     if (params.offset !== undefined) qs.set("offset", params.offset);
+    if (params.translate === false) qs.set("translate", "false");
     const query = qs.toString();
     return authRequest(`/match/results${query ? `?${query}` : ""}`);
   },
@@ -269,5 +270,17 @@ export const matchApi = {
       method: "POST",
       body: JSON.stringify(body),
     });
+  },
+
+  clearFeedback(jobHash) {
+    return authRequest(`/match/${jobHash}/feedback`, { method: "DELETE" });
+  },
+
+  getSaved(params = {}) {
+    const qs = new URLSearchParams();
+    if (params.limit) qs.set("limit", params.limit);
+    if (params.offset !== undefined) qs.set("offset", params.offset);
+    const query = qs.toString();
+    return authRequest(`/match/saved${query ? `?${query}` : ""}`);
   },
 };

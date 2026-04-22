@@ -9,12 +9,32 @@ import numpy as np
 from config import settings
 
 # Default scoring weights (user can customize via profile.score_weights)
+# Language factor added: rewards jobs whose required language matches user profile.
 DEFAULT_WEIGHTS = {
     "embedding": 0.35,
-    "salary": 0.25,
-    "location": 0.15,
+    "salary": 0.15,
+    "location": 0.10,
     "recency": 0.15,
-    "llm": 0.10,
+    "llm": 0.15,
+    "language": 0.10,
+}
+
+# Maps ISO 639-1 language codes → lowercase name variants used in user profiles
+_LANGUAGE_CODE_MAP: dict[str, set[str]] = {
+    "en": {"english", "inglés", "ingles"},
+    "es": {"spanish", "español", "espanol"},
+    "de": {"german", "deutsch", "alemán", "aleman"},
+    "fr": {"french", "français", "francais", "francés", "frances"},
+    "it": {"italian", "italiano"},
+    "ja": {"japanese", "japonés", "japones"},
+    "pt": {"portuguese", "português", "portugues"},
+    "nl": {"dutch", "nederlands"},
+    "zh": {"chinese", "mandarin"},
+    "ru": {"russian", "ruso"},
+    "ar": {"arabic", "árabe"},
+    "ko": {"korean", "coreano"},
+    "pl": {"polish", "polaco"},
+    "sv": {"swedish", "sueco"},
 }
 
 
@@ -129,6 +149,25 @@ class JobMatcher:
             return 0.3
         return 0.1
 
+    @staticmethod
+    def compute_language_match(
+        user_languages: list[str], job_language: str | None
+    ) -> float:
+        """Score language match [0, 1].
+
+        1.0 = job language matches at least one user profile language.
+        0.5 = job language unknown (neutral, no penalty).
+        0.2 = job language not in user profile.
+        """
+        if not job_language:
+            return 0.5  # Unknown — neutral
+        code = job_language.lower().strip()
+        name_variants = _LANGUAGE_CODE_MAP.get(code, {code})
+        user_langs_lower = {lang.lower() for lang in user_languages}
+        if name_variants & user_langs_lower:
+            return 1.0
+        return 0.2
+
     def compute_final_score(
         self,
         embedding_score: float,
@@ -136,15 +175,17 @@ class JobMatcher:
         location_score: float,
         recency_score: float,
         llm_score: float = 0.0,
+        language_score: float = 0.5,
         weights: dict | None = None,
     ) -> float:
         """Compute weighted final score [0, 100]."""
         w = weights or DEFAULT_WEIGHTS
         raw = (
-            w.get("embedding", 0.4) * embedding_score
-            + w.get("salary", 0.2) * salary_score
-            + w.get("location", 0.15) * location_score
+            w.get("embedding", 0.35) * embedding_score
+            + w.get("salary", 0.15) * salary_score
+            + w.get("location", 0.10) * location_score
             + w.get("recency", 0.15) * recency_score
-            + w.get("llm", 0.1) * (llm_score / 100.0 if llm_score > 1 else llm_score)
+            + w.get("llm", 0.15) * (llm_score / 100.0 if llm_score > 1 else llm_score)
+            + w.get("language", 0.10) * language_score
         )
         return round(raw * 100, 1)

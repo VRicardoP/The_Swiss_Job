@@ -64,10 +64,18 @@ def setup_schedules() -> None:
         replace_existing=True,
     )
 
+    # Limpieza de ofertas caducadas: diario a las 03:30 CET (antes del dedup de las 04:00)
+    scheduler.add_job(
+        _dispatch_cleanup_stale,
+        CronTrigger(hour=3, minute=30, timezone="Europe/Zurich"),
+        id="cleanup_stale_jobs",
+        replace_existing=True,
+    )
+
     logger.info(
         "Scheduler configured: fetch every %d min, scrapers every %d h, "
         "dedup daily 04:00, URL check weekly Sun 03:00, "
-        "saved searches every %d min",
+        "saved searches every %d min, cleanup stale jobs daily 03:30",
         settings.SCHEDULER_FETCH_INTERVAL_MINUTES,
         settings.SCHEDULER_SCRAPER_INTERVAL_HOURS,
         settings.SCHEDULER_SEARCH_INTERVAL_MINUTES,
@@ -97,3 +105,8 @@ def _dispatch_saved_searches() -> None:
 def _dispatch_fetch_scrapers() -> None:
     celery_app.send_task("tasks.scraping.fetch_scrapers")
     logger.debug("Dispatched tasks.scraping.fetch_scrapers")
+
+
+def _dispatch_cleanup_stale() -> None:
+    celery_app.send_task("tasks.cleanup_stale_jobs")
+    logger.debug("Dispatched tasks.cleanup_stale_jobs")

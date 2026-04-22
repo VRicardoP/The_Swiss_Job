@@ -49,7 +49,7 @@ function formatSalary(min, max) {
   return `bis ${fmt(max)} CHF`;
 }
 
-function MatchCard({ match, onFeedback, onImplicit }) {
+function MatchCard({ match, onFeedback, onClearFeedback, onImplicit }) {
   const sourceColor =
     SOURCE_COLORS[match.job_source] || "bg-gray-100 text-gray-700";
   const salary = formatSalary(match.job_salary_min, match.job_salary_max);
@@ -189,23 +189,20 @@ function MatchCard({ match, onFeedback, onImplicit }) {
       <div className="mt-3 flex items-center gap-2 border-t border-border-light pt-3">
         <button
           type="button"
-          onClick={() => handleFeedback("thumbs_up")}
+          onClick={() =>
+            match.feedback === "thumbs_up"
+              ? onClearFeedback?.({ jobHash: match.job_hash })
+              : handleFeedback("thumbs_up")
+          }
+          title={match.feedback === "thumbs_up" ? "Desmarcar" : "Guardar oferta"}
           className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
             match.feedback === "thumbs_up"
-              ? "bg-success-light text-success"
+              ? "bg-success-light text-success ring-1 ring-success/30"
               : "bg-surface-secondary text-text-tertiary hover:scale-105"
           }`}
         >
-          <svg
-            className="h-4 w-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5"
             />
           </svg>
@@ -213,23 +210,20 @@ function MatchCard({ match, onFeedback, onImplicit }) {
         </button>
         <button
           type="button"
-          onClick={() => handleFeedback("thumbs_down")}
+          onClick={() =>
+            match.feedback === "thumbs_down"
+              ? onClearFeedback?.({ jobHash: match.job_hash })
+              : handleFeedback("thumbs_down")
+          }
+          title={match.feedback === "thumbs_down" ? "Desmarcar" : "No me interesa"}
           className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
             match.feedback === "thumbs_down"
-              ? "bg-error-light text-error"
+              ? "bg-error-light text-error ring-1 ring-error/30"
               : "bg-surface-secondary text-text-tertiary hover:scale-105"
           }`}
         >
-          <svg
-            className="h-4 w-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018c.163 0 .326.02.485.06L17 4m-7 10v2a3 3 0 003 3h.095c.5 0 .905-.405.905-.905 0-.714.211-1.412.608-2.006L17 13V4m-7 10h2m5-6h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5"
             />
           </svg>

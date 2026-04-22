@@ -165,6 +165,61 @@ class MatchService:
         await self.db.refresh(match)
         return match
 
+    async def clear_feedback(
+        self,
+        user_id: uuid.UUID,
+        job_hash: str,
+    ) -> MatchResult | None:
+        """Elimina el feedback explícito de un resultado (lo pone a None)."""
+        stmt = select(MatchResult).where(
+            MatchResult.user_id == user_id,
+            MatchResult.job_hash == job_hash,
+        )
+        result = await self.db.execute(stmt)
+        match = result.scalar_one_or_none()
+
+        if match is None:
+            return None
+
+        match.feedback = None
+        await self.db.commit()
+        await self.db.refresh(match)
+        return match
+
+    async def get_saved_jobs(
+        self,
+        user_id: uuid.UUID,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        """Devuelve los empleos marcados como thumbs_up o applied."""
+        _POSITIVE_FEEDBACK = ("thumbs_up", "applied")
+
+        count_stmt = (
+            select(func.count())
+            .select_from(MatchResult)
+            .where(
+                MatchResult.user_id == user_id,
+                MatchResult.feedback.in_(_POSITIVE_FEEDBACK),
+            )
+        )
+        total = (await self.db.execute(count_stmt)).scalar_one()
+
+        stmt = (
+            select(MatchResult, Job)
+            .join(Job, MatchResult.job_hash == Job.hash)
+            .where(
+                MatchResult.user_id == user_id,
+                MatchResult.feedback.in_(_POSITIVE_FEEDBACK),
+            )
+            .order_by(MatchResult.score_final.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = (await self.db.execute(stmt)).all()
+        results = [{"match": match, "job": job} for match, job in rows]
+        return results, total
+
     async def record_implicit_feedback(
         self,
         user_id: uuid.UUID,
@@ -268,6 +323,9 @@ class MatchService:
             location_score = JobMatcher.compute_location_match(
                 profile.locations or [], job.location
             )
+            language_score = JobMatcher.compute_language_match(
+                profile.languages or [], job.language
+            )
             first_seen = job.first_seen_at
             if first_seen.tzinfo is None:
                 first_seen = first_seen.replace(tzinfo=timezone.utc)
@@ -280,6 +338,7 @@ class MatchService:
                 location_score=location_score,
                 recency_score=rec_score,
                 llm_score=0.0,
+                language_score=language_score,
                 weights=weights,
             )
 
@@ -295,6 +354,7 @@ class MatchService:
                     "score_location": round(location_score, 4),
                     "score_recency": round(rec_score, 4),
                     "score_llm": 0.0,
+                    "score_language": round(language_score, 4),
                     "score_final": final,
                     "matching_skills": matching,
                     "missing_skills": missing,
@@ -335,6 +395,8 @@ class MatchService:
                     "tags": job.tags or [],
                     "location": job.location or "",
                     "remote": job.remote or False,
+                    "language": job.language or "",
+                    "contract_type": job.contract_type.value if job.contract_type else "",
                 }
             )
 
@@ -370,6 +432,7 @@ class MatchService:
                     location_score=r["score_location"],
                     recency_score=r["score_recency"],
                     llm_score=r["score_llm"],
+                    language_score=r.get("score_language", 0.5),
                     weights=weights,
                 )
 

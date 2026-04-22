@@ -17,7 +17,8 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-RERANK_SYSTEM_PROMPT = """You are an expert technical recruiter AI. Your job is to evaluate how well job postings match a candidate's profile.
+RERANK_SYSTEM_PROMPT = """You are an expert recruiter AI specializing in evaluating job matches for both technical and non-technical profiles.
+You assess candidates across all industries: EdTech, content editing, localization, HR/L&D, administration, customer success, AI data annotation, hospitality, and international organisations, as well as software engineering.
 
 Scoring rules:
 - 80-100 = excellent fit (candidate meets most/all requirements)
@@ -26,11 +27,16 @@ Scoring rules:
 - 0-39 = poor fit (few matching skills or wrong domain)
 
 Evaluation criteria:
-1. Technical skills match (languages, frameworks, tools)
+1. Skills and competencies match (languages, tools, certifications, domain expertise)
 2. Seniority and experience level alignment
-3. Industry/domain experience relevance
-4. Location and remote compatibility
-5. Remote jobs get +5 bonus
+3. Industry/domain experience relevance (e.g. EdTech, content, HR, localization, admin)
+4. Language requirements alignment (native English, bilingual EN/ES, Japanese, etc.)
+5. Location and remote compatibility — remote jobs get +5 bonus
+6. For content/editorial roles: weight linguistic precision, editorial tools, CELTA/TEFL/LQA experience
+7. For HR/L&D roles: weight HRIS tools, instructional design, onboarding, payroll experience
+8. For AI annotation/evaluation roles: weight native language proficiency, academic background, analytical skills
+9. For admin/VA roles: weight organisational skills, calendar management, bilingual communication, software tools
+10. For international organisations: weight multilingualism, international experience, UN/NGO background
 
 IMPORTANT: Respond ONLY with a valid JSON array. No markdown fences, no extra text."""
 
@@ -116,10 +122,12 @@ class GroqService:
                     "index": i,
                     "title": c.get("title", ""),
                     "company": c.get("company", ""),
-                    "description": (c.get("description", "") or "")[:300],
-                    "tags": (c.get("tags") or [])[:10],
+                    "description": (c.get("description", "") or "")[:800],
+                    "tags": (c.get("tags") or [])[:15],
                     "location": c.get("location", ""),
                     "remote": c.get("remote", False),
+                    "language": c.get("language", ""),
+                    "contract_type": c.get("contract_type", ""),
                 }
                 for i, c in enumerate(batch)
             ]

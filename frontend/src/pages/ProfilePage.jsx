@@ -171,7 +171,7 @@ export default function ProfilePage() {
           type="text"
           value={form.title}
           onChange={(e) => handleChange("title", e.target.value)}
-          placeholder="e.g. Senior Backend Developer"
+          placeholder="e.g. Content Editor, HR Coordinator, AI Evaluator"
           className="w-full rounded-xl border border-border bg-surface-secondary px-3 py-2 focus:border-swiss-red focus:ring-2 focus:ring-swiss-red/20 focus:outline-none"
         />
       </section>
@@ -179,7 +179,7 @@ export default function ProfilePage() {
       {/* Skills */}
       <section className="bg-surface shadow-card rounded-xl p-6 mb-6">
         <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-text-tertiary">
-          Skills
+          Skills, Languages & Certifications
         </label>
         <div className="mb-2 flex flex-wrap gap-2">
           {form.skills.map((s) => (
@@ -191,7 +191,7 @@ export default function ProfilePage() {
             type="text"
             value={newSkill}
             onChange={(e) => setNewSkill(e.target.value)}
-            placeholder="Add skill..."
+            placeholder="Add skill, language, tool, certification..."
             className="flex-1 rounded-xl border border-border bg-surface-secondary px-3 py-2 focus:border-swiss-red focus:ring-2 focus:ring-swiss-red/20 focus:outline-none"
           />
           <button

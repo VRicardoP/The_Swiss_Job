@@ -50,7 +50,7 @@ class ProfileUpdate(BaseModel):
     def validate_weights(cls, v):
         if v is None:
             return v
-        valid_keys = {"embedding", "salary", "location", "recency", "llm"}
+        valid_keys = {"embedding", "salary", "location", "recency", "llm", "language"}
         if not set(v.keys()).issubset(valid_keys):
             raise ValueError(f"Invalid weight keys. Allowed: {valid_keys}")
         if any(not (0 <= val <= 1) for val in v.values()):

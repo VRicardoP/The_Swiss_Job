@@ -9,10 +9,21 @@ export function useAnalyze() {
   });
 }
 
+// Carga masiva sin traducciones — solo para categorizar y contar.
 export function useMatchResults(limit = 20, offset = 0) {
   return useQuery({
     queryKey: ["match-results", { limit, offset }],
-    queryFn: () => matchApi.getResults({ limit, offset }),
+    queryFn: () => matchApi.getResults({ limit, offset, translate: false }),
+  });
+}
+
+// Carga de una página de resultados con traducciones — para mostrar las tarjetas.
+export function useMatchResultsPage(limit = 100, offset = 0, enabled = true) {
+  return useQuery({
+    queryKey: ["match-results-page", { limit, offset }],
+    queryFn: () => matchApi.getResults({ limit, offset, translate: true }),
+    enabled,
+    staleTime: 5 * 60 * 1000, // 5 min — las traducciones no cambian frecuentemente
   });
 }
 
@@ -36,5 +47,23 @@ export function useSubmitImplicit() {
   return useMutation({
     mutationFn: ({ jobHash, action, durationMs }) =>
       matchApi.submitImplicit(jobHash, action, durationMs),
+  });
+}
+
+export function useClearFeedback() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobHash }) => matchApi.clearFeedback(jobHash),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["match-results"] });
+      qc.invalidateQueries({ queryKey: ["saved-jobs"] });
+    },
+  });
+}
+
+export function useSavedJobs(limit = 100, offset = 0) {
+  return useQuery({
+    queryKey: ["saved-jobs", { limit, offset }],
+    queryFn: () => matchApi.getSaved({ limit, offset }),
   });
 }
