@@ -34,8 +34,11 @@ docker-compose.override.yml
 *.swo
 *~
 
-# Claude Code
+# Claude Code y herramientas IA (configuración local, no compartir)
 .claude/
+.ai/
+.zencoder/
+.zenflow/
 
 # OS
 .DS_Store
