@@ -22,7 +22,7 @@ from schemas.match import (
 from services.groq_service import GroqService
 from services.job_matcher import DEFAULT_WEIGHTS
 from services.match_service import MatchService
-from services.translation_service import SKIP_LANGUAGES, TranslationService
+from services.translation_service import TranslationService
 
 logger = logging.getLogger(__name__)
 
@@ -97,18 +97,15 @@ async def _build_results_response(
         job = item["job"]
 
         original_title = job.title or ""
-        lang = (job.language or "").lower()
         translated = translations.get(original_title)
-        # Only set job_title_en when translation actually differs from original
-        is_translated = (
-            translated
-            and translated != original_title
-            and lang not in SKIP_LANGUAGES
-        )
+        # Mostrar traducción si el LLM produjo algo diferente al original
+        # No usar job.language para bloquear: puede ser erróneo (langdetect falla en
+        # títulos cortos o mixtos alemán-inglés → job.language = "en" incorrecto)
+        is_translated = bool(translated and translated.strip() != original_title.strip())
         job_title_en = translated if is_translated else None
-        # Detect language for indicator when DB field is empty
+        # Detectar idioma para el indicador de idioma en la UI
         job_language = job.language
-        if is_translated and not job_language:
+        if not job_language and original_title:
             job_language = TranslationService._detect_language(original_title) or None
 
         data.append(
@@ -138,6 +135,7 @@ async def _build_results_response(
                 job_salary_max=job.salary_max_chf,
                 job_tags=job.tags or [],
                 job_source=job.source,
+                job_category=job.category,
             )
         )
 

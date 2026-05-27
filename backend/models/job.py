@@ -72,6 +72,9 @@ class Job(Base):
     )
     url_last_check: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Categoría del análisis maestro (A–M o "otros"), asignada en DataNormalizer
+    category: Mapped[str | None] = mapped_column(String(10), index=True)
+
     # Deduplication
     fuzzy_hash: Mapped[str | None] = mapped_column(String(32), index=True)
     duplicate_of: Mapped[str | None] = mapped_column(String(32))

@@ -231,6 +231,51 @@ export const documentsApi = {
   },
 };
 
+export const analyticsApi = {
+  analyze(params = {}) {
+    return authRequest('/analytics/analyze', {
+      method: 'POST',
+      body: JSON.stringify({ min_rejected: params.min_rejected ?? 2 }),
+    })
+  },
+
+  listSuggestions(statusFilter = 'pending') {
+    return authRequest(`/analytics/suggestions?status_filter=${statusFilter}`)
+  },
+
+  reviewSuggestion(id, action) {
+    return authRequest(`/analytics/suggestions/${id}/review`, {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    })
+  },
+
+  listFilters() {
+    return authRequest('/analytics/filters')
+  },
+
+  createFilter(data) {
+    return authRequest('/analytics/filters', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+
+  async deleteFilter(id) {
+    const res = await fetch(`${BASE}/analytics/filters/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      const err = new Error(body.detail || res.statusText)
+      err.status = res.status
+      throw err
+    }
+    // 204 No Content — sin body
+  },
+}
+
 export const matchApi = {
   analyze() {
     return authRequest("/match/analyze", {

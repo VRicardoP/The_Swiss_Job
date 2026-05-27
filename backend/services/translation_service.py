@@ -2,6 +2,13 @@
 
 Uses llama-3.1-8b-instant (fast model) for translating DE/FR/IT job titles
 to English. Results are cached per-title in Redis with 30-day TTL.
+
+Mejoras v2:
+- Detección de idioma mejorada: heurística por caracteres especiales antes de langdetect.
+- Retry automático en fallo de parsing JSON (prompt simplificado).
+- max_tokens aumentado a 2048 para batches de 25 títulos largos.
+- Prompt ampliado con ejemplos de compound words alemanes y marcadores suizos.
+- Log de fallos de traducción para detectar patrones de degradación.
 """
 
 import hashlib
@@ -20,7 +27,12 @@ logger = logging.getLogger(__name__)
 SKIP_LANGUAGES = frozenset({"en", "es"})
 
 CACHE_PREFIX = "translate:title:"
-CACHE_TTL_SECONDS = 30 * 86_400  # 30 days
+CACHE_TTL_SECONDS = 30 * 86_400  # 30 días
+
+# Caracteres característicos de idiomas no-inglés frecuentes en ofertas suizas
+_GERMAN_CHARS = frozenset("äöüÄÖÜß")
+_FRENCH_CHARS = frozenset("éèêëàâîïùûçœæÉÈÊÀÂÎÙÛÇ")
+_ITALIAN_CHARS = frozenset("àèéìíîòóùúÀÈÉÌÍÎÒÓÙÚ")
 
 TRANSLATION_SYSTEM_PROMPT = """\
 You are a professional translator specializing in Swiss job market titles.
@@ -29,17 +41,41 @@ Translate the following job titles to English.
 RULES:
 1. Translate ONLY the job title text — no explanations, no commentary.
 2. Keep proper nouns, brand names, and technical acronyms unchanged \
-(e.g. "KV", "ICT", "SAP", "ERP").
+(e.g. "KV", "ICT", "SAP", "ERP", "HR", "CTO", "CEO").
 3. Preserve percentage ranges like "80-100%" as-is.
-4. If the title is already in English, return it unchanged.
-5. Return ONLY a JSON object mapping the index to its English translation.
+4. Preserve gender markers like "(m/w/d)", "(m/f/d)", "m/w" as-is.
+5. If the title is already in English, return it unchanged.
+6. For German compound words, split and translate meaningfully: \
+"Sachbearbeiter" → "Clerk/Administrator", \
+"Fachbereichsleiter" → "Department Head", \
+"Projektleiter" → "Project Manager", \
+"Softwareentwickler" → "Software Developer", \
+"Systemadministrator" → "System Administrator", \
+"Buchhalter" → "Accountant", \
+"Pflegefachperson" → "Registered Nurse", \
+"Lehrperson" → "Teacher", \
+"Kauffrau/Kaufmann" → "Commercial Employee".
+7. Return ONLY a JSON object mapping the index (as string) to its English translation.
 
-Example input: {"0": "Sachbearbeiter/in Finanzbuchhaltung 80-100%", \
-"1": "Développeur Full Stack Senior"}
-Example output: {"0": "Financial Accounting Clerk 80-100%", \
-"1": "Senior Full Stack Developer"}
+Example input:
+{"0": "Sachbearbeiter/in Finanzbuchhaltung 80-100%", \
+"1": "Développeur Full Stack Senior", \
+"2": "Fachbereichsleiter Informatik (m/w/d)", \
+"3": "Software Engineer"}
+Example output:
+{"0": "Financial Accounting Clerk 80-100%", \
+"1": "Senior Full Stack Developer", \
+"2": "IT Department Head (m/w/d)", \
+"3": "Software Engineer"}
 
-Respond with ONLY the JSON object. No markdown fences."""
+Respond with ONLY the JSON object. No markdown fences. No extra text."""
+
+# Prompt simplificado para el retry (menos instrucciones = menos confusión para el LLM)
+_RETRY_SYSTEM_PROMPT = """\
+Translate these Swiss job titles to English.
+Return ONLY a JSON object: {"0": "translation", "1": "translation", ...}
+Keep brand names, acronyms, and percentage ranges unchanged.
+No markdown, no explanation."""
 
 
 class TranslationService:
@@ -59,24 +95,29 @@ class TranslationService:
 
         Returns:
             Dict mapping original title -> English translation.
-            Titles in EN/ES or that fail translation are returned as-is.
+            Titles confirmadas como EN/ES (por heurística de caracteres + langdetect)
+            se devuelven tal cual. El resto se intentan traducir — el LLM devuelve
+            el título sin cambios si ya está en inglés.
         """
         result: dict[str, str] = {}
         to_translate: list[str] = []
 
         if not self._groq.is_available:
+            logger.debug("Groq no disponible — devolviendo títulos originales")
             return {item["title"]: item["title"] for item in titles_with_lang}
 
-        # Check cache and filter titles needing translation
         for item in titles_with_lang:
             title = item["title"]
-            lang = (item.get("language") or "").lower()
+            if not title:
+                result[title] = title
+                continue
 
-            # Detect language from title text when DB field is empty
-            if not lang and title:
-                lang = self._detect_language(title)
+            # Determinar idioma real: la heurística de caracteres tiene prioridad
+            # sobre el campo language de BD (puede ser erróneo para títulos cortos).
+            lang = self._resolve_language(title, item.get("language") or "")
 
-            if not title or lang in SKIP_LANGUAGES:
+            # Solo omitir traducción si estamos seguros de que es inglés/español
+            if lang in SKIP_LANGUAGES:
                 result[title] = title
                 continue
 
@@ -90,33 +131,62 @@ class TranslationService:
             return result
 
         # Batch LLM calls (25 titles per request)
+        failed_titles: list[str] = []
         for i in range(0, len(to_translate), 25):
             batch = to_translate[i : i + 25]
             translations = await self._translate_batch(batch)
             for title in batch:
-                translated = translations.get(title, title)
-                result[title] = translated
-                await self._set_cached(title, translated)
+                translated = translations.get(title)
+                if translated is None:
+                    # Primer intento fallido — acumular para retry
+                    failed_titles.append(title)
+                else:
+                    result[title] = translated
+                    await self._set_cached(title, translated)
+
+        # Retry con prompt simplificado para los que fallaron
+        if failed_titles:
+            logger.warning(
+                "Retry de traducción para %d títulos tras fallo de parsing",
+                len(failed_titles),
+            )
+            for i in range(0, len(failed_titles), 25):
+                batch = failed_titles[i : i + 25]
+                translations = await self._translate_batch(batch, retry=True)
+                for title in batch:
+                    translated = translations.get(title, title)
+                    result[title] = translated
+                    if translated != title:
+                        await self._set_cached(title, translated)
 
         return result
 
-    async def _translate_batch(self, titles: list[str]) -> dict[str, str]:
-        """Send a single Groq request to translate a batch of titles."""
+    async def _translate_batch(
+        self, titles: list[str], *, retry: bool = False
+    ) -> dict[str, str]:
+        """Send a single Groq request to translate a batch of titles.
+
+        Returns dict mapping original_title → translated (only successfully parsed ones).
+        On failure devuelve dict vacío (no title → title fallback aquí).
+        """
         index_to_title = {str(i): t for i, t in enumerate(titles)}
         user_prompt = json.dumps(index_to_title, ensure_ascii=False)
+        system_prompt = _RETRY_SYSTEM_PROMPT if retry else TRANSLATION_SYSTEM_PROMPT
 
         try:
             response = await self._groq.get_chat_response(
                 user_message=user_prompt,
-                system_prompt=TRANSLATION_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 model=settings.GROQ_RERANK_MODEL,
-                temperature=0.1,
-                max_tokens=1024,
+                temperature=0.05,
+                max_tokens=2048,
             )
-            return self._parse_response(response, index_to_title)
+            parsed = self._parse_response(response, index_to_title)
+            # Validar que el resultado tiene sentido (no devuelve None ni vacío)
+            return {t: v for t, v in parsed.items() if v and v.strip()}
         except Exception:
-            logger.exception("Translation batch failed, returning originals")
-            return {t: t for t in titles}
+            logger.exception("Translation batch failed (retry=%s)", retry)
+            return {}
 
     @staticmethod
     def _parse_response(
@@ -125,37 +195,86 @@ class TranslationService:
     ) -> dict[str, str]:
         """Parse LLM JSON response back to original_title -> translated."""
         text = raw.strip()
-        # Strip markdown fences if present
+        # Eliminar markdown fences si los hay
         if text.startswith("```"):
             lines = text.split("\n")
             text = "\n".join(lines[1:])
             if text.endswith("```"):
                 text = text[:-3].strip()
 
+        # Intentar extraer JSON aunque haya texto antes/después
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start != -1 and end > start:
+            text = text[start:end]
+
         try:
             translated_map = json.loads(text)
         except json.JSONDecodeError:
             logger.warning("Failed to parse translation JSON: %.200s", text)
-            return {t: t for t in index_to_title.values()}
+            return {}
 
         result: dict[str, str] = {}
         for idx, original in index_to_title.items():
-            result[original] = translated_map.get(idx, original)
+            translated = translated_map.get(idx)
+            if translated:
+                result[original] = str(translated).strip()
         return result
 
-    @staticmethod
-    def _detect_language(text: str) -> str:
-        """Detect language of a short text using langdetect.
+    @classmethod
+    def _resolve_language(cls, title: str, db_lang: str) -> str:
+        """Determina el idioma real de un título, corrigiendo errores del campo BD.
 
-        Returns 2-letter language code or empty string on failure.
+        Estrategia:
+        1. Si hay caracteres especiales DE/FR/IT en el título → ese idioma (fiable 100%).
+        2. Si el título tiene tokens largos (compound words alemanas) → "de".
+        3. Si la BD dice "en"/"es" pero no hay evidencia → desconfiamos y devolvemos "".
+           Esto fuerza que el título se envíe al LLM (que lo devuelve igual si es inglés).
+        4. Si langdetect tiene alta confianza (≥0.65) → usamos ese resultado.
         """
+        chars = set(title)
+
+        # Regla 1: caracteres especiales inequívocos
+        if chars & _GERMAN_CHARS:
+            return "de"
+        if chars & _FRENCH_CHARS:
+            return "fr"
+        if chars & _ITALIAN_CHARS:
+            return "it"
+
+        # Regla 2: tokens muy largos → probable alemán (Erfahrene, Softwarefirma…)
+        # Asterisco y slash son marcadores de género suizos — eliminar antes de medir
+        clean_words = title.replace("*", "").replace("/", " ").split()
+        if any(len(w) > 12 for w in clean_words):
+            return "de"
+
+        # Regla 3: si la BD dice EN pero no hay evidencia → no confiar, tratar como desconocido
+        # El LLM devuelve el título sin cambios si ya está en inglés → seguro enviar
+        normalized_db = db_lang.lower()
+        if normalized_db in SKIP_LANGUAGES:
+            # Doble comprobación con langdetect de alta confianza
+            try:
+                results = detect_langs(title)
+                if results and results[0].lang in SKIP_LANGUAGES and results[0].prob >= 0.70:
+                    return results[0].lang
+            except LangDetectException:
+                pass
+            # Sin evidencia suficiente de inglés → dejar que el LLM decida
+            return ""
+
+        # Regla 4: langdetect con confianza moderada para idiomas no-EN
         try:
-            results = detect_langs(text)
-            if results and results[0].prob >= 0.5:
+            results = detect_langs(title)
+            if results and results[0].prob >= 0.35:
                 return results[0].lang
         except LangDetectException:
             pass
         return ""
+
+    @classmethod
+    def _detect_language(cls, text: str) -> str:
+        """Detecta idioma de un texto corto. Wrapper para compatibilidad externa."""
+        return cls._resolve_language(text, "")
 
     # --- Redis cache helpers ---
 

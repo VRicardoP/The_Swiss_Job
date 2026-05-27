@@ -11,6 +11,7 @@ from models.enums import (
 from models.generated_document import GeneratedDocument
 from models.job import Job
 from models.job_application import JobApplication
+from models.job_filter import JobFilter, PatternSuggestion
 from models.match_result import MatchResult
 from models.notification import Notification
 from models.saved_search import SavedSearch
@@ -24,10 +25,12 @@ __all__ = [
     "GeneratedDocument",
     "Job",
     "JobApplication",
+    "JobFilter",
     "MatchFeedback",
     "MatchResult",
     "Notification",
     "NotifyFrequency",
+    "PatternSuggestion",
     "RemotePreference",
     "SalaryPeriod",
     "SavedSearch",

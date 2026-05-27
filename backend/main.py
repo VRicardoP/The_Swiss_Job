@@ -12,6 +12,7 @@ from core.rate_limit import limiter
 from providers import log_provider_status
 from services.scheduler import scheduler, setup_schedules
 from services.sse_manager import SSEManager
+from routers.analytics import router as analytics_router
 from routers.applications import router as applications_router
 from routers.auth import router as auth_router
 from routers.documents import router as documents_router
@@ -72,6 +73,7 @@ app.add_middleware(
 )
 
 # Routers
+app.include_router(analytics_router)
 app.include_router(applications_router)
 app.include_router(auth_router)
 app.include_router(documents_router)

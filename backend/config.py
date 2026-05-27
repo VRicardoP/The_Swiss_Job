@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # Groq LLM
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
-    GROQ_RERANK_MODEL: str = "llama-3.1-8b-instant"
+    GROQ_RERANK_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
     GROQ_RERANK_BATCH_SIZE: int = 10
     GROQ_RERANK_TEMPERATURE: float = 0.2
     GROQ_RERANK_MAX_TOKENS: int = 2048

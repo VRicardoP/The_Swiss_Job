@@ -12,14 +12,18 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import cast, delete, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from sqlalchemy.dialects.postgresql import JSONB
 
 from config import settings
 from models.job import Job
+from models.job_filter import JobFilter
 from models.match_result import MatchResult
 from models.user_profile import UserProfile
 from services.groq_service import GroqService
+from services.job_classifier import CATEGORY_MULTIPLIERS
 from services.job_matcher import DEFAULT_WEIGHTS, JobMatcher
 
 logger = logging.getLogger(__name__)
@@ -58,9 +62,12 @@ class MatchService:
         # Load dismissed job hashes so they don't reappear
         excluded_hashes = await self._get_excluded_hashes(user_id)
 
+        # Load user-approved exclusion filters
+        active_filters = await self._get_active_filters(user_id)
+
         # Stage 1: fetch ALL active jobs with embeddings, ordered by cosine similarity
         candidates = await self._stage1_vector_search(
-            profile.cv_embedding, excluded_hashes
+            profile.cv_embedding, excluded_hashes, active_filters
         )
 
         if not candidates:
@@ -273,13 +280,32 @@ class MatchService:
         result = await self.db.execute(stmt)
         return {row[0] for row in result.all()}
 
+    async def _get_active_filters(
+        self, user_id: uuid.UUID
+    ) -> list[dict]:
+        """Carga los filtros de exclusión activos del usuario."""
+        stmt = select(JobFilter).where(
+            JobFilter.user_id == user_id,
+            JobFilter.is_active.is_(True),
+        )
+        result = await self.db.execute(stmt)
+        return [
+            {"type": f.filter_type, "pattern": f.pattern}
+            for f in result.scalars().all()
+        ]
+
     async def _stage1_vector_search(
-        self, profile_embedding: list, excluded_hashes: set[str] | None = None
+        self,
+        profile_embedding: list,
+        excluded_hashes: set[str] | None = None,
+        active_filters: list[dict] | None = None,
     ) -> list[Job]:
         """Fetch ALL active jobs with embeddings, ordered by cosine similarity.
 
-        Jobs with hashes in excluded_hashes are skipped (previously dismissed).
+        Excluye jobs con feedback negativo y aplica filtros aprobados por el usuario.
         """
+        import json
+
         conditions = [
             Job.is_active.is_(True),
             Job.duplicate_of.is_(None),
@@ -288,6 +314,20 @@ class MatchService:
         ]
         if excluded_hashes:
             conditions.append(Job.hash.not_in(excluded_hashes))
+
+        # Aplicar filtros de título (ILIKE) y de tags (JSONB @> operator)
+        for f in (active_filters or []):
+            if f["type"] == "title_contains":
+                # Escapa wildcards de ILIKE para tratar el patrón como literal
+                safe = f["pattern"].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                conditions.append(~Job.title.ilike(f"%{safe}%", escape="\\"))
+            elif f["type"] == "tag_contains":
+                # tag IS NULL (sin tags) → incluir; tags no contiene el patrón → incluir
+                # NOT (NULL @> ...) = NULL que en WHERE equivale a FALSE → excluiría incorrectamente
+                tag_json = cast(literal(json.dumps([f["pattern"]])), JSONB)
+                conditions.append(
+                    or_(Job.tags.is_(None), ~Job.tags.op("@>")(tag_json))
+                )
 
         stmt = (
             select(Job)
@@ -341,6 +381,10 @@ class MatchService:
                 language_score=language_score,
                 weights=weights,
             )
+
+            # Penalización por categoría fuera del perfil objetivo (A–G = ×1.0)
+            category = job.category or "otros"
+            final = round(final * CATEGORY_MULTIPLIERS.get(category, 0.55), 2)
 
             matching, missing = self._compute_skill_overlap(
                 profile.skills or [], job.tags or []
@@ -425,8 +469,8 @@ class MatchService:
                 if llm_data.get("missing_skills"):
                     r["missing_skills"] = llm_data["missing_skills"]
 
-                # Recalculate final score with real LLM score
-                r["score_final"] = self.matcher.compute_final_score(
+                # Recalculate final score with real LLM score + category multiplier
+                base = self.matcher.compute_final_score(
                     embedding_score=r["score_embedding"],
                     salary_score=r["score_salary"],
                     location_score=r["score_location"],
@@ -434,6 +478,10 @@ class MatchService:
                     llm_score=r["score_llm"],
                     language_score=r.get("score_language", 0.5),
                     weights=weights,
+                )
+                category = r["job"].category or "otros"
+                r["score_final"] = round(
+                    base * CATEGORY_MULTIPLIERS.get(category, 0.55), 2
                 )
 
         # Re-sort after LLM scoring

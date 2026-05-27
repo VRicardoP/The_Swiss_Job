@@ -48,6 +48,7 @@ class MatchResultResponse(BaseModel):
     job_salary_max: int | None = None
     job_tags: list[str] = Field(default_factory=list)
     job_source: str | None = None
+    job_category: str | None = None  # A–M o "otros"
 
 
 class MatchAnalyzeResponse(BaseModel):

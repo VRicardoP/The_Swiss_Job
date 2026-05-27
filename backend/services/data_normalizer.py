@@ -177,6 +177,17 @@ class DataNormalizer:
         job = DataNormalizer.detect_language(job)
         job = DataNormalizer.infer_seniority(job)
         job = DataNormalizer.infer_contract_type(job)
+        job = DataNormalizer.classify_category(job)
+        return job
+
+    @staticmethod
+    def classify_category(job: dict) -> dict:
+        """Asigna la categoría del análisis maestro (A–M o 'otros')."""
+        from services.job_classifier import classify_job
+        job["category"] = classify_job(
+            title=job.get("title") or "",
+            tags=job.get("tags") or [],
+        )
         return job
 
     @staticmethod

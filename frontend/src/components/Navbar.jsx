@@ -45,6 +45,12 @@ export default function Navbar() {
               >
                 Alerts
               </Link>
+              <Link
+                to="/filters"
+                className="text-sm text-text-secondary hover:text-swiss-red transition-colors duration-200"
+              >
+                Filters
+              </Link>
               <NotificationBell />
               <Link
                 to="/profile"
