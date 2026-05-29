@@ -19,6 +19,7 @@ from schemas.match import (
     MatchResultsResponse,
     MatchScoreBreakdown,
 )
+from scrapers.swiss_schools_config import get_school
 from services.groq_service import GroqService
 from services.job_matcher import DEFAULT_WEIGHTS
 from services.match_service import MatchService
@@ -108,6 +109,13 @@ async def _build_results_response(
         if not job_language and original_title:
             job_language = TranslationService._detect_language(original_title) or None
 
+        # Resolver school metadata si el job es de la watchlist (tag = school.id)
+        school = None
+        for tag in (job.tags or []):
+            school = get_school(tag)
+            if school:
+                break
+
         data.append(
             MatchResultResponse(
                 id=match.id,
@@ -124,6 +132,11 @@ async def _build_results_response(
                 matching_skills=match.matching_skills,
                 missing_skills=match.missing_skills,
                 feedback=match.feedback,
+                application_status=match.application_status,
+                urgency_score=match.urgency_score,
+                has_draft=bool(match.draft_letter),
+                school_id=school.id if school else None,
+                school_policy=school.policy if school else None,
                 created_at=match.created_at,
                 job_title=job.title,
                 job_title_en=job_title_en,

@@ -11,6 +11,7 @@ import {
   Settings,
   SlidersHorizontal,
   ChevronDown,
+  GraduationCap,
 } from "lucide-react";
 import useAuthStore from "../stores/authStore";
 import { useLogout } from "../hooks/useAuth";
@@ -27,8 +28,9 @@ const PRIMARY_NAV = [
 
 // Rutas secundarias (menú móvil + acciones desktop)
 const SECONDARY_NAV = [
-  { to: "/searches", label: "Alerts",  icon: Bell },
-  { to: "/filters",  label: "Filters", icon: SlidersHorizontal },
+  { to: "/searches",  label: "Alerts",    icon: Bell },
+  { to: "/watchlist", label: "Watchlist", icon: GraduationCap },
+  { to: "/filters",   label: "Filters",   icon: SlidersHorizontal },
 ];
 
 function BrandMark() {
@@ -120,6 +122,7 @@ function UserMenu({ user, onLogout }) {
 
           <MenuItem to="/profile" icon={User} label="Profile" onClick={() => setOpen(false)} />
           <MenuItem to="/searches" icon={Bell} label="Saved alerts" onClick={() => setOpen(false)} />
+          <MenuItem to="/watchlist" icon={GraduationCap} label="Watchlist" onClick={() => setOpen(false)} />
           <MenuItem to="/filters" icon={SlidersHorizontal} label="Filters" onClick={() => setOpen(false)} />
           <MenuItem to="/onboarding" icon={Settings} label="Onboarding" onClick={() => setOpen(false)} />
 

@@ -21,6 +21,7 @@ from routers.match import router as match_router
 from routers.notifications import router as notifications_router
 from routers.profile import router as profile_router
 from routers.saved_searches import router as searches_router
+from routers.watchlist import router as watchlist_router
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ app.include_router(match_router)
 app.include_router(notifications_router)
 app.include_router(profile_router)
 app.include_router(searches_router)
+app.include_router(watchlist_router)
 
 
 @app.get("/health")

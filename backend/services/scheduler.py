@@ -72,6 +72,22 @@ def setup_schedules() -> None:
         replace_existing=True,
     )
 
+    # Healthcheck de la watchlist: cada 6h
+    scheduler.add_job(
+        _dispatch_watchlist_health,
+        IntervalTrigger(hours=6),
+        id="watchlist_health",
+        replace_existing=True,
+    )
+
+    # Digest diario de la watchlist: 18:00 CET (score 40-69)
+    scheduler.add_job(
+        _dispatch_watchlist_digest,
+        CronTrigger(hour=18, timezone="Europe/Zurich"),
+        id="watchlist_digest",
+        replace_existing=True,
+    )
+
     logger.info(
         "Scheduler configured: fetch every %d min, scrapers every %d h, "
         "dedup daily 04:00, URL check weekly Sun 03:00, "
@@ -110,3 +126,13 @@ def _dispatch_fetch_scrapers() -> None:
 def _dispatch_cleanup_stale() -> None:
     celery_app.send_task("tasks.cleanup_stale_jobs")
     logger.debug("Dispatched tasks.cleanup_stale_jobs")
+
+
+def _dispatch_watchlist_health() -> None:
+    celery_app.send_task("tasks.watchlist.check_health")
+    logger.debug("Dispatched tasks.watchlist.check_health")
+
+
+def _dispatch_watchlist_digest() -> None:
+    celery_app.send_task("tasks.watchlist.send_digest")
+    logger.debug("Dispatched tasks.watchlist.send_digest")

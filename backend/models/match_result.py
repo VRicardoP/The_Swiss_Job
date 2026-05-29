@@ -55,6 +55,27 @@ class MatchResult(Base):
     # Implicit feedback signals (list of {action, duration_ms?})
     feedback_implicit: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
+    # State machine de candidatura (lifecycle de aplicación).
+    # detected → reviewed → drafted → sent → awaiting →
+    # followup_due → interview → closed_positive | closed_negative
+    application_status: Mapped[str] = mapped_column(
+        String(20), default="detected", nullable=False, server_default="detected"
+    )
+    application_status_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    # Urgency boost (school metadata + recency + keywords + deadline). Se
+    # combina con score_final para producir el orden final visible al usuario.
+    urgency_score: Mapped[float] = mapped_column(
+        Float, default=0.0, nullable=False, server_default="0"
+    )
+
+    # Borrador de carta (plantilla A o B con placeholders rellenados).
+    draft_letter: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

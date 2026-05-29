@@ -114,6 +114,10 @@ class MatchService:
         # Persist ALL results above threshold (replace previous)
         await self._save_results(user_id, qualified)
 
+        # Dispara push inmediato si algún job de la watchlist supera 70
+        # (combinando score_final + urgency boost).
+        await self._notify_watchlist_priority(user_id, qualified)
+
         return {
             "status": "success",
             "total_candidates": total_candidates,
@@ -337,6 +341,23 @@ class MatchService:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
+    @staticmethod
+    def _category_multiplier_for(job: Job, profile: UserProfile) -> float:
+        """Devuelve el multiplicador de categoría aplicable a este job-usuario.
+
+        Bypass watchlist: si el job viene de la lista cerrada de colegios
+        suizos (source = swiss_schools_*) y el usuario ha activado la
+        watchlist (profile.watchlist_schools_enabled), el multiplicador es
+        1.0 — la penalización H (docencia) no aplica para esa lista.
+        """
+        source = (job.source or "")
+        if source.startswith("swiss_schools_") and getattr(
+            profile, "watchlist_schools_enabled", False
+        ):
+            return 1.0
+        category = job.category or "otros"
+        return CATEGORY_MULTIPLIERS.get(category, 0.55)
+
     def _stage2_multifactor_score(
         self,
         profile: UserProfile,
@@ -382,9 +403,15 @@ class MatchService:
                 weights=weights,
             )
 
-            # Penalización por categoría fuera del perfil objetivo (A–G = ×1.0)
-            category = job.category or "otros"
-            final = round(final * CATEGORY_MULTIPLIERS.get(category, 0.55), 2)
+            # Penalización por categoría (A–G = ×1.0). Bypass per-user para
+            # watchlist de colegios suizos si el usuario lo tiene activo.
+            final = round(final * self._category_multiplier_for(job, profile), 2)
+
+            # Urgency boost (solo aplica si el job es de la watchlist).
+            from services.urgency_scorer import compute_urgency_score
+            urgency = compute_urgency_score(
+                job, description=job.description_snippet or ""
+            )
 
             matching, missing = self._compute_skill_overlap(
                 profile.skills or [], job.tags or []
@@ -400,6 +427,7 @@ class MatchService:
                     "score_llm": 0.0,
                     "score_language": round(language_score, 4),
                     "score_final": final,
+                    "urgency_score": urgency,
                     "matching_skills": matching,
                     "missing_skills": missing,
                 }
@@ -479,9 +507,8 @@ class MatchService:
                     language_score=r.get("score_language", 0.5),
                     weights=weights,
                 )
-                category = r["job"].category or "otros"
                 r["score_final"] = round(
-                    base * CATEGORY_MULTIPLIERS.get(category, 0.55), 2
+                    base * self._category_multiplier_for(r["job"], profile), 2
                 )
 
         # Re-sort after LLM scoring
@@ -507,11 +534,32 @@ class MatchService:
         prev_rows = (await self.db.execute(prev_stmt)).all()
         prev_feedback = {row[0]: row[1] for row in prev_rows}
 
+        # Preserve application_status y draft_letter cuando ya no son "detected"
+        prev_state_stmt = select(
+            MatchResult.job_hash,
+            MatchResult.application_status,
+            MatchResult.application_status_at,
+            MatchResult.draft_letter,
+        ).where(
+            MatchResult.user_id == user_id,
+            MatchResult.application_status != "detected",
+        )
+        prev_state_rows = (await self.db.execute(prev_state_stmt)).all()
+        prev_state = {
+            row[0]: {
+                "status": row[1],
+                "status_at": row[2],
+                "draft_letter": row[3],
+            }
+            for row in prev_state_rows
+        }
+
         # Delete all previous results
         await self.db.execute(delete(MatchResult).where(MatchResult.user_id == user_id))
 
         for r in results:
             job = r["job"]
+            state = prev_state.get(job.hash)
             match = MatchResult(
                 user_id=user_id,
                 job_hash=job.hash,
@@ -521,11 +569,82 @@ class MatchService:
                 score_recency=r["score_recency"],
                 score_llm=r["score_llm"],
                 score_final=r["score_final"],
+                urgency_score=r.get("urgency_score", 0),
                 explanation=r.get("explanation"),
                 matching_skills=r["matching_skills"],
                 missing_skills=r["missing_skills"],
                 feedback=prev_feedback.get(job.hash),
             )
+            if state:
+                match.application_status = state["status"]
+                match.application_status_at = state["status_at"]
+                match.draft_letter = state["draft_letter"]
             self.db.add(match)
 
         await self.db.commit()
+
+    async def _notify_watchlist_priority(
+        self, user_id: uuid.UUID, results: list[dict]
+    ) -> None:
+        """Crea notificación push inmediata para jobs watchlist con
+        score_final + urgency_score >= 70. Solo dispara si el usuario tiene
+        watchlist_schools_enabled=True.
+        """
+        from models.notification import Notification
+        from models.user_profile import UserProfile
+
+        prof_stmt = select(UserProfile).where(UserProfile.user_id == user_id)
+        profile = (await self.db.execute(prof_stmt)).scalar_one_or_none()
+        if not profile or not profile.watchlist_schools_enabled:
+            return
+
+        priority = [
+            r for r in results
+            if (r["job"].source or "").startswith("swiss_schools_")
+            and (r["score_final"] + r.get("urgency_score", 0)) >= 70
+        ]
+        if not priority:
+            return
+
+        # Una sola notificación con los top-5 para no saturar
+        top = priority[:5]
+        lines = [
+            f"• {r['job'].company or '?'} — {r['job'].title[:55]} "
+            f"(score {r['score_final']:.0f} + urg {r.get('urgency_score', 0):.0f})"
+            for r in top
+        ]
+        suffix = f"\n... y {len(priority) - 5} más" if len(priority) > 5 else ""
+
+        self.db.add(
+            Notification(
+                user_id=user_id,
+                event_type="watchlist_priority",
+                title=f"Watchlist colegios — {len(priority)} oportunidad(es) prioritaria(s)",
+                body="\n".join(lines) + suffix,
+                data={
+                    "count": len(priority),
+                    "job_hashes": [r["job"].hash for r in priority],
+                },
+            )
+        )
+        await self.db.commit()
+
+        # Broadcast SSE para refresh inmediato del frontend
+        try:
+            import json
+
+            import redis
+
+            from config import settings as cfg
+
+            r = redis.from_url(cfg.REDIS_URL)
+            r.publish(
+                f"sse:{user_id}",
+                json.dumps({
+                    "event": "watchlist_priority",
+                    "data": {"count": len(priority)},
+                }),
+            )
+            r.close()
+        except Exception:
+            logger.warning("SSE broadcast failed for watchlist priority")

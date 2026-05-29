@@ -9,6 +9,8 @@ import {
   MapPin,
   Building2,
   Sparkles,
+  GraduationCap,
+  Flame,
 } from "lucide-react";
 import { Avatar, Badge, cn } from "./ui";
 
@@ -176,8 +178,33 @@ function MatchCard({ match, onFeedback, onClearFeedback, onImplicit }) {
             <ScoreRing value={match.score_final} />
           </div>
 
-          {/* Meta: source + salary */}
+          {/* Meta: source + watchlist + urgency + salary */}
           <div className="mt-2 flex flex-wrap items-center gap-2">
+            {match.school_id && (
+              <Badge
+                variant="success"
+                size="xs"
+                leftIcon={<GraduationCap className="h-3 w-3" />}
+                title={`Watchlist • ${match.school_policy ?? ""}`}
+              >
+                Watchlist
+              </Badge>
+            )}
+            {match.urgency_score >= 30 && (
+              <Badge
+                variant="warning"
+                size="xs"
+                leftIcon={<Flame className="h-3 w-3" />}
+                title="Urgency score"
+              >
+                urg {Math.round(match.urgency_score)}
+              </Badge>
+            )}
+            {match.application_status && match.application_status !== "detected" && (
+              <Badge variant="info" size="xs" title="Estado candidatura">
+                {match.application_status}
+              </Badge>
+            )}
             {match.job_source && (
               <Badge variant="neutral" size="xs">
                 {match.job_source}

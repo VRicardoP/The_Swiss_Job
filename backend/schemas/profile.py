@@ -19,6 +19,7 @@ class ProfileData(BaseModel):
     remote_pref: str
     cv_text: str | None
     score_weights: dict | None
+    watchlist_schools_enabled: bool = False
     updated_at: datetime
 
 
@@ -34,6 +35,7 @@ class ProfileUpdate(BaseModel):
     salary_max: int | None = Field(None, ge=0)
     remote_pref: RemotePreference | None = None
     score_weights: dict[str, float] | None = None
+    watchlist_schools_enabled: bool | None = None
 
     @model_validator(mode="after")
     def validate_salary_range(self):
@@ -88,6 +90,7 @@ class ProfileResponse(BaseModel):
     cv_text: str | None
     has_cv_embedding: bool = False
     score_weights: dict | None
+    watchlist_schools_enabled: bool = False
     updated_at: datetime
 
 

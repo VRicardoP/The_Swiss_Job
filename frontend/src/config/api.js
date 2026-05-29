@@ -9,7 +9,7 @@ function getAuthHeaders() {
 }
 
 async function request(path, options = {}) {
-  const { headers: optHeaders, ...rest } = options;
+  const { headers: optHeaders, raw, ...rest } = options;
   const res = await fetch(`${BASE}${path}`, {
     ...rest,
     headers: { "Content-Type": "application/json", ...optHeaders },
@@ -29,7 +29,7 @@ async function request(path, options = {}) {
     err.status = res.status;
     throw err;
   }
-  return res.json();
+  return raw ? res.text() : res.json();
 }
 
 async function authRequest(path, options = {}) {
@@ -327,5 +327,37 @@ export const matchApi = {
     if (params.offset !== undefined) qs.set("offset", params.offset);
     const query = qs.toString();
     return authRequest(`/match/saved${query ? `?${query}` : ""}`);
+  },
+};
+
+// Watchlist API — colegios suizos vigilados
+export const watchlistApi = {
+  listSchools() {
+    return authRequest("/watchlist/schools");
+  },
+  setStatus(jobHash, applicationStatus) {
+    return authRequest(`/watchlist/match/${jobHash}/status`, {
+      method: "POST",
+      body: JSON.stringify({ application_status: applicationStatus }),
+    });
+  },
+  generateDraft(jobHash, templateOverride = null) {
+    return authRequest(`/watchlist/match/${jobHash}/draft`, {
+      method: "POST",
+      body: JSON.stringify(
+        templateOverride ? { template_override: templateOverride } : {},
+      ),
+    });
+  },
+  // Devuelve el borrador guardado como texto plano (no JSON)
+  getDraft(jobHash) {
+    return authRequest(`/watchlist/match/${jobHash}/draft`, {
+      raw: true, // text/plain, no JSON.parse
+    });
+  },
+  calendarUrl(jobHash) {
+    // El endpoint requiere Authorization, así que en lugar de exponerlo
+    // como link directo el front lo descargará con fetch + blob.
+    return `/watchlist/match/${jobHash}/calendar.ics`;
   },
 };

@@ -74,25 +74,51 @@ export default function MatchPage() {
 
   const grouped = useMemo(() => groupByCategory(allMatches), [allMatches]);
 
+  const watchlistMatches = useMemo(
+    () =>
+      allMatches
+        .filter((m) => m.school_id)
+        .sort(
+          (a, b) =>
+            b.score_final + (b.urgency_score || 0) -
+            (a.score_final + (a.urgency_score || 0)),
+        ),
+    [allMatches],
+  );
+
   const tabItems = useMemo(() => {
-    const items = CATEGORIES.filter(
-      (cat) => (grouped.get(cat.id) ?? []).length > 0,
-    ).map((cat) => ({
-      id: cat.id,
-      label: cat.shortLabel || cat.label,
-      shortLabel: cat.shortLabel,
-      count: (grouped.get(cat.id) ?? []).length,
-    }));
+    const items = [];
+    if (watchlistMatches.length > 0) {
+      items.push({
+        id: "__watchlist",
+        label: "Watchlist",
+        shortLabel: "Watchlist",
+        count: watchlistMatches.length,
+      });
+    }
+    items.push(
+      ...CATEGORIES.filter(
+        (cat) => (grouped.get(cat.id) ?? []).length > 0,
+      ).map((cat) => ({
+        id: cat.id,
+        label: cat.shortLabel || cat.label,
+        shortLabel: cat.shortLabel,
+        count: (grouped.get(cat.id) ?? []).length,
+      })),
+    );
     const otrosCount = (grouped.get("otros") ?? []).length;
     if (otrosCount > 0) {
       items.push({ id: "otros", label: "Other", count: otrosCount });
     }
     return items;
-  }, [grouped]);
+  }, [grouped, watchlistMatches.length]);
 
-  const visibleMatches = activeCategory
-    ? grouped.get(activeCategory) ?? []
-    : [];
+  const visibleMatches =
+    activeCategory === "__watchlist"
+      ? watchlistMatches
+      : activeCategory
+        ? grouped.get(activeCategory) ?? []
+        : [];
 
   // Métricas: top score y matches > 70
   const topScore = useMemo(

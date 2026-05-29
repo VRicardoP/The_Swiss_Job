@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSON, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -44,6 +44,14 @@ class UserProfile(Base):
     cv_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     cv_embedding = mapped_column(Vector(384), nullable=True)
     score_weights: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # Vigilancia de colegios suizos (watchlist swiss_schools_*).
+    # Si está activo, los jobs de la watchlist se promueven en el matching
+    # (bypass de la penalización H sobre docencia, ver match_service).
+    watchlist_schools_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

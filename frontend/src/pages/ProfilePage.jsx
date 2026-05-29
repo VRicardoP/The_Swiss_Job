@@ -82,6 +82,7 @@ export default function ProfilePage() {
         location: 0.25,
         recency: 0.15,
       },
+      watchlist_schools_enabled: profile.watchlist_schools_enabled ?? false,
     });
   }
 
@@ -125,6 +126,7 @@ export default function ProfilePage() {
       salary_max: form.salary_max ? Number(form.salary_max) : null,
       remote_pref: form.remote_pref,
       score_weights: form.score_weights,
+      watchlist_schools_enabled: form.watchlist_schools_enabled,
     });
   }
 
@@ -292,6 +294,27 @@ export default function ProfilePage() {
               />
             </div>
           </div>
+
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-surface-secondary p-3">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-border-strong text-ink-900 focus:ring-ink-900"
+              checked={form.watchlist_schools_enabled}
+              onChange={(e) =>
+                setField("watchlist_schools_enabled", e.target.checked)
+              }
+            />
+            <span className="text-sm">
+              <span className="block font-medium text-text-primary">
+                Vigilancia de colegios suizos
+              </span>
+              <span className="block text-text-secondary">
+                Activa el seguimiento de una lista cerrada de 17 colegios
+                internacionales y desactiva la penalización del sector docencia
+                solo para esos colegios.
+              </span>
+            </span>
+          </label>
         </SectionCard>
 
         {/* Score weights */}

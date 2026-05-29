@@ -35,6 +35,14 @@ class MatchResultResponse(BaseModel):
     matching_skills: list[str] = Field(default_factory=list)
     missing_skills: list[str] = Field(default_factory=list)
     feedback: str | None = None
+
+    # Watchlist colegios suizos: state machine + urgency boost + carta
+    application_status: str = "detected"
+    urgency_score: float = 0.0
+    has_draft: bool = False
+    school_id: str | None = None     # Si pertenece a la watchlist, slug del colegio
+    school_policy: str | None = None # direct_email_ok, portal_only, etc.
+
     created_at: datetime
 
     # Denormalized job fields for display
@@ -49,6 +57,38 @@ class MatchResultResponse(BaseModel):
     job_tags: list[str] = Field(default_factory=list)
     job_source: str | None = None
     job_category: str | None = None  # A–M o "otros"
+
+
+class ApplicationStatusRequest(BaseModel):
+    """Cambio de estado en el state machine de candidatura."""
+
+    application_status: str = Field(
+        ...,
+        pattern=(
+            r"^(detected|reviewed|drafted|sent|awaiting|followup_due|"
+            r"interview|closed_positive|closed_negative)$"
+        ),
+    )
+
+
+class ApplicationStatusResponse(BaseModel):
+    status: str
+    job_hash: str
+    application_status: str
+
+
+class GenerateDraftRequest(BaseModel):
+    """Solicita generar borrador de carta a partir de plantilla del colegio."""
+
+    template_override: str | None = Field(
+        default=None, pattern=r"^[AB]$"
+    )  # Si se pasa, ignora school.template_id
+
+
+class GenerateDraftResponse(BaseModel):
+    status: str
+    job_hash: str
+    draft_letter: str
 
 
 class MatchAnalyzeResponse(BaseModel):

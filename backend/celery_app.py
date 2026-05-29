@@ -34,4 +34,5 @@ celery_app.conf.include = [
     "tasks.embedding_tasks",
     "tasks.search_tasks",
     "tasks.scraping_tasks",
+    "tasks.watchlist_tasks",
 ]
