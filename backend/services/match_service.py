@@ -520,66 +520,88 @@ class MatchService:
         user_id: uuid.UUID,
         results: list[dict],
     ) -> None:
-        """Persist match results, replacing previous ones for this user.
+        """Upsert match results para el usuario.
 
-        Preserves feedback from previous runs: if a job_hash already had
-        positive feedback (thumbs_up, applied), it is carried over.
+        Estrategia: NO delete-all + insert. Razones:
+        - feedback "dismissed"/"thumbs_down" debe preservarse para que
+          _get_excluded_hashes siga excluyendo esos jobs en runs futuros.
+        - application_status / draft_letter se debe preservar incluso si
+          el job ya no supera el threshold y por tanto no aparece en
+          `results` (caso típico: el usuario movió a "sent" un job cuyo
+          score cae por re-ranking distinto del LLM).
+
+        Lógica:
+        1. Cargar todos los MatchResult existentes del usuario.
+        2. Para cada result nuevo:
+           - Si existe row → actualizar scores y campos derivados,
+             conservar feedback, application_status, draft_letter.
+           - Si no existe → insertar.
+        3. Para cada row existente NO presente en results:
+           - Si tiene feedback, application_status != "detected", o
+             draft_letter → conservar (frozen, sin actualizar scores).
+           - Si está "limpio" (sin engagement del usuario) → borrar.
         """
-        # Load existing positive feedback to preserve
-        prev_stmt = select(MatchResult.job_hash, MatchResult.feedback).where(
-            MatchResult.user_id == user_id,
-            MatchResult.feedback.is_not(None),
-            MatchResult.feedback.not_in(_NEGATIVE_FEEDBACK),
-        )
-        prev_rows = (await self.db.execute(prev_stmt)).all()
-        prev_feedback = {row[0]: row[1] for row in prev_rows}
-
-        # Preserve application_status y draft_letter cuando ya no son "detected"
-        prev_state_stmt = select(
-            MatchResult.job_hash,
-            MatchResult.application_status,
-            MatchResult.application_status_at,
-            MatchResult.draft_letter,
-        ).where(
-            MatchResult.user_id == user_id,
-            MatchResult.application_status != "detected",
-        )
-        prev_state_rows = (await self.db.execute(prev_state_stmt)).all()
-        prev_state = {
-            row[0]: {
-                "status": row[1],
-                "status_at": row[2],
-                "draft_letter": row[3],
-            }
-            for row in prev_state_rows
+        existing_stmt = select(MatchResult).where(MatchResult.user_id == user_id)
+        existing_rows = (await self.db.execute(existing_stmt)).scalars().all()
+        existing_by_hash: dict[str, MatchResult] = {
+            row.job_hash: row for row in existing_rows
         }
 
-        # Delete all previous results
-        await self.db.execute(delete(MatchResult).where(MatchResult.user_id == user_id))
-
+        new_hashes: set[str] = set()
         for r in results:
             job = r["job"]
-            state = prev_state.get(job.hash)
-            match = MatchResult(
-                user_id=user_id,
-                job_hash=job.hash,
-                score_embedding=r["score_embedding"],
-                score_salary=r["score_salary"],
-                score_location=r["score_location"],
-                score_recency=r["score_recency"],
-                score_llm=r["score_llm"],
-                score_final=r["score_final"],
-                urgency_score=r.get("urgency_score", 0),
-                explanation=r.get("explanation"),
-                matching_skills=r["matching_skills"],
-                missing_skills=r["missing_skills"],
-                feedback=prev_feedback.get(job.hash),
+            new_hashes.add(job.hash)
+            existing = existing_by_hash.get(job.hash)
+            if existing is not None:
+                # UPDATE: refrescar scores; conservar fields del usuario
+                existing.score_embedding = r["score_embedding"]
+                existing.score_salary = r["score_salary"]
+                existing.score_location = r["score_location"]
+                existing.score_recency = r["score_recency"]
+                existing.score_llm = r["score_llm"]
+                existing.score_final = r["score_final"]
+                existing.urgency_score = r.get("urgency_score", 0)
+                existing.explanation = r.get("explanation")
+                existing.matching_skills = r["matching_skills"]
+                existing.missing_skills = r["missing_skills"]
+                # feedback, application_status, application_status_at,
+                # draft_letter NO se tocan — son del usuario.
+            else:
+                self.db.add(MatchResult(
+                    user_id=user_id,
+                    job_hash=job.hash,
+                    score_embedding=r["score_embedding"],
+                    score_salary=r["score_salary"],
+                    score_location=r["score_location"],
+                    score_recency=r["score_recency"],
+                    score_llm=r["score_llm"],
+                    score_final=r["score_final"],
+                    urgency_score=r.get("urgency_score", 0),
+                    explanation=r.get("explanation"),
+                    matching_skills=r["matching_skills"],
+                    missing_skills=r["missing_skills"],
+                ))
+
+        # Eliminar solo rows "huérfanas" sin engagement del usuario
+        to_delete: list[str] = []
+        for h, row in existing_by_hash.items():
+            if h in new_hashes:
+                continue
+            has_engagement = (
+                row.feedback is not None
+                or row.application_status != "detected"
+                or row.draft_letter is not None
             )
-            if state:
-                match.application_status = state["status"]
-                match.application_status_at = state["status_at"]
-                match.draft_letter = state["draft_letter"]
-            self.db.add(match)
+            if not has_engagement:
+                to_delete.append(h)
+
+        if to_delete:
+            await self.db.execute(
+                delete(MatchResult).where(
+                    MatchResult.user_id == user_id,
+                    MatchResult.job_hash.in_(to_delete),
+                )
+            )
 
         await self.db.commit()
 
@@ -587,9 +609,15 @@ class MatchService:
         self, user_id: uuid.UUID, results: list[dict]
     ) -> None:
         """Crea notificación push inmediata para jobs watchlist con
-        score_final + urgency_score >= 70. Solo dispara si el usuario tiene
-        watchlist_schools_enabled=True.
+        score_final + urgency_score >= WATCHLIST_PUSH_THRESHOLD. Solo dispara
+        si el usuario tiene watchlist_schools_enabled=True.
+
+        Respeta ALERTS_MAX_PUSH_PER_DAY como cap diario de notificaciones
+        push (todos los event_type combinados) para evitar fatiga.
         """
+        from datetime import timedelta
+        from sqlalchemy import func as sql_func
+
         from models.notification import Notification
         from models.user_profile import UserProfile
 
@@ -601,9 +629,29 @@ class MatchService:
         priority = [
             r for r in results
             if (r["job"].source or "").startswith("swiss_schools_")
-            and (r["score_final"] + r.get("urgency_score", 0)) >= 70
+            and (r["score_final"] + r.get("urgency_score", 0))
+                >= settings.WATCHLIST_PUSH_THRESHOLD
         ]
         if not priority:
+            return
+
+        # Cap diario configurado en settings.ALERTS_MAX_PUSH_PER_DAY
+        since = datetime.now(timezone.utc) - timedelta(hours=24)
+        count_stmt = (
+            select(sql_func.count())
+            .select_from(Notification)
+            .where(
+                Notification.user_id == user_id,
+                Notification.created_at >= since,
+            )
+        )
+        sent_today = (await self.db.execute(count_stmt)).scalar_one()
+        if sent_today >= settings.ALERTS_MAX_PUSH_PER_DAY:
+            logger.info(
+                "Watchlist priority skipped for user %s: daily cap reached (%d)",
+                user_id,
+                settings.ALERTS_MAX_PUSH_PER_DAY,
+            )
             return
 
         # Una sola notificación con los top-5 para no saturar
@@ -629,22 +677,26 @@ class MatchService:
         )
         await self.db.commit()
 
-        # Broadcast SSE para refresh inmediato del frontend
+        # Broadcast SSE para refresh inmediato del frontend.
+        # Importante: usar redis.asyncio (no `import redis` síncrono),
+        # estamos dentro de un método async — síncrono bloquea el event loop.
         try:
             import json
 
-            import redis
+            from redis import asyncio as aioredis
 
             from config import settings as cfg
 
-            r = redis.from_url(cfg.REDIS_URL)
-            r.publish(
-                f"sse:{user_id}",
-                json.dumps({
-                    "event": "watchlist_priority",
-                    "data": {"count": len(priority)},
-                }),
-            )
-            r.close()
+            r = aioredis.from_url(cfg.REDIS_URL)
+            try:
+                await r.publish(
+                    f"sse:{user_id}",
+                    json.dumps({
+                        "event": "watchlist_priority",
+                        "data": {"count": len(priority)},
+                    }),
+                )
+            finally:
+                await r.aclose()
         except Exception:
             logger.warning("SSE broadcast failed for watchlist priority")
