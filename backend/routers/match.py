@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.rate_limit import limiter
 from core.security import get_current_user
 from database import get_db
 from models.user import User
@@ -37,6 +38,7 @@ def _get_groq(request: Request) -> GroqService:
 
 
 @router.post("/analyze", response_model=MatchAnalyzeResponse)
+@limiter.limit("3/minute")
 async def analyze_matches(
     request: Request,
     body: MatchAnalyzeRequest = MatchAnalyzeRequest(),

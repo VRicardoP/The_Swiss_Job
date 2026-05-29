@@ -14,7 +14,15 @@ del "school-specific hook" (párrafo 3) se deja con un marcador explícito
 que esa parte NO debe automatizarse.
 """
 
+import asyncio
+import logging
+
 from scrapers.swiss_schools_config import WatchedSchool
+
+logger = logging.getLogger(__name__)
+
+# Timeout duro para evitar workers colgados si Groq se atasca.
+_GROQ_TIMEOUT_SECONDS = 30.0
 
 _SYSTEM_PROMPT_A = """\
 Eres un asistente que redacta cartas de presentación PROFESIONALES y FORMALES
@@ -80,12 +88,22 @@ async def generate_draft_letter(
     system = _SYSTEM_PROMPT_A if template_id == "A" else _SYSTEM_PROMPT_B
     user_prompt = _build_user_prompt(school, job, profile)
 
-    return await groq.get_chat_response(
-        user_message=user_prompt,
-        system_prompt=system,
-        temperature=0.4,
-        max_tokens=900,
-    )
+    try:
+        return await asyncio.wait_for(
+            groq.get_chat_response(
+                user_message=user_prompt,
+                system_prompt=system,
+                temperature=0.4,
+                max_tokens=900,
+            ),
+            timeout=_GROQ_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "letter_generator: Groq timeout (%ss) — devolviendo fallback",
+            _GROQ_TIMEOUT_SECONDS,
+        )
+        return _fallback_template(school, job, profile, template_id)
 
 
 def _build_user_prompt(school: WatchedSchool, job, profile) -> str:

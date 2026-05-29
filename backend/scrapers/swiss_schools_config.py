@@ -352,3 +352,20 @@ def schools_by_strategy(strategy: str) -> list[WatchedSchool]:
 
 def get_school(school_id: str) -> WatchedSchool | None:
     return next((s for s in SCHOOLS if s.id == school_id), None)
+
+
+def resolve_school_from_job(job) -> WatchedSchool | None:
+    """Identifica el WatchedSchool al que pertenece un job a partir de sus
+    tags. Los scrapers de la watchlist insertan school.id como tag.
+
+    Función centralizada para que watchlist router, urgency scorer y
+    cualquier futuro consumidor compartan la misma lógica.
+    """
+    tags = getattr(job, "tags", None)
+    if not tags:
+        return None
+    for tag in tags:
+        s = get_school(tag)
+        if s is not None:
+            return s
+    return None

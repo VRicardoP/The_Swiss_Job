@@ -33,6 +33,9 @@ class SourceCompliance(Base):
     last_blocked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    last_success_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     auto_disable_on_block: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False
     )

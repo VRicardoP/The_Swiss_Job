@@ -18,14 +18,17 @@ from celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-# Source keys de scrapers swiss_schools_* a vigilar.
-# Si se añaden más scrapers a la watchlist en el futuro, se incluyen aquí
-# o se descubren dinámicamente desde el registry.
-_WATCHLIST_SOURCES = (
-    "swiss_schools_nae",
-    "swiss_schools_isp",
-    "swiss_schools_inspired",
-)
+
+def _get_watchlist_sources() -> tuple[str, ...]:
+    """Deriva del registry los source_keys que pertenecen a la watchlist.
+
+    Cualquier scraper cuyo nombre empiece por `swiss_schools_` se considera
+    parte de la watchlist. Esto evita la divergencia silenciosa que tenía
+    la lista hardcoded cuando se añadían nuevos scrapers (Fase 2-3).
+    """
+    from scrapers import _SCRAPER_CLASSES
+    return tuple(k for k in _SCRAPER_CLASSES if k.startswith("swiss_schools_"))
+
 
 # Umbral de "scraper silencioso": si lleva más de N horas sin éxito
 _SILENT_HOURS = 24
@@ -52,14 +55,27 @@ async def _check_health_async() -> dict[str, Any]:
     issues: list[dict] = []
     now = datetime.now(timezone.utc)
     threshold = now - timedelta(hours=_SILENT_HOURS)
+    watchlist_sources = _get_watchlist_sources()
 
     async with task_session() as db:
         # 1) Fuentes de la watchlist con problemas
         stmt = select(SourceCompliance).where(
-            SourceCompliance.source_key.in_(_WATCHLIST_SOURCES)
+            SourceCompliance.source_key.in_(watchlist_sources)
         )
         sources = (await db.execute(stmt)).scalars().all()
+        sources_by_key = {s.source_key: s for s in sources}
 
+        # 1a) Sources registradas en el scraper registry pero sin fila en
+        # source_compliance — error de seeding o migración perdida.
+        for key in watchlist_sources:
+            if key not in sources_by_key:
+                issues.append({
+                    "source": key,
+                    "kind": "no_compliance_row",
+                    "detail": "Scraper registrado sin source_compliance",
+                })
+
+        # 1b) Issues por fuente conocida
         for s in sources:
             if not s.is_allowed:
                 issues.append({
@@ -79,6 +95,22 @@ async def _check_health_async() -> dict[str, Any]:
                     "source": s.source_key,
                     "kind": "recently_blocked",
                     "detail": f"Último bloqueo {s.last_blocked_at.isoformat()}",
+                })
+            # 1c) NUEVO: silencio sin éxito en >24h
+            if s.last_success_at is None:
+                issues.append({
+                    "source": s.source_key,
+                    "kind": "never_succeeded",
+                    "detail": "Nunca completó un scrape exitosamente",
+                })
+            elif s.last_success_at < threshold:
+                issues.append({
+                    "source": s.source_key,
+                    "kind": "silent",
+                    "detail": (
+                        f"Sin éxito desde {s.last_success_at.isoformat()} "
+                        f"(>{_SILENT_HOURS}h)"
+                    ),
                 })
 
         if not issues:
@@ -147,6 +179,7 @@ def send_watchlist_digest() -> dict[str, Any]:
 async def _send_digest_async() -> dict[str, Any]:
     from sqlalchemy import and_, select
 
+    from config import settings
     from database import task_session
     from models.job import Job
     from models.match_result import MatchResult
@@ -156,6 +189,7 @@ async def _send_digest_async() -> dict[str, Any]:
 
     # Ventana digest: matches creados en las últimas 24h
     since = datetime.now(timezone.utc) - timedelta(hours=24)
+    watchlist_sources = _get_watchlist_sources()
 
     async with task_session() as db:
         users_stmt = (
@@ -176,10 +210,12 @@ async def _send_digest_async() -> dict[str, Any]:
                 .where(
                     MatchResult.user_id == user.id,
                     MatchResult.created_at >= since,
-                    Job.source.in_(_WATCHLIST_SOURCES),
+                    Job.source.in_(watchlist_sources),
                     and_(
-                        MatchResult.score_final >= 40,
-                        MatchResult.score_final < 70,
+                        MatchResult.score_final
+                            >= settings.WATCHLIST_DIGEST_MIN_SCORE,
+                        MatchResult.score_final
+                            < settings.WATCHLIST_PUSH_THRESHOLD,
                     ),
                 )
                 .order_by(MatchResult.score_final.desc())

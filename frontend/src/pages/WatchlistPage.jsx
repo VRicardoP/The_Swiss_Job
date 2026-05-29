@@ -50,9 +50,12 @@ export default function WatchlistPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [openDraft, setOpenDraft] = useState(null); // job_hash with open drawer
 
+  // Consistente con useMatch.js: queryKey con { limit, offset } para que
+  // invalidaciones genéricas con prefix ["match-results"] alcancen también.
+  const watchlistQueryArgs = { limit: 500, offset: 0, translate: false };
   const { data: results, isLoading } = useQuery({
-    queryKey: ["match-results", 500],
-    queryFn: () => matchApi.getResults({ limit: 500, translate: false }),
+    queryKey: ["match-results", watchlistQueryArgs],
+    queryFn: () => matchApi.getResults(watchlistQueryArgs),
   });
 
   const watchlist = useMemo(() => {
@@ -81,30 +84,32 @@ export default function WatchlistPage() {
 
   const setStatus = useMutation({
     mutationFn: ({ jobHash, status }) => watchlistApi.setStatus(jobHash, status),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["match-results", 500] }),
+    // Invalidación con prefix para cubrir todas las páginas de match-results
+    // (este, useMatch.js con {limit, offset}, etc.).
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["match-results"] }),
   });
 
   const generateDraft = useMutation({
     mutationFn: ({ jobHash }) => watchlistApi.generateDraft(jobHash),
     onSuccess: (data, vars) => {
-      qc.invalidateQueries({ queryKey: ["match-results", 500] });
+      qc.invalidateQueries({ queryKey: ["match-results"] });
       setOpenDraft(vars.jobHash);
     },
   });
 
   async function downloadIcs(jobHash) {
-    const token = localStorage.getItem("swissjob_token");
-    const res = await fetch(`/api/v1/watchlist/match/${jobHash}/calendar.ics`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) return;
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `swissjob-${jobHash}.ics`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      const blob = await watchlistApi.downloadIcs(jobHash);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `swissjob-${jobHash}.ics`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to download .ics:", err);
+      alert("No se pudo descargar el calendario. Sesión expirada?");
+    }
   }
 
   return (

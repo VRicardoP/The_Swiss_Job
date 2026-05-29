@@ -18,7 +18,10 @@ Componentes (suma directa, capada a 100):
 import re
 from datetime import datetime, timezone
 
-from scrapers.swiss_schools_config import WatchedSchool, get_school
+from scrapers.swiss_schools_config import (
+    WatchedSchool,
+    resolve_school_from_job,
+)
 
 _URGENT_KEYWORDS = re.compile(
     r"\b(immediate|immediately|as soon as possible|asap|urgent|"
@@ -47,8 +50,7 @@ def compute_urgency_score(
     el urgency boost es exclusivo de la watchlist por diseño.
     """
     if school is None:
-        # Resolver desde tags si está disponible
-        school = _resolve_school_from_job(job)
+        school = resolve_school_from_job(job)
     if school is None:
         return 0
 
@@ -83,12 +85,3 @@ def compute_urgency_score(
     return max(0, min(100, score))
 
 
-def _resolve_school_from_job(job) -> WatchedSchool | None:
-    """Identifica el WatchedSchool al que pertenece el job vía tags."""
-    if not getattr(job, "tags", None):
-        return None
-    for tag in job.tags:
-        s = get_school(tag)
-        if s is not None:
-            return s
-    return None

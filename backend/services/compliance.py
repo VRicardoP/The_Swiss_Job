@@ -45,11 +45,18 @@ class ComplianceEngine:
         await self.db.commit()
 
     async def reset_blocks(self, source_key: str) -> None:
-        """Reset consecutive block counter after a successful request."""
+        """Reset consecutive block counter after a successful request.
+
+        Marca también last_success_at, que el healthcheck usa para detectar
+        scrapers silenciosos (sin éxito >24h, no necesariamente bloqueados).
+        """
         await self.db.execute(
             update(SourceCompliance)
             .where(SourceCompliance.source_key == source_key)
-            .values(consecutive_blocks=0)
+            .values(
+                consecutive_blocks=0,
+                last_success_at=datetime.now(timezone.utc),
+            )
         )
         await self.db.commit()
 

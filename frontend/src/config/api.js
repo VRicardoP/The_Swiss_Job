@@ -360,4 +360,19 @@ export const watchlistApi = {
     // como link directo el front lo descargará con fetch + blob.
     return `/watchlist/match/${jobHash}/calendar.ics`;
   },
+  // Descarga el .ics como Blob respetando los headers de auth + manejo
+  // de errores estándar. Reemplaza al fetch() directo que existía en
+  // WatchlistPage y evitaba el wrapper de auth.
+  async downloadIcs(jobHash) {
+    const res = await fetch(
+      `${BASE}/watchlist/match/${jobHash}/calendar.ics`,
+      { headers: getAuthHeaders() },
+    );
+    if (!res.ok) {
+      const err = new Error(`HTTP ${res.status}: ${res.statusText}`);
+      err.status = res.status;
+      throw err;
+    }
+    return res.blob();
+  },
 };

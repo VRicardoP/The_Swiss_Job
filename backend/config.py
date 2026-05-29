@@ -61,7 +61,6 @@ class Settings(BaseSettings):
     GROQ_RERANK_TEMPERATURE: float = 0.2
     GROQ_RERANK_MAX_TOKENS: int = 2048
     GROQ_CACHE_TTL_DAYS: int = 7
-    MATCH_LLM_RERANK_TOP_N: int = 20
 
     # Scraper schedule
     SCHEDULER_SCRAPER_INTERVAL_HOURS: int = 6
@@ -70,6 +69,12 @@ class Settings(BaseSettings):
     ALERTS_MAX_PUSH_PER_DAY: int = 10
     ALERTS_MIN_SCORE_THRESHOLD: int = 50
     SCHEDULER_SEARCH_INTERVAL_MINUTES: int = 60
+
+    # Watchlist colegios — thresholds del dual-channel
+    # Push inmediato si score_final + urgency_score >= threshold.
+    WATCHLIST_PUSH_THRESHOLD: float = 70.0
+    # Digest diario incluye matches con score_final entre [min, push_threshold).
+    WATCHLIST_DIGEST_MIN_SCORE: float = 40.0
 
     # Database pool (TD-20)
     DB_POOL_SIZE: int = 10
