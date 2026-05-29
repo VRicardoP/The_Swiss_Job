@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { jobsApi } from "../config/api";
 import useAuthStore from "../stores/authStore";
 import DocumentGenerator from "../components/DocumentGenerator";
+import { sanitizeHtml } from "../utils/sanitizeHtml";
 
 function formatSalary(min, max) {
   if (!min && !max) return null;
@@ -142,7 +143,7 @@ export default function JobDetailPage() {
           <div className="bg-surface p-6 rounded-xl shadow-card">
             <div
               className="prose prose-sm prose-headings:text-text-primary prose-p:text-text-secondary prose-a:text-swiss-red max-w-none"
-              dangerouslySetInnerHTML={{ __html: job.description }}
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(job.description) }}
             />
           </div>
         )}

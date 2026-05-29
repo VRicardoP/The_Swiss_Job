@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.rate_limit import limiter
 from core.security import get_current_user
 from database import get_db
 from models.job import Job
@@ -25,7 +26,10 @@ from schemas.match import (
     GenerateDraftRequest,
     GenerateDraftResponse,
 )
-from scrapers.swiss_schools_config import SCHOOLS, WatchedSchool, get_school
+from scrapers.swiss_schools_config import (
+    SCHOOLS,
+    resolve_school_from_job,
+)
 from services.groq_service import GroqService
 from services.letter_generator import generate_draft_letter
 
@@ -106,6 +110,7 @@ async def update_application_status(
 @router.post(
     "/match/{job_hash}/draft", response_model=GenerateDraftResponse
 )
+@limiter.limit("10/minute")
 async def generate_draft(
     job_hash: str,
     body: GenerateDraftRequest,
@@ -136,7 +141,7 @@ async def generate_draft(
     match, job = row
 
     # Identificar colegio
-    school = _resolve_school(job)
+    school = resolve_school_from_job(job)
     if school is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -220,7 +225,7 @@ async def export_calendar(
         raise HTTPException(status_code=404, detail="Match result not found")
     match, job = row
 
-    school = _resolve_school(job)
+    school = resolve_school_from_job(job)
     school_name = school.name if school else (job.company or "Job")
 
     base = match.created_at or datetime.now(timezone.utc)
@@ -260,14 +265,6 @@ async def export_calendar(
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-def _resolve_school(job: Job) -> WatchedSchool | None:
-    for tag in (job.tags or []):
-        s = get_school(tag)
-        if s is not None:
-            return s
-    return None
-
-
 def _build_ics(
     events: list[tuple[str, str, datetime, str, str]],
 ) -> str:
@@ -295,7 +292,7 @@ def _build_ics(
             f"DTEND:{end_str}",
             f"SUMMARY:{_ics_escape(summary)}",
             f"DESCRIPTION:{_ics_escape(desc)}",
-            f"URL:{url}",
+            f"URL:{_ics_escape(url)}",
             "END:VEVENT",
         ])
     lines.append("END:VCALENDAR")

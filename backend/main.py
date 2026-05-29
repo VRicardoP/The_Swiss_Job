@@ -26,8 +26,32 @@ from routers.watchlist import router as watchlist_router
 logger = logging.getLogger(__name__)
 
 
+_INSECURE_SECRET_KEY = "change-me-in-production"
+
+
+def _validate_security_config() -> None:
+    """Aborta el arranque si SECRET_KEY conserva el valor por defecto.
+
+    Permitir explícitamente el default solo en entorno test (config conftest).
+    Cualquier instancia accesible que no sea tests es candidata a falsificación
+    de JWTs con una secret públicamente conocida.
+    """
+    import os
+
+    if settings.SECRET_KEY != _INSECURE_SECRET_KEY:
+        return
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return
+    raise RuntimeError(
+        "SECRET_KEY is set to the insecure default 'change-me-in-production'. "
+        "Generate a random value (e.g. `python -c \"import secrets; "
+        "print(secrets.token_urlsafe(32))\"`) and set it in your .env."
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _validate_security_config()
     # Startup — SSE Manager (Redis pub/sub)
     redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=False)
     sse = SSEManager(redis_client, queue_maxsize=settings.SSE_QUEUE_MAXSIZE)

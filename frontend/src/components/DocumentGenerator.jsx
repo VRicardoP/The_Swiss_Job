@@ -13,6 +13,7 @@ import {
   useDeleteDocument,
 } from "../hooks/useDocuments";
 import { Button, IconButton, cn } from "./ui";
+import { sanitizeHtml } from "../utils/sanitizeHtml";
 
 const LANGUAGES = [
   { code: "en", label: "EN" },
@@ -21,9 +22,21 @@ const LANGUAGES = [
   { code: "it", label: "IT" },
 ];
 
+function escapeHtml(s) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function MarkdownRenderer({ content }) {
-  // Renderer minimal de markdown — clase prose-like construida a mano.
-  const html = content
+  // Renderer minimal de markdown — escapamos primero el contenido del LLM
+  // y luego sustituimos los tokens markdown por tags HTML controlados.
+  // Sanitizamos el output con DOMPurify para defensa-en-profundidad.
+  const escaped = escapeHtml(content);
+  const html = escaped
     .replace(/^### (.+)$/gm, '<h3 class="mt-5 mb-1 text-sm font-semibold tracking-tight text-text-primary">$1</h3>')
     .replace(/^## (.+)$/gm,  '<h2 class="mt-6 mb-2 border-b border-border pb-1.5 text-base font-semibold tracking-tight text-text-primary">$1</h2>')
     .replace(/^# (.+)$/gm,   '<h1 class="mt-6 mb-3 text-lg font-semibold tracking-tight text-text-primary">$1</h1>')
@@ -33,12 +46,11 @@ function MarkdownRenderer({ content }) {
     .replace(/\n\n/g,        '</p><p class="mt-3 text-sm leading-relaxed text-text-primary">')
     .replace(/\n/g, "<br/>");
 
+  const wrapped = `<p class="text-sm leading-relaxed text-text-primary">${html}</p>`;
   return (
     <div
       className="max-w-none font-sans"
-      dangerouslySetInnerHTML={{
-        __html: `<p class="text-sm leading-relaxed text-text-primary">${html}</p>`,
-      }}
+      dangerouslySetInnerHTML={{ __html: sanitizeHtml(wrapped) }}
     />
   );
 }
