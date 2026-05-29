@@ -1,5 +1,11 @@
-import { useState, useRef, useEffect } from "react";
-import { useNotificationSSE, useNotificationHistory, useMarkRead } from "../hooks/useNotifications";
+import { useEffect, useRef, useState } from "react";
+import { Bell, Inbox } from "lucide-react";
+import {
+  useNotificationSSE,
+  useNotificationHistory,
+  useMarkRead,
+} from "../hooks/useNotifications";
+import { cn } from "./ui";
 
 export default function NotificationBell() {
   const { unreadCount } = useNotificationSSE();
@@ -8,64 +14,113 @@ export default function NotificationBell() {
   const { data: notifications } = useNotificationHistory({ limit: 10 });
   const markRead = useMarkRead();
 
-  // Close dropdown on outside click
   useEffect(() => {
+    if (!open) return;
     function handleClick(e) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
         setOpen(false);
       }
     }
-    if (open) document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    function handleKey(e) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
   }, [open]);
+
+  const items = notifications?.data ?? [];
 
   return (
     <div className="relative" ref={dropdownRef}>
       <button
-        onClick={() => setOpen(!open)}
-        className="relative text-text-secondary hover:text-swiss-red transition-colors duration-200"
+        type="button"
+        onClick={() => setOpen((v) => !v)}
         aria-label="Notifications"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={cn(
+          "relative inline-flex h-9 w-9 items-center justify-center rounded-lg",
+          "text-text-secondary hover:bg-surface-tertiary hover:text-text-primary",
+          "transition-colors duration-150",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
+        )}
       >
-        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-          />
-        </svg>
+        <Bell className="h-[18px] w-[18px]" aria-hidden="true" />
         {unreadCount > 0 && (
-          <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-swiss-red text-[10px] font-bold text-white">
+          <span
+            className={cn(
+              "absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center",
+              "rounded-full bg-swiss-red px-1 text-[10px] font-semibold leading-none text-white",
+              "ring-2 ring-surface",
+            )}
+          >
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 top-8 z-50 w-72 bg-surface rounded-xl shadow-dropdown border border-border animate-scale-in">
-          <div className="border-b border-border-light px-3 py-2">
-            <span className="text-sm font-bold text-text-primary">Notifications</span>
+        <div
+          role="menu"
+          className={cn(
+            "absolute right-0 top-11 z-50 w-80 origin-top-right",
+            "animate-scale-in rounded-xl border border-border bg-surface shadow-dropdown",
+            "overflow-hidden",
+          )}
+        >
+          <div className="flex items-center justify-between border-b border-border-light px-3.5 py-2.5">
+            <span className="text-sm font-semibold text-text-primary">
+              Notifications
+            </span>
+            {unreadCount > 0 && (
+              <span className="text-xs text-text-tertiary tabular-nums">
+                {unreadCount} new
+              </span>
+            )}
           </div>
-          <div className="max-h-64 overflow-y-auto">
-            {notifications?.data?.length > 0 ? (
-              notifications.data.map((n) => (
+
+          <div className="max-h-80 overflow-y-auto">
+            {items.length > 0 ? (
+              items.map((n) => (
                 <button
                   key={n.id}
+                  type="button"
                   onClick={() => {
                     if (!n.is_read) markRead.mutate(n.id);
                   }}
-                  className={`w-full border-b border-border-light px-3 py-2 text-left hover:bg-surface-secondary transition-colors duration-150 ${
-                    n.is_read ? "opacity-60" : "bg-swiss-red-50"
-                  }`}
+                  className={cn(
+                    "flex w-full gap-3 border-b border-border-light px-3.5 py-3 text-left",
+                    "transition-colors duration-150",
+                    "hover:bg-surface-tertiary",
+                    !n.is_read && "bg-swiss-red-50/60",
+                  )}
                 >
-                  <p className="text-sm font-semibold text-text-primary">{n.title}</p>
-                  <p className="text-xs text-text-secondary line-clamp-2">{n.body}</p>
+                  <span
+                    className={cn(
+                      "mt-1.5 inline-flex h-2 w-2 shrink-0 rounded-full",
+                      n.is_read ? "bg-border-strong" : "bg-swiss-red",
+                    )}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-text-primary">
+                      {n.title}
+                    </span>
+                    <span className="mt-0.5 line-clamp-2 block text-xs text-text-secondary">
+                      {n.body}
+                    </span>
+                  </span>
                 </button>
               ))
             ) : (
-              <p className="px-3 py-4 text-center text-sm text-text-tertiary">
-                No notifications yet
-              </p>
+              <div className="flex flex-col items-center gap-2 px-3.5 py-8 text-center">
+                <Inbox className="h-6 w-6 text-text-quaternary" aria-hidden="true" />
+                <p className="text-sm text-text-tertiary">No notifications yet</p>
+              </div>
             )}
           </div>
         </div>

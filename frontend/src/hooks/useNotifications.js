@@ -44,7 +44,9 @@ export function useNotificationSSE() {
         setLastEvent(data);
         setUnreadCount((c) => c + 1);
         qc.invalidateQueries({ queryKey: ["notifications"] });
-      } catch {}
+      } catch {
+        // payload mal formado: ignoramos para que el stream siga vivo
+      }
     });
 
     es.addEventListener("connected", () => {});

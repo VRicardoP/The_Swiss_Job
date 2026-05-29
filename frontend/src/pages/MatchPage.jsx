@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Sparkles,
+  AlertTriangle,
+  ArrowRight,
+  Inbox,
+} from "lucide-react";
 import {
   useAnalyze,
   useMatchResults,
@@ -9,40 +14,51 @@ import {
 } from "../hooks/useMatch";
 import { useProfile } from "../hooks/useProfile";
 import MatchCard from "../components/MatchCard";
+import CategoryTabs from "../components/CategoryTabs";
 import {
   CATEGORIES,
   CATEGORY_MAP,
   groupByCategory,
 } from "../utils/jobCategories";
+import {
+  Button,
+  LinkButton,
+  PageHeader,
+  EmptyState,
+  MetricTile,
+  SkeletonCard,
+  cn,
+} from "../components/ui";
 
 export default function MatchPage() {
   const { data: profile, isLoading: profileLoading } = useProfile();
-
-  // Carga masiva sin traducciones — para categorizar y mostrar las tarjetas.
-  // translate=false evita las llamadas a Groq LLM y reduce el tiempo de carga
-  // de potencialmente 30-60s (caché fría) a menos de 2s.
-  const { data: results, isLoading: resultsLoading, isError, error } =
-    useMatchResults(3000, 0);
+  const {
+    data: results,
+    isLoading: resultsLoading,
+    isError,
+    error,
+  } = useMatchResults(3000, 0);
 
   const analyze = useAnalyze();
   const submitFeedback = useSubmitFeedback();
   const clearFeedback = useClearFeedback();
   const submitImplicit = useSubmitImplicit();
 
-  // Categoría activa seleccionada (null = no mostrar resultados todavía)
   const [activeCategory, setActiveCategory] = useState(null);
 
-  // Track view_time on page unmount
   const enterTime = useRef(Date.now());
-  const resultsRef = useRef(null);
+  const resultsRef = useRef(results);
   resultsRef.current = results;
 
+  // Implicit view_time on unmount
   useEffect(() => {
+    const enteredAt = enterTime.current;
     return () => {
-      const duration = Date.now() - enterTime.current;
-      if (resultsRef.current?.data?.length > 0) {
+      const duration = Date.now() - enteredAt;
+      const first = resultsRef.current?.data?.[0];
+      if (first) {
         submitImplicit.mutate({
-          jobHash: resultsRef.current.data[0].job_hash,
+          jobHash: first.job_hash,
           action: "view_time",
           durationMs: duration,
         });
@@ -52,222 +68,234 @@ export default function MatchPage() {
   }, []);
 
   const hasCvEmbedding = profile?.has_cv_embedding;
-  const allMatches = results?.data ?? [];
+  const allMatches = useMemo(() => results?.data ?? [], [results?.data]);
   const total = results?.total ?? 0;
   const isLoading = profileLoading || resultsLoading;
 
-  // Agrupar todos los resultados por categoría
-  const grouped = groupByCategory(allMatches);
+  const grouped = useMemo(() => groupByCategory(allMatches), [allMatches]);
 
-  // Calcular categorías con resultados (para mostrar los botones)
-  const availableCategories = CATEGORIES.filter(
-    (cat) => (grouped.get(cat.id) ?? []).length > 0
-  );
-  const otrosCount = (grouped.get("otros") ?? []).length;
+  const tabItems = useMemo(() => {
+    const items = CATEGORIES.filter(
+      (cat) => (grouped.get(cat.id) ?? []).length > 0,
+    ).map((cat) => ({
+      id: cat.id,
+      label: cat.shortLabel || cat.label,
+      shortLabel: cat.shortLabel,
+      count: (grouped.get(cat.id) ?? []).length,
+    }));
+    const otrosCount = (grouped.get("otros") ?? []).length;
+    if (otrosCount > 0) {
+      items.push({ id: "otros", label: "Other", count: otrosCount });
+    }
+    return items;
+  }, [grouped]);
 
-  // Resultados de la categoría activa
   const visibleMatches = activeCategory
-    ? (grouped.get(activeCategory) ?? [])
+    ? grouped.get(activeCategory) ?? []
     : [];
 
-  function handleAnalyze() {
-    setActiveCategory(null);
-    analyze.mutate();
-  }
+  // Métricas: top score y matches > 70
+  const topScore = useMemo(
+    () =>
+      allMatches.length > 0
+        ? Math.round(Math.max(...allMatches.map((m) => m.score_final)))
+        : 0,
+    [allMatches],
+  );
+  const strongMatches = useMemo(
+    () => allMatches.filter((m) => m.score_final >= 70).length,
+    [allMatches],
+  );
 
   function handleFeedback({ jobHash, feedback }) {
     submitFeedback.mutate({ jobHash, feedback });
   }
-
   function handleClearFeedback({ jobHash }) {
     clearFeedback.mutate({ jobHash });
   }
-
   function handleImplicit({ jobHash, action, durationMs }) {
     submitImplicit.mutate({ jobHash, action, durationMs });
   }
 
-  if (isLoading && allMatches.length === 0) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-swiss-red" />
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen">
-      <div className="mx-auto max-w-3xl p-4 pb-20">
-        {/* Header */}
-        <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-text-primary tracking-tight">AI Matches</h1>
-          <Link to="/" className="text-sm text-swiss-red font-medium hover:underline">
-            Back to search
-          </Link>
-        </div>
-
-        {/* CV warning */}
-        {!hasCvEmbedding && (
-          <div className="mb-4 bg-warning-light border border-warning/20 rounded-xl p-4">
-            <p className="text-sm text-warning">
-              Upload your CV to enable AI matching.{" "}
-              <Link to="/profile" className="text-swiss-red font-medium underline">
-                Go to Profile
-              </Link>
-            </p>
-          </div>
-        )}
-
-        {/* Analyze button */}
-        <div className="mb-4">
-          <button
-            type="button"
-            onClick={handleAnalyze}
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+      <PageHeader
+        eyebrow="AI Matching"
+        title="Your matches"
+        description="Curated jobs ranked against your CV using semantic search, salary fit and recency."
+        actions={
+          <Button
+            variant="primary"
+            size="lg"
+            leftIcon={<Sparkles className="h-4 w-4" />}
+            loading={analyze.isPending}
             disabled={!hasCvEmbedding || analyze.isPending}
-            className="w-full bg-swiss-red hover:bg-swiss-red-hover rounded-xl px-4 py-3 text-base font-semibold text-white shadow-card hover:shadow-card-hover transition-all duration-200 disabled:opacity-50"
+            onClick={() => {
+              setActiveCategory(null);
+              analyze.mutate();
+            }}
           >
-            {analyze.isPending ? "Analyzing..." : "Find Matches"}
-          </button>
-          {analyze.isSuccess && (
-            <p className="mt-2 text-center text-sm text-success font-medium">
-              Found {analyze.data.results_count} matches from{" "}
-              {analyze.data.total_candidates} candidates.
+            {analyze.isPending ? "Analyzing" : "Find new matches"}
+          </Button>
+        }
+      />
+
+      {/* CV warning */}
+      {!profileLoading && !hasCvEmbedding && (
+        <div
+          className={cn(
+            "mt-6 flex items-start gap-3 rounded-xl border border-warning-border bg-warning-light p-4",
+          )}
+        >
+          <AlertTriangle className="h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-text-primary">
+              Upload your CV to unlock AI matching
             </p>
-          )}
-          {analyze.isError && (
-            <div className="mt-2 bg-error-light text-error rounded-xl p-3 text-sm">
-              {analyze.error.message}
-            </div>
-          )}
+            <p className="mt-0.5 text-sm text-text-secondary">
+              Without an embedded CV, we can't compute semantic scores for jobs.
+            </p>
+          </div>
+          <LinkButton
+            to="/profile"
+            variant="outline"
+            size="sm"
+            rightIcon={<ArrowRight className="h-3.5 w-3.5" />}
+            className="shrink-0"
+          >
+            Go to Profile
+          </LinkButton>
         </div>
+      )}
 
-        {/* Category filter buttons — solo cuando hay resultados */}
-        {allMatches.length > 0 && (
-          <div className="mb-6">
-            <p className="mb-2 text-xs text-text-tertiary font-medium uppercase tracking-wide">
-              Selecciona una categoría para ver los resultados
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {availableCategories.map((cat) => {
-                const count = (grouped.get(cat.id) ?? []).length;
-                const isActive = activeCategory === cat.id;
-                return (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() =>
-                      setActiveCategory(isActive ? null : cat.id)
-                    }
-                    className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
-                      isActive
-                        ? "bg-swiss-red text-white shadow-sm"
-                        : "bg-surface border border-border text-text-secondary hover:border-swiss-red/40 hover:text-swiss-red"
-                    }`}
-                  >
-                    <span className="font-bold">{cat.id}</span>
-                    <span className="hidden sm:inline">{cat.shortLabel}</span>
-                    <span
-                      className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                        isActive
-                          ? "bg-white/20 text-white"
-                          : "bg-surface-tertiary text-text-tertiary"
-                      }`}
-                    >
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
-              {otrosCount > 0 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setActiveCategory(
-                      activeCategory === "otros" ? null : "otros"
-                    )
-                  }
-                  className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
-                    activeCategory === "otros"
-                      ? "bg-swiss-red text-white shadow-sm"
-                      : "bg-surface border border-border text-text-secondary hover:border-swiss-red/40 hover:text-swiss-red"
-                  }`}
+      {/* Estado del análisis */}
+      {analyze.isSuccess && (
+        <p className="mt-3 text-sm text-success">
+          Found {analyze.data.results_count} new matches from{" "}
+          {analyze.data.total_candidates} candidates.
+        </p>
+      )}
+      {analyze.isError && (
+        <div className="mt-3 rounded-xl border border-error-border bg-error-light p-3 text-sm text-error">
+          {analyze.error?.message || "Analysis failed"}
+        </div>
+      )}
+
+      {/* Métricas */}
+      {allMatches.length > 0 && (
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <MetricTile label="Total matches" value={total.toLocaleString()} />
+          <MetricTile label="Strong (≥70)" value={strongMatches} tone="success" />
+          <MetricTile label="Top score" value={topScore} tone="ink" />
+          <MetricTile label="Categories" value={tabItems.length} />
+        </div>
+      )}
+
+      {/* Loading */}
+      {isLoading && allMatches.length === 0 && (
+        <div className="mt-6 space-y-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </div>
+      )}
+
+      {/* Error */}
+      {isError && (
+        <div className="mt-6 rounded-xl border border-error-border bg-error-light p-4 text-sm text-error">
+          Error loading results: {error?.message}
+        </div>
+      )}
+
+      {/* Sin resultados */}
+      {!isLoading && !isError && allMatches.length === 0 && (
+        <div className="mt-6">
+          <EmptyState
+            icon={Sparkles}
+            title={hasCvEmbedding ? "No matches yet" : "Add your CV first"}
+            description={
+              hasCvEmbedding
+                ? 'Click "Find new matches" to analyze your CV against the latest jobs.'
+                : "Upload your CV in your profile to get AI-powered job recommendations."
+            }
+            action={
+              hasCvEmbedding ? (
+                <Button
+                  variant="primary"
+                  leftIcon={<Sparkles className="h-4 w-4" />}
+                  loading={analyze.isPending}
+                  onClick={() => analyze.mutate()}
                 >
-                  <span>Otros</span>
-                  <span
-                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                      activeCategory === "otros"
-                        ? "bg-white/20 text-white"
-                        : "bg-surface-tertiary text-text-tertiary"
-                    }`}
-                  >
-                    {otrosCount}
-                  </span>
-                </button>
-              )}
-            </div>
+                  Find matches
+                </Button>
+              ) : (
+                <LinkButton to="/profile" variant="primary">
+                  Go to Profile
+                </LinkButton>
+              )
+            }
+          />
+        </div>
+      )}
+
+      {/* Categorías */}
+      {allMatches.length > 0 && (
+        <section className="mt-6">
+          <div className="mb-3 flex items-end justify-between gap-3">
+            <h2 className="text-sm font-medium text-text-secondary">
+              Browse by category
+            </h2>
+            {activeCategory && (
+              <button
+                type="button"
+                onClick={() => setActiveCategory(null)}
+                className="text-xs font-medium text-text-tertiary hover:text-text-primary"
+              >
+                Show all categories
+              </button>
+            )}
           </div>
-        )}
+          <CategoryTabs
+            categories={tabItems}
+            activeId={activeCategory}
+            onChange={setActiveCategory}
+          />
+        </section>
+      )}
 
-        {/* Results error */}
-        {isError && (
-          <div className="bg-error-light text-error rounded-xl p-4 text-sm">
-            Error loading results: {error.message}
+      {/* Resultados de la categoría */}
+      {activeCategory && (
+        <section className="mt-6">
+          <header className="mb-3 flex items-center justify-between">
+            <h2 className="text-base font-semibold tracking-tight text-text-primary">
+              {CATEGORY_MAP[activeCategory]?.label ?? "Other"}{" "}
+              <span className="text-text-tertiary font-normal">
+                · {visibleMatches.length}
+              </span>
+            </h2>
+          </header>
+          <div className="space-y-3">
+            {visibleMatches.map((match) => (
+              <MatchCard
+                key={match.id}
+                match={match}
+                onFeedback={handleFeedback}
+                onClearFeedback={handleClearFeedback}
+                onImplicit={handleImplicit}
+              />
+            ))}
           </div>
-        )}
+        </section>
+      )}
 
-        {/* Resultados de la categoría seleccionada */}
-        {activeCategory && (
-          <>
-            <div className="mb-3 flex items-center justify-between">
-              <p className="text-sm text-text-secondary font-medium">
-                <span className="font-bold text-text-primary">
-                  {CATEGORY_MAP[activeCategory]?.label ?? "Otros"}
-                </span>{" "}
-                — {visibleMatches.length} oferta
-                {visibleMatches.length !== 1 ? "s" : ""}
-              </p>
-            </div>
-            <div className="space-y-3">
-              {visibleMatches.map((match) => (
-                <MatchCard
-                  key={match.id}
-                  match={match}
-                  onFeedback={handleFeedback}
-                  onClearFeedback={handleClearFeedback}
-                  onImplicit={handleImplicit}
-                />
-              ))}
-            </div>
-          </>
-        )}
-
-        {/* Estado vacío: sin categoría seleccionada */}
-        {!isError && !resultsLoading && allMatches.length > 0 && !activeCategory && (
-          <div className="py-10 text-center">
-            <p className="text-text-tertiary text-sm">
-              Pulsa una categoría para ver las ofertas correspondientes.
-            </p>
-          </div>
-        )}
-
-        {/* Estado vacío: sin resultados */}
-        {!isError && !resultsLoading && allMatches.length === 0 && (
-          <div className="py-12 text-center">
-            <p className="text-text-tertiary">
-              {hasCvEmbedding
-                ? 'No matches yet. Click "Find Matches" to start.'
-                : "Upload your CV to get AI-powered job matches."}
-            </p>
-          </div>
-        )}
-
-        {/* Total general (informativo) */}
-        {allMatches.length > 0 && (
-          <p className="mt-6 text-center text-xs text-text-tertiary">
-            {total} ofertas analizadas en total
+      {allMatches.length > 0 && !activeCategory && (
+        <div className="mt-8 flex flex-col items-center gap-2 rounded-xl border border-dashed border-border bg-surface px-6 py-10 text-center">
+          <Inbox className="h-5 w-5 text-text-quaternary" aria-hidden="true" />
+          <p className="text-sm text-text-secondary">
+            Pick a category above to view its offers.
           </p>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

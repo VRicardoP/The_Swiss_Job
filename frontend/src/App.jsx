@@ -1,8 +1,10 @@
 import { lazy, Suspense } from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, useLocation } from 'react-router-dom'
 import { useAuthHydration } from './hooks/useAuth'
+import useAuthStore from './stores/authStore'
 import Navbar from './components/Navbar'
 import ProtectedRoute from './components/ProtectedRoute'
+import { cn } from './components/ui'
 
 const SearchPage = lazy(() => import('./pages/SearchPage'))
 const JobDetailPage = lazy(() => import('./pages/JobDetailPage'))
@@ -19,80 +21,92 @@ const RegisterPage = lazy(() => import('./pages/RegisterPage'))
 function PageLoader() {
   return (
     <div className="flex min-h-[60vh] items-center justify-center">
-      <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-swiss-red" />
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-ink" />
     </div>
   )
 }
 
 function App() {
   useAuthHydration()
+  const token = useAuthStore((s) => s.token)
+  const location = useLocation()
+  const onAuthPage =
+    location.pathname === '/login' || location.pathname === '/register'
+
+  // Compensa el bottom nav móvil para que el contenido no quede oculto.
+  const hasBottomNav = !!token && !onAuthPage
 
   return (
     <div className="flex min-h-screen flex-col bg-surface-secondary">
       <Navbar />
-      <main className="flex-1">
+      <main
+        className={cn(
+          'flex-1',
+          hasBottomNav && 'pb-20 lg:pb-0',
+        )}
+      >
         <Suspense fallback={<PageLoader />}>
           <Routes>
-          <Route path="/" element={<SearchPage />} />
-          <Route path="/job/:hash" element={<JobDetailPage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route
-            path="/profile"
-            element={
-              <ProtectedRoute>
-                <ProfilePage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/match"
-            element={
-              <ProtectedRoute>
-                <MatchPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/saved"
-            element={
-              <ProtectedRoute>
-                <SavedJobsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/pipeline"
-            element={
-              <ProtectedRoute>
-                <PipelinePage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/searches"
-            element={
-              <ProtectedRoute>
-                <SavedSearchesPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/filters"
-            element={
-              <ProtectedRoute>
-                <FiltersPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/onboarding"
-            element={
-              <ProtectedRoute>
-                <OnboardingPage />
-              </ProtectedRoute>
-            }
-          />
+            <Route path="/" element={<SearchPage />} />
+            <Route path="/job/:hash" element={<JobDetailPage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <ProfilePage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/match"
+              element={
+                <ProtectedRoute>
+                  <MatchPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/saved"
+              element={
+                <ProtectedRoute>
+                  <SavedJobsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/pipeline"
+              element={
+                <ProtectedRoute>
+                  <PipelinePage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/searches"
+              element={
+                <ProtectedRoute>
+                  <SavedSearchesPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/filters"
+              element={
+                <ProtectedRoute>
+                  <FiltersPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/onboarding"
+              element={
+                <ProtectedRoute>
+                  <OnboardingPage />
+                </ProtectedRoute>
+              }
+            />
           </Routes>
         </Suspense>
       </main>

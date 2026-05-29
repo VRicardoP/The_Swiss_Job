@@ -1,142 +1,190 @@
 import { memo } from "react";
 import { Link } from "react-router-dom";
-
-const SOURCE_COLORS = {
-  jobicy: "bg-purple-100 text-purple-700",
-  remotive: "bg-green-100 text-green-700",
-  arbeitnow: "bg-blue-100 text-blue-700",
-  remoteok: "bg-orange-100 text-orange-700",
-  himalayas: "bg-teal-100 text-teal-700",
-  weworkremotely: "bg-rose-100 text-rose-700",
-  swisstechtjobs: "bg-red-100 text-red-700",
-  ictjobs: "bg-indigo-100 text-indigo-700",
-};
-
-function scoreColor(value) {
-  if (value > 70) return "bg-green-500";
-  if (value > 40) return "bg-yellow-500";
-  return "bg-red-500";
-}
-
-function scoreTextColor(value) {
-  if (value > 70) return "text-green-700";
-  if (value > 40) return "text-yellow-700";
-  return "text-red-700";
-}
-
-function ScoreBar({ label, value }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-20 text-xs text-text-tertiary capitalize">{label}</span>
-      <div className="h-2 flex-1 rounded-full bg-surface-tertiary">
-        <div
-          className={`h-2 rounded-full ${scoreColor(value)}`}
-          style={{ width: `${Math.min(value, 100)}%` }}
-        />
-      </div>
-      <span className="w-8 text-right text-xs text-text-secondary">
-        {Math.round(value)}
-      </span>
-    </div>
-  );
-}
+import {
+  ThumbsUp,
+  ThumbsDown,
+  ArrowUpRight,
+  Languages,
+  Check,
+  MapPin,
+  Building2,
+  Sparkles,
+} from "lucide-react";
+import { Avatar, Badge, cn } from "./ui";
 
 function formatSalary(min, max) {
   if (!min && !max) return null;
   const fmt = (v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : v);
   if (min && max) return `${fmt(min)}–${fmt(max)} CHF`;
-  if (min) return `ab ${fmt(min)} CHF`;
-  return `bis ${fmt(max)} CHF`;
+  if (min) return `from ${fmt(min)} CHF`;
+  return `up to ${fmt(max)} CHF`;
+}
+
+function toneForScore(value) {
+  if (value >= 70) return { ring: "stroke-success", text: "text-success", track: "stroke-success/15" };
+  if (value >= 40) return { ring: "stroke-warning", text: "text-warning", track: "stroke-warning/15" };
+  return { ring: "stroke-error", text: "text-error", track: "stroke-error/15" };
+}
+
+function ScoreRing({ value, size = 56 }) {
+  const v = Math.max(0, Math.min(100, Math.round(value)));
+  const stroke = 5;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const offset = c * (1 - v / 100);
+  const tone = toneForScore(v);
+  return (
+    <div
+      className="relative shrink-0"
+      style={{ width: size, height: size }}
+      aria-label={`Match score ${v} out of 100`}
+    >
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          strokeWidth={stroke}
+          className={cn("stroke-ink/10", tone.track)}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={offset}
+          className={cn("transition-all duration-500 ease-out", tone.ring)}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className={cn("text-base font-semibold tracking-tight tabular-nums", tone.text)}>
+          {v}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ScoreBar({ label, value }) {
+  const v = Math.max(0, Math.min(100, Math.round(value)));
+  return (
+    <div className="flex items-center gap-2.5">
+      <span className="w-16 text-[11px] uppercase tracking-wider text-text-tertiary">
+        {label}
+      </span>
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-tertiary">
+        <div
+          className={cn(
+            "h-full rounded-full transition-all duration-500",
+            v >= 70 ? "bg-success" : v >= 40 ? "bg-ink-500" : "bg-ink-300",
+          )}
+          style={{ width: `${v}%` }}
+        />
+      </div>
+      <span className="w-7 text-right text-[11px] font-medium tabular-nums text-text-secondary">
+        {v}
+      </span>
+    </div>
+  );
+}
+
+function FeedbackButton({ active, activeTone = "success", icon, label, onClick, title }) {
+  const tones = {
+    success: "bg-success-light text-success ring-1 ring-success-border",
+    error:   "bg-error-light text-error ring-1 ring-error-border",
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-pressed={active}
+      className={cn(
+        "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-all duration-150",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-1",
+        active
+          ? tones[activeTone]
+          : "bg-surface text-text-secondary border border-border hover:border-border-strong hover:text-text-primary",
+      )}
+    >
+      {icon}
+      {label}
+    </button>
+  );
 }
 
 function MatchCard({ match, onFeedback, onClearFeedback, onImplicit }) {
-  const sourceColor =
-    SOURCE_COLORS[match.job_source] || "bg-gray-100 text-gray-700";
   const salary = formatSalary(match.job_salary_min, match.job_salary_max);
-  const initial = match.job_company
-    ? match.job_company[0].toUpperCase()
-    : "?";
 
   function handleJobClick() {
     onImplicit?.({ jobHash: match.job_hash, action: "opened" });
   }
 
-  function handleFeedback(feedback) {
-    onFeedback?.({ jobHash: match.job_hash, feedback });
+  function toggleFeedback(kind) {
+    if (match.feedback === kind) {
+      onClearFeedback?.({ jobHash: match.job_hash });
+    } else {
+      onFeedback?.({ jobHash: match.job_hash, feedback: kind });
+    }
   }
 
-  const scoreBgColor =
-    match.score_final > 70
-      ? "bg-success-light"
-      : match.score_final > 40
-        ? "bg-warning-light"
-        : "bg-error-light";
-
-  const scoreTxtColor =
-    match.score_final > 70
-      ? "text-success"
-      : match.score_final > 40
-        ? "text-warning"
-        : "text-error";
+  const title = match.job_title_en || match.job_title;
 
   return (
-    <div className="bg-surface rounded-xl shadow-card hover:shadow-card-hover p-5 transition-all duration-200">
-      {/* Header: company initial + title + score */}
-      <div className="flex gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-swiss-red-light text-lg font-bold text-swiss-red">
-          {initial}
-        </div>
+    <article className="group rounded-xl border border-border bg-surface p-4 sm:p-5 transition-all duration-150 hover:border-border-strong hover:shadow-card-hover">
+      <div className="flex gap-3 sm:gap-4">
+        <Avatar name={match.job_company || "?"} size="md" />
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
+          {/* Encabezado */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
               <Link
                 to={`/job/${match.job_hash}`}
                 onClick={handleJobClick}
-                className="block truncate text-[15px] font-semibold text-text-primary hover:text-swiss-red"
+                className="block truncate text-[15px] font-semibold tracking-tight text-text-primary hover:text-ink"
                 title={match.job_title_en ? match.job_title : undefined}
               >
-                {match.job_title_en || match.job_title}
+                {title}
               </Link>
               {match.job_title_en && (
-                <span
-                  className="inline-flex items-center gap-0.5 text-[10px] text-text-tertiary"
-                  title={`Original: ${match.job_title}`}
-                >
-                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                      d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
-                  </svg>
+                <span className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-text-quaternary">
+                  <Languages className="h-3 w-3" aria-hidden="true" />
                   Translated from {match.job_language?.toUpperCase()}
                 </span>
               )}
-              <p className="truncate text-sm text-text-secondary">
-                {match.job_company}
-                {match.job_location && ` · ${match.job_location}`}
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-sm text-text-secondary">
+                {match.job_company && (
+                  <span className="inline-flex items-center gap-1 truncate">
+                    <Building2 className="h-3.5 w-3.5 text-text-quaternary" aria-hidden="true" />
+                    <span className="truncate">{match.job_company}</span>
+                  </span>
+                )}
+                {match.job_location && (
+                  <span className="inline-flex items-center gap-1">
+                    <MapPin className="h-3.5 w-3.5 text-text-quaternary" aria-hidden="true" />
+                    {match.job_location}
+                  </span>
+                )}
               </p>
             </div>
 
-            {/* Final score */}
-            <div
-              className={`flex w-14 h-14 shrink-0 items-center justify-center rounded-full ${scoreBgColor}`}
-            >
-              <span
-                className={`text-lg font-bold ${scoreTxtColor}`}
-              >
-                {Math.round(match.score_final)}
-              </span>
-            </div>
+            <ScoreRing value={match.score_final} />
           </div>
 
-          {/* Source + salary badges */}
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            <span
-              className="inline-block rounded-full px-2 py-0.5 text-[10px] font-medium bg-surface-tertiary text-text-secondary"
-            >
-              {match.job_source}
-            </span>
+          {/* Meta: source + salary */}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {match.job_source && (
+              <Badge variant="neutral" size="xs">
+                {match.job_source}
+              </Badge>
+            )}
             {salary && (
-              <span className="text-sm font-semibold text-swiss-red">
+              <span className="ml-auto text-sm font-semibold tabular-nums text-text-primary">
                 {salary}
               </span>
             )}
@@ -144,100 +192,71 @@ function MatchCard({ match, onFeedback, onClearFeedback, onImplicit }) {
         </div>
       </div>
 
-      {/* Score breakdown */}
-      <div className="mt-3 space-y-1">
+      {/* Breakdown */}
+      <div className="mt-4 grid gap-2 rounded-lg bg-surface-secondary p-3 sm:grid-cols-2">
         <ScoreBar label="Skills" value={match.scores.embedding * 100} />
         <ScoreBar label="Salary" value={match.scores.salary * 100} />
         <ScoreBar label="Location" value={match.scores.location * 100} />
         <ScoreBar label="Recency" value={match.scores.recency * 100} />
         {match.scores.llm > 0 && (
-          <ScoreBar label="AI" value={match.scores.llm * 100} />
+          <div className="sm:col-span-2">
+            <ScoreBar label="AI" value={match.scores.llm * 100} />
+          </div>
         )}
       </div>
 
-      {/* Matching / Missing skills */}
-      {(match.matching_skills.length > 0 ||
-        match.missing_skills.length > 0) && (
-        <div className="mt-3 flex flex-wrap gap-1">
+      {/* Skills matching / missing */}
+      {(match.matching_skills.length > 0 || match.missing_skills.length > 0) && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
           {match.matching_skills.map((skill) => (
-            <span
-              key={skill}
-              className="inline-block rounded-full bg-success-light px-2 py-0.5 text-[10px] font-medium text-success"
-            >
+            <Badge key={skill} variant="success" size="xs" leftIcon={<Check className="h-3 w-3" />}>
               {skill}
-            </span>
+            </Badge>
           ))}
           {match.missing_skills.map((skill) => (
-            <span
-              key={skill}
-              className="inline-block rounded-full bg-surface-tertiary px-2 py-0.5 text-[10px] font-medium text-text-tertiary line-through"
-            >
+            <Badge key={skill} variant="neutral" size="xs" className="line-through opacity-60">
               {skill}
-            </span>
+            </Badge>
           ))}
         </div>
       )}
 
-      {/* LLM explanation */}
+      {/* Explicación LLM */}
       {match.explanation && (
-        <p className="mt-2 text-xs leading-relaxed text-text-secondary">
-          {match.explanation}
-        </p>
+        <div className="mt-3 flex items-start gap-2 rounded-lg border border-info-border bg-info-light/60 p-3">
+          <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-info" aria-hidden="true" />
+          <p className="text-xs leading-relaxed text-info">{match.explanation}</p>
+        </div>
       )}
 
-      {/* Feedback buttons */}
-      <div className="mt-3 flex items-center gap-2 border-t border-border-light pt-3">
-        <button
-          type="button"
-          onClick={() =>
-            match.feedback === "thumbs_up"
-              ? onClearFeedback?.({ jobHash: match.job_hash })
-              : handleFeedback("thumbs_up")
-          }
-          title={match.feedback === "thumbs_up" ? "Desmarcar" : "Guardar oferta"}
-          className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
-            match.feedback === "thumbs_up"
-              ? "bg-success-light text-success ring-1 ring-success/30"
-              : "bg-surface-secondary text-text-tertiary hover:scale-105"
-          }`}
-        >
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5"
-            />
-          </svg>
-          Good
-        </button>
-        <button
-          type="button"
-          onClick={() =>
-            match.feedback === "thumbs_down"
-              ? onClearFeedback?.({ jobHash: match.job_hash })
-              : handleFeedback("thumbs_down")
-          }
-          title={match.feedback === "thumbs_down" ? "Desmarcar" : "No me interesa"}
-          className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
-            match.feedback === "thumbs_down"
-              ? "bg-error-light text-error ring-1 ring-error/30"
-              : "bg-surface-secondary text-text-tertiary hover:scale-105"
-          }`}
-        >
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018c.163 0 .326.02.485.06L17 4m-7 10v2a3 3 0 003 3h.095c.5 0 .905-.405.905-.905 0-.714.211-1.412.608-2.006L17 13V4m-7 10h2m5-6h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5"
-            />
-          </svg>
-          Not for me
-        </button>
+      {/* Acciones */}
+      <div className="mt-4 flex items-center gap-2 border-t border-border-light pt-3">
+        <FeedbackButton
+          active={match.feedback === "thumbs_up"}
+          activeTone="success"
+          icon={<ThumbsUp className="h-3.5 w-3.5" />}
+          label="Good"
+          onClick={() => toggleFeedback("thumbs_up")}
+          title={match.feedback === "thumbs_up" ? "Unmark" : "Save match"}
+        />
+        <FeedbackButton
+          active={match.feedback === "thumbs_down"}
+          activeTone="error"
+          icon={<ThumbsDown className="h-3.5 w-3.5" />}
+          label="Not for me"
+          onClick={() => toggleFeedback("thumbs_down")}
+          title={match.feedback === "thumbs_down" ? "Unmark" : "Dismiss"}
+        />
         <Link
           to={`/job/${match.job_hash}`}
           onClick={handleJobClick}
-          className="ml-auto text-xs text-swiss-red font-medium hover:underline"
+          className="ml-auto inline-flex items-center gap-1 text-sm font-medium text-text-primary hover:text-ink"
         >
           View details
+          <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
         </Link>
       </div>
-    </div>
+    </article>
   );
 }
 

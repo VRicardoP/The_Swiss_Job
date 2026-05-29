@@ -1,100 +1,298 @@
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import {
+  Search,
+  Sparkles,
+  Bookmark,
+  Kanban,
+  Bell,
+  User,
+  LogOut,
+  Settings,
+  SlidersHorizontal,
+  ChevronDown,
+} from "lucide-react";
 import useAuthStore from "../stores/authStore";
 import { useLogout } from "../hooks/useAuth";
 import NotificationBell from "./NotificationBell";
+import { Button, Avatar, cn } from "./ui";
+
+// Rutas principales (mostradas como tabs en desktop y bottom nav en móvil)
+const PRIMARY_NAV = [
+  { to: "/",         label: "Search",   icon: Search,    end: true },
+  { to: "/match",    label: "Matches",  icon: Sparkles },
+  { to: "/saved",    label: "Saved",    icon: Bookmark },
+  { to: "/pipeline", label: "Pipeline", icon: Kanban },
+];
+
+// Rutas secundarias (menú móvil + acciones desktop)
+const SECONDARY_NAV = [
+  { to: "/searches", label: "Alerts",  icon: Bell },
+  { to: "/filters",  label: "Filters", icon: SlidersHorizontal },
+];
+
+function BrandMark() {
+  return (
+    <Link
+      to="/"
+      className="flex items-center gap-2 text-base font-semibold tracking-tight text-text-primary"
+    >
+      <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-ink text-text-inverse">
+        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="2" y="2" width="20" height="20" rx="3" className="fill-swiss-red" />
+          <path d="M7 12h10M12 7v10" stroke="white" strokeWidth="2.5" strokeLinecap="round" />
+        </svg>
+      </span>
+      <span>SwissJob</span>
+    </Link>
+  );
+}
+
+function DesktopTab({ to, label, icon: Icon, end }) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) =>
+        cn(
+          "relative inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-medium tracking-tight transition-all duration-150",
+          isActive
+            ? "bg-ink-50 text-text-primary"
+            : "text-text-secondary hover:bg-surface-tertiary hover:text-text-primary",
+        )
+      }
+    >
+      {Icon && <Icon className="h-4 w-4" aria-hidden="true" />}
+      {label}
+    </NavLink>
+  );
+}
+
+function UserMenu({ user, onLogout }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    function onKey(e) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-full p-0.5 pr-2 transition-all duration-150",
+          "hover:bg-surface-tertiary",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
+        )}
+      >
+        <Avatar name={user?.email || "U"} size="sm" shape="circle" />
+        <ChevronDown className="h-3.5 w-3.5 text-text-tertiary" aria-hidden="true" />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-11 z-50 w-60 origin-top-right animate-scale-in rounded-xl border border-border bg-surface p-1.5 shadow-dropdown"
+        >
+          <div className="px-2.5 py-2">
+            <p className="text-xs text-text-tertiary">Signed in as</p>
+            <p className="truncate text-sm font-medium text-text-primary">
+              {user?.email || "—"}
+            </p>
+          </div>
+          <div className="my-1 h-px bg-border-light" />
+
+          <MenuItem to="/profile" icon={User} label="Profile" onClick={() => setOpen(false)} />
+          <MenuItem to="/searches" icon={Bell} label="Saved alerts" onClick={() => setOpen(false)} />
+          <MenuItem to="/filters" icon={SlidersHorizontal} label="Filters" onClick={() => setOpen(false)} />
+          <MenuItem to="/onboarding" icon={Settings} label="Onboarding" onClick={() => setOpen(false)} />
+
+          <div className="my-1 h-px bg-border-light" />
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              onLogout();
+            }}
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm text-text-secondary hover:bg-error-light hover:text-error transition-colors"
+          >
+            <LogOut className="h-4 w-4" aria-hidden="true" />
+            Log out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({ to, icon: Icon, label, onClick }) {
+  return (
+    <Link
+      to={to}
+      onClick={onClick}
+      role="menuitem"
+      className="flex items-center gap-2 rounded-md px-2.5 py-2 text-sm text-text-primary hover:bg-surface-tertiary transition-colors"
+    >
+      {Icon && <Icon className="h-4 w-4 text-text-secondary" aria-hidden="true" />}
+      {label}
+    </Link>
+  );
+}
+
+function BottomNav() {
+  return (
+    <nav
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 backdrop-blur-lg pb-safe lg:hidden"
+      aria-label="Primary"
+    >
+      <ul className="mx-auto flex max-w-2xl items-stretch">
+        {PRIMARY_NAV.map((item) => (
+          <li key={item.to} className="flex-1">
+            <NavLink
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) =>
+                cn(
+                  "flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-medium",
+                  isActive ? "text-text-primary" : "text-text-tertiary",
+                )
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  <span
+                    className={cn(
+                      "flex h-6 w-10 items-center justify-center rounded-full transition-colors",
+                      isActive && "bg-ink-50",
+                    )}
+                  >
+                    <item.icon
+                      className={cn(
+                        "h-[18px] w-[18px]",
+                        isActive ? "text-text-primary" : "text-text-tertiary",
+                      )}
+                      aria-hidden="true"
+                    />
+                  </span>
+                  <span>{item.label}</span>
+                </>
+              )}
+            </NavLink>
+          </li>
+        ))}
+        <li className="flex-1">
+          <NavLink
+            to="/profile"
+            className={({ isActive }) =>
+              cn(
+                "flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-medium",
+                isActive ? "text-text-primary" : "text-text-tertiary",
+              )
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <span
+                  className={cn(
+                    "flex h-6 w-10 items-center justify-center rounded-full transition-colors",
+                    isActive && "bg-ink-50",
+                  )}
+                >
+                  <User
+                    className={cn(
+                      "h-[18px] w-[18px]",
+                      isActive ? "text-text-primary" : "text-text-tertiary",
+                    )}
+                    aria-hidden="true"
+                  />
+                </span>
+                <span>Profile</span>
+              </>
+            )}
+          </NavLink>
+        </li>
+      </ul>
+    </nav>
+  );
+}
 
 export default function Navbar() {
   const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
   const logout = useLogout();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // En vistas de auth (login/register) la navbar se reduce
+  const onAuthPage = location.pathname === "/login" || location.pathname === "/register";
 
   return (
-    <nav className="sticky top-0 z-40 h-16 bg-surface/80 backdrop-blur-lg border-b border-border shadow-xs">
-      <div className="mx-auto flex h-full max-w-6xl items-center justify-between px-4">
-        <Link to="/" className="flex items-center gap-2 text-lg font-bold text-text-primary">
-          <svg className="h-7 w-7" viewBox="0 0 32 32" fill="none">
-            <rect width="32" height="32" rx="6" className="fill-swiss-red" />
-            <path d="M10 16h12M16 10v12" stroke="white" strokeWidth="3.5" strokeLinecap="round" />
-          </svg>
-          SwissJob
-        </Link>
+    <>
+      <header className="sticky top-0 z-40 border-b border-border bg-surface/85 backdrop-blur-lg">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:h-16 sm:px-6">
+          <BrandMark />
 
-        <div className="flex items-center gap-3">
-          {token ? (
-            <>
-              <Link
-                to="/match"
-                className="text-sm text-text-secondary hover:text-swiss-red transition-colors duration-200"
-              >
-                Matches
-              </Link>
-              <Link
-                to="/saved"
-                className="text-sm text-text-secondary hover:text-swiss-red transition-colors duration-200"
-              >
-                Saved
-              </Link>
-              <Link
-                to="/pipeline"
-                className="text-sm text-text-secondary hover:text-swiss-red transition-colors duration-200"
-              >
-                Pipeline
-              </Link>
-              <Link
-                to="/searches"
-                className="text-sm text-text-secondary hover:text-swiss-red transition-colors duration-200"
-              >
-                Alerts
-              </Link>
-              <Link
-                to="/filters"
-                className="text-sm text-text-secondary hover:text-swiss-red transition-colors duration-200"
-              >
-                Filters
-              </Link>
-              <NotificationBell />
-              <Link
-                to="/profile"
-                className="w-8 h-8 rounded-full bg-surface-tertiary flex items-center justify-center hover:bg-swiss-red-light transition-colors duration-200"
-              >
-                <svg
-                  className="h-5 w-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-                  />
-                </svg>
-              </Link>
-              <button
-                onClick={logout}
-                className="text-sm text-text-tertiary hover:text-swiss-red transition-colors duration-200"
-              >
-                Logout
-              </button>
-            </>
-          ) : (
-            <>
-              <Link
-                to="/login"
-                className="text-sm text-text-secondary hover:text-swiss-red transition-colors"
-              >
-                Login
-              </Link>
-              <Link
-                to="/register"
-                className="bg-swiss-red hover:bg-swiss-red-hover text-white rounded-full px-5 py-2 text-sm font-semibold transition-all duration-200 shadow-xs"
-              >
-                Register
-              </Link>
-            </>
+          {token && !onAuthPage && (
+            <nav className="ml-2 hidden items-center gap-0.5 lg:flex" aria-label="Primary">
+              {PRIMARY_NAV.map((item) => (
+                <DesktopTab key={item.to} {...item} />
+              ))}
+            </nav>
           )}
+
+          <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+            {token ? (
+              <>
+                <nav className="hidden items-center gap-0.5 lg:flex" aria-label="Secondary">
+                  {SECONDARY_NAV.map((item) => (
+                    <DesktopTab key={item.to} {...item} />
+                  ))}
+                </nav>
+
+                <NotificationBell />
+
+                <UserMenu user={user} onLogout={() => logout()} />
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate("/login")}
+                  className="hidden sm:inline-flex"
+                >
+                  Log in
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => navigate("/register")}
+                >
+                  Get started
+                </Button>
+              </>
+            )}
+          </div>
         </div>
-      </div>
-    </nav>
+      </header>
+
+      {token && !onAuthPage && <BottomNav />}
+    </>
   );
 }

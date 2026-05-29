@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import {
+  Bell,
+  Play,
+  Plus,
+  Trash2,
+  X,
+  PauseCircle,
+  PlayCircle,
+} from "lucide-react";
 import {
   useSavedSearches,
   useCreateSearch,
@@ -8,10 +16,27 @@ import {
   useRunSearch,
 } from "../hooks/useSavedSearches";
 import { useSearchStore } from "../stores/searchStore";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  IconButton,
+  Input,
+  LinkButton,
+  PageHeader,
+  Select,
+  SkeletonCard,
+  cn,
+} from "../components/ui";
 
-const FREQ_OPTIONS = ["realtime", "daily", "weekly"];
+const FREQ_OPTIONS = [
+  { value: "realtime", label: "Realtime" },
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+];
 
-function SearchCard({ search, onToggle, onRun, onDelete }) {
+function SearchCard({ search, onToggle, onDelete }) {
   const run = useRunSearch();
   const [running, setRunning] = useState(false);
 
@@ -19,58 +44,193 @@ function SearchCard({ search, onToggle, onRun, onDelete }) {
     setRunning(true);
     try {
       await run.mutateAsync(search.id);
-      onRun?.();
     } finally {
       setRunning(false);
     }
   }
 
+  const activeFilters = Object.entries(search.filters || {}).filter(
+    ([, v]) => v,
+  );
+
   return (
-    <div className="bg-surface shadow-card rounded-xl hover:shadow-card-hover transition-all p-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="font-medium text-text-primary">{search.name}</h3>
-          <p className="mt-1 text-xs text-text-secondary">
-            {Object.entries(search.filters || {})
-              .filter(([, v]) => v)
-              .map(([k, v]) => `${k}: ${v}`)
-              .join(", ") || "No filters"}
-          </p>
-          <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
-            <span>Min score: {search.min_score}</span>
-            <span>Freq: {search.notify_frequency}</span>
-            <span>Matches: {search.total_matches}</span>
+    <Card padding="md" className="transition-colors hover:border-border-strong">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="truncate text-sm font-semibold tracking-tight text-text-primary">
+              {search.name}
+            </h3>
+            <Badge
+              variant={search.is_active ? "success" : "neutral"}
+              size="xs"
+            >
+              {search.is_active ? "Active" : "Paused"}
+            </Badge>
+          </div>
+
+          {activeFilters.length > 0 ? (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {activeFilters.map(([k, v]) => (
+                <Badge key={k} variant="outline" size="xs">
+                  {k}: {String(v)}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-1.5 text-xs italic text-text-tertiary">
+              No filters
+            </p>
+          )}
+
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-tertiary">
+            <span>
+              Min score{" "}
+              <span className="font-medium text-text-primary tabular-nums">
+                {search.min_score}
+              </span>
+            </span>
+            <span aria-hidden="true">·</span>
+            <span className="capitalize">{search.notify_frequency}</span>
+            <span aria-hidden="true">·</span>
+            <span>
+              {search.total_matches}{" "}
+              {search.total_matches === 1 ? "match" : "matches"}
+            </span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => onToggle(search.id, !search.is_active)}
-            className={`rounded-full px-2 py-1 text-xs font-medium ${
-              search.is_active
-                ? "bg-success-light text-success"
-                : "bg-surface-tertiary text-text-tertiary"
-            }`}
-          >
-            {search.is_active ? "Active" : "Paused"}
-          </button>
-        </div>
+
+        <IconButton
+          aria-label={search.is_active ? "Pause" : "Resume"}
+          variant="ghost"
+          onClick={() => onToggle(search.id, !search.is_active)}
+          title={search.is_active ? "Pause alerts" : "Resume alerts"}
+        >
+          {search.is_active ? (
+            <PauseCircle className="h-4 w-4" />
+          ) : (
+            <PlayCircle className="h-4 w-4" />
+          )}
+        </IconButton>
       </div>
-      <div className="mt-3 flex gap-2">
-        <button
+
+      <div className="mt-3 flex items-center gap-2 border-t border-border-light pt-3">
+        <Button
+          variant="secondary"
+          size="sm"
+          leftIcon={<Play className="h-3.5 w-3.5" />}
+          loading={running}
           onClick={handleRun}
-          disabled={running}
-          className="rounded-full bg-swiss-red px-3 py-1 text-xs text-white hover:bg-swiss-red-hover disabled:opacity-50"
         >
-          {running ? "Running..." : "Run now"}
-        </button>
-        <button
+          Run now
+        </Button>
+        <IconButton
+          aria-label="Delete saved search"
+          variant="ghost"
+          size="sm"
           onClick={() => onDelete(search.id)}
-          className="rounded-full bg-error-light px-3 py-1 text-xs text-error hover:text-error/80"
+          className="ml-auto text-text-tertiary hover:bg-error-light hover:text-error"
         >
-          Delete
-        </button>
+          <Trash2 className="h-3.5 w-3.5" />
+        </IconButton>
       </div>
-    </div>
+    </Card>
+  );
+}
+
+function NewSearchForm({ onCancel, onSubmit, pending, searchStore }) {
+  const [name, setName] = useState("");
+  const [minScore, setMinScore] = useState(50);
+  const [frequency, setFrequency] = useState("daily");
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    const filters = {};
+    if (searchStore.q) filters.q = searchStore.q;
+    if (searchStore.source) filters.source = searchStore.source;
+    if (searchStore.canton) filters.canton = searchStore.canton;
+    if (searchStore.language) filters.language = searchStore.language;
+    if (searchStore.remoteOnly) filters.remote_only = true;
+
+    onSubmit({
+      name: name.trim(),
+      filters,
+      min_score: minScore,
+      notify_frequency: frequency,
+      notify_push: true,
+    });
+  }
+
+  return (
+    <Card padding="lg" className="animate-fade-in-up">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <header className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold tracking-tight text-text-primary">
+              New saved search
+            </h3>
+            <p className="mt-0.5 text-xs text-text-secondary">
+              Captures the current filters from the Search page.
+            </p>
+          </div>
+          <IconButton
+            aria-label="Cancel"
+            variant="ghost"
+            size="sm"
+            onClick={onCancel}
+          >
+            <X className="h-4 w-4" />
+          </IconButton>
+        </header>
+
+        <Input
+          label="Name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Remote senior backend roles"
+          required
+        />
+
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            label="Min score"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={100}
+            value={minScore}
+            onChange={(e) => setMinScore(Number(e.target.value))}
+          />
+          <Select
+            label="Alert frequency"
+            value={frequency}
+            onChange={(e) => setFrequency(e.target.value)}
+          >
+            {FREQ_OPTIONS.map((f) => (
+              <option key={f.value} value={f.value}>
+                {f.label}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            variant="primary"
+            loading={pending}
+            disabled={!name.trim()}
+            leftIcon={<Bell className="h-4 w-4" />}
+          >
+            Save & enable
+          </Button>
+        </div>
+      </form>
+    </Card>
   );
 }
 
@@ -79,160 +239,101 @@ export default function SavedSearchesPage() {
   const createSearch = useCreateSearch();
   const updateSearch = useUpdateSearch();
   const deleteSearch = useDeleteSearch();
-
   const searchStore = useSearchStore();
-
   const [showForm, setShowForm] = useState(false);
-  const [name, setName] = useState("");
-  const [minScore, setMinScore] = useState(50);
-  const [frequency, setFrequency] = useState("daily");
-
-  function handleCreate(e) {
-    e.preventDefault();
-    if (!name.trim()) return;
-
-    const filters = {};
-    if (searchStore.q) filters.q = searchStore.q;
-    if (searchStore.source) filters.source = searchStore.source;
-    if (searchStore.canton) filters.canton = searchStore.canton;
-    if (searchStore.language) filters.language = searchStore.language;
-    if (searchStore.remoteOnly) filters.remote_only = true;
-
-    createSearch.mutate(
-      {
-        name: name.trim(),
-        filters,
-        min_score: minScore,
-        notify_frequency: frequency,
-        notify_push: true,
-      },
-      {
-        onSuccess: () => {
-          setName("");
-          setShowForm(false);
-        },
-      }
-    );
-  }
 
   function handleToggle(id, active) {
     updateSearch.mutate({ id, data: { is_active: active } });
   }
-
   function handleDelete(id) {
     deleteSearch.mutate(id);
   }
-
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-swiss-red" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="mx-auto max-w-3xl p-6">
-        <p className="text-error">Error: {error.message}</p>
-      </div>
-    );
+  function handleCreate(payload) {
+    createSearch.mutate(payload, {
+      onSuccess: () => setShowForm(false),
+    });
   }
 
   const searches = data?.data || [];
+  const activeCount = searches.filter((s) => s.is_active).length;
 
   return (
-    <div className="mx-auto max-w-3xl p-4">
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-text-primary tracking-tight">Saved Searches</h1>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="rounded-full bg-swiss-red px-5 py-1.5 text-sm font-semibold text-white hover:bg-swiss-red-hover shadow-xs transition-all duration-200"
-        >
-          {showForm ? "Cancel" : "New Search"}
-        </button>
-      </div>
+    <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
+      <PageHeader
+        eyebrow="Alerts"
+        title="Saved searches"
+        description={
+          searches.length > 0
+            ? `${activeCount} active · ${searches.length} total`
+            : "Re-run any search on a schedule and get alerts for new matches."
+        }
+        actions={
+          !showForm && (
+            <Button
+              variant="primary"
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => setShowForm(true)}
+            >
+              New search
+            </Button>
+          )
+        }
+      />
 
-      {showForm && (
-        <form
-          onSubmit={handleCreate}
-          className="mb-4 bg-surface shadow-card rounded-xl border border-border p-4"
-        >
-          <p className="mb-2 text-xs text-text-secondary">
-            Saves current search filters from the home page.
-          </p>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Search name..."
-            className="mb-2 w-full rounded-xl border border-border bg-surface-secondary px-3 py-2 text-sm focus:border-swiss-red focus:outline-none"
+      <div className="mt-6 space-y-4">
+        {showForm && (
+          <NewSearchForm
+            onCancel={() => setShowForm(false)}
+            onSubmit={handleCreate}
+            pending={createSearch.isPending}
+            searchStore={searchStore}
           />
-          <div className="mb-2 flex gap-3">
-            <div className="flex-1">
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-text-tertiary">
-                Min Score
-              </label>
-              <input
-                type="number"
-                value={minScore}
-                onChange={(e) => setMinScore(Number(e.target.value))}
-                min={0}
-                max={100}
-                className="w-full rounded-xl border border-border bg-surface-secondary px-3 py-1.5 text-sm focus:border-swiss-red focus:outline-none"
-              />
-            </div>
-            <div className="flex-1">
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-text-tertiary">
-                Alert Frequency
-              </label>
-              <select
-                value={frequency}
-                onChange={(e) => setFrequency(e.target.value)}
-                className="w-full rounded-xl border border-border bg-surface-secondary px-3 py-1.5 text-sm focus:border-swiss-red focus:outline-none"
-              >
-                {FREQ_OPTIONS.map((f) => (
-                  <option key={f} value={f}>
-                    {f.charAt(0).toUpperCase() + f.slice(1)}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <button
-            type="submit"
-            disabled={createSearch.isPending || !name.trim()}
-            className="w-full rounded-xl bg-swiss-red py-2 text-sm font-semibold text-white hover:bg-swiss-red-hover disabled:opacity-50"
-          >
-            {createSearch.isPending ? "Saving..." : "Save Search"}
-          </button>
-        </form>
-      )}
+        )}
 
-      {searches.length === 0 ? (
-        <div className="mt-20 text-center">
-          <p className="text-lg text-text-tertiary">No saved searches</p>
-          <p className="mt-1 text-sm text-text-tertiary">
-            Set filters on the{" "}
-            <Link to="/" className="text-swiss-red hover:underline">
-              Search
-            </Link>{" "}
-            page, then save them here for alerts.
-          </p>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {searches.map((s) => (
-            <SearchCard
-              key={s.id}
-              search={s}
-              onToggle={handleToggle}
-              onRun={() => {}}
-              onDelete={handleDelete}
-            />
-          ))}
-        </div>
-      )}
+        {error && (
+          <div className="rounded-xl border border-error-border bg-error-light p-4 text-sm text-error">
+            {error.message}
+          </div>
+        )}
+
+        {isLoading ? (
+          <div className="space-y-3">
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        ) : searches.length === 0 && !showForm ? (
+          <EmptyState
+            icon={Bell}
+            title="No saved searches yet"
+            description="Set filters on the Search page, then save them here to get matches on a schedule."
+            action={
+              <LinkButton to="/" variant="primary">
+                Go to Search
+              </LinkButton>
+            }
+            secondaryAction={
+              <Button
+                variant="secondary"
+                leftIcon={<Plus className="h-4 w-4" />}
+                onClick={() => setShowForm(true)}
+              >
+                New search
+              </Button>
+            }
+          />
+        ) : (
+          <div className={cn("space-y-3")}>
+            {searches.map((s) => (
+              <SearchCard
+                key={s.id}
+                search={s}
+                onToggle={handleToggle}
+                onDelete={handleDelete}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

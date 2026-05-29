@@ -1,92 +1,210 @@
 @import "tailwindcss";
 
-/* ── Design tokens for SwissJob ── */
+/* ── Design tokens — Swiss Minimal Pro ──
+ * Combinación: rojo suizo (acento de marca) + neutro oscuro premium (acción/jerarquía).
+ * Filosofía: claridad, densidad útil, microinteracciones discretas.
+ */
 @theme {
-  /* Swiss brand palette */
-  --color-swiss-red: #DC0000;
-  --color-swiss-red-hover: #B80000;
+  /* Marca: rojo suizo (uso restringido a marca + acentos puntuales) */
+  --color-swiss-red: #DC0018;
+  --color-swiss-red-hover: #B80014;
+  --color-swiss-red-active: #9C0011;
   --color-swiss-red-light: #FEF2F2;
   --color-swiss-red-50: #FFF5F5;
   --color-swiss-red-100: #FFE3E3;
+  --color-swiss-red-200: #FFC9C9;
 
-  /* Neutral palette (warm grays, Apple aesthetic) */
+  /* Acento premium oscuro: principal para acciones, navegación activa, énfasis */
+  --color-ink: #0A0A0B;
+  --color-ink-900: #111114;
+  --color-ink-800: #1C1C20;
+  --color-ink-700: #2A2A30;
+  --color-ink-600: #3B3B44;
+  --color-ink-500: #52525C;
+  --color-ink-400: #71717A;
+  --color-ink-300: #A1A1AA;
+  --color-ink-200: #D4D4D8;
+  --color-ink-100: #E4E4E7;
+  --color-ink-50:  #F4F4F5;
+
+  /* Superficies */
   --color-surface: #FFFFFF;
-  --color-surface-secondary: #F9FAFB;
-  --color-surface-tertiary: #F3F4F6;
-  --color-border: #E5E7EB;
-  --color-border-light: #F3F4F6;
-  --color-text-primary: #111827;
-  --color-text-secondary: #6B7280;
-  --color-text-tertiary: #9CA3AF;
-  --color-text-inverse: #FFFFFF;
+  --color-surface-secondary: #FAFAFA;
+  --color-surface-tertiary: #F4F4F5;
+  --color-surface-muted: #EDEDEF;
+  --color-surface-inverse: #0A0A0B;
 
-  /* Semantic colors */
-  --color-success: #059669;
+  /* Bordes */
+  --color-border: #E4E4E7;
+  --color-border-light: #F1F1F3;
+  --color-border-strong: #D4D4D8;
+
+  /* Texto */
+  --color-text-primary: #0A0A0B;
+  --color-text-secondary: #52525C;
+  --color-text-tertiary: #71717A;
+  --color-text-quaternary: #A1A1AA;
+  --color-text-inverse: #FAFAFA;
+
+  /* Semánticos (uso ponderado) */
+  --color-success: #047857;
   --color-success-light: #ECFDF5;
-  --color-warning: #D97706;
+  --color-success-border: #A7F3D0;
+  --color-warning: #B45309;
   --color-warning-light: #FFFBEB;
-  --color-error: #DC2626;
+  --color-warning-border: #FCD34D;
+  --color-error: #B91C1C;
   --color-error-light: #FEF2F2;
-  --color-info: #2563EB;
+  --color-error-border: #FCA5A5;
+  --color-info: #1D4ED8;
   --color-info-light: #EFF6FF;
+  --color-info-border: #BFDBFE;
 
-  /* Typography */
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  /* Tipografía */
+  --font-sans: "Inter", "SF Pro Text", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Inter", "SF Pro Display", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
-  /* Shadows (Apple-like soft, layered) */
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
-  --shadow-dropdown: 0 4px 24px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
-  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.15), 0 4px 16px rgba(0, 0, 0, 0.08);
+  /* Radios */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 20px;
 
-  /* Animations */
-  --animate-fade-in: fade-in 0.2s ease-out;
-  --animate-slide-up: slide-up 0.3s ease-out;
-  --animate-scale-in: scale-in 0.15s ease-out;
+  /* Sombras (suaves, capas finas) */
+  --shadow-xs: 0 1px 2px rgba(10, 10, 11, 0.04);
+  --shadow-sm: 0 1px 3px rgba(10, 10, 11, 0.06), 0 1px 2px rgba(10, 10, 11, 0.04);
+  --shadow-card: 0 1px 3px rgba(10, 10, 11, 0.05), 0 1px 2px rgba(10, 10, 11, 0.03);
+  --shadow-card-hover: 0 8px 24px rgba(10, 10, 11, 0.08), 0 2px 6px rgba(10, 10, 11, 0.04);
+  --shadow-dropdown: 0 8px 32px rgba(10, 10, 11, 0.12), 0 2px 8px rgba(10, 10, 11, 0.06);
+  --shadow-modal: 0 24px 64px rgba(10, 10, 11, 0.18), 0 4px 16px rgba(10, 10, 11, 0.08);
+  --shadow-ring: 0 0 0 3px rgba(10, 10, 11, 0.08);
+  --shadow-ring-red: 0 0 0 3px rgba(220, 0, 24, 0.18);
+
+  /* Animaciones */
+  --animate-fade-in: fade-in 0.18s ease-out;
+  --animate-fade-in-up: fade-in-up 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-up: slide-up 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-down: slide-down 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-scale-in: scale-in 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-shimmer: shimmer 1.6s linear infinite;
 }
 
 /* ── Keyframes ── */
 @keyframes fade-in {
   from { opacity: 0; }
-  to { opacity: 1; }
+  to   { opacity: 1; }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes slide-up {
   from { transform: translateY(100%); }
-  to { transform: translateY(0); }
+  to   { transform: translateY(0); }
+}
+
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes scale-in {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
-/* ── Global base styles ── */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+/* ── Global base ── */
 @layer base {
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
   body {
     @apply bg-surface-secondary text-text-primary;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
   ::-webkit-scrollbar {
-    width: 6px;
+    width: 8px;
+    height: 8px;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: #D1D5DB;
+    background: var(--color-ink-200);
     border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-300);
   }
 
   *:focus-visible {
-    outline: 2px solid var(--color-swiss-red);
+    outline: 2px solid var(--color-ink);
     outline-offset: 2px;
     border-radius: 4px;
+  }
+
+  /* Reducción de movimiento — accesibilidad */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* ── Utilidades reutilizables ── */
+@layer utilities {
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--color-surface-tertiary) 0%,
+      var(--color-surface-muted) 50%,
+      var(--color-surface-tertiary) 100%
+    );
+    background-size: 800px 100%;
+    animation: shimmer 1.6s linear infinite;
+  }
+
+  .glass {
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: saturate(180%) blur(16px);
+    -webkit-backdrop-filter: saturate(180%) blur(16px);
+  }
+
+  .glass-dark {
+    background: rgba(10, 10, 11, 0.72);
+    backdrop-filter: saturate(180%) blur(16px);
+    -webkit-backdrop-filter: saturate(180%) blur(16px);
+  }
+
+  .hairline {
+    box-shadow: inset 0 0 0 1px var(--color-border);
+  }
+
+  /* Spacing seguro para barra inferior móvil (iOS notch) */
+  .pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
+  .pt-safe {
+    padding-top: max(env(safe-area-inset-top), 0px);
   }
 }

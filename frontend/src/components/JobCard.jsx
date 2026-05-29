@@ -1,86 +1,121 @@
 import { memo } from "react";
 import { Link } from "react-router-dom";
-
-const SOURCE_COLORS = {
-  jobicy: "bg-purple-100 text-purple-700",
-  remotive: "bg-green-100 text-green-700",
-  arbeitnow: "bg-blue-100 text-blue-700",
-  remoteok: "bg-orange-100 text-orange-700",
-  himalayas: "bg-teal-100 text-teal-700",
-  weworkremotely: "bg-rose-100 text-rose-700",
-  swisstechtjobs: "bg-red-100 text-red-700",
-  ictjobs: "bg-indigo-100 text-indigo-700",
-};
+import { MapPin, Globe2, Building2 } from "lucide-react";
+import { Avatar, Badge, cn } from "./ui";
 
 function formatSalary(min, max) {
   if (!min && !max) return null;
   const fmt = (v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : v);
   if (min && max) return `${fmt(min)}–${fmt(max)} CHF`;
-  if (min) return `ab ${fmt(min)} CHF`;
-  return `bis ${fmt(max)} CHF`;
+  if (min) return `from ${fmt(min)} CHF`;
+  return `up to ${fmt(max)} CHF`;
+}
+
+function formatPosted(iso) {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return null;
+  const diff = (Date.now() - then) / 1000;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  const days = Math.floor(diff / 86400);
+  if (days < 30) return `${days}d`;
+  return `${Math.floor(days / 30)}mo`;
 }
 
 function JobCard({ job }) {
   const salary = formatSalary(job.salary_min_chf, job.salary_max_chf);
-  const colorClass = SOURCE_COLORS[job.source] || "bg-gray-100 text-gray-700";
-  const initial = job.company ? job.company[0].toUpperCase() : "?";
+  const posted = formatPosted(job.published_at || job.created_at);
 
   return (
     <Link
       to={`/job/${job.hash}`}
-      className="block bg-surface rounded-xl shadow-card hover:shadow-card-hover hover:-translate-y-0.5 p-5 transition-all duration-200"
+      className={cn(
+        "group block rounded-xl border border-border bg-surface p-4 sm:p-5",
+        "transition-all duration-150",
+        "hover:border-border-strong hover:shadow-card-hover",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-surface-secondary",
+      )}
     >
-      <div className="flex gap-3">
-        {/* Company initial */}
-        <div className="shrink-0 w-11 h-11 rounded-xl bg-swiss-red-light flex items-center justify-center text-lg font-bold text-swiss-red">
-          {initial}
-        </div>
+      <div className="flex gap-3 sm:gap-4">
+        <Avatar name={job.company || "?"} size="md" />
 
         <div className="min-w-0 flex-1">
-          {/* Title + company */}
-          <h3 className="text-[15px] font-semibold text-text-primary truncate">
-            {job.title}
-          </h3>
-          <p className="text-sm text-text-secondary truncate">
-            {job.company}
-            {job.canton && ` · ${job.canton}`}
-            {job.is_remote && " · Remote"}
-          </p>
+          {/* Encabezado: title + salario */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-[15px] font-semibold tracking-tight text-text-primary group-hover:text-ink">
+                {job.title}
+              </h3>
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-text-secondary">
+                {job.company && (
+                  <span className="inline-flex items-center gap-1 truncate">
+                    <Building2 className="h-3.5 w-3.5 text-text-quaternary" aria-hidden="true" />
+                    <span className="truncate">{job.company}</span>
+                  </span>
+                )}
+                {(job.canton || job.location) && (
+                  <span className="inline-flex items-center gap-1">
+                    <MapPin className="h-3.5 w-3.5 text-text-quaternary" aria-hidden="true" />
+                    {job.canton || job.location}
+                  </span>
+                )}
+                {job.is_remote && (
+                  <span className="inline-flex items-center gap-1 text-success">
+                    <Globe2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    Remote
+                  </span>
+                )}
+              </p>
+            </div>
+
+            {salary && (
+              <div className="shrink-0 rounded-md bg-ink-50 px-2 py-1 text-right">
+                <span className="block text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
+                  Salary
+                </span>
+                <span className="block text-sm font-semibold tabular-nums text-text-primary">
+                  {salary}
+                </span>
+              </div>
+            )}
+          </div>
 
           {/* Snippet */}
           {job.description_snippet && (
-            <p className="mt-1 text-sm text-text-secondary leading-relaxed line-clamp-2">
+            <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-text-secondary">
               {job.description_snippet}
             </p>
           )}
 
-          {/* Badges + salary */}
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <span
-              className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-surface-tertiary text-text-secondary`}
-            >
-              {job.source}
-            </span>
-            {job.language && (
-              <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-info-light text-info">
-                {job.language.toUpperCase()}
-              </span>
-            )}
+          {/* Tags + fuente + tiempo */}
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
             {job.seniority && (
-              <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-warning-light text-warning">
+              <Badge variant="ink" size="xs">
                 {job.seniority}
-              </span>
+              </Badge>
             )}
             {job.contract_type && (
-              <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-success-light text-success">
-                {job.contract_type}
-              </span>
+              <Badge variant="neutral" size="xs">
+                {job.contract_type.replace("_", " ")}
+              </Badge>
             )}
-            {salary && (
-              <span className="ml-auto text-sm font-semibold text-swiss-red">
-                {salary}
-              </span>
+            {job.language && (
+              <Badge variant="outline" size="xs">
+                {job.language.toUpperCase()}
+              </Badge>
             )}
+
+            <span className="ml-auto inline-flex items-center gap-2 text-[11px] text-text-tertiary">
+              {posted && <span className="tabular-nums">{posted}</span>}
+              {job.source && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="truncate max-w-32">{job.source}</span>
+                </>
+              )}
+            </span>
           </div>
         </div>
       </div>

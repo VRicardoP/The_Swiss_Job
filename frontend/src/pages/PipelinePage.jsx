@@ -1,21 +1,40 @@
 import { memo, useCallback } from "react";
-import { Link } from "react-router-dom";
+import {
+  ArrowRight,
+  X,
+  Trash2,
+  FileText,
+  Inbox,
+  TrendingUp,
+} from "lucide-react";
 import {
   useApplications,
   useApplicationStats,
   useUpdateApplication,
   useDeleteApplication,
 } from "../hooks/useApplications";
+import {
+  Avatar,
+  Badge,
+  EmptyState,
+  IconButton,
+  LinkButton,
+  MetricTile,
+  PageHeader,
+  Skeleton,
+  cn,
+} from "../components/ui";
 
+// Cada columna define el estado, label y acento superior del kanban.
 const COLUMNS = [
-  { key: "saved", label: "Saved", border: "border-t-text-tertiary" },
-  { key: "applied", label: "Applied", border: "border-t-info" },
-  { key: "phone_screen", label: "Phone Screen", border: "border-t-warning" },
-  { key: "technical", label: "Technical", border: "border-t-warning" },
-  { key: "interview", label: "Interview", border: "border-t-swiss-red" },
-  { key: "offer", label: "Offer", border: "border-t-success" },
-  { key: "rejected", label: "Rejected", border: "border-t-error" },
-  { key: "withdrawn", label: "Withdrawn", border: "border-t-text-tertiary" },
+  { key: "saved",        label: "Saved",        tone: "bg-ink-300" },
+  { key: "applied",      label: "Applied",      tone: "bg-info" },
+  { key: "phone_screen", label: "Phone screen", tone: "bg-warning" },
+  { key: "technical",    label: "Technical",    tone: "bg-warning" },
+  { key: "interview",    label: "Interview",    tone: "bg-swiss-red" },
+  { key: "offer",        label: "Offer",        tone: "bg-success" },
+  { key: "rejected",     label: "Rejected",     tone: "bg-error" },
+  { key: "withdrawn",    label: "Withdrawn",    tone: "bg-ink-300" },
 ];
 
 const NEXT_STATUS = {
@@ -26,71 +45,97 @@ const NEXT_STATUS = {
   interview: "offer",
 };
 
-function StatusBadge({ status }) {
-  const colors = {
-    saved: "bg-surface-tertiary text-text-secondary",
-    applied: "bg-info-light text-info",
-    phone_screen: "bg-warning-light text-warning",
-    technical: "bg-warning-light text-warning",
-    interview: "bg-swiss-red-light text-swiss-red",
-    offer: "bg-success-light text-success",
-    rejected: "bg-error-light text-error",
-    withdrawn: "bg-surface-tertiary text-text-tertiary",
-  };
-  return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${colors[status] || ""}`}>
-      {status.replace("_", " ")}
-    </span>
-  );
-}
-
-const ApplicationCard = memo(function ApplicationCard({ app, onAdvance, onReject, onDelete }) {
+const ApplicationCard = memo(function ApplicationCard({
+  app,
+  onAdvance,
+  onReject,
+  onDelete,
+}) {
   const next = NEXT_STATUS[app.status];
+  const canReject = app.status !== "rejected" && app.status !== "withdrawn";
+
   return (
-    <div className="bg-surface rounded-xl shadow-xs hover:shadow-card p-4 transition-all duration-200">
-      <p className="text-sm font-medium text-text-primary line-clamp-1">
-        {app.job_title || "Untitled"}
-      </p>
-      <p className="text-xs text-text-secondary">{app.job_company || "Unknown"}</p>
-      {app.job_location && (
-        <p className="text-xs text-text-tertiary">{app.job_location}</p>
-      )}
+    <article className="rounded-lg border border-border bg-surface p-3 transition-all duration-150 hover:border-border-strong hover:shadow-card">
+      <div className="flex items-start gap-2.5">
+        <Avatar name={app.job_company || "?"} size="sm" />
+        <div className="min-w-0 flex-1">
+          <p className="line-clamp-1 text-sm font-medium tracking-tight text-text-primary">
+            {app.job_title || "Untitled"}
+          </p>
+          <p className="line-clamp-1 text-xs text-text-secondary">
+            {app.job_company || "Unknown"}
+            {app.job_location && ` · ${app.job_location}`}
+          </p>
+        </div>
+      </div>
+
       {app.notes && (
-        <p className="mt-1 text-xs text-text-secondary italic line-clamp-2">{app.notes}</p>
+        <p className="mt-2 line-clamp-2 rounded-md bg-surface-secondary px-2 py-1.5 text-xs italic text-text-secondary">
+          {app.notes}
+        </p>
       )}
-      <div className="mt-2 flex items-center gap-1">
+
+      <div className="mt-3 flex items-center gap-1.5">
         {next && (
           <button
+            type="button"
             onClick={() => onAdvance(app.id, next)}
-            className="rounded-full bg-swiss-red px-2 py-0.5 text-xs text-white hover:bg-swiss-red-hover"
+            className={cn(
+              "inline-flex h-7 items-center gap-1 rounded-md border border-border bg-surface px-2 text-[11px] font-medium text-text-primary",
+              "hover:border-ink hover:bg-ink hover:text-text-inverse transition-colors",
+            )}
+            title={`Move to ${next.replace("_", " ")}`}
           >
-            {next.replace("_", " ")}
+            <span className="capitalize">{next.replace("_", " ")}</span>
+            <ArrowRight className="h-3 w-3" aria-hidden="true" />
           </button>
         )}
-        {app.status !== "rejected" && app.status !== "withdrawn" && (
-          <button
+
+        {canReject && (
+          <IconButton
+            aria-label="Reject"
+            variant="ghost"
+            size="sm"
             onClick={() => onReject(app.id)}
-            className="rounded-full bg-error-light px-2 py-0.5 text-xs text-error hover:opacity-80"
+            className="hover:bg-error-light hover:text-error"
           >
-            Reject
-          </button>
+            <X className="h-3.5 w-3.5" />
+          </IconButton>
         )}
-        <Link
+
+        <LinkButton
           to={`/job/${app.job_hash}`}
-          className="text-xs text-swiss-red hover:underline"
+          variant="ghost"
+          size="xs"
+          leftIcon={<FileText className="h-3 w-3" />}
+          className="text-text-secondary"
         >
-          AI Docs
-        </Link>
-        <button
+          Docs
+        </LinkButton>
+
+        <IconButton
+          aria-label="Remove"
+          variant="ghost"
+          size="sm"
           onClick={() => onDelete(app.id)}
-          className="ml-auto text-xs text-text-tertiary hover:text-error"
+          className="ml-auto text-text-tertiary hover:bg-error-light hover:text-error"
         >
-          Remove
-        </button>
+          <Trash2 className="h-3.5 w-3.5" />
+        </IconButton>
       </div>
-    </div>
+    </article>
   );
 });
+
+function ColumnSkeleton() {
+  return (
+    <div className="w-[260px] shrink-0 space-y-2">
+      <Skeleton className="h-9 w-full rounded-lg" />
+      <Skeleton className="h-24 w-full rounded-lg" />
+      <Skeleton className="h-24 w-full rounded-lg" />
+    </div>
+  );
+}
 
 export default function PipelinePage() {
   const { data, isLoading, error } = useApplications({ limit: 200 });
@@ -99,118 +144,160 @@ export default function PipelinePage() {
   const deleteApp = useDeleteApplication();
 
   const handleAdvance = useCallback(
-    (id, newStatus) => {
-      updateApp.mutate({ id, data: { status: newStatus } });
-    },
+    (id, newStatus) => updateApp.mutate({ id, data: { status: newStatus } }),
     [updateApp],
   );
-
   const handleReject = useCallback(
-    (id) => {
-      updateApp.mutate({ id, data: { status: "rejected" } });
-    },
+    (id) => updateApp.mutate({ id, data: { status: "rejected" } }),
     [updateApp],
   );
-
-  const handleDelete = useCallback(
-    (id) => {
-      deleteApp.mutate(id);
-    },
-    [deleteApp],
-  );
-
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-swiss-red" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="mx-auto max-w-2xl p-6">
-        <p className="text-error">Error: {error.message}</p>
-      </div>
-    );
-  }
+  const handleDelete = useCallback((id) => deleteApp.mutate(id), [deleteApp]);
 
   const applications = data?.data || [];
+  const conversion = stats?.conversion_rates?.saved_to_applied;
 
   return (
-    <div className="mx-auto max-w-7xl p-4">
-      {/* Header */}
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-text-primary tracking-tight">Pipeline</h1>
-        <Link to="/match" className="text-sm text-swiss-red font-medium hover:underline">
-          Find matches
-        </Link>
-      </div>
+    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
+      <PageHeader
+        eyebrow="Career"
+        title="Pipeline"
+        description="Track every application from saved to offer."
+        actions={
+          <LinkButton
+            to="/match"
+            variant="primary"
+            leftIcon={<TrendingUp className="h-4 w-4" />}
+          >
+            Find matches
+          </LinkButton>
+        }
+      />
 
-      {/* Stats bar */}
+      {/* Métricas */}
       {stats && (
-        <div className="mb-4 flex flex-wrap gap-3">
-          {Object.entries(stats.by_status).map(([status, count]) => (
-            <div key={status} className="flex items-center gap-1">
-              <StatusBadge status={status} />
-              <span className="text-sm font-medium text-text-primary">{count}</span>
-            </div>
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+          {["saved", "applied", "interview", "offer"].map((key) => (
+            <MetricTile
+              key={key}
+              label={key.replace("_", " ")}
+              value={stats.by_status?.[key] ?? 0}
+              tone={
+                key === "offer" ? "success" : key === "interview" ? "brand" : "neutral"
+              }
+            />
           ))}
-          {stats.conversion_rates?.saved_to_applied !== undefined && (
-            <span className="text-xs text-text-secondary">
-              Conversion: {(stats.conversion_rates.saved_to_applied * 100).toFixed(0)}%
-            </span>
+          {conversion !== undefined && (
+            <MetricTile
+              label="Apply rate"
+              value={`${(conversion * 100).toFixed(0)}%`}
+              tone="ink"
+              hint="Saved → Applied"
+            />
           )}
+          <MetricTile
+            label="Active"
+            value={applications.filter(
+              (a) => a.status !== "rejected" && a.status !== "withdrawn",
+            ).length}
+            tone="ink"
+          />
         </div>
       )}
 
-      {applications.length === 0 ? (
-        <div className="mt-20 text-center">
-          <p className="text-lg text-text-tertiary">No applications yet</p>
-          <p className="mt-1 text-sm text-text-tertiary">
-            Save jobs from the{" "}
-            <Link to="/match" className="text-swiss-red hover:underline">
-              Matches
-            </Link>{" "}
-            page to start tracking.
-          </p>
+      {/* Error */}
+      {error && (
+        <div className="mt-6 rounded-xl border border-error-border bg-error-light p-4 text-sm text-error">
+          {error.message}
         </div>
-      ) : (
-        <div className="flex gap-3 overflow-x-auto pb-4">
+      )}
+
+      {/* Loading */}
+      {isLoading && (
+        <div className="mt-6 flex gap-3 overflow-x-auto pb-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <ColumnSkeleton key={i} />
+          ))}
+        </div>
+      )}
+
+      {/* Empty */}
+      {!isLoading && applications.length === 0 && (
+        <div className="mt-6">
+          <EmptyState
+            icon={Inbox}
+            title="No applications yet"
+            description="Save jobs from the Matches page and they'll show up here as you progress."
+            action={
+              <LinkButton to="/match" variant="primary">
+                Go to Matches
+              </LinkButton>
+            }
+          />
+        </div>
+      )}
+
+      {/* Kanban */}
+      {!isLoading && applications.length > 0 && (
+        <div className="mt-6 flex gap-3 overflow-x-auto pb-4 snap-x snap-mandatory">
           {COLUMNS.map((col) => {
             const items = applications.filter((a) => a.status === col.key);
-            if (items.length === 0 && !["saved", "applied", "interview", "offer"].includes(col.key)) {
+            // Ocultar columnas terminales vacías
+            if (
+              items.length === 0 &&
+              !["saved", "applied", "interview", "offer"].includes(col.key)
+            ) {
               return null;
             }
             return (
               <div
                 key={col.key}
-                className={`min-w-[220px] shrink-0 bg-surface-secondary rounded-xl border-t-4 ${col.border} p-2`}
+                className="w-[260px] shrink-0 snap-start rounded-xl bg-surface-secondary"
               >
-                <div className="mb-2 flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-text-primary">
-                    {col.label}
-                  </h3>
-                  <span className="bg-surface rounded-full shadow-xs px-2 py-0.5 text-xs text-text-secondary">
-                    {items.length}
-                  </span>
-                </div>
-                <div className="flex flex-col gap-2">
-                  {items.map((app) => (
-                    <ApplicationCard
-                      key={app.id}
-                      app={app}
-                      onAdvance={handleAdvance}
-                      onReject={handleReject}
-                      onDelete={handleDelete}
+                {/* Cabecera columna */}
+                <header
+                  className={cn(
+                    "sticky top-0 z-10 flex items-center justify-between rounded-t-xl bg-surface-secondary/95 px-3 py-2.5 backdrop-blur",
+                    "border-b border-border-light",
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={cn("h-1.5 w-1.5 rounded-full", col.tone)}
+                      aria-hidden="true"
                     />
-                  ))}
+                    <h3 className="text-sm font-medium tracking-tight text-text-primary">
+                      {col.label}
+                    </h3>
+                  </div>
+                  <Badge variant="neutral" size="xs">
+                    {items.length}
+                  </Badge>
+                </header>
+
+                {/* Cards */}
+                <div className="flex flex-col gap-2 p-2">
+                  {items.length === 0 ? (
+                    <p className="rounded-lg border border-dashed border-border bg-surface px-3 py-4 text-center text-xs text-text-tertiary">
+                      Empty
+                    </p>
+                  ) : (
+                    items.map((app) => (
+                      <ApplicationCard
+                        key={app.id}
+                        app={app}
+                        onAdvance={handleAdvance}
+                        onReject={handleReject}
+                        onDelete={handleDelete}
+                      />
+                    ))
+                  )}
                 </div>
               </div>
             );
           })}
         </div>
       )}
+
     </div>
   );
 }
