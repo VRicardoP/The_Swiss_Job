@@ -131,7 +131,8 @@ class SwissSchoolsNAEScraper(BaseScraper):
             "company": school.name,  # Nombre del colegio como empresa
             "location": f"{city}, {country}" if city else country,
             "url": url,
-            "category": "A",  # Bypass de penalización H
+            # Categoría real (probablemente H) la asigna el classifier.
+            # El bypass se aplica en match_service según watchlist_schools_enabled.
             "tags": ["education", "international school", school.id],
             "language": "en",
         }

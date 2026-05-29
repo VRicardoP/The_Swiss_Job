@@ -123,7 +123,7 @@ class SwissSchoolsISPScraper(BaseJobProvider):
             "company": school.name,
             "location": location_text or f"{school.city}, CH",
             "url": url,
-            "category": "A",  # Bypass de penalización H
+            # Categoría real la asigna el classifier; bypass en match_service.
             "tags": ["education", "international school", school.id],
             "language": "en",
         }

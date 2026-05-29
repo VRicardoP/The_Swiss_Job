@@ -182,14 +182,7 @@ class DataNormalizer:
 
     @staticmethod
     def classify_category(job: dict) -> dict:
-        """Asigna la categoría del análisis maestro (A–M o 'otros').
-
-        Si el job ya trae categoría asignada se respeta. Esto permite a los
-        scrapers de la lista de swiss_schools forzar "A" y saltarse la
-        penalización H aplicada a la docencia general.
-        """
-        if job.get("category"):
-            return job
+        """Asigna la categoría del análisis maestro (A–M o 'otros')."""
         from services.job_classifier import classify_job
         job["category"] = classify_job(
             title=job.get("title") or "",

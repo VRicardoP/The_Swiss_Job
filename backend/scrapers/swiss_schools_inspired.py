@@ -114,7 +114,7 @@ class SwissSchoolsInspiredScraper(BaseScraper):
             "company": school.name,
             "location": location,
             "url": url,
-            "category": "A",
+            # Categoría real la asigna el classifier; bypass en match_service.
             "tags": ["education", "international school", school.id],
             "language": "en",
         }

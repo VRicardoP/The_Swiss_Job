@@ -3,9 +3,14 @@
 from scrapers.gastrojob import GastrojobScraper
 from scrapers.schuljobs import SchulJobsScraper
 from scrapers.stelle_admin import StelleAdminScraper
+from scrapers.swiss_schools_ecolint import SwissSchoolsEcolintScraper
+from scrapers.swiss_schools_hautlac import SwissSchoolsHautLacScraper
 from scrapers.swiss_schools_inspired import SwissSchoolsInspiredScraper
+from scrapers.swiss_schools_isb import SwissSchoolsISBScraper
+from scrapers.swiss_schools_iscs import SwissSchoolsISCSScraper
 from scrapers.swiss_schools_isp import SwissSchoolsISPScraper
 from scrapers.swiss_schools_nae import SwissSchoolsNAEScraper
+from scrapers.swiss_schools_zis import SwissSchoolsZISScraper
 from scrapers.tes import TESScraper
 from services.job_service import BaseJobProvider
 
@@ -14,10 +19,20 @@ _SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
     "stelle_admin": StelleAdminScraper,
     "tes": TESScraper,
     "schuljobs": SchulJobsScraper,
-    # Watchlist de colegios suizos (Fase 1): NAE central + ISP Workday + Inspired SF
+    # Watchlist Fase 1: portales centralizados (NAE + ISP + Inspired)
     "swiss_schools_nae": SwissSchoolsNAEScraper,
     "swiss_schools_isp": SwissSchoolsISPScraper,
     "swiss_schools_inspired": SwissSchoolsInspiredScraper,
+    # Watchlist Fase 2: Group A propios (ZIS + ISB + Ecolint)
+    "swiss_schools_zis": SwissSchoolsZISScraper,
+    "swiss_schools_isb": SwissSchoolsISBScraper,
+    "swiss_schools_ecolint": SwissSchoolsEcolintScraper,
+    # Watchlist Fase 3: HTML propio menores (Haut-Lac + ISCS)
+    # Riviera, Verbier, ISR quedan como "manual": Riviera no expone jobs
+    # en HTML estático; Verbier solo enlaza a TES (ya cubierto); ISR usa
+    # SPA AbaServices que requeriría Playwright para ~1 vacante.
+    "swiss_schools_hautlac": SwissSchoolsHautLacScraper,
+    "swiss_schools_iscs": SwissSchoolsISCSScraper,
 }
 
 
