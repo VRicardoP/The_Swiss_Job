@@ -1,0 +1,130 @@
+# SwissJobHunter — stack de producción (QNAP Container Station + Tailscale).
+#
+# Despliegue:
+#   - Único puerto expuesto al host: 8080 (frontend / nginx). Backend, postgres
+#     y redis solo accesibles desde la red interna `swissjob-net`.
+#   - Acceso desde cualquier dispositivo en la tailnet via
+#     http://capsule.tailebc81d.ts.net:8080
+#   - Migraciones Alembic se aplican automáticamente en el arranque del backend
+#     (scripts/entrypoint.sh). El worker NO migra (entrypoint=[]).
+#
+# Antes de levantar:
+#   1. Generar SECRET_KEY: python -c "import secrets; print(secrets.token_urlsafe(48))"
+#   2. Crear .env.prod a partir de .env.prod.example y rellenar los CHANGE_ME.
+#   3. docker compose -f docker-compose.prod.yml up -d --build
+#
+# Stop / restart:
+#   docker compose -f docker-compose.prod.yml down
+#   docker compose -f docker-compose.prod.yml up -d
+# Los volúmenes pgdata y redisdata persisten datos entre restarts.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: swissjob-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - swissjob-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: swissjob-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - swissjob-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    image: swissjob-backend:prod
+    container_name: swissjob-backend
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s   # el modelo de embeddings tarda ~30-60s en cargar
+    networks:
+      - swissjob-net
+
+  worker:
+    image: swissjob-backend:prod   # reutiliza la imagen del backend
+    container_name: swissjob-worker
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    depends_on:
+      backend:
+        condition: service_healthy  # espera a que el backend haya migrado
+    # El worker NO ejecuta entrypoint.sh (no migra). Arranca celery directamente.
+    entrypoint: []
+    command:
+      - celery
+      - -A
+      - celery_app
+      - worker
+      - -Q
+      - default,scraping,ai
+      - --concurrency=2
+      - --loglevel=info
+    networks:
+      - swissjob-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    image: swissjob-frontend:prod
+    container_name: swissjob-frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost/nginx-health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - swissjob-net
+
+networks:
+  swissjob-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local
