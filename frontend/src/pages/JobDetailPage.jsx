@@ -37,7 +37,7 @@ export default function JobDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen-safe flex items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-swiss-red" />
       </div>
     );
@@ -45,7 +45,7 @@ export default function JobDetailPage() {
 
   if (isError) {
     return (
-      <div className="min-h-screen p-4">
+      <div className="min-h-screen-safe p-4">
         <button
           onClick={() => navigate(-1)}
           className="text-sm text-text-secondary hover:text-swiss-red transition-colors mb-4"
@@ -63,7 +63,7 @@ export default function JobDetailPage() {
   const initial = job.company ? job.company[0].toUpperCase() : "?";
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen-safe">
       {/* Header */}
       <header className="bg-surface shadow-card rounded-b-xl">
         <div className="max-w-3xl mx-auto px-4 py-4">

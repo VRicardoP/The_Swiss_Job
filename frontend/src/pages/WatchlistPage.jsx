@@ -152,7 +152,7 @@ export default function WatchlistPage() {
         </div>
       ) : visible.length === 0 ? (
         <EmptyState
-          icon={<GraduationCap className="h-10 w-10" />}
+          icon={GraduationCap}
           title="Aún no hay vacantes en la watchlist"
           description="Cuando los scrapers de los colegios suizos detecten nuevas vacantes aparecerán aquí."
         />

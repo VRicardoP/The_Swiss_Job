@@ -38,12 +38,19 @@ function App() {
   const hasBottomNav = !!token && !onAuthPage
 
   return (
-    <div className="flex min-h-screen flex-col bg-surface-secondary">
+    // min-h-screen-safe usa 100dvh para no romperse con la barra de URL
+    // dinámica de Safari iOS.
+    <div className="flex min-h-screen-safe flex-col bg-surface-secondary">
       <Navbar />
       <main
         className={cn(
-          'flex-1',
-          hasBottomNav && 'pb-20 lg:pb-0',
+          // px-safe respeta el notch lateral del iPhone en landscape.
+          // No interfiere con el padding interno de cada página
+          // (mx-auto + px-4) — solo añade inset en los bordes.
+          'flex-1 px-safe',
+          // pb-bottom-nav suma el alto de la BottomNav (5rem) más el
+          // safe-area-inset-bottom del iPhone. En desktop se anula.
+          hasBottomNav && 'pb-bottom-nav lg:pb-0',
         )}
       >
         <Suspense fallback={<PageLoader />}>

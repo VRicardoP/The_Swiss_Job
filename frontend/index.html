@@ -3,8 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#DC0000" />
+    <!-- viewport-fit=cover es obligatorio para que iOS exponga
+         env(safe-area-inset-*); sin él los notebooks .pt-safe/.pb-safe
+         devuelven 0 en iPhone con Dynamic Island / notch. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5"
+    />
+    <!-- Paleta Swiss Minimal Pro: rojo de marca + ink oscuro para dark. -->
+    <meta name="theme-color" content="#DC0018" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0A0A0B" media="(prefers-color-scheme: dark)" />
+    <!-- PWA / Capacitor — comportamiento standalone tipo app nativa. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="SwissJob" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- Evitar que iOS convierta cadenas en links de teléfono o email. -->
+    <meta name="format-detection" content="telephone=no, email=no, address=no" />
     <title>SwissJob — Find Your Career in Switzerland</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

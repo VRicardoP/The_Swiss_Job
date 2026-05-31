@@ -161,7 +161,9 @@ function MenuItem({ to, icon: Icon, label, onClick }) {
 function BottomNav() {
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 backdrop-blur-lg pb-safe lg:hidden"
+      // pb-safe respeta el home indicator; px-safe el notch lateral
+      // cuando el iPhone se gira a landscape.
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 backdrop-blur-lg pb-safe px-safe lg:hidden"
       aria-label="Primary"
     >
       <ul className="mx-auto flex max-w-2xl items-stretch">
@@ -247,8 +249,11 @@ export default function Navbar() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 border-b border-border bg-surface/85 backdrop-blur-lg">
-        <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:h-16 sm:px-6">
+      {/* pt-safe: empuja el header bajo el Dynamic Island / notch.
+          px-safe-plus-4: añade el inset lateral cuando el iPhone está
+          en landscape, sin sacrificar el padding mínimo de 1rem. */}
+      <header className="sticky top-0 z-40 border-b border-border bg-surface/85 backdrop-blur-lg pt-safe">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-safe-plus-4 sm:h-16 sm:px-safe-plus-6">
           <BrandMark />
 
           {token && !onAuthPage && (

@@ -200,11 +200,57 @@
     box-shadow: inset 0 0 0 1px var(--color-border);
   }
 
-  /* Spacing seguro para barra inferior móvil (iOS notch) */
+  /* Spacing seguro para iOS — Dynamic Island, home indicator y notch
+     lateral en landscape. Requiere viewport-fit=cover en index.html. */
   .pb-safe {
     padding-bottom: max(env(safe-area-inset-bottom), 0px);
   }
   .pt-safe {
     padding-top: max(env(safe-area-inset-top), 0px);
   }
+  .pl-safe {
+    padding-left: max(env(safe-area-inset-left), 0px);
+  }
+  .pr-safe {
+    padding-right: max(env(safe-area-inset-right), 0px);
+  }
+  .px-safe {
+    padding-left: max(env(safe-area-inset-left), 0px);
+    padding-right: max(env(safe-area-inset-right), 0px);
+  }
+  /* Combina padding de diseño + safe-area. Útil cuando ya tienes px-4
+     y quieres que en iPhone landscape se añada el inset lateral. */
+  .px-safe-plus-4 {
+    padding-left: max(env(safe-area-inset-left), 1rem);
+    padding-right: max(env(safe-area-inset-right), 1rem);
+  }
+  .px-safe-plus-6 {
+    padding-left: max(env(safe-area-inset-left), 1.5rem);
+    padding-right: max(env(safe-area-inset-right), 1.5rem);
+  }
+  /* Altura total respetando barras dinámicas de iOS. dvh = dynamic
+     viewport height; 100vh falla porque NO se reduce con la barra de
+     URL de Safari. */
+  .min-h-screen-safe {
+    min-height: 100dvh;
+  }
+  .h-screen-safe {
+    height: 100dvh;
+  }
+  /* Padding inferior para layouts con BottomNav fija (5rem ~ h-20) +
+     el home-indicator de iPhone. Sin esto el contenido del scroll
+     queda tapado por la nav. */
+  .pb-bottom-nav {
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+  }
+}
+
+/* Reset global pensado para móvil iOS — fondo del viewport extendido a
+   las áreas detrás del notch (de otra forma queda en blanco) y evita
+   el rubber-banding al hacer overscroll en el body. */
+html,
+body {
+  background-color: var(--color-surface);
+  overscroll-behavior-y: contain;
+  -webkit-tap-highlight-color: transparent;
 }
