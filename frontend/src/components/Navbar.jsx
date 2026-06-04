@@ -59,7 +59,7 @@ function DesktopTab({ to, label, icon: Icon, end }) {
         cn(
           "relative inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-medium tracking-tight transition-all duration-150",
           isActive
-            ? "bg-ink-50 text-text-primary"
+            ? "bg-swiss-red-50 text-swiss-red"
             : "text-text-secondary hover:bg-surface-tertiary hover:text-text-primary",
         )
       }
@@ -158,6 +158,50 @@ function MenuItem({ to, icon: Icon, label, onClick }) {
   );
 }
 
+function BottomNavItem({ to, end, label, icon: Icon }) {
+  return (
+    <li className="flex-1">
+      <NavLink
+        to={to}
+        end={end}
+        className={({ isActive }) =>
+          cn(
+            "flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-medium",
+            "transition-colors duration-150",
+            isActive ? "text-swiss-red" : "text-text-tertiary",
+          )
+        }
+      >
+        {({ isActive }) => (
+          <>
+            <span
+              className={cn(
+                "flex h-7 w-12 items-center justify-center rounded-full transition-all duration-150",
+                isActive && "bg-swiss-red-50",
+              )}
+            >
+              {Icon && (
+                <Icon
+                  className={cn(
+                    "h-5 w-5 transition-colors",
+                    isActive ? "text-swiss-red" : "text-text-tertiary",
+                  )}
+                  aria-hidden="true"
+                  // Cuando un item se activa, engrosamos un poco el trazo para
+                  // que la diferencia con los inactivos sea más obvia en
+                  // pantallas pequeñas y a un vistazo rápido.
+                  strokeWidth={isActive ? 2.4 : 2}
+                />
+              )}
+            </span>
+            <span>{label}</span>
+          </>
+        )}
+      </NavLink>
+    </li>
+  );
+}
+
 function BottomNav() {
   return (
     <nav
@@ -168,70 +212,9 @@ function BottomNav() {
     >
       <ul className="mx-auto flex max-w-2xl items-stretch">
         {PRIMARY_NAV.map((item) => (
-          <li key={item.to} className="flex-1">
-            <NavLink
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                cn(
-                  "flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-medium",
-                  isActive ? "text-text-primary" : "text-text-tertiary",
-                )
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <span
-                    className={cn(
-                      "flex h-6 w-10 items-center justify-center rounded-full transition-colors",
-                      isActive && "bg-ink-50",
-                    )}
-                  >
-                    <item.icon
-                      className={cn(
-                        "h-[18px] w-[18px]",
-                        isActive ? "text-text-primary" : "text-text-tertiary",
-                      )}
-                      aria-hidden="true"
-                    />
-                  </span>
-                  <span>{item.label}</span>
-                </>
-              )}
-            </NavLink>
-          </li>
+          <BottomNavItem key={item.to} {...item} />
         ))}
-        <li className="flex-1">
-          <NavLink
-            to="/profile"
-            className={({ isActive }) =>
-              cn(
-                "flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-medium",
-                isActive ? "text-text-primary" : "text-text-tertiary",
-              )
-            }
-          >
-            {({ isActive }) => (
-              <>
-                <span
-                  className={cn(
-                    "flex h-6 w-10 items-center justify-center rounded-full transition-colors",
-                    isActive && "bg-ink-50",
-                  )}
-                >
-                  <User
-                    className={cn(
-                      "h-[18px] w-[18px]",
-                      isActive ? "text-text-primary" : "text-text-tertiary",
-                    )}
-                    aria-hidden="true"
-                  />
-                </span>
-                <span>Profile</span>
-              </>
-            )}
-          </NavLink>
-        </li>
+        <BottomNavItem to="/profile" label="Profile" icon={User} />
       </ul>
     </nav>
   );
