@@ -11,12 +11,16 @@ RUN apt-get update \
 
 # Playwright deja el binario en esta ruta global accesible por cualquier user
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV HF_HOME=/home/app/.cache/huggingface
+ENV SENTENCE_TRANSFORMERS_HOME=/home/app/.cache/huggingface/sentence-transformers
 
 # Python sin buffering para que los logs salgan al stdout en tiempo real
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 RUN useradd --create-home --shell /bin/bash app
+RUN mkdir -p ${HF_HOME} ${SENTENCE_TRANSFORMERS_HOME} \
+    && chown -R app:app /home/app/.cache
 
 WORKDIR /app
 
@@ -45,4 +49,4 @@ CMD ["gunicorn", "main:app", \
      "--bind", "0.0.0.0:8000", \
      "--access-logfile", "-", \
      "--error-logfile", "-", \
-     "--timeout", "120"]
+     "--timeout", "420"]

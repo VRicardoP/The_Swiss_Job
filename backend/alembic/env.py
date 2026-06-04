@@ -9,12 +9,18 @@ from alembic import context
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.pool import NullPool
 
+from config import settings
 from database import Base
 import models  # noqa: F401 — registers model metadata on Base
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Sobrescribe el sqlalchemy.url del alembic.ini con el de settings (pydantic).
+# Así Alembic comparte la misma fuente de verdad que la app (env vars > .env)
+# y NO depende del valor hard-coded de desarrollo del alembic.ini.
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 target_metadata = Base.metadata
 

@@ -1,46 +1,23 @@
-# SwissJobHunter — stack de producción con BUILD en el NAS.
-#
-# ⚠ Para QNAP Container Station prefiere docker-compose.qnap.yml (este YAML
-#   asume `docker compose` CLI con expansión de ${VARS} y paths relativos,
-#   que Container Station NO soporta).
-#
-# Variantes:
-#   - docker-compose.yml          : Dev local.
-#   - docker-compose.prod.yml     : Build-en-NAS — este archivo.
-#   - docker-compose.prebuilt.yml : Imágenes pre-cargadas via `docker load`.
-#   - docker-compose.qnap.yml     : Recomendado para Container Station.
-#
-# Características:
-#   - Único puerto expuesto al host: 8080 (frontend / nginx).
-#   - Backend, postgres y redis: solo accesibles vía red interna `swissjob-net`.
-#   - Migraciones Alembic se aplican automáticamente en el arranque del backend
-#     (scripts/entrypoint.sh). El worker NO migra (entrypoint=[]).
-#   - Acceso vía Tailscale: http://capsule.tailebc81d.ts.net:8080
-#
-# Antes de levantar:
-#   1. Generar SECRET_KEY: python -c "import secrets; print(secrets.token_urlsafe(48))"
-#   2. Crear .env.prod a partir de .env.prod.example y rellenar los CHANGE_ME.
-#      ⚠ POSTGRES_PASSWORD y la parte :password@ de DATABASE_URL deben coincidir.
-#   3. docker compose -f docker-compose.prod.yml up -d --build
-#
-# Stop / restart:
-#   docker compose -f docker-compose.prod.yml down
-#   docker compose -f docker-compose.prod.yml up -d
-# Los volúmenes pgdata, redisdata y hfcache persisten entre restarts.
+# SwissJobHunter — versión específica para Container Station QNAP.
+# Self-contained: rutas absolutas para volúmenes y env_file.
+# Container Station NO expande ${VARS} ni resuelve env_file relativo, por eso
+# todos los paths van absolutos: /share/Public/swissjob/...
+# Todos los servicios que necesitan credenciales (postgres, backend, worker)
+# leen del mismo .env.prod → imposible que se desincronicen.
 
 services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: swissjob-postgres
     restart: unless-stopped
-    # env_file en lugar de ${VARS}: misma fuente de credenciales que el
-    # backend (imposible que se desincronicen) y compatible con Container
-    # Station, que no expande ${VARS} del compose.
+    # env_file con path absoluto (Container Station QNAP no resuelve paths
+    # relativos). Misma fuente de credenciales que backend y worker:
+    # imposible que postgres y backend usen passwords distintos.
     env_file:
-      - .env.prod
+      - /share/Public/swissjob/.env.prod
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./docker/postgres/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
+      - /share/Public/swissjob/docker/postgres/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
     healthcheck:
       # $$ escapa la sustitución de compose; el shell del contenedor resuelve
       # $POSTGRES_USER / $POSTGRES_DB con su propio entorno (cargado vía env_file).
@@ -67,14 +44,11 @@ services:
       - swissjob-net
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.prod
     image: swissjob-backend:prod
     container_name: swissjob-backend
     restart: unless-stopped
     env_file:
-      - .env.prod
+      - /share/Public/swissjob/.env.prod
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,34 +56,33 @@ services:
         condition: service_healthy
     volumes:
       # Cache de HuggingFace persistente — evita re-descargar el modelo
-      # paraphrase-multilingual-MiniLM-L12-v2 (~120 MB) en cada recreate.
+      # paraphrase-multilingual-MiniLM-L12-v2 (~120 MB) en cada Recreate.
       - hfcache:/home/app/.cache/huggingface
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
       interval: 30s
       timeout: 5s
       # start_period generoso: el primer arranque carga el modelo embedding
-      # (~120 MB) en CPU del NAS, hasta 5 min. Después del primer arranque
-      # el modelo queda en hfcache y los siguientes recreates son <60s.
+      # (~120 MB) en CPU del NAS, ~4-5 min. Después del primer arranque el
+      # modelo queda en el volumen hfcache y el siguiente Recreate es <60s.
       start_period: 360s
       retries: 5
     networks:
       - swissjob-net
 
   worker:
-    image: swissjob-backend:prod   # reutiliza la imagen del backend
+    image: swissjob-backend:prod
     container_name: swissjob-worker
     restart: unless-stopped
     env_file:
-      - .env.prod
+      - /share/Public/swissjob/.env.prod
     depends_on:
       backend:
-        condition: service_healthy  # espera a que el backend haya migrado
+        condition: service_healthy
     volumes:
-      # Compartido con backend: el worker también usa el modelo embedding
+      # Compartido con el backend — el worker también usa el modelo embedding
       # para tareas de matching que llegan a la queue.
       - hfcache:/home/app/.cache/huggingface
-    # El worker NO ejecuta entrypoint.sh (no migra). Arranca celery directamente.
     entrypoint: []
     command:
       - celery
@@ -124,9 +97,6 @@ services:
       - swissjob-net
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.prod
     image: swissjob-frontend:prod
     container_name: swissjob-frontend
     restart: unless-stopped

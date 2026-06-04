@@ -1,41 +1,27 @@
-# SwissJobHunter — stack de producción con BUILD en el NAS.
+# SwissJobHunter — stack producción, versión PREBUILT.
 #
-# ⚠ Para QNAP Container Station prefiere docker-compose.qnap.yml (este YAML
-#   asume `docker compose` CLI con expansión de ${VARS} y paths relativos,
-#   que Container Station NO soporta).
+# A diferencia de docker-compose.prod.yml, este NO construye nada en el NAS.
+# Asume que las imágenes swissjob-backend:prod y swissjob-frontend:prod
+# ya están cargadas en el daemon (vía `docker load -i swissjob-backend.tar`).
 #
-# Variantes:
-#   - docker-compose.yml          : Dev local.
-#   - docker-compose.prod.yml     : Build-en-NAS — este archivo.
-#   - docker-compose.prebuilt.yml : Imágenes pre-cargadas via `docker load`.
-#   - docker-compose.qnap.yml     : Recomendado para Container Station.
+# Despliegue:
+#   docker load -i swissjob-backend.tar
+#   docker load -i swissjob-frontend.tar
+#   docker compose -f docker-compose.prebuilt.yml up -d
 #
-# Características:
-#   - Único puerto expuesto al host: 8080 (frontend / nginx).
-#   - Backend, postgres y redis: solo accesibles vía red interna `swissjob-net`.
-#   - Migraciones Alembic se aplican automáticamente en el arranque del backend
-#     (scripts/entrypoint.sh). El worker NO migra (entrypoint=[]).
-#   - Acceso vía Tailscale: http://capsule.tailebc81d.ts.net:8080
-#
-# Antes de levantar:
-#   1. Generar SECRET_KEY: python -c "import secrets; print(secrets.token_urlsafe(48))"
-#   2. Crear .env.prod a partir de .env.prod.example y rellenar los CHANGE_ME.
-#      ⚠ POSTGRES_PASSWORD y la parte :password@ de DATABASE_URL deben coincidir.
-#   3. docker compose -f docker-compose.prod.yml up -d --build
-#
-# Stop / restart:
-#   docker compose -f docker-compose.prod.yml down
-#   docker compose -f docker-compose.prod.yml up -d
-# Los volúmenes pgdata, redisdata y hfcache persisten entre restarts.
+# Acceso desde la tailnet:
+#   http://capsule.tailebc81d.ts.net:8080
 
 services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: swissjob-postgres
     restart: unless-stopped
-    # env_file en lugar de ${VARS}: misma fuente de credenciales que el
-    # backend (imposible que se desincronicen) y compatible con Container
-    # Station, que no expande ${VARS} del compose.
+    # env_file en lugar de ${VAR} en environment: así el servicio NO depende
+    # de que quien lance compose le pase `--env-file .env.prod`. Container
+    # Station (QNAP) no inyecta .env.prod automáticamente, y sin él las
+    # sustituciones quedaban vacías → el init de Postgres usaba un password
+    # distinto del que mandaba el backend → InvalidPasswordError al conectar.
     env_file:
       - .env.prod
     volumes:
@@ -67,9 +53,6 @@ services:
       - swissjob-net
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.prod
     image: swissjob-backend:prod
     container_name: swissjob-backend
     restart: unless-stopped
@@ -97,19 +80,18 @@ services:
       - swissjob-net
 
   worker:
-    image: swissjob-backend:prod   # reutiliza la imagen del backend
+    image: swissjob-backend:prod
     container_name: swissjob-worker
     restart: unless-stopped
     env_file:
       - .env.prod
     depends_on:
       backend:
-        condition: service_healthy  # espera a que el backend haya migrado
+        condition: service_healthy
     volumes:
       # Compartido con backend: el worker también usa el modelo embedding
       # para tareas de matching que llegan a la queue.
       - hfcache:/home/app/.cache/huggingface
-    # El worker NO ejecuta entrypoint.sh (no migra). Arranca celery directamente.
     entrypoint: []
     command:
       - celery
@@ -124,9 +106,6 @@ services:
       - swissjob-net
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.prod
     image: swissjob-frontend:prod
     container_name: swissjob-frontend
     restart: unless-stopped
