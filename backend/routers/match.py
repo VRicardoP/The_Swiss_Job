@@ -146,6 +146,7 @@ async def _build_results_response(
                 job_company=job.company,
                 job_location=job.location,
                 job_url=job.url,
+                job_description=job.description_snippet,
                 job_salary_min=job.salary_min_chf,
                 job_salary_max=job.salary_max_chf,
                 job_tags=job.tags or [],

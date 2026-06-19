@@ -4,6 +4,7 @@ import {
   ThumbsUp,
   ThumbsDown,
   ArrowUpRight,
+  ExternalLink,
   Languages,
   Check,
   MapPin,
@@ -67,29 +68,6 @@ function ScoreRing({ value, size = 56 }) {
           {v}
         </span>
       </div>
-    </div>
-  );
-}
-
-function ScoreBar({ label, value }) {
-  const v = Math.max(0, Math.min(100, Math.round(value)));
-  return (
-    <div className="flex items-center gap-2.5">
-      <span className="w-16 text-[11px] uppercase tracking-wider text-text-tertiary">
-        {label}
-      </span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-tertiary">
-        <div
-          className={cn(
-            "h-full rounded-full transition-all duration-500",
-            v >= 70 ? "bg-success" : v >= 40 ? "bg-ink-500" : "bg-ink-300",
-          )}
-          style={{ width: `${v}%` }}
-        />
-      </div>
-      <span className="w-7 text-right text-[11px] font-medium tabular-nums text-text-secondary">
-        {v}
-      </span>
     </div>
   );
 }
@@ -219,18 +197,12 @@ function MatchCard({ match, onFeedback, onClearFeedback, onImplicit }) {
         </div>
       </div>
 
-      {/* Breakdown */}
-      <div className="mt-4 grid gap-2 rounded-lg bg-surface-secondary p-3 sm:grid-cols-2">
-        <ScoreBar label="Skills" value={match.scores.embedding * 100} />
-        <ScoreBar label="Salary" value={match.scores.salary * 100} />
-        <ScoreBar label="Location" value={match.scores.location * 100} />
-        <ScoreBar label="Recency" value={match.scores.recency * 100} />
-        {match.scores.llm > 0 && (
-          <div className="sm:col-span-2">
-            <ScoreBar label="AI" value={match.scores.llm * 100} />
-          </div>
-        )}
-      </div>
+      {/* Descripción del puesto */}
+      {match.job_description && (
+        <p className="mt-3 line-clamp-3 text-sm leading-relaxed text-text-secondary">
+          {match.job_description}
+        </p>
+      )}
 
       {/* Skills matching / missing */}
       {(match.matching_skills.length > 0 || match.missing_skills.length > 0) && (
@@ -274,10 +246,30 @@ function MatchCard({ match, onFeedback, onClearFeedback, onImplicit }) {
           onClick={() => toggleFeedback("thumbs_down")}
           title={match.feedback === "thumbs_down" ? "Unmark" : "Dismiss"}
         />
+
+        {match.job_url && (
+          <a
+            href={match.job_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => onImplicit?.({ jobHash: match.job_hash, action: "applied" })}
+            className={cn(
+              "ml-auto inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold",
+              "bg-swiss-red text-white transition-colors duration-150",
+              "hover:bg-swiss-red-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-swiss-red focus-visible:ring-offset-1",
+            )}
+          >
+            Apply
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+          </a>
+        )}
         <Link
           to={`/job/${match.job_hash}`}
           onClick={handleJobClick}
-          className="ml-auto inline-flex items-center gap-1 text-sm font-medium text-text-primary hover:text-ink"
+          className={cn(
+            "inline-flex items-center gap-1 text-sm font-medium text-text-primary hover:text-ink",
+            !match.job_url && "ml-auto",
+          )}
         >
           View details
           <ArrowUpRight className="h-4 w-4" aria-hidden="true" />

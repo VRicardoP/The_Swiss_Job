@@ -39,7 +39,12 @@ export function useSubmitFeedback() {
   return useMutation({
     mutationFn: ({ jobHash, feedback }) =>
       matchApi.submitFeedback(jobHash, feedback),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["match-results"] }),
+    onSuccess: () => {
+      // match-results: "not for me" oculta la oferta de la vista de matches.
+      // saved-jobs: "Good" la guarda y debe reflejarse al instante en Saved.
+      qc.invalidateQueries({ queryKey: ["match-results"] });
+      qc.invalidateQueries({ queryKey: ["saved-jobs"] });
+    },
   });
 }
 

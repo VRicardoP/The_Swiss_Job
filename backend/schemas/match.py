@@ -52,6 +52,7 @@ class MatchResultResponse(BaseModel):
     job_company: str | None = None
     job_location: str | None = None
     job_url: str | None = None
+    job_description: str | None = None  # snippet corto para la tarjeta
     job_salary_min: int | None = None
     job_salary_max: int | None = None
     job_tags: list[str] = Field(default_factory=list)
