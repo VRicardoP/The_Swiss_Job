@@ -14,6 +14,13 @@ from tests.conftest import random_email
 
 _TEST_PASSWORD = "TestPass123!"
 
+# Seed compartido por el embedding del perfil y el de los jobs de prueba: al
+# coincidir, la similitud coseno ≈ 1.0 y el embedding_score (35% del peso) basta
+# para superar MATCH_SCORE_THRESHOLD. Con vectores ortogonales (seeds distintos)
+# el score cae por debajo y el pipeline devuelve 'no_jobs'. Ver Fase 5: el factor
+# idioma y el rebalanceo de pesos redujeron el margen que antes daban salary+location.
+_PROFILE_EMBED_SEED = 1
+
 
 def _auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
@@ -70,7 +77,8 @@ async def _insert_jobs_with_embeddings(db: AsyncSession, count: int = 5) -> list
     for i in range(count):
         data = _job_data(i)
         job = Job(**{k: v for k, v in data.items() if k in valid_columns})
-        job.embedding = _fake_embedding(seed=100 + i)
+        # Mismo seed que el perfil → cosine≈1.0 → embedding_score alto (ver constante).
+        job.embedding = _fake_embedding(seed=_PROFILE_EMBED_SEED)
         db.add(job)
         hashes.append(data["hash"])
     await db.commit()
@@ -103,7 +111,7 @@ async def _setup_user_with_embedding(
 
     result = await db.execute(select(UserProfile).where(UserProfile.user_id == user_id))
     profile = result.scalar_one()
-    profile.cv_embedding = _fake_embedding(seed=1)
+    profile.cv_embedding = _fake_embedding(seed=_PROFILE_EMBED_SEED)
     await db.commit()
 
     return token, user_id

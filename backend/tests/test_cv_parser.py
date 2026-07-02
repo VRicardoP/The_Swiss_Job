@@ -73,22 +73,25 @@ class TestExtractText:
 
 
 class TestExtractSkills:
-    def test_finds_programming_languages(self):
-        skills = CVParser.extract_skills("Experienced in Python, Java, and React")
-        assert "Python" in skills
-        assert "Java" in skills
-        assert "React" in skills
+    def test_finds_known_skills(self):
+        # SKILL_PATTERNS (Fase 5) cubre idiomas, docencia, contenido, RRHH y gestión.
+        skills = CVParser.extract_skills(
+            "Fluent in English, certified in Agile and Project Management"
+        )
+        assert "English" in skills
+        assert "Agile" in skills
+        assert "Project Management" in skills
 
     def test_finds_multilingual_keywords(self):
-        skills = CVParser.extract_skills("Sprachen: Deutsch, English, Italiano")
-        assert "Deutsch" in skills
+        skills = CVParser.extract_skills("Languages: English, French, Spanish")
         assert "English" in skills
-        assert "Italiano" in skills
+        assert "French" in skills
+        assert "Spanish" in skills
 
     def test_deduplication(self):
-        skills = CVParser.extract_skills("Python python PYTHON developer")
-        python_count = sum(1 for s in skills if s.lower() == "python")
-        assert python_count == 1
+        skills = CVParser.extract_skills("English english ENGLISH speaker")
+        english_count = sum(1 for s in skills if s.lower() == "english")
+        assert english_count == 1
 
     def test_empty_text_returns_empty(self):
         assert CVParser.extract_skills("") == []

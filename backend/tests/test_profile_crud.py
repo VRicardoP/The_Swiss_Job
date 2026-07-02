@@ -200,8 +200,8 @@ class TestUploadCV:
         token, _ = await _register_and_get_token(client)
 
         cv_text = (
-            "Senior Python Developer with 5 years of experience in FastAPI "
-            "and PostgreSQL. Expert in Docker and Kubernetes deployments."
+            "Senior Content Editor with 5 years of experience. Fluent in English "
+            "and French. Certified in Agile and Project Management."
         )
         pdf_bytes = _make_pdf(cv_text)
 
@@ -214,7 +214,7 @@ class TestUploadCV:
         data = resp.json()
         assert data["message"] == "CV uploaded and parsed successfully"
         assert data["cv_text_length"] > 0
-        assert "Python" in data["skills_extracted"]
+        assert "English" in data["skills_extracted"]
 
     @patch("tasks.embedding_tasks.generate_profile_embedding")
     async def test_upload_docx_success(self, mock_task, client):
@@ -222,8 +222,8 @@ class TestUploadCV:
         token, _ = await _register_and_get_token(client)
 
         cv_text = (
-            "Full Stack Developer experienced with React, Node.js and "
-            "TypeScript. Fluent in Deutsch and English."
+            "Experienced professional fluent in French and English. "
+            "Certified in Scrum and Agile methodologies."
         )
         docx_bytes = _make_docx(cv_text)
 
@@ -242,7 +242,7 @@ class TestUploadCV:
         assert resp.status_code == 200
         data = resp.json()
         assert data["cv_text_length"] > 0
-        assert "React" in data["skills_extracted"]
+        assert "French" in data["skills_extracted"]
 
     async def test_upload_unsupported_type(self, client):
         token, _ = await _register_and_get_token(client)
@@ -281,10 +281,10 @@ class TestUploadCV:
             json={"skills": ["Go", "Rust"]},
         )
 
-        # Upload CV with different skills
+        # Upload CV with different skills (los que el parser sí reconoce, Fase 5)
         cv_text = (
-            "Python developer with extensive experience in FastAPI and "
-            "PostgreSQL. Expert in Docker containerization and cloud deployments."
+            "Experienced in Agile and Customer Success, fluent in English. "
+            "Strong background in Project Management and Talent Acquisition."
         )
         pdf_bytes = _make_pdf(cv_text)
         resp = await client.post(
@@ -294,12 +294,12 @@ class TestUploadCV:
         )
         assert resp.status_code == 200
 
-        # Verify skills merged
+        # Verify skills merged: los previos se conservan y se añaden los extraídos
         profile_resp = await client.get("/api/v1/profile", headers=_auth(token))
         all_skills = profile_resp.json()["skills"]
         assert "Go" in all_skills
         assert "Rust" in all_skills
-        assert "Python" in all_skills
+        assert "Agile" in all_skills
 
 
 class TestDeleteCV:

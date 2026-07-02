@@ -42,14 +42,16 @@ class TestStripHtmlTags:
 
 class TestExtractJobSkills:
     def test_finds_known_skills(self):
+        # JOB_TAGS (Fase 5) refleja el perfil real: idiomas, docencia, contenido, RRHH.
         skills = extract_job_skills(
-            "Senior Python Developer",
-            "We use Django and PostgreSQL with Docker",
+            "Content Editor and Copywriter",
+            "Fluent in English and French, TEFL certified",
         )
-        assert "python" in skills
-        assert "django" in skills
-        assert "postgresql" in skills
-        assert "docker" in skills
+        assert "content editor" in skills
+        assert "copywriter" in skills
+        assert "english" in skills
+        assert "french" in skills
+        assert "tefl" in skills
 
     def test_max_15_skills(self):
         # Description with many tech tags
@@ -67,13 +69,13 @@ class TestExtractJobSkills:
         assert extract_job_skills("", "") == []
 
     def test_no_duplicates(self):
-        skills = extract_job_skills("Python Python", "python developer")
-        assert skills.count("python") == 1
+        skills = extract_job_skills("Copywriter Copywriter", "copywriter needed")
+        assert skills.count("copywriter") == 1
 
     def test_case_insensitive(self):
-        skills = extract_job_skills("REACT Developer", "Using TYPESCRIPT")
-        assert "react" in skills
-        assert "typescript" in skills
+        skills = extract_job_skills("COPYWRITER Needed", "Using ENGLISH")
+        assert "copywriter" in skills
+        assert "english" in skills
 
 
 # ---------------------------------------------------------------------------

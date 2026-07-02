@@ -4,14 +4,12 @@ SSR HTML listing + JSON-LD (Schema.org JobPosting) on detail pages.
 AJAX pagination via /scroll/searchhash/{hash}/page/{N} endpoint.
 """
 
-import asyncio
 import json
 import logging
 
 import httpx
 from bs4 import BeautifulSoup
 
-from config import settings
 from services.circuit_breaker import CircuitBreakerOpen
 from services.scraper_engine import BaseScraper
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
@@ -109,21 +107,17 @@ class SchulJobsScraper(BaseScraper):
             "X-Requested-With": "XMLHttpRequest",
         }
 
-        async with httpx.AsyncClient(
-            headers=self.DEFAULT_HEADERS,
-            follow_redirects=True,
-            timeout=settings.SCRAPER_HTTPX_TIMEOUT,
-        ) as client:
+        async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
             # Phase 1: initial listing page
             try:
-                response = await self._circuit.call(
+                response = await self._request_with_retry(
                     lambda: client.get(self.LISTING_URL)
                 )
             except (CircuitBreakerOpen, httpx.HTTPError) as e:
                 logger.error("%s initial page error: %s", self.SOURCE_NAME, e)
                 return []
 
-            if response.status_code in (403, 429):
+            if response.status_code in self.BLOCK_STATUS:
                 await self._report_block(response.status_code)
                 return []
             if response.status_code != 200:
@@ -134,6 +128,12 @@ class SchulJobsScraper(BaseScraper):
 
             soup = BeautifulSoup(response.text, "lxml")
             initial_stubs = self.parse_listing_page(soup)
+            # 0 resultados + marcador anti-bot => soft-block (200 sin datos).
+            # Reutiliza el helper base (una sola implementación del soft-block).
+            if not initial_stubs and await self._maybe_report_soft_block(
+                response.text, page=1
+            ):
+                return []
             all_stubs.extend(initial_stubs)
 
             # Extract searchhash for AJAX pagination
@@ -149,13 +149,13 @@ class SchulJobsScraper(BaseScraper):
                     if not next_page:
                         break
 
-                    await asyncio.sleep(self.RATE_LIMIT_SECONDS)
+                    await self._rate_limit_delay()
                     scroll_url = SCROLL_URL.format(
                         searchhash=searchhash, page=next_page
                     )
 
                     try:
-                        resp = await self._circuit.call(
+                        resp = await self._request_with_retry(
                             lambda u=scroll_url: client.get(u, headers=ajax_headers)
                         )
                     except (CircuitBreakerOpen, httpx.HTTPError) as e:
@@ -167,7 +167,7 @@ class SchulJobsScraper(BaseScraper):
                         )
                         break
 
-                    if resp.status_code in (403, 429):
+                    if resp.status_code in self.BLOCK_STATUS:
                         await self._report_block(resp.status_code)
                         break
                     if resp.status_code != 200:
@@ -217,7 +217,7 @@ class SchulJobsScraper(BaseScraper):
                 for stub in unique_stubs:
                     detail_url = stub.get("detail_url")
                     if detail_url:
-                        await asyncio.sleep(self.RATE_LIMIT_SECONDS)
+                        await self._rate_limit_delay()
                         detail = await self._fetch_detail_httpx(client, detail_url)
                         if detail:
                             stub.update(detail)

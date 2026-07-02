@@ -392,6 +392,9 @@ class TestJobMatcher:
             "location": 0.0,
             "recency": 0.0,
             "llm": 0.0,
+            # Fase 5 añadió el factor idioma; sin esta clave, compute_final_score cae
+            # al peso por defecto (0.10) y filtraría +5 puntos. Explícito a 0 para aislar embedding.
+            "language": 0.0,
         }
         score = matcher.compute_final_score(
             embedding_score=0.5,

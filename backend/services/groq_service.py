@@ -1,7 +1,7 @@
 """GroqService — LLM re-ranking and chat via Groq API.
 
-Uses llama-3.1-8b-instant for fast re-ranking (Stage 3) and
-llama-3.3-70b-versatile for heavier tasks (CV adaptation in Fase 3+).
+Uses settings.GROQ_RERANK_MODEL (llama-4-scout, fast) for re-ranking (Stage 3)
+and translation; settings.GROQ_MODEL (gpt-oss-120b) for heavier document tasks.
 Groq SDK is synchronous — calls are wrapped in run_in_threadpool.
 """
 

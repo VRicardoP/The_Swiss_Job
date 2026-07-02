@@ -1,6 +1,8 @@
 """Scraper registry: discover and instantiate all HTML-scraping providers."""
 
+from scrapers.financejobs import FinancejobsScraper
 from scrapers.gastrojob import GastrojobScraper
+from scrapers.myscience import MyScienceScraper
 from scrapers.schuljobs import SchulJobsScraper
 from scrapers.stelle_admin import StelleAdminScraper
 from scrapers.swiss_schools_ecolint import SwissSchoolsEcolintScraper
@@ -19,6 +21,15 @@ _SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
     "stelle_admin": StelleAdminScraper,
     "tes": TESScraper,
     "schuljobs": SchulJobsScraper,
+    # Reactivados gracias a la capa anti-detección (scraper_stealth): con las
+    # cabeceras realistas (client hints + Sec-Fetch) ambos vuelven a devolver
+    # HTTP 200 con datos. Sonda en vivo: myscience ~14 jobs/pág, financejobs ~10.
+    "myscience": MyScienceScraper,
+    "financejobs": FinancejobsScraper,
+    # medjobs (med-jobs.com) SIGUE deshabilitado: está tras un challenge duro de
+    # Cloudflare (/cdn-cgi/challenge-platform) que el Playwright endurecido local
+    # NO supera. Requiere un browser stealth remoto de pago vía CDP
+    # (settings.SCRAPER_BROWSER_CDP_URL). Reactívalo solo con ese opt-in.
     # Watchlist Fase 1: portales centralizados (NAE + ISP + Inspired)
     "swiss_schools_nae": SwissSchoolsNAEScraper,
     "swiss_schools_isp": SwissSchoolsISPScraper,

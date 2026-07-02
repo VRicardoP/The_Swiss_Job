@@ -1,7 +1,7 @@
 """Tests for AI document generation endpoints (CV and cover letter)."""
 
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -16,6 +16,24 @@ from tests.conftest import random_email
 _TEST_PASSWORD = "TestPass123!"
 _MOCK_CV_CONTENT = "# Tailored CV\n\n## Professional Summary\nExperienced developer..."
 _MOCK_CL_CONTENT = "# Cover Letter\n\nDear Hiring Manager,\n\nI am writing..."
+_MOCK_GEMINI_CONTENT = "# CV (Gemini)\n\n## Profil\nErfahrener Entwickler..."
+
+
+def _gemini_off() -> MagicMock:
+    """GeminiService no configurado — fuerza el path de Groq."""
+    m = MagicMock()
+    m.is_available = False
+    return m
+
+
+def _gemini_on(content: str = _MOCK_GEMINI_CONTENT, error: Exception | None = None):
+    """GeminiService disponible; devuelve `content` o lanza `error` (para fallback)."""
+    m = MagicMock()
+    m.is_available = True
+    m.get_chat_response = AsyncMock(
+        return_value=content, side_effect=error
+    )
+    return m
 
 
 def _auth(token: str) -> dict:
@@ -145,10 +163,12 @@ class TestDocumentValidation:
 
 @pytest.mark.anyio
 class TestDocumentGeneration:
+    @patch("routers.documents._get_gemini")
     @patch("routers.documents._get_groq")
     async def test_generate_cv_success(
         self,
         mock_get_groq,
+        mock_get_gemini,
         client: AsyncClient,
         db_session: AsyncSession,
     ):
@@ -156,6 +176,7 @@ class TestDocumentGeneration:
         mock_groq.is_available = True
         mock_groq.get_chat_response = AsyncMock(return_value=_MOCK_CV_CONTENT)
         mock_get_groq.return_value = mock_groq
+        mock_get_gemini.return_value = _gemini_off()  # forzar path Groq
 
         token, email = await _register_and_get_token(client)
         await _set_cv_text(db_session, email)
@@ -175,10 +196,72 @@ class TestDocumentGeneration:
         assert data["language"] == "en"
         assert data["id"] is not None
 
+    @patch("routers.documents._get_gemini")
+    @patch("routers.documents._get_groq")
+    async def test_generate_cv_uses_gemini_when_available(
+        self,
+        mock_get_groq,
+        mock_get_gemini,
+        client: AsyncClient,
+        db_session: AsyncSession,
+    ):
+        # Gemini disponible → se usa Gemini (calidad), NO Groq.
+        mock_groq = AsyncMock()
+        mock_groq.is_available = True
+        mock_groq.get_chat_response = AsyncMock(return_value=_MOCK_CV_CONTENT)
+        mock_get_groq.return_value = mock_groq
+        gemini = _gemini_on()
+        mock_get_gemini.return_value = gemini
+
+        token, email = await _register_and_get_token(client)
+        await _set_cv_text(db_session, email)
+        job_hash = await _insert_job(db_session, idx=11)
+
+        resp = await client.post(
+            "/api/v1/documents/generate",
+            headers=_auth(token),
+            json={"job_hash": job_hash, "doc_type": "cv", "language": "de"},
+        )
+        assert resp.status_code == 200
+        assert "Gemini" in resp.json()["content"]
+        gemini.get_chat_response.assert_awaited_once()
+        mock_groq.get_chat_response.assert_not_awaited()
+
+    @patch("routers.documents._get_gemini")
+    @patch("routers.documents._get_groq")
+    async def test_generate_falls_back_to_groq_when_gemini_fails(
+        self,
+        mock_get_groq,
+        mock_get_gemini,
+        client: AsyncClient,
+        db_session: AsyncSession,
+    ):
+        # Gemini disponible pero falla (saturación/cuota) → fallback a Groq.
+        mock_groq = AsyncMock()
+        mock_groq.is_available = True
+        mock_groq.get_chat_response = AsyncMock(return_value=_MOCK_CV_CONTENT)
+        mock_get_groq.return_value = mock_groq
+        mock_get_gemini.return_value = _gemini_on(error=RuntimeError("Gemini HTTP 503"))
+
+        token, email = await _register_and_get_token(client)
+        await _set_cv_text(db_session, email)
+        job_hash = await _insert_job(db_session, idx=12)
+
+        resp = await client.post(
+            "/api/v1/documents/generate",
+            headers=_auth(token),
+            json={"job_hash": job_hash, "doc_type": "cv", "language": "en"},
+        )
+        assert resp.status_code == 200
+        assert "Tailored CV" in resp.json()["content"]  # contenido de Groq
+        mock_groq.get_chat_response.assert_awaited_once()
+
+    @patch("routers.documents._get_gemini")
     @patch("routers.documents._get_groq")
     async def test_generate_cover_letter_success(
         self,
         mock_get_groq,
+        mock_get_gemini,
         client: AsyncClient,
         db_session: AsyncSession,
     ):
@@ -186,6 +269,7 @@ class TestDocumentGeneration:
         mock_groq.is_available = True
         mock_groq.get_chat_response = AsyncMock(return_value=_MOCK_CL_CONTENT)
         mock_get_groq.return_value = mock_groq
+        mock_get_gemini.return_value = _gemini_off()  # forzar path Groq
 
         token, email = await _register_and_get_token(client)
         await _set_cv_text(db_session, email)
@@ -206,16 +290,20 @@ class TestDocumentGeneration:
         assert "Cover Letter" in data["content"]
         assert data["language"] == "de"
 
+    @patch("routers.documents._get_gemini")
     @patch("routers.documents._get_groq")
-    async def test_generate_groq_unavailable(
+    async def test_generate_unavailable_when_no_provider(
         self,
         mock_get_groq,
+        mock_get_gemini,
         client: AsyncClient,
         db_session: AsyncSession,
     ):
+        # 503 solo si NINGÚN proveedor (ni Gemini ni Groq) está configurado.
         mock_groq = AsyncMock()
         mock_groq.is_available = False
         mock_get_groq.return_value = mock_groq
+        mock_get_gemini.return_value = _gemini_off()
 
         token, email = await _register_and_get_token(client)
         await _set_cv_text(db_session, email)
@@ -227,7 +315,7 @@ class TestDocumentGeneration:
             json={"job_hash": job_hash, "doc_type": "cv"},
         )
         assert resp.status_code == 503
-        assert "GROQ_API_KEY" in resp.json()["detail"]
+        assert "GEMINI_API_KEY" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -253,10 +341,12 @@ class TestDocumentCRUD:
         assert data["total"] == 0
         assert data["data"] == []
 
+    @patch("routers.documents._get_gemini")
     @patch("routers.documents._get_groq")
     async def test_list_with_generated_doc(
         self,
         mock_get_groq,
+        mock_get_gemini,
         client: AsyncClient,
         db_session: AsyncSession,
     ):
@@ -264,6 +354,7 @@ class TestDocumentCRUD:
         mock_groq.is_available = True
         mock_groq.get_chat_response = AsyncMock(return_value=_MOCK_CV_CONTENT)
         mock_get_groq.return_value = mock_groq
+        mock_get_gemini.return_value = _gemini_off()  # forzar path Groq
 
         token, email = await _register_and_get_token(client)
         await _set_cv_text(db_session, email)

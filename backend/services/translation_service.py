@@ -1,7 +1,7 @@
 """TranslationService — batch translation of job titles via Groq LLM.
 
-Uses llama-3.1-8b-instant (fast model) for translating DE/FR/IT job titles
-to English. Results are cached per-title in Redis with 30-day TTL.
+Uses settings.GROQ_RERANK_MODEL (llama-4-scout, fast) for translating DE/FR/IT
+job titles to English. Results are cached per-title in Redis with 30-day TTL.
 
 Mejoras v2:
 - Detección de idioma mejorada: heurística por caracteres especiales antes de langdetect.
@@ -14,7 +14,9 @@ Mejoras v2:
 import hashlib
 import json
 import logging
+import re
 
+from groq import APIStatusError
 from langdetect import detect_langs
 from langdetect.lang_detect_exception import LangDetectException
 
@@ -77,6 +79,26 @@ Return ONLY a JSON object: {"0": "translation", "1": "translation", ...}
 Keep brand names, acronyms, and percentage ranges unchanged.
 No markdown, no explanation."""
 
+# Pares "índice": "valor" de un objeto JSON, tolerando comillas escapadas en el valor.
+_JSON_PAIR_RE = re.compile(r'"(\d+)"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _salvage_pairs(text: str) -> dict[str, str]:
+    """Rescata pares índice→traducción de un JSON truncado o ligeramente malformado.
+
+    json.loads es todo-o-nada: un solo error de sintaxis (típicamente truncado por
+    max_tokens) descartaría las 25 traducciones del lote. Aquí recuperamos los pares
+    completos que sí están presentes antes del punto de rotura.
+    """
+    salvaged: dict[str, str] = {}
+    for idx, raw_value in _JSON_PAIR_RE.findall(text):
+        try:
+            # Reusar json para des-escapar secuencias (\", \\, \uXXXX) del valor.
+            salvaged[idx] = json.loads(f'"{raw_value}"')
+        except json.JSONDecodeError:
+            salvaged[idx] = raw_value
+    return salvaged
+
 
 class TranslationService:
     """Translate job titles to English via Groq LLM with Redis caching."""
@@ -130,6 +152,29 @@ class TranslationService:
         if not to_translate:
             return result
 
+        try:
+            await self._translate_pending(to_translate, result)
+        except APIStatusError as e:
+            # 401/403: la API key es inválida/sin permisos. Reintentar no arregla nada;
+            # avisamos una vez de forma accionable y dejamos los títulos sin traducir
+            # (el router los muestra en su idioma original al faltar en el dict).
+            logger.error(
+                "Groq rechazó la petición (HTTP %s): revisa GROQ_API_KEY. "
+                "%d títulos quedan sin traducir (se muestran en su idioma original).",
+                e.status_code,
+                len(to_translate),
+            )
+
+        return result
+
+    async def _translate_pending(
+        self, to_translate: list[str], result: dict[str, str]
+    ) -> None:
+        """Traduce los títulos pendientes por lotes, con retry de los que no parsean.
+
+        Escribe en `result` y en la caché. Propaga APIStatusError (p.ej. 401/403)
+        para que el llamante aborte: un error de auth fallaría igual en cada lote.
+        """
         # Batch LLM calls (25 titles per request)
         failed_titles: list[str] = []
         for i in range(0, len(to_translate), 25):
@@ -145,21 +190,20 @@ class TranslationService:
                     await self._set_cached(title, translated)
 
         # Retry con prompt simplificado para los que fallaron
-        if failed_titles:
-            logger.warning(
-                "Retry de traducción para %d títulos tras fallo de parsing",
-                len(failed_titles),
-            )
-            for i in range(0, len(failed_titles), 25):
-                batch = failed_titles[i : i + 25]
-                translations = await self._translate_batch(batch, retry=True)
-                for title in batch:
-                    translated = translations.get(title, title)
-                    result[title] = translated
-                    if translated != title:
-                        await self._set_cached(title, translated)
-
-        return result
+        if not failed_titles:
+            return
+        logger.warning(
+            "Retry de traducción para %d títulos tras fallo de parsing",
+            len(failed_titles),
+        )
+        for i in range(0, len(failed_titles), 25):
+            batch = failed_titles[i : i + 25]
+            translations = await self._translate_batch(batch, retry=True)
+            for title in batch:
+                translated = translations.get(title, title)
+                result[title] = translated
+                if translated != title:
+                    await self._set_cached(title, translated)
 
     async def _translate_batch(
         self, titles: list[str], *, retry: bool = False
@@ -184,6 +228,16 @@ class TranslationService:
             parsed = self._parse_response(response, index_to_title)
             # Validar que el resultado tiene sentido (no devuelve None ni vacío)
             return {t: v for t, v in parsed.items() if v and v.strip()}
+        except APIStatusError as e:
+            # 401/403 (key inválida/sin permisos): propagar — no tiene sentido
+            # reintentar ni seguir con más lotes, fallarían igual.
+            if e.status_code in (401, 403):
+                raise
+            # 429/5xx u otros: transitorio → dict vacío (retry/fallback lo cubren).
+            logger.warning(
+                "Groq HTTP %s en batch de traducción (retry=%s)", e.status_code, retry
+            )
+            return {}
         except Exception:
             logger.exception("Translation batch failed (retry=%s)", retry)
             return {}
@@ -211,8 +265,17 @@ class TranslationService:
         try:
             translated_map = json.loads(text)
         except json.JSONDecodeError:
-            logger.warning("Failed to parse translation JSON: %.200s", text)
-            return {}
+            # Un único fallo (p.ej. truncado por max_tokens) tiraría el lote entero
+            # de 25 títulos. Rescatamos los pares "idx":"valor" bien formados.
+            translated_map = _salvage_pairs(text)
+            if not translated_map:
+                logger.warning("Failed to parse translation JSON: %.200s", text)
+                return {}
+            logger.warning(
+                "JSON de traducción malformado; rescatados %d de %d títulos",
+                len(translated_map),
+                len(index_to_title),
+            )
 
         result: dict[str, str] = {}
         for idx, original in index_to_title.items():
@@ -255,7 +318,11 @@ class TranslationService:
             # Doble comprobación con langdetect de alta confianza
             try:
                 results = detect_langs(title)
-                if results and results[0].lang in SKIP_LANGUAGES and results[0].prob >= 0.70:
+                if (
+                    results
+                    and results[0].lang in SKIP_LANGUAGES
+                    and results[0].prob >= 0.70
+                ):
                     return results[0].lang
             except LangDetectException:
                 pass

@@ -22,6 +22,7 @@ from schemas.documents import (
     GeneratedDocumentResponse,
 )
 from services.document_generator import DocumentGeneratorService
+from services.gemini_service import GeminiService
 from services.groq_service import GroqService
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,11 @@ def _get_groq(request: Request) -> GroqService:
     """Build GroqService with Redis from app state."""
     redis_client = getattr(request.app.state, "redis_client", None)
     return GroqService(redis_client=redis_client)
+
+
+def _get_gemini() -> GeminiService:
+    """Build GeminiService — proveedor primario de documentos (calidad)."""
+    return GeminiService()
 
 
 def _to_response(
@@ -61,10 +67,11 @@ async def generate_document(
 ):
     """Generate a tailored CV or cover letter for a specific job."""
     groq = _get_groq(request)
-    if not groq.is_available:
+    gemini = _get_gemini()
+    if not (gemini.is_available or groq.is_available):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service unavailable. GROQ_API_KEY not configured.",
+            detail="AI service unavailable. Configure GEMINI_API_KEY or GROQ_API_KEY.",
         )
 
     # Load user profile with CV text
@@ -113,8 +120,8 @@ async def generate_document(
     matching_skills = match_result.matching_skills if match_result else None
     missing_skills = match_result.missing_skills if match_result else None
 
-    # Generate document
-    generator = DocumentGeneratorService(groq)
+    # Generate document (Gemini primario, Groq fallback)
+    generator = DocumentGeneratorService(groq, gemini)
     if body.doc_type == DocType.cv:
         content = await generator.generate_cv(
             cv_text=profile.cv_text,

@@ -1,7 +1,8 @@
 """DocumentGeneratorService — AI-powered CV and cover letter generation.
 
-Uses GroqService (composition) with llama-3.3-70b-versatile for generating
-tailored CVs and cover letters in Markdown format.
+Prioriza CALIDAD: usa Google Gemini (settings.GEMINI_MODEL) como proveedor
+primario y cae a Groq (settings.GROQ_MODEL) si Gemini no está configurado o
+falla. Genera CVs y cartas de presentación en Markdown.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ import hashlib
 import logging
 
 from config import settings
+from services.gemini_service import GeminiService
 from services.groq_service import GroqService
 
 logger = logging.getLogger(__name__)
@@ -62,8 +64,11 @@ IMPORTANT: Generate ONLY the Markdown content. No preamble, no explanation, no c
 class DocumentGeneratorService:
     """Generates tailored CVs and cover letters using LLM."""
 
-    def __init__(self, groq: GroqService) -> None:
+    def __init__(
+        self, groq: GroqService, gemini: GeminiService | None = None
+    ) -> None:
         self.groq = groq
+        self.gemini = gemini
 
     async def generate_cv(
         self,
@@ -122,11 +127,30 @@ class DocumentGeneratorService:
         return await self._call_llm(system_prompt, user_prompt)
 
     async def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
-        """Call Groq LLM with the heavy model for document generation."""
+        """Genera el documento: Gemini primario (calidad), Groq de fallback.
+
+        Gemini es mejor para CVs y evita el límite de 8k tokens/min de Groq free
+        tier. Si Gemini no está configurado o falla (saturación, cuota), se cae a
+        Groq para que la generación nunca se rompa por un fallo transitorio.
+        """
+        if self.gemini is not None and self.gemini.is_available:
+            try:
+                return await self.gemini.get_chat_response(
+                    user_message=user_prompt,
+                    system_prompt=system_prompt,
+                    temperature=settings.GROQ_DOC_TEMPERATURE,
+                    max_tokens=settings.GROQ_DOC_MAX_TOKENS,
+                )
+            except Exception:
+                logger.warning(
+                    "Gemini falló en la generación de documento; fallback a Groq",
+                    exc_info=True,
+                )
+
         return await self.groq.get_chat_response(
             user_message=user_prompt,
             system_prompt=system_prompt,
-            model=settings.GROQ_MODEL,  # llama-3.3-70b-versatile
+            model=settings.GROQ_MODEL,  # fallback pesado (gpt-oss-120b)
             temperature=settings.GROQ_DOC_TEMPERATURE,
             max_tokens=settings.GROQ_DOC_MAX_TOKENS,
         )

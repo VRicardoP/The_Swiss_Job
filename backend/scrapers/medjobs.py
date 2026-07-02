@@ -8,6 +8,7 @@ import logging
 from bs4 import BeautifulSoup
 
 from services.scraper_engine import BaseScraper
+from services.scraper_stealth import realistic_headers
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
 logger = logging.getLogger(__name__)
@@ -24,15 +25,10 @@ class MedJobsScraper(BaseScraper):
     FETCH_DETAILS = False  # Extract from Playwright-rendered listing
     PAGE_SIZE = 20
 
-    # Extra headers to avoid 403
-    DEFAULT_HEADERS: dict[str, str] = {
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "de-CH,de;q=0.9,fr;q=0.8,en;q=0.7",
-        "Referer": f"{BASE_URL}/",
+    # Extiende las cabeceras realistas base (client hints + Sec-Fetch) con
+    # Referer y DNT, en vez de reemplazarlas: med-jobs.com está tras Cloudflare
+    # y es el portal que más se beneficia del baseline anti-detección.
+    DEFAULT_HEADERS: dict[str, str] = realistic_headers(referer=f"{BASE_URL}/") | {
         "DNT": "1",
     }
 

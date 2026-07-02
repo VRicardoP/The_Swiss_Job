@@ -55,7 +55,13 @@ class Settings(BaseSettings):
 
     # Groq LLM
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    # Modelo pesado — generación de cartas/documentos (calidad > volumen).
+    # llama-3.3-70b-versatile queda DECOMISIONADO por Groq el 2026-08-16 → migrado a
+    # gpt-oss-120b (reemplazo recomendado por Groq). Es un modelo de razonamiento pero
+    # su cadena de pensamiento va en un campo `reasoning` aparte: `.content` sale limpio.
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
+    # Modelo rápido — traducción de títulos + re-ranking Stage 3 (alto volumen).
+    # Scout (MoE, ~17B activos) es rápido y barato, devuelve JSON limpio y sigue vigente.
     GROQ_RERANK_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
     GROQ_RERANK_BATCH_SIZE: int = 10
     GROQ_RERANK_TEMPERATURE: float = 0.2
@@ -92,10 +98,19 @@ class Settings(BaseSettings):
     # Groq concurrency (TD-22)
     GROQ_CONCURRENCY: int = 2
 
-    # Document generation
+    # Document generation (CV/carta). Prioriza CALIDAD sobre latencia.
     GROQ_DOC_TEMPERATURE: float = 0.4
     GROQ_DOC_MAX_TOKENS: int = 4096
     GROQ_DOC_CACHE_TTL_HOURS: int = 24
+    # Proveedor PRIMARIO de documentos: Google Gemini (free tier de Google).
+    # gemini-2.5-flash genera CVs de calidad (~9s); gpt-oss-120b en Groq free tier
+    # topa a 8k tokens/min y falla en documentos largos → Gemini lo evita. Si la key
+    # falta o Gemini falla/satura, DocumentGeneratorService cae a Groq (GROQ_MODEL).
+    # Nota: los modelos gemma-4-* dan mala salida para esta tarea (repiten el prompt)
+    # y ~30s de latencia; por eso el default es gemini-2.5-flash, no Gemma.
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_TIMEOUT_SECONDS: float = 60.0
 
     # Compliance (TD-06)
     COMPLIANCE_BLOCK_THRESHOLD: int = 3
@@ -103,6 +118,24 @@ class Settings(BaseSettings):
     # Scraper defaults (TD-06)
     SCRAPER_HTTPX_TIMEOUT: float = 20.0
     SCRAPER_PLAYWRIGHT_TIMEOUT_MS: int = 30000
+
+    # Anti-detección del scraper (apuntes del curso de web scraping)
+    # Jitter: fracción aleatoria extra sobre RATE_LIMIT_SECONDS para evitar
+    # intervalos constantes (0.5 = hasta +50%).
+    SCRAPER_DELAY_JITTER_RATIO: float = 0.5
+    # Reintentos ante errores transitorios (timeouts, 5xx) con backoff exponencial.
+    SCRAPER_MAX_RETRIES: int = 2
+    SCRAPER_RETRY_BACKOFF_SECONDS: float = 2.0
+    # Proxy opcional (httpx + Playwright). Vacío = desactivado. Permite enrutar
+    # portales muy protegidos a través de un proxy/rotación residencial externo.
+    SCRAPER_PROXY_URL: str = ""
+    # Browser remoto opcional vía CDP (p.ej. un browser stealth de pago). Vacío =
+    # se lanza Chromium local. Si se define, Playwright se conecta por CDP.
+    SCRAPER_BROWSER_CDP_URL: str = ""
+    # Chromium exige --no-sandbox al correr como root dentro de un contenedor, pero
+    # eso REDUCE el aislamiento del renderer. True por defecto (compat Docker root);
+    # ponlo en False donde el runtime permita mantener el sandbox (contenedor no-root).
+    SCRAPER_PLAYWRIGHT_NO_SANDBOX: bool = True
 
     # Provider API Keys (empty = provider disabled)
     JSEARCH_RAPIDAPI_KEY: str = ""
