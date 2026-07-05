@@ -12,7 +12,7 @@ import logging
 from bs4 import BeautifulSoup, Tag
 
 from scrapers.swiss_schools_config import get_school
-from services.scraper_engine import BaseScraper
+from scrapers.swiss_schools_base import SwissSchoolBaseScraper
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ ECOLINT_BASE = "https://www.ecolint.ch"
 ECOLINT_LISTING = f"{ECOLINT_BASE}/en/job-opportunities"
 
 
-class SwissSchoolsEcolintScraper(BaseScraper):
+class SwissSchoolsEcolintScraper(SwissSchoolBaseScraper):
     SOURCE_NAME = "swiss_schools_ecolint"
     LISTING_URL = ECOLINT_LISTING
     RATE_LIMIT_SECONDS = 3.0
@@ -47,13 +47,6 @@ class SwissSchoolsEcolintScraper(BaseScraper):
             if stub:
                 out.append(stub)
         return out
-
-    def parse_job_detail(self, soup: BeautifulSoup) -> dict:
-        return {}
-
-    def normalize_job(self, raw: dict) -> dict:
-        raw["hash"] = self.compute_hash(raw["title"], raw["company"], raw["url"])
-        return raw
 
     def _parse_article(self, art: Tag) -> dict | None:
         title_el = art.select_one("span.f-n-title, .field-name-title-field")

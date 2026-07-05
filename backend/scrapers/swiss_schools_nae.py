@@ -19,7 +19,7 @@ from urllib.parse import quote_plus
 from bs4 import BeautifulSoup, Tag
 
 from scrapers.swiss_schools_config import WatchedSchool, schools_by_strategy
-from services.scraper_engine import BaseScraper
+from scrapers.swiss_schools_base import SwissSchoolBaseScraper
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ _SCHOOL_CANONICAL: dict[str, str] = {
 }
 
 
-class SwissSchoolsNAEScraper(BaseScraper):
+class SwissSchoolsNAEScraper(SwissSchoolBaseScraper):
     SOURCE_NAME = "swiss_schools_nae"
     LISTING_URL = f"{NAE_BASE}/search/"
     RATE_LIMIT_SECONDS = 2.0
@@ -90,15 +90,6 @@ class SwissSchoolsNAEScraper(BaseScraper):
             if stub:
                 out.append(stub)
         return out
-
-    def parse_job_detail(self, soup: BeautifulSoup) -> dict:
-        """Sin uso — FETCH_DETAILS=False."""
-        return {}
-
-    def normalize_job(self, raw: dict) -> dict:
-        """El stub ya viene en el esquema unificado; solo añadimos hash."""
-        raw["hash"] = self.compute_hash(raw["title"], raw["company"], raw["url"])
-        return raw
 
     def _parse_tile(
         self, tile: Tag, canonical_school: str, school: WatchedSchool

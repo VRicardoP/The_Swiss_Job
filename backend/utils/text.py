@@ -120,91 +120,6 @@ JOB_TAGS: list[str] = [
     "scrum",
 ]
 
-# ---------------------------------------------------------------------------
-# Location helpers
-# ---------------------------------------------------------------------------
-
-WORLDWIDE_SYNONYMS: set[str] = {
-    "worldwide",
-    "remote",
-    "anywhere",
-    "global",
-    "n/a",
-    "-",
-    "various",
-    "multiple countries",
-    "all regions",
-    "international",
-    "any location",
-    "work from home",
-    "wfh",
-    "distributed",
-    "location independent",
-}
-
-COUNTRY_MAPPINGS: dict[str, str] = {
-    "usa": "United States",
-    "us": "United States",
-    "united states": "United States",
-    "united states of america": "United States",
-    "uk": "United Kingdom",
-    "united kingdom": "United Kingdom",
-    "great britain": "United Kingdom",
-    "de": "Germany",
-    "germany": "Germany",
-    "deutschland": "Germany",
-    "fr": "France",
-    "france": "France",
-    "ch": "Switzerland",
-    "switzerland": "Switzerland",
-    "schweiz": "Switzerland",
-    "suisse": "Switzerland",
-    "svizzera": "Switzerland",
-    "at": "Austria",
-    "austria": "Austria",
-    "österreich": "Austria",
-    "it": "Italy",
-    "italy": "Italy",
-    "italia": "Italy",
-    "nl": "Netherlands",
-    "netherlands": "Netherlands",
-    "es": "Spain",
-    "spain": "Spain",
-    "españa": "Spain",
-    "au": "Australia",
-    "australia": "Australia",
-    "ca": "Canada",
-    "canada": "Canada",
-    "br": "Brazil",
-    "brazil": "Brazil",
-    "in": "India",
-    "india": "India",
-    "sg": "Singapore",
-    "singapore": "Singapore",
-    "jp": "Japan",
-    "japan": "Japan",
-    "ie": "Ireland",
-    "ireland": "Ireland",
-    "se": "Sweden",
-    "sweden": "Sweden",
-    "no": "Norway",
-    "norway": "Norway",
-    "dk": "Denmark",
-    "denmark": "Denmark",
-    "fi": "Finland",
-    "finland": "Finland",
-    "pt": "Portugal",
-    "portugal": "Portugal",
-    "be": "Belgium",
-    "belgium": "Belgium",
-    "pl": "Poland",
-    "poland": "Poland",
-    "cz": "Czech Republic",
-    "czech republic": "Czech Republic",
-    "nz": "New Zealand",
-    "new zealand": "New Zealand",
-}
-
 # Swiss cantons: maps name variants (DE/FR/IT/EN, lowercase) → 2-letter code
 SWISS_CANTONS: dict[str, str] = {
     # Zürich
@@ -326,17 +241,6 @@ def extract_job_skills(title: str, description: str) -> list[str]:
         if tag.lower() in combined and tag not in found:
             found.append(tag)
     return found[:15]
-
-
-def process_job_location(location: str) -> str:
-    """Standardize job location names to a canonical form."""
-    if not location or not isinstance(location, str):
-        return "Unknown"
-    stripped = location.strip()
-    if not stripped or stripped.lower() in WORLDWIDE_SYNONYMS:
-        return "Remote / Worldwide"
-    loc_lower = stripped.lower()
-    return COUNTRY_MAPPINGS.get(loc_lower, stripped.title())
 
 
 def extract_canton(location: str) -> str | None:

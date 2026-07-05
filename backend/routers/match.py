@@ -78,6 +78,66 @@ async def analyze_matches(
     )
 
 
+def _to_match_response(item: dict, translations: dict[str, str]) -> MatchResultResponse:
+    """Mapea un resultado del servicio a MatchResultResponse (traducción ya calculada)."""
+    match = item["match"]
+    job = item["job"]
+
+    original_title = job.title or ""
+    translated = translations.get(original_title)
+    # Mostrar traducción si el LLM produjo algo diferente al original.
+    # No usar job.language para bloquear: puede ser erróneo (langdetect falla en
+    # títulos cortos o mixtos alemán-inglés → job.language = "en" incorrecto).
+    is_translated = bool(translated and translated.strip() != original_title.strip())
+    job_title_en = translated if is_translated else None
+    # Detectar idioma para el indicador de idioma en la UI
+    job_language = job.language
+    if not job_language and original_title:
+        job_language = TranslationService._detect_language(original_title) or None
+
+    # Resolver school metadata si el job es de la watchlist (tag = school.id)
+    school = None
+    for tag in job.tags or []:
+        school = get_school(tag)
+        if school:
+            break
+
+    return MatchResultResponse(
+        id=match.id,
+        job_hash=match.job_hash,
+        score_final=match.score_final,
+        scores=MatchScoreBreakdown(
+            embedding=match.score_embedding,
+            salary=match.score_salary,
+            location=match.score_location,
+            recency=match.score_recency,
+            llm=match.score_llm,
+        ),
+        explanation=match.explanation,
+        matching_skills=match.matching_skills,
+        missing_skills=match.missing_skills,
+        feedback=match.feedback,
+        application_status=match.application_status,
+        urgency_score=match.urgency_score,
+        has_draft=bool(match.draft_letter),
+        school_id=school.id if school else None,
+        school_policy=school.policy if school else None,
+        created_at=match.created_at,
+        job_title=job.title,
+        job_title_en=job_title_en,
+        job_language=job_language,
+        job_company=job.company,
+        job_location=job.location,
+        job_url=job.url,
+        job_description=job.description_snippet,
+        job_salary_min=job.salary_min_chf,
+        job_salary_max=job.salary_max_chf,
+        job_tags=job.tags or [],
+        job_source=job.source,
+        job_category=job.category,
+    )
+
+
 async def _build_results_response(
     results: list[dict],
     total: int,
@@ -95,68 +155,7 @@ async def _build_results_response(
         translator = TranslationService(groq)
         translations = await translator.translate_titles(titles_with_lang)
 
-    data = []
-    for item in results:
-        match = item["match"]
-        job = item["job"]
-
-        original_title = job.title or ""
-        translated = translations.get(original_title)
-        # Mostrar traducción si el LLM produjo algo diferente al original
-        # No usar job.language para bloquear: puede ser erróneo (langdetect falla en
-        # títulos cortos o mixtos alemán-inglés → job.language = "en" incorrecto)
-        is_translated = bool(
-            translated and translated.strip() != original_title.strip()
-        )
-        job_title_en = translated if is_translated else None
-        # Detectar idioma para el indicador de idioma en la UI
-        job_language = job.language
-        if not job_language and original_title:
-            job_language = TranslationService._detect_language(original_title) or None
-
-        # Resolver school metadata si el job es de la watchlist (tag = school.id)
-        school = None
-        for tag in job.tags or []:
-            school = get_school(tag)
-            if school:
-                break
-
-        data.append(
-            MatchResultResponse(
-                id=match.id,
-                job_hash=match.job_hash,
-                score_final=match.score_final,
-                scores=MatchScoreBreakdown(
-                    embedding=match.score_embedding,
-                    salary=match.score_salary,
-                    location=match.score_location,
-                    recency=match.score_recency,
-                    llm=match.score_llm,
-                ),
-                explanation=match.explanation,
-                matching_skills=match.matching_skills,
-                missing_skills=match.missing_skills,
-                feedback=match.feedback,
-                application_status=match.application_status,
-                urgency_score=match.urgency_score,
-                has_draft=bool(match.draft_letter),
-                school_id=school.id if school else None,
-                school_policy=school.policy if school else None,
-                created_at=match.created_at,
-                job_title=job.title,
-                job_title_en=job_title_en,
-                job_language=job_language,
-                job_company=job.company,
-                job_location=job.location,
-                job_url=job.url,
-                job_description=job.description_snippet,
-                job_salary_min=job.salary_min_chf,
-                job_salary_max=job.salary_max_chf,
-                job_tags=job.tags or [],
-                job_source=job.source,
-                job_category=job.category,
-            )
-        )
+    data = [_to_match_response(item, translations) for item in results]
 
     return MatchResultsResponse(
         data=data,

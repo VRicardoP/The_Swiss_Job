@@ -16,7 +16,7 @@ import logging
 from bs4 import BeautifulSoup, Tag
 
 from scrapers.swiss_schools_config import get_school
-from services.scraper_engine import BaseScraper
+from scrapers.swiss_schools_base import SwissSchoolBaseScraper
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ ISB_BASE = "https://www.isbasel.ch"
 ISB_BOARD_URL = f"{ISB_BASE}/connect/news/?board=employment-public-job-postings"
 
 
-class SwissSchoolsISBScraper(BaseScraper):
+class SwissSchoolsISBScraper(SwissSchoolBaseScraper):
     SOURCE_NAME = "swiss_schools_isb"
     LISTING_URL = ISB_BOARD_URL
     RATE_LIMIT_SECONDS = 3.0
@@ -60,13 +60,6 @@ class SwissSchoolsISBScraper(BaseScraper):
             if stub:
                 out.append(stub)
         return out
-
-    def parse_job_detail(self, soup: BeautifulSoup) -> dict:
-        return {}
-
-    def normalize_job(self, raw: dict) -> dict:
-        raw["hash"] = self.compute_hash(raw["title"], raw["company"], raw["url"])
-        return raw
 
     def _parse_post(self, post: Tag) -> dict | None:
         title_el = (

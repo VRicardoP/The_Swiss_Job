@@ -15,7 +15,7 @@ import re
 from bs4 import BeautifulSoup, Tag
 
 from scrapers.swiss_schools_config import get_school
-from services.scraper_engine import BaseScraper
+from scrapers.swiss_schools_base import SwissSchoolBaseScraper
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ ZIS_PAGE = "https://www.zis.ch/one-zis-community/employment"
 _JOBID_RE = re.compile(r"jobid=(\d+)")
 
 
-class SwissSchoolsZISScraper(BaseScraper):
+class SwissSchoolsZISScraper(SwissSchoolBaseScraper):
     SOURCE_NAME = "swiss_schools_zis"
     LISTING_URL = ZIS_PAGE
     RATE_LIMIT_SECONDS = 3.0
@@ -78,13 +78,6 @@ class SwissSchoolsZISScraper(BaseScraper):
                 }
             )
         return out
-
-    def parse_job_detail(self, soup: BeautifulSoup) -> dict:
-        return {}
-
-    def normalize_job(self, raw: dict) -> dict:
-        raw["hash"] = self.compute_hash(raw["title"], raw["company"], raw["url"])
-        return raw
 
     @staticmethod
     def _clean_title(a: Tag) -> str:

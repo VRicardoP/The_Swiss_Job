@@ -3,7 +3,6 @@
 from utils.text import (
     extract_canton,
     extract_job_skills,
-    process_job_location,
     strip_html_tags,
 )
 
@@ -76,37 +75,6 @@ class TestExtractJobSkills:
         skills = extract_job_skills("COPYWRITER Needed", "Using ENGLISH")
         assert "copywriter" in skills
         assert "english" in skills
-
-
-# ---------------------------------------------------------------------------
-# process_job_location
-# ---------------------------------------------------------------------------
-
-
-class TestProcessJobLocation:
-    def test_known_country(self):
-        assert process_job_location("usa") == "United States"
-        assert process_job_location("ch") == "Switzerland"
-        assert process_job_location("uk") == "United Kingdom"
-
-    def test_worldwide_synonyms(self):
-        assert process_job_location("remote") == "Remote / Worldwide"
-        assert process_job_location("worldwide") == "Remote / Worldwide"
-        assert process_job_location("anywhere") == "Remote / Worldwide"
-
-    def test_unknown_titlecased(self):
-        assert process_job_location("some city") == "Some City"
-
-    def test_empty_string(self):
-        assert process_job_location("") == "Unknown"
-
-    def test_none(self):
-        assert process_job_location(None) == "Unknown"
-
-    def test_switzerland_variants(self):
-        assert process_job_location("switzerland") == "Switzerland"
-        assert process_job_location("schweiz") == "Switzerland"
-        assert process_job_location("suisse") == "Switzerland"
 
 
 # ---------------------------------------------------------------------------

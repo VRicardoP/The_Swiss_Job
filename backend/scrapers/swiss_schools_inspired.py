@@ -19,7 +19,7 @@ from urllib.parse import quote_plus
 from bs4 import BeautifulSoup, Tag
 
 from scrapers.swiss_schools_config import WatchedSchool, schools_by_strategy
-from services.scraper_engine import BaseScraper
+from scrapers.swiss_schools_base import SwissSchoolBaseScraper
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ _SCHOOL_CANONICAL: dict[str, str] = {
 }
 
 
-class SwissSchoolsInspiredScraper(BaseScraper):
+class SwissSchoolsInspiredScraper(SwissSchoolBaseScraper):
     SOURCE_NAME = "swiss_schools_inspired"
     LISTING_URL = f"{INSPIRED_BASE}/search/"
     RATE_LIMIT_SECONDS = 2.0
@@ -79,13 +79,6 @@ class SwissSchoolsInspiredScraper(BaseScraper):
             if stub:
                 out.append(stub)
         return out
-
-    def parse_job_detail(self, soup: BeautifulSoup) -> dict:
-        return {}
-
-    def normalize_job(self, raw: dict) -> dict:
-        raw["hash"] = self.compute_hash(raw["title"], raw["company"], raw["url"])
-        return raw
 
     def _parse_tile(
         self, tile: Tag, canonical_school: str, school: WatchedSchool

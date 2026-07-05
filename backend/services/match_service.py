@@ -109,31 +109,8 @@ class MatchService:
                 "results_count": 0,
             }
 
-        # Stage 3: LLM re-ranking ADAPTATIVO.
-        # Corre si hay CUALQUIER proveedor LLM (Groq o su fallback Gemini).
-        # - Pool pequeño (<= MATCH_LLM_RERANK_MAX): se re-rankean TODAS (sin tope);
-        #   es el caso normal con extracción incremental → nada relevante se queda
-        #   sin el pulido del LLM.
-        # - Avalancha (> MATCH_LLM_RERANK_MAX): se limita a MATCH_LLM_RERANK_TOP para
-        #   proteger el crédito de IA.
-        if self.groq is not None and self._llm_available and len(qualified) > 0:
-            rerank_n = (
-                len(qualified)
-                if len(qualified) <= settings.MATCH_LLM_RERANK_MAX
-                else settings.MATCH_LLM_RERANK_TOP
-            )
-            head = qualified[:rerank_n]
-            tail = qualified[rerank_n:]
-
-            head = await self._stage3_llm_rerank(
-                profile=profile,
-                scored_results=head,
-                weights=weights,
-            )
-
-            # Merge and re-sort: LLM-ranked head + unranked tail
-            qualified = head + tail
-            qualified.sort(key=lambda x: x["score_final"], reverse=True)
+        # Stage 3: LLM re-ranking adaptativo (solo si hay proveedor LLM).
+        qualified = await self._maybe_rerank(qualified, profile, weights)
 
         # Persist ALL results above threshold (replace previous)
         await self._save_results(user_id, qualified)
@@ -147,6 +124,39 @@ class MatchService:
             "total_candidates": total_candidates,
             "results_count": len(qualified),
         }
+
+    async def _maybe_rerank(
+        self, qualified: list[dict], profile, weights: dict
+    ) -> list[dict]:
+        """Stage 3: re-ranking LLM adaptativo. Devuelve `qualified` (re-ordenado si aplica).
+
+        Corre si hay CUALQUIER proveedor LLM (Groq o su fallback Gemini):
+        - Pool pequeño (<= MATCH_LLM_RERANK_MAX): re-rankea TODAS (sin tope) — el caso
+          normal con extracción incremental, nada relevante se queda sin pulir.
+        - Avalancha (> MATCH_LLM_RERANK_MAX): limita a MATCH_LLM_RERANK_TOP para
+          proteger el crédito de IA.
+        """
+        if not (self.groq is not None and self._llm_available and len(qualified) > 0):
+            return qualified
+
+        rerank_n = (
+            len(qualified)
+            if len(qualified) <= settings.MATCH_LLM_RERANK_MAX
+            else settings.MATCH_LLM_RERANK_TOP
+        )
+        head = qualified[:rerank_n]
+        tail = qualified[rerank_n:]
+
+        head = await self._stage3_llm_rerank(
+            profile=profile,
+            scored_results=head,
+            weights=weights,
+        )
+
+        # Merge and re-sort: LLM-ranked head + unranked tail
+        qualified = head + tail
+        qualified.sort(key=lambda x: x["score_final"], reverse=True)
+        return qualified
 
     async def get_results(
         self,
@@ -399,6 +409,8 @@ class MatchService:
         """Score each candidate with multi-factor weights. Returns sorted list."""
         import numpy as np
 
+        from services.urgency_scorer import compute_urgency_score
+
         profile_emb = np.array(profile.cv_embedding)
         now = datetime.now(timezone.utc)
 
@@ -440,8 +452,6 @@ class MatchService:
             final = round(final * self._category_multiplier_for(job, profile), 2)
 
             # Urgency boost (solo aplica si el job es de la watchlist).
-            from services.urgency_scorer import compute_urgency_score
-
             urgency = compute_urgency_score(
                 job, description=job.description_snippet or ""
             )

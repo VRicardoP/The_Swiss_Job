@@ -14,7 +14,7 @@ import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.job import Job
@@ -236,12 +236,15 @@ class PatternAnalysisService:
 
     async def get_rejected_count(self, user_id: uuid.UUID) -> int:
         """Devuelve el número de jobs con feedback negativo para el usuario."""
-        stmt = select(MatchResult).where(
-            MatchResult.user_id == user_id,
-            MatchResult.feedback.in_(_NEGATIVE_FEEDBACK),
+        stmt = (
+            select(func.count())
+            .select_from(MatchResult)
+            .where(
+                MatchResult.user_id == user_id,
+                MatchResult.feedback.in_(_NEGATIVE_FEEDBACK),
+            )
         )
-        result = await self._db.execute(stmt)
-        return len(result.scalars().all())
+        return (await self._db.execute(stmt)).scalar_one()
 
     # --- Métodos internos ---
 

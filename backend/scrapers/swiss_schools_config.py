@@ -341,8 +341,13 @@ def schools_by_strategy(strategy: str) -> list[WatchedSchool]:
     return [s for s in SCHOOLS if s.strategy == strategy]
 
 
+# Índice por id para lookup O(1) (get_school se llama en caliente por cada tag
+# de cada job en resolve_school_from_job). Los ids son únicos.
+_SCHOOLS_BY_ID: dict[str, WatchedSchool] = {s.id: s for s in SCHOOLS}
+
+
 def get_school(school_id: str) -> WatchedSchool | None:
-    return next((s for s in SCHOOLS if s.id == school_id), None)
+    return _SCHOOLS_BY_ID.get(school_id)
 
 
 def resolve_school_from_job(job) -> WatchedSchool | None:

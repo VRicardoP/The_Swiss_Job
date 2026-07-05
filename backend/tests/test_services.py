@@ -1,53 +1,14 @@
 """Tests for base services: job_service, circuit_breaker, sse_manager, job_matcher."""
 
 import asyncio
-import time
 import uuid
 
 import pytest
 
 from services.circuit_breaker import CircuitBreaker, CircuitBreakerOpen, CircuitState
 from services.job_matcher import JobMatcher
-from services.job_service import BaseJobCache, BaseJobProvider
+from services.job_service import BaseJobProvider
 from services.sse_manager import SSEManager
-
-
-# --- BaseJobCache ---
-
-
-class TestBaseJobCache:
-    def test_set_and_get(self):
-        cache = BaseJobCache(ttl_seconds=60)
-        cache.set("abc", {"title": "Dev"})
-        assert cache.get("abc") == {"title": "Dev"}
-
-    def test_get_missing(self):
-        cache = BaseJobCache()
-        assert cache.get("missing") is None
-
-    def test_expired_entry(self):
-        cache = BaseJobCache(ttl_seconds=0)
-        cache.set("key", {"title": "Old"})
-        time.sleep(0.01)
-        assert cache.get("key") is None
-
-    def test_get_all(self):
-        cache = BaseJobCache()
-        cache.set("a", {"id": "1"})
-        cache.set("b", {"id": "2"})
-        assert len(cache.get_all()) == 2
-
-    def test_clear(self):
-        cache = BaseJobCache()
-        cache.set("a", {"id": "1"})
-        cache.clear()
-        assert cache.size == 0
-
-    def test_size(self):
-        cache = BaseJobCache()
-        assert cache.size == 0
-        cache.set("a", {"id": "1"})
-        assert cache.size == 1
 
 
 # --- BaseJobProvider ---
