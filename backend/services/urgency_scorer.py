@@ -38,6 +38,40 @@ _DEADLINE_RE = re.compile(
 )
 
 
+def _tier_score(school: WatchedSchool) -> int:
+    """+30 grupo A, +15 grupo B, +0 grupo C."""
+    if school.group_tier == "A":
+        return 30
+    if school.group_tier == "B":
+        return 15
+    return 0
+
+
+def _recency_score(job) -> int:
+    """+15 si < 48 h, +10 si < 7 días (usa first_seen_at o, si no, created_at)."""
+    first_seen = getattr(job, "first_seen_at", None) or getattr(job, "created_at", None)
+    if not first_seen:
+        return 0
+    if first_seen.tzinfo is None:
+        first_seen = first_seen.replace(tzinfo=timezone.utc)
+    days_old = (datetime.now(timezone.utc) - first_seen).days
+    if days_old < 2:
+        return 15
+    if days_old < 7:
+        return 10
+    return 0
+
+
+def _text_signals_score(text: str) -> int:
+    """+20 palabra de urgencia, +10 deadline explícito en la descripción."""
+    score = 0
+    if _URGENT_KEYWORDS.search(text):
+        score += 20
+    if _DEADLINE_RE.search(text):
+        score += 10
+    return score
+
+
 def compute_urgency_score(
     job,
     *,
@@ -54,32 +88,9 @@ def compute_urgency_score(
     if school is None:
         return 0
 
-    score = 0
-
-    if school.group_tier == "A":
-        score += 30
-    elif school.group_tier == "B":
-        score += 15
-
-    # Recency (usa first_seen si está, si no created_at del job)
-    first_seen = getattr(job, "first_seen_at", None) or getattr(job, "created_at", None)
-    if first_seen:
-        if first_seen.tzinfo is None:
-            first_seen = first_seen.replace(tzinfo=timezone.utc)
-        days_old = (datetime.now(timezone.utc) - first_seen).days
-        if days_old < 2:
-            score += 15
-        elif days_old < 7:
-            score += 10
-
-    text = description or ""
-    if _URGENT_KEYWORDS.search(text):
-        score += 20
-
-    if _DEADLINE_RE.search(text):
-        score += 10
-
+    score = _tier_score(school) + _recency_score(job)
+    score += _text_signals_score(description or "")
     if school.policy == "portal_only":
-        score -= 10
+        score -= 10  # sin candidatura directa
 
     return max(0, min(100, score))

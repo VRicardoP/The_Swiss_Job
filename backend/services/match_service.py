@@ -561,6 +561,32 @@ class MatchService:
         scored_results.sort(key=lambda x: x["score_final"], reverse=True)
         return scored_results
 
+    @staticmethod
+    def _apply_scores(row: MatchResult, r: dict) -> None:
+        """Copia scores/campos derivados de un result a la fila (update o insert).
+
+        NO toca feedback/application_status/draft_letter → los conserva en un UPDATE.
+        """
+        row.score_embedding = r["score_embedding"]
+        row.score_salary = r["score_salary"]
+        row.score_location = r["score_location"]
+        row.score_recency = r["score_recency"]
+        row.score_llm = r["score_llm"]
+        row.score_final = r["score_final"]
+        row.urgency_score = r.get("urgency_score", 0)
+        row.explanation = r.get("explanation")
+        row.matching_skills = r["matching_skills"]
+        row.missing_skills = r["missing_skills"]
+
+    @staticmethod
+    def _has_engagement(row: MatchResult) -> bool:
+        """True si la fila tiene interacción del usuario → no se borra en el prune."""
+        return (
+            row.feedback is not None
+            or row.application_status != "detected"
+            or row.draft_letter is not None
+        )
+
     async def _save_results(
         self,
         user_id: uuid.UUID,
@@ -595,53 +621,24 @@ class MatchService:
 
         new_hashes: set[str] = set()
         for r in results:
-            job = r["job"]
-            new_hashes.add(job.hash)
-            existing = existing_by_hash.get(job.hash)
+            job_hash = r["job"].hash
+            new_hashes.add(job_hash)
+            existing = existing_by_hash.get(job_hash)
             if existing is not None:
-                # UPDATE: refrescar scores; conservar fields del usuario
-                existing.score_embedding = r["score_embedding"]
-                existing.score_salary = r["score_salary"]
-                existing.score_location = r["score_location"]
-                existing.score_recency = r["score_recency"]
-                existing.score_llm = r["score_llm"]
-                existing.score_final = r["score_final"]
-                existing.urgency_score = r.get("urgency_score", 0)
-                existing.explanation = r.get("explanation")
-                existing.matching_skills = r["matching_skills"]
-                existing.missing_skills = r["missing_skills"]
-                # feedback, application_status, application_status_at,
-                # draft_letter NO se tocan — son del usuario.
+                # UPDATE: refrescar scores. feedback/application_status/draft_letter
+                # NO se tocan — son del usuario (los conserva _apply_scores al no tocarlos).
+                self._apply_scores(existing, r)
             else:
-                self.db.add(
-                    MatchResult(
-                        user_id=user_id,
-                        job_hash=job.hash,
-                        score_embedding=r["score_embedding"],
-                        score_salary=r["score_salary"],
-                        score_location=r["score_location"],
-                        score_recency=r["score_recency"],
-                        score_llm=r["score_llm"],
-                        score_final=r["score_final"],
-                        urgency_score=r.get("urgency_score", 0),
-                        explanation=r.get("explanation"),
-                        matching_skills=r["matching_skills"],
-                        missing_skills=r["missing_skills"],
-                    )
-                )
+                row = MatchResult(user_id=user_id, job_hash=job_hash)
+                self._apply_scores(row, r)
+                self.db.add(row)
 
-        # Eliminar solo rows "huérfanas" sin engagement del usuario
-        to_delete: list[str] = []
-        for h, row in existing_by_hash.items():
-            if h in new_hashes:
-                continue
-            has_engagement = (
-                row.feedback is not None
-                or row.application_status != "detected"
-                or row.draft_letter is not None
-            )
-            if not has_engagement:
-                to_delete.append(h)
+        # Prune: borrar solo huérfanas SIN engagement del usuario.
+        to_delete = [
+            h
+            for h, row in existing_by_hash.items()
+            if h not in new_hashes and not self._has_engagement(row)
+        ]
 
         if to_delete:
             await self.db.execute(
