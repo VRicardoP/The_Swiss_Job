@@ -498,68 +498,63 @@ class MatchService:
         weights: dict,
     ) -> list[dict]:
         """Stage 3: LLM re-ranking via Groq. Updates score_llm + explanation."""
-        # Build candidate dicts for the LLM prompt
-        candidates_for_llm = []
-        for r in scored_results:
-            job = r["job"]
-            candidates_for_llm.append(
-                {
-                    "title": job.title or "",
-                    "company": job.company or "",
-                    "description": job.description or "",
-                    "tags": job.tags or [],
-                    "location": job.location or "",
-                    "remote": job.remote or False,
-                    "language": job.language or "",
-                    "contract_type": job.contract_type.value
-                    if job.contract_type
-                    else "",
-                }
-            )
-
-        profile_text = profile.cv_text or ""
-        profile_skills = profile.skills or []
+        candidates_for_llm = [self._llm_candidate(r["job"]) for r in scored_results]
 
         llm_results = await self.groq.rerank_jobs(
-            profile_text=profile_text,
-            profile_skills=profile_skills,
+            profile_text=profile.cv_text or "",
+            profile_skills=profile.skills or [],
             candidates=candidates_for_llm,
             fallback=self.gemini,
         )
 
-        # Build lookup: global_index -> llm result
         llm_by_index = {r["global_index"]: r for r in llm_results}
-
         for i, r in enumerate(scored_results):
             llm_data = llm_by_index.get(i)
             if llm_data and llm_data.get("score", 0) > 0:
-                llm_score = llm_data["score"]
-                r["score_llm"] = round(llm_score / 100.0, 4)
-                r["explanation"] = llm_data.get("reason", "")
-
-                # Merge LLM skill analysis if richer than rule-based
-                if llm_data.get("matching_skills"):
-                    r["matching_skills"] = llm_data["matching_skills"]
-                if llm_data.get("missing_skills"):
-                    r["missing_skills"] = llm_data["missing_skills"]
-
-                # Recalculate final score with real LLM score + category multiplier
-                base = self.matcher.compute_final_score(
-                    embedding_score=r["score_embedding"],
-                    salary_score=r["score_salary"],
-                    location_score=r["score_location"],
-                    recency_score=r["score_recency"],
-                    llm_score=r["score_llm"],
-                    language_score=r.get("score_language", 0.5),
-                    weights=weights,
-                )
-                r["score_final"] = round(
-                    base * self._category_multiplier_for(r["job"], profile), 2
-                )
+                self._apply_llm_result(r, llm_data, profile, weights)
 
         # Re-sort after LLM scoring
         scored_results.sort(key=lambda x: x["score_final"], reverse=True)
         return scored_results
+
+    @staticmethod
+    def _llm_candidate(job) -> dict:
+        """Proyecta un Job a los campos que ve el LLM en el prompt de re-ranking."""
+        return {
+            "title": job.title or "",
+            "company": job.company or "",
+            "description": job.description or "",
+            "tags": job.tags or [],
+            "location": job.location or "",
+            "remote": job.remote or False,
+            "language": job.language or "",
+            "contract_type": job.contract_type.value if job.contract_type else "",
+        }
+
+    def _apply_llm_result(
+        self, r: dict, llm_data: dict, profile: UserProfile, weights: dict
+    ) -> None:
+        """Mergea el resultado del LLM en un scored result y recalcula score_final."""
+        r["score_llm"] = round(llm_data["score"] / 100.0, 4)
+        r["explanation"] = llm_data.get("reason", "")
+        # Merge LLM skill analysis if richer than rule-based
+        if llm_data.get("matching_skills"):
+            r["matching_skills"] = llm_data["matching_skills"]
+        if llm_data.get("missing_skills"):
+            r["missing_skills"] = llm_data["missing_skills"]
+        # Recalculate final score with real LLM score + category multiplier
+        base = self.matcher.compute_final_score(
+            embedding_score=r["score_embedding"],
+            salary_score=r["score_salary"],
+            location_score=r["score_location"],
+            recency_score=r["score_recency"],
+            llm_score=r["score_llm"],
+            language_score=r.get("score_language", 0.5),
+            weights=weights,
+        )
+        r["score_final"] = round(
+            base * self._category_multiplier_for(r["job"], profile), 2
+        )
 
     @staticmethod
     def _apply_scores(row: MatchResult, r: dict) -> None:

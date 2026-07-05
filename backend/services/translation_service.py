@@ -295,48 +295,60 @@ class TranslationService:
            Esto fuerza que el título se envíe al LLM (que lo devuelve igual si es inglés).
         4. Si langdetect tiene alta confianza (≥0.65) → usamos ese resultado.
         """
-        chars = set(title)
+        # Reglas 1-2: heurística de caracteres/tokens (fiable, sin langdetect).
+        by_chars = cls._lang_from_chars(title)
+        if by_chars:
+            return by_chars
 
-        # Regla 1: caracteres especiales inequívocos
+        # Regla 3: si la BD dice EN/ES, solo lo confirmamos con langdetect ALTO y
+        # coincidente; si no, "" → el LLM decide (devuelve el título igual si es EN).
+        if db_lang.lower() in SKIP_LANGUAGES:
+            return cls._langdetect_lang(
+                title, min_prob=0.70, restrict_to=SKIP_LANGUAGES
+            )
+
+        # Regla 4: idiomas no-EN con confianza moderada.
+        return cls._langdetect_lang(title, min_prob=0.35)
+
+    @staticmethod
+    def _lang_from_chars(title: str) -> str:
+        """Reglas 1-2: caracteres especiales DE/FR/IT o tokens largos (alemán).
+
+        Devuelve el código de idioma o "" si la heurística de caracteres no decide.
+        """
+        chars = set(title)
         if chars & _GERMAN_CHARS:
             return "de"
         if chars & _FRENCH_CHARS:
             return "fr"
         if chars & _ITALIAN_CHARS:
             return "it"
-
-        # Regla 2: tokens muy largos → probable alemán (Erfahrene, Softwarefirma…)
-        # Asterisco y slash son marcadores de género suizos — eliminar antes de medir
+        # Tokens muy largos → probable alemán (compound words). Asterisco y slash
+        # son marcadores de género suizos — eliminar antes de medir longitud.
         clean_words = title.replace("*", "").replace("/", " ").split()
         if any(len(w) > 12 for w in clean_words):
             return "de"
+        return ""
 
-        # Regla 3: si la BD dice EN pero no hay evidencia → no confiar, tratar como desconocido
-        # El LLM devuelve el título sin cambios si ya está en inglés → seguro enviar
-        normalized_db = db_lang.lower()
-        if normalized_db in SKIP_LANGUAGES:
-            # Doble comprobación con langdetect de alta confianza
-            try:
-                results = detect_langs(title)
-                if (
-                    results
-                    and results[0].lang in SKIP_LANGUAGES
-                    and results[0].prob >= 0.70
-                ):
-                    return results[0].lang
-            except LangDetectException:
-                pass
-            # Sin evidencia suficiente de inglés → dejar que el LLM decida
-            return ""
+    @staticmethod
+    def _langdetect_lang(
+        title: str, min_prob: float, restrict_to: frozenset[str] | None = None
+    ) -> str:
+        """Idioma top de langdetect si supera `min_prob` (y está en `restrict_to`).
 
-        # Regla 4: langdetect con confianza moderada para idiomas no-EN
+        Devuelve "" si langdetect falla, no hay confianza suficiente o el idioma
+        no está en el conjunto restringido.
+        """
         try:
             results = detect_langs(title)
-            if results and results[0].prob >= 0.35:
-                return results[0].lang
         except LangDetectException:
-            pass
-        return ""
+            return ""
+        if not results or results[0].prob < min_prob:
+            return ""
+        top = results[0]
+        if restrict_to is not None and top.lang not in restrict_to:
+            return ""
+        return top.lang
 
     @classmethod
     def _detect_language(cls, text: str) -> str:
