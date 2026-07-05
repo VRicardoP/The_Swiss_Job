@@ -47,9 +47,7 @@ class SourceCursor(Base):
     # Tipo de identidad guardada: url | hash | timestamp. Hoy: url.
     cursor_type: Mapped[str] = mapped_column(String(20), nullable=False, default="url")
     # Ventana corta de identidades recientes (URLs) para el early-stop.
-    recent_identities: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list
-    )
+    recent_identities: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     # Marca de agua temporal (preparada para cursores por fecha; hoy informativa).
     high_watermark_seen_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

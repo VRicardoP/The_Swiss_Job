@@ -140,9 +140,7 @@ class SwissSchoolsNAEScraper(BaseScraper):
     @staticmethod
     def _extract_field(tile: Tag, field_name: str) -> str | None:
         """Lee el contenido de #job-{id}-desktop-section-{field}-value."""
-        el = tile.select_one(
-            f'div[id$="-desktop-section-{field_name}-value"]'
-        )
+        el = tile.select_one(f'div[id$="-desktop-section-{field_name}-value"]')
         if el:
             return el.get_text(strip=True)
         return None

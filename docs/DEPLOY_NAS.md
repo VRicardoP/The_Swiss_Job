@@ -281,6 +281,21 @@ SECRET_KEY=<output del token_urlsafe(48)>
 # === Groq LLM ===
 GROQ_API_KEY=gsk_...
 
+# === Google Gemini (LLM PRIMARIO de generación de CV/carta) ===
+# Sin ella, la generación de documentos cae al fallback Groq gpt-oss-120b
+# (que en el free tier de Groq topa a 8k tokens/min).
+GEMINI_API_KEY=
+
+# === Email (SMTP) para avisos — alerta de docencia primaria ===
+# Gmail: SMTP_HOST=smtp.gmail.com, SMTP_PORT=587, App Password (16 car., 2FA).
+# Vacío = la alerta no envía (queda desactivada limpiamente).
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASSWORD=
+SMTP_FROM=
+TEACHER_ALERT_EMAIL=amoore3199@gmail.com
+
 # === Providers opcionales (vacíos = desactivados) ===
 JSEARCH_RAPIDAPI_KEY=
 ADZUNA_APP_ID=
@@ -293,6 +308,8 @@ BACKEND_CORS_ORIGINS=["http://capsule.tailebc81d.ts.net:4000"]
 
 # === Scheduler ===
 SCHEDULER_ENABLED=True
+# Cosecha diaria autónoma (True) vs fetch por intervalos (False):
+SCHEDULER_DAILY_HARVEST_ENABLED=True
 EOF
 ```
 
@@ -302,6 +319,10 @@ EOF
 - [ ] `POSTGRES_PASSWORD` igual en sus dos apariciones (raw y dentro de `DATABASE_URL`)
 - [ ] `GROQ_API_KEY` rellenada (sin ella matching funciona pero sin LLM rerank,
       traducción ni generador de cartas)
+- [ ] `GEMINI_API_KEY` rellenada (LLM primario de CV/carta; sin ella cae al fallback
+      Groq gpt-oss-120b, limitado en el free tier)
+- [ ] `SMTP_*` rellenadas si quieres la alerta de docencia primaria por email
+      (`TEACHER_ALERT_EMAIL`); vacías = alerta desactivada sin error
 - [ ] `BACKEND_CORS_ORIGINS` apunta al hostname Tailscale correcto
 
 ### 3.4 Transferir al NAS

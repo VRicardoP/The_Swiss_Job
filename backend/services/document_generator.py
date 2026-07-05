@@ -64,9 +64,7 @@ IMPORTANT: Generate ONLY the Markdown content. No preamble, no explanation, no c
 class DocumentGeneratorService:
     """Generates tailored CVs and cover letters using LLM."""
 
-    def __init__(
-        self, groq: GroqService, gemini: GeminiService | None = None
-    ) -> None:
+    def __init__(self, groq: GroqService, gemini: GeminiService | None = None) -> None:
         self.groq = groq
         self.gemini = gemini
 

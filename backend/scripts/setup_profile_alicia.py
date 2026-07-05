@@ -75,10 +75,10 @@ PROFILE_DATA = {
         "CRM",
     ],
     "languages": [
-        "English",    # Nativo — diferenciador global
-        "Spanish",    # C1 — dominio profesional completo
-        "Japanese",   # B1 — diferenciador estratégico en localización
-        "French",     # A2 — potencial eje Ginebra-Bruselas
+        "English",  # Nativo — diferenciador global
+        "Spanish",  # C1 — dominio profesional completo
+        "Japanese",  # B1 — diferenciador estratégico en localización
+        "French",  # A2 — potencial eje Ginebra-Bruselas
     ],
     "locations": [
         "Remote",
@@ -87,8 +87,8 @@ PROFILE_DATA = {
         "Zurich",
         "Spain",
     ],
-    "salary_min": 45000,   # CHF/year — entrada para roles remote EN/ES bilingüe
-    "salary_max": 85000,   # CHF/year — techo Instructional Designer senior (EE.UU.: hasta 85k USD)
+    "salary_min": 45000,  # CHF/year — entrada para roles remote EN/ES bilingüe
+    "salary_max": 85000,  # CHF/year — techo Instructional Designer senior (EE.UU.: hasta 85k USD)
     "remote_pref": "remote_only",
     # Pesos de scoring ajustados al perfil de Alicia:
     # - Embedding: base semántica del perfil (título + CV)
@@ -222,7 +222,11 @@ async def _update_profile(user_id: str, db) -> None:
     profile.score_weights = PROFILE_DATA["score_weights"]
 
     await db.flush()
-    logger.info("Perfil configurado: %d skills, %d idiomas", len(profile.skills), len(profile.languages))
+    logger.info(
+        "Perfil configurado: %d skills, %d idiomas",
+        len(profile.skills),
+        len(profile.languages),
+    )
 
 
 async def _create_saved_searches(user_id: str, db) -> None:
@@ -231,7 +235,9 @@ async def _create_saved_searches(user_id: str, db) -> None:
     from models.saved_search import SavedSearch
 
     # Eliminar búsquedas anteriores del script (identificadas por prefijo conocido)
-    existing = await db.execute(select(SavedSearch).where(SavedSearch.user_id == user_id))
+    existing = await db.execute(
+        select(SavedSearch).where(SavedSearch.user_id == user_id)
+    )
     count_existing = len(existing.scalars().all())
     if count_existing > 0:
         logger.info("Eliminando %d búsquedas guardadas existentes", count_existing)
@@ -274,15 +280,30 @@ async def run(email: str, dry_run: bool = False) -> None:
             logger.info("--- DRY RUN — no se realizarán cambios ---")
             logger.info("Perfil a configurar:")
             logger.info("  title: %s", PROFILE_DATA["title"])
-            logger.info("  skills (%d): %s", len(PROFILE_DATA["skills"]), ", ".join(PROFILE_DATA["skills"][:5]) + "...")
+            logger.info(
+                "  skills (%d): %s",
+                len(PROFILE_DATA["skills"]),
+                ", ".join(PROFILE_DATA["skills"][:5]) + "...",
+            )
             logger.info("  languages: %s", PROFILE_DATA["languages"])
             logger.info("  locations: %s", PROFILE_DATA["locations"])
-            logger.info("  salary: %s–%s CHF/year", PROFILE_DATA["salary_min"], PROFILE_DATA["salary_max"])
+            logger.info(
+                "  salary: %s–%s CHF/year",
+                PROFILE_DATA["salary_min"],
+                PROFILE_DATA["salary_max"],
+            )
             logger.info("  remote_pref: %s", PROFILE_DATA["remote_pref"])
-            logger.info("  score_weights: %s", json.dumps(PROFILE_DATA["score_weights"]))
+            logger.info(
+                "  score_weights: %s", json.dumps(PROFILE_DATA["score_weights"])
+            )
             logger.info("Búsquedas a crear: %d", len(SAVED_SEARCHES))
             for s in SAVED_SEARCHES:
-                logger.info("  - %s (min_score=%s, freq=%s)", s["name"], s["min_score"], s["notify_frequency"])
+                logger.info(
+                    "  - %s (min_score=%s, freq=%s)",
+                    s["name"],
+                    s["min_score"],
+                    s["notify_frequency"],
+                )
             return
 
         await _update_profile(str(user.id), db)
@@ -292,9 +313,15 @@ async def run(email: str, dry_run: bool = False) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Configurar perfil de búsqueda de empleo para Alicia Moore")
+    parser = argparse.ArgumentParser(
+        description="Configurar perfil de búsqueda de empleo para Alicia Moore"
+    )
     parser.add_argument("--email", required=True, help="Email del usuario a configurar")
-    parser.add_argument("--dry-run", action="store_true", help="Mostrar qué se haría sin aplicar cambios")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Mostrar qué se haría sin aplicar cambios",
+    )
     args = parser.parse_args()
 
     asyncio.run(run(email=args.email, dry_run=args.dry_run))

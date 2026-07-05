@@ -30,31 +30,120 @@ _NEGATIVE_FEEDBACK = frozenset({"dismissed", "thumbs_down"})
 _STOP_WORDS = frozenset(
     {
         # Alemán
-        "und", "der", "die", "das", "in", "mit", "für", "von", "zu", "bei",
-        "als", "auf", "an", "im", "ist", "sie", "er", "wir", "ich", "ein",
-        "eine", "einer", "einem", "einen", "eines",
+        "und",
+        "der",
+        "die",
+        "das",
+        "in",
+        "mit",
+        "für",
+        "von",
+        "zu",
+        "bei",
+        "als",
+        "auf",
+        "an",
+        "im",
+        "ist",
+        "sie",
+        "er",
+        "wir",
+        "ich",
+        "ein",
+        "eine",
+        "einer",
+        "einem",
+        "einen",
+        "eines",
         # Inglés
-        "the", "a", "an", "in", "at", "for", "and", "or", "with", "of",
-        "to", "be", "is", "are", "was", "were", "have", "has", "had",
+        "the",
+        "a",
+        "an",
+        "in",
+        "at",
+        "for",
+        "and",
+        "or",
+        "with",
+        "of",
+        "to",
+        "be",
+        "is",
+        "are",
+        "was",
+        "were",
+        "have",
+        "has",
+        "had",
         # Francés
-        "de", "la", "le", "les", "du", "en", "et", "à", "par", "un", "une",
-        "des", "au", "aux", "ce", "se",
+        "de",
+        "la",
+        "le",
+        "les",
+        "du",
+        "en",
+        "et",
+        "à",
+        "par",
+        "un",
+        "une",
+        "des",
+        "au",
+        "aux",
+        "ce",
+        "se",
         # Italiano
-        "di", "il", "lo", "la", "in", "e", "con", "per", "un", "una",
-        "del", "della", "dei",
+        "di",
+        "il",
+        "lo",
+        "la",
+        "in",
+        "e",
+        "con",
+        "per",
+        "un",
+        "una",
+        "del",
+        "della",
+        "dei",
         # Marcadores de género suizos
-        "mf", "mw", "mfd", "mwd", "wm", "fm", "d", "w", "m",
+        "mf",
+        "mw",
+        "mfd",
+        "mwd",
+        "wm",
+        "fm",
+        "d",
+        "w",
+        "m",
         # Porcentajes de jornada (muy frecuentes en Suiza)
-        "80", "100", "90", "50", "60", "70", "40", "120", "80-100",
-        "100%", "80%", "90%", "60%", "50%", "80-100%",
+        "80",
+        "100",
+        "90",
+        "50",
+        "60",
+        "70",
+        "40",
+        "120",
+        "80-100",
+        "100%",
+        "80%",
+        "90%",
+        "60%",
+        "50%",
+        "80-100%",
         # Preposiciones y artículos cortos
-        "of", "as", "on", "by", "be",
+        "of",
+        "as",
+        "on",
+        "by",
+        "be",
     }
 )
 
 # Mínimos para que un patrón sea sugerido
-_MIN_REJECTED_OCCURRENCES = 2   # aparece en al menos N jobs rechazados
-_MIN_REJECTION_RATE = 0.55      # al menos el 55% de sus apariciones son en rechazados
+_MIN_REJECTED_OCCURRENCES = 2  # aparece en al menos N jobs rechazados
+_MIN_REJECTION_RATE = 0.55  # al menos el 55% de sus apariciones son en rechazados
 _MAX_SUGGESTIONS_PER_TYPE = 10  # máximo sugerencias por tipo en un análisis
 
 
@@ -147,21 +236,16 @@ class PatternAnalysisService:
 
     async def get_rejected_count(self, user_id: uuid.UUID) -> int:
         """Devuelve el número de jobs con feedback negativo para el usuario."""
-        stmt = (
-            select(MatchResult)
-            .where(
-                MatchResult.user_id == user_id,
-                MatchResult.feedback.in_(_NEGATIVE_FEEDBACK),
-            )
+        stmt = select(MatchResult).where(
+            MatchResult.user_id == user_id,
+            MatchResult.feedback.in_(_NEGATIVE_FEEDBACK),
         )
         result = await self._db.execute(stmt)
         return len(result.scalars().all())
 
     # --- Métodos internos ---
 
-    async def _load_jobs(
-        self, user_id: uuid.UUID
-    ) -> tuple[list[dict], list[dict]]:
+    async def _load_jobs(self, user_id: uuid.UUID) -> tuple[list[dict], list[dict]]:
         """Carga jobs rechazados y todos los jobs del usuario como dicts."""
         stmt_all = (
             select(MatchResult, Job)
@@ -239,7 +323,9 @@ class PatternAnalysisService:
                 continue
 
             seen_patterns.add(ngram)
-            confidence = min(1.0, (rejection_rate * 0.7) + (min(rejected_count, 10) / 10 * 0.3))
+            confidence = min(
+                1.0, (rejection_rate * 0.7) + (min(rejected_count, 10) / 10 * 0.3)
+            )
             samples = ngram_to_samples[ngram][:5]
 
             tipo = "1-gram" if len(words) == 1 else f"{len(words)}-gram"
@@ -305,7 +391,9 @@ class PatternAnalysisService:
             if rejection_rate < _MIN_REJECTION_RATE:
                 continue
 
-            confidence = min(1.0, (rejection_rate * 0.7) + (min(rejected_count, 10) / 10 * 0.3))
+            confidence = min(
+                1.0, (rejection_rate * 0.7) + (min(rejected_count, 10) / 10 * 0.3)
+            )
             samples = tag_to_samples[tag][:5]
 
             suggestions.append(

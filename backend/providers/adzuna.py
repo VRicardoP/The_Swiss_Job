@@ -45,7 +45,8 @@ class AdzunaProvider(BaseJobProvider):
                         "app_id": app_id,
                         "app_key": app_key,
                         "results_per_page": RESULTS_PER_PAGE,
-                        "what": query or "content editor localization proofreader HR coordinator virtual assistant customer success",
+                        "what": query
+                        or "content editor localization proofreader HR coordinator virtual assistant customer success",
                         "what_or": "localization LQA bilingual proofreader HR coordinator virtual assistant",
                     }
 

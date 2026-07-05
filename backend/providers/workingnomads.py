@@ -52,12 +52,29 @@ _RELEVANT_CATEGORIES = {
 }
 
 _TECH_EXCLUDE_TITLES = {
-    "software engineer", "backend engineer", "frontend engineer",
-    "full stack", "fullstack", "devops", "sre", "site reliability",
-    "ml engineer", "data engineer", "cloud engineer", "platform engineer",
-    "mobile developer", "ios developer", "android developer",
-    "blockchain", "cybersecurity", "security engineer", "embedded",
-    "firmware", "hardware engineer", "network engineer", "infrastructure",
+    "software engineer",
+    "backend engineer",
+    "frontend engineer",
+    "full stack",
+    "fullstack",
+    "devops",
+    "sre",
+    "site reliability",
+    "ml engineer",
+    "data engineer",
+    "cloud engineer",
+    "platform engineer",
+    "mobile developer",
+    "ios developer",
+    "android developer",
+    "blockchain",
+    "cybersecurity",
+    "security engineer",
+    "embedded",
+    "firmware",
+    "hardware engineer",
+    "network engineer",
+    "infrastructure",
 }
 
 
@@ -86,7 +103,8 @@ class WorkingNomadsProvider(BaseJobProvider):
         if query:
             q_lower = query.lower()
             filtered = [
-                j for j in filtered
+                j
+                for j in filtered
                 if q_lower in f"{j['title']} {j['description']}".lower()
             ]
 

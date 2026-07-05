@@ -20,8 +20,14 @@ logger = logging.getLogger(__name__)
 ISCS_URL = "https://iscs-zug.ch/employment/"
 
 _JOB_KEYWORDS = (
-    "TEACHER", "COORDINATOR", "PROGRAMME", "PROGRAM", "ACADEMY",
-    "DIRECTOR", "PRINCIPAL", "ASSISTANT",
+    "TEACHER",
+    "COORDINATOR",
+    "PROGRAMME",
+    "PROGRAM",
+    "ACADEMY",
+    "DIRECTOR",
+    "PRINCIPAL",
+    "ASSISTANT",
 )
 
 

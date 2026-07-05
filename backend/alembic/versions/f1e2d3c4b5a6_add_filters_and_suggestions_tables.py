@@ -29,7 +29,9 @@ def upgrade() -> None:
         sa.Column("description", sa.String(length=500), nullable=True),
         sa.Column("hit_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default="true"),
-        sa.Column("source", sa.String(length=20), nullable=False, server_default="auto"),
+        sa.Column(
+            "source", sa.String(length=20), nullable=False, server_default="auto"
+        ),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

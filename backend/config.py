@@ -142,7 +142,9 @@ class Settings(BaseSettings):
     # Requiere SMTP_* configurado para enviar.
     TEACHER_ALERT_ENABLED: bool = True
     TEACHER_ALERT_EMAIL: str = "amoore3199@gmail.com"
-    TEACHER_ALERT_INITIAL_LOOKBACK_DAYS: int = 7  # primera ejecución mira atrás esta ventana
+    TEACHER_ALERT_INITIAL_LOOKBACK_DAYS: int = (
+        7  # primera ejecución mira atrás esta ventana
+    )
     SCHEDULER_TEACHER_ALERT_INTERVAL_HOURS: int = 6
 
     # Compliance (TD-06)

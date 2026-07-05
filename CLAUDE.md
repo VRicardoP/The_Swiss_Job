@@ -10,7 +10,7 @@
 
 - **Backend**: FastAPI + Celery + PostgreSQL (pgvector) + Redis
 - **Frontend**: React + TailwindCSS v4 + Vite
-- **Workers**: Celery (providers queue cada 6h, scraping queue cada 6h)
+- **Workers**: Celery — cosecha diaria autónoma (fetch→scrape→embed→dedup→match a hora variable con jitter, `SCHEDULER_DAILY_HARVEST_ENABLED`) o, en modo intervalos, providers/scraping cada 6h; + alerta profesor cada 6h
 - **Memoria del proyecto**: `.claude/memory/` — leer `MEMORY.md` al inicio de sesión
 
 ---
@@ -30,7 +30,7 @@
 
 ## Restricciones del proyecto
 
-- **NO scraping** de: jobs.ch, jobup.ch, Indeed, LinkedIn, Glassdoor, XING
+- **NO scraping PÚBLICO** de: jobs.ch, jobup.ch, Indeed, LinkedIn, Glassdoor, XING. `providers/restricted.py` permite integrarlos SOLO por ruta autorizada (credencial partner / feed oficial); arrancan deshabilitados (sin credencial → 0 peticiones, nunca scraping)
 - Nunca modificar `.env` ni `docker-compose.yml` sin confirmación explícita
 - Tests siempre contra la DB `swissjobhunter_test` — nunca contra producción
 - Tareas Celery con `def`, no `async def`. Patrón: `def task(): asyncio.run(_impl())`
@@ -86,18 +86,29 @@ Los skills leen los prompts canónicos en `.ai/prompts/` y añaden contexto del 
 ## Arquitectura en una página
 
 ```
-providers/          # 16 providers (BaseJobProvider + CircuitBreaker)
-scrapers/           # 7 scrapers (BaseScraper extends BaseJobProvider)
+providers/          # 25 providers (20 activos + 5 restringidos gated); BaseJobProvider + CircuitBreaker
+  restricted.py     # jobs.ch/LinkedIn/Indeed/Glassdoor/XING SOLO por ruta autorizada (partner/feed); OFF por defecto
+scrapers/           # 14 scrapers (6 base + 8 swiss_schools_*); BaseScraper extends BaseJobProvider
 services/
-  job_matcher.py    # pipeline 3 etapas: pgvector → multi-factor → Groq LLM
-  translation.py    # títulos a inglés via Groq (DE/FR/IT only)
-  groq_service.py   # sync SDK + run_in_threadpool + Redis cache 7d
+  job_matcher.py    # pipeline 3 etapas: pgvector → multi-factor → LLM (Groq rerank, fallback Gemini)
+  translation_service.py  # títulos a inglés via GROQ_RERANK_MODEL=llama-4-scout (DE/FR/IT only)
+  groq_service.py   # sync SDK + run_in_threadpool + Redis cache 7d; rerank cae a Gemini si Groq falla
+  gemini_service.py # Google Gemini 2.5 Flash — PRIMARIO de generación de CV/carta (httpx); fallback Groq gpt-oss-120b
+  email_service.py  # SMTP stdlib para avisos (SMTP_* en config)
+  teacher_alert.py  # detecta docencia primaria (categoría H job_classifier + nivel) → email
+  cursor_store.py   # crawler INCREMENTAL: cursor de URLs recientes por fuente/scope (early-stop)
+  scraper_stealth.py # capa anti-detección (headers Chrome, jitter, soft-block, Playwright endurecido)
   compliance.py     # ComplianceEngine + kill-switch (3 bloques → disable)
 tasks/
-  fetch_jobs.py     # queue: default, schedule: cada 6h
-  scraping_tasks.py # queue: scraping, schedule: cada 6h
+  pipeline_tasks.py # COSECHA DIARIA autónoma: fetch→scrape→embed→dedup→match, hora variable (jitter)
+  fetch_tasks.py / scraping_tasks.py  # fetch API cada 6h / scrapers cada 6h (modo intervalos)
+  matching_tasks.py # matching automático de todos los perfiles con embedding
+  alert_tasks.py    # alerta profesor primaria por email (cada 6h)
 api/                # FastAPI routers
-models/             # SQLAlchemy + Pydantic schemas
+models/             # SQLAlchemy + Pydantic (incl. source_cursor.py para el crawler incremental)
 ```
+
+Modelos LLM: `GROQ_MODEL=openai/gpt-oss-120b` (fallback docs), `GROQ_RERANK_MODEL=meta-llama/llama-4-scout-17b-16e-instruct`
+(traducción + rerank), Gemini `gemini-2.5-flash` (primario docs). `llama-3.3-70b-versatile` DECOMISIONADO por Groq (2026-08-16).
 
 > Para detalles de cada componente, consultar `.claude/memory/MEMORY.md`

@@ -30,9 +30,7 @@ def _gemini_on(content: str = _MOCK_GEMINI_CONTENT, error: Exception | None = No
     """GeminiService disponible; devuelve `content` o lanza `error` (para fallback)."""
     m = MagicMock()
     m.is_available = True
-    m.get_chat_response = AsyncMock(
-        return_value=content, side_effect=error
-    )
+    m.get_chat_response = AsyncMock(return_value=content, side_effect=error)
     return m
 
 

@@ -105,7 +105,9 @@ async def _build_results_response(
         # Mostrar traducción si el LLM produjo algo diferente al original
         # No usar job.language para bloquear: puede ser erróneo (langdetect falla en
         # títulos cortos o mixtos alemán-inglés → job.language = "en" incorrecto)
-        is_translated = bool(translated and translated.strip() != original_title.strip())
+        is_translated = bool(
+            translated and translated.strip() != original_title.strip()
+        )
         job_title_en = translated if is_translated else None
         # Detectar idioma para el indicador de idioma en la UI
         job_language = job.language
@@ -114,7 +116,7 @@ async def _build_results_response(
 
         # Resolver school metadata si el job es de la watchlist (tag = school.id)
         school = None
-        for tag in (job.tags or []):
+        for tag in job.tags or []:
             school = get_school(tag)
             if school:
                 break

@@ -14,19 +14,33 @@ import httpx
 
 from services.job_service import BaseJobProvider
 from utils.http import fetch_rss
-from utils.text import extract_canton, extract_job_skills, strip_html_tags
+from utils.text import extract_job_skills, strip_html_tags
 
 logger = logging.getLogger(__name__)
 
 RSS_URL = "https://remote.co/remote-jobs/feed/"
 
 _TECH_EXCLUDE_TITLES = {
-    "software engineer", "backend engineer", "frontend engineer",
-    "full stack", "fullstack", "devops", "sre", "ml engineer",
-    "data engineer", "cloud engineer", "mobile developer",
-    "ios developer", "android developer", "blockchain",
-    "cybersecurity", "security engineer", "embedded", "firmware",
-    "network engineer", "infrastructure engineer",
+    "software engineer",
+    "backend engineer",
+    "frontend engineer",
+    "full stack",
+    "fullstack",
+    "devops",
+    "sre",
+    "ml engineer",
+    "data engineer",
+    "cloud engineer",
+    "mobile developer",
+    "ios developer",
+    "android developer",
+    "blockchain",
+    "cybersecurity",
+    "security engineer",
+    "embedded",
+    "firmware",
+    "network engineer",
+    "infrastructure engineer",
 }
 
 
@@ -64,14 +78,16 @@ class RemoteCoProvider(BaseJobProvider):
         items = channel.findall("item")
         all_jobs = self._process_raw_jobs(items)
         filtered = [
-            j for j in all_jobs
+            j
+            for j in all_jobs
             if not any(kw in j.get("title", "").lower() for kw in _TECH_EXCLUDE_TITLES)
         ]
 
         if query:
             q_lower = query.lower()
             filtered = [
-                j for j in filtered
+                j
+                for j in filtered
                 if q_lower in f"{j['title']} {j['description']}".lower()
             ]
 

@@ -72,9 +72,7 @@ async def list_schools(current_user: User = Depends(get_current_user)):
 # ── State machine de candidatura ───────────────────────────────────────────
 
 
-@router.post(
-    "/match/{job_hash}/status", response_model=ApplicationStatusResponse
-)
+@router.post("/match/{job_hash}/status", response_model=ApplicationStatusResponse)
 async def update_application_status(
     job_hash: str,
     body: ApplicationStatusRequest,
@@ -107,9 +105,7 @@ async def update_application_status(
 # ── Generación de borrador ─────────────────────────────────────────────────
 
 
-@router.post(
-    "/match/{job_hash}/draft", response_model=GenerateDraftResponse
-)
+@router.post("/match/{job_hash}/draft", response_model=GenerateDraftResponse)
 @limiter.limit("10/minute")
 async def generate_draft(
     job_hash: str,
@@ -255,9 +251,7 @@ async def export_calendar(
         content=ics,
         media_type="text/calendar; charset=utf-8",
         headers={
-            "Content-Disposition": (
-                f'attachment; filename="swissjob-{job_hash}.ics"'
-            ),
+            "Content-Disposition": (f'attachment; filename="swissjob-{job_hash}.ics"'),
         },
     )
 
@@ -284,17 +278,19 @@ def _build_ics(
             start = start.replace(tzinfo=timezone.utc)
         start_str = start.strftime("%Y%m%dT%H%M%SZ")
         end_str = (start + timedelta(minutes=30)).strftime("%Y%m%dT%H%M%SZ")
-        lines.extend([
-            "BEGIN:VEVENT",
-            f"UID:{uid}@swissjob",
-            f"DTSTAMP:{now_str}",
-            f"DTSTART:{start_str}",
-            f"DTEND:{end_str}",
-            f"SUMMARY:{_ics_escape(summary)}",
-            f"DESCRIPTION:{_ics_escape(desc)}",
-            f"URL:{_ics_escape(url)}",
-            "END:VEVENT",
-        ])
+        lines.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}@swissjob",
+                f"DTSTAMP:{now_str}",
+                f"DTSTART:{start_str}",
+                f"DTEND:{end_str}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(desc)}",
+                f"URL:{_ics_escape(url)}",
+                "END:VEVENT",
+            ]
+        )
     lines.append("END:VCALENDAR")
     return "\r\n".join(lines) + "\r\n"
 

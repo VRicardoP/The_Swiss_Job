@@ -68,7 +68,9 @@ def test_update_after_run_prepends_and_caps(monkeypatch):
     from config import settings
 
     monkeypatch.setattr(settings, "CURSOR_RECENT_IDENTITIES_MAX", 3)
-    cursor = SourceCursor(source_key="x", scope_key="default", recent_identities=["b", "c"])
+    cursor = SourceCursor(
+        source_key="x", scope_key="default", recent_identities=["b", "c"]
+    )
 
     CursorStore().update_after_run(
         cursor, fetched_identities=["a", "b"], new_count=1, pages_read=1

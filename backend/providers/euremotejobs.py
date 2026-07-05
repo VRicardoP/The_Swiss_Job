@@ -14,7 +14,7 @@ import httpx
 
 from services.job_service import BaseJobProvider
 from utils.http import fetch_rss
-from utils.text import extract_canton, extract_job_skills, strip_html_tags
+from utils.text import extract_job_skills, strip_html_tags
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +22,28 @@ RSS_URL = "https://euremotejobs.com/feed/"
 
 # Palabras en título que indican roles técnicos a descartar
 _TECH_EXCLUDE = {
-    "software engineer", "backend engineer", "frontend engineer",
-    "full stack", "fullstack", "devops", "sre", "site reliability",
-    "ml engineer", "data engineer", "cloud engineer", "platform engineer",
-    "mobile developer", "ios developer", "android developer",
-    "blockchain", "cybersecurity", "security engineer", "embedded",
-    "firmware", "hardware engineer", "network engineer",
+    "software engineer",
+    "backend engineer",
+    "frontend engineer",
+    "full stack",
+    "fullstack",
+    "devops",
+    "sre",
+    "site reliability",
+    "ml engineer",
+    "data engineer",
+    "cloud engineer",
+    "platform engineer",
+    "mobile developer",
+    "ios developer",
+    "android developer",
+    "blockchain",
+    "cybersecurity",
+    "security engineer",
+    "embedded",
+    "firmware",
+    "hardware engineer",
+    "network engineer",
 }
 
 
@@ -69,7 +85,8 @@ class EURemoteJobsProvider(BaseJobProvider):
         if query:
             q_lower = query.lower()
             filtered = [
-                j for j in filtered
+                j
+                for j in filtered
                 if q_lower in f"{j['title']} {j['description']}".lower()
             ]
 

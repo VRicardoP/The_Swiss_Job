@@ -308,19 +308,14 @@ class MatchService:
 
     async def _get_excluded_hashes(self, user_id: uuid.UUID) -> set[str]:
         """Load job hashes that the user dismissed or thumbs-downed."""
-        stmt = (
-            select(MatchResult.job_hash)
-            .where(
-                MatchResult.user_id == user_id,
-                MatchResult.feedback.in_(_NEGATIVE_FEEDBACK),
-            )
+        stmt = select(MatchResult.job_hash).where(
+            MatchResult.user_id == user_id,
+            MatchResult.feedback.in_(_NEGATIVE_FEEDBACK),
         )
         result = await self.db.execute(stmt)
         return {row[0] for row in result.all()}
 
-    async def _get_active_filters(
-        self, user_id: uuid.UUID
-    ) -> list[dict]:
+    async def _get_active_filters(self, user_id: uuid.UUID) -> list[dict]:
         """Carga los filtros de exclusión activos del usuario."""
         stmt = select(JobFilter).where(
             JobFilter.user_id == user_id,
@@ -354,18 +349,21 @@ class MatchService:
             conditions.append(Job.hash.not_in(excluded_hashes))
 
         # Aplicar filtros de título (ILIKE) y de tags (JSONB @> operator)
-        for f in (active_filters or []):
+        for f in active_filters or []:
             if f["type"] == "title_contains":
                 # Escapa wildcards de ILIKE para tratar el patrón como literal
-                safe = f["pattern"].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                safe = (
+                    f["pattern"]
+                    .replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+                )
                 conditions.append(~Job.title.ilike(f"%{safe}%", escape="\\"))
             elif f["type"] == "tag_contains":
                 # tag IS NULL (sin tags) → incluir; tags no contiene el patrón → incluir
                 # NOT (NULL @> ...) = NULL que en WHERE equivale a FALSE → excluiría incorrectamente
                 tag_json = cast(literal(json.dumps([f["pattern"]])), JSONB)
-                conditions.append(
-                    or_(Job.tags.is_(None), ~Job.tags.op("@>")(tag_json))
-                )
+                conditions.append(or_(Job.tags.is_(None), ~Job.tags.op("@>")(tag_json)))
 
         stmt = (
             select(Job)
@@ -384,7 +382,7 @@ class MatchService:
         watchlist (profile.watchlist_schools_enabled), el multiplicador es
         1.0 — la penalización H (docencia) no aplica para esa lista.
         """
-        source = (job.source or "")
+        source = job.source or ""
         if source.startswith("swiss_schools_") and getattr(
             profile, "watchlist_schools_enabled", False
         ):
@@ -443,6 +441,7 @@ class MatchService:
 
             # Urgency boost (solo aplica si el job es de la watchlist).
             from services.urgency_scorer import compute_urgency_score
+
             urgency = compute_urgency_score(
                 job, description=job.description_snippet or ""
             )
@@ -502,7 +501,9 @@ class MatchService:
                     "location": job.location or "",
                     "remote": job.remote or False,
                     "language": job.language or "",
-                    "contract_type": job.contract_type.value if job.contract_type else "",
+                    "contract_type": job.contract_type.value
+                    if job.contract_type
+                    else "",
                 }
             )
 
@@ -602,20 +603,22 @@ class MatchService:
                 # feedback, application_status, application_status_at,
                 # draft_letter NO se tocan — son del usuario.
             else:
-                self.db.add(MatchResult(
-                    user_id=user_id,
-                    job_hash=job.hash,
-                    score_embedding=r["score_embedding"],
-                    score_salary=r["score_salary"],
-                    score_location=r["score_location"],
-                    score_recency=r["score_recency"],
-                    score_llm=r["score_llm"],
-                    score_final=r["score_final"],
-                    urgency_score=r.get("urgency_score", 0),
-                    explanation=r.get("explanation"),
-                    matching_skills=r["matching_skills"],
-                    missing_skills=r["missing_skills"],
-                ))
+                self.db.add(
+                    MatchResult(
+                        user_id=user_id,
+                        job_hash=job.hash,
+                        score_embedding=r["score_embedding"],
+                        score_salary=r["score_salary"],
+                        score_location=r["score_location"],
+                        score_recency=r["score_recency"],
+                        score_llm=r["score_llm"],
+                        score_final=r["score_final"],
+                        urgency_score=r.get("urgency_score", 0),
+                        explanation=r.get("explanation"),
+                        matching_skills=r["matching_skills"],
+                        missing_skills=r["missing_skills"],
+                    )
+                )
 
         # Eliminar solo rows "huérfanas" sin engagement del usuario
         to_delete: list[str] = []
@@ -662,10 +665,11 @@ class MatchService:
             return
 
         priority = [
-            r for r in results
+            r
+            for r in results
             if (r["job"].source or "").startswith("swiss_schools_")
             and (r["score_final"] + r.get("urgency_score", 0))
-                >= settings.WATCHLIST_PUSH_THRESHOLD
+            >= settings.WATCHLIST_PUSH_THRESHOLD
         ]
         if not priority:
             return
@@ -726,10 +730,12 @@ class MatchService:
             try:
                 await r.publish(
                     f"sse:{user_id}",
-                    json.dumps({
-                        "event": "watchlist_priority",
-                        "data": {"count": len(priority)},
-                    }),
+                    json.dumps(
+                        {
+                            "event": "watchlist_priority",
+                            "data": {"count": len(priority)},
+                        }
+                    ),
                 )
             finally:
                 await r.aclose()

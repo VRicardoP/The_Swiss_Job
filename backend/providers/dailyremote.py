@@ -14,7 +14,7 @@ import httpx
 
 from services.job_service import BaseJobProvider
 from utils.http import fetch_rss
-from utils.text import extract_canton, extract_job_skills, strip_html_tags
+from utils.text import extract_job_skills, strip_html_tags
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,8 @@ class DailyRemoteProvider(BaseJobProvider):
         if query:
             q_lower = query.lower()
             filtered = [
-                j for j in filtered
+                j
+                for j in filtered
                 if q_lower in f"{j['title']} {j['description']}".lower()
             ]
 
@@ -137,12 +138,26 @@ class DailyRemoteProvider(BaseJobProvider):
     def _filter_relevant(jobs: list[dict]) -> list[dict]:
         """Descarta empleos tech-only para reducir ruido irrelevante."""
         _EXCLUDE_KEYWORDS = {
-            "software engineer", "backend engineer", "frontend engineer",
-            "full stack", "fullstack", "devops", "sre", "ml engineer",
-            "data engineer", "cloud engineer", "mobile developer",
-            "ios developer", "android developer", "blockchain",
-            "cybersecurity", "security engineer", "qa engineer",
-            "embedded", "firmware", "hardware",
+            "software engineer",
+            "backend engineer",
+            "frontend engineer",
+            "full stack",
+            "fullstack",
+            "devops",
+            "sre",
+            "ml engineer",
+            "data engineer",
+            "cloud engineer",
+            "mobile developer",
+            "ios developer",
+            "android developer",
+            "blockchain",
+            "cybersecurity",
+            "security engineer",
+            "qa engineer",
+            "embedded",
+            "firmware",
+            "hardware",
         }
         result = []
         for job in jobs:

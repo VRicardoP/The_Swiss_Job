@@ -112,7 +112,11 @@ class ReliefWebProvider(BaseJobProvider):
             description = f"{body}\n\nHow to apply: {how}".strip()
 
         # Ubicación: ciudad + país
-        city = (fields.get("city") or [{}])[0].get("name", "") if fields.get("city") else ""
+        city = (
+            (fields.get("city") or [{}])[0].get("name", "")
+            if fields.get("city")
+            else ""
+        )
         countries = fields.get("country", []) or []
         country = countries[0].get("name", "") if countries else ""
         location_str = ", ".join(filter(None, [city, country])) or "Remote / Worldwide"
@@ -129,7 +133,11 @@ class ReliefWebProvider(BaseJobProvider):
         tags = list(dict.fromkeys(category_tags + extracted_tags))[: self.MAX_TAGS]
 
         # Tipo de contrato
-        job_type = (fields.get("type", []) or [{}])[0].get("name", "") if fields.get("type") else ""
+        job_type = (
+            (fields.get("type", []) or [{}])[0].get("name", "")
+            if fields.get("type")
+            else ""
+        )
         contract_type = _map_contract_type(job_type)
 
         # Fecha

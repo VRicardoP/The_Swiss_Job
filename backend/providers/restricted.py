@@ -36,9 +36,7 @@ class RestrictedPartnerProvider(BaseJobProvider):
     def _credential(self) -> str:
         return getattr(settings, self.CREDENTIAL_ATTR, "") or ""
 
-    async def fetch_jobs(
-        self, query: str, location: str = "Switzerland"
-    ) -> list[dict]:
+    async def fetch_jobs(self, query: str, location: str = "Switzerland") -> list[dict]:
         """Sin credencial → auth_missing (0 peticiones). Con credencial → feed partner."""
         if not self._credential():
             logger.info(
@@ -97,7 +95,9 @@ class JobCloudPartnerProvider(RestrictedPartnerProvider):
 
     SOURCE_NAME = "jobcloud_partner"
     CREDENTIAL_ATTR = "JOBCLOUD_PARTNER_API_KEY"
-    AUTHORIZED_ROUTE = "JobCloud partner API / XML oficial o import de enlaces del usuario"
+    AUTHORIZED_ROUTE = (
+        "JobCloud partner API / XML oficial o import de enlaces del usuario"
+    )
 
 
 class LinkedInAuthorizedProvider(RestrictedPartnerProvider):
@@ -105,7 +105,9 @@ class LinkedInAuthorizedProvider(RestrictedPartnerProvider):
 
     SOURCE_NAME = "linkedin_authorized"
     CREDENTIAL_ATTR = "LINKEDIN_PARTNER_TOKEN"
-    AUTHORIZED_ROUTE = "LinkedIn Talent Solutions / Job Posting API o import manual del usuario"
+    AUTHORIZED_ROUTE = (
+        "LinkedIn Talent Solutions / Job Posting API o import manual del usuario"
+    )
 
 
 class IndeedPartnerProvider(RestrictedPartnerProvider):
@@ -113,7 +115,9 @@ class IndeedPartnerProvider(RestrictedPartnerProvider):
 
     SOURCE_NAME = "indeed_partner"
     CREDENTIAL_ATTR = "INDEED_PARTNER_KEY"
-    AUTHORIZED_ROUTE = "Indeed Partner APIs / Job Sync / feed aprobado o import de alertas"
+    AUTHORIZED_ROUTE = (
+        "Indeed Partner APIs / Job Sync / feed aprobado o import de alertas"
+    )
 
 
 class GlassdoorPartnerProvider(RestrictedPartnerProvider):
@@ -129,4 +133,6 @@ class XingPartnerProvider(RestrictedPartnerProvider):
 
     SOURCE_NAME = "xing_partner"
     CREDENTIAL_ATTR = "XING_PARTNER_TOKEN"
-    AUTHORIZED_ROUTE = "XING e-recruiting feed/API (Apply With XING) con partner approval"
+    AUTHORIZED_ROUTE = (
+        "XING e-recruiting feed/API (Apply With XING) con partner approval"
+    )

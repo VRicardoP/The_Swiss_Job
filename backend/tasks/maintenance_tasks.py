@@ -166,7 +166,11 @@ async def _cleanup_stale_jobs_async(max_age_days: int) -> dict[str, Any]:
     logger.info(
         "cleanup_stale_jobs: %d eliminadas en total "
         "(normales >%dd: %d | good >90d: %d | pipeline >180d: %d)",
-        total, max_age_days, deleted_normal, deleted_good, deleted_pipeline,
+        total,
+        max_age_days,
+        deleted_normal,
+        deleted_good,
+        deleted_pipeline,
     )
     return {
         "status": "success",

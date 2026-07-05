@@ -67,7 +67,8 @@ class UNDPJobsProvider(BaseJobProvider):
         if query:
             q_lower = query.lower()
             all_jobs = [
-                j for j in all_jobs
+                j
+                for j in all_jobs
                 if q_lower in f"{j['title']} {j['description']}".lower()
             ]
 
@@ -79,9 +80,7 @@ class UNDPJobsProvider(BaseJobProvider):
 
         # Soporte para RSS 2.0 y RSS 1.0 (con namespace)
         title = (
-            item.findtext("title")
-            or item.findtext(f"{{{_RSS_NS}}}title")
-            or ""
+            item.findtext("title") or item.findtext(f"{{{_RSS_NS}}}title") or ""
         ).strip()
 
         url = (
@@ -102,9 +101,7 @@ class UNDPJobsProvider(BaseJobProvider):
 
         # dc:subject puede contener categoría del rol
         category = (
-            item.findtext(f"{{{_DC_NS}}}subject")
-            or item.findtext("category")
-            or ""
+            item.findtext(f"{{{_DC_NS}}}subject") or item.findtext("category") or ""
         ).strip()
 
         # Empresa es siempre UNDP en este feed
@@ -117,7 +114,9 @@ class UNDPJobsProvider(BaseJobProvider):
         if category and category.lower() not in [t.lower() for t in tags]:
             tags = [category] + tags
 
-        is_remote = "home-based" in location_str.lower() or "remote" in location_str.lower()
+        is_remote = (
+            "home-based" in location_str.lower() or "remote" in location_str.lower()
+        )
 
         return {
             "hash": self.compute_hash(title, company, url or guid),
@@ -173,9 +172,21 @@ def _extract_location(title: str, description: str) -> str:
 
     # Ciudades frecuentes en UNDP
     _CITIES = [
-        "New York", "Geneva", "Nairobi", "Bangkok", "Brussels",
-        "Washington", "Istanbul", "Cairo", "Dakar", "Addis Ababa",
-        "Panama City", "Amman", "Beirut", "Kabul", "Islamabad",
+        "New York",
+        "Geneva",
+        "Nairobi",
+        "Bangkok",
+        "Brussels",
+        "Washington",
+        "Istanbul",
+        "Cairo",
+        "Dakar",
+        "Addis Ababa",
+        "Panama City",
+        "Amman",
+        "Beirut",
+        "Kabul",
+        "Islamabad",
     ]
     for city in _CITIES:
         if city.lower() in combined[:500]:

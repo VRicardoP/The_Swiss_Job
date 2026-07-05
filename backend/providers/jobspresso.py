@@ -20,11 +20,23 @@ logger = logging.getLogger(__name__)
 RSS_URL = "https://jobspresso.co/feed/?post_type=job_listing"
 
 _TECH_EXCLUDE_TITLES = {
-    "software engineer", "backend engineer", "frontend engineer",
-    "full stack", "fullstack", "devops", "sre", "ml engineer",
-    "data engineer", "cloud engineer", "mobile developer",
-    "ios developer", "android developer", "blockchain",
-    "cybersecurity", "security engineer", "embedded",
+    "software engineer",
+    "backend engineer",
+    "frontend engineer",
+    "full stack",
+    "fullstack",
+    "devops",
+    "sre",
+    "ml engineer",
+    "data engineer",
+    "cloud engineer",
+    "mobile developer",
+    "ios developer",
+    "android developer",
+    "blockchain",
+    "cybersecurity",
+    "security engineer",
+    "embedded",
 }
 
 
@@ -62,14 +74,16 @@ class JobspressoProvider(BaseJobProvider):
         items = channel.findall("item")
         all_jobs = self._process_raw_jobs(items)
         filtered = [
-            j for j in all_jobs
+            j
+            for j in all_jobs
             if not any(kw in j.get("title", "").lower() for kw in _TECH_EXCLUDE_TITLES)
         ]
 
         if query:
             q_lower = query.lower()
             filtered = [
-                j for j in filtered
+                j
+                for j in filtered
                 if q_lower in f"{j['title']} {j['description']}".lower()
             ]
 

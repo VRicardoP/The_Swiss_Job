@@ -21,9 +21,7 @@ from services.scraper_engine import BaseScraper
 logger = logging.getLogger(__name__)
 
 ISB_BASE = "https://www.isbasel.ch"
-ISB_BOARD_URL = (
-    f"{ISB_BASE}/connect/news/?board=employment-public-job-postings"
-)
+ISB_BOARD_URL = f"{ISB_BASE}/connect/news/?board=employment-public-job-postings"
 
 
 class SwissSchoolsISBScraper(BaseScraper):

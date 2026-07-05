@@ -17,17 +17,33 @@ _TEACHING_CATEGORY = "H"
 # minúsculas sobre título + tags. Frases específicas para evitar falsos positivos.
 _PRIMARY_MARKERS: tuple[str, ...] = (
     # EN
-    "primary teacher", "primary school", "primary years", "primary class",
+    "primary teacher",
+    "primary school",
+    "primary years",
+    "primary class",
     # DE
-    "primarlehr", "primarstufe", "primarschule", "grundschule", "grundstufe",
+    "primarlehr",
+    "primarstufe",
+    "primarschule",
+    "grundschule",
+    "grundstufe",
     # FR
-    "enseignant primaire", "enseignante primaire", "école primaire",
-    "degré primaire", "cycle primaire", "instituteur", "institutrice",
+    "enseignant primaire",
+    "enseignante primaire",
+    "école primaire",
+    "degré primaire",
+    "cycle primaire",
+    "instituteur",
+    "institutrice",
     # IT
-    "scuola primaria", "scuola elementare", "maestro elementare",
+    "scuola primaria",
+    "scuola elementare",
+    "maestro elementare",
     "insegnante scuola primaria",
     # ES
-    "escuela primaria", "profesor de primaria", "maestro de primaria",
+    "escuela primaria",
+    "profesor de primaria",
+    "maestro de primaria",
 )
 
 

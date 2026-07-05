@@ -15,7 +15,7 @@ import httpx
 
 from services.job_service import BaseJobProvider
 from utils.http import fetch_rss
-from utils.text import extract_canton, extract_job_skills, strip_html_tags
+from utils.text import extract_job_skills, strip_html_tags
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,10 @@ class TranslatorsCafeProvider(BaseJobProvider):
                 lambda: fetch_rss(
                     client,
                     RSS_URL,
-                    headers={**self.DEFAULT_HEADERS, "Accept": "application/rss+xml, application/xml"},
+                    headers={
+                        **self.DEFAULT_HEADERS,
+                        "Accept": "application/rss+xml, application/xml",
+                    },
                     timeout=20.0,
                 )
             )
@@ -50,13 +53,18 @@ class TranslatorsCafeProvider(BaseJobProvider):
 
         # Soporta tanto RSS 2.0 como Atom
         channel = root.find("channel")
-        items = channel.findall("item") if channel is not None else root.findall(".//{http://www.w3.org/2005/Atom}entry")
+        items = (
+            channel.findall("item")
+            if channel is not None
+            else root.findall(".//{http://www.w3.org/2005/Atom}entry")
+        )
         all_jobs = self._process_raw_jobs(items)
 
         if query:
             q_lower = query.lower()
             all_jobs = [
-                j for j in all_jobs
+                j
+                for j in all_jobs
                 if q_lower in f"{j['title']} {j['description']}".lower()
             ]
 

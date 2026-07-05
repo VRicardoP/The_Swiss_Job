@@ -73,7 +73,8 @@ class ILOJobsProvider(BaseJobProvider):
         if query:
             q_lower = query.lower()
             all_jobs = [
-                j for j in all_jobs
+                j
+                for j in all_jobs
                 if q_lower in f"{j['title']} {j['description']}".lower()
             ]
 
@@ -102,7 +103,9 @@ class ILOJobsProvider(BaseJobProvider):
             tags = [category] + tags
 
         contract_type = _map_job_type(job_type)
-        is_remote = "remote" in job_location.lower() or "home-based" in job_location.lower()
+        is_remote = (
+            "remote" in job_location.lower() or "home-based" in job_location.lower()
+        )
 
         return {
             "hash": self.compute_hash(title, company, url or guid),

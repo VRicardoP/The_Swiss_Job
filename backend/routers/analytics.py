@@ -69,9 +69,7 @@ async def list_suggestions(
             detail=f"status_filter debe ser uno de: {', '.join(valid_statuses)}",
         )
 
-    stmt = select(PatternSuggestion).where(
-        PatternSuggestion.user_id == current_user.id
-    )
+    stmt = select(PatternSuggestion).where(PatternSuggestion.user_id == current_user.id)
     if status_filter != "all":
         stmt = stmt.where(PatternSuggestion.status == status_filter)
     stmt = stmt.order_by(PatternSuggestion.confidence.desc())
@@ -104,7 +102,9 @@ async def review_suggestion(
     )
     suggestion = result.scalar_one_or_none()
     if suggestion is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sugerencia no encontrada")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Sugerencia no encontrada"
+        )
 
     if suggestion.status != "pending":
         raise HTTPException(
@@ -221,7 +221,9 @@ async def delete_filter(
     )
     job_filter = result.scalar_one_or_none()
     if job_filter is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Filtro no encontrado")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Filtro no encontrado"
+        )
 
     job_filter.is_active = False
     await db.commit()

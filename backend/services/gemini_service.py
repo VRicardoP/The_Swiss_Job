@@ -66,9 +66,7 @@ class GeminiService:
 
         text = self._extract_text(resp.json())
         if not text:
-            reason = (resp.json().get("candidates") or [{}])[0].get(
-                "finishReason", "?"
-            )
+            reason = (resp.json().get("candidates") or [{}])[0].get("finishReason", "?")
             raise RuntimeError(f"Gemini sin texto (finishReason={reason})")
         return text
 

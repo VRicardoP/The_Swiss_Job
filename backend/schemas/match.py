@@ -40,8 +40,8 @@ class MatchResultResponse(BaseModel):
     application_status: str = "detected"
     urgency_score: float = 0.0
     has_draft: bool = False
-    school_id: str | None = None     # Si pertenece a la watchlist, slug del colegio
-    school_policy: str | None = None # direct_email_ok, portal_only, etc.
+    school_id: str | None = None  # Si pertenece a la watchlist, slug del colegio
+    school_policy: str | None = None  # direct_email_ok, portal_only, etc.
 
     created_at: datetime
 

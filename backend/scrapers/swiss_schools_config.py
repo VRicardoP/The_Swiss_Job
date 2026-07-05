@@ -24,12 +24,12 @@ from typing import Literal
 # Política de candidatura — describe CÓMO se postula a este colegio.
 # La capa de matching no la usa; sirve a la "action layer" del módulo.
 Policy = Literal[
-    "direct_email_ok",          # acepta candidaturas espontáneas por email HR
-    "portal_only",              # solo vía portal/formulario; no email abierto
-    "portal_nord_anglia",       # canaliza todo por careers.nordangliaeducation.com
-    "portal_workday",           # ATS Workday del grupo (ISP)
-    "portal_successfactors",    # SuccessFactors del grupo Inspired
-    "manual",                   # requiere contacto humano caso a caso
+    "direct_email_ok",  # acepta candidaturas espontáneas por email HR
+    "portal_only",  # solo vía portal/formulario; no email abierto
+    "portal_nord_anglia",  # canaliza todo por careers.nordangliaeducation.com
+    "portal_workday",  # ATS Workday del grupo (ISP)
+    "portal_successfactors",  # SuccessFactors del grupo Inspired
+    "manual",  # requiere contacto humano caso a caso
 ]
 
 # Plantilla de carta recomendada (la rellena el doc generator).
@@ -42,21 +42,21 @@ GroupTier = Literal["A", "B", "C"]
 
 @dataclass(frozen=True)
 class WatchedSchool:
-    id: str                            # Identificador interno (estable, slug)
-    name: str                          # Nombre legible
-    city: str                          # Ciudad para metadatos
-    careers_url: str                   # URL a la página de carreras
-    strategy: str                      # Una de las estrategias soportadas
-    params: dict | None = None         # Parámetros específicos de la estrategia
+    id: str  # Identificador interno (estable, slug)
+    name: str  # Nombre legible
+    city: str  # Ciudad para metadatos
+    careers_url: str  # URL a la página de carreras
+    strategy: str  # Una de las estrategias soportadas
+    params: dict | None = None  # Parámetros específicos de la estrategia
 
     # ── Action-layer metadata (Fase 2, investigación humana) ──────────────
-    group_tier: GroupTier = "B"        # Prioridad: A=grandes/renombrados, C=pequeños
-    policy: Policy = "manual"          # Cómo se postula
-    contact_email: str | None = None   # HR/recruitment público (None si no hay)
-    contact_name: str | None = None    # Nombre del HR/Director si conocido
-    template_id: TemplateId = "A"      # A=urbano/formal, B=boarding/pequeño/cálido
-    application_url: str | None = None # URL específica para spontaneous si difiere
-    notes: str | None = None           # Particularidades del proceso
+    group_tier: GroupTier = "B"  # Prioridad: A=grandes/renombrados, C=pequeños
+    policy: Policy = "manual"  # Cómo se postula
+    contact_email: str | None = None  # HR/recruitment público (None si no hay)
+    contact_name: str | None = None  # Nombre del HR/Director si conocido
+    template_id: TemplateId = "A"  # A=urbano/formal, B=boarding/pequeño/cálido
+    application_url: str | None = None  # URL específica para spontaneous si difiere
+    notes: str | None = None  # Particularidades del proceso
 
 
 SCHOOLS: list[WatchedSchool] = [
@@ -103,7 +103,6 @@ SCHOOLS: list[WatchedSchool] = [
         application_url="https://careers.nordangliaeducation.com/job/Aubonne-Share-Your-Profile-With-La-C%C3%B4te-International-School-Aubonne!/1025207901/",
         notes="Nord Anglia. 400+ alumnos. 'Share Your Profile' para spontaneous.",
     ),
-
     # ── ISP / Workday (1 colegio) ──────────────────────────────────────────
     WatchedSchool(
         id="mosaic_geneva",
@@ -123,7 +122,6 @@ SCHOOLS: list[WatchedSchool] = [
         application_url="https://internationalschools.wd3.myworkdayjobs.com/ISPCareers",
         notes="Pertenece a ISP. Email general acepta CV. Rango 3-13 años.",
     ),
-
     # ── Inspired Education / SuccessFactors (2 colegios) ───────────────────
     WatchedSchool(
         id="ges_versoix",
@@ -156,7 +154,6 @@ SCHOOLS: list[WatchedSchool] = [
         application_url="https://jobs.inspirededu.com/job/Montreux-Career-Opportunities-Spontaneous-Application/799096002/",
         notes="Inspired. ~400 alumnos boarding+day. Spontaneous expreso en portal.",
     ),
-
     # ── SchoolSpring (1 colegio) ───────────────────────────────────────────
     WatchedSchool(
         id="zis_zurich",
@@ -173,7 +170,6 @@ SCHOOLS: list[WatchedSchool] = [
         application_url="https://www.zis.ch/one-zis-community/employment",
         notes="Pide aplicar via portal, NO email/post. 1250+ alumnos.",
     ),
-
     # ── AbaServices (1 colegio) ────────────────────────────────────────────
     WatchedSchool(
         id="isr_buchs",
@@ -190,7 +186,6 @@ SCHOOLS: list[WatchedSchool] = [
         application_url="https://app.jobportal.abaservices.ch",
         notes="Form obligatorio (AbaServices). NO acepta CV solo. Top-10 IB CH.",
     ),
-
     # ── Finalsite (1 colegio) ──────────────────────────────────────────────
     WatchedSchool(
         id="isb_basel",
@@ -206,7 +201,6 @@ SCHOOLS: list[WatchedSchool] = [
         application_url="https://www.isbasel.ch/join/working-at-isb",
         notes="Acepta CV año redondo para substitute/tutor. Prioridad CH/EU permit.",
     ),
-
     # ── HubSpot CMS (1 colegio) ────────────────────────────────────────────
     WatchedSchool(
         id="hautlac_stlegier",
@@ -222,7 +216,6 @@ SCHOOLS: list[WatchedSchool] = [
         application_url="https://info.haut-lac.ch/jobs-and-career",
         notes="~600 alumnos. Pide CV+diplomas+experiencia+referencias.",
     ),
-
     # ── Drupal nativo (1 colegio) ──────────────────────────────────────────
     WatchedSchool(
         id="ecolint_geneva",
@@ -239,7 +232,6 @@ SCHOOLS: list[WatchedSchool] = [
         application_url="https://www.ecolint.ch/en/job-opportunities",
         notes="4500 alumnos, 1250 staff, 3 campus. SOLO online: cover+CV+3 refs.",
     ),
-
     # ── HTML estático propio (4 colegios) ──────────────────────────────────
     WatchedSchool(
         id="riviera_montreux",
@@ -297,7 +289,6 @@ SCHOOLS: list[WatchedSchool] = [
         application_url="https://careers.nordangliaeducation.com/job/Villars-sur-Ollon-Share-Your-Profile-With-Coll%C3%A8ge-Beau-Soleil!/1025207001/",
         notes="Mirror del Nord Anglia central. Algunas vacantes inline en propia web.",
     ),
-
     # ── Manual / sin listado público (3 colegios) ──────────────────────────
     WatchedSchool(
         id="bsb_bern",

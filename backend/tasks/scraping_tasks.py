@@ -116,7 +116,9 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                         )
 
                 if store is not None and cursor is not None:
-                    pages_read = max(1, math.ceil(len(jobs) / max(scraper.PAGE_SIZE, 1)))
+                    pages_read = max(
+                        1, math.ceil(len(jobs) / max(scraper.PAGE_SIZE, 1))
+                    )
                     store.update_after_run(
                         cursor,
                         fetched_identities,

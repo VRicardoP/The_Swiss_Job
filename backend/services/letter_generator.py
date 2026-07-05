@@ -120,19 +120,19 @@ def _build_user_prompt(school: WatchedSchool, job, profile) -> str:
 ## Colegio
 - Nombre: {school.name}
 - Ciudad: {school.city}
-- Tipo/notas: {school.notes or 'sin notas'}
+- Tipo/notas: {school.notes or "sin notas"}
 
 ## Oferta
 - Título: {job.title}
 - Ubicación: {job.location or school.city}
 - URL: {job.url}
-- Idioma del anuncio: {job.language or 'desconocido'}
+- Idioma del anuncio: {job.language or "desconocido"}
 
 ## Perfil del candidato (resumen)
 - Título profesional: {candidate_title}
 - Skills: {skills}
 - Idiomas: {languages}
-- Años de experiencia: {profile.experience_years or 'no especificados'}
+- Años de experiencia: {profile.experience_years or "no especificados"}
 
 ## Saludo
 {salutation},
@@ -142,9 +142,7 @@ Genera el borrador siguiendo la estructura. Incluye el marcador
 """
 
 
-def _fallback_template(
-    school: WatchedSchool, job, profile, template_id: str
-) -> str:
+def _fallback_template(school: WatchedSchool, job, profile, template_id: str) -> str:
     """Plantilla mínima sin LLM (cuando Groq no está disponible)."""
     name = profile.title or "[nombre del candidato]"
     salutation = (

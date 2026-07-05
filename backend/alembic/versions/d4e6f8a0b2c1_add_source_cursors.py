@@ -55,9 +55,7 @@ def upgrade() -> None:
         sa.Column(
             "avg_new_jobs_per_run", sa.Float(), nullable=False, server_default="0"
         ),
-        sa.Column(
-            "avg_pages_per_run", sa.Float(), nullable=False, server_default="0"
-        ),
+        sa.Column("avg_pages_per_run", sa.Float(), nullable=False, server_default="0"),
         sa.Column(
             "consecutive_empty_runs",
             sa.Integer(),
@@ -83,13 +81,9 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "source_key", "scope_key", name="uq_source_cursor_scope"
-        ),
+        sa.UniqueConstraint("source_key", "scope_key", name="uq_source_cursor_scope"),
     )
-    op.create_index(
-        "ix_source_cursors_source_key", "source_cursors", ["source_key"]
-    )
+    op.create_index("ix_source_cursors_source_key", "source_cursors", ["source_key"])
 
 
 def downgrade() -> None:

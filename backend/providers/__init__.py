@@ -10,30 +10,20 @@ from providers.authenticjobs import AuthenticJobsProvider
 from providers.careerjet import CareerjetProvider
 from providers.dailyremote import DailyRemoteProvider
 from providers.euremotejobs import EURemoteJobsProvider
-from providers.himalayas import HimalayasProvider
-from providers.ictjobs import ICTJobsProvider
-from providers.impactpool import ImpactPoolProvider
-from providers.jobicy import JobicyProvider
 from providers.jobspresso import JobspressoProvider
 from providers.jooble import JoobleProvider
 from providers.jsearch import JSearchProvider
 from providers.ostjob import OstjobProvider
 from providers.proz import ProzProvider
 from providers.publicjobs import PublicJobsProvider
-from providers.reliefweb import ReliefWebProvider
 from providers.remoteco import RemoteCoProvider
-from providers.remoteok import RemoteOKProvider
 from providers.remotive import RemotiveProvider
-from providers.swisstechjobs import SwissTechJobsProvider
 from providers.translatorscafe import TranslatorsCafeProvider
 from providers.weworkremotely import WeWorkRemotelyProvider
 from providers.workingnomads import WorkingNomadsProvider
 from providers.zebis import ZebisProvider
 from providers.zentraljob import ZentraljobProvider
 from providers.globaljobs import GlobalJobsProvider
-from providers.untalent import UNTalentProvider
-from providers.undpjobs import UNDPJobsProvider
-from providers.ilojobs import ILOJobsProvider
 from providers.restricted import (
     GlassdoorPartnerProvider,
     IndeedPartnerProvider,

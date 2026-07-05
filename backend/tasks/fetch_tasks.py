@@ -19,40 +19,92 @@ logger = logging.getLogger(__name__)
 # guardar en DB. Evita que ofertas de ingeniería de software contaminen los
 # matches de un perfil no técnico (Content Editor, HR, VA, L&D...).
 # ---------------------------------------------------------------------------
-_TECH_TITLE_KEYWORDS: frozenset[str] = frozenset({
-    # Ingeniería de software
-    "software engineer", "software developer", "software architect",
-    "backend engineer", "backend developer", "frontend engineer",
-    "frontend developer", "full stack", "fullstack", "full-stack",
-    # DevOps / Cloud / Infra
-    "devops", "sre", "site reliability", "cloud engineer", "cloud architect",
-    "infrastructure engineer", "platform engineer", "systems engineer",
-    "network engineer", "network administrator",
-    # Datos / ML / IA técnica
-    "data engineer", "ml engineer", "machine learning engineer",
-    "ai research engineer", "ai engineer", "data scientist", "data architect",
-    "deep learning", "computer vision", "nlp engineer",
-    # Móvil / Embebido
-    "mobile developer", "ios developer", "android developer",
-    "react native", "flutter developer", "embedded", "firmware",
-    # Seguridad
-    "cybersecurity", "security engineer", "penetration tester",
-    "infosec", "devsecops",
-    # Blockchain / Web3
-    "blockchain", "smart contract", "web3 developer", "solidity",
-    # Herramientas tech específicas
-    "kubernetes", "terraform", "ansible",
-    # Sanidad y enfermería — fuera del perfil
-    "pflegefachperson", "pflegefachfrau", "pflegefachmann",
-    "krankenpfleger", "krankenschwester", "physiotherap", "ergotherap",
-    "logopäd", "psychiatriepflege",
-    # Construcción y oficios — fuera del perfil
-    "maurer", "zimmermann", "elektriker", "kaminbaumonteur",
-    "sanitärmonteur", "metallbau", "tiefbau", "hochbau",
-    "bauführer", "polier", "installateur",
-    # Hostelería operativa — fuera del perfil
-    "hauswirtschaft", "reinigungskraft", "küchenhilfe",
-})
+_TECH_TITLE_KEYWORDS: frozenset[str] = frozenset(
+    {
+        # Ingeniería de software
+        "software engineer",
+        "software developer",
+        "software architect",
+        "backend engineer",
+        "backend developer",
+        "frontend engineer",
+        "frontend developer",
+        "full stack",
+        "fullstack",
+        "full-stack",
+        # DevOps / Cloud / Infra
+        "devops",
+        "sre",
+        "site reliability",
+        "cloud engineer",
+        "cloud architect",
+        "infrastructure engineer",
+        "platform engineer",
+        "systems engineer",
+        "network engineer",
+        "network administrator",
+        # Datos / ML / IA técnica
+        "data engineer",
+        "ml engineer",
+        "machine learning engineer",
+        "ai research engineer",
+        "ai engineer",
+        "data scientist",
+        "data architect",
+        "deep learning",
+        "computer vision",
+        "nlp engineer",
+        # Móvil / Embebido
+        "mobile developer",
+        "ios developer",
+        "android developer",
+        "react native",
+        "flutter developer",
+        "embedded",
+        "firmware",
+        # Seguridad
+        "cybersecurity",
+        "security engineer",
+        "penetration tester",
+        "infosec",
+        "devsecops",
+        # Blockchain / Web3
+        "blockchain",
+        "smart contract",
+        "web3 developer",
+        "solidity",
+        # Herramientas tech específicas
+        "kubernetes",
+        "terraform",
+        "ansible",
+        # Sanidad y enfermería — fuera del perfil
+        "pflegefachperson",
+        "pflegefachfrau",
+        "pflegefachmann",
+        "krankenpfleger",
+        "krankenschwester",
+        "physiotherap",
+        "ergotherap",
+        "logopäd",
+        "psychiatriepflege",
+        # Construcción y oficios — fuera del perfil
+        "maurer",
+        "zimmermann",
+        "elektriker",
+        "kaminbaumonteur",
+        "sanitärmonteur",
+        "metallbau",
+        "tiefbau",
+        "hochbau",
+        "bauführer",
+        "polier",
+        "installateur",
+        # Hostelería operativa — fuera del perfil
+        "hauswirtschaft",
+        "reinigungskraft",
+        "küchenhilfe",
+    }
+)
 
 
 def _is_tech_job(title: str) -> bool:

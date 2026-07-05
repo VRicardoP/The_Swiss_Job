@@ -27,6 +27,7 @@ def _get_watchlist_sources() -> tuple[str, ...]:
     la lista hardcoded cuando se añadían nuevos scrapers (Fase 2-3).
     """
     from scrapers import _SCRAPER_CLASSES
+
     return tuple(k for k in _SCRAPER_CLASSES if k.startswith("swiss_schools_"))
 
 
@@ -69,49 +70,61 @@ async def _check_health_async() -> dict[str, Any]:
         # source_compliance — error de seeding o migración perdida.
         for key in watchlist_sources:
             if key not in sources_by_key:
-                issues.append({
-                    "source": key,
-                    "kind": "no_compliance_row",
-                    "detail": "Scraper registrado sin source_compliance",
-                })
+                issues.append(
+                    {
+                        "source": key,
+                        "kind": "no_compliance_row",
+                        "detail": "Scraper registrado sin source_compliance",
+                    }
+                )
 
         # 1b) Issues por fuente conocida
         for s in sources:
             if not s.is_allowed:
-                issues.append({
-                    "source": s.source_key,
-                    "kind": "disabled",
-                    "detail": "Compliance kill-switch activado",
-                })
+                issues.append(
+                    {
+                        "source": s.source_key,
+                        "kind": "disabled",
+                        "detail": "Compliance kill-switch activado",
+                    }
+                )
                 continue
             if s.consecutive_blocks > 0:
-                issues.append({
-                    "source": s.source_key,
-                    "kind": "blocks",
-                    "detail": f"{s.consecutive_blocks} bloques consecutivos",
-                })
+                issues.append(
+                    {
+                        "source": s.source_key,
+                        "kind": "blocks",
+                        "detail": f"{s.consecutive_blocks} bloques consecutivos",
+                    }
+                )
             if s.last_blocked_at and s.last_blocked_at >= threshold:
-                issues.append({
-                    "source": s.source_key,
-                    "kind": "recently_blocked",
-                    "detail": f"Último bloqueo {s.last_blocked_at.isoformat()}",
-                })
+                issues.append(
+                    {
+                        "source": s.source_key,
+                        "kind": "recently_blocked",
+                        "detail": f"Último bloqueo {s.last_blocked_at.isoformat()}",
+                    }
+                )
             # 1c) NUEVO: silencio sin éxito en >24h
             if s.last_success_at is None:
-                issues.append({
-                    "source": s.source_key,
-                    "kind": "never_succeeded",
-                    "detail": "Nunca completó un scrape exitosamente",
-                })
+                issues.append(
+                    {
+                        "source": s.source_key,
+                        "kind": "never_succeeded",
+                        "detail": "Nunca completó un scrape exitosamente",
+                    }
+                )
             elif s.last_success_at < threshold:
-                issues.append({
-                    "source": s.source_key,
-                    "kind": "silent",
-                    "detail": (
-                        f"Sin éxito desde {s.last_success_at.isoformat()} "
-                        f"(>{_SILENT_HOURS}h)"
-                    ),
-                })
+                issues.append(
+                    {
+                        "source": s.source_key,
+                        "kind": "silent",
+                        "detail": (
+                            f"Sin éxito desde {s.last_success_at.isoformat()} "
+                            f"(>{_SILENT_HOURS}h)"
+                        ),
+                    }
+                )
 
         if not issues:
             return {"status": "ok", "checked": len(sources), "issues": 0}
@@ -212,10 +225,8 @@ async def _send_digest_async() -> dict[str, Any]:
                     MatchResult.created_at >= since,
                     Job.source.in_(watchlist_sources),
                     and_(
-                        MatchResult.score_final
-                            >= settings.WATCHLIST_DIGEST_MIN_SCORE,
-                        MatchResult.score_final
-                            < settings.WATCHLIST_PUSH_THRESHOLD,
+                        MatchResult.score_final >= settings.WATCHLIST_DIGEST_MIN_SCORE,
+                        MatchResult.score_final < settings.WATCHLIST_PUSH_THRESHOLD,
                     ),
                 )
                 .order_by(MatchResult.score_final.desc())
@@ -229,13 +240,15 @@ async def _send_digest_async() -> dict[str, Any]:
                 f"• {j.company or '?'} — {j.title[:60]} (score {m.score_final:.0f})"
                 for m, j in rows
             ]
-            db.add(Notification(
-                user_id=user.id,
-                event_type="watchlist_digest",
-                title=f"Digest watchlist — {len(rows)} matches potenciales",
-                body="\n".join(lines),
-                data={"count": len(rows)},
-            ))
+            db.add(
+                Notification(
+                    user_id=user.id,
+                    event_type="watchlist_digest",
+                    title=f"Digest watchlist — {len(rows)} matches potenciales",
+                    body="\n".join(lines),
+                    data={"count": len(rows)},
+                )
+            )
             notified += 1
 
         await db.commit()

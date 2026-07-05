@@ -14,7 +14,7 @@ import httpx
 
 from services.job_service import BaseJobProvider
 from utils.http import fetch_rss
-from utils.text import extract_canton, extract_job_skills, strip_html_tags
+from utils.text import extract_job_skills, strip_html_tags
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,8 @@ class ProzProvider(BaseJobProvider):
         if query:
             q_lower = query.lower()
             all_jobs = [
-                j for j in all_jobs
+                j
+                for j in all_jobs
                 if q_lower in f"{j['title']} {j['description']}".lower()
             ]
 

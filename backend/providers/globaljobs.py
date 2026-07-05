@@ -59,7 +59,8 @@ class GlobalJobsProvider(BaseJobProvider):
         if query:
             q_lower = query.lower()
             all_jobs = [
-                j for j in all_jobs
+                j
+                for j in all_jobs
                 if q_lower in f"{j['title']} {j['description']}".lower()
             ]
 
@@ -105,7 +106,8 @@ class GlobalJobsProvider(BaseJobProvider):
             "description": description,
             "description_snippet": self._snippet(description),
             "url": url or guid,
-            "remote": "remote" in location_str.lower() or "home-based" in location_str.lower(),
+            "remote": "remote" in location_str.lower()
+            or "home-based" in location_str.lower(),
             "tags": tags[: self.MAX_TAGS],
             "logo": None,
             "salary_min_chf": None,
@@ -122,9 +124,24 @@ class GlobalJobsProvider(BaseJobProvider):
 
 # Ciudades clave de organismos internacionales para extracción de ubicación
 _INTL_CITIES = [
-    "Geneva", "New York", "Vienna", "Brussels", "Paris", "Nairobi",
-    "Washington", "London", "Rome", "The Hague", "Bonn", "Bangkok",
-    "Bangkok", "Addis Ababa", "Cairo", "Dakar", "Beirut", "Amman",
+    "Geneva",
+    "New York",
+    "Vienna",
+    "Brussels",
+    "Paris",
+    "Nairobi",
+    "Washington",
+    "London",
+    "Rome",
+    "The Hague",
+    "Bonn",
+    "Bangkok",
+    "Bangkok",
+    "Addis Ababa",
+    "Cairo",
+    "Dakar",
+    "Beirut",
+    "Amman",
 ]
 
 

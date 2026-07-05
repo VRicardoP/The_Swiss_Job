@@ -61,20 +61,22 @@ class SwissSchoolsZISScraper(BaseScraper):
             if not title:
                 continue
 
-            out.append({
-                "source": self.SOURCE_NAME,
-                "source_id": job_id,
-                "title": title,
-                "company": self._school.name,
-                "location": f"{self._school.city}, CH",
-                "url": href,
-                "tags": [
-                    "education",
-                    "international school",
-                    self._school.id,
-                ],
-                "language": "en",
-            })
+            out.append(
+                {
+                    "source": self.SOURCE_NAME,
+                    "source_id": job_id,
+                    "title": title,
+                    "company": self._school.name,
+                    "location": f"{self._school.city}, CH",
+                    "url": href,
+                    "tags": [
+                        "education",
+                        "international school",
+                        self._school.id,
+                    ],
+                    "language": "en",
+                }
+            )
         return out
 
     def parse_job_detail(self, soup: BeautifulSoup) -> dict:

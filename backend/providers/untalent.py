@@ -56,7 +56,9 @@ class UNTalentProvider(BaseJobProvider):
 
         async with httpx.AsyncClient() as client:
             # Paso 1: trabajos home-based (mayor relevancia para Alicia)
-            home_jobs = await self._fetch_pages(client, HOME_BASED_URL, pages=_MAX_PAGES)
+            home_jobs = await self._fetch_pages(
+                client, HOME_BASED_URL, pages=_MAX_PAGES
+            )
             jobs.extend(home_jobs)
 
             # Paso 2: todos los trabajos (primera página, para no duplicar demasiado)
@@ -80,7 +82,8 @@ class UNTalentProvider(BaseJobProvider):
         if query:
             q_lower = query.lower()
             normalized = [
-                j for j in normalized
+                j
+                for j in normalized
                 if q_lower in f"{j['title']} {j['description']}".lower()
             ]
 
@@ -114,7 +117,9 @@ class UNTalentProvider(BaseJobProvider):
             if isinstance(data, list):
                 items = data
             elif isinstance(data, dict):
-                items = data.get("jobs") or data.get("data") or data.get("results") or []
+                items = (
+                    data.get("jobs") or data.get("data") or data.get("results") or []
+                )
             else:
                 break
 
@@ -177,7 +182,9 @@ class UNTalentProvider(BaseJobProvider):
             "salary_period": None,
             "language": "en",
             "seniority": seniority,
-            "contract_type": _map_contract(raw.get("contract") or raw.get("type") or ""),
+            "contract_type": _map_contract(
+                raw.get("contract") or raw.get("type") or ""
+            ),
             "employment_type": None,
         }
 
@@ -188,7 +195,9 @@ def _map_seniority(level: str) -> str | None:
         return None
     if any(x in level for x in ["p-1", "p1", "g-1", "g1", "g-2", "g2", "junior"]):
         return "junior"
-    if any(x in level for x in ["p-2", "p2", "p-3", "p3", "g-3", "g3", "g-4", "g4", "mid"]):
+    if any(
+        x in level for x in ["p-2", "p2", "p-3", "p3", "g-3", "g3", "g-4", "g4", "mid"]
+    ):
         return "mid"
     if any(x in level for x in ["p-4", "p4", "p-5", "p5", "senior"]):
         return "senior"

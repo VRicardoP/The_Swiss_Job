@@ -44,8 +44,8 @@ def _validate_security_config() -> None:
         return
     raise RuntimeError(
         "SECRET_KEY is set to the insecure default 'change-me-in-production'. "
-        "Generate a random value (e.g. `python -c \"import secrets; "
-        "print(secrets.token_urlsafe(32))\"`) and set it in your .env."
+        'Generate a random value (e.g. `python -c "import secrets; '
+        'print(secrets.token_urlsafe(32))"`) and set it in your .env.'
     )
 
 

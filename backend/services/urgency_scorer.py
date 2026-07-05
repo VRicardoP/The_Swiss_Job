@@ -83,5 +83,3 @@ def compute_urgency_score(
         score -= 10
 
     return max(0, min(100, score))
-
-
