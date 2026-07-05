@@ -12,7 +12,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import cast, delete, literal, or_, select
+from sqlalchemy import cast, delete, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy.dialects.postgresql import JSONB
@@ -492,41 +492,27 @@ class MatchService:
 
         await self.db.commit()
 
-    async def _notify_watchlist_priority(
-        self, user_id: uuid.UUID, results: list[dict]
-    ) -> None:
-        """Crea notificación push inmediata para jobs watchlist con
-        score_final + urgency_score >= WATCHLIST_PUSH_THRESHOLD. Solo dispara
-        si el usuario tiene watchlist_schools_enabled=True.
-
-        Respeta ALERTS_MAX_PUSH_PER_DAY como cap diario de notificaciones
-        push (todos los event_type combinados) para evitar fatiga.
-        """
-        from datetime import timedelta
-        from sqlalchemy import func as sql_func
-
-        from models.notification import Notification
-        from models.user_profile import UserProfile
-
-        prof_stmt = select(UserProfile).where(UserProfile.user_id == user_id)
-        profile = (await self.db.execute(prof_stmt)).scalar_one_or_none()
-        if not profile or not profile.watchlist_schools_enabled:
-            return
-
-        priority = [
+    @staticmethod
+    def _priority_watchlist(results: list[dict]) -> list[dict]:
+        """Filtra los resultados de watchlist de colegios que superan el umbral
+        de push (score_final + urgency_score >= WATCHLIST_PUSH_THRESHOLD)."""
+        return [
             r
             for r in results
             if (r["job"].source or "").startswith("swiss_schools_")
             and (r["score_final"] + r.get("urgency_score", 0))
             >= settings.WATCHLIST_PUSH_THRESHOLD
         ]
-        if not priority:
-            return
 
-        # Cap diario configurado en settings.ALERTS_MAX_PUSH_PER_DAY
+    async def _daily_push_cap_reached(self, user_id: uuid.UUID) -> bool:
+        """True si el usuario ya alcanzó ALERTS_MAX_PUSH_PER_DAY en 24h."""
+        from datetime import timedelta
+
+        from models.notification import Notification
+
         since = datetime.now(timezone.utc) - timedelta(hours=24)
         count_stmt = (
-            select(sql_func.count())
+            select(func.count())
             .select_from(Notification)
             .where(
                 Notification.user_id == user_id,
@@ -534,15 +520,13 @@ class MatchService:
             )
         )
         sent_today = (await self.db.execute(count_stmt)).scalar_one()
-        if sent_today >= settings.ALERTS_MAX_PUSH_PER_DAY:
-            logger.info(
-                "Watchlist priority skipped for user %s: daily cap reached (%d)",
-                user_id,
-                settings.ALERTS_MAX_PUSH_PER_DAY,
-            )
-            return
+        return sent_today >= settings.ALERTS_MAX_PUSH_PER_DAY
 
-        # Una sola notificación con los top-5 para no saturar
+    @staticmethod
+    def _watchlist_notification(user_id: uuid.UUID, priority: list[dict]):
+        """Construye la Notification de watchlist con los top-5 (no satura)."""
+        from models.notification import Notification
+
         top = priority[:5]
         lines = [
             f"• {r['job'].company or '?'} — {r['job'].title[:55]} "
@@ -551,23 +535,23 @@ class MatchService:
         ]
         suffix = f"\n... y {len(priority) - 5} más" if len(priority) > 5 else ""
 
-        self.db.add(
-            Notification(
-                user_id=user_id,
-                event_type="watchlist_priority",
-                title=f"Watchlist colegios — {len(priority)} oportunidad(es) prioritaria(s)",
-                body="\n".join(lines) + suffix,
-                data={
-                    "count": len(priority),
-                    "job_hashes": [r["job"].hash for r in priority],
-                },
-            )
+        return Notification(
+            user_id=user_id,
+            event_type="watchlist_priority",
+            title=f"Watchlist colegios — {len(priority)} oportunidad(es) prioritaria(s)",
+            body="\n".join(lines) + suffix,
+            data={
+                "count": len(priority),
+                "job_hashes": [r["job"].hash for r in priority],
+            },
         )
-        await self.db.commit()
 
-        # Broadcast SSE para refresh inmediato del frontend.
-        # Importante: usar redis.asyncio (no `import redis` síncrono),
-        # estamos dentro de un método async — síncrono bloquea el event loop.
+    async def _broadcast_watchlist_sse(self, user_id: uuid.UUID, count: int) -> None:
+        """Broadcast SSE para refresh inmediato del frontend.
+
+        Importante: usar redis.asyncio (no `import redis` síncrono), estamos
+        dentro de un método async — el cliente síncrono bloquea el event loop.
+        """
         try:
             import json
 
@@ -580,13 +564,44 @@ class MatchService:
                 await r.publish(
                     f"sse:{user_id}",
                     json.dumps(
-                        {
-                            "event": "watchlist_priority",
-                            "data": {"count": len(priority)},
-                        }
+                        {"event": "watchlist_priority", "data": {"count": count}}
                     ),
                 )
             finally:
                 await r.aclose()
         except Exception:
             logger.warning("SSE broadcast failed for watchlist priority")
+
+    async def _notify_watchlist_priority(
+        self, user_id: uuid.UUID, results: list[dict]
+    ) -> None:
+        """Crea notificación push inmediata para jobs watchlist con
+        score_final + urgency_score >= WATCHLIST_PUSH_THRESHOLD. Solo dispara
+        si el usuario tiene watchlist_schools_enabled=True.
+
+        Respeta ALERTS_MAX_PUSH_PER_DAY como cap diario de notificaciones
+        push (todos los event_type combinados) para evitar fatiga.
+        """
+        from models.user_profile import UserProfile
+
+        prof_stmt = select(UserProfile).where(UserProfile.user_id == user_id)
+        profile = (await self.db.execute(prof_stmt)).scalar_one_or_none()
+        if not profile or not profile.watchlist_schools_enabled:
+            return
+
+        priority = self._priority_watchlist(results)
+        if not priority:
+            return
+
+        if await self._daily_push_cap_reached(user_id):
+            logger.info(
+                "Watchlist priority skipped for user %s: daily cap reached (%d)",
+                user_id,
+                settings.ALERTS_MAX_PUSH_PER_DAY,
+            )
+            return
+
+        self.db.add(self._watchlist_notification(user_id, priority))
+        await self.db.commit()
+
+        await self._broadcast_watchlist_sse(user_id, len(priority))
