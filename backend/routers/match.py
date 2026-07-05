@@ -24,6 +24,7 @@ from scrapers.swiss_schools_config import get_school
 from services.gemini_service import GeminiService
 from services.groq_service import GroqService
 from services.job_matcher import DEFAULT_WEIGHTS
+from services.match_result_service import MatchResultService
 from services.match_service import MatchService
 from services.translation_service import TranslationService
 
@@ -178,7 +179,7 @@ async def get_match_results(
     translate=false omite la traducción de títulos (útil para carga masiva
     de categorización donde las traducciones no son necesarias).
     """
-    service = MatchService(db)
+    service = MatchResultService(db)
     results, total = await service.get_results(
         user_id=current_user.id,
         limit=limit,
@@ -205,7 +206,7 @@ async def get_match_history(
     offset: int = Query(0, ge=0),
 ):
     """Get full match history for the current user (all past results)."""
-    service = MatchService(db)
+    service = MatchResultService(db)
     results, total = await service.get_results(
         user_id=current_user.id,
         limit=limit,
@@ -231,7 +232,7 @@ async def submit_feedback(
     db: AsyncSession = Depends(get_db),
 ):
     """Submit explicit feedback (thumbs_up/thumbs_down/applied/dismissed)."""
-    service = MatchService(db)
+    service = MatchResultService(db)
     result = await service.submit_feedback(
         user_id=current_user.id,
         job_hash=job_hash,
@@ -258,7 +259,7 @@ async def clear_feedback(
     db: AsyncSession = Depends(get_db),
 ):
     """Elimina el feedback explícito de un resultado (deselección)."""
-    service = MatchService(db)
+    service = MatchResultService(db)
     result = await service.clear_feedback(
         user_id=current_user.id,
         job_hash=job_hash,
@@ -286,7 +287,7 @@ async def get_saved_jobs(
     offset: int = Query(0, ge=0),
 ):
     """Devuelve los empleos marcados como 'Good' (thumbs_up o applied)."""
-    service = MatchService(db)
+    service = MatchResultService(db)
     results, total = await service.get_saved_jobs(
         user_id=current_user.id,
         limit=limit,
@@ -312,7 +313,7 @@ async def submit_implicit_feedback(
     db: AsyncSession = Depends(get_db),
 ):
     """Record implicit feedback signal (opened, view_time, saved, applied, dismissed, skipped)."""
-    service = MatchService(db)
+    service = MatchResultService(db)
     result = await service.record_implicit_feedback(
         user_id=current_user.id,
         job_hash=job_hash,

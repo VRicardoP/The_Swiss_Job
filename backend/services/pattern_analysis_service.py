@@ -19,12 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.job import Job
 from models.job_filter import PatternSuggestion
-from models.match_result import MatchResult
+from models.match_result import NEGATIVE_FEEDBACK, MatchResult
 
 logger = logging.getLogger(__name__)
-
-# Feedback negativos que indican rechazo explícito del usuario
-_NEGATIVE_FEEDBACK = frozenset({"dismissed", "thumbs_down"})
 
 # Stop words multilingüe (DE/EN/FR/IT) + marcadores Swiss frecuentes
 _STOP_WORDS = frozenset(
@@ -241,7 +238,7 @@ class PatternAnalysisService:
             .select_from(MatchResult)
             .where(
                 MatchResult.user_id == user_id,
-                MatchResult.feedback.in_(_NEGATIVE_FEEDBACK),
+                MatchResult.feedback.in_(NEGATIVE_FEEDBACK),
             )
         )
         return (await self._db.execute(stmt)).scalar_one()
@@ -268,7 +265,7 @@ class PatternAnalysisService:
                 "feedback": match.feedback,
             }
             all_jobs.append(entry)
-            if match.feedback in _NEGATIVE_FEEDBACK:
+            if match.feedback in NEGATIVE_FEEDBACK:
                 rejected_jobs.append(entry)
 
         return rejected_jobs, all_jobs

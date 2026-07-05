@@ -9,6 +9,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
 
+# Valores de MatchResult.feedback agrupados por signo (fuente única de verdad).
+NEGATIVE_FEEDBACK = frozenset({"dismissed", "thumbs_down"})
+POSITIVE_FEEDBACK = frozenset({"thumbs_up", "applied"})
+
 
 class MatchResult(Base):
     __tablename__ = "match_results"
