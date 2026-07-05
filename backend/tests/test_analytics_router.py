@@ -3,10 +3,8 @@
 Cubre filtros de exclusión (crear/listar/borrar), generación de sugerencias a
 partir de jobs rechazados, y revisión (approve/reject) con creación de JobFilter.
 
-NOTA: documenta una inconsistencia real (ver test_review_status_uses_action_verb):
-el endpoint guarda status = body.action ("approve"/"reject") mientras que
-list_suggestions filtra por "approved"/"rejected". Reportado aparte; el test fija
-el comportamiento ACTUAL, no el deseado.
+test_approved_suggestion_listable_as_approved verifica el mapeo verbo→participio
+del status (approve→approved) que permite listar las sugerencias ya revisadas.
 """
 
 import uuid
@@ -164,13 +162,12 @@ class TestSuggestions:
         )
         assert resp.status_code == 404
 
-    async def test_review_status_uses_action_verb(
+    async def test_approved_suggestion_listable_as_approved(
         self, client: AsyncClient, db_session: AsyncSession
     ):
-        """BUG documentado: al aprobar, status queda como 'approve' (verbo),
-        no 'approved'. Por eso ?status_filter=approved NO devuelve la revisada.
-        Este test fija el comportamiento ACTUAL para que un futuro arreglo lo
-        detecte y actualice conscientemente."""
+        """Al aprobar (action='approve'), el status persistido es 'approved'
+        (participio), de modo que ?status_filter=approved SÍ devuelve la
+        sugerencia revisada y ya NO aparece entre las pendientes."""
         headers, user_id = await _auth(client)
         await _seed_rejected(db_session, user_id, 3)
         await client.post(
@@ -185,8 +182,12 @@ class TestSuggestions:
             json={"action": "approve"},
         )
 
-        # Con el vocabulario esperado ("approved") NO aparece (por el bug)
         approved = await client.get(
             "/api/v1/analytics/suggestions?status_filter=approved", headers=headers
         )
-        assert all(s["id"] != sug_id for s in approved.json()["data"])
+        assert any(s["id"] == sug_id for s in approved.json()["data"])
+
+        pending = await client.get(
+            "/api/v1/analytics/suggestions?status_filter=pending", headers=headers
+        )
+        assert all(s["id"] != sug_id for s in pending.json()["data"])

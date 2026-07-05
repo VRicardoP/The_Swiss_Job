@@ -113,7 +113,11 @@ async def review_suggestion(
         )
 
     now = datetime.now(timezone.utc)
-    suggestion.status = body.action  # "approved" o "rejected"
+    # body.action es el verbo ("approve"/"reject"); el status persistido usa el
+    # participio ("approved"/"rejected"), que es el vocabulario con el que
+    # list_suggestions filtra. Sin este mapeo, una sugerencia revisada quedaba
+    # invisible ante ?status_filter=approved.
+    suggestion.status = "approved" if body.action == "approve" else "rejected"
     suggestion.reviewed_at = now
 
     filter_id: uuid.UUID | None = None
