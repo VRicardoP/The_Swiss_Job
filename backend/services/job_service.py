@@ -80,6 +80,11 @@ class BaseJobProvider(ABC):
             failure_threshold=self.CB_FAILURE_THRESHOLD,
             recovery_timeout=self.CB_RECOVERY_TIMEOUT,
         )
+        # Crawler incremental: identidades (URLs) ya vistas, inyectadas por el
+        # pipeline ANTES de fetch_jobs para el early-stop. Vacío = sin early-stop
+        # (comportamiento legacy). `_stop_reason` es observabilidad del run.
+        self._known_urls: set[str] = set()
+        self._stop_reason: str | None = None
 
     def get_source_name(self) -> str:
         """Return the unique source identifier. Uses SOURCE_NAME by default."""
@@ -115,6 +120,33 @@ class BaseJobProvider(ABC):
         """Compute a unique hash for deduplication."""
         raw = f"{title.strip().lower()}|{company.strip().lower()}|{url.strip()}"
         return hashlib.md5(raw.encode()).hexdigest()
+
+    @staticmethod
+    def job_identity(job: dict) -> str:
+        """Identidad estable de una oferta para cursor/early-stop.
+
+        Usa la `url` (única en la tabla jobs). En stubs de scraper que aún no la
+        exponen, cae a `detail_url`/`source_id`/`hash`. Cadena vacía = sin identidad
+        (nunca coincidirá con el cursor → no fuerza un early-stop erróneo).
+        """
+        return (
+            job.get("url")
+            or job.get("detail_url")
+            or job.get("source_id")
+            or job.get("hash")
+            or ""
+        ).strip()
+
+    def _page_all_known(self, page_jobs: list[dict]) -> bool:
+        """True si TODA la página ya se había visto (ninguna oferta nueva) según el
+        cursor inyectado en `_known_urls`.
+
+        Es la señal del crawler incremental: hemos alcanzado el contenido ya
+        sincronizado → dejar de paginar. Con `_known_urls` vacío nunca corta.
+        """
+        if not self._known_urls or not page_jobs:
+            return False
+        return all(self.job_identity(j) in self._known_urls for j in page_jobs)
 
     # Required fields in every normalized job dict
     _REQUIRED_FIELDS = {"hash", "source", "title", "company", "url"}

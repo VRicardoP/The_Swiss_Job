@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     SCHEDULER_ENABLED: bool = True
     SCHEDULER_FETCH_INTERVAL_MINUTES: int = 30
 
+    # Cosecha diaria autónoma: encadena fetch → embeddings → dedup → matching
+    # UNA vez al día a hora VARIABLE (patrón circadiano; evita intervalos de
+    # reloj, ver a.txt §5/§10). Cuando está activa, sustituye al fetch por
+    # intervalos (providers/scrapers) y todo corre sin intervención del usuario.
+    SCHEDULER_DAILY_HARVEST_ENABLED: bool = True
+    SCHEDULER_DAILY_HARVEST_HOUR: int = 12  # hora base (CET)
+    # Jitter en horas: la ejecución se adelanta/retrasa hasta ±N horas, de modo
+    # que cada día cae a una hora distinta dentro de la franja diurna.
+    SCHEDULER_DAILY_HARVEST_JITTER_HOURS: int = 4
+
     # Embedding model
     EMBEDDING_MODEL_NAME: str = "paraphrase-multilingual-MiniLM-L12-v2"
     EMBEDDING_DEVICE: str = "cpu"
@@ -50,7 +60,12 @@ class Settings(BaseSettings):
 
     # AI Matching
     MATCH_SCORE_THRESHOLD: float = 35.0  # minimum score to qualify as a match
-    MATCH_LLM_RERANK_TOP: int = 50  # how many top candidates get LLM re-ranking
+    # Re-ranking LLM ADAPTATIVO: si las ofertas cualificadas caben en
+    # MATCH_LLM_RERANK_MAX se re-rankean TODAS (sin efecto de tope, caso normal con
+    # extracción incremental); por encima se aplica MATCH_LLM_RERANK_TOP para proteger
+    # el crédito de IA en avalanchas. Con Gemini de fallback el coste sigue acotado.
+    MATCH_LLM_RERANK_TOP: int = 50  # tope de re-ranking cuando el pool es enorme
+    MATCH_LLM_RERANK_MAX: int = 150  # por debajo de esto, se re-rankea todo
     SEMANTIC_DEDUP_THRESHOLD: float = 0.95
 
     # Groq LLM
@@ -112,6 +127,24 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.5-flash"
     GEMINI_TIMEOUT_SECONDS: float = 60.0
 
+    # Email (SMTP) para avisos. Vacío = envío desactivado. Gmail: host
+    # smtp.gmail.com, port 587, STARTTLS, y una App Password de 16 car. como
+    # SMTP_PASSWORD (requiere 2FA en la cuenta). Puerto 465 → SSL automático.
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""  # remitente; si vacío se usa SMTP_USER
+    SMTP_STARTTLS: bool = True
+
+    # Alerta de ofertas de PROFESOR DE PRIMARIA en colegios suizos → email.
+    # Opt-in aislado (no afecta al matching principal, que penaliza docencia).
+    # Requiere SMTP_* configurado para enviar.
+    TEACHER_ALERT_ENABLED: bool = True
+    TEACHER_ALERT_EMAIL: str = "amoore3199@gmail.com"
+    TEACHER_ALERT_INITIAL_LOOKBACK_DAYS: int = 7  # primera ejecución mira atrás esta ventana
+    SCHEDULER_TEACHER_ALERT_INTERVAL_HOURS: int = 6
+
     # Compliance (TD-06)
     COMPLIANCE_BLOCK_THRESHOLD: int = 3
 
@@ -136,6 +169,21 @@ class Settings(BaseSettings):
     # eso REDUCE el aislamiento del renderer. True por defecto (compat Docker root);
     # ponlo en False donde el runtime permita mantener el sandbox (contenedor no-root).
     SCRAPER_PLAYWRIGHT_NO_SANDBOX: bool = True
+
+    # Crawler incremental (cursores + early-stop). Ver a.txt / PLAN_STEALTH_SCRAPER.
+    # Eje: el volumen de peticiones depende de las ofertas NUEVAS, no del total.
+    CURSOR_INCREMENTAL_ENABLED: bool = True
+    # Nº de identidades recientes (URLs) que guarda cada cursor para el early-stop.
+    CURSOR_RECENT_IDENTITIES_MAX: int = 300
+
+    # Fuentes RESTRINGIDAS (jobs.ch/jobup.ch, LinkedIn, Indeed, Glassdoor, XING).
+    # Vacío = conector deshabilitado (auth_missing, 0 peticiones). NO scraping
+    # público: solo se activan con credencial de partner/API autorizada. Ver a.txt §6-7.
+    JOBCLOUD_PARTNER_API_KEY: str = ""
+    LINKEDIN_PARTNER_TOKEN: str = ""
+    INDEED_PARTNER_KEY: str = ""
+    GLASSDOOR_PARTNER_KEY: str = ""
+    XING_PARTNER_TOKEN: str = ""
 
     # Provider API Keys (empty = provider disabled)
     JSEARCH_RAPIDAPI_KEY: str = ""

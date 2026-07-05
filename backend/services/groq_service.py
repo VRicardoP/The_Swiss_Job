@@ -109,6 +109,7 @@ class GroqService:
         profile_text: str,
         profile_skills: list[str],
         candidates: list[dict],
+        fallback: "object | None" = None,
     ) -> list[dict]:
         """Re-rank job candidates using LLM evaluation.
 
@@ -116,11 +117,15 @@ class GroqService:
             profile_text: User CV text or profile summary.
             profile_skills: User skills list.
             candidates: List of dicts with job info (from Stage 2).
+            fallback: Segundo proveedor LLM (p.ej. GeminiService) con
+                get_chat_response compatible. Se usa si Groq falla o no está
+                configurado — resiliencia ante caducidad de GROQ_API_KEY.
 
         Returns:
             List of dicts with LLM scores and explanations, keyed by index.
         """
-        if not self.is_available:
+        fallback_ok = fallback is not None and getattr(fallback, "is_available", False)
+        if not self.is_available and not fallback_ok:
             return []
 
         batch_size = settings.GROQ_RERANK_BATCH_SIZE
@@ -172,18 +177,12 @@ class GroqService:
             else:
                 async with sem:
                     try:
-                        response = await self.get_chat_response(
-                            user_message=user_prompt,
-                            system_prompt=RERANK_SYSTEM_PROMPT,
-                            model=settings.GROQ_RERANK_MODEL,
-                            temperature=settings.GROQ_RERANK_TEMPERATURE,
-                            max_tokens=settings.GROQ_RERANK_MAX_TOKENS,
-                        )
+                        response = await self._rerank_call(user_prompt, fallback)
                         batch_results = self._parse_llm_response(response, len(batch))
                         await self._set_cached(cache_key, batch_results)
                     except Exception:
                         logger.exception(
-                            "Groq rerank failed for batch %d/%d",
+                            "Rerank failed for batch %d/%d (Groq+fallback)",
                             batch_idx + 1,
                             len(batches),
                         )
@@ -202,6 +201,34 @@ class GroqService:
             all_results.extend(batch_results)
 
         return all_results
+
+    async def _rerank_call(self, user_prompt: str, fallback: "object | None") -> str:
+        """Pide el re-ranking a Groq; si falla o no está, cae al fallback (Gemini).
+
+        Ambos servicios exponen `get_chat_response` con firma compatible (Gemini
+        no recibe `model`). Lanza si ninguno responde, para que el llamante degrade
+        a `_fallback_results`.
+        """
+        if self.is_available:
+            try:
+                return await self.get_chat_response(
+                    user_message=user_prompt,
+                    system_prompt=RERANK_SYSTEM_PROMPT,
+                    model=settings.GROQ_RERANK_MODEL,
+                    temperature=settings.GROQ_RERANK_TEMPERATURE,
+                    max_tokens=settings.GROQ_RERANK_MAX_TOKENS,
+                )
+            except Exception:
+                logger.warning("Groq rerank falló; intentando fallback (Gemini)")
+
+        if fallback is not None and getattr(fallback, "is_available", False):
+            return await fallback.get_chat_response(
+                user_message=user_prompt,
+                system_prompt=RERANK_SYSTEM_PROMPT,
+                temperature=settings.GROQ_RERANK_TEMPERATURE,
+                max_tokens=settings.GROQ_RERANK_MAX_TOKENS,
+            )
+        raise RuntimeError("Sin proveedor LLM disponible para el re-ranking")
 
     @staticmethod
     def _parse_llm_response(response: str, batch_len: int) -> list[dict]:

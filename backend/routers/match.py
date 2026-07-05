@@ -21,6 +21,7 @@ from schemas.match import (
     MatchScoreBreakdown,
 )
 from scrapers.swiss_schools_config import get_school
+from services.gemini_service import GeminiService
 from services.groq_service import GroqService
 from services.job_matcher import DEFAULT_WEIGHTS
 from services.match_service import MatchService
@@ -52,7 +53,7 @@ async def analyze_matches(
     Stage 3: LLM re-ranking via Groq (if API key configured) — top-K only
     """
     groq = _get_groq(request)
-    service = MatchService(db, groq=groq)
+    service = MatchService(db, groq=groq, gemini=GeminiService())
     result = await service.run_matching(
         user_id=current_user.id,
         min_score=body.min_score,

@@ -34,6 +34,13 @@ from providers.globaljobs import GlobalJobsProvider
 from providers.untalent import UNTalentProvider
 from providers.undpjobs import UNDPJobsProvider
 from providers.ilojobs import ILOJobsProvider
+from providers.restricted import (
+    GlassdoorPartnerProvider,
+    IndeedPartnerProvider,
+    JobCloudPartnerProvider,
+    LinkedInAuthorizedProvider,
+    XingPartnerProvider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +77,14 @@ _PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {
     # "untalent": UNTalentProvider,       # Requiere token de autenticación (no es pública)
     # "undpjobs": UNDPJobsProvider,       # Feed RSS devuelve HTML, no XML
     # "ilojobs": ILOJobsProvider,         # Feed WordPress devuelve HTML con entidades inválidas
+    # Fuentes RESTRINGIDAS (restricted_ready): arrancan deshabilitadas vía
+    # _KEY_REQUIREMENTS — get_all_providers() no las instancia sin credencial de
+    # partner. NO scraping público. Ver providers/restricted.py y a.txt §6-7.
+    "jobcloud_partner": JobCloudPartnerProvider,
+    "linkedin_authorized": LinkedInAuthorizedProvider,
+    "indeed_partner": IndeedPartnerProvider,
+    "glassdoor_partner": GlassdoorPartnerProvider,
+    "xing_partner": XingPartnerProvider,
     # Desactivados temporalmente (tech-only, bajo valor para el perfil actual)
     # "himalayas": HimalayasProvider,
     # "jobicy": JobicyProvider,
@@ -84,6 +99,13 @@ _KEY_REQUIREMENTS: dict[str, str] = {
     "careerjet": "CAREERJET_AFFID",
     "jooble": "JOOBLE_API_KEY",
     "jsearch": "JSEARCH_RAPIDAPI_KEY",
+    # Fuentes restringidas: sin credencial de partner NO se instancian (arrancan
+    # deshabilitadas). Activar solo por vía autorizada. Ver a.txt §6-7.
+    "jobcloud_partner": "JOBCLOUD_PARTNER_API_KEY",
+    "linkedin_authorized": "LINKEDIN_PARTNER_TOKEN",
+    "indeed_partner": "INDEED_PARTNER_KEY",
+    "glassdoor_partner": "GLASSDOOR_PARTNER_KEY",
+    "xing_partner": "XING_PARTNER_TOKEN",
 }
 
 

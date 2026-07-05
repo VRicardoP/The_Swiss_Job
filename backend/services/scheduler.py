@@ -24,13 +24,40 @@ def setup_schedules() -> None:
         logger.info("Scheduler disabled via SCHEDULER_ENABLED=False")
         return
 
-    # Fetch all API providers every N minutes
-    scheduler.add_job(
-        _dispatch_fetch_providers,
-        IntervalTrigger(minutes=settings.SCHEDULER_FETCH_INTERVAL_MINUTES),
-        id="fetch_providers",
-        replace_existing=True,
-    )
+    # Extracción de ofertas: cosecha diaria autónoma a hora VARIABLE (patrón
+    # circadiano) o, si está desactivada, el fetch clásico por intervalos.
+    if settings.SCHEDULER_DAILY_HARVEST_ENABLED:
+        jitter_seconds = settings.SCHEDULER_DAILY_HARVEST_JITTER_HOURS * 3600
+        scheduler.add_job(
+            _dispatch_daily_harvest,
+            CronTrigger(
+                hour=settings.SCHEDULER_DAILY_HARVEST_HOUR,
+                minute=0,
+                timezone="Europe/Zurich",
+                jitter=jitter_seconds,
+            ),
+            id="daily_harvest",
+            replace_existing=True,
+        )
+        logger.info(
+            "Cosecha diaria activa: hora base %02d:00 CET ± %dh de jitter",
+            settings.SCHEDULER_DAILY_HARVEST_HOUR,
+            settings.SCHEDULER_DAILY_HARVEST_JITTER_HOURS,
+        )
+    else:
+        # Fetch clásico: API providers cada N min, scrapers cada N h.
+        scheduler.add_job(
+            _dispatch_fetch_providers,
+            IntervalTrigger(minutes=settings.SCHEDULER_FETCH_INTERVAL_MINUTES),
+            id="fetch_providers",
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            _dispatch_fetch_scrapers,
+            IntervalTrigger(hours=settings.SCHEDULER_SCRAPER_INTERVAL_HOURS),
+            id="fetch_scrapers",
+            replace_existing=True,
+        )
 
     # Semantic dedup: daily at 04:00 CET
     scheduler.add_job(
@@ -53,14 +80,6 @@ def setup_schedules() -> None:
         _dispatch_saved_searches,
         IntervalTrigger(minutes=settings.SCHEDULER_SEARCH_INTERVAL_MINUTES),
         id="run_saved_searches",
-        replace_existing=True,
-    )
-
-    # Scrapers: every N hours
-    scheduler.add_job(
-        _dispatch_fetch_scrapers,
-        IntervalTrigger(hours=settings.SCHEDULER_SCRAPER_INTERVAL_HOURS),
-        id="fetch_scrapers",
         replace_existing=True,
     )
 
@@ -88,14 +107,26 @@ def setup_schedules() -> None:
         replace_existing=True,
     )
 
+    # Alerta de ofertas de profesor de primaria (Suiza) → email: cada N horas
+    scheduler.add_job(
+        _dispatch_teacher_alert,
+        IntervalTrigger(hours=settings.SCHEDULER_TEACHER_ALERT_INTERVAL_HOURS),
+        id="teacher_alert",
+        replace_existing=True,
+    )
+
     logger.info(
-        "Scheduler configured: fetch every %d min, scrapers every %d h, "
-        "dedup daily 04:00, URL check weekly Sun 03:00, "
-        "saved searches every %d min, cleanup stale jobs daily 03:30",
-        settings.SCHEDULER_FETCH_INTERVAL_MINUTES,
-        settings.SCHEDULER_SCRAPER_INTERVAL_HOURS,
+        "Scheduler configured: daily harvest=%s, dedup daily 04:00, "
+        "URL check weekly Sun 03:00, saved searches every %d min, "
+        "cleanup stale jobs daily 03:30",
+        settings.SCHEDULER_DAILY_HARVEST_ENABLED,
         settings.SCHEDULER_SEARCH_INTERVAL_MINUTES,
     )
+
+
+def _dispatch_daily_harvest() -> None:
+    celery_app.send_task("tasks.pipeline.daily_harvest")
+    logger.info("Dispatched tasks.pipeline.daily_harvest")
 
 
 def _dispatch_fetch_providers() -> None:
@@ -136,3 +167,8 @@ def _dispatch_watchlist_health() -> None:
 def _dispatch_watchlist_digest() -> None:
     celery_app.send_task("tasks.watchlist.send_digest")
     logger.debug("Dispatched tasks.watchlist.send_digest")
+
+
+def _dispatch_teacher_alert() -> None:
+    celery_app.send_task("tasks.alert_tasks.detect_teacher_alerts")
+    logger.debug("Dispatched tasks.alert_tasks.detect_teacher_alerts")

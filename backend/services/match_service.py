@@ -35,10 +35,25 @@ _NEGATIVE_FEEDBACK = {"dismissed", "thumbs_down"}
 class MatchService:
     """Orchestrates the full matching pipeline for a user."""
 
-    def __init__(self, db: AsyncSession, groq: GroqService | None = None):
+    def __init__(
+        self,
+        db: AsyncSession,
+        groq: GroqService | None = None,
+        gemini: object | None = None,
+    ):
         self.db = db
         self.matcher = JobMatcher()
         self.groq = groq
+        # Segundo proveedor LLM (GeminiService) usado como fallback del
+        # re-ranking cuando Groq falla/caduca. Interfaz get_chat_response.
+        self.gemini = gemini
+
+    @property
+    def _llm_available(self) -> bool:
+        """True si hay al menos un proveedor LLM disponible (Groq o Gemini)."""
+        groq_ok = bool(self.groq and self.groq.is_available)
+        gemini_ok = bool(self.gemini and getattr(self.gemini, "is_available", False))
+        return groq_ok or gemini_ok
 
     async def run_matching(
         self,
@@ -94,12 +109,21 @@ class MatchService:
                 "results_count": 0,
             }
 
-        # Stage 3: LLM re-ranking (top N candidates only)
-        llm_top = settings.MATCH_LLM_RERANK_TOP
-        if self.groq and self.groq.is_available and len(qualified) > 0:
-            # Only send top N to LLM, keep the rest as-is
-            head = qualified[:llm_top]
-            tail = qualified[llm_top:]
+        # Stage 3: LLM re-ranking ADAPTATIVO.
+        # Corre si hay CUALQUIER proveedor LLM (Groq o su fallback Gemini).
+        # - Pool pequeño (<= MATCH_LLM_RERANK_MAX): se re-rankean TODAS (sin tope);
+        #   es el caso normal con extracción incremental → nada relevante se queda
+        #   sin el pulido del LLM.
+        # - Avalancha (> MATCH_LLM_RERANK_MAX): se limita a MATCH_LLM_RERANK_TOP para
+        #   proteger el crédito de IA.
+        if self.groq is not None and self._llm_available and len(qualified) > 0:
+            rerank_n = (
+                len(qualified)
+                if len(qualified) <= settings.MATCH_LLM_RERANK_MAX
+                else settings.MATCH_LLM_RERANK_TOP
+            )
+            head = qualified[:rerank_n]
+            tail = qualified[rerank_n:]
 
             head = await self._stage3_llm_rerank(
                 profile=profile,
@@ -489,6 +513,7 @@ class MatchService:
             profile_text=profile_text,
             profile_skills=profile_skills,
             candidates=candidates_for_llm,
+            fallback=self.gemini,
         )
 
         # Build lookup: global_index -> llm result

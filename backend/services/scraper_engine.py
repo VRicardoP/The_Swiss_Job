@@ -239,6 +239,17 @@ class BaseScraper(BaseJobProvider):
 
                 all_jobs.extend(await self._collect_page_jobs(client, stubs))
 
+                # Crawler incremental: si la página entera ya se había visto, hemos
+                # alcanzado el contenido sincronizado → parar (no seguir paginando).
+                if self._page_all_known(stubs):
+                    self._stop_reason = "known_page"
+                    logger.info(
+                        "%s early-stop en página %d: sin ofertas nuevas (cursor)",
+                        self.SOURCE_NAME,
+                        page,
+                    )
+                    break
+
                 if len(stubs) < self.PAGE_SIZE:
                     break
 
@@ -403,6 +414,16 @@ class BaseScraper(BaseJobProvider):
                         break
 
                     all_jobs.extend(stubs)
+
+                    # Crawler incremental: early-stop si la página ya es conocida.
+                    if self._page_all_known(stubs):
+                        self._stop_reason = "known_page"
+                        logger.info(
+                            "%s early-stop (Playwright) en página %d: sin novedades (cursor)",
+                            self.SOURCE_NAME,
+                            pg_num,
+                        )
+                        break
 
                     if len(stubs) < self.PAGE_SIZE:
                         break

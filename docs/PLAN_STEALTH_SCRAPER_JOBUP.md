@@ -1,550 +1,542 @@
-# Plan: Stealth Scraper — jobup.ch
+# Plan: Crawler Incremental Multi-Fuente para SwissJob
 
-> **Status:** Planificado — pendiente de implementación
-> **Fecha:** 2026-03-12
-> **Riesgo legal:** Uso personal únicamente. Ver sección "Consideraciones legales".
-
----
-
-## 1. Contexto
-
-jobup.ch (propiedad de JobCloud AG) es el portal de empleo #1 de Suiza francófona
-(~2.9M visitas/mes, ~48K ofertas activas). Sus TOS prohíben scraping automatizado,
-por lo que está en la lista de portales prohibidos del proyecto.
-
-Este documento planifica un scraper "stealth" que simula comportamiento humano
-navegando el portal a ritmo natural. **Solo para uso personal de búsqueda de empleo.**
+> **Estado:** Rediseñado - reemplaza el plan anterior de scraper stealth para jobup.ch  
+> **Fecha:** 2026-07-03  
+> **Eje central:** el volumen de peticiones depende del número de ofertas nuevas, no del número total de ofertas.
 
 ---
 
-## 2. Reconocimiento técnico de jobup.ch
+## 1. Objetivo
 
-### 2.1 Stack tecnológico
-- **React SPA** con datos pre-cargados en objeto `__INIT__` (similar a `__NEXT_DATA__`)
-- **Job Search API:** `https://job-search-api.jobup.ch` (API interna consumida por el frontend)
-- **Analytics:** Tealium UTG + Microsoft Clarity
-- **Error tracking:** Sentry
-- **CDN/WAF:** AWS (CloudFront + WAF)
+SwissJob necesita ampliar cobertura sin convertir el scraping en un proceso caro, frágil o legalmente problemático. El enfoque correcto no es navegar miles de ofertas, sino mantener cursores por fuente y consultar solo el tramo reciente de cada listado.
 
-### 2.2 Anti-bot
-- **AWS WAF CAPTCHA** (`AWS_CAPTCHA_REGIONAL` token en config)
-- **Bot detection activa:** campo `botDetect.clientClassification` en datos de página
-- **Cookies HTTP-only** para sesiones autenticadas
+La regla de diseño es:
 
-### 2.3 Estructura de URLs
-```
-Listado:   https://www.jobup.ch/en/jobs/
-Filtrado:  https://www.jobup.ch/en/jobs/?term=python&location=zurich
-Paginado:  https://www.jobup.ch/en/jobs/?page=2
-Detalle:   https://www.jobup.ch/en/jobs/detail/{job-id}/
+```text
+requests_por_run ~= páginas_necesarias_hasta_encontrar_oferta_conocida
+requests_por_run ~= 1 + ceil(ofertas_nuevas / page_size)
 ```
 
-### 2.4 Datos en listado vs detalle
-| Listado (card)                              | Detalle (página)              |
-|---------------------------------------------|-------------------------------|
-| title, company, logo, location              | Descripción completa          |
-| employment grade (%), employment type        | Requisitos detallados         |
-| publication date, salary (si disponible)     | Info de contacto/aplicación   |
-| `isPaid`, `isNew`, `isActive` flags         | Skills, benefits, etc.        |
+No debe depender de:
 
-### 2.5 Paginación
-- 20 resultados por página (configurable: `DEFAULT_SEARCH_RESULTS: 20`)
-- Total: ~2424 páginas (`meta.numPages`)
-- Parámetro: `?page=N`
-- Datos embebidos en `__INIT__` JSON dentro de `<script>` tag
+```text
+requests_por_run ~= total_ofertas / page_size
+```
 
-### 2.6 robots.txt
-- `/en/jobs/` **NO está bloqueado** — las páginas de búsqueda son crawleables
-- No hay directiva `Crawl-delay`
-- Sitemap disponible: `https://www.jobup.ch/sitemaps/sitemap.xml`
-- Solo SemrushBot está bloqueado completamente (`Disallow: /`)
+Esto cambia el sistema de un crawler exhaustivo a un sincronizador incremental. El primer crawl puede necesitar una ventana de arranque controlada, pero el modo normal debe parar en cuanto encuentre identificadores ya conocidos.
 
 ---
 
-## 3. Estrategia: Simulación de navegación humana
+## 2. Principios no negociables
 
-### 3.1 Principio fundamental
-El scraper NO hace requests masivas. Simula un usuario real que:
-1. Abre el portal
-2. Navega por las ofertas (20 por página)
-3. Hace scroll, lee, a veces hace clic en un detalle
-4. Cierra la sesión después de un rato
-
-### 3.2 Perfil de sesión
-```
-Sesión = {
-    páginas_por_sesión: 15-25        (aleatorio)
-    delay_entre_páginas: 20-45s      (aleatorio, distribución normal μ=30s)
-    delay_entre_detalles: 10-25s     (simulando lectura)
-    prob_click_detalle: 0.3          (30% de ofertas → visita detalle)
-    duración_sesión: ~15-25 min
-    sesiones_por_día: 4-6            (espaciadas 2-4 horas)
-    pausa_entre_sesiones: 2-4h       (aleatorio)
-}
-```
-
-### 3.3 Fases de operación
-
-#### Fase A: Crawl inicial (días 1-2)
-- **Objetivo:** Recopilar el catálogo existente (~48K ofertas)
-- **Ritmo:** ~20 ofertas/página × 20 páginas/sesión × 5 sesiones/día = **~2000 ofertas/día**
-- **Solo datos de listado** (no visitar detalles) → más rápido
-- **Estimación:** 48K ofertas ÷ 2000/día = **~24 días para catálogo completo**
-- **Alternativa acelerada:** 8 sesiones/día, 30 páginas/sesión = **~10 días**
-
-#### Fase B: Mantenimiento diario (día 3+)
-- **Objetivo:** Recopilar solo ofertas nuevas
-- **Volumen estimado:** ~500-1500 ofertas nuevas/día en jobup.ch
-- **Ritmo:** 2-3 sesiones/día, ordenando por fecha publicación
-- **Detección de "ya visto":** Parar cuando se encuentren ofertas ya en la DB
-- **Duración:** ~30-60 min/día de actividad total
-
-### 3.4 Diagrama de flujo
-```
-┌─────────────────────────────────────┐
-│          SCHEDULER (Celery)         │
-│  Lanza N sesiones/día espaciadas    │
-└───────────────┬─────────────────────┘
-                │
-                ▼
-┌─────────────────────────────────────┐
-│         SESIÓN (Playwright)         │
-│                                     │
-│  1. Abrir browser con perfil real   │
-│  2. Navegar a jobup.ch/en/jobs/     │
-│  3. Aceptar cookies (si aparecen)   │
-│  4. FOR page in range(max_pages):   │
-│     a. Extraer __INIT__ JSON        │
-│     b. Parsear ofertas del listado  │
-│     c. ¿Oferta ya en DB? → STOP    │
-│     d. Random: ¿click detalle?      │
-│        → delay lectura → extraer    │
-│     e. Scroll down suavemente       │
-│     f. Click "siguiente página"     │
-│     g. Sleep(random 20-45s)         │
-│  5. Cerrar browser                  │
-└───────────────┬─────────────────────┘
-                │
-                ▼
-┌─────────────────────────────────────┐
-│       PIPELINE EXISTENTE            │
-│  normalize → dedup → save to DB     │
-└─────────────────────────────────────┘
-```
+1. **Incremental primero.** Toda fuente debe guardar un cursor: `last_seen_id`, `last_seen_posted_at`, `etag`, `last_modified`, sitemap `lastmod` o hash de la cabecera/listado.
+2. **La fuente manda el método.** API, feed ATS, XML autorizado o sitemap permitido siempre tienen prioridad sobre HTML.
+3. **HTML es último recurso.** Solo para fuentes con permiso suficiente, robots compatible y bajo volumen.
+4. **No bypass.** No diseñar el sistema alrededor de evadir WAF, CAPTCHA, login, paywalls o controles anti-bot. Un 403/429/CAPTCHA es señal de parada y revisión.
+5. **Conectores preparados no significan conectores activos.** jobs.ch/jobup.ch, LinkedIn, Indeed, Glassdoor y XING pueden existir en el catálogo técnico, pero deben arrancar deshabilitados hasta disponer de API, feed, partnership, export autorizado o revisión legal.
+6. **Dedupe global obligatorio.** La misma vacante puede llegar por ATS, portal, agregador, newsletter y web corporativa.
 
 ---
 
-## 4. Diseño técnico
+## 3. Modelo de adquisición por capas
 
-### 4.1 Nuevo archivo: `backend/scrapers/jobup.py`
+| Capa | Método | Uso en SwissJob | Huella | Activación |
+|------|--------|-----------------|--------|------------|
+| 0 | ATS público/API pública | Greenhouse, Lever, Ashby, SmartRecruiters, Workday cuando expone endpoints públicos | Muy baja | Por defecto si el endpoint es público y permitido |
+| 1 | API/partner feed autorizado | JobCloud, LinkedIn, Indeed, Glassdoor, XING, Talent.com, Job-Room | Muy baja | Solo con credenciales/acuerdo |
+| 2 | Import autorizado por usuario | emails de alertas, CSV/export, enlaces guardados, webhooks de cuentas propias | Baja | Opt-in del usuario |
+| 3 | Sitemap/RSS permitido | URLs con `lastmod`, RSS de búsquedas guardadas, feeds de empresas | Baja | Si robots/TOS lo permiten |
+| 4 | HTML público permitido | portales pequeños, webs corporativas, colegios, nichos | Media | Gated por `SourceCompliance` |
+| 5 | Fuente restringida sin permiso | jobs.ch/jobup.ch, LinkedIn, Indeed, Glassdoor, XING si no hay acuerdo | Cero | No se consulta |
+
+La arquitectura debe maximizar capas 0-2. La capa 4 queda para fuentes donde SwissJob ya tiene permiso operacional razonable y el valor justifica el coste.
+
+---
+
+## 4. Fuentes restringidas: cómo prepararlas sin activarlas indebidamente
+
+Estas fuentes ya no deben tratarse como "prohibidas para siempre", sino como **fuentes restringidas con rutas de integración autorizables**. Eso permite modelarlas ahora y activarlas después sin rediseñar el sistema.
+
+| Fuente | Estado por defecto | Ruta aceptable | Qué construir ahora |
+|--------|--------------------|----------------|---------------------|
+| JobCloud: jobs.ch / jobup.ch | `disabled` | API/partner, XML/interface oficial, acuerdo comercial, feed autorizado por empleador | `jobcloud_partner` provider con credenciales opcionales; sin scraper público |
+| LinkedIn Jobs | `disabled` | LinkedIn Talent Solutions / Job Posting / Apply Connect si SwissJob llega a partner; import de alertas/enlaces del usuario | `linkedin_authorized` connector; ingest de URLs guardadas por usuario |
+| Indeed | `disabled` | Indeed Partner APIs, Job Sync, Publisher plugin/feed aprobado, XML/ATS integration autorizada | `indeed_partner` connector; ingest de alertas o export autorizado |
+| Glassdoor | `disabled` | API partner con partner id/key o canal aprobado | `glassdoor_partner` connector; no crawling de reviews/jobs |
+| XING | `disabled` | XING e-recruiting feed/API, Apply With XING, partner approval | `xing_partner` connector; soporte para feed autorizado |
+
+Cada una debe existir en `source_compliance` con:
+
+```text
+is_allowed = false
+method = "partner_feed" | "api" | "manual_import"
+robots_txt_ok = false/unknown hasta revisión
+auto_disable_on_block = true
+tos_notes = "Restricted source. Enable only with authorized API/feed/partner path."
+```
+
+La UI/admin debe poder mostrar estas fuentes como "preparadas", no como "rotas".
+
+---
+
+## 5. Cursor incremental
+
+Cada fuente se divide en scopes. Un scope es una combinación estable como:
+
+```text
+source_key + query + location + language + category + remote_mode
+```
+
+Ejemplos:
+
+```text
+careerjet|teacher|Switzerland|fr|education|any
+jobcloud_partner|software engineer|Geneva|en|tech|hybrid
+greenhouse|company_slug=acme
+```
+
+### 5.1 Tabla propuesta: `source_cursors`
+
+```text
+id
+source_key
+scope_key
+cursor_type                 # id | timestamp | etag | last_modified | sitemap_lastmod | hash
+cursor_value                # valor serializado principal
+high_watermark_posted_at
+recent_source_ids_json      # ventana corta para early-stop y reorder
+recent_content_hashes_json  # fallback si no hay ID estable
+bootstrap_complete
+last_run_at
+last_success_at
+last_empty_at
+next_run_at
+avg_new_jobs_per_run
+avg_pages_per_run
+consecutive_empty_runs
+consecutive_errors
+created_at
+updated_at
+```
+
+`recent_source_ids_json` no sustituye la tabla `jobs`; es una cache pequeña para parar rápido cuando el portal reordena ofertas o mezcla patrocinadas.
+
+### 5.2 Semántica del cursor
+
+| Tipo | Cuándo usarlo | Parada |
+|------|---------------|--------|
+| `id` | IDs monotónicos o URLs con ID estable | parar al encontrar ID ya visto |
+| `timestamp` | listados ordenados por fecha real | parar cuando `posted_at <= high_watermark` y IDs ya vistos |
+| `etag` / `last_modified` | APIs/feeds HTTP compatibles | no procesar si 304 o cabecera sin cambios |
+| `sitemap_lastmod` | sitemaps por fecha | solo abrir URLs con `lastmod` nuevo |
+| `hash` | fuentes sin ID ni fecha fiable | parar cuando N hashes consecutivos ya existen |
+
+---
+
+## 6. Algoritmo de crawl
+
+### 6.1 Arranque controlado
+
+El bootstrap no debe intentar absorber todo un portal si no es necesario. Para SwissJob basta con una ventana útil:
+
+| Fuente | Bootstrap recomendado |
+|--------|-----------------------|
+| API con filtros | 7-30 días o primeras 5 páginas por scope |
+| ATS público | todos los jobs activos de la empresa, normalmente una petición |
+| Sitemap | URLs con `lastmod` reciente; límite por día |
+| HTML permitido | 3-10 páginas por scope, según `page_size` y valor de fuente |
+| Fuente restringida | 0 peticiones |
+
+### 6.2 Mantenimiento normal
+
+Pseudo-flujo:
+
+```text
+for source_scope in due_scopes:
+    load cursor
+    page = 1
+    new_jobs = []
+    seen_known_streak = 0
+
+    while page <= source.max_pages_per_run:
+        batch = fetch_page_or_feed(source_scope, page, cursor)
+
+        if unchanged(batch):        # 304, same etag, same list hash
+            break
+
+        for raw_job in batch.jobs:
+            identity = extract_source_identity(raw_job)
+
+            if already_seen(identity):
+                seen_known_streak += 1
+                if should_stop(seen_known_streak, page, source):
+                    stop scope
+            else:
+                new_jobs.append(raw_job)
+                seen_known_streak = 0
+
+        if batch.has_no_next_page:
+            break
+
+        page += 1
+
+    normalize -> dedup -> save
+    update cursor with newest successfully saved job
+    update scheduler metrics
+```
+
+### 6.3 Condición de parada
+
+La condición debe combinar ID, fecha y racha de conocidos:
+
+```text
+stop if:
+  - current_id in recent_source_ids
+  - and current_posted_at <= high_watermark_posted_at + reorder_tolerance
+  - or known_streak >= source.known_streak_stop_threshold
+```
+
+Valores iniciales:
+
+```text
+known_streak_stop_threshold = 5
+reorder_tolerance = 48h
+max_pages_per_run = min(10, configured_source_limit)
+```
+
+Esto evita cortar demasiado pronto cuando hay ofertas patrocinadas, reposts o ordenamientos no estrictamente cronológicos.
+
+---
+
+## 7. Presupuesto dinámico de peticiones
+
+Cada fuente debe tener un presupuesto por run calculado desde su histórico:
+
+```text
+expected_pages = ceil(max(avg_new_jobs_per_run, 1) / page_size) + safety_page
+max_pages_this_run = clamp(expected_pages, min_pages=1, max_pages=source_cap)
+```
+
+Reglas:
+
+- Si tres runs seguidos devuelven cero ofertas nuevas, reducir frecuencia.
+- Si un run encuentra nuevas ofertas en la última página permitida, subir una página de margen en el siguiente run.
+- Si aparece 403, 429, CAPTCHA, login inesperado o soft-block, abortar y reportar a `ComplianceEngine`.
+- Si la fuente soporta `ETag` o `Last-Modified`, hacer petición condicional antes de procesar contenido.
+
+Resultado esperado:
+
+| Situación | Peticiones |
+|-----------|------------|
+| No hay cambios | 0-1 |
+| 1-20 nuevas con `page_size=20` | 1 |
+| 21-40 nuevas | 2 |
+| Portal con 50K ofertas pero 12 nuevas | 1 |
+
+---
+
+## 8. Diseño en SwissJob
+
+### 8.1 Componentes nuevos
+
+| Componente | Responsabilidad |
+|------------|-----------------|
+| `SourceCursor` model | Persistir cursores por fuente/scope |
+| `CursorStore` service | Leer, actualizar y bloquear cursores durante un run |
+| `IncrementalFetchResult` schema | Devolver `jobs`, `cursor_update`, `pages_read`, `stop_reason` |
+| `SourceRegistry` ampliado | Distinguir `api`, `partner_feed`, `ats_feed`, `manual_import`, `html_scraping` |
+| `CrawlerBudgetService` | Calcular `next_run_at`, `max_pages_this_run` y backoff |
+| `SourceCompliance` ampliado | Mantener kill-switch y estado legal/operacional |
+
+### 8.2 Cambios en providers/scrapers
+
+Los providers actuales pueden seguir devolviendo jobs, pero el contrato debería evolucionar hacia:
 
 ```python
-class JobupScraper(BaseScraper):
-    SOURCE_NAME = "jobup"
-    LISTING_URL = "https://www.jobup.ch/en/jobs/"
-    NEEDS_PLAYWRIGHT = True
-    FETCH_DETAILS = False          # Fase A: solo listado
-    RATE_LIMIT_SECONDS = 30.0      # Media entre páginas (se randomiza)
-    MAX_PAGES = 20                 # Por sesión
-    PAGE_SIZE = 20
+class IncrementalProvider:
+    source_key: str
+    method: str
 
-    # --- Stealth config (no heredar de BaseScraper) ---
-    STEALTH_MODE = True
-    PAGES_PER_SESSION = (15, 25)   # rango aleatorio
-    DELAY_BETWEEN_PAGES = (20, 45) # segundos, rango aleatorio
-    DELAY_DETAIL_READ = (10, 25)   # segundos si visita detalle
-    DETAIL_CLICK_PROBABILITY = 0.3
+    async def fetch_incremental(
+        self,
+        scope: SourceScope,
+        cursor: SourceCursor,
+        budget: CrawlBudget,
+    ) -> IncrementalFetchResult:
+        ...
 ```
 
-### 4.2 Diferencias con scrapers normales
+Para compatibilidad:
 
-El scraper de jobup.ch **NO usa el flujo estándar** de `BaseScraper._scrape_with_playwright()`.
-Necesita un override completo de `fetch_jobs()` porque:
-
-1. **Delays aleatorios** (no fijos como `RATE_LIMIT_SECONDS`)
-2. **Scroll suave** antes de paginar (simular lectura)
-3. **Extracción de `__INIT__` JSON** en vez de parsear HTML
-4. **Early stop** cuando encuentra ofertas ya conocidas
-5. **Cookie consent** handling automático
-6. **Sesiones con estado** (cookies persistentes durante la sesión)
-
-```python
-async def fetch_jobs(self, query: str, location: str = "Switzerland") -> list[dict]:
-    """Override completo — sesión stealth con comportamiento humano."""
-    if not await self._pre_check():
-        return []
-
-    all_raw = await self._stealth_session(query)
-    results = self._process_raw_jobs(all_raw)
-
-    if results:
-        await self._reset_compliance_blocks()
-
-    return self._finalize_fetch(results)
-
-async def _stealth_session(self, query: str) -> list[dict]:
-    """Una sesión de navegación simulando usuario humano."""
-    from playwright.async_api import async_playwright
-    import random
-
-    all_jobs = []
-    max_pages = random.randint(*self.PAGES_PER_SESSION)
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=self._browser_args(),
-        )
-        context = await browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent=self._random_user_agent(),
-            locale="en-CH",
-            timezone_id="Europe/Zurich",
-            geolocation={"latitude": 47.3769, "longitude": 8.5417},
-            permissions=["geolocation"],
-        )
-        page = await context.new_page()
-
-        try:
-            # 1. Navigate to listing
-            await page.goto(self.LISTING_URL, wait_until="networkidle")
-            await self._handle_cookie_consent(page)
-            await self._human_scroll(page)
-
-            # 2. Paginate
-            for pg in range(max_pages):
-                jobs = await self._extract_init_json(page)
-
-                if not jobs:
-                    break
-
-                # Early stop: if we've seen these jobs before
-                known_count = self._count_known_jobs(jobs)
-                if known_count > len(jobs) * 0.8:
-                    logger.info("80%% known jobs — stopping early")
-                    break
-
-                all_jobs.extend(jobs)
-
-                # Random delay (human reading time)
-                delay = random.uniform(*self.DELAY_BETWEEN_PAGES)
-                await asyncio.sleep(delay)
-
-                # Smooth scroll + click next page
-                await self._human_scroll(page)
-                has_next = await self._click_next_page(page)
-                if not has_next:
-                    break
-
-        finally:
-            await browser.close()
-
-    return all_jobs
+```text
+BaseJobProvider.fetch_jobs()
+  -> wrapper legacy
+  -> crea scope por defecto
+  -> llama fetch_incremental si existe
 ```
 
-### 4.3 Métodos auxiliares stealth
+### 8.3 Scheduling
 
-```python
-def _browser_args(self) -> list[str]:
-    """Chrome args que dificultan detección de headless."""
-    return [
-        "--disable-blink-features=AutomationControlled",
-        "--disable-features=IsolateOrigins,site-per-process",
-        "--no-sandbox",
-    ]
+El scheduler actual lanza providers/scrapers por intervalos fijos. El nuevo modelo debería lanzar scopes vencidos:
 
-def _random_user_agent(self) -> str:
-    """Rotar entre user agents reales de Chrome reciente."""
-    agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ..."
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ...",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ...",
-    ]
-    return random.choice(agents)
-
-async def _human_scroll(self, page) -> None:
-    """Scroll suave simulando lectura humana."""
-    for _ in range(random.randint(2, 5)):
-        scroll_amount = random.randint(200, 600)
-        await page.mouse.wheel(0, scroll_amount)
-        await asyncio.sleep(random.uniform(0.5, 2.0))
-
-async def _handle_cookie_consent(self, page) -> None:
-    """Aceptar cookies si aparece el banner."""
-    try:
-        accept_btn = page.locator("button:has-text('Accept'), button:has-text('Akzeptieren')")
-        if await accept_btn.is_visible(timeout=3000):
-            await accept_btn.click()
-            await asyncio.sleep(1)
-    except Exception:
-        pass  # No cookie banner — continue
-
-async def _extract_init_json(self, page) -> list[dict]:
-    """Extraer datos de ofertas del objeto __INIT__ embebido."""
-    init_data = await page.evaluate("""
-        () => {
-            const scripts = document.querySelectorAll('script');
-            for (const s of scripts) {
-                if (s.textContent.includes('__INIT__')) {
-                    const match = s.textContent.match(/__INIT__\\s*=\\s*(\\{.*?\\});/s);
-                    if (match) return JSON.parse(match[1]);
-                }
-            }
-            return null;
-        }
-    """)
-    if not init_data:
-        return []
-
-    # Navigate nested structure to find job results
-    results = (init_data
-               .get("vacancy", {})
-               .get("results", {})
-               .get("main", {})
-               .get("results", []))
-    return results
-
-async def _click_next_page(self, page) -> bool:
-    """Click en botón de siguiente página."""
-    try:
-        next_btn = page.locator("a[rel='next'], button:has-text('Next')")
-        if await next_btn.is_visible(timeout=3000):
-            await next_btn.click()
-            await page.wait_for_load_state("networkidle")
-            return True
-    except Exception:
-        pass
-    return False
+```text
+tasks.sources.fetch_due_scopes
+  - SELECT source_cursors WHERE next_run_at <= now()
+  - lock por scope
+  - calcular budget
+  - ejecutar provider
+  - guardar jobs
+  - actualizar cursor y next_run_at
 ```
 
-### 4.4 Normalización
+Frecuencias iniciales:
 
-```python
-def normalize_job(self, raw: dict) -> dict:
-    """Normalizar datos del JSON __INIT__ al esquema del proyecto."""
-    job_id = raw.get("id", "")
-    title = raw.get("title", "").strip()
-    company_data = raw.get("company", {})
-    company = company_data.get("name", "").strip()
-    location = raw.get("place", "").strip()
-    url = f"https://www.jobup.ch/en/jobs/detail/{job_id}/"
+| Tipo | Frecuencia base |
+|------|-----------------|
+| ATS público | 6-24h |
+| API/agregador con cuota | según cuota; 6-12h |
+| Job-Room/SECO | 6-12h si credenciales |
+| HTML permitido | 12-24h |
+| Watchlist de empresas/colegios | 6-24h según prioridad |
+| Fuente restringida deshabilitada | nunca |
 
-    # Employment grade: e.g. [80, 100] → "80-100%"
-    grades = raw.get("employmentGrades", [])
-    employment_type = f"{grades[0]}-{grades[1]}%" if len(grades) == 2 else None
+---
 
-    # Publication date
-    pub_date = raw.get("publicationDate")
+## 9. Normalización y deduplicación
 
-    return {
-        "hash": self.compute_hash(title, company, url),
-        "source": self.SOURCE_NAME,
-        "source_id": str(job_id),
-        "title": title,
-        "company": company,
-        "location": location,
-        "canton": extract_canton(location),
-        "description": "",  # Solo disponible en detalle
-        "description_snippet": "",
-        "url": url,
-        "remote": False,
-        "tags": [],
-        "logo": company_data.get("logoUrl"),
-        "salary_min_chf": None,
-        "salary_max_chf": None,
-        "salary_original": None,
-        "salary_currency": None,
-        "salary_period": None,
-        "language": None,
-        "seniority": None,
-        "contract_type": None,
-        "employment_type": employment_type,
-        "posted_at": pub_date,
-    }
+Para que el crawler incremental sea fiable, el ID de fuente no basta. El pipeline debe construir varias identidades:
+
+```text
+source_identity = source_key + source_job_id
+canonical_url_identity = canonicalized_url
+semantic_identity = hash(normalize(title) + normalize(company) + normalize(location))
+content_identity = fuzzy_hash(description_snippet or description)
 ```
 
-### 4.5 Early stop — detección de ofertas conocidas
+Orden de decisión:
 
-```python
-def _count_known_jobs(self, raw_jobs: list[dict]) -> int:
-    """Count how many jobs from this batch are already in our DB.
+1. Si `source_identity` existe, actualizar metadata y cursor.
+2. Si `canonical_url_identity` existe, unir como duplicado.
+3. Si `semantic_identity` coincide con alta confianza, marcar duplicate_of.
+4. Si solo coincide parcialmente, guardar como candidato a revisión/dedupe fuzzy.
 
-    Uses an in-memory set of known hashes loaded at session start.
-    """
-    count = 0
-    for raw in raw_jobs:
-        title = raw.get("title", "")
-        company = raw.get("company", {}).get("name", "")
-        job_id = raw.get("id", "")
-        url = f"https://www.jobup.ch/en/jobs/detail/{job_id}/"
-        h = self.compute_hash(title, company, url)
-        if h in self._known_hashes:
-            count += 1
-    return count
+Esto es crítico al habilitar fuentes restringidas por vías autorizadas, porque Indeed, LinkedIn, JobCloud y los ATS pueden publicar la misma oferta.
+
+---
+
+## 10. Conectores ATS públicos
+
+Estos conectores deben tener prioridad porque entregan datos estructurados con muy pocas peticiones:
+
+| ATS | Cursor recomendado | Patrón |
+|-----|--------------------|--------|
+| Greenhouse | `updated_at` + `id` | listar jobs del board; `content=true` si hace falta descripción |
+| Lever | `createdAt`/`updatedAt` + posting ID | JSON público por company site |
+| Ashby | job ID + updated timestamp si disponible | API/job board endpoint |
+| SmartRecruiters | posting ID + `releasedDate`/`updatedDate` | postings API |
+| Workday | requisition ID + fecha | variable por tenant; usar solo endpoints publicados |
+
+Un único run por empresa suele costar 1 petición. Para 500 empresas con ATS, el volumen diario puede ser cientos de peticiones, no decenas de miles.
+
+---
+
+## 11. Fuentes restringidas: conectores objetivo
+
+### 11.1 JobCloud (`jobs.ch`, `jobup.ch`)
+
+No crear scraper público de jobs.ch/jobup.ch. Crear un provider deshabilitado que solo acepte estas entradas:
+
+- credenciales/API de JobCloud si se obtiene acuerdo;
+- XML/interface oficial autorizado;
+- feed de empleador cuando SwissJob actúe como ATS/partner;
+- import manual de enlaces guardados por el usuario.
+
+Cursor:
+
+```text
+source_job_id = external advert ID / INSERATID / partner job id
+cursor_type = timestamp or id
+```
+
+### 11.2 LinkedIn
+
+No depender de scraping autenticado ni búsqueda pública automatizada. Preparar:
+
+- connector para Job Posting / Apply Connect si hay partner access;
+- import de alertas de empleo recibidas por email;
+- import manual de saved jobs o URLs pegadas por el usuario;
+- enriquecimiento mínimo: guardar URL, título visible, empresa, ubicación y fecha si llegan por canal autorizado.
+
+Cursor:
+
+```text
+source_job_id = LinkedIn job URN/id cuando venga por API
+fallback = canonical URL hash para imports manuales
+```
+
+### 11.3 Indeed
+
+Preparar provider para:
+
+- Partner APIs / Job Sync;
+- Publisher JavaScript/plugin o feed aprobado si aplica al modelo de SwissJob;
+- XML/ATS integration autorizada;
+- email alerts/import usuario.
+
+No usar endpoints internos ni crawling de resultados.
+
+### 11.4 Glassdoor
+
+Preparar connector con partner ID/key y límites estrictos. Separar dos dominios:
+
+- jobs autorizados;
+- company/reviews/salary data solo si la licencia lo permite.
+
+Por defecto no importar reviews ni salarios desde HTML.
+
+### 11.5 XING
+
+Preparar connector para:
+
+- XING e-recruiting feed;
+- XING e-recruiting API;
+- Apply With XING si SwissJob integra candidatura;
+- import autorizado del usuario.
+
+Mantener el estado `disabled` hasta aprobación.
+
+---
+
+## 12. Compliance y estados operativos
+
+La lista actual de "prohibidos" debe evolucionar a estados:
+
+| Estado | Significado |
+|--------|-------------|
+| `allowed` | Puede ejecutarse automáticamente |
+| `restricted_ready` | Conector existe, pero falta credencial/acuerdo |
+| `manual_only` | Solo import de usuario/email/CSV |
+| `blocked` | Hubo bloqueo técnico; no reintentar sin revisión |
+| `forbidden` | No hay ruta aceptable; no construir conector |
+
+En la base actual puede representarse inicialmente con `is_allowed=false` y `tos_notes`, pero conviene añadir un campo futuro `status`.
+
+Propuesta:
+
+```text
+status: allowed | restricted_ready | manual_only | blocked | forbidden
+authorization_type: public | partner | user_import | internal | none
+authorization_reference: URL/contrato/ticket interno
+reviewed_at
+reviewed_by
 ```
 
 ---
 
-## 5. Scheduling: Sesiones distribuidas
+## 13. Observabilidad
 
-### 5.1 Nuevo Celery task
+Métricas mínimas:
 
-No incluir en `fetch_scrapers` (el task general de scraping cada 6h).
-Crear un **task independiente** con scheduling propio:
-
-```python
-# backend/tasks/jobup_tasks.py
-
-@celery_app.task(name="tasks.jobup.stealth_session", bind=True,
-                 soft_time_limit=2400, time_limit=3000)
-def jobup_stealth_session(self) -> dict:
-    """Run one stealth browsing session on jobup.ch."""
-    return asyncio.run(_run_session())
-
-async def _run_session():
-    scraper = JobupScraper()
-    # Load known hashes before session
-    scraper._known_hashes = await _load_known_hashes()
-    jobs = await scraper.fetch_jobs("")
-    # Save via standard pipeline
-    ...
+```text
+source_requests_total{source,scope}
+source_new_jobs_total{source,scope}
+source_pages_per_run{source,scope}
+source_stop_reason_total{source,reason}
+source_cursor_lag_seconds{source,scope}
+source_duplicate_rate{source}
+source_compliance_blocks_total{source,status_code}
 ```
 
-### 5.2 Schedule (APScheduler → Celery Beat)
+Stop reasons:
 
-```python
-# En el scheduler: 5 sesiones/día distribuidas
-JOBUP_SESSION_HOURS = [8, 11, 14, 17, 20]  # Horas UTC+1 (horario suizo)
-
-# Cada sesión se dispara con jitter aleatorio de ±30 min
-# para evitar patrones detectables
+```text
+known_id
+known_hash_streak
+etag_not_modified
+last_modified_not_modified
+page_limit
+empty_page
+compliance_block
+auth_missing
+source_disabled
+parse_error
 ```
 
-### 5.3 Fase A vs Fase B automática
-
-```python
-async def _run_session():
-    known_count = await _count_jobup_jobs_in_db()
-
-    if known_count < 40000:
-        # Fase A: crawl completo, sin early-stop
-        scraper.EARLY_STOP_ENABLED = False
-        scraper.MAX_PAGES = 30  # más páginas por sesión
-    else:
-        # Fase B: mantenimiento, ordenar por fecha, early-stop
-        scraper.EARLY_STOP_ENABLED = True
-        scraper.MAX_PAGES = 15
-        scraper.SORT_BY = "date"  # ofertas más recientes primero
-```
+Estas métricas demuestran si el sistema cumple el objetivo: menos páginas cuando hay menos ofertas nuevas.
 
 ---
 
-## 6. Integración con el proyecto
+## 14. Plan de implementación
 
-### 6.1 Archivos a crear/modificar
+### Fase 1: Documento y modelo
 
-| Archivo | Acción | Descripción |
-|---------|--------|-------------|
-| `backend/scrapers/jobup.py` | **Crear** | Scraper stealth completo |
-| `backend/tasks/jobup_tasks.py` | **Crear** | Celery task independiente |
-| `backend/scrapers/__init__.py` | **Modificar** | Registrar JobupScraper (comentado por defecto) |
-| `alembic/versions/xxx_seed_jobup_compliance.py` | **Crear** | Seed compliance row |
-| `backend/config.py` | **Modificar** | Añadir settings JOBUP_* |
+- [x] Reemplazar el plan de scraper stealth por diseño incremental.
+- [ ] Crear modelo `SourceCursor`.
+- [ ] Crear `CursorStore`.
+- [ ] Añadir migración para cursores.
+- [ ] Añadir estado extendido de fuente o documentar mapping temporal en `SourceCompliance`.
 
-### 6.2 Config settings
+### Fase 2: Motor incremental
 
-```python
-# config.py
-JOBUP_ENABLED: bool = False                    # Deshabilitado por defecto
-JOBUP_SESSIONS_PER_DAY: int = 5
-JOBUP_SESSION_HOURS: list[int] = [8, 11, 14, 17, 20]
-JOBUP_PAGES_PER_SESSION: tuple[int, int] = (15, 25)
-JOBUP_DELAY_BETWEEN_PAGES: tuple[int, int] = (20, 45)
-JOBUP_EARLY_STOP_THRESHOLD: float = 0.8       # 80% ofertas conocidas → stop
-```
+- [ ] Crear `IncrementalFetchResult`.
+- [ ] Añadir wrapper incremental compatible con `BaseJobProvider`.
+- [ ] Implementar `CrawlerBudgetService`.
+- [ ] Cambiar scheduler para scopes vencidos, no solo intervalos fijos globales.
+- [ ] Registrar `stop_reason` en logs y métricas.
 
-### 6.3 Compliance entry
+### Fase 3: Fuentes de alta eficiencia
 
-```python
-SourceCompliance(
-    source_key="jobup",
-    is_allowed=False,        # Requiere activación manual explícita
-    method="scraping",
-    robots_txt_ok=True,      # /en/jobs/ no está bloqueado en robots.txt
-    tos_notes="TOS prohíben scraping. Solo uso personal. Activar manualmente.",
-    auto_disable_on_block=True,
-)
-```
+- [ ] Implementar conectores ATS públicos: Greenhouse, Lever, Ashby, SmartRecruiters.
+- [ ] Adaptar Jooble/Careerjet/Adzuna/JSearch a cursores cuando la API lo permita.
+- [ ] Añadir import por email/CSV/URL para fuentes restringidas.
+- [ ] Mantener HTML permitido solo para fuentes pequeñas y watchlist.
 
----
+### Fase 4: Fuentes restringidas preparadas
 
-## 7. Medidas anti-detección
+- [ ] Seed de `source_compliance` para `jobcloud_partner`, `linkedin_authorized`, `indeed_partner`, `glassdoor_partner`, `xing_partner` con `is_allowed=false`.
+- [ ] Crear providers stub que devuelven `auth_missing` si no hay credenciales.
+- [ ] Añadir UI/admin para mostrar "preparado, pendiente de autorización".
+- [ ] Documentar procedimiento de activación por fuente.
 
-| Medida | Implementación |
-|--------|----------------|
-| **User-Agent rotation** | Pool de 5+ UAs de Chrome real (Win/Mac/Linux) |
-| **Viewport realista** | 1920×1080 (no 800×600 headless default) |
-| **Timezone/locale** | `Europe/Zurich`, `en-CH` |
-| **Geolocation** | Zurich (47.37°N, 8.54°E) |
-| **Anti-headless flags** | `--disable-blink-features=AutomationControlled` |
-| **Cookie persistence** | Mantener cookies durante toda la sesión |
-| **Scroll humano** | Random scroll amounts con micro-delays |
-| **Delays aleatorios** | Distribución normal, no intervalos fijos |
-| **Early stop** | Parar cuando 80% son ofertas conocidas |
-| **Sesiones cortas** | 15-25 páginas máximo por sesión |
-| **Horarios variables** | Jitter de ±30 min en cada sesión |
-| **Sin parallelismo** | 1 sesión a la vez, nunca concurrent |
+### Fase 5: Optimización
+
+- [ ] Recalcular frecuencia por `avg_new_jobs_per_run`.
+- [ ] Usar `ETag`/`Last-Modified` donde exista.
+- [ ] Usar sitemap `lastmod` antes de abrir detalles.
+- [ ] Medir `requests_per_new_job` por fuente.
+- [ ] Desactivar fuentes con bajo valor o alto coste.
 
 ---
 
-## 8. Limitaciones conocidas
+## 15. Criterios de éxito
 
-1. **Sin descripción completa:** Solo datos del listado (título, empresa, ubicación, salario).
-   Para descripciones completas habría que visitar detalles (mucho más lento).
-2. **AWS WAF CAPTCHA:** Si se activa, la sesión debe abortar inmediatamente.
-   El ComplianceEngine reportará el bloqueo y deshabilitará tras 3 consecutivos.
-3. **Catálogo completo lento:** ~10-24 días para las ~48K ofertas iniciales.
-4. **No apto para producción:** Solo uso personal. No incluir en builds públicos.
+El rediseño está funcionando si:
 
----
-
-## 9. Consideraciones legales
-
-- **robots.txt:** Las páginas de ofertas (`/en/jobs/`) **no están bloqueadas**
-- **TOS:** Prohíben acceso automatizado — este scraper viola los TOS
-- **Riesgo real (uso personal):** Prácticamente nulo a este volumen
-- **Riesgo si se comercializa:** Significativo — acción legal probable
-- **Recomendación:** Mantener `JOBUP_ENABLED=False` por defecto.
-  Solo activar manualmente para uso personal. No incluir datos de jobup.ch
-  en ningún servicio público.
+- Una fuente sin cambios cuesta 0-1 peticiones por run.
+- Una fuente con pocas novedades no pagina más allá de la primera página.
+- `requests_per_new_job` baja con el tiempo.
+- Las fuentes restringidas aparecen modeladas pero no se ejecutan sin autorización.
+- Los bloqueos no generan reintentos agresivos: se convierten en estado de compliance.
+- La deduplicación evita que una misma vacante aparezca varias veces al llegar desde JobCloud, LinkedIn, Indeed, ATS y web corporativa.
 
 ---
 
-## 10. Alternativas consideradas
+## 16. Referencias oficiales revisadas
 
-| Alternativa | Pros | Contras |
-|-------------|------|---------|
-| **API oficial JobCloud** | Legal, completa, estable | Solo partners comerciales, costosa |
-| **Sitemap crawling** | Más discreto | Solo URLs, sin datos estructurados |
-| **RSS/Atom feed** | Ligero | No existe para jobup.ch |
-| **Scraper directo (sin stealth)** | Más rápido, simple | Detectable, bloqueo probable |
-| **→ Stealth Playwright** | Indetectable a bajo volumen | Lento, complejo, viola TOS |
+- JobCloud Technical Solutions: https://www.jobcloud.ch/c/en/technical-solution/xml-fields/
+- LinkedIn Talent Solutions / Job Posting API: https://learn.microsoft.com/en-us/linkedin/talent/job-postings/api/overview
+- Indeed Partner Docs: https://docs.indeed.com/
+- Indeed Apply / Job Sync: https://docs.indeed.com/indeed-apply/
+- Glassdoor API documentation: https://www.glassdoor.com/developer/index.htm
+- XING Job Integration: https://dev.xing.com/partners/job_integration
+- Greenhouse Job Board API: https://developers.greenhouse.io/job-board.html
 
 ---
 
-## 11. Checklist de implementación
+## 17. Conclusión
 
-- [ ] Crear `backend/scrapers/jobup.py` con `JobupScraper`
-- [ ] Implementar `_stealth_session()` con delays aleatorios
-- [ ] Implementar `_extract_init_json()` — parsear `__INIT__` object
-- [ ] Implementar `_human_scroll()` y `_handle_cookie_consent()`
-- [ ] Implementar `_count_known_jobs()` para early-stop
-- [ ] Implementar `normalize_job()` para formato `__INIT__`
-- [ ] Crear `backend/tasks/jobup_tasks.py` con task independiente
-- [ ] Añadir settings `JOBUP_*` en `config.py`
-- [ ] Crear migración compliance seed
-- [ ] Registrar en `scrapers/__init__.py` (comentado)
-- [ ] Configurar schedule en Celery Beat (deshabilitado por defecto)
-- [ ] Test manual: ejecutar 1 sesión y verificar extracción
-- [ ] Verificar que AWS WAF CAPTCHA no se activa
-- [ ] Monitorear logs durante 48h de prueba
+El sistema no debe intentar ganar por volumen ni por evasión. Debe ganar por arquitectura: cursores, fuentes estructuradas, permisos claros, dedupe fuerte y presupuesto dinámico.
+
+La frase que debe guiar cada cambio del crawler es:
+
+> El volumen de peticiones depende del número de ofertas nuevas, no del número total de ofertas.

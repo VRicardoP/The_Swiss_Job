@@ -77,8 +77,11 @@ def fetch_providers(self) -> dict[str, Any]:
     try:
         result = asyncio.run(_fetch_providers_async())
 
-        # Chain: generate embeddings for newly ingested jobs
-        if result.get("new", 0) > 0:
+        # Chain: generate embeddings for newly ingested jobs.
+        # Cuando la cosecha diaria está activa, la cadena (daily_harvest) ya
+        # encadena embed_all_pending → dedup → matching, así que aquí NO se
+        # auto-encadena (evita doble trabajo y carreras sobre los mismos jobs).
+        if result.get("new", 0) > 0 and not settings.SCHEDULER_DAILY_HARVEST_ENABLED:
             from tasks.embedding_tasks import generate_job_embeddings
 
             generate_job_embeddings.delay(batch_size=100)

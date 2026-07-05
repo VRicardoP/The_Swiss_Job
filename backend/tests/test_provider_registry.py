@@ -11,10 +11,12 @@ from services.job_service import BaseJobProvider
 
 class TestProviderRegistry:
     def test_get_provider_names_registered(self):
-        # Fase 5: 20 providers activos. jobicy/remoteok/himalayas/ictjobs/swisstechjobs
-        # están desactivados a propósito (tech-only, bajo valor para el perfil actual).
+        # 20 providers "clásicos" + 5 fuentes RESTRINGIDAS (restricted_ready) = 25.
+        # jobicy/remoteok/himalayas/ictjobs/swisstechjobs están desactivados a
+        # propósito (tech-only). Las restringidas se registran pero arrancan
+        # deshabilitadas (gated por credencial de partner).
         names = get_provider_names()
-        assert len(names) == 20
+        assert len(names) == 25
         assert "remotive" in names
         assert "jooble" in names
         assert "careerjet" in names
@@ -22,6 +24,9 @@ class TestProviderRegistry:
         assert "zebis" in names
         assert "publicjobs" in names
         assert "globaljobs" in names
+        # Fuentes restringidas presentes en el catálogo
+        assert "jobcloud_partner" in names
+        assert "linkedin_authorized" in names
 
     def test_get_provider_known(self):
         provider = get_provider("remotive")
@@ -65,9 +70,12 @@ class TestProviderRegistry:
 
     def test_log_provider_status_returns_all_providers(self):
         status = log_provider_status()
-        assert len(status) == 20
+        assert len(status) == 25
         # Free providers should be enabled
         assert status["remotive"] == "enabled"
         assert status["arbeitnow"] == "enabled"
         # Key-gated providers should show disabled reason
         assert "disabled" in status.get("jsearch", "")
+        # Fuentes restringidas: deshabilitadas sin credencial de partner
+        assert "disabled" in status.get("jobcloud_partner", "")
+        assert "disabled" in status.get("xing_partner", "")
