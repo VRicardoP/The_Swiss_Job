@@ -100,6 +100,7 @@ services/
   crawler_budget.py # presupuesto explícito: páginas por run según novedades medias + backoff de fuentes sin cambios
   scraper_stealth.py # capa anti-detección (headers Chrome, jitter, soft-block, Playwright endurecido)
   compliance.py     # ComplianceEngine + kill-switch (3 bloques → disable)
+  # Scraping "humano" (4 capas: huella navegador + circadiano + incremental/presupuesto + no-evasión): docs/SCRAPING_HUMANO.md
 tasks/
   pipeline_tasks.py # COSECHA DIARIA autónoma: fetch→scrape→embed→dedup→match, hora variable (jitter)
   fetch_tasks.py / scraping_tasks.py  # fetch API cada 6h / scrapers cada 6h (modo intervalos)
