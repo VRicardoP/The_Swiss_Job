@@ -91,7 +91,7 @@ providers/          # 25 providers (20 activos + 5 restringidos gated); BaseJobP
 scrapers/           # 14 scrapers (6 base + 8 swiss_schools_*); BaseScraper extends BaseJobProvider
 services/
   job_matcher.py    # pipeline 3 etapas: pgvector → multi-factor → LLM (Groq rerank, fallback Gemini)
-  translation_service.py  # títulos a inglés via GROQ_RERANK_MODEL=llama-4-scout (DE/FR/IT only)
+  translation_service.py  # títulos a inglés via GROQ_RERANK_MODEL=qwen3.6-27b (DE/FR/IT only)
   groq_service.py   # sync SDK + run_in_threadpool + Redis cache 7d; rerank cae a Gemini si Groq falla
   gemini_service.py # Google Gemini 2.5 Flash — PRIMARIO de generación de CV/carta (httpx); fallback Groq gpt-oss-120b
   email_service.py  # SMTP stdlib para avisos (SMTP_* en config)
@@ -108,7 +108,8 @@ api/                # FastAPI routers
 models/             # SQLAlchemy + Pydantic (incl. source_cursor.py para el crawler incremental)
 ```
 
-Modelos LLM: `GROQ_MODEL=openai/gpt-oss-120b` (fallback docs), `GROQ_RERANK_MODEL=meta-llama/llama-4-scout-17b-16e-instruct`
-(traducción + rerank), Gemini `gemini-2.5-flash` (primario docs). `llama-3.3-70b-versatile` DECOMISIONADO por Groq (2026-08-16).
+Modelos LLM: `GROQ_MODEL=openai/gpt-oss-120b` (fallback docs), `GROQ_RERANK_MODEL=qwen/qwen3.6-27b`
+(traducción + rerank, requiere `reasoning_effort=none` — lo envía GroqService automáticamente), Gemini `gemini-2.5-flash`
+(primario docs). Decomisos Groq: `llama-3.3-70b-versatile` (2026-08-16), `llama-4-scout` (2026-07-17).
 
 > Para detalles de cada componente, consultar `.claude/memory/MEMORY.md`

@@ -1,6 +1,6 @@
 """TranslationService — batch translation of job titles via Groq LLM.
 
-Uses settings.GROQ_RERANK_MODEL (llama-4-scout, fast) for translating DE/FR/IT
+Uses settings.GROQ_RERANK_MODEL (qwen3.6-27b, fast) for translating DE/FR/IT
 job titles to English. Results are cached per-title in Redis with 30-day TTL.
 
 Mejoras v2:

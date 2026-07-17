@@ -76,8 +76,14 @@ class Settings(BaseSettings):
     # su cadena de pensamiento va en un campo `reasoning` aparte: `.content` sale limpio.
     GROQ_MODEL: str = "openai/gpt-oss-120b"
     # Modelo rápido — traducción de títulos + re-ranking Stage 3 (alto volumen).
-    # Scout (MoE, ~17B activos) es rápido y barato, devuelve JSON limpio y sigue vigente.
-    GROQ_RERANK_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    # llama-4-scout DECOMISIONADO por Groq el 2026-07-17 → migrado a qwen3.6-27b
+    # (reemplazo recomendado por Groq; sondeado en vivo 2026-07-17: JSON limpio,
+    # 25/25 títulos y rerank 10/10 con parsers estrictos, ~0.5-2.4s por lote).
+    GROQ_RERANK_MODEL: str = "qwen/qwen3.6-27b"
+    # qwen3.6 razona por defecto y quemaría max_tokens en <think> rompiendo los
+    # parsers JSON (verificado en vivo). Este valor se envía como reasoning_effort
+    # SOLO en llamadas con GROQ_RERANK_MODEL; vacío = no enviar el parámetro.
+    GROQ_RERANK_REASONING_EFFORT: str = "none"
     GROQ_RERANK_BATCH_SIZE: int = 10
     GROQ_RERANK_TEMPERATURE: float = 0.2
     GROQ_RERANK_MAX_TOKENS: int = 2048

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from config import settings
 from services.groq_service import GroqService
 
 
@@ -89,6 +90,52 @@ class TestGroqServiceFallback:
             assert r["index"] == i
             assert r["score"] == 0
             assert r["reason"] == ""
+
+
+@pytest.mark.anyio
+class TestGroqServiceReasoningEffort:
+    """Envío condicional de reasoning_effort en get_chat_response.
+
+    El modelo rápido (qwen3.6) razona por defecto y quemaría max_tokens en
+    <think> rompiendo los parsers JSON — debe recibir reasoning_effort. El
+    modelo pesado (gpt-oss-120b) no debe recibir el parámetro.
+    """
+
+    @staticmethod
+    def _service_with_mock_client() -> tuple[GroqService, MagicMock]:
+        svc = GroqService.__new__(GroqService)
+        svc.client = MagicMock()
+        svc.redis = None
+        completion = MagicMock()
+        completion.choices = [MagicMock(message=MagicMock(content="ok"))]
+        svc.client.chat.completions.create.return_value = completion
+        return svc, svc.client.chat.completions.create
+
+    async def test_rerank_model_sends_reasoning_effort(self):
+        svc, create = self._service_with_mock_client()
+        await svc.get_chat_response("hola", model=settings.GROQ_RERANK_MODEL)
+        assert (
+            create.call_args.kwargs["reasoning_effort"]
+            == settings.GROQ_RERANK_REASONING_EFFORT
+        )
+
+    async def test_default_model_sends_reasoning_effort(self):
+        # Llamadas sin model (p.ej. letter_generator) usan el modelo rápido
+        # por defecto y deben quedar cubiertas igualmente.
+        svc, create = self._service_with_mock_client()
+        await svc.get_chat_response("hola")
+        assert "reasoning_effort" in create.call_args.kwargs
+
+    async def test_heavy_model_does_not_send_reasoning_effort(self):
+        svc, create = self._service_with_mock_client()
+        await svc.get_chat_response("hola", model=settings.GROQ_MODEL)
+        assert "reasoning_effort" not in create.call_args.kwargs
+
+    async def test_empty_setting_disables_the_parameter(self):
+        svc, create = self._service_with_mock_client()
+        with patch.object(settings, "GROQ_RERANK_REASONING_EFFORT", ""):
+            await svc.get_chat_response("hola", model=settings.GROQ_RERANK_MODEL)
+        assert "reasoning_effort" not in create.call_args.kwargs
 
 
 @pytest.mark.anyio

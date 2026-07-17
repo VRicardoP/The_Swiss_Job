@@ -1,6 +1,6 @@
 """GroqService — LLM re-ranking and chat via Groq API.
 
-Uses settings.GROQ_RERANK_MODEL (llama-4-scout, fast) for re-ranking (Stage 3)
+Uses settings.GROQ_RERANK_MODEL (qwen3.6-27b, fast) for re-ranking (Stage 3)
 and translation; settings.GROQ_MODEL (gpt-oss-120b) for heavier document tasks.
 Groq SDK is synchronous — calls are wrapped in run_in_threadpool.
 """
@@ -93,12 +93,24 @@ class GroqService:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": user_message})
 
+        # qwen3.6 razona por defecto y agotaría max_tokens en <think> antes de
+        # emitir contenido (rompe los parsers JSON de traducción y rerank).
+        # Suprimimos el razonamiento SOLO para el modelo rápido; el modelo pesado
+        # (gpt-oss-120b) ya emite su razonamiento en un campo aparte.
+        extra_params: dict[str, Any] = {}
+        if (
+            selected_model == settings.GROQ_RERANK_MODEL
+            and settings.GROQ_RERANK_REASONING_EFFORT
+        ):
+            extra_params["reasoning_effort"] = settings.GROQ_RERANK_REASONING_EFFORT
+
         def _sync_call() -> str:
             completion = self.client.chat.completions.create(
                 messages=messages,
                 model=selected_model,
                 temperature=effective_temp,
                 max_tokens=effective_max_tokens,
+                **extra_params,
             )
             return completion.choices[0].message.content
 
