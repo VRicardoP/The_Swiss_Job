@@ -184,6 +184,17 @@ class Settings(BaseSettings):
     # Nº de identidades recientes (URLs) que guarda cada cursor para el early-stop.
     CURSOR_RECENT_IDENTITIES_MAX: int = 300
 
+    # Presupuesto explícito de crawling (plan incremental §7). Requiere cursores
+    # (CURSOR_INCREMENTAL_ENABLED): acota las páginas por run según las novedades
+    # medias de la fuente y salta runs de fuentes sin novedades (backoff).
+    CRAWLER_BUDGET_ENABLED: bool = True
+    # Margen de páginas sobre las esperadas (cubre reorden/patrocinadas al borde).
+    CRAWLER_BUDGET_SAFETY_PAGES: int = 1
+    # Runs vacíos seguidos a partir de los cuales se reduce la frecuencia.
+    CRAWLER_BUDGET_EMPTY_RUNS_THRESHOLD: int = 3
+    # Tope del multiplicador de backoff (x intervalo base entre runs).
+    CRAWLER_BUDGET_BACKOFF_MAX_MULTIPLIER: int = 4
+
     # Fuentes RESTRINGIDAS (jobs.ch/jobup.ch, LinkedIn, Indeed, Glassdoor, XING).
     # Vacío = conector deshabilitado (auth_missing, 0 peticiones). NO scraping
     # público: solo se activan con credencial de partner/API autorizada. Ver a.txt §6-7.

@@ -468,43 +468,46 @@ Estas métricas demuestran si el sistema cumple el objetivo: menos páginas cuan
 
 ## 14. Plan de implementación
 
+> Checklist sincronizado con el código el 2026-07-18. Donde la implementación
+> difiere del diseño original se anota cómo se materializó.
+
 ### Fase 1: Documento y modelo
 
 - [x] Reemplazar el plan de scraper stealth por diseño incremental.
-- [ ] Crear modelo `SourceCursor`.
-- [ ] Crear `CursorStore`.
-- [ ] Añadir migración para cursores.
-- [ ] Añadir estado extendido de fuente o documentar mapping temporal en `SourceCompliance`.
+- [x] Crear modelo `SourceCursor` (`models/source_cursor.py` — versión simplificada: identidades por URL en `recent_identities`, métricas EMA; sin columnas etag/next_run_at, ver Fase 5).
+- [x] Crear `CursorStore` (`services/cursor_store.py`).
+- [x] Añadir migración para cursores (`alembic/versions/d4e6f8a0b2c1_add_source_cursors.py`).
+- [x] Estado extendido de fuente en `SourceCompliance` (migraciones `e6f8a0b2c4d3_seed_restricted_compliance` + `f6a8b9c1d2e3_source_compliance_last_success`).
 
 ### Fase 2: Motor incremental
 
-- [ ] Crear `IncrementalFetchResult`.
-- [ ] Añadir wrapper incremental compatible con `BaseJobProvider`.
-- [ ] Implementar `CrawlerBudgetService`.
-- [ ] Cambiar scheduler para scopes vencidos, no solo intervalos fijos globales.
-- [ ] Registrar `stop_reason` en logs y métricas.
+- [ ] ~~Crear `IncrementalFetchResult`~~ — descartado: en lugar del contrato nuevo, el pipeline inyecta `_known_urls` en el provider y lee `_stop_reason` (diseño más simple, sin romper `BaseJobProvider`).
+- [x] Wrapper incremental compatible con `BaseJobProvider` — materializado como early-stop en `BaseScraper` (`_page_all_known()` en los caminos httpx, Playwright y scroll AJAX de schuljobs).
+- [x] Implementar `CrawlerBudgetService` (`services/crawler_budget.py`, 2026-07-18): páginas por run según `avg_new_jobs_per_run` (§7) + backoff de frecuencia tras `CRAWLER_BUDGET_EMPTY_RUNS_THRESHOLD` runs vacíos. Inyectado por `tasks/scraping_tasks.py`; el scraper lo respeta vía `_pages_budget()`.
+- [ ] Cambiar scheduler para scopes vencidos, no solo intervalos fijos globales — parcial: el schedule sigue siendo fijo (cosecha diaria / cada 6h), pero `CrawlerBudgetService.should_run` salta fuentes sin novedades dentro de cada run (backoff por fuente).
+- [x] Registrar `stop_reason` en logs y métricas — `_stop_reason` ("known_page") + métricas EMA en el cursor (`avg_new_jobs_per_run`, `avg_pages_per_run`, `consecutive_empty_runs`).
 
 ### Fase 3: Fuentes de alta eficiencia
 
-- [ ] Implementar conectores ATS públicos: Greenhouse, Lever, Ashby, SmartRecruiters.
-- [ ] Adaptar Jooble/Careerjet/Adzuna/JSearch a cursores cuando la API lo permita.
+- [ ] Implementar conectores ATS públicos: Greenhouse, Lever, Ashby, SmartRecruiters (existe un caso Workday ad-hoc: `scrapers/swiss_schools_isp.py`).
+- [ ] Adaptar Jooble/Careerjet/Adzuna/JSearch a cursores cuando la API lo permita (hoy el cursor solo se inyecta en scrapers).
 - [ ] Añadir import por email/CSV/URL para fuentes restringidas.
-- [ ] Mantener HTML permitido solo para fuentes pequeñas y watchlist.
+- [x] Mantener HTML permitido solo para fuentes pequeñas y watchlist (scrapers actuales: portales de nicho + watchlist `swiss_schools_*`).
 
 ### Fase 4: Fuentes restringidas preparadas
 
-- [ ] Seed de `source_compliance` para `jobcloud_partner`, `linkedin_authorized`, `indeed_partner`, `glassdoor_partner`, `xing_partner` con `is_allowed=false`.
-- [ ] Crear providers stub que devuelven `auth_missing` si no hay credenciales.
+- [x] Seed de `source_compliance` para las 5 fuentes restringidas con `is_allowed=false` (`e6f8a0b2c4d3_seed_restricted_compliance.py`).
+- [x] Providers stub que devuelven `auth_missing` sin credenciales (`providers/restricted.py` — 0 peticiones, nunca scraping).
 - [ ] Añadir UI/admin para mostrar "preparado, pendiente de autorización".
-- [ ] Documentar procedimiento de activación por fuente.
+- [x] Documentar procedimiento de activación por fuente (docstrings de `providers/restricted.py`: ruta autorizada + credencial por fuente).
 
 ### Fase 5: Optimización
 
-- [ ] Recalcular frecuencia por `avg_new_jobs_per_run`.
+- [x] Recalcular frecuencia — vía backoff de `CrawlerBudgetService.should_run` (runs vacíos consecutivos duplican el intervalo exigido, tope `CRAWLER_BUDGET_BACKOFF_MAX_MULTIPLIER`).
 - [ ] Usar `ETag`/`Last-Modified` donde exista.
 - [ ] Usar sitemap `lastmod` antes de abrir detalles.
-- [ ] Medir `requests_per_new_job` por fuente.
-- [ ] Desactivar fuentes con bajo valor o alto coste.
+- [ ] Medir `requests_per_new_job` por fuente (proxy actual: `avg_pages_per_run` vs `avg_new_jobs_per_run` en el cursor).
+- [ ] Desactivar fuentes con bajo valor o alto coste (manual hoy: p.ej. medjobs deshabilitado por Cloudflare).
 
 ---
 

@@ -65,7 +65,8 @@ class SwissSchoolsISPScraper(BaseJobProvider):
         )
         results: list[dict] = []
 
-        for page in range(self.MAX_PAGES):
+        # Presupuesto dinámico de páginas si el pipeline lo inyectó (≤ MAX_PAGES).
+        for page in range(self._pages_budget()):
             offset = page * self.PAGE_SIZE
             payload = {
                 "appliedFacets": {},

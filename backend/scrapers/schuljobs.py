@@ -26,7 +26,9 @@ class SchulJobsScraper(BaseScraper):
     SOURCE_NAME = "schuljobs"
     LISTING_URL = f"{BASE_URL}/suche"
     RATE_LIMIT_SECONDS = 2.0
-    MAX_PAGES = 1  # Initial page only; AJAX handles the rest
+    # Techo de páginas del run: la inicial + las de scroll AJAX. El presupuesto
+    # dinámico (CrawlerBudgetService) acota por debajo según las novedades.
+    MAX_PAGES = 1 + MAX_SCROLL_PAGES
     NEEDS_PLAYWRIGHT = False
     FETCH_DETAILS = True  # Detail page has JSON-LD with full info
     PAGE_SIZE = 25
@@ -140,12 +142,21 @@ class SchulJobsScraper(BaseScraper):
             result_list = soup.select_one("[data-searchhash]")
             searchhash = result_list.get("data-searchhash") if result_list else None
 
+            # Crawler incremental: si TODA la página inicial ya es conocida no
+            # hay novedades → no paginar por AJAX (0 peticiones de scroll).
+            if self._page_all_known(initial_stubs):
+                self._stop_reason = "known_page"
+                logger.info(
+                    "%s early-stop en página inicial: sin ofertas nuevas (cursor)",
+                    self.SOURCE_NAME,
+                )
             # Phase 2: AJAX scroll pages
-            if searchhash:
+            elif searchhash:
                 btn = soup.select_one("[data-nextpage]")
                 next_page = int(btn.get("data-nextpage")) if btn else None
 
-                for _ in range(MAX_SCROLL_PAGES):
+                # Presupuesto del run menos la página inicial ya pedida.
+                for _ in range(self._pages_budget() - 1):
                     if not next_page:
                         break
 
@@ -185,6 +196,16 @@ class SchulJobsScraper(BaseScraper):
                     frag_soup = BeautifulSoup(html_fragment, "lxml")
                     page_stubs = self.parse_listing_page(frag_soup)
                     all_stubs.extend(page_stubs)
+
+                    # Crawler incremental: página de scroll entera ya conocida
+                    # → alcanzado el contenido sincronizado, parar.
+                    if self._page_all_known(page_stubs):
+                        self._stop_reason = "known_page"
+                        logger.info(
+                            "%s early-stop en scroll: sin ofertas nuevas (cursor)",
+                            self.SOURCE_NAME,
+                        )
+                        break
 
                     np = data.get("nextpage")
                     next_page = int(np) if np else None

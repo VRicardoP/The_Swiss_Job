@@ -12,6 +12,7 @@ from celery_app import celery_app
 from config import settings
 from database import task_session
 from scrapers import get_all_scrapers
+from services.crawler_budget import CrawlerBudgetService
 from services.cursor_store import CursorStore
 from services.data_normalizer import DataNormalizer
 from services.deduplicator import Deduplicator
@@ -57,8 +58,18 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
 
     scrapers = get_all_scrapers()
     store = CursorStore() if settings.CURSOR_INCREMENTAL_ENABLED else None
+    # Presupuesto explícito: solo tiene sentido con cursores (usa su historial).
+    budget_on = store is not None and settings.CRAWLER_BUDGET_ENABLED
+    # Intervalo base entre runs: la cosecha diaria corre 1 vez/día; en modo
+    # intervalos, cada SCHEDULER_SCRAPER_INTERVAL_HOURS.
+    base_interval_hours = (
+        24.0
+        if settings.SCHEDULER_DAILY_HARVEST_ENABLED
+        else float(settings.SCHEDULER_SCRAPER_INTERVAL_HOURS)
+    )
     summary = {
         "scrapers": 0,
+        "skipped": 0,
         "fetched": 0,
         "new": 0,
         "updated": 0,
@@ -76,6 +87,24 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 if store is not None:
                     cursor = await store.load(db, source)
                     scraper._known_urls = store.known_identities(cursor)
+
+                if budget_on and cursor is not None:
+                    # Backoff: fuente sin novedades N runs seguidos → saltar el
+                    # run hasta cumplir el intervalo ampliado (0 peticiones).
+                    if not CrawlerBudgetService.should_run(cursor, base_interval_hours):
+                        summary["skipped"] += 1
+                        logger.info(
+                            "%s saltado por presupuesto: %d runs sin novedades",
+                            source,
+                            cursor.consecutive_empty_runs,
+                        )
+                        continue
+                    # Tope de páginas del run según las novedades medias.
+                    scraper._max_pages_this_run = (
+                        CrawlerBudgetService.max_pages_this_run(
+                            cursor, scraper.PAGE_SIZE, scraper.MAX_PAGES
+                        )
+                    )
 
                 jobs = await scraper.fetch_jobs("", "Switzerland")
                 logger.info("Scraper %s returned %d jobs", source, len(jobs))

@@ -150,6 +150,45 @@ class TestBaseScraperFetchJobs:
         scraper._scrape_with_playwright.assert_called_once()
 
 
+class TestBaseScraperPageBudget:
+    """Presupuesto dinámico de páginas inyectado por el pipeline."""
+
+    def test_no_budget_uses_max_pages(self):
+        scraper = ConcreteScraper()
+        assert scraper._pages_budget() == ConcreteScraper.MAX_PAGES
+
+    def test_budget_clamped_to_max_pages(self):
+        scraper = ConcreteScraper()
+        scraper._max_pages_this_run = 99
+        assert scraper._pages_budget() == ConcreteScraper.MAX_PAGES
+
+    def test_budget_never_below_one_page(self):
+        scraper = ConcreteScraper()
+        scraper._max_pages_this_run = 0
+        assert scraper._pages_budget() == 1
+
+    @pytest.mark.asyncio
+    async def test_injected_budget_limits_httpx_pages(self):
+        scraper = ConcreteScraper()
+        scraper._max_pages_this_run = 1
+        # Página llena (PAGE_SIZE=2): sin presupuesto seguiría a la página 2.
+        html = (
+            '<html><body><div class="job">A</div><div class="job">B</div></body></html>'
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = html
+
+        with patch.object(
+            scraper._circuit, "call", new_callable=AsyncMock, return_value=mock_response
+        ) as mock_call:
+            result = await scraper._scrape_with_httpx("")
+
+        assert len(result) == 2
+        assert mock_call.await_count == 1  # solo la página presupuestada
+
+
 class TestBaseScraperHttpx:
     @pytest.mark.asyncio
     async def test_scrape_with_httpx_parses_pages(self):

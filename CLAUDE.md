@@ -97,6 +97,7 @@ services/
   email_service.py  # SMTP stdlib para avisos (SMTP_* en config)
   teacher_alert.py  # detecta docencia primaria (categoría H job_classifier + nivel) → email
   cursor_store.py   # crawler INCREMENTAL: cursor de URLs recientes por fuente/scope (early-stop)
+  crawler_budget.py # presupuesto explícito: páginas por run según novedades medias + backoff de fuentes sin cambios
   scraper_stealth.py # capa anti-detección (headers Chrome, jitter, soft-block, Playwright endurecido)
   compliance.py     # ComplianceEngine + kill-switch (3 bloques → disable)
 tasks/
