@@ -61,10 +61,12 @@ class CrawlerBudgetService:
         threshold = settings.CRAWLER_BUDGET_EMPTY_RUNS_THRESHOLD
         if streak < threshold or cursor.last_run_at is None:
             return True
-        multiplier = min(
-            2 ** (streak - threshold + 1),
-            settings.CRAWLER_BUDGET_BACKOFF_MAX_MULTIPLIER,
-        )
+        # Acotamos el exponente antes de elevar: una fuente muerta acumula rachas
+        # de docenas y `2**streak` sería un entero enorme reducido luego a tope.
+        cap = settings.CRAWLER_BUDGET_BACKOFF_MAX_MULTIPLIER
+        max_exp = cap.bit_length()  # 2**max_exp >= cap → suficiente para saturar
+        exponent = min(streak - threshold + 1, max_exp)
+        multiplier = min(2**exponent, cap)
         current_time = now or datetime.now(timezone.utc)
         required_gap = timedelta(hours=base_interval_hours * multiplier)
         return (current_time - cursor.last_run_at) >= required_gap

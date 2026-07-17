@@ -21,6 +21,9 @@ class BaseJobProvider(ABC):
     DEFAULT_HEADERS: dict[str, str] = {"User-Agent": "SwissJobHunter/1.0"}
     CB_FAILURE_THRESHOLD: int = 5
     CB_RECOVERY_TIMEOUT: int = 60
+    # Techo de paginación por run. Default 1 (providers de API son O(1)); los
+    # scrapers lo suben. Lo usa `_pages_budget()` como cota del presupuesto.
+    MAX_PAGES: int = 1
 
     def __init__(self):
         self._circuit = CircuitBreaker(
@@ -33,6 +36,16 @@ class BaseJobProvider(ABC):
         # (comportamiento legacy). `_stop_reason` es observabilidad del run.
         self._known_urls: set[str] = set()
         self._stop_reason: str | None = None
+        # Presupuesto dinámico de páginas para ESTE run, inyectado por el
+        # pipeline (CrawlerBudgetService) antes de fetch_jobs. None = sin
+        # presupuesto → se usa MAX_PAGES (comportamiento legacy).
+        self._max_pages_this_run: int | None = None
+
+    def _pages_budget(self) -> int:
+        """Tope de páginas del run: el presupuesto inyectado, acotado por MAX_PAGES."""
+        if self._max_pages_this_run is None:
+            return self.MAX_PAGES
+        return max(1, min(self.MAX_PAGES, self._max_pages_this_run))
 
     def get_source_name(self) -> str:
         """Return the unique source identifier. Uses SOURCE_NAME by default."""

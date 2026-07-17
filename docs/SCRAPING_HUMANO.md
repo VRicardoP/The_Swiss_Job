@@ -101,7 +101,7 @@ del early-stop en **política explícita** (sección 7 del plan).
 - `budget_on = cursores activos + CRAWLER_BUDGET_ENABLED`.
 - Intervalo base: 24h con la cosecha diaria, o `SCHEDULER_SCRAPER_INTERVAL_HOURS` en modo intervalos.
 - Salta la fuente (`summary["skipped"]`) o fija `scraper._max_pages_this_run`.
-- `BaseScraper._pages_budget()` = `min(MAX_PAGES, presupuesto)` (mínimo 1), respetado en httpx y Playwright.
+- `BaseJobProvider._pages_budget()` = `min(MAX_PAGES, presupuesto)` (mínimo 1), respetado en httpx, Playwright y en scrapers que extienden `BaseJobProvider` directamente (Workday ISP).
 - **Sin migraciones**: reutiliza columnas ya presentes en `SourceCursor`.
 
 Comportamiento esperado por situación:

@@ -31,7 +31,9 @@ class SchulJobsScraper(BaseScraper):
     MAX_PAGES = 1 + MAX_SCROLL_PAGES
     NEEDS_PLAYWRIGHT = False
     FETCH_DETAILS = True  # Detail page has JSON-LD with full info
-    PAGE_SIZE = 25
+    # Unidad de paginación que se repite (scroll AJAX). El presupuesto dinámico
+    # divide las novedades por este tamaño; usar el real evita infra/sobrestimar.
+    PAGE_SIZE = SCROLL_PAGE_SIZE
 
     def build_listing_url(self, page: int, query: str) -> str:
         return self.LISTING_URL

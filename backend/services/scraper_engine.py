@@ -80,19 +80,6 @@ class BaseScraper(BaseJobProvider):
     # Cabeceras realistas de un Chrome real (User-Agent, client hints, Sec-Fetch).
     DEFAULT_HEADERS: dict[str, str] = realistic_headers()
 
-    def __init__(self):
-        super().__init__()
-        # Presupuesto dinámico de páginas para ESTE run, inyectado por el
-        # pipeline (CrawlerBudgetService) antes de fetch_jobs. None = sin
-        # presupuesto → se usa MAX_PAGES (comportamiento legacy).
-        self._max_pages_this_run: int | None = None
-
-    def _pages_budget(self) -> int:
-        """Tope de páginas del run: el presupuesto inyectado, acotado por MAX_PAGES."""
-        if self._max_pages_this_run is None:
-            return self.MAX_PAGES
-        return max(1, min(self.MAX_PAGES, self._max_pages_this_run))
-
     async def fetch_jobs(self, query: str, location: str = "Switzerland") -> list[dict]:
         """Fetch jobs via scraping. Overrides BaseJobProvider.fetch_jobs().
 
