@@ -4,6 +4,8 @@ Uses paraphrase-multilingual-MiniLM-L12-v2 for cross-language embeddings.
 Model loading is deferred until first use (lazy singleton).
 """
 
+import threading
+
 import numpy as np
 
 from config import settings
@@ -42,16 +44,23 @@ class JobMatcher:
     """Core matching engine. Combines embedding similarity with multi-factor scoring."""
 
     _model = None
+    # Serializa la carga: el warming en background y las peticiones (vía
+    # asyncio.to_thread) pueden llamar a la vez; sin lock cargarían el modelo dos
+    # veces (memoria/tiempo duplicados).
+    _model_lock = threading.Lock()
 
     @classmethod
     def _get_model(cls):
-        """Lazy-load the SentenceTransformer model."""
+        """Lazy-load the SentenceTransformer model (thread-safe)."""
         if cls._model is None:
-            from sentence_transformers import SentenceTransformer
+            with cls._model_lock:
+                # Doble comprobación: otro hilo pudo cargarlo mientras esperábamos.
+                if cls._model is None:
+                    from sentence_transformers import SentenceTransformer
 
-            cls._model = SentenceTransformer(
-                settings.EMBEDDING_MODEL_NAME, device=settings.EMBEDDING_DEVICE
-            )
+                    cls._model = SentenceTransformer(
+                        settings.EMBEDDING_MODEL_NAME, device=settings.EMBEDDING_DEVICE
+                    )
         return cls._model
 
     @staticmethod

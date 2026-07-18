@@ -14,11 +14,21 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://redis:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://redis:6379/2"
 
-    # CORS
+    # CORS — orígenes/métodos/cabeceras explícitos (no wildcard con credenciales).
+    # El frontend solo envía Authorization + Content-Type; ampliar aquí si cambia.
     BACKEND_CORS_ORIGINS: list[str] = [
         "http://localhost:5174",
         "http://localhost:5173",
     ]
+    BACKEND_CORS_METHODS: list[str] = [
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+    ]
+    BACKEND_CORS_HEADERS: list[str] = ["Authorization", "Content-Type", "Accept"]
 
     # App
     SECRET_KEY: str = "change-me-in-production"
@@ -47,6 +57,10 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL_NAME: str = "paraphrase-multilingual-MiniLM-L12-v2"
     EMBEDDING_DEVICE: str = "cpu"
     EMBEDDING_BATCH_SIZE: int = 64
+    # Precarga del modelo al arrancar. True = warming en BACKGROUND (no bloquea el
+    # lifespan; el primer arranque tarda minutos en cargar el modelo). False = carga
+    # perezosa en la primera petición que lo use. Nunca bloquea el event loop.
+    EMBEDDING_PRELOAD_ON_STARTUP: bool = True
 
     # CV upload
     CV_MAX_SIZE_MB: int = 10

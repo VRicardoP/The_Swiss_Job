@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -49,6 +50,24 @@ def _validate_security_config() -> None:
     )
 
 
+async def _warm_embedding_model() -> None:
+    """Carga el modelo de embeddings en un hilo, sin bloquear el event loop.
+
+    El primer arranque tarda minutos en cargar el SentenceTransformer; hacerlo
+    síncrono en el lifespan dejaba el servidor sin responder (health incluido)
+    todo ese tiempo. Lo cargamos en background: las peticiones que lo necesiten
+    esperan en el loader perezoso (thread-safe). Un fallo aquí no tumba el
+    arranque; la carga perezosa lo reintentará en la primera petición.
+    """
+    from services.job_matcher import JobMatcher
+
+    try:
+        await asyncio.to_thread(JobMatcher._get_model)
+        logger.info("Embedding model warmed up")
+    except Exception:
+        logger.exception("Embedding model warmup failed; se cargará bajo demanda")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _validate_security_config()
@@ -59,12 +78,12 @@ async def lifespan(app: FastAPI):
     app.state.sse_manager = sse
     app.state.redis_client = redis_client
 
-    # Preload embedding model to avoid latency spike on first request (TD-16)
-    logger.info("Preloading embedding model...")
-    from services.job_matcher import JobMatcher
-
-    JobMatcher._get_model()
-    logger.info("Embedding model loaded")
+    # Warming del modelo de embeddings en background (no bloquea el arranque).
+    warmup_task = (
+        asyncio.create_task(_warm_embedding_model())
+        if settings.EMBEDDING_PRELOAD_ON_STARTUP
+        else None
+    )
 
     log_provider_status()
     setup_schedules()
@@ -73,6 +92,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    if warmup_task is not None and not warmup_task.done():
+        warmup_task.cancel()
     scheduler.shutdown()
     await sse.stop()
     await redis_client.aclose()
@@ -93,8 +114,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.BACKEND_CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=settings.BACKEND_CORS_METHODS,
+    allow_headers=settings.BACKEND_CORS_HEADERS,
 )
 
 # Routers
