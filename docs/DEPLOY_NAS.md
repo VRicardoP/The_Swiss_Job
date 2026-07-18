@@ -81,18 +81,27 @@ permisos restringidos.
 **Container Station → Applications → swissjob → Stop / Recreate**.
 La opción "Recreate" relee el YAML del filesystem.
 
-### 0.4 Primer arranque del backend tarda ~5 min (modelo embedding)
+### 0.4 Primer arranque: el modelo embedding se carga en BACKGROUND
 
-El `lifespan` de FastAPI hace `JobMatcher._get_model()` que descarga
-`paraphrase-multilingual-MiniLM-L12-v2` (~120 MB) la primera vez. En CPU del
-NAS: 4-5 min. Sin un `start_period` generoso, Container Station marca
-unhealthy y aborta el `up`.
+`paraphrase-multilingual-MiniLM-L12-v2` (~120 MB) sigue tardando 4-5 min en
+descargarse/cargarse la primera vez, PERO desde 2026-07-18 el `lifespan` ya
+**no bloquea** en esa carga: se lanza como tarea background
+(`asyncio.to_thread`, gateada por `EMBEDDING_PRELOAD_ON_STARTUP=True`), así que
+`Application startup complete.` aparece de inmediato y el backend pasa a
+healthy en segundos. La primera petición de matching que necesite el modelo
+esperará a que termine la carga; el resto de la API responde ya.
 
-**Mitigaciones aplicadas** en `docker-compose.qnap.yml` (y `prod.yml`):
+- **En los logs verás `Embedding model warmed up`** cuando la carga background
+  termina (ya NO el antiguo `Preloading embedding model...`, que era síncrono).
+- Con `EMBEDDING_PRELOAD_ON_STARTUP=False` la carga es puramente perezosa (en la
+  primera petición que la use).
 
-- Healthcheck con `start_period: 360s` y `retries: 5`.
+**Mitigaciones que siguen aplicando** en `docker-compose.qnap.yml` (y `prod.yml`):
+
+- Healthcheck con `start_period: 360s` y `retries: 5` (holgura de sobra ahora que
+  el arranque no bloquea; se mantiene por seguridad).
 - Volumen `hfcache` para que el modelo persista entre recreates → siguientes
-  arranques <60s.
+  arranques no re-descargan.
 
 ### 0.5 `alembic.ini` tenía el password hard-coded
 
@@ -528,7 +537,7 @@ embedding NO se vuelve a descargar.
 | Síntoma | Causa probable | Acción |
 |---|---|---|
 | `Failed to create application "swissjob". ... container swissjob-backend is unhealthy` y al ver logs el último mensaje es `[entrypoint] Aplicando migraciones Alembic...` con traceback `asyncpg.exceptions.InvalidPasswordError` | `alembic.ini` con `sqlalchemy.url` hard-coded, o desincronización entre `POSTGRES_PASSWORD` y `DATABASE_URL` en `.env.prod`, o YAML del compose con literal distinto del `.env.prod` | 1. Verifica que la imagen tiene el fix: `docker run --rm --entrypoint sh swissjob-backend:prod -c 'grep sqlalchemy.url alembic.ini'` debe dar `driver://user:pass@localhost/dbname`. Si no, rebuild. 2. `grep -E "^POSTGRES_\|^DATABASE_URL" .env.prod` — passwords coinciden. 3. `grep environment docker-compose.qnap.yml` — no debe haber password literal en postgres. |
-| Backend `unhealthy` >90s tras arranque limpio | Modelo embedding descargando por primera vez | Esperar hasta 5 min. Verifica `docker logs -f swissjob-backend` para ver `Preloading embedding model...`. Asegúrate que el YAML tiene `start_period: 360s`. |
+| Backend `unhealthy` >90s tras arranque limpio | Ya NO debería pasar por el modelo (carga en background desde 2026-07-18). Si ocurre, es otra cosa (BD, Redis) | `docker logs -f swissjob-backend`: `Application startup complete.` debe salir en segundos; `Embedding model warmed up` llega después sin bloquear. Si el startup no completa, mira BD/Redis. |
 | Frontend devuelve 502 | Backend aún no healthy | `docker logs swissjob-backend` y esperar. Tras pasar healthy, refrescar. |
 | Postgres exited al arrancar | Permisos volumen o init-pgvector inaccesible | Verifica que `/share/Public/swissjob/docker/postgres/init-pgvector.sql` existe y es legible. |
 | Worker no procesa jobs (queue crece) | Redis no conecta o tarea falla | `docker logs swissjob-worker` — buscar tracebacks. Verificar `redis-cli ping` desde dentro: `docker exec swissjob-worker redis-cli -h redis ping`. |
