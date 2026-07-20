@@ -377,5 +377,46 @@ El contenido personalizado de la carta. La detección, clasificación, borrador 
 
 ---
 
+## Estado de cobertura (verificado 2026-07-21)
+
+Cruce de la tabla de metadatos (17 colegios) contra la implementación real de los dos proyectos.
+
+### SwissJob — 16/17 cubiertos en `backend/scrapers/swiss_schools_config.py`
+
+18 entradas `WatchedSchool`, cada una con estrategia por plataforma, `careers_url`, policy, contacto y template:
+
+| school_id (tabla) | Entrada en config | Estrategia | Nota |
+|---|---|---|---|
+| zis | zis_zurich | `schoolspring` | |
+| isg | ecolint_geneva | `drupal_ecolint` | |
+| isb | isb_basel | `finalsite_board` | |
+| iscs | iscs_zug | `html_css` | |
+| beau | beausoleil_villars + beausoleil_inline | `nae_central` + `html_css` | web propia como mirror |
+| vis | verbier_vis | `html_css` | |
+| ges | ges_versoix | `inspired_sf` | |
+| lgr | lagarenne_villars | `manual` | anti-bot 403 con UA simple |
+| hau | hautlac_stlegier | `hubspot_cms` | |
+| lci | lcis_aubonne | `nae_central` | |
+| chp | champittet_nyon | `nae_central` | |
+| riv | riviera_montreux | `html_css` | |
+| bsb | bsb_bern | `manual` | sin listado público (anuncian por Facebook) |
+| mos | mosaic_geneva | `isp_workday` | |
+| wte | wisdomtree_pully | `manual` | solo publica en jobs.ch/jobup.ch (prohibidos) |
+| isr | isr_buchs | `abaservices` | |
+| **gri** | **—** | **—** | **NO cubierto: la tabla lo tiene entero en TBD (sin policy/URL/método)** |
+
+- **Extra no listado en la tabla:** `stgeorges_montreux` (St. George's International School, Montreux) vía `inspired_sf`.
+- **3 en modo `manual`** (fichados pero sin scraping automático): La Garenne, British School Bern y Wisdom Tree, por los motivos de la columna Nota.
+
+### ReactPortfolio — 0/17 cubiertos (módulo presente pero sin sembrar)
+
+El módulo de colegios existe entero (`models/school.py`, `services/school_scraper|extractor|classifier|urgency|alert.py`, `routers/schools.py`, migración) pero **no hay ningún colegio sembrado en el repo**: no existe seed de schools (solo `seed_cv_profiles.py`, de CVs) ni fixture JSON/CSV. Los colegios se crean a mano en runtime vía `POST /api/v1/schools` (admin), así que ninguno de los 17 está pre-configurado. Además `SchoolScrapingMethod` solo cubre `groq_extract`, `jina_reader`, `schoolspring_api`, `nord_anglia_api`, `tes_rss` — sin estrategia dedicada para Workday/SuccessFactors/Finalsite/HubSpot/Drupal/AbaServices (que sí necesitan Ecolint, ISB, Mosaic, GES, St. George's, Haut-Lac, ISR). Fichado como DT-114 en `ReactPortfolio/DEUDA_TECNICA.md`.
+
+### Pendiente
+- **SwissJob:** añadir Grindelwald (`gri`) cuando haya datos (policy, `careers_url`, método) — hoy es el único hueco.
+- **ReactPortfolio:** decidir entre sembrar los 17 (un `seed_schools.py` desde esta tabla + añadir las estrategias de plataforma que faltan) o marcar su monitor de colegios como secundario/no-usado, dado que SwissJob ya lo cubre a fondo.
+
+---
+
 *Documento generado: 28 de mayo de 2026*
 *Contexto: candidatura IT para colegios británicos e internacionales en Suiza — Vicente Ricardo Pau Valero*
