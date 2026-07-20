@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-me-in-production"
     APP_NAME: str = "SwissJobHunter"
 
+    # Nivel de logging de la app (root). La app no fijaba nivel → los loggers
+    # propios quedaban en WARNING y el scheduler/cosecha (INFO) no se veían.
+    LOG_LEVEL: str = "INFO"
+
     # JWT
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30

@@ -4,8 +4,12 @@ APScheduler only dispatches tasks; it does NOT execute work inline.
 This keeps the FastAPI event loop unblocked.
 """
 
+import asyncio
 import logging
+import os
+import socket
 
+import redis.asyncio as aioredis
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -16,6 +20,80 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone="Europe/Zurich")
+
+# --- Leader-lock: el scheduler corre en UN SOLO proceso -----------------------
+# Con varios workers de gunicorn, cada uno ejecuta el lifespan → sin gate se
+# arrancarían N schedulers y cada job se dispararía N veces (doble cosecha, doble
+# matching...). El lock de líder en Redis garantiza que solo un proceso programa.
+_LEADER_KEY = "swissjob:scheduler:leader"
+_LEADER_TTL = 60  # segundos de vida del lock
+_RENEW_EVERY = 20  # cada cuánto renueva/reintenta la elección
+_WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
+
+
+async def _leader_step(r, is_leader: bool) -> bool:
+    """Un paso de elección: adquiere o renueva el lock. Devuelve si somos líder.
+
+    Extraído para poder testear la lógica sin el bucle infinito.
+    """
+    if not is_leader:
+        acquired = await r.set(_LEADER_KEY, _WORKER_ID, nx=True, ex=_LEADER_TTL)
+        if acquired:
+            setup_schedules()
+            scheduler.start()
+            logger.info("Scheduler LÍDER (%s): jobs programados", _WORKER_ID)
+            return True
+        return False
+
+    # Ya somos líderes: renovar mientras el lock siga siendo nuestro.
+    current = await r.get(_LEADER_KEY)
+    if current == _WORKER_ID:
+        await r.expire(_LEADER_KEY, _LEADER_TTL)
+        return True
+
+    # Perdimos el liderazgo (caso raro): parar y dejar que otro releve.
+    logger.warning("Scheduler perdió el liderazgo; deteniendo scheduler")
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+    return False
+
+
+async def run_scheduler_with_leader_lock() -> None:
+    """Arranca el scheduler solo en el proceso que gana el lock de líder.
+
+    Renueva el lock mientras vive y reintenta la elección si el líder cae (el lock
+    expira por TTL), de modo que el scheduling se recupera sin reiniciar el
+    contenedor. Bucle cancelable en el shutdown del lifespan.
+    """
+    if not settings.SCHEDULER_ENABLED:
+        logger.info("Scheduler disabled via SCHEDULER_ENABLED=False")
+        return
+
+    r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    is_leader = False
+    try:
+        while True:
+            try:
+                is_leader = await _leader_step(r, is_leader)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # Redis caído, etc. → reintentar, no morir.
+                logger.warning("Leader-lock loop error: %s", exc)
+            await asyncio.sleep(_RENEW_EVERY)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        try:
+            if is_leader:
+                if scheduler.running:
+                    scheduler.shutdown(wait=False)
+                # Liberar el lock si sigue siendo nuestro → relevo inmediato.
+                current = await r.get(_LEADER_KEY)
+                if current == _WORKER_ID:
+                    await r.delete(_LEADER_KEY)
+        except Exception:
+            pass
+        await r.aclose()
 
 
 def setup_schedules() -> None:

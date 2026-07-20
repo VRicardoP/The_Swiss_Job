@@ -10,8 +10,9 @@ from slowapi.errors import RateLimitExceeded
 
 from config import settings
 from core.rate_limit import limiter
+from logging_setup import configure_logging
 from providers import log_provider_status
-from services.scheduler import scheduler, setup_schedules
+from services.scheduler import run_scheduler_with_leader_lock
 from services.sse_manager import SSEManager
 from routers.analytics import router as analytics_router
 from routers.applications import router as applications_router
@@ -23,6 +24,10 @@ from routers.notifications import router as notifications_router
 from routers.profile import router as profile_router
 from routers.saved_searches import router as searches_router
 from routers.watchlist import router as watchlist_router
+
+# Fija el nivel de logging (INFO por defecto) antes de que nada emita, para que
+# el scheduler y la cosecha diaria sean visibles en los logs.
+configure_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -86,15 +91,20 @@ async def lifespan(app: FastAPI):
     )
 
     log_provider_status()
-    setup_schedules()
-    scheduler.start()
+    # El scheduler corre en UN SOLO proceso (leader-lock en Redis) para evitar
+    # el doble disparo con varios workers de gunicorn.
+    scheduler_task = asyncio.create_task(run_scheduler_with_leader_lock())
 
     yield
 
     # Shutdown
     if warmup_task is not None and not warmup_task.done():
         warmup_task.cancel()
-    scheduler.shutdown()
+    scheduler_task.cancel()
+    try:
+        await scheduler_task
+    except asyncio.CancelledError:
+        pass
     await sse.stop()
     await redis_client.aclose()
 
