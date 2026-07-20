@@ -44,6 +44,12 @@ async def _detect_and_notify() -> dict[str, Any]:
     if not settings.TEACHER_ALERT_ENABLED:
         return {"status": "disabled"}
 
+    if not settings.TEACHER_ALERT_EMAIL:
+        logger.warning(
+            "Alerta profesor primaria: TEACHER_ALERT_EMAIL vacío — se omite el envío"
+        )
+        return {"status": "no_recipient"}
+
     email = EmailService()
     if not email.is_available:
         logger.warning(

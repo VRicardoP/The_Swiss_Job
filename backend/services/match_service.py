@@ -25,6 +25,7 @@ from models.user_profile import UserProfile
 from services.groq_service import GroqService
 from services.job_classifier import CATEGORY_MULTIPLIERS
 from services.job_matcher import DEFAULT_WEIGHTS, JobMatcher
+from services.skill_synonyms import filter_missing_skills
 
 logger = logging.getLogger(__name__)
 
@@ -336,6 +337,8 @@ class MatchService:
 
         matching = sorted(user_lower & job_lower)
         missing = sorted(job_lower - user_lower)
+        # Quita "missing" que el candidato ya cubre por sinónimo (copywriting↔content writer…).
+        missing = filter_missing_skills(user_skills, missing)
         return matching, missing
 
     async def _stage3_llm_rerank(
@@ -388,7 +391,9 @@ class MatchService:
         if llm_data.get("matching_skills"):
             r["matching_skills"] = llm_data["matching_skills"]
         if llm_data.get("missing_skills"):
-            r["missing_skills"] = llm_data["missing_skills"]
+            r["missing_skills"] = filter_missing_skills(
+                profile.skills or [], llm_data["missing_skills"]
+            )
         # Recalculate final score with real LLM score + category multiplier
         base = self.matcher.compute_final_score(
             embedding_score=r["score_embedding"],

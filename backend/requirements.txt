@@ -1,3 +1,9 @@
+# torch CPU-only: sin esta línea, sentence-transformers arrastra el build CUDA de
+# PyTorch (~4.5 GB: nvidia-*, triton) desde PyPI. El contenedor corre en CPU en el
+# NAS, así que forzamos las wheels +cpu (sortean por delante de las de PyPI por el
+# sufijo de versión local, así que pip las elige sin más cambios).
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 # Web framework
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.34,<1.0

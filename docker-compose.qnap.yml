@@ -71,7 +71,11 @@ services:
       - swissjob-net
 
   worker:
-    image: swissjob-backend:prod
+    # Imagen CON Chromium: el worker ejecuta los scrapers Playwright. NO puede
+    # usar swissjob-backend:prod, que se construye esbelta (INSTALL_BROWSERS=false).
+    # Container Station no construye: carga swissjob-worker:prod (build en dev con
+    # docker-compose.prod.yml → docker save → docker load en el NAS).
+    image: swissjob-worker:prod
     container_name: swissjob-worker
     restart: unless-stopped
     env_file:

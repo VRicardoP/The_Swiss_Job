@@ -193,6 +193,15 @@ def setup_schedules() -> None:
         replace_existing=True,
     )
 
+    # Digest diario de matches por email (opt-in): hora fija CET.
+    if settings.DAILY_DIGEST_ENABLED:
+        scheduler.add_job(
+            _dispatch_daily_digest,
+            CronTrigger(hour=settings.DAILY_DIGEST_HOUR, timezone="Europe/Zurich"),
+            id="daily_digest",
+            replace_existing=True,
+        )
+
     logger.info(
         "Scheduler configured: daily harvest=%s, dedup daily 04:00, "
         "URL check weekly Sun 03:00, saved searches every %d min, "
@@ -250,3 +259,8 @@ def _dispatch_watchlist_digest() -> None:
 def _dispatch_teacher_alert() -> None:
     celery_app.send_task("tasks.alert_tasks.detect_teacher_alerts")
     logger.debug("Dispatched tasks.alert_tasks.detect_teacher_alerts")
+
+
+def _dispatch_daily_digest() -> None:
+    celery_app.send_task("tasks.digest_tasks.send_daily_digest")
+    logger.debug("Dispatched tasks.digest_tasks.send_daily_digest")

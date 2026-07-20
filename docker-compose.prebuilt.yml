@@ -1,11 +1,12 @@
 # SwissJobHunter — stack producción, versión PREBUILT.
 #
 # A diferencia de docker-compose.prod.yml, este NO construye nada en el NAS.
-# Asume que las imágenes swissjob-backend:prod y swissjob-frontend:prod
-# ya están cargadas en el daemon (vía `docker load -i swissjob-backend.tar`).
+# Asume que las imágenes swissjob-backend:prod (API, esbelta), swissjob-worker:prod
+# (worker, CON Chromium) y swissjob-frontend:prod ya están cargadas en el daemon.
 #
 # Despliegue:
 #   docker load -i swissjob-backend.tar
+#   docker load -i swissjob-worker.tar
 #   docker load -i swissjob-frontend.tar
 #   docker compose -f docker-compose.prebuilt.yml up -d
 #
@@ -80,7 +81,8 @@ services:
       - swissjob-net
 
   worker:
-    image: swissjob-backend:prod
+    # Imagen CON Chromium (swissjob-backend:prod se construye esbelta sin él).
+    image: swissjob-worker:prod
     container_name: swissjob-worker
     restart: unless-stopped
     env_file:

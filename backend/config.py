@@ -165,11 +165,26 @@ class Settings(BaseSettings):
     # Opt-in aislado (no afecta al matching principal, que penaliza docencia).
     # Requiere SMTP_* configurado para enviar.
     TEACHER_ALERT_ENABLED: bool = True
-    TEACHER_ALERT_EMAIL: str = "amoore3199@gmail.com"
+    # Sin default personal en el código: el destinatario se fija por entorno
+    # (TEACHER_ALERT_EMAIL). Vacío = alerta omitida aunque esté habilitada.
+    TEACHER_ALERT_EMAIL: str = ""
     TEACHER_ALERT_INITIAL_LOOKBACK_DAYS: int = (
         7  # primera ejecución mira atrás esta ventana
     )
     SCHEDULER_TEACHER_ALERT_INTERVAL_HOURS: int = 6
+
+    # Digest diario de matches por email (opt-in, requiere SMTP_*). Resume los
+    # mejores matches NUEVOS de cada usuario desde el último envío (marca de agua
+    # en Redis, sin re-enviar). Distinto de la alerta de profesor (destinatario fijo).
+    DAILY_DIGEST_ENABLED: bool = False
+    DAILY_DIGEST_HOUR: int = 7  # hora fija CET del envío
+    DAILY_DIGEST_MIN_SCORE: float = 60.0
+    DAILY_DIGEST_MAX_JOBS: int = 20  # tope de ofertas por email y usuario
+    DAILY_DIGEST_INITIAL_LOOKBACK_HOURS: int = 24  # ventana en la primera corrida
+
+    # Health-check de URLs: nº máximo de ofertas comprobadas por corrida (rotación
+    # por check más antiguo). Acota peticiones salientes del job semanal.
+    MAINTENANCE_URL_CHECK_LIMIT: int = 200
 
     # Compliance (TD-06)
     COMPLIANCE_BLOCK_THRESHOLD: int = 3

@@ -75,15 +75,106 @@ async def _dedup_semantic_batch_async(batch_size: int) -> dict[str, Any]:
         }
 
 
-@celery_app.task(name="tasks.check_job_urls")
-def check_job_urls() -> dict:
-    """Verify job URLs are still active (HEAD request health check).
+# UA de navegador para el health-check: algunos portales devuelven 403 a clientes
+# "bot". Da igual para la decisión (solo desactivamos en 404/410), pero evita ruido.
+_URL_CHECK_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+_URL_CHECK_CONCURRENCY = 10
+_URL_CHECK_TIMEOUT_SECONDS = 10.0
+# Solo estos códigos significan "la oferta ya no existe". 403/405/5xx/timeouts NO
+# desactivan (pueden ser bloqueos anti-bot o caídas transitorias, no bajas).
+_URL_DEAD_STATUSES = frozenset({404, 410})
 
-    Full implementation in Fase 1 Week 3.
-    Marks jobs as inactive if 404/410/timeout.
+
+@celery_app.task(name="tasks.check_job_urls")
+def check_job_urls(limit: int | None = None) -> dict[str, Any]:
+    """Comprueba con HEAD que las URLs de las ofertas activas siguen vivas.
+
+    Desactiva (is_active=False) solo las que devuelven 404/410. Acotado a
+    `limit` ofertas por corrida (las de check más antiguo primero), de modo que
+    barre el catálogo por rotación sin martillear ningún portal.
     """
-    logger.info("URL health check: not yet implemented (Fase 1 Week 3)")
-    return {"status": "not_implemented"}
+    from config import settings
+
+    effective = limit if limit is not None else settings.MAINTENANCE_URL_CHECK_LIMIT
+    try:
+        return asyncio.run(_check_job_urls_async(effective))
+    except Exception as exc:
+        logger.error("check_job_urls failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
+async def _check_job_urls_async(limit: int) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
+    import httpx
+    from sqlalchemy import nulls_first, select, update
+
+    from database import task_session
+    from models.job import Job
+
+    async with task_session() as db:
+        stmt = (
+            select(Job.hash, Job.url)
+            .where(Job.is_active.is_(True), Job.duplicate_of.is_(None))
+            # Prioriza las nunca comprobadas y las de check más antiguo.
+            .order_by(nulls_first(Job.url_last_check.asc()))
+            .limit(limit)
+        )
+        rows = (await db.execute(stmt)).all()
+
+        if not rows:
+            return {"status": "success", "checked": 0, "deactivated": 0}
+
+        sem = asyncio.Semaphore(_URL_CHECK_CONCURRENCY)
+        timeout = httpx.Timeout(_URL_CHECK_TIMEOUT_SECONDS)
+
+        async def _probe(client: httpx.AsyncClient, job_hash: str, url: str):
+            async with sem:
+                try:
+                    resp = await client.head(url, follow_redirects=True)
+                    return job_hash, resp.status_code
+                except Exception:
+                    # Error de red/timeout: desconocido, no lo damos por muerto.
+                    return job_hash, None
+
+        async with httpx.AsyncClient(
+            headers={"User-Agent": _URL_CHECK_UA}, timeout=timeout
+        ) as client:
+            results = await asyncio.gather(*(_probe(client, h, u) for h, u in rows))
+
+        now = datetime.now(timezone.utc)
+        dead = [h for h, status in results if status in _URL_DEAD_STATUSES]
+        probed = [
+            h for h, _status in results
+        ]  # todas las sondeadas (incluidos errores)
+
+        if dead:
+            await db.execute(
+                update(Job)
+                .where(Job.hash.in_(dead))
+                .values(is_active=False, url_last_check=now)
+            )
+        # Avanza url_last_check en TODAS las sondeadas, también las de error de
+        # red/timeout: si no, quedan con url_last_check NULL y el order_by
+        # nulls_first las re-selecciona cada semana → inanición de la rotación,
+        # el resto del catálogo nunca se comprueba.
+        dead_set = set(dead)
+        rest = [h for h in probed if h not in dead_set]
+        if rest:
+            await db.execute(
+                update(Job).where(Job.hash.in_(rest)).values(url_last_check=now)
+            )
+        await db.commit()
+
+    logger.info(
+        "check_job_urls: %d sondeadas, %d desactivadas (404/410)",
+        len(probed),
+        len(dead),
+    )
+    return {"status": "success", "checked": len(probed), "deactivated": len(dead)}
 
 
 @celery_app.task(name="tasks.cleanup_stale_jobs")

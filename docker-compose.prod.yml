@@ -70,6 +70,10 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.prod
+      args:
+        # La API no ejecuta scrapers Playwright (los corre el worker), así que su
+        # imagen se construye sin Chromium (~1 GB menos).
+        INSTALL_BROWSERS: "false"
     image: swissjob-backend:prod
     container_name: swissjob-backend
     restart: unless-stopped
@@ -97,7 +101,15 @@ services:
       - swissjob-net
 
   worker:
-    image: swissjob-backend:prod   # reutiliza la imagen del backend
+    # Imagen propia CON Chromium: el worker ejecuta los scrapers Playwright.
+    # Comparte la capa de pip con swissjob-backend:prod (BuildKit la cachea);
+    # solo añade la capa del navegador.
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+      args:
+        INSTALL_BROWSERS: "true"
+    image: swissjob-worker:prod
     container_name: swissjob-worker
     restart: unless-stopped
     env_file:
