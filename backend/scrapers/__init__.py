@@ -2,6 +2,7 @@
 
 from scrapers.financejobs import FinancejobsScraper
 from scrapers.gastrojob import GastrojobScraper
+from scrapers.irishjobs import IrishJobsScraper
 from scrapers.myscience import MyScienceScraper
 from scrapers.schuljobs import SchulJobsScraper
 from scrapers.stelle_admin import StelleAdminScraper
@@ -26,6 +27,9 @@ _SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
     # HTTP 200 con datos. Sonda en vivo: myscience ~14 jobs/pág, financejobs ~10.
     "myscience": MyScienceScraper,
     "financejobs": FinancejobsScraper,
+    # Irlanda: IrishJobs.ie + Jobs.ie (misma plataforma StepStone, SSR
+    # __PRELOADED_STATE__; remoto derivado del scope /jobs/work-from-home)
+    "irishjobs": IrishJobsScraper,
     # medjobs (med-jobs.com) SIGUE deshabilitado: está tras un challenge duro de
     # Cloudflare (/cdn-cgi/challenge-platform) que el Playwright endurecido local
     # NO supera. Requiere un browser stealth remoto de pago vía CDP

@@ -11,12 +11,13 @@ from services.job_service import BaseJobProvider
 
 class TestProviderRegistry:
     def test_get_provider_names_registered(self):
-        # 20 providers "clásicos" + 5 fuentes RESTRINGIDAS (restricted_ready) = 25.
+        # 23 providers "clásicos" (20 + 3 remoto UE-norte: thehub/jobgether/
+        # nav_arbeidsplassen) + 5 fuentes RESTRINGIDAS (restricted_ready) = 28.
         # jobicy/remoteok/himalayas/ictjobs/swisstechjobs están desactivados a
         # propósito (tech-only). Las restringidas se registran pero arrancan
         # deshabilitadas (gated por credencial de partner).
         names = get_provider_names()
-        assert len(names) == 25
+        assert len(names) == 28
         assert "remotive" in names
         assert "jooble" in names
         assert "careerjet" in names
@@ -24,6 +25,10 @@ class TestProviderRegistry:
         assert "zebis" in names
         assert "publicjobs" in names
         assert "globaljobs" in names
+        # Nuevas fuentes de remoto europeo/nórdico
+        assert "thehub" in names
+        assert "jobgether" in names
+        assert "nav_arbeidsplassen" in names
         # Fuentes restringidas presentes en el catálogo
         assert "jobcloud_partner" in names
         assert "linkedin_authorized" in names
@@ -70,10 +75,14 @@ class TestProviderRegistry:
 
     def test_log_provider_status_returns_all_providers(self):
         status = log_provider_status()
-        assert len(status) == 25
+        assert len(status) == 28
         # Free providers should be enabled
         assert status["remotive"] == "enabled"
         assert status["arbeitnow"] == "enabled"
+        # Los 3 nuevos (API pública sin key) arrancan habilitados
+        assert status["thehub"] == "enabled"
+        assert status["jobgether"] == "enabled"
+        assert status["nav_arbeidsplassen"] == "enabled"
         # Key-gated providers should show disabled reason
         assert "disabled" in status.get("jsearch", "")
         # Fuentes restringidas: deshabilitadas sin credencial de partner

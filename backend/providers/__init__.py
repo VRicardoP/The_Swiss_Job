@@ -24,6 +24,9 @@ from providers.workingnomads import WorkingNomadsProvider
 from providers.zebis import ZebisProvider
 from providers.zentraljob import ZentraljobProvider
 from providers.globaljobs import GlobalJobsProvider
+from providers.thehub import TheHubProvider
+from providers.jobgether import JobgetherProvider
+from providers.nav_arbeidsplassen import NavArbeidsplassenProvider
 from providers.restricted import (
     GlassdoorPartnerProvider,
     IndeedPartnerProvider,
@@ -51,6 +54,10 @@ _PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {
     "remoteco": RemoteCoProvider,
     "jobspresso": JobspressoProvider,
     "authenticjobs": AuthenticJobsProvider,
+    # Remoto europeo/nórdico (estudio portales UE-norte, API pública sin key)
+    "thehub": TheHubProvider,  # startups nórdicas, flag isRemote estructural
+    "jobgether": JobgetherProvider,  # remoto paneuropeo (requiere UA de navegador)
+    "nav_arbeidsplassen": NavArbeidsplassenProvider,  # servicio público noruego
     # Localización y contenido lingüístico
     "proz": ProzProvider,
     "translatorscafe": TranslatorsCafeProvider,
