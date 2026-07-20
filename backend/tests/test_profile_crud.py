@@ -194,7 +194,7 @@ class TestUpdateProfile:
 
 
 class TestUploadCV:
-    @patch("tasks.embedding_tasks.generate_profile_embedding")
+    @patch("tasks.profile_tasks.analyze_cv_and_autofill")
     async def test_upload_pdf_success(self, mock_task, client):
         mock_task.delay.return_value = MagicMock(id="task-123")
         token, _ = await _register_and_get_token(client)
@@ -212,11 +212,11 @@ class TestUploadCV:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["message"] == "CV uploaded and parsed successfully"
+        assert data["message"] == "CV uploaded — analyzing to auto-complete your profile"
         assert data["cv_text_length"] > 0
         assert "English" in data["skills_extracted"]
 
-    @patch("tasks.embedding_tasks.generate_profile_embedding")
+    @patch("tasks.profile_tasks.analyze_cv_and_autofill")
     async def test_upload_docx_success(self, mock_task, client):
         mock_task.delay.return_value = MagicMock(id="task-456")
         token, _ = await _register_and_get_token(client)

@@ -131,18 +131,23 @@ async def upload_cv(
 
     await db.commit()
 
-    # Dispatch embedding generation task
+    # Dispara el análisis del CV + autocompletado del perfil (LLM) + embedding.
+    # Emite progreso por SSE (`cv_analysis_progress`) para la barra del frontend.
+    # Esta tarea regenera el embedding al final, así que reemplaza al dispatch
+    # directo de generate_profile_embedding.
     task_id = None
     try:
-        from tasks.embedding_tasks import generate_profile_embedding
+        from tasks.profile_tasks import analyze_cv_and_autofill
 
-        result = generate_profile_embedding.delay(str(current_user.id))
+        result = analyze_cv_and_autofill.delay(str(current_user.id))
         task_id = result.id
     except Exception:
-        logger.warning("Failed to dispatch embedding task for user %s", current_user.id)
+        logger.warning(
+            "Failed to dispatch CV analysis task for user %s", current_user.id
+        )
 
     return CVUploadResponse(
-        message="CV uploaded and parsed successfully",
+        message="CV uploaded — analyzing to auto-complete your profile",
         cv_text_length=len(cleaned_text),
         skills_extracted=skills,
         embedding_task_id=task_id,

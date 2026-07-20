@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import { useProfile, useUpdateProfile, useUploadCV } from "../hooks/useProfile";
 import TagList from "../components/TagList";
+import CvAnalysisBanner from "../components/CvAnalysisBanner";
+import { useCvAnalysis } from "../hooks/useCvAnalysis";
 import { Button, Input, Select, cn } from "../components/ui";
 
 const STEPS = [
@@ -81,6 +83,7 @@ export default function OnboardingPage() {
   const navigate = useNavigate();
   const { data: profile, isLoading } = useProfile();
   const uploadCV = useUploadCV();
+  const cvAnalysis = useCvAnalysis();
   const updateProfile = useUpdateProfile();
   const fileInputRef = useRef(null);
 
@@ -119,6 +122,8 @@ export default function OnboardingPage() {
       setSkills((prev) => [...new Set([...prev, ...result.skills_extracted])]);
     }
     setCvUploaded(true);
+    // Arranca la barra de progreso del autocompletado del perfil (SSE).
+    cvAnalysis.start();
   }
 
   async function handleFinish() {
@@ -199,12 +204,21 @@ export default function OnboardingPage() {
             >
               Choose file
             </Button>
-            {cvUploaded && (
+            {cvUploaded && !cvAnalysis.active && (
               <p className="flex items-center gap-1.5 text-sm text-success">
                 <CheckCircle2 className="h-4 w-4" />
                 CV uploaded successfully
               </p>
             )}
+            <div className="w-full">
+              <CvAnalysisBanner
+                active={cvAnalysis.active}
+                stage={cvAnalysis.stage}
+                percent={cvAnalysis.percent}
+                message={cvAnalysis.message}
+                onDismiss={cvAnalysis.dismiss}
+              />
+            </div>
             {uploadCV.isError && (
               <p className="text-sm text-error">{uploadCV.error.message}</p>
             )}

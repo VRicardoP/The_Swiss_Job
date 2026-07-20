@@ -15,6 +15,8 @@ import {
   useDeleteCV,
 } from "../hooks/useProfile";
 import TagList from "../components/TagList";
+import CvAnalysisBanner from "../components/CvAnalysisBanner";
+import { useCvAnalysis } from "../hooks/useCvAnalysis";
 import {
   Button,
   Input,
@@ -60,6 +62,7 @@ export default function ProfilePage() {
   const updateProfile = useUpdateProfile();
   const uploadCV = useUploadCV();
   const deleteCV = useDeleteCV();
+  const cvAnalysis = useCvAnalysis();
   const fileInputRef = useRef(null);
 
   const [form, setForm] = useState(null);
@@ -133,7 +136,8 @@ export default function ProfilePage() {
   function handleUploadCV(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    uploadCV.mutate(file);
+    // Al subir, arranca la barra de progreso del autocompletado (SSE).
+    uploadCV.mutate(file, { onSuccess: () => cvAnalysis.start() });
   }
 
   const weightsSum = Object.values(form.score_weights).reduce(
@@ -215,12 +219,13 @@ export default function ProfilePage() {
             {profile.cv_text ? "Replace CV (PDF / DOCX)" : "Upload CV (PDF / DOCX)"}
           </Button>
 
-          {uploadCV.isSuccess && (
-            <p className="flex items-center gap-1.5 text-sm text-success">
-              <CheckCircle2 className="h-4 w-4" />
-              CV uploaded — {uploadCV.data.skills_extracted.length} skills extracted.
-            </p>
-          )}
+          <CvAnalysisBanner
+            active={cvAnalysis.active}
+            stage={cvAnalysis.stage}
+            percent={cvAnalysis.percent}
+            message={cvAnalysis.message}
+            onDismiss={cvAnalysis.dismiss}
+          />
           {uploadCV.isError && (
             <p className="flex items-center gap-1.5 text-sm text-error">
               <AlertCircle className="h-4 w-4" />

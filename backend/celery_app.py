@@ -38,4 +38,5 @@ celery_app.conf.include = [
     "tasks.alert_tasks",
     "tasks.matching_tasks",
     "tasks.pipeline_tasks",
+    "tasks.profile_tasks",
 ]
