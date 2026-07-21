@@ -61,10 +61,12 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL_NAME: str = "paraphrase-multilingual-MiniLM-L12-v2"
     EMBEDDING_DEVICE: str = "cpu"
     EMBEDDING_BATCH_SIZE: int = 64
-    # Precarga del modelo al arrancar. True = warming en BACKGROUND (no bloquea el
-    # lifespan; el primer arranque tarda minutos en cargar el modelo). False = carga
-    # perezosa en la primera petición que lo use. Nunca bloquea el event loop.
-    EMBEDDING_PRELOAD_ON_STARTUP: bool = True
+    # Precarga del modelo en la API al arrancar. La API NO embebe (el matching usa
+    # embeddings precalculados; los embeddings de perfil/ofertas son tareas del
+    # worker), así que por defecto NO precarga (False): evita cargar ~400MB en el
+    # proceso de la API para nada. El worker de la cola "ai" lo carga perezosamente.
+    # (True = warming en background, por si algún día la API llegara a necesitarlo.)
+    EMBEDDING_PRELOAD_ON_STARTUP: bool = False
 
     # CV upload
     CV_MAX_SIZE_MB: int = 10
