@@ -79,6 +79,10 @@ class Job(Base):
     fuzzy_hash: Mapped[str | None] = mapped_column(String(32), index=True)
     duplicate_of: Mapped[str | None] = mapped_column(String(32))
 
+    # Content versioning — MD5 de los campos de contenido mutables (PF.1); detecta
+    # cambios en ofertas re-vistas para refrescar contenido y forzar re-embed.
+    content_hash: Mapped[str | None] = mapped_column(String(32))
+
     def __repr__(self) -> str:
         return f"<Job hash={self.hash} source={self.source} title={self.title!r}>"
 

@@ -1,7 +1,7 @@
 """Tests for JobRepository — upsert, dedup marking, and active counts."""
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from models.job import Job
 from services.job_repository import JobRepository
@@ -56,6 +56,26 @@ class TestJobRepository:
         is_new = await repo.upsert_job(_job_dict())
         await db_session.commit()
         assert is_new is False
+
+    async def test_upsert_refreshes_content_on_conflict(self, db_session):
+        """PF.1: una oferta re-vista con contenido cambiado debe ACTUALIZARSE,
+        no congelarse (antes solo se tocaba last_seen_at/is_active)."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(_job_dict(description="Old description", tags=["a"]))
+        await db_session.commit()
+
+        await repo.upsert_job(_job_dict(description="New description", tags=["b"]))
+        await db_session.commit()
+
+        row = (
+            await db_session.execute(
+                select(Job.description, Job.tags).where(Job.hash == h)
+            )
+        ).one()
+        assert row.description == "New description"
+        assert row.tags == ["b"]
 
     async def test_upsert_refreshes_last_seen_at(self, db_session):
         """A second upsert must bump last_seen_at to a newer timestamp."""
@@ -211,3 +231,61 @@ class TestJobRepository:
         assert row.is_active is True
         # Ensure nonexistent_field was silently ignored (no AttributeError)
         assert not hasattr(row, "nonexistent_field")
+
+
+@pytest.mark.anyio
+class TestUpsertContentVersioning:
+    """PF.1: content_hash + invalidación de embedding al cambiar el contenido."""
+
+    async def test_content_hash_set_on_insert(self, db_session):
+        repo = JobRepository(db_session)
+        await repo.upsert_job(_job_dict())
+        await db_session.commit()
+
+        ch = (
+            await db_session.execute(
+                select(Job.content_hash).where(Job.hash == _job_dict()["hash"])
+            )
+        ).scalar_one()
+        assert ch is not None
+        assert len(ch) == 32
+
+    async def test_embedding_invalidated_when_content_changes(self, db_session):
+        """Contenido cambiado -> embedding=NULL para forzar re-embed + re-match."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(_job_dict(description="v1"))
+        await db_session.commit()
+        # Simular el embedding ya generado por el pipeline.
+        await db_session.execute(
+            update(Job).where(Job.hash == h).values(embedding=[0.1] * 384)
+        )
+        await db_session.commit()
+
+        await repo.upsert_job(_job_dict(description="v2"))
+        await db_session.commit()
+
+        emb = (
+            await db_session.execute(select(Job.embedding).where(Job.hash == h))
+        ).scalar_one()
+        assert emb is None
+
+    async def test_embedding_preserved_when_content_unchanged(self, db_session):
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(_job_dict(description="same"))
+        await db_session.commit()
+        await db_session.execute(
+            update(Job).where(Job.hash == h).values(embedding=[0.2] * 384)
+        )
+        await db_session.commit()
+
+        await repo.upsert_job(_job_dict(description="same"))
+        await db_session.commit()
+
+        emb = (
+            await db_session.execute(select(Job.embedding).where(Job.hash == h))
+        ).scalar_one()
+        assert emb is not None
