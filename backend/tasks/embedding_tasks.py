@@ -172,7 +172,13 @@ async def _generate_job_embeddings_async(batch_size: int) -> dict[str, Any]:
 
 
 async def _embed_all_pending_async(batch_size: int) -> dict[str, Any]:
-    """Drena TODOS los pendientes en bucle; dispara dedup una sola vez al final."""
+    """Drena TODOS los pendientes en bucle.
+
+    El dedup semántico NO se dispara aquí: lo encadena el orquestador
+    (pipeline_tasks.daily_harvest) con una firma .si() secuencial, de modo que el
+    matching corre solo tras completarse el dedup. Dispararlo aquí con .delay() lo
+    ejecutaría dos veces y en paralelo a la cadena (ver PF.2).
+    """
     from database import task_session
     from services.job_matcher import JobMatcher
 
@@ -185,9 +191,5 @@ async def _embed_all_pending_async(batch_size: int) -> dict[str, Any]:
             if n < batch_size:  # último lote incompleto → no quedan pendientes
                 break
 
-    if total:
-        from tasks.maintenance_tasks import dedup_semantic_batch
-
-        dedup_semantic_batch.delay(batch_size=min(max(total, 200), 1000))
     logger.info("embed_all_pending: %d jobs embedded", total)
     return {"status": "success", "processed": total}

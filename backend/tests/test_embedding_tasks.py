@@ -10,6 +10,7 @@ from models.job import Job
 from models.user import User
 from models.user_profile import UserProfile
 from tasks.embedding_tasks import (
+    _embed_all_pending_async,
     _generate_job_embeddings_async,
     _generate_profile_embedding_async,
 )
@@ -147,3 +148,73 @@ class TestGenerateJobEmbeddings:
 
         assert result["status"] == "success"
         assert result["processed"] == 0
+
+
+class TestEmbedAllPendingDedupDispatch:
+    """PF.2: el orquestador (pipeline_tasks.daily_harvest) posee el dedup.
+
+    La cadena diaria encadena embed_all_pending -> dedup_semantic_batch -> matching
+    con firmas .si() (secuenciales). Si embed_all_pending ADEMAS dispara dedup con
+    .delay(), dedup corre dos veces y compite con la cadena. Estos tests fijan que
+    embed_all_pending NO re-despacha dedup, y que el flujo por intervalos SI lo hace.
+    """
+
+    @patch("tasks.maintenance_tasks.dedup_semantic_batch")
+    @patch("services.job_matcher.JobMatcher")
+    async def test_embed_all_pending_does_not_dispatch_dedup(
+        self, MockMatcher, mock_dedup, db_session
+    ):
+        mock_instance = MagicMock()
+        mock_instance.encode_batch.return_value = np.zeros((2, 384), dtype=np.float32)
+        MockMatcher.return_value = mock_instance
+        MockMatcher.build_job_text = MagicMock(return_value="job text")
+
+        for i in range(2):
+            job = Job(
+                hash=f"emball_test_{i:018d}",
+                source="test",
+                title=f"Job {i}",
+                company="TestCo",
+                url=f"https://example.com/joball/{i}",
+                is_active=True,
+            )
+            db_session.add(job)
+        await db_session.commit()
+
+        with patch("database.task_session", _mock_session_factory(db_session)):
+            result = await _embed_all_pending_async(batch_size=100)
+
+        assert result["status"] == "success"
+        assert result["processed"] == 2
+        # La cadena posee el dedup; embed_all_pending no debe re-despacharlo.
+        mock_dedup.delay.assert_not_called()
+
+    @patch("tasks.maintenance_tasks.dedup_semantic_batch")
+    @patch("services.job_matcher.JobMatcher")
+    async def test_interval_batch_still_dispatches_dedup(
+        self, MockMatcher, mock_dedup, db_session
+    ):
+        # Guarda de regresion: en modo por intervalos (sin cadena) el embed de un
+        # solo lote SIGUE siendo el unico disparador de dedup.
+        mock_instance = MagicMock()
+        mock_instance.encode_batch.return_value = np.zeros((2, 384), dtype=np.float32)
+        MockMatcher.return_value = mock_instance
+        MockMatcher.build_job_text = MagicMock(return_value="job text")
+
+        for i in range(2):
+            job = Job(
+                hash=f"interval_test_{i:017d}",
+                source="test",
+                title=f"Job {i}",
+                company="TestCo",
+                url=f"https://example.com/jobint/{i}",
+                is_active=True,
+            )
+            db_session.add(job)
+        await db_session.commit()
+
+        with patch("database.task_session", _mock_session_factory(db_session)):
+            result = await _generate_job_embeddings_async(batch_size=100)
+
+        assert result["processed"] == 2
+        mock_dedup.delay.assert_called_once()
