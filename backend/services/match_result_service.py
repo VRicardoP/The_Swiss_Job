@@ -37,7 +37,8 @@ class MatchResultService:
         Excluye los resultados con feedback negativo (thumbs_down/dismissed):
         una oferta marcada "not for me" deja de mostrarse de inmediato. El
         registro persiste en BD (sigue excluyendo ese hash de futuros runs por
-        _get_excluded_hashes), y el job se elimina por expiración normal.
+        _get_excluded_hashes). Solo se muestran ofertas ACTIVAS: las caducadas se
+        archivan (is_active=False, ver cleanup_stale_jobs) y no reaparecen aquí.
         """
         not_dismissed = or_(
             MatchResult.feedback.is_(None),
@@ -47,14 +48,23 @@ class MatchResultService:
         count_stmt = (
             select(func.count())
             .select_from(MatchResult)
-            .where(MatchResult.user_id == user_id, not_dismissed)
+            .join(Job, MatchResult.job_hash == Job.hash)
+            .where(
+                MatchResult.user_id == user_id,
+                not_dismissed,
+                Job.is_active.is_(True),
+            )
         )
         total = (await self.db.execute(count_stmt)).scalar_one()
 
         stmt = (
             select(MatchResult, Job)
             .join(Job, MatchResult.job_hash == Job.hash)
-            .where(MatchResult.user_id == user_id, not_dismissed)
+            .where(
+                MatchResult.user_id == user_id,
+                not_dismissed,
+                Job.is_active.is_(True),
+            )
             .order_by(MatchResult.score_final.desc())
             .limit(limit)
             .offset(offset)

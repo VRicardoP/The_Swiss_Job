@@ -179,10 +179,10 @@ async def _check_job_urls_async(limit: int) -> dict[str, Any]:
 
 @celery_app.task(name="tasks.cleanup_stale_jobs")
 def cleanup_stale_jobs(max_age_days: int = 60) -> dict[str, Any]:
-    """Elimina ofertas de empleo que superan el umbral de antigüedad.
+    """Archiva o elimina ofertas caducadas (no vistas en `max_age_days`).
 
-    Política: 60 días desde `last_seen_at` (última vez visto en el feed).
-    Las ofertas no vistas en 60 días se consideran caducadas y se eliminan.
+    Con adjuntos del usuario → se ARCHIVA (is_active=False); sin adjuntos → se
+    BORRA. Ver _cleanup_stale_jobs_async para el detalle de la política.
     """
     try:
         return asyncio.run(_cleanup_stale_jobs_async(max_age_days))
@@ -192,82 +192,65 @@ def cleanup_stale_jobs(max_age_days: int = 60) -> dict[str, Any]:
 
 
 async def _cleanup_stale_jobs_async(max_age_days: int) -> dict[str, Any]:
-    """Async: borra jobs caducados según política de retención por categoría.
+    """Async: archiva o borra las ofertas caducadas según tengan adjuntos del usuario.
 
-    Política de retención:
-    - Normal (sin interacción): max_age_days (por defecto 60 días)
-    - Guardadas como Good (thumbs_up/applied): 90 días desde last_seen_at
-    - En pipeline de candidaturas (job_applications): 180 días desde last_seen_at
+    Caducada = no vista en el feed en `max_age_days` (last_seen_at). Política:
+    - CON adjuntos del usuario (candidatura, documento generado, o match con
+      feedback/borrador/estado avanzado) → se ARCHIVA (is_active=False): se oculta
+      del board y del matching, pero la fila sobrevive, conservando el contexto de
+      la candidatura/documento y permitiendo el re-enlace si la oferta reaparece
+      (mismo hash). NUNCA se borra una oferta con datos del usuario (evita que la
+      cascada de la FK destruya candidaturas, documentos o el match) (PF.3).
+    - SIN adjuntos → se BORRA.
     """
     from sqlalchemy import text
 
     from database import task_session
 
+    # Una oferta tiene "adjuntos" si el usuario interactuó de forma NO recomputable:
+    # candidatura, documento generado, o match con feedback / borrador de carta /
+    # estado de candidatura avanzado (más allá del inicial "detected").
+    attached = """
+        hash IN (SELECT job_hash FROM job_applications)
+        OR hash IN (SELECT job_hash FROM generated_documents)
+        OR hash IN (
+            SELECT job_hash FROM match_results
+            WHERE feedback IS NOT NULL
+               OR feedback_implicit IS NOT NULL
+               OR draft_letter IS NOT NULL
+               OR application_status <> 'detected'
+        )
+    """
+    stale = "last_seen_at < NOW() - make_interval(days => :days)"
+
     async with task_session() as db:
-        # 1. Borrar jobs normales caducados (excluir los que tienen retención extendida)
-        r_normal = await db.execute(
-            text("""
-                DELETE FROM jobs
-                WHERE last_seen_at < NOW() - make_interval(days => :days)
-                  AND hash NOT IN (
-                      SELECT DISTINCT job_hash FROM match_results
-                      WHERE feedback IN ('thumbs_up', 'applied')
-                  )
-                  AND hash NOT IN (
-                      SELECT DISTINCT job_hash FROM job_applications
-                  )
-            """),
+        # Archivar (no borrar) las caducadas CON adjuntos que sigan activas.
+        r_archived = await db.execute(
+            text(  # noqa: S608 — `stale`/`attached` son SQL estático de confianza
+                f"UPDATE jobs SET is_active = FALSE "
+                f"WHERE {stale} AND is_active = TRUE AND ({attached})"
+            ),
             {"days": max_age_days},
         )
-
-        # 2. Borrar jobs guardados como Good con más de 90 días
-        #    (que además no estén en pipeline)
-        r_good = await db.execute(
-            text("""
-                DELETE FROM jobs
-                WHERE last_seen_at < NOW() - INTERVAL '90 days'
-                  AND hash IN (
-                      SELECT DISTINCT job_hash FROM match_results
-                      WHERE feedback IN ('thumbs_up', 'applied')
-                  )
-                  AND hash NOT IN (
-                      SELECT DISTINCT job_hash FROM job_applications
-                  )
-            """),
+        # Borrar las caducadas SIN adjuntos.
+        r_deleted = await db.execute(
+            text(  # noqa: S608 — idem
+                f"DELETE FROM jobs WHERE {stale} AND NOT ({attached})"
+            ),
+            {"days": max_age_days},
         )
-
-        # 3. Borrar jobs en pipeline con más de 180 días
-        r_pipeline = await db.execute(
-            text("""
-                DELETE FROM jobs
-                WHERE last_seen_at < NOW() - INTERVAL '180 days'
-                  AND hash IN (
-                      SELECT DISTINCT job_hash FROM job_applications
-                  )
-            """),
-        )
-
         await db.commit()
 
-    deleted_normal = r_normal.rowcount
-    deleted_good = r_good.rowcount
-    deleted_pipeline = r_pipeline.rowcount
-    total = deleted_normal + deleted_good + deleted_pipeline
-
+    archived = r_archived.rowcount or 0
+    deleted = r_deleted.rowcount or 0
     logger.info(
-        "cleanup_stale_jobs: %d eliminadas en total "
-        "(normales >%dd: %d | good >90d: %d | pipeline >180d: %d)",
-        total,
-        max_age_days,
-        deleted_normal,
-        deleted_good,
-        deleted_pipeline,
+        "cleanup_stale_jobs: %d archivadas (con adjuntos), %d borradas (sin adjuntos)",
+        archived,
+        deleted,
     )
     return {
         "status": "success",
-        "deleted_total": total,
-        "deleted_normal": deleted_normal,
-        "deleted_good": deleted_good,
-        "deleted_pipeline": deleted_pipeline,
+        "archived": archived,
+        "deleted": deleted,
         "max_age_days": max_age_days,
     }

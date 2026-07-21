@@ -9,6 +9,7 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.job import Job
@@ -70,6 +71,31 @@ async def _seed(
         setattr(mr, k, v)
     db.add(mr)
     await db.commit()
+
+
+@pytest.mark.anyio
+class TestGetResultsHidesArchivedJobs:
+    """PF.3: una oferta archivada (is_active=False) no debe reaparecer en el feed."""
+
+    async def test_archived_job_not_shown(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        user_id = await _register(client)
+        await _insert_job(db_session, "arch1")
+        await _seed(db_session, user_id, "arch1")  # feedback=None -> visible
+
+        _, total = await _svc(db_session).get_results(user_id)
+        assert total == 1  # visible mientras está activa
+
+        # Archivar (como hace cleanup_stale_jobs con ofertas caducadas + adjuntos)
+        await db_session.execute(
+            update(Job).where(Job.hash == "arch1").values(is_active=False)
+        )
+        await db_session.commit()
+
+        results, total = await _svc(db_session).get_results(user_id)
+        assert total == 0
+        assert results == []
 
 
 @pytest.mark.anyio
