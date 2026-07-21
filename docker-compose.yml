@@ -71,12 +71,12 @@ services:
 
   worker-ai:
     # Worker DEDICADO a la cola "ai": carga el modelo de embeddings UNA vez
-    # (concurrency=1, sin reciclado). El worker general ya no escucha "ai" (PF.4).
+    # (concurrency=1). El worker general ya no escucha "ai" (PF.4).
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: swissjob-worker-ai
-    command: celery -A celery_app worker -l info -Q ai --concurrency=1 --max-tasks-per-child=0 -P prefork
+    command: celery -A celery_app worker -l info -Q ai --concurrency=1 -P prefork
     volumes:
       - ./backend:/app
     env_file:

@@ -221,3 +221,33 @@ class TestCleanupArchivesAttachedJobs:
             await db_session.execute(select(Job).where(Job.hash == h))
         ).scalar_one_or_none()
         assert job is not None and job.is_active is True
+
+    async def test_stale_job_with_match_draft_letter_is_archived(self, db_session):
+        h = "mdraft" + "0" * 26
+        await _make_stale_job(db_session, h)
+        uid = await _make_user(db_session)
+        await _make_match(db_session, uid, h, draft_letter="Estimada empresa...")
+
+        with patch("database.task_session", _mock_session_factory(db_session)):
+            await _cleanup_stale_jobs_async(max_age_days=60)
+
+        db_session.expire_all()
+        job = (
+            await db_session.execute(select(Job).where(Job.hash == h))
+        ).scalar_one_or_none()
+        assert job is not None and job.is_active is False
+
+    async def test_stale_job_with_advanced_status_is_archived(self, db_session):
+        h = "mstat" + "0" * 27
+        await _make_stale_job(db_session, h)
+        uid = await _make_user(db_session)
+        await _make_match(db_session, uid, h, application_status="reviewed")
+
+        with patch("database.task_session", _mock_session_factory(db_session)):
+            await _cleanup_stale_jobs_async(max_age_days=60)
+
+        db_session.expire_all()
+        job = (
+            await db_session.execute(select(Job).where(Job.hash == h))
+        ).scalar_one_or_none()
+        assert job is not None and job.is_active is False

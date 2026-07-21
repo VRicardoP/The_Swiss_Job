@@ -329,3 +329,50 @@ class TestUpsertContentVersioning:
             await db_session.execute(select(Job.embedding).where(Job.hash == h))
         ).scalar_one()
         assert emb is not None  # conservado
+
+    async def test_embedding_invalidated_when_prior_null_and_text_changed(
+        self, db_session
+    ):
+        """Fila anterior a la columna (content_hash=NULL) cuyo TEXTO cambia: el
+        embedding SÍ se invalida (no queda obsoleto)."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+        await repo.upsert_job(_job_dict(description="legacy-v1"))
+        await db_session.commit()
+        await db_session.execute(
+            update(Job)
+            .where(Job.hash == h)
+            .values(content_hash=None, embedding=[0.4] * 384)
+        )
+        await db_session.commit()
+
+        await repo.upsert_job(_job_dict(description="provider-v2"))  # texto cambia
+        await db_session.commit()
+
+        emb = (
+            await db_session.execute(select(Job.embedding).where(Job.hash == h))
+        ).scalar_one()
+        assert emb is None  # invalidado
+
+    async def test_embedding_preserved_on_non_text_field_change(self, db_session):
+        """Cambiar un campo que NO entra en el texto embebido (logo/salario) NO
+        invalida el embedding (evita re-embeber texto idéntico)."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+        await repo.upsert_job(_job_dict(description="stable", logo=None))
+        await db_session.commit()
+        await db_session.execute(
+            update(Job).where(Job.hash == h).values(embedding=[0.5] * 384)
+        )
+        await db_session.commit()
+
+        # Mismo description/tags; cambian logo y salario (fuera de build_job_text).
+        await repo.upsert_job(
+            _job_dict(description="stable", logo="new-logo", salary_min_chf=99000)
+        )
+        await db_session.commit()
+
+        emb = (
+            await db_session.execute(select(Job.embedding).where(Job.hash == h))
+        ).scalar_one()
+        assert emb is not None  # conservado

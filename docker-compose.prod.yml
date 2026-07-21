@@ -156,7 +156,6 @@ services:
       - -Q
       - ai
       - --concurrency=1
-      - --max-tasks-per-child=0
       - --loglevel=info
     networks:
       - swissjob-net

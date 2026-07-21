@@ -43,12 +43,13 @@ SENIORITY_TOKENS: set[str] = {
 }
 
 # Marcadores de diversidad/género (m/f/d, (m/w), (all genders)...): se quitan por
-# regex ANTES de la puntuación, generalizando todas las permutaciones de 2-3
-# géneros en vez de enumerar cada literal (evita fallos de dedup con formatos
-# frecuentes como (m/w) o (h/f)). Letras: m/w/f/h/d/x (alemán, francés, divers).
-# El \b evita tocar palabras/rutas reales (p.ej. "Frontend/Backend", "PhD/Faculty").
+# regex ANTES de la puntuación, generalizando las permutaciones de 2-3 géneros.
+# La forma ENTRE PARÉNTESIS se acepta siempre; la forma SUELTA solo como token
+# COMPLETO (bordeada por espacios/inicio/fin), NO embebida entre símbolos, para no
+# romper "R&D/M&A", "Frontend/Backend", "C/C++" ni "F/T". Letras: m/w/f/h/d/x.
 _DIVERSITY_RE = re.compile(
-    r"\(?\b[mwfhdx](?:\s*/\s*[mwfhdx]){1,2}\b\)?"  # (m/f/d), (m/w), f/m/x, h/f...
+    r"\([mwfhdx](?:\s*/\s*[mwfhdx]){1,2}\)"  # con paréntesis: (m/f/d), (m/w), (h/f)
+    r"|(?:^|(?<=\s))[mwfhdx](?:\s*/\s*[mwfhdx]){1,2}(?=\s|$)"  # suelto: token completo
     r"|\(\s*all\s+genders?\s*\)"  # (all genders)
     r"|\(\s*(?:divers|gn)\s*\)",  # (divers), (gn)
     re.IGNORECASE,

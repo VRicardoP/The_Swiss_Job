@@ -44,6 +44,7 @@
   espera detrás del lote (head-of-line, ventana de minutos).
 - **Decisión:** **aceptado.** `--concurrency>1` reintroduciría copias del modelo (el objetivo
   de PF.4 era 1 carga); el camino interactivo es asíncrono con barra de progreso SSE (sin
-  bloqueo duro ni fallo) y el solape es raro (cosecha 1×/día). Si molestara en la práctica:
-  cola `ai_interactive` propia en `worker-ai`, o revisar si `analyze_cv_and_autofill` (usa el
-  LLM, no el modelo de embeddings) puede ir a otra cola.
+  bloqueo duro ni fallo) y el solape es raro (cosecha 1×/día). Nota: `analyze_cv_and_autofill`
+  **SÍ usa el modelo de embeddings** (`matcher.encode`, `profile_tasks.py:153`), así que
+  pertenece correctamente a `worker-ai`; la única alternativa sería una cola `ai_interactive`
+  propia (otro worker → 2ª copia del modelo), que no compensa por ahora.

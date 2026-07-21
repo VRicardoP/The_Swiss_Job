@@ -124,6 +124,14 @@ class TestNormalizeTitleTokens:
             == "java kotlin engineer"
         )
 
+    def test_diversity_regex_ampersand_not_a_marker(self):
+        # "R&D/M&A" no debe colapsar con "R&A" (el '&' no debe activar el marcador).
+        h_rdma = Deduplicator.compute_fuzzy_hash("R&D/M&A Analyst", "Acme")
+        h_ra = Deduplicator.compute_fuzzy_hash("R&A Analyst", "Acme")
+        assert h_rdma != h_ra
+        assert Deduplicator._normalize_title("C/C++ Developer") == "c c developer"
+        assert Deduplicator._normalize_title("F/T Position") == "f t position"
+
 
 # --- DB lookup (requires db_session fixture) ---
 

@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, case, func, null, select, update
+from sqlalchemy import case, func, null, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -99,15 +99,18 @@ class JobRepository:
         set_["last_seen_at"] = datetime.now(timezone.utc)
         set_["is_active"] = True
         set_["content_hash"] = stmt.excluded.content_hash
-        # Contenido cambiado → embedding obsoleto: NULL fuerza re-embed + re-match.
-        # Solo si YA conocíamos el content_hash: si era NULL (fila anterior a esta
-        # columna), se conserva el embedding y solo se empieza a rastrear el hash —
-        # así el despliegue de la columna NO dispara un re-embed masivo del corpus.
+        # El embedding se construye de title+company+description+tags
+        # (JobMatcher.build_job_text). En un conflicto, title/company están fijados
+        # por el hash, así que solo pueden cambiar description/tags: invalidamos el
+        # embedding (NULL → re-embed + re-match) SOLO si esos cambian. Es
+        # independiente de content_hash (que versiona MÁS campos): así ni un cambio
+        # de logo/salario re-embebe texto idéntico (eficiencia), ni una fila anterior
+        # a la columna (content_hash NULL) conserva un embedding obsoleto (correctitud).
         set_["embedding"] = case(
             (
-                and_(
-                    Job.content_hash.isnot(None),
-                    Job.content_hash.is_distinct_from(stmt.excluded.content_hash),
+                or_(
+                    Job.description.is_distinct_from(stmt.excluded.description),
+                    Job.tags.is_distinct_from(stmt.excluded.tags),
                 ),
                 null(),
             ),
