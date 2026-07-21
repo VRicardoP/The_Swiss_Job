@@ -42,21 +42,17 @@ SENIORITY_TOKENS: set[str] = {
     "jr",
 }
 
-# Marcadores de diversidad/género — literales multi-carácter con puntuación; se
-# quitan por substring ANTES de la puntuación (no aparecen dentro de palabras reales).
-DIVERSITY_MARKERS: set[str] = {
-    "(m/f/d)",
-    "(m/w/d)",
-    "(f/m/d)",
-    "(w/m/d)",
-    "(m/f/x)",
-    "(w/m/x)",
-    "(all genders)",
-    "m/f/d",
-    "m/w/d",
-    "f/m/d",
-    "w/m/d",
-}
+# Marcadores de diversidad/género (m/f/d, (m/w), (all genders)...): se quitan por
+# regex ANTES de la puntuación, generalizando todas las permutaciones de 2-3
+# géneros en vez de enumerar cada literal (evita fallos de dedup con formatos
+# frecuentes como (m/w) o (h/f)). Letras: m/w/f/h/d/x (alemán, francés, divers).
+# El \b evita tocar palabras/rutas reales (p.ej. "Frontend/Backend", "PhD/Faculty").
+_DIVERSITY_RE = re.compile(
+    r"\(?\b[mwfhdx](?:\s*/\s*[mwfhdx]){1,2}\b\)?"  # (m/f/d), (m/w), f/m/x, h/f...
+    r"|\(\s*all\s+genders?\s*\)"  # (all genders)
+    r"|\(\s*(?:divers|gn)\s*\)",  # (divers), (gn)
+    re.IGNORECASE,
+)
 
 _PUNCT_RE = re.compile(r"[^\w\s]", re.UNICODE)
 _SPACES_RE = re.compile(r"\s+")
@@ -87,9 +83,8 @@ class Deduplicator:
         substring, para no romper palabras que la contengan (international, leader).
         """
         t = title.lower().strip()
-        # Diversidad/género: literales multi-carácter → substring seguro.
-        for marker in DIVERSITY_MARKERS:
-            t = t.replace(marker, " ")
+        # Diversidad/género (regex) antes de quitar la puntuación (la llevan).
+        t = _DIVERSITY_RE.sub(" ", t)
         # Puntuación fuera → tokens; filtrar seniority por token exacto.
         t = _PUNCT_RE.sub(" ", t)
         tokens = [w for w in t.split() if w not in SENIORITY_TOKENS]

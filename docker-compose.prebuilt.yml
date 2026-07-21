@@ -90,9 +90,32 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    entrypoint: []
+    command:
+      - celery
+      - -A
+      - celery_app
+      - worker
+      - -Q
+      - default,scraping
+      - --concurrency=2
+      - --loglevel=info
+    networks:
+      - swissjob-net
+
+  worker-ai:
+    # Worker DEDICADO a la cola "ai": carga el modelo de embeddings UNA sola vez
+    # (concurrency=1, sin reciclado). El worker general ya no escucha "ai", así que
+    # no lo carga → 1 copia del modelo (~400MB) en vez de hasta 3 (PF.4).
+    image: swissjob-worker:prod
+    container_name: swissjob-worker-ai
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    depends_on:
+      backend:
+        condition: service_healthy
     volumes:
-      # Compartido con backend: el worker también usa el modelo embedding
-      # para tareas de matching que llegan a la queue.
       - hfcache:/home/app/.cache/huggingface
     entrypoint: []
     command:
@@ -101,8 +124,9 @@ services:
       - celery_app
       - worker
       - -Q
-      - default,scraping,ai
-      - --concurrency=2
+      - ai
+      - --concurrency=1
+      - --max-tasks-per-child=0
       - --loglevel=info
     networks:
       - swissjob-net

@@ -94,6 +94,36 @@ class TestNormalizeTitleTokens:
         h_analyst = Deduplicator.compute_fuzzy_hash("Analyst", "Acme")
         assert h_intl != h_analyst
 
+    def test_sr_jr_with_dot_stripped(self):
+        # El punto de 'sr.'/'jr.' lo quita _PUNCT_RE antes del filtrado por token.
+        assert Deduplicator._normalize_title("Sr. Data Scientist") == "data scientist"
+        assert Deduplicator._normalize_title("Jr. Developer") == "developer"
+
+    def test_more_standalone_seniority_stripped(self):
+        assert Deduplicator._normalize_title("Head of Sales") == "of sales"
+        assert Deduplicator._normalize_title("Intern Researcher") == "researcher"
+        assert Deduplicator._normalize_title("Trainee Analyst") == "analyst"
+
+    def test_two_gender_markers_removed(self):
+        # Formatos de 2 géneros (frecuentes en DACH/CH) también se quitan (regex).
+        assert Deduplicator._normalize_title("Data Engineer (m/w)") == "data engineer"
+        assert Deduplicator._normalize_title("Ingénieur (h/f)") == "ingénieur"
+        # Dedup cross-source: (m/w), (m/w/d) y sin marcador colapsan al mismo hash.
+        base = Deduplicator.compute_fuzzy_hash("Developer", "Acme")
+        assert Deduplicator.compute_fuzzy_hash("Developer (m/w)", "Acme") == base
+        assert Deduplicator.compute_fuzzy_hash("Developer (m/w/d)", "Acme") == base
+
+    def test_diversity_regex_no_false_positive(self):
+        # Rutas/tech con barra NO deben tratarse como marcador de género.
+        assert (
+            Deduplicator._normalize_title("Frontend/Backend Developer")
+            == "frontend backend developer"
+        )
+        assert (
+            Deduplicator._normalize_title("Java/Kotlin Engineer")
+            == "java kotlin engineer"
+        )
+
 
 # --- DB lookup (requires db_session fixture) ---
 

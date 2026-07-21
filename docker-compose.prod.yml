@@ -117,11 +117,8 @@ services:
     depends_on:
       backend:
         condition: service_healthy  # espera a que el backend haya migrado
-    volumes:
-      # Compartido con backend: el worker también usa el modelo embedding
-      # para tareas de matching que llegan a la queue.
-      - hfcache:/home/app/.cache/huggingface
-    # El worker NO ejecuta entrypoint.sh (no migra). Arranca celery directamente.
+    # Ya NO monta hfcache: el worker general no escucha "ai" → no carga el modelo (PF.4).
+    # NO ejecuta entrypoint.sh (no migra). Arranca celery directamente.
     entrypoint: []
     command:
       - celery
@@ -159,6 +156,7 @@ services:
       - -Q
       - ai
       - --concurrency=1
+      - --max-tasks-per-child=0
       - --loglevel=info
     networks:
       - swissjob-net

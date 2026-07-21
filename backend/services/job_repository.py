@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import case, func, null, select, update
+from sqlalchemy import and_, case, func, null, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -100,8 +100,17 @@ class JobRepository:
         set_["is_active"] = True
         set_["content_hash"] = stmt.excluded.content_hash
         # Contenido cambiado → embedding obsoleto: NULL fuerza re-embed + re-match.
+        # Solo si YA conocíamos el content_hash: si era NULL (fila anterior a esta
+        # columna), se conserva el embedding y solo se empieza a rastrear el hash —
+        # así el despliegue de la columna NO dispara un re-embed masivo del corpus.
         set_["embedding"] = case(
-            (Job.content_hash.is_distinct_from(stmt.excluded.content_hash), null()),
+            (
+                and_(
+                    Job.content_hash.isnot(None),
+                    Job.content_hash.is_distinct_from(stmt.excluded.content_hash),
+                ),
+                null(),
+            ),
             else_=Job.embedding,
         )
 
@@ -121,6 +130,8 @@ class JobRepository:
     async def get_active_count(self) -> int:
         """Count active, non-duplicate jobs."""
         result = await self.db.execute(
-            select(func.count()).select_from(Job).where(Job.is_active.is_(True))
+            select(func.count())
+            .select_from(Job)
+            .where(Job.is_active.is_(True), Job.duplicate_of.is_(None))
         )
         return result.scalar_one()

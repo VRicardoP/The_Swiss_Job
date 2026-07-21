@@ -191,6 +191,21 @@ class TestJobRepository:
         count = await repo.get_active_count()
         assert count == 2
 
+    async def test_get_active_count_excludes_reactivated_duplicate(self, db_session):
+        """Un duplicado re-visto vuelve a is_active=True (intencional) pero, como
+        conserva duplicate_of, NO debe contarse como activo."""
+        repo = JobRepository(db_session)
+        data = _job_dict()
+        await repo.upsert_job(data)
+        await db_session.commit()
+        await repo.mark_duplicate(data["hash"], "canonical_hash_098765432109")
+        await db_session.commit()
+        # Re-upsert reactiva is_active=True pero duplicate_of se conserva.
+        await repo.upsert_job(data)
+        await db_session.commit()
+
+        assert await repo.get_active_count() == 0
+
     async def test_upsert_handles_all_valid_columns(self, db_session):
         """upsert_job must persist every column present on the Job model."""
         repo = JobRepository(db_session)
@@ -289,3 +304,28 @@ class TestUpsertContentVersioning:
             await db_session.execute(select(Job.embedding).where(Job.hash == h))
         ).scalar_one()
         assert emb is not None
+
+    async def test_embedding_preserved_when_prior_content_hash_null(self, db_session):
+        """Fila anterior a la columna (content_hash=NULL): el re-upsert NO invalida
+        el embedding — evita un re-embed masivo del corpus al desplegar la columna;
+        solo empieza a rastrear el hash de ahí en adelante."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(_job_dict(description="v1"))
+        await db_session.commit()
+        # Simular fila migrada: content_hash NULL + embedding ya generado.
+        await db_session.execute(
+            update(Job)
+            .where(Job.hash == h)
+            .values(content_hash=None, embedding=[0.3] * 384)
+        )
+        await db_session.commit()
+
+        await repo.upsert_job(_job_dict(description="v1"))  # mismo contenido
+        await db_session.commit()
+
+        emb = (
+            await db_session.execute(select(Job.embedding).where(Job.hash == h))
+        ).scalar_one()
+        assert emb is not None  # conservado
