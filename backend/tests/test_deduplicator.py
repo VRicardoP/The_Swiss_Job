@@ -51,6 +51,50 @@ class TestComputeFuzzyHash:
         assert h1 != h2
 
 
+class TestNormalizeTitleTokens:
+    """PF.5: la seniority se filtra POR TOKEN, nunca por substring.
+
+    El substring-replace corrompía palabras legítimas que contienen una palabra de
+    seniority: intern->international, lead->leader, head->headset, sr->disruptive.
+    """
+
+    def test_substring_intern_not_stripped(self):
+        assert (
+            Deduplicator._normalize_title("International Marketing")
+            == "international marketing"
+        )
+
+    def test_substring_lead_not_stripped(self):
+        assert Deduplicator._normalize_title("Team Leader") == "team leader"
+
+    def test_substring_head_not_stripped(self):
+        assert Deduplicator._normalize_title("Headset Engineer") == "headset engineer"
+
+    def test_substring_sr_not_stripped(self):
+        assert (
+            Deduplicator._normalize_title("Disruptive Innovation")
+            == "disruptive innovation"
+        )
+
+    def test_standalone_seniority_token_stripped(self):
+        """Como token independiente, la seniority SI se elimina."""
+        assert (
+            Deduplicator._normalize_title("Senior Data Scientist") == "data scientist"
+        )
+        assert Deduplicator._normalize_title("Junior QA") == "qa"
+        assert Deduplicator._normalize_title("Lead Data Scientist") == "data scientist"
+
+    def test_gender_markers_still_removed(self):
+        assert Deduplicator._normalize_title("Data Engineer (m/f/d)") == "data engineer"
+        assert Deduplicator._normalize_title("Nurse (all genders)") == "nurse"
+
+    def test_substring_bug_no_longer_collides(self):
+        """Regresion: el bug podia acercar titulos distintos; deben diferir."""
+        h_intl = Deduplicator.compute_fuzzy_hash("International Analyst", "Acme")
+        h_analyst = Deduplicator.compute_fuzzy_hash("Analyst", "Acme")
+        assert h_intl != h_analyst
+
+
 # --- DB lookup (requires db_session fixture) ---
 
 

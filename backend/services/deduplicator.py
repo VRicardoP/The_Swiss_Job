@@ -28,18 +28,23 @@ COMPANY_SUFFIXES: set[str] = {
     "nv",
 }
 
-# Seniority words to strip from titles for fuzzy matching
-SENIORITY_STRIP: set[str] = {
+# Palabras de seniority — se filtran POR TOKEN (nunca por substring), para no
+# corromper palabras legítimas que las contengan (international, leader, headset).
+# Los puntos de "sr."/"jr." los elimina _PUNCT_RE antes de filtrar por token.
+SENIORITY_TOKENS: set[str] = {
     "senior",
     "junior",
     "lead",
     "head",
     "intern",
     "trainee",
-    "sr.",
-    "jr.",
     "sr",
     "jr",
+}
+
+# Marcadores de diversidad/género — literales multi-carácter con puntuación; se
+# quitan por substring ANTES de la puntuación (no aparecen dentro de palabras reales).
+DIVERSITY_MARKERS: set[str] = {
     "(m/f/d)",
     "(m/w/d)",
     "(f/m/d)",
@@ -75,15 +80,20 @@ class Deduplicator:
 
     @staticmethod
     def _normalize_title(title: str) -> str:
-        """Normalize a job title for fuzzy matching."""
+        """Normalize a job title for fuzzy matching.
+
+        Los marcadores de diversidad (m/f/d, (all genders)...) se quitan antes de
+        la puntuación porque la llevan. La seniority se filtra POR TOKEN, no por
+        substring, para no romper palabras que la contengan (international, leader).
+        """
         t = title.lower().strip()
-        # Remove seniority keywords
-        for word in SENIORITY_STRIP:
-            t = t.replace(word, " ")
-        # Remove punctuation and collapse spaces
+        # Diversidad/género: literales multi-carácter → substring seguro.
+        for marker in DIVERSITY_MARKERS:
+            t = t.replace(marker, " ")
+        # Puntuación fuera → tokens; filtrar seniority por token exacto.
         t = _PUNCT_RE.sub(" ", t)
-        t = _SPACES_RE.sub(" ", t).strip()
-        return t
+        tokens = [w for w in t.split() if w not in SENIORITY_TOKENS]
+        return _SPACES_RE.sub(" ", " ".join(tokens)).strip()
 
     @staticmethod
     def _normalize_company(company: str) -> str:
