@@ -111,11 +111,12 @@ def embed_all_pending(self, batch_size: int = 200) -> dict[str, Any]:
         raise self.retry(exc=exc, countdown=120)
 
 
-async def _embed_pending_batch(db, matcher, batch_size: int) -> int:
-    """Codifica un lote de jobs sin embedding y hace commit. Devuelve cuántos.
+async def _embed_pending_batch(db, matcher, batch_size: int) -> tuple[int, int]:
+    """Codifica un lote de jobs sin embedding y hace commit.
 
-    `build_job_text` es un staticmethod de JobMatcher; se invoca desde la
-    instancia para no reimportar la clase en el bucle.
+    Devuelve (seleccionados, escritos): son distintos si algún write se salta por
+    concurrencia optimista (ver abajo). `build_job_text` es un staticmethod de
+    JobMatcher; se invoca desde la instancia para no reimportar la clase en el bucle.
     """
     from sqlalchemy import select, update
 
@@ -132,7 +133,7 @@ async def _embed_pending_batch(db, matcher, batch_size: int) -> int:
     )
     jobs = (await db.execute(stmt)).scalars().all()
     if not jobs:
-        return 0
+        return (0, 0)
 
     # Snapshot del content_hash en la LECTURA: el vector se calcula fuera de la BD
     # (lento) y otro upsert podría cambiar el contenido mientras tanto. Escribimos el
@@ -172,7 +173,7 @@ async def _embed_pending_batch(db, matcher, batch_size: int) -> int:
             len(jobs),
             len(jobs) - written,
         )
-    return len(jobs)
+    return (len(jobs), written)
 
 
 async def _generate_job_embeddings_async(batch_size: int) -> dict[str, Any]:
@@ -182,16 +183,16 @@ async def _generate_job_embeddings_async(batch_size: int) -> dict[str, Any]:
 
     matcher = JobMatcher()
     async with task_session() as db:
-        processed = await _embed_pending_batch(db, matcher, batch_size)
+        _, written = await _embed_pending_batch(db, matcher, batch_size)
 
-    if processed:
+    if written:
         from tasks.maintenance_tasks import dedup_semantic_batch
 
         dedup_semantic_batch.delay(batch_size=200)
         logger.info(
-            "Generated embeddings for %d jobs, dispatched semantic dedup", processed
+            "Generated embeddings for %d jobs, dispatched semantic dedup", written
         )
-    return {"status": "success", "processed": processed}
+    return {"status": "success", "processed": written}
 
 
 async def _embed_all_pending_async(batch_size: int) -> dict[str, Any]:
@@ -207,11 +208,20 @@ async def _embed_all_pending_async(batch_size: int) -> dict[str, Any]:
 
     matcher = JobMatcher()
     total = 0
+    stalls = 0
     async with task_session() as db:
+        # Drena hasta que NO queden pendientes (selected==0). Una fila saltada por
+        # cambio concurrente se re-selecciona en la pasada siguiente y se escribe con
+        # el contenido ya estable. Si varias pasadas seguidas no escriben nada (todas
+        # saltadas por cambios continuos), se corta y se re-embeben en la próxima
+        # cosecha (evita un bucle indefinido).
         while True:
-            n = await _embed_pending_batch(db, matcher, batch_size)
-            total += n
-            if n < batch_size:  # último lote incompleto → no quedan pendientes
+            selected, written = await _embed_pending_batch(db, matcher, batch_size)
+            total += written
+            if selected == 0:
+                break
+            stalls = stalls + 1 if written == 0 else 0
+            if stalls >= 3:
                 break
 
     logger.info("embed_all_pending: %d jobs embedded", total)

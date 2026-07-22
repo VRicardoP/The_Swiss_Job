@@ -141,6 +141,13 @@ class TestNormalizeTitleTokens:
         # "W/M" (weiblich/männlich) SÍ es género y se quita.
         assert Deduplicator._normalize_title("W/M Consultant") == "consultant"
 
+    def test_gender_markers_with_spaces_removed(self):
+        # Marcadores con espacios alrededor de "/" también se quitan (paren. y sueltos).
+        base = Deduplicator.compute_fuzzy_hash("Developer", "Acme")
+        assert Deduplicator.compute_fuzzy_hash("Developer (m / w / d)", "Acme") == base
+        assert Deduplicator.compute_fuzzy_hash("Developer m / w / d", "Acme") == base
+        assert Deduplicator._normalize_title("Ingénieur (h / f)") == "ingénieur"
+
 
 # --- DB lookup (requires db_session fixture) ---
 

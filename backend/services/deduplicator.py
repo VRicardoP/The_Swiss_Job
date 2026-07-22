@@ -47,7 +47,8 @@ SENIORITY_TOKENS: set[str] = {
 # (/d divers, /x nonbinary), para NO confundir abreviaturas técnicas (H/W hardware,
 # R&D/M&A, C/C++, F/T) con género. Se quitan ANTES de la puntuación.
 _DIVERSITY_RE = re.compile(
-    r"\(?\b(?:m/f|f/m|m/w|w/m|h/f|f/h)(?:\s*/\s*[dx])?\b\)?"  # (m/f/d), (m/w), h/f...
+    r"\(?\b(?:m\s*/\s*f|f\s*/\s*m|m\s*/\s*w|w\s*/\s*m|h\s*/\s*f|f\s*/\s*h)"
+    r"(?:\s*/\s*[dx])?\b\)?"  # (m/f/d), (m / w / d), h/f... (espacios opcionales)
     r"|\(\s*all\s+genders?\s*\)"  # (all genders)
     r"|\(\s*(?:divers|gn)\s*\)",  # (divers), (gn)
     re.IGNORECASE,

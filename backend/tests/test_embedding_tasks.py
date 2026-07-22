@@ -274,3 +274,39 @@ class TestEmbedWriteGuardedByContentHash:
         )
         await db_session.commit()
         assert (r2.rowcount or 0) == 1
+
+
+class TestEmbedAllPendingDrain:
+    """rev.4 #1: el drenado continúa hasta que NO quedan pendientes (selected==0),
+    reintentando las filas saltadas por concurrencia; no las abandona ni bucle indef."""
+
+    @patch("services.job_matcher.JobMatcher")
+    async def test_drain_retries_skipped_then_finishes(
+        self, MockMatcher, db_session, monkeypatch
+    ):
+        import tasks.embedding_tasks as et
+
+        # (selected, written) por pasada: saltada (1,0) → reintento (1,1) → fin (0,0)
+        seq = iter([(1, 0), (1, 1), (0, 0)])
+
+        async def fake_batch(db, matcher, batch_size):
+            return next(seq)
+
+        monkeypatch.setattr(et, "_embed_pending_batch", fake_batch)
+        with patch("database.task_session", _mock_session_factory(db_session)):
+            result = await et._embed_all_pending_async(batch_size=200)
+        assert result["processed"] == 1  # solo cuenta lo escrito (0+1); no abandona
+
+    @patch("services.job_matcher.JobMatcher")
+    async def test_drain_stops_on_persistent_stall(
+        self, MockMatcher, db_session, monkeypatch
+    ):
+        import tasks.embedding_tasks as et
+
+        async def always_skip(db, matcher, batch_size):
+            return (1, 0)  # cambios continuos: nunca escribe
+
+        monkeypatch.setattr(et, "_embed_pending_batch", always_skip)
+        with patch("database.task_session", _mock_session_factory(db_session)):
+            result = await et._embed_all_pending_async(batch_size=200)
+        assert result["processed"] == 0  # corta sin colgarse
