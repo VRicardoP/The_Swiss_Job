@@ -97,7 +97,9 @@ class JobRepository:
             if col not in _SYSTEM_MANAGED
         }
         set_["last_seen_at"] = datetime.now(timezone.utc)
-        set_["is_active"] = True
+        # Reactivar SOLO si NO es duplicado: una oferta archivada que reaparece se
+        # reactiva; un duplicado re-visto sigue inactivo (no vuelve a los feeds).
+        set_["is_active"] = case((Job.duplicate_of.isnot(None), False), else_=True)
         set_["content_hash"] = stmt.excluded.content_hash
         # El embedding se construye de title+company+description+tags
         # (JobMatcher.build_job_text). En un conflicto, title/company están fijados

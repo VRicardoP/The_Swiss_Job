@@ -105,36 +105,47 @@ class TestJobRepository:
         ).scalar_one()
         assert row2 >= first_seen
 
-    async def test_upsert_reactivates_inactive_job(self, db_session):
-        """Re-upserting a previously deactivated job must set is_active=True."""
+    async def test_upsert_reactivates_archived_job(self, db_session):
+        """Re-upserting una oferta ARCHIVADA (is_active=False, SIN duplicate_of)
+        debe reactivarla."""
         repo = JobRepository(db_session)
         data = _job_dict()
+        await repo.upsert_job(data)
+        await db_session.commit()
+        await db_session.execute(
+            update(Job).where(Job.hash == data["hash"]).values(is_active=False)
+        )
+        await db_session.commit()
 
-        # Insert then mark as duplicate (which sets is_active=False)
         await repo.upsert_job(data)
         await db_session.commit()
 
-        await repo.mark_duplicate(data["hash"], "other_canonical_hash_1234567")
-        await db_session.commit()
-
-        # Confirm it was deactivated
         row = (
             await db_session.execute(
                 select(Job.is_active).where(Job.hash == data["hash"])
             )
         ).scalar_one()
-        assert row is False
+        assert row is True  # archivada sin duplicate_of → reactiva
 
-        # Re-upsert the same job — should reactivate
+    async def test_upsert_does_not_reactivate_duplicate(self, db_session):
+        """Re-upserting un DUPLICADO (duplicate_of set) NO debe reactivarlo — así no
+        vuelve a los feeds."""
+        repo = JobRepository(db_session)
+        data = _job_dict()
+        await repo.upsert_job(data)
+        await db_session.commit()
+        await repo.mark_duplicate(data["hash"], "canonical_dup_0000000000000000")
+        await db_session.commit()
+
         await repo.upsert_job(data)
         await db_session.commit()
 
-        row2 = (
+        row = (
             await db_session.execute(
                 select(Job.is_active).where(Job.hash == data["hash"])
             )
         ).scalar_one()
-        assert row2 is True
+        assert row is False  # sigue inactivo (es duplicado)
 
     async def test_mark_duplicate_sets_fields(self, db_session):
         """mark_duplicate must set duplicate_of and deactivate the job."""

@@ -115,7 +115,11 @@ class Deduplicator:
                 Job.fuzzy_hash == fuzzy_hash,
                 Job.source != source,
                 Job.is_active.is_(True),
+                Job.duplicate_of.is_(
+                    None
+                ),  # solo canónicas (no duplicados reactivados)
             )
+            .order_by(Job.first_seen_at.asc())  # determinista: la más antigua = raíz
             .limit(1)
         )
         result = await db.execute(stmt)

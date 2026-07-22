@@ -198,3 +198,23 @@ class TestFindFuzzyDuplicate:
             db_session, "nonexistent", "jooble"
         )
         assert result is None
+
+    async def test_excludes_reactivated_duplicate(self, db_session):
+        """No debe devolver un duplicado reactivado (is_active=True + duplicate_of set)."""
+        db_session.add(
+            Job(
+                hash="dupfuzzy" + "0" * 24,
+                source="jobicy",
+                title="Python Developer",
+                company="Acme",
+                url="http://example.com/dupfuzzy",
+                fuzzy_hash="fuzzydup01",
+                is_active=True,
+                duplicate_of="canon" + "0" * 27,
+            )
+        )
+        await db_session.commit()
+        result = await Deduplicator.find_fuzzy_duplicate(
+            db_session, "fuzzydup01", "jooble"
+        )
+        assert result is None  # excluido por duplicate_of IS NOT NULL
