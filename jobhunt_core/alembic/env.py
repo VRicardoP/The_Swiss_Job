@@ -3,6 +3,12 @@
 - version table PROPIA y dentro del esquema del core (jobhunt.alembic_version):
   no toca ni conoce la del backend legacy (public.alembic_version).
 - conecta con la URL del core (rol de mínimo privilegio) en driver sync.
+
+REGLA (revisión A-02): una revisión APLICADA en cualquier entorno es INMUTABLE —
+Alembic solo registra el ID, no un checksum, así que editarla diverge en
+silencio. Toda corrección de esquema = NUEVA revisión (coreNNNN). Editar una
+revisión solo es admisible si JAMÁS se aplicó fuera de la rama privada, y
+entonces se recrean explícitamente las BD que la ejecutaron.
 """
 
 import sys

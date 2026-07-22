@@ -6,10 +6,13 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-def test_single_head_is_baseline():
+def test_single_head_chain():
+    """Invariante: UN solo head, con la cadena anclada en el baseline core0001."""
     cfg = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_heads() == ["core0001"]
+    heads = script.get_heads()
+    assert len(heads) == 1, f"múltiples heads: {heads}"
+    assert script.get_bases() == ["core0001"]
 
 
 def test_version_table_lives_in_core_schema():
