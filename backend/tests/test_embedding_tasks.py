@@ -218,3 +218,59 @@ class TestEmbedAllPendingDedupDispatch:
 
         assert result["processed"] == 2
         mock_dedup.delay.assert_called_once()
+
+
+class TestEmbedWriteGuardedByContentHash:
+    """rev.3 #1: la escritura del embedding se salta si el content_hash cambió
+    mientras se calculaba el vector (carrera upsert/embed) → la fila queda NULL
+    para re-embeberse con el contenido fresco (concurrencia optimista)."""
+
+    async def test_guarded_write_skips_stale_snapshot(self, db_session):
+        from sqlalchemy import select, update
+
+        h = "guard0" + "0" * 26  # 32 chars
+        db_session.add(
+            Job(
+                hash=h,
+                source="test",
+                title="T",
+                company="C",
+                url=f"https://example.com/{h}",
+                is_active=True,
+            )
+        )
+        await db_session.commit()
+        await db_session.execute(
+            update(Job).where(Job.hash == h).values(content_hash="H1")
+        )
+        await db_session.commit()
+
+        # Snapshot viejo (H0) ≠ content_hash actual (H1) → NO debe escribir.
+        r = await db_session.execute(
+            update(Job)
+            .where(
+                Job.hash == h,
+                Job.embedding.is_(None),
+                Job.content_hash.is_not_distinct_from("H0"),
+            )
+            .values(embedding=[0.1] * 384)
+        )
+        await db_session.commit()
+        assert (r.rowcount or 0) == 0
+        emb = (
+            await db_session.execute(select(Job.embedding).where(Job.hash == h))
+        ).scalar_one()
+        assert emb is None
+
+        # Snapshot correcto (H1) → SÍ escribe.
+        r2 = await db_session.execute(
+            update(Job)
+            .where(
+                Job.hash == h,
+                Job.embedding.is_(None),
+                Job.content_hash.is_not_distinct_from("H1"),
+            )
+            .values(embedding=[0.2] * 384)
+        )
+        await db_session.commit()
+        assert (r2.rowcount or 0) == 1

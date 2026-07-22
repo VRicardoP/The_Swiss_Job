@@ -117,7 +117,7 @@ async def _embed_pending_batch(db, matcher, batch_size: int) -> int:
     `build_job_text` es un staticmethod de JobMatcher; se invoca desde la
     instancia para no reimportar la clase en el bucle.
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, update
 
     from models.job import Job
 
@@ -134,6 +134,12 @@ async def _embed_pending_batch(db, matcher, batch_size: int) -> int:
     if not jobs:
         return 0
 
+    # Snapshot del content_hash en la LECTURA: el vector se calcula fuera de la BD
+    # (lento) y otro upsert podría cambiar el contenido mientras tanto. Escribimos el
+    # embedding SOLO si el content_hash sigue igual y el embedding sigue NULL
+    # (concurrencia optimista); si cambió, la fila queda NULL y se re-embebe en el
+    # siguiente lote con el contenido fresco — así no se guarda un embedding obsoleto.
+    snapshots = [(j.hash, j.content_hash) for j in jobs]
     texts = [
         matcher.build_job_text(
             {
@@ -146,9 +152,26 @@ async def _embed_pending_batch(db, matcher, batch_size: int) -> int:
         for j in jobs
     ]
     embeddings = await asyncio.to_thread(matcher.encode_batch, texts)
-    for job, emb in zip(jobs, embeddings):
-        job.embedding = emb.tolist()
+    written = 0
+    for (h, content_hash), emb in zip(snapshots, embeddings):
+        result = await db.execute(
+            update(Job)
+            .where(
+                Job.hash == h,
+                Job.embedding.is_(None),
+                Job.content_hash.is_not_distinct_from(content_hash),
+            )
+            .values(embedding=emb.tolist())
+        )
+        written += result.rowcount or 0
     await db.commit()
+    if written < len(jobs):
+        logger.info(
+            "embed batch: %d/%d escritos (%d saltados por cambio concurrente)",
+            written,
+            len(jobs),
+            len(jobs) - written,
+        )
     return len(jobs)
 
 

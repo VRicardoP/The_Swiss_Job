@@ -1,3 +1,5 @@
+import os
+
 from celery import Celery
 
 from config import settings
@@ -24,7 +26,11 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_soft_time_limit=300,
     task_time_limit=360,
-    worker_max_tasks_per_child=200,
+    # Recicla el hijo prefork cada 200 tareas (anti-fuga). worker-ai lo desactiva
+    # con CELERY_MAX_TASKS_PER_CHILD=0 (→ None) para NO recargar el modelo de
+    # embeddings; el worker general/scraping mantiene el default 200.
+    worker_max_tasks_per_child=int(os.getenv("CELERY_MAX_TASKS_PER_CHILD", "200"))
+    or None,
 )
 
 celery_app.conf.include = [

@@ -110,6 +110,9 @@ services:
         condition: service_healthy
     volumes:
       - hfcache:/home/app/.cache/huggingface
+    environment:
+      # Sin reciclado del hijo prefork → NO recarga el modelo de embeddings (rev.3 #2).
+      - CELERY_MAX_TASKS_PER_CHILD=0
     entrypoint: []
     command:
       - celery

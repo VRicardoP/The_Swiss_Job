@@ -132,6 +132,15 @@ class TestNormalizeTitleTokens:
         assert Deduplicator._normalize_title("C/C++ Developer") == "c c developer"
         assert Deduplicator._normalize_title("F/T Position") == "f t position"
 
+    def test_tech_abbreviation_not_treated_as_gender(self):
+        # "H/W" (hardware) NO es marcador de género; NO debe colapsar con "Engineer".
+        assert Deduplicator._normalize_title("H/W Engineer") == "h w engineer"
+        assert Deduplicator.compute_fuzzy_hash(
+            "H/W Engineer", "Acme"
+        ) != Deduplicator.compute_fuzzy_hash("Engineer", "Acme")
+        # "W/M" (weiblich/männlich) SÍ es género y se quita.
+        assert Deduplicator._normalize_title("W/M Consultant") == "consultant"
+
 
 # --- DB lookup (requires db_session fixture) ---
 
