@@ -115,6 +115,15 @@ def _state(factory, scope_id):
     return asyncio.run(go())
 
 
+def _provider_cursor_of(state) -> dict | None:
+    """El cursor sin la clave interna de fingerprint (para asserts limpios)."""
+    if state is None or state.cursor is None:
+        return None
+    c = dict(state.cursor)
+    c.pop("_params_fp", None)
+    return c
+
+
 def _run(factory, scope_id, sink):
     async def go():
         async with httpx.AsyncClient(
@@ -134,7 +143,7 @@ def test_two_scopes_commit_cursor_each(db):
     assert r1.listings == r2.listings == 2
     for sid in (s1, s2):  # cursor POR SCOPE, commiteado, sin fallos
         st = _state(factory, sid)
-        assert st.cursor == {"watermark": 200}
+        assert _provider_cursor_of(st) == {"watermark": 200}
         assert st.last_complete_at is not None and st.consecutive_failures == 0
     assert len(sink.batches) == 2
 
@@ -227,7 +236,7 @@ def test_sink_and_cursor_commit_in_same_tx(db):
     r = _run(factory, s1, MarkerSink(marker))
     assert r.status == "ok"
     assert _marker_exists(factory, marker)  # lo del sink quedó COMMITEADO con el cursor
-    assert _state(factory, s1).cursor == {"watermark": 200}
+    assert _provider_cursor_of(_state(factory, s1)) == {"watermark": 200}
     _delete_marker(factory, marker)
 
 
@@ -263,6 +272,95 @@ def test_provider_failure_records_and_leaves_cursor(db):
     st = _state(factory, s1)
     assert st.cursor is None and st.last_complete_at is None
     assert st.consecutive_failures == 1
+
+
+class RecordingProvider(FakeProvider):
+    """FakeProvider sensible a la keyword (fingerprint) que graba los cursores."""
+
+    SEMANTIC_PARAMS = ("keyword",)
+
+    def __init__(self):
+        self.received_cursors: list = []
+
+    async def fetch_new(self, params, cursor, http):
+        self.received_cursors.append(cursor)
+        return await super().fetch_new(params, cursor, http)
+
+
+def test_semantic_param_change_resets_cursor(db):
+    """Revisión #3: cambiar la keyword del scope con cursor existente reinicia
+    el cursor (un watermark heredado enterraría ofertas del filtro nuevo)."""
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+
+    async def set_keyword(kw):
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "UPDATE harvest_scopes SET params = CAST(:p AS jsonb) WHERE id = :i"
+                ),
+                {"p": f'{{"keyword": "{kw}"}}', "i": s1},
+            )
+            await s.commit()
+
+    asyncio.run(set_keyword("python"))
+    provider = RecordingProvider()
+
+    async def go():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(500))
+        ) as http:
+            return await run_scope(s1, provider, CollectSink(), http, session_factory=factory)
+
+    assert asyncio.run(go()).status == "ok"
+    assert provider.received_cursors == [None]  # primer run: sin cursor
+
+    asyncio.run(set_keyword("java"))  # cambia el parámetro SEMÁNTICO
+    assert asyncio.run(go()).status == "ok"
+    # Pese a existir estado, el provider recibe cursor=None (reinicio).
+    assert provider.received_cursors == [None, None]
+
+    asyncio.run(set_keyword("java"))  # sin cambio → el cursor SÍ se conserva
+    assert asyncio.run(go()).status == "ok"
+    assert provider.received_cursors[2] == {"watermark": 200}
+
+
+class InterleavedProvider(FakeProvider):
+    """Simula el run LENTO de la carrera del revisor: durante su fetch, OTRO run
+    completo del mismo scope avanza el cursor y commitea."""
+
+    def __init__(self, factory, scope_id):
+        self.factory = factory
+        self.scope_id = scope_id
+
+    async def fetch_new(self, params, cursor, http):
+        inner = await run_scope(
+            self.scope_id, FakeProvider(), CollectSink(), http, session_factory=self.factory
+        )
+        assert inner.status == "ok"  # el run rápido gana y commitea watermark=200
+        # El lento devuelve un cursor VIEJO (calculado con su snapshot previo).
+        return FetchResult(listings=(), next_cursor={"watermark": 1}, pages_fetched=1)
+
+
+def test_concurrent_run_aborts_stale_instead_of_clobbering(db):
+    """Revisión #2 (lost-update): el run lento detecta el cursor avanzado bajo
+    FOR UPDATE y aborta como 'stale' sin pisar el estado del rápido."""
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+
+    async def go():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(500))
+        ) as http:
+            return await run_scope(
+                s1, InterleavedProvider(factory, s1), CollectSink(), http, session_factory=factory
+            )
+
+    r = asyncio.run(go())
+    assert r.status == "stale"
+    st = _state(factory, s1)
+    assert _provider_cursor_of(st) == {"watermark": 200}  # gana el rápido, no el lento
+    assert st.consecutive_failures == 0  # stale NO cuenta como fallo
 
 
 def test_disabled_scope_is_skipped(db):

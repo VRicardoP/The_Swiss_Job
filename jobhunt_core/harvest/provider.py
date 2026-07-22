@@ -5,8 +5,10 @@ implementa el real: listing + incarnación + revisión raw). El runner garantiza
 que el cursor solo avanza si el sink completó sin error.
 """
 
+import hashlib
+import json
 from abc import ABC, abstractmethod
-from typing import Protocol
+from typing import ClassVar, Protocol
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,12 +20,23 @@ class BaseProvider(ABC):
     """Una fuente Tier 0/1 (API/feed). Sin estado: el cursor viene del scope."""
 
     name: str
+    # Parámetros SEMÁNTICOS del scope (definen QUÉ se cosecha): si cambian con
+    # cursor existente, el runner reinicia el cursor — un watermark heredado
+    # enterraría ofertas que el filtro nuevo sí querría (rev. A-03 #3). Los
+    # operativos (p.ej. max_pages) NO entran en el fingerprint.
+    SEMANTIC_PARAMS: ClassVar[tuple[str, ...]] = ()
 
     @abstractmethod
     async def fetch_new(
         self, params: dict, cursor: dict | None, http: httpx.AsyncClient
     ) -> FetchResult:
         """Devuelve SOLO lo nuevo respecto al cursor, con el cursor siguiente."""
+
+    def params_fingerprint(self, params: dict) -> str:
+        """Hash canónico del subconjunto semántico de params."""
+        semantic = {k: params.get(k) for k in self.SEMANTIC_PARAMS}
+        raw = json.dumps(semantic, sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.sha256(raw.encode()).hexdigest()
 
 
 class ListingSink(Protocol):

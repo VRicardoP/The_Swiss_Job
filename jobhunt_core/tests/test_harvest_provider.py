@@ -1,19 +1,22 @@
 """Provider Arbeitnow (A-03): incremental SIN pérdida, con HTTP MOCKEADO.
 
-La auditoría A-03 exigió: (1) el presupuesto de páginas NO puede perder ofertas
-(backfill entre runs hasta drenar); (2) los empates de created_at en la
-frontera se re-emiten (el sink idempotente deduplica); (3) items sin timestamp
-o sin url/slug se saltan sin disparar el corte.
+Revisión externa A-03: (1) sin resume por página — backfill desde la página 1
+con ANCLA lógica (inmune a la deriva por borrados: solo re-emite, nunca salta);
+(2) empates de frontera re-emitidos (dedup en el sink idempotente); (3) items
+sin timestamp/url se saltan sin disparar el corte; (4) liveness: max_pages>=2
+y techo de skip con reinicio de ancla.
 """
 
 import asyncio
 import json
 
 import httpx
+import pytest
 
+import jobhunt_core.harvest.providers.arbeitnow as arb
 from jobhunt_core.harvest.providers.arbeitnow import ArbeitnowProvider
 
-# Tres páginas orden desc por created_at.
+# Orden desc por created_at. p1: a300,b250 · p2: c200,d100 · p3: e50.
 PAGES = {
     1: {
         "data": [
@@ -54,22 +57,67 @@ def _ids(result):
     return [x.external_id for x in result.listings]
 
 
-def test_budget_cut_never_loses_offers_backfill_resumes():
-    """AUDITORÍA #1 (HIGH): presupuesto < backlog → el watermark NO avanza; el
-    cursor guarda backfill y el run siguiente DRENA el resto. Unión completa."""
+def test_budget_cut_never_loses_offers_anchor_resumes():
+    """AUDITORÍA/REVISIÓN #1: presupuesto < backlog → watermark intacto + ancla;
+    el run siguiente re-escanea desde la página 1 y drena. Unión completa."""
     r1, hits1 = _fetch(params={"max_pages": 2})
     assert _ids(r1) == ["a", "b", "c", "d"]
     assert hits1 == [1, 2]
-    # Cortó por presupuesto con backlog → watermark intacto + estado de backfill.
-    assert r1.next_cursor == {"watermark": 0, "pending_watermark": 300, "backfill_page": 3}
+    assert r1.next_cursor == {"watermark": 0, "pending_watermark": 300, "anchor_ts": 100}
 
-    # Run 2: reanuda con 1 página de solape (página 2) y termina el drenaje.
-    r2, hits2 = _fetch(params={"max_pages": 3}, cursor=r1.next_cursor)
-    assert hits2 == [2, 3]
-    assert _ids(r2) == ["c", "d", "e"]  # c y d re-emitidos por el solape (idempotente)
+    # Run 2: DESDE LA PÁGINA 1 (sin asumir estabilidad de páginas); lo ya
+    # emitido se salta por el ancla; la frontera (d==100) se re-emite.
+    r2, hits2 = _fetch(params={"max_pages": 2}, cursor=r1.next_cursor)
+    assert hits2 == [1, 2, 3]
+    assert _ids(r2) == ["d", "e"]
     assert r2.next_cursor == {"watermark": 300}  # drenado → consolida el pending
-    # UNIÓN de ambos runs = TODO el feed: nada se pierde.
-    assert set(_ids(r1)) | set(_ids(r2)) == {"a", "b", "c", "d", "e"}
+    assert set(_ids(r1)) | set(_ids(r2)) == {"a", "b", "c", "d", "e"}  # nada se pierde
+
+
+def test_deletion_drift_beyond_pages_does_not_lose(caplog):
+    """Repro EXACTA del revisor: borrados masivos entre runs desplazan el feed;
+    el re-escaneo desde la página 1 entrega e/f igualmente (solo re-emisión,
+    jamás salto)."""
+    v1 = {
+        1: {"data": [
+            {"slug": "a", "url": "https://x/a", "title": "T", "created_at": 400, "tags": []},
+            {"slug": "b", "url": "https://x/b", "title": "T", "created_at": 350, "tags": []},
+        ], "links": {"next": "?page=2"}},
+        2: {"data": [
+            {"slug": "c", "url": "https://x/c", "title": "T", "created_at": 300, "tags": []},
+            {"slug": "d", "url": "https://x/d", "title": "T", "created_at": 250, "tags": []},
+        ], "links": {"next": "?page=3"}},
+        3: {"data": [
+            {"slug": "e", "url": "https://x/e", "title": "T", "created_at": 200, "tags": []},
+            {"slug": "f", "url": "https://x/f", "title": "T", "created_at": 150, "tags": []},
+        ], "links": {}},
+    }
+    r1, _ = _fetch(params={"max_pages": 2}, pages=v1)
+    assert _ids(r1) == ["a", "b", "c", "d"]
+    assert r1.next_cursor == {"watermark": 0, "pending_watermark": 400, "anchor_ts": 250}
+
+    # a-d borradas: e/f suben de la página 3 a la 1.
+    v2 = {1: {"data": v1[3]["data"], "links": {}}}
+    r2, hits2 = _fetch(params={"max_pages": 2}, cursor=r1.next_cursor, pages=v2)
+    assert hits2 == [1]
+    assert _ids(r2) == ["e", "f"]  # entregadas: 200/150 <= ancla 250 → se emiten
+    assert r2.next_cursor == {"watermark": 400}
+    assert set(_ids(r1)) | set(_ids(r2)) == {"a", "b", "c", "d", "e", "f"}
+
+
+def test_max_pages_below_minimum_rejected():
+    with pytest.raises(ValueError, match="max_pages"):
+        _fetch(params={"max_pages": 1})
+
+
+def test_skip_overflow_resets_anchor(monkeypatch):
+    """Deriva más profunda que el techo de skip: se suelta el ancla (re-emisión
+    idempotente en el próximo run) en vez de estancarse."""
+    monkeypatch.setattr(arb, "MAX_SKIP_PAGES", 1)
+    cursor = {"watermark": 0, "pending_watermark": 300, "anchor_ts": 10}
+    result, hits = _fetch(params={"max_pages": 2}, cursor=cursor)
+    assert hits == [1, 2]  # 2 páginas de skip puro (>10) → techo superado
+    assert result.next_cursor == {"watermark": 0, "pending_watermark": 300}  # sin ancla
 
 
 def test_full_drain_advances_watermark():
@@ -80,8 +128,6 @@ def test_full_drain_advances_watermark():
 
 
 def test_incremental_early_stop_reemits_boundary_tie():
-    """AUDITORÍA #2: corte ESTRICTO — los == watermark se re-emiten (dedup en el
-    sink idempotente); corta en el primer < watermark."""
     result, hits = _fetch(cursor={"watermark": 200})
     assert _ids(result) == ["a", "b", "c"]  # c (==200) re-emitido, d (100<200) corta
     assert result.next_cursor == {"watermark": 300}
@@ -94,7 +140,7 @@ def test_no_new_items_reemits_only_boundary():
     assert result.next_cursor == {"watermark": 300}
 
 
-def test_missing_created_at_is_skipped_not_cross(caplog):
+def test_missing_created_at_is_skipped_not_cross():
     pages = {
         1: {
             "data": [
@@ -106,7 +152,6 @@ def test_missing_created_at_is_skipped_not_cross(caplog):
         }
     }
     result, _ = _fetch(pages=pages)
-    # El item sin timestamp se salta SIN cortar la página; el resto se recoge.
     assert _ids(result) == ["a", "b"]
     assert result.next_cursor == {"watermark": 300}
 
@@ -124,7 +169,6 @@ def test_missing_url_or_slug_is_skipped():
     }
     result, _ = _fetch(pages=pages)
     assert _ids(result) == ["ok"]
-    # Los inválidos NO frenan el watermark (sus timestamps sí se observan).
     assert result.next_cursor == {"watermark": 300}
 
 
