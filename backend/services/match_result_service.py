@@ -53,6 +53,7 @@ class MatchResultService:
                 MatchResult.user_id == user_id,
                 not_dismissed,
                 Job.is_active.is_(True),
+                Job.duplicate_of.is_(None),
             )
         )
         total = (await self.db.execute(count_stmt)).scalar_one()
@@ -64,6 +65,7 @@ class MatchResultService:
                 MatchResult.user_id == user_id,
                 not_dismissed,
                 Job.is_active.is_(True),
+                Job.duplicate_of.is_(None),
             )
             .order_by(MatchResult.score_final.desc())
             .limit(limit)

@@ -314,6 +314,18 @@ class TestEmbedAllPendingDrain:
         assert result["processed"] == 0  # corta sin colgarse
         assert result["status"] == "partial"  # señaliza que quedan pendientes
 
+    def test_task_not_success_on_partial(self, monkeypatch):
+        """rev.6 #10: un drenado parcial NO debe terminar en éxito, para que la
+        cadena .si() (dedup→matching) NO avance con embeddings incompletos."""
+        import tasks.embedding_tasks as et
+
+        async def fake_partial(batch_size):
+            return {"status": "partial", "processed": 0}
+
+        monkeypatch.setattr(et, "_embed_all_pending_async", fake_partial)
+        r = et.embed_all_pending.apply(args=[200])
+        assert not r.successful()  # RETRY/FAILURE → la cadena no avanza
+
 
 class TestEmbedPendingBatchRealRace:
     """rev.5 #2: carrera REAL — otro upsert cambia el content_hash (en otra sesión,

@@ -97,6 +97,24 @@ class TestGetResultsHidesArchivedJobs:
         assert total == 0
         assert results == []
 
+    async def test_reactivated_duplicate_not_shown(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        """Un duplicado reactivado (is_active=True pero duplicate_of set) NO debe
+        aparecer en el feed."""
+        user_id = await _register(client)
+        await _insert_job(db_session, "dup1")
+        await _seed(db_session, user_id, "dup1")
+        await db_session.execute(
+            update(Job)
+            .where(Job.hash == "dup1")
+            .values(duplicate_of="canonical000000", is_active=True)
+        )
+        await db_session.commit()
+
+        _, total = await _svc(db_session).get_results(user_id)
+        assert total == 0  # excluido por duplicate_of IS NOT NULL
+
 
 @pytest.mark.anyio
 class TestClearFeedback:

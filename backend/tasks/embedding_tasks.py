@@ -105,10 +105,22 @@ def embed_all_pending(self, batch_size: int = 200) -> dict[str, Any]:
     así que procesar cientos de ofertas no consume crédito de ninguna API de IA.
     """
     try:
-        return asyncio.run(_embed_all_pending_async(batch_size))
+        result = asyncio.run(_embed_all_pending_async(batch_size))
     except Exception as exc:
         logger.error("embed_all_pending failed: %s", exc)
         raise self.retry(exc=exc, countdown=120)
+    if result.get("status") == "partial":
+        # NO dejar que la cadena (.si()) avance a dedup/matching con embeddings
+        # incompletos: reintentar; si el parcial persiste, el fallo detiene la
+        # cadena (garantiza que el matching no corre sobre ofertas sin embedding).
+        logger.warning(
+            "embed_all_pending parcial: reintento para no matchear incompleto"
+        )
+        raise self.retry(
+            exc=RuntimeError("embed_all_pending parcial: quedan ofertas sin embedding"),
+            countdown=120,
+        )
+    return result
 
 
 async def _embed_pending_batch(db, matcher, batch_size: int) -> tuple[int, int]:
