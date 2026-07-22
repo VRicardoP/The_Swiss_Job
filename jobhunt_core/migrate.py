@@ -105,9 +105,15 @@ def _bootstrap() -> None:
         # Revoca los grants DIRECTOS del rol sobre el esquema legacy (los del
         # pseudo-rol PUBLIC no se tocan: ver política en el docstring).
         conn.execute(sa.text(f"REVOKE ALL ON SCHEMA public FROM {_ROLE}"))
-        conn.execute(sa.text(f'ALTER ROLE {_ROLE} SET search_path = "{schema}"'))
+        # search_path = jobhunt, public: pgvector (tipo + operadores) vive en
+        # public y A-02 lo necesita; las tablas legacy quedan protegidas por
+        # ACL (verificadas abajo), no por invisibilidad del esquema (rev. 3ª #1).
+        conn.execute(
+            sa.text(f'ALTER ROLE {_ROLE} SET search_path = "{schema}", public')
+        )
 
         _verify_isolation(conn, schema)
+        _verify_pgvector(conn, schema)
     engine.dispose()
 
 
@@ -145,19 +151,41 @@ def _verify_isolation(conn: sa.Connection, schema: str) -> None:
         raise RuntimeError(f"Rol {_ROLE} puede CREATE en el esquema public (legacy)")
 
     # TODA relación de public (tablas/vistas/matviews/particionadas/foráneas):
-    # cero privilegios de cualquier tipo para el rol del core.
+    # cero privilegios de cualquier tipo para el rol del core — incluidas las
+    # ACL DE COLUMNA (rev. 3ª #2: un GRANT SELECT(col) no aparece en
+    # has_table_privilege pero sí en has_any_column_privilege).
     reachable = conn.execute(
         sa.text(
             "SELECT c.relname FROM pg_class c "
             "JOIN pg_namespace n ON n.oid = c.relnamespace "
             "WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','m','f') "
-            "AND has_table_privilege(:r, c.oid, "
-            "'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')"
+            "AND (has_table_privilege(:r, c.oid, "
+            "'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
+            "OR has_any_column_privilege(:r, c.oid, "
+            "'SELECT,INSERT,UPDATE,REFERENCES'))"
         ),
         {"r": _ROLE},
     ).scalars().all()
     if reachable:
-        raise RuntimeError(f"Rol {_ROLE} tiene privilegios en public: {reachable}")
+        raise RuntimeError(
+            f"Rol {_ROLE} tiene privilegios (de tabla o de COLUMNA) en public: {reachable}"
+        )
+
+    # Funciones SECURITY DEFINER en public ejecutables por el core: escalada
+    # potencial (corren con los privilegios del dueño) — no debe existir ninguna.
+    secdef = conn.execute(
+        sa.text(
+            "SELECT p.proname FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "WHERE n.nspname = 'public' AND p.prosecdef "
+            "AND has_function_privilege(:r, p.oid, 'EXECUTE')"
+        ),
+        {"r": _ROLE},
+    ).scalars().all()
+    if secdef:
+        raise RuntimeError(
+            f"Funciones SECURITY DEFINER de public ejecutables por {_ROLE}: {secdef}"
+        )
 
     # CASE fuerza el orden de evaluación: el planner de Postgres puede evaluar
     # los predicados del WHERE en cualquier orden, y has_sequence_privilege
@@ -214,6 +242,28 @@ def _verify_isolation(conn: sa.Connection, schema: str) -> None:
         schema,
         _ROLE,
     )
+
+
+def _verify_pgvector(conn: sa.Connection, schema: str) -> None:
+    """pgvector resoluble COMO el rol del core (rev. 3ª #1).
+
+    A-02 crea columnas vector(384) y usa el operador <=>; ambos viven en
+    `public`. Se prueba con SET LOCAL ROLE + el search_path real del rol —
+    si no resuelve, el job muere aquí (no en la primera migración de A-02).
+    """
+    try:
+        conn.execute(sa.text(f"SET LOCAL search_path = \"{schema}\", public"))
+        conn.execute(sa.text(f"SET LOCAL ROLE {_ROLE}"))
+        dist = conn.execute(
+            sa.text("SELECT '[1,2,3]'::vector <=> '[1,2,4]'::vector")
+        ).scalar()
+        conn.execute(sa.text("RESET ROLE"))
+    except Exception as exc:
+        raise RuntimeError(
+            "pgvector NO resoluble con el rol del core (¿extensión ausente o "
+            f"fuera del search_path?): {exc}"
+        ) from exc
+    logger.info("pgvector verificado como %s (cast + operador <=>, dist=%s)", _ROLE, dist)
 
 
 def main() -> None:

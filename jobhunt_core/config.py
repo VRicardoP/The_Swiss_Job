@@ -90,6 +90,17 @@ class CoreSettings(BaseSettings):
                     f"en prod {name} necesita contraseña real de redis-core "
                     "(no la de dev ni un marcador de plantilla)"
                 )
+        # requirepass es único por instancia: broker y result backend DEBEN
+        # llevar la misma contraseña (rev. 3ª #3 — si difieren, Celery falla
+        # auth en uno de los dos aunque la API parezca ready).
+        if (
+            urlsplit(self.CORE_BROKER_URL).password
+            != urlsplit(self.CORE_RESULT_BACKEND).password
+        ):
+            raise ValueError(
+                "CORE_BROKER_URL y CORE_RESULT_BACKEND deben llevar la MISMA "
+                "contraseña de redis-core (requirepass es único por instancia)"
+            )
         return self
 
 

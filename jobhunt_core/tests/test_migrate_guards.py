@@ -121,6 +121,15 @@ class TestProdFailFast:
         with pytest.raises(Exception):
             cls()  # sin +asyncpg → driver equivocado
 
+    def test_mismatched_redis_passwords_rejected_in_prod(self, monkeypatch):
+        # rev. 3ª #3: requirepass es único → broker y result deben coincidir.
+        cls = self._settings(
+            monkeypatch,
+            CORE_RESULT_BACKEND="redis://:OtraPassword_9@redis-core:6379/1",
+        )
+        with pytest.raises(Exception):
+            cls()
+
 
 class TestPasswordCrossCheck:
     def test_bootstrap_rejects_mismatched_passwords(self, monkeypatch):

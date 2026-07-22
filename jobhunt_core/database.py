@@ -15,8 +15,14 @@ class Base(DeclarativeBase):
 
 engine = create_async_engine(
     settings.CORE_DATABASE_URL,
-    # search_path fijado a nivel de conexión: el core no resuelve tablas fuera
-    # de su esquema ni aunque una query olvide el prefijo.
-    connect_args={"server_settings": {"search_path": settings.CORE_DB_SCHEMA}},
+    # search_path = jobhunt, public (rev. externa 3ª #1): pgvector (tipo
+    # `vector` y sus operadores, p.ej. <=>) vive en `public`; sin él en el
+    # search_path, A-02 no puede crear ni operar columnas vector(384). La
+    # protección frente a las TABLAS legacy de public NO es la invisibilidad
+    # del esquema sino las ACL (cero privilegios, verificado exhaustivamente
+    # en cada corrida del migrate, incluidas ACL de columna).
+    connect_args={
+        "server_settings": {"search_path": f"{settings.CORE_DB_SCHEMA}, public"}
+    },
 )
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
