@@ -1,0 +1,6 @@
+# Contexto de build del CORE (jobhunt_core/Dockerfile usa la raíz como contexto).
+# Solo el paquete entra al contexto; backend/ y frontend/ tienen su propio
+# contexto de build (./backend, ./frontend) con sus propias reglas.
+*
+!jobhunt_core
+jobhunt_core/**/__pycache__

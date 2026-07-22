@@ -90,6 +90,113 @@ services:
       redis:
         condition: service_healthy
 
+  # ---- jobhunt-core (Fase A, A-01) — aislado del legacy (ADR-08 / plan §15bis) ----
+
+  redis-core:
+    # Broker/locks DEDICADOS del core: noeviction (un broker jamás expulsa
+    # mensajes ni locks) + AOF (persistencia: recrear el contenedor no pierde
+    # tareas) + auth + red propia core-net (el legacy NO lo alcanza) + puerto
+    # host solo en localhost. La caché legacy sigue en `redis`.
+    image: redis:7-alpine
+    container_name: swissjob-redis-core
+    environment:
+      - CORE_REDIS_PASSWORD=${CORE_REDIS_PASSWORD:-core_redis_dev}
+    command:
+      - sh
+      - -c
+      - >-
+        redis-server --maxmemory 256mb --maxmemory-policy noeviction
+        --appendonly yes --appendfsync everysec
+        --requirepass "$$CORE_REDIS_PASSWORD"
+    ports:
+      - "127.0.0.1:${HOST_REDIS_CORE_PORT:-6381}:6379"
+    volumes:
+      - redis_core_data:/data
+    networks:
+      - core-net
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$CORE_REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  core-migrate:
+    # Job de migración PROPIO del core (one-shot): bootstrap de rol+esquema
+    # (idempotente, con credencial admin) + alembic upgrade head. El backend
+    # legacy migra en su entrypoint; el core NUNCA se cuelga de eso.
+    build:
+      context: .
+      dockerfile: jobhunt_core/Dockerfile
+    image: swissjob-core:dev
+    container_name: swissjob-core-migrate
+    command: python -m jobhunt_core.migrate
+    environment:
+      - CORE_DATABASE_URL=postgresql+asyncpg://jobhunt_core:${CORE_DB_PASSWORD:-jobhunt_core_dev}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
+      - CORE_ADMIN_DATABASE_URL=postgresql://${POSTGRES_USER:-swissjob}:${POSTGRES_PASSWORD:-swissjob_dev_2024}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
+      - CORE_DB_PASSWORD=${CORE_DB_PASSWORD:-jobhunt_core_dev}
+    volumes:
+      # Código vivo también en el job de migración (mismo trato que api/worker):
+      # evita ejecutar una imagen desactualizada en dev.
+      - ./jobhunt_core:/app/jobhunt_core
+    networks:
+      - default
+      - core-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  core-api:
+    build:
+      context: .
+      dockerfile: jobhunt_core/Dockerfile
+    image: swissjob-core:dev
+    container_name: swissjob-core-api
+    command: uvicorn jobhunt_core.api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      # 8003: puerto dedicado del core (plan §21) — sin colisión con 8001/8002/5174/5435/6380.
+      - "${HOST_CORE_API_PORT:-8003}:8000"
+    environment:
+      - CORE_DATABASE_URL=postgresql+asyncpg://jobhunt_core:${CORE_DB_PASSWORD:-jobhunt_core_dev}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
+      - CORE_BROKER_URL=redis://:${CORE_REDIS_PASSWORD:-core_redis_dev}@redis-core:6379/0
+      - CORE_RESULT_BACKEND=redis://:${CORE_REDIS_PASSWORD:-core_redis_dev}@redis-core:6379/1
+    volumes:
+      - ./jobhunt_core:/app/jobhunt_core
+    networks:
+      - default
+      - core-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-core:
+        condition: service_healthy
+      core-migrate:
+        # La API no arranca sobre una BD sin migrar (además de /v1/ready).
+        condition: service_completed_successfully
+
+  core-worker:
+    build:
+      context: .
+      dockerfile: jobhunt_core/Dockerfile
+    image: swissjob-core:dev
+    container_name: swissjob-core-worker
+    # SOLO colas core.* — el worker legacy escucha default/scraping/ai en OTRO broker.
+    command: celery -A jobhunt_core.celery_app worker -l info -Q core.default,core.harvest,core.embedding,core.matching,core.notifications --concurrency=2
+    environment:
+      - CORE_DATABASE_URL=postgresql+asyncpg://jobhunt_core:${CORE_DB_PASSWORD:-jobhunt_core_dev}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
+      - CORE_BROKER_URL=redis://:${CORE_REDIS_PASSWORD:-core_redis_dev}@redis-core:6379/0
+      - CORE_RESULT_BACKEND=redis://:${CORE_REDIS_PASSWORD:-core_redis_dev}@redis-core:6379/1
+    volumes:
+      - ./jobhunt_core:/app/jobhunt_core
+    networks:
+      - default
+      - core-net
+    depends_on:
+      redis-core:
+        condition: service_healthy
+      core-migrate:
+        condition: service_completed_successfully
+
   frontend:
     build:
       context: ./frontend
@@ -107,3 +214,10 @@ services:
 volumes:
   pgdata:
   redisdata:
+  redis_core_data:
+
+networks:
+  # Red EXCLUSIVA del core: el legacy no está en ella → no puede alcanzar
+  # redis-core (ni leer/escribir/FLUSHALL su broker). Los servicios core están
+  # también en `default` para llegar a postgres.
+  core-net:

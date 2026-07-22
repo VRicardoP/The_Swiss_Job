@@ -133,6 +133,98 @@ services:
     networks:
       - swissjob-net
 
+  # ---- jobhunt-core (Fase A, A-01) — perfil "core": NO arranca hasta Fase B
+  # (sombra). Activar con: docker compose --profile core up -d
+  # Requiere cargar también: docker load -i swissjob-core.tar
+  # AISLAMIENTO de secretos (revisión A-01 #1): el core NO recibe el .env.prod
+  # legacy. Runtime → .env.core.prod; admin → SOLO core-migrate (.env.core.admin.prod).
+
+  redis-core:
+    profiles: ["core"]
+    image: redis:7-alpine
+    container_name: swissjob-redis-core
+    restart: unless-stopped
+    # noeviction (broker jamás expulsa mensajes/locks, ADR-08) + AOF + auth +
+    # red core-net exclusiva (el legacy no lo alcanza).
+    env_file:
+      - .env.core.prod
+    command:
+      - sh
+      - -c
+      - >-
+        redis-server --maxmemory 256mb --maxmemory-policy noeviction
+        --appendonly yes --appendfsync everysec
+        --requirepass "$$CORE_REDIS_PASSWORD"
+    volumes:
+      - redis_core_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$CORE_REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - core-net
+
+  core-migrate:
+    profiles: ["core"]
+    image: swissjob-core:prod
+    container_name: swissjob-core-migrate
+    command: python -m jobhunt_core.migrate
+    env_file:
+      - .env.core.prod
+      - .env.core.admin.prod
+    environment:
+      - CORE_ENV=prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - swissjob-net
+      - core-net
+
+  core-api:
+    profiles: ["core"]
+    image: swissjob-core:prod
+    container_name: swissjob-core-api
+    restart: unless-stopped
+    command: uvicorn jobhunt_core.api.main:app --host 0.0.0.0 --port 8000
+    env_file:
+      - .env.core.prod
+    environment:
+      - CORE_ENV=prod
+    # SIN puerto de host: solo red interna (plan §21); nunca por ngrok.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-core:
+        condition: service_healthy
+      core-migrate:
+        condition: service_completed_successfully
+    networks:
+      - swissjob-net
+      - core-net
+
+  core-worker:
+    profiles: ["core"]
+    image: swissjob-core:prod
+    container_name: swissjob-core-worker
+    restart: unless-stopped
+    # SOLO colas core.* — el worker legacy escucha default/scraping/ai en OTRO broker.
+    command: celery -A jobhunt_core.celery_app worker -l info -Q core.default,core.harvest,core.embedding,core.matching,core.notifications --concurrency=2
+    env_file:
+      - .env.core.prod
+    environment:
+      - CORE_ENV=prod
+    depends_on:
+      redis-core:
+        condition: service_healthy
+      core-migrate:
+        condition: service_completed_successfully
+    networks:
+      - swissjob-net
+      - core-net
+
   frontend:
     image: swissjob-frontend:prod
     container_name: swissjob-frontend
@@ -156,6 +248,9 @@ services:
 networks:
   swissjob-net:
     driver: bridge
+  # Red EXCLUSIVA del core: el legacy no está en ella → no alcanza redis-core.
+  core-net:
+    driver: bridge
 
 volumes:
   pgdata:
@@ -163,4 +258,6 @@ volumes:
   redisdata:
     driver: local
   hfcache:
+    driver: local
+  redis_core_data:
     driver: local

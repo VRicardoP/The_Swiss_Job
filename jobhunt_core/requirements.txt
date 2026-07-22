@@ -1,0 +1,13 @@
+# jobhunt-core (A-01) — runtime mínimo. Sin ML/Chromium hasta A-06.
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+sqlalchemy>=2.0,<3
+asyncpg>=0.29,<1
+psycopg2-binary>=2.9,<3
+alembic>=1.13,<2
+celery>=5.3,<6
+redis>=5.0,<6
+pydantic-settings>=2.2,<3
+# tests (la imagen dev los ejecuta; podar en una imagen prod slim si hace falta)
+pytest>=8.0,<9
+httpx>=0.27,<1
