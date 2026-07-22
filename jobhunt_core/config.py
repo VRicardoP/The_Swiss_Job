@@ -7,6 +7,8 @@ jobhunt_core, esquema jobhunt, broker/backend en redis-core y sin credenciales
 de dev — la configuración muere al arrancar si no se cumple.
 """
 
+import re
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import model_validator
@@ -15,12 +17,20 @@ from pydantic_settings import BaseSettings
 # Credenciales que SOLO valen en dev; en prod el arranque falla si siguen presentes.
 _DEV_PASSWORD = "jobhunt_core_dev"
 _DEV_REDIS_PASSWORD = "core_redis_dev"
+# Marcadores de plantilla sin rellenar: también se rechazan en prod (rev. #3).
+_PLACEHOLDER_RE = re.compile(r"CAMBIA|CHANGE_?ME|PLACEHOLDER|EXAMPLE", re.IGNORECASE)
+
+
+def _bad_secret(value: str | None) -> bool:
+    return not value or value in (_DEV_PASSWORD, _DEV_REDIS_PASSWORD) or bool(
+        _PLACEHOLDER_RE.search(value)
+    )
 
 
 class CoreSettings(BaseSettings):
-    # "dev" | "prod". Los compose de prod lo fijan a "prod" en su bloque
-    # environment (no depende del env_file) → fail-fast garantizado.
-    CORE_ENV: str = "dev"
+    # Literal: un valor desconocido ("production", "PROD"...) NO desactiva las
+    # guardas en silencio — la configuración no valida (rev. #3).
+    CORE_ENV: Literal["dev", "prod"] = "dev"
 
     # Postgres COMPARTIDO con el legacy, pero esquema propio + rol de mínimo
     # privilegio (el rol del core no tiene grants sobre `public`).
@@ -46,15 +56,19 @@ class CoreSettings(BaseSettings):
             return self
 
         db = urlsplit(self.CORE_DATABASE_URL)
+        if db.scheme != "postgresql+asyncpg":
+            raise ValueError(
+                f"en prod CORE_DATABASE_URL debe ser postgresql+asyncpg:// ({db.scheme!r})"
+            )
         if db.username != "jobhunt_core":
             raise ValueError(
                 "en prod CORE_DATABASE_URL debe conectar como el rol jobhunt_core "
                 f"(recibido: {db.username!r}) — nunca con el usuario legacy/admin"
             )
-        if not db.password or db.password == _DEV_PASSWORD:
+        if _bad_secret(db.password):
             raise ValueError(
-                "en prod CORE_DATABASE_URL necesita contraseña real (no la de dev): "
-                "define CORE_DATABASE_URL/CORE_DB_PASSWORD en .env.core.prod"
+                "en prod CORE_DATABASE_URL necesita contraseña real (no la de dev "
+                "ni un marcador de plantilla sin rellenar)"
             )
         if self.CORE_DB_SCHEMA != "jobhunt":
             raise ValueError(f"en prod CORE_DB_SCHEMA debe ser 'jobhunt' ({self.CORE_DB_SCHEMA!r})")
@@ -64,13 +78,18 @@ class CoreSettings(BaseSettings):
             ("CORE_RESULT_BACKEND", self.CORE_RESULT_BACKEND),
         ):
             u = urlsplit(url)
+            if u.scheme != "redis":
+                raise ValueError(f"en prod {name} debe ser redis:// ({u.scheme!r})")
             if u.hostname != "redis-core":
                 raise ValueError(
                     f"en prod {name} debe apuntar al Redis DEDICADO redis-core "
                     f"(recibido host: {u.hostname!r}) — nunca al Redis de caché legacy"
                 )
-            if not u.password or u.password == _DEV_REDIS_PASSWORD:
-                raise ValueError(f"en prod {name} necesita contraseña real de redis-core")
+            if _bad_secret(u.password):
+                raise ValueError(
+                    f"en prod {name} necesita contraseña real de redis-core "
+                    "(no la de dev ni un marcador de plantilla)"
+                )
         return self
 
 

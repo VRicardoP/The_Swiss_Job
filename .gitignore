@@ -29,8 +29,15 @@ docker-compose.override.yml
 .env.prod
 .env.production
 .env.staging
-# Permitir el template
+# Secretos del core (jobhunt_core) — NUNCA commitear los reales
+.env.core.prod
+.env.core.admin.prod
+.env.core.redis.prod
+# Permitir los templates
 !.env.prod.example
+!.env.core.prod.example
+!.env.core.admin.prod.example
+!.env.core.redis.prod.example
 
 # IDE
 .vscode/

@@ -25,6 +25,7 @@ import logging
 import os
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import sqlalchemy as sa
 from alembic import command
@@ -57,11 +58,21 @@ def _bootstrap() -> None:
     schema = settings.CORE_DB_SCHEMA
     if not _IDENT_RE.match(schema):
         raise ValueError(f"CORE_DB_SCHEMA inválido: {schema!r}")
+    # Cross-check ANTES de tocar nada (rev. #5): si la contraseña que se va a
+    # fijar en el rol no coincide con la de CORE_DATABASE_URL, la rotación
+    # dejaría a api/worker (y al propio Alembic) sin poder autenticar.
+    url_password = urlsplit(settings.CORE_DATABASE_URL).password
+    if url_password != password:
+        raise ValueError(
+            "CORE_DB_PASSWORD no coincide con la contraseña de CORE_DATABASE_URL: "
+            "rotarían desincronizadas (rol con una, clientes con otra)"
+        )
 
-    engine = sa.create_engine(
-        admin_url, isolation_level="AUTOCOMMIT", poolclass=sa.pool.NullPool
-    )
-    with engine.connect() as conn:
+    engine = sa.create_engine(admin_url, poolclass=sa.pool.NullPool)
+    # TRANSACCIONAL (rev. #5): CREATE/ALTER ROLE, REVOKE y CREATE SCHEMA son
+    # transaccionales en Postgres; un fallo (incluida la verificación) hace
+    # rollback y NO deja el bootstrap a medias.
+    with engine.begin() as conn:
         exists = conn.execute(
             sa.text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": _ROLE}
         ).scalar()
@@ -96,12 +107,17 @@ def _bootstrap() -> None:
         conn.execute(sa.text(f"REVOKE ALL ON SCHEMA public FROM {_ROLE}"))
         conn.execute(sa.text(f'ALTER ROLE {_ROLE} SET search_path = "{schema}"'))
 
-        _verify_isolation(conn)
+        _verify_isolation(conn, schema)
     engine.dispose()
 
 
-def _verify_isolation(conn: sa.Connection) -> None:
-    """Aislamiento EFECTIVO verificado contra Postgres; si falla, el job muere."""
+def _verify_isolation(conn: sa.Connection, schema: str) -> None:
+    """Aislamiento EFECTIVO y EXHAUSTIVO contra Postgres (rev. #4).
+
+    No solo el estado deseado: guarda contra la DERIVA — enumera TODAS las
+    relaciones/secuencias de `public` y exige cero privilegios, cero objetos
+    del core en `public`, y el owner correcto del esquema del core.
+    """
     attrs = conn.execute(
         sa.text(
             "SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls "
@@ -128,21 +144,75 @@ def _verify_isolation(conn: sa.Connection) -> None:
     if can_create_public:
         raise RuntimeError(f"Rol {_ROLE} puede CREATE en el esquema public (legacy)")
 
-    # Si la tabla legacy central existe, el core NO debe poder leerla.
-    jobs_exists = conn.execute(
-        sa.text("SELECT to_regclass('public.jobs') IS NOT NULL")
-    ).scalar()
-    if jobs_exists:
-        can_read_jobs = conn.execute(
-            sa.text("SELECT has_table_privilege(:r, 'public.jobs', 'SELECT')"),
-            {"r": _ROLE},
-        ).scalar()
-        if can_read_jobs:
-            raise RuntimeError(f"Rol {_ROLE} puede leer public.jobs (legacy)")
+    # TODA relación de public (tablas/vistas/matviews/particionadas/foráneas):
+    # cero privilegios de cualquier tipo para el rol del core.
+    reachable = conn.execute(
+        sa.text(
+            "SELECT c.relname FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','m','f') "
+            "AND has_table_privilege(:r, c.oid, "
+            "'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')"
+        ),
+        {"r": _ROLE},
+    ).scalars().all()
+    if reachable:
+        raise RuntimeError(f"Rol {_ROLE} tiene privilegios en public: {reachable}")
 
+    # CASE fuerza el orden de evaluación: el planner de Postgres puede evaluar
+    # los predicados del WHERE en cualquier orden, y has_sequence_privilege
+    # revienta sobre relaciones que no son secuencias.
+    seq_reachable = conn.execute(
+        sa.text(
+            "SELECT c.relname FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND CASE WHEN c.relkind = 'S' "
+            "THEN has_sequence_privilege(:r, c.oid, 'USAGE,SELECT,UPDATE') "
+            "ELSE false END"
+        ),
+        {"r": _ROLE},
+    ).scalars().all()
+    if seq_reachable:
+        raise RuntimeError(f"Rol {_ROLE} tiene privilegios en secuencias de public: {seq_reachable}")
+
+    # Nada en public debe pertenecer al rol del core.
+    owned_in_public = conn.execute(
+        sa.text(
+            "SELECT c.relname FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' "
+            "AND c.relowner = (SELECT oid FROM pg_roles WHERE rolname = :r)"
+        ),
+        {"r": _ROLE},
+    ).scalars().all()
+    if owned_in_public:
+        raise RuntimeError(f"Objetos de public propiedad de {_ROLE}: {owned_in_public}")
+
+    # El esquema del core debe pertenecer al rol del core (un `jobhunt`
+    # pre-existente con otro owner impediría migrar o filtraría propiedad).
+    schema_owner = conn.execute(
+        sa.text(
+            "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = :s"
+        ),
+        {"s": schema},
+    ).scalar()
+    if schema_owner != _ROLE:
+        raise RuntimeError(f"El esquema {schema} pertenece a {schema_owner!r}, no a {_ROLE}")
+
+    audited = conn.execute(
+        sa.text(
+            "SELECT count(*) FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','m','f','S')"
+        )
+    ).scalar()
     logger.info(
-        "Aislamiento verificado: sin atributos elevados, sin memberships, "
-        "sin CREATE en public, sin SELECT en tablas legacy"
+        "Aislamiento verificado (exhaustivo): sin atributos elevados, sin "
+        "memberships, sin privilegio alguno sobre las %d relaciones/secuencias "
+        "de public, sin objetos propios en public, esquema %s con owner %s",
+        audited,
+        schema,
+        _ROLE,
     )
 
 

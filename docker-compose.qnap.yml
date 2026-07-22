@@ -140,8 +140,9 @@ services:
     restart: unless-stopped
     # noeviction (broker jamás expulsa mensajes/locks, ADR-08) + AOF + auth +
     # red core-net exclusiva (el legacy no lo alcanza).
+    # SOLO recibe su propio secreto (rev. #2): nunca URLs de BD/Celery.
     env_file:
-      - /share/Public/swissjob/.env.core.prod
+      - /share/Public/swissjob/.env.core.redis.prod
     command:
       - sh
       - -c

@@ -89,3 +89,45 @@ class TestProdFailFast:
         for k in self.GOOD:
             monkeypatch.delenv(k, raising=False)
         assert CoreSettings().CORE_ENV == "dev"
+
+    def test_unknown_env_value_rejected(self, monkeypatch):
+        # rev. #3: "production"/"PROD"/etc. NO desactivan las guardas en
+        # silencio — CORE_ENV es Literal["dev","prod"] y cualquier otro valor
+        # invalida la configuración entera.
+        cls = self._settings(monkeypatch, CORE_ENV="production")
+        with pytest.raises(Exception):
+            cls()
+
+    def test_template_placeholders_rejected_in_prod(self, monkeypatch):
+        # rev. #3: la plantilla .env.core.prod.example SIN rellenar no debe
+        # arrancar en prod (valores replicados literalmente de la plantilla).
+        cls = self._settings(
+            monkeypatch,
+            CORE_DATABASE_URL=(
+                "postgresql+asyncpg://jobhunt_core:CAMBIA_PASSWORD_DB"
+                "@postgres:5432/swissjobhunter"
+            ),
+            CORE_BROKER_URL="redis://:CAMBIA_PASSWORD_REDIS@redis-core:6379/0",
+            CORE_RESULT_BACKEND="redis://:CAMBIA_PASSWORD_REDIS@redis-core:6379/1",
+        )
+        with pytest.raises(Exception):
+            cls()
+
+    def test_wrong_url_scheme_rejected_in_prod(self, monkeypatch):
+        cls = self._settings(
+            monkeypatch,
+            CORE_DATABASE_URL="postgresql://jobhunt_core:RealPw_12345@postgres:5432/swissjobhunter",
+        )
+        with pytest.raises(Exception):
+            cls()  # sin +asyncpg → driver equivocado
+
+
+class TestPasswordCrossCheck:
+    def test_bootstrap_rejects_mismatched_passwords(self, monkeypatch):
+        # rev. #5: CORE_DB_PASSWORD debe coincidir con la contraseña de
+        # CORE_DATABASE_URL; si no, la rotación desincronizaría rol y clientes.
+        # (El default de CORE_DATABASE_URL lleva jobhunt_core_dev.)
+        monkeypatch.setenv("CORE_ADMIN_DATABASE_URL", "postgresql://x@nowhere/db")
+        monkeypatch.setenv("CORE_DB_PASSWORD", "OtraPassword_123")
+        with pytest.raises(ValueError, match="no coincide"):
+            _bootstrap()

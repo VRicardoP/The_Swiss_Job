@@ -176,8 +176,9 @@ services:
     restart: unless-stopped
     # noeviction (un broker jamás expulsa mensajes/locks, ADR-08) + AOF
     # (persistencia) + auth + red core-net exclusiva (el legacy no lo alcanza).
+    # SOLO recibe su propio secreto (rev. #2): nunca URLs de BD/Celery.
     env_file:
-      - .env.core.prod
+      - .env.core.redis.prod
     command:
       - sh
       - -c

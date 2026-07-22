@@ -4,6 +4,7 @@ Los endpoints de negocio (vacancies/matches, DTOs de CONTRATOS_FASE_A.md §2)
 llegan en A-09; este módulo solo establece la app, /v1 y las sondas.
 """
 
+import logging
 from functools import lru_cache
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from fastapi.responses import JSONResponse
 
 from jobhunt_core import __version__
 from jobhunt_core.database import engine
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="jobhunt-core",
@@ -51,9 +54,13 @@ async def ready() -> JSONResponse:
             current = (
                 await conn.execute(sa.text("SELECT version_num FROM alembic_version"))
             ).scalar()
-    except Exception as exc:  # BD caída, esquema/tabla ausente, credencial mala...
+    except Exception:  # BD caída, esquema/tabla ausente, credencial mala...
+        # El detalle (host/usuario/SQL) se queda en el log; al cliente solo un
+        # código genérico (rev. #6: no filtrar internals por la sonda).
+        logger.exception("readiness: la BD del core no está disponible/migrada")
         return JSONResponse(
-            status_code=503, content={"status": "not_ready", "error": str(exc)[:200]}
+            status_code=503,
+            content={"status": "not_ready", "reason": "database_unavailable"},
         )
     expected = _expected_head()
     if current != expected:
