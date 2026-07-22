@@ -11,6 +11,7 @@ from models.user import User
 from models.user_profile import UserProfile
 from tasks.embedding_tasks import (
     _embed_all_pending_async,
+    _embed_pending_batch,
     _generate_job_embeddings_async,
     _generate_profile_embedding_async,
 )
@@ -296,6 +297,7 @@ class TestEmbedAllPendingDrain:
         with patch("database.task_session", _mock_session_factory(db_session)):
             result = await et._embed_all_pending_async(batch_size=200)
         assert result["processed"] == 1  # solo cuenta lo escrito (0+1); no abandona
+        assert result["status"] == "success"
 
     @patch("services.job_matcher.JobMatcher")
     async def test_drain_stops_on_persistent_stall(
@@ -310,3 +312,66 @@ class TestEmbedAllPendingDrain:
         with patch("database.task_session", _mock_session_factory(db_session)):
             result = await et._embed_all_pending_async(batch_size=200)
         assert result["processed"] == 0  # corta sin colgarse
+        assert result["status"] == "partial"  # señaliza que quedan pendientes
+
+
+class TestEmbedPendingBatchRealRace:
+    """rev.5 #2: carrera REAL — otro upsert cambia el content_hash (en otra sesión,
+    con commit) mientras se calcula el vector; el guard debe SALTAR la escritura y
+    dejar el embedding NULL para re-embeberse con el contenido fresco."""
+
+    @patch("services.job_matcher.JobMatcher")
+    async def test_concurrent_content_change_skips_write(self, MockMatcher, db_session):
+        import asyncio
+
+        from sqlalchemy import select, update
+
+        from tests.conftest import TestSessionLocal
+
+        h = "race00" + "0" * 26  # 32 chars
+        db_session.add(
+            Job(
+                hash=h,
+                source="test",
+                title="T",
+                company="C",
+                url=f"https://example.com/{h}",
+                is_active=True,
+            )
+        )
+        await db_session.commit()
+        await db_session.execute(
+            update(Job).where(Job.hash == h).values(content_hash="H1")
+        )
+        await db_session.commit()
+
+        loop = asyncio.get_running_loop()
+
+        async def _concurrent_upsert():
+            # Sesión SEPARADA que commitea el cambio (como un upsert concurrente).
+            async with TestSessionLocal() as s2:
+                await s2.execute(
+                    update(Job).where(Job.hash == h).values(content_hash="H2")
+                )
+                await s2.commit()
+
+        matcher = MagicMock()
+        matcher.build_job_text = MagicMock(return_value="job text")
+
+        def _encode(texts):
+            # En el hilo de to_thread: dispara el cambio concurrente y espera.
+            fut = asyncio.run_coroutine_threadsafe(_concurrent_upsert(), loop)
+            fut.result(timeout=10)
+            return np.zeros((len(texts), 384), dtype=np.float32)
+
+        matcher.encode_batch.side_effect = _encode
+
+        selected, written = await _embed_pending_batch(db_session, matcher, 100)
+        await db_session.commit()
+
+        assert selected == 1
+        assert written == 0  # el guard saltó (content_hash cambió durante el encode)
+        emb = (
+            await db_session.execute(select(Job.embedding).where(Job.hash == h))
+        ).scalar_one()
+        assert emb is None

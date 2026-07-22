@@ -195,6 +195,11 @@ async def _generate_job_embeddings_async(batch_size: int) -> dict[str, Any]:
     return {"status": "success", "processed": written}
 
 
+# Pasadas seguidas sin escribir nada (todas saltadas por cambio concurrente) antes
+# de rendirse y dejar el resto para la próxima cosecha (evita un bucle indefinido).
+_MAX_EMBED_STALLS = 3
+
+
 async def _embed_all_pending_async(batch_size: int) -> dict[str, Any]:
     """Drena TODOS los pendientes en bucle.
 
@@ -209,20 +214,27 @@ async def _embed_all_pending_async(batch_size: int) -> dict[str, Any]:
     matcher = JobMatcher()
     total = 0
     stalls = 0
+    stalled = False
     async with task_session() as db:
         # Drena hasta que NO queden pendientes (selected==0). Una fila saltada por
         # cambio concurrente se re-selecciona en la pasada siguiente y se escribe con
-        # el contenido ya estable. Si varias pasadas seguidas no escriben nada (todas
-        # saltadas por cambios continuos), se corta y se re-embeben en la próxima
-        # cosecha (evita un bucle indefinido).
+        # el contenido ya estable. Si _MAX_EMBED_STALLS pasadas seguidas no escriben
+        # nada (cambios continuos), se corta y se re-embeben en la próxima cosecha.
         while True:
             selected, written = await _embed_pending_batch(db, matcher, batch_size)
             total += written
             if selected == 0:
                 break
             stalls = stalls + 1 if written == 0 else 0
-            if stalls >= 3:
+            if stalls >= _MAX_EMBED_STALLS:
+                stalled = True
                 break
 
+    if stalled:
+        logger.warning(
+            "embed_all_pending: cortado tras %d pasadas sin progreso; quedan "
+            "pendientes que se re-embeberán en la próxima cosecha.",
+            _MAX_EMBED_STALLS,
+        )
     logger.info("embed_all_pending: %d jobs embedded", total)
-    return {"status": "success", "processed": total}
+    return {"status": "partial" if stalled else "success", "processed": total}
