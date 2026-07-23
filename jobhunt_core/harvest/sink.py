@@ -1,4 +1,14 @@
-"""Sink real de ingesta (A-04): slot + incarnación + revisión RAW, por LOTES.
+"""Sink real de ingesta (A-04 + identidad A-05): slot + incarnación + revisión
+RAW + re-enlace determinista, por LOTES.
+
+A-05 (ADR-01, solo lo DETERMINISTA — nada semántico en Fase A):
+- Guard de reciclado en el nivel exacto: empresa (tokens PF.5) distinta con
+  contenido nuevo → cierra la incarnación y abre otra (vacante NUEVA).
+- Cross-source fuerte: url_normalized vigente en OTRA fuente → attach a esa
+  vacante + `link_evidence` (solo al CREAR la incarnación).
+- Conflicto external_id↔URL: gana external_id; la URL queda como alias en
+  `link_evidence`. Drift de URL entre fuentes y duplicados difusos intra-lote
+  → `dedup_candidates` (pending; resolución = Fase B, jamás se funde aquí).
 
 Contrato (CONTRATOS §1 + ADR-01/05, ticket A-04):
 - El raw se persiste ANTES de normalizar: la revisión (`source_listing_revisions`)
@@ -26,6 +36,7 @@ from urllib.parse import urlsplit, urlunsplit
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jobhunt_core.harvest import identity
 from jobhunt_core.harvest.types import RawListing
 
 logger = logging.getLogger(__name__)
@@ -139,12 +150,17 @@ class RawListingSink:
     ) -> None:
         if not listings:
             return
-        source_id = (
+        src = (
             await session.execute(
-                sa.text("SELECT source_id FROM harvest_scopes WHERE id = :sid"),
+                sa.text(
+                    "SELECT hs.source_id, s.name AS source_name "
+                    "FROM harvest_scopes hs JOIN sources s ON s.id = hs.source_id "
+                    "WHERE hs.id = :sid"
+                ),
                 {"sid": scope_id},
             )
-        ).scalar_one()
+        ).one()
+        source_id, source_name = src.source_id, src.source_name
 
         # CUARENTENA de frontera (rev. #2 y 2ª #2): TODO el preprocesado
         # por-listing (canónica, hash, URL normalizada, UTF-8) ocurre dentro de
@@ -173,27 +189,68 @@ class RawListingSink:
 
         # Dedup DENTRO del lote por external_id (la última aparición VÁLIDA gana).
         by_ext = {listing.external_id: listing for listing in valid}
-        slot_by_ext = await self._ensure_slots(session, source_id, by_ext, prep_by_ext)
-        inc_by_slot = await self._ensure_incarnations(session, slot_by_ext, by_ext)
+        slot_by_ext, stored_urln = await self._ensure_slots(
+            session, source_id, by_ext, prep_by_ext
+        )
+        inc_by_slot = await self._active_incarnations(session, list(slot_by_ext.values()))
+
+        # A-05 · nivel EXACTO: contenido cambiado → guard de reciclado (ADR-01).
+        fresh_exts, recycled = await self._recycle_guard(
+            session, source_name, slot_by_ext, inc_by_slot, by_ext, prep_by_ext
+        )
+        recycled_vacs = [inc_by_slot[s][1] for s in recycled]
+        for slot_id in recycled:
+            del inc_by_slot[slot_id]  # su incarnación quedó cerrada: reabre abajo
+
+        # A-05 · nivel 2 (cross-source por url_normalized) + creación. Los
+        # slots RECICLADOS jamás se attachean (ADR-01: reciclado = vacante
+        # NUEVA; en particular no vuelven a la vacante que acaban de dejar).
+        inc_by_slot, created_incs, evidence, pairs = await self._resolve_new_incarnations(
+            session, source_id, source_name, slot_by_ext, inc_by_slot, by_ext,
+            prep_by_ext, no_attach=set(recycled),
+        )
+
+        # Auditoría A-05 #1: una vacante COMPARTIDA cross-source cuyo primary
+        # acaba de cerrarse seguiría ACTIVA por la otra fuente con el puntero
+        # apuntando a una incarnación cerrada — PERMANENTE (la otra fuente
+        # refresca last_seen y el archivado nunca llega). Reasignación
+        # determinista a una incarnación activa; sin activas se deja (caso
+        # mono-fuente: la vacante vieja muere y el archivado la recoge).
+        await self._repair_primary_pointers(session, recycled_vacs)
+
+        # A-05 · alias external_id↔URL (gana external_id, ADR-01) y drift de
+        # URL entre fuentes (cierra la carrera de creación concurrente: nunca
+        # attach tardío automático — candidato pending, resolución Fase B).
+        evidence += await self._url_alias_evidence(
+            session, source_id, slot_by_ext, stored_urln, prep_by_ext, inc_by_slot
+        )
+        pairs += await self._url_drift_pairs(session, slot_by_ext)
+        await self._write_link_evidence(session, evidence)
+        await self._write_dedup_candidates(session, pairs)
+
         await self._refresh_and_revise(
-            session, slot_by_ext, inc_by_slot, by_ext, prep_by_ext
+            session, slot_by_ext, inc_by_slot, by_ext, prep_by_ext,
+            fresh_exts, created_incs,
         )
 
     async def _ensure_slots(
         self, session, source_id, by_ext: dict[str, RawListing], prep_by_ext
-    ) -> dict[str, uuid.UUID]:
-        """Upsert de slots (source_listings) por lote. Devuelve external_id→id."""
+    ) -> tuple[dict[str, uuid.UUID], dict[str, str]]:
+        """Upsert de slots (source_listings) por lote. Devuelve
+        (external_id→id, external_id→url_normalized ALMACENADA) — la almacenada
+        detecta el conflicto external_id↔URL (A-05)."""
         exts = list(by_ext)
         rows = (
             await session.execute(
                 sa.text(
-                    "SELECT id, external_id FROM source_listings "
+                    "SELECT id, external_id, url_normalized FROM source_listings "
                     "WHERE source_id = :src AND external_id = ANY(:exts)"
                 ),
                 {"src": source_id, "exts": exts},
             )
         ).all()
         slot_by_ext = {r.external_id: r.id for r in rows}
+        stored_urln = {r.external_id: r.url_normalized for r in rows}
 
         # ORDEN GLOBAL DETERMINISTA también aquí (el test de carrera cazó el
         # deadlock que faltaba): dos runs con lotes en orden inverso insertan
@@ -220,43 +277,144 @@ class RawListingSink:
             rows = (
                 await session.execute(
                     sa.text(
-                        "SELECT id, external_id FROM source_listings "
+                        "SELECT id, external_id, url_normalized FROM source_listings "
                         "WHERE source_id = :src AND external_id = ANY(:exts)"
                     ),
                     {"src": source_id, "exts": missing},
                 )
             ).all()
             slot_by_ext.update({r.external_id: r.id for r in rows})
+            stored_urln.update({r.external_id: r.url_normalized for r in rows})
             for ext in missing:
                 if ext not in slot_by_ext:
-                    # Colisión de url_normalized con OTRO slot: validación de
-                    # frontera — se salta con log (identidad ambigua = A-05).
+                    # Colisión de url_normalized con OTRO slot de la MISMA
+                    # fuente: la UNIQUE impide otro slot con esa URL — se salta
+                    # con log (el alias cross-slot lo registra _url_alias_evidence
+                    # cuando el external_id SÍ existe; ADR-01: gana external_id).
                     logger.warning(
                         "sink: listing %r saltado (URL normalizada ya pertenece "
                         "a otro slot)", ext,
                     )
-        return slot_by_ext
+        return slot_by_ext, stored_urln
 
-    async def _ensure_incarnations(
-        self, session, slot_by_ext: dict[str, uuid.UUID], by_ext
-    ) -> dict[uuid.UUID, uuid.UUID]:
-        """Incarnación ACTIVA por slot; crea vacante+incarnación para slots sin
-        ella (seq = max previa + 1: un slot reciclado ya cerrado reabre aquí)."""
-        slot_ids = list(slot_by_ext.values())
+    async def _active_incarnations(
+        self, session, slot_ids
+    ) -> dict[uuid.UUID, tuple[uuid.UUID, uuid.UUID]]:
+        """slot → (incarnación ACTIVA, su vacante)."""
         rows = (
             await session.execute(
                 sa.text(
-                    "SELECT id, source_listing_id FROM source_listing_incarnations "
+                    "SELECT id, source_listing_id, vacancy_id "
+                    "FROM source_listing_incarnations "
                     "WHERE source_listing_id = ANY(:ids) AND ended_at IS NULL"
                 ),
                 {"ids": slot_ids},
             )
         ).all()
-        inc_by_slot = {r.source_listing_id: r.id for r in rows}
+        return {r.source_listing_id: (r.id, r.vacancy_id) for r in rows}
 
-        orphan_slots = [s for s in slot_ids if s not in inc_by_slot]
-        if not orphan_slots:
-            return inc_by_slot
+    async def _recycle_guard(
+        self, session, source_name, slot_by_ext, inc_by_slot, by_ext, prep_by_ext
+    ) -> tuple[set[str], list[uuid.UUID]]:
+        """Nivel EXACTO con guard de reciclado (ADR-01/A-05).
+
+        Para incarnaciones ACTIVAS cuyo contenido entrante es NUEVO, compara la
+        identidad determinista (tokens de EMPRESA, PF.5) del raw vigente contra
+        el entrante: empresa distinta → RECICLADO (cierra la incarnación aquí;
+        la nueva —con vacante nueva— la abre _resolve_new_incarnations). El
+        coseno < SIM_RECYCLE queda diferido a Fase B con los embeddings: sin
+        identidad completa NUNCA se recicla (conservador, no corromper).
+
+        Devuelve (exts con contenido nuevo en incarnación CONSERVADA, slots
+        reciclados)."""
+        pairs = []  # (ext, inc_id, chash) de slots con incarnación activa
+        for ext, slot_id in slot_by_ext.items():
+            info = inc_by_slot.get(slot_id)
+            if info is not None:
+                pairs.append((ext, str(info[0]), prep_by_ext[ext][1]))
+        if not pairs:
+            return set(), []
+        # PRE-FILTRO de pares exactos (A-04 #3): contenido ya visto en ESA
+        # incarnación = ni revisión ni guard.
+        existing = {
+            (str(r.incarnation_id), r.content_hash)
+            for r in (
+                await session.execute(
+                    sa.text(
+                        "SELECT r.incarnation_id, r.content_hash "
+                        "FROM source_listing_revisions r "
+                        "JOIN unnest(CAST(:ids AS uuid[]), CAST(:hs AS text[])) "
+                        "  AS t(iid, chash) "
+                        "ON r.incarnation_id = t.iid AND r.content_hash = t.chash"
+                    ),
+                    {"ids": [p[1] for p in pairs], "hs": [p[2] for p in pairs]},
+                )
+            ).all()
+        }
+        fresh = [(ext, iid) for ext, iid, chash in pairs if (iid, chash) not in existing]
+        if not fresh:
+            return set(), []
+        # Raw VIGENTE solo de las incarnaciones con contenido nuevo. Sin
+        # revisión previa = primer contenido de la incarnación: sin guard.
+        latest_raw = {
+            str(r.incarnation_id): r.raw
+            for r in (
+                await session.execute(
+                    sa.text(
+                        "SELECT DISTINCT ON (incarnation_id) incarnation_id, raw "
+                        "FROM source_listing_revisions "
+                        "WHERE incarnation_id = ANY(:ids) "
+                        "ORDER BY incarnation_id, fetched_at DESC, id"
+                    ),
+                    {"ids": sorted({iid for _, iid in fresh})},
+                )
+            ).all()
+        }
+        fresh_exts: set[str] = set()
+        recycled: list[uuid.UUID] = []
+        recycled_incs: list[str] = []
+        for ext, iid in fresh:
+            old_raw = latest_raw.get(iid)
+            if old_raw is not None and identity.should_recycle(
+                identity.extract_identity(source_name, old_raw),
+                identity.extract_identity(source_name, by_ext[ext].payload),
+            ):
+                recycled.append(slot_by_ext[ext])
+                recycled_incs.append(iid)
+                logger.info(
+                    "sink: slot %r RECICLADO (empresa distinta) — se cierra la "
+                    "incarnación y se abre otra con vacante nueva", ext,
+                )
+            else:
+                fresh_exts.add(ext)
+        if recycled_incs:
+            recycled_incs.sort()  # orden determinista (anti-deadlock, A-04 #2)
+            await session.execute(
+                sa.text(
+                    "UPDATE source_listing_incarnations SET ended_at = now() "
+                    "WHERE id = :iid AND ended_at IS NULL"
+                ),
+                [{"iid": iid} for iid in recycled_incs],
+            )
+        return fresh_exts, recycled
+
+    async def _resolve_new_incarnations(
+        self, session, source_id, source_name, slot_by_ext, inc_by_slot,
+        by_ext, prep_by_ext, no_attach=frozenset(),
+    ):
+        """Incarnaciones para slots SIN activa (nuevos, reabiertos, reciclados).
+
+        Nivel 2 (ADR-01): si la url_normalized está VIGENTE en OTRA fuente
+        (vacante activa, ni archivada ni fundida), la nueva incarnación se
+        ATTACHEA a esa vacante (+`link_evidence` url_normalized) — el attach
+        solo ocurre AL CREAR, jamás re-attach automático de existentes. Si no,
+        vacante fresca. Duplicados difusos DENTRO del lote → `dedup_candidates`.
+
+        Devuelve (inc_by_slot final, incs nuevas de este run, evidencia, pares)."""
+        ext_by_slot = {v: k for k, v in slot_by_ext.items()}
+        orphans = [s for s in slot_by_ext.values() if s not in inc_by_slot]
+        if not orphans:
+            return inc_by_slot, set(), [], []
         seq_rows = (
             await session.execute(
                 sa.text(
@@ -264,33 +422,62 @@ class RawListingSink:
                     "FROM source_listing_incarnations "
                     "WHERE source_listing_id = ANY(:ids) GROUP BY source_listing_id"
                 ),
-                {"ids": orphan_slots},
+                {"ids": orphans},
             )
         ).all()
         max_seq = {r.source_listing_id: r.max_seq for r in seq_rows}
-        ext_by_slot = {v: k for k, v in slot_by_ext.items()}
+
+        # Nivel 2: vacantes ACTIVAS de otras fuentes con la misma URL
+        # normalizada (índice core0003). Empate multi-fuente → min(vacancy_id)
+        # determinista; las demás acabarán como pares por drift de URL.
+        urls = sorted({prep_by_ext[ext_by_slot[s]][2] for s in orphans})
+        attach_by_urln: dict[str, uuid.UUID] = {}
+        for r in (
+            await session.execute(
+                sa.text(
+                    "SELECT sl.url_normalized AS urln, i.vacancy_id "
+                    "FROM source_listings sl "
+                    "JOIN source_listing_incarnations i "
+                    "  ON i.source_listing_id = sl.id AND i.ended_at IS NULL "
+                    "JOIN vacancies v ON v.id = i.vacancy_id "
+                    "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
+                    "WHERE sl.url_normalized = ANY(:urls) AND sl.source_id != :src "
+                    "ORDER BY sl.url_normalized, i.vacancy_id"
+                ),
+                {"urls": urls, "src": source_id},
+            )
+        ).all():
+            attach_by_urln.setdefault(r.urln, r.vacancy_id)
 
         new_rows = []
-        for slot_id in orphan_slots:
-            listing = by_ext[ext_by_slot[slot_id]]
+        for slot_id in orphans:
+            ext = ext_by_slot[slot_id]
+            listing = by_ext[ext]
+            attached_vac = (
+                None if slot_id in no_attach
+                else attach_by_urln.get(prep_by_ext[ext][2])
+            )
             new_rows.append(
                 {
-                    "iid": uuid.uuid4(), "vid": uuid.uuid4(), "slot": str(slot_id),
+                    "iid": uuid.uuid4(),
+                    "vid": attached_vac if attached_vac is not None else uuid.uuid4(),
+                    "created": attached_vac is None,
+                    "slot": str(slot_id),
                     "seq": max_seq.get(slot_id, 0) + 1,
                     "url": listing.url, "aurl": listing.apply_url,
                 }
             )
-        # ORDEN GLOBAL DETERMINISTA (auditoría A-04 #2): dos runs concurrentes
-        # de la misma fuente adquieren los locks en el mismo orden → sin deadlock.
+        # ORDEN GLOBAL DETERMINISTA (auditoría A-04 #2).
         new_rows.sort(key=lambda r: r["slot"])
-        # Vacante fresca por slot nuevo (identidad la refina A-05/merge).
-        await session.execute(
-            sa.text("INSERT INTO vacancies (id) VALUES (:vid)"),
-            [{"vid": r["vid"]} for r in new_rows],
-        )
-        # ON CONFLICT contra el índice parcial (una incarnación ACTIVA por
-        # slot): si otro run de la MISMA fuente ganó la carrera, DO NOTHING —
-        # se re-selecciona al ganador y se limpia nuestra vacante huérfana.
+        creating = [r for r in new_rows if r["created"]]
+        if creating:
+            # Vacante fresca solo para lo NO attacheado.
+            await session.execute(
+                sa.text("INSERT INTO vacancies (id) VALUES (:vid)"),
+                [{"vid": r["vid"]} for r in creating],
+            )
+        # ON CONFLICT contra el índice parcial (una activa por slot): si otro
+        # run ganó la carrera, DO NOTHING → re-select del ganador + limpieza.
         await session.execute(
             sa.text(
                 "INSERT INTO source_listing_incarnations "
@@ -298,47 +485,253 @@ class RawListingSink:
                 "VALUES (:iid, :slot, :vid, :seq, :url, :aurl) "
                 "ON CONFLICT (source_listing_id) WHERE ended_at IS NULL DO NOTHING"
             ),
-            new_rows,
+            [
+                {k: r[k] for k in ("iid", "slot", "vid", "seq", "url", "aurl")}
+                for r in new_rows
+            ],
         )
         winners = {
-            r.source_listing_id: r.id
+            r.source_listing_id: (r.id, r.vacancy_id)
             for r in (
                 await session.execute(
                     sa.text(
-                        "SELECT id, source_listing_id FROM source_listing_incarnations "
+                        "SELECT id, source_listing_id, vacancy_id "
+                        "FROM source_listing_incarnations "
                         "WHERE source_listing_id = ANY(:ids) AND ended_at IS NULL"
                     ),
-                    {"ids": orphan_slots},
+                    {"ids": orphans},
                 )
             ).all()
         }
-        ours = [r for r in new_rows if winners.get(uuid.UUID(r["slot"])) == r["iid"]]
+        ours = [
+            r for r in new_rows
+            if winners.get(uuid.UUID(r["slot"]), (None, None))[0] == r["iid"]
+        ]
         losers = [r for r in new_rows if r not in ours]
-        if losers:
-            # Perdimos la carrera en esos slots: fuera nuestras vacantes huérfanas.
+        lost_vids = [r["vid"] for r in losers if r["created"]]
+        if lost_vids:
+            # Perdimos la carrera: fuera SOLO nuestras vacantes creadas (las
+            # attacheadas son de otros y no se tocan).
             await session.execute(
                 sa.text("DELETE FROM vacancies WHERE id = ANY(:ids)"),
-                {"ids": [r["vid"] for r in losers]},
+                {"ids": lost_vids},
             )
-        if ours:
+        pointer_rows = [
+            {"iid": r["iid"], "vid": r["vid"]} for r in ours if r["created"]
+        ]
+        if pointer_rows:
+            # Puntero primario SOLO en vacantes frescas: una vacante attacheada
+            # conserva el primary de su fuente original (ADR-01).
             await session.execute(
                 sa.text(
                     "UPDATE vacancies SET primary_incarnation_id = :iid WHERE id = :vid"
                 ),
-                [{"iid": r["iid"], "vid": r["vid"]} for r in ours],
+                pointer_rows,
             )
+        evidence = [
+            {
+                "slot": r["slot"], "vac": r["vid"],
+                "method": "url_normalized", "conf": identity.CONF_URL_ATTACH,
+            }
+            for r in ours if not r["created"]
+        ]
+        # Medio intra-lote: misma identidad difusa (PF.5) en DOS+ vacantes
+        # CREADAS en este lote → candidatos (el primero contra el resto).
+        pairs = []
+        by_key: dict[str, list] = {}
+        for r in ours:
+            if not r["created"]:
+                continue
+            listing = by_ext[ext_by_slot[uuid.UUID(r["slot"])]]
+            key = identity.fuzzy_key(
+                *identity.extract_identity(source_name, listing.payload)
+            )
+            if key:
+                by_key.setdefault(key, []).append(r["vid"])
+        for vids in by_key.values():
+            pairs += [
+                {"a": vids[0], "b": other, "sim": identity.SIM_FUZZY_BATCH}
+                for other in vids[1:]
+            ]
+        inc_by_slot = dict(inc_by_slot)
         inc_by_slot.update(winners)
-        return inc_by_slot
+        new_incs = {info[0] for info in winners.values()}
+        return inc_by_slot, new_incs, evidence, pairs
+
+    async def _repair_primary_pointers(self, session, vacancy_ids) -> None:
+        """Reasigna el puntero primario de vacantes cuyo primary quedó CERRADO
+        pero que conservan incarnaciones ACTIVAS (vacante compartida
+        cross-source; auditoría A-05 #1). Elección DETERMINISTA: la activa más
+        antigua (first_seen_at, id) — sin semántica, Fase A. La FK compuesta
+        exige misma vacante: el pick sale de la propia vacante. Sin activas no
+        se toca (mono-fuente: el archivado ADR-07 recoge la vacante muerta)."""
+        if not vacancy_ids:
+            return
+        await session.execute(
+            sa.text(
+                "UPDATE vacancies v SET primary_incarnation_id = pick.iid "
+                "FROM (SELECT DISTINCT ON (vacancy_id) vacancy_id, id AS iid "
+                "      FROM source_listing_incarnations "
+                "      WHERE vacancy_id = ANY(:vacs) AND ended_at IS NULL "
+                "      ORDER BY vacancy_id, first_seen_at, id) pick "
+                "WHERE v.id = pick.vacancy_id "
+                "AND NOT EXISTS (SELECT 1 FROM source_listing_incarnations cur "
+                "                WHERE cur.id = v.primary_incarnation_id "
+                "                AND cur.ended_at IS NULL)"
+            ),
+            {"vacs": sorted(set(vacancy_ids), key=str)},
+        )
+
+    async def _url_alias_evidence(
+        self, session, source_id, slot_by_ext, stored_urln, prep_by_ext, inc_by_slot
+    ) -> list[dict]:
+        """Conflicto external_id↔URL (ADR-01): el listing casó por external_id
+        con el slot X pero su URL normalizada pertenece a OTRO slot de la misma
+        fuente → GANA external_id (se procesa como X); la URL se registra como
+        alias (evidencia X → vacante vigente del dueño de esa URL)."""
+        drifted = {
+            ext: prep_by_ext[ext][2]
+            for ext, urln in stored_urln.items()
+            if prep_by_ext[ext][2] != urln
+        }
+        if not drifted:
+            return []
+        vac_by_urln = {
+            r.urln: r.vacancy_id
+            for r in (
+                await session.execute(
+                    sa.text(
+                        "SELECT sl.url_normalized AS urln, i.vacancy_id "
+                        "FROM source_listings sl "
+                        "JOIN source_listing_incarnations i "
+                        "  ON i.source_listing_id = sl.id AND i.ended_at IS NULL "
+                        "WHERE sl.source_id = :src AND sl.url_normalized = ANY(:urls)"
+                    ),
+                    {"src": source_id, "urls": sorted(set(drifted.values()))},
+                )
+            ).all()
+        }
+        out = []
+        for ext, urln in drifted.items():
+            vac = vac_by_urln.get(urln)
+            own = inc_by_slot.get(slot_by_ext[ext])
+            if vac is not None and (own is None or own[1] != vac):
+                out.append(
+                    {
+                        "slot": str(slot_by_ext[ext]), "vac": vac,
+                        "method": "url_alias", "conf": identity.CONF_URL_ALIAS,
+                    }
+                )
+        return out
+
+    async def _url_drift_pairs(self, session, slot_by_ext) -> list[dict]:
+        """Misma url_normalizada VIGENTE en dos fuentes con vacantes DISTINTAS
+        (p.ej. creación concurrente en ambas: el attach solo ocurre al crear,
+        jamás re-attach automático) → candidato medio idempotente (par único)."""
+        rows = (
+            await session.execute(
+                sa.text(
+                    "SELECT mi.vacancy_id AS a, oi.vacancy_id AS b "
+                    "FROM source_listings me "
+                    "JOIN source_listing_incarnations mi "
+                    "  ON mi.source_listing_id = me.id AND mi.ended_at IS NULL "
+                    "JOIN source_listings o "
+                    "  ON o.url_normalized = me.url_normalized "
+                    " AND o.source_id != me.source_id "
+                    "JOIN source_listing_incarnations oi "
+                    "  ON oi.source_listing_id = o.id AND oi.ended_at IS NULL "
+                    "WHERE me.id = ANY(:ids) AND mi.vacancy_id != oi.vacancy_id"
+                ),
+                {"ids": list(slot_by_ext.values())},
+            )
+        ).all()
+        return [{"a": r.a, "b": r.b, "sim": identity.SIM_URL_DRIFT} for r in rows]
+
+    async def _write_link_evidence(self, session, rows) -> None:
+        """Evidencia SIN spam: la emisión total re-detecta el alias en CADA
+        cosecha — pre-filtro por (slot, vacante, método), solo inserta lo nuevo."""
+        if not rows:
+            return
+        uniq = {(r["slot"], str(r["vac"]), r["method"]): r for r in rows}
+        rows = list(uniq.values())
+        existing = {
+            (str(r.source_listing_id), str(r.vacancy_id), r.method)
+            for r in (
+                await session.execute(
+                    sa.text(
+                        "SELECT le.source_listing_id, le.vacancy_id, le.method "
+                        "FROM link_evidence le "
+                        "JOIN unnest(CAST(:slots AS uuid[]), CAST(:vacs AS uuid[]), "
+                        "            CAST(:methods AS text[])) AS t(s, v, m) "
+                        "ON le.source_listing_id = t.s AND le.vacancy_id = t.v "
+                        "AND le.method = t.m"
+                    ),
+                    {
+                        "slots": [r["slot"] for r in rows],
+                        "vacs": [str(r["vac"]) for r in rows],
+                        "methods": [r["method"] for r in rows],
+                    },
+                )
+            ).all()
+        }
+        fresh = [
+            r for r in rows if (r["slot"], str(r["vac"]), r["method"]) not in existing
+        ]
+        if fresh:
+            fresh.sort(key=lambda r: (r["slot"], str(r["vac"]), r["method"]))
+            await session.execute(
+                sa.text(
+                    "INSERT INTO link_evidence "
+                    "(id, source_listing_id, vacancy_id, method, confidence) "
+                    "VALUES (:id, :slot, :vac, :method, :conf)"
+                ),
+                [{"id": uuid.uuid4(), **r} for r in fresh],
+            )
+
+    async def _write_dedup_candidates(self, session, pairs) -> None:
+        """Candidatos medio (state=pending; la RESOLUCIÓN es Fase B — aquí
+        jamás se funde). Par canónico único (LEAST/GREATEST) + DO NOTHING:
+        idempotente ante re-cosechas y carreras."""
+        if not pairs:
+            return
+        canon: dict[tuple[str, str], dict] = {}
+        for p in pairs:
+            a, b = str(p["a"]), str(p["b"])
+            if a == b:
+                continue
+            canon.setdefault((min(a, b), max(a, b)), p)
+        rows = [
+            {"id": uuid.uuid4(), "a": p["a"], "b": p["b"], "sim": p["sim"]}
+            for _, p in sorted(canon.items())
+        ]
+        if rows:
+            await session.execute(
+                sa.text(
+                    "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
+                    "VALUES (:id, :a, :b, :sim) "
+                    "ON CONFLICT (LEAST(vacancy_a, vacancy_b), "
+                    "GREATEST(vacancy_a, vacancy_b)) DO NOTHING"
+                ),
+                rows,
+            )
 
     async def _refresh_and_revise(
-        self, session, slot_by_ext, inc_by_slot, by_ext, prep_by_ext
+        self, session, slot_by_ext, inc_by_slot, by_ext, prep_by_ext,
+        fresh_exts, new_incs,
     ) -> None:
-        """`last_seen_at` (y url/apply) en CADA cosecha + revisión si cambió."""
+        """`last_seen_at` (y url/apply) en CADA cosecha + revisión si procede.
+
+        El PRE-FILTRO de contenido ya corrió en el guard (A-04 #3): aquí una
+        revisión procede si (a) el contenido es nuevo en incarnación CONSERVADA
+        (`fresh_exts`) o (b) la incarnación es NUEVA de este run (`new_incs` —
+        incluye las de runs concurrentes ganadores: su contenido puede diferir
+        del nuestro y el ON CONFLICT deduplica)."""
         refresh, candidates = [], []
         for ext, slot_id in slot_by_ext.items():
-            inc_id = inc_by_slot.get(slot_id)
-            if inc_id is None:
+            info = inc_by_slot.get(slot_id)
+            if info is None:
                 continue
+            inc_id = info[0]
             listing = by_ext[ext]
             refresh.append(
                 {"iid": str(inc_id), "url": listing.url, "aurl": listing.apply_url}
@@ -346,9 +739,10 @@ class RawListingSink:
             # UNA sola serialización Y un solo hash: calculados en la
             # cuarentena de frontera y reutilizados aquí (#3/#5).
             canon, chash, _ = prep_by_ext[ext]
-            candidates.append(
-                {"id": uuid.uuid4(), "iid": str(inc_id), "chash": chash, "raw": canon}
-            )
+            if ext in fresh_exts or inc_id in new_incs:
+                candidates.append(
+                    {"id": uuid.uuid4(), "iid": str(inc_id), "chash": chash, "raw": canon}
+                )
         if refresh:
             # Orden determinista → mismos locks en el mismo orden entre runs (#2).
             refresh.sort(key=lambda r: r["iid"])
@@ -361,42 +755,15 @@ class RawListingSink:
                 refresh,
             )
         if candidates:
-            # PRE-FILTRO (auditoría #3): en régimen estable casi todo el lote ya
-            # existe — un SELECT indexado (uq_slrev_incarnation_hash) evita
-            # enviar/parsear payloads enteros que acabarían en DO NOTHING.
-            # Pares ALINEADOS via unnest (rev. A-04 #3): ANY(ids) AND ANY(hs)
-            # sería el producto cruzado y degeneraría en O(n²) con historiales
-            # que compartan hashes; el join por (iid, chash) consulta EXACTAMENTE
-            # los pares solicitados.
-            existing = {
-                (str(r.incarnation_id), r.content_hash)
-                for r in (
-                    await session.execute(
-                        sa.text(
-                            "SELECT r.incarnation_id, r.content_hash "
-                            "FROM source_listing_revisions r "
-                            "JOIN unnest(CAST(:ids AS uuid[]), CAST(:hs AS text[])) "
-                            "  AS t(iid, chash) "
-                            "ON r.incarnation_id = t.iid AND r.content_hash = t.chash"
-                        ),
-                        {
-                            "ids": [c["iid"] for c in candidates],
-                            "hs": [c["chash"] for c in candidates],
-                        },
-                    )
-                ).all()
-            }
-            fresh = [c for c in candidates if (c["iid"], c["chash"]) not in existing]
-            if fresh:
-                fresh.sort(key=lambda r: r["iid"])  # orden determinista (#2)
-                # ON CONFLICT se mantiene: cierra la carrera entre el SELECT y
-                # el INSERT (el pre-filtro es optimización, no la corrección).
-                await session.execute(
-                    sa.text(
-                        "INSERT INTO source_listing_revisions "
-                        "(id, incarnation_id, content_hash, raw) "
-                        "VALUES (:id, :iid, :chash, CAST(:raw AS jsonb)) "
-                        "ON CONFLICT (incarnation_id, content_hash) DO NOTHING"
-                    ),
-                    fresh,
-                )
+            candidates.sort(key=lambda r: r["iid"])  # orden determinista (#2)
+            # ON CONFLICT se mantiene: cierra la carrera entre el pre-filtro y
+            # el INSERT (el pre-filtro es optimización, no la corrección).
+            await session.execute(
+                sa.text(
+                    "INSERT INTO source_listing_revisions "
+                    "(id, incarnation_id, content_hash, raw) "
+                    "VALUES (:id, :iid, :chash, CAST(:raw AS jsonb)) "
+                    "ON CONFLICT (incarnation_id, content_hash) DO NOTHING"
+                ),
+                candidates,
+            )

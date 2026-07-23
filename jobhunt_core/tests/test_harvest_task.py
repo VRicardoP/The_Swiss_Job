@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import jobhunt_core.tasks.harvest as harvest_task
 from jobhunt_core.celery_app import celery_app
+from jobhunt_core.harvest import identity
 from jobhunt_core.harvest.provider import ProviderConfigError
 from jobhunt_core.harvest.providers import UnknownProviderError
 from jobhunt_core.harvest.sink import _preprocess, content_hash, normalize_url
@@ -139,6 +140,48 @@ def test_preprocess_boundary_limits():
         RawListing(external_id="a", url="https://x/a", payload={"t": "\ud800"}),
     ):
         assert _preprocess(bad) is None
+
+
+def test_identity_normalization_pf5():
+    """PF.5 portado (A-05): seniority/género por TOKEN, sufijos legales fuera."""
+    assert identity.normalize_title("Senior Python Dev (m/w/d)") == "python dev"
+    assert identity.normalize_title("International Team Leader") == "international team leader"
+    assert identity.normalize_company("ACME AG") == identity.normalize_company("Acme GmbH")
+    assert identity.fuzzy_key("Python Dev", "ACME AG") == "python dev|acme"
+    assert identity.fuzzy_key("Python Dev", None) is None  # identidad incompleta
+    assert identity.fuzzy_key(None, "ACME") is None
+
+
+def test_identity_recycle_guard_semantics():
+    """Guard determinista (A-05): recicla SOLO con ambas empresas presentes y
+    distintas; la falta de datos degrada a conservador."""
+    assert identity.should_recycle(("t", "ACME AG"), ("t", "Umbrella SA"))
+    assert not identity.should_recycle(("t", "ACME AG"), ("t", "acme gmbh"))
+    assert not identity.should_recycle(("t", None), ("t", "ACME"))
+    assert not identity.should_recycle(("t", "ACME"), ("t", None))
+    assert identity.extract_identity("fuente-desconocida", {"title": "x"}) == (None, None)
+
+    identity.register_extractor("rota", lambda p: p["no-existe"])
+    try:
+        assert identity.extract_identity("rota", {}) == (None, None)  # jamás rompe
+    finally:
+        identity._EXTRACTORS.pop("rota", None)
+
+
+def test_identity_non_string_values_degrade_to_none():
+    """Auditoría A-05 #2: title/company no-string del feed (número, bool,
+    lista, objeto) = identidad ausente — nunca llega a .lower()."""
+    identity.register_extractor(
+        "tipos", lambda p: (p.get("title"), p.get("company"))
+    )
+    try:
+        assert identity.extract_identity("tipos", {"title": 42, "company": 7}) == (None, None)
+        assert identity.extract_identity("tipos", {"title": True, "company": ["x"]}) == (None, None)
+        assert identity.extract_identity(
+            "tipos", {"title": "ok", "company": {"name": "ACME"}}
+        ) == ("ok", None)
+    finally:
+        identity._EXTRACTORS.pop("tipos", None)
 
 
 def test_normalize_url_canonical():

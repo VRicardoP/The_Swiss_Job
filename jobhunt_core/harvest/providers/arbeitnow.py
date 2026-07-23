@@ -25,10 +25,17 @@ import logging
 
 import httpx
 
+from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 logger = logging.getLogger(__name__)
+
+# Identidad determinista (A-05): título/empresa crudos del payload Arbeitnow.
+register_extractor(
+    "arbeitnow",
+    lambda payload: (payload.get("title"), payload.get("company_name")),
+)
 
 API_URL = "https://www.arbeitnow.com/api/job-board-api"
 # Objetivo inicial de páginas por run; crece solo (x2, persistido en el cursor)
