@@ -5,6 +5,7 @@ antes de normalizar; idempotencia por content_hash. Ejecutar vía core-migrate.
 """
 
 import asyncio
+import logging
 import os
 import uuid
 
@@ -311,6 +312,91 @@ def test_concurrent_scopes_same_source_no_duplicates(db):
             assert seq == 2
 
     asyncio.run(invariants())
+
+
+def test_concurrent_cross_key_lock_order_no_deadlock(db):
+    """Rev. A-04 #1 (repro de la revisión): claves UNIQUE CRUZADAS entre lotes
+    — T1 [a→urlZ, b→urlA] vs T2 [c→urlA, d→urlZ]. Ordenar por external_id deja
+    los locks de url_normalized en orden INVERSO → deadlock (2/5 en la repro
+    original). La serialización por fuente (pg_advisory_xact_lock) lo elimina
+    manteniendo paralelismo entre fuentes. 5 rondas con slots frescos."""
+    factory, created = db
+    scope_a = _seed_scope(factory, created)
+    scope_b = _seed_second_scope(factory, created)
+
+    async def worker(scope_id, listings):
+        async with factory() as s:
+            await RawListingSink().handle(s, scope_id, tuple(listings))
+            await s.commit()
+
+    async def race(i):
+        t1 = [_listing(f"a{i}", url=f"https://x/z{i}"), _listing(f"b{i}", url=f"https://x/a{i}")]
+        t2 = [_listing(f"c{i}", url=f"https://x/a{i}"), _listing(f"d{i}", url=f"https://x/z{i}")]
+        await asyncio.gather(worker(scope_a, t1), worker(scope_b, t2))
+
+    for i in range(5):
+        asyncio.run(race(i))  # sin DeadlockDetectedError
+
+    async def invariants():
+        async with factory() as s:
+            dup_urls = (
+                await s.execute(
+                    sa.text(
+                        "SELECT count(*) FROM (SELECT url_normalized "
+                        "FROM source_listings WHERE source_id = :src "
+                        "GROUP BY url_normalized HAVING count(*) > 1) d"
+                    ),
+                    {"src": created["source"]},
+                )
+            ).scalar()
+            assert dup_urls == 0  # la UNIQUE cruzada decide UN ganador por URL
+            c = (
+                await s.execute(
+                    sa.text(
+                        "SELECT "
+                        "(SELECT count(*) FROM source_listings WHERE source_id=:src) AS slots, "
+                        "(SELECT count(*) FROM source_listing_incarnations i "
+                        " JOIN source_listings l ON l.id=i.source_listing_id "
+                        " WHERE l.source_id=:src AND i.ended_at IS NULL) AS activas"
+                    ),
+                    {"src": created["source"]},
+                )
+            ).one()
+            # 2 URLs por ronda x 5 rondas; cada slot con SU incarnación activa.
+            assert (c.slots, c.activas) == (10, 10)
+            orphans = (
+                await s.execute(
+                    sa.text(
+                        "SELECT count(*) FROM vacancies v "
+                        "WHERE v.id NOT IN (SELECT vacancy_id FROM source_listing_incarnations) "
+                        "AND v.primary_incarnation_id IS NULL "
+                        "AND v.created_at > now() - interval '5 minutes'"
+                    )
+                )
+            ).scalar()
+            assert orphans == 0
+
+    asyncio.run(invariants())
+
+
+def test_mixed_batch_isolates_invalid_listings(db, caplog):
+    """Rev. A-04 #2 (repro): un external_id de 201 chars (o url > 1000, o NUL)
+    NO revienta el lote con StringDataRightTruncationError — se cuarentena con
+    log y los válidos persisten. Con la emisión total de A-03, sin esto el dato
+    tóxico reaparecería en cada cosecha y bloquearía el scope para siempre."""
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    poison = [
+        _listing("x" * 201),  # external_id > 200
+        _listing("url-larga", url="https://x/" + "u" * 1000),  # url > 1000
+        _listing("nul", payload={"title": "a\x00b"}),  # NUL (jsonb lo rechaza)
+        _listing("surrogate", payload={"t": "\ud800"}),  # no codificable UTF-8
+    ]
+    with caplog.at_level(logging.WARNING, logger="jobhunt_core.harvest.sink"):
+        _sink_batch(factory, scope, [_listing("ok1"), *poison, _listing("ok2")])
+    c = _counts(factory, created["source"])
+    assert (c.slots, c.incs, c.revs) == (2, 2, 2)  # SOLO los válidos
+    assert sum("CUARENTENA" in r.getMessage() for r in caplog.records) == 4
 
 
 def test_empty_batch_is_noop(db):

@@ -184,6 +184,15 @@ def test_max_pages_below_minimum_rejected():
         _fetch(params={"max_pages": 1})
 
 
+def test_hard_max_pages_invalid_rejected():
+    """Rev. A-04 #4: config inválida FALLA explícita — con hard_max_pages=0 el
+    barrido haría 0 peticiones y devolvería cursor parcial vacío para siempre."""
+    with pytest.raises(ValueError, match="hard_max_pages"):
+        _fetch(params={"max_pages": 2, "hard_max_pages": 0})
+    with pytest.raises(ValueError, match="hard_max_pages"):
+        _fetch(params={"max_pages": 10, "hard_max_pages": 5})
+
+
 def test_keyword_scope_filters_client_side():
     result, _ = _fetch(params={"keyword": "python"})
     assert _ids(result) == ["a", "c"]

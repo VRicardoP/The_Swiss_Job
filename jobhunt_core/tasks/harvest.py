@@ -26,11 +26,18 @@ logger = logging.getLogger(__name__)
 def run_scope_task(self, scope_id: str) -> dict[str, Any]:
     try:
         result = asyncio.run(_run_scope_impl(scope_id))
+    except KeyError as exc:
+        # Error de configuración PERMANENTE (provider desconocido, rev. A-04
+        # #5): reintentar no lo arregla — falla explícito SIN consumir retry.
+        logger.error("harvest.run_scope %s: %s — sin retry", scope_id, exc)
+        raise
     except Exception as exc:
+        # Transitorios (HTTP, BD): AQUÍ sí retry.
         logger.error("harvest.run_scope %s falló: %s", scope_id, exc)
         raise self.retry(exc=exc, countdown=120)
     if result.status == "error":
-        # 'stale'/'skipped'/'partial' NO se reintentan (no son fallos de fuente).
+        # 'stale'/'skipped'/'partial'/'not_found' NO se reintentan (no son
+        # fallos de fuente).
         raise self.retry(
             exc=RuntimeError(result.error or "run error"), countdown=120
         )
@@ -54,7 +61,11 @@ async def _run_scope_impl(scope_id: str) -> ScopeRunResult:
             )
         ).scalar_one_or_none()
     if source_name is None:
-        return ScopeRunResult(scope_id=scope_id, status="error", error="scope inexistente")
+        # Scope eliminado tras encolar la tarea: caso NORMAL y permanente
+        # (rev. A-04 #5) — no es un error de fuente y no debe consumir retry.
+        return ScopeRunResult(
+            scope_id=scope_id, status="not_found", detail={"reason": "scope inexistente"}
+        )
     provider = get_provider(source_name)
     async with httpx.AsyncClient() as http:
         return await run_scope(scope_id, provider, RawListingSink(), http)

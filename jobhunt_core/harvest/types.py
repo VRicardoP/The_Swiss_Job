@@ -35,7 +35,8 @@ class ScopeRunResult:
     scope_id: str
     # "ok" · "partial" (barrido incompleto: persistido pero SIN last_complete_at)
     # · "skipped" (disabled) · "stale" (otro run/config ganó; sin pisar, no
-    # cuenta como fallo) · "error"
+    # cuenta como fallo) · "not_found" (scope eliminado tras encolar: caso
+    # normal PERMANENTE, sin retry) · "error"
     status: str
     listings: int = 0
     pages: int = 0

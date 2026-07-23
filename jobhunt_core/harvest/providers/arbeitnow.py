@@ -56,6 +56,14 @@ class ArbeitnowProvider(BaseProvider):
         if configured < MIN_PAGE_TARGET:
             raise ValueError(f"max_pages debe ser >= {MIN_PAGE_TARGET}")
         hard_max = int(params.get("hard_max_pages", HARD_MAX_PAGES))
+        # Config inválida FALLA explícita (rev. A-04 #4): con hard_max < target
+        # mínimo el barrido haría 0 peticiones y devolvería un cursor parcial
+        # (page_target=0, listings=[]) para siempre — livelock silencioso.
+        if hard_max < MIN_PAGE_TARGET or hard_max < configured:
+            raise ValueError(
+                f"hard_max_pages ({hard_max}) debe ser >= {MIN_PAGE_TARGET} "
+                f"y >= max_pages ({configured})"
+            )
         # Objetivo adaptativo (rev. 4ª #1): arranca en lo configurado y, si un
         # barrido anterior se quedó corto, usa el objetivo crecido persistido.
         target = min(max(configured, int(cur.get("page_target", 0))), hard_max)

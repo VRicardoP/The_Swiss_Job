@@ -30,6 +30,42 @@ from jobhunt_core.harvest.types import RawListing
 
 logger = logging.getLogger(__name__)
 
+# Límites REALES del esquema (CONTRATOS §1 / core0002): validar en la frontera
+# evita que UN listing sobredimensionado envenene el lote entero (rev. A-04 #2 —
+# con la emisión total de A-03 el dato tóxico reaparecería en cada cosecha y
+# bloquearía el scope indefinidamente).
+MAX_EXTERNAL_ID_LEN = 200
+MAX_URL_LEN = 1000
+
+
+def _valid_listing(listing: RawListing, canon: str) -> bool:
+    """Cumple los límites del esquema; si no, se registra y se aísla (nunca se
+    truncan claves de identidad ni se aborta el lote válido). `canon` es la
+    serialización canónica YA calculada (única — se reutiliza para el hash)."""
+    reasons = []
+    if len(listing.external_id) > MAX_EXTERNAL_ID_LEN:
+        reasons.append(f"external_id > {MAX_EXTERNAL_ID_LEN}")
+    if len(listing.url) > MAX_URL_LEN or len(normalize_url(listing.url)) > MAX_URL_LEN:
+        reasons.append(f"url > {MAX_URL_LEN}")
+    if listing.apply_url and len(listing.apply_url) > MAX_URL_LEN:
+        reasons.append(f"apply_url > {MAX_URL_LEN}")
+    # NUL: Postgres lo rechaza en text Y en jsonb. json.dumps SIEMPRE escapa
+    # los controles, asi que en `canon` un NUL aparece como la secuencia \\u0000.
+    if (
+        "\x00" in listing.external_id
+        or "\x00" in listing.url
+        or "\x00" in (listing.apply_url or "")
+        or "\\u0000" in canon
+    ):
+        reasons.append("NUL byte (rechazado por Postgres)")
+    if reasons:
+        logger.warning(
+            "sink: listing %r EN CUARENTENA (%s) — no envenena el lote",
+            listing.external_id[:80], "; ".join(reasons),
+        )
+        return False
+    return True
+
 
 def normalize_url(url: str) -> str:
     """Clave de dedup por URL: esquema/host en minúsculas, sin fragmento ni
@@ -68,11 +104,46 @@ class RawListingSink:
             )
         ).scalar_one()
 
-        # Dedup DENTRO del lote por external_id (la última aparición gana).
-        by_ext = {listing.external_id: listing for listing in listings}
+        # SERIALIZACIÓN POR FUENTE (rev. A-04 #1): dos scopes de la MISMA fuente
+        # tocan los mismos slots con DOS claves UNIQUE (external_id y
+        # url_normalized) — ningún orden por una sola clave evita el deadlock
+        # cruzado. El advisory lock transaccional (se libera en commit/rollback)
+        # serializa por fuente y mantiene el paralelismo ENTRE fuentes.
+        await session.execute(
+            sa.text("SELECT pg_advisory_xact_lock(hashtextextended(:src, 0))"),
+            {"src": str(source_id)},
+        )
+
+        # Validación de FRONTERA contra los límites del esquema (rev. #2): los
+        # inválidos se aíslan con log; el lote válido sigue adelante. La
+        # serialización canónica Y el hash se calculan UNA vez aquí.
+        valid: list[RawListing] = []
+        canon_by_ext: dict[str, tuple[str, str]] = {}
+        for listing in listings:
+            try:
+                canon = canonical_payload(listing.payload)
+                # encode() detecta surrogates sueltos (json.loads puede
+                # producirlos): pasarían dumps pero reventarían hash/BD.
+                chash = hashlib.sha256(canon.encode()).hexdigest()
+            except (TypeError, ValueError, UnicodeEncodeError) as exc:
+                logger.warning(
+                    "sink: listing %r EN CUARENTENA (payload no serializable: %s)",
+                    listing.external_id[:80], exc,
+                )
+                continue
+            if not _valid_listing(listing, canon):
+                continue
+            valid.append(listing)
+            canon_by_ext[listing.external_id] = (canon, chash)
+        if not valid:
+            return
+        # Dedup DENTRO del lote por external_id (la última aparición VÁLIDA gana).
+        by_ext = {listing.external_id: listing for listing in valid}
         slot_by_ext = await self._ensure_slots(session, source_id, by_ext)
         inc_by_slot = await self._ensure_incarnations(session, slot_by_ext, by_ext)
-        await self._refresh_and_revise(session, slot_by_ext, inc_by_slot, by_ext)
+        await self._refresh_and_revise(
+            session, slot_by_ext, inc_by_slot, by_ext, canon_by_ext
+        )
 
     async def _ensure_slots(
         self, session, source_id, by_ext: dict[str, RawListing]
@@ -224,7 +295,7 @@ class RawListingSink:
         return inc_by_slot
 
     async def _refresh_and_revise(
-        self, session, slot_by_ext, inc_by_slot, by_ext
+        self, session, slot_by_ext, inc_by_slot, by_ext, canon_by_ext
     ) -> None:
         """`last_seen_at` (y url/apply) en CADA cosecha + revisión si cambió."""
         refresh, candidates = [], []
@@ -236,15 +307,11 @@ class RawListingSink:
             refresh.append(
                 {"iid": str(inc_id), "url": listing.url, "aurl": listing.apply_url}
             )
-            # UNA sola serialización: la misma cadena canónica se hashea y, si
-            # hace falta, se persiste (auditoría #3/#5).
-            canon = canonical_payload(listing.payload)
+            # UNA sola serialización Y un solo hash: calculados en la
+            # validación de frontera y reutilizados aquí (#3/#5).
+            canon, chash = canon_by_ext[ext]
             candidates.append(
-                {
-                    "id": uuid.uuid4(), "iid": str(inc_id),
-                    "chash": hashlib.sha256(canon.encode()).hexdigest(),
-                    "raw": canon,
-                }
+                {"id": uuid.uuid4(), "iid": str(inc_id), "chash": chash, "raw": canon}
             )
         if refresh:
             # Orden determinista → mismos locks en el mismo orden entre runs (#2).
@@ -261,14 +328,20 @@ class RawListingSink:
             # PRE-FILTRO (auditoría #3): en régimen estable casi todo el lote ya
             # existe — un SELECT indexado (uq_slrev_incarnation_hash) evita
             # enviar/parsear payloads enteros que acabarían en DO NOTHING.
+            # Pares ALINEADOS via unnest (rev. A-04 #3): ANY(ids) AND ANY(hs)
+            # sería el producto cruzado y degeneraría en O(n²) con historiales
+            # que compartan hashes; el join por (iid, chash) consulta EXACTAMENTE
+            # los pares solicitados.
             existing = {
                 (str(r.incarnation_id), r.content_hash)
                 for r in (
                     await session.execute(
                         sa.text(
-                            "SELECT incarnation_id, content_hash "
-                            "FROM source_listing_revisions "
-                            "WHERE incarnation_id = ANY(:ids) AND content_hash = ANY(:hs)"
+                            "SELECT r.incarnation_id, r.content_hash "
+                            "FROM source_listing_revisions r "
+                            "JOIN unnest(CAST(:ids AS uuid[]), CAST(:hs AS text[])) "
+                            "  AS t(iid, chash) "
+                            "ON r.incarnation_id = t.iid AND r.content_hash = t.chash"
                         ),
                         {
                             "ids": [c["iid"] for c in candidates],
