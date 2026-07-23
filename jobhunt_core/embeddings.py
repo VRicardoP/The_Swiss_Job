@@ -28,12 +28,16 @@ EMBED_DIM = 384
 
 
 class SentenceTransformerBackend:
-    """Backend real (mismo modelo multilingüe 384d que el legacy — los
-    vectores deben ser comparables en la sombra de Fase B). Carga perezosa y
-    thread-safe: el import de ML solo ocurre si de verdad se embebe."""
+    """Backend real POR MODELO (rev. A-06 #3): carga `name` en la revisión
+    INMUTABLE `version` (tag/commit de HF) — `model_id` identifica al encoder
+    REAL, nunca un backend global compartido. Carga perezosa y thread-safe:
+    el import de ML solo ocurre si de verdad se embebe."""
 
-    _model = None
-    _lock = threading.Lock()
+    def __init__(self, name: str, version: str):
+        self._name = name
+        self._version = version
+        self._model = None
+        self._lock = threading.Lock()
 
     def encode_batch(self, texts: list[str]) -> list[list[float]]:
         model = self._get_model()
@@ -44,33 +48,38 @@ class SentenceTransformerBackend:
         )
         return [v.tolist() for v in vectors]
 
-    @classmethod
-    def _get_model(cls):
-        if cls._model is None:
-            with cls._lock:
-                if cls._model is None:
+    def _get_model(self):
+        if self._model is None:
+            with self._lock:
+                if self._model is None:
                     from sentence_transformers import SentenceTransformer
 
-                    cls._model = SentenceTransformer(
-                        settings.CORE_EMBEDDING_MODEL_NAME, device="cpu"
+                    self._model = SentenceTransformer(
+                        self._name, revision=self._version, device="cpu"
                     )
-        return cls._model
+        return self._model
 
 
-_backend = None
+# Fábrica de backends por (name, version) — INYECTABLE (tests) y cacheada:
+# cada modelo registrado resuelve SU encoder. A-07 (perfiles) debe reutilizar
+# exactamente esta resolución.
+_backend_factory = None
+_backends: dict[tuple[str, str], object] = {}
 
 
-def get_backend():
-    """Backend por defecto (singleton). Los tests lo sustituyen."""
-    global _backend
-    if _backend is None:
-        _backend = SentenceTransformerBackend()
-    return _backend
+def get_backend(name: str, version: str):
+    key = (name, version)
+    if key not in _backends:
+        factory = _backend_factory or SentenceTransformerBackend
+        _backends[key] = factory(name, version)
+    return _backends[key]
 
 
-def set_backend(backend) -> None:
-    global _backend
-    _backend = backend
+def set_backend_factory(factory) -> None:
+    """Sustituye la fábrica (tests) y vacía la caché; None restaura la real."""
+    global _backend_factory
+    _backend_factory = factory
+    _backends.clear()
 
 
 async def register_model(
@@ -96,14 +105,30 @@ async def register_model(
             "dim": dim, "active": active,
         },
     )
-    model_id = (
+    # Validar la fila REAL bajo lock (rev. A-06 #4): tras el DO NOTHING la
+    # existente puede tener otra dimensión — jamás dar éxito sobre ella.
+    row = (
         await session.execute(
             sa.text(
-                "SELECT id FROM embedding_models WHERE name = :name AND version = :version"
+                "SELECT id, dim, active FROM embedding_models "
+                "WHERE name = :name AND version = :version FOR UPDATE"
             ),
             {"name": name, "version": version},
         )
-    ).scalar_one()
+    ).one()
+    if row.dim != dim:
+        raise ValueError(
+            f"modelo {name}/{version} ya registrado con dim={row.dim} != {dim}: "
+            "la dimensión de un modelo registrado es INMUTABLE (expand/contract)"
+        )
+    # `active` SÍ se actualiza: el registro es una declaración operativa
+    # idempotente (activar/desactivar re-declarando).
+    if row.active != active:
+        await session.execute(
+            sa.text("UPDATE embedding_models SET active = :a WHERE id = :id"),
+            {"a": active, "id": row.id},
+        )
+    model_id = row.id
     # Partición del modelo (idempotente). El nombre deriva del id: estable.
     partition = f"offer_embeddings_{model_id.hex[:16]}"
     schema = settings.CORE_DB_SCHEMA

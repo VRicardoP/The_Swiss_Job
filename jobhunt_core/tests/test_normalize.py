@@ -64,6 +64,16 @@ def test_text_hash_ignores_salary_and_location_but_not_text():
     assert normalize.offer_text_hash(base) != normalize.offer_text_hash(other_title)
 
 
+def test_text_hash_derives_from_encoder_input():
+    """Rev. A-06 2ª #5: text_hash y el input del encoder derivan de la MISMA
+    representación canónica — mismo texto embebible ⇒ mismo hash ⇒ UN
+    embedding, estrictamente."""
+    a = {"title": "A B", "company": None, "description": None, "tags": []}
+    b = {"title": "A", "company": "B", "description": None, "tags": []}
+    assert normalize.build_offer_text(a) == normalize.build_offer_text(b)
+    assert normalize.offer_text_hash(a) == normalize.offer_text_hash(b)
+
+
 def test_build_offer_text_mirrors_legacy_composition():
     content = {"title": "Dev", "company": "ACME", "description": "backend", "tags": ["py", "sql"]}
     assert normalize.build_offer_text(content) == "Dev ACME backend py sql"

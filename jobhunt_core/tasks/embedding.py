@@ -52,7 +52,10 @@ async def _run_pending_impl(limit: int) -> dict[str, Any]:
                 continue
             texts = [build_offer_text(r.content) for r in pending]
             # ENCODE fuera de transacción (CPU): la sesión no queda colgada.
-            vectors = embeddings.get_backend().encode_batch(texts)
+            # Backend POR MODELO (rev. A-06 #3): model_id identifica al
+            # encoder real — nunca un backend global compartido.
+            backend = embeddings.get_backend(model.name, model.version)
+            vectors = backend.encode_batch(texts)
             items = [
                 {"text_hash": r.text_hash, "vector": v}
                 for r, v in zip(pending, vectors)

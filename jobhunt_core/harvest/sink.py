@@ -249,7 +249,10 @@ class RawListingSink:
         # determinista BAJO el lock de vacante ya tomado (la re-lectura ve
         # solo estado commiteado o propio: dos fuentes reciclando a la vez se
         # serializan aquí). Sin activas se deja (mono-fuente: archivado ADR-07).
-        await self._repair_primary_pointers(session, recycled_vacs)
+        # rev. A-06 #1: la CANÓNICA sigue al nuevo primary (o queda NULL) —
+        # jamás puede servirse el contenido del primary reciclado.
+        repaired = await self._repair_primary_pointers(session, recycled_vacs)
+        await self._rebuild_canonical_after_repair(session, repaired)
 
         # A-05 · alias external_id↔URL (gana external_id, ADR-01) y drift de
         # URL entre fuentes (cierra la carrera de creación concurrente: nunca
@@ -626,29 +629,198 @@ class RawListingSink:
         new_incs = {info[0] for info in winners.values()}
         return inc_by_slot, new_incs, evidence, pairs
 
-    async def _repair_primary_pointers(self, session, vacancy_ids) -> None:
+    async def _repair_primary_pointers(self, session, vacancy_ids) -> list:
         """Reasigna el puntero primario de vacantes cuyo primary quedó CERRADO
         pero que conservan incarnaciones ACTIVAS (vacante compartida
         cross-source; auditoría A-05 #1). Elección DETERMINISTA: la activa más
         antigua (first_seen_at, id) — sin semántica, Fase A. La FK compuesta
         exige misma vacante: el pick sale de la propia vacante. Sin activas no
-        se toca (mono-fuente: el archivado ADR-07 recoge la vacante muerta)."""
+        se toca (mono-fuente: el archivado ADR-07 recoge la vacante muerta).
+        Devuelve [(vacancy_id, nuevo_primary_inc_id)] para que la CANÓNICA
+        siga al nuevo primary (rev. A-06 #1)."""
         if not vacancy_ids:
+            return []
+        rows = (
+            await session.execute(
+                sa.text(
+                    "UPDATE vacancies v SET primary_incarnation_id = pick.iid "
+                    "FROM (SELECT DISTINCT ON (vacancy_id) vacancy_id, id AS iid "
+                    "      FROM source_listing_incarnations "
+                    "      WHERE vacancy_id = ANY(:vacs) AND ended_at IS NULL "
+                    "      ORDER BY vacancy_id, first_seen_at, id) pick "
+                    "WHERE v.id = pick.vacancy_id "
+                    "AND NOT EXISTS (SELECT 1 FROM source_listing_incarnations cur "
+                    "                WHERE cur.id = v.primary_incarnation_id "
+                    "                AND cur.ended_at IS NULL) "
+                    "RETURNING v.id, v.primary_incarnation_id"
+                ),
+                {"vacs": sorted(set(vacancy_ids), key=str)},
+            )
+        ).all()
+        return [(r.id, r.primary_incarnation_id) for r in rows]
+
+    async def _rebuild_canonical_after_repair(self, session, repaired) -> None:
+        """La canónica vigente debe seguir SIEMPRE al primary (rev. A-06 #1):
+        tras reasignar el primary de una vacante compartida, se reconstruye
+        `current_offer_revision_id` desde la ÚLTIMA revisión raw del NUEVO
+        primary — con el normalizador de SU fuente (que puede ser otra). Sin
+        revisión/normalizador/título → puntero NULL: JAMÁS puede quedar
+        sirviéndose el contenido del primary anterior (otra empresa). Corre
+        BAJO los locks de vacante ya tomados (mismo tx que la reparación)."""
+        if not repaired:
             return
+        latest = {
+            r.incarnation_id: r
+            for r in (
+                await session.execute(
+                    sa.text(
+                        "SELECT DISTINCT ON (r.incarnation_id) r.incarnation_id, "
+                        "r.id AS slrev_id, r.content_hash, r.raw, s.name AS source_name "
+                        "FROM source_listing_revisions r "
+                        "JOIN source_listing_incarnations i ON i.id = r.incarnation_id "
+                        "JOIN source_listings sl ON sl.id = i.source_listing_id "
+                        "JOIN sources s ON s.id = sl.source_id "
+                        "WHERE r.incarnation_id = ANY(:ids) "
+                        "ORDER BY r.incarnation_id, r.fetched_at DESC, r.id"
+                    ),
+                    {"ids": sorted({str(i) for _v, i in repaired})},
+                )
+            ).all()
+        }
+        to_point, to_null = [], []
+        for vac_id, inc_id in repaired:
+            r = latest.get(inc_id)
+            content = (
+                normalize.normalize_offer(r.source_name, r.raw) if r is not None else None
+            )
+            if content is None:
+                to_null.append({"vid": vac_id, "iid": inc_id})
+            else:
+                to_point.append(
+                    {
+                        "vid": vac_id, "iid": inc_id, "chash": r.content_hash,
+                        "slrev": r.slrev_id, "content": content,
+                    }
+                )
+        if to_point:
+            rev_ids = await self._ensure_offer_revisions(
+                session,
+                [
+                    {"vid": p["vid"], "chash": p["chash"], "content": p["content"]}
+                    for p in to_point
+                ],
+            )
+            pointer_rows, source_rows = [], []
+            for p in to_point:
+                rev_id = rev_ids.get((str(p["vid"]), p["chash"]))
+                if rev_id is None:
+                    to_null.append({"vid": p["vid"], "iid": p["iid"]})
+                    continue
+                pointer_rows.append({"rid": rev_id, "vid": p["vid"], "iid": p["iid"]})
+                source_rows.append(
+                    {"orid": rev_id, "slrid": p["slrev"], "vid": p["vid"]}
+                )
+            if pointer_rows:
+                pointer_rows.sort(key=lambda r: str(r["vid"]))
+                await session.execute(
+                    sa.text(
+                        "UPDATE vacancies SET current_offer_revision_id = :rid "
+                        "WHERE id = :vid AND primary_incarnation_id = :iid"
+                    ),
+                    pointer_rows,
+                )
+            if source_rows:
+                source_rows.sort(key=lambda r: (str(r["orid"]), str(r["slrid"])))
+                await session.execute(
+                    sa.text(
+                        "INSERT INTO offer_revision_sources "
+                        "(offer_revision_id, source_listing_revision_id, vacancy_id) "
+                        "VALUES (:orid, :slrid, :vid) "
+                        "ON CONFLICT (offer_revision_id, source_listing_revision_id) "
+                        "DO NOTHING"
+                    ),
+                    source_rows,
+                )
+        if to_null:
+            to_null.sort(key=lambda r: str(r["vid"]))
+            await session.execute(
+                sa.text(
+                    "UPDATE vacancies SET current_offer_revision_id = NULL "
+                    "WHERE id = :vid AND primary_incarnation_id = :iid"
+                ),
+                to_null,
+            )
+
+    async def _ensure_offer_revisions(self, session, entries) -> dict:
+        """entries = [{vid, chash, content(dict)}] → {(str(vid), chash): id}.
+        Lookup por pares exactos + INSERT de lo que falte (ON CONFLICT cubre
+        la carrera) + re-select de ganadores."""
+        if not entries:
+            return {}
+        rev_ids = {
+            (str(r.vacancy_id), r.content_hash): r.id
+            for r in (
+                await session.execute(
+                    sa.text(
+                        "SELECT o.id, o.vacancy_id, o.content_hash "
+                        "FROM offer_revisions o "
+                        "JOIN unnest(CAST(:vids AS uuid[]), CAST(:hs AS text[])) "
+                        "  AS t(vid, chash) "
+                        "ON o.vacancy_id = t.vid AND o.content_hash = t.chash"
+                    ),
+                    {
+                        "vids": [str(e["vid"]) for e in entries],
+                        "hs": [e["chash"] for e in entries],
+                    },
+                )
+            ).all()
+        }
+        missing = [
+            e for e in entries if (str(e["vid"]), e["chash"]) not in rev_ids
+        ]
+        if not missing:
+            return rev_ids
+        offer_rows = sorted(
+            (
+                {
+                    "id": uuid.uuid4(), "vid": e["vid"], "chash": e["chash"],
+                    "thash": normalize.offer_text_hash(e["content"]),
+                    "content": json.dumps(e["content"], ensure_ascii=False),
+                }
+                for e in missing
+            ),
+            key=lambda r: (str(r["vid"]), r["chash"]),
+        )
         await session.execute(
             sa.text(
-                "UPDATE vacancies v SET primary_incarnation_id = pick.iid "
-                "FROM (SELECT DISTINCT ON (vacancy_id) vacancy_id, id AS iid "
-                "      FROM source_listing_incarnations "
-                "      WHERE vacancy_id = ANY(:vacs) AND ended_at IS NULL "
-                "      ORDER BY vacancy_id, first_seen_at, id) pick "
-                "WHERE v.id = pick.vacancy_id "
-                "AND NOT EXISTS (SELECT 1 FROM source_listing_incarnations cur "
-                "                WHERE cur.id = v.primary_incarnation_id "
-                "                AND cur.ended_at IS NULL)"
+                "INSERT INTO offer_revisions "
+                "(id, vacancy_id, content_hash, text_hash, content) "
+                "VALUES (:id, :vid, :chash, :thash, CAST(:content AS jsonb)) "
+                "ON CONFLICT (vacancy_id, content_hash) DO NOTHING"
             ),
-            {"vacs": sorted(set(vacancy_ids), key=str)},
+            offer_rows,
         )
+        rev_ids.update(
+            {
+                (str(r.vacancy_id), r.content_hash): r.id
+                for r in (
+                    await session.execute(
+                        sa.text(
+                            "SELECT o.id, o.vacancy_id, o.content_hash "
+                            "FROM offer_revisions o "
+                            "JOIN unnest(CAST(:vids AS uuid[]), CAST(:hs AS text[])) "
+                            "  AS t(vid, chash) "
+                            "ON o.vacancy_id = t.vid AND o.content_hash = t.chash"
+                        ),
+                        {
+                            "vids": [str(r["vid"]) for r in offer_rows],
+                            "hs": [r["chash"] for r in offer_rows],
+                        },
+                    )
+                ).all()
+            }
+        )
+        return rev_ids
 
     async def _url_alias_evidence(
         self, session, source_id, slot_by_ext, stored_urln, prep_by_ext, inc_by_slot
@@ -850,6 +1022,7 @@ class RawListingSink:
         # cada primary (pares exactos): lo que falte se crea.
         rev_ids: dict[tuple[str, str], uuid.UUID] = {}
         pointer_rows: list[dict] = []
+        null_rows: list[dict] = []
         created_pairs: set[tuple[str, str]] = set()
         if primaries:
             rev_ids = {
@@ -870,53 +1043,24 @@ class RawListingSink:
                     )
                 ).all()
             }
-            offer_rows = []
-            for ext, _inc, vac, chash in primaries:
+            entries = []
+            for ext, inc, vac, chash in primaries:
                 if (str(vac), chash) in rev_ids:
                     continue
                 content = normalize.normalize_offer(source_name, by_ext[ext].payload)
                 if content is None:
-                    continue  # sin canónica: puntero intacto (log ya emitido)
-                offer_rows.append(
-                    {
-                        "id": uuid.uuid4(), "vid": vac, "chash": chash,
-                        "thash": normalize.offer_text_hash(content),
-                        "content": json.dumps(content, ensure_ascii=False),
-                    }
-                )
-            if offer_rows:
-                created_pairs = {(str(r["vid"]), r["chash"]) for r in offer_rows}
-                offer_rows.sort(key=lambda r: (str(r["vid"]), r["chash"]))
-                await session.execute(
-                    sa.text(
-                        "INSERT INTO offer_revisions "
-                        "(id, vacancy_id, content_hash, text_hash, content) "
-                        "VALUES (:id, :vid, :chash, :thash, CAST(:content AS jsonb)) "
-                        "ON CONFLICT (vacancy_id, content_hash) DO NOTHING"
-                    ),
-                    offer_rows,
-                )
-                # Ganadores reales (carrera cubierta por el ON CONFLICT).
-                rev_ids.update(
-                    {
-                        (str(r.vacancy_id), r.content_hash): r.id
-                        for r in (
-                            await session.execute(
-                                sa.text(
-                                    "SELECT o.id, o.vacancy_id, o.content_hash "
-                                    "FROM offer_revisions o "
-                                    "JOIN unnest(CAST(:vids AS uuid[]), "
-                                    "CAST(:hs AS text[])) AS t(vid, chash) "
-                                    "ON o.vacancy_id = t.vid AND o.content_hash = t.chash"
-                                ),
-                                {
-                                    "vids": [str(r["vid"]) for r in offer_rows],
-                                    "hs": [r["chash"] for r in offer_rows],
-                                },
-                            )
-                        ).all()
-                    }
-                )
+                    # rev. A-06 #2: el contenido ACTUAL del primary no es
+                    # normalizable — la canónica ANTERIOR no puede seguir
+                    # sirviéndose como vigente (API/matching la darían por
+                    # buena indefinidamente mientras last_seen_at se refresca):
+                    # puntero a NULL, CAS condicionado al primary.
+                    if vac_rows[vac].current_offer_revision_id is not None:
+                        null_rows.append({"vid": vac, "iid": inc})
+                    continue
+                entries.append({"vid": vac, "chash": chash, "content": content})
+            if entries:
+                created_pairs = {(str(e["vid"]), e["chash"]) for e in entries}
+                rev_ids.update(await self._ensure_offer_revisions(session, entries))
             for ext, inc, vac, chash in primaries:
                 rev_id = rev_ids.get((str(vac), chash))
                 if rev_id is None or vac_rows[vac].cur_chash == chash:
@@ -931,6 +1075,15 @@ class RawListingSink:
                         "WHERE id = :vid AND primary_incarnation_id = :iid"
                     ),
                     pointer_rows,
+                )
+            if null_rows:
+                null_rows.sort(key=lambda r: str(r["vid"]))
+                await session.execute(
+                    sa.text(
+                        "UPDATE vacancies SET current_offer_revision_id = NULL "
+                        "WHERE id = :vid AND primary_incarnation_id = :iid"
+                    ),
+                    null_rows,
                 )
 
         # Agregación de fuentes: revisiones raw NUEVAS + primaries cuya

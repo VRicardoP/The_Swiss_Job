@@ -12,7 +12,6 @@ salario/location NO altera el text_hash → NO re-embebe.
 """
 
 import hashlib
-import json
 import logging
 from typing import Callable
 
@@ -59,14 +58,6 @@ def normalize_offer(source_name: str, raw: dict) -> dict | None:
     return content
 
 
-def offer_text_hash(content: dict) -> str:
-    """Hash ESTABLE del texto embebible (ADR-02): solo TEXT_FIELDS — cambiar
-    salario/location produce OTRO content_hash pero el MISMO text_hash."""
-    basis = {k: content.get(k) for k in TEXT_FIELDS}
-    raw = json.dumps(basis, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(raw.encode()).hexdigest()
-
-
 def build_offer_text(content: dict) -> str:
     """Texto de embedding — MISMA composición que el legacy (build_job_text:
     title company description tags) para que los vectores sean comparables en
@@ -78,6 +69,15 @@ def build_offer_text(content: dict) -> str:
         " ".join(content.get("tags") or []),
     ]
     return " ".join(p for p in parts if p)
+
+
+def offer_text_hash(content: dict) -> str:
+    """Hash del texto embebible EXACTO (rev. A-06 #5): text_hash y el input
+    del encoder derivan de la MISMA representación (`build_offer_text`) —
+    mismo texto ⇒ mismo hash ⇒ UN embedding, estrictamente. Salario/location
+    no participan (TEXT_FIELDS, ADR-02): cambiarlos da OTRO content_hash con
+    el MISMO text_hash → no re-embebe."""
+    return hashlib.sha256(build_offer_text(content).encode()).hexdigest()
 
 
 def _text(value) -> str | None:
