@@ -45,6 +45,7 @@ def db():
                     {"srcs": srcs},
                 )
             ).scalars().all()
+            vac_ids = list(vac_ids) + created["extra_vacs"]
             # Orden FK-seguro; candidatos/evidencia antes que vacantes/slots.
             if vac_ids:
                 await s.execute(
@@ -409,6 +410,158 @@ def test_merged_vacancy_excluded_from_attach(db):
         a=vac_a, b=vac_b,
     )
     assert [(r.state, float(r.similarity)) for r in cands] == [("pending", 0.9)]
+
+
+def test_concurrent_archive_vs_attach_revalidates_under_lock(db):
+    """Rev. A-05 2ª #1 (repro): el archive commitea DESPUÉS de la pre-selección
+    del attach — el protocolo de locks por vacante (FOR UPDATE ordenado +
+    revalidación EPQ) expulsa la vacante y b1 obtiene la suya propia. Jamás
+    contenido vivo enlazado a una vacante inactiva."""
+    factory, created = db
+    scope_a = _seed(factory, created, "arbeitnow")
+    scope_b = _seed(factory, created, "otherboard")
+    _sink(factory, scope_a, [_listing("a1", url="https://x/shared")])
+    vac_a = _incs(factory, "a1")[0].vacancy_id
+
+    async def race():
+        async with factory() as s1:
+            # s1 archiva SIN commitear: el sink de B esperará en el FOR UPDATE.
+            await s1.execute(
+                sa.text("UPDATE vacancies SET archived_at = now() WHERE id = :v"),
+                {"v": vac_a},
+            )
+
+            async def run_sink():
+                async with factory() as s2:
+                    await RawListingSink().handle(
+                        s2, scope_b, (_listing("b1", url="https://x/shared"),)
+                    )
+                    await s2.commit()
+
+            task = asyncio.create_task(run_sink())
+            await asyncio.sleep(0.4)  # el sink alcanza el lock y queda esperando
+            await s1.commit()  # el archive gana; el sink revalida bajo el lock
+            await task
+
+    asyncio.run(race())
+    vac_b = _incs(factory, "b1")[0].vacancy_id
+    assert vac_b != vac_a  # revalidado: vacante propia, no la archivada
+
+
+def test_three_source_concurrent_recycle_repairs_primary_under_lock(db):
+    """Rev. A-05 2ª #2 (repro): A y B reciclan CONCURRENTEMENTE su incarnación
+    de una vacante compartida por TRES fuentes; C sigue activa. El lock por
+    vacante serializa cierre+reparación: el primary final apunta a la única
+    incarnación ACTIVA (la de C), nunca a un cierre sin confirmar."""
+    from jobhunt_core.harvest import identity as identity_mod
+
+    factory, created = db
+    scope_a = _seed(factory, created, "arbeitnow")
+    scope_b = _seed(factory, created, "otherboard")
+    scope_c = _seed(factory, created, "thirdboard")
+    identity_mod.register_extractor(
+        "otherboard", lambda p: (p.get("title"), p.get("company_name"))
+    )
+    try:
+        _sink(factory, scope_a, [_listing("a1", company="ACME AG", url="https://x/shared", v=1)])
+        _sink(factory, scope_b, [_listing("b1", company="ACME AG", url="https://x/shared", v=1)])
+        _sink(factory, scope_c, [_listing("c1", url="https://x/shared", v=1)])
+        v_shared = _incs(factory, "a1")[0].vacancy_id
+        c1_inc = _incs(factory, "c1")[0]
+        assert c1_inc.vacancy_id == v_shared  # compartida por las tres
+
+        async def worker(scope_id, listing):
+            async with factory() as s:
+                await RawListingSink().handle(s, scope_id, (listing,))
+                await s.commit()
+
+        async def race():
+            await asyncio.gather(
+                worker(scope_a, _listing("a1", company="Umbrella GmbH", url="https://x/shared", v=2)),
+                worker(scope_b, _listing("b1", company="Zombo Corp", url="https://x/shared", v=2)),
+            )
+
+        asyncio.run(race())
+
+        rows = _one(
+            factory,
+            "SELECT v.primary_incarnation_id, i.ended_at "
+            "FROM vacancies v JOIN source_listing_incarnations i "
+            "ON i.id = v.primary_incarnation_id WHERE v.id = :v",
+            v=v_shared,
+        )
+        assert rows[0].ended_at is None  # primary = incarnación ACTIVA
+        assert rows[0].primary_incarnation_id == c1_inc.id  # la de C
+        activas = _one(
+            factory,
+            "SELECT count(*) AS n FROM source_listing_incarnations "
+            "WHERE vacancy_id = :v AND ended_at IS NULL",
+            v=v_shared,
+        )
+        assert activas[0].n == 1
+    finally:
+        identity_mod._EXTRACTORS.pop("otherboard", None)
+
+
+def test_candidate_similarity_keeps_maximum_and_respects_resolution(db):
+    """Rev. A-05 2ª #3: la similitud registrada no depende del orden de
+    llegada — gana el MÁXIMO en el lote y GREATEST en BD, SOLO mientras el
+    candidato siga pending; un candidato resuelto no se toca."""
+    factory, created = db
+    va, vb = uuid.uuid4(), uuid.uuid4()
+    created["extra_vacs"] += [va, vb]
+
+    async def setup():
+        async with factory() as s:
+            await s.execute(
+                sa.text("INSERT INTO vacancies (id) VALUES (:id)"),
+                [{"id": va}, {"id": vb}],
+            )
+            await s.commit()
+
+    asyncio.run(setup())
+    sink = RawListingSink()
+
+    def write(pairs):
+        async def go():
+            async with factory() as s:
+                await sink._write_dedup_candidates(s, pairs)
+                await s.commit()
+
+        asyncio.run(go())
+
+    def sim_state():
+        r = _one(
+            factory,
+            "SELECT similarity, state FROM dedup_candidates "
+            "WHERE vacancy_a IN (:a, :b) AND vacancy_b IN (:a, :b)",
+            a=va, b=vb,
+        )
+        return float(r[0].similarity), r[0].state
+
+    # Lote con el MISMO par en ambos órdenes y sims distintas → gana el máximo.
+    write([{"a": va, "b": vb, "sim": 0.85}, {"a": vb, "b": va, "sim": 0.9}])
+    assert sim_state() == (0.9, "pending")
+    write([{"a": va, "b": vb, "sim": 0.95}])  # BD: GREATEST sube
+    assert sim_state() == (0.95, "pending")
+    write([{"a": va, "b": vb, "sim": 0.5}])  # menor: se conserva
+    assert sim_state() == (0.95, "pending")
+
+    async def resolve():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "UPDATE dedup_candidates SET state = 'confirmed', "
+                    "resolved_by = 'test', resolved_at = now() "
+                    "WHERE vacancy_a IN (:a, :b) AND vacancy_b IN (:a, :b)"
+                ),
+                {"a": va, "b": vb},
+            )
+            await s.commit()
+
+    asyncio.run(resolve())
+    write([{"a": va, "b": vb, "sim": 0.99}])  # resuelto: NO se toca
+    assert sim_state() == (0.95, "confirmed")
 
 
 def test_intra_batch_fuzzy_duplicates_become_candidates_not_one_vacancy(db):

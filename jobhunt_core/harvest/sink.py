@@ -194,28 +194,54 @@ class RawListingSink:
         )
         inc_by_slot = await self._active_incarnations(session, list(slot_by_ext.values()))
 
-        # A-05 · nivel EXACTO: contenido cambiado → guard de reciclado (ADR-01).
+        # A-05 · nivel EXACTO: contenido cambiado → DECISIÓN de reciclado
+        # (ADR-01). Solo decide: el cierre ocurre bajo el lock de vacantes.
         fresh_exts, recycled = await self._recycle_guard(
             session, source_name, slot_by_ext, inc_by_slot, by_ext, prep_by_ext
         )
+        recycled_incs = [inc_by_slot[s][0] for s in recycled]
         recycled_vacs = [inc_by_slot[s][1] for s in recycled]
         for slot_id in recycled:
-            del inc_by_slot[slot_id]  # su incarnación quedó cerrada: reabre abajo
+            del inc_by_slot[slot_id]  # se cierra bajo el lock y reabre abajo
+        orphans = [s for s in slot_by_ext.values() if s not in inc_by_slot]
+
+        # Candidatas de attach (nivel 2) SIN lock: pre-selección barata.
+        ext_by_slot = {v: k for k, v in slot_by_ext.items()}
+        attach_by_urln = await self._attach_candidates(
+            session, source_id,
+            sorted({prep_by_ext[ext_by_slot[s]][2] for s in orphans if s not in set(recycled)}),
+        )
+
+        # PROTOCOLO DE LOCKS POR VACANTE (rev. A-05 #1/#2): TODAS las vacantes
+        # que este run va a tocar (recicladas ∪ candidatas de attach) se
+        # bloquean en UN solo FOR UPDATE ordenado por id (orden global entre
+        # runs → sin deadlock) y se REVALIDA su vigencia bajo el lock: un
+        # archive/merge que commiteó tras la pre-selección la expulsa del
+        # attach (EPQ re-evalúa el WHERE) → vacante nueva. Cierre de
+        # incarnaciones y reparación del primary ocurren BAJO estos locks:
+        # cualquier escritor de vacancies (archive/merge/attach/reciclado)
+        # debe usar este mismo protocolo.
+        still_active = await self._lock_vacancies(
+            session, list(set(recycled_vacs) | set(attach_by_urln.values()))
+        )
+        attach_by_urln = {
+            u: v for u, v in attach_by_urln.items() if v in still_active
+        }
+        await self._close_incarnations(session, recycled_incs)
 
         # A-05 · nivel 2 (cross-source por url_normalized) + creación. Los
         # slots RECICLADOS jamás se attachean (ADR-01: reciclado = vacante
         # NUEVA; en particular no vuelven a la vacante que acaban de dejar).
         inc_by_slot, created_incs, evidence, pairs = await self._resolve_new_incarnations(
-            session, source_id, source_name, slot_by_ext, inc_by_slot, by_ext,
-            prep_by_ext, no_attach=set(recycled),
+            session, source_name, slot_by_ext, inc_by_slot, by_ext,
+            prep_by_ext, attach_by_urln, no_attach=set(recycled),
         )
 
-        # Auditoría A-05 #1: una vacante COMPARTIDA cross-source cuyo primary
-        # acaba de cerrarse seguiría ACTIVA por la otra fuente con el puntero
-        # apuntando a una incarnación cerrada — PERMANENTE (la otra fuente
-        # refresca last_seen y el archivado nunca llega). Reasignación
-        # determinista a una incarnación activa; sin activas se deja (caso
-        # mono-fuente: la vacante vieja muere y el archivado la recoge).
+        # Auditoría A-05 #1 + rev. #2: la vacante COMPARTIDA que pierde su
+        # primary por el cierre y conserva activas reasigna el puntero
+        # determinista BAJO el lock de vacante ya tomado (la re-lectura ve
+        # solo estado commiteado o propio: dos fuentes reciclando a la vez se
+        # serializan aquí). Sin activas se deja (mono-fuente: archivado ADR-07).
         await self._repair_primary_pointers(session, recycled_vacs)
 
         # A-05 · alias external_id↔URL (gana external_id, ADR-01) y drift de
@@ -320,8 +346,8 @@ class RawListingSink:
 
         Para incarnaciones ACTIVAS cuyo contenido entrante es NUEVO, compara la
         identidad determinista (tokens de EMPRESA, PF.5) del raw vigente contra
-        el entrante: empresa distinta → RECICLADO (cierra la incarnación aquí;
-        la nueva —con vacante nueva— la abre _resolve_new_incarnations). El
+        el entrante: empresa distinta → RECICLADO. SOLO DECIDE (rev. #2): el
+        cierre lo hace _close_incarnations BAJO el lock de vacante. El
         coseno < SIM_RECYCLE queda diferido a Fase B con los embeddings: sin
         identidad completa NUNCA se recicla (conservador, no corromper).
 
@@ -372,7 +398,6 @@ class RawListingSink:
         }
         fresh_exts: set[str] = set()
         recycled: list[uuid.UUID] = []
-        recycled_incs: list[str] = []
         for ext, iid in fresh:
             old_raw = latest_raw.get(iid)
             if old_raw is not None and identity.should_recycle(
@@ -380,57 +405,21 @@ class RawListingSink:
                 identity.extract_identity(source_name, by_ext[ext].payload),
             ):
                 recycled.append(slot_by_ext[ext])
-                recycled_incs.append(iid)
                 logger.info(
                     "sink: slot %r RECICLADO (empresa distinta) — se cierra la "
                     "incarnación y se abre otra con vacante nueva", ext,
                 )
             else:
                 fresh_exts.add(ext)
-        if recycled_incs:
-            recycled_incs.sort()  # orden determinista (anti-deadlock, A-04 #2)
-            await session.execute(
-                sa.text(
-                    "UPDATE source_listing_incarnations SET ended_at = now() "
-                    "WHERE id = :iid AND ended_at IS NULL"
-                ),
-                [{"iid": iid} for iid in recycled_incs],
-            )
         return fresh_exts, recycled
 
-    async def _resolve_new_incarnations(
-        self, session, source_id, source_name, slot_by_ext, inc_by_slot,
-        by_ext, prep_by_ext, no_attach=frozenset(),
-    ):
-        """Incarnaciones para slots SIN activa (nuevos, reabiertos, reciclados).
-
-        Nivel 2 (ADR-01): si la url_normalized está VIGENTE en OTRA fuente
-        (vacante activa, ni archivada ni fundida), la nueva incarnación se
-        ATTACHEA a esa vacante (+`link_evidence` url_normalized) — el attach
-        solo ocurre AL CREAR, jamás re-attach automático de existentes. Si no,
-        vacante fresca. Duplicados difusos DENTRO del lote → `dedup_candidates`.
-
-        Devuelve (inc_by_slot final, incs nuevas de este run, evidencia, pares)."""
-        ext_by_slot = {v: k for k, v in slot_by_ext.items()}
-        orphans = [s for s in slot_by_ext.values() if s not in inc_by_slot]
-        if not orphans:
-            return inc_by_slot, set(), [], []
-        seq_rows = (
-            await session.execute(
-                sa.text(
-                    "SELECT source_listing_id, COALESCE(MAX(seq), 0) AS max_seq "
-                    "FROM source_listing_incarnations "
-                    "WHERE source_listing_id = ANY(:ids) GROUP BY source_listing_id"
-                ),
-                {"ids": orphans},
-            )
-        ).all()
-        max_seq = {r.source_listing_id: r.max_seq for r in seq_rows}
-
-        # Nivel 2: vacantes ACTIVAS de otras fuentes con la misma URL
-        # normalizada (índice core0003). Empate multi-fuente → min(vacancy_id)
-        # determinista; las demás acabarán como pares por drift de URL.
-        urls = sorted({prep_by_ext[ext_by_slot[s]][2] for s in orphans})
+    async def _attach_candidates(self, session, source_id, urls) -> dict:
+        """Pre-selección de attach (nivel 2) SIN lock: vacantes ACTIVAS de
+        otras fuentes con la misma URL normalizada (índice core0003). Empate
+        multi-fuente → min(vacancy_id) determinista. La VIGENCIA se revalida
+        después bajo el lock de vacante (rev. #1)."""
+        if not urls:
+            return {}
         attach_by_urln: dict[str, uuid.UUID] = {}
         for r in (
             await session.execute(
@@ -448,6 +437,73 @@ class RawListingSink:
             )
         ).all():
             attach_by_urln.setdefault(r.urln, r.vacancy_id)
+        return attach_by_urln
+
+    async def _lock_vacancies(self, session, vacancy_ids) -> set:
+        """Bloquea las vacantes en orden GLOBAL determinista (ORDER BY id,
+        FOR UPDATE) y devuelve las que siguen VIGENTES bajo el lock: si un
+        archive/merge concurrente commiteó primero, EPQ re-evalúa el WHERE
+        sobre la versión nueva y la fila cae del resultado (rev. #1). Las no
+        vigentes no se bloquean — tampoco hace falta: ya no se attachea."""
+        if not vacancy_ids:
+            return set()
+        rows = (
+            await session.execute(
+                sa.text(
+                    "SELECT id FROM vacancies "
+                    "WHERE id = ANY(:ids) "
+                    "AND archived_at IS NULL AND merged_into IS NULL "
+                    "ORDER BY id FOR UPDATE"
+                ),
+                {"ids": sorted(set(vacancy_ids), key=str)},
+            )
+        ).all()
+        return {r.id for r in rows}
+
+    async def _close_incarnations(self, session, incarnation_ids) -> None:
+        """Cierra las incarnaciones recicladas — SIEMPRE después de
+        _lock_vacancies (rev. #2: dos fuentes reciclando la misma vacante
+        compartida se serializan en el lock; la reparación posterior ya ve
+        estado commiteado, nunca un cierre sin confirmar)."""
+        if not incarnation_ids:
+            return
+        ids = sorted(str(i) for i in incarnation_ids)  # orden determinista
+        await session.execute(
+            sa.text(
+                "UPDATE source_listing_incarnations SET ended_at = now() "
+                "WHERE id = :iid AND ended_at IS NULL"
+            ),
+            [{"iid": iid} for iid in ids],
+        )
+
+    async def _resolve_new_incarnations(
+        self, session, source_name, slot_by_ext, inc_by_slot,
+        by_ext, prep_by_ext, attach_by_urln, no_attach=frozenset(),
+    ):
+        """Incarnaciones para slots SIN activa (nuevos, reabiertos, reciclados).
+
+        Nivel 2 (ADR-01): `attach_by_urln` llega YA revalidado bajo el lock de
+        vacante (rev. #1) — la nueva incarnación se attachea a esa vacante
+        (+`link_evidence` url_normalized); el attach solo ocurre AL CREAR,
+        jamás re-attach automático de existentes. Si no, vacante fresca.
+        Duplicados difusos DENTRO del lote → `dedup_candidates`.
+
+        Devuelve (inc_by_slot final, incs nuevas de este run, evidencia, pares)."""
+        ext_by_slot = {v: k for k, v in slot_by_ext.items()}
+        orphans = [s for s in slot_by_ext.values() if s not in inc_by_slot]
+        if not orphans:
+            return inc_by_slot, set(), [], []
+        seq_rows = (
+            await session.execute(
+                sa.text(
+                    "SELECT source_listing_id, COALESCE(MAX(seq), 0) AS max_seq "
+                    "FROM source_listing_incarnations "
+                    "WHERE source_listing_id = ANY(:ids) GROUP BY source_listing_id"
+                ),
+                {"ids": orphans},
+            )
+        ).all()
+        max_seq = {r.source_listing_id: r.max_seq for r in seq_rows}
 
         new_rows = []
         for slot_id in orphans:
@@ -694,12 +750,17 @@ class RawListingSink:
         idempotente ante re-cosechas y carreras."""
         if not pairs:
             return
+        # La similitud NO puede depender del orden de llegada (rev. #3): en el
+        # lote gana el MÁXIMO, y en BD GREATEST — solo mientras el candidato
+        # siga pending (jamás se toca estado ni resolución).
         canon: dict[tuple[str, str], dict] = {}
         for p in pairs:
             a, b = str(p["a"]), str(p["b"])
             if a == b:
                 continue
-            canon.setdefault((min(a, b), max(a, b)), p)
+            key = (min(a, b), max(a, b))
+            if key not in canon or p["sim"] > canon[key]["sim"]:
+                canon[key] = p
         rows = [
             {"id": uuid.uuid4(), "a": p["a"], "b": p["b"], "sim": p["sim"]}
             for _, p in sorted(canon.items())
@@ -710,7 +771,10 @@ class RawListingSink:
                     "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
                     "VALUES (:id, :a, :b, :sim) "
                     "ON CONFLICT (LEAST(vacancy_a, vacancy_b), "
-                    "GREATEST(vacancy_a, vacancy_b)) DO NOTHING"
+                    "GREATEST(vacancy_a, vacancy_b)) DO UPDATE "
+                    "SET similarity = GREATEST(dedup_candidates.similarity, "
+                    "EXCLUDED.similarity) "
+                    "WHERE dedup_candidates.state = 'pending'"
                 ),
                 rows,
             )
