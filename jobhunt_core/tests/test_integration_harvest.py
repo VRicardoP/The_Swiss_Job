@@ -58,7 +58,7 @@ def db():
     """Sesiones async contra la BD del core + limpieza de los datos de prueba."""
     engine = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    created = {"source": None, "scopes": []}
+    created = {"source": None, "scopes": [], "extra_sources": []}
     yield factory, created
 
     async def cleanup():
@@ -66,6 +66,8 @@ def db():
             for sid in created["scopes"]:
                 await s.execute(sa.text("DELETE FROM source_scope_state WHERE scope_id=:i"), {"i": sid})
                 await s.execute(sa.text("DELETE FROM harvest_scopes WHERE id=:i"), {"i": sid})
+            for src in created["extra_sources"]:
+                await s.execute(sa.text("DELETE FROM sources WHERE id=:i"), {"i": src})
             if created["source"]:
                 await s.execute(sa.text("DELETE FROM sources WHERE id=:i"), {"i": created["source"]})
             await s.commit()
@@ -401,37 +403,68 @@ class ParamChangingProvider(FakeProvider):
         return await FakeProvider.fetch_new(self, params, cursor, http)
 
 
-def test_disable_during_fetch_aborts_without_persisting(db):
-    factory, created = db
-    (s1,) = _seed_scopes(factory, created, n=1)
+class SourceRepointingProvider(FakeProvider):
+    """Simula que el scope se RE-APUNTA a otra fuente durante el fetch."""
 
+    def __init__(self, factory, scope_id, created):
+        self.factory = factory
+        self.scope_id = scope_id
+        self.created = created
+
+    async def fetch_new(self, params, cursor, http):
+        async with self.factory() as s:
+            other = uuid.uuid4()
+            self.created["extra_sources"].append(other)
+            await s.execute(
+                sa.text("INSERT INTO sources (id, name, tier) VALUES (:id, :n, 0)"),
+                {"id": other, "n": f"otra-fuente-{other.hex[:8]}"},
+            )
+            await s.execute(
+                sa.text("UPDATE harvest_scopes SET source_id = :src WHERE id = :i"),
+                {"src": other, "i": self.scope_id},
+            )
+            await s.commit()
+        return await FakeProvider.fetch_new(self, params, cursor, http)
+
+
+def _run_with(factory, scope_id, provider, sink):
     async def go():
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(lambda r: httpx.Response(500))
         ) as http:
-            return await run_scope(
-                s1, DisablingProvider(factory, s1), CollectSink(), http, session_factory=factory
-            )
+            return await run_scope(scope_id, provider, sink, http, session_factory=factory)
 
-    r = asyncio.run(go())
+    return asyncio.run(go())
+
+
+def test_disable_during_fetch_aborts_without_persisting(db):
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+    sink = CollectSink()
+    r = _run_with(factory, s1, DisablingProvider(factory, s1), sink)
     assert r.status == "skipped"  # NO 'ok': la re-validación bajo el lock lo cazó
+    assert sink.batches == []  # el sink JAMÁS llegó a invocarse (rev. 3ª #3)
     assert _state(factory, s1) is None  # nada persistido
 
 
 def test_param_change_during_fetch_aborts_stale(db):
     factory, created = db
     (s1,) = _seed_scopes(factory, created, n=1)
-
-    async def go():
-        async with httpx.AsyncClient(
-            transport=httpx.MockTransport(lambda r: httpx.Response(500))
-        ) as http:
-            return await run_scope(
-                s1, ParamChangingProvider(factory, s1), CollectSink(), http, session_factory=factory
-            )
-
-    r = asyncio.run(go())
+    sink = CollectSink()
+    r = _run_with(factory, s1, ParamChangingProvider(factory, s1), sink)
     assert r.status == "stale"  # el lote viejo no se persiste bajo config nueva
+    assert sink.batches == []
+    assert _state(factory, s1) is None
+
+
+def test_source_repoint_during_fetch_aborts_stale(db):
+    """Rev. 3ª #3: re-apuntar el scope a OTRA fuente durante el fetch → stale."""
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+    sink = CollectSink()
+    r = _run_with(factory, s1, SourceRepointingProvider(factory, s1, created), sink)
+    assert r.status == "stale"
+    assert sink.batches == []
     assert _state(factory, s1) is None
 
 
