@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jobhunt_core.config import settings
-from jobhunt_core.harvest.provider import BaseProvider
+from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError
 from jobhunt_core.harvest.runner import run_scope
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
@@ -466,6 +466,60 @@ def test_source_repoint_during_fetch_aborts_stale(db):
     assert r.status == "stale"
     assert sink.batches == []
     assert _state(factory, s1) is None
+
+
+class DeletingProvider(FakeProvider):
+    """Simula que el scope se ELIMINA durante el fetch (rev. A-04 2ª #3)."""
+
+    def __init__(self, factory, scope_id):
+        self.factory = factory
+        self.scope_id = scope_id
+
+    async def fetch_new(self, params, cursor, http):
+        async with self.factory() as s:
+            await s.execute(
+                sa.text("DELETE FROM source_scope_state WHERE scope_id = :i"),
+                {"i": self.scope_id},
+            )
+            await s.execute(
+                sa.text("DELETE FROM harvest_scopes WHERE id = :i"), {"i": self.scope_id}
+            )
+            await s.commit()
+        return await FakeProvider.fetch_new(self, params, cursor, http)
+
+
+def test_scope_deleted_during_fetch_returns_not_found(db):
+    """Rev. A-04 2ª #3: scope borrado DURANTE el fetch → not_found (permanente
+    y normal, sin retry), sin persistir nada y sin excepción."""
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+    sink = CollectSink()
+    r = _run_with(factory, s1, DeletingProvider(factory, s1), sink)
+    assert r.status == "not_found"
+    assert sink.batches == []
+    assert _state(factory, s1) is None
+
+
+def test_missing_scope_returns_not_found(db):
+    """Rev. A-04 2ª #3: scope inexistente al arrancar → not_found, no error."""
+    factory, created = db
+    r = _run(factory, str(uuid.uuid4()), CollectSink())
+    assert r.status == "not_found"
+
+
+class ConfigErrorProvider(FakeProvider):
+    async def fetch_new(self, params, cursor, http):
+        raise ProviderConfigError("hard_max_pages inválido (simulado)")
+
+
+def test_provider_config_error_propagates_without_failure_count(db):
+    """Rev. A-04 2ª #3: config PERMANENTE sube a la tarea (que falla sin
+    retry) y NO cuenta como fallo de fuente (sin backoff)."""
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+    with pytest.raises(ProviderConfigError):
+        _run_with(factory, s1, ConfigErrorProvider(), CollectSink())
+    assert _state(factory, s1) is None  # sin contador de fallo
 
 
 class PartialProvider(FakeProvider):

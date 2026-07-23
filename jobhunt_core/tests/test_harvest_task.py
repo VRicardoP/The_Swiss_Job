@@ -4,12 +4,9 @@ from unittest.mock import patch
 
 import jobhunt_core.tasks.harvest as harvest_task
 from jobhunt_core.celery_app import celery_app
-from jobhunt_core.harvest.sink import (
-    _valid_listing,
-    canonical_payload,
-    content_hash,
-    normalize_url,
-)
+from jobhunt_core.harvest.provider import ProviderConfigError
+from jobhunt_core.harvest.providers import UnknownProviderError
+from jobhunt_core.harvest.sink import _preprocess, content_hash, normalize_url
 from jobhunt_core.harvest.types import RawListing, ScopeRunResult
 
 
@@ -62,18 +59,48 @@ def test_task_not_found_does_not_retry():
 
 
 def test_task_unknown_provider_fails_without_retry():
-    """Rev. A-04 #5: provider desconocido = config PERMANENTE — falla explícito
-    sin re-ejecutar (reintentar no lo arregla)."""
+    """Rev. A-04 #5 + 2ª #3: provider desconocido = config PERMANENTE — falla
+    explícito sin re-ejecutar, con excepción CONCRETA (no cualquier KeyError)."""
     calls = []
 
     async def fake_impl(scope_id):
         calls.append(scope_id)
-        raise KeyError("Provider desconocido: 'nope'")
+        raise UnknownProviderError("Provider desconocido: 'nope'")
 
     with patch.object(harvest_task, "_run_scope_impl", fake_impl):
         r = harvest_task.run_scope_task.apply(args=["s1"])
     assert not r.successful()
     assert len(calls) == 1  # UNA ejecución: sin retry
+
+
+def test_task_config_error_fails_without_retry():
+    """Rev. 2ª #3: params inválidos del provider (ProviderConfigError, p.ej.
+    hard_max_pages=0) suben desde el runner y fallan SIN retry."""
+    calls = []
+
+    async def fake_impl(scope_id):
+        calls.append(scope_id)
+        raise ProviderConfigError("hard_max_pages (0) debe ser >= 2")
+
+    with patch.object(harvest_task, "_run_scope_impl", fake_impl):
+        r = harvest_task.run_scope_task.apply(args=["s1"])
+    assert not r.successful()
+    assert len(calls) == 1
+
+
+def test_task_internal_keyerror_is_transient_and_retries():
+    """Rev. 2ª #3: un KeyError INTERNO cualquiera NO es config — se reintenta
+    como transitorio (antes se clasificaba mal como permanente)."""
+    calls = []
+
+    async def fake_impl(scope_id):
+        calls.append(scope_id)
+        raise KeyError("bug interno cualquiera")
+
+    with patch.object(harvest_task, "_run_scope_impl", fake_impl):
+        r = harvest_task.run_scope_task.apply(args=["s1"])
+    assert not r.successful()
+    assert len(calls) == 2  # original + 1 retry
 
 
 def test_task_transient_exception_consumes_retry():
@@ -90,22 +117,28 @@ def test_task_transient_exception_consumes_retry():
     assert len(calls) == 2  # original + 1 retry (max_retries=1)
 
 
-def test_valid_listing_boundary_limits():
-    """Validación de frontera (rev. A-04 #2) — y regresión: espacios/UTF-8 en
-    el payload NUNCA cuarentenan (solo NUL y límites del esquema)."""
+def test_preprocess_boundary_limits():
+    """Cuarentena de frontera (rev. A-04 #2 y 2ª #2) — y regresiones de falso
+    positivo: espacios, UTF-8 y un '\\u0000' LITERAL (texto legítimo, sin NUL
+    real) NUNCA cuarentenan."""
     ok = RawListing(
         external_id="a", url="https://x/a",
-        payload={"title": "desarrollo web", "desc": "señal única — ütf8"},
+        payload={"title": "desarrollo web", "desc": "señal — ütf8", "lit": "\\u0000"},
     )
-    assert _valid_listing(ok, canonical_payload(ok.payload))
+    assert _preprocess(ok) is not None
     for bad in (
         RawListing(external_id="x" * 201, url="https://x/a", payload={}),
         RawListing(external_id="a", url="https://x/" + "u" * 1000, payload={}),
         RawListing(external_id="a", url="https://x/a", payload={}, apply_url="https://x/" + "u" * 1000),
         RawListing(external_id="a", url="https://x/a", payload={"t": "a\x00b"}),
         RawListing(external_id="a\x00b", url="https://x/a", payload={}),
+        RawListing(external_id="a", url="https://x/a", payload={"n": float("nan")}),  # 2ª: jsonb sin NaN
+        RawListing(external_id="a", url="https://[invalid", payload={}),  # 2ª: urlsplit ValueError
+        RawListing(external_id="a\ud800", url="https://x/a", payload={}),  # 2ª: surrogate en id
+        RawListing(external_id="a", url="https://x/a\ud800", payload={}),  # 2ª: surrogate en url
+        RawListing(external_id="a", url="https://x/a", payload={"t": "\ud800"}),
     ):
-        assert not _valid_listing(bad, canonical_payload(bad.payload))
+        assert _preprocess(bad) is None
 
 
 def test_normalize_url_canonical():

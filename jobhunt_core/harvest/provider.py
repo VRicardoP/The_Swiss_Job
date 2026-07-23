@@ -16,6 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 
+class ProviderConfigError(ValueError):
+    """Configuración del scope inválida (p.ej. hard_max_pages=0) — error
+    PERMANENTE (rev. A-04 2ª #3): reintentar no lo arregla. El runner lo deja
+    subir SIN contarlo como fallo de fuente y la tarea falla sin retry."""
+
+
 class BaseProvider(ABC):
     """Una fuente Tier 0/1 (API/feed). Sin estado: el cursor viene del scope."""
 

@@ -38,33 +38,71 @@ MAX_EXTERNAL_ID_LEN = 200
 MAX_URL_LEN = 1000
 
 
-def _valid_listing(listing: RawListing, canon: str) -> bool:
-    """Cumple los límites del esquema; si no, se registra y se aísla (nunca se
-    truncan claves de identidad ni se aborta el lote válido). `canon` es la
-    serialización canónica YA calculada (única — se reutiliza para el hash)."""
-    reasons = []
-    if len(listing.external_id) > MAX_EXTERNAL_ID_LEN:
-        reasons.append(f"external_id > {MAX_EXTERNAL_ID_LEN}")
-    if len(listing.url) > MAX_URL_LEN or len(normalize_url(listing.url)) > MAX_URL_LEN:
-        reasons.append(f"url > {MAX_URL_LEN}")
-    if listing.apply_url and len(listing.apply_url) > MAX_URL_LEN:
-        reasons.append(f"apply_url > {MAX_URL_LEN}")
-    # NUL: Postgres lo rechaza en text Y en jsonb. json.dumps SIEMPRE escapa
-    # los controles, asi que en `canon` un NUL aparece como la secuencia \\u0000.
-    if (
-        "\x00" in listing.external_id
-        or "\x00" in listing.url
-        or "\x00" in (listing.apply_url or "")
-        or "\\u0000" in canon
-    ):
-        reasons.append("NUL byte (rechazado por Postgres)")
+def _preprocess(listing: RawListing) -> tuple[str, str, str] | None:
+    """(canon, chash, url_normalizada) — o None con CUARENTENA logueada.
+
+    TODO el trabajo por-listing vive aquí DENTRO (rev. 2ª #2): serialización,
+    hash, normalización de URL y validación UTF-8 — ninguna entrada individual
+    puede abortar el lote válido (con la emisión total de A-03, un dato tóxico
+    reaparecería en cada cosecha y bloquearía el scope para siempre)."""
+    try:
+        canon = canonical_payload(listing.payload)
+        # encode() detecta surrogates sueltos (json.loads puede producirlos
+        # desde escapes \\uD800 del feed): pasan dumps pero revientan en BD.
+        chash = hashlib.sha256(canon.encode()).hexdigest()
+        url_norm = normalize_url(listing.url)  # p.ej. 'https://[inv' → ValueError
+        listing.external_id.encode()
+        listing.url.encode()
+        (listing.apply_url or "").encode()
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        # ascii(): el propio external_id puede ser incodificable — el log
+        # nunca debe reventar por el dato que está aislando.
+        logger.warning(
+            "sink: listing %s EN CUARENTENA (preprocesado imposible: %s)",
+            ascii(listing.external_id)[:80], exc,
+        )
+        return None
+    reasons = _limit_violations(listing, url_norm)
     if reasons:
         logger.warning(
             "sink: listing %r EN CUARENTENA (%s) — no envenena el lote",
             listing.external_id[:80], "; ".join(reasons),
         )
-        return False
-    return True
+        return None
+    return canon, chash, url_norm
+
+
+def _limit_violations(listing: RawListing, url_norm: str) -> list[str]:
+    """Límites reales del esquema + NUL (Postgres lo rechaza en text y jsonb)."""
+    reasons = []
+    if len(listing.external_id) > MAX_EXTERNAL_ID_LEN:
+        reasons.append(f"external_id > {MAX_EXTERNAL_ID_LEN}")
+    if len(listing.url) > MAX_URL_LEN or len(url_norm) > MAX_URL_LEN:
+        reasons.append(f"url > {MAX_URL_LEN}")
+    if listing.apply_url and len(listing.apply_url) > MAX_URL_LEN:
+        reasons.append(f"apply_url > {MAX_URL_LEN}")
+    if (
+        "\x00" in listing.external_id
+        or "\x00" in listing.url
+        or "\x00" in (listing.apply_url or "")
+        or _payload_has_nul(listing.payload)
+    ):
+        reasons.append("NUL (rechazado por Postgres)")
+    return reasons
+
+
+def _payload_has_nul(value) -> bool:
+    """NUL en los VALORES reales del payload (json.loads solo produce
+    dict/list/str/num/bool/None). Buscar la secuencia escapada en la canónica
+    daría falsos positivos con textos legítimos que contengan literalmente
+    '\\u0000' (rev. 2ª #2)."""
+    if isinstance(value, str):
+        return "\x00" in value
+    if isinstance(value, dict):
+        return any(_payload_has_nul(k) or _payload_has_nul(v) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(_payload_has_nul(v) for v in value)
+    return False
 
 
 def normalize_url(url: str) -> str:
@@ -80,8 +118,12 @@ def normalize_url(url: str) -> str:
 def canonical_payload(payload: dict) -> str:
     """Serialización canónica ÚNICA (auditoría A-04 #5): la MISMA cadena se
     hashea y se persiste como raw — un payload hasheable siempre es persistible
-    (default=str en ambos usos), y solo se serializa una vez (#3)."""
-    return json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+    (default=str en ambos usos), y solo se serializa una vez (#3).
+    allow_nan=False (rev. 2ª #2): jsonb rechaza NaN/Infinity — mejor ValueError
+    en la cuarentena de frontera que abortar el lote entero en el INSERT."""
+    return json.dumps(
+        payload, sort_keys=True, ensure_ascii=False, default=str, allow_nan=False
+    )
 
 
 def content_hash(payload: dict) -> str:
@@ -104,6 +146,21 @@ class RawListingSink:
             )
         ).scalar_one()
 
+        # CUARENTENA de frontera (rev. #2 y 2ª #2): TODO el preprocesado
+        # por-listing (canónica, hash, URL normalizada, UTF-8) ocurre dentro de
+        # _preprocess ANTES de tocar la BD — y antes del advisory lock: un lote
+        # 100% tóxico ni siquiera serializa la fuente.
+        valid: list[RawListing] = []
+        prep_by_ext: dict[str, tuple[str, str, str]] = {}
+        for listing in listings:
+            prep = _preprocess(listing)
+            if prep is None:
+                continue
+            valid.append(listing)
+            prep_by_ext[listing.external_id] = prep
+        if not valid:
+            return
+
         # SERIALIZACIÓN POR FUENTE (rev. A-04 #1): dos scopes de la MISMA fuente
         # tocan los mismos slots con DOS claves UNIQUE (external_id y
         # url_normalized) — ningún orden por una sola clave evita el deadlock
@@ -114,39 +171,16 @@ class RawListingSink:
             {"src": str(source_id)},
         )
 
-        # Validación de FRONTERA contra los límites del esquema (rev. #2): los
-        # inválidos se aíslan con log; el lote válido sigue adelante. La
-        # serialización canónica Y el hash se calculan UNA vez aquí.
-        valid: list[RawListing] = []
-        canon_by_ext: dict[str, tuple[str, str]] = {}
-        for listing in listings:
-            try:
-                canon = canonical_payload(listing.payload)
-                # encode() detecta surrogates sueltos (json.loads puede
-                # producirlos): pasarían dumps pero reventarían hash/BD.
-                chash = hashlib.sha256(canon.encode()).hexdigest()
-            except (TypeError, ValueError, UnicodeEncodeError) as exc:
-                logger.warning(
-                    "sink: listing %r EN CUARENTENA (payload no serializable: %s)",
-                    listing.external_id[:80], exc,
-                )
-                continue
-            if not _valid_listing(listing, canon):
-                continue
-            valid.append(listing)
-            canon_by_ext[listing.external_id] = (canon, chash)
-        if not valid:
-            return
         # Dedup DENTRO del lote por external_id (la última aparición VÁLIDA gana).
         by_ext = {listing.external_id: listing for listing in valid}
-        slot_by_ext = await self._ensure_slots(session, source_id, by_ext)
+        slot_by_ext = await self._ensure_slots(session, source_id, by_ext, prep_by_ext)
         inc_by_slot = await self._ensure_incarnations(session, slot_by_ext, by_ext)
         await self._refresh_and_revise(
-            session, slot_by_ext, inc_by_slot, by_ext, canon_by_ext
+            session, slot_by_ext, inc_by_slot, by_ext, prep_by_ext
         )
 
     async def _ensure_slots(
-        self, session, source_id, by_ext: dict[str, RawListing]
+        self, session, source_id, by_ext: dict[str, RawListing], prep_by_ext
     ) -> dict[str, uuid.UUID]:
         """Upsert de slots (source_listings) por lote. Devuelve external_id→id."""
         exts = list(by_ext)
@@ -175,8 +209,10 @@ class RawListingSink:
                 ),
                 [
                     {
+                        # URL normalizada PREcalculada en _preprocess (rev. 2ª
+                        # #2): aquí ya no puede fallar ni se recalcula.
                         "id": uuid.uuid4(), "src": source_id, "ext": ext,
-                        "urln": normalize_url(by_ext[ext].url),
+                        "urln": prep_by_ext[ext][2],
                     }
                     for ext in missing
                 ],
@@ -295,7 +331,7 @@ class RawListingSink:
         return inc_by_slot
 
     async def _refresh_and_revise(
-        self, session, slot_by_ext, inc_by_slot, by_ext, canon_by_ext
+        self, session, slot_by_ext, inc_by_slot, by_ext, prep_by_ext
     ) -> None:
         """`last_seen_at` (y url/apply) en CADA cosecha + revisión si cambió."""
         refresh, candidates = [], []
@@ -308,8 +344,8 @@ class RawListingSink:
                 {"iid": str(inc_id), "url": listing.url, "aurl": listing.apply_url}
             )
             # UNA sola serialización Y un solo hash: calculados en la
-            # validación de frontera y reutilizados aquí (#3/#5).
-            canon, chash = canon_by_ext[ext]
+            # cuarentena de frontera y reutilizados aquí (#3/#5).
+            canon, chash, _ = prep_by_ext[ext]
             candidates.append(
                 {"id": uuid.uuid4(), "iid": str(inc_id), "chash": chash, "raw": canon}
             )

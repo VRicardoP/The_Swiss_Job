@@ -391,12 +391,18 @@ def test_mixed_batch_isolates_invalid_listings(db, caplog):
         _listing("url-larga", url="https://x/" + "u" * 1000),  # url > 1000
         _listing("nul", payload={"title": "a\x00b"}),  # NUL (jsonb lo rechaza)
         _listing("surrogate", payload={"t": "\ud800"}),  # no codificable UTF-8
+        _listing("nan", payload={"n": float("nan")}),  # 2ª: jsonb rechaza NaN
+        _listing("ipv6", url="https://[invalid"),  # 2ª: urlsplit ValueError
+        _listing("s\ud800id"),  # 2ª: surrogate en el propio external_id
     ]
+    # Regresión de FALSO POSITIVO (2ª #2): texto legítimo con '\u0000' LITERAL
+    # (seis caracteres, sin NUL real) debe persistir con normalidad.
+    lit = _listing("lit", payload={"t": "\\u0000"})
     with caplog.at_level(logging.WARNING, logger="jobhunt_core.harvest.sink"):
-        _sink_batch(factory, scope, [_listing("ok1"), *poison, _listing("ok2")])
+        _sink_batch(factory, scope, [_listing("ok1"), *poison, lit, _listing("ok2")])
     c = _counts(factory, created["source"])
-    assert (c.slots, c.incs, c.revs) == (2, 2, 2)  # SOLO los válidos
-    assert sum("CUARENTENA" in r.getMessage() for r in caplog.records) == 4
+    assert (c.slots, c.incs, c.revs) == (3, 3, 3)  # ok1, lit, ok2
+    assert sum("CUARENTENA" in r.getMessage() for r in caplog.records) == 7
 
 
 def test_empty_batch_is_noop(db):
@@ -434,6 +440,34 @@ def test_same_normalized_url_within_one_batch(db):
     )
     c = _counts(factory, created["source"])
     assert (c.slots, c.incs, c.revs) == (1, 1, 1)  # el segundo se salta con log
+
+
+def test_task_two_consecutive_runs_same_process(db):
+    """Rev. 2ª #1 (repro): dos tareas Celery REALES consecutivas en el MISMO
+    proceso worker. Con el engine global compartido, la 2ª muere con 'Future
+    attached to a different loop' + InterfaceError (cada asyncio.run crea un
+    loop nuevo y el pool asyncpg queda ligado al primero). El engine
+    desechable por invocación (task_session_factory) lo elimina."""
+    from jobhunt_core.tasks.harvest import run_scope_task
+
+    factory, created = db
+    scope_a = _seed_scope(factory, created)
+    scope_b = _seed_second_scope(factory, created)
+
+    async def disable():
+        async with factory() as s:
+            await s.execute(
+                sa.text("UPDATE harvest_scopes SET enabled = false WHERE id = ANY(:ids)"),
+                {"ids": [uuid.UUID(scope_a), uuid.UUID(scope_b)]},
+            )
+            await s.commit()
+
+    asyncio.run(disable())
+
+    r1 = run_scope_task.apply(args=[scope_a])
+    r2 = run_scope_task.apply(args=[scope_b])  # antes: InterfaceError aquí
+    assert r1.successful() and r1.result["status"] == "skipped"
+    assert r2.successful() and r2.result["status"] == "skipped"
 
 
 def test_e2e_run_scope_with_real_sink(db):

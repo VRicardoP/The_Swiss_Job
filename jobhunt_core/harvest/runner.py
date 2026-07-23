@@ -20,7 +20,7 @@ import httpx
 import sqlalchemy as sa
 
 from jobhunt_core.database import SessionLocal
-from jobhunt_core.harvest.provider import BaseProvider, ListingSink
+from jobhunt_core.harvest.provider import BaseProvider, ListingSink, ProviderConfigError
 from jobhunt_core.harvest.types import ScopeRunResult
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,12 @@ async def run_scope(
             )
         ).one_or_none()
         if row is None:
-            return ScopeRunResult(scope_id=scope_id, status="error", error="scope inexistente")
+            # Scope eliminado tras encolar: caso NORMAL permanente (rev. 2ª
+            # #3) — no es fallo de fuente y la tarea no debe reintentar.
+            return ScopeRunResult(
+                scope_id=scope_id, status="not_found",
+                detail={"reason": "scope inexistente"},
+            )
         if not row.enabled:
             return ScopeRunResult(scope_id=scope_id, status="skipped")
         if row.source_name != provider.name:
@@ -67,6 +72,10 @@ async def run_scope(
 
         try:
             result = await provider.fetch_new(params, provider_cursor, http)
+        except ProviderConfigError:
+            # Config PERMANENTE inválida (rev. 2ª #3): NO es fallo de la
+            # fuente (sin backoff) — sube a la tarea, que falla sin retry.
+            raise
         except Exception as exc:
             await _record_failure_safe(session, scope_id)
             logger.warning("scope %s: fetch falló: %s", scope_id, exc)
@@ -90,7 +99,14 @@ async def run_scope(
                 )
             ).one_or_none()
             if locked is None:
-                raise RuntimeError("el scope desapareció durante el run")
+                # Borrado DURANTE el fetch (rev. 2ª #3): también not_found —
+                # sin registrar fallo (el INSERT del contador violaría la FK).
+                await session.rollback()
+                logger.info("scope %s: eliminado durante el run, not_found", scope_id)
+                return ScopeRunResult(
+                    scope_id=scope_id, status="not_found",
+                    detail={"reason": "scope eliminado durante el run"},
+                )
             if not locked.enabled:
                 await session.rollback()
                 logger.info("scope %s: deshabilitado durante el run, skipped", scope_id)

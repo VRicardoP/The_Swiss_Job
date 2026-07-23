@@ -25,7 +25,7 @@ import logging
 
 import httpx
 
-from jobhunt_core.harvest.provider import BaseProvider
+from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 logger = logging.getLogger(__name__)
@@ -54,13 +54,14 @@ class ArbeitnowProvider(BaseProvider):
         cur = cursor or {}
         configured = int(params.get("max_pages", DEFAULT_PAGE_TARGET))
         if configured < MIN_PAGE_TARGET:
-            raise ValueError(f"max_pages debe ser >= {MIN_PAGE_TARGET}")
+            raise ProviderConfigError(f"max_pages debe ser >= {MIN_PAGE_TARGET}")
         hard_max = int(params.get("hard_max_pages", HARD_MAX_PAGES))
         # Config inválida FALLA explícita (rev. A-04 #4): con hard_max < target
         # mínimo el barrido haría 0 peticiones y devolvería un cursor parcial
         # (page_target=0, listings=[]) para siempre — livelock silencioso.
+        # ProviderConfigError (rev. 2ª #3): permanente, la tarea NO reintenta.
         if hard_max < MIN_PAGE_TARGET or hard_max < configured:
-            raise ValueError(
+            raise ProviderConfigError(
                 f"hard_max_pages ({hard_max}) debe ser >= {MIN_PAGE_TARGET} "
                 f"y >= max_pages ({configured})"
             )

@@ -8,8 +8,16 @@ _PROVIDERS: dict[str, BaseProvider] = {
 }
 
 
+class UnknownProviderError(LookupError):
+    """Provider no registrado — error de configuración PERMANENTE (rev. A-04
+    2ª #3): la tarea falla explícito SIN retry. Excepción PROPIA para no
+    clasificar cualquier KeyError interno como error de configuración."""
+
+
 def get_provider(name: str) -> BaseProvider:
-    try:
-        return _PROVIDERS[name]
-    except KeyError:
-        raise KeyError(f"Provider desconocido: {name!r} (registrados: {sorted(_PROVIDERS)})")
+    provider = _PROVIDERS.get(name)
+    if provider is None:
+        raise UnknownProviderError(
+            f"Provider desconocido: {name!r} (registrados: {sorted(_PROVIDERS)})"
+        )
+    return provider
