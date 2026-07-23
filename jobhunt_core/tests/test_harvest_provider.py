@@ -78,7 +78,7 @@ def test_adaptive_target_reaches_full_feed_without_manual_change():
     assert hits2 == [1, 2, 3]
     assert "e" in _ids(r2)  # e_never_seen=False
     assert r2.complete is True
-    assert "page_target" not in r2.next_cursor  # completado → el objetivo se resetea
+    assert r2.next_cursor["page_target"] == 4  # el tamaño APRENDIDO se conserva (P2#1)
 
 
 def test_mid_run_deletion_only_delays_never_loses():
@@ -115,6 +115,33 @@ def test_mid_run_deletion_only_delays_never_loses():
     r2, _ = _fetch(cursor=r1.next_cursor, handler=mutating_handler)
     assert _ids(r2) == ["c", "d", "e", "f"]  # lost=[] — el barrido total los ve
     assert set(_ids(r1)) | set(_ids(r2)) == {"a", "b", "c", "d", "e", "f"}
+
+
+def test_learned_target_persists_after_complete_no_oscillation():
+    """Rev. 5ª P2#1: el tamaño aprendido se CONSERVA tras completar — sin ciclo
+    partial/complete/partial (4 runs, config fija max_pages=2)."""
+    r1, h1 = _fetch(params={"max_pages": 2})
+    assert (r1.complete, r1.next_cursor["page_target"], h1) == (False, 4, [1, 2])
+    r2, h2 = _fetch(params={"max_pages": 2}, cursor=r1.next_cursor)
+    assert (r2.complete, h2) == (True, [1, 2, 3])
+    assert r2.next_cursor["page_target"] == 4  # APRENDIDO, no eliminado
+    r3, h3 = _fetch(params={"max_pages": 2}, cursor=r2.next_cursor)
+    assert (r3.complete, h3) == (True, [1, 2, 3])  # ya no vuelve a 'partial'
+    r4, h4 = _fetch(params={"max_pages": 2}, cursor=r3.next_cursor)
+    assert (r4.complete, h4) == (True, [1, 2, 3])
+
+
+def test_hard_cap_is_contractual_with_persistent_alert(caplog):
+    """Rev. 5ª P2#2: feed > hard_max_pages → 'partial' estable sobre el mismo
+    prefijo + alerta de CAPACIDAD en CADA run (nunca pérdida silenciosa)."""
+    import logging
+
+    with caplog.at_level(logging.ERROR):
+        r1, h1 = _fetch(params={"max_pages": 2, "hard_max_pages": 2})
+        assert (r1.complete, r1.next_cursor["page_target"], h1) == (False, 2, [1, 2])
+        r2, h2 = _fetch(params={"max_pages": 2, "hard_max_pages": 2}, cursor=r1.next_cursor)
+        assert (r2.complete, r2.next_cursor["page_target"], h2) == (False, 2, [1, 2])
+    assert caplog.text.count("CAPACIDAD EXCEDIDA") == 2  # persistente, cada run
 
 
 def test_partial_sweep_flag_and_no_target_regression():

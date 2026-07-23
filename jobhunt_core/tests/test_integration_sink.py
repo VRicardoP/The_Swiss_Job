@@ -1,0 +1,378 @@
+"""RawListingSink (A-04) contra Postgres real: slot + incarnación + revisión.
+
+DoD: revisión cuelga de la incarnación; `last_seen_at` en CADA cosecha; raw
+antes de normalizar; idempotencia por content_hash. Ejecutar vía core-migrate.
+"""
+
+import asyncio
+import os
+import uuid
+
+import httpx
+import pytest
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from jobhunt_core.config import settings
+from jobhunt_core.harvest.runner import run_scope
+from jobhunt_core.harvest.sink import RawListingSink
+from jobhunt_core.harvest.types import RawListing
+from jobhunt_core.tests.test_integration_harvest import FakeProvider
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("CORE_ADMIN_DATABASE_URL"),
+    reason="requiere BD (ejecutar vía core-migrate)",
+)
+
+
+@pytest.fixture()
+def db():
+    engine = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    created = {"source": None, "scopes": []}
+    yield factory, created
+
+    async def cleanup():
+        async with factory() as s:
+            # Borra TODO el grafo creado por el sink para esta fuente, en orden
+            # FK-seguro (el puntero primario se nulifica por SET NULL de columna).
+            vac_ids = (
+                await s.execute(
+                    sa.text(
+                        "SELECT DISTINCT i.vacancy_id FROM source_listing_incarnations i "
+                        "JOIN source_listings l ON l.id = i.source_listing_id "
+                        "WHERE l.source_id = :src"
+                    ),
+                    {"src": created["source"]},
+                )
+            ).scalars().all()
+            await s.execute(
+                sa.text(
+                    "DELETE FROM source_listing_revisions WHERE incarnation_id IN ("
+                    "SELECT i.id FROM source_listing_incarnations i "
+                    "JOIN source_listings l ON l.id = i.source_listing_id "
+                    "WHERE l.source_id = :src)"
+                ),
+                {"src": created["source"]},
+            )
+            await s.execute(
+                sa.text(
+                    "DELETE FROM source_listing_incarnations WHERE source_listing_id IN "
+                    "(SELECT id FROM source_listings WHERE source_id = :src)"
+                ),
+                {"src": created["source"]},
+            )
+            if vac_ids:
+                await s.execute(
+                    sa.text("DELETE FROM vacancies WHERE id = ANY(:ids)"), {"ids": vac_ids}
+                )
+            await s.execute(
+                sa.text("DELETE FROM source_listings WHERE source_id = :src"),
+                {"src": created["source"]},
+            )
+            for sid in created["scopes"]:
+                await s.execute(sa.text("DELETE FROM source_scope_state WHERE scope_id=:i"), {"i": sid})
+                await s.execute(sa.text("DELETE FROM harvest_scopes WHERE id=:i"), {"i": sid})
+            await s.execute(sa.text("DELETE FROM sources WHERE id=:i"), {"i": created["source"]})
+            await s.commit()
+        await engine.dispose()
+
+    asyncio.run(cleanup())
+
+
+def _seed_scope(factory, created) -> str:
+    async def go():
+        async with factory() as s:
+            source_id, scope_id = uuid.uuid4(), uuid.uuid4()
+            created["source"] = source_id
+            created["scopes"].append(scope_id)
+            await s.execute(
+                sa.text("INSERT INTO sources (id, name, tier) VALUES (:id, 'arbeitnow', 0)"),
+                {"id": source_id},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO harvest_scopes (id, source_id, params, tier) "
+                    "VALUES (:id, :src, '{}'::jsonb, 0)"
+                ),
+                {"id": scope_id, "src": source_id},
+            )
+            await s.commit()
+            return str(scope_id)
+
+    return asyncio.run(go())
+
+
+def _sink_batch(factory, scope_id, listings) -> None:
+    async def go():
+        async with factory() as s:
+            await RawListingSink().handle(s, scope_id, tuple(listings))
+            await s.commit()
+
+    asyncio.run(go())
+
+
+def _counts(factory, source_id):
+    async def go():
+        async with factory() as s:
+            return (
+                await s.execute(
+                    sa.text(
+                        "SELECT "
+                        "(SELECT count(*) FROM source_listings WHERE source_id=:src) AS slots, "
+                        "(SELECT count(*) FROM source_listing_incarnations i "
+                        " JOIN source_listings l ON l.id=i.source_listing_id "
+                        " WHERE l.source_id=:src) AS incs, "
+                        "(SELECT count(*) FROM source_listing_revisions r "
+                        " JOIN source_listing_incarnations i ON i.id=r.incarnation_id "
+                        " JOIN source_listings l ON l.id=i.source_listing_id "
+                        " WHERE l.source_id=:src) AS revs"
+                    ),
+                    {"src": source_id},
+                )
+            ).one()
+
+    return asyncio.run(go())
+
+
+def _listing(ext, payload=None, url=None):
+    return RawListing(
+        external_id=ext,
+        url=url or f"https://x/{ext}",
+        payload=payload if payload is not None else {"title": ext, "v": 1},
+    )
+
+
+def test_first_batch_creates_full_graph(db):
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _sink_batch(factory, scope, [_listing("j1"), _listing("j2")])
+    c = _counts(factory, created["source"])
+    assert (c.slots, c.incs, c.revs) == (2, 2, 2)
+
+    async def check_graph():
+        async with factory() as s:
+            row = (
+                await s.execute(
+                    sa.text(
+                        "SELECT i.seq, i.vacancy_id, v.primary_incarnation_id, i.id "
+                        "FROM source_listing_incarnations i "
+                        "JOIN source_listings l ON l.id = i.source_listing_id "
+                        "JOIN vacancies v ON v.id = i.vacancy_id "
+                        "WHERE l.external_id = 'j1'"
+                    )
+                )
+            ).one()
+            assert row.seq == 1
+            assert row.primary_incarnation_id == row.id  # puntero primario fijado
+
+    asyncio.run(check_graph())
+
+
+def test_unchanged_content_refreshes_last_seen_without_new_revision(db):
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _sink_batch(factory, scope, [_listing("j1")])
+
+    async def seen():
+        async with factory() as s:
+            return (
+                await s.execute(
+                    sa.text(
+                        "SELECT i.last_seen_at FROM source_listing_incarnations i "
+                        "JOIN source_listings l ON l.id=i.source_listing_id "
+                        "WHERE l.external_id='j1'"
+                    )
+                )
+            ).scalar_one()
+
+    t1 = asyncio.run(seen())
+    _sink_batch(factory, scope, [_listing("j1")])  # MISMO contenido
+    t2 = asyncio.run(seen())
+    assert t2 > t1  # last_seen_at refrescado en CADA cosecha (contrato §1)
+    assert _counts(factory, created["source"]).revs == 1  # sin revisión nueva
+
+
+def test_changed_content_creates_new_revision_same_incarnation(db):
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _sink_batch(factory, scope, [_listing("j1", payload={"title": "j1", "v": 1})])
+    _sink_batch(factory, scope, [_listing("j1", payload={"title": "j1", "v": 2})])
+    c = _counts(factory, created["source"])
+    assert (c.slots, c.incs, c.revs) == (1, 1, 2)  # misma incarnación, 2 revisiones
+
+
+def test_url_collision_skipped_with_log(db):
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _sink_batch(factory, scope, [_listing("j1", url="https://x/misma")])
+    # Otro external_id con la MISMA URL normalizada → frontera: se salta.
+    _sink_batch(factory, scope, [_listing("j2", url="https://x/misma/")])
+    c = _counts(factory, created["source"])
+    assert (c.slots, c.incs, c.revs) == (1, 1, 1)
+
+
+def _seed_second_scope(factory, created) -> str:
+    async def go():
+        async with factory() as s:
+            scope_id = uuid.uuid4()
+            created["scopes"].append(scope_id)
+            await s.execute(
+                sa.text(
+                    "INSERT INTO harvest_scopes (id, source_id, params, tier) "
+                    "VALUES (:id, :src, '{}'::jsonb, 0)"
+                ),
+                {"id": scope_id, "src": created["source"]},
+            )
+            await s.commit()
+            return str(scope_id)
+
+    return asyncio.run(go())
+
+
+def test_concurrent_scopes_same_source_no_duplicates(db):
+    """Auditoría A-04 #1/#2: DOS scopes de la MISMA fuente, sinks CONCURRENTES
+    sobre external_ids solapados (slot nuevo + slot reciclado) → exactamente
+    1 slot / 1 incarnación activa / 1 vacante por external_id; sin
+    unique_violation ni deadlock sin gestionar; sin vacantes huérfanas."""
+    factory, created = db
+    scope_a = _seed_scope(factory, created)
+    scope_b = _seed_second_scope(factory, created)
+
+    # Slot 'recycled' pre-existente con su incarnación CERRADA (rama seq>1).
+    _sink_batch(factory, scope_a, [_listing("recycled")])
+
+    async def close_incarnation():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "UPDATE source_listing_incarnations SET ended_at = now() "
+                    "WHERE source_listing_id IN "
+                    "(SELECT id FROM source_listings WHERE external_id = 'recycled')"
+                )
+            )
+            await s.commit()
+
+    asyncio.run(close_incarnation())
+
+    batch = [_listing("nuevo"), _listing("recycled"), _listing("compartido")]
+
+    async def worker(scope_id, listings):
+        async with factory() as s:
+            await RawListingSink().handle(s, scope_id, tuple(listings))
+            await s.commit()
+
+    async def race():
+        # Órdenes de lote INVERSOS entre scopes: el peor caso de locks.
+        await asyncio.gather(
+            worker(scope_a, batch), worker(scope_b, list(reversed(batch)))
+        )
+
+    asyncio.run(race())  # sin excepciones no gestionadas
+
+    async def invariants():
+        async with factory() as s:
+            rows = (
+                await s.execute(
+                    sa.text(
+                        "SELECT l.external_id, "
+                        "count(*) FILTER (WHERE i.ended_at IS NULL) AS activas, "
+                        "count(DISTINCT l.id) AS slots "
+                        "FROM source_listings l "
+                        "LEFT JOIN source_listing_incarnations i ON i.source_listing_id = l.id "
+                        "WHERE l.source_id = :src GROUP BY l.external_id"
+                    ),
+                    {"src": created["source"]},
+                )
+            ).all()
+            for r in rows:
+                assert (r.slots, r.activas) == (1, 1), r
+            # Sin vacantes huérfanas: cada vacante creada tiene su incarnación.
+            orphans = (
+                await s.execute(
+                    sa.text(
+                        "SELECT count(*) FROM vacancies v "
+                        "WHERE v.id NOT IN (SELECT vacancy_id FROM source_listing_incarnations) "
+                        "AND v.primary_incarnation_id IS NULL AND v.created_at > now() - interval '5 minutes'"
+                    )
+                )
+            ).scalar()
+            assert orphans == 0
+            # El slot reciclado reabrió con seq=2.
+            seq = (
+                await s.execute(
+                    sa.text(
+                        "SELECT i.seq FROM source_listing_incarnations i "
+                        "JOIN source_listings l ON l.id = i.source_listing_id "
+                        "WHERE l.external_id = 'recycled' AND i.ended_at IS NULL"
+                    )
+                )
+            ).scalar_one()
+            assert seq == 2
+
+    asyncio.run(invariants())
+
+
+def test_empty_batch_is_noop(db):
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _sink_batch(factory, scope, [])
+    assert tuple(_counts(factory, created["source"])) == (0, 0, 0)
+
+
+def test_intra_batch_duplicate_external_last_wins(db):
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _sink_batch(
+        factory, scope,
+        [_listing("j1", payload={"v": 1}), _listing("j1", payload={"v": 2})],
+    )
+    c = _counts(factory, created["source"])
+    assert (c.slots, c.incs, c.revs) == (1, 1, 1)
+
+    async def payload():
+        async with factory() as s:
+            return (
+                await s.execute(sa.text("SELECT raw FROM source_listing_revisions"))
+            ).scalar_one()
+
+    assert asyncio.run(payload())["v"] == 2  # la última aparición gana
+
+
+def test_same_normalized_url_within_one_batch(db):
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _sink_batch(
+        factory, scope,
+        [_listing("j1", url="https://x/misma"), _listing("j2", url="https://x/misma/")],
+    )
+    c = _counts(factory, created["source"])
+    assert (c.slots, c.incs, c.revs) == (1, 1, 1)  # el segundo se salta con log
+
+
+def test_e2e_run_scope_with_real_sink(db):
+    """E2E A-03+A-04: runner + sink real — grafo y estado commiteados juntos."""
+    factory, created = db
+    scope = _seed_scope(factory, created)
+
+    async def go():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(500))
+        ) as http:
+            return await run_scope(scope, FakeProvider(), RawListingSink(), http, session_factory=factory)
+
+    r = asyncio.run(go())
+    assert r.status == "ok" and r.listings == 2
+    c = _counts(factory, created["source"])
+    assert (c.slots, c.incs, c.revs) == (2, 2, 2)
+
+    async def state():
+        async with factory() as s:
+            return (
+                await s.execute(
+                    sa.text("SELECT last_complete_at FROM source_scope_state WHERE scope_id=:i"),
+                    {"i": scope},
+                )
+            ).scalar_one()
+
+    assert asyncio.run(state()) is not None

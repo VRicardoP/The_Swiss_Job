@@ -32,8 +32,12 @@ logger = logging.getLogger(__name__)
 
 API_URL = "https://www.arbeitnow.com/api/job-board-api"
 # Objetivo inicial de páginas por run; crece solo (x2, persistido en el cursor)
-# si el feed resulta mayor. HARD cap contra bucles de la API.
+# si el feed resulta mayor, y el tamaño APRENDIDO se conserva tras los barridos
+# completos (sin oscilar partial/complete — rev. 5ª P2#1).
 DEFAULT_PAGE_TARGET = 50
+# LÍMITE CONTRACTUAL DE CAPACIDAD (rev. 5ª P2#2): si el feed legítimo lo supera,
+# los barridos quedan 'partial' sobre el mismo prefijo y se emite una ALERTA
+# PERSISTENTE (error en cada run). Configurable por scope: params.hard_max_pages.
 HARD_MAX_PAGES = 500
 MIN_PAGE_TARGET = 2
 HTTP_TIMEOUT_S = 20.0
@@ -51,9 +55,10 @@ class ArbeitnowProvider(BaseProvider):
         configured = int(params.get("max_pages", DEFAULT_PAGE_TARGET))
         if configured < MIN_PAGE_TARGET:
             raise ValueError(f"max_pages debe ser >= {MIN_PAGE_TARGET}")
+        hard_max = int(params.get("hard_max_pages", HARD_MAX_PAGES))
         # Objetivo adaptativo (rev. 4ª #1): arranca en lo configurado y, si un
         # barrido anterior se quedó corto, usa el objetivo crecido persistido.
-        target = min(max(configured, int(cur.get("page_target", 0))), HARD_MAX_PAGES)
+        target = min(max(configured, int(cur.get("page_target", 0))), hard_max)
         keyword = (params.get("keyword") or "").lower() or None
 
         collected: list[RawListing] = []
@@ -86,17 +91,27 @@ class ArbeitnowProvider(BaseProvider):
 
         next_cursor: dict = {"last_top_seen": top_seen}
         if exhausted:
-            complete = True  # objetivo cumplido: el target adaptativo se resetea
+            complete = True
+            # Conservar el tamaño APRENDIDO (rev. 5ª P2#1): sin esto el ciclo
+            # oscilaría partial/complete con alertas periódicas. Un feed que
+            # encoge no cuesta nada: el barrido para igual en la exhaustión
+            # (el target es solo un techo).
+            if target > configured:
+                next_cursor["page_target"] = target
         else:
             complete = False
-            grown = min(target * 2, HARD_MAX_PAGES)
+            grown = min(target * 2, hard_max)
             next_cursor["page_target"] = grown
             logger.warning(
                 "arbeitnow: barrido INCOMPLETO (%d páginas sin agotar el feed); "
                 "objetivo adaptativo %d→%d", pages, target, grown,
             )
-            if target >= HARD_MAX_PAGES:
-                logger.error("arbeitnow: HARD_MAX_PAGES=%d insuficiente", HARD_MAX_PAGES)
+            if target >= hard_max:
+                # ALERTA PERSISTENTE (cada run): capacidad contractual excedida.
+                logger.error(
+                    "arbeitnow: CAPACIDAD EXCEDIDA — el feed supera "
+                    "hard_max_pages=%d; ampliar el límite del scope", hard_max,
+                )
         logger.info(
             "arbeitnow: %d emitidas (%d páginas, %s) cursor=%s",
             len(collected), pages, "completo" if complete else "PARCIAL", next_cursor,
