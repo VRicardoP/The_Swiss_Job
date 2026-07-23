@@ -52,26 +52,13 @@ class ArbeitnowProvider(BaseProvider):
         self, params: dict, cursor: dict | None, http: httpx.AsyncClient
     ) -> FetchResult:
         cur = cursor or {}
-        configured = int(params.get("max_pages", DEFAULT_PAGE_TARGET))
-        if configured < MIN_PAGE_TARGET:
-            raise ProviderConfigError(f"max_pages debe ser >= {MIN_PAGE_TARGET}")
-        hard_max = int(params.get("hard_max_pages", HARD_MAX_PAGES))
-        # Config inválida FALLA explícita (rev. A-04 #4): con hard_max < target
-        # mínimo el barrido haría 0 peticiones y devolvería un cursor parcial
-        # (page_target=0, listings=[]) para siempre — livelock silencioso.
-        # ProviderConfigError (rev. 2ª #3): permanente, la tarea NO reintenta.
-        if hard_max < MIN_PAGE_TARGET or hard_max < configured:
-            raise ProviderConfigError(
-                f"hard_max_pages ({hard_max}) debe ser >= {MIN_PAGE_TARGET} "
-                f"y >= max_pages ({configured})"
-            )
+        configured, hard_max, keyword = _parse_config(params or {})
         # Objetivo adaptativo (rev. 4ª #1): arranca en lo configurado y, si un
         # barrido anterior se quedó corto, usa el objetivo crecido persistido.
-        target = min(max(configured, int(cur.get("page_target", 0))), hard_max)
-        keyword = (params.get("keyword") or "").lower() or None
+        target = min(max(configured, _cursor_int(cur, "page_target")), hard_max)
 
         collected: list[RawListing] = []
-        top_seen = int(cur.get("last_top_seen", 0))
+        top_seen = _cursor_int(cur, "last_top_seen")
         pages = 0
         page = 1
         exhausted = False
@@ -129,6 +116,49 @@ class ArbeitnowProvider(BaseProvider):
             listings=tuple(collected), next_cursor=next_cursor,
             pages_fetched=pages, complete=complete,
         )
+
+
+def _parse_config(params: dict) -> tuple[int, int, str | None]:
+    """Valida TIPOS y rangos del JSON de configuración (rev. 3ª, APPROVE P2):
+    `max_pages="abc"`, `hard_max_pages=null` o `keyword=123` son errores
+    PERMANENTES — ProviderConfigError explícito, jamás un
+    ValueError/TypeError/AttributeError genérico que consuma retries y deje
+    `consecutive_failures` creciendo por un error de configuración."""
+    if not isinstance(params, dict):
+        raise ProviderConfigError(
+            f"params debe ser un objeto JSON, no {type(params).__name__}"
+        )
+    try:
+        configured = int(params.get("max_pages", DEFAULT_PAGE_TARGET))
+        hard_max = int(params.get("hard_max_pages", HARD_MAX_PAGES))
+    except (TypeError, ValueError) as exc:
+        raise ProviderConfigError(f"max_pages/hard_max_pages inválidos: {exc}") from exc
+    keyword_raw = params.get("keyword")
+    if keyword_raw is not None and not isinstance(keyword_raw, str):
+        raise ProviderConfigError(
+            f"keyword debe ser string, no {type(keyword_raw).__name__}"
+        )
+    if configured < MIN_PAGE_TARGET:
+        raise ProviderConfigError(f"max_pages debe ser >= {MIN_PAGE_TARGET}")
+    # Config inválida FALLA explícita (rev. A-04 #4): con hard_max < target
+    # mínimo el barrido haría 0 peticiones y devolvería un cursor parcial
+    # (page_target=0, listings=[]) para siempre — livelock silencioso.
+    if hard_max < MIN_PAGE_TARGET or hard_max < configured:
+        raise ProviderConfigError(
+            f"hard_max_pages ({hard_max}) debe ser >= {MIN_PAGE_TARGET} "
+            f"y >= max_pages ({configured})"
+        )
+    keyword = (keyword_raw or "").lower() or None
+    return configured, hard_max, keyword
+
+
+def _cursor_int(cur: dict, key: str) -> int:
+    """El cursor sale de NUESTRA BD, pero si se corrompe tampoco lo arregla un
+    retry (rev. 3ª): misma clasificación permanente que la config inválida."""
+    try:
+        return int(cur.get(key, 0))
+    except (TypeError, ValueError) as exc:
+        raise ProviderConfigError(f"cursor corrupto: {key}={cur.get(key)!r}") from exc
 
 
 def _parse_created_at(item: dict) -> int | None:

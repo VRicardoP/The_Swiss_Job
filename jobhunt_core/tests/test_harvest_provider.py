@@ -9,6 +9,7 @@ import json
 import httpx
 import pytest
 
+from jobhunt_core.harvest.provider import ProviderConfigError
 from jobhunt_core.harvest.providers.arbeitnow import ArbeitnowProvider
 
 # p1: a300,b250 · p2: c200,d100 · p3: e50.
@@ -191,6 +192,27 @@ def test_hard_max_pages_invalid_rejected():
         _fetch(params={"max_pages": 2, "hard_max_pages": 0})
     with pytest.raises(ValueError, match="hard_max_pages"):
         _fetch(params={"max_pages": 10, "hard_max_pages": 5})
+
+
+def test_invalid_config_types_are_config_errors():
+    """Rev. 3ª (APPROVE P2, repro): max_pages='abc' dejaba consecutive_failures
+    creciendo con retries — los TIPOS inválidos del JSON de config son tan
+    permanentes como los rangos: ProviderConfigError, nunca
+    ValueError/TypeError/AttributeError genéricos."""
+    for params in (
+        {"max_pages": "abc"},  # repro de la revisión: ValueError → retry x2
+        {"hard_max_pages": None},  # TypeError
+        {"keyword": 123},  # AttributeError en .lower()
+    ):
+        with pytest.raises(ProviderConfigError):
+            _fetch(params=params)
+
+
+def test_corrupt_cursor_is_config_error():
+    """Rev. 3ª: un cursor corrupto tampoco se arregla reintentando."""
+    for cursor in ({"page_target": "abc"}, {"last_top_seen": {}}):
+        with pytest.raises(ProviderConfigError):
+            _fetch(cursor=cursor)
 
 
 def test_keyword_scope_filters_client_side():
