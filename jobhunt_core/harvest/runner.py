@@ -110,16 +110,23 @@ async def run_scope(
 
             await sink.handle(session, scope_id, result.listings)
             new_cursor = {**result.next_cursor, FINGERPRINT_KEY: fingerprint}
+            # Un barrido INCOMPLETO se persiste (sus listings son válidos) pero
+            # NO cuenta como cosecha completa: last_complete_at intacto y los
+            # fallos no se resetean (rev. 4ª #1).
             await session.execute(
                 sa.text(
                     "INSERT INTO source_scope_state "
                     "(scope_id, cursor, last_complete_at, consecutive_failures) "
-                    "VALUES (:sid, CAST(:cur AS jsonb), now(), 0) "
+                    "VALUES (:sid, CAST(:cur AS jsonb), "
+                    "CASE WHEN :complete THEN now() END, 0) "
                     "ON CONFLICT (scope_id) DO UPDATE SET "
-                    "cursor = EXCLUDED.cursor, last_complete_at = now(), "
-                    "consecutive_failures = 0"
+                    "cursor = EXCLUDED.cursor, "
+                    "last_complete_at = CASE WHEN :complete THEN now() "
+                    "ELSE source_scope_state.last_complete_at END, "
+                    "consecutive_failures = CASE WHEN :complete THEN 0 "
+                    "ELSE source_scope_state.consecutive_failures END"
                 ),
-                {"sid": scope_id, "cur": json.dumps(new_cursor)},
+                {"sid": scope_id, "cur": json.dumps(new_cursor), "complete": result.complete},
             )
             await session.commit()
         except Exception as exc:
@@ -128,12 +135,14 @@ async def run_scope(
             logger.warning("scope %s: persistencia falló, cursor intacto: %s", scope_id, exc)
             return ScopeRunResult(scope_id=scope_id, status="error", error=str(exc)[:200])
 
-        logger.info(
-            "scope %s: %d listings, %d páginas, cursor commiteado",
-            scope_id, len(result.listings), result.pages_fetched,
+        status = "ok" if result.complete else "partial"
+        log = logger.info if result.complete else logger.warning
+        log(
+            "scope %s: %d listings, %d páginas, cursor commiteado (%s)",
+            scope_id, len(result.listings), result.pages_fetched, status,
         )
         return ScopeRunResult(
-            scope_id=scope_id, status="ok",
+            scope_id=scope_id, status=status,
             listings=len(result.listings), pages=result.pages_fetched,
         )
 

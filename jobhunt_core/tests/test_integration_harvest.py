@@ -468,6 +468,34 @@ def test_source_repoint_during_fetch_aborts_stale(db):
     assert _state(factory, s1) is None
 
 
+class PartialProvider(FakeProvider):
+    async def fetch_new(self, params, cursor, http):
+        return FetchResult(
+            listings=(RawListing(external_id="p1", url="https://x/p1", payload={}),),
+            next_cursor={"last_top_seen": 5, "page_target": 8},
+            pages_fetched=2,
+            complete=False,
+        )
+
+
+def test_partial_sweep_persists_but_not_complete(db):
+    """Rev. 4ª #1: un barrido incompleto persiste sink+cursor pero NO marca
+    last_complete_at ni resetea fallos, y reporta 'partial'."""
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+    sink = CollectSink()
+    r = _run_with(factory, s1, PartialProvider(), sink)
+    assert r.status == "partial"
+    assert len(sink.batches) == 1  # los listings vistos SÍ llegan al sink
+    st = _state(factory, s1)
+    assert _provider_cursor_of(st) == {"last_top_seen": 5, "page_target": 8}
+    assert st.last_complete_at is None  # jamás se marcó cosecha completa
+    # Un run COMPLETO posterior sí consolida.
+    r2 = _run_with(factory, s1, FakeProvider(), CollectSink())
+    assert r2.status == "ok"
+    assert _state(factory, s1).last_complete_at is not None
+
+
 def test_disabled_scope_is_skipped(db):
     factory, created = db
     (s1,) = _seed_scopes(factory, created, n=1)

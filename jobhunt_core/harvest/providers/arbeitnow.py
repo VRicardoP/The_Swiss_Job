@@ -1,22 +1,23 @@
 """Provider Arbeitnow (Tier 0 — API pública gratuita, sin credenciales).
 
-Diseño SOUND para paginación por offset con orden NO contractual (3ª revisión
-externa A-03): sin cursor estable del proveedor, NINGÚN corte finito de
-"páginas antiguas" demuestra que el feed esté drenado. Por tanto:
+Diseño FINAL tras la 4ª revisión externa de A-03 — el único sound para una API
+de paginación por offset MUTABLE y sin cursor/snapshot del proveedor:
 
-- Cada run recorre el feed COMPLETO (página 1 → fin de `links.next`), acotado
-  por un tope de seguridad. La incrementalidad vive en la EMISIÓN, no en el
-  fetch: solo los items con `created_at >= watermark` van al sink (idempotente,
-  ADR-05 — los re-emitidos se deduplican por claves estables).
-- El watermark SOLO se consolida si el run AGOTÓ el feed. Si el tope de
-  seguridad corta antes, el watermark queda INTACTO (fallo conservador, con
-  warning): nada puede perderse, solo re-emitirse.
-- Sin ancla, sin backfill, sin resume por página, sin heurísticas de orden:
-  no queda estado del que pueda depender una pérdida.
-- Garantía: todo item >= watermark visible en el feed durante un run se emite
-  en ese run. Retrodatados por debajo del watermark: indetectables para
-  cualquier esquema de watermark (limitación documentada).
-- Items sin timestamp o sin url/slug se saltan con log; jamás afectan al corte.
+- Cada run barre el feed COMPLETO y EMITE TODOS los listings válidos que casan
+  con el scope. Nada se filtra por "ya visto": la deduplicación y el refresco
+  son del sink idempotente (A-04 necesita ver TODO lo visible en cada cosecha
+  para refrescar `last_seen_at` y detectar revisiones — CONTRATOS §1/A-04).
+- El "cursor" es SOLO metadato de observabilidad (`last_top_seen`) + el
+  OBJETIVO ADAPTATIVO de páginas (`page_target`): si un barrido se corta por
+  el tope, el objetivo se duplica (persistido) hasta poder agotar el feed —
+  liveness garantizada sin techo configurado a mano.
+- Un barrido que no agota `links.next` devuelve `complete=False`: el runner lo
+  persiste igualmente (los listings vistos son válidos) pero NO actualiza
+  `last_complete_at` y reporta `partial` (alerta operativa).
+- Borrados/desplazamientos durante la paginación solo causan omisión TEMPORAL
+  (el siguiente barrido completo los ve): sin filtro de emisión no existe
+  estado capaz de convertir una omisión en pérdida permanente.
+- Items sin url/slug se saltan con log (validación de frontera).
 NO está en la lista restringida del proyecto (jobs.ch/LinkedIn/... siguen OFF).
 """
 
@@ -30,11 +31,11 @@ from jobhunt_core.harvest.types import FetchResult, RawListing
 logger = logging.getLogger(__name__)
 
 API_URL = "https://www.arbeitnow.com/api/job-board-api"
-# Tope de SEGURIDAD de páginas por run (feed patológico/bucle de la API). Si se
-# alcanza sin agotar el feed, NO se consolida el watermark (conservador). El
-# feed real de Arbeitnow son unas decenas de páginas.
-DEFAULT_MAX_PAGES = 50
-MIN_MAX_PAGES = 2
+# Objetivo inicial de páginas por run; crece solo (x2, persistido en el cursor)
+# si el feed resulta mayor. HARD cap contra bucles de la API.
+DEFAULT_PAGE_TARGET = 50
+HARD_MAX_PAGES = 500
+MIN_PAGE_TARGET = 2
 HTTP_TIMEOUT_S = 20.0
 
 
@@ -46,18 +47,21 @@ class ArbeitnowProvider(BaseProvider):
     async def fetch_new(
         self, params: dict, cursor: dict | None, http: httpx.AsyncClient
     ) -> FetchResult:
-        watermark = int((cursor or {}).get("watermark", 0))
-        max_pages = int(params.get("max_pages", DEFAULT_MAX_PAGES))
-        if max_pages < MIN_MAX_PAGES:
-            raise ValueError(f"max_pages debe ser >= {MIN_MAX_PAGES}")
+        cur = cursor or {}
+        configured = int(params.get("max_pages", DEFAULT_PAGE_TARGET))
+        if configured < MIN_PAGE_TARGET:
+            raise ValueError(f"max_pages debe ser >= {MIN_PAGE_TARGET}")
+        # Objetivo adaptativo (rev. 4ª #1): arranca en lo configurado y, si un
+        # barrido anterior se quedó corto, usa el objetivo crecido persistido.
+        target = min(max(configured, int(cur.get("page_target", 0))), HARD_MAX_PAGES)
         keyword = (params.get("keyword") or "").lower() or None
 
         collected: list[RawListing] = []
-        top_seen = watermark
+        top_seen = int(cur.get("last_top_seen", 0))
         pages = 0
         page = 1
         exhausted = False
-        while pages < max_pages:
+        while pages < target:
             resp = await http.get(API_URL, params={"page": page}, timeout=HTTP_TIMEOUT_S)
             resp.raise_for_status()
             body = resp.json()
@@ -68,13 +72,10 @@ class ArbeitnowProvider(BaseProvider):
                 break
             for item in items:
                 created = _parse_created_at(item)
-                if created is None:
-                    # Sin timestamp: se salta el ITEM (jamás decide nada más).
-                    logger.warning("arbeitnow: item sin created_at válido, saltado")
-                    continue
-                top_seen = max(top_seen, created)
-                if created < watermark:
-                    continue  # antiguo: no se emite; el barrido SIGUE hasta el fin
+                if created is not None:
+                    top_seen = max(top_seen, created)
+                # EMISIÓN TOTAL de lo válido que casa con el scope: el watermark
+                # ya NO filtra (A-04 refresca last_seen_at/revisiones con esto).
                 listing = _to_listing(item, keyword)
                 if listing is not None:
                     collected.append(listing)
@@ -83,22 +84,26 @@ class ArbeitnowProvider(BaseProvider):
                 break
             page += 1
 
+        next_cursor: dict = {"last_top_seen": top_seen}
         if exhausted:
-            next_cursor = {"watermark": top_seen}
+            complete = True  # objetivo cumplido: el target adaptativo se resetea
         else:
-            # Tope de seguridad sin agotar el feed: watermark INTACTO (nada se
-            # consolida sin drenaje demostrado; solo habrá re-emisión).
+            complete = False
+            grown = min(target * 2, HARD_MAX_PAGES)
+            next_cursor["page_target"] = grown
             logger.warning(
-                "arbeitnow: tope de %d páginas sin agotar el feed; watermark intacto",
-                max_pages,
+                "arbeitnow: barrido INCOMPLETO (%d páginas sin agotar el feed); "
+                "objetivo adaptativo %d→%d", pages, target, grown,
             )
-            next_cursor = {"watermark": watermark}
+            if target >= HARD_MAX_PAGES:
+                logger.error("arbeitnow: HARD_MAX_PAGES=%d insuficiente", HARD_MAX_PAGES)
         logger.info(
             "arbeitnow: %d emitidas (%d páginas, %s) cursor=%s",
-            len(collected), pages, "feed agotado" if exhausted else "tope", next_cursor,
+            len(collected), pages, "completo" if complete else "PARCIAL", next_cursor,
         )
         return FetchResult(
-            listings=tuple(collected), next_cursor=next_cursor, pages_fetched=pages
+            listings=tuple(collected), next_cursor=next_cursor,
+            pages_fetched=pages, complete=complete,
         )
 
 
