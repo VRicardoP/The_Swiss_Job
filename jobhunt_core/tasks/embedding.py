@@ -11,6 +11,7 @@ import logging
 from typing import Any
 
 from jobhunt_core import embeddings
+from jobhunt_core import profiles as core_profiles
 from jobhunt_core.celery_app import celery_app
 from jobhunt_core.database import task_session_factory
 from jobhunt_core.harvest.normalize import build_offer_text
@@ -31,37 +32,63 @@ def run_pending_task(self, limit: int = 200) -> dict[str, Any]:
 
 async def _run_pending_impl(limit: int) -> dict[str, Any]:
     embedded: dict[str, int] = {}
+    profiles_embedded: dict[str, int] = {}
     async with task_session_factory() as session_factory:
         async with session_factory() as session:
             models = await embeddings.active_models(session)
         for model in models:
             if model.dim != embeddings.EMBED_DIM:
                 # Registro protegido por register_model; cinturón por si el
-                # dato entró por otra vía: JAMÁS embeber a otra dimensión.
+                # dato entró por otra vía: JAMÁS embeber a otra dimensión
+                # (ni ofertas ni perfiles).
                 logger.error(
                     "embedding: modelo %s/%s dim=%d != %d — saltado",
                     model.name, model.version, model.dim, embeddings.EMBED_DIM,
                 )
                 continue
+            key = f"{model.name}/{model.version}"
+            # Backend POR MODELO (rev. A-06 #3), resuelto de forma perezosa:
+            # model_id identifica al encoder real. A-07 (perfiles) reutiliza
+            # EXACTAMENTE esta resolución.
+            backend = None
+
             async with session_factory() as session:
                 pending = await embeddings.pending_offer_texts(
                     session, model.id, limit=limit
                 )
-            if not pending:
-                embedded[f"{model.name}/{model.version}"] = 0
-                continue
-            texts = [build_offer_text(r.content) for r in pending]
-            # ENCODE fuera de transacción (CPU): la sesión no queda colgada.
-            # Backend POR MODELO (rev. A-06 #3): model_id identifica al
-            # encoder real — nunca un backend global compartido.
-            backend = embeddings.get_backend(model.name, model.version)
-            vectors = backend.encode_batch(texts)
-            items = [
-                {"text_hash": r.text_hash, "vector": v}
-                for r, v in zip(pending, vectors)
-            ]
+            n = 0
+            if pending:
+                texts = [build_offer_text(r.content) for r in pending]
+                # ENCODE fuera de transacción (CPU): la sesión no queda colgada.
+                backend = embeddings.get_backend(model.name, model.version)
+                vectors = backend.encode_batch(texts)
+                items = [
+                    {"text_hash": r.text_hash, "vector": v}
+                    for r, v in zip(pending, vectors)
+                ]
+                async with session_factory() as session:
+                    n = await embeddings.store_offer_embeddings(session, model.id, items)
+                    await session.commit()
+            embedded[key] = n
+
+            # Perfiles (A-07): última revisión de cada perfil, mismo backend.
             async with session_factory() as session:
-                n = await embeddings.store_offer_embeddings(session, model.id, items)
-                await session.commit()
-            embedded[f"{model.name}/{model.version}"] = n
-    return {"embedded": embedded}
+                pending_p = await embeddings.pending_profile_revisions(
+                    session, model.id, limit=limit
+                )
+            n_p = 0
+            if pending_p:
+                texts_p = [core_profiles.build_profile_text(r.content) for r in pending_p]
+                backend = backend or embeddings.get_backend(model.name, model.version)
+                vectors_p = backend.encode_batch(texts_p)
+                items_p = [
+                    {"revision_id": r.id, "profile_id": r.profile_id, "vector": v}
+                    for r, v in zip(pending_p, vectors_p)
+                ]
+                async with session_factory() as session:
+                    n_p = await embeddings.store_profile_embeddings(
+                        session, model.id, items_p
+                    )
+                    await session.commit()
+            profiles_embedded[key] = n_p
+    return {"embedded": embedded, "profiles_embedded": profiles_embedded}

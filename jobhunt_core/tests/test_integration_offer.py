@@ -43,7 +43,7 @@ class FakeBackend:
 def db():
     engine = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    created = {"sources": [], "scopes": [], "models": []}
+    created = {"sources": [], "scopes": [], "models": [], "consumers": []}
     yield factory, created
 
     async def cleanup():
@@ -122,6 +122,27 @@ def db():
             await s.execute(
                 sa.text("DELETE FROM sources WHERE id = ANY(:srcs)"), {"srcs": srcs}
             )
+            for cid in created["consumers"]:
+                await s.execute(
+                    sa.text(
+                        "DELETE FROM profile_embeddings WHERE profile_id IN "
+                        "(SELECT id FROM profiles WHERE consumer_id = :c)"
+                    ),
+                    {"c": cid},
+                )
+                await s.execute(
+                    sa.text(
+                        "DELETE FROM profile_revisions WHERE profile_id IN "
+                        "(SELECT id FROM profiles WHERE consumer_id = :c)"
+                    ),
+                    {"c": cid},
+                )
+                await s.execute(
+                    sa.text("DELETE FROM profiles WHERE consumer_id = :c"), {"c": cid}
+                )
+                await s.execute(
+                    sa.text("DELETE FROM consumers WHERE id = :c"), {"c": cid}
+                )
             for mid in created["models"]:
                 await s.execute(
                     sa.text("DELETE FROM offer_embeddings WHERE model_id = :m"), {"m": mid}
@@ -789,6 +810,52 @@ def test_repair_null_is_not_resurrected_by_next_harvest(db):
     assert cur() is None  # reparación: sin normalizador → NULL
     _sink(factory, scope_b, [_listing("b1", url="https://x/shared", **mismo)])  # re-barrido
     assert cur() is None  # NO resucitada por el hash raw de A
+
+
+def test_combined_offers_and_profiles_share_backend_same_pass(db):
+    """Auditoría A-07 #1: ofertas Y perfiles pendientes en el MISMO pase — el
+    encoder se instancia UNA sola vez por (name, version) y ambas familias
+    embeben (se ejercita la rama de reuso por cortocircuito del backend)."""
+    from jobhunt_core import profiles as core_profiles
+    from jobhunt_core.tasks.embedding import run_pending_task
+
+    factory, created = db
+    scope = _seed(factory, created, "arbeitnow")
+    _sink(factory, scope, [_listing("j1")])
+
+    async def mk_profile():
+        async with factory() as s:
+            cid = await core_profiles.ensure_consumer(s, "tenant-mix")
+            created["consumers"].append(cid)
+            pid = await core_profiles.upsert_profile(s, cid, "user-1")
+            await core_profiles.save_profile_revision(
+                s, pid, {"title": "Dev", "skills": ["python"]}
+            )
+            await s.commit()
+
+    asyncio.run(mk_profile())
+    _register(factory, created)
+
+    seen: list[tuple[str, str]] = []
+
+    class Fake:
+        def encode_batch(self, texts):
+            return [[0.4] * embeddings.EMBED_DIM for _ in texts]
+
+    def factory_fn(name, version):
+        seen.append((name, version))
+        return Fake()
+
+    embeddings.set_backend_factory(factory_fn)
+    try:
+        r = run_pending_task.apply(kwargs={"limit": 50})
+        assert r.successful()
+        key = f"modelo-test/{SHA_A}"
+        assert r.result["embedded"][key] == 1
+        assert r.result["profiles_embedded"][key] == 1
+    finally:
+        embeddings.set_backend_factory(None)
+    assert len(seen) == 1  # UN encoder compartido por ambas familias
 
 
 def test_concurrent_stores_same_hash_single_row(db):

@@ -184,6 +184,77 @@ async def pending_offer_texts(session, model_id, limit: int = 200) -> list:
     ).all()
 
 
+async def pending_profile_revisions(session, model_id, limit: int = 200) -> list:
+    """ÚLTIMA revisión de cada perfil sin vector para este modelo (A-07).
+    Solo la vigente: el histórico no se re-embebe — las evaluaciones (A-08)
+    fijan su revisión por FK compuesta."""
+    return (
+        await session.execute(
+            sa.text(
+                "SELECT pr.id, pr.profile_id, pr.content "
+                "FROM (SELECT DISTINCT ON (profile_id) id, profile_id, content "
+                "      FROM profile_revisions "
+                "      ORDER BY profile_id, created_at DESC, id DESC) pr "
+                "LEFT JOIN profile_embeddings pe "
+                "  ON pe.profile_revision_id = pr.id AND pe.model_id = :mid "
+                "WHERE pe.profile_revision_id IS NULL "
+                "ORDER BY pr.id LIMIT :lim"
+            ),
+            {"mid": model_id, "lim": limit},
+        )
+    ).all()
+
+
+async def store_profile_embeddings(session, model_id, items: list[dict]) -> int:
+    """items = [{'revision_id','profile_id','vector'}]. OPTIMISTA: pre-filtro
+    + DO NOTHING sobre la PK (profile_revision_id, model_id); la FK COMPUESTA
+    (revision, profile) garantiza mismo perfil (contrato §1). Devuelve filas
+    insertadas (informativo)."""
+    if not items:
+        return 0
+    for it in items:
+        if len(it["vector"]) != EMBED_DIM:
+            raise ValueError(
+                f"vector de {len(it['vector'])} dims para la revisión "
+                f"{it['revision_id']} (esperadas {EMBED_DIM})"
+            )
+    rows = sorted(
+        (
+            {
+                "rid": it["revision_id"], "pid": it["profile_id"], "mid": model_id,
+                "vec": "[" + ",".join(repr(float(x)) for x in it["vector"]) + "]",
+            }
+            for it in items
+        ),
+        key=lambda r: str(r["rid"]),
+    )
+    existing = {
+        r.profile_revision_id
+        for r in (
+            await session.execute(
+                sa.text(
+                    "SELECT profile_revision_id FROM profile_embeddings "
+                    "WHERE model_id = :mid AND profile_revision_id = ANY(:rids)"
+                ),
+                {"mid": model_id, "rids": [r["rid"] for r in rows]},
+            )
+        ).all()
+    }
+    fresh = [r for r in rows if r["rid"] not in existing]
+    if not fresh:
+        return 0
+    await session.execute(
+        sa.text(
+            "INSERT INTO profile_embeddings "
+            "(profile_revision_id, profile_id, model_id, vector) "
+            "VALUES (:rid, :pid, :mid, CAST(:vec AS vector)) "
+            "ON CONFLICT (profile_revision_id, model_id) DO NOTHING"
+        ),
+        fresh,
+    )
+    return len(fresh)
+
+
 async def store_offer_embeddings(session, model_id, items: list[dict]) -> int:
     """items = [{'text_hash': ..., 'vector': [float x384]}]. OPTIMISTA:
     DO NOTHING sobre la PK (text_hash, model_id). Devuelve filas insertadas."""
