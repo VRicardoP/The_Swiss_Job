@@ -47,6 +47,11 @@ class CoreSettings(BaseSettings):
     # Namespace propio de locks/coordinación (leader-lock separado del legacy).
     CORE_LOCK_PREFIX: str = "jobhunt:"
 
+    # Embeddings (A-06, ADR-02): MISMO modelo multilingüe 384d que el legacy —
+    # los vectores deben ser comparables en la sombra de Fase B.
+    CORE_EMBEDDING_MODEL_NAME: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    CORE_EMBEDDING_BATCH_SIZE: int = 32
+
     model_config = {"extra": "ignore"}
 
     @model_validator(mode="after")

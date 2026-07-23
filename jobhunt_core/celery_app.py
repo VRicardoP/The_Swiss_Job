@@ -34,4 +34,8 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
 )
 
-celery_app.conf.include = ["jobhunt_core.tasks.ping", "jobhunt_core.tasks.harvest"]
+celery_app.conf.include = [
+    "jobhunt_core.tasks.ping",
+    "jobhunt_core.tasks.harvest",
+    "jobhunt_core.tasks.embedding",
+]

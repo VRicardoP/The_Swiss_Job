@@ -55,6 +55,22 @@ def db():
                     ),
                     {"v": vac_ids},
                 )
+                # A-06: canónicas fuera ANTES de borrar vacantes.
+                await s.execute(
+                    sa.text(
+                        "UPDATE vacancies SET current_offer_revision_id = NULL "
+                        "WHERE id = ANY(:v)"
+                    ),
+                    {"v": vac_ids},
+                )
+                await s.execute(
+                    sa.text("DELETE FROM offer_revision_sources WHERE vacancy_id = ANY(:v)"),
+                    {"v": vac_ids},
+                )
+                await s.execute(
+                    sa.text("DELETE FROM offer_revisions WHERE vacancy_id = ANY(:v)"),
+                    {"v": vac_ids},
+                )
             await s.execute(
                 sa.text(
                     "DELETE FROM link_evidence WHERE source_listing_id IN "
@@ -548,25 +564,44 @@ def test_archived_shared_vacancy_concurrent_recycles_serialize(db):
         async def race():
             sink_a = PausingSink("close")
             sink_b = PausingSink("close")
+            pids: dict[str, int] = {}
 
-            async def run(sink, scope_id, listing):
+            async def run(name, sink, scope_id, listing):
                 async with factory() as s:
+                    pids[name] = (
+                        await s.execute(sa.text("SELECT pg_backend_pid()"))
+                    ).scalar_one()
                     await sink.handle(s, scope_id, (listing,))
                     await s.commit()
 
             task_a = asyncio.create_task(run(
-                sink_a, scope_a,
+                "a", sink_a, scope_a,
                 _listing("a1", company="Umbrella GmbH", url="https://x/shared", v=2),
             ))
             await sink_a.hit.wait()  # A cerró SU incarnación, locks en mano
             task_b = asyncio.create_task(run(
-                sink_b, scope_b,
+                "b", sink_b, scope_b,
                 _listing("b1", company="Zombo Corp", url="https://x/shared", v=2),
             ))
-            await asyncio.sleep(0.3)  # margen para que B alcance el lock
-            # SERIALIZACIÓN: B no ha podido llegar a su cierre — está esperando
-            # el lock de vacante que A retiene (sin el fix #2, la archivada no
-            # se bloqueaba y B pasaba de largo: este assert falla).
+            # Espera VERIFICADA (rev. 3ª P2): Postgres confirma que B está
+            # bloqueado POR A (pg_blocking_pids) — nada de asumirlo por sleep.
+            async with factory() as s:
+                for _ in range(200):
+                    if "b" in pids:
+                        blocking = (
+                            await s.execute(
+                                sa.text("SELECT pg_blocking_pids(:pid)"),
+                                {"pid": pids["b"]},
+                            )
+                        ).scalar_one()
+                        if pids["a"] in (blocking or []):
+                            break
+                    await asyncio.sleep(0.05)
+                else:
+                    raise AssertionError("B nunca quedó bloqueado por A")
+            # SERIALIZACIÓN demostrada: B espera el lock de vacante que A
+            # retiene y NO ha podido llegar a su cierre (sin el fix #2, la
+            # archivada no se bloqueaba y B pasaba de largo: esto fallaría).
             assert not sink_b.hit.is_set()
             sink_a.resume.set()
             await task_a

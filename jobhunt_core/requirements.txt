@@ -1,4 +1,8 @@
-# jobhunt-core (A-01) — runtime mínimo. Sin ML/Chromium hasta A-06.
+# jobhunt-core — runtime + ML de embeddings (A-06). Sin Chromium.
+# torch CPU-only (mismo truco que backend/requirements.txt): sin esta línea,
+# sentence-transformers arrastra el build CUDA (~4.5 GB) desde PyPI.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 fastapi>=0.115,<1
 uvicorn>=0.30,<1
 sqlalchemy>=2.0,<3
@@ -9,6 +13,9 @@ pgvector>=0.2,<1
 celery>=5.3,<6
 redis>=5.0,<6
 pydantic-settings>=2.2,<3
+# Embeddings (A-06): import PEREZOSO — la imagen puede omitirlo (p.ej. tests
+# con backend fake) y todo lo demás sigue funcionando.
+sentence-transformers>=3.3,<4.0
 # tests (la imagen dev los ejecuta; podar en una imagen prod slim si hace falta)
 pytest>=8.0,<9
 httpx>=0.27,<1

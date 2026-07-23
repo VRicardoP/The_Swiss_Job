@@ -26,6 +26,7 @@ import logging
 import httpx
 
 from jobhunt_core.harvest.identity import register_extractor
+from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
@@ -35,6 +36,22 @@ logger = logging.getLogger(__name__)
 register_extractor(
     "arbeitnow",
     lambda payload: (payload.get("title"), payload.get("company_name")),
+)
+
+# Contenido canónico (A-06): el fn solo ESCOGE campos; la coerción es central.
+# Arbeitnow no publica salario en el feed → salary None (content_hash del raw
+# sí cambiaría si apareciera, pero el text_hash no depende de él — ADR-02).
+register_normalizer(
+    "arbeitnow",
+    lambda raw: {
+        "title": raw.get("title"),
+        "company": raw.get("company_name"),
+        "description": raw.get("description"),
+        "tags": raw.get("tags"),
+        "location": raw.get("location"),
+        "remote": raw.get("remote"),
+        "salary": None,
+    },
 )
 
 API_URL = "https://www.arbeitnow.com/api/job-board-api"

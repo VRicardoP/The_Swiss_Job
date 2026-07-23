@@ -47,6 +47,24 @@ def db():
                     {"src": created["source"]},
                 )
             ).scalars().all()
+            if vac_ids:
+                # A-06: la canónica cuelga de la vacante — puntero a NULL y
+                # revisiones fuera ANTES de borrar vacantes.
+                await s.execute(
+                    sa.text(
+                        "UPDATE vacancies SET current_offer_revision_id = NULL "
+                        "WHERE id = ANY(:v)"
+                    ),
+                    {"v": vac_ids},
+                )
+                await s.execute(
+                    sa.text("DELETE FROM offer_revision_sources WHERE vacancy_id = ANY(:v)"),
+                    {"v": vac_ids},
+                )
+                await s.execute(
+                    sa.text("DELETE FROM offer_revisions WHERE vacancy_id = ANY(:v)"),
+                    {"v": vac_ids},
+                )
             await s.execute(
                 sa.text(
                     "DELETE FROM source_listing_revisions WHERE incarnation_id IN ("
