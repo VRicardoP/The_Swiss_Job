@@ -363,6 +363,78 @@ def test_concurrent_run_aborts_stale_instead_of_clobbering(db):
     assert st.consecutive_failures == 0  # stale NO cuenta como fallo
 
 
+class DisablingProvider(FakeProvider):
+    """Simula que el scope se DESHABILITA durante el fetch (rev. 2ª #3)."""
+
+    def __init__(self, factory, scope_id):
+        self.factory = factory
+        self.scope_id = scope_id
+
+    async def fetch_new(self, params, cursor, http):
+        async with self.factory() as s:
+            await s.execute(
+                sa.text("UPDATE harvest_scopes SET enabled = false WHERE id = :i"),
+                {"i": self.scope_id},
+            )
+            await s.commit()
+        return await FakeProvider.fetch_new(self, params, cursor, http)
+
+
+class ParamChangingProvider(FakeProvider):
+    """Simula que la keyword cambia durante el fetch (rev. 2ª #3)."""
+
+    SEMANTIC_PARAMS = ("keyword",)
+
+    def __init__(self, factory, scope_id):
+        self.factory = factory
+        self.scope_id = scope_id
+
+    async def fetch_new(self, params, cursor, http):
+        async with self.factory() as s:
+            await s.execute(
+                sa.text(
+                    "UPDATE harvest_scopes SET params = CAST(:p AS jsonb) WHERE id = :i"
+                ),
+                {"p": '{"keyword": "otra"}', "i": self.scope_id},
+            )
+            await s.commit()
+        return await FakeProvider.fetch_new(self, params, cursor, http)
+
+
+def test_disable_during_fetch_aborts_without_persisting(db):
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+
+    async def go():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(500))
+        ) as http:
+            return await run_scope(
+                s1, DisablingProvider(factory, s1), CollectSink(), http, session_factory=factory
+            )
+
+    r = asyncio.run(go())
+    assert r.status == "skipped"  # NO 'ok': la re-validación bajo el lock lo cazó
+    assert _state(factory, s1) is None  # nada persistido
+
+
+def test_param_change_during_fetch_aborts_stale(db):
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+
+    async def go():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(500))
+        ) as http:
+            return await run_scope(
+                s1, ParamChangingProvider(factory, s1), CollectSink(), http, session_factory=factory
+            )
+
+    r = asyncio.run(go())
+    assert r.status == "stale"  # el lote viejo no se persiste bajo config nueva
+    assert _state(factory, s1) is None
+
+
 def test_disabled_scope_is_skipped(db):
     factory, created = db
     (s1,) = _seed_scopes(factory, created, n=1)

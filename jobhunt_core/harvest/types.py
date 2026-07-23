@@ -30,7 +30,9 @@ class FetchResult:
 @dataclass
 class ScopeRunResult:
     scope_id: str
-    status: str  # "ok" | "skipped" | "error"
+    # "ok" · "skipped" (disabled) · "stale" (otro run/config ganó; sin pisar,
+    # no cuenta como fallo) · "error"
+    status: str
     listings: int = 0
     pages: int = 0
     error: str | None = None

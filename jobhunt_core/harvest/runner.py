@@ -74,11 +74,15 @@ async def run_scope(
 
         try:
             # Persistencia + cursor en UNA transacción, con la fila del scope
-            # BLOQUEADA: ningún otro run del mismo scope puede colarse.
+            # BLOQUEADA: ningún otro run del mismo scope puede colarse. Se
+            # re-valida TODA la configuración (no solo el cursor): enabled,
+            # params y fuente pueden cambiar durante el fetch (rev. A-03 #3).
             locked = (
                 await session.execute(
                     sa.text(
-                        "SELECT sss.cursor FROM harvest_scopes hs "
+                        "SELECT hs.enabled, hs.params, s.name AS source_name, sss.cursor "
+                        "FROM harvest_scopes hs "
+                        "JOIN sources s ON s.id = hs.source_id "
                         "LEFT JOIN source_scope_state sss ON sss.scope_id = hs.id "
                         "WHERE hs.id = :sid FOR UPDATE OF hs"
                     ),
@@ -87,11 +91,21 @@ async def run_scope(
             ).one_or_none()
             if locked is None:
                 raise RuntimeError("el scope desapareció durante el run")
-            if locked.cursor != snapshot:
-                # Otro run avanzó el cursor mientras este hacía fetch: abortar
-                # SIN pisar (no es un fallo de la fuente: no cuenta para backoff).
+            if not locked.enabled:
                 await session.rollback()
-                logger.info("scope %s: cursor avanzado por otro run, stale", scope_id)
+                logger.info("scope %s: deshabilitado durante el run, skipped", scope_id)
+                return ScopeRunResult(scope_id=scope_id, status="skipped")
+            stale_reason = None
+            if locked.cursor != snapshot:
+                stale_reason = "cursor avanzado por otro run"
+            elif locked.source_name != provider.name:
+                stale_reason = f"fuente re-apuntada a {locked.source_name!r}"
+            elif provider.params_fingerprint(locked.params or {}) != fingerprint:
+                stale_reason = "parámetros semánticos cambiados durante el fetch"
+            if stale_reason:
+                # Abortar SIN pisar (no es fallo de la fuente: no cuenta backoff).
+                await session.rollback()
+                logger.info("scope %s: %s, stale", scope_id, stale_reason)
                 return ScopeRunResult(scope_id=scope_id, status="stale")
 
             await sink.handle(session, scope_id, result.listings)
