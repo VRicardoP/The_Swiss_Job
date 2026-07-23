@@ -12,6 +12,7 @@ salario/location NO altera el text_hash → NO re-embebe.
 """
 
 import hashlib
+import json
 import logging
 from typing import Callable
 
@@ -69,6 +70,16 @@ def build_offer_text(content: dict) -> str:
         " ".join(content.get("tags") or []),
     ]
     return " ".join(p for p in parts if p)
+
+
+def offer_content_hash(content: dict) -> str:
+    """Hash del CONTENIDO CANÓNICO normalizado (rev. A-06 2ª #2): identifica
+    el RESULTADO del normalizador, no el raw de la fuente — el hash del raw
+    vive en source_listing_revisions. Dos fuentes con el mismo raw pero
+    normalizadores distintos producen canónicas DISTINTAS; la misma canónica
+    desde raws distintos se reutiliza."""
+    raw = json.dumps(content, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def offer_text_hash(content: dict) -> str:

@@ -193,6 +193,11 @@ class RawListingSink:
             session, source_id, by_ext, prep_by_ext
         )
         inc_by_slot = await self._active_incarnations(session, list(slot_by_ext.values()))
+        # TODAS las vacantes con incarnación en el lote (rev. A-06 2ª #1): la
+        # canonicalización y las revisiones deben decidirse BAJO su lock — una
+        # fuente no-primaria que persiste contenido nuevo sin lock puede leer
+        # un primary a punto de cambiar y dejar la canónica obsoleta.
+        batch_vacs = {info[1] for info in inc_by_slot.values()}
 
         # A-05 · nivel EXACTO: contenido cambiado → DECISIÓN de reciclado
         # (ADR-01). Solo decide: el cierre ocurre bajo el lock de vacantes.
@@ -213,14 +218,16 @@ class RawListingSink:
         )
         pre_vacs = await self._attach_candidates(session, source_id, attach_urls)
 
-        # PROTOCOLO DE LOCKS POR VACANTE (rev. A-05 2ª #1/#2): TODO lo que este
-        # run va a MODIFICAR (recicladas — vigentes o no — ∪ candidatas de
-        # attach) se bloquea en UN solo FOR UPDATE ordenado por id (orden
-        # global entre runs → sin deadlock), SIN filtrar vigencia. Cierre,
-        # revalidación del attach y reparación del primary ocurren BAJO estos
-        # locks: cualquier escritor de vacancies (archive/merge/attach/
-        # reciclado) debe usar este mismo protocolo.
-        await self._lock_vacancies(session, set(recycled_vacs) | pre_vacs)
+        # PROTOCOLO DE LOCKS POR VACANTE (rev. A-05 2ª #1/#2 + A-06 2ª #1):
+        # TODO lo que este run va a MODIFICAR U OBSERVAR para decidir —
+        # vacantes del lote (canonicalización/revisiones), recicladas
+        # (vigentes o no) y candidatas de attach — se bloquea en UN solo
+        # FOR UPDATE ordenado por id (orden global entre runs → sin deadlock),
+        # SIN filtrar vigencia. Cierre, revalidación del attach, reparación
+        # del primary, revisiones y canónica ocurren BAJO estos locks:
+        # cualquier escritor de vacancies (archive/merge/attach/reciclado/
+        # canónica) debe usar este mismo protocolo.
+        await self._lock_vacancies(session, batch_vacs | set(recycled_vacs) | pre_vacs)
         await self._close_incarnations(session, recycled_incs)
 
         # REVALIDACIÓN bajo el lock (rev. 2ª #1): se repite el JOIN COMPLETO
@@ -698,7 +705,11 @@ class RawListingSink:
             else:
                 to_point.append(
                     {
-                        "vid": vac_id, "iid": inc_id, "chash": r.content_hash,
+                        # Clave CANÓNICA (rev. 2ª #2): hash del contenido
+                        # normalizado por SU normalizador — el mismo raw en
+                        # otra fuente jamás reutiliza una canónica ajena.
+                        "vid": vac_id, "iid": inc_id,
+                        "chash": normalize.offer_content_hash(content),
                         "slrev": r.slrev_id, "content": content,
                     }
                 )
@@ -979,9 +990,11 @@ class RawListingSink:
           protocolo de locks sin ampliarlo).
         - Listing NO primario con revisión NUEVA: su raw se AGREGA como fuente
           de la revisión canónica vigente sin mover el puntero (ADR-01).
-        - `content_hash` de la canónica = el del raw del primary; `text_hash`
-          SOLO del texto (title/company/description/tags): cambiar salario da
-          OTRA revisión con el MISMO text_hash → NO re-embebe (ADR-02).
+        - `content_hash` de la canónica = hash del contenido NORMALIZADO
+          (rev. 2ª #2: identifica el resultado del normalizador; el hash del
+          raw vive en source_listing_revisions); `text_hash` SOLO del texto:
+          cambiar salario da OTRA revisión con el MISMO text_hash → NO
+          re-embebe (ADR-02).
         """
         cands = [
             (ext, info[0], info[1], prep_by_ext[ext][1])
@@ -1018,53 +1031,72 @@ class RawListingSink:
             if ext in fresh_exts or inc in new_incs
         ]
 
-        # Ids de las offer_revisions existentes para el contenido ACTUAL de
-        # cada primary (pares exactos): lo que falte se crea.
+        # NORMALIZAR SIEMPRE el contenido del primary ANTES de buscar revisión
+        # reutilizable (rev. A-06 2ª #2): la canónica se identifica por el
+        # hash del CONTENIDO NORMALIZADO (offer_content_hash) — el hash del
+        # raw vive en source_listing_revisions y NO identifica el resultado de
+        # un normalizador (mismo raw en dos fuentes ≠ misma canónica; None
+        # JAMÁS resucita una revisión ajena por coincidencia de hash raw).
+        # Coste: una normalización en Python por primary y barrido (dict picks
+        # + coerción) — es lo que hace posible el auto-reparador.
+        primary_canon: dict[str, tuple[str, dict] | None] = {}
+        for ext, _inc, _vac, _chash in primaries:
+            content = normalize.normalize_offer(source_name, by_ext[ext].payload)
+            primary_canon[ext] = (
+                None if content is None
+                else (normalize.offer_content_hash(content), content)
+            )
+
         rev_ids: dict[tuple[str, str], uuid.UUID] = {}
         pointer_rows: list[dict] = []
         null_rows: list[dict] = []
         created_pairs: set[tuple[str, str]] = set()
         if primaries:
-            rev_ids = {
-                (str(r.vacancy_id), r.content_hash): r.id
-                for r in (
-                    await session.execute(
-                        sa.text(
-                            "SELECT o.id, o.vacancy_id, o.content_hash "
-                            "FROM offer_revisions o "
-                            "JOIN unnest(CAST(:vids AS uuid[]), CAST(:hs AS text[])) "
-                            "  AS t(vid, chash) "
-                            "ON o.vacancy_id = t.vid AND o.content_hash = t.chash"
-                        ),
-                        {
-                            "vids": [str(v) for _e, _i, v, _c in primaries],
-                            "hs": [c for _e, _i, _v, c in primaries],
-                        },
-                    )
-                ).all()
-            }
-            entries = []
-            for ext, inc, vac, chash in primaries:
-                if (str(vac), chash) in rev_ids:
-                    continue
-                content = normalize.normalize_offer(source_name, by_ext[ext].payload)
-                if content is None:
-                    # rev. A-06 #2: el contenido ACTUAL del primary no es
-                    # normalizable — la canónica ANTERIOR no puede seguir
-                    # sirviéndose como vigente (API/matching la darían por
-                    # buena indefinidamente mientras last_seen_at se refresca):
-                    # puntero a NULL, CAS condicionado al primary.
+            with_canon = [
+                (ext, inc, vac, primary_canon[ext][0], primary_canon[ext][1])
+                for ext, inc, vac, _c in primaries
+                if primary_canon[ext] is not None
+            ]
+            if with_canon:
+                rev_ids = {
+                    (str(r.vacancy_id), r.content_hash): r.id
+                    for r in (
+                        await session.execute(
+                            sa.text(
+                                "SELECT o.id, o.vacancy_id, o.content_hash "
+                                "FROM offer_revisions o "
+                                "JOIN unnest(CAST(:vids AS uuid[]), CAST(:hs AS text[])) "
+                                "  AS t(vid, chash) "
+                                "ON o.vacancy_id = t.vid AND o.content_hash = t.chash"
+                            ),
+                            {
+                                "vids": [str(v) for _e, _i, v, _ch, _co in with_canon],
+                                "hs": [ch for _e, _i, _v, ch, _co in with_canon],
+                            },
+                        )
+                    ).all()
+                }
+                entries = [
+                    {"vid": vac, "chash": ch, "content": content}
+                    for _ext, _inc, vac, ch, content in with_canon
+                    if (str(vac), ch) not in rev_ids
+                ]
+                if entries:
+                    created_pairs = {(str(e["vid"]), e["chash"]) for e in entries}
+                    rev_ids.update(await self._ensure_offer_revisions(session, entries))
+            for ext, inc, vac, _chash in primaries:
+                pc = primary_canon[ext]
+                if pc is None:
+                    # rev. A-06 #2 + 2ª #2: contenido ACTUAL no normalizable —
+                    # la canónica anterior no puede seguir vigente (se serviría
+                    # obsoleta con last_seen fresco) NI resucitarse otra por
+                    # hash: puntero a NULL, CAS condicionado al primary.
                     if vac_rows[vac].current_offer_revision_id is not None:
                         null_rows.append({"vid": vac, "iid": inc})
                     continue
-                entries.append({"vid": vac, "chash": chash, "content": content})
-            if entries:
-                created_pairs = {(str(e["vid"]), e["chash"]) for e in entries}
-                rev_ids.update(await self._ensure_offer_revisions(session, entries))
-            for ext, inc, vac, chash in primaries:
-                rev_id = rev_ids.get((str(vac), chash))
-                if rev_id is None or vac_rows[vac].cur_chash == chash:
-                    continue  # sin revisión (normalización fallida) o ya vigente
+                rev_id = rev_ids.get((str(vac), pc[0]))
+                if rev_id is None or vac_rows[vac].cur_chash == pc[0]:
+                    continue  # sin revisión (carrera) o ya vigente
                 pointer_rows.append({"rid": rev_id, "vid": vac, "iid": inc})
             if pointer_rows:
                 pointer_rows.sort(key=lambda r: str(r["vid"]))
@@ -1093,9 +1125,11 @@ class RawListingSink:
         # SIN fuente para siempre). En régimen estable: cero escrituras.
         agg_exts = {ext for ext, _i, _v, _c in fresh_pairs}
         agg_pairs = list(fresh_pairs) + [
-            (ext, inc, vac, chash)
+            (ext, inc, vac, chash)  # chash RAW: la clave del slrev
             for ext, inc, vac, chash in primaries
-            if (str(vac), chash) in created_pairs and ext not in agg_exts
+            if primary_canon.get(ext) is not None
+            and (str(vac), primary_canon[ext][0]) in created_pairs
+            and ext not in agg_exts
         ]
         if not agg_pairs:
             return
@@ -1127,7 +1161,8 @@ class RawListingSink:
             if slrev_id is None or row is None:
                 continue
             if row.primary_incarnation_id == inc:
-                rev_id = rev_ids.get((str(vac), chash))
+                pc = primary_canon.get(ext)
+                rev_id = rev_ids.get((str(vac), pc[0])) if pc else None
             else:
                 # NO primario: agrega a la canónica VIGENTE sin mover puntero.
                 rev_id = new_current.get(vac, row.current_offer_revision_id)

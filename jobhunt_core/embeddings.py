@@ -13,6 +13,7 @@
 """
 
 import logging
+import re
 import threading
 import uuid
 
@@ -25,6 +26,11 @@ logger = logging.getLogger(__name__)
 # Dimensión de la columna vector en Fase A (ADR-02): otra dimensión = nuevo
 # ciclo expand/contract, JAMÁS reutilizar la columna.
 EMBED_DIM = 384
+
+# version = commit SHA de HF (rev. A-06 2ª #3): una ref MÓVIL (main/tag)
+# resolvería a pesos distintos tras un reinicio del worker — espacios
+# vectoriales diferentes bajo el mismo model_id.
+_SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 class SentenceTransformerBackend:
@@ -93,6 +99,12 @@ async def register_model(
         raise ValueError(
             f"dim={dim}: la columna de Fase A es vector({EMBED_DIM}); otra "
             "dimensión requiere expand/contract (ADR-02)"
+        )
+    if not _SHA40_RE.fullmatch(version):
+        raise ValueError(
+            f"version {version!r} debe ser un commit SHA INMUTABLE (40 hex) del "
+            "modelo: una ref móvil (main/tag) resolvería a pesos distintos bajo "
+            "el mismo model_id (rev. A-06 2ª #3)"
         )
     await session.execute(
         sa.text(

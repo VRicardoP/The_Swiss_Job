@@ -16,9 +16,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 import jobhunt_core.harvest.providers  # noqa: F401 — registra extractor/normalizador
 from jobhunt_core import embeddings
 from jobhunt_core.config import settings
-from jobhunt_core.harvest.normalize import offer_text_hash
+from jobhunt_core.harvest.normalize import offer_content_hash, offer_text_hash
 from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.harvest.types import RawListing
+
+SHA_A, SHA_B, SHA_C, SHA_D = "a" * 40, "b" * 40, "c" * 40, "d" * 40
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("CORE_ADMIN_DATABASE_URL"),
@@ -203,7 +205,7 @@ def _vacancy_state(factory, ext):
     )[0]
 
 
-def _register(factory, created, name="modelo-test", version="1"):
+def _register(factory, created, name="modelo-test", version=SHA_A):
     async def go():
         async with factory() as s:
             mid = await embeddings.register_model(s, name, version)
@@ -227,15 +229,9 @@ def test_primary_revision_creates_canonical_and_pointer(db):
     assert st.content["company"] == "ACME AG"
     assert st.content["tags"] == ["py", "sql"]
     assert st.text_hash == offer_text_hash(st.content)
-    # content_hash de la canónica = el del raw del primary.
-    raw_ch = _rows(
-        factory,
-        "SELECT r.content_hash FROM source_listing_revisions r "
-        "JOIN source_listing_incarnations i ON i.id = r.incarnation_id "
-        "JOIN source_listings l ON l.id = i.source_listing_id "
-        "WHERE l.external_id = 'j1'",
-    )
-    assert st.content_hash == raw_ch[0][0]
+    # content_hash de la canónica = hash del contenido NORMALIZADO (rev.
+    # 2ª #2): identifica el resultado del normalizador, no el raw.
+    assert st.content_hash == offer_content_hash(st.content)
     # La revisión raw quedó agregada como fuente de la canónica.
     srcs = _rows(
         factory,
@@ -347,17 +343,17 @@ def test_embedding_task_by_text_hash_no_reembed_and_optimistic(db):
     try:
         r1 = run_pending_task.apply(kwargs={"limit": 50})
         assert r1.successful()
-        assert r1.result["embedded"]["modelo-test/1"] == 2
+        assert r1.result["embedded"][f"modelo-test/{SHA_A}"] == 2
 
         # location cambia → revisión nueva, MISMO text_hash → nada pendiente.
         _sink(factory, scope, [_listing("j1", location="Basilea")])
         r2 = run_pending_task.apply(kwargs={"limit": 50})
-        assert r2.result["embedded"]["modelo-test/1"] == 0
+        assert r2.result["embedded"][f"modelo-test/{SHA_A}"] == 0
 
         # título cambia → text_hash nuevo → un embedding más.
         _sink(factory, scope, [_listing("j2", title="Data Engineer Sr")])
         r3 = run_pending_task.apply(kwargs={"limit": 50})
-        assert r3.result["embedded"]["modelo-test/1"] == 1
+        assert r3.result["embedded"][f"modelo-test/{SHA_A}"] == 1
     finally:
         embeddings.set_backend_factory(None)
 
@@ -465,7 +461,7 @@ def test_task_skips_model_with_wrong_dimension(db):
     try:
         r = run_pending_task.apply(kwargs={"limit": 50})
         assert r.successful()  # sin excepción
-        assert r.result["embedded"] == {"modelo-test/1": 1}  # rogue SALTADO
+        assert r.result["embedded"] == {f"modelo-test/{SHA_A}": 1}  # rogue SALTADO
     finally:
         embeddings.set_backend_factory(None)
 
@@ -562,8 +558,8 @@ def test_two_active_models_use_distinct_backends(db):
     factory, created = db
     scope = _seed(factory, created, "arbeitnow")
     _sink(factory, scope, [_listing("j1")])
-    _register(factory, created, name="modelo-uno", version="1")
-    _register(factory, created, name="modelo-dos", version="7")
+    _register(factory, created, name="modelo-uno", version=SHA_B)
+    _register(factory, created, name="modelo-dos", version=SHA_C)
 
     seen: list[tuple[str, str]] = []
 
@@ -582,10 +578,10 @@ def test_two_active_models_use_distinct_backends(db):
     try:
         r = run_pending_task.apply(kwargs={"limit": 50})
         assert r.successful()
-        assert r.result["embedded"] == {"modelo-uno/1": 1, "modelo-dos/7": 1}
+        assert r.result["embedded"] == {f"modelo-uno/{SHA_B}": 1, f"modelo-dos/{SHA_C}": 1}
     finally:
         embeddings.set_backend_factory(None)
-    assert sorted(seen) == [("modelo-dos", "7"), ("modelo-uno", "1")]
+    assert sorted(seen) == [("modelo-dos", SHA_C), ("modelo-uno", SHA_B)]
     vecs = _rows(
         factory,
         "SELECT DISTINCT vector::text AS v FROM offer_embeddings "
@@ -607,9 +603,9 @@ def test_register_model_rejects_existing_dim_mismatch_and_updates_active(db):
             await s.execute(
                 sa.text(
                     "INSERT INTO embedding_models (id, name, version, dim, active) "
-                    "VALUES (:id, 'legacy512', '1', 512, TRUE)"
+                    "VALUES (:id, 'legacy512', :ver, 512, TRUE)"
                 ),
-                {"id": mid},
+                {"id": mid, "ver": SHA_D},
             )
             await s.commit()
 
@@ -617,7 +613,7 @@ def test_register_model_rejects_existing_dim_mismatch_and_updates_active(db):
 
     async def re_register():
         async with factory() as s:
-            await embeddings.register_model(s, "legacy512", "1", dim=384)
+            await embeddings.register_model(s, "legacy512", SHA_D, dim=384)
 
     with pytest.raises(ValueError, match="INMUTABLE"):
         asyncio.run(re_register())
@@ -626,12 +622,173 @@ def test_register_model_rejects_existing_dim_mismatch_and_updates_active(db):
 
     async def deactivate():
         async with factory() as s:
-            await embeddings.register_model(s, "modelo-test", "1", active=False)
+            await embeddings.register_model(s, "modelo-test", SHA_A, active=False)
             await s.commit()
 
     asyncio.run(deactivate())
     row = _rows(factory, "SELECT active FROM embedding_models WHERE id = :m", m=mid)
     assert row[0].active is False
+
+    # Rev. 2ª #3: una ref MÓVIL jamás se registra.
+    async def mobile_ref():
+        async with factory() as s:
+            await embeddings.register_model(s, "otro", "main")
+
+    with pytest.raises(ValueError, match="SHA"):
+        asyncio.run(mobile_ref())
+
+
+OTHERBOARD_NORMALIZER = lambda raw: {  # noqa: E731 — normalizador de test
+    "title": raw.get("title"), "company": raw.get("company_name"),
+    "description": raw.get("description"), "tags": raw.get("tags"),
+    "location": raw.get("location"), "remote": None, "salary": None,
+}
+
+
+def _with_otherboard(normalizer=OTHERBOARD_NORMALIZER):
+    """Registra extractor(+normalizador) de 'otherboard'; devuelve el undo."""
+    from jobhunt_core.harvest import identity as identity_mod
+    from jobhunt_core.harvest import normalize as normalize_mod
+
+    identity_mod.register_extractor(
+        "otherboard", lambda p: (p.get("title"), p.get("company_name"))
+    )
+    if normalizer is not None:
+        normalize_mod.register_normalizer("otherboard", normalizer)
+
+    def undo():
+        identity_mod._EXTRACTORS.pop("otherboard", None)
+        normalize_mod._NORMALIZERS.pop("otherboard", None)
+
+    return undo
+
+
+def test_nonprimary_new_content_during_repair_blocks_and_repoints(db):
+    """Rev. A-06 2ª #1 (repro determinista): A recicla y reconstruye la
+    canónica desde el raw ANTIGUO de B mientras retiene los locks; B persiste
+    contenido NUEVO en paralelo — con el lock de TODAS las vacantes del lote,
+    B queda BLOQUEADO (verificado con pg_blocking_pids), y al entrar ya ve el
+    primary nuevo (él mismo) → repunta a 'B NUEVO'. Sin el lock, la canónica
+    quedaba en 'B antiguo' con la última revisión de B más nueva."""
+    import jobhunt_core.tests.test_integration_identity as ident_tests
+
+    factory, created = db
+    scope_a = _seed(factory, created, "arbeitnow")
+    scope_b = _seed(factory, created, "otherboard")
+    undo = _with_otherboard()
+    try:
+        _sink(factory, scope_a, [_listing("a1", title="Contenido de A", url="https://x/shared")])
+        _sink(factory, scope_b, [_listing("b1", title="B antiguo", url="https://x/shared")])
+        v_shared = _vacancy_state(factory, "b1").vac
+
+        async def race():
+            sink_a = ident_tests.PausingSink("close")
+            pids: dict[str, int] = {}
+
+            async def run(name, sink, scope_id, listing):
+                async with factory() as s:
+                    pids[name] = (
+                        await s.execute(sa.text("SELECT pg_backend_pid()"))
+                    ).scalar_one()
+                    await sink.handle(s, scope_id, (listing,))
+                    await s.commit()
+
+            task_a = asyncio.create_task(run(
+                "a", sink_a, scope_a,
+                _listing("a1", title="Otra", company="Umbrella GmbH", url="https://x/shared"),
+            ))
+            await sink_a.hit.wait()  # A cerró su incarnación, locks en mano
+            task_b = asyncio.create_task(run(
+                "b", RawListingSink(), scope_b,
+                _listing("b1", title="B NUEVO", url="https://x/shared"),
+            ))
+            # Espera VERIFICADA: B bloqueado POR A (lock de vacantes del lote).
+            async with factory() as s:
+                for _ in range(200):
+                    if "b" in pids:
+                        blocking = (
+                            await s.execute(
+                                sa.text("SELECT pg_blocking_pids(:pid)"),
+                                {"pid": pids["b"]},
+                            )
+                        ).scalar_one()
+                        if pids["a"] in (blocking or []):
+                            break
+                    await asyncio.sleep(0.05)
+                else:
+                    raise AssertionError("B nunca quedó bloqueado por A")
+            sink_a.resume.set()
+            await task_a
+            await task_b
+
+        asyncio.run(race())
+        row = _rows(
+            factory,
+            "SELECT o.content->>'title' AS title FROM vacancies v "
+            "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
+            "WHERE v.id = :v", v=v_shared,
+        )
+        assert row[0].title == "B NUEVO"  # jamás 'B antiguo' con B más nuevo
+    finally:
+        undo()
+
+
+def test_same_raw_different_normalizer_distinct_canonical(db):
+    """Rev. A-06 2ª #2a (repro): A y B emiten un raw IDÉNTICO pero el
+    normalizador de B produce otro contenido ('B:...') — tras reparar hacia
+    B, la canónica es la de SU normalizador, jamás la reutilizada de A por
+    coincidencia del hash raw."""
+    factory, created = db
+    scope_a = _seed(factory, created, "arbeitnow")
+    scope_b = _seed(factory, created, "otherboard")
+    undo = _with_otherboard(
+        lambda raw: {
+            "title": "B:" + (raw.get("title") or ""), "company": raw.get("company_name"),
+            "description": raw.get("description"), "tags": raw.get("tags"),
+            "location": raw.get("location"), "remote": None, "salary": None,
+        }
+    )
+    try:
+        mismo = dict(title="Mismo raw", company="ACME AG", desc="d", tags=["t"], location="Z")
+        _sink(factory, scope_a, [_listing("a1", url="https://x/shared", **mismo)])
+        _sink(factory, scope_b, [_listing("b1", url="https://x/shared", **mismo)])
+        v_shared = _vacancy_state(factory, "b1").vac
+        # A recicla → primary pasa a B → canónica reconstruida con SU normalizador.
+        _sink(factory, scope_a, [_listing("a1", title="Otra", company="Umbrella GmbH", url="https://x/shared")])
+        row = _rows(
+            factory,
+            "SELECT o.content->>'title' AS title FROM vacancies v "
+            "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
+            "WHERE v.id = :v", v=v_shared,
+        )
+        assert row[0].title == "B:Mismo raw"
+    finally:
+        undo()
+
+
+def test_repair_null_is_not_resurrected_by_next_harvest(db):
+    """Rev. A-06 2ª #2b (repro): B sin normalizador + raw IDÉNTICO al de A.
+    Tras reparar → NULL; el SIGUIENTE barrido de B no puede resucitar la
+    canónica de A por coincidencia del hash raw: sigue NULL."""
+    factory, created = db
+    scope_a = _seed(factory, created, "arbeitnow")
+    scope_b = _seed(factory, created, "otherboard")  # SIN normalizador
+    mismo = dict(title="Mismo raw", company="ACME AG", desc="d", tags=["t"], location="Z")
+    _sink(factory, scope_a, [_listing("a1", url="https://x/shared", **mismo)])
+    _sink(factory, scope_b, [_listing("b1", url="https://x/shared", **mismo)])
+    v_shared = _vacancy_state(factory, "b1").vac
+    _sink(factory, scope_a, [_listing("a1", title="Otra", company="Umbrella GmbH", url="https://x/shared")])
+
+    def cur():
+        return _rows(
+            factory,
+            "SELECT current_offer_revision_id AS c FROM vacancies WHERE id = :v",
+            v=v_shared,
+        )[0].c
+
+    assert cur() is None  # reparación: sin normalizador → NULL
+    _sink(factory, scope_b, [_listing("b1", url="https://x/shared", **mismo)])  # re-barrido
+    assert cur() is None  # NO resucitada por el hash raw de A
 
 
 def test_concurrent_stores_same_hash_single_row(db):
