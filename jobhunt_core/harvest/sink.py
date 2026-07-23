@@ -205,29 +205,36 @@ class RawListingSink:
             del inc_by_slot[slot_id]  # se cierra bajo el lock y reabre abajo
         orphans = [s for s in slot_by_ext.values() if s not in inc_by_slot]
 
-        # Candidatas de attach (nivel 2) SIN lock: pre-selección barata.
+        # Candidatas de attach (nivel 2) SIN lock: pre-selección barata que
+        # solo determina QUÉ vacantes bloquear.
         ext_by_slot = {v: k for k, v in slot_by_ext.items()}
-        attach_by_urln = await self._attach_candidates(
-            session, source_id,
-            sorted({prep_by_ext[ext_by_slot[s]][2] for s in orphans if s not in set(recycled)}),
+        attach_urls = sorted(
+            {prep_by_ext[ext_by_slot[s]][2] for s in orphans if s not in set(recycled)}
         )
+        pre_vacs = await self._attach_candidates(session, source_id, attach_urls)
 
-        # PROTOCOLO DE LOCKS POR VACANTE (rev. A-05 #1/#2): TODAS las vacantes
-        # que este run va a tocar (recicladas ∪ candidatas de attach) se
-        # bloquean en UN solo FOR UPDATE ordenado por id (orden global entre
-        # runs → sin deadlock) y se REVALIDA su vigencia bajo el lock: un
-        # archive/merge que commiteó tras la pre-selección la expulsa del
-        # attach (EPQ re-evalúa el WHERE) → vacante nueva. Cierre de
-        # incarnaciones y reparación del primary ocurren BAJO estos locks:
-        # cualquier escritor de vacancies (archive/merge/attach/reciclado)
-        # debe usar este mismo protocolo.
-        still_active = await self._lock_vacancies(
-            session, list(set(recycled_vacs) | set(attach_by_urln.values()))
-        )
-        attach_by_urln = {
-            u: v for u, v in attach_by_urln.items() if v in still_active
-        }
+        # PROTOCOLO DE LOCKS POR VACANTE (rev. A-05 2ª #1/#2): TODO lo que este
+        # run va a MODIFICAR (recicladas — vigentes o no — ∪ candidatas de
+        # attach) se bloquea en UN solo FOR UPDATE ordenado por id (orden
+        # global entre runs → sin deadlock), SIN filtrar vigencia. Cierre,
+        # revalidación del attach y reparación del primary ocurren BAJO estos
+        # locks: cualquier escritor de vacancies (archive/merge/attach/
+        # reciclado) debe usar este mismo protocolo.
+        await self._lock_vacancies(session, set(recycled_vacs) | pre_vacs)
         await self._close_incarnations(session, recycled_incs)
+
+        # REVALIDACIÓN bajo el lock (rev. 2ª #1): se repite el JOIN COMPLETO
+        # (incarnación ACTIVA de otra fuente + vacante VIGENTE + misma URL)
+        # restringido a las candidatas ya bloqueadas — si la relación que
+        # justificó el attach ya no se cumple (p.ej. la otra fuente RECICLÓ su
+        # incarnación y la vacante quedó nominalmente activa pero vacía), la
+        # candidata cae: vacante propia y el drift la deja como candidato.
+        # Nunca se usa el resultado obsoleto de la pre-selección.
+        attach_by_urln: dict[str, uuid.UUID] = {}
+        for r in await self._attach_join(
+            session, source_id, attach_urls, candidates=pre_vacs
+        ):
+            attach_by_urln.setdefault(r.urln, r.vacancy_id)
 
         # A-05 · nivel 2 (cross-source por url_normalized) + creación. Los
         # slots RECICLADOS jamás se attachean (ADR-01: reciclado = vacante
@@ -413,52 +420,51 @@ class RawListingSink:
                 fresh_exts.add(ext)
         return fresh_exts, recycled
 
-    async def _attach_candidates(self, session, source_id, urls) -> dict:
-        """Pre-selección de attach (nivel 2) SIN lock: vacantes ACTIVAS de
-        otras fuentes con la misma URL normalizada (índice core0003). Empate
-        multi-fuente → min(vacancy_id) determinista. La VIGENCIA se revalida
-        después bajo el lock de vacante (rev. #1)."""
+    async def _attach_join(self, session, source_id, urls, candidates=None):
+        """JOIN completo del nivel 2: incarnación ACTIVA de OTRA fuente sobre
+        vacante VIGENTE con la misma URL normalizada (índice core0003). Con
+        `candidates` se restringe a vacantes YA bloqueadas (revalidación, rev.
+        2ª #1). Orden (urln, vacancy_id): empate multi-fuente → min
+        determinista."""
         if not urls:
-            return {}
-        attach_by_urln: dict[str, uuid.UUID] = {}
-        for r in (
-            await session.execute(
-                sa.text(
-                    "SELECT sl.url_normalized AS urln, i.vacancy_id "
-                    "FROM source_listings sl "
-                    "JOIN source_listing_incarnations i "
-                    "  ON i.source_listing_id = sl.id AND i.ended_at IS NULL "
-                    "JOIN vacancies v ON v.id = i.vacancy_id "
-                    "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
-                    "WHERE sl.url_normalized = ANY(:urls) AND sl.source_id != :src "
-                    "ORDER BY sl.url_normalized, i.vacancy_id"
-                ),
-                {"urls": urls, "src": source_id},
-            )
-        ).all():
-            attach_by_urln.setdefault(r.urln, r.vacancy_id)
-        return attach_by_urln
+            return []
+        sql = (
+            "SELECT sl.url_normalized AS urln, i.vacancy_id "
+            "FROM source_listings sl "
+            "JOIN source_listing_incarnations i "
+            "  ON i.source_listing_id = sl.id AND i.ended_at IS NULL "
+            "JOIN vacancies v ON v.id = i.vacancy_id "
+            "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
+            "WHERE sl.url_normalized = ANY(:urls) AND sl.source_id != :src "
+        )
+        params = {"urls": urls, "src": source_id}
+        if candidates is not None:
+            sql += "AND i.vacancy_id = ANY(:cands) "
+            params["cands"] = sorted(candidates, key=str)
+        sql += "ORDER BY sl.url_normalized, i.vacancy_id"
+        return (await session.execute(sa.text(sql), params)).all()
 
-    async def _lock_vacancies(self, session, vacancy_ids) -> set:
-        """Bloquea las vacantes en orden GLOBAL determinista (ORDER BY id,
-        FOR UPDATE) y devuelve las que siguen VIGENTES bajo el lock: si un
-        archive/merge concurrente commiteó primero, EPQ re-evalúa el WHERE
-        sobre la versión nueva y la fila cae del resultado (rev. #1). Las no
-        vigentes no se bloquean — tampoco hace falta: ya no se attachea."""
+    async def _attach_candidates(self, session, source_id, urls) -> set:
+        """Pre-selección SIN lock (rev. 2ª #1): SOLO determina qué vacantes
+        bloquear. La decisión real de attach es la REVALIDACIÓN posterior del
+        join completo bajo el lock — jamás este resultado."""
+        return {r.vacancy_id for r in await self._attach_join(session, source_id, urls)}
+
+    async def _lock_vacancies(self, session, vacancy_ids) -> None:
+        """Bloquea TODAS las vacantes que el run va a MODIFICAR, en orden
+        GLOBAL determinista (ORDER BY id, FOR UPDATE) y SIN filtrar vigencia
+        (rev. 2ª #2): una reciclada archivada/fundida también se cierra y
+        repara — dos runs concurrentes sobre ella deben serializarse igual.
+        La ELEGIBILIDAD de attach se decide aparte (revalidación del join)."""
         if not vacancy_ids:
-            return set()
-        rows = (
-            await session.execute(
-                sa.text(
-                    "SELECT id FROM vacancies "
-                    "WHERE id = ANY(:ids) "
-                    "AND archived_at IS NULL AND merged_into IS NULL "
-                    "ORDER BY id FOR UPDATE"
-                ),
-                {"ids": sorted(set(vacancy_ids), key=str)},
-            )
-        ).all()
-        return {r.id for r in rows}
+            return
+        await session.execute(
+            sa.text(
+                "SELECT id FROM vacancies WHERE id = ANY(:ids) "
+                "ORDER BY id FOR UPDATE"
+            ),
+            {"ids": sorted(set(vacancy_ids), key=str)},
+        )
 
     async def _close_incarnations(self, session, incarnation_ids) -> None:
         """Cierra las incarnaciones recicladas — SIEMPRE después de

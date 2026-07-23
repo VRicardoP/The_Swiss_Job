@@ -412,10 +412,35 @@ def test_merged_vacancy_excluded_from_attach(db):
     assert [(r.state, float(r.similarity)) for r in cands] == [("pending", 0.9)]
 
 
+class PausingSink(RawListingSink):
+    """Sink instrumentado (rev. 2ª #3): pausa en el punto EXACTO del protocolo
+    para FIJAR la intercalación — nada de sleeps para sincronizar."""
+
+    def __init__(self, pause_after: str):
+        self._pause_after = pause_after
+        self.hit = asyncio.Event()
+        self.resume = asyncio.Event()
+
+    async def _pause(self, point):
+        if self._pause_after == point:
+            self.hit.set()
+            await self.resume.wait()
+
+    async def _attach_candidates(self, *args, **kwargs):
+        out = await super()._attach_candidates(*args, **kwargs)
+        await self._pause("preselect")
+        return out
+
+    async def _close_incarnations(self, *args, **kwargs):
+        out = await super()._close_incarnations(*args, **kwargs)
+        await self._pause("close")
+        return out
+
+
 def test_concurrent_archive_vs_attach_revalidates_under_lock(db):
-    """Rev. A-05 2ª #1 (repro): el archive commitea DESPUÉS de la pre-selección
-    del attach — el protocolo de locks por vacante (FOR UPDATE ordenado +
-    revalidación EPQ) expulsa la vacante y b1 obtiene la suya propia. Jamás
+    """Rev. A-05 2ª #1/#3 (determinista): B pausa JUSTO tras la pre-selección
+    (donde vio la vacante activa); el archive commitea; al reanudar, lock +
+    revalidación del join expulsan la vacante → B crea la suya propia. Jamás
     contenido vivo enlazado a una vacante inactiva."""
     factory, created = db
     scope_a = _seed(factory, created, "arbeitnow")
@@ -424,28 +449,144 @@ def test_concurrent_archive_vs_attach_revalidates_under_lock(db):
     vac_a = _incs(factory, "a1")[0].vacancy_id
 
     async def race():
+        sink_b = PausingSink("preselect")
+
+        async def run_b():
+            async with factory() as s:
+                await sink_b.handle(s, scope_b, (_listing("b1", url="https://x/shared"),))
+                await s.commit()
+
+        task = asyncio.create_task(run_b())
+        await sink_b.hit.wait()  # B ya pre-seleccionó vac_a como candidata
         async with factory() as s1:
-            # s1 archiva SIN commitear: el sink de B esperará en el FOR UPDATE.
             await s1.execute(
                 sa.text("UPDATE vacancies SET archived_at = now() WHERE id = :v"),
                 {"v": vac_a},
             )
-
-            async def run_sink():
-                async with factory() as s2:
-                    await RawListingSink().handle(
-                        s2, scope_b, (_listing("b1", url="https://x/shared"),)
-                    )
-                    await s2.commit()
-
-            task = asyncio.create_task(run_sink())
-            await asyncio.sleep(0.4)  # el sink alcanza el lock y queda esperando
-            await s1.commit()  # el archive gana; el sink revalida bajo el lock
-            await task
+            await s1.commit()
+        sink_b.resume.set()
+        await task
 
     asyncio.run(race())
-    vac_b = _incs(factory, "b1")[0].vacancy_id
-    assert vac_b != vac_a  # revalidado: vacante propia, no la archivada
+    assert _incs(factory, "b1")[0].vacancy_id != vac_a  # revalidado: propia
+
+
+def test_attach_revalidates_relation_after_concurrent_recycle(db):
+    """Rev. A-05 2ª #1 (repro determinista): B pre-selecciona la vacante de A
+    por URL; A RECICLA su única incarnación (la vacante queda nominalmente
+    activa pero VACÍA, con primary cerrado); al reanudar, la revalidación del
+    JOIN COMPLETO (incarnación activa incluida) la expulsa → vacante propia."""
+    factory, created = db
+    scope_a = _seed(factory, created, "arbeitnow")
+    scope_b = _seed(factory, created, "otherboard")
+    _sink(factory, scope_a, [_listing("a1", company="ACME AG", url="https://x/shared", v=1)])
+    vac_a = _incs(factory, "a1")[0].vacancy_id
+
+    async def race():
+        sink_b = PausingSink("preselect")
+
+        async def run_b():
+            async with factory() as s:
+                await sink_b.handle(s, scope_b, (_listing("b1", url="https://x/shared"),))
+                await s.commit()
+
+        task = asyncio.create_task(run_b())
+        await sink_b.hit.wait()
+        # A recicla COMPLETO (cierra su única incarnación de vac_a) y commitea.
+        async with factory() as s:
+            await RawListingSink().handle(
+                s, scope_a,
+                (_listing("a1", company="Umbrella GmbH", url="https://x/shared", v=2),),
+            )
+            await s.commit()
+        sink_b.resume.set()
+        await task
+
+    asyncio.run(race())
+    assert _incs(factory, "b1")[0].vacancy_id != vac_a  # relación rota: propia
+    activas = _one(
+        factory,
+        "SELECT count(*) AS n FROM source_listing_incarnations "
+        "WHERE vacancy_id = :v AND ended_at IS NULL",
+        v=vac_a,
+    )
+    assert activas[0].n == 0  # la vieja quedó vacía: nadie se re-attacheó
+
+
+def test_archived_shared_vacancy_concurrent_recycles_serialize(db):
+    """Rev. A-05 2ª #2 (repro determinista): la vacante compartida por TRES
+    fuentes está ARCHIVADA. El lock NO filtra vigencia: A pausa tras SU cierre
+    con los locks en mano y B queda BLOQUEADO antes de poder cerrar (se
+    afirma) — serializados, el primary termina en la única incarnación activa
+    (la de C) también en la vacante archivada."""
+    from jobhunt_core.harvest import identity as identity_mod
+
+    factory, created = db
+    scope_a = _seed(factory, created, "arbeitnow")
+    scope_b = _seed(factory, created, "otherboard")
+    scope_c = _seed(factory, created, "thirdboard")
+    identity_mod.register_extractor(
+        "otherboard", lambda p: (p.get("title"), p.get("company_name"))
+    )
+    try:
+        _sink(factory, scope_a, [_listing("a1", company="ACME AG", url="https://x/shared", v=1)])
+        _sink(factory, scope_b, [_listing("b1", company="ACME AG", url="https://x/shared", v=1)])
+        _sink(factory, scope_c, [_listing("c1", url="https://x/shared", v=1)])
+        v_shared = _incs(factory, "a1")[0].vacancy_id
+        c1_inc = _incs(factory, "c1")[0]
+
+        async def archive():
+            async with factory() as s:
+                await s.execute(
+                    sa.text("UPDATE vacancies SET archived_at = now() WHERE id = :v"),
+                    {"v": v_shared},
+                )
+                await s.commit()
+
+        asyncio.run(archive())
+
+        async def race():
+            sink_a = PausingSink("close")
+            sink_b = PausingSink("close")
+
+            async def run(sink, scope_id, listing):
+                async with factory() as s:
+                    await sink.handle(s, scope_id, (listing,))
+                    await s.commit()
+
+            task_a = asyncio.create_task(run(
+                sink_a, scope_a,
+                _listing("a1", company="Umbrella GmbH", url="https://x/shared", v=2),
+            ))
+            await sink_a.hit.wait()  # A cerró SU incarnación, locks en mano
+            task_b = asyncio.create_task(run(
+                sink_b, scope_b,
+                _listing("b1", company="Zombo Corp", url="https://x/shared", v=2),
+            ))
+            await asyncio.sleep(0.3)  # margen para que B alcance el lock
+            # SERIALIZACIÓN: B no ha podido llegar a su cierre — está esperando
+            # el lock de vacante que A retiene (sin el fix #2, la archivada no
+            # se bloqueaba y B pasaba de largo: este assert falla).
+            assert not sink_b.hit.is_set()
+            sink_a.resume.set()
+            await task_a
+            await sink_b.hit.wait()  # ahora B tiene los locks y cerró la suya
+            sink_b.resume.set()
+            await task_b
+
+        asyncio.run(race())
+
+        rows = _one(
+            factory,
+            "SELECT v.primary_incarnation_id, i.ended_at "
+            "FROM vacancies v JOIN source_listing_incarnations i "
+            "ON i.id = v.primary_incarnation_id WHERE v.id = :v",
+            v=v_shared,
+        )
+        assert rows[0].ended_at is None  # primary = incarnación ACTIVA
+        assert rows[0].primary_incarnation_id == c1_inc.id  # la de C
+    finally:
+        identity_mod._EXTRACTORS.pop("otherboard", None)
 
 
 def test_three_source_concurrent_recycle_repairs_primary_under_lock(db):
