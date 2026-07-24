@@ -169,6 +169,29 @@ async def purge_source_graph(
         )
 
 
+async def purge_shadow(
+    s: AsyncSession,
+    set_ids: Sequence[uuid.UUID] = (),
+    dedup_refs: Sequence[str] = (),
+) -> None:
+    """Tablas de B-03: los juicios caen por ON DELETE CASCADE de labeled_sets;
+    los pares dedup no cuelgan de ningún set — se borran por job_ref."""
+    sets = list(set_ids)
+    if sets:
+        await s.execute(
+            sa.text("DELETE FROM labeled_sets WHERE id = ANY(:i)"), {"i": sets}
+        )
+    refs = list(dedup_refs)
+    if refs:
+        await s.execute(
+            sa.text(
+                "DELETE FROM labeled_dedup_pairs "
+                "WHERE job_ref_a = ANY(:r) OR job_ref_b = ANY(:r)"
+            ),
+            {"r": refs},
+        )
+
+
 async def purge_policies(s: AsyncSession, policy_ids: Sequence[uuid.UUID]) -> None:
     if not policy_ids:
         return
