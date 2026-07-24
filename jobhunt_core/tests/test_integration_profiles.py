@@ -566,26 +566,63 @@ def _run_rows(factory, sql, **params):
     return asyncio.run(go())
 
 
-def test_core0004_backfills_preexisting_revisions(db):
-    """Rev. A-07 2ª #1 (repro): revisiones creadas ANTES de core0004 quedaban
-    sin activación → sin vigente y fuera del worker. Test REAL de migración:
-    downgrade a core0003 → seed pre-migración → upgrade → el backfill activa
-    preservando la ordenación antigua (created_at, id) y el perfil vuelve a
-    ser visible (vigente + pendiente de embedding)."""
+def test_core0004_backfills_preexisting_revisions():
+    """Rev. A-07 2ª #1 + 3ª #1: revisiones creadas ANTES de core0004 quedaban
+    sin activación → sin vigente y fuera del worker. Test REAL de migración
+    sobre una BD DESECHABLE (jamás la compartida de la suite — un downgrade
+    allí destruiría reactivaciones históricas ajenas): crear desde vacío →
+    core0003 → seed pre-migración → head → verificar vigente y pendiente →
+    destruir."""
+    import os
     import subprocess
+    from urllib.parse import urlsplit, urlunsplit
 
-    factory, created = db
-    subprocess.run(
-        ["alembic", "-c", "jobhunt_core/alembic.ini", "downgrade", "core0003"],
-        check=True, capture_output=True,
+    # La URL admin es síncrona (psycopg2): normalizar a asyncpg para el test.
+    admin_url = os.environ["CORE_ADMIN_DATABASE_URL"].replace(
+        "postgresql://", "postgresql+asyncpg://"
     )
+    dbname = f"jobhunt_migtest_{uuid.uuid4().hex[:12]}"
+    parts = urlsplit(admin_url)
+    temp_url = urlunsplit((parts.scheme, parts.netloc, f"/{dbname}", "", ""))
+    admin_engine = create_async_engine(
+        admin_url, poolclass=sa.pool.NullPool, isolation_level="AUTOCOMMIT"
+    )
+
+    async def create_db():
+        async with admin_engine.connect() as c:
+            await c.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+
+    asyncio.run(create_db())
     try:
-        cid = _setup_consumer(factory, created, name="tenant-premigracion")
-        pid, r1, r2 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        temp_engine = create_async_engine(temp_url, poolclass=sa.pool.NullPool)
+        cid, pid = uuid.uuid4(), uuid.uuid4()
+        r1, r2 = uuid.uuid4(), uuid.uuid4()
+
+        async def bootstrap_and_seed_after_core0003():
+            async with temp_engine.begin() as c:
+                # Bootstrap mínimo (lo hace migrate.py en entornos reales).
+                await c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+                await c.execute(
+                    sa.text(f'CREATE SCHEMA IF NOT EXISTS "{settings.CORE_DB_SCHEMA}"')
+                )
+
+        asyncio.run(bootstrap_and_seed_after_core0003())
+        env = {**os.environ, "CORE_DATABASE_URL": temp_url}
+        subprocess.run(
+            ["alembic", "-c", "jobhunt_core/alembic.ini", "upgrade", "core0003"],
+            check=True, capture_output=True, env=env,
+        )
 
         async def seed():
-            async with factory() as s:
-                await s.execute(
+            async with temp_engine.begin() as c:
+                await c.execute(
+                    sa.text(f'SET search_path = "{settings.CORE_DB_SCHEMA}", public')
+                )
+                await c.execute(
+                    sa.text("INSERT INTO consumers (id, name) VALUES (:id, 'mig')"),
+                    {"id": cid},
+                )
+                await c.execute(
                     sa.text(
                         "INSERT INTO profiles (id, consumer_id, external_ref) "
                         "VALUES (:id, :cid, 'user-pre')"
@@ -597,7 +634,7 @@ def test_core0004_backfills_preexisting_revisions(db):
                     (r1, "1" * 64, "now() - interval '2 hours'"),
                     (r2, "2" * 64, "now() - interval '1 hour'"),
                 ):
-                    await s.execute(
+                    await c.execute(
                         sa.text(
                             "INSERT INTO profile_revisions "
                             "(id, profile_id, content, content_hash, text_hash, created_at) "
@@ -606,32 +643,54 @@ def test_core0004_backfills_preexisting_revisions(db):
                         ),
                         {"id": rid, "pid": pid, "ch": chash, "th": "t" * 64},
                     )
-                await s.commit()
 
         asyncio.run(seed())
-    finally:
         subprocess.run(
             ["alembic", "-c", "jobhunt_core/alembic.ini", "upgrade", "head"],
-            check=True, capture_output=True,
+            check=True, capture_output=True, env=env,
         )
 
-    acts = _run_rows(
-        factory,
-        "SELECT seq, revision_id FROM profile_revision_activations "
-        "WHERE profile_id = :p ORDER BY seq", p=pid,
-    )
-    assert [(a.seq, a.revision_id) for a in acts] == [(1, r1), (2, r2)]
+        async def verify():
+            async with temp_engine.connect() as c:
+                await c.execute(
+                    sa.text(f'SET search_path = "{settings.CORE_DB_SCHEMA}", public')
+                )
+                acts = (
+                    await c.execute(
+                        sa.text(
+                            "SELECT seq, revision_id FROM profile_revision_activations "
+                            "WHERE profile_id = :p ORDER BY seq"
+                        ),
+                        {"p": pid},
+                    )
+                ).all()
+                assert [(a.seq, a.revision_id) for a in acts] == [(1, r1), (2, r2)]
+                # Pendiente: la MISMA query del worker (vigente sin vector).
+                pend = (
+                    await c.execute(
+                        sa.text(
+                            "SELECT pr.id FROM (SELECT DISTINCT ON (profile_id) "
+                            "profile_id, revision_id FROM profile_revision_activations "
+                            "ORDER BY profile_id, seq DESC) cur "
+                            "JOIN profile_revisions pr ON pr.id = cur.revision_id "
+                            "LEFT JOIN profile_embeddings pe "
+                            "  ON pe.profile_revision_id = pr.id AND pe.model_id = :mid "
+                            "WHERE pe.profile_revision_id IS NULL"
+                        ),
+                        {"mid": uuid.uuid4()},
+                    )
+                ).scalars().all()
+                assert pend == [r2]  # vigente = la más reciente, de vuelta al worker
 
-    async def cur():
-        async with factory() as s:
-            return await profiles.current_revision(s, pid)
+        asyncio.run(verify())
+        asyncio.run(temp_engine.dispose())
+    finally:
 
-    assert asyncio.run(cur()).id == r2  # vigente = la más reciente pre-migración
+        async def drop_db():
+            async with admin_engine.connect() as c:
+                await c.execute(
+                    sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)')
+                )
+            await admin_engine.dispose()
 
-    mid = _register(factory, created)
-
-    async def pending():
-        async with factory() as s:
-            return await embeddings.pending_profile_revisions(s, mid)
-
-    assert r2 in {r.id for r in asyncio.run(pending())}  # vuelve al worker
+        asyncio.run(drop_db())
