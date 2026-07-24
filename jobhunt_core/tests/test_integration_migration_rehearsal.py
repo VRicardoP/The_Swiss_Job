@@ -11,9 +11,7 @@ BD compartida. Ejecutar vía core-migrate.
 
 import asyncio
 import os
-import subprocess
 import uuid
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -21,6 +19,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import jobhunt_core.harvest.providers  # noqa: F401 — registra extractor/normalizador
 from jobhunt_core.config import settings
+from jobhunt_core.tests.alembic_runner import run_alembic
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("CORE_ADMIN_DATABASE_URL"),
@@ -28,19 +27,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 SHA = "d" * 40
-
-
-# Ruta ABSOLUTA al ini (rev. 1ª A-12: independiente del CWD, la misma
-# disciplina que migrate.py — el test debe correr también desde jobhunt_core/).
-_INI = str(Path(__file__).resolve().parents[1] / "alembic.ini")
-
-
-def _alembic(temp_url, *args, check=True):
-    env = {**os.environ, "CORE_DATABASE_URL": temp_url}
-    return subprocess.run(
-        ["alembic", "-c", _INI, *args],
-        check=check, capture_output=True, env=env,
-    )
 
 
 def test_full_downgrade_upgrade_cycle_on_populated_copy():
@@ -82,7 +68,7 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                 )
 
         asyncio.run(bootstrap())
-        _alembic(temp_url, "upgrade", "head")
+        run_alembic(temp_url, "upgrade", "head")
 
         # POBLAR en head un grafo REPRESENTATIVO usando los SERVICIOS reales
         # (no INSERTs sueltos): cosecha→canónica, perfil+activación, modelo
@@ -190,7 +176,7 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                 return eid
 
         eid_long = asyncio.run(seed_long_destination())
-        blocked = _alembic(temp_url, "downgrade", "core0004", check=False)
+        blocked = run_alembic(temp_url, "downgrade", "core0004", check=False)
         assert blocked.returncode != 0  # FALLO CONTROLADO: jamás truncar
         assert b"character varying(60)" in blocked.stderr + blocked.stdout
 
@@ -209,8 +195,8 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
         for target in (
             "core0006", "core0005", "core0004", "core0003", "core0002", "core0001", "base",
         ):
-            _alembic(temp_url, "downgrade", target)
-        _alembic(temp_url, "upgrade", "head")
+            run_alembic(temp_url, "downgrade", target)
+        run_alembic(temp_url, "upgrade", "head")
 
         async def verify_after_cycle():
             async with factory() as s:

@@ -18,6 +18,7 @@ from jobhunt_core.config import settings
 from jobhunt_core.harvest.runner import run_scope
 from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.harvest.types import RawListing
+from jobhunt_core.tests import dbcleanup
 from jobhunt_core.tests.test_integration_harvest import FakeProvider
 
 pytestmark = pytest.mark.skipif(
@@ -37,62 +38,9 @@ def db():
         async with factory() as s:
             # Borra TODO el grafo creado por el sink para esta fuente, en orden
             # FK-seguro (el puntero primario se nulifica por SET NULL de columna).
-            vac_ids = (
-                await s.execute(
-                    sa.text(
-                        "SELECT DISTINCT i.vacancy_id FROM source_listing_incarnations i "
-                        "JOIN source_listings l ON l.id = i.source_listing_id "
-                        "WHERE l.source_id = :src"
-                    ),
-                    {"src": created["source"]},
-                )
-            ).scalars().all()
-            if vac_ids:
-                # A-06: la canónica cuelga de la vacante — puntero a NULL y
-                # revisiones fuera ANTES de borrar vacantes.
-                await s.execute(
-                    sa.text(
-                        "UPDATE vacancies SET current_offer_revision_id = NULL "
-                        "WHERE id = ANY(:v)"
-                    ),
-                    {"v": vac_ids},
-                )
-                await s.execute(
-                    sa.text("DELETE FROM offer_revision_sources WHERE vacancy_id = ANY(:v)"),
-                    {"v": vac_ids},
-                )
-                await s.execute(
-                    sa.text("DELETE FROM offer_revisions WHERE vacancy_id = ANY(:v)"),
-                    {"v": vac_ids},
-                )
-            await s.execute(
-                sa.text(
-                    "DELETE FROM source_listing_revisions WHERE incarnation_id IN ("
-                    "SELECT i.id FROM source_listing_incarnations i "
-                    "JOIN source_listings l ON l.id = i.source_listing_id "
-                    "WHERE l.source_id = :src)"
-                ),
-                {"src": created["source"]},
+            await dbcleanup.purge_source_graph(
+                s, [created["source"]], created["scopes"]
             )
-            await s.execute(
-                sa.text(
-                    "DELETE FROM source_listing_incarnations WHERE source_listing_id IN "
-                    "(SELECT id FROM source_listings WHERE source_id = :src)"
-                ),
-                {"src": created["source"]},
-            )
-            if vac_ids:
-                await s.execute(
-                    sa.text("DELETE FROM vacancies WHERE id = ANY(:ids)"), {"ids": vac_ids}
-                )
-            await s.execute(
-                sa.text("DELETE FROM source_listings WHERE source_id = :src"),
-                {"src": created["source"]},
-            )
-            for sid in created["scopes"]:
-                await s.execute(sa.text("DELETE FROM source_scope_state WHERE scope_id=:i"), {"i": sid})
-                await s.execute(sa.text("DELETE FROM harvest_scopes WHERE id=:i"), {"i": sid})
-            await s.execute(sa.text("DELETE FROM sources WHERE id=:i"), {"i": created["source"]})
             await s.commit()
         await engine.dispose()
 

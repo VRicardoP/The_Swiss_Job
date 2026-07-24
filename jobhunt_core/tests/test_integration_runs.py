@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from jobhunt_core import runs
 from jobhunt_core.config import settings
 from jobhunt_core.harvest.types import ScopeRunResult
+from jobhunt_core.tests import dbcleanup
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("CORE_ADMIN_DATABASE_URL"),
@@ -32,24 +33,8 @@ def db():
 
     async def cleanup():
         async with factory() as s:
-            if created["runs"]:
-                await s.execute(
-                    sa.text("DELETE FROM source_harvest_runs WHERE run_id = ANY(:r)"),
-                    {"r": created["runs"]},
-                )
-                await s.execute(
-                    sa.text("DELETE FROM harvest_runs WHERE id = ANY(:r)"),
-                    {"r": created["runs"]},
-                )
-            for sid in created["scopes"]:
-                await s.execute(
-                    sa.text("DELETE FROM source_scope_state WHERE scope_id=:i"), {"i": sid}
-                )
-                await s.execute(sa.text("DELETE FROM harvest_scopes WHERE id=:i"), {"i": sid})
-            await s.execute(
-                sa.text("DELETE FROM sources WHERE id = ANY(:s)"),
-                {"s": created["sources"]},
-            )
+            await dbcleanup.purge_runs(s, created["runs"])
+            await dbcleanup.purge_source_graph(s, created["sources"], created["scopes"])
             await s.commit()
         await engine.dispose()
 

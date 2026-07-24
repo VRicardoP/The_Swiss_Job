@@ -18,6 +18,7 @@ import jobhunt_core.harvest.providers  # noqa: F401 — registra el extractor ar
 from jobhunt_core.config import settings
 from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.harvest.types import RawListing
+from jobhunt_core.tests import dbcleanup
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("CORE_ADMIN_DATABASE_URL"),
@@ -34,88 +35,11 @@ def db():
 
     async def cleanup():
         async with factory() as s:
-            srcs = created["sources"]
-            vac_ids = (
-                await s.execute(
-                    sa.text(
-                        "SELECT DISTINCT i.vacancy_id FROM source_listing_incarnations i "
-                        "JOIN source_listings l ON l.id = i.source_listing_id "
-                        "WHERE l.source_id = ANY(:srcs)"
-                    ),
-                    {"srcs": srcs},
-                )
-            ).scalars().all()
-            vac_ids = list(vac_ids) + created["extra_vacs"]
-            # Orden FK-seguro; candidatos/evidencia antes que vacantes/slots.
-            if vac_ids:
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM dedup_candidates "
-                        "WHERE vacancy_a = ANY(:v) OR vacancy_b = ANY(:v)"
-                    ),
-                    {"v": vac_ids},
-                )
-                # A-06: canónicas fuera ANTES de borrar vacantes.
-                await s.execute(
-                    sa.text(
-                        "UPDATE vacancies SET current_offer_revision_id = NULL "
-                        "WHERE id = ANY(:v)"
-                    ),
-                    {"v": vac_ids},
-                )
-                await s.execute(
-                    sa.text("DELETE FROM offer_revision_sources WHERE vacancy_id = ANY(:v)"),
-                    {"v": vac_ids},
-                )
-                await s.execute(
-                    sa.text("DELETE FROM offer_revisions WHERE vacancy_id = ANY(:v)"),
-                    {"v": vac_ids},
-                )
-            await s.execute(
-                sa.text(
-                    "DELETE FROM link_evidence WHERE source_listing_id IN "
-                    "(SELECT id FROM source_listings WHERE source_id = ANY(:srcs))"
-                ),
-                {"srcs": srcs},
-            )
-            await s.execute(
-                sa.text(
-                    "DELETE FROM source_listing_revisions WHERE incarnation_id IN ("
-                    "SELECT i.id FROM source_listing_incarnations i "
-                    "JOIN source_listings l ON l.id = i.source_listing_id "
-                    "WHERE l.source_id = ANY(:srcs))"
-                ),
-                {"srcs": srcs},
-            )
-            await s.execute(
-                sa.text(
-                    "DELETE FROM source_listing_incarnations WHERE source_listing_id IN "
-                    "(SELECT id FROM source_listings WHERE source_id = ANY(:srcs))"
-                ),
-                {"srcs": srcs},
-            )
-            if vac_ids:
-                await s.execute(
-                    sa.text("DELETE FROM vacancies WHERE id = ANY(:v)"), {"v": vac_ids}
-                )
-            await s.execute(
-                sa.text("DELETE FROM source_listings WHERE source_id = ANY(:srcs)"),
-                {"srcs": srcs},
-            )
-            if created["extra_vacs"]:
-                await s.execute(
-                    sa.text("DELETE FROM vacancies WHERE id = ANY(:v)"),
-                    {"v": created["extra_vacs"]},
-                )
-            for sid in created["scopes"]:
-                await s.execute(
-                    sa.text("DELETE FROM source_scope_state WHERE scope_id=:i"), {"i": sid}
-                )
-                await s.execute(
-                    sa.text("DELETE FROM harvest_scopes WHERE id=:i"), {"i": sid}
-                )
-            await s.execute(
-                sa.text("DELETE FROM sources WHERE id = ANY(:srcs)"), {"srcs": srcs}
+            # extra_vacs entran en el MISMO barrido que las vacantes derivadas
+            # de incarnaciones (dedup/canónica incluidas — orden FK-seguro).
+            await dbcleanup.purge_source_graph(
+                s, created["sources"], created["scopes"],
+                extra_vac_ids=created["extra_vacs"],
             )
             await s.commit()
         await engine.dispose()

@@ -21,6 +21,7 @@ from jobhunt_core import embeddings, matching, profiles
 from jobhunt_core.config import settings
 from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.harvest.types import RawListing
+from jobhunt_core.tests import dbcleanup
 
 SHA_A = "a" * 40
 
@@ -52,142 +53,11 @@ def db():
 
     async def cleanup():
         async with factory() as s:
-            cons = created["consumers"]
-            if cons:
-                # Estado ANTES que evaluaciones (FK RESTRICT del current_eval).
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM integration_outbox WHERE subject_profile_id IN "
-                        "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
-                    ),
-                    {"c": cons},
-                )
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM profile_vacancy_state WHERE profile_id IN "
-                        "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
-                    ),
-                    {"c": cons},
-                )
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM match_evaluations WHERE profile_id IN "
-                        "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
-                    ),
-                    {"c": cons},
-                )
-                for tbl in (
-                    "profile_embeddings", "profile_revision_activations",
-                    "profile_revisions",
-                ):
-                    await s.execute(
-                        sa.text(
-                            f"DELETE FROM {tbl} WHERE profile_id IN "
-                            "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
-                        ),
-                        {"c": cons},
-                    )
-                await s.execute(
-                    sa.text("DELETE FROM profiles WHERE consumer_id = ANY(:c)"),
-                    {"c": cons},
-                )
-                await s.execute(
-                    sa.text("DELETE FROM consumers WHERE id = ANY(:c)"), {"c": cons}
-                )
-            srcs = created["sources"]
-            if srcs:
-                vac_ids = (
-                    await s.execute(
-                        sa.text(
-                            "SELECT DISTINCT i.vacancy_id FROM source_listing_incarnations i "
-                            "JOIN source_listings l ON l.id = i.source_listing_id "
-                            "WHERE l.source_id = ANY(:srcs)"
-                        ),
-                        {"srcs": srcs},
-                    )
-                ).scalars().all()
-                if vac_ids:
-                    await s.execute(
-                        sa.text(
-                            "DELETE FROM dedup_candidates "
-                            "WHERE vacancy_a = ANY(:v) OR vacancy_b = ANY(:v)"
-                        ),
-                        {"v": vac_ids},
-                    )
-                    await s.execute(
-                        sa.text(
-                            "UPDATE vacancies SET current_offer_revision_id = NULL "
-                            "WHERE id = ANY(:v)"
-                        ),
-                        {"v": vac_ids},
-                    )
-                    await s.execute(
-                        sa.text("DELETE FROM offer_revision_sources WHERE vacancy_id = ANY(:v)"),
-                        {"v": vac_ids},
-                    )
-                    await s.execute(
-                        sa.text("DELETE FROM offer_revisions WHERE vacancy_id = ANY(:v)"),
-                        {"v": vac_ids},
-                    )
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM link_evidence WHERE source_listing_id IN "
-                        "(SELECT id FROM source_listings WHERE source_id = ANY(:srcs))"
-                    ),
-                    {"srcs": srcs},
-                )
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM source_listing_revisions WHERE incarnation_id IN ("
-                        "SELECT i.id FROM source_listing_incarnations i "
-                        "JOIN source_listings l ON l.id = i.source_listing_id "
-                        "WHERE l.source_id = ANY(:srcs))"
-                    ),
-                    {"srcs": srcs},
-                )
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM source_listing_incarnations WHERE source_listing_id IN "
-                        "(SELECT id FROM source_listings WHERE source_id = ANY(:srcs))"
-                    ),
-                    {"srcs": srcs},
-                )
-                if vac_ids:
-                    await s.execute(
-                        sa.text("DELETE FROM vacancies WHERE id = ANY(:v)"), {"v": vac_ids}
-                    )
-                await s.execute(
-                    sa.text("DELETE FROM source_listings WHERE source_id = ANY(:srcs)"),
-                    {"srcs": srcs},
-                )
-                for sid in created["scopes"]:
-                    await s.execute(
-                        sa.text("DELETE FROM source_scope_state WHERE scope_id=:i"), {"i": sid}
-                    )
-                    await s.execute(
-                        sa.text("DELETE FROM harvest_scopes WHERE id=:i"), {"i": sid}
-                    )
-                await s.execute(
-                    sa.text("DELETE FROM sources WHERE id = ANY(:srcs)"), {"srcs": srcs}
-                )
-            if created["policies"]:
-                await s.execute(
-                    sa.text("DELETE FROM scoring_policies WHERE id = ANY(:p)"),
-                    {"p": created["policies"]},
-                )
+            await dbcleanup.purge_consumer_graph(s, created["consumers"])
+            await dbcleanup.purge_source_graph(s, created["sources"], created["scopes"])
+            await dbcleanup.purge_policies(s, created["policies"])
             for mid in created["models"]:
-                await s.execute(
-                    sa.text("DELETE FROM offer_embeddings WHERE model_id = :m"), {"m": mid}
-                )
-                await s.execute(
-                    sa.text(
-                        f"DROP TABLE IF EXISTS {settings.CORE_DB_SCHEMA}."
-                        f"offer_embeddings_{mid.hex[:16]}"
-                    )
-                )
-                await s.execute(
-                    sa.text("DELETE FROM embedding_models WHERE id = :m"), {"m": mid}
-                )
+                await dbcleanup.purge_model(s, mid)
             await s.commit()
         await engine.dispose()
 

@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jobhunt_core import embeddings, profiles
 from jobhunt_core.config import settings
+from jobhunt_core.tests import dbcleanup
+from jobhunt_core.tests.alembic_runner import run_alembic
 
 SHA_A = "a" * 40
 
@@ -34,49 +36,9 @@ def db():
 
     async def cleanup():
         async with factory() as s:
-            cons = created["consumers"]
-            if cons:
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM profile_embeddings WHERE profile_id IN "
-                        "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
-                    ),
-                    {"c": cons},
-                )
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM profile_revision_activations WHERE profile_id IN "
-                        "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
-                    ),
-                    {"c": cons},
-                )
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM profile_revisions WHERE profile_id IN "
-                        "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
-                    ),
-                    {"c": cons},
-                )
-                await s.execute(
-                    sa.text("DELETE FROM profiles WHERE consumer_id = ANY(:c)"),
-                    {"c": cons},
-                )
-                await s.execute(
-                    sa.text("DELETE FROM consumers WHERE id = ANY(:c)"), {"c": cons}
-                )
+            await dbcleanup.purge_consumer_graph(s, created["consumers"])
             for mid in created["models"]:
-                await s.execute(
-                    sa.text("DELETE FROM offer_embeddings WHERE model_id = :m"), {"m": mid}
-                )
-                await s.execute(
-                    sa.text(
-                        f"DROP TABLE IF EXISTS {settings.CORE_DB_SCHEMA}."
-                        f"offer_embeddings_{mid.hex[:16]}"
-                    )
-                )
-                await s.execute(
-                    sa.text("DELETE FROM embedding_models WHERE id = :m"), {"m": mid}
-                )
+                await dbcleanup.purge_model(s, mid)
             await s.commit()
         await engine.dispose()
 
@@ -574,8 +536,6 @@ def test_core0004_backfills_preexisting_revisions():
     core0003 → seed pre-migración → head → verificar vigente y pendiente →
     destruir."""
     import os
-    import subprocess
-    from pathlib import Path
     from urllib.parse import urlsplit, urlunsplit
 
     # La URL admin es síncrona (psycopg2): normalizar a asyncpg para el test.
@@ -608,13 +568,8 @@ def test_core0004_backfills_preexisting_revisions():
                 )
 
         asyncio.run(bootstrap_and_seed_after_core0003())
-        env = {**os.environ, "CORE_DATABASE_URL": temp_url}
-        # Ruta ABSOLUTA al ini (independiente del CWD, como migrate.py).
-        ini = str(Path(__file__).resolve().parents[1] / "alembic.ini")
-        subprocess.run(
-            ["alembic", "-c", ini, "upgrade", "core0003"],
-            check=True, capture_output=True, env=env,
-        )
+        # Ruta ABSOLUTA al ini y CORE_DATABASE_URL inyectada — alembic_runner.
+        run_alembic(temp_url, "upgrade", "core0003")
 
         async def seed():
             async with temp_engine.begin() as c:
@@ -648,10 +603,7 @@ def test_core0004_backfills_preexisting_revisions():
                     )
 
         asyncio.run(seed())
-        subprocess.run(
-            ["alembic", "-c", ini, "upgrade", "head"],
-            check=True, capture_output=True, env=env,
-        )
+        run_alembic(temp_url, "upgrade", "head")
 
         async def verify():
             async with temp_engine.connect() as c:

@@ -19,6 +19,7 @@ from jobhunt_core.config import settings
 from jobhunt_core.harvest.normalize import offer_content_hash, offer_text_hash
 from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.harvest.types import RawListing
+from jobhunt_core.tests import dbcleanup
 
 SHA_A, SHA_B, SHA_C, SHA_D = "a" * 40, "b" * 40, "c" * 40, "d" * 40
 
@@ -48,121 +49,12 @@ def db():
 
     async def cleanup():
         async with factory() as s:
-            srcs = created["sources"]
-            vac_ids = (
-                await s.execute(
-                    sa.text(
-                        "SELECT DISTINCT i.vacancy_id FROM source_listing_incarnations i "
-                        "JOIN source_listings l ON l.id = i.source_listing_id "
-                        "WHERE l.source_id = ANY(:srcs)"
-                    ),
-                    {"srcs": srcs},
-                )
-            ).scalars().all()
-            if vac_ids:
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM dedup_candidates "
-                        "WHERE vacancy_a = ANY(:v) OR vacancy_b = ANY(:v)"
-                    ),
-                    {"v": vac_ids},
-                )
-                # El puntero FK-compuesto bloquea el borrado de revisiones.
-                await s.execute(
-                    sa.text(
-                        "UPDATE vacancies SET current_offer_revision_id = NULL "
-                        "WHERE id = ANY(:v)"
-                    ),
-                    {"v": vac_ids},
-                )
-                await s.execute(
-                    sa.text("DELETE FROM offer_revision_sources WHERE vacancy_id = ANY(:v)"),
-                    {"v": vac_ids},
-                )
-                await s.execute(
-                    sa.text("DELETE FROM offer_revisions WHERE vacancy_id = ANY(:v)"),
-                    {"v": vac_ids},
-                )
-            await s.execute(
-                sa.text(
-                    "DELETE FROM link_evidence WHERE source_listing_id IN "
-                    "(SELECT id FROM source_listings WHERE source_id = ANY(:srcs))"
-                ),
-                {"srcs": srcs},
-            )
-            await s.execute(
-                sa.text(
-                    "DELETE FROM source_listing_revisions WHERE incarnation_id IN ("
-                    "SELECT i.id FROM source_listing_incarnations i "
-                    "JOIN source_listings l ON l.id = i.source_listing_id "
-                    "WHERE l.source_id = ANY(:srcs))"
-                ),
-                {"srcs": srcs},
-            )
-            await s.execute(
-                sa.text(
-                    "DELETE FROM source_listing_incarnations WHERE source_listing_id IN "
-                    "(SELECT id FROM source_listings WHERE source_id = ANY(:srcs))"
-                ),
-                {"srcs": srcs},
-            )
-            if vac_ids:
-                await s.execute(
-                    sa.text("DELETE FROM vacancies WHERE id = ANY(:v)"), {"v": vac_ids}
-                )
-            await s.execute(
-                sa.text("DELETE FROM source_listings WHERE source_id = ANY(:srcs)"),
-                {"srcs": srcs},
-            )
-            for sid in created["scopes"]:
-                await s.execute(
-                    sa.text("DELETE FROM source_scope_state WHERE scope_id=:i"), {"i": sid}
-                )
-                await s.execute(sa.text("DELETE FROM harvest_scopes WHERE id=:i"), {"i": sid})
-            await s.execute(
-                sa.text("DELETE FROM sources WHERE id = ANY(:srcs)"), {"srcs": srcs}
-            )
-            for cid in created["consumers"]:
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM profile_embeddings WHERE profile_id IN "
-                        "(SELECT id FROM profiles WHERE consumer_id = :c)"
-                    ),
-                    {"c": cid},
-                )
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM profile_revision_activations WHERE profile_id IN "
-                        "(SELECT id FROM profiles WHERE consumer_id = :c)"
-                    ),
-                    {"c": cid},
-                )
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM profile_revisions WHERE profile_id IN "
-                        "(SELECT id FROM profiles WHERE consumer_id = :c)"
-                    ),
-                    {"c": cid},
-                )
-                await s.execute(
-                    sa.text("DELETE FROM profiles WHERE consumer_id = :c"), {"c": cid}
-                )
-                await s.execute(
-                    sa.text("DELETE FROM consumers WHERE id = :c"), {"c": cid}
-                )
+            # Orden histórico de este fixture: grafo de fuentes ANTES que
+            # consumers (aquí no hay evaluaciones que lo impidan).
+            await dbcleanup.purge_source_graph(s, created["sources"], created["scopes"])
+            await dbcleanup.purge_consumer_graph(s, created["consumers"])
             for mid in created["models"]:
-                await s.execute(
-                    sa.text("DELETE FROM offer_embeddings WHERE model_id = :m"), {"m": mid}
-                )
-                await s.execute(
-                    sa.text(
-                        f"DROP TABLE IF EXISTS {settings.CORE_DB_SCHEMA}."
-                        f"offer_embeddings_{mid.hex[:16]}"
-                    )
-                )
-                await s.execute(
-                    sa.text("DELETE FROM embedding_models WHERE id = :m"), {"m": mid}
-                )
+                await dbcleanup.purge_model(s, mid)
             await s.commit()
         await engine.dispose()
 

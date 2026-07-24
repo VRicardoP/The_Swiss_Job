@@ -18,6 +18,7 @@ from jobhunt_core.config import settings
 from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError
 from jobhunt_core.harvest.runner import run_scope
 from jobhunt_core.harvest.types import FetchResult, RawListing
+from jobhunt_core.tests import dbcleanup
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("CORE_ADMIN_DATABASE_URL"),
@@ -63,13 +64,9 @@ def db():
 
     async def cleanup():
         async with factory() as s:
-            for sid in created["scopes"]:
-                await s.execute(sa.text("DELETE FROM source_scope_state WHERE scope_id=:i"), {"i": sid})
-                await s.execute(sa.text("DELETE FROM harvest_scopes WHERE id=:i"), {"i": sid})
-            for src in created["extra_sources"]:
-                await s.execute(sa.text("DELETE FROM sources WHERE id=:i"), {"i": src})
-            if created["source"]:
-                await s.execute(sa.text("DELETE FROM sources WHERE id=:i"), {"i": created["source"]})
+            await dbcleanup.purge_source_graph(
+                s, created["extra_sources"] + [created["source"]], created["scopes"]
+            )
             await s.commit()
         await engine.dispose()
 
