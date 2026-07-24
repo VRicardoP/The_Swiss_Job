@@ -51,6 +51,62 @@ def run_scope_task(self, scope_id: str) -> dict[str, Any]:
     }
 
 
+@celery_app.task(name="jobhunt.harvest.run_all", bind=True, max_retries=1)
+def run_all_task(self, run_key: str) -> dict[str, Any]:
+    """Orquestador del RUN de cosecha (A-11): idempotente por run_key — el
+    reintento reutiliza el mismo harvest_run (id determinista) y SALTA los
+    scopes ya terminados con éxito; solo re-ejecuta errores/colgados."""
+    try:
+        return asyncio.run(_run_all_impl(run_key))
+    except Exception as exc:
+        logger.error("harvest.run_all %s falló: %s", run_key, exc)
+        raise self.retry(exc=exc, countdown=120)
+
+
+async def _run_all_impl(run_key: str) -> dict[str, Any]:
+    from jobhunt_core import runs
+
+    results: dict[str, str] = {}
+    executed = skipped = 0
+    async with task_session_factory() as session_factory:
+        async with session_factory() as session:
+            run_id = await runs.start_run(session, run_key)
+            scope_ids = (
+                await session.execute(
+                    sa.text("SELECT id FROM harvest_scopes WHERE enabled ORDER BY id")
+                )
+            ).scalars().all()
+            await session.commit()
+        for scope_id in scope_ids:
+            async with session_factory() as session:
+                should = await runs.claim_scope_run(session, run_id, scope_id)
+                await session.commit()
+            if not should:
+                # Ya hecho en este run — o en marcha por OTRO worker (claim
+                # atómico con lease): en ambos casos NO se duplica.
+                skipped += 1
+                results[str(scope_id)] = "skipped"
+                continue
+            try:
+                result = await _run_scope_impl(str(scope_id))
+                status = result.status
+            except Exception as exc:  # el run sigue con el resto de scopes
+                logger.warning("run %s: scope %s falló: %s", run_key, scope_id, exc)
+                status = "error"
+            executed += 1
+            async with session_factory() as session:
+                await runs.finish_scope_run(session, run_id, scope_id, status)
+                await session.commit()
+            results[str(scope_id)] = status
+        async with session_factory() as session:
+            overall = await runs.finish_run(session, run_id)
+            await session.commit()
+    return {
+        "run_id": str(run_id), "status": overall,
+        "executed": executed, "skipped": skipped, "scopes": results,
+    }
+
+
 async def _run_scope_impl(scope_id: str) -> ScopeRunResult:
     # Engine DESECHABLE por invocación (rev. 2ª #1): cada asyncio.run crea un
     # loop nuevo — el engine global quedaría ligado al primero y la segunda
