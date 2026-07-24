@@ -25,6 +25,24 @@ import sqlalchemy as sa
 
 logger = logging.getLogger(__name__)
 
+# Tope de tuplas del scan ITERATIVO del HNSW (rev. A-08 #2): strict_order
+# sigue escaneando hasta llenar el LIMIT tras el filtro, acotado por esto.
+MAX_SCAN_TUPLES = 20000
+
+# SQL de candidatos (module-level: los tests lo EXPLAINean tal cual).
+CANDIDATES_SQL = (
+    "SELECT v.id AS vacancy_id, "
+    "v.current_offer_revision_id AS offer_revision_id, "
+    "1 - (oe.vector <=> CAST(:vec AS vector)) AS sim "
+    "FROM vacancies v "
+    "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
+    "JOIN offer_embeddings oe "
+    "  ON oe.text_hash = orv.text_hash AND oe.model_id = :mid "
+    "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
+    "ORDER BY oe.vector <=> CAST(:vec AS vector) "
+    "LIMIT :k"
+)
+
 
 def eval_key(offer_revision_id, profile_revision_id, model_id, policy_id) -> str:
     """Clave DETERMINISTA de la evaluación: mismos componentes ⇒ misma clave
@@ -94,7 +112,10 @@ async def evaluate_profile(
         )
     ).scalar_one_or_none()
     if locked is None:
-        return {"status": "not_found", "evaluated": 0, "new_evals": 0}
+        return {
+            "status": "not_found", "evaluated": 0, "new_evals": 0,
+            "moved_current": False,
+        }
     prof = (
         await session.execute(
             sa.text(
@@ -111,32 +132,36 @@ async def evaluate_profile(
     if prof is None:
         # Sin revisión vigente o sin vector para este modelo: nada que evaluar
         # (el worker de embeddings aún no pasó) — no es un error.
-        return {"status": "sin_vector", "evaluated": 0, "new_evals": 0}
+        return {
+            "status": "sin_vector", "evaluated": 0, "new_evals": 0,
+            "moved_current": False,
+        }
 
-    # hnsw.ef_search por defecto (40) truncaría el top-K en silencio con
-    # limit > 40 (auditoría A-08): se eleva SOLO en esta transacción. Entero
-    # validado (SET no admite binds).
-    ef_search = int(max(limit, 40))
-    await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {ef_search}"))
-    candidates = (
-        await session.execute(
-            sa.text(
-                "SELECT v.id AS vacancy_id, "
-                "v.current_offer_revision_id AS offer_revision_id, "
-                "1 - (oe.vector <=> CAST(:vec AS vector)) AS sim "
-                "FROM vacancies v "
-                "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
-                "JOIN offer_embeddings oe "
-                "  ON oe.text_hash = orv.text_hash AND oe.model_id = :mid "
-                "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
-                "ORDER BY oe.vector <=> CAST(:vec AS vector) "
-                "LIMIT :k"
-            ),
-            {"vec": prof.vec, "mid": model_id, "k": limit},
-        )
-    ).all()
+    # ANN ROBUSTO (auditoría + rev. A-08 #2): el filtro posterior (revisión
+    # vigente + vacante activa) puede dejar el scan HNSW SIN candidatos si los
+    # embeddings HISTÓRICOS/huérfanos más cercanos lo consumen. Tres capas:
+    # ef_search >= limit (sin truncado del top-K), iterative_scan strict_order
+    # (pgvector >= 0.8: sigue escaneando hasta llenar el LIMIT tras el filtro,
+    # acotado por MAX_SCAN_TUPLES) y, si aun así queda corto, FALLBACK EXACTO
+    # (sin índice — la verdad; solo se paga cuando el ANN no llena el top-K).
+    # Enteros validados (SET no admite binds).
+    params = {"vec": prof.vec, "mid": model_id, "k": limit}
+    await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(max(limit, 40))}"))
+    await session.execute(sa.text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
+    await session.execute(
+        sa.text(f"SET LOCAL hnsw.max_scan_tuples = {int(MAX_SCAN_TUPLES)}")
+    )
+    candidates = (await session.execute(sa.text(CANDIDATES_SQL), params)).all()
+    if len(candidates) < limit:
+        # ¿Corto por inanición del scan acotado o porque no hay más filas?
+        # El exacto responde siempre bien.
+        await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
+        await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
+        candidates = (await session.execute(sa.text(CANDIDATES_SQL), params)).all()
+        await session.execute(sa.text("SET LOCAL enable_indexscan = on"))
+        await session.execute(sa.text("SET LOCAL enable_bitmapscan = on"))
     if not candidates:
-        return {"status": "ok", "evaluated": 0, "new_evals": 0}
+        return {"status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False}
 
     eval_rows = []
     for c in candidates:
@@ -186,24 +211,36 @@ async def evaluate_profile(
     new_evals = sum(
         1 for r in eval_rows if winners.get((r["vid"], r["key"])) == r["id"]
     )
+    moved = False
     if move_current:
         state_rows = [
             {"pid": profile_id, "vid": r["vid"], "eid": winners[(r["vid"], r["key"])]}
             for r in eval_rows
             if (r["vid"], r["key"]) in winners
         ]
-        # Estado: SOLO current_eval_id/updated_at — feedback/dismissed/saved/
-        # notes se preservan SIEMPRE (ADR-03: estado estable).
-        await session.execute(
-            sa.text(
-                "INSERT INTO profile_vacancy_state (profile_id, vacancy_id, current_eval_id) "
-                "VALUES (:pid, :vid, :eid) "
-                "ON CONFLICT (profile_id, vacancy_id) DO UPDATE "
-                "SET current_eval_id = EXCLUDED.current_eval_id, updated_at = now()"
-            ),
-            state_rows,
-        )
-    return {"status": "ok", "evaluated": len(eval_rows), "new_evals": new_evals}
+        if state_rows:
+            # Estado: SOLO current_eval_id/updated_at — feedback/dismissed/
+            # saved/notes se preservan SIEMPRE (ADR-03: estado estable).
+            # clock_timestamp() + GREATEST (rev. A-08 #3): now() es la HORA DE
+            # INICIO de la transacción — una tx vieja que escribe tarde jamás
+            # debe hacer retroceder updated_at.
+            await session.execute(
+                sa.text(
+                    "INSERT INTO profile_vacancy_state "
+                    "(profile_id, vacancy_id, current_eval_id, updated_at) "
+                    "VALUES (:pid, :vid, :eid, clock_timestamp()) "
+                    "ON CONFLICT (profile_id, vacancy_id) DO UPDATE "
+                    "SET current_eval_id = EXCLUDED.current_eval_id, "
+                    "updated_at = GREATEST(profile_vacancy_state.updated_at, "
+                    "clock_timestamp())"
+                ),
+                state_rows,
+            )
+            moved = True
+    return {
+        "status": "ok", "evaluated": len(eval_rows), "new_evals": new_evals,
+        "moved_current": moved,
+    }
 
 
 async def feed(session, profile_id, limit: int = 20, cursor=None):
@@ -248,26 +285,35 @@ async def feed(session, profile_id, limit: int = 20, cursor=None):
 
 
 async def set_dismissed(session, profile_id, vacancy_id, dismissed: bool) -> None:
-    """Descartar/restaurar: upsert que SOLO toca dismissed_at/updated_at."""
+    """Descartar/restaurar: upsert que SOLO toca dismissed_at/updated_at.
+    clock_timestamp() + GREATEST (rev. A-08 #3): la hora real de ESCRITURA,
+    no la de inicio de la tx — sin retrocesos temporales entre tx solapadas."""
     await session.execute(
         sa.text(
-            "INSERT INTO profile_vacancy_state (profile_id, vacancy_id, dismissed_at) "
-            "VALUES (:pid, :vid, CASE WHEN :d THEN now() END) "
+            "INSERT INTO profile_vacancy_state "
+            "(profile_id, vacancy_id, dismissed_at, updated_at) "
+            "VALUES (:pid, :vid, CASE WHEN :d THEN clock_timestamp() END, "
+            "clock_timestamp()) "
             "ON CONFLICT (profile_id, vacancy_id) DO UPDATE "
-            "SET dismissed_at = CASE WHEN :d THEN now() END, updated_at = now()"
+            "SET dismissed_at = CASE WHEN :d THEN clock_timestamp() END, "
+            "updated_at = GREATEST(profile_vacancy_state.updated_at, clock_timestamp())"
         ),
         {"pid": profile_id, "vid": vacancy_id, "d": dismissed},
     )
 
 
 async def set_saved(session, profile_id, vacancy_id, saved: bool) -> None:
-    """Bookmark (saved = aquí, ADR-03): solo saved_at/updated_at."""
+    """Bookmark (saved = aquí, ADR-03): solo saved_at/updated_at — misma
+    disciplina temporal que set_dismissed (rev. A-08 #3)."""
     await session.execute(
         sa.text(
-            "INSERT INTO profile_vacancy_state (profile_id, vacancy_id, saved_at) "
-            "VALUES (:pid, :vid, CASE WHEN :sv THEN now() END) "
+            "INSERT INTO profile_vacancy_state "
+            "(profile_id, vacancy_id, saved_at, updated_at) "
+            "VALUES (:pid, :vid, CASE WHEN :sv THEN clock_timestamp() END, "
+            "clock_timestamp()) "
             "ON CONFLICT (profile_id, vacancy_id) DO UPDATE "
-            "SET saved_at = CASE WHEN :sv THEN now() END, updated_at = now()"
+            "SET saved_at = CASE WHEN :sv THEN clock_timestamp() END, "
+            "updated_at = GREATEST(profile_vacancy_state.updated_at, clock_timestamp())"
         ),
         {"pid": profile_id, "vid": vacancy_id, "sv": saved},
     )

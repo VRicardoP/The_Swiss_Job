@@ -273,10 +273,10 @@ def _setup(factory, created, titles, profile_content=None,
     return result
 
 
-def _evaluate(factory, pid, mid, polid):
+def _evaluate(factory, pid, mid, polid, limit=100):
     async def go():
         async with factory() as s:
-            r = await matching.evaluate_profile(s, pid, mid, polid)
+            r = await matching.evaluate_profile(s, pid, mid, polid, limit=limit)
             await s.commit()
             return r
 
@@ -522,7 +522,10 @@ def test_profile_without_vector_is_noop(db):
             return r
 
     r = asyncio.run(go())
-    assert r == {"status": "sin_vector", "evaluated": 0, "new_evals": 0}
+    assert r == {
+        "status": "sin_vector", "evaluated": 0, "new_evals": 0,
+        "moved_current": False,
+    }
 
 
 def test_two_active_models_canonical_current_is_deterministic(db):
@@ -660,6 +663,149 @@ def test_inactive_policy_excluded(db):
     assert asyncio.run(deactivate()) == polid  # misma fila, active declarativo
     r2 = run_profile_task.apply(args=[str(pid)])
     assert r2.result["results"] == {}  # sin políticas activas: nada que evaluar
+
+
+def test_canonical_skips_model_without_offer_embeddings(db):
+    """Rev. A-08 #1 (repro): el modelo A tiene vector de perfil pero CERO
+    embeddings de ofertas → 'ok/evaluated=0' NO consume el canónico; B evalúa
+    y mueve el estado — el feed no queda vacío."""
+    from jobhunt_core.tasks.matching import run_profile_task
+
+    factory, created = db
+    pid, mid_a, polid, vacs = _setup(
+        factory, created, ["backend python", "data eng"],
+        model_specs=(("modelo-a", SHA_A), ("modelo-b", "b" * 40)),
+    )
+    mid_b = created["models"][-1]
+
+    async def strip_model_a_offer_vectors():
+        async with factory() as s:
+            await s.execute(
+                sa.text("DELETE FROM offer_embeddings WHERE model_id = :m"),
+                {"m": mid_a},
+            )
+            await s.commit()
+
+    asyncio.run(strip_model_a_offer_vectors())
+    r = run_profile_task.apply(args=[str(pid)])
+    assert r.successful()
+    key_a = f"modelo-a@{SHA_A}/cosine@v1"
+    assert r.result["results"][key_a]["evaluated"] == 0  # A sin candidatos
+    assert r.result["results"][key_a]["moved_current"] is False
+    cur = _rows(
+        factory,
+        "SELECT e.model_id FROM profile_vacancy_state s "
+        "JOIN match_evaluations e ON e.id = s.current_eval_id "
+        "WHERE s.profile_id = :p", p=pid,
+    )
+    assert len(cur) == 2 and {c.model_id for c in cur} == {mid_b}  # B movió
+    rows, _ = _feed(factory, pid)
+    assert len(rows) == 2  # el feed NO queda vacío
+
+
+def _seed_orphan_embeddings(factory, mid, profile_vec_text, n):
+    """Embeddings HISTÓRICOS/huérfanos (text_hash sin canónica vigente) máxima-
+    mente cercanos al vector del perfil: consumen el scan ANN filtrado."""
+
+    async def go():
+        async with factory() as s:
+            for i in range(n):
+                await s.execute(
+                    sa.text(
+                        "INSERT INTO offer_embeddings (text_hash, model_id, vector) "
+                        "VALUES (:th, :m, CAST(:v AS vector))"
+                    ),
+                    {"th": f"{i:064x}", "m": mid, "v": profile_vec_text},
+                )
+            await s.commit()
+
+    asyncio.run(go())
+
+
+def _profile_vec_text(factory, pid, mid):
+    return _rows(
+        factory,
+        "SELECT pe.vector::text AS v FROM profile_embeddings pe "
+        "WHERE pe.profile_id = :p AND pe.model_id = :m", p=pid, m=mid,
+    )[0].v
+
+
+def test_ann_starvation_by_orphan_embeddings(db):
+    """Rev. A-08 #2 (repro): 200 embeddings huérfanos MÁS CERCANOS que
+    cualquier oferta activa consumían el scan HNSW filtrado (0 candidatos con
+    ef_search=40). strict_order sigue escaneando: se evalúan las 30 activas.
+    Y el plan del ANN usa de verdad el índice (EXPLAIN)."""
+    factory, created = db
+    titles = [f"puesto especializado {i}" for i in range(30)]
+    pid, mid, polid, vacs = _setup(factory, created, titles)
+    vec = _profile_vec_text(factory, pid, mid)
+    _seed_orphan_embeddings(factory, mid, vec, 200)
+
+    r = _evaluate(factory, pid, mid, polid, limit=20)
+    assert r["evaluated"] == 20  # sin inanición: el filtro no vacía el top-K
+
+    async def explain():
+        async with factory() as s:
+            await s.execute(sa.text("SET LOCAL hnsw.ef_search = 40"))
+            await s.execute(sa.text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
+            # Con pocos cientos de filas el planner prefiere Sort exacto (más
+            # barato); se desactiva el seq scan para VALIDAR que el camino del
+            # índice HNSW existe y casa con la forma de la query.
+            await s.execute(sa.text("SET LOCAL enable_seqscan = off"))
+            plan = "\n".join(
+                (
+                    await s.execute(
+                        sa.text("EXPLAIN " + matching.CANDIDATES_SQL),
+                        {"vec": vec, "mid": mid, "k": 20},
+                    )
+                ).scalars().all()
+            )
+            return plan
+
+    plan = asyncio.run(explain())
+    assert "Index Scan using" in plan  # el ANN usa el HNSW de la partición
+
+
+def test_ann_fallback_exact_when_scan_cap_hit(db, monkeypatch):
+    """Rev. A-08 #2 (fallback): si el scan iterativo agota su tope de tuplas
+    entre huérfanos sin llenar el top-K, el FALLBACK EXACTO responde igual."""
+    factory, created = db
+    titles = [f"puesto especializado {i}" for i in range(30)]
+    pid, mid, polid, vacs = _setup(factory, created, titles)
+    vec = _profile_vec_text(factory, pid, mid)
+    _seed_orphan_embeddings(factory, mid, vec, 200)
+
+    monkeypatch.setattr(matching, "MAX_SCAN_TUPLES", 50)  # fuerza la inanición
+    r = _evaluate(factory, pid, mid, polid, limit=20)
+    assert r["evaluated"] == 20  # el exacto llena el top-K igualmente
+
+
+def test_state_timestamps_never_regress_across_overlapping_txs(db):
+    """Rev. A-08 #3 (repro): T1 abre tx (now() congelado), T2 descarta y
+    commitea, T1 guarda DESPUÉS — con clock_timestamp()+GREATEST el estado
+    nunca retrocede: updated_at/saved_at >= dismissed_at."""
+    factory, created = db
+    pid, mid, polid, vacs = _setup(factory, created, ["backend python"])
+    vid = vacs["backend python"]
+
+    async def overlap():
+        async with factory() as s1, factory() as s2:
+            await s1.execute(sa.text("SELECT 1"))  # abre la tx de T1 (vieja)
+            await asyncio.sleep(0.05)
+            await matching.set_dismissed(s2, pid, vid, True)
+            await s2.commit()
+            await asyncio.sleep(0.05)
+            await matching.set_saved(s1, pid, vid, True)  # T1 escribe la última
+            await s1.commit()
+
+    asyncio.run(overlap())
+    row = _rows(
+        factory,
+        "SELECT dismissed_at, saved_at, updated_at FROM profile_vacancy_state "
+        "WHERE profile_id = :p AND vacancy_id = :v", p=pid, v=vid,
+    )[0]
+    assert row.saved_at >= row.dismissed_at  # hora real de escritura
+    assert row.updated_at >= row.dismissed_at  # jamás retrocede
 
 
 def test_matching_task_end_to_end_and_not_found(db):

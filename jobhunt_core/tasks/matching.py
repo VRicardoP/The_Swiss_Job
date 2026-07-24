@@ -71,9 +71,11 @@ async def _run_profile_impl(profile_id: str, limit: int) -> dict[str, Any]:
                         move_current=canonical_pending,
                     )
                     await session.commit()
-                if r["status"] == "ok":
-                    # El canónico es el primer combo que DE VERDAD evaluó: un
-                    # 'sin_vector' (modelo aún sin backfill) no lo consume.
+                if r.get("moved_current"):
+                    # El canónico es el primer combo que DE VERDAD movió el
+                    # estado (rev. A-08 #1): un 'ok' con 0 vacantes evaluadas
+                    # (modelo sin embeddings de ofertas) NO lo consume — el
+                    # siguiente modelo puede poblar el feed.
                     canonical_pending = False
                 # La clave incluye la VERSIÓN del modelo (auditoría A-08: dos
                 # modelos con el mismo name colapsaban en una sola entrada).
