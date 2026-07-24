@@ -182,8 +182,8 @@ def db():
     asyncio.run(cleanup())
 
 
-def _api(factory, url, token=None, headers=None):
-    """GET contra la app real (ASGITransport) con la sesión de test inyectada."""
+def _api(factory, url, token=None, headers=None, method="GET"):
+    """Petición contra la app real (ASGITransport) con la sesión inyectada."""
 
     async def go():
         from httpx import ASGITransport, AsyncClient
@@ -203,7 +203,7 @@ def _api(factory, url, token=None, headers=None):
                 h = dict(headers or {})
                 if token is not None:
                     h["Authorization"] = f"Bearer {token}"
-                return await client.get(url, headers=h)
+                return await client.request(method, url, headers=h)
         finally:
             app.dependency_overrides.clear()
 
@@ -471,8 +471,9 @@ def test_matches_dto_pagination_and_errors(db):
     r = _api(factory, base + "?cursor=%21%21%21no-cursor", token=token)
     assert (r.status_code, r.json()["code"]) == (400, "invalid_cursor")
     for bad in (0, 101):
+        # Los límites los declara Query(ge/le) → validación → sobre uniforme.
         r = _api(factory, base + f"?limit={bad}", token=token)
-        assert (r.status_code, r.json()["code"]) == (400, "invalid_limit")
+        assert (r.status_code, r.json()["code"]) == (400, "invalid_request")
 
     # Auditoría A-09: cursor con Decimal NO finito → 400, jamás keyset roto.
     import base64 as b64
@@ -491,16 +492,108 @@ def test_matches_dto_pagination_and_errors(db):
     assert "details" in r.json() and "message" in r.json()
 
 
+def test_profile_reassignment_never_leaks(db):
+    """Rev. A-09 #1 (repro): el ownership va EN la query y en UNA sentencia.
+    Tras reasignar el perfil al tenant B (con revisión nueva 'secreta'), el
+    tenant A recibe 404 en perfil y matches; y el feed llamado con el
+    consumer de A devuelve CERO filas aunque el profile_id sea correcto."""
+    factory, created = db
+    pid, vacs, token_a = _seed_matches(factory, created)
+    cid_a = created["consumers"][0]
+    cid_b, _kb, token_b = _issue(factory, created, "tenant-b", ALL_SCOPES)
+
+    async def reassign():
+        async with factory() as s:
+            await s.execute(
+                sa.text("UPDATE profiles SET consumer_id = :b WHERE id = :p"),
+                {"b": cid_b, "p": pid},
+            )
+            await profiles.save_profile_revision(
+                s, pid, {"title": "SECRETO DEL NUEVO TENANT", "skills": ["x"]}
+            )
+            await s.commit()
+
+    asyncio.run(reassign())
+    assert _api(factory, f"/v1/profiles/{pid}", token=token_a).status_code == 404
+    assert _api(factory, f"/v1/profiles/{pid}/matches", token=token_a).status_code == 404
+    r = _api(factory, f"/v1/profiles/{pid}", token=token_b)
+    assert r.status_code == 200  # el dueño NUEVO sí lo ve
+    assert "SECRETO" in r.json()["current_revision"]["content"]["title"]
+
+    # Cinturón SQL del feed: consumer de A + profile_id correcto → 0 filas.
+    async def direct_feed():
+        async with factory() as s:
+            rows, _ = await matching.feed(s, pid, consumer_id=cid_a)
+            return rows
+
+    assert asyncio.run(direct_feed()) == []
+
+
+def test_matches_etag_and_state_change(db):
+    """Rev. A-09 #2: /matches TIENE ETag — estable entre llamadas idénticas,
+    304 con If-None-Match y cambia cuando cambia la página (dismiss)."""
+    factory, created = db
+    pid, vacs, token = _seed_matches(factory, created)
+    base = f"/v1/profiles/{pid}/matches"
+
+    r1 = _api(factory, base, token=token)
+    etag = r1.headers["etag"]
+    assert _api(factory, base, token=token).headers["etag"] == etag  # estable
+    r304 = _api(factory, base, token=token, headers={"If-None-Match": etag})
+    assert r304.status_code == 304
+
+    async def dismiss():
+        async with factory() as s:
+            await matching.set_dismissed(s, pid, next(iter(vacs.values())), True)
+            await s.commit()
+
+    asyncio.run(dismiss())
+    r2 = _api(factory, base, token=token, headers={"If-None-Match": etag})
+    assert r2.status_code == 200 and r2.headers["etag"] != etag
+
+
+def test_if_none_match_http_semantics(db):
+    """Rev. A-09 #5: comodín `*`, comparación DÉBIL (W/) y listas de entidades
+    satisfacen la condición en GET."""
+    factory, created = db
+    pid, vacs, token = _seed_matches(factory, created, titles=("backend python",))
+    url = f"/v1/vacancies/{vacs['backend python']}"
+    etag = _api(factory, url, token=token).headers["etag"]
+    for header in ("*", f"W/{etag}", f'"otro-etag", {etag}'):
+        r = _api(factory, url, token=token, headers={"If-None-Match": header})
+        assert r.status_code == 304, header
+
+
+def test_router_404_and_405_wear_contract_envelope(db):
+    """Rev. A-09 #3: los HTTPException de Starlette también llevan el sobre —
+    ruta inexistente y método incorrecto incluidos."""
+    factory, created = db
+    r = _api(factory, "/v1/no-existe")
+    assert (r.status_code, r.json()["code"]) == (404, "not_found")
+    r = _api(factory, f"/v1/vacancies/{uuid.uuid4()}", method="POST")
+    assert (r.status_code, r.json()["code"]) == (405, "method_not_allowed")
+    assert set(r.json()) == {"code", "message", "details"}
+
+
 def test_openapi_schema_exposed(db):
     factory, created = db
     r = _api(factory, "/v1/openapi.json")
     assert r.status_code == 200
     paths = r.json()["paths"]
+    spec = r.json()
+    # Rev. A-09 #6: OpenAPI FIEL al contrato — Bearer declarado, 400 (no 422),
+    # 304 y 500 documentados en cada operación de negocio.
+    assert "HTTPBearer" in spec["components"]["securitySchemes"]
+    assert "ErrorDTO" in spec["components"]["schemas"]
     for p in (
         "/v1/vacancies/{vacancy_id}",
         "/v1/profiles/{profile_id}",
         "/v1/profiles/{profile_id}/matches",
     ):
         assert p in paths
-    # Auditoría A-09: el esquema de ERROR del contrato está documentado.
-    assert "ErrorDTO" in r.json()["components"]["schemas"]
+        op = spec["paths"][p]["get"]
+        assert op.get("security"), p  # securityScheme aplicado a la operación
+        resps = op["responses"]
+        assert "422" not in resps, p
+        for status in ("400", "401", "403", "404", "304", "500"):
+            assert status in resps, (p, status)

@@ -263,14 +263,20 @@ async def evaluate_profile(
     }
 
 
-async def feed(session, profile_id, limit: int = 20, cursor=None):
+async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=None):
     """Feed del perfil (DoD A-08): evaluación VIGENTE + no-dismissed + vacante
     ACTIVA, keyset por (score_final DESC, vacancy_id ASC).
 
     `cursor` = (score_final, vacancy_id) de la última fila entregada; devuelve
-    (filas, next_cursor) con next_cursor None al agotar."""
+    (filas, next_cursor) con next_cursor None al agotar. `consumer_id`
+    (rev. A-09 #1): el OWNERSHIP multi-tenant se filtra EN LA QUERY (§2) —
+    una reasignación de tenant a mitad de request jamás puede filtrar filas."""
     where_cursor = ""
+    tenant_join = ""
     params = {"pid": profile_id, "lim": limit}
+    if consumer_id is not None:
+        tenant_join = "JOIN profiles p ON p.id = s.profile_id AND p.consumer_id = :cid "
+        params["cid"] = consumer_id
     if cursor is not None:
         where_cursor = (
             "AND (e.score_final < :cs "
@@ -283,6 +289,7 @@ async def feed(session, profile_id, limit: int = 20, cursor=None):
                 "SELECT e.vacancy_id, e.score_final, e.id AS eval_id, e.scores, "
                 "e.offer_revision_id, s.saved_at, s.feedback, s.notes "
                 "FROM profile_vacancy_state s "
+                f"{tenant_join}"
                 "JOIN match_evaluations e ON e.id = s.current_eval_id "
                 "  AND e.profile_id = s.profile_id AND e.vacancy_id = s.vacancy_id "
                 "JOIN vacancies v ON v.id = s.vacancy_id "

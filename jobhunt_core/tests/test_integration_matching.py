@@ -709,14 +709,16 @@ def _seed_orphan_embeddings(factory, mid, profile_vec_text, n):
 
     async def go():
         async with factory() as s:
-            for i in range(n):
-                await s.execute(
-                    sa.text(
-                        "INSERT INTO offer_embeddings (text_hash, model_id, vector) "
-                        "VALUES (:th, :m, CAST(:v AS vector))"
-                    ),
-                    {"th": f"{i:064x}", "m": mid, "v": profile_vec_text},
-                )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO offer_embeddings (text_hash, model_id, vector) "
+                    "VALUES (:th, :m, CAST(:v AS vector))"
+                ),
+                [
+                    {"th": f"{i:064x}", "m": mid, "v": profile_vec_text}
+                    for i in range(n)
+                ],
+            )
             await s.commit()
 
     asyncio.run(go())
@@ -792,14 +794,59 @@ def test_limit_bounds_are_validated_and_huge_limit_works(db):
     assert r["evaluated"] == 2  # sin error del GUC; evalúa todo lo elegible
 
 
-def test_small_corpus_does_not_trigger_fallback(db):
-    """Rev. A-08 2ª P2#2: con menos elegibles que limit, el ANN que agota el
-    corpus NO dispara la segunda búsqueda — el objetivo real es el conteo
-    acotado (aquí bastan los resultados: mismo evaluated, una sola pasada)."""
+def test_small_corpus_single_ann_pass_and_fallback_counted(db, monkeypatch):
+    """Rev. A-08 2ª P2#2 + rev. A-09 #7 (falso verde): se CUENTAN las
+    ejecuciones reales de CANDIDATES_SQL — corpus < limit ⇒ UNA sola pasada;
+    inanición forzada ⇒ exactamente dos (ANN + fallback exacto)."""
+    from sqlalchemy import event
+
     factory, created = db
     pid, mid, polid, vacs = _setup(factory, created, ["backend python", "data eng"])
-    r = _evaluate(factory, pid, mid, polid, limit=100)  # corpus de 2
+
+    counter = {"n": 0}
+    engine2 = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
+    factory2 = async_sessionmaker(engine2, expire_on_commit=False)
+
+    def count_candidates(conn, cursor, statement, parameters, context, executemany):
+        if "ORDER BY oe.vector" in statement:
+            counter["n"] += 1
+
+    event.listen(engine2.sync_engine, "before_cursor_execute", count_candidates)
+
+    def run_eval():
+        async def go():
+            async with factory2() as s:
+                r = await matching.evaluate_profile(s, pid, mid, polid, limit=100)
+                await s.commit()
+                return r
+
+        return asyncio.run(go())
+
+    r = run_eval()
     assert r["evaluated"] == 2
+    assert counter["n"] == 1  # corpus < limit: SIN segunda búsqueda
+
+    # Disparo del fallback INDEPENDIENTE del plan: a esta escala el planner
+    # arranca desde vacancies (plan exacto) y el HNSW no puede inanirse — se
+    # fuerza una primera pasada VACÍA (< objetivo) parcheando el SQL; ambas
+    # pasadas ejecutan el MISMO statement, así que el contador demuestra el
+    # control de flujo real (la inanición FÍSICA a escala la validó la
+    # revisión externa con 20k huérfanos y 1k activas).
+    counter["n"] = 0
+    monkeypatch.setattr(
+        matching, "CANDIDATES_SQL",
+        matching.CANDIDATES_SQL.replace(
+            "WHERE v.archived_at", "WHERE false AND v.archived_at"
+        ),
+    )
+    r = run_eval()
+    assert r["evaluated"] == 0
+    assert counter["n"] == 2  # ANN corta (< objetivo) → fallback EJECUTADO
+
+    async def dispose():
+        await engine2.dispose()
+
+    asyncio.run(dispose())
 
 
 def test_state_timestamps_never_regress_across_overlapping_txs(db):

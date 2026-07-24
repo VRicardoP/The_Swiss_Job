@@ -12,7 +12,9 @@ from pathlib import Path
 import sqlalchemy as sa
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from jobhunt_core import __version__
 from jobhunt_core.api.deps import ApiError
@@ -71,6 +73,56 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
         status_code=500,
         content={"code": "internal_error", "message": "error interno", "details": {}},
     )
+
+
+_HTTP_CODES = {404: "not_found", 405: "method_not_allowed", 429: "rate_limited"}
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(
+    request: Request, exc: StarletteHTTPException
+) -> JSONResponse:
+    """Los HTTPException de Starlette (ruta inexistente → 404, método
+    incorrecto → 405...) TAMBIÉN llevan el sobre del contrato (rev. A-09 #3:
+    'TODOS los caminos' significa todos)."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "code": _HTTP_CODES.get(exc.status_code, "http_error"),
+            "message": str(exc.detail),
+            "details": {},
+        },
+    )
+
+
+def _openapi_with_contract_errors():
+    """OpenAPI FIEL al contrato (rev. A-09 #6): la validación responde 400
+    (no el 422 que FastAPI anuncia por defecto) y todo endpoint puede dar el
+    500 uniforme. El securityScheme Bearer lo aporta la dependencia."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title, version=app.version, routes=app.routes,
+    )
+    error_ref = {
+        "content": {
+            "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorDTO"}
+            }
+        }
+    }
+    for path in schema.get("paths", {}).values():
+        for op in path.values():
+            resps = op.get("responses", {})
+            if "422" in resps:
+                resps.pop("422")
+                resps.setdefault("400", {"description": "Bad Request", **error_ref})
+            resps.setdefault("500", {"description": "Internal Server Error", **error_ref})
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _openapi_with_contract_errors
 
 
 @app.get("/v1/health")

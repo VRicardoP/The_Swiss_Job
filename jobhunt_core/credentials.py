@@ -54,18 +54,29 @@ async def revoke_credential(session, key_id: str) -> None:
     )
 
 
+# Hash dummy PRECOMPUTADO: la rama key_id-inexistente compara contra él — ni
+# una query ni un hash de más respecto a la rama real (rev. A-09 #4).
+_DUMMY_HASH = hashlib.sha256(b"jobhunt-core-dummy-credential").hexdigest()
+
+
 async def authenticate(session, token: str):
     """(consumer_id, scopes) o None. Un token inválido por CUALQUIER causa
     (formato, key_id, secreto, revocada, caducada, consumer inactivo) devuelve
-    None sin distinguir el motivo — al cliente siempre el mismo 401."""
+    None sin distinguir el motivo — mismo 401 y MISMO camino de ejecución
+    (rev. A-09 #4: una query única con la expiración evaluada en SQL, el hash
+    candidato calculado UNA vez y compare_digest SIEMPRE ejecutado)."""
     key_id, sep, secret = token.partition(".")
     if not sep or not key_id or not secret:
         return None
+    candidate = _hash_secret(secret)
     row = (
         await session.execute(
             sa.text(
-                "SELECT cc.hash, cc.scopes, cc.consumer_id, cc.revoked_at, "
-                "cc.expires_at, c.active "
+                "SELECT cc.hash, cc.scopes, cc.consumer_id, "
+                "(cc.revoked_at IS NOT NULL) AS revoked, "
+                "(cc.expires_at IS NOT NULL "
+                " AND cc.expires_at < clock_timestamp()) AS expired, "
+                "c.active "
                 "FROM consumer_credentials cc "
                 "JOIN consumers c ON c.id = cc.consumer_id "
                 "WHERE cc.key_id = :kid"
@@ -73,22 +84,9 @@ async def authenticate(session, token: str):
             {"kid": key_id},
         )
     ).one_or_none()
-    if row is None:
-        # Comparación fantasma: el tiempo de respuesta no revela si el key_id
-        # existe.
-        hmac.compare_digest(_hash_secret(secret), _hash_secret("x"))
+    stored = row.hash if row is not None else _DUMMY_HASH
+    ok = hmac.compare_digest(stored, candidate)
+    if row is None or not ok or row.revoked or row.expired or not row.active:
         return None
-    if not hmac.compare_digest(row.hash, _hash_secret(secret)):
-        return None
-    if row.revoked_at is not None or not row.active:
-        return None
-    if row.expires_at is not None:
-        expired = (
-            await session.execute(
-                sa.text("SELECT :exp < clock_timestamp()"), {"exp": row.expires_at}
-            )
-        ).scalar_one()
-        if expired:
-            return None
     scopes = row.scopes if isinstance(row.scopes, list) else []
     return row.consumer_id, scopes

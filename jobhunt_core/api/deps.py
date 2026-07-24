@@ -10,7 +10,8 @@ import dataclasses
 import logging
 import uuid
 
-from fastapi import Depends, Request
+from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from jobhunt_core import credentials
 from jobhunt_core.database import SessionLocal
@@ -53,12 +54,18 @@ async def get_session():
         yield session
 
 
-async def get_principal(request: Request, session=Depends(get_session)) -> Principal:
-    auth = request.headers.get("authorization", "")
-    scheme, _, token = auth.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
+# HTTPBearer como dependencia FORMAL (rev. A-09 #6): OpenAPI declara el
+# securityScheme; auto_error=False para conservar NUESTRO 401 del contrato.
+_bearer = HTTPBearer(auto_error=False)
+
+
+async def get_principal(
+    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    session=Depends(get_session),
+) -> Principal:
+    if creds is None or creds.scheme.lower() != "bearer" or not creds.credentials.strip():
         raise error_401()
-    result = await credentials.authenticate(session, token.strip())
+    result = await credentials.authenticate(session, creds.credentials.strip())
     if result is None:
         raise error_401()
     consumer_id, scopes = result

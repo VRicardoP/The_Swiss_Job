@@ -71,10 +71,27 @@ def _etag_of(payload: dict) -> str:
     return '"' + hashlib.sha256(canonical.encode()).hexdigest()[:32] + '"'
 
 
+def _if_none_match_matches(header: str, etag: str) -> bool:
+    """Semántica HTTP real de If-None-Match (rev. A-09 #5): lista de
+    entidades, comodín `*` y comparación DÉBIL (W/ se ignora para GET)."""
+    header = header.strip()
+    if header == "*":
+        return True
+    current = etag.strip('"')
+    for part in header.split(","):
+        cand = part.strip()
+        if cand.startswith("W/"):
+            cand = cand[2:].strip()
+        if cand.strip('"') == current:
+            return True
+    return False
+
+
 def _with_etag(request: Request, payload: dict) -> Response:
     """304 si la representación no cambió (If-None-Match); ETag siempre."""
     etag = _etag_of(payload)
-    if request.headers.get("if-none-match") == etag:
+    inm = request.headers.get("if-none-match")
+    if inm and _if_none_match_matches(inm, etag):
         return Response(status_code=304, headers={"ETag": etag})
     return Response(
         content=json.dumps(payload, ensure_ascii=False, default=str),
@@ -187,48 +204,61 @@ async def get_profile(
     session=Depends(get_session),
     principal: Principal = Depends(require_scope("profiles:read")),
 ):
+    # OWNERSHIP EN SQL y en UNA sola sentencia (rev. A-09 #1): el filtro por
+    # consumer_id va en la query (§2) y la identidad + revisión vigente salen
+    # del MISMO snapshot — sin ventana TOCTOU entre comprobación y contenido.
+    # Cross-tenant y ausente son INDISTINGUIBLES: 404 (no revelar).
     row = (
         await session.execute(
             sa.text(
-                "SELECT id, consumer_id, external_ref, created_at "
-                "FROM profiles WHERE id = :pid"
+                "SELECT p.id, p.external_ref, p.created_at, "
+                "pr.content, pr.content_hash, pr.text_hash "
+                "FROM profiles p "
+                "LEFT JOIN (SELECT DISTINCT ON (a.profile_id) a.profile_id, "
+                "           r.content, r.content_hash, r.text_hash "
+                "           FROM profile_revision_activations a "
+                "           JOIN profile_revisions r ON r.id = a.revision_id "
+                "           WHERE a.profile_id = :pid "
+                "           ORDER BY a.profile_id, a.seq DESC) pr "
+                "  ON pr.profile_id = p.id "
+                "WHERE p.id = :pid AND p.consumer_id = :cid"
             ),
-            {"pid": profile_id},
+            {"pid": profile_id, "cid": principal.consumer_id},
         )
     ).one_or_none()
-    # Cross-tenant y ausente son INDISTINGUIBLES: 404 (§2, no revelar).
-    if row is None or row.consumer_id != principal.consumer_id:
+    if row is None:
         raise error_404("perfil")
-    rev = await profiles.current_revision(session, profile_id)
     dto = schemas.ProfileDTO(
         id=row.id, external_ref=row.external_ref, created_at=row.created_at,
         current_revision=(
             schemas.ProfileRevisionDTO(
-                content=rev.content, content_hash=rev.content_hash,
-                text_hash=rev.text_hash,
+                content=row.content, content_hash=row.content_hash,
+                text_hash=row.text_hash,
             )
-            if rev is not None
+            if row.content_hash is not None
             else None
         ),
     )
     return _with_etag(request, dto.model_dump(mode="json"))
 
 
-@router.get("/profiles/{profile_id}/matches", response_model=schemas.MatchesPageDTO)
+@router.get("/profiles/{profile_id}/matches", response_model=schemas.MatchesPageDTO,
+            responses={304: {"description": "Not Modified"}})
 async def get_matches(
     profile_id: uuid.UUID,
+    request: Request,
     session=Depends(get_session),
     principal: Principal = Depends(require_scope("matches:read")),
-    limit: int = Query(20),
+    limit: int = Query(20, ge=1, le=MAX_PAGE_LIMIT),
     cursor: str | None = Query(None),
 ):
     """Feed del perfil (§2/A-08): excluye dismissed y no-activas; orden
-    score_final DESC; keyset opaco base64(score_final|vacancy_id)."""
-    if not 1 <= limit <= MAX_PAGE_LIMIT:
-        raise ApiError(
-            400, "invalid_limit", f"limit debe estar en 1..{MAX_PAGE_LIMIT}",
-            {"limit": limit},
-        )
+    score_final DESC; keyset opaco base64(score_final|vacancy_id). ETag de la
+    página (rev. A-09 #2). Los límites del `limit` los declara Query (ge/le →
+    OpenAPI) y el sobre lo pone el handler de validación."""
+    # 404 para cross-tenant/ausente (indistinguibles); además el feed filtra
+    # el tenant EN SQL (rev. A-09 #1) — una reasignación entre esta lectura y
+    # la página jamás filtra filas ajenas (solo degradaría a página vacía).
     owner = (
         await session.execute(
             sa.text("SELECT consumer_id FROM profiles WHERE id = :pid"),
@@ -239,7 +269,10 @@ async def get_matches(
         raise error_404("perfil")
 
     cur = decode_cursor(cursor) if cursor else None
-    rows, next_cur = await matching.feed(session, profile_id, limit=limit, cursor=cur)
+    rows, next_cur = await matching.feed(
+        session, profile_id, limit=limit, cursor=cur,
+        consumer_id=principal.consumer_id,
+    )
     eval_ids = [r.eval_id for r in rows]
     evals = {
         e.id: e
@@ -252,9 +285,9 @@ async def get_matches(
                     "FROM match_evaluations e "
                     "JOIN embedding_models m ON m.id = e.model_id "
                     "JOIN scoring_policies p ON p.id = e.scoring_policy_id "
-                    "WHERE e.id = ANY(:ids)"
+                    "WHERE e.id = ANY(:ids) AND e.profile_id = :pid"
                 ),
-                {"ids": eval_ids},
+                {"ids": eval_ids, "pid": profile_id},
             )
         ).all()
     } if eval_ids else {}
@@ -289,7 +322,9 @@ async def get_matches(
                 ),
             )
         )
-    return schemas.MatchesPageDTO(
+    page = schemas.MatchesPageDTO(
         items=items,
         next_cursor=encode_cursor(*next_cur) if next_cur else None,
     )
+    # ETag también en el feed (rev. A-09 #2): la página es una representación.
+    return _with_etag(request, page.model_dump(mode="json"))
