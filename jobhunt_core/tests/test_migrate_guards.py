@@ -32,6 +32,14 @@ class TestLiteralGuards:
         with pytest.raises(ValueError):
             _bootstrap()
 
+    def test_bootstrap_raises_on_bad_capture_password(self, monkeypatch):
+        # B-01: la credencial del rol de REPLICACIÓN pasa por la MISMA
+        # barrera anti-inyección, también antes de conectar.
+        monkeypatch.setenv("CORE_ADMIN_DATABASE_URL", "postgresql://x@nowhere/db")
+        monkeypatch.setenv("CORE_CAPTURE_PASSWORD", "bad pass!'")
+        with pytest.raises(ValueError, match="CORE_CAPTURE_PASSWORD"):
+            _bootstrap()
+
 
 class TestProdFailFast:
     """rev. externa A-01 #2: el DoD de aislamiento se IMPONE en prod, no se asume."""

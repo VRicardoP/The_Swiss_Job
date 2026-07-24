@@ -592,7 +592,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                     )
                 ).scalar_one()
 
-        assert asyncio.run(seed_and_version()) == "core0008a"
+        assert asyncio.run(seed_and_version()) == "core0008b"  # head incluye B-01
 
         run_alembic(temp_url, "downgrade", "core0007")
 
@@ -626,7 +626,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                         sa.text("SELECT version_num FROM alembic_version")
                     )
                 ).scalar_one()
-                assert version == "core0008a"
+                assert version == "core0008b"  # head incluye B-01
                 # El esquema re-creado FUNCIONA y con sus guardas: smoke real.
                 cid = await profiles.ensure_consumer(s, "b03-post")
                 pid = await profiles.upsert_profile(s, cid, "user-post")

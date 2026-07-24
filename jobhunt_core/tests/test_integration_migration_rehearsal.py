@@ -193,8 +193,8 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
         # DOWNGRADE COMPLETO paso a paso (valida CADA down-migration con
         # datos reales delante) y vuelta a head.
         for target in (
-            "core0007", "core0006", "core0005", "core0004", "core0003", "core0002",
-            "core0001", "base",
+            "core0008a", "core0007", "core0006", "core0005", "core0004", "core0003",
+            "core0002", "core0001", "base",
         ):
             run_alembic(temp_url, "downgrade", target)
         run_alembic(temp_url, "upgrade", "head")
@@ -204,7 +204,7 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                 version = (
                     await s.execute(sa.text("SELECT version_num FROM alembic_version"))
                 ).scalar_one()
-                assert version == "core0008a"
+                assert version == "core0008b"
                 # El esquema re-creado FUNCIONA: smoke de escritura real.
                 await s.execute(
                     sa.text("INSERT INTO consumers (id, name) VALUES (:i, 'post-cycle')"),
@@ -219,12 +219,13 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                             "AND indexname IN ('ix_source_listings_url_normalized', "
                             "'ix_pract_profile_seq', 'ix_profrev_text_hash_id', "
                             "'ix_outbox_deliv_pending', 'ix_outbox_deliv_inflight', "
-                            "'ix_incarnation_vacancy_active', 'uq_labeled_dedup_pair')"
+                            "'ix_incarnation_vacancy_active', 'uq_labeled_dedup_pair', "
+                            "'ix_shadow_change_unapplied')"
                         ),
                         {"s": settings.CORE_DB_SCHEMA},
                     )
                 ).scalar_one()
-                assert idx == 7
+                assert idx == 8
 
         asyncio.run(verify_after_cycle())
         asyncio.run(temp_engine.dispose())

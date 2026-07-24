@@ -192,6 +192,21 @@ async def purge_shadow(
         )
 
 
+async def purge_capture(s: AsyncSession, pks: Sequence[str] = ()) -> None:
+    """Staging del CDC (B-01): borra por pk cambios sembrados por tests.
+
+    La fila de estado (id=1) y el staging del slot REAL de producción no se
+    tocan jamás desde aquí — los tests de captura corren sobre BD desechable
+    (test_integration_capture); esto sirve a fixtures que siembren staging
+    SINTÉTICO en la BD compartida (proyector B-02)."""
+    rows = list(pks)
+    if not rows:
+        return
+    await s.execute(
+        sa.text("DELETE FROM shadow_change_log WHERE pk = ANY(:p)"), {"p": rows}
+    )
+
+
 async def purge_policies(s: AsyncSession, policy_ids: Sequence[uuid.UUID]) -> None:
     if not policy_ids:
         return
