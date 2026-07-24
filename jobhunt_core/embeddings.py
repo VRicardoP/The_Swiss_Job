@@ -155,9 +155,15 @@ async def register_model(
 
 
 async def active_models(session) -> list:
+    """Orden DETERMINISTA (name, version): el evaluador canónico del matching
+    y cualquier iteración por modelos no dependen del orden físico del heap
+    (auditoría A-08)."""
     return (
         await session.execute(
-            sa.text("SELECT id, name, version, dim FROM embedding_models WHERE active")
+            sa.text(
+                "SELECT id, name, version, dim FROM embedding_models "
+                "WHERE active ORDER BY name, version"
+            )
         )
     ).all()
 

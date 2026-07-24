@@ -1,0 +1,273 @@
+"""Matching determinista por embeddings (A-08, ADR-03 + CONTRATOS §1).
+
+- `match_evaluations` = APPEND-ONLY con los componentes como COLUMNAS y
+  `eval_key` DETERMINISTA (hash de offer_revision + profile_revision + model +
+  policy): re-evaluar los MISMOS componentes no duplica —
+  UNIQUE(profile_id, vacancy_id, eval_key) + DO NOTHING ("reintento no
+  duplica"). Sin feedback aquí (ADR-03).
+- `profile_vacancy_state` = estado ESTABLE por (perfil, vacante): el matching
+  solo mueve `current_eval_id` (FK compuesta, RESTRICT) y `updated_at` —
+  JAMÁS pisa feedback/dismissed_at/saved_at/notes.
+- Feed (DoD): evaluación VIGENTE (current_eval_id) + no-dismissed + vacante
+  ACTIVA, keyset por (score_final DESC, vacancy_id ASC).
+- score_final en Fase A: similitud coseno (pgvector `<=>`, HNSW del modelo)
+  escalada a 0..100 con 2 decimales (NUMERIC(6,2) del contrato). El
+  multi-factor/rerank es POLÍTICA VERSIONADA de Fase B (`weights` JSONB
+  reservado en scoring_policies).
+"""
+
+import hashlib
+import json
+import logging
+import uuid
+
+import sqlalchemy as sa
+
+logger = logging.getLogger(__name__)
+
+
+def eval_key(offer_revision_id, profile_revision_id, model_id, policy_id) -> str:
+    """Clave DETERMINISTA de la evaluación: mismos componentes ⇒ misma clave
+    ⇒ una sola fila append-only (idempotencia por contrato)."""
+    raw = f"{offer_revision_id}|{profile_revision_id}|{model_id}|{policy_id}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+async def ensure_policy(
+    session, name: str, prompt_version: str, weights: dict | None = None,
+    active: bool = True,
+) -> uuid.UUID:
+    """Alta idempotente de la política (UNIQUE(name, prompt_version)). Como
+    register_model: la fila existente se relee bajo lock y `active` se
+    ACTUALIZA al re-declarar (declaración operativa); weights solo al crear
+    (una política versionada no muta — otra versión = otra fila)."""
+    await session.execute(
+        sa.text(
+            "INSERT INTO scoring_policies (id, name, prompt_version, weights, active) "
+            "VALUES (:id, :name, :ver, CAST(:w AS jsonb), :active) "
+            "ON CONFLICT (name, prompt_version) DO NOTHING"
+        ),
+        {
+            "id": uuid.uuid4(), "name": name, "ver": prompt_version,
+            "w": json.dumps(weights or {}), "active": active,
+        },
+    )
+    row = (
+        await session.execute(
+            sa.text(
+                "SELECT id, active FROM scoring_policies "
+                "WHERE name = :name AND prompt_version = :ver FOR UPDATE"
+            ),
+            {"name": name, "ver": prompt_version},
+        )
+    ).one()
+    if row.active != active:
+        await session.execute(
+            sa.text("UPDATE scoring_policies SET active = :a WHERE id = :id"),
+            {"a": active, "id": row.id},
+        )
+    return row.id
+
+
+async def evaluate_profile(
+    session, profile_id, model_id, policy_id, limit: int = 100,
+    move_current: bool = True,
+) -> dict:
+    """Evalúa el perfil (revisión VIGENTE + su vector) contra las ofertas
+    ACTIVAS con vector del mismo modelo, por coseno (HNSW).
+
+    - LOCK por perfil (FOR UPDATE — mismo protocolo que save_profile_revision;
+      auditoría A-08): evaluaciones del mismo perfil se SERIALIZAN, y la que
+      corre después lee la revisión vigente MÁS NUEVA — current_eval_id nunca
+      retrocede a una revisión vieja por una carrera.
+    - `move_current`: solo el evaluador CANÓNICO (primer (modelo, política)
+      activo en orden determinista — lo decide la tarea) mueve
+      current_eval_id; el resto corre en SOMBRA (append-only, sin tocar el
+      estado) — con varios modelos el feed es determinista (auditoría A-08).
+    Todo por lotes: 1 SELECT de candidatos + 1 INSERT append-only + 1
+    re-select de ganadores + 1 UPSERT de estado (solo current_eval_id y
+    updated_at)."""
+    locked = (
+        await session.execute(
+            sa.text("SELECT id FROM profiles WHERE id = :pid FOR UPDATE"),
+            {"pid": profile_id},
+        )
+    ).scalar_one_or_none()
+    if locked is None:
+        return {"status": "not_found", "evaluated": 0, "new_evals": 0}
+    prof = (
+        await session.execute(
+            sa.text(
+                "SELECT cur.revision_id, pe.vector::text AS vec "
+                "FROM (SELECT DISTINCT ON (profile_id) profile_id, revision_id "
+                "      FROM profile_revision_activations WHERE profile_id = :pid "
+                "      ORDER BY profile_id, seq DESC) cur "
+                "JOIN profile_embeddings pe "
+                "  ON pe.profile_revision_id = cur.revision_id AND pe.model_id = :mid"
+            ),
+            {"pid": profile_id, "mid": model_id},
+        )
+    ).one_or_none()
+    if prof is None:
+        # Sin revisión vigente o sin vector para este modelo: nada que evaluar
+        # (el worker de embeddings aún no pasó) — no es un error.
+        return {"status": "sin_vector", "evaluated": 0, "new_evals": 0}
+
+    # hnsw.ef_search por defecto (40) truncaría el top-K en silencio con
+    # limit > 40 (auditoría A-08): se eleva SOLO en esta transacción. Entero
+    # validado (SET no admite binds).
+    ef_search = int(max(limit, 40))
+    await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {ef_search}"))
+    candidates = (
+        await session.execute(
+            sa.text(
+                "SELECT v.id AS vacancy_id, "
+                "v.current_offer_revision_id AS offer_revision_id, "
+                "1 - (oe.vector <=> CAST(:vec AS vector)) AS sim "
+                "FROM vacancies v "
+                "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
+                "JOIN offer_embeddings oe "
+                "  ON oe.text_hash = orv.text_hash AND oe.model_id = :mid "
+                "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
+                "ORDER BY oe.vector <=> CAST(:vec AS vector) "
+                "LIMIT :k"
+            ),
+            {"vec": prof.vec, "mid": model_id, "k": limit},
+        )
+    ).all()
+    if not candidates:
+        return {"status": "ok", "evaluated": 0, "new_evals": 0}
+
+    eval_rows = []
+    for c in candidates:
+        key = eval_key(c.offer_revision_id, prof.revision_id, model_id, policy_id)
+        # Coseno en [-1, 1] → score 0..100 (2 decimales, NUMERIC(6,2)).
+        score = round(max(0.0, float(c.sim)) * 100, 2)
+        eval_rows.append(
+            {
+                "id": uuid.uuid4(), "pid": profile_id, "vid": c.vacancy_id,
+                "orid": c.offer_revision_id, "prid": prof.revision_id,
+                "mid": model_id, "spid": policy_id, "key": key,
+                "score": score,
+                "scores": json.dumps({"similarity": round(float(c.sim), 6)}),
+            }
+        )
+    eval_rows.sort(key=lambda r: str(r["vid"]))  # orden determinista
+    await session.execute(
+        sa.text(
+            "INSERT INTO match_evaluations "
+            "(id, profile_id, vacancy_id, offer_revision_id, profile_revision_id, "
+            " model_id, scoring_policy_id, eval_key, score_final, scores) "
+            "VALUES (:id, :pid, :vid, :orid, :prid, :mid, :spid, :key, :score, "
+            "CAST(:scores AS jsonb)) "
+            "ON CONFLICT (profile_id, vacancy_id, eval_key) DO NOTHING"
+        ),
+        eval_rows,
+    )
+    # Ganadores REALES (idempotencia/carreras: la fila puede ser previa).
+    winners = {
+        (r.vacancy_id, r.eval_key): r.id
+        for r in (
+            await session.execute(
+                sa.text(
+                    "SELECT e.id, e.vacancy_id, e.eval_key FROM match_evaluations e "
+                    "JOIN unnest(CAST(:vids AS uuid[]), CAST(:keys AS text[])) "
+                    "  AS t(vid, k) ON e.vacancy_id = t.vid AND e.eval_key = t.k "
+                    "WHERE e.profile_id = :pid"
+                ),
+                {
+                    "pid": profile_id,
+                    "vids": [str(r["vid"]) for r in eval_rows],
+                    "keys": [r["key"] for r in eval_rows],
+                },
+            )
+        ).all()
+    }
+    new_evals = sum(
+        1 for r in eval_rows if winners.get((r["vid"], r["key"])) == r["id"]
+    )
+    if move_current:
+        state_rows = [
+            {"pid": profile_id, "vid": r["vid"], "eid": winners[(r["vid"], r["key"])]}
+            for r in eval_rows
+            if (r["vid"], r["key"]) in winners
+        ]
+        # Estado: SOLO current_eval_id/updated_at — feedback/dismissed/saved/
+        # notes se preservan SIEMPRE (ADR-03: estado estable).
+        await session.execute(
+            sa.text(
+                "INSERT INTO profile_vacancy_state (profile_id, vacancy_id, current_eval_id) "
+                "VALUES (:pid, :vid, :eid) "
+                "ON CONFLICT (profile_id, vacancy_id) DO UPDATE "
+                "SET current_eval_id = EXCLUDED.current_eval_id, updated_at = now()"
+            ),
+            state_rows,
+        )
+    return {"status": "ok", "evaluated": len(eval_rows), "new_evals": new_evals}
+
+
+async def feed(session, profile_id, limit: int = 20, cursor=None):
+    """Feed del perfil (DoD A-08): evaluación VIGENTE + no-dismissed + vacante
+    ACTIVA, keyset por (score_final DESC, vacancy_id ASC).
+
+    `cursor` = (score_final, vacancy_id) de la última fila entregada; devuelve
+    (filas, next_cursor) con next_cursor None al agotar."""
+    where_cursor = ""
+    params = {"pid": profile_id, "lim": limit}
+    if cursor is not None:
+        where_cursor = (
+            "AND (e.score_final < :cs "
+            "OR (e.score_final = :cs AND e.vacancy_id > :cv)) "
+        )
+        params["cs"], params["cv"] = cursor
+    rows = (
+        await session.execute(
+            sa.text(
+                "SELECT e.vacancy_id, e.score_final, e.id AS eval_id, e.scores, "
+                "e.offer_revision_id, s.saved_at, s.feedback, s.notes "
+                "FROM profile_vacancy_state s "
+                "JOIN match_evaluations e ON e.id = s.current_eval_id "
+                "  AND e.profile_id = s.profile_id AND e.vacancy_id = s.vacancy_id "
+                "JOIN vacancies v ON v.id = s.vacancy_id "
+                "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
+                "WHERE s.profile_id = :pid AND s.dismissed_at IS NULL "
+                f"{where_cursor}"
+                "ORDER BY e.score_final DESC, e.vacancy_id ASC "
+                "LIMIT :lim"
+            ),
+            params,
+        )
+    ).all()
+    # `rows and`: con limit=0 no hay última fila (auditoría A-08).
+    next_cursor = (
+        (rows[-1].score_final, rows[-1].vacancy_id)
+        if rows and len(rows) == limit
+        else None
+    )
+    return rows, next_cursor
+
+
+async def set_dismissed(session, profile_id, vacancy_id, dismissed: bool) -> None:
+    """Descartar/restaurar: upsert que SOLO toca dismissed_at/updated_at."""
+    await session.execute(
+        sa.text(
+            "INSERT INTO profile_vacancy_state (profile_id, vacancy_id, dismissed_at) "
+            "VALUES (:pid, :vid, CASE WHEN :d THEN now() END) "
+            "ON CONFLICT (profile_id, vacancy_id) DO UPDATE "
+            "SET dismissed_at = CASE WHEN :d THEN now() END, updated_at = now()"
+        ),
+        {"pid": profile_id, "vid": vacancy_id, "d": dismissed},
+    )
+
+
+async def set_saved(session, profile_id, vacancy_id, saved: bool) -> None:
+    """Bookmark (saved = aquí, ADR-03): solo saved_at/updated_at."""
+    await session.execute(
+        sa.text(
+            "INSERT INTO profile_vacancy_state (profile_id, vacancy_id, saved_at) "
+            "VALUES (:pid, :vid, CASE WHEN :sv THEN now() END) "
+            "ON CONFLICT (profile_id, vacancy_id) DO UPDATE "
+            "SET saved_at = CASE WHEN :sv THEN now() END, updated_at = now()"
+        ),
+        {"pid": profile_id, "vid": vacancy_id, "sv": saved},
+    )

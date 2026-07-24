@@ -38,4 +38,5 @@ celery_app.conf.include = [
     "jobhunt_core.tasks.ping",
     "jobhunt_core.tasks.harvest",
     "jobhunt_core.tasks.embedding",
+    "jobhunt_core.tasks.matching",
 ]
