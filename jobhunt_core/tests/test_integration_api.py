@@ -483,9 +483,11 @@ def test_matches_dto_pagination_and_errors(db):
         assert (r.status_code, r.json()["code"]) == (400, "invalid_request")
 
     # Auditoría A-09: cursor con Decimal NO finito → 400, jamás keyset roto.
+    # Auditoría final: también MAGNITUD desbordante — 1E262144 lanza DataError
+    # en el driver (→ 500) y 1E200000 se codificaba en silencio como 0.
     import base64 as b64
 
-    for score in ("NaN", "-Infinity"):
+    for score in ("NaN", "-Infinity", "1E262144", "1E200000"):
         cur_bad = b64.urlsafe_b64encode(f"{score}|{uuid.uuid4()}".encode()).decode()
         r = _api(factory, base + f"?cursor={cur_bad}", token=token)
         assert (r.status_code, r.json()["code"]) == (400, "invalid_cursor")

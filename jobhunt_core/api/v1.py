@@ -19,7 +19,7 @@ from decimal import Decimal, InvalidOperation
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from jobhunt_core import matching, profiles
+from jobhunt_core import matching
 from jobhunt_core.api import schemas
 from jobhunt_core.api.deps import (
     ApiError,
@@ -42,6 +42,11 @@ router = APIRouter(
 )
 
 MAX_PAGE_LIMIT = 100
+# Cota de MAGNITUD del score del cursor (auditoría final A-09→GATE): score_final
+# es NUMERIC(6,2) — nada legítimo se acerca a 1E6. Sin cota, un exponente
+# gigante desborda el NUMERIC en el driver (DataError → 500) o, peor, se
+# codifica en silencio como 0 y corrompe la paginación.
+CURSOR_SCORE_BOUND = Decimal("1E6")
 
 
 def encode_cursor(score_final, vacancy_id) -> str:
@@ -54,11 +59,11 @@ def decode_cursor(cursor: str) -> tuple[Decimal, uuid.UUID]:
         raw = base64.urlsafe_b64decode(cursor.encode()).decode()
         score, _, vid = raw.partition("|")
         score_dec = Decimal(score)
-        if not score_dec.is_finite():
+        if not score_dec.is_finite() or abs(score_dec) > CURSOR_SCORE_BOUND:
             # Auditoría A-09: NaN/±Infinity/sNaN son Decimals VÁLIDOS que no
             # lanzan — en el keyset NaN es el mayor numeric de Postgres
             # (primera página en bucle) y -Infinity vacía la paginación.
-            raise InvalidOperation("cursor no finito")
+            raise InvalidOperation("cursor fuera de dominio")
         return score_dec, uuid.UUID(vid)
     except (ValueError, InvalidOperation, UnicodeDecodeError) as exc:
         raise ApiError(
