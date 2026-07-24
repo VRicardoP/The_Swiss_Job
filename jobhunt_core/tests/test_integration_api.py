@@ -1,0 +1,506 @@
+"""API /v1 read-only multi-tenant (A-09) contra Postgres real.
+
+DoD: matriz ruta→scope (403 sin scope) · ownership por tenant (404 cross,
+indistinguible de ausente) · corpus GLOBAL para vacancies · DTOs §2 · ETag/304
+· cursor keyset opaco · CONTRACT TESTS NEGATIVOS cross-consumer obligatorios.
+Ejecutar vía core-migrate.
+"""
+
+import asyncio
+import datetime
+import os
+import uuid
+
+import pytest
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from jobhunt_core import credentials, embeddings, matching, profiles
+from jobhunt_core.config import settings
+from jobhunt_core.tests import test_integration_matching as tim
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("CORE_ADMIN_DATABASE_URL"),
+    reason="requiere BD (ejecutar vía core-migrate)",
+)
+
+ALL_SCOPES = ["vacancies:read", "profiles:read", "matches:read"]
+
+
+@pytest.fixture()
+def db():
+    engine = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    created = {
+        "sources": [], "scopes": [], "models": [], "consumers": [],
+        "policies": [], "extra_vacs": [],
+    }
+    yield factory, created
+
+    async def cleanup():
+        async with factory() as s:
+            cons = created["consumers"]
+            if cons:
+                await s.execute(
+                    sa.text("DELETE FROM consumer_credentials WHERE consumer_id = ANY(:c)"),
+                    {"c": cons},
+                )
+                await s.execute(
+                    sa.text(
+                        "DELETE FROM profile_vacancy_state WHERE profile_id IN "
+                        "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
+                    ),
+                    {"c": cons},
+                )
+                await s.execute(
+                    sa.text(
+                        "DELETE FROM match_evaluations WHERE profile_id IN "
+                        "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
+                    ),
+                    {"c": cons},
+                )
+                for tbl in (
+                    "profile_embeddings", "profile_revision_activations",
+                    "profile_revisions",
+                ):
+                    await s.execute(
+                        sa.text(
+                            f"DELETE FROM {tbl} WHERE profile_id IN "
+                            "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
+                        ),
+                        {"c": cons},
+                    )
+                await s.execute(
+                    sa.text("DELETE FROM profiles WHERE consumer_id = ANY(:c)"),
+                    {"c": cons},
+                )
+                await s.execute(
+                    sa.text("DELETE FROM consumers WHERE id = ANY(:c)"), {"c": cons}
+                )
+            srcs = created["sources"]
+            if srcs:
+                vac_ids = (
+                    await s.execute(
+                        sa.text(
+                            "SELECT DISTINCT i.vacancy_id FROM source_listing_incarnations i "
+                            "JOIN source_listings l ON l.id = i.source_listing_id "
+                            "WHERE l.source_id = ANY(:srcs)"
+                        ),
+                        {"srcs": srcs},
+                    )
+                ).scalars().all()
+                if vac_ids:
+                    await s.execute(
+                        sa.text(
+                            "DELETE FROM dedup_candidates "
+                            "WHERE vacancy_a = ANY(:v) OR vacancy_b = ANY(:v)"
+                        ),
+                        {"v": vac_ids},
+                    )
+                    await s.execute(
+                        sa.text(
+                            "UPDATE vacancies SET current_offer_revision_id = NULL "
+                            "WHERE id = ANY(:v)"
+                        ),
+                        {"v": vac_ids},
+                    )
+                    await s.execute(
+                        sa.text("DELETE FROM offer_revision_sources WHERE vacancy_id = ANY(:v)"),
+                        {"v": vac_ids},
+                    )
+                    await s.execute(
+                        sa.text("DELETE FROM offer_revisions WHERE vacancy_id = ANY(:v)"),
+                        {"v": vac_ids},
+                    )
+                await s.execute(
+                    sa.text(
+                        "DELETE FROM link_evidence WHERE source_listing_id IN "
+                        "(SELECT id FROM source_listings WHERE source_id = ANY(:srcs))"
+                    ),
+                    {"srcs": srcs},
+                )
+                await s.execute(
+                    sa.text(
+                        "DELETE FROM source_listing_revisions WHERE incarnation_id IN ("
+                        "SELECT i.id FROM source_listing_incarnations i "
+                        "JOIN source_listings l ON l.id = i.source_listing_id "
+                        "WHERE l.source_id = ANY(:srcs))"
+                    ),
+                    {"srcs": srcs},
+                )
+                await s.execute(
+                    sa.text(
+                        "DELETE FROM source_listing_incarnations WHERE source_listing_id IN "
+                        "(SELECT id FROM source_listings WHERE source_id = ANY(:srcs))"
+                    ),
+                    {"srcs": srcs},
+                )
+                if vac_ids:
+                    await s.execute(
+                        sa.text("DELETE FROM vacancies WHERE id = ANY(:v)"), {"v": vac_ids}
+                    )
+                await s.execute(
+                    sa.text("DELETE FROM source_listings WHERE source_id = ANY(:srcs)"),
+                    {"srcs": srcs},
+                )
+                for sid in created["scopes"]:
+                    await s.execute(
+                        sa.text("DELETE FROM source_scope_state WHERE scope_id=:i"), {"i": sid}
+                    )
+                    await s.execute(
+                        sa.text("DELETE FROM harvest_scopes WHERE id=:i"), {"i": sid}
+                    )
+                await s.execute(
+                    sa.text("DELETE FROM sources WHERE id = ANY(:srcs)"), {"srcs": srcs}
+                )
+            if created["extra_vacs"]:
+                await s.execute(
+                    sa.text("DELETE FROM vacancies WHERE id = ANY(:v)"),
+                    {"v": created["extra_vacs"]},
+                )
+            if created["policies"]:
+                await s.execute(
+                    sa.text("DELETE FROM scoring_policies WHERE id = ANY(:p)"),
+                    {"p": created["policies"]},
+                )
+            for mid in created["models"]:
+                await s.execute(
+                    sa.text("DELETE FROM offer_embeddings WHERE model_id = :m"), {"m": mid}
+                )
+                await s.execute(
+                    sa.text(
+                        f"DROP TABLE IF EXISTS {settings.CORE_DB_SCHEMA}."
+                        f"offer_embeddings_{mid.hex[:16]}"
+                    )
+                )
+                await s.execute(
+                    sa.text("DELETE FROM embedding_models WHERE id = :m"), {"m": mid}
+                )
+            await s.commit()
+        await engine.dispose()
+
+    asyncio.run(cleanup())
+
+
+def _api(factory, url, token=None, headers=None):
+    """GET contra la app real (ASGITransport) con la sesión de test inyectada."""
+
+    async def go():
+        from httpx import ASGITransport, AsyncClient
+
+        from jobhunt_core.api import deps
+        from jobhunt_core.api.main import app
+
+        async def override_session():
+            async with factory() as s:
+                yield s
+
+        app.dependency_overrides[deps.get_session] = override_session
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                h = dict(headers or {})
+                if token is not None:
+                    h["Authorization"] = f"Bearer {token}"
+                return await client.get(url, headers=h)
+        finally:
+            app.dependency_overrides.clear()
+
+    return asyncio.run(go())
+
+
+def _issue(factory, created, consumer_name, scopes, expires_at=None):
+    async def go():
+        async with factory() as s:
+            cid = await profiles.ensure_consumer(s, consumer_name)
+            if cid not in created["consumers"]:
+                created["consumers"].append(cid)
+            key_id, secret = await credentials.create_credential(
+                s, cid, scopes, expires_at=expires_at
+            )
+            await s.commit()
+            return cid, key_id, f"{key_id}.{secret}"
+
+    return asyncio.run(go())
+
+
+def _seed_matches(factory, created, titles=("backend python", "data eng")):
+    """Ofertas + perfil + evaluación (helpers de A-08) → (pid, vacs, token)."""
+    pid, mid, polid, vacs = tim._setup(factory, created, list(titles))
+    tim._evaluate(factory, pid, mid, polid)
+    _cid, _kid, token = _issue(factory, created, "tenant-match", ALL_SCOPES)
+    return pid, vacs, token
+
+
+def test_auth_negative_catalog(db):
+    """Contract tests NEGATIVOS de credencial: cualquier causa → 401 con la
+    forma {code, message, details}, sin distinguir motivo."""
+    factory, created = db
+    _cid, key_id, token = _issue(factory, created, "tenant-a", ALL_SCOPES)
+    url = f"/v1/vacancies/{uuid.uuid4()}"
+
+    for bad_token, desc in (
+        (None, "sin cabecera"),
+        ("basura-sin-punto", "formato inválido"),
+        (f"{key_id}.secreto-equivocado", "secreto malo"),
+        (f"{'0' * 16}.{'x' * 43}", "key_id inexistente"),
+    ):
+        r = _api(factory, url, token=bad_token)
+        assert r.status_code == 401, desc
+        body = r.json()
+        assert body["code"] == "unauthorized" and "message" in body and "details" in body
+
+    # Revocada y caducada → mismo 401.
+    async def revoke():
+        async with factory() as s:
+            await credentials.revoke_credential(s, key_id)
+            await s.commit()
+
+    asyncio.run(revoke())
+    assert _api(factory, url, token=token).status_code == 401
+
+    _cid2, _kid2, expired = _issue(
+        factory, created, "tenant-a", ALL_SCOPES,
+        expires_at=datetime.datetime.now(datetime.timezone.utc)
+        - datetime.timedelta(hours=1),
+    )
+    assert _api(factory, url, token=expired).status_code == 401
+
+
+def test_scope_matrix_403(db):
+    """Matriz ruta→scope (§2): credencial VÁLIDA sin el scope → 403 con el
+    scope requerido en details."""
+    factory, created = db
+    _cid, _kid, only_vac = _issue(factory, created, "tenant-a", ["vacancies:read"])
+    _cid2, _kid2, only_prof = _issue(factory, created, "tenant-a", ["profiles:read"])
+    pid = uuid.uuid4()
+
+    r = _api(factory, f"/v1/profiles/{pid}", token=only_vac)
+    assert (r.status_code, r.json()["code"]) == (403, "forbidden")
+    assert r.json()["details"] == {"required_scope": "profiles:read"}
+    r = _api(factory, f"/v1/profiles/{pid}/matches", token=only_vac)
+    assert (r.status_code, r.json()["details"]["required_scope"]) == (403, "matches:read")
+    r = _api(factory, f"/v1/vacancies/{uuid.uuid4()}", token=only_prof)
+    assert (r.status_code, r.json()["details"]["required_scope"]) == (403, "vacancies:read")
+
+
+def test_cross_tenant_404_and_global_corpus(db):
+    """Ownership §2: el perfil de A visto por B → 404 INDISTINGUIBLE de
+    ausente; el corpus de vacantes es GLOBAL (B puede leerlo)."""
+    factory, created = db
+    pid, vacs, token_a = _seed_matches(factory, created)
+    _cidb, _kidb, token_b = _issue(factory, created, "tenant-b", ALL_SCOPES)
+
+    r_cross = _api(factory, f"/v1/profiles/{pid}", token=token_b)
+    r_absent = _api(factory, f"/v1/profiles/{uuid.uuid4()}", token=token_b)
+    assert r_cross.status_code == r_absent.status_code == 404
+    assert r_cross.json() == r_absent.json()  # indistinguibles
+
+    r = _api(factory, f"/v1/profiles/{pid}/matches", token=token_b)
+    assert r.status_code == 404
+
+    vid = vacs["backend python"]
+    r = _api(factory, f"/v1/vacancies/{vid}", token=token_b)
+    assert r.status_code == 200  # corpus GLOBAL
+
+
+def test_vacancy_dto_shape_and_404s(db):
+    factory, created = db
+    pid, vacs, token = _seed_matches(factory, created)
+    vid = vacs["backend python"]
+
+    r = _api(factory, f"/v1/vacancies/{vid}", token=token)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["title"] == "backend python"
+    assert body["company"] == "ACME AG"
+    assert body["tags"] == ["t"]
+    assert body["translations"] == []
+    assert body["primary_listing"]["source"] == "arbeitnow"
+    assert body["primary_listing"]["external_id"] == "j0"
+    assert body["primary_listing"]["last_seen_at"] is not None
+    assert [x["source"] for x in body["listings"]] == ["arbeitnow"]
+
+    assert _api(factory, f"/v1/vacancies/{uuid.uuid4()}", token=token).status_code == 404
+
+    async def archive():
+        async with factory() as s:
+            await s.execute(
+                sa.text("UPDATE vacancies SET archived_at = now() WHERE id = :v"),
+                {"v": vid},
+            )
+            await s.commit()
+
+    asyncio.run(archive())
+    r = _api(factory, f"/v1/vacancies/{vid}", token=token)
+    assert r.status_code == 404  # solo ACTIVAS (§2)
+
+    # Auditoría A-09: FUNDIDA (merged_into) también queda fuera del corpus.
+    vid2 = vacs["data eng"]
+
+    async def merge():
+        async with factory() as s:
+            winner = uuid.uuid4()
+            created["extra_vacs"].append(winner)
+            await s.execute(sa.text("INSERT INTO vacancies (id) VALUES (:w)"), {"w": winner})
+            await s.execute(
+                sa.text("UPDATE vacancies SET merged_into = :w WHERE id = :v"),
+                {"w": winner, "v": vid2},
+            )
+            await s.commit()
+
+    asyncio.run(merge())
+    assert _api(factory, f"/v1/vacancies/{vid2}", token=token).status_code == 404
+
+
+def test_vacancy_etag_304_and_change(db):
+    factory, created = db
+    pid, vacs, token = _seed_matches(factory, created, titles=("backend python",))
+    vid = vacs["backend python"]
+    url = f"/v1/vacancies/{vid}"
+
+    r1 = _api(factory, url, token=token)
+    etag = r1.headers["etag"]
+    r2 = _api(factory, url, token=token, headers={"If-None-Match": etag})
+    assert r2.status_code == 304 and r2.headers["etag"] == etag
+
+    # El contenido cambia → representación nueva → ETag nuevo y 200.
+    async def change():
+        async with factory() as s:
+            scope_id = created["scopes"][0]
+            from jobhunt_core.harvest.sink import RawListingSink
+
+            await RawListingSink().handle(
+                s, str(scope_id), (tim._listing("j0", "backend python senior"),)
+            )
+            await s.commit()
+
+    asyncio.run(change())
+    r3 = _api(factory, url, token=token, headers={"If-None-Match": etag})
+    assert r3.status_code == 200 and r3.headers["etag"] != etag
+    assert r3.json()["title"] == "backend python senior"
+
+
+def test_profile_dto_and_etag(db):
+    factory, created = db
+    pid, vacs, token = _seed_matches(factory, created)
+    r = _api(factory, f"/v1/profiles/{pid}", token=token)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["external_ref"] == "user-1"
+    assert body["current_revision"]["content"]["title"] == "python dev"
+    etag = r.headers["etag"]
+    r2 = _api(factory, f"/v1/profiles/{pid}", token=token, headers={"If-None-Match": etag})
+    assert r2.status_code == 304
+
+    # Auditoría A-09: una revisión NUEVA cambia la representación → ETag nuevo.
+    async def new_revision():
+        async with factory() as s:
+            await profiles.save_profile_revision(
+                s, uuid.UUID(str(pid)), {"title": "arquitecto", "skills": ["aws"]}
+            )
+            await s.commit()
+
+    asyncio.run(new_revision())
+    r3 = _api(factory, f"/v1/profiles/{pid}", token=token, headers={"If-None-Match": etag})
+    assert r3.status_code == 200 and r3.headers["etag"] != etag
+    assert r3.json()["current_revision"]["content"]["title"] == "arquitecto"
+
+
+def test_profile_without_revision_serves_null_current(db):
+    """Auditoría A-09: perfil sin revisión → 200 con current_revision null y
+    ETag presente (la rama null del DTO no estaba cubierta)."""
+    factory, created = db
+    cid, _kid, token = _issue(factory, created, "tenant-nuevo", ALL_SCOPES)
+
+    async def mk():
+        async with factory() as s:
+            pid = await profiles.upsert_profile(s, cid, "user-sin-cv")
+            await s.commit()
+            return pid
+
+    pid = asyncio.run(mk())
+    r = _api(factory, f"/v1/profiles/{pid}", token=token)
+    assert r.status_code == 200
+    assert r.json()["current_revision"] is None
+    assert "etag" in r.headers
+
+
+def test_matches_dto_pagination_and_errors(db):
+    factory, created = db
+    pid, vacs, token = _seed_matches(
+        factory, created, titles=("backend python", "data eng", "qa manual")
+    )
+    base = f"/v1/profiles/{pid}/matches"
+
+    r = _api(factory, base, token=token)
+    assert r.status_code == 200
+    full = r.json()
+    assert len(full["items"]) == 3 and full["next_cursor"] is None
+    scores = [it["evaluation"]["score_final"] for it in full["items"]]
+    assert scores == sorted(scores, reverse=True)  # score DESC
+    first = full["items"][0]
+    assert first["evaluation"]["model"] == {"name": "modelo-match", "version": tim.SHA_A}
+    assert first["evaluation"]["policy"] == {"name": "cosine", "prompt_version": "v1"}
+    assert "similarity" in first["evaluation"]["scores"]
+    assert first["state"] == {"saved": False, "dismissed": False, "feedback": None, "notes": None}
+    assert first["vacancy"]["primary_listing"]["source"] == "arbeitnow"
+
+    # Keyset opaco: página de 1 → cursor → resto, sin repetir ni saltar.
+    r1 = _api(factory, base + "?limit=1", token=token)
+    cur = r1.json()["next_cursor"]
+    assert cur is not None
+    r2 = _api(factory, base + f"?limit=100&cursor={cur}", token=token)
+    ids = [it["vacancy"]["id"] for it in r1.json()["items"]] + [
+        it["vacancy"]["id"] for it in r2.json()["items"]
+    ]
+    assert ids == [it["vacancy"]["id"] for it in full["items"]]
+
+    # Dismissed fuera del feed vía API.
+    async def dismiss():
+        async with factory() as s:
+            await matching.set_dismissed(s, pid, uuid.UUID(first["vacancy"]["id"]), True)
+            await s.commit()
+
+    asyncio.run(dismiss())
+    r = _api(factory, base, token=token)
+    assert len(r.json()["items"]) == 2
+
+    # Errores del contrato: cursor ilegible y limit fuera de rango → 400.
+    r = _api(factory, base + "?cursor=%21%21%21no-cursor", token=token)
+    assert (r.status_code, r.json()["code"]) == (400, "invalid_cursor")
+    for bad in (0, 101):
+        r = _api(factory, base + f"?limit={bad}", token=token)
+        assert (r.status_code, r.json()["code"]) == (400, "invalid_limit")
+
+    # Auditoría A-09: cursor con Decimal NO finito → 400, jamás keyset roto.
+    import base64 as b64
+
+    for score in ("NaN", "-Infinity"):
+        cur_bad = b64.urlsafe_b64encode(f"{score}|{uuid.uuid4()}".encode()).decode()
+        r = _api(factory, base + f"?cursor={cur_bad}", token=token)
+        assert (r.status_code, r.json()["code"]) == (400, "invalid_cursor")
+
+    # Auditoría A-09 P2: la entrada MALFORMADA lleva el MISMO sobre del
+    # contrato (nada de 422 con {'detail': ...}).
+    r = _api(factory, base + "?limit=abc", token=token)
+    assert (r.status_code, r.json()["code"]) == (400, "invalid_request")
+    r = _api(factory, "/v1/vacancies/no-es-uuid", token=token)
+    assert (r.status_code, r.json()["code"]) == (400, "invalid_request")
+    assert "details" in r.json() and "message" in r.json()
+
+
+def test_openapi_schema_exposed(db):
+    factory, created = db
+    r = _api(factory, "/v1/openapi.json")
+    assert r.status_code == 200
+    paths = r.json()["paths"]
+    for p in (
+        "/v1/vacancies/{vacancy_id}",
+        "/v1/profiles/{profile_id}",
+        "/v1/profiles/{profile_id}/matches",
+    ):
+        assert p in paths
+    # Auditoría A-09: el esquema de ERROR del contrato está documentado.
+    assert "ErrorDTO" in r.json()["components"]["schemas"]

@@ -780,6 +780,28 @@ def test_ann_fallback_exact_when_scan_cap_hit(db, monkeypatch):
     assert r["evaluated"] == 20  # el exacto llena el top-K igualmente
 
 
+def test_limit_bounds_are_validated_and_huge_limit_works(db):
+    """Rev. A-08 2ª P2#1: limit fuera de rango no llega a SQL; limit > 1000
+    funciona (ef_search se acota a 1000 y el objetivo real lo cubre)."""
+    factory, created = db
+    pid, mid, polid, vacs = _setup(factory, created, ["backend python", "data eng"])
+    for bad in (0, -5):
+        with pytest.raises(ValueError, match="top-K"):
+            _evaluate(factory, pid, mid, polid, limit=bad)
+    r = _evaluate(factory, pid, mid, polid, limit=2000)
+    assert r["evaluated"] == 2  # sin error del GUC; evalúa todo lo elegible
+
+
+def test_small_corpus_does_not_trigger_fallback(db):
+    """Rev. A-08 2ª P2#2: con menos elegibles que limit, el ANN que agota el
+    corpus NO dispara la segunda búsqueda — el objetivo real es el conteo
+    acotado (aquí bastan los resultados: mismo evaluated, una sola pasada)."""
+    factory, created = db
+    pid, mid, polid, vacs = _setup(factory, created, ["backend python", "data eng"])
+    r = _evaluate(factory, pid, mid, polid, limit=100)  # corpus de 2
+    assert r["evaluated"] == 2
+
+
 def test_state_timestamps_never_regress_across_overlapping_txs(db):
     """Rev. A-08 #3 (repro): T1 abre tx (now() congelado), T2 descarta y
     commitea, T1 guarda DESPUÉS — con clock_timestamp()+GREATEST el estado

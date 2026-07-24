@@ -137,24 +137,44 @@ async def evaluate_profile(
             "moved_current": False,
         }
 
-    # ANN ROBUSTO (auditoría + rev. A-08 #2): el filtro posterior (revisión
-    # vigente + vacante activa) puede dejar el scan HNSW SIN candidatos si los
-    # embeddings HISTÓRICOS/huérfanos más cercanos lo consumen. Tres capas:
-    # ef_search >= limit (sin truncado del top-K), iterative_scan strict_order
-    # (pgvector >= 0.8: sigue escaneando hasta llenar el LIMIT tras el filtro,
-    # acotado por MAX_SCAN_TUPLES) y, si aun así queda corto, FALLBACK EXACTO
-    # (sin índice — la verdad; solo se paga cuando el ANN no llena el top-K).
+    # ANN ROBUSTO (auditoría + rev. A-08 #2 + 2ª P2s): el filtro posterior
+    # (revisión vigente + vacante activa) puede dejar el scan HNSW SIN
+    # candidatos si los embeddings HISTÓRICOS/huérfanos más cercanos lo
+    # consumen. Capas: ef_search en [40..1000] (rango válido del GUC; para
+    # limit > 1000 cubre el fallback), iterative_scan strict_order (pgvector
+    # >= 0.8: sigue escaneando hasta llenar el LIMIT tras el filtro, acotado
+    # por MAX_SCAN_TUPLES) y FALLBACK EXACTO solo si el ANN devuelve menos
+    # que el OBJETIVO REAL (conteo acotado de elegibles: un corpus menor que
+    # limit NO dispara la segunda búsqueda en cada run — rev. 2ª P2#2).
     # Enteros validados (SET no admite binds).
+    if limit < 1:
+        raise ValueError(f"limit={limit}: el top-K debe ser >= 1")
+    eligible = (
+        await session.execute(
+            sa.text(
+                "SELECT count(*) FROM (SELECT 1 FROM vacancies v "
+                "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
+                "JOIN offer_embeddings oe "
+                "  ON oe.text_hash = orv.text_hash AND oe.model_id = :mid "
+                "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
+                "LIMIT :k) t"
+            ),
+            {"mid": model_id, "k": limit},
+        )
+    ).scalar_one()
+    target = min(limit, int(eligible))
+    if target == 0:
+        return {"status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False}
     params = {"vec": prof.vec, "mid": model_id, "k": limit}
-    await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(max(limit, 40))}"))
+    ef_search = min(max(limit, 40), 1000)
+    await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(ef_search)}"))
     await session.execute(sa.text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
     await session.execute(
         sa.text(f"SET LOCAL hnsw.max_scan_tuples = {int(MAX_SCAN_TUPLES)}")
     )
     candidates = (await session.execute(sa.text(CANDIDATES_SQL), params)).all()
-    if len(candidates) < limit:
-        # ¿Corto por inanición del scan acotado o porque no hay más filas?
-        # El exacto responde siempre bien.
+    if len(candidates) < target:
+        # Inanición REAL del scan acotado: el exacto responde siempre bien.
         await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
         await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
         candidates = (await session.execute(sa.text(CANDIDATES_SQL), params)).all()
