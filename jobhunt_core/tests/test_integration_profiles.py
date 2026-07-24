@@ -575,6 +575,7 @@ def test_core0004_backfills_preexisting_revisions():
     destruir."""
     import os
     import subprocess
+    from pathlib import Path
     from urllib.parse import urlsplit, urlunsplit
 
     # La URL admin es síncrona (psycopg2): normalizar a asyncpg para el test.
@@ -608,8 +609,10 @@ def test_core0004_backfills_preexisting_revisions():
 
         asyncio.run(bootstrap_and_seed_after_core0003())
         env = {**os.environ, "CORE_DATABASE_URL": temp_url}
+        # Ruta ABSOLUTA al ini (independiente del CWD, como migrate.py).
+        ini = str(Path(__file__).resolve().parents[1] / "alembic.ini")
         subprocess.run(
-            ["alembic", "-c", "jobhunt_core/alembic.ini", "upgrade", "core0003"],
+            ["alembic", "-c", ini, "upgrade", "core0003"],
             check=True, capture_output=True, env=env,
         )
 
@@ -646,7 +649,7 @@ def test_core0004_backfills_preexisting_revisions():
 
         asyncio.run(seed())
         subprocess.run(
-            ["alembic", "-c", "jobhunt_core/alembic.ini", "upgrade", "head"],
+            ["alembic", "-c", ini, "upgrade", "head"],
             check=True, capture_output=True, env=env,
         )
 
