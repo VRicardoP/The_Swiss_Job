@@ -27,25 +27,28 @@ def dispatch_outbox_task(self, limit: int = 100) -> dict[str, Any]:
 
 
 async def _dispatch_impl(limit: int) -> dict[str, Any]:
+    # Sin transporte NO se reclama nada (2ª rev. A-10: el claim incrementa
+    # attempts y un fallo posterior + retry de la task inflaría el contador
+    # violando "sin transporte → sin consumir intentos"; no reclamar es la
+    # solución de raíz).
+    transport = delivery.get_transport()
+    if transport is None:
+        logger.warning(
+            "delivery: sin transporte configurado — no se reclama ninguna entrega"
+        )
+        return {
+            "claimed": 0, "delivered": 0, "failed": 0, "dead": 0,
+            "fenced_out": 0, "no_transport": True,
+        }
+
     async with task_session_factory() as session_factory:
         async with session_factory() as session:
             claimed, lease_token = await delivery.claim_deliveries(session, limit=limit)
             await session.commit()
         if not claimed:
-            return {"claimed": 0, "delivered": 0, "failed": 0, "dead": 0, "skipped": 0}
-
-        transport = delivery.get_transport()
-        if transport is None:
-            logger.warning(
-                "delivery: sin transporte configurado — %d entregas vuelven a "
-                "pending sin consumir intento", len(claimed),
-            )
-            async with session_factory() as session:
-                await delivery.release_unclaimed(session, claimed, lease_token)
-                await session.commit()
             return {
-                "claimed": len(claimed), "delivered": 0, "failed": 0,
-                "dead": 0, "skipped": len(claimed),
+                "claimed": 0, "delivered": 0, "failed": 0, "dead": 0,
+                "fenced_out": 0, "no_transport": False,
             }
 
         delivered, failed = [], []
@@ -53,7 +56,8 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
             # Transporte FUERA de la transacción del claim: un cuelgue deja el
             # lease y el evento se re-reclama al caducar (at-least-once); el
             # FENCING por lease impide que nuestros marks tardíos pisen al
-            # nuevo dueño.
+            # nuevo dueño — y sus alertas/contadores solo cuentan transiciones
+            # REALES (2ª rev.).
             try:
                 transport(row.destination, delivery.event_dict(row))
                 delivered.append({"eid": row.event_id, "dest": row.destination})
@@ -65,10 +69,16 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
                     }
                 )
         async with session_factory() as session:
-            await delivery.mark_delivered(session, delivered, lease_token)
-            dead = await delivery.mark_failed(session, failed, lease_token)
+            delivered_real = await delivery.mark_delivered(session, delivered, lease_token)
+            fail_result = await delivery.mark_failed(session, failed, lease_token)
             await session.commit()
+    real = delivered_real + fail_result["dead"] + fail_result["retried"]
     return {
-        "claimed": len(claimed), "delivered": len(delivered),
-        "failed": len(failed) - dead, "dead": dead, "skipped": 0,
+        "claimed": len(claimed),
+        "delivered": delivered_real,
+        "failed": fail_result["retried"],
+        "dead": fail_result["dead"],
+        # Marks que el fence descartó (claim superado): observabilidad.
+        "fenced_out": len(claimed) - real,
+        "no_transport": False,
     }

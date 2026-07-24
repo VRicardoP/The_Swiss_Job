@@ -95,89 +95,132 @@ async def claim_deliveries(session, limit: int = 100) -> tuple[list, object]:
 
 
 # Guarda de FENCING común: solo escribe quien aún posee el claim.
-_FENCE = "AND state = 'inflight' AND lease = :lease"
+_FENCE = "AND d.state = 'inflight' AND d.lease = :lease"
 
 
-async def mark_delivered(session, marks: list, lease_token) -> None:
-    """marks = [{'eid', 'dest'}]. Solo si el claim sigue siendo NUESTRO."""
+async def mark_delivered(session, marks: list, lease_token) -> int:
+    """marks = [{'eid', 'dest'}]. Solo si el claim sigue siendo NUESTRO.
+    Devuelve las filas REALMENTE transicionadas (2ª rev. A-10: los contadores
+    reportan lo que el fence permitió escribir, no la intención)."""
     if not marks:
-        return
-    await session.execute(
-        sa.text(
-            "UPDATE integration_outbox_deliveries "
-            "SET state = 'delivered', ack_at = clock_timestamp(), lease = NULL "
-            f"WHERE event_id = :eid AND destination = :dest {_FENCE}"
-        ),
-        [{**m, "lease": lease_token} for m in marks],
-    )
+        return 0
+    done = (
+        await session.execute(
+            sa.text(
+                "UPDATE integration_outbox_deliveries d "
+                "SET state = 'delivered', ack_at = clock_timestamp(), lease = NULL "
+                "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[])) "
+                "  AS t(eid, dest) "
+                "WHERE d.event_id = t.eid AND d.destination = t.dest "
+                f"{_FENCE} RETURNING d.event_id"
+            ),
+            {
+                "eids": [str(m["eid"]) for m in marks],
+                "dests": [m["dest"] for m in marks],
+                "lease": lease_token,
+            },
+        )
+    ).all()
+    return len(done)
 
 
-async def mark_failed(session, fails: list, lease_token) -> int:
+async def mark_failed(session, fails: list, lease_token) -> dict:
     """fails = [{'eid', 'dest', 'attempts', 'error'}] (attempts YA
     incrementado por el claim). Con fencing: un mark TARDÍO de un claim
-    superado no toca nada (ni resucita delivered/dead). Devuelve cuántas
-    pasaron a DEAD (alerta)."""
+    superado no toca nada (ni resucita delivered/dead) Y TAMPOCO alerta ni
+    cuenta (2ª rev. A-10: la ALERTA de dead-letter se emite SOLO para filas
+    realmente transicionadas por el UPDATE — jamás una página falsa por un
+    evento que otro dispatcher sí entregó). Devuelve {'dead': n, 'retried': n}
+    con transiciones REALES."""
     if not fails:
-        return 0
+        return {"dead": 0, "retried": 0}
     dead = [f for f in fails if f["attempts"] >= MAX_ATTEMPTS]
     retry = [f for f in fails if f["attempts"] < MAX_ATTEMPTS]
-    for f in dead:
-        # ALERTA persistente del contrato (DoD A-10: dead-letter + alerta).
-        logger.error(
-            "delivery: evento %s → %s en DEAD-LETTER tras %d intentos (%s)",
-            f["eid"], f["dest"], f["attempts"], (f["error"] or "")[:200],
-        )
+    dead_done = []
     if dead:
-        await session.execute(
-            sa.text(
-                "UPDATE integration_outbox_deliveries "
-                "SET state = 'dead', last_error = :error, lease = NULL "
-                f"WHERE event_id = :eid AND destination = :dest {_FENCE}"
-            ),
-            [
-                {"eid": f["eid"], "dest": f["dest"], "error": f["error"],
-                 "lease": lease_token}
-                for f in dead
-            ],
-        )
-    if retry:
-        await session.execute(
-            sa.text(
-                "UPDATE integration_outbox_deliveries "
-                "SET state = 'pending', last_error = :error, lease = NULL, "
-                "ack_at = NULL, "
-                "next_attempt_at = clock_timestamp() + make_interval(secs => :backoff) "
-                f"WHERE event_id = :eid AND destination = :dest {_FENCE}"
-            ),
-            [
+        dead_done = (
+            await session.execute(
+                sa.text(
+                    "UPDATE integration_outbox_deliveries d "
+                    "SET state = 'dead', last_error = t.error, lease = NULL "
+                    "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[]), "
+                    "            CAST(:errors AS text[])) AS t(eid, dest, error) "
+                    "WHERE d.event_id = t.eid AND d.destination = t.dest "
+                    f"{_FENCE} RETURNING d.event_id, d.destination, d.attempts, "
+                    "d.last_error"
+                ),
                 {
-                    "eid": f["eid"], "dest": f["dest"], "error": f["error"],
-                    "backoff": backoff_seconds(f["attempts"]),
+                    "eids": [str(f["eid"]) for f in dead],
+                    "dests": [f["dest"] for f in dead],
+                    "errors": [f["error"] for f in dead],
                     "lease": lease_token,
-                }
-                for f in retry
-            ],
+                },
+            )
+        ).all()
+        for row in dead_done:
+            # ALERTA persistente del contrato (DoD A-10), SOLO transiciones
+            # reales confirmadas por el fence.
+            logger.error(
+                "delivery: evento %s → %s en DEAD-LETTER tras %d intentos (%s)",
+                row.event_id, row.destination, row.attempts,
+                (row.last_error or "")[:200],
+            )
+    retried = 0
+    if retry:
+        retried_rows = (
+            await session.execute(
+                sa.text(
+                    "UPDATE integration_outbox_deliveries d "
+                    "SET state = 'pending', last_error = t.error, lease = NULL, "
+                    "ack_at = NULL, "
+                    "next_attempt_at = clock_timestamp() + "
+                    "make_interval(secs => t.backoff) "
+                    "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[]), "
+                    "            CAST(:errors AS text[]), CAST(:backoffs AS int[])) "
+                    "  AS t(eid, dest, error, backoff) "
+                    "WHERE d.event_id = t.eid AND d.destination = t.dest "
+                    f"{_FENCE} RETURNING d.event_id"
+                ),
+                {
+                    "eids": [str(f["eid"]) for f in retry],
+                    "dests": [f["dest"] for f in retry],
+                    "errors": [f["error"] for f in retry],
+                    "backoffs": [backoff_seconds(f["attempts"]) for f in retry],
+                    "lease": lease_token,
+                },
+            )
+        ).all()
+        retried = len(retried_rows)
+    return {"dead": len(dead_done), "retried": retried}
+
+
+async def stats(session) -> dict:
+    """Observabilidad del GATE A (ADR-06: monitorizar lag + dead-letter):
+    conteos por estado + edad del pending más antiguo (segundos)."""
+    counts = {
+        r.state: r.n
+        for r in (
+            await session.execute(
+                sa.text(
+                    "SELECT state, count(*) AS n "
+                    "FROM integration_outbox_deliveries GROUP BY state"
+                )
+            )
+        ).all()
+    }
+    oldest = (
+        await session.execute(
+            sa.text(
+                "SELECT EXTRACT(EPOCH FROM clock_timestamp() - "
+                "MIN(COALESCE(next_attempt_at, clock_timestamp()))) "
+                "FROM integration_outbox_deliveries WHERE state = 'pending'"
+            )
         )
-    return len(dead)
-
-
-async def release_unclaimed(session, rows: list, lease_token) -> None:
-    """Sin transporte configurado: devolver a pending SIN consumir el intento
-    (no es un fallo del destino) y con espera para no ciclar. Con fencing."""
-    if not rows:
-        return
-    await session.execute(
-        sa.text(
-            "UPDATE integration_outbox_deliveries "
-            "SET state = 'pending', attempts = attempts - 1, lease = NULL, "
-            "next_attempt_at = clock_timestamp() + make_interval(secs => 300) "
-            f"WHERE event_id = :eid AND destination = :dest {_FENCE}"
-        ),
-        [
-            {"eid": r.event_id, "dest": r.destination, "lease": lease_token}
-            for r in rows
-        ],
-    )
+    ).scalar_one_or_none()
+    return {
+        "by_state": counts,
+        "oldest_pending_s": float(oldest) if oldest is not None else 0.0,
+    }
 
 
 def event_dict(row) -> dict:

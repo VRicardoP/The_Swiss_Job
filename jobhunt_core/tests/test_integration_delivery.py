@@ -1,5 +1,5 @@
 """Entrega `match.evaluated` outbox→inbox por consumidor (A-10) contra
-Postgres real.
+Postgres real (incluye regresiones de la 2ª revisión Opus post-commit).
 
 DoD: at-least-once, idempotente por (consumer_id, event_id); event_id
 determinista; dead-letter + alerta. El inbox vive en la BD del CONSUMIDOR
@@ -368,12 +368,14 @@ def test_expired_lease_is_reclaimed(db, monkeypatch):
         delivery.set_transport(None)
 
 
-def test_no_transport_preserves_pending_without_burning_attempts(db):
+def test_no_transport_claims_nothing_and_burns_no_attempts(db):
+    """2ª rev. A-10: sin transporte NO se reclama nada — attempts intacto de
+    raíz (un release + retry de la task podía inflarlo)."""
     factory, created = db
     pid, vacs = _setup_evaluated(factory, created, titles=("backend python",))
     assert delivery.get_transport() is None
     r = _dispatch()
-    assert (r["claimed"], r["skipped"], r["delivered"]) == (1, 1, 0)
+    assert (r["claimed"], r["delivered"], r["no_transport"]) == (0, 0, True)
     row = _rows(
         factory,
         "SELECT d.state, d.attempts FROM integration_outbox_deliveries d "
@@ -503,9 +505,13 @@ def test_late_mark_from_superseded_claim_cannot_resurrect_state(db, monkeypatch)
         delivery.set_transport(None)
 
     # Mark TARDÍO del claim viejo (fallo) → fencing: no toca el delivered.
+    # 2ª rev.: con MAX_ATTEMPTS=1 la clasificación local diría 'dead' — la
+    # ALERTA y el contador deben gobernarse por la transición REAL (cero).
+    monkeypatch.setattr(delivery, "MAX_ATTEMPTS", 1)
+
     async def late_fail():
         async with factory() as s:
-            await delivery.mark_failed(
+            result = await delivery.mark_failed(
                 s,
                 [
                     {
@@ -516,8 +522,12 @@ def test_late_mark_from_superseded_claim_cannot_resurrect_state(db, monkeypatch)
                 lease1,
             )
             await s.commit()
+            return result
 
-    asyncio.run(late_fail())
+    with caplog_at_error() as records:
+        result = asyncio.run(late_fail())
+    assert result == {"dead": 0, "retried": 0}  # NADA transicionó
+    assert not any("DEAD-LETTER" in r.getMessage() for r in records)  # sin página falsa
     row = _rows(
         factory,
         "SELECT d.state, d.ack_at FROM integration_outbox_deliveries d "
@@ -525,6 +535,52 @@ def test_late_mark_from_superseded_claim_cannot_resurrect_state(db, monkeypatch)
         "WHERE o.subject_profile_id = :p", p=pid,
     )[0]
     assert row.state == "delivered" and row.ack_at is not None  # INTACTO
+
+
+import contextlib
+
+
+@contextlib.contextmanager
+def caplog_at_error():
+    """Captura records ERROR del logger de delivery sin la fixture caplog
+    (usable dentro de contextos anidados)."""
+    records = []
+
+    class H(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    h = H(level=logging.ERROR)
+    lg = logging.getLogger("jobhunt_core.delivery")
+    lg.addHandler(h)
+    try:
+        yield records
+    finally:
+        lg.removeHandler(h)
+
+
+def test_stats_expose_lag_and_states(db):
+    """2ª rev. A-10 (GATE A / ADR-06: monitorizar lag + dead-letter):
+    conteos por estado y edad del pending más antiguo."""
+    factory, created = db
+    pid, vacs = _setup_evaluated(factory, created)
+
+    async def get_stats():
+        async with factory() as s:
+            return await delivery.stats(s)
+
+    st = asyncio.run(get_stats())
+    assert st["by_state"].get("pending", 0) >= 2
+    assert st["oldest_pending_s"] >= 0.0
+
+    inbox = FakeInbox()
+    delivery.set_transport(inbox.transport)
+    try:
+        _dispatch()
+    finally:
+        delivery.set_transport(None)
+    st = asyncio.run(get_stats())
+    assert st["by_state"].get("delivered", 0) >= 2
 
 
 def test_delivery_task_registered_and_routed():
