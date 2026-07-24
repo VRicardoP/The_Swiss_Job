@@ -11,7 +11,8 @@
 - **Backend**: FastAPI + Celery + PostgreSQL (pgvector) + Redis
 - **Frontend**: React + TailwindCSS v4 + Vite
 - **Workers**: Celery — cosecha diaria autónoma (fetch→scrape→embed→dedup→match a hora variable con jitter, `SCHEDULER_DAILY_HARVEST_ENABLED`) o, en modo intervalos, providers/scraping cada 6h; + alerta profesor cada 6h
-- **Memoria del proyecto**: `.claude/memory/` — leer `MEMORY.md` al inicio de sesión
+- **Core (Fase A)**: paquete `jobhunt_core/` — API v1 FastAPI (`core-api`, puerto 8003), `core-worker` Celery (tareas `jobhunt.*`, broker `redis-core`, colas `core.*`), migraciones propias vía `core-migrate`
+- **Documentación de referencia**: core → `PLAN_UNIFICACION_JOBHUNTING.md` (§23–§24) y `CONTRATOS_FASE_A.md` en `/home/lothar/Public/`; legacy → `docs/`
 
 ---
 
@@ -21,7 +22,9 @@
 |------------|-------------|
 | PostgreSQL | **5435**    |
 | Redis      | **6380**    |
+| Redis core | **6381** (solo loopback) |
 | Backend    | **8002**    |
+| Core API   | **8003**    |
 | Frontend   | **5174**    |
 
 > Servicios en conflicto en el host: 5433, 5434 (postgres), 6379 (redis), 5678 (n8n), 8001
@@ -58,6 +61,9 @@ docker compose up -d
 # Tests backend
 docker compose exec -T backend python -m pytest tests/ -v --timeout=30
 
+# Tests core (Fase A, 222 tests)
+docker compose run --rm core-migrate python -m pytest jobhunt_core/tests
+
 # Linting
 docker compose exec -T backend ruff check --no-cache .
 docker compose exec -T backend ruff format --check --no-cache .
@@ -65,6 +71,9 @@ docker compose exec -T backend ruff format --check --no-cache .
 # Migraciones
 docker compose exec backend alembic upgrade head
 docker compose exec backend alembic revision --autogenerate -m "descripcion"
+
+# Migraciones core (cadena core0001..core0007 — las aplica core-migrate en el arranque)
+docker compose run --rm core-migrate python -m jobhunt_core.migrate
 
 # Logs en tiempo real
 docker compose logs -f backend
@@ -108,10 +117,14 @@ tasks/
   alert_tasks.py    # alerta profesor primaria por email (cada 6h)
 api/                # FastAPI routers
 models/             # SQLAlchemy + Pydantic (incl. source_cursor.py para el crawler incremental)
+jobhunt_core/       # Core Fase A COMPLETA 2026-07-24 (ensayo GATE A superado): API /v1 FastAPI (core-api :8003),
+                    #   worker Celery jobhunt.* (broker redis-core, colas core.*), harvest/ + matching/embeddings/
+                    #   delivery/runs/profiles, Alembic propio core0001..core0007, tests 222/222 (vía core-migrate)
 ```
 
 Modelos LLM: `GROQ_MODEL=openai/gpt-oss-120b` (fallback docs), `GROQ_RERANK_MODEL=qwen/qwen3.6-27b`
 (traducción + rerank, requiere `reasoning_effort=none` — lo envía GroqService automáticamente), Gemini `gemini-2.5-flash`
 (primario docs). Decomisos Groq: `llama-3.3-70b-versatile` (2026-08-16), `llama-4-scout` (2026-07-17).
 
-> Para detalles de cada componente, consultar `.claude/memory/MEMORY.md`
+> Para detalles de cada componente, consultar `docs/` (legacy) y, para el core,
+> `PLAN_UNIFICACION_JOBHUNTING.md` y `CONTRATOS_FASE_A.md` en `/home/lothar/Public/`
