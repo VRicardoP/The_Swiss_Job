@@ -185,16 +185,17 @@ async def pending_offer_texts(session, model_id, limit: int = 200) -> list:
 
 
 async def pending_profile_revisions(session, model_id, limit: int = 200) -> list:
-    """ÚLTIMA revisión de cada perfil sin vector para este modelo (A-07).
-    Solo la vigente: el histórico no se re-embebe — las evaluaciones (A-08)
-    fijan su revisión por FK compuesta."""
+    """Revisión VIGENTE (última activación, rev. A-07 #1) de cada perfil sin
+    vector para este modelo. Solo la vigente: el histórico no se re-embebe —
+    las evaluaciones (A-08) fijan su revisión por FK compuesta."""
     return (
         await session.execute(
             sa.text(
-                "SELECT pr.id, pr.profile_id, pr.content "
-                "FROM (SELECT DISTINCT ON (profile_id) id, profile_id, content "
-                "      FROM profile_revisions "
-                "      ORDER BY profile_id, created_at DESC, id DESC) pr "
+                "SELECT pr.id, pr.profile_id, pr.content, pr.text_hash "
+                "FROM (SELECT DISTINCT ON (profile_id) profile_id, revision_id "
+                "      FROM profile_revision_activations "
+                "      ORDER BY profile_id, seq DESC) cur "
+                "JOIN profile_revisions pr ON pr.id = cur.revision_id "
                 "LEFT JOIN profile_embeddings pe "
                 "  ON pe.profile_revision_id = pr.id AND pe.model_id = :mid "
                 "WHERE pe.profile_revision_id IS NULL "
@@ -205,11 +206,77 @@ async def pending_profile_revisions(session, model_id, limit: int = 200) -> list
     ).all()
 
 
+async def _lock_profiles_and_current(session, profile_ids) -> dict:
+    """LOCK ordenado por perfil (protocolo compartido con
+    save_profile_revision, rev. A-07 #3) + mapa perfil→revisión VIGENTE."""
+    await session.execute(
+        sa.text("SELECT id FROM profiles WHERE id = ANY(:ids) ORDER BY id FOR UPDATE"),
+        {"ids": sorted(set(profile_ids), key=str)},
+    )
+    return {
+        r.profile_id: r.revision_id
+        for r in (
+            await session.execute(
+                sa.text(
+                    "SELECT DISTINCT ON (profile_id) profile_id, revision_id "
+                    "FROM profile_revision_activations "
+                    "WHERE profile_id = ANY(:ids) ORDER BY profile_id, seq DESC"
+                ),
+                {"ids": sorted(set(profile_ids), key=str)},
+            )
+        ).all()
+    }
+
+
+async def copy_profile_vectors_by_text(session, model_id, pending) -> tuple[int, list]:
+    """Reutilización por text_hash (rev. A-07 #2): a las revisiones VIGENTES
+    pendientes cuyo TEXTO ya tiene vector para este modelo (bajo cualquier
+    revisión, incluso de otro perfil — mismo texto ⇒ mismo vector) se les
+    COPIA el vector sin re-encodear. Bajo el lock por perfil se revalida la
+    vigencia. Devuelve (copiadas, restantes aún sin vector)."""
+    if not pending:
+        return 0, []
+    current = await _lock_profiles_and_current(session, [r.profile_id for r in pending])
+    still = [r for r in pending if current.get(r.profile_id) == r.id]
+    if not still:
+        return 0, []
+    copied = {
+        r.profile_revision_id
+        for r in (
+            await session.execute(
+                sa.text(
+                    "INSERT INTO profile_embeddings "
+                    "(profile_revision_id, profile_id, model_id, vector) "
+                    "SELECT t.rid, t.pid, :mid, src.vector "
+                    "FROM unnest(CAST(:rids AS uuid[]), CAST(:pids AS uuid[]), "
+                    "            CAST(:ths AS text[])) AS t(rid, pid, th) "
+                    "JOIN LATERAL (SELECT pe.vector FROM profile_embeddings pe "
+                    "              JOIN profile_revisions pr2 "
+                    "                ON pr2.id = pe.profile_revision_id "
+                    "              WHERE pr2.text_hash = t.th "
+                    "              AND pe.model_id = :mid LIMIT 1) src ON TRUE "
+                    "ON CONFLICT (profile_revision_id, model_id) DO NOTHING "
+                    "RETURNING profile_revision_id"
+                ),
+                {
+                    "mid": model_id,
+                    "rids": [str(r.id) for r in still],
+                    "pids": [str(r.profile_id) for r in still],
+                    "ths": [r.text_hash for r in still],
+                },
+            )
+        ).all()
+    }
+    remaining = [r for r in still if r.id not in copied]
+    return len(copied), remaining
+
+
 async def store_profile_embeddings(session, model_id, items: list[dict]) -> int:
-    """items = [{'revision_id','profile_id','vector'}]. OPTIMISTA: pre-filtro
-    + DO NOTHING sobre la PK (profile_revision_id, model_id); la FK COMPUESTA
-    (revision, profile) garantiza mismo perfil (contrato §1). Devuelve filas
-    insertadas (informativo)."""
+    """items = [{'revision_id','profile_id','vector'}]. Bajo el LOCK por
+    perfil se revalida que la revisión sigue siendo la VIGENTE (rev. A-07 #3:
+    jamás persistir el vector de una revisión ya sustituida durante el
+    encode); pre-filtro + DO NOTHING sobre la PK (revision, model); la FK
+    COMPUESTA (revision, profile) garantiza mismo perfil (§1)."""
     if not items:
         return 0
     for it in items:
@@ -218,16 +285,25 @@ async def store_profile_embeddings(session, model_id, items: list[dict]) -> int:
                 f"vector de {len(it['vector'])} dims para la revisión "
                 f"{it['revision_id']} (esperadas {EMBED_DIM})"
             )
-    rows = sorted(
-        (
+    current = await _lock_profiles_and_current(
+        session, [it["profile_id"] for it in items]
+    )
+    rows = []
+    for it in sorted(items, key=lambda x: str(x["revision_id"])):
+        if current.get(it["profile_id"]) != it["revision_id"]:
+            logger.info(
+                "embedding: revisión %s ya no es la vigente de su perfil — "
+                "vector descartado", it["revision_id"],
+            )
+            continue
+        rows.append(
             {
                 "rid": it["revision_id"], "pid": it["profile_id"], "mid": model_id,
                 "vec": "[" + ",".join(repr(float(x)) for x in it["vector"]) + "]",
             }
-            for it in items
-        ),
-        key=lambda r: str(r["rid"]),
-    )
+        )
+    if not rows:
+        return 0
     existing = {
         r.profile_revision_id
         for r in (

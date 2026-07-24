@@ -132,6 +132,13 @@ def db():
                 )
                 await s.execute(
                     sa.text(
+                        "DELETE FROM profile_revision_activations WHERE profile_id IN "
+                        "(SELECT id FROM profiles WHERE consumer_id = :c)"
+                    ),
+                    {"c": cid},
+                )
+                await s.execute(
+                    sa.text(
                         "DELETE FROM profile_revisions WHERE profile_id IN "
                         "(SELECT id FROM profiles WHERE consumer_id = :c)"
                     ),

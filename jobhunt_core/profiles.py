@@ -6,8 +6,12 @@
   de ofertas, rev. A-06 2ª #2); `text_hash` = hash del TEXTO embebible
   EXACTO (misma composición que el legacy `profile_tasks`: title + cv_text +
   skills — vectores comparables en la sombra de Fase B).
-- El perfil VIGENTE = su ÚLTIMA revisión (created_at, id): `profiles` no
-  tiene puntero en el esquema ratificado; las evaluaciones (A-08) fijan la
+- El perfil VIGENTE lo define `profile_revision_activations` (core0004,
+  RATIFICADA por la rev. externa A-07 #1): relación APPEND-ONLY con `seq`
+  monotónico por perfil — vigente = max(seq). Guardar contenido ya conocido
+  lo RE-ACTIVA (una reversión A→B→A deja A vigente reutilizando su revisión
+  inmutable); `created_at`/UUID jamás deciden vigencia (now() es constante en
+  transacción y el UUID no es orden). Las evaluaciones (A-08) fijan la
   revisión usada vía FK compuesta (mismo perfil).
 - La coerción de tipos es central y defensiva (lección A-05 #2): contenido
   basura degrada o devuelve None — jamás revienta al llamador.
@@ -116,13 +120,21 @@ async def upsert_profile(session, consumer_id, external_ref: str) -> uuid.UUID:
 
 
 async def save_profile_revision(session, profile_id, content) -> uuid.UUID | None:
-    """Revisión INMUTABLE del contenido normalizado; idempotente por
-    (profile_id, content_hash): el mismo contenido devuelve la MISMA revisión
-    (jamás duplica). None si el contenido no es normalizable."""
+    """Revisión INMUTABLE + ACTIVACIÓN monotónica (rev. A-07 #1).
+
+    Idempotente por (profile_id, content_hash): el mismo contenido reutiliza
+    su revisión — y si no era la vigente, la RE-ACTIVA (reversión A→B→A deja
+    A vigente). Bajo LOCK del perfil (FOR UPDATE, protocolo compartido con el
+    guard de embeddings — rev. #3): seq sin huecos de carrera ni empates.
+    None si el contenido no es normalizable."""
     norm = normalize_profile(content)
     if norm is None:
         return None
     chash = profile_content_hash(norm)
+    await session.execute(
+        sa.text("SELECT id FROM profiles WHERE id = :pid FOR UPDATE"),
+        {"pid": profile_id},
+    )
     await session.execute(
         sa.text(
             "INSERT INTO profile_revisions "
@@ -136,7 +148,7 @@ async def save_profile_revision(session, profile_id, content) -> uuid.UUID | Non
             "chash": chash, "thash": profile_text_hash(norm),
         },
     )
-    return (
+    rid = (
         await session.execute(
             sa.text(
                 "SELECT id FROM profile_revisions "
@@ -145,17 +157,38 @@ async def save_profile_revision(session, profile_id, content) -> uuid.UUID | Non
             {"pid": profile_id, "chash": chash},
         )
     ).scalar_one()
+    cur = (
+        await session.execute(
+            sa.text(
+                "SELECT revision_id FROM profile_revision_activations "
+                "WHERE profile_id = :pid ORDER BY seq DESC LIMIT 1"
+            ),
+            {"pid": profile_id},
+        )
+    ).scalar_one_or_none()
+    if cur != rid:
+        await session.execute(
+            sa.text(
+                "INSERT INTO profile_revision_activations "
+                "(profile_id, revision_id, seq) "
+                "VALUES (:pid, :rid, COALESCE((SELECT MAX(seq) FROM "
+                "profile_revision_activations WHERE profile_id = :pid), 0) + 1)"
+            ),
+            {"pid": profile_id, "rid": rid},
+        )
+    return rid
 
 
-async def latest_revision(session, profile_id):
-    """Revisión VIGENTE del perfil = la última (created_at, id) — el esquema
-    ratificado no tiene puntero en profiles; A-08 fija la usada por FK."""
+async def current_revision(session, profile_id):
+    """Revisión VIGENTE = la de la ÚLTIMA activación (max seq, rev. A-07 #1)."""
     return (
         await session.execute(
             sa.text(
-                "SELECT id, profile_id, content, content_hash, text_hash "
-                "FROM profile_revisions WHERE profile_id = :pid "
-                "ORDER BY created_at DESC, id DESC LIMIT 1"
+                "SELECT pr.id, pr.profile_id, pr.content, pr.content_hash, "
+                "pr.text_hash "
+                "FROM profile_revision_activations a "
+                "JOIN profile_revisions pr ON pr.id = a.revision_id "
+                "WHERE a.profile_id = :pid ORDER BY a.seq DESC LIMIT 1"
             ),
             {"pid": profile_id},
         )

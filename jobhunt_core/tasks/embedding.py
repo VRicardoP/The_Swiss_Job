@@ -71,24 +71,43 @@ async def _run_pending_impl(limit: int) -> dict[str, Any]:
                     await session.commit()
             embedded[key] = n
 
-            # Perfiles (A-07): última revisión de cada perfil, mismo backend.
+            # Perfiles (A-07): revisión VIGENTE de cada perfil, mismo backend.
             async with session_factory() as session:
                 pending_p = await embeddings.pending_profile_revisions(
                     session, model.id, limit=limit
                 )
             n_p = 0
             if pending_p:
-                texts_p = [core_profiles.build_profile_text(r.content) for r in pending_p]
-                backend = backend or embeddings.get_backend(model.name, model.version)
-                vectors_p = backend.encode_batch(texts_p)
-                items_p = [
-                    {"revision_id": r.id, "profile_id": r.profile_id, "vector": v}
-                    for r, v in zip(pending_p, vectors_p)
-                ]
+                # 1) Reutilización por text_hash (rev. A-07 #2): lo ya
+                #    embebido se COPIA sin re-encodear.
                 async with session_factory() as session:
-                    n_p = await embeddings.store_profile_embeddings(
-                        session, model.id, items_p
+                    copied, remaining = await embeddings.copy_profile_vectors_by_text(
+                        session, model.id, pending_p
                     )
                     await session.commit()
+                n_p += copied
+                if remaining:
+                    # 2) Dedup del lote por text_hash: UN encode por texto
+                    #    único, el vector se distribuye a sus revisiones.
+                    by_th: dict[str, list] = {}
+                    for r in remaining:
+                        by_th.setdefault(r.text_hash, []).append(r)
+                    ths = sorted(by_th)
+                    texts_p = [
+                        core_profiles.build_profile_text(by_th[th][0].content)
+                        for th in ths
+                    ]
+                    backend = backend or embeddings.get_backend(model.name, model.version)
+                    vectors_p = backend.encode_batch(texts_p)
+                    items_p = [
+                        {"revision_id": r.id, "profile_id": r.profile_id, "vector": v}
+                        for th, v in zip(ths, vectors_p)
+                        for r in by_th[th]
+                    ]
+                    async with session_factory() as session:
+                        n_p += await embeddings.store_profile_embeddings(
+                            session, model.id, items_p
+                        )
+                        await session.commit()
             profiles_embedded[key] = n_p
     return {"embedded": embedded, "profiles_embedded": profiles_embedded}

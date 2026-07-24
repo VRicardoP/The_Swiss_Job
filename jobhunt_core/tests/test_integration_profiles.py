@@ -45,6 +45,13 @@ def db():
                 )
                 await s.execute(
                     sa.text(
+                        "DELETE FROM profile_revision_activations WHERE profile_id IN "
+                        "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
+                    ),
+                    {"c": cons},
+                )
+                await s.execute(
+                    sa.text(
                         "DELETE FROM profile_revisions WHERE profile_id IN "
                         "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
                     ),
@@ -156,13 +163,194 @@ def test_revision_idempotent_and_latest_wins(db):
 
     async def latest():
         async with factory() as s:
-            return await profiles.latest_revision(s, pid)
+            return await profiles.current_revision(s, pid)
 
     row = _run(latest())
-    assert row.id == r2  # vigente = la ÚLTIMA
+    assert row.id == r2  # vigente = la última ACTIVACIÓN
     assert row.content["cv_text"] == "12 años Python"
 
     assert _save(factory, pid, {"locations": ["Berna"]}) is None  # sin texto
+
+
+def test_reversion_reactivates_historic_revision(db):
+    """Rev. A-07 #1 (repro): A→B→A — el tercer guardado reutiliza la revisión
+    INMUTABLE A y la RE-ACTIVA: vigente = A (con 'vigente = última por
+    created_at' quedaba B)."""
+    factory, created = db
+    cid = _setup_consumer(factory, created)
+
+    async def mk():
+        async with factory() as s:
+            pid = await profiles.upsert_profile(s, cid, "user-1")
+            await s.commit()
+            return pid
+
+    pid = _run(mk())
+    ra = _save(factory, pid, CONTENT_1)  # A
+    _save(factory, pid, CONTENT_2)  # B
+    ra2 = _save(factory, pid, dict(CONTENT_1))  # reversión a A
+    assert ra2 == ra  # revisión reutilizada (inmutable, sin duplicar)
+
+    async def cur():
+        async with factory() as s:
+            return await profiles.current_revision(s, pid)
+
+    row = _run(cur())
+    assert row.id == ra  # VIGENTE = A (re-activada)
+    acts = _run_rows(
+        factory,
+        "SELECT seq, revision_id FROM profile_revision_activations "
+        "WHERE profile_id = :p ORDER BY seq", p=pid,
+    )
+    assert len(acts) == 3  # historial append-only completo: A, B, A
+
+
+def test_two_saves_in_one_transaction_second_wins(db):
+    """Rev. A-07 #1 (repro): dos guardados en la MISMA transacción comparten
+    created_at (now() constante) — la ACTIVACIÓN monotónica hace vigente al
+    SEGUNDO sin depender de timestamps ni UUIDs."""
+    factory, created = db
+    cid = _setup_consumer(factory, created)
+
+    async def both():
+        async with factory() as s:
+            pid = await profiles.upsert_profile(s, cid, "user-1")
+            await profiles.save_profile_revision(
+                s, pid, {**CONTENT_1, "title": "PRIMERA"}
+            )
+            r2 = await profiles.save_profile_revision(
+                s, pid, {**CONTENT_1, "title": "SEGUNDA"}
+            )
+            await s.commit()
+            return pid, r2
+
+    pid, r2 = _run(both())
+
+    async def cur():
+        async with factory() as s:
+            return await profiles.current_revision(s, pid)
+
+    row = _run(cur())
+    assert row.id == r2
+    assert row.content["title"] == "SEGUNDA"
+
+
+def test_salary_change_copies_vector_without_reencoding(db):
+    """Rev. A-07 #2 (repro): cambiar solo salary_min crea otra revisión con el
+    MISMO text_hash — el vector se COPIA bajo la revisión vigente sin llamar
+    al encoder otra vez."""
+    from jobhunt_core.tasks.embedding import run_pending_task
+
+    factory, created = db
+    cid = _setup_consumer(factory, created)
+
+    async def mk():
+        async with factory() as s:
+            pid = await profiles.upsert_profile(s, cid, "user-1")
+            await s.commit()
+            return pid
+
+    pid = _run(mk())
+    _save(factory, pid, {**CONTENT_1, "salary_min": 80000})
+    _register(factory, created)
+
+    calls: list[list[str]] = []
+
+    class Fake:
+        def encode_batch(self, texts):
+            calls.append(list(texts))
+            return [[0.7] * embeddings.EMBED_DIM for _ in texts]
+
+    embeddings.set_backend_factory(lambda name, version: Fake())
+    try:
+        r1 = run_pending_task.apply(kwargs={"limit": 50})
+        assert r1.result["profiles_embedded"][f"modelo-test/{SHA_A}"] == 1
+        assert len(calls) == 1  # un encode
+
+        _save(factory, pid, {**CONTENT_1, "salary_min": 95000})  # mismo texto
+        r2 = run_pending_task.apply(kwargs={"limit": 50})
+        assert r2.result["profiles_embedded"][f"modelo-test/{SHA_A}"] == 1  # copiada
+        assert len(calls) == 1  # el encoder NO se volvió a llamar
+    finally:
+        embeddings.set_backend_factory(None)
+
+
+def test_batch_dedupes_same_text_across_profiles(db):
+    """Rev. A-07 #2: dos perfiles con el MISMO texto embebible en un lote →
+    UN encode de UN texto; el vector se distribuye a ambas revisiones."""
+    from jobhunt_core.tasks.embedding import run_pending_task
+
+    factory, created = db
+    cid = _setup_consumer(factory, created)
+
+    async def mk():
+        async with factory() as s:
+            p1 = await profiles.upsert_profile(s, cid, "user-1")
+            p2 = await profiles.upsert_profile(s, cid, "user-2")
+            await s.commit()
+            return p1, p2
+
+    p1, p2 = _run(mk())
+    _save(factory, p1, dict(CONTENT_1))
+    _save(factory, p2, {**CONTENT_1, "salary_min": 70000})  # mismo TEXTO
+    mid = _register(factory, created)
+
+    calls: list[list[str]] = []
+
+    class Fake:
+        def encode_batch(self, texts):
+            calls.append(list(texts))
+            return [[0.8] * embeddings.EMBED_DIM for _ in texts]
+
+    embeddings.set_backend_factory(lambda name, version: Fake())
+    try:
+        r = run_pending_task.apply(kwargs={"limit": 50})
+        assert r.result["profiles_embedded"][f"modelo-test/{SHA_A}"] == 2
+    finally:
+        embeddings.set_backend_factory(None)
+    assert calls == [[profiles.build_profile_text(profiles.normalize_profile(CONTENT_1))]]
+    rows = _run_rows(
+        factory,
+        "SELECT count(*) AS n FROM profile_embeddings WHERE model_id = :m", m=mid,
+    )
+    assert rows[0].n == 2
+
+
+def test_store_discards_vector_of_superseded_revision(db):
+    """Rev. A-07 #3 (repro): snapshot R1 → se guarda R2 → store del vector de
+    R1 → DESCARTADO (revalidación de vigencia bajo el lock por perfil):
+    jamás se persiste el vector de una revisión sustituida."""
+    factory, created = db
+    cid = _setup_consumer(factory, created)
+
+    async def mk():
+        async with factory() as s:
+            pid = await profiles.upsert_profile(s, cid, "user-1")
+            await s.commit()
+            return pid
+
+    pid = _run(mk())
+    r1 = _save(factory, pid, CONTENT_1)
+    mid = _register(factory, created)
+    _save(factory, pid, CONTENT_2)  # R2 sustituye a R1 ANTES del store
+
+    async def store_r1():
+        async with factory() as s:
+            n = await embeddings.store_profile_embeddings(
+                s, mid,
+                [{"revision_id": r1, "profile_id": pid,
+                  "vector": [0.9] * embeddings.EMBED_DIM}],
+            )
+            await s.commit()
+            return n
+
+    assert _run(store_r1()) == 0  # descartado: R1 ya no es la vigente
+    rows = _run_rows(
+        factory,
+        "SELECT count(*) AS n FROM profile_embeddings WHERE profile_revision_id = :r",
+        r=r1,
+    )
+    assert rows[0].n == 0
 
 
 def test_two_profiles_embedded_by_model_end_to_end(db):
@@ -376,3 +564,74 @@ def _run_rows(factory, sql, **params):
             return (await s.execute(sa.text(sql), params)).all()
 
     return asyncio.run(go())
+
+
+def test_core0004_backfills_preexisting_revisions(db):
+    """Rev. A-07 2ª #1 (repro): revisiones creadas ANTES de core0004 quedaban
+    sin activación → sin vigente y fuera del worker. Test REAL de migración:
+    downgrade a core0003 → seed pre-migración → upgrade → el backfill activa
+    preservando la ordenación antigua (created_at, id) y el perfil vuelve a
+    ser visible (vigente + pendiente de embedding)."""
+    import subprocess
+
+    factory, created = db
+    subprocess.run(
+        ["alembic", "-c", "jobhunt_core/alembic.ini", "downgrade", "core0003"],
+        check=True, capture_output=True,
+    )
+    try:
+        cid = _setup_consumer(factory, created, name="tenant-premigracion")
+        pid, r1, r2 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+
+        async def seed():
+            async with factory() as s:
+                await s.execute(
+                    sa.text(
+                        "INSERT INTO profiles (id, consumer_id, external_ref) "
+                        "VALUES (:id, :cid, 'user-pre')"
+                    ),
+                    {"id": pid, "cid": cid},
+                )
+                # Dos revisiones con la ordenación ANTIGUA bien definida.
+                for rid, chash, ts in (
+                    (r1, "1" * 64, "now() - interval '2 hours'"),
+                    (r2, "2" * 64, "now() - interval '1 hour'"),
+                ):
+                    await s.execute(
+                        sa.text(
+                            "INSERT INTO profile_revisions "
+                            "(id, profile_id, content, content_hash, text_hash, created_at) "
+                            f"VALUES (:id, :pid, '{{\"title\": \"pre\"}}'::jsonb, "
+                            f":ch, :th, {ts})"
+                        ),
+                        {"id": rid, "pid": pid, "ch": chash, "th": "t" * 64},
+                    )
+                await s.commit()
+
+        asyncio.run(seed())
+    finally:
+        subprocess.run(
+            ["alembic", "-c", "jobhunt_core/alembic.ini", "upgrade", "head"],
+            check=True, capture_output=True,
+        )
+
+    acts = _run_rows(
+        factory,
+        "SELECT seq, revision_id FROM profile_revision_activations "
+        "WHERE profile_id = :p ORDER BY seq", p=pid,
+    )
+    assert [(a.seq, a.revision_id) for a in acts] == [(1, r1), (2, r2)]
+
+    async def cur():
+        async with factory() as s:
+            return await profiles.current_revision(s, pid)
+
+    assert asyncio.run(cur()).id == r2  # vigente = la más reciente pre-migración
+
+    mid = _register(factory, created)
+
+    async def pending():
+        async with factory() as s:
+            return await embeddings.pending_profile_revisions(s, mid)
+
+    assert r2 in {r.id for r in asyncio.run(pending())}  # vuelve al worker
