@@ -57,6 +57,13 @@ def db():
                 # Estado ANTES que evaluaciones (FK RESTRICT del current_eval).
                 await s.execute(
                     sa.text(
+                        "DELETE FROM integration_outbox WHERE subject_profile_id IN "
+                        "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
+                    ),
+                    {"c": cons},
+                )
+                await s.execute(
+                    sa.text(
                         "DELETE FROM profile_vacancy_state WHERE profile_id IN "
                         "(SELECT id FROM profiles WHERE consumer_id = ANY(:c))"
                     ),

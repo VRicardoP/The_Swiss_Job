@@ -29,6 +29,8 @@ celery_app.conf.update(
         "jobhunt.embedding.*": {"queue": "core.embedding"},
         "jobhunt.matching.*": {"queue": "core.matching"},
         "jobhunt.notifications.*": {"queue": "core.notifications"},
+        # Despacho del outbox (A-10): cola general del core.
+        "jobhunt.delivery.*": {"queue": "core.default"},
     },
     task_acks_late=True,
     worker_prefetch_multiplier=1,
@@ -39,4 +41,5 @@ celery_app.conf.include = [
     "jobhunt_core.tasks.harvest",
     "jobhunt_core.tasks.embedding",
     "jobhunt_core.tasks.matching",
+    "jobhunt_core.tasks.delivery",
 ]

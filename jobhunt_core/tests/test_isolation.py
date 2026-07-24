@@ -33,6 +33,7 @@ def test_expected_core_queues_exist():
         "core.embedding",
         "core.matching",
         "core.notifications",
+        "core.default",  # despacho del outbox (A-10)
     }
 
 

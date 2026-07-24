@@ -29,6 +29,14 @@ logger = logging.getLogger(__name__)
 # sigue escaneando hasta llenar el LIMIT tras el filtro, acotado por esto.
 MAX_SCAN_TUPLES = 20000
 
+# Namespace DETERMINISTA de los eventos de integración (ADR-05: event_id =
+# uuid5(ns, type || ':' || clave-natural); para match.evaluated → eval_key).
+EVENTS_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "jobhunt-core/integration-events")
+
+
+def event_id_for(event_type: str, natural_key: str) -> uuid.UUID:
+    return uuid.uuid5(EVENTS_NAMESPACE, f"{event_type}:{natural_key}")
+
 # SQL de candidatos (module-level: los tests lo EXPLAINean tal cual).
 CANDIDATES_SQL = (
     "SELECT v.id AS vacancy_id, "
@@ -107,10 +115,14 @@ async def evaluate_profile(
     updated_at)."""
     locked = (
         await session.execute(
-            sa.text("SELECT id FROM profiles WHERE id = :pid FOR UPDATE"),
+            sa.text(
+                "SELECT p.id, c.name AS consumer_name FROM profiles p "
+                "JOIN consumers c ON c.id = p.consumer_id "
+                "WHERE p.id = :pid FOR UPDATE OF p"
+            ),
             {"pid": profile_id},
         )
-    ).scalar_one_or_none()
+    ).one_or_none()
     if locked is None:
         return {
             "status": "not_found", "evaluated": 0, "new_evals": 0,
@@ -228,9 +240,51 @@ async def evaluate_profile(
             )
         ).all()
     }
-    new_evals = sum(
-        1 for r in eval_rows if winners.get((r["vid"], r["key"])) == r["id"]
-    )
+    fresh = [r for r in eval_rows if winners.get((r["vid"], r["key"])) == r["id"]]
+    new_evals = len(fresh)
+    if fresh:
+        # OUTBOX en la MISMA transacción que la escritura (A-10, ADR-05):
+        # event_id determinista por eval_key + DO NOTHING = re-emisión
+        # imposible; el estado de entrega va POR destino (ADR-06) — el BFF del
+        # consumidor del perfil (§3). Payload = SOLO IDs (el consumidor
+        # resuelve por /v1).
+        events = sorted(
+            (
+                {
+                    "eid": event_id_for("match.evaluated", r["key"]),
+                    "agg": r["key"], "pid": profile_id,
+                    "payload": json.dumps(
+                        {
+                            "eval_key": r["key"],
+                            "profile_id": str(profile_id),
+                            "vacancy_id": str(r["vid"]),
+                        }
+                    ),
+                }
+                for r in fresh
+            ),
+            key=lambda e: str(e["eid"]),
+        )
+        await session.execute(
+            sa.text(
+                "INSERT INTO integration_outbox "
+                "(event_id, aggregate, aggregate_id, subject_profile_id, "
+                " version, type, payload) "
+                "VALUES (:eid, 'match_evaluation', :agg, :pid, 1, "
+                "'match.evaluated', CAST(:payload AS jsonb)) "
+                "ON CONFLICT (event_id) DO NOTHING"
+            ),
+            events,
+        )
+        await session.execute(
+            sa.text(
+                "INSERT INTO integration_outbox_deliveries "
+                "(event_id, destination, next_attempt_at) "
+                "VALUES (:eid, :dest, clock_timestamp()) "
+                "ON CONFLICT (event_id, destination) DO NOTHING"
+            ),
+            [{"eid": e["eid"], "dest": locked.consumer_name} for e in events],
+        )
     moved = False
     if move_current:
         state_rows = [
