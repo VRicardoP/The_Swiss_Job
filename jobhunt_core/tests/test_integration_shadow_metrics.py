@@ -12,7 +12,8 @@ de outbox que appendea y p99 exacto (percentile_cont); (g) latencia_p95 con
 lotes sembrados incl. uno sin sellar y uno fuera de ventana; (h) coste y
 reenlace_pct con fuentes definidas; (i) purga que borra lo viejo aplicado y
 PRESERVA la última fila users por pk (la exclusión del proyector sigue
-funcionando) y lo no aplicado, podando samples viejos — idempotente;
+funcionando) y lo no aplicado, podando samples viejos SOLO si su p99 quedó
+SELLADO (los no sellados esperan a su compute) — idempotente;
 (j) gates ok/failed con umbrales forzados; (k) informe legible generado;
 (l) tareas Celery registradas y enrutadas a core.default.
 
@@ -1004,7 +1005,8 @@ def test_purge_deletes_old_applied_preserving_last_users_and_unapplied(db):
             {"l": lsn, "t": t, "o": op, "p": pk, "j": json.dumps(payload),
              "r": recv, "a": applied},
         )
-    # Samples de ciclos FUERA de retención se podan; los del actual, no.
+    # Samples de ciclos FUERA de retención se podan SOLO si el p99 quedó
+    # SELLADO (guard value <> centinela — P3); los del ciclo actual, nunca.
     for cid, n in ((date(2026, 7, 10), 3), (date(2026, 7, 25), 2)):
         _exec(
             factory,
@@ -1013,6 +1015,8 @@ def test_purge_deletes_old_applied_preserving_last_users_and_unapplied(db):
             "CAST(:j AS jsonb))",
             {"c": cid, "j": json.dumps({"samples": [{"oldest_pending_s": i} for i in range(n)]})},
         )
+    # Sella el p99 del ciclo viejo: sin sellar, el guard lo dejaría intacto.
+    _compute(factory, cycle_id=date(2026, 7, 10))
 
     async def exclusion():
         async with factory() as s:
@@ -1044,6 +1048,59 @@ def test_purge_deletes_old_applied_preserving_last_users_and_unapplied(db):
     result2 = _run(purge())
     assert result2 == result | {"staging_deleted": 0, "sample_rows_pruned": 0}
     assert {r.lsn for r in _rows(factory, "SELECT lsn FROM shadow_change_log")} == kept
+
+
+def test_purge_keeps_unsealed_samples_until_compute_seals_them(db):
+    """Regresión P3: una fila de outbox_lag_p99 MUESTREADA pero NO sellada
+    (value = centinela) con ciclo ya fuera de retención NO se poda — sus
+    samples sobreviven a purge_staging para que un compute_cycle tardío
+    (>= 7 días de retraso o backfill histórico) selle el p99 correcto desde
+    ellos, en vez de dejar el [gate] en no_data PERMANENTE. Una vez sellada,
+    la siguiente purga ya puede podarla."""
+    factory = db
+    # Fila del muestreador SIN computar: value = centinela, solo samples.
+    _exec(
+        factory,
+        "INSERT INTO shadow_cycle_metrics (cycle_id, metric, scope, value, "
+        "details) VALUES (:c, 'outbox_lag_p99', 'global', :nodata, "
+        "CAST(:j AS jsonb))",
+        {"c": CYCLE, "nodata": metrics.NO_DATA_VALUE, "j": json.dumps(
+            {"samples": [
+                {"ts": "t", "oldest_pending_s": v} for v in (100, 150, 200, 250)
+            ]}
+        )},
+    )
+    # Purga con el ciclo YA fuera de retención (cutoff 2026-07-23 > CYCLE)
+    # y el compute aún sin correr: el guard la deja INTACTA.
+    purge_now = datetime(2026, 7, 30, 12, 0, tzinfo=metrics.CYCLE_TZ)
+
+    async def purge():
+        async with factory() as s:
+            r = await metrics.purge_staging(s, now=purge_now)
+            await s.commit()
+            return r
+
+    assert _run(purge())["sample_rows_pruned"] == 0  # no sellada: no se poda
+    row = _metric_row(factory, "outbox_lag_p99")
+    assert float(row.value) == metrics.NO_DATA_VALUE
+    assert len(row.details["samples"]) == 4  # samples INTACTOS
+
+    # compute_cycle posterior (backfill) sella el p99 desde esos samples.
+    # A MANO: p99 de [100,150,200,250] = 200 + 0.97·50 = 248.5.
+    _compute(factory, cycle_id=CYCLE, now=purge_now)
+    row = _metric_row(factory, "outbox_lag_p99")
+    assert float(row.value) == pytest.approx(248.5)
+    assert row.details["no_data"] is False
+    g = _gates(factory)["outbox_lag_p99"]
+    assert g["ok"] is True  # 248.5 <= 300: gate en VERDE, no no_data eterno
+
+    # Ya SELLADA: la siguiente purga poda los samples y el p99 sobrevive.
+    assert _run(purge())["sample_rows_pruned"] == 1
+    row = _metric_row(factory, "outbox_lag_p99")
+    assert "samples" not in row.details
+    assert row.details["samples_pruned"] == 4
+    assert float(row.value) == pytest.approx(248.5)
+    assert _gates(factory)["outbox_lag_p99"]["ok"] is True
 
 
 # ---------------------------------------------- recompute sin perfiles idos

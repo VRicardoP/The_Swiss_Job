@@ -57,7 +57,8 @@ SIEMPRE la última fila `users` (op I/U aplicada) por pk: es la fuente de la
 exclusión de usuarios inactivos del proyector (NOTA de shadow/projector.py —
 borrarla haría olvidar la exclusión). Lo NO aplicado jamás se toca. También
 poda los arrays de samples de `outbox_lag_p99` de ciclos ya fuera de
-retención (el p99 quedó computado; el array solo ocupa). Idempotente.
+retención SOLO si su p99 quedó SELLADO (value != centinela; el array solo
+ocupa) — una fila muestreada sin computar conserva sus samples. Idempotente.
 
 El esquema legacy es PARÁMETRO (`legacy_schema`, mismo patrón que labels.py):
 tests con esquema desechable, producción 'public' (GRANTs RO de §1). Aquí
@@ -1135,10 +1136,15 @@ async def purge_staging(
     jamás se toca (sigue pendiente de proyectar, sea de cuando sea).
 
     También poda los arrays details.samples de outbox_lag_p99 en ciclos ya
-    fuera de retención (el p99 quedó sellado por compute_cycle; el array
-    solo ocupa) dejando `samples_pruned` como rastro — un recomputo
-    posterior del ciclo PRESERVA ese p99 sellado (_outbox_lag_row devuelve
-    None y no hay upsert), jamás lo machaca con el centinela sin-datos.
+    fuera de retención, SOLO en filas cuyo p99 quedó SELLADO por
+    compute_cycle — GARANTIZADO por el guard `value <> NO_DATA_VALUE` del
+    WHERE, no asumido: una fila muestreada pero aún sin computar (value =
+    centinela — compute_cycle retrasado >= 7 días o backfill histórico)
+    CONSERVA sus samples hasta que un compute los selle, evitando un
+    [gate] en no_data PERMANENTE. La poda deja `samples_pruned` como
+    rastro — un recomputo posterior del ciclo PRESERVA ese p99 sellado
+    (_outbox_lag_row devuelve None y no hay upsert), jamás lo machaca con
+    el centinela sin-datos.
     IDEMPOTENTE: el segundo pase no encuentra nada que borrar ni podar."""
     cid_now = current_cycle_id(now)
     cutoff = cycle_bounds(cid_now)[1] - timedelta(days=STAGING_RETENTION_DAYS)
@@ -1165,10 +1171,12 @@ async def purge_staging(
                 "SET details = (details - 'samples') || jsonb_build_object("
                 "  'samples_pruned', jsonb_array_length(details->'samples')) "
                 "WHERE metric = :m AND cycle_id < :cid "
+                "  AND value <> :nodata "
                 "  AND jsonb_typeof(details->'samples') = 'array'"
             ),
             {
                 "m": M_OUTBOX_LAG,
+                "nodata": NO_DATA_VALUE,
                 "cid": cid_now - timedelta(days=STAGING_RETENTION_DAYS),
             },
         )
