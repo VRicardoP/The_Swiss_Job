@@ -5,7 +5,9 @@ snapshot↔LSN registrada; (b) cambios post-snapshot por streaming en orden
 LSN; (c) whitelist por tabla — hashed_password/email JAMÁS en staging;
 (d) ack tras commit — kill −9 sin pérdida ni duplicado aplicado (re-entrega
 absorbida por ON CONFLICT); (e) rol jobhunt_capture REPLICATION + GRANTs RO
-enumerados y NADA más; (f) ciclo de migración head→core0008a→head.
+enumerados y NADA más; (f) ciclo de migración head→core0008a→head;
+(g) arranque en frío sin esquema legacy: reintento con backoff SIN crear el
+slot; (h) healthcheck: slot presente pero INACTIVO ⇒ exit 1.
 
 Aislamiento: BD DESECHABLE (jobhunt_cap_<hex>) con el esquema core migrado a
 head y MINI-tablas fixture jobs/users/user_profiles en SU `public` (con las
@@ -15,6 +17,7 @@ PROPIO (nombre único) con DROP en finally SIEMPRE: un slot huérfano retiene
 WAL y bloquearía el DROP DATABASE. Ejecutar vía core-migrate.
 """
 
+import logging
 import os
 import time
 import uuid
@@ -24,7 +27,7 @@ import pytest
 import sqlalchemy as sa
 
 from jobhunt_core.config import settings
-from jobhunt_core.shadow.capture import DEFAULT_TABLES, ShadowCapture
+from jobhunt_core.shadow.capture import DEFAULT_TABLES, ShadowCapture, health_check
 from jobhunt_core.tests.alembic_runner import run_alembic
 
 _ADMIN = os.getenv("CORE_ADMIN_DATABASE_URL")
@@ -593,6 +596,77 @@ def test_ack_after_commit_survives_kill_without_loss_or_duplicates(capture):
         engine,
         f"SELECT lsn, seq_in_tx, pk FROM {S}.shadow_change_log ORDER BY lsn, seq_in_tx",
     ) == after
+
+
+# ------------------------------------------- (g) readiness del esquema legacy
+
+
+def test_cold_start_without_legacy_schema_retries_and_creates_no_slot(
+    capture, caplog
+):
+    """P3 arranque en frío: las migraciones legacy son MANUALES — sin las
+    tablas capturadas el bootstrap NO debe crear el slot (un slot huérfano
+    retendría WAL en cada vuelta del crash-loop, §8) sino esperar
+    reintentando con backoff. El test acota la espera con ready_max_retries
+    pequeño; el esquema `coldstart` no existe: mismo information_schema vacío
+    que una BD aún sin migrar."""
+    make, slot, engine = capture
+    cap = make(tables="coldstart.jobs,coldstart.users", ready_max_retries=2)
+    with caplog.at_level(logging.WARNING, logger="jobhunt_core.shadow.capture"):
+        with pytest.raises(RuntimeError, match="esquema legacy aún sin migrar"):
+            cap.start()
+    # Reintentó con backoff y log claro (no crash inmediato)...
+    assert "esquema legacy aún sin migrar" in caplog.text
+    assert "reintentando en" in caplog.text
+    # ...y JAMÁS creó el slot ni dejó estado a medias.
+    assert (
+        _scalar(
+            engine,
+            "SELECT count(*) FROM pg_replication_slots WHERE slot_name = :n",
+            n=slot,
+        )
+        == 0
+    )
+    assert _scalar(engine, f"SELECT count(*) FROM {S}.shadow_capture_state") == 0
+
+
+# ------------------------------------------- (h) healthcheck con slot inactivo
+
+
+def _wait_slot_active(engine, slot: str, timeout: float = 10.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _scalar(
+            engine,
+            "SELECT active FROM pg_replication_slots WHERE slot_name = :n",
+            n=slot,
+        ):
+            return
+        time.sleep(0.2)
+    raise RuntimeError(f"slot {slot} no llegó a activarse en {timeout}s")
+
+
+def test_health_check_unhealthy_when_slot_exists_but_inactive(
+    capture, capture_db, monkeypatch, capsys
+):
+    """P3 healthcheck: mismo estado, mismo slot — la ÚNICA diferencia entre
+    sano y no sano es `active` (consumidor conectado o caído). El inactivo
+    legítimo del backfill del bootstrap lo cubre el start_period de 300s del
+    compose, no este check."""
+    make, slot, engine = capture
+    monkeypatch.setenv("CORE_DATABASE_URL", capture_db["core_dsn"])
+    monkeypatch.setenv("CORE_CAPTURE_SLOT", slot)
+
+    cap = make()
+    cap.start()  # bootstrap: frontera registrada + START_REPLICATION
+    _wait_slot_active(engine, slot)
+    assert health_check() == 0  # walsender conectado: sano
+
+    cap.close()  # consumidor caído: el slot queda presente pero INACTIVO
+    _wait_slot_released(slot)
+    assert health_check() == 1
+    err = capsys.readouterr().err
+    assert "INACTIVO" in err  # motivo visible en stderr
 
 
 # ------------------------------------------------------------ (e) roles/grants

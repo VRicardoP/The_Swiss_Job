@@ -9,8 +9,11 @@ Tablas [B] del buffer legacy→core, bloqueadas hasta el OK del compose
 - `shadow_change_log`: buffer idempotente de cambios. PK(lsn, seq_in_tx) —
   la re-entrega del slot (ack tras commit) colisiona ahí y se absorbe con
   DO NOTHING. `applied_at` lo sella el proyector (B-02); el índice PARCIAL
-  sobre las filas sin aplicar es su cola de trabajo (la tabla retiene ciclos
-  cerrados + 7 días: un índice completo sería casi todo ruido ya aplicado).
+  sobre las filas sin aplicar es su cola de trabajo. La retención contractual
+  del staging (ciclos cerrados + 7 días) NO la implementa esta migración: la
+  purga del staging aplicado es de B-04, que define el ciclo (§7) — de ahí el
+  índice parcial: sobre una tabla que acumula hasta esa purga, un índice
+  completo sería casi todo ruido ya aplicado.
 - `shadow_projection_batches`: marcas de LOTE del proyector — fuente de
   `latencia_p95` (§5: `offer_revisions.created_at` no enlaza con el cambio
   origen; la traza temporal es del lote).

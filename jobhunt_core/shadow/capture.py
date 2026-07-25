@@ -2,7 +2,11 @@
 
 Proceso DEDICADO (servicio `core-capture`, no worker Celery) sobre psycopg2:
 
-- **Bootstrap primera vez**: `CREATE_REPLICATION_SLOT ... LOGICAL wal2json
+- **Bootstrap primera vez**: readiness del esquema legacy ANTES de crear el
+  slot (las migraciones legacy son MANUALES: si las tablas capturadas no
+  existen aún con su PK contractual se espera con backoff SIN crear nada —
+  un slot creado en frío retendría WAL en cada vuelta del crash-loop, §8) →
+  `CREATE_REPLICATION_SLOT ... LOGICAL wal2json
   EXPORT_SNAPSHOT` → BACKFILL de las tablas capturadas leyendo CON ese
   snapshot (`SET TRANSACTION SNAPSHOT` en la conexión normal) hacia
   `shadow_change_log` (op='I', lsn=snapshot_lsn, seq incremental) → frontera
@@ -130,6 +134,7 @@ class ShadowCapture:
         tables: str = DEFAULT_TABLES,
         schema: str | None = None,
         status_interval: float = 10.0,
+        ready_max_retries: int | None = None,
     ) -> None:
         if not _IDENT_RE.match(slot):
             raise ValueError(f"Nombre de slot inválido: {slot!r}")
@@ -144,6 +149,10 @@ class ShadowCapture:
         self.core_dsn = core_dsn
         self.slot = slot
         self.status_interval = status_interval
+        # None = espera INDEFINIDA a que el esquema legacy migre (producción:
+        # las migraciones legacy son manuales); los tests acotan con un valor
+        # pequeño para probar el reintento sin colgar la suite.
+        self.ready_max_retries = ready_max_retries
         self.rows_applied = 0  # total aplicado en esta instancia (observabilidad/tests)
         self._stop = False
         self._ack = True
@@ -240,6 +249,7 @@ class ShadowCapture:
     def _bootstrap(self) -> int:
         """Slot + snapshot exportado + backfill consistente (§2). Devuelve el
         LSN de arranque del streaming (= consistent_point del slot)."""
+        self._wait_legacy_ready()
         self._cur.execute(
             f'CREATE_REPLICATION_SLOT "{self.slot}" LOGICAL wal2json EXPORT_SNAPSHOT'
         )
@@ -255,6 +265,57 @@ class ShadowCapture:
         # ejecute OTRO comando: el backfill completo va antes del START.
         self._backfill(snapshot_name, snapshot_lsn)
         return snapshot_lsn
+
+    def _wait_legacy_ready(self) -> None:
+        """Readiness del esquema legacy ANTES de CREATE_REPLICATION_SLOT.
+
+        Las migraciones legacy son MANUALES: en un arranque en frío las
+        tablas capturadas pueden no existir todavía. Crear el slot y reventar
+        después en el backfill dejaría en cada vuelta del crash-loop un slot
+        huérfano reteniendo WAL de la BD compartida (§8) — aquí se espera con
+        backoff SIN crear nada. `ready_max_retries=None` (producción) espera
+        indefinidamente; los tests lo acotan y reciben RuntimeError."""
+        backoff = 1.0
+        attempts = 0
+        while not self._stop:
+            missing = self._legacy_missing()
+            if not missing:
+                return
+            attempts += 1
+            if (
+                self.ready_max_retries is not None
+                and attempts >= self.ready_max_retries
+            ):
+                raise RuntimeError(
+                    f"esquema legacy aún sin migrar tras {attempts} "
+                    f"comprobaciones (faltan: {', '.join(missing)})"
+                )
+            logger.warning(
+                "esquema legacy aún sin migrar (faltan: %s) — "
+                "reintentando en %.0fs",
+                ", ".join(missing),
+                backoff,
+            )
+            self._sleep(backoff)
+            backoff = min(backoff * 2, 60.0)
+        raise RuntimeError(
+            "parada solicitada durante la espera del esquema legacy "
+            "(bootstrap abortado sin crear el slot)"
+        )
+
+    def _legacy_missing(self) -> list[str]:
+        """Tablas capturadas AÚN no listas: ausentes o sin su PK contractual
+        (misma consulta de information_schema que usa el backfill)."""
+        missing = []
+        with self._core.cursor() as cur:
+            for qualified in self.tables:
+                src_schema, table = qualified.split(".")
+                spec = TABLE_WHITELIST.get(table)
+                if spec is None:
+                    continue  # sin whitelist contractual: el backfill la ignora
+                if spec["pk"] not in self._table_columns(cur, src_schema, table):
+                    missing.append(qualified)
+        return missing
 
     def _backfill(self, snapshot_name: str, snapshot_lsn: int) -> None:
         """Lee las tablas capturadas CON el snapshot del slot y las vuelca a
@@ -297,12 +358,7 @@ class ShadowCapture:
         """Backfill de UNA tabla; devuelve el seq siguiente. La whitelist se
         intersecta con las columnas reales (los fixtures de test son "mini"
         tablas; en producción están todas)."""
-        cur.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = %s AND table_name = %s",
-            (src_schema, table),
-        )
-        existing = {row[0] for row in cur.fetchall()}
+        existing = self._table_columns(cur, src_schema, table)
         pk_col = spec["pk"]
         if pk_col not in existing:
             raise RuntimeError(f"{src_schema}.{table} sin su PK contractual {pk_col!r}")
@@ -338,6 +394,17 @@ class ShadowCapture:
             self._insert_changes(cur, batch)
         cur.execute("CLOSE backfill_read")
         return seq
+
+    @staticmethod
+    def _table_columns(cur, src_schema: str, table: str) -> set[str]:
+        """Columnas reales de la tabla vía information_schema (conjunto vacío
+        = tabla ausente) — compartida por backfill y check de readiness."""
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = %s AND table_name = %s",
+            (src_schema, table),
+        )
+        return {row[0] for row in cur.fetchall()}
 
     @staticmethod
     def _insert_changes(cur, rows: list[tuple]) -> None:
@@ -598,7 +665,13 @@ def _core_dsn() -> str:
 
 def health_check() -> int:
     """Healthcheck ligero para compose (`--health`): conexión core OK + slot
-    presente + progreso reciente. Exit 0 sano / 1 no.
+    presente y ACTIVO (walsender conectado) + progreso reciente. Exit 0 sano
+    / 1 no.
+
+    Slot presente pero `active=false` = consumidor caído mientras el slot
+    retiene WAL de la BD compartida (§8): unhealthy con motivo. El único
+    inactivo LEGÍTIMO es el backfill del bootstrap (slot ya creado, aún sin
+    START_REPLICATION) — lo cubre el start_period de 300s del compose.
 
     Umbral de antigüedad de `updated_at`: 26 h por defecto — `updated_at`
     solo avanza al aplicar transacciones capturadas (las tx vacías solo hacen
@@ -617,11 +690,19 @@ def health_check() -> int:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT 1 FROM pg_replication_slots WHERE slot_name = %s",
+                    "SELECT active FROM pg_replication_slots WHERE slot_name = %s",
                     (slot,),
                 )
-                if cur.fetchone() is None:
+                slot_row = cur.fetchone()
+                if slot_row is None:
                     print(f"unhealthy: slot {slot} ausente", file=sys.stderr)
+                    return 1
+                if not slot_row[0]:
+                    print(
+                        f"unhealthy: slot {slot} presente pero INACTIVO "
+                        "(consumidor no conectado; el slot retiene WAL)",
+                        file=sys.stderr,
+                    )
                     return 1
                 cur.execute(
                     "SELECT last_applied_lsn, "

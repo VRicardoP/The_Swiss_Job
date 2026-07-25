@@ -128,8 +128,10 @@ services:
 
   core-migrate:
     # Job de migración PROPIO del core (one-shot): bootstrap de rol+esquema
-    # (idempotente, con credencial admin) + alembic upgrade head. El backend
-    # legacy migra en su entrypoint; el core NUNCA se cuelga de eso.
+    # (idempotente, con credencial admin) + alembic upgrade head. Las
+    # migraciones legacy son MANUALES (docker compose exec backend alembic
+    # upgrade head); el core NUNCA se cuelga de eso — core-capture espera el
+    # esquema legacy con backoff antes de crear su slot (B-01).
     build:
       context: .
       dockerfile: jobhunt_core/Dockerfile
@@ -227,9 +229,11 @@ services:
       - ./jobhunt_core:/app/jobhunt_core
     healthcheck:
       # Subcomando --health del propio módulo: conexión core OK + slot
-      # presente + updated_at de la frontera con antigüedad < 26h (el legacy
-      # garantiza tráfico diario). start_period generoso: el bootstrap hace
-      # el backfill COMPLETO de jobs antes de registrar la frontera.
+      # presente y ACTIVO (walsender conectado) + updated_at de la frontera
+      # con antigüedad < 26h (el legacy garantiza tráfico diario).
+      # start_period generoso: el bootstrap hace el backfill COMPLETO de jobs
+      # antes de registrar la frontera (slot aún INACTIVO hasta
+      # START_REPLICATION — inactivo legítimo que cubre este start_period).
       test: ["CMD", "python", "-m", "jobhunt_core.shadow.capture", "--health"]
       interval: 60s
       timeout: 10s
