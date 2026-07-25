@@ -30,6 +30,12 @@ def register_normalizer(source_name: str, fn: Callable[[dict], dict]) -> None:
     _NORMALIZERS[source_name] = fn
 
 
+def has_normalizer(source_name: str) -> bool:
+    """Consulta del registry sin efectos (B-02: la alerta de 'fuente sin
+    handler' del proyector no debe tocar el dict privado)."""
+    return source_name in _NORMALIZERS
+
+
 def normalize_offer(source_name: str, raw: dict) -> dict | None:
     """Contenido canónico o None (sin normalizador, payload imposible o sin
     título) — sin oferta canónica NO se mueve el puntero, jamás se rompe el

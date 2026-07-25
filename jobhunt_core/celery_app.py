@@ -31,6 +31,9 @@ celery_app.conf.update(
         "jobhunt.notifications.*": {"queue": "core.notifications"},
         # Despacho del outbox (A-10): cola general del core.
         "jobhunt.delivery.*": {"queue": "core.default"},
+        # Proyector de la sombra (B-02, contrato §3): comparte la cola de
+        # cosecha — es ingesta, y serializa con los locks del sink.
+        "jobhunt.shadow.project": {"queue": "core.harvest"},
     },
     task_acks_late=True,
     worker_prefetch_multiplier=1,
@@ -42,4 +45,5 @@ celery_app.conf.include = [
     "jobhunt_core.tasks.embedding",
     "jobhunt_core.tasks.matching",
     "jobhunt_core.tasks.delivery",
+    "jobhunt_core.tasks.shadow",
 ]
