@@ -52,9 +52,10 @@ celery_app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     # CADENCIAS de la sombra (B-05, §5/§6) — SOLO tareas de colas core.*.
-    # El beat corre en el core-worker LOCAL (shadow/RUNBOOK.md):
-    #   docker compose exec core-worker celery -A jobhunt_core.celery_app beat
-    # (el compose no se toca sin OK del propietario). Cadencias ajustables
+    # El beat va EMBEBIDO en el command del core-worker (`worker ... -B`,
+    # docker-compose.yml — decisión del propietario 2026-07-25): sobrevive
+    # a recreates/restarts, cosa que un `exec -d ... beat` no hacía
+    # (moría en silencio con cada `up -d`). Cadencias ajustables
     # por settings CORE_SHADOW_*; el crontab usa timezone Europe/Zurich (la
     # de este app): 06:05 = justo tras el cierre del ciclo (06:00, §5).
     beat_schedule={

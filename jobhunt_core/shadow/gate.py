@@ -14,10 +14,11 @@ DECISIONES (documentadas, no obvias):
   (core.default — observabilidad ligera, jamás detrás de un lote del
   proyector), `run_cycle` diario a las 06:05 Europe/Zurich (core.harvest —
   es ingesta y serializa con el proyector). Ajustables por settings
-  (CORE_SHADOW_*). El beat corre EN EL core-worker LOCAL:
-  `docker compose exec core-worker celery -A jobhunt_core.celery_app beat`
-  (el compose NO se toca sin OK del propietario — regla del proyecto; el
-  comando vive en el runbook). 06:05 y no 06:00: el ciclo cierra a las
+  (CORE_SHADOW_*). El beat va EMBEBIDO en el command del core-worker
+  (`worker ... -B`, docker-compose.yml — decisión del propietario
+  2026-07-25): un beat lanzado con `exec -d` moría en silencio con cada
+  recreate del worker, apagando la única alerta de retención WAL de la BD
+  compartida. 06:05 y no 06:00: el ciclo cierra a las
   06:00 (§5) y el margen evita computar un ciclo aún abierto por deriva
   de reloj entre beat y BD.
 
@@ -559,6 +560,38 @@ def rollback_replay(
         slot, summary["snapshot_lsn"], summary["backfill_rows"],
     )
     return summary
+
+
+def emergency_drop_slot(
+    capture_dsn: str,
+    slot: str = DEFAULT_SLOT,
+    confirm: bool = False,
+    slot_release_timeout_s: float = 30.0,
+) -> bool:
+    """Drop-slot de EMERGENCIA (§8, shadow/RUNBOOK.md §4): libera el WAL
+    retenido cuando el disco de la BD compartida peligra. Termina el
+    walsender residual y espera/reintenta hasta que el slot quede inactivo
+    antes del DROP (bucle de _stop_and_drop_slot): un
+    pg_drop_replication_slot lanzado en el mismo batch que el terminate
+    FALLA si el walsender aún no ha muerto — de ahí la espera.
+
+    SOLO dropea el slot: no toca staging ni fuentes. La sombra queda sin
+    continuidad; la reconstrucción posterior es rollback_replay (§3).
+    Devuelve True si dropeó, False si el slot ya no existía (idempotente)."""
+    if confirm is not True:
+        raise RuntimeError(
+            "emergency_drop_slot DESTRUYE el slot (la sombra pierde su "
+            "continuidad WAL): exige confirm=True explícito "
+            "(ver shadow/RUNBOOK.md §4)"
+        )
+    if not _IDENT_RE.match(slot):
+        raise RuntimeError(f"nombre de slot inválido: {slot!r}")
+    dropped = _stop_and_drop_slot(capture_dsn, slot, slot_release_timeout_s)
+    logger.info(
+        "emergency_drop_slot: slot %s %s", slot,
+        "eliminado (WAL liberado)" if dropped else "ya ausente",
+    )
+    return dropped
 
 
 def _stop_and_drop_slot(capture_dsn: str, slot: str, timeout_s: float) -> bool:

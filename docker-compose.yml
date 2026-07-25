@@ -193,7 +193,14 @@ services:
     image: swissjob-core:dev
     container_name: swissjob-core-worker
     # SOLO colas core.* — el worker legacy escucha default/scraping/ai en OTRO broker.
-    command: celery -A jobhunt_core.celery_app worker -l info -Q core.default,core.harvest,core.embedding,core.matching,core.notifications --concurrency=2
+    # Beat EMBEBIDO (-B) en el worker (B-05, decisión del propietario 2026-07-25):
+    # el beat lanzado con `exec -d ... beat` moría EN SILENCIO con cada `up -d`
+    # (recreate) y con él la única alerta de retención WAL de la BD compartida
+    # (CONTRATOS_FASE_B §6/§8). Embebido, cada recreate/restart del worker
+    # rearranca el beat automáticamente. `-s /tmp/...`: el proceso corre como
+    # usuario `core` y /app es de root — el shelve del beat necesita ruta escribible.
+    command: celery -A jobhunt_core.celery_app worker -l info -Q core.default,core.harvest,core.embedding,core.matching,core.notifications --concurrency=2 -B -s /tmp/celerybeat-schedule
+    restart: unless-stopped
     environment:
       - CORE_DATABASE_URL=postgresql+asyncpg://jobhunt_core:${CORE_DB_PASSWORD:-jobhunt_core_dev}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
       - CORE_BROKER_URL=redis://:${CORE_REDIS_PASSWORD:-core_redis_dev}@redis-core:6379/0

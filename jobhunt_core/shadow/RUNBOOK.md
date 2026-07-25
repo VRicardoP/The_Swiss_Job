@@ -80,30 +80,90 @@ re-backfill == conteo legacy activo.
 Si el disco de la BD **compartida** peligra por WAL retenido y no hay tiempo de
 diagnóstico: **perder la sombra ≪ tumbar producción**.
 
+> ⚠️ `pg_drop_replication_slot` **FALLA** si el slot sigue `active`: terminar el
+> walsender y dropear en el mismo batch es una carrera perdida (el backend tarda
+> en morir). La secuencia correcta es: terminar → **esperar hasta
+> `active_pid IS NULL`** → drop, con reintentos.
+
+**Vía preferente** — la función con guardas (mismo bucle
+terminate→espera→drop que usa el rollback, timeout 30 s):
+
+```bash
+docker compose stop core-capture   # parar el consumidor SIEMPRE primero
+
+docker compose run --rm core-migrate python -c "
+import os
+from jobhunt_core.shadow.gate import emergency_drop_slot
+print(emergency_drop_slot(
+    capture_dsn=os.environ.get('CAPTURE_DSN',
+        'postgresql://jobhunt_capture:jobhunt_capture_dev@postgres:5432/swissjobhunter'),
+    confirm=True,
+))"
+```
+
+**Alternativa manual (psql)** — el mismo bucle con la espera explícita, en un
+solo `DO` (nunca terminate+drop en un único batch):
+
 ```bash
 docker compose stop core-capture
+
 docker compose exec -T postgres psql -U swissjob -d swissjobhunter -c "
-SELECT pg_terminate_backend(active_pid) FROM pg_replication_slots
-WHERE slot_name = 'jobhunt_shadow' AND active_pid IS NOT NULL;
-SELECT pg_drop_replication_slot('jobhunt_shadow');"
+DO \$\$
+DECLARE pid int; i int := 0;
+BEGIN
+  LOOP
+    SELECT active_pid INTO pid FROM pg_replication_slots
+      WHERE slot_name = 'jobhunt_shadow';
+    IF NOT FOUND THEN RAISE NOTICE 'slot ya ausente'; RETURN; END IF;
+    IF pid IS NULL THEN
+      PERFORM pg_drop_replication_slot('jobhunt_shadow');
+      RAISE NOTICE 'slot dropeado — WAL liberado';
+      RETURN;
+    END IF;
+    PERFORM pg_terminate_backend(pid);
+    PERFORM pg_sleep(0.25);   -- esperar a que el walsender muera de verdad
+    i := i + 1;
+    IF i > 120 THEN
+      RAISE EXCEPTION 'slot jobhunt_shadow sigue ACTIVO tras 30s: ¿core-capture parado?';
+    END IF;
+  END LOOP;
+END
+\$\$;"
 ```
 
 El WAL se libera al instante. La sombra queda SIN continuidad: para
 reconstruirla, ejecutar el rollback/replay completo (§3) cuando haya margen —
 **no** re-arrancar core-capture antes (fallaría con "slot AUSENTE" a propósito).
 
-## 5. Cadencias (beat en el core-worker LOCAL)
+## 5. Cadencias (beat EMBEBIDO en core-worker)
 
 El `beat_schedule` vive en `celery_app.py` (ajustable por settings
 `CORE_SHADOW_*`): `sample_outbox_lag` y `check_slot_health` cada 5 min,
 `run_cycle` diario 06:05 Europe/Zurich (tras el cierre del ciclo, §5). SOLO
-colas `core.*`. El compose no se toca sin OK del propietario: el beat se lanza
-DENTRO del core-worker existente —
+colas `core.*`.
+
+El beat va **EMBEBIDO** en el command del core-worker (`worker ... -B`,
+docker-compose.yml — decisión del propietario 2026-07-25): **ya no se arranca
+a mano**. Antes se lanzaba con `exec -d ... beat` y moría en silencio con cada
+`up -d` (recreate) — apagando la única alerta de retención WAL de la BD
+compartida (§6/§8). Embebido, cada recreate/restart del worker lo rearranca.
+
+Verificación (tras cualquier arranque/restart del worker):
 
 ```bash
-docker compose exec -d core-worker celery -A jobhunt_core.celery_app beat \
-  -l info -s /tmp/celerybeat-schedule
+docker compose ps core-worker                                  # Up
+docker compose logs core-worker | grep -m1 "beat: Starting"    # beat vivo
+# En ≤ 5 min el beat despacha las cadencias de 5 min:
+docker compose logs core-worker | grep "Sending due task shadow-"
+# (shadow-sample-outbox-lag y shadow-check-slot-health; shadow-run-cycle a las 06:05)
 ```
+
+**Liveness del muestreador**: si con el worker Up no aparecen samples nuevos
+durante **> 15 min** (ni "Sending due task shadow-sample-outbox-lag" en el log,
+ni entradas nuevas en `details->'samples'` de la fila `outbox_lag_p99` del
+ciclo abierto en `jobhunt.shadow_cycle_metrics`), el beat está caído aunque el
+worker viva: revisar el log de core-worker y `docker compose restart
+core-worker` (worker y beat rearrancan juntos).
 
 Estado del gate en cualquier momento:
 
