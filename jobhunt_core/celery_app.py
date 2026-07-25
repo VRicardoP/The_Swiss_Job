@@ -34,6 +34,14 @@ celery_app.conf.update(
         # Proyector de la sombra (B-02, contrato §3): comparte la cola de
         # cosecha — es ingesta, y serializa con los locks del sink.
         "jobhunt.shadow.project": {"queue": "core.harvest"},
+        # Métricas/muestreo/purga de la sombra (B-04): observabilidad y
+        # mantenimiento, NO ingesta — cola general core.default. En
+        # core.harvest el muestreador (cadencia 5 min vía B-05) quedaría
+        # detrás de lotes largos del proyector (prefetch=1 + acks_late) y
+        # ninguna de estas tareas toca los locks del sink.
+        "jobhunt.shadow.sample_outbox_lag": {"queue": "core.default"},
+        "jobhunt.shadow.compute_cycle": {"queue": "core.default"},
+        "jobhunt.shadow.purge_staging": {"queue": "core.default"},
     },
     task_acks_late=True,
     worker_prefetch_multiplier=1,
