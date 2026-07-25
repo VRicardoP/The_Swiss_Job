@@ -29,12 +29,16 @@ nuevas de escritura:
   `erase_shadow_profile` reutilizable).
 - Tras cada lote: embeddings `run_pending` + `evaluate_profile` SOLO de los
   perfiles sombra afectados — o de todos los activos si hubo corpus nuevo
-  (revisiones de ofertas o cierres que mueven la canónica). Al ENTRAR (bajo
-  el single-flight) el disparo se RE-GARANTIZA: se drenan los embeddings
-  pendientes y se evalúan TODOS los perfiles sombra activos — un crash tras
-  el commit de un lote pero durante `_after_batch` no deja nada sin disparar
-  (re-ejecutable y barato: run_pending sin pendientes es no-op y
-  evaluate_profile es dedup por eval_key).
+  (revisiones de ofertas o cierres que mueven la canónica). A la SALIDA
+  (bajo el single-flight, TRAS el drenado — fuera de las marcas de lote) el
+  disparo se RE-GARANTIZA: se drenan los embeddings pendientes (no-op real
+  sin pendientes) y se re-evalúan SOLO los perfiles sombra activos que esta
+  invocación no evaluó Y cuya señal de recuperación está encendida
+  (_RECOVERY_NEEDED_SQL: revisión vigente sin match_evaluation para algún
+  modelo+política activos, o corpus canónico embebido más reciente que su
+  última evaluación) — un crash tras el commit de un lote pero durante
+  `_after_batch` no deja nada sin disparar (evaluate_profile es dedup por
+  eval_key), y sin crash previo la recuperación no re-escanea nada.
 
 DECISIONES no obvias (por contrato, documentadas):
 
@@ -99,6 +103,7 @@ from sqlalchemy.pool import NullPool
 
 from jobhunt_core import profiles as core_profiles
 from jobhunt_core.database import create_core_engine, task_session_factory
+from jobhunt_core.embeddings import EMBED_DIM
 from jobhunt_core.harvest import normalize
 from jobhunt_core.harvest.providers import legacy_shadow
 from jobhunt_core.harvest.sink import RawListingSink
@@ -240,13 +245,14 @@ async def project_pending(
 
 
 async def _project_all(totals, batch_size, max_batches) -> None:
-    """Cuerpo de la proyección (YA bajo el single-flight): re-disparo del
-    flujo post-lote + drenado del staging por lotes."""
+    """Cuerpo de la proyección (YA bajo el single-flight): drenado del
+    staging por lotes + recuperación del flujo post-lote a la SALIDA (tras
+    las marcas de lote — ver _replay_after_batch)."""
     sink = RawListingSink()
+    evaluated: set = set()  # perfiles ya evaluados por _after_batch en ESTA invocación
     async with task_session_factory() as session_factory:
         async with session_factory() as session:
             await _register_known_legacy_sources(session)
-        totals["recovery_evaluated"] = await _replay_after_batch(session_factory)
         while max_batches is None or totals["batches"] < max_batches:
             result = await _project_batch(session_factory, sink, batch_size)
             if result is None:
@@ -254,9 +260,12 @@ async def _project_all(totals, batch_size, max_batches) -> None:
             totals["batches"] += 1
             for key in ("changes", "upserts", "closes", "erased", "revisions_new"):
                 totals[key] += getattr(result, key)
-            totals["profiles_evaluated"] += await _after_batch(
-                session_factory, result
-            )
+            targets = await _after_batch(session_factory, result)
+            evaluated.update(targets)
+            totals["profiles_evaluated"] += len(targets)
+        totals["recovery_evaluated"] = await _replay_after_batch(
+            session_factory, evaluated
+        )
 
 
 async def _register_known_legacy_sources(session) -> None:
@@ -1075,44 +1084,130 @@ async def erase_shadow_profile(
 # ------------------------------------------------- flujo normal tras el lote
 
 
-async def _replay_after_batch(session_factory) -> int:
-    """Re-garantiza el disparo post-lote al ENTRAR (bajo el single-flight,
-    ANTES de drenar el staging): un crash tras el commit de un lote pero
+# Señal de RECUPERACIÓN (2º análisis B-02, P2): UNA sola consulta por
+# invocación para TODOS los candidatos — jamás una por perfil. Un candidato
+# la enciende si, para algún (modelo activo dim=384, política activa):
+#   (a) su revisión VIGENTE no tiene ninguna match_evaluation, o
+#   (b) existe una offer_revision canónica EMBEBIDA para ese modelo más
+#       reciente (created_at) que su última evaluación con ese combo.
+# El máximo del corpus por combo es escalar (no depende del perfil): se
+# calcula una vez en el CTE. Subconsultas sobre índices EXISTENTES:
+# ix_pract_profile_seq (vigente por max(seq)), uq_eval_profile_vacancy_key
+# (prefijo profile_id en match_evaluations), ix_vacancies_archived_at +
+# ix_offrev_text_hash + pk_offer_embeddings (corpus embebido por modelo).
+_RECOVERY_NEEDED_SQL = """
+WITH combos AS (
+    SELECT m.id AS model_id, sp.id AS policy_id,
+           (SELECT max(orv.created_at)
+              FROM vacancies v
+              JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id
+              JOIN offer_embeddings oe
+                ON oe.text_hash = orv.text_hash AND oe.model_id = m.id
+             WHERE v.archived_at IS NULL AND v.merged_into IS NULL) AS corpus_max
+      FROM embedding_models m
+      CROSS JOIN scoring_policies sp
+     WHERE m.active AND m.dim = :dim AND sp.active
+)
+SELECT DISTINCT p.id
+  FROM profiles p
+  JOIN LATERAL (
+        SELECT a.revision_id
+          FROM profile_revision_activations a
+         WHERE a.profile_id = p.id
+         ORDER BY a.seq DESC
+         LIMIT 1
+       ) cur ON true
+  CROSS JOIN combos c
+ WHERE p.id = ANY(:pids)
+   AND (
+        NOT EXISTS (
+            SELECT 1
+              FROM match_evaluations e
+             WHERE e.profile_id = p.id
+               AND e.profile_revision_id = cur.revision_id
+               AND e.model_id = c.model_id
+               AND e.scoring_policy_id = c.policy_id)
+        OR c.corpus_max > (
+            SELECT max(e.created_at)
+              FROM match_evaluations e
+             WHERE e.profile_id = p.id
+               AND e.model_id = c.model_id
+               AND e.scoring_policy_id = c.policy_id)
+       )
+"""
+
+
+async def _replay_after_batch(session_factory, evaluated: set) -> int:
+    """Re-garantiza el disparo post-lote a la SALIDA (bajo el single-flight,
+    DESPUÉS del while de drenado): un crash tras el commit de un lote pero
     antes o a mitad de _after_batch deja embeddings sin drenar o
     evaluaciones sin disparar y SIN rastro en el change_log (ya sellado).
-    Se drenan SIEMPRE los embeddings pendientes y se evalúan TODOS los
-    perfiles sombra activos — re-ejecutable y barato: run_pending sin
-    pendientes es no-op y evaluate_profile es dedup por eval_key (jamás
-    duplica). Devuelve los perfiles evaluados en la recuperación."""
-    await _drain_embeddings()
+
+    Va TRAS el drenado para que su duración jamás entre en
+    finished_at − min_received_at de ningún lote: las marcas se escriben en
+    _record_batch antes de llegar aquí y latencia_p95 (§5) mide la
+    proyección, no la recuperación.
+
+    Los embeddings pendientes se drenan SIEMPRE (run_pending sin pendientes
+    es un no-op real); la evaluación NO es incondicional: solo los perfiles
+    sombra activos que _after_batch no evaluó en ESTA invocación
+    (`evaluated`) y cuya señal de recuperación está encendida — detección en
+    UNA consulta (_RECOVERY_NEEDED_SQL): revisión vigente sin
+    match_evaluation para algún (modelo, política) activos, o corpus
+    canónico embebido más reciente que su última evaluación. La evaluación
+    de recuperación sigue siendo dedup por eval_key (jamás duplica).
+    Devuelve los perfiles evaluados en la recuperación."""
+    await _drain_embeddings(session_factory)
     async with session_factory() as session:
-        targets = await _active_shadow_profiles(session)
+        targets = await _recovery_targets(session, evaluated)
     for pid in targets:
-        await _run_profile_impl(str(pid), EVAL_LIMIT)
+        await _run_profile_impl(str(pid), EVAL_LIMIT, session_factory=session_factory)
     return len(targets)
 
 
-async def _after_batch(session_factory, result: _BatchResult) -> int:
+async def _recovery_targets(session, evaluated: set) -> list:
+    """Perfiles sombra activos NO evaluados en esta invocación cuya señal de
+    recuperación está encendida. La detección es UNA consulta para todos los
+    candidatos (jamás una por perfil): número de queries constante."""
+    candidates = [
+        pid for pid in await _active_shadow_profiles(session) if pid not in evaluated
+    ]
+    if not candidates:
+        return []
+    rows = (
+        await session.execute(
+            sa.text(_RECOVERY_NEEDED_SQL),
+            {"pids": candidates, "dim": EMBED_DIM},
+        )
+    ).scalars().all()
+    return sorted(rows, key=str)
+
+
+async def _after_batch(session_factory, result: _BatchResult) -> list:
     """Embeddings pendientes + evaluate_profile del flujo NORMAL del core.
     Eficiencia (§3): solo perfiles afectados — o todos los activos del
-    consumer sombra si hubo corpus nuevo. Corre FUERA de la tx del lote."""
+    consumer sombra si hubo corpus nuevo. Corre FUERA de la tx del lote.
+    Devuelve los perfiles evaluados (la recuperación de salida ya no los
+    re-evalúa)."""
     if not (
         result.revisions_new or result.corpus_changed or result.affected_profiles
     ):
-        return 0
-    await _drain_embeddings()
+        return []
+    await _drain_embeddings(session_factory)
     async with session_factory() as session:
         targets = await _eval_targets(session, result)
     for pid in targets:
         # Mismo top-K por defecto que la tarea jobhunt.matching.run_profile.
-        await _run_profile_impl(str(pid), EVAL_LIMIT)
-    return len(targets)
+        await _run_profile_impl(str(pid), EVAL_LIMIT, session_factory=session_factory)
+    return targets
 
 
-async def _drain_embeddings(limit: int = 200, max_rounds: int = 50) -> None:
+async def _drain_embeddings(
+    session_factory, limit: int = 200, max_rounds: int = 50
+) -> None:
     """run_pending hasta vaciar (acotado): la evaluación necesita vectores."""
     for _ in range(max_rounds):
-        r = await _run_pending_impl(limit)
+        r = await _run_pending_impl(limit, session_factory=session_factory)
         if not any(r["embedded"].values()) and not any(
             r["profiles_embedded"].values()
         ):
@@ -1143,7 +1238,8 @@ async def _eval_targets(session, result: _BatchResult) -> list:
 async def _active_shadow_profiles(session) -> list:
     """TODOS los perfiles del consumer sombra menos los excluidos por
     users.is_active=false (mecanismo de exclusión de cabecera) — los
-    objetivos de 'corpus nuevo' y del re-disparo de entrada."""
+    objetivos de 'corpus nuevo' y los candidatos de la recuperación de
+    salida (que además filtra por señal en _recovery_targets)."""
     cid = await _shadow_consumer_id(session)
     if cid is None:
         return []

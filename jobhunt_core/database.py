@@ -49,6 +49,12 @@ async def task_session_factory():
     InterfaceError. Engine propio por invocación, dispose en el MISMO loop;
     NullPool: sin conexiones que sobrevivan al loop (mismo patrón que
     backend.database.task_session del legacy).
+
+    NOTA (2º análisis B-02, P3): quien YA corre dentro de un ÚNICO
+    asyncio.run (el proyector de la sombra) no debe pagar un engine NullPool
+    por llamada — las impls de las tareas (_run_pending_impl,
+    _run_profile_impl) aceptan `session_factory=` inyectada; este context
+    manager queda para el camino Celery standalone (loop nuevo por tarea).
     """
     task_engine = create_core_engine(poolclass=NullPool)
     try:

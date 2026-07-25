@@ -14,7 +14,11 @@ shadow_projection_batches con marcas coherentes; (i) tarea Celery
 registrada y enrutada a core.harvest SIN beat. Además (1er análisis B-02):
 single-flight con try-lock (2ª invocación sale limpia), una transacción POR
 FUENTE con applied_at sellado en ella (crash entre fuentes → retry continúa)
-y re-disparo del flujo post-lote al entrar (crash en _after_batch).
+y recuperación del flujo post-lote a la SALIDA condicionada a señal real
+(2º análisis B-02): crash en _after_batch ⇒ la siguiente invocación
+re-evalúa; sin crash ⇒ recovery_evaluated==0 sin scans extra, con las
+marcas de lote escritas ANTES del replay (latencia_p95 intacta) y la
+detección en UNA consulta por invocación (no una por perfil).
 
 Aislamiento: BD DESECHABLE (jobhunt_proj_<hex>) migrada a head; el staging
 se SIEMBRA SINTÉTICO (no se necesita el slot real, §7 "B-02 parcial") y
@@ -931,11 +935,12 @@ def test_crash_between_sources_seals_partially_and_retry_completes(db, monkeypat
     ) == 0
 
 
-def test_entry_replay_recovers_after_batch_crash(db, monkeypatch):
-    """Re-disparo de entrada: un crash DESPUÉS del commit del lote pero EN
+def test_replay_recovers_after_batch_crash(db, monkeypatch):
+    """Recuperación de salida: un crash DESPUÉS del commit del lote pero EN
     _after_batch deja el staging sellado y sin rastro de lo no disparado —
-    la siguiente invocación drena embeddings y evalúa los perfiles sombra
-    activos al ENTRAR (dedup por eval_key), sin depender del change_log."""
+    la siguiente invocación (staging vacío) drena embeddings y detecta por
+    SEÑAL (revisión vigente sin match_evaluation para el modelo+política
+    activos) que el perfil necesita evaluación, sin depender del change_log."""
     factory = db
     src = f"fx{uuid.uuid4().hex[:6]}"
     u = uuid.uuid4()
@@ -974,7 +979,121 @@ def test_entry_replay_recovers_after_batch_crash(db, monkeypatch):
         embeddings.set_backend_factory(None)
 
 
-# ---------------------------------------------- (h) lotes: marcas coherentes
+def test_no_crash_no_recovery_and_marks_exclude_replay_time(db, monkeypatch):
+    """Sin crash previo la señal de recuperación está APAGADA: la
+    recuperación de salida no re-evalúa nada (cero scans extra —
+    _run_profile_impl no se invoca con staging vacío) y las marcas de lote
+    quedan escritas ANTES de empezar el replay (finished_at ≤ inicio del
+    replay, ambos con el reloj del servidor): su tiempo no entra en
+    finished_at − min_received_at de ningún lote (latencia_p95 intacta)."""
+    factory = db
+    src = f"fx{uuid.uuid4().hex[:6]}"
+    u = uuid.uuid4()
+    _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
+    try:
+        replay_started = {}
+        orig_replay = projector._replay_after_batch
+
+        async def spying_replay(session_factory, evaluated):
+            async with session_factory() as s:
+                replay_started["at"] = (
+                    await s.execute(sa.text("SELECT clock_timestamp()"))
+                ).scalar_one()
+            return await orig_replay(session_factory, evaluated)
+
+        monkeypatch.setattr(projector, "_replay_after_batch", spying_replay)
+        _seed(factory, [
+            ("jobs", "I", "job-nr", _job("job-nr", src, title="Python Developer")),
+            ("users", "I", str(u), {"id": str(u), "is_active": True}),
+            ("user_profiles", "I", "prof-nr", _profile(u)),
+        ])
+        t1 = _project()
+        # _after_batch ya evaluó al perfil en ESTA invocación ⇒ el replay no
+        # lo repite aunque su señal siguiera encendida.
+        assert t1["profiles_evaluated"] == 1
+        assert t1["recovery_evaluated"] == 0
+
+        # ORDEN TEMPORAL: todas las marcas de lote se escribieron ANTES del
+        # inicio del replay — el tiempo del replay no entra en ninguna marca.
+        finished = [
+            r.finished_at
+            for r in _rows(
+                factory, "SELECT finished_at FROM shadow_projection_batches"
+            )
+        ]
+        assert finished and all(f <= replay_started["at"] for f in finished)
+
+        # Segunda invocación SIN crash y con staging vacío: señal apagada ⇒
+        # recovery 0 y CERO scans extra (ninguna evaluación disparada).
+        n_evals = _scalar(factory, "SELECT count(*) FROM match_evaluations")
+        calls = {"n": 0}
+        orig_run = projector._run_profile_impl
+
+        async def counting_run(profile_id, limit, session_factory=None):
+            calls["n"] += 1
+            return await orig_run(
+                profile_id, limit, session_factory=session_factory
+            )
+
+        monkeypatch.setattr(projector, "_run_profile_impl", counting_run)
+        t2 = _project()
+        assert (t2["batches"], t2["recovery_evaluated"]) == (0, 0)
+        assert calls["n"] == 0  # cero scans extra
+        assert _scalar(factory, "SELECT count(*) FROM match_evaluations") == n_evals
+    finally:
+        embeddings.set_backend_factory(None)
+
+
+class _CountingSession:
+    """Proxy mínimo que cuenta los execute de una sesión real (mide que la
+    detección de recuperación sea un número CONSTANTE de queries)."""
+
+    def __init__(self, session):
+        self._session = session
+        self.executed = 0
+
+    async def execute(self, *args, **kwargs):
+        self.executed += 1
+        return await self._session.execute(*args, **kwargs)
+
+
+def test_recovery_detection_is_one_query_not_one_per_profile(db, monkeypatch):
+    """La detección de recuperación cuesta un número CONSTANTE de queries por
+    invocación (consumer + perfiles + exclusión de inactivos + detección = 4)
+    con N perfiles candidatos — jamás una consulta por perfil."""
+    factory = db
+    _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    users = [uuid.uuid4() for _ in range(3)]
+
+    async def no_after_batch(session_factory, result):
+        return []  # simula el crash post-lote: nada evaluado ni drenado
+
+    async def no_replay(session_factory, evaluated):
+        return 0  # la recuperación se mide aparte, sobre sesión contada
+
+    monkeypatch.setattr(projector, "_after_batch", no_after_batch)
+    monkeypatch.setattr(projector, "_replay_after_batch", no_replay)
+    _seed(factory, [
+        row
+        for u in users
+        for row in [
+            ("users", "I", str(u), {"id": str(u), "is_active": True}),
+            ("user_profiles", "I", f"prof-{u}", _profile(u)),
+        ]
+    ])
+    _project()
+
+    async def measure():
+        async with factory() as s:
+            counting = _CountingSession(s)
+            targets = await projector._recovery_targets(counting, set())
+            return counting.executed, targets
+
+    executed, targets = _run(measure())
+    # Los 3 perfiles necesitan recuperación (revisión vigente sin evaluación).
+    assert len(targets) == 3
+    assert executed == 4  # constante: NO escala con el número de perfiles
 
 
 def test_batches_recorded_with_coherent_marks(db):
