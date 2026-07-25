@@ -1283,7 +1283,12 @@ def test_tasks_registered_routed_to_core_default_and_run(db):
         # Decisión B-04: observabilidad/mantenimiento → core.default (jamás
         # detrás de un lote del proyector en core.harvest).
         assert celery_app.conf.task_routes[name] == {"queue": "core.default"}
-    assert not celery_app.conf.beat_schedule  # SIN beat: cadencia en B-05
+    # Cadencia cableada por B-05: el muestreador SÍ va en el beat (5 min);
+    # compute_cycle/purge NO — los orquesta jobhunt.shadow.run_cycle.
+    beat_tasks = {e["task"] for e in celery_app.conf.beat_schedule.values()}
+    assert "jobhunt.shadow.sample_outbox_lag" in beat_tasks
+    assert "jobhunt.shadow.compute_cycle" not in beat_tasks
+    assert "jobhunt.shadow.purge_staging" not in beat_tasks
 
     result = purge_staging_task.apply()  # staging vacío: no-op idempotente
     assert result.successful()

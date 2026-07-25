@@ -7,6 +7,7 @@ core, ninguna cola coincide.
 """
 
 from celery import Celery
+from celery.schedules import crontab
 
 from jobhunt_core.config import settings
 
@@ -42,9 +43,37 @@ celery_app.conf.update(
         "jobhunt.shadow.sample_outbox_lag": {"queue": "core.default"},
         "jobhunt.shadow.compute_cycle": {"queue": "core.default"},
         "jobhunt.shadow.purge_staging": {"queue": "core.default"},
+        # Harness GATE-SOMBRA (B-05): el ciclo orquestado es ingesta (drena
+        # el staging vía el proyector) — serializa en core.harvest; la
+        # vigilancia del slot es observabilidad ligera — core.default.
+        "jobhunt.shadow.run_cycle": {"queue": "core.harvest"},
+        "jobhunt.shadow.check_slot_health": {"queue": "core.default"},
     },
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    # CADENCIAS de la sombra (B-05, §5/§6) — SOLO tareas de colas core.*.
+    # El beat corre en el core-worker LOCAL (shadow/RUNBOOK.md):
+    #   docker compose exec core-worker celery -A jobhunt_core.celery_app beat
+    # (el compose no se toca sin OK del propietario). Cadencias ajustables
+    # por settings CORE_SHADOW_*; el crontab usa timezone Europe/Zurich (la
+    # de este app): 06:05 = justo tras el cierre del ciclo (06:00, §5).
+    beat_schedule={
+        "shadow-sample-outbox-lag": {
+            "task": "jobhunt.shadow.sample_outbox_lag",
+            "schedule": float(settings.CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S),
+        },
+        "shadow-check-slot-health": {
+            "task": "jobhunt.shadow.check_slot_health",
+            "schedule": float(settings.CORE_SHADOW_SLOT_HEALTH_EVERY_S),
+        },
+        "shadow-run-cycle": {
+            "task": "jobhunt.shadow.run_cycle",
+            "schedule": crontab(
+                hour=settings.CORE_SHADOW_RUN_CYCLE_HOUR,
+                minute=settings.CORE_SHADOW_RUN_CYCLE_MINUTE,
+            ),
+        },
+    },
 )
 
 celery_app.conf.include = [

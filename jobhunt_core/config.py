@@ -52,6 +52,14 @@ class CoreSettings(BaseSettings):
     CORE_EMBEDDING_MODEL_NAME: str = "paraphrase-multilingual-MiniLM-L12-v2"
     CORE_EMBEDDING_BATCH_SIZE: int = 32
 
+    # Cadencias del harness GATE-SOMBRA (B-05, §5/§6) — las consume el beat
+    # de celery_app.py (corre en el core-worker LOCAL, ver shadow/RUNBOOK.md).
+    CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S: int = 300   # sample_outbox_lag (§5)
+    CORE_SHADOW_SLOT_HEALTH_EVERY_S: int = 300     # check_slot_health (§6)
+    CORE_SHADOW_RUN_CYCLE_HOUR: int = 6            # run_cycle diario 06:05
+    CORE_SHADOW_RUN_CYCLE_MINUTE: int = 5          # (Europe/Zurich, tras el
+    #                                              cierre del ciclo a las 06:00)
+
     model_config = {"extra": "ignore"}
 
     @model_validator(mode="after")

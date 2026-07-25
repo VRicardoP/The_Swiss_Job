@@ -1150,9 +1150,12 @@ def test_task_registered_routed_and_runs(db):
     assert celery_app.conf.task_routes["jobhunt.shadow.project"] == {
         "queue": "core.harvest"
     }
-    # SIN beat (contrato): la tarea solo se registra — la dispara el runner
-    # de ciclos (B-05) o el operador.
-    assert not celery_app.conf.beat_schedule
+    # La tarea NO va en el beat: la dispara el runner de ciclos (B-05,
+    # jobhunt.shadow.run_cycle) o el operador — el beat de B-05 solo
+    # cablea muestreador, salud del slot y run_cycle.
+    assert "jobhunt.shadow.project" not in {
+        e["task"] for e in celery_app.conf.beat_schedule.values()
+    }
 
     result = project_task.apply()  # staging vacío en la BD desechable
     assert result.successful()
