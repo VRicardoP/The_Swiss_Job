@@ -48,6 +48,24 @@ DECISIONES documentadas (no obvias):
 - nDCG con IDCG = 0 (set congelado sin ninguna etiqueta > 0): la fórmula es
   indefinida — se persiste 0 con `details.no_medible` y el gate marca
   ok=False (visible, jamás un verde silencioso).
+- dedup con denominador 0 (P1-2, rev. externa): un oráculo VACÍO o sin
+  pares evaluables ya NO persiste 1.0 "vacuamente cierto" — se persiste el
+  CENTINELA + details.no_data y el gate queda en ROJO (sin afirmaciones no
+  hay nada DEMOSTRADO). Además `labels_ready` (gate nuevo) verifica la
+  precondición del oráculo (DoD B-03): >= LABELS_MIN_FROZEN_SETS sets
+  CONGELADOS con >= LABELS_MIN_JUDGMENTS_PER_SET juicios cada uno, >=
+  LABELS_MIN_DEDUP_PAIRS pares dedup y >= LABELS_MIN_MAPPED_DEDUP_PAIRS
+  pares MAPEABLES a vacantes core — sin oráculo al DoD, el ciclo no puede
+  sumar al contador de §6.
+- INMUTABILIDAD de ciclos sellados (P1-4, rev. externa): compute_cycle
+  sobre un ciclo con métricas SELLADAS (finished_at) no recomputa — el
+  recomputo usa el estado ACTUAL y reescribiría la historia (un rojo
+  sellado podría volverse verde). Recomputar exige `force=True`, que
+  además estampa `details.recomputed_at` en TODAS las filas del ciclo:
+  gate_status (shadow/gate.py) trata un ciclo recomputado como NO
+  computable para la racha (resetea igual que un rojo) y el informe lo
+  señala. Matiz documentado: un cómputo PARCIAL de un ciclo aún abierto
+  también sella — completarlo al cierre exigirá force (y marcará el ciclo).
 - Percentiles (p99 outbox, p95 latencia): percentile_cont de Postgres
   (interpolación lineal) — un único método, verificable a mano.
 
@@ -101,6 +119,7 @@ M_OUTBOX_LAG = "outbox_lag_p99"
 M_LATENCIA = "latencia_p95"
 M_COSTE = "coste"
 M_REENLACE = "reenlace_pct"
+M_LABELS_READY = "labels_ready"  # precondición del oráculo (P1-2, DoD B-03)
 
 SCOPE_GLOBAL = "global"
 NDCG_K = 10  # top-K de ndcg@10 / overlap@10 (denominador FIJO del overlap)
@@ -119,6 +138,13 @@ LATENCIA_P95_MAX_S = 600.0     # [gate]
 REENLACE_PCT_MAX = 0.05        # [alerta] <= 5%/ciclo (ratio 0..1)
 STAGING_BACKLOG_GRACE_S = 3600  # "change_log sin applied_at > 1h" (§5)
 STAGING_RETENTION_DAYS = 7     # retención §2: ciclos cerrados + 7 días
+
+# Precondición del ORÁCULO (gate `labels_ready`, P1-2 — DoD B-03/§4): sin
+# esto los gates de calidad no son DEMOSTRABLES y el ciclo no puede sumar.
+LABELS_MIN_FROZEN_SETS = 2         # >= 2 sets CONGELADOS…
+LABELS_MIN_JUDGMENTS_PER_SET = 30  # …con >= 30 juicios cada uno (DoD B-03)
+LABELS_MIN_DEDUP_PAIRS = 50        # >= 50 pares dedup etiquetados
+LABELS_MIN_MAPPED_DEDUP_PAIRS = 20  # >= N pares MAPEABLES a vacantes core
 
 # value NUMERIC NOT NULL (core0008a inmutable): centinela del "NULL con
 # details" del contrato. Los gates leen details.no_data, NUNCA este número.
@@ -139,12 +165,13 @@ METRIC_KINDS: dict[str, str] = {
     M_LATENCIA: KIND_GATE,
     M_COSTE: KIND_ALERTA,             # proxy informativo, sin umbral duro
     M_REENLACE: KIND_ALERTA,
+    M_LABELS_READY: KIND_GATE,        # precondición del oráculo (P1-2)
 }
 # Métricas globales que TODO ciclo computado debe tener (gates sin fila =
 # sin datos = ok False; alertas sin fila no inventan estado).
 _EXPECTED_GLOBAL = (
-    M_DEDUP_PRECISION, M_DEDUP_RECALL, M_PERDIDA, M_NO_INGERIBLES,
-    M_OUTBOX_LAG, M_LATENCIA, M_COSTE, M_REENLACE,
+    M_LABELS_READY, M_DEDUP_PRECISION, M_DEDUP_RECALL, M_PERDIDA,
+    M_NO_INGERIBLES, M_OUTBOX_LAG, M_LATENCIA, M_COSTE, M_REENLACE,
 )
 
 # Espejo de backend/models/match_result.py::NEGATIVE_FEEDBACK (el feed
@@ -266,20 +293,43 @@ async def compute_cycle(
     cycle_id: date | None = None,
     legacy_schema: str = "public",
     now: datetime | None = None,
+    force: bool = False,
 ) -> dict:
     """Computa y PERSISTE las métricas de §5 del ciclo CERRADO más reciente
-    (o el `cycle_id` indicado — replay/backfill). Idempotente: upsert por
-    PK, con DOS matices del recomputo: (a) las filas profile:<id> de
-    perfiles que YA no se miden (p.ej. borrado GDPR, set descongelado) se
-    ELIMINAN en la misma transacción del cómputo — no quedan huérfanas del
-    cálculo anterior; (b) un outbox_lag_p99 ya SELLADO cuyos samples podó
-    purge_staging se PRESERVA (no se machaca con el centinela sin-datos; la
-    métrica no aparece en el resumen de ese recomputo). Devuelve un resumen
-    JSON-serializable (resultado de la tarea Celery)."""
+    (o el `cycle_id` indicado — replay/backfill).
+
+    INMUTABILIDAD (P1-4, rev. externa): un ciclo con métricas SELLADAS
+    (alguna fila con finished_at) NO se recomputa — el recomputo usa el
+    estado ACTUAL de la BD y reescribiría un veredicto histórico (un rojo
+    sellado podría volverse verde). Sin `force=True` se devuelve un resumen
+    con `skipped_sealed` y NO se toca nada; con `force=True` se recomputa y
+    se estampa `details.recomputed_at` en TODAS las filas del ciclo —
+    gate_status trata ese ciclo como NO computable para la racha.
+
+    Matices del recomputo forzado (idempotente, upsert por PK): (a) las
+    filas profile:<id> de perfiles que YA no se miden (p.ej. borrado GDPR,
+    set descongelado) se ELIMINAN en la misma transacción del cómputo — no
+    quedan huérfanas del cálculo anterior; (b) un outbox_lag_p99 ya SELLADO
+    cuyos samples podó purge_staging se PRESERVA (no se machaca con el
+    centinela sin-datos; la métrica no aparece en el resumen de ese
+    recomputo). Devuelve un resumen JSON-serializable (tarea Celery)."""
     _check_legacy_schema(legacy_schema)
     cid = cycle_id or latest_closed_cycle_id(now)
     start, end = cycle_bounds(cid)
     moment = now or datetime.now(timezone.utc)
+    sealed = await _cycle_sealed(session, cid)
+    if sealed and not force:
+        logger.warning(
+            "metrics: ciclo %s ya SELLADO — INMUTABLE sin force=True (P1-4): "
+            "no se recomputa", cid,
+        )
+        return {
+            "cycle_id": cid.isoformat(),
+            "window": [start.isoformat(), end.isoformat()],
+            "skipped_sealed": True,
+            "profiles_measured": 0,
+            "metrics": {},
+        }
     if end > moment:
         logger.warning(
             "metrics: ciclo %s aún ABIERTO (fin %s > ahora) — cómputo parcial",
@@ -311,12 +361,47 @@ async def compute_cycle(
             merge_details=merge,
         )
         computed[metric] = value
-    return {
+    summary = {
         "cycle_id": cid.isoformat(),
         "window": [start.isoformat(), end.isoformat()],
         "profiles_measured": len(profiles),
         "metrics": computed,
     }
+    if sealed:
+        # Recomputo FORZADO de un ciclo sellado (P1-4): trazado en TODAS las
+        # filas del ciclo (también las preservadas sin upsert, p.ej. un p99
+        # post-purga) — la racha de §6 lo tratará como no computable.
+        ts = moment.astimezone(timezone.utc).isoformat()
+        await session.execute(
+            sa.text(
+                "UPDATE shadow_cycle_metrics "
+                "SET details = details || jsonb_build_object('recomputed_at', "
+                "CAST(:ts AS text)) WHERE cycle_id = :c"
+            ),
+            {"ts": ts, "c": cid},
+        )
+        summary["recomputed_at"] = ts
+        logger.warning(
+            "metrics: ciclo %s RECOMPUTADO con force=True — recomputed_at=%s "
+            "(no computable para la racha de §6)", cid, ts,
+        )
+    return summary
+
+
+async def _cycle_sealed(session: AsyncSession, cid: date) -> bool:
+    """True si el ciclo tiene alguna métrica SELLADA (finished_at) — el
+    placeholder del muestreador de outbox no sella."""
+    return bool(
+        (
+            await session.execute(
+                sa.text(
+                    "SELECT 1 FROM shadow_cycle_metrics "
+                    "WHERE cycle_id = :c AND finished_at IS NOT NULL LIMIT 1"
+                ),
+                {"c": cid},
+            )
+        ).scalar_one_or_none()
+    )
 
 
 async def _measured_profiles(session: AsyncSession) -> list:
@@ -570,6 +655,7 @@ async def _global_metric_rows(
     outbox_lag_p99 puede devolver None (p99 sellado post-purga): se omite
     del upsert — la fila persistida se preserva tal cual."""
     rows: list[tuple] = []
+    rows.append(await _labels_ready_row(session))
     rows += await _dedup_rows(session)
     rows += await _perdida_rows(session, legacy_schema, moment)
     lag_row = await _outbox_lag_row(session, cid)
@@ -586,8 +672,13 @@ async def _dedup_rows(session: AsyncSession) -> list[tuple]:
     labeled_dedup_pairs (§5). "Core dice duplicate" = misma vacante (attach,
     mapeo por CUALQUIER encarnación) O par en dedup_candidates con state <>
     'rejected'. Pares con algún ref sin slot core = no evaluables (details).
-    Denominador 0 ⇒ 1.0 (vacuamente cierto: sin afirmaciones no hay falsos) —
-    details deja los conteos para auditarlo."""
+
+    Denominador 0 (P1-2, rev. externa): SIN pares evaluables en ese
+    denominador NO hay nada demostrado — se persiste el CENTINELA +
+    details.no_data (jamás un 1.0 "vacuamente cierto" que pondría el gate
+    en verde con el oráculo vacío); el gate queda en ROJO y `labels_ready`
+    señala la precondición incumplida. details deja los conteos para
+    auditarlo."""
     pairs = (
         await session.execute(
             sa.text(
@@ -603,12 +694,82 @@ async def _dedup_rows(session: AsyncSession) -> list[tuple]:
     c = _dedup_confusion(pairs, mapping, candidate_pairs)
     details = c | {"pares": len(pairs)}
     tp, fp, fn = c["tp"], c["fp"], c["fn"]
-    precision = round(tp / (tp + fp), 6) if (tp + fp) else 1.0
-    recall = round(tp / (tp + fn), 6) if (tp + fn) else 1.0
-    return [
-        (M_DEDUP_PRECISION, precision, details, False),
-        (M_DEDUP_RECALL, recall, details, False),
-    ]
+    rows: list[tuple] = []
+    for metric, denom in (
+        (M_DEDUP_PRECISION, tp + fp),
+        (M_DEDUP_RECALL, tp + fn),
+    ):
+        if denom:
+            rows.append((metric, round(tp / denom, 6), details, False))
+        else:
+            rows.append((
+                metric,
+                NO_DATA_VALUE,
+                details | {
+                    "no_data": True,
+                    "nota": "sin pares evaluables en el denominador: "
+                            "no demostrable (P1-2)",
+                },
+                False,
+            ))
+    return rows
+
+
+async def _labels_ready_row(session: AsyncSession) -> tuple:
+    """Gate `labels_ready` (P1-2): precondición del ORÁCULO según el DoD de
+    B-03/§4 — >= LABELS_MIN_FROZEN_SETS sets CONGELADOS con >=
+    LABELS_MIN_JUDGMENTS_PER_SET juicios cada uno, >= LABELS_MIN_DEDUP_PAIRS
+    pares dedup etiquetados y >= LABELS_MIN_MAPPED_DEDUP_PAIRS pares con
+    AMBOS refs mapeables a vacantes core (sin mapeo, dedup no es evaluable).
+    value 1 = precondición cumplida; 0 = gate ROJO (el ciclo no puede sumar
+    al contador de §6 con un oráculo que no da para medir)."""
+    frozen_total = (
+        await session.execute(
+            sa.text(
+                "SELECT count(*) FROM labeled_sets WHERE frozen_at IS NOT NULL"
+            )
+        )
+    ).scalar_one()
+    frozen_ok = (
+        await session.execute(
+            sa.text(
+                "SELECT count(*) FROM ("
+                "  SELECT ls.id FROM labeled_sets ls "
+                "  JOIN labeled_judgments j ON j.set_id = ls.id "
+                "  WHERE ls.frozen_at IS NOT NULL "
+                "  GROUP BY ls.id HAVING count(*) >= :minj) q"
+            ),
+            {"minj": LABELS_MIN_JUDGMENTS_PER_SET},
+        )
+    ).scalar_one()
+    pairs = (
+        await session.execute(
+            sa.text("SELECT job_ref_a, job_ref_b FROM labeled_dedup_pairs")
+        )
+    ).all()
+    refs = sorted({r for p in pairs for r in (p.job_ref_a, p.job_ref_b)})
+    mapping = await map_job_refs_to_vacancies(session, refs)
+    mapped_pairs = sum(
+        1 for p in pairs if p.job_ref_a in mapping and p.job_ref_b in mapping
+    )
+    ok = (
+        int(frozen_ok) >= LABELS_MIN_FROZEN_SETS
+        and len(pairs) >= LABELS_MIN_DEDUP_PAIRS
+        and mapped_pairs >= LABELS_MIN_MAPPED_DEDUP_PAIRS
+    )
+    details = {
+        "sets_congelados": int(frozen_total),
+        "sets_congelados_ok": int(frozen_ok),
+        "pares_dedup": len(pairs),
+        "pares_mapeables": mapped_pairs,
+        "umbrales": {
+            "min_sets_congelados": LABELS_MIN_FROZEN_SETS,
+            "min_juicios_por_set": LABELS_MIN_JUDGMENTS_PER_SET,
+            "min_pares_dedup": LABELS_MIN_DEDUP_PAIRS,
+            "min_pares_mapeables": LABELS_MIN_MAPPED_DEDUP_PAIRS,
+        },
+    }
+    return M_LABELS_READY, (1 if ok else 0), details, False
 
 
 def _dedup_confusion(pairs, mapping: dict, candidate_pairs: set) -> dict:
@@ -944,9 +1105,12 @@ async def evaluate_gates(session: AsyncSession, cycle_id: date) -> dict:
     """{clave: {value, umbral, kind, ok}} con los umbrales RATIFICADOS de §6.
     Clave = metric para scope global; f"{metric}::{scope}" por perfil. Un
     gate SIN datos (fila ausente, centinela, set no medible) es ok=False —
-    no demostrable no suma al contador de N ciclos. Las alertas informativas
-    (overlap, coste) siempre ok=True; las alertas con umbral (no_ingeribles,
-    reenlace) marcan ok=False al dispararse (se registra, no resetea)."""
+    no demostrable no suma al contador de N ciclos. `labels_ready` (P1-2)
+    es la precondición del oráculo: gate NUEVO que exige el DoD de B-03
+    (sets congelados/juicios/pares dedup/pares mapeables) — en rojo si el
+    oráculo no da para medir. Las alertas informativas (overlap, coste)
+    siempre ok=True; las alertas con umbral (no_ingeribles, reenlace)
+    marcan ok=False al dispararse (se registra, no resetea)."""
     rows = (
         await session.execute(
             sa.text(
@@ -1003,6 +1167,7 @@ def _profile_gates(out: dict, by: dict, scope: str) -> None:
 
 def _global_gates(out: dict, by: dict) -> None:
     checks = {
+        M_LABELS_READY: (1, lambda v, u: v >= u),
         M_DEDUP_PRECISION: (DEDUP_PRECISION_MIN, lambda v, u: v >= u),
         M_DEDUP_RECALL: (DEDUP_RECALL_MIN, lambda v, u: v >= u),
         M_PERDIDA: (PERDIDA_MAX, lambda v, u: v == u),
@@ -1012,10 +1177,11 @@ def _global_gates(out: dict, by: dict) -> None:
         M_COSTE: (None, lambda v, u: True),
         M_REENLACE: (REENLACE_PCT_MAX, lambda v, u: v <= u),
     }
-    # Métricas que usan el centinela NO_DATA_VALUE (su fila puede existir con
-    # el placeholder del muestreador ANTES de compute_cycle): el centinela es
-    # "sin datos", jamás un valor — perdida sí puede ser negativa legítima.
-    sentinel_metrics = {M_OUTBOX_LAG, M_LATENCIA}
+    # Métricas que usan el centinela NO_DATA_VALUE (fila con placeholder del
+    # muestreador ANTES de compute_cycle, o dedup sin pares evaluables —
+    # P1-2): el centinela es "sin datos", jamás un valor — perdida sí puede
+    # ser negativa legítima y queda FUERA de este conjunto.
+    sentinel_metrics = {M_OUTBOX_LAG, M_LATENCIA, M_DEDUP_PRECISION, M_DEDUP_RECALL}
     for metric in _EXPECTED_GLOBAL:
         umbral, check = checks[metric]
         kind = METRIC_KINDS[metric]
@@ -1071,6 +1237,8 @@ def _report_line(key: str, g: dict) -> str:
         umbral = f">= {g['umbral']:.4f}"
     elif g["kind"] == KIND_GATE and key.startswith(M_PERDIDA):
         umbral = f"== {g['umbral']}"
+    elif key == M_LABELS_READY:
+        umbral = f">= {g['umbral']}"
     else:
         cmp = ">=" if key.startswith("dedup") else "<="
         umbral = f"{cmp} {g['umbral']}"

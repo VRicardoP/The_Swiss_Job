@@ -69,14 +69,20 @@ def sample_outbox_lag_task(self) -> dict[str, Any]:
 
 @celery_app.task(name="jobhunt.shadow.compute_cycle", bind=True, max_retries=1)
 def compute_cycle_task(
-    self, cycle_id: str | None = None, legacy_schema: str = "public"
+    self,
+    cycle_id: str | None = None,
+    legacy_schema: str = "public",
+    force: bool = False,
 ) -> dict[str, Any]:
     """Computa y persiste las 10 métricas de §5 del ciclo CERRADO más
-    reciente (o el `cycle_id` ISO indicado). Idempotente (upsert por PK)."""
+    reciente (o el `cycle_id` ISO indicado). Un ciclo ya SELLADO es
+    INMUTABLE (P1-4): sin `force=True` se salta el recomputo; con force se
+    recomputa dejando details.recomputed_at (el ciclo deja de contar para
+    la racha del GATE-SOMBRA)."""
     try:
         cid = date.fromisoformat(cycle_id) if cycle_id else None
         return asyncio.run(
-            _in_session(metrics.compute_cycle, cid, legacy_schema)
+            _in_session(metrics.compute_cycle, cid, legacy_schema, force=force)
         )
     except Exception as exc:
         logger.error("shadow.compute_cycle falló: %s", exc)

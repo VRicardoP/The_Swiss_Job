@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from jobhunt_core import embeddings, matching
 from jobhunt_core import profiles as core_profiles
 from jobhunt_core.config import settings
-from jobhunt_core.shadow import labels, metrics, projector
+from jobhunt_core.shadow import gate, labels, metrics, projector
 from jobhunt_core.tests.alembic_runner import run_alembic
 
 _ADMIN = os.getenv("CORE_ADMIN_DATABASE_URL")
@@ -352,11 +352,11 @@ def _legacy_result(factory, user_id, job_hash, score, feedback=None):
     )
 
 
-def _compute(factory, cycle_id=None, now=AFTER):
+def _compute(factory, cycle_id=None, now=AFTER, force=False):
     async def go():
         async with factory() as s:
             r = await metrics.compute_cycle(
-                s, cycle_id=cycle_id, legacy_schema=LEG, now=now
+                s, cycle_id=cycle_id, legacy_schema=LEG, now=now, force=force
             )
             await s.commit()
             return r
@@ -474,12 +474,13 @@ def test_ndcg_core_and_legacy_and_overlap_exact_values(db):
     assert gates[f"overlap@10::{scope}"]["kind"] == "alerta"
     assert gates[f"overlap@10::{scope}"]["ok"] is True
 
-    # Recomputar es IDEMPOTENTE (upsert por PK): mismos valores, sin filas dup.
+    # Recomputar (con force: el ciclo quedó SELLADO — P1-4) es IDEMPOTENTE
+    # (upsert por PK): mismos valores, sin filas dup.
     n_before = _scalar(
         factory, "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
         c=CYCLE,
     )
-    _compute(factory)
+    _compute(factory, force=True)
     assert _scalar(
         factory, "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
         c=CYCLE,
@@ -572,6 +573,144 @@ def test_dedup_precision_recall_with_built_confusion_matrix(db):
     assert gates["dedup_recall"]["ok"] is False     # 0.667 < 0.90
 
 
+def test_dedup_empty_oracle_is_no_data_not_green(db):
+    """Regresión P1-2 (rev. externa): BD SIN labels — el revisor computó un
+    ciclo con el oráculo VACÍO y dedup_precision/recall persistían 1.0
+    (denominador 0 ⇒ "vacuamente cierto") poniendo los gates en VERDE. Ahora:
+    centinela + details.no_data ⇒ gates en ROJO, y labels_ready (la
+    precondición del oráculo) también en rojo."""
+    factory = db
+    _compute(factory)
+    for metric in ("dedup_precision", "dedup_recall"):
+        row = _metric_row(factory, metric)
+        assert float(row.value) == metrics.NO_DATA_VALUE  # JAMÁS 1.0
+        assert row.details["no_data"] is True
+        assert row.details["pares"] == 0
+    lr = _metric_row(factory, "labels_ready")
+    assert float(lr.value) == 0
+    assert lr.details["sets_congelados_ok"] == 0
+    assert lr.details["pares_dedup"] == 0
+    gates = _gates(factory)
+    for key in ("dedup_precision", "dedup_recall"):
+        assert gates[key]["ok"] is False and gates[key]["kind"] == "gate"
+        assert gates[key]["value"] is None and gates[key]["nota"] == "sin datos"
+    assert gates["labels_ready"]["ok"] is False
+    assert gates["labels_ready"]["kind"] == "gate"
+
+
+def test_labels_ready_green_with_dod_oracle(db):
+    """P1-2: con el oráculo al DoD de B-03 (>= 2 sets CONGELADOS con >= 30
+    juicios cada uno, >= 50 pares dedup, >= 20 MAPEABLES a vacantes core)
+    labels_ready pasa a VERDE y dedup se computa con valores reales."""
+    factory = db
+    src = _mk_source(factory, "legacy:lrfx")
+    p = uuid.uuid4().hex[:6]
+    pid1 = _mk_profile(factory, str(uuid.uuid4()))
+    pid2 = _mk_profile(factory, str(uuid.uuid4()))
+    _mk_frozen_set(factory, pid1, {f"{p}-a{i:02d}": i % 4 for i in range(30)})
+    _mk_frozen_set(
+        factory, pid2, {f"{p}-b{i:02d}": i % 4 for i in range(30)}, name="ronda-2"
+    )
+    # 25 pares MAPEADOS (ambos refs con slot y MISMA vacante ⇒ TP) + 25 sin
+    # slot core (no mapeables): 50 pares >= 50, 25 mapeables >= 20.
+    for i in range(25):
+        ra, rb = f"{p}-m{i:02d}a", f"{p}-m{i:02d}b"
+        vid, _, _ = _mk_slot(factory, src, ra)
+        _mk_slot(factory, src, rb, active=False, vacancy_id=vid)
+        _exec(
+            factory,
+            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
+            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            {"a": ra, "b": rb},
+        )
+    for i in range(25):
+        _exec(
+            factory,
+            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
+            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            {"a": f"{p}-u{i:02d}a", "b": f"{p}-u{i:02d}b"},
+        )
+
+    _compute(factory)
+    lr = _metric_row(factory, "labels_ready")
+    assert float(lr.value) == 1
+    assert lr.details["sets_congelados"] == 2
+    assert lr.details["sets_congelados_ok"] == 2
+    assert lr.details["pares_dedup"] == 50
+    assert lr.details["pares_mapeables"] == 25
+    gates = _gates(factory)
+    assert gates["labels_ready"]["ok"] is True
+    # dedup con oráculo real: 25 TP / 0 FP / 0 FN ⇒ precision = recall = 1.0
+    # (esta vez un 1.0 DEMOSTRADO, no vacuo).
+    assert float(_metric_row(factory, "dedup_precision").value) == 1.0
+    assert float(_metric_row(factory, "dedup_recall").value) == 1.0
+    assert gates["dedup_precision"]["ok"] is True
+    assert gates["dedup_recall"]["ok"] is True
+
+
+# ------------------------------------------- inmutabilidad de ciclos (P1-4)
+
+
+def test_sealed_cycle_immutable_and_force_recompute_resets_streak(db):
+    """Regresión P1-4 (rev. externa): compute_cycle(cycle_id=pasado) sobre un
+    ciclo SELLADO recalculaba con el estado ACTUAL y podía reescribir un
+    ROJO histórico. Ahora: (a) sin force NO se recomputa (el rojo sellado
+    queda intacto); (b) con force=True recomputa y estampa
+    details.recomputed_at en TODAS las filas; (c) gate_status trata el
+    ciclo recomputado como NO computable — la racha NO lo cuenta aunque el
+    gate rojo haya pasado a verde."""
+    factory = db
+    src = _mk_source(factory, "legacy:immfx")
+    p = uuid.uuid4().hex[:6]
+    # Estado del cierre del ciclo: 1 job legacy vivo SIN slot core ⇒
+    # perdida = 1 (gate ROJO), sellado.
+    _legacy_job(factory, f"{p}-hueco")
+    r1 = _compute(factory, cycle_id=CYCLE)
+    assert "skipped_sealed" not in r1
+    assert float(_metric_row(factory, "perdida").value) == 1
+    assert _gates(factory)["perdida"]["ok"] is False
+
+    # El hueco se "repara" DESPUÉS del sellado (estado ACTUAL != histórico).
+    _mk_slot(factory, src, f"{p}-hueco")
+
+    # (a) SIN force: INMUTABLE — nada se reescribe, el rojo sigue rojo.
+    r2 = _compute(factory, cycle_id=CYCLE)
+    assert r2["skipped_sealed"] is True and r2["metrics"] == {}
+    row = _metric_row(factory, "perdida")
+    assert float(row.value) == 1  # el escenario del revisor ya NO reescribe
+    assert "recomputed_at" not in row.details
+    assert _gates(factory)["perdida"]["ok"] is False
+
+    # (b) CON force: recomputa (perdida 1 → 0) y lo deja TRAZADO en TODAS
+    # las filas del ciclo.
+    r3 = _compute(factory, cycle_id=CYCLE, force=True)
+    assert r3["recomputed_at"]
+    assert float(_metric_row(factory, "perdida").value) == 0
+    stamped = _rows(
+        factory,
+        "SELECT details FROM shadow_cycle_metrics WHERE cycle_id = :c",
+        c=CYCLE,
+    )
+    assert stamped and all(r.details.get("recomputed_at") for r in stamped)
+
+    # (c) la racha NO cuenta un ciclo recomputado: resetea igual que un rojo.
+    async def status():
+        async with factory() as s:
+            return await gate.gate_status(s, now=AFTER)
+
+    st = _run(status())
+    assert st["last_cycle"] == CYCLE.isoformat()
+    assert st["consecutive_ok"] == 0
+    assert st["per_cycle"][0]["recomputado"] is True
+    assert st["per_cycle"][0]["ok"] is False
+
+    async def report():
+        async with factory() as s:
+            return await gate.render_gate_report(s, now=AFTER)
+
+    assert "RECOMPUTADO" in _run(report())  # el informe lo señala
+
+
 # --------------------------------------------------- falsos_negativos (§5/§6)
 
 
@@ -662,7 +801,8 @@ def test_perdida_zero_on_healthy_mirror_and_gap_when_injected(db):
     assert gates["reenlace_pct"]["value"] == 0.0  # sin encarnaciones tocadas
 
     # HUECO inyectado: job vivo sin slot + backlog viejo (> 1h) sin aplicar;
-    # lo sin aplicar RECIENTE no cuenta (gracia de 1h).
+    # lo sin aplicar RECIENTE no cuenta (gracia de 1h). El ciclo quedó
+    # sellado por el primer compute ⇒ el recomputo exige force (P1-4).
     _legacy_job(factory, f"{p}-hueco")
     _exec(
         factory,
@@ -672,7 +812,7 @@ def test_perdida_zero_on_healthy_mirror_and_gap_when_injected(db):
         "(9002, 0, 'jobs', 'I', 'x-new', CAST('{}' AS jsonb), :new)",
         {"old": AFTER - timedelta(hours=2), "new": AFTER - timedelta(minutes=10)},
     )
-    _compute(factory)
+    _compute(factory, force=True)
     row = _metric_row(factory, "perdida")
     # A MANO: 4 vivos − 3 slots + 1 backlog viejo = 2.
     assert float(row.value) == 2
@@ -799,9 +939,9 @@ def test_outbox_lag_without_samples_is_no_data_and_gate_fails(db):
 
 def test_recompute_after_purge_preserves_sealed_p99(db):
     """purge_staging poda details.samples de ciclos fuera de retención; un
-    recompute posterior del ciclo NO machaca el p99 SELLADO con el
-    centinela sin-datos: el 250.0 histórico sobrevive (ni siquiera hay
-    upsert) y su gate sigue en verde."""
+    recompute posterior del ciclo (con force — el ciclo quedó sellado,
+    P1-4) NO machaca el p99 SELLADO con el centinela sin-datos: el 250.0
+    histórico sobrevive (ni siquiera hay upsert) y su gate sigue en verde."""
     factory = db
     _exec(
         factory,
@@ -831,14 +971,15 @@ def test_recompute_after_purge_preserves_sealed_p99(db):
     assert row.details["samples_pruned"] == 4
     sealed_at = row.finished_at
 
-    # Recompute del ciclo purgado: se PRESERVA el valor (no hay upsert —
-    # la métrica ni aparece en el resumen de este recomputo).
-    result = _compute(factory)
+    # Recompute FORZADO del ciclo purgado: se PRESERVA el valor (no hay
+    # upsert — la métrica ni aparece en el resumen de este recomputo).
+    result = _compute(factory, force=True)
     assert "outbox_lag_p99" not in result["metrics"]
     row = _metric_row(factory, "outbox_lag_p99")
     assert float(row.value) == pytest.approx(250.0)
     assert row.details["samples_pruned"] == 4
     assert row.finished_at == sealed_at  # ni re-sellado: intacta
+    assert row.details["recomputed_at"]  # el force queda TRAZADO (P1-4)
     assert _gates(factory)["outbox_lag_p99"]["ok"] is True  # 250 <= 300
 
 
@@ -1107,9 +1248,10 @@ def test_purge_keeps_unsealed_samples_until_compute_seals_them(db):
 
 
 def test_recompute_removes_stale_profile_rows(db):
-    """Un recompute que mide MENOS perfiles (p.ej. uno borrado por GDPR)
-    elimina las filas profile:<id> obsoletas del cálculo anterior — en la
-    misma transacción del cómputo, sin tocar las globales ni otros scopes."""
+    """Un recompute (forzado — el ciclo quedó sellado, P1-4) que mide MENOS
+    perfiles (p.ej. uno borrado por GDPR) elimina las filas profile:<id>
+    obsoletas del cálculo anterior — en la misma transacción del cómputo,
+    sin tocar las globales ni otros scopes."""
     factory = db
     pid1 = _mk_profile(factory, str(uuid.uuid4()))
     pid2 = _mk_profile(factory, str(uuid.uuid4()))
@@ -1131,7 +1273,7 @@ def test_recompute_removes_stale_profile_rows(db):
 
     # GDPR: el perfil 2 desaparece (labeled_sets cae por ON DELETE CASCADE).
     _exec(factory, "DELETE FROM profiles WHERE id = :p", {"p": pid2})
-    assert _compute(factory)["profiles_measured"] == 1
+    assert _compute(factory, force=True)["profiles_measured"] == 1
     assert profile_scopes() == {f"profile:{pid1}"}  # sin filas huérfanas
     # Las globales del ciclo siguen intactas tras el DELETE selectivo.
     assert _metric_row(factory, "perdida") is not None
@@ -1165,6 +1307,7 @@ def test_evaluate_gates_ok_and_failed_with_forced_values(db):
         ("ndcg@10", p2, 0.62, {}),
         ("ndcg@10_legacy", p2, 0.50, {}),
         ("falsos_negativos", p2, 0.015, {"modo": "ratio_2pct"}),  # OK (<=0.02)
+        ("labels_ready", "global", 1, {}),                        # OK (P1-2)
         ("dedup_precision", "global", 0.96, {}),                  # OK
         ("dedup_recall", "global", 0.89, {}),                     # FALLO (<0.90)
         ("perdida", "global", 1, {}),                             # FALLO (==0)
@@ -1186,6 +1329,9 @@ def test_evaluate_gates_ok_and_failed_with_forced_values(db):
     assert gates[f"ndcg@10::{p2}"]["umbral"] == pytest.approx(0.60)
     assert gates[f"falsos_negativos::{p1}"] ["ok"] is False
     assert gates[f"falsos_negativos::{p2}"]["ok"] is True
+    assert gates["labels_ready"] == {
+        "value": 1.0, "umbral": 1, "kind": "gate", "ok": True,
+    }
     assert gates["dedup_precision"]["ok"] is True
     assert gates["dedup_recall"]["ok"] is False
     assert gates["perdida"]["ok"] is False
@@ -1203,8 +1349,8 @@ def test_evaluate_gates_ok_and_failed_with_forced_values(db):
     empty = _gates(factory, cycle=date(2026, 6, 1))
     assert empty["ndcg@10"]["ok"] is False
     assert "sin perfiles" in empty["ndcg@10"]["nota"]
-    for m in ("dedup_precision", "dedup_recall", "perdida", "outbox_lag_p99",
-              "latencia_p95"):
+    for m in ("labels_ready", "dedup_precision", "dedup_recall", "perdida",
+              "outbox_lag_p99", "latencia_p95"):
         assert empty[m]["ok"] is False and empty[m]["nota"] == "sin datos"
     for m in ("no_ingeribles", "coste", "reenlace_pct"):
         assert empty[m]["ok"] is True and empty[m]["nota"] == "sin datos"
@@ -1221,6 +1367,7 @@ def test_render_report_is_readable_text(db):
     _seed_metric(factory, cyc, "ndcg@10_legacy", p1, 0.80, {})
     _seed_metric(factory, cyc, "falsos_negativos", p1, 0.0, {"modo": "estricto_0"})
     _seed_metric(factory, cyc, "overlap@10", p1, 0.3, {})
+    _seed_metric(factory, cyc, "labels_ready", "global", 1, {})
     _seed_metric(factory, cyc, "dedup_precision", "global", 0.96, {})
     _seed_metric(factory, cyc, "dedup_recall", "global", 0.95, {})
     _seed_metric(
@@ -1249,13 +1396,14 @@ def test_render_report_is_readable_text(db):
     assert "INFORME DE CICLO SOMBRA — 2026-07-01" in text
     assert "[2026-07-01T06:00:00+02:00 .. 2026-07-02T06:00:00+02:00)" in text
     for needle in (
-        f"ndcg@10::{p1}", "overlap@10", "dedup_precision", "perdida",
-        "outbox_lag_p99", "latencia_p95", "coste", "reenlace_pct",
+        f"ndcg@10::{p1}", "overlap@10", "labels_ready", "dedup_precision",
+        "perdida", "outbox_lag_p99", "latencia_p95", "coste", "reenlace_pct",
     ):
         assert needle in text
     # ndcg 0.70 < 0.75 falla: el único gate en rojo de este ciclo forzado
-    # (gates: ndcg + falsos_negativos del perfil + 5 globales = 7).
-    assert "CICLO NO APTO: 1/7" in text
+    # (gates: ndcg + falsos_negativos del perfil + 6 globales = 8, con
+    # labels_ready — P1-2 — incluido).
+    assert "CICLO NO APTO: 1/8" in text
     assert "alertas activas: 0" in text
     assert "perdida = 5 legacy vivos - 5 slots activos + 0 staging" in text
     assert "coste = 2 embeddings + 3 evaluaciones + 7.5s de worker" in text

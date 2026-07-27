@@ -427,6 +427,7 @@ def _seed_green_cycle(factory, cycle, scope="profile:aaaa"):
         ("ndcg@10_legacy", scope, 0.70, {}),
         ("falsos_negativos", scope, 0.0, {"modo": "estricto_0"}),
         ("overlap@10", scope, 0.4, {}),
+        ("labels_ready", "global", 1, {}),  # precondición del oráculo (P1-2)
         ("dedup_precision", "global", 1.0, {}),
         ("dedup_recall", "global", 1.0, {}),
         ("perdida", "global", 0, {}),
@@ -468,8 +469,8 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     st = _status(factory, now=GNOW)
     assert st["consecutive_ok"] == 3 and st["gate_passed"] is False
     assert st["per_cycle"][3] == {
-        "cycle": "2026-07-16", "computado": True, "ok": False,
-        "gates_rojos": ["perdida"], "alertas": [],
+        "cycle": "2026-07-16", "computado": True, "recomputado": False,
+        "ok": False, "gates_rojos": ["perdida"], "alertas": [],
     }
 
     # Las [alerta] NO resetean (§6): no_ingeribles > 0 y reenlace > 5% en G0
@@ -490,8 +491,8 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     st = _status(factory, now=GNOW)
     assert st["consecutive_ok"] == 1
     assert st["per_cycle"][1] == {
-        "cycle": "2026-07-18", "computado": False, "ok": False,
-        "gates_rojos": [], "alertas": [],
+        "cycle": "2026-07-18", "computado": False, "recomputado": False,
+        "ok": False, "gates_rojos": [], "alertas": [],
     }
 
     # Una fila SOLO del muestreador (finished_at NULL, placeholder) NO es un
@@ -510,6 +511,36 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     assert "SIN COMPUTAR" in text
     assert "gates: perdida" in text
     assert "alertas: no_ingeribles, reenlace_pct" in text
+
+
+def test_gate_counter_ignores_recomputed_cycle(db):
+    """Regresión P1-4 (rev. externa): un ciclo sellado y RECOMPUTADO con
+    force (details.recomputed_at — p.ej. un rojo reescrito a verde con
+    estado posterior) NO cuenta para la racha aunque TODOS sus gates estén
+    en verde: resetea igual que un rojo, y el informe lo señala."""
+    factory = db
+    for i in range(3):
+        _seed_green_cycle(factory, G0 - timedelta(days=i))
+    assert _status(factory, now=GNOW)["consecutive_ok"] == 3
+
+    # G0-1: TODO en verde pero con el sello que deja compute_cycle(force=True)
+    # sobre un ciclo sellado — exactamente la reescritura del revisor.
+    _exec(
+        factory,
+        "UPDATE shadow_cycle_metrics SET details = details || "
+        "jsonb_build_object('recomputed_at', '2026-07-20T10:00:00+00:00') "
+        "WHERE cycle_id = :c",
+        {"c": G0 - timedelta(days=1)},
+    )
+    st = _status(factory, now=GNOW)
+    assert st["consecutive_ok"] == 1  # G0 verde; G0-1 recomputado CORTA
+    entry = st["per_cycle"][1]
+    assert entry["recomputado"] is True
+    assert entry["computado"] is True
+    assert entry["ok"] is False
+    assert entry["gates_rojos"] == []  # en verde… y aun así no computable
+    text = _report(factory, now=GNOW)
+    assert "RECOMPUTADO" in text and "no computable para la racha" in text
 
 
 # ------------------------------------------------------ alertas de slot (§6)
@@ -695,16 +726,20 @@ def test_run_cycle_end_to_end_projects_computes_purges_evaluates(db, gate_db):
         )[0]
         assert 0.0 <= float(ndcg.value) <= 1.0  # computado sobre el feed real
         # Gates evaluados: perdida en verde; los sin datos del ciclo cerrado
-        # (outbox sin samples, sin lotes en SU ventana) en rojo — el contador
-        # queda a 0 (conservador, §6).
+        # (outbox sin samples, sin lotes en SU ventana) en rojo, y también
+        # labels_ready/dedup (P1-2: oráculo sin pares dedup ⇒ no
+        # demostrable) — el contador queda a 0 (conservador, §6).
         assert "perdida" not in result["gates_failed"]
         assert "outbox_lag_p99" in result["gates_failed"]
         assert "latencia_p95" in result["gates_failed"]
+        assert "labels_ready" in result["gates_failed"]
+        assert "dedup_precision" in result["gates_failed"]
         assert result["cycle_ok"] is False
         assert (result["consecutive_ok"], result["required"]) == (0, 7)
 
-        # IDEMPOTENTE y RE-ENTRANTE: segunda pasada sin pendientes, mismas
-        # filas de métricas (upsert por PK, sin duplicar).
+        # IDEMPOTENTE y RE-ENTRANTE: segunda pasada sin pendientes; el ciclo
+        # quedó SELLADO ⇒ compute_cycle se SALTA (inmutabilidad P1-4) y las
+        # filas de métricas quedan idénticas (sin duplicar ni reescribir).
         n1 = _scalar(
             factory,
             "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
@@ -713,6 +748,7 @@ def test_run_cycle_end_to_end_projects_computes_purges_evaluates(db, gate_db):
         result2 = _run(gate.run_cycle(legacy_schema="public", now=moment))
         assert result2["status"] == "ok"
         assert result2["project"]["changes"] == 0
+        assert result2["metrics"]["skipped_sealed"] is True
         assert _scalar(
             factory,
             "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
@@ -741,6 +777,86 @@ def test_run_cycle_end_to_end_projects_computes_purges_evaluates(db, gate_db):
             lock_engine.dispose()
     finally:
         embeddings.set_backend_factory(None)
+
+
+def test_run_cycle_aborts_without_metrics_when_projector_busy(
+    db, gate_db, monkeypatch
+):
+    """Regresión P1-3 (rev. externa): con el lock del PROYECTOR tomado por
+    otra conexión, run_cycle YA NO "computa igual" — reintenta acotado
+    (backoff corto) y sale con status='project_busy' SIN sellar métricas,
+    SIN purgar y SIN tocar el contador."""
+    factory = db
+    monkeypatch.setattr(gate, "PROJECT_DRAIN_RETRIES", 2)
+    monkeypatch.setattr(gate, "PROJECT_DRAIN_BACKOFF_S", 0.05)
+    src = f"busy{uuid.uuid4().hex[:6]}"
+    _seed_staging(factory, [("jobs", "I", f"{src}-1", _job_payload(f"{src}-1", src))])
+    moment = datetime.now(timezone.utc)
+    cid = metrics.latest_closed_cycle_id(moment)
+
+    lock_engine = sa.create_engine(
+        gate_db["core_dsn"], poolclass=sa.pool.NullPool,
+        isolation_level="AUTOCOMMIT",
+    )
+    try:
+        with lock_engine.connect() as lock_conn:
+            lock_conn.execute(
+                sa.text("SELECT pg_advisory_lock(hashtextextended(:k, 0))"),
+                {"k": "jobhunt:shadow-projector"},
+            )
+            res = _run(gate.run_cycle(legacy_schema="public", now=moment))
+            lock_conn.execute(
+                sa.text("SELECT pg_advisory_unlock(hashtextextended(:k, 0))"),
+                {"k": "jobhunt:shadow-projector"},
+            )
+    finally:
+        lock_engine.dispose()
+
+    assert res["status"] == "project_busy"
+    assert res["project"]["status"] == "already_running"
+    assert res["project_attempts"] == 2  # reintento ACOTADO, no infinito
+    assert "metrics" not in res and "purge" not in res  # nada sellado
+    assert _scalar(
+        factory,
+        "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
+        c=cid,
+    ) == 0  # el revisor encontraba aquí un ciclo computado sin drenar
+    assert _scalar(
+        factory,
+        "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+    ) == 1  # el staging sigue pendiente, intacto
+
+
+def test_run_cycle_staging_pending_blocks_seal(db):
+    """Regresión P1-3 (verificación PRE-SELLADO): si tras el drenado quedan
+    filas de shadow_change_log sin applied_at con lsn <= watermark del
+    cierre del ciclo, run_cycle NO computa (status='staging_pending') —
+    se fuerza con max_batches=0 (drenado sin lotes) y una fila recibida
+    DENTRO de la ventana del ciclo cerrado."""
+    factory = db
+    moment = datetime.now(timezone.utc)
+    cid = metrics.latest_closed_cycle_id(moment)
+    cycle_end = metrics.cycle_bounds(cid)[1]
+    _exec(
+        factory,
+        "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
+        "payload, received_at) VALUES (:l, 0, 'jobs', 'I', :p, "
+        "CAST('{}' AS jsonb), :r)",
+        {"l": next(_LSN_SEQ), "p": f"pend-{uuid.uuid4().hex[:6]}",
+         "r": cycle_end - timedelta(hours=2)},
+    )
+    res = _run(
+        gate.run_cycle(legacy_schema="public", now=moment, max_batches=0)
+    )
+    assert res["status"] == "staging_pending"
+    assert res["staging_pending"] == 1
+    assert res["project"]["status"] == "ok"  # el drenado no falló: no drenó
+    assert "metrics" not in res and "purge" not in res
+    assert _scalar(
+        factory,
+        "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
+        c=cid,
+    ) == 0
 
 
 # ------------------------------------- rollback/replay COMPLETO (DoD B-05)

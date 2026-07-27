@@ -25,12 +25,21 @@ DECISIONES (documentadas, no obvias):
 - SINGLE-FLIGHT: `run_cycle` tiene lock PROPIO (advisory lock de sesión
   'jobhunt:shadow-run-cycle' sobre conexión dedicada — el MISMO patrón del
   proyector) y además REUTILIZA el del proyector tal cual: si otro worker
-  está drenando, project_pending sale con status='already_running' y
-  run_cycle NO espera — computa igual (idempotente: upsert por PK; el
-  backlog sin aplicar > 1h lo captura el término de `perdida`, §5) y deja
-  el estado del drenado anotado en el resultado. Re-entrante: repetir el
-  ciclo re-proyecta nada (staging sellado), recomputa a idéntico valor y
-  la purga es idempotente.
+  está drenando, project_pending sale con status='already_running'.
+
+- MEDIR EXIGE DRENAR (P1-3, rev. externa): run_cycle ya NO computa con el
+  staging a medias — si project_pending no devuelve status='ok' (otro
+  worker drena, u otro fallo), reintenta con backoff CORTO Y ACOTADO
+  (PROJECT_DRAIN_RETRIES × PROJECT_DRAIN_BACKOFF_S) y, si sigue ocupado,
+  sale limpio con status='project_busy' SIN sellar métricas ni tocar el
+  contador (unas métricas sobre un corpus a medio drenar serían un falso
+  veredicto del ciclo). Además, ANTES de sellar verifica que no queda
+  NINGUNA fila de shadow_change_log sin applied_at con lsn <= watermark
+  del cierre del ciclo (max lsn recibido antes del fin de la ventana): si
+  queda backlog del ciclo, status='staging_pending' y tampoco computa.
+  Re-entrante: repetir el ciclo re-proyecta nada (staging sellado), el
+  cómputo de un ciclo ya sellado se SALTA (inmutabilidad P1-4, ver abajo)
+  y la purga es idempotente.
 
 - CONTADOR (§6): un ciclo SUMA si está COMPUTADO (alguna fila de
   shadow_cycle_metrics con finished_at sellado — el placeholder del
@@ -39,6 +48,11 @@ DECISIONES (documentadas, no obvias):
   desde el último ciclo CERRADO y se corta en el primer no-verde); las
   [alerta] NO resetean (§6: se registran y avisan). Gate sin datos = no
   demostrable = ok False en evaluate_gates ⇒ no suma (conservador).
+  INMUTABILIDAD (P1-4, rev. externa): un ciclo sellado solo se recomputa
+  con compute_cycle(force=True), que estampa details.recomputed_at en
+  TODAS sus filas — gate_status lo trata como NO computable para la racha
+  (resetea igual que un rojo, aunque sus valores estén en verde) y
+  render_gate_report lo señala: la historia no se reescribe en silencio.
 
 - ROLLBACK/REPLAY (§6/§8): exige `confirm=True` EXPLÍCITO y NUNCA toca
   `public` — la conexión de escritura fija search_path SOLO al esquema
@@ -56,6 +70,7 @@ DECISIONES (documentadas, no obvias):
   retira entero.
 """
 
+import asyncio
 import logging
 import time as time_mod
 from datetime import date, datetime, timedelta, timezone
@@ -77,6 +92,7 @@ from jobhunt_core.shadow.metrics import (
     KIND_ALERTA,
     KIND_GATE,
     compute_cycle,
+    cycle_bounds,
     evaluate_gates,
     latest_closed_cycle_id,
     purge_staging,
@@ -95,6 +111,13 @@ SLOT_STALLED_MAX_S = 30 * 60           # consumidor parado > 30 min
 # disciplina del proyector — clave DISTINTA de la suya).
 _RUN_CYCLE_LOCK = "jobhunt:shadow-run-cycle"
 
+# P1-3: reintentos ACOTADOS si el drenado no pudo completarse (proyector
+# ocupado por otro worker). Corto: run_cycle corre en el beat diario y un
+# lote largo ajeno no debe retener la cola core.harvest — si tras esto el
+# staging sigue sin drenar, el ciclo NO se computa (status='project_busy').
+PROJECT_DRAIN_RETRIES = 3      # intentos TOTALES de project_pending
+PROJECT_DRAIN_BACKOFF_S = 5.0  # espera entre intentos (acotada: 2×5 s)
+
 
 # ------------------------------------------------------- ciclo orquestado
 
@@ -106,9 +129,12 @@ async def run_cycle(
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_batches: int | None = None,
 ) -> dict:
-    """Orquestador del ciclo (§7 B-05): project_pending → compute_cycle del
-    ciclo CERRADO (o `cycle_id` explícito — replay/backfill) → purge_staging
-    → evaluate_gates + contador. Idempotente y re-entrante (ver cabecera).
+    """Orquestador del ciclo (§7 B-05): project_pending (con reintentos
+    acotados) → verificación de staging drenado → compute_cycle del ciclo
+    CERRADO (o `cycle_id` explícito — replay/backfill) → purge_staging →
+    evaluate_gates + contador. Si el drenado no se completa NO se computa
+    (status 'project_busy' / 'staging_pending', P1-3 — ver cabecera).
+    Idempotente y re-entrante (un ciclo ya sellado no se recomputa, P1-4).
 
     Devuelve un resumen JSON-serializable (resultado de la tarea Celery)."""
     result: dict = {"status": "ok"}
@@ -157,20 +183,64 @@ async def _run_cycle_locked(
     """Cuerpo del ciclo (YA bajo el single-flight)."""
     cid = cycle_id or latest_closed_cycle_id(now)
     result["cycle_id"] = cid.isoformat()
-    # 1) Drenado del staging (single-flight del proyector REUTILIZADO: si ya
-    # hay una proyección en curso no se espera — ver decisión de cabecera).
-    result["project"] = await project_pending(
-        batch_size=batch_size, max_batches=max_batches
-    )
+    # 1) Drenado del staging con reintentos ACOTADOS (P1-3): si el proyector
+    # está en manos de otro worker (already_running) se reintenta con
+    # backoff corto; si sigue sin drenar, NO se mide (medir sin drenar =
+    # falso veredicto del ciclo — el revisor lo demostró con el lock tomado).
+    attempts = 1
+    proj = await project_pending(batch_size=batch_size, max_batches=max_batches)
+    while proj["status"] != "ok" and attempts < PROJECT_DRAIN_RETRIES:
+        await asyncio.sleep(PROJECT_DRAIN_BACKOFF_S)
+        proj = await project_pending(
+            batch_size=batch_size, max_batches=max_batches
+        )
+        attempts += 1
+    result["project"] = proj
+    result["project_attempts"] = attempts
+    if proj["status"] != "ok":
+        result["status"] = "project_busy"
+        logger.warning(
+            "gate: ciclo %s NO computado — project_pending sigue en '%s' "
+            "tras %d intentos (P1-3: sin drenar no se mide ni se sella)",
+            cid, proj["status"], attempts,
+        )
+        return
     async with task_session_factory() as factory:
-        # 2) + 3) Métricas del ciclo cerrado y purga en UNA transacción.
+        # 2) Verificación PRE-SELLADO (P1-3): cero filas de staging sin
+        # applied_at con lsn <= watermark del cierre del ciclo (max lsn
+        # recibido antes del fin de la ventana). Si queda backlog del
+        # ciclo, computar sellaría métricas sobre un corpus incompleto.
+        cycle_end = cycle_bounds(cid)[1]
+        async with factory() as session:
+            pending = (
+                await session.execute(
+                    sa.text(
+                        "SELECT count(*) FROM shadow_change_log "
+                        "WHERE applied_at IS NULL AND lsn <= COALESCE(("
+                        "  SELECT max(lsn) FROM shadow_change_log "
+                        "  WHERE received_at < :fin), 0)"
+                    ),
+                    {"fin": cycle_end},
+                )
+            ).scalar_one()
+        if pending:
+            result["status"] = "staging_pending"
+            result["staging_pending"] = int(pending)
+            logger.warning(
+                "gate: ciclo %s NO computado — %d filas de staging sin "
+                "aplicar bajo el watermark del cierre (%s): sin drenar no "
+                "se sella (P1-3)",
+                cid, pending, cycle_end.isoformat(),
+            )
+            return
+        # 3) + 4) Métricas del ciclo cerrado y purga en UNA transacción.
         async with factory() as session:
             result["metrics"] = await compute_cycle(
                 session, cycle_id=cid, legacy_schema=legacy_schema, now=now
             )
             result["purge"] = await purge_staging(session, now=now)
             await session.commit()
-        # 4) Gates del ciclo + contador de consecutivos (lectura pura).
+        # 5) Gates del ciclo + contador de consecutivos (lectura pura).
         async with factory() as session:
             gates = await evaluate_gates(session, cid)
             status = await gate_status(session, now=now)
@@ -207,10 +277,13 @@ async def gate_status(
 ) -> dict:
     """Contador de ciclos CONSECUTIVOS en verde leyendo shadow_cycle_metrics
     vía evaluate_gates, hacia atrás desde el último ciclo CERRADO. Un ciclo
-    en rojo o SIN COMPUTAR corta la cuenta (las [alerta] no, §6).
+    en rojo, SIN COMPUTAR o RECOMPUTADO tras sellado (details.recomputed_at,
+    P1-4: sus valores ya no son el veredicto histórico) corta la cuenta
+    (las [alerta] no, §6).
 
     → {consecutive_ok, required, gate_passed, last_cycle,
-       per_cycle: [{cycle, computado, ok, gates_rojos, alertas}, ...]}
+       per_cycle: [{cycle, computado, recomputado, ok, gates_rojos,
+       alertas}, ...]}
     (per_cycle: los `required` ciclos más recientes, del último hacia atrás).
     """
     last = latest_closed_cycle_id(now)
@@ -252,7 +325,11 @@ async def gate_status(
 async def _cycle_entry(session: AsyncSession, cid: date) -> dict:
     """Veredicto de UN ciclo para el contador. COMPUTADO = alguna fila con
     finished_at sellado (compute_cycle sella; el placeholder del muestreador
-    de outbox no) — un ciclo solo muestreado NO cuenta como computado."""
+    de outbox no) — un ciclo solo muestreado NO cuenta como computado.
+    RECOMPUTADO (P1-4) = alguna fila con details.recomputed_at (sello que
+    deja compute_cycle(force=True) sobre un ciclo sellado): sus valores son
+    un recalculo con estado POSTERIOR, no el veredicto histórico — ok=False
+    SIEMPRE (resetea la racha igual que un rojo, aunque esté en verde)."""
     computed = bool(
         (
             await session.execute(
@@ -266,9 +343,21 @@ async def _cycle_entry(session: AsyncSession, cid: date) -> dict:
     )
     if not computed:
         return {
-            "cycle": cid.isoformat(), "computado": False, "ok": False,
-            "gates_rojos": [], "alertas": [],
+            "cycle": cid.isoformat(), "computado": False, "recomputado": False,
+            "ok": False, "gates_rojos": [], "alertas": [],
         }
+    recomputed = bool(
+        (
+            await session.execute(
+                sa.text(
+                    "SELECT 1 FROM shadow_cycle_metrics "
+                    "WHERE cycle_id = :c "
+                    "AND details ->> 'recomputed_at' IS NOT NULL LIMIT 1"
+                ),
+                {"c": cid},
+            )
+        ).scalar_one_or_none()
+    )
     gates = await evaluate_gates(session, cid)
     failed = sorted(
         k for k, g in gates.items() if g["kind"] == KIND_GATE and not g["ok"]
@@ -277,7 +366,8 @@ async def _cycle_entry(session: AsyncSession, cid: date) -> dict:
         k for k, g in gates.items() if g["kind"] == KIND_ALERTA and not g["ok"]
     )
     return {
-        "cycle": cid.isoformat(), "computado": True, "ok": not failed,
+        "cycle": cid.isoformat(), "computado": True, "recomputado": recomputed,
+        "ok": not failed and not recomputed,
         "gates_rojos": failed, "alertas": alerts,
     }
 
@@ -303,7 +393,10 @@ async def render_gate_report(
         "-" * 72,
     ]
     for e in st["per_cycle"]:
-        estado = "OK" if e["ok"] else ("FALLO" if e["computado"] else "—")
+        if e.get("recomputado"):
+            estado = "RECOMP"  # P1-4: recomputado tras sellado, no computable
+        else:
+            estado = "OK" if e["ok"] else ("FALLO" if e["computado"] else "—")
         detalle = []
         if e["gates_rojos"]:
             detalle.append("gates: " + ", ".join(e["gates_rojos"]))
@@ -311,6 +404,10 @@ async def render_gate_report(
             detalle.append("alertas: " + ", ".join(e["alertas"]))
         if not e["computado"]:
             detalle.append("SIN COMPUTAR (resetea el contador)")
+        if e.get("recomputado"):
+            detalle.append(
+                "RECOMPUTADO tras sellado (P1-4: no computable para la racha)"
+            )
         lines.append(
             f"{e['cycle']:<12} {'sí' if e['computado'] else 'no':<10} "
             f"{estado:<8} {'; '.join(detalle) or '—'}"

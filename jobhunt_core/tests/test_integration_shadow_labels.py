@@ -61,9 +61,19 @@ def legacy_fx():
 
     Al rol del core se le da SELECT (en la sombra real ese GRANT read-only
     enumerado lo instala B-01 sobre `public`; aquí el esquema es de usar y
-    tirar). DROP SCHEMA ... CASCADE al final."""
+    tirar). DROP SCHEMA ... CASCADE al final.
+
+    P2-8: el esquema fixture debe vivir en la MISMA BD que usan los tests —
+    con el aislamiento de sesión (tests/conftest.py) esa es la BD DESECHABLE
+    de la suite, no la de dev a la que apunta el DSN admin: se re-apunta el
+    path de la URL admin al dbname de settings.CORE_DATABASE_URL (mismas
+    credenciales admin, BD de la suite)."""
     admin_url = os.environ["CORE_ADMIN_DATABASE_URL"].replace(
         "postgresql://", "postgresql+asyncpg://"
+    )
+    parts = urlsplit(admin_url)
+    admin_url = urlunsplit(
+        (parts.scheme, parts.netloc, urlsplit(settings.CORE_DATABASE_URL).path, "", "")
     )
     schema = f"shadow_fx_{uuid.uuid4().hex[:10]}"
     core_role = urlsplit(settings.CORE_DATABASE_URL).username

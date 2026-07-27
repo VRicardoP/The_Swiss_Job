@@ -217,7 +217,16 @@ async def purge_policies(s: AsyncSession, policy_ids: Sequence[uuid.UUID]) -> No
 
 
 async def purge_model(s: AsyncSession, model_id: uuid.UUID) -> None:
-    """Vectores + partición por-modelo + registro del modelo, en ese orden."""
+    """Vectores + partición por-modelo + registro del modelo, en ese orden.
+
+    P2-8 (rev. externa): también los vectores de PERFIL del modelo —
+    `profile_embeddings` referencia `embedding_models` por FK y `run_pending`
+    pudo vectorizar perfiles AJENOS al grafo del test (cualquier perfil con
+    revisión activa en la BD): sin este DELETE, el DELETE del modelo
+    revienta por FK y el registro queda como residuo."""
+    await s.execute(
+        sa.text("DELETE FROM profile_embeddings WHERE model_id = :m"), {"m": model_id}
+    )
     await s.execute(
         sa.text("DELETE FROM offer_embeddings WHERE model_id = :m"), {"m": model_id}
     )
