@@ -59,6 +59,12 @@ class CoreSettings(BaseSettings):
     CORE_SHADOW_RUN_CYCLE_HOUR: int = 6            # run_cycle diario 06:05
     CORE_SHADOW_RUN_CYCLE_MINUTE: int = 5          # (Europe/Zurich, tras el
     #                                              cierre del ciclo a las 06:00)
+    # P1-1 (rev. externa parte 2): proyección y despacho del outbox EN
+    # CADENCIA — con la proyección solo diaria (06:05) los lotes acumulaban
+    # ~20h de latencia y latencia_p95<=600s / outbox_lag_p99<=300s (§6) eran
+    # matemáticamente imposibles.
+    CORE_SHADOW_PROJECT_EVERY_S: int = 300         # jobhunt.shadow.project
+    CORE_DELIVERY_DISPATCH_EVERY_S: int = 300      # jobhunt.delivery.dispatch_outbox
 
     model_config = {"extra": "ignore"}
 

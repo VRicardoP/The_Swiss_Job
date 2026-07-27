@@ -669,6 +669,63 @@ def test_health_check_unhealthy_when_slot_exists_but_inactive(
     assert "INACTIVO" in err  # motivo visible en stderr
 
 
+def test_health_check_heartbeat_liveness_not_data_progress(
+    capture, capture_db, monkeypatch, capsys
+):
+    """Regresión P2-7 (rev. externa parte 2): la evidencia del revisor era
+    core-capture unhealthy con slot ACTIVO y 3 días sin tráfico legacy —
+    `updated_at` solo avanza con txs aplicadas y el healthcheck lo puntuaba.
+    Ahora la liveness es `heartbeat_at` (keepalive + tx aplicada): latido
+    fresco sin tráfico ⇒ HEALTHY; latido viejo (consumidor zombi) ⇒
+    unhealthy. `updated_at`/`last_applied_lsn` quedan como progreso de
+    DATOS."""
+    make, slot, engine = capture
+    monkeypatch.setenv("CORE_DATABASE_URL", capture_db["core_dsn"])
+    monkeypatch.setenv("CORE_CAPTURE_SLOT", slot)
+
+    cap = make()
+    cap.start()
+    _wait_slot_active(engine, slot)
+
+    # El falso negativo del revisor: 3 días sin tráfico (updated_at viejo)
+    # con latido fresco ⇒ HEALTHY (antes: unhealthy por progreso estancado).
+    _exec(
+        engine,
+        f"UPDATE {S}.shadow_capture_state "
+        "SET updated_at = now() - interval '3 days'",
+    )
+    assert health_check() == 0
+
+    # Latido viejo (> umbral 26h) ⇒ unhealthy con el motivo del LATIDO.
+    _exec(
+        engine,
+        f"UPDATE {S}.shadow_capture_state "
+        "SET heartbeat_at = now() - interval '27 hours'",
+    )
+    assert health_check() == 1
+    assert "LATIDO" in capsys.readouterr().err
+
+
+def test_heartbeat_advances_on_keepalive_without_traffic(capture):
+    """P2-7: el latido avanza con los KEEPALIVES del stream aunque no llegue
+    ninguna transacción — updated_at (progreso de datos) queda quieto."""
+    make, slot, engine = capture
+    cap = make(status_interval=0.1)
+    cap.start()
+    row0 = _rows(
+        engine,
+        f"SELECT heartbeat_at, updated_at FROM {S}.shadow_capture_state",
+    )[0]
+    assert row0.heartbeat_at is not None  # el bootstrap ya deja latido
+    cap.stream(max_seconds=1.0)  # sin tráfico: solo keepalives
+    row1 = _rows(
+        engine,
+        f"SELECT heartbeat_at, updated_at FROM {S}.shadow_capture_state",
+    )[0]
+    assert row1.heartbeat_at > row0.heartbeat_at  # latido VIVO sin tráfico
+    assert row1.updated_at == row0.updated_at  # datos: intacto
+
+
 # ------------------------------------------------------------ (e) roles/grants
 
 
@@ -754,13 +811,21 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
                 c.execute(
                     sa.text(f"SELECT version_num FROM {S}.alembic_version")
                 ).scalar()
-                == "core0008b"
+                == "core0009"  # head incluye la parte 2 de la revisión externa
             )
             c.execute(
                 sa.text(
                     f"INSERT INTO {S}.shadow_capture_state "
                     "(id, slot_name, snapshot_lsn, snapshot_exported_at, "
                     "last_applied_lsn) VALUES (1, 'jobhunt_shadow', 100, now(), 100)"
+                )
+            )
+            # core0009: inbox sombra con PK(consumer_id, event_id) delante
+            # del downgrade (dato real en la tabla nueva).
+            c.execute(
+                sa.text(
+                    f"INSERT INTO {S}.shadow_inbox (consumer_id, event_id, "
+                    "payload) VALUES ('tenant-x', gen_random_uuid(), '{}'::jsonb)"
                 )
             )
             # Solo el primer literal es f-string: las llaves JSON de los
@@ -840,11 +905,11 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
                 sa.text(
                     "SELECT count(*) FROM pg_tables WHERE schemaname = :s "
                     "AND tablename IN ('shadow_capture_state', 'shadow_change_log', "
-                    "'shadow_projection_batches')"
+                    "'shadow_projection_batches', 'shadow_inbox')"
                 ),
                 {"s": S},
             ).scalar()
-            assert remaining == 0  # downgrade limpio: las 3 fuera
+            assert remaining == 0  # downgrade limpio: 0008b + 0009 fuera
             still_b03 = c.execute(
                 sa.text(
                     "SELECT count(*) FROM pg_tables WHERE schemaname = :s "
@@ -860,7 +925,7 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
                 c.execute(
                     sa.text(f"SELECT version_num FROM {S}.alembic_version")
                 ).scalar()
-                == "core0008b"
+                == "core0009"
             )
             idx = c.execute(
                 sa.text(

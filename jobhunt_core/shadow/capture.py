@@ -41,6 +41,12 @@ el backfill + escritura del staging propio). El snapshot exportado por una se
 importa desde la otra (válido mientras la conexión de replicación no ejecute
 otro comando — por eso el backfill ocurre ANTES de START_REPLICATION).
 
+- **Heartbeat (P2-7, core0009)**: `shadow_capture_state.heartbeat_at` es la
+  señal de LIVENESS del consumidor — se actualiza en cada keepalive del
+  stream y en cada tx aplicada (también en las vacías). `updated_at`/
+  `last_applied_lsn` son progreso de DATOS: el healthcheck ya no da falsos
+  unhealthy con slot activo y días sin tráfico legacy.
+
 Slot y tabla-lista PARAMETRIZABLES (tests: esquema fixture en BD desechable;
 producción: defaults del contrato). LSN como BIGINT: pg_lsn 'X/Y' =
 (X<<32)|Y — el mismo entero que expone psycopg2 (msg.data_start).
@@ -341,7 +347,8 @@ class ShadowCapture:
                 cur.execute(
                     "INSERT INTO shadow_capture_state "
                     "(id, slot_name, snapshot_lsn, snapshot_exported_at, "
-                    "last_applied_lsn) VALUES (1, %s, %s, now(), %s)",
+                    "last_applied_lsn, heartbeat_at) "
+                    "VALUES (1, %s, %s, now(), %s, now())",
                     (self.slot, snapshot_lsn, snapshot_lsn),
                 )
                 cur.execute("COMMIT")
@@ -437,6 +444,9 @@ class ShadowCapture:
                 continue
             if ack and now - last_status >= self.status_interval:
                 self._cur.send_feedback()  # keepalive de estado (sin avanzar flush)
+                # P2-7: LATIDO en cada keepalive — liveness aunque el legacy
+                # lleve días sin tráfico (updated_at solo avanza con txs).
+                self._touch_heartbeat()
                 last_status = now
             timeout = 1.0
             if deadline is not None:
@@ -573,7 +583,10 @@ class ShadowCapture:
 
     def _flush(self, commit_msg) -> None:
         """Commit de la tx wal2json: staging + progreso en UNA transacción;
-        el ack al slot va SOLO DESPUÉS del commit (§2: pérdida imposible)."""
+        el ack al slot va SOLO DESPUÉS del commit (§2: pérdida imposible).
+        P2-7: heartbeat_at avanza con CADA tx aplicada (misma tx) y también
+        con las tx vacías — un flujo continuo de tx filtradas no llega a la
+        rama de keepalive del stream y sin esto el latido se estancaría."""
         rows, self._tx = self._tx, []
         flush_lsn = commit_msg.data_start
         if rows:
@@ -583,7 +596,8 @@ class ShadowCapture:
                     self._insert_changes(cur, rows)
                     cur.execute(
                         "UPDATE shadow_capture_state "
-                        "SET last_applied_lsn = %s, updated_at = now() WHERE id = 1",
+                        "SET last_applied_lsn = %s, updated_at = now(), "
+                        "heartbeat_at = now() WHERE id = 1",
                         (flush_lsn,),
                     )
                     cur.execute("COMMIT")
@@ -594,10 +608,23 @@ class ShadowCapture:
             logger.debug(
                 "Tx aplicada: %d cambios hasta %s", len(rows), int_to_lsn(flush_lsn)
             )
+        else:
+            self._touch_heartbeat()
         # Tx vacías (add-tables filtró todo del lado servidor) avanzan el
         # flush igualmente: sin esto el slot retendría WAL ajeno (§8).
         if self._ack:
             self._cur.send_feedback(flush_lsn=flush_lsn)
+
+    def _touch_heartbeat(self) -> None:
+        """LATIDO del consumidor (P2-7): UPDATE mínimo (autocommit) de
+        heartbeat_at — liveness, SIN tocar last_applied_lsn/updated_at (esos
+        son progreso de DATOS). Antes del bootstrap la fila id=1 no existe:
+        el UPDATE es un no-op inocuo. Un error de conexión SUBE: run() lo
+        trata como caída y reconecta con backoff."""
+        with self._core.cursor() as cur:
+            cur.execute(
+                "UPDATE shadow_capture_state SET heartbeat_at = now() WHERE id = 1"
+            )
 
     # ------------------------------------------------------------ estado/slot
 
@@ -665,7 +692,7 @@ def _core_dsn() -> str:
 
 def health_check() -> int:
     """Healthcheck ligero para compose (`--health`): conexión core OK + slot
-    presente y ACTIVO (walsender conectado) + progreso reciente. Exit 0 sano
+    presente y ACTIVO (walsender conectado) + LATIDO reciente. Exit 0 sano
     / 1 no.
 
     Slot presente pero `active=false` = consumidor caído mientras el slot
@@ -673,11 +700,16 @@ def health_check() -> int:
     inactivo LEGÍTIMO es el backfill del bootstrap (slot ya creado, aún sin
     START_REPLICATION) — lo cubre el start_period de 300s del compose.
 
-    Umbral de antigüedad de `updated_at`: 26 h por defecto — `updated_at`
-    solo avanza al aplicar transacciones capturadas (las tx vacías solo hacen
-    ack), y el ritmo real del legacy garantiza tráfico diario (cosecha
-    12:00±4h + cleanup 03:30); un umbral menor daría falsos unhealthy en
-    horas valle. Ajustable vía CORE_CAPTURE_HEALTH_MAX_AGE_S.
+    LIVENESS por `heartbeat_at` (P2-7, rev. externa parte 2): el consumidor
+    lo actualiza en cada keepalive del stream (~status_interval, 10 s) y en
+    cada tx aplicada — antes se medía `updated_at`, que SOLO avanza con txs
+    capturadas: con slot activo y días sin tráfico legacy el healthcheck
+    daba FALSO unhealthy (la evidencia del revisor: 3 días sin tráfico).
+    `last_applied_lsn`/`updated_at` quedan como progreso de DATOS (se
+    reporta, no se puntúa). Umbral: el ACTUAL (26 h por defecto,
+    CORE_CAPTURE_HEALTH_MAX_AGE_S) — un consumidor vivo lo satisface de
+    sobra con latido cada 10 s. COALESCE a updated_at: estado anterior a
+    core0009 sin latido registrado.
     """
     slot = os.getenv("CORE_CAPTURE_SLOT", DEFAULT_SLOT)
     max_age = float(os.getenv("CORE_CAPTURE_HEALTH_MAX_AGE_S", str(26 * 3600)))
@@ -706,7 +738,8 @@ def health_check() -> int:
                     return 1
                 cur.execute(
                     "SELECT last_applied_lsn, "
-                    "extract(epoch FROM now() - updated_at) "
+                    "extract(epoch FROM now() - COALESCE(heartbeat_at, "
+                    "updated_at)) "
                     "FROM shadow_capture_state WHERE id = 1"
                 )
                 row = cur.fetchone()
@@ -719,8 +752,9 @@ def health_check() -> int:
                 last_applied, age = row
                 if age is None or float(age) > max_age:
                     print(
-                        f"unhealthy: progreso estancado (edad={age}s > "
-                        f"{max_age:.0f}s, last_applied={int_to_lsn(last_applied)})",
+                        f"unhealthy: sin LATIDO del consumidor (edad={age}s > "
+                        f"{max_age:.0f}s; progreso de datos: "
+                        f"last_applied={int_to_lsn(last_applied)})",
                         file=sys.stderr,
                     )
                     return 1

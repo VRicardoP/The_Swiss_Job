@@ -10,8 +10,11 @@ cross-source previo + primary reparado — patrón del gate); (d) perfil sombra
 EXCLUIDO de evaluación sin borrar (y re-incluido al reactivar); (f) users
 op=D → ERASE completo verificado tabla a tabla; (g) re-proyección
 idempotente (segunda pasada sin cambios); (h) lotes registrados en
-shadow_projection_batches con marcas coherentes; (i) tarea Celery
-registrada y enrutada a core.harvest SIN beat. Además (1er análisis B-02):
+shadow_projection_batches con marcas coherentes — INTENCIÓN durable P2-5:
+insertada al planificar, finalizada al sellar, recuperada como `recovered`
+tras un crash y VISIBLE en latencia_p95; (i) tarea Celery registrada,
+enrutada a core.harvest y con cadencia de 5 min en el beat (P1-1).
+Además (1er análisis B-02):
 single-flight con try-lock (2ª invocación sale limpia), una transacción POR
 FUENTE con applied_at sellado en ella (crash entre fuentes → retry continúa)
 y recuperación del flujo post-lote a la SALIDA condicionada a señal real
@@ -34,6 +37,7 @@ import json
 import logging
 import os
 import uuid
+from datetime import timedelta
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
@@ -42,7 +46,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jobhunt_core import embeddings, matching
 from jobhunt_core.config import settings
-from jobhunt_core.shadow import projector
+from jobhunt_core.shadow import metrics, projector
 from jobhunt_core.tests.alembic_runner import run_alembic
 from jobhunt_core.tests.test_integration_matching import DirectionalBackend
 
@@ -889,9 +893,11 @@ def test_second_concurrent_invocation_exits_clean(db, proj_db):
 
 def test_crash_between_sources_seals_partially_and_retry_completes(db, monkeypatch):
     """UNA transacción POR FUENTE con el applied_at sellado en ELLA: el crash
-    tras la primera fuente deja sus cambios aplicados Y sellados, el resto en
-    NULL y SIN marca de lote; el retry aplica SOLO lo restante y su marca
-    cubre el conjunto realmente aplicado."""
+    tras la primera fuente deja sus cambios aplicados Y sellados y el resto
+    en NULL. P2-5: la INTENCIÓN del lote (insertada al planificar) queda
+    ABIERTA (finished_at NULL) — ya no se pierde la marca — y el retry la
+    cierra como `recovered` (lote LENTO visible) antes de aplicar SOLO lo
+    restante con su marca propia."""
     factory = db
     h = uuid.uuid4().hex[:6]
     src_a, src_b = f"fxa{h}", f"fxb{h}"  # orden alfabético determinista
@@ -919,20 +925,97 @@ def test_crash_between_sources_seals_partially_and_retry_completes(db, monkeypat
     assert sealed["job-fa"] is not None and sealed["job-fb"] is None
     assert _active_exts(factory, _source_id(factory, src_a)) == {"job-fa"}
     assert _source_id(factory, src_b) is None
-    # Crash ANTES de la fila de lote: se pierde solo la MARCA, no datos.
-    assert _scalar(factory, "SELECT count(*) FROM shadow_projection_batches") == 0
+    # P2-5: la intención del lote SOBREVIVE al crash, abierta (durable).
+    intents = _rows(
+        factory,
+        "SELECT finished_at, recovered, changes FROM shadow_projection_batches",
+    )
+    assert len(intents) == 1
+    assert intents[0].finished_at is None and intents[0].recovered is False
+    assert intents[0].changes == 2  # el lote planificado entero
 
-    # El retry (el lock quedó liberado pese al error) completa SOLO el resto.
+    # El retry (el lock quedó liberado pese al error) cierra la intención
+    # huérfana como recovered y completa SOLO el resto.
     boom["armed"] = False
     totals = _project()
+    assert totals["batches_recovered"] == 1
     assert (totals["changes"], totals["upserts"]) == (1, 1)
     assert _active_exts(factory, _source_id(factory, src_b)) == {"job-fb"}
-    marks = _rows(factory, "SELECT changes FROM shadow_projection_batches")
-    assert [m.changes for m in marks] == [1]
+    marks = _rows(
+        factory,
+        "SELECT changes, recovered, finished_at "
+        "FROM shadow_projection_batches ORDER BY started_at",
+    )
+    assert [(m.changes, m.recovered) for m in marks] == [(2, True), (1, False)]
+    assert all(m.finished_at is not None for m in marks)  # nada invisible
     assert _scalar(
         factory,
         "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
     ) == 0
+
+
+def test_slow_batch_crash_before_finalize_recovered_and_visible_in_p95(
+    db, monkeypatch
+):
+    """Regresión P2-5 (rev. externa parte 2, escenario del revisor): crash
+    ENTRE el sellado de la última fuente y la finalización del lote. Antes,
+    la fila del lote se escribía al final y el crash la PERDÍA: un lote
+    lento moría invisible para latencia_p95. Ahora la intención durable
+    queda abierta, la recuperación la cierra con finished_at=ahora y
+    recovered=true, y latencia_p95 la CUENTA (conservador: lote lento,
+    jamás desaparece)."""
+    factory = db
+    src = f"fx{uuid.uuid4().hex[:6]}"
+    _seed(factory, [("jobs", "I", "job-p25", _job("job-p25", src))])
+
+    orig_finalize = projector._finalize_batch
+
+    async def boom(session, batch_id, revisions_new):
+        raise RuntimeError("crash simulado entre sellado y finalización")
+
+    monkeypatch.setattr(projector, "_finalize_batch", boom)
+    with pytest.raises(RuntimeError, match="finalización"):
+        _project()
+    monkeypatch.setattr(projector, "_finalize_batch", orig_finalize)
+
+    # Los DATOS quedaron aplicados y sellados (tx por fuente commiteada)...
+    assert _scalar(
+        factory,
+        "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+    ) == 0
+    # ...y la intención queda ABIERTA: el lote no desapareció (P2-5).
+    intent = _rows(
+        factory,
+        "SELECT finished_at, recovered FROM shadow_projection_batches",
+    )[0]
+    assert intent.finished_at is None and intent.recovered is False
+
+    # La recuperación (arranque de la siguiente invocación) la cierra como
+    # recovered — sin nada nuevo que drenar.
+    totals = _project()
+    assert (totals["batches"], totals["batches_recovered"]) == (0, 1)
+    mark = _rows(
+        factory,
+        "SELECT finished_at, recovered, min_received_at "
+        "FROM shadow_projection_batches",
+    )[0]
+    assert mark.finished_at is not None and mark.recovered is True
+
+    # VISIBLE en latencia_p95 (§5): el lote recuperado entra en el p95 del
+    # ciclo que contiene su finished_at, contado además en details.
+    async def latencia():
+        async with factory() as s:
+            now = (
+                await s.execute(sa.text("SELECT clock_timestamp()"))
+            ).scalar_one()
+            return await metrics._latencia_row(
+                s, now - timedelta(hours=1), now + timedelta(hours=1)
+            )
+
+    m, value, details, _merge = _run(latencia())
+    assert m == "latencia_p95"
+    assert details == {"lotes": 1, "lotes_recuperados": 1}
+    assert float(value) >= 0.0  # finished_at real − min_received_at: cuenta
 
 
 def test_replay_recovers_after_batch_crash(db, monkeypatch):
@@ -1144,18 +1227,23 @@ def test_max_batches_limits_the_drain(db):
 
 def test_task_registered_routed_and_runs(db):
     from jobhunt_core.celery_app import celery_app
+    from jobhunt_core.config import settings as core_settings
     from jobhunt_core.tasks.shadow import project_task
 
     assert "jobhunt.shadow.project" in celery_app.tasks
     assert celery_app.conf.task_routes["jobhunt.shadow.project"] == {
         "queue": "core.harvest"
     }
-    # La tarea NO va en el beat: la dispara el runner de ciclos (B-05,
-    # jobhunt.shadow.run_cycle) o el operador — el beat de B-05 solo
-    # cablea muestreador, salud del slot y run_cycle.
-    assert "jobhunt.shadow.project" not in {
-        e["task"] for e in celery_app.conf.beat_schedule.values()
+    # P1-1 (rev. externa parte 2): la tarea SÍ va en el beat (cada 5 min) —
+    # proyectar solo dentro de run_cycle (06:05) acumulaba ~20h de latencia
+    # por lote y latencia_p95<=600s (§6) era imposible. El single-flight
+    # tolera el solape con run_cycle (already_running sale limpio).
+    by_task = {
+        e["task"]: e for e in celery_app.conf.beat_schedule.values()
     }
+    assert by_task["jobhunt.shadow.project"]["schedule"] == float(
+        core_settings.CORE_SHADOW_PROJECT_EVERY_S
+    )
 
     result = project_task.apply()  # staging vacío en la BD desechable
     assert result.successful()

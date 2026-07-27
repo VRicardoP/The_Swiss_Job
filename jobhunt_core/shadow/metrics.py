@@ -68,6 +68,21 @@ DECISIONES documentadas (no obvias):
   también sella — completarlo al cierre exigirá force (y marcará el ciclo).
 - Percentiles (p99 outbox, p95 latencia): percentile_cont de Postgres
   (interpolación lineal) — un único método, verificable a mano.
+- outbox por EDAD DE EVENTO + `outbox_dead` (P2-6, rev. externa parte 2):
+  el muestreador guarda la edad del evento NO entregado más viejo
+  (delivery.stats: clock_timestamp() − integration_outbox.created_at,
+  pending E inflight, jamás negativa) — antes medía la distancia a
+  next_attempt_at y un fallo con backoff futuro APLANABA el lag justo
+  cuando crecía. Cada sample lleva además `dead_total`; el gate NUEVO
+  `outbox_dead` es rojo si hubo algún evento en DEAD-LETTER en el ciclo:
+  value = max(dead_total muestreado en el ciclo, conteo dead ACTUAL al
+  cómputo — dead es terminal: lo muerto en el ciclo sigue muerto al
+  cierre, y el conteo actual cubre ciclos sin samples). Siempre
+  computable; el conteo va en details.
+- latencia_p95 INCLUYE los lotes `recovered` (P2-5): una intención de lote
+  huérfana (crash de la invocación) se cierra en la recuperación del
+  proyector con finished_at=ahora y recovered=true — cuenta como lote
+  LENTO, jamás desaparece del p95; details.lotes_recuperados lo expone.
 
 La purga del staging (§7, asignada a B-04) borra de `shadow_change_log` lo
 APLICADO con received_at < (cierre del ciclo actual − 7 días) PRESERVANDO
@@ -116,6 +131,7 @@ M_FALSOS_NEG = "falsos_negativos"
 M_PERDIDA = "perdida"
 M_NO_INGERIBLES = "no_ingeribles"
 M_OUTBOX_LAG = "outbox_lag_p99"
+M_OUTBOX_DEAD = "outbox_dead"  # dead-letter en el ciclo ⇒ rojo (P2-6)
 M_LATENCIA = "latencia_p95"
 M_COSTE = "coste"
 M_REENLACE = "reenlace_pct"
@@ -162,6 +178,7 @@ METRIC_KINDS: dict[str, str] = {
     M_PERDIDA: KIND_GATE,
     M_NO_INGERIBLES: KIND_ALERTA,     # alerta si > 0
     M_OUTBOX_LAG: KIND_GATE,
+    M_OUTBOX_DEAD: KIND_GATE,         # dead_total > 0 en el ciclo ⇒ rojo (P2-6)
     M_LATENCIA: KIND_GATE,
     M_COSTE: KIND_ALERTA,             # proxy informativo, sin umbral duro
     M_REENLACE: KIND_ALERTA,
@@ -171,7 +188,8 @@ METRIC_KINDS: dict[str, str] = {
 # sin datos = ok False; alertas sin fila no inventan estado).
 _EXPECTED_GLOBAL = (
     M_LABELS_READY, M_DEDUP_PRECISION, M_DEDUP_RECALL, M_PERDIDA,
-    M_NO_INGERIBLES, M_OUTBOX_LAG, M_LATENCIA, M_COSTE, M_REENLACE,
+    M_NO_INGERIBLES, M_OUTBOX_LAG, M_OUTBOX_DEAD, M_LATENCIA, M_COSTE,
+    M_REENLACE,
 )
 
 # Espejo de backend/models/match_result.py::NEGATIVE_FEEDBACK (el feed
@@ -250,15 +268,21 @@ async def sample_outbox_lag(
     session: AsyncSession, now: datetime | None = None
 ) -> dict:
     """Muestreador LIGERO de `oldest_pending_s` (delivery.stats, §5): appendea
-    {ts, oldest_pending_s} al array details.samples de la fila del ciclo
-    ABIERTO en este momento (metric=outbox_lag_p99, scope=global) vía upsert
-    concatenando. `value` nace con el centinela (aún sin computar) y NO se
+    {ts, oldest_pending_s, dead_total} al array details.samples de la fila del
+    ciclo ABIERTO en este momento (metric=outbox_lag_p99, scope=global) vía
+    upsert concatenando. P2-6: `oldest_pending_s` es la EDAD DEL EVENTO no
+    entregado más viejo (pending E inflight, jamás negativa — nombre
+    conservado por compatibilidad de samples) y `dead_total` alimenta el gate
+    `outbox_dead`. `value` nace con el centinela (aún sin computar) y NO se
     toca en el conflict: si compute_cycle ya selló el p99, un sample tardío
     no lo pisa. La CADENCIA (5 min) la cablea B-05 — aquí solo la operación."""
-    lag = (await delivery_stats(session))["oldest_pending_s"]
+    st = await delivery_stats(session)
+    lag, dead_total = st["oldest_pending_s"], st["dead_total"]
     cid = current_cycle_id(now)
     ts = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    sample = json.dumps([{"ts": ts.isoformat(), "oldest_pending_s": lag}])
+    sample = json.dumps(
+        [{"ts": ts.isoformat(), "oldest_pending_s": lag, "dead_total": dead_total}]
+    )
     n_samples = (
         await session.execute(
             sa.text(
@@ -281,6 +305,7 @@ async def sample_outbox_lag(
     return {
         "cycle_id": cid.isoformat(),
         "oldest_pending_s": lag,
+        "dead_total": dead_total,
         "samples": int(n_samples),
     }
 
@@ -661,6 +686,7 @@ async def _global_metric_rows(
     lag_row = await _outbox_lag_row(session, cid)
     if lag_row is not None:
         rows.append(lag_row)
+    rows.append(await _outbox_dead_row(session, cid))
     rows.append(await _latencia_row(session, start, end))
     rows.append(await _coste_row(session, start, end))
     rows.append(await _reenlace_row(session, start, end))
@@ -954,20 +980,67 @@ async def _outbox_lag_row(session: AsyncSession, cid: date) -> tuple | None:
     return M_OUTBOX_LAG, value, details, True
 
 
+async def _outbox_dead_row(session: AsyncSession, cid: date) -> tuple:
+    """Gate `outbox_dead` (P2-6): rojo si hubo DEAD-LETTER en el ciclo.
+
+    value = max(dead_total muestreado en el ciclo, conteo dead ACTUAL):
+    dead es un estado TERMINAL sin purga automática — lo que murió durante
+    el ciclo sigue muerto al cómputo (06:05), y el conteo actual cubre
+    también un ciclo sin samples (beat caído). Los samples dejan la traza
+    intra-ciclo. Siempre computable — jamás centinela."""
+    sampled = (
+        await session.execute(
+            sa.text(
+                "SELECT max((s->>'dead_total')::int) AS dead_max, "
+                "count(*) FILTER (WHERE s ? 'dead_total') AS with_data "
+                "FROM shadow_cycle_metrics m "
+                "CROSS JOIN LATERAL "
+                "  jsonb_array_elements(m.details->'samples') AS s "
+                "WHERE m.cycle_id = :c AND m.metric = :m AND m.scope = :s"
+            ),
+            {"c": cid, "m": M_OUTBOX_LAG, "s": SCOPE_GLOBAL},
+        )
+    ).one_or_none()
+    current = (
+        await session.execute(
+            sa.text(
+                "SELECT count(*) FROM integration_outbox_deliveries "
+                "WHERE state = 'dead'"
+            )
+        )
+    ).scalar_one()
+    dead_max = int(sampled.dead_max) if sampled and sampled.dead_max is not None else 0
+    value = max(dead_max, int(current))
+    details = {
+        "dead_actual": int(current),
+        "dead_max_muestras": dead_max,
+        "samples_con_dato": int(sampled.with_data) if sampled else 0,
+        "nota": (
+            "max(dead_total muestreado en el ciclo, conteo dead actual) — "
+            "dead es terminal: > 0 exige intervención del operador"
+        ),
+    }
+    return M_OUTBOX_DEAD, value, details, False
+
+
 async def _latencia_row(
     session: AsyncSession, start: datetime, end: datetime
 ) -> tuple:
     """p95 (percentile_cont) por LOTE de finished_at − min_received_at sobre
-    shadow_projection_batches del ciclo (por finished_at). Tolera lotes SIN
-    marca por diseño (B-02: un crash pierde solo la fila del lote — se mide
-    sobre los EXISTENTES) y excluye filas sin sellar. Sin lotes ⇒ centinela."""
+    shadow_projection_batches del ciclo (por finished_at), INCLUIDOS los
+    lotes `recovered` (P2-5: intenciones huérfanas cerradas por la
+    recuperación del proyector con finished_at=ahora — cuentan como LENTOS,
+    jamás desaparecen; details.lotes_recuperados los expone). Excluye filas
+    sin sellar (intenciones AÚN abiertas). Sin lotes ⇒ centinela."""
     row = (
         await session.execute(
             sa.text(
                 "SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY "
                 "  EXTRACT(EPOCH FROM (finished_at - min_received_at))::float8"
                 ") AS p95, "
-                "count(*) AS n FROM shadow_projection_batches "
+                "count(*) AS n, "
+                "count(*) FILTER (WHERE recovered) AS n_rec "
+                "FROM shadow_projection_batches "
                 "WHERE finished_at IS NOT NULL "
                 "  AND finished_at >= :s AND finished_at < :e"
             ),
@@ -977,7 +1050,8 @@ async def _latencia_row(
     if row.p95 is None:
         details = {"no_data": True, "lotes": 0, "nota": "sin lotes en el ciclo"}
         return M_LATENCIA, NO_DATA_VALUE, details, False
-    return M_LATENCIA, round(float(row.p95), 6), {"lotes": int(row.n)}, False
+    details = {"lotes": int(row.n), "lotes_recuperados": int(row.n_rec)}
+    return M_LATENCIA, round(float(row.p95), 6), details, False
 
 
 async def _coste_row(
@@ -1173,6 +1247,7 @@ def _global_gates(out: dict, by: dict) -> None:
         M_PERDIDA: (PERDIDA_MAX, lambda v, u: v == u),
         M_NO_INGERIBLES: (0, lambda v, u: v <= u),
         M_OUTBOX_LAG: (OUTBOX_LAG_P99_MAX_S, lambda v, u: v <= u),
+        M_OUTBOX_DEAD: (0, lambda v, u: v <= u),  # dead-letter ⇒ rojo (P2-6)
         M_LATENCIA: (LATENCIA_P95_MAX_S, lambda v, u: v <= u),
         M_COSTE: (None, lambda v, u: True),
         M_REENLACE: (REENLACE_PCT_MAX, lambda v, u: v <= u),

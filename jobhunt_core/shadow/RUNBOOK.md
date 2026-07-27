@@ -14,7 +14,8 @@ SELECT slot_name, active, active_pid,
 FROM pg_replication_slots WHERE slot_name = 'jobhunt_shadow';"
 
 docker compose exec -T postgres psql -U swissjob -d swissjobhunter -c "
-SELECT slot_name, last_applied_lsn, updated_at, now() - updated_at AS sin_progreso
+SELECT slot_name, last_applied_lsn, updated_at, now() - updated_at AS sin_datos,
+       heartbeat_at, now() - heartbeat_at AS sin_latido
 FROM jobhunt.shadow_capture_state;"
 
 # Salud según los umbrales de §6 (retención > 2 GiB / parado > 30 min ⇒ ALERTA)
@@ -28,8 +29,12 @@ asyncio.run(main())"
 ```
 
 Señales: `active=false` = consumidor caído (el slot **retiene WAL** mientras tanto);
-`wal_retenido` creciendo = consumidor caído o atascado; `updated_at` viejo = sin
-transacciones aplicadas (ver umbral 26 h del healthcheck de core-capture).
+`wal_retenido` creciendo = consumidor caído o atascado; `heartbeat_at` viejo = consumidor
+SIN LATIDO (es lo que puntúa el healthcheck de core-capture — umbral 26 h,
+`CORE_CAPTURE_HEALTH_MAX_AGE_S`; el latido avanza con cada keepalive ~10 s y cada tx
+aplicada); `updated_at` viejo = sin transacciones aplicadas — **progreso de DATOS,
+informativo**: con slot activo y días sin tráfico legacy es NORMAL y ya no da unhealthy
+(P2-7, core0009).
 
 ## 2. Reinicio del consumidor (RTO ≤ 1 h)
 
@@ -138,9 +143,19 @@ reconstruirla, ejecutar el rollback/replay completo (§3) cuando haya margen —
 ## 5. Cadencias (beat EMBEBIDO en core-worker)
 
 El `beat_schedule` vive en `celery_app.py` (ajustable por settings
-`CORE_SHADOW_*`): `sample_outbox_lag` y `check_slot_health` cada 5 min,
-`run_cycle` diario 06:05 Europe/Zurich (tras el cierre del ciclo, §5). SOLO
-colas `core.*`.
+`CORE_SHADOW_*` / `CORE_DELIVERY_DISPATCH_EVERY_S`): `sample_outbox_lag`,
+`check_slot_health`, **`jobhunt.shadow.project`** (P1-1: sin cadencia, la
+proyección solo al cierre del ciclo acumulaba ~20 h de latencia) y
+**`jobhunt.delivery.dispatch_outbox`** cada 5 min; `run_cycle` diario 06:05
+Europe/Zurich (tras el cierre del ciclo, §5). SOLO colas `core.*`.
+
+**Entrega sombra real (P1-1b)**: al arrancar, el worker registra el transporte
+`shadow/inbox.py` — INSERT síncrono e idempotente en `jobhunt.shadow_inbox`
+(core0009; PK consumer_id+event_id, ON CONFLICT DO NOTHING) — SOLO si nadie
+inyectó otro transporte. El transporte **real HTTP al inbox del BFF llega en
+Fase C** y sustituye a este por la misma costura (`delivery.set_transport`).
+Verificación: `SELECT consumer_id, count(*) FROM jobhunt.shadow_inbox GROUP BY 1;`
+crece con cada despacho con eventos pendientes; re-entregas no duplican filas.
 
 El beat va **EMBEBIDO** en el command del core-worker (`worker ... -B`,
 docker-compose.yml — decisión del propietario 2026-07-25): **ya no se arranca
@@ -154,8 +169,9 @@ Verificación (tras cualquier arranque/restart del worker):
 docker compose ps core-worker                                  # Up
 docker compose logs core-worker | grep -m1 "beat: Starting"    # beat vivo
 # En ≤ 5 min el beat despacha las cadencias de 5 min:
-docker compose logs core-worker | grep "Sending due task shadow-"
-# (shadow-sample-outbox-lag y shadow-check-slot-health; shadow-run-cycle a las 06:05)
+docker compose logs core-worker | grep -E "Sending due task (shadow-|delivery-)"
+# (shadow-sample-outbox-lag, shadow-check-slot-health, shadow-project y
+#  delivery-dispatch-outbox; shadow-run-cycle a las 06:05)
 ```
 
 **Liveness del muestreador**: si con el worker Up no aparecen samples nuevos

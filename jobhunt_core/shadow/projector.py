@@ -80,11 +80,18 @@ handle/_close en la misma tx acumulan locks de vacante de órdenes distintos
 propias txs. Cada tx sella el applied_at de SUS cambios: un crash a mitad
 deja el resto en NULL y el retry continúa sobre escrituras ya idempotentes
 (ON CONFLICT del sink, revisión/activación de perfiles reutilizadas,
-cierres con WHERE ended_at IS NULL, erase a base de DELETEs). La fila de
-`shadow_projection_batches` se escribe AL FINAL con las marcas del conjunto
-realmente aplicado: un crash antes de esa fila pierde SOLO la marca del
-lote — jamás datos — y B-04 debe tolerar lotes sin marca (ya tolerable:
-latencia_p95 es el p95 de los lotes EXISTENTES). SINGLE-FLIGHT: un
+cierres con WHERE ended_at IS NULL, erase a base de DELETEs). INTENCIÓN
+DURABLE del lote (P2-5, rev. externa parte 2): la fila de
+`shadow_projection_batches` se INSERTA al PLANIFICAR (first/last_lsn,
+min_received_at, started_at, changes; finished_at NULL, commit propio) y se
+FINALIZA (finished_at, revisions_new) en la MISMA tx que sella lo último
+del lote — un crash a mitad deja la intención ABIERTA, jamás invisible.
+RECUPERACIÓN: al entrar (bajo el single-flight — cualquier finished_at
+NULL es de una invocación MUERTA: solo un proyector corre a la vez) las
+intenciones huérfanas se cierran con finished_at=ahora y recovered=true —
+conservador: cuentan como lotes LENTOS en latencia_p95 (§5), el escenario
+del revisor (lote lento + crash ⇒ latencia invisible) ya no puede ocurrir.
+SINGLE-FLIGHT: un
 pg_advisory_lock de SESIÓN sobre conexión dedicada cubre TODA
 project_pending (incluido _after_batch); la invocación concurrente sale
 limpia con pg_try_advisory_lock ("ya en curso"), sin bloquear al worker.
@@ -203,7 +210,7 @@ async def project_pending(
     totals = {
         "status": "ok", "batches": 0, "changes": 0, "upserts": 0, "closes": 0,
         "erased": 0, "revisions_new": 0, "profiles_evaluated": 0,
-        "recovery_evaluated": 0,
+        "recovery_evaluated": 0, "batches_recovered": 0,
     }
     lock_engine = create_core_engine(
         poolclass=NullPool, isolation_level="AUTOCOMMIT"
@@ -251,6 +258,7 @@ async def _project_all(totals, batch_size, max_batches) -> None:
     sink = RawListingSink()
     evaluated: set = set()  # perfiles ya evaluados por _after_batch en ESTA invocación
     async with task_session_factory() as session_factory:
+        totals["batches_recovered"] = await _recover_orphan_batches(session_factory)
         async with session_factory() as session:
             await _register_known_legacy_sources(session)
         while max_batches is None or totals["batches"] < max_batches:
@@ -268,6 +276,33 @@ async def _project_all(totals, batch_size, max_batches) -> None:
         )
 
 
+async def _recover_orphan_batches(session_factory) -> int:
+    """P2-5: cierra las INTENCIONES de lote huérfanas (finished_at NULL) de
+    invocaciones MUERTAS. Corre bajo el single-flight — solo un proyector
+    vive a la vez, así que toda intención abierta al ENTRAR es de un crash:
+    se sella con finished_at=ahora y recovered=true. Conservador: el lote
+    cuenta como LENTO en latencia_p95 (finished_at real ≫ min_received_at) —
+    jamás desaparece del p95 (el escenario del revisor)."""
+    async with session_factory() as session:
+        ids = (
+            await session.execute(
+                sa.text(
+                    "UPDATE shadow_projection_batches "
+                    "SET finished_at = clock_timestamp(), recovered = true "
+                    "WHERE finished_at IS NULL RETURNING id"
+                )
+            )
+        ).scalars().all()
+        await session.commit()
+    if ids:
+        logger.warning(
+            "projector: %d intención(es) de lote huérfana(s) cerrada(s) como "
+            "recovered (P2-5) — cuentan como lotes LENTOS en latencia_p95",
+            len(ids),
+        )
+    return len(ids)
+
+
 async def _register_known_legacy_sources(session) -> None:
     names = (
         await session.execute(
@@ -279,15 +314,15 @@ async def _register_known_legacy_sources(session) -> None:
 
 
 async def _project_batch(session_factory, sink, batch_size: int) -> _BatchResult | None:
-    """UN lote = VARIAS transacciones: lectura+plan, una tx POR FUENTE (un
-    solo sink.handle o un solo ciclo de cierre por tx — invariante del sink),
-    perfiles y users en las suyas — cada una sella el applied_at de SUS
-    cambios — y el registro del lote AL FINAL. Devuelve None si no queda nada
-    pendiente."""
+    """UN lote = VARIAS transacciones: lectura+plan+INTENCIÓN durable (P2-5),
+    una tx POR FUENTE (un solo sink.handle o un solo ciclo de cierre por tx —
+    invariante del sink), perfiles y users en las suyas — cada una sella el
+    applied_at de SUS cambios — y la FINALIZACIÓN de la intención AL FINAL.
+    Devuelve None si no queda nada pendiente."""
     read = await _read_batch_and_plan(session_factory, batch_size)
     if read is None:
         return None
-    rows, started_at, jobs_by_pk, plans = read
+    rows, batch_id, jobs_by_pk, plans = read
     upserts, closes, job_revs = await _apply_jobs_by_source(
         session_factory, sink, plans, jobs_by_pk
     )
@@ -297,7 +332,7 @@ async def _project_batch(session_factory, sink, batch_size: int) -> _BatchResult
     erased = await _project_users_tx(session_factory, rows)
     affected -= erased
     await _finish_batch(
-        session_factory, rows, started_at, jobs_by_pk, plans, job_revs + prof_revs
+        session_factory, rows, batch_id, jobs_by_pk, plans, job_revs + prof_revs
     )
     return _BatchResult(
         changes=len(rows), upserts=upserts, closes=closes, erased=len(erased),
@@ -308,10 +343,13 @@ async def _project_batch(session_factory, sink, batch_size: int) -> _BatchResult
 
 
 async def _read_batch_and_plan(session_factory, batch_size: int) -> tuple | None:
-    """Tx de LECTURA: lote pendiente + plan de jobs. El plan no queda
+    """Tx de LECTURA + INTENCIÓN: lote pendiente, plan de jobs y la fila de
+    `shadow_projection_batches` COMMITEADA con finished_at NULL (P2-5:
+    intención DURABLE — si la invocación muere a mitad, la recuperación la
+    cierra como lote lento; jamás un lote invisible). El plan no queda
     obsoleto frente a las txs de aplicación que siguen: los slots/fuentes
     legacy:* solo los escribe este proyector (single-flight). Devuelve
-    (rows, started_at, jobs_by_pk, plans) o None sin pendientes."""
+    (rows, batch_id, jobs_by_pk, plans) o None sin pendientes."""
     async with session_factory() as session:
         rows = (
             await session.execute(
@@ -325,16 +363,15 @@ async def _read_batch_and_plan(session_factory, batch_size: int) -> tuple | None
         ).all()
         if not rows:
             return None
-        started_at = (
-            await session.execute(sa.text("SELECT clock_timestamp()"))
-        ).scalar_one()
         jobs_rows = [r for r in rows if r.src_table == "jobs"]
         folds = _fold_jobs(jobs_rows)
         plans = await _plan_jobs(session, folds) if folds else {}
+        batch_id = await _insert_batch_intent(session, rows)
+        await session.commit()  # la intención sobrevive a un crash posterior
     jobs_by_pk: dict[str, list] = {}
     for r in jobs_rows:
         jobs_by_pk.setdefault(r.pk, []).append(r)
-    return rows, started_at, jobs_by_pk, plans
+    return rows, batch_id, jobs_by_pk, plans
 
 
 async def _project_profiles_tx(session_factory, rows) -> tuple[set, int]:
@@ -362,10 +399,11 @@ async def _project_users_tx(session_factory, rows) -> set:
 
 
 async def _finish_batch(
-    session_factory, rows, started_at, jobs_by_pk, plans, revisions_new
+    session_factory, rows, batch_id, jobs_by_pk, plans, revisions_new
 ) -> None:
     """Cierre del lote: sella lo no cubierto por ningún plan (pks sin fuente
-    resoluble, cierres de jobs jamás proyectados) y escribe la marca."""
+    resoluble, cierres de jobs jamás proyectados) y FINALIZA la intención
+    (finished_at + contadores) en la MISMA tx que ese último sellado (P2-5)."""
     covered = {pk for p in plans.values() for pk, _f in p["upserts"]}
     covered |= {pk for p in plans.values() for pk in p["closes"]}
     leftover = [
@@ -376,7 +414,7 @@ async def _finish_batch(
     ]
     async with session_factory() as session:
         await _seal_rows(session, leftover)
-        await _record_batch(session, rows, started_at, revisions_new)
+        await _finalize_batch(session, batch_id, revisions_new)
         await session.commit()
 
 
@@ -395,25 +433,37 @@ async def _seal_rows(session, rows) -> None:
     )
 
 
-async def _record_batch(session, rows, started_at, revisions_new) -> None:
-    """Marca del lote (fuente de latencia_p95, §5) con el conjunto realmente
-    aplicado — AL FINAL, tras las txs por fuente/perfiles/users. Un crash
-    antes de esta fila pierde SOLO la marca del lote (los datos ya quedaron
-    aplicados y sellados tx a tx y el retry no los re-lee): B-04 debe tolerar
-    lotes sin marca — ya tolerable, latencia_p95 es el p95 de los lotes
-    EXISTENTES en shadow_projection_batches."""
+async def _insert_batch_intent(session, rows) -> uuid.UUID:
+    """INTENCIÓN durable del lote (P2-5, fuente de latencia_p95 §5): fila
+    insertada AL PLANIFICAR con todo lo ya conocido (lsns, min_received_at,
+    started_at=ahora, changes) y finished_at NULL — el commit lo hace el
+    llamador. Un crash posterior la deja abierta y la recuperación la
+    cierra como recovered (lote LENTO visible), jamás la pierde."""
+    return (
+        await session.execute(
+            sa.text(
+                "INSERT INTO shadow_projection_batches "
+                "(first_lsn, last_lsn, min_received_at, started_at, changes) "
+                "VALUES (:f, :l, :m, clock_timestamp(), :c) RETURNING id"
+            ),
+            {
+                "f": rows[0].lsn, "l": rows[-1].lsn,
+                "m": min(r.received_at for r in rows), "c": len(rows),
+            },
+        )
+    ).scalar_one()
+
+
+async def _finalize_batch(session, batch_id, revisions_new) -> None:
+    """Finalización de la intención — SIEMPRE en la MISMA tx que el último
+    sellado del lote (P2-5): finished_at + revisions_new reales."""
     await session.execute(
         sa.text(
-            "INSERT INTO shadow_projection_batches "
-            "(first_lsn, last_lsn, min_received_at, started_at, finished_at, "
-            " changes, revisions_new) "
-            "VALUES (:f, :l, :m, :st, clock_timestamp(), :c, :r)"
+            "UPDATE shadow_projection_batches "
+            "SET finished_at = clock_timestamp(), revisions_new = :r "
+            "WHERE id = :i"
         ),
-        {
-            "f": rows[0].lsn, "l": rows[-1].lsn,
-            "m": min(r.received_at for r in rows), "st": started_at,
-            "c": len(rows), "r": revisions_new,
-        },
+        {"i": batch_id, "r": revisions_new},
     )
 
 
@@ -1144,9 +1194,9 @@ async def _replay_after_batch(session_factory, evaluated: set) -> int:
     evaluaciones sin disparar y SIN rastro en el change_log (ya sellado).
 
     Va TRAS el drenado para que su duración jamás entre en
-    finished_at − min_received_at de ningún lote: las marcas se escriben en
-    _record_batch antes de llegar aquí y latencia_p95 (§5) mide la
-    proyección, no la recuperación.
+    finished_at − min_received_at de ningún lote: las intenciones se
+    finalizan en _finalize_batch antes de llegar aquí y latencia_p95 (§5)
+    mide la proyección, no la recuperación.
 
     Los embeddings pendientes se drenan SIEMPRE (run_pending sin pendientes
     es un no-op real); la evaluación NO es incondicional: solo los perfiles

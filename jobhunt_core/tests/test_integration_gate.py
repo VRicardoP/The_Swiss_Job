@@ -421,7 +421,8 @@ def _seed_metric(factory, cycle, metric, scope, value, details=None, sealed=True
 def _seed_green_cycle(factory, cycle, scope="profile:aaaa"):
     """Ciclo TODO en verde con los umbrales RATIFICADOS de §6: ndcg 0.90 >=
     max(0.60, 0.70−0.05); fn 0 en modo estricto; dedup 1.0; perdida 0;
-    outbox 10 <= 300; latencia 20 <= 600; alertas en reposo."""
+    outbox 10 <= 300; outbox_dead 0 (P2-6); latencia 20 <= 600; alertas en
+    reposo."""
     rows = [
         ("ndcg@10", scope, 0.90, {}),
         ("ndcg@10_legacy", scope, 0.70, {}),
@@ -433,6 +434,7 @@ def _seed_green_cycle(factory, cycle, scope="profile:aaaa"):
         ("perdida", "global", 0, {}),
         ("no_ingeribles", "global", 0, {}),
         ("outbox_lag_p99", "global", 10.0, {"samples_count": 5, "no_data": False}),
+        ("outbox_dead", "global", 0, {"dead_actual": 0}),  # P2-6: sin dead
         ("latencia_p95", "global", 20.0, {"lotes": 3}),
         ("coste", "global", 5.0, {}),
         ("reenlace_pct", "global", 0.0, {}),
@@ -647,13 +649,17 @@ def test_tasks_registered_beat_cadences_and_core_queues(db):
         "queue": "core.default"
     }
 
-    # Cadencias B-05 en el beat (ajustables por settings): muestreador y
-    # salud del slot cada 5 min; run_cycle diario 06:05 Europe/Zurich.
+    # Cadencias B-05 + P1-1 en el beat (ajustables por settings): muestreador,
+    # salud del slot, PROYECTOR y despacho del outbox cada 5 min (P1-1: la
+    # proyección/entrega solo al cierre del ciclo hacía imposible
+    # latencia_p95<=600s); run_cycle diario 06:05 Europe/Zurich.
     by_task = {
         e["task"]: e for e in celery_app.conf.beat_schedule.values()
     }
     assert by_task["jobhunt.shadow.sample_outbox_lag"]["schedule"] == 300.0
     assert by_task["jobhunt.shadow.check_slot_health"]["schedule"] == 300.0
+    assert by_task["jobhunt.shadow.project"]["schedule"] == 300.0
+    assert by_task["jobhunt.delivery.dispatch_outbox"]["schedule"] == 300.0
     cron = by_task["jobhunt.shadow.run_cycle"]["schedule"]
     assert cron.hour == {6} and cron.minute == {5}
     assert celery_app.conf.timezone == "Europe/Zurich"

@@ -869,20 +869,23 @@ def test_perdida_quarantine_frontier_matches_sink(db):
 
 def test_sampler_appends_and_p99_exact(db):
     factory = db
-    # Delivery pending con 100 s de edad: oldest_pending_s ≈ 100.
+    # EVENTO no entregado con 100 s de edad (P2-6: el lag es la edad del
+    # evento — integration_outbox.created_at —, no el próximo reintento):
+    # oldest_pending_s ≈ 100 aunque next_attempt_at esté en el FUTURO.
     eid = uuid.uuid4()
     _exec(
         factory,
         "INSERT INTO integration_outbox (event_id, aggregate, aggregate_id, "
-        "version, type, payload) VALUES (:e, 'match_evaluation', 'k', 1, "
-        "'match.evaluated', CAST('{}' AS jsonb))",
+        "version, type, payload, created_at) VALUES (:e, 'match_evaluation', "
+        "'k', 1, 'match.evaluated', CAST('{}' AS jsonb), "
+        "clock_timestamp() - make_interval(secs => 100))",
         {"e": eid},
     )
     _exec(
         factory,
         "INSERT INTO integration_outbox_deliveries (event_id, destination, "
-        "next_attempt_at) VALUES (:e, 'bff', clock_timestamp() - "
-        "make_interval(secs => 100))",
+        "next_attempt_at) VALUES (:e, 'bff', clock_timestamp() + "
+        "make_interval(secs => 300))",
         {"e": eid},
     )
 
@@ -897,6 +900,7 @@ def test_sampler_appends_and_p99_exact(db):
     assert r1["cycle_id"] == CYCLE.isoformat()
     assert r1["samples"] == 1
     assert 99 <= r1["oldest_pending_s"] <= 110
+    assert r1["dead_total"] == 0  # P2-6: cada sample lleva dead_total
     r2 = _run(sample(t0 + timedelta(minutes=5)))
     assert r2["samples"] == 2  # appendea, no pisa
 
@@ -904,6 +908,7 @@ def test_sampler_appends_and_p99_exact(db):
     assert float(row.value) == metrics.NO_DATA_VALUE  # aún sin computar
     assert len(row.details["samples"]) == 2
     assert row.details["samples"][0]["ts"].startswith("2026-07-20T")
+    assert row.details["samples"][0]["dead_total"] == 0
 
     # p99 EXACTO (percentile_cont): samples deterministas [100, 200, 300, 400]
     # → 0.99·3 = 2.97 → 300 + 0.97·100 = 397.0.
@@ -935,6 +940,54 @@ def test_outbox_lag_without_samples_is_no_data_and_gate_fails(db):
     assert row.details["no_data"] is True
     g = _gates(factory)["outbox_lag_p99"]
     assert g["value"] is None and g["ok"] is False and g["nota"] == "sin datos"
+    # outbox_dead SIEMPRE es computable (conteo actual): sin dead ⇒ 0, verde.
+    dead = _metric_row(factory, "outbox_dead")
+    assert float(dead.value) == 0
+    assert _gates(factory)["outbox_dead"]["ok"] is True
+
+
+# ------------------------------------------------------- outbox_dead (P2-6)
+
+
+def test_outbox_dead_gate_red_on_dead_letter(db):
+    """Regresión P2-6 (rev. externa parte 2): un evento en DEAD-LETTER
+    durante el ciclo pone `outbox_dead` en ROJO — vía muestreador (sample
+    con dead_total) Y vía conteo actual al cómputo (dead es terminal)."""
+    factory = db
+    eid = uuid.uuid4()
+    _exec(
+        factory,
+        "INSERT INTO integration_outbox (event_id, aggregate, aggregate_id, "
+        "version, type, payload) VALUES (:e, 'match_evaluation', 'k', 1, "
+        "'match.evaluated', CAST('{}' AS jsonb))",
+        {"e": eid},
+    )
+    _exec(
+        factory,
+        "INSERT INTO integration_outbox_deliveries (event_id, destination, "
+        "state, attempts, last_error) VALUES (:e, 'bff', 'dead', 8, 'boom')",
+        {"e": eid},
+    )
+
+    async def sample(now):
+        async with factory() as s:
+            r = await metrics.sample_outbox_lag(s, now=now)
+            await s.commit()
+            return r
+
+    r = _run(sample(CSTART + timedelta(hours=2)))
+    assert r["dead_total"] == 1  # el sample lo capturó dentro del ciclo
+
+    _compute(factory)
+    row = _metric_row(factory, "outbox_dead")
+    assert float(row.value) == 1
+    assert row.details["dead_actual"] == 1
+    assert row.details["dead_max_muestras"] == 1
+    g = _gates(factory)["outbox_dead"]
+    assert g["kind"] == "gate" and g["ok"] is False  # ROJO: resetea la racha
+    # dead NO cuenta en el lag (no es pending/inflight): métricas separadas.
+    lag = _metric_row(factory, "outbox_lag_p99")
+    assert lag.details["samples"][0]["oldest_pending_s"] == 0.0
 
 
 def test_recompute_after_purge_preserves_sealed_p99(db):
@@ -1313,6 +1366,7 @@ def test_evaluate_gates_ok_and_failed_with_forced_values(db):
         ("perdida", "global", 1, {}),                             # FALLO (==0)
         ("no_ingeribles", "global", 2, {}),                       # ALERTA (>0)
         ("outbox_lag_p99", "global", 299.0, {"samples_count": 9}),  # OK
+        ("outbox_dead", "global", 1, {"dead_actual": 1}),           # FALLO (P2-6)
         ("latencia_p95", "global", 700.0, {"lotes": 4}),            # FALLO
         ("coste", "global", 1234.0, {}),                            # informativa
         ("reenlace_pct", "global", 0.06, {}),                       # ALERTA
@@ -1339,6 +1393,9 @@ def test_evaluate_gates_ok_and_failed_with_forced_values(db):
         "value": 2.0, "umbral": 0, "kind": "alerta", "ok": False,
     }
     assert gates["outbox_lag_p99"]["ok"] is True
+    assert gates["outbox_dead"] == {
+        "value": 1.0, "umbral": 0, "kind": "gate", "ok": False,  # P2-6
+    }
     assert gates["latencia_p95"]["ok"] is False
     assert gates["coste"] == {
         "value": 1234.0, "umbral": None, "kind": "alerta", "ok": True,
@@ -1350,7 +1407,7 @@ def test_evaluate_gates_ok_and_failed_with_forced_values(db):
     assert empty["ndcg@10"]["ok"] is False
     assert "sin perfiles" in empty["ndcg@10"]["nota"]
     for m in ("labels_ready", "dedup_precision", "dedup_recall", "perdida",
-              "outbox_lag_p99", "latencia_p95"):
+              "outbox_lag_p99", "outbox_dead", "latencia_p95"):
         assert empty[m]["ok"] is False and empty[m]["nota"] == "sin datos"
     for m in ("no_ingeribles", "coste", "reenlace_pct"):
         assert empty[m]["ok"] is True and empty[m]["nota"] == "sin datos"
@@ -1377,6 +1434,7 @@ def test_render_report_is_readable_text(db):
     )
     _seed_metric(factory, cyc, "no_ingeribles", "global", 0, {})
     _seed_metric(factory, cyc, "outbox_lag_p99", "global", 12.0, {})
+    _seed_metric(factory, cyc, "outbox_dead", "global", 0, {"dead_actual": 0})
     _seed_metric(factory, cyc, "latencia_p95", "global", 38.5, {})
     _seed_metric(
         factory, cyc, "coste", "global", 12.5,
@@ -1397,13 +1455,14 @@ def test_render_report_is_readable_text(db):
     assert "[2026-07-01T06:00:00+02:00 .. 2026-07-02T06:00:00+02:00)" in text
     for needle in (
         f"ndcg@10::{p1}", "overlap@10", "labels_ready", "dedup_precision",
-        "perdida", "outbox_lag_p99", "latencia_p95", "coste", "reenlace_pct",
+        "perdida", "outbox_lag_p99", "outbox_dead", "latencia_p95", "coste",
+        "reenlace_pct",
     ):
         assert needle in text
     # ndcg 0.70 < 0.75 falla: el único gate en rojo de este ciclo forzado
-    # (gates: ndcg + falsos_negativos del perfil + 6 globales = 8, con
-    # labels_ready — P1-2 — incluido).
-    assert "CICLO NO APTO: 1/8" in text
+    # (gates: ndcg + falsos_negativos del perfil + 7 globales = 9, con
+    # labels_ready — P1-2 — y outbox_dead — P2-6 — incluidos).
+    assert "CICLO NO APTO: 1/9" in text
     assert "alertas activas: 0" in text
     assert "perdida = 5 legacy vivos - 5 slots activos + 0 staging" in text
     assert "coste = 2 embeddings + 3 evaluaciones + 7.5s de worker" in text

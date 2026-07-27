@@ -431,7 +431,8 @@ def caplog_at_error():
 
 def test_stats_expose_lag_and_states(db):
     """2ª rev. A-10 (GATE A / ADR-06: monitorizar lag + dead-letter):
-    conteos por estado y edad del pending más antiguo."""
+    conteos por estado, edad del evento no entregado más viejo (P2-6) y
+    dead_total."""
     factory, created = db
     pid, vacs = _setup_evaluated(factory, created)
 
@@ -442,6 +443,7 @@ def test_stats_expose_lag_and_states(db):
     st = asyncio.run(get_stats())
     assert st["by_state"].get("pending", 0) >= 2
     assert st["oldest_pending_s"] >= 0.0
+    assert st["dead_total"] == 0
 
     inbox = FakeInbox()
     delivery.set_transport(inbox.transport)
@@ -451,10 +453,190 @@ def test_stats_expose_lag_and_states(db):
         delivery.set_transport(None)
     st = asyncio.run(get_stats())
     assert st["by_state"].get("delivered", 0) >= 2
+    # Todo entregado: sin eventos pending/inflight la edad vuelve a 0.
+    assert st["oldest_pending_s"] == 0.0
+
+
+def _stats(factory):
+    async def go():
+        async with factory() as s:
+            return await delivery.stats(s)
+
+    return asyncio.run(go())
+
+
+def test_stats_lag_is_event_age_never_next_retry(db, monkeypatch):
+    """Regresión P2-6 (rev. externa parte 2): una entrega FALLIDA con
+    `next_attempt_at` en el FUTURO (backoff) debe dar un lag POSITIVO y
+    CRECIENTE — la edad del EVENTO. La métrica anterior medía
+    clock_timestamp() − next_attempt_at: negativa justo cuando el evento
+    envejecía esperando su reintento (el escenario del revisor)."""
+    import time as time_mod
+
+    factory, created = db
+    pid, vacs = _setup_evaluated(factory, created, titles=("backend python",))
+    # Fallo real por la maquinaria: backoff deja next_attempt_at en el futuro.
+    monkeypatch.setattr(delivery, "BACKOFF_BASE_S", 3600)
+    inbox = FakeInbox(fail_times=10**6)
+    delivery.set_transport(inbox.transport)
+    try:
+        r = _dispatch()
+        assert r["failed"] == 1
+    finally:
+        delivery.set_transport(None)
+    row = _rows(
+        factory,
+        "SELECT d.state, d.next_attempt_at > clock_timestamp() AS future "
+        "FROM integration_outbox_deliveries d "
+        "JOIN integration_outbox o ON o.event_id = d.event_id "
+        "WHERE o.subject_profile_id = :p", p=pid,
+    )[0]
+    assert (row.state, row.future) == ("pending", True)  # reintento FUTURO
+
+    st1 = _stats(factory)
+    assert st1["oldest_pending_s"] > 0.0  # jamás negativo ni aplanado
+    time_mod.sleep(0.2)
+    st2 = _stats(factory)
+    assert st2["oldest_pending_s"] > st1["oldest_pending_s"]  # CRECE
+
+    # inflight también cuenta (evento sin entregar): un claim colgado no
+    # saca el evento de la medición.
+    async def to_inflight():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "UPDATE integration_outbox_deliveries "
+                    "SET state = 'inflight', lease = clock_timestamp() + "
+                    "make_interval(secs => 120) WHERE event_id IN ("
+                    "SELECT event_id FROM integration_outbox "
+                    "WHERE subject_profile_id = :p)"
+                ),
+                {"p": pid},
+            )
+            await s.commit()
+
+    asyncio.run(to_inflight())
+    st3 = _stats(factory)
+    assert st3["oldest_pending_s"] > 0.0
+
+
+def test_stats_dead_total_counts_dead_letters(db, monkeypatch):
+    """Regresión P2-6: un evento en DEAD-LETTER aparece en dead_total (la
+    fuente del gate `outbox_dead` de §6) y deja de contar en el lag."""
+    factory, created = db
+    pid, vacs = _setup_evaluated(factory, created, titles=("backend python",))
+    monkeypatch.setattr(delivery, "MAX_ATTEMPTS", 1)
+    monkeypatch.setattr(delivery, "BACKOFF_BASE_S", 0)
+    inbox = FakeInbox(fail_times=10**6)
+    delivery.set_transport(inbox.transport)
+    try:
+        r = _dispatch()
+        assert r["dead"] == 1
+    finally:
+        delivery.set_transport(None)
+    st = _stats(factory)
+    assert st["dead_total"] == 1
+    assert st["by_state"].get("dead") == 1
+    assert st["oldest_pending_s"] == 0.0  # dead no es pending/inflight
+
+
+# --------------------------------- transporte sombra REAL (P1-1b, §8 Fase B)
+
+
+def test_shadow_inbox_transport_persistent_idempotent_at_least_once(db):
+    """P1-1b (decisión delegada [EJECUTADA]): el transporte de producción de
+    la sombra entrega al inbox PERSISTENTE jobhunt.shadow_inbox con INSERT
+    ON CONFLICT DO NOTHING — at-least-once real (el transporte corre otra
+    vez en la re-entrega) + consumo idempotente demostrado EN CONTINUO. El
+    registro de arranque de worker jamás pisa un transporte ya inyectado."""
+    from jobhunt_core.shadow import inbox as shadow_inbox
+    from jobhunt_core.tasks.delivery import register_shadow_inbox_transport
+
+    factory, created = db
+    pid, vacs = _setup_evaluated(factory, created)
+
+    # Con transporte YA inyectado, register_if_unset NO pisa (tests/Fase C).
+    injected = FakeInbox()
+    injected_fn = injected.transport  # bound method FIJO (is-comparable)
+    delivery.set_transport(injected_fn)
+    try:
+        assert shadow_inbox.register_if_unset() is False
+        assert delivery.get_transport() is injected_fn
+    finally:
+        delivery.set_transport(None)
+
+    # Arranque del worker (señal worker_process_init): registra el sombra.
+    register_shadow_inbox_transport()
+    assert delivery.get_transport() is shadow_inbox.shadow_inbox_transport
+    try:
+        r = _dispatch()
+        assert r["delivered"] == 2
+        rows = _rows(
+            factory,
+            "SELECT consumer_id, event_id, payload FROM shadow_inbox "
+            "WHERE payload->>'subject_profile_id' = :p", p=str(pid),
+        )
+        assert len(rows) == 2
+        for row in rows:
+            assert row.consumer_id == "tenant-match"
+            assert row.payload["event_id"] == str(row.event_id)
+            assert row.payload["type"] == "match.evaluated"
+            assert set(row.payload["payload"]) == {
+                "eval_key", "profile_id", "vacancy_id",
+            }
+
+        # RE-ENTREGA forzada (ack perdido): el transporte corre OTRA vez y
+        # el inbox PERSISTENTE desduplica por PK(consumer_id, event_id).
+        async def reset():
+            async with factory() as s:
+                await s.execute(
+                    sa.text(
+                        "UPDATE integration_outbox_deliveries "
+                        "SET state = 'pending', next_attempt_at = clock_timestamp() "
+                        "WHERE event_id IN (SELECT event_id FROM integration_outbox "
+                        "WHERE subject_profile_id = :p)"
+                    ),
+                    {"p": pid},
+                )
+                await s.commit()
+
+        asyncio.run(reset())
+        assert _dispatch()["delivered"] == 2  # at-least-once real
+        n = _rows(
+            factory,
+            "SELECT count(*) AS n FROM shadow_inbox "
+            "WHERE payload->>'subject_profile_id' = :p", p=str(pid),
+        )[0].n
+        assert n == 2  # cero duplicados: idempotente y PERSISTENTE
+    finally:
+        delivery.set_transport(None)
+
+        async def cleanup():
+            async with factory() as s:
+                await s.execute(
+                    sa.text(
+                        "DELETE FROM shadow_inbox "
+                        "WHERE payload->>'subject_profile_id' = :p"
+                    ),
+                    {"p": str(pid)},
+                )
+                await s.commit()
+
+        asyncio.run(cleanup())
 
 
 def test_delivery_task_registered_and_routed():
     from jobhunt_core.celery_app import celery_app
+    from jobhunt_core.config import settings as core_settings
 
     assert "jobhunt.delivery.dispatch_outbox" in celery_app.tasks
     assert celery_app.conf.task_routes["jobhunt.delivery.*"] == {"queue": "core.default"}
+    assert celery_app.conf.task_routes["jobhunt.delivery.dispatch_outbox"] == {
+        "queue": "core.default"
+    }
+    # P1-1: el despacho va en el beat (cada 5 min) — sin cadencia, la
+    # entrega sombra sería un no-op permanente.
+    by_task = {e["task"]: e for e in celery_app.conf.beat_schedule.values()}
+    assert by_task["jobhunt.delivery.dispatch_outbox"]["schedule"] == float(
+        core_settings.CORE_DELIVERY_DISPATCH_EVERY_S
+    )

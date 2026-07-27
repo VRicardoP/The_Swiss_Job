@@ -30,8 +30,12 @@ celery_app.conf.update(
         "jobhunt.embedding.*": {"queue": "core.embedding"},
         "jobhunt.matching.*": {"queue": "core.matching"},
         "jobhunt.notifications.*": {"queue": "core.notifications"},
-        # Despacho del outbox (A-10): cola general del core.
+        # Despacho del outbox (A-10): cola general del core. La entrada
+        # EXPLÍCITA de dispatch_outbox existe porque la tarea va en el beat
+        # (P1-1) y el invariante "todo lo del beat rutea a core.*" se
+        # verifica por nombre exacto.
         "jobhunt.delivery.*": {"queue": "core.default"},
+        "jobhunt.delivery.dispatch_outbox": {"queue": "core.default"},
         # Proyector de la sombra (B-02, contrato §3): comparte la cola de
         # cosecha — es ingesta, y serializa con los locks del sink.
         "jobhunt.shadow.project": {"queue": "core.harvest"},
@@ -73,6 +77,20 @@ celery_app.conf.update(
                 hour=settings.CORE_SHADOW_RUN_CYCLE_HOUR,
                 minute=settings.CORE_SHADOW_RUN_CYCLE_MINUTE,
             ),
+        },
+        # P1-1 (rev. externa parte 2): proyector y despacho del outbox EN
+        # CADENCIA (5 min) — la proyección/entrega solo al cierre del ciclo
+        # (06:05) producía lotes con ~20h de latencia: latencia_p95<=600s y
+        # outbox_lag_p99<=300s (§6) eran imposibles. El single-flight del
+        # proyector tolera solapes (already_running sale limpio) y el
+        # dispatcher usa SKIP LOCKED: varios beats no se pisan.
+        "shadow-project": {
+            "task": "jobhunt.shadow.project",
+            "schedule": float(settings.CORE_SHADOW_PROJECT_EVERY_S),
+        },
+        "delivery-dispatch-outbox": {
+            "task": "jobhunt.delivery.dispatch_outbox",
+            "schedule": float(settings.CORE_DELIVERY_DISPATCH_EVERY_S),
         },
     },
 )

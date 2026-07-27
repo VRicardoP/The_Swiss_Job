@@ -4,17 +4,37 @@ Convención del repo: `def` + asyncio.run(_impl()). El claim es transaccional
 (SKIP LOCKED + lease + attempts); el transporte corre FUERA de la transacción
 del claim y los marks van en lotes. Sin transporte configurado los eventos se
 conservan pending sin consumir intentos.
+
+P1-1 (rev. externa parte 2): en el ARRANQUE del worker (señal
+worker_process_init — cada proceso del pool, jamás en tests con `.apply()`)
+se registra el transporte SOMBRA (shadow/inbox.py → jobhunt.shadow_inbox)
+SOLO si nadie inyectó otro: la entrega deja de ser un no-op permanente en
+Fase B, y los tests siguen inyectando el suyo con set_transport. La cadencia
+(beat cada 5 min) vive en celery_app.py.
 """
 
 import asyncio
 import logging
 from typing import Any
 
+from celery.signals import worker_process_init
+
 from jobhunt_core import delivery
 from jobhunt_core.celery_app import celery_app
 from jobhunt_core.database import task_session_factory
 
 logger = logging.getLogger(__name__)
+
+
+@worker_process_init.connect
+def register_shadow_inbox_transport(**_kwargs) -> None:
+    """Arranque del worker: transporte sombra por defecto (P1-1b, §8).
+
+    `register_if_unset` respeta cualquier transporte YA inyectado (tests,
+    o el HTTP real que llega en Fase C)."""
+    from jobhunt_core.shadow import inbox
+
+    inbox.register_if_unset()
 
 
 @celery_app.task(name="jobhunt.delivery.dispatch_outbox", bind=True, max_retries=1)

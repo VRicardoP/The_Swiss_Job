@@ -10,7 +10,10 @@
   `set_transport(fn)` con fn(destination, event_dict) síncrono que lanza si
   falla; la implementación real (HTTP al inbox del BFF) llega con el cutover
   de Fase C — sin transporte configurado los pendientes se conservan SIN
-  consumir intentos.
+  consumir intentos. En Fase B el worker registra al arrancar el transporte
+  SOMBRA (shadow/inbox.py → jobhunt.shadow_inbox, P1-1b) SOLO si nadie
+  inyectó otro: entrega real y continua sin efectos visibles (§8 del
+  contrato de Fase B).
 """
 
 import logging
@@ -195,8 +198,18 @@ async def mark_failed(session, fails: list, lease_token) -> dict:
 
 
 async def stats(session) -> dict:
-    """Observabilidad del GATE A (ADR-06: monitorizar lag + dead-letter):
-    conteos por estado + edad del pending más antiguo (segundos)."""
+    """Observabilidad del GATE A/B (ADR-06: monitorizar lag + dead-letter):
+    conteos por estado + edad del EVENTO no entregado más viejo + dead_total.
+
+    P2-6 (rev. externa parte 2): `oldest_pending_s` mide la EDAD DEL EVENTO
+    (`clock_timestamp() − integration_outbox.created_at` del más viejo en
+    pending E inflight), no la distancia a `next_attempt_at` — aquello medía
+    el PRÓXIMO reintento (negativo con backoff futuro: un fallo con
+    next_attempt_at en el futuro APLANABA el lag justo cuando crecía).
+    Jamás negativa (GREATEST 0) y monótona mientras el evento siga sin
+    entregar. El nombre de la clave se conserva (§5: fórmula actualizada en
+    el contrato; los samples históricos del muestreador siguen agregables).
+    `dead_total` alimenta el gate nuevo `outbox_dead` (§6)."""
     counts = {
         r.state: r.n
         for r in (
@@ -211,15 +224,18 @@ async def stats(session) -> dict:
     oldest = (
         await session.execute(
             sa.text(
-                "SELECT EXTRACT(EPOCH FROM clock_timestamp() - "
-                "MIN(COALESCE(next_attempt_at, clock_timestamp()))) "
-                "FROM integration_outbox_deliveries WHERE state = 'pending'"
+                "SELECT GREATEST(EXTRACT(EPOCH FROM clock_timestamp() - "
+                "MIN(o.created_at)), 0) "
+                "FROM integration_outbox_deliveries d "
+                "JOIN integration_outbox o ON o.event_id = d.event_id "
+                "WHERE d.state IN ('pending', 'inflight')"
             )
         )
     ).scalar_one_or_none()
     return {
         "by_state": counts,
         "oldest_pending_s": float(oldest) if oldest is not None else 0.0,
+        "dead_total": int(counts.get("dead", 0)),
     }
 
 
