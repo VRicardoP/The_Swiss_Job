@@ -11,7 +11,8 @@
 - **Backend**: FastAPI + Celery + PostgreSQL (pgvector) + Redis
 - **Frontend**: React + TailwindCSS v4 + Vite
 - **Workers**: Celery — cosecha diaria autónoma (fetch→scrape→embed→dedup→match a hora variable con jitter, `SCHEDULER_DAILY_HARVEST_ENABLED`) o, en modo intervalos, providers/scraping cada 6h; + alerta profesor cada 6h
-- **Core (Fase A)**: paquete `jobhunt_core/` — API v1 FastAPI (`core-api`, puerto 8003), `core-worker` Celery (tareas `jobhunt.*`, broker `redis-core`, colas `core.*`), migraciones propias vía `core-migrate`
+- **Core (Fase A)**: paquete `jobhunt_core/` — API v1 FastAPI (`core-api`, puerto 8003), `core-worker` Celery (tareas `jobhunt.*`, broker `redis-core`, colas `core.*`, **beat embebido** `-B`: sampler/salud del slot cada 5 min + ciclo sombra 06:05), migraciones propias vía `core-migrate` (cadena `core0001..core0008b`)
+- **Sombra (Fase B, SOLO LOCAL)**: CDC legacy→core por slot lógico `jobhunt_shadow` (postgres custom `docker/postgres-core/` con wal2json, `wal_level=logical`) → servicio `core-capture` (staging con ack tras commit) → proyector → métricas y GATE-SOMBRA (7 ciclos). Módulos `jobhunt_core/shadow/`; operación: `jobhunt_core/shadow/RUNBOOK.md`
 - **Documentación de referencia**: core → `PLAN_UNIFICACION_JOBHUNTING.md` (§23–§24) y `CONTRATOS_FASE_A.md` en `/home/lothar/Public/`; legacy → `docs/`
 
 ---
