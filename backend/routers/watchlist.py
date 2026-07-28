@@ -6,26 +6,25 @@ Cubre:
 - Exportación de eventos de calendario (.ics) (GET /calendar.ics)
 - Listado de colegios vigilados con metadata (GET /schools)
 
-A.SEAM (plan §15bis): este router queda ENTERO en local en esta etapa —
-son escrituras del state machine y lecturas de estado escrito localmente
-(status/draft/calendar sobre MatchResult), cuyo escritor autoritativo sigue
-siendo el legacy hasta Fase C (cambio de escritor con idempotency key —
-cota registrada, no implementada). Solo las lecturas del FEED van por la
-costura (routers/match.py + services/matching).
+A.SEAM (plan §15bis): el state machine de candidatura (status/draft sobre
+MatchResult) consume la capacidad CANDIDATURAS (services/applications) y el
+listado la capacidad COLEGIOS (services/schools), ambas a traves de su
+costura. El /v1 del core NO expone ninguna de las dos (cota fijada por
+contract test) y su UNICO escritor es LOCAL: por el criterio unificador se
+sirven de local en TODOS los modos, incluida core_primary — aquí no hay
+501/503 por routing. La generación LLM del borrador y la presentación .ics
+siguen en el router (orquestación, no estado).
 """
 
 import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.rate_limit import limiter
 from core.security import get_current_user
 from database import get_db
-from models.job import Job
-from models.match_result import MatchResult
 from models.user import User
 from schemas.match import (
     ApplicationStatusRequest,
@@ -33,12 +32,11 @@ from schemas.match import (
     GenerateDraftRequest,
     GenerateDraftResponse,
 )
-from scrapers.swiss_schools_config import (
-    SCHOOLS,
-    resolve_school_from_job,
-)
+from scrapers.swiss_schools_config import resolve_school_from_job
+from services.applications import resolve_applications
 from services.groq_service import GroqService
 from services.letter_generator import generate_draft_letter
+from services.schools import resolve_schools
 
 logger = logging.getLogger(__name__)
 
@@ -54,26 +52,13 @@ def _get_groq(request: Request) -> GroqService:
 
 
 @router.get("/schools")
-async def list_schools(current_user: User = Depends(get_current_user)):
+async def list_schools(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Devuelve la lista de colegios vigilados con metadata pública."""
-    return {
-        "schools": [
-            {
-                "id": s.id,
-                "name": s.name,
-                "city": s.city,
-                "group_tier": s.group_tier,
-                "policy": s.policy,
-                "contact_email": s.contact_email,
-                "contact_name": s.contact_name,
-                "template_id": s.template_id,
-                "application_url": s.application_url,
-                "careers_url": s.careers_url,
-                "notes": s.notes,
-            }
-            for s in SCHOOLS
-        ]
-    }
+    schools = await resolve_schools(db, current_user.id)
+    return await schools.list()
 
 
 # ── State machine de candidatura ───────────────────────────────────────────
@@ -87,20 +72,15 @@ async def update_application_status(
     db: AsyncSession = Depends(get_db),
 ):
     """Actualiza el estado de la candidatura en el state machine."""
-    stmt = select(MatchResult).where(
-        MatchResult.user_id == current_user.id,
-        MatchResult.job_hash == job_hash,
+    applications = await resolve_applications(db, current_user.id)
+    updated = await applications.set_match_status(
+        current_user.id, job_hash, body.application_status
     )
-    match = (await db.execute(stmt)).scalar_one_or_none()
-    if match is None:
+    if not updated:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Match result not found",
         )
-
-    match.application_status = body.application_status
-    match.application_status_at = datetime.now(timezone.utc)
-    await db.commit()
 
     return ApplicationStatusResponse(
         status="success",
@@ -126,22 +106,15 @@ async def generate_draft(
     Si el job no pertenece a un colegio de la watchlist devuelve 400.
     El borrador se persiste en MatchResult.draft_letter.
     """
-    # Cargar match + job
-    stmt = (
-        select(MatchResult, Job)
-        .join(Job, Job.hash == MatchResult.job_hash)
-        .where(
-            MatchResult.user_id == current_user.id,
-            MatchResult.job_hash == job_hash,
-        )
-    )
-    row = (await db.execute(stmt)).one_or_none()
+    # Cargar match + job (estado de candidatura, via costura)
+    applications = await resolve_applications(db, current_user.id)
+    row = await applications.get_match(current_user.id, job_hash)
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Match result not found",
         )
-    match, job = row
+    _match, job = row
 
     # Identificar colegio
     school = resolve_school_from_job(job)
@@ -166,13 +139,13 @@ async def generate_draft(
         template_id=template_id,
     )
 
-    match.draft_letter = draft
-    # Si está en "detected" o "reviewed", avanzar a "drafted"
-    if match.application_status in ("detected", "reviewed"):
-        match.application_status = "drafted"
-        match.application_status_at = datetime.now(timezone.utc)
-
-    await db.commit()
+    # Persistir borrador + avance detected/reviewed -> drafted (escritor local)
+    saved = await applications.save_draft(current_user.id, job_hash, draft)
+    if not saved:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Match result not found",
+        )
 
     return GenerateDraftResponse(
         status="success",
@@ -188,11 +161,8 @@ async def get_draft(
     db: AsyncSession = Depends(get_db),
 ):
     """Devuelve el borrador guardado (texto plano)."""
-    stmt = select(MatchResult.draft_letter).where(
-        MatchResult.user_id == current_user.id,
-        MatchResult.job_hash == job_hash,
-    )
-    draft = (await db.execute(stmt)).scalar_one_or_none()
+    applications = await resolve_applications(db, current_user.id)
+    draft = await applications.get_draft(current_user.id, job_hash)
     if not draft:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -215,15 +185,8 @@ async def export_calendar(
     2. Follow-up (+14 días)
     3. Recordatorio deadline si está en draft_letter o description (best-effort)
     """
-    stmt = (
-        select(MatchResult, Job)
-        .join(Job, Job.hash == MatchResult.job_hash)
-        .where(
-            MatchResult.user_id == current_user.id,
-            MatchResult.job_hash == job_hash,
-        )
-    )
-    row = (await db.execute(stmt)).one_or_none()
+    applications = await resolve_applications(db, current_user.id)
+    row = await applications.get_match(current_user.id, job_hash)
     if row is None:
         raise HTTPException(status_code=404, detail="Match result not found")
     match, job = row

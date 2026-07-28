@@ -7,9 +7,11 @@ son las LECTURAS DEL FEED que hoy consumen los routers de match
 y `saved` (marcados positivos).
 
 ESCRITURAS FUERA DEL PUERTO — cota REGISTRADA, no implementada:
-feedback explicito/implicito, el state machine de candidatura (watchlist:
-status/draft/calendar) y el disparo del pipeline (/analyze) quedan SIEMPRE
-en local en esta etapa. Matriz de escritor del plan §15bis: el legacy es el
+feedback explicito/implicito y el disparo del pipeline (/analyze) quedan
+SIEMPRE en local en esta etapa. El state machine de candidatura (watchlist:
+status/draft/calendar) tiene desde A.SEAM candidaturas su propia costura
+(services/applications) — sigue sirviendose SIEMPRE de local en todos los
+modos (criterio unificador: su unico escritor es local). Matriz de escritor del plan §15bis: el legacy es el
 escritor autoritativo de ese estado hasta el cutover; el cambio de escritor
 llega en Fase C como escritura sincrona contra el escritor activo +
 idempotency key (el outbox replica eventos, no convierte comandos en

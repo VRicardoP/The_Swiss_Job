@@ -1,4 +1,16 @@
-"""Document generation endpoints — AI-tailored CV and cover letter."""
+"""Document generation endpoints — AI-tailored CV and cover letter.
+
+A.SEAM (plan §15bis): el ALMACEN de documentos generados consume la
+capacidad DOCUMENTOS a traves de la costura (services/documents) — la
+implementacion la decide `jobhunt_routing` por perfil+capacidad, con default
+'local'. Con routing 'local' el comportamiento es byte-identico al previo
+(la logica de almacen vive movida verbatim en services/documents/local.py).
+El /v1 del core NO expone esta capacidad (cota fijada por contract test) y
+su UNICO escritor es LOCAL: por el criterio unificador se sirve de local en
+TODOS los modos, incluida core_primary — aqui no hay 501/503 por routing.
+La orquestacion de la generacion (Gemini/Groq, cache Redis, insumos de
+perfil/oferta/match) sigue en el router: no es estado de esta capacidad.
+"""
 
 import json
 import logging
@@ -11,7 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from core.security import get_current_user
 from database import get_db
-from models.generated_document import GeneratedDocument
 from models.job import Job
 from models.match_result import MatchResult
 from models.user import User
@@ -22,6 +33,7 @@ from schemas.documents import (
     GeneratedDocumentResponse,
 )
 from services.document_generator import DocumentGeneratorService
+from services.documents import resolve_documents
 from services.gemini_service import GeminiService
 from services.groq_service import GroqService
 
@@ -39,23 +51,6 @@ def _get_groq(request: Request) -> GroqService:
 def _get_gemini() -> GeminiService:
     """Build GeminiService — proveedor primario de documentos (calidad)."""
     return GeminiService()
-
-
-def _to_response(
-    doc: GeneratedDocument,
-    job_title: str | None = None,
-    job_company: str | None = None,
-) -> GeneratedDocumentResponse:
-    return GeneratedDocumentResponse(
-        id=doc.id,
-        job_hash=doc.job_hash,
-        doc_type=doc.doc_type,
-        content=doc.content,
-        language=doc.language,
-        created_at=doc.created_at,
-        job_title=job_title,
-        job_company=job_company,
-    )
 
 
 @router.post("/generate", response_model=GeneratedDocumentResponse)
@@ -147,19 +142,17 @@ async def generate_document(
             language=body.language,
         )
 
-    # Save to DB
-    doc = GeneratedDocument(
-        user_id=current_user.id,
-        job_hash=body.job_hash,
-        doc_type=body.doc_type.value,
-        content=content,
-        language=body.language,
+    # Save to DB (escritor local, via costura de la capacidad DOCUMENTOS)
+    documents = await resolve_documents(db, current_user.id)
+    response = await documents.create(
+        current_user.id,
+        body.job_hash,
+        body.doc_type.value,
+        content,
+        body.language,
+        job_title=job.title,
+        job_company=job.company,
     )
-    db.add(doc)
-    await db.commit()
-    await db.refresh(doc)
-
-    response = _to_response(doc, job_title=job.title, job_company=job.company)
 
     # Cache in Redis
     if redis:
@@ -184,31 +177,8 @@ async def list_documents(
     doc_type: str | None = Query(None),
 ):
     """List generated documents for a specific job."""
-    conditions = [
-        GeneratedDocument.user_id == current_user.id,
-        GeneratedDocument.job_hash == job_hash,
-    ]
-    if doc_type:
-        conditions.append(GeneratedDocument.doc_type == doc_type)
-
-    stmt = (
-        select(GeneratedDocument, Job)
-        .outerjoin(Job, GeneratedDocument.job_hash == Job.hash)
-        .where(*conditions)
-        .order_by(GeneratedDocument.created_at.desc())
-    )
-    rows = (await db.execute(stmt)).all()
-
-    data = [
-        _to_response(
-            doc,
-            job_title=job.title if job else None,
-            job_company=job.company if job else None,
-        )
-        for doc, job in rows
-    ]
-
-    return DocumentListResponse(data=data, total=len(data))
+    documents = await resolve_documents(db, current_user.id)
+    return await documents.list(current_user.id, job_hash, doc_type=doc_type)
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -218,18 +188,10 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a generated document."""
-    doc = (
-        await db.execute(
-            select(GeneratedDocument).where(
-                GeneratedDocument.id == document_id,
-                GeneratedDocument.user_id == current_user.id,
-            )
-        )
-    ).scalar_one_or_none()
-    if doc is None:
+    documents = await resolve_documents(db, current_user.id)
+    deleted = await documents.delete(current_user.id, document_id)
+    if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found.",
         )
-    await db.delete(doc)
-    await db.commit()
