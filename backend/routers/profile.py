@@ -1,4 +1,20 @@
-"""Profile CRUD: preferences, CV upload, GDPR export/delete."""
+"""Profile CRUD: preferences, CV upload, GDPR export/delete.
+
+A.SEAM (plan §15bis): la LECTURA del perfil (GET /api/v1/profile) consume la
+capacidad PERFILES a traves de la costura (services/profiles) — la
+implementacion (local|core) la decide `jobhunt_routing` POR PERFIL
+(users.id), con default 'local' (comportamiento byte-identico al previo:
+LocalProfile es la lectura del router movida verbatim).
+
+Las ESCRITURAS (PUT preferencias/weights, CV upload/delete, autofill) quedan
+SIEMPRE en local en esta etapa y su respuesta es el recibo del escritor
+local — cota registrada: la matriz de escritor del plan §15bis mantiene al
+legacy como escritor autoritativo de `user_profiles` hasta el cutover; el
+cambio de escritor llega en Fase C como escritura sincrona contra el
+escritor activo + idempotency key. GDPR export/delete-all operan SIEMPRE
+sobre el almacen local, fuera de la costura (exportan/borran lo que este
+sistema almacena).
+"""
 
 import logging
 from datetime import datetime, timezone
@@ -20,10 +36,31 @@ from schemas.profile import (
     ProfileUpdate,
     UserExport,
 )
+from services.profiles import (
+    CoreUnavailableError,
+    ProfileError,
+    ProfileUnsupportedError,
+    resolve_profiles,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/profile", tags=["profile"])
+
+
+def _profile_http_error(exc: ProfileError) -> HTTPException:
+    """Traduce errores de la costura a HTTP (solo alcanzable con routing a core)."""
+    if isinstance(exc, CoreUnavailableError):
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Profile temporarily unavailable",
+        )
+    if isinstance(exc, ProfileUnsupportedError):
+        return HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Operation not available on the active profile backend",
+        )
+    raise exc  # error de programacion: no enmascarar como HTTP
 
 
 @router.get("", response_model=ProfileResponse)
@@ -32,8 +69,11 @@ async def get_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Get the authenticated user's complete profile."""
-    await db.refresh(current_user, ["profile"])
-    profile = current_user.profile
+    profiles = await resolve_profiles(db, current_user.id)
+    try:
+        profile = await profiles.get(current_user)
+    except ProfileError as exc:
+        raise _profile_http_error(exc) from exc
     if profile is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -50,7 +90,11 @@ async def update_profile(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update user profile preferences (partial update)."""
+    """Update user profile preferences (partial update).
+
+    ESCRITURA del escritor LOCAL (A.SEAM: siempre local hasta Fase C); la
+    respuesta es su recibo — no pasa por la costura de lectura.
+    """
     await db.refresh(current_user, ["profile"])
     profile = current_user.profile
     if profile is None:
