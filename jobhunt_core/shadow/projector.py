@@ -1312,13 +1312,19 @@ async def _shadow_consumer_id(session):
 
 
 async def _filter_inactive(session, rows) -> list:
-    inactive = await _inactive_user_refs(session, [r.external_ref for r in rows])
+    inactive = await inactive_user_refs(session, [r.external_ref for r in rows])
     return sorted((r.id for r in rows if r.external_ref not in inactive), key=str)
 
 
-async def _inactive_user_refs(session, refs) -> set[str]:
+async def inactive_user_refs(session, refs) -> set[str]:
     """Set de user_ids inactivos desde el ÚLTIMO estado users por pk del
-    staging YA APLICADO (mecanismo de exclusión documentado en cabecera)."""
+    staging YA APLICADO (mecanismo de exclusión documentado en cabecera).
+
+    HELPER COMPARTIDO (público a propósito): es EL mecanismo de exclusión de
+    usuarios inactivos de la sombra — lo usa este proyector (objetivos de
+    evaluación) y B-04 (shadow/metrics: perfiles medidos y `labels_ready`,
+    decisión delegada 2026-07-28, cierre del NO-GO 2). Cambiarlo aquí cambia
+    la exclusión en TODOS los consumidores: jamás duplicar esta consulta."""
     if not refs:
         return set()
     rows = (

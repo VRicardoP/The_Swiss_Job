@@ -352,6 +352,21 @@ def _legacy_result(factory, user_id, job_hash, score, feedback=None):
     )
 
 
+def _stage_users(factory, rows):
+    """rows = [(lsn, op, user_id, is_active)] → filas `users` del staging YA
+    APLICADAS (la forma que lee inactive_user_refs, mecanismo compartido
+    proyector/métricas)."""
+    for lsn, op, uid, active in rows:
+        _exec(
+            factory,
+            "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
+            "payload, applied_at) VALUES (:l, 0, 'users', :o, :p, "
+            "CAST(:j AS jsonb), now())",
+            {"l": lsn, "o": op, "p": str(uid),
+             "j": json.dumps({"id": str(uid), "is_active": active})},
+        )
+
+
 def _compute(factory, cycle_id=None, now=AFTER, force=False):
     async def go():
         async with factory() as s:
@@ -646,6 +661,92 @@ def test_labels_ready_green_with_dod_oracle(db):
     assert float(_metric_row(factory, "dedup_recall").value) == 1.0
     assert gates["dedup_precision"]["ok"] is True
     assert gates["dedup_recall"]["ok"] is True
+
+
+def test_inactive_profile_excluded_from_metrics_and_labels_ready(db):
+    """Regresión NO-GO 2 (decisión delegada 2026-07-28): un perfil cuyo
+    external_ref está INACTIVO (último estado `users` del staging aplicado —
+    el MISMO mecanismo de exclusión del proyector, inactive_user_refs)
+    (a) NO se mide: sin fila ndcg suya ni gate por perfil; (b) su set
+    congelado NO cuenta para el >= 2 de labels_ready (evidencia vacua) y
+    details.sets_excluidos_inactivos lo registra — el set se CONSERVA
+    congelado e intacto. Re-activar (staging users is_active=true aplicado)
+    lo devuelve a la medición y al conteo en el siguiente cómputo, sin
+    re-congelar nada. Escenario del revisor: usuario de captura inactivo
+    con set congelado inflando el requisito de >= 2 sets."""
+    factory = db
+    src = _mk_source(factory, "legacy:inafx")
+    p = uuid.uuid4().hex[:6]
+    u1, u2 = uuid.uuid4(), uuid.uuid4()
+    pid1 = _mk_profile(factory, str(u1))
+    pid2 = _mk_profile(factory, str(u2))
+    _mk_frozen_set(factory, pid1, {f"{p}-a{i:02d}": i % 4 for i in range(30)})
+    _mk_frozen_set(
+        factory, pid2, {f"{p}-b{i:02d}": i % 4 for i in range(30)}, name="ronda-2"
+    )
+    # Oráculo dedup al DoD (50 pares, 25 mapeables): labels_ready depende
+    # SOLO del conteo de sets contables.
+    for i in range(25):
+        ra, rb = f"{p}-m{i:02d}a", f"{p}-m{i:02d}b"
+        vid, _, _ = _mk_slot(factory, src, ra)
+        _mk_slot(factory, src, rb, active=False, vacancy_id=vid)
+        _exec(
+            factory,
+            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
+            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            {"a": ra, "b": rb},
+        )
+    for i in range(25):
+        _exec(
+            factory,
+            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
+            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            {"a": f"{p}-u{i:02d}a", "b": f"{p}-u{i:02d}b"},
+        )
+    # u1 ACTIVO, u2 INACTIVO (último estado users por pk del staging aplicado).
+    _stage_users(factory, [
+        (1, "I", u1, True), (2, "I", u2, True), (3, "U", u2, False),
+    ])
+
+    r1 = _compute(factory)
+    assert r1["profiles_measured"] == 1  # u2 fuera de la medición
+    assert _metric_row(factory, "ndcg@10", f"profile:{pid1}") is not None
+    assert _metric_row(factory, "ndcg@10", f"profile:{pid2}") is None
+    lr = _metric_row(factory, "labels_ready")
+    assert float(lr.value) == 0  # 1 set contable < 2: gate ROJO
+    assert lr.details["sets_congelados"] == 2
+    assert lr.details["sets_congelados_ok"] == 1
+    assert lr.details["sets_excluidos_inactivos"] == 1
+    assert lr.details["pares_dedup"] == 50
+    assert lr.details["pares_mapeables"] == 25
+    gates = _gates(factory)
+    assert gates["labels_ready"]["ok"] is False
+    assert f"ndcg@10::profile:{pid2}" not in gates  # sin fila = sin gate suyo
+    # El set del inactivo se CONSERVA congelado e INTACTO (inmutable, §4).
+    assert _scalar(
+        factory,
+        "SELECT count(*) FROM labeled_judgments j "
+        "JOIN labeled_sets ls ON ls.id = j.set_id WHERE ls.profile_id = :p",
+        p=pid2,
+    ) == 30
+    assert _scalar(
+        factory, "SELECT frozen_at FROM labeled_sets WHERE profile_id = :p",
+        p=pid2,
+    ) is not None
+
+    # RE-ACTIVACIÓN aplicada ⇒ el siguiente ciclo lo mide y lo cuenta.
+    _stage_users(factory, [(4, "U", u2, True)])
+    cycle2 = CYCLE + timedelta(days=1)
+    r2 = _compute(factory, cycle_id=cycle2, now=AFTER + timedelta(days=1))
+    assert r2["profiles_measured"] == 2
+    assert _metric_row(
+        factory, "ndcg@10", f"profile:{pid2}", cycle=cycle2
+    ) is not None
+    lr2 = _metric_row(factory, "labels_ready", cycle=cycle2)
+    assert float(lr2.value) == 1
+    assert lr2.details["sets_congelados_ok"] == 2
+    assert lr2.details["sets_excluidos_inactivos"] == 0
+    assert _gates(factory, cycle=cycle2)["labels_ready"]["ok"] is True
 
 
 # ------------------------------------------- inmutabilidad de ciclos (P1-4)
@@ -1214,7 +1315,7 @@ def test_purge_deletes_old_applied_preserving_last_users_and_unapplied(db):
 
     async def exclusion():
         async with factory() as s:
-            return await projector._inactive_user_refs(s, [u1, u2])
+            return await projector.inactive_user_refs(s, [u1, u2])
 
     assert _run(exclusion()) == {u1, u2}  # ambos inactivos ANTES de purgar
 

@@ -83,6 +83,19 @@ DECISIONES documentadas (no obvias):
   huérfana (crash de la invocación) se cierra en la recuperación del
   proyector con finished_at=ahora y recovered=true — cuenta como lote
   LENTO, jamás desaparece del p95; details.lotes_recuperados lo expone.
+- EXCLUSIÓN de usuarios inactivos (cierre NO-GO 2, decisión DELEGADA
+  2026-07-28 por delegación del propietario): las métricas usan EL MISMO
+  mecanismo de exclusión que el proyector (`inactive_user_refs`, último
+  estado `users` por pk del staging YA aplicado — helper compartido, jamás
+  una consulta duplicada). Un perfil cuyo external_ref está inactivo (a)
+  NO se mide (sin filas ndcg/overlap/falsos_negativos: el proyector no lo
+  evalúa — medirlo generaría gates rojos vacuos sobre un feed congelado) y
+  (b) sus sets congelados NO cuentan para el requisito de >= 2 de
+  `labels_ready` (evidencia vacua: un set de un perfil fuera de evaluación
+  no demuestra nada del pipeline). El set congelado se CONSERVA intacto
+  (inmutable, §4) y details.sets_excluidos_inactivos deja el rastro;
+  re-activar al usuario (staging users is_active=true aplicado) lo
+  devuelve a la medición y al conteo sin tocar el set.
 
 La purga del staging (§7, asignada a B-04) borra de `shadow_change_log` lo
 APLICADO con received_at < (cierre del ciclo actual − 7 días) PRESERVANDO
@@ -111,7 +124,7 @@ from jobhunt_core import matching
 from jobhunt_core.delivery import stats as delivery_stats
 from jobhunt_core.harvest.sink import MAX_URL_LEN, normalize_url
 from jobhunt_core.shadow.labels import _check_legacy_schema, map_job_refs_to_vacancies
-from jobhunt_core.shadow.projector import SHADOW_CONSUMER
+from jobhunt_core.shadow.projector import SHADOW_CONSUMER, inactive_user_refs
 
 logger = logging.getLogger(__name__)
 
@@ -433,8 +446,15 @@ async def _measured_profiles(session: AsyncSession) -> list:
     """Perfiles del consumer sombra con set CONGELADO (frozen_at NOT NULL,
     §4: el oráculo no se mueve durante la medición). Si un perfil tiene
     varios sets congelados (rondas), gana el congelado MÁS RECIENTE —
-    determinista con desempates fijos."""
-    return (
+    determinista con desempates fijos.
+
+    EXCLUYE los perfiles con external_ref INACTIVO por el MISMO mecanismo
+    que el proyector (`inactive_user_refs` compartido — decisión delegada
+    2026-07-28, cierre NO-GO 2, ver docstring de módulo): el proyector no
+    los evalúa, así que medirlos produciría filas ndcg/falsos_negativos
+    vacuas en rojo permanente. Sin fila = sin gate para ese perfil;
+    re-activar (staging users is_active=true aplicado) lo re-incluye."""
+    rows = (
         await session.execute(
             sa.text(
                 "SELECT DISTINCT ON (p.id) p.id, p.external_ref, "
@@ -448,6 +468,8 @@ async def _measured_profiles(session: AsyncSession) -> list:
             {"cn": SHADOW_CONSUMER},
         )
     ).all()
+    inactive = await inactive_user_refs(session, [r.external_ref for r in rows])
+    return [r for r in rows if r.external_ref not in inactive]
 
 
 # ---------------------------------------------------- métricas por perfil
@@ -748,26 +770,40 @@ async def _labels_ready_row(session: AsyncSession) -> tuple:
     pares dedup etiquetados y >= LABELS_MIN_MAPPED_DEDUP_PAIRS pares con
     AMBOS refs mapeables a vacantes core (sin mapeo, dedup no es evaluable).
     value 1 = precondición cumplida; 0 = gate ROJO (el ciclo no puede sumar
-    al contador de §6 con un oráculo que no da para medir)."""
-    frozen_total = (
+    al contador de §6 con un oráculo que no da para medir).
+
+    Los sets congelados de perfiles cuyo external_ref está INACTIVO
+    (`inactive_user_refs`, MISMO mecanismo que el proyector — decisión
+    delegada 2026-07-28, cierre NO-GO 2) NO cuentan para el requisito de
+    >= LABELS_MIN_FROZEN_SETS: son evidencia VACUA (el perfil está fuera de
+    evaluación y sus métricas no se computan). El set se conserva intacto
+    (inmutable) y details.sets_excluidos_inactivos deja el rastro; con el
+    usuario re-activado vuelve a contar sin re-congelar nada."""
+    frozen_rows = (
         await session.execute(
             sa.text(
-                "SELECT count(*) FROM labeled_sets WHERE frozen_at IS NOT NULL"
+                "SELECT ls.id, p.external_ref, count(j.job_ref) AS n_juicios "
+                "FROM labeled_sets ls "
+                "JOIN profiles p ON p.id = ls.profile_id "
+                "LEFT JOIN labeled_judgments j ON j.set_id = ls.id "
+                "WHERE ls.frozen_at IS NOT NULL "
+                "GROUP BY ls.id, p.external_ref"
             )
         )
-    ).scalar_one()
-    frozen_ok = (
-        await session.execute(
-            sa.text(
-                "SELECT count(*) FROM ("
-                "  SELECT ls.id FROM labeled_sets ls "
-                "  JOIN labeled_judgments j ON j.set_id = ls.id "
-                "  WHERE ls.frozen_at IS NOT NULL "
-                "  GROUP BY ls.id HAVING count(*) >= :minj) q"
-            ),
-            {"minj": LABELS_MIN_JUDGMENTS_PER_SET},
-        )
-    ).scalar_one()
+    ).all()
+    inactive = await inactive_user_refs(
+        session, [r.external_ref for r in frozen_rows]
+    )
+    frozen_total = len(frozen_rows)
+    excluded_inactive = sum(
+        1 for r in frozen_rows if r.external_ref in inactive
+    )
+    frozen_ok = sum(
+        1
+        for r in frozen_rows
+        if r.external_ref not in inactive
+        and int(r.n_juicios) >= LABELS_MIN_JUDGMENTS_PER_SET
+    )
     pairs = (
         await session.execute(
             sa.text("SELECT job_ref_a, job_ref_b FROM labeled_dedup_pairs")
@@ -779,13 +815,14 @@ async def _labels_ready_row(session: AsyncSession) -> tuple:
         1 for p in pairs if p.job_ref_a in mapping and p.job_ref_b in mapping
     )
     ok = (
-        int(frozen_ok) >= LABELS_MIN_FROZEN_SETS
+        frozen_ok >= LABELS_MIN_FROZEN_SETS
         and len(pairs) >= LABELS_MIN_DEDUP_PAIRS
         and mapped_pairs >= LABELS_MIN_MAPPED_DEDUP_PAIRS
     )
     details = {
-        "sets_congelados": int(frozen_total),
-        "sets_congelados_ok": int(frozen_ok),
+        "sets_congelados": frozen_total,
+        "sets_congelados_ok": frozen_ok,
+        "sets_excluidos_inactivos": excluded_inactive,
         "pares_dedup": len(pairs),
         "pares_mapeables": mapped_pairs,
         "umbrales": {
@@ -1374,7 +1411,7 @@ async def purge_staging(
     días): DELETE de shadow_change_log WHERE applied_at IS NOT NULL AND
     received_at < (cierre del ciclo ACTUAL − 7 días), PRESERVANDO SIEMPRE la
     última fila `users` (op I/U, aplicada) de CADA pk — es EXACTAMENTE la
-    fila que lee _inactive_user_refs del proyector (su NOTA documentada):
+    fila que lee inactive_user_refs del proyector (su NOTA documentada):
     borrarla haría olvidar la exclusión de usuarios inactivos. Lo NO aplicado
     jamás se toca (sigue pendiente de proyectar, sea de cuando sea).
 
