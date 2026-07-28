@@ -97,20 +97,25 @@ class MatchResultService:
             await self.db.commit()
             await self.db.refresh(match)
             return match
-        return await self._upsert_minimal_feedback(user_id, job_hash, feedback)
+        return await self._upsert_minimal_feedback(
+            user_id, job_hash, {"feedback": feedback}
+        )
 
     async def _upsert_minimal_feedback(
         self,
         user_id: uuid.UUID,
         job_hash: str,
-        feedback: str,
+        values: dict,
     ) -> MatchResult | None:
-        """Crea (o pisa el feedback de) una fila minima para un Job existente.
+        """Crea (o pisa el estado de) una fila minima para un Job existente.
 
+        Camino COMUN del feedback explicito e implicito sobre huerfanos
+        legacy (Job local SIN fila MatchResult, visibles via feed del core).
         Upsert real (ON CONFLICT sobre uq_match_user_job): una carrera con el
         motor de matching o con otra peticion no rompe la unicidad. Scores a
-        0.0 y skills vacias: el proximo run de matching los rellenara; el
-        feedback es lo unico que este camino escribe.
+        0.0 y skills vacias: el proximo run de matching los rellenara;
+        `values` (feedback o feedback_implicit) es lo unico que este camino
+        escribe.
         """
         job_exists = (
             await self.db.execute(select(Job.hash).where(Job.hash == job_hash))
@@ -130,11 +135,11 @@ class MatchResultService:
                 score_final=0.0,
                 matching_skills=[],
                 missing_skills=[],
-                feedback=feedback,
+                **values,
             )
             .on_conflict_do_update(
                 index_elements=["user_id", "job_hash"],
-                set_={"feedback": feedback},
+                set_=values,
             )
         )
         await self.db.execute(stmt)
@@ -199,15 +204,28 @@ class MatchResultService:
         Signals and their weights:
           opened -> +0.1, view_time (>10s) -> +0.2, saved -> +0.5,
           applied -> +1.0, dismissed -> -0.3, skipped -> -0.1
-        """
-        match = await self._get_one(user_id, job_hash)
-        if match is None:
-            return None
 
-        signals = match.feedback_implicit or []
+        Huerfano legacy (Job local SIN fila MatchResult, visible via feed
+        del core): mismo camino de upsert minimo que el feedback explicito
+        (simetria implicit/explicit — 2ª rev. A.SEAM matching). Solo si el
+        Job tampoco existe se devuelve None (404 del router). La fila creada
+        con feedback_implicit queda ademas protegida del cleanup de ofertas
+        caducadas (criterio `attached` de maintenance_tasks).
+        """
         signal = {"action": action}
         if duration_ms is not None:
             signal["duration_ms"] = duration_ms
+
+        match = await self._get_one(user_id, job_hash)
+        if match is None:
+            return await self._upsert_minimal_feedback(
+                user_id, job_hash, {"feedback_implicit": [signal]}
+            )
+
+        # Copia de la lista: JSONB sin MutableList — mutar in-place el mismo
+        # objeto no genera historia de cambio y el flush NO persistiria la
+        # senal (las posteriores a la primera se perdian en silencio).
+        signals = list(match.feedback_implicit or [])
         signals.append(signal)
         match.feedback_implicit = signals
 

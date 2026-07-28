@@ -36,6 +36,7 @@ import uuid
 
 import httpx
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -508,6 +509,76 @@ async def test_core_legacy_item_without_local_job_excluded(db_session):
     assert items == [] and total == 0
 
 
+async def test_core_exclusion_logged_as_info_with_counts(db_session, caplog):
+    """La exclusion por accionabilidad SE MIDE: feed con 1 item accionable +
+    1 core-nativo => INFO por peticion con servidos/excluidos. Sin esta senal
+    un canary con feed mayormente core-nativo se vaciaria en silencio."""
+    import logging
+
+    user_id = await seed_local(db_session)
+    core_profile_id = uuid.uuid4()
+    await set_profile_link(db_session, user_id, core_profile_id)
+    orphan_hash = "e" * 32  # accionable: tiene Job local
+    _add_job(db_session, orphan_hash)
+    await db_session.commit()
+    fake = FakeFeed(
+        core_profile_id,
+        [
+            _orphan_dto(orphan_hash, "eval-log-served"),
+            _match_dto("devops_remote", legacy=False),  # core-nativo: excluido
+        ],
+    )
+    core = make_core_matching(db_session, fake.transport())
+    with caplog.at_level(logging.INFO, logger="services.matching.core_client"):
+        items, total = await core.results(user_id)
+    assert total == 1
+    records = [r for r in caplog.records if r.name == "services.matching.core_client"]
+    infos = [r for r in records if r.levelno == logging.INFO]
+    assert len(infos) == 1
+    msg = infos[0].getMessage()
+    assert "1 items servidos" in msg and "1 excluidos" in msg
+    # Con exclusion parcial NO es el caso del canary vacuo: cero WARNING.
+    assert not [r for r in records if r.levelno == logging.WARNING]
+
+
+async def test_core_feed_empty_only_by_exclusion_warns(db_session, caplog):
+    """Feed integramente no-accionable => queda VACIO solo por exclusiones:
+    WARNING especifico (la senal del canary vacuo)."""
+    import logging
+
+    user_id = await seed_local(db_session)
+    core_profile_id = uuid.uuid4()
+    await set_profile_link(db_session, user_id, core_profile_id)
+    fake = FakeFeed(
+        core_profile_id,
+        [
+            _match_dto("devops_remote", legacy=False),  # core-nativo
+            _orphan_dto("f" * 32, "eval-log-nojob"),  # legacy sin Job local
+        ],
+    )
+    core = make_core_matching(db_session, fake.transport())
+    with caplog.at_level(logging.INFO, logger="services.matching.core_client"):
+        items, total = await core.results(user_id)
+    assert items == [] and total == 0
+    records = [r for r in caplog.records if r.name == "services.matching.core_client"]
+    warns = [r for r in records if r.levelno == logging.WARNING]
+    assert len(warns) == 1
+    msg = warns[0].getMessage()
+    assert "VACIO solo por exclusion de accionabilidad" in msg and "2 items" in msg
+
+
+async def test_core_no_exclusions_logs_nothing(seeded, caplog):
+    """Feed 100% accionable: ni INFO ni WARNING (no ensuciar el log)."""
+    import logging
+
+    user_id, matchings, _ = seeded
+    with caplog.at_level(logging.INFO, logger="services.matching.core_client"):
+        await matchings["core"].results(user_id)
+    assert [
+        r for r in caplog.records if r.name == "services.matching.core_client"
+    ] == []
+
+
 async def test_core_strips_shadow_source_prefix(seeded):
     """La fuente sombra `legacy:<source>` se presenta como la ORIGINAL."""
     user_id, matchings, _ = seeded
@@ -795,6 +866,62 @@ async def test_router_orphan_feedback_discards_from_core_feed(
     )
     assert resp.status_code == 200
     assert resp.json()["data"] == [] and resp.json()["total"] == 0
+
+
+async def test_router_orphan_implicit_feedback_upserts_row(
+    client, db_session, monkeypatch
+):
+    """Simetria implicit/explicit (2ª rev.): implicit 'opened' sobre un
+    huerfano legacy surfaced por el feed del core => 200 y fila minima creada
+    con la senal — antes devolvia 404 sobre un item que el propio feed
+    mostraba. La fila con feedback_implicit queda ademas protegida del
+    cleanup de ofertas caducadas (criterio `attached` de maintenance_tasks)."""
+    user_id, headers = await _register(client)
+    orphan_hash = "d" * 32
+    _add_job(db_session, orphan_hash)
+    await db_session.commit()
+    core_profile_id = uuid.uuid4()
+    await set_profile_link(db_session, user_id, core_profile_id)
+    fake = FakeFeed(core_profile_id, [_orphan_dto(orphan_hash, "eval-router-impl")])
+
+    def factory() -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url="http://core-api:8000/v1",
+            headers={"Authorization": f"Bearer {TEST_CONSUMER_KEY}"},
+            timeout=1.0,
+            transport=fake.transport(),
+        )
+
+    monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", TEST_CONSUMER_KEY)
+    monkeypatch.setattr(core_client, "default_client_factory", factory)
+    await set_routing(
+        db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id
+    )
+
+    # El huerfano esta SURFACED en el feed que ve el usuario.
+    resp = await client.get(
+        "/api/v1/match/results", headers=headers, params={"translate": "false"}
+    )
+    assert resp.status_code == 200
+    assert [r["job_hash"] for r in resp.json()["data"]] == [orphan_hash]
+
+    resp = await client.post(
+        f"/api/v1/match/{orphan_hash}/implicit",
+        headers=headers,
+        json={"action": "opened"},
+    )
+    assert resp.status_code == 200
+
+    row = (
+        await db_session.execute(
+            select(MatchResult).where(
+                MatchResult.user_id == user_id,
+                MatchResult.job_hash == orphan_hash,
+            )
+        )
+    ).scalar_one()
+    assert row.feedback_implicit == [{"action": "opened"}]
+    assert row.feedback is None
 
 
 async def test_router_core_read_falls_back_to_local(client, db_session, monkeypatch):

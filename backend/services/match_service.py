@@ -16,6 +16,7 @@ from sqlalchemy import cast, delete, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from config import settings
 from models.job import Job
@@ -409,21 +410,34 @@ class MatchService:
         )
 
     @staticmethod
-    def _apply_scores(row: MatchResult, r: dict) -> None:
-        """Copia scores/campos derivados de un result a la fila (update o insert).
+    def _score_values(r: dict) -> dict:
+        """Columnas de scores/campos derivados de un result (forma dict).
+
+        Fuente unica para el UPDATE en sesion y para el upsert ON CONFLICT:
+        NUNCA incluye feedback/feedback_implicit/application_status/
+        draft_letter — el estado del usuario no se pisa desde el motor.
+        """
+        return {
+            "score_embedding": r["score_embedding"],
+            "score_salary": r["score_salary"],
+            "score_location": r["score_location"],
+            "score_recency": r["score_recency"],
+            "score_llm": r["score_llm"],
+            "score_final": r["score_final"],
+            "urgency_score": r.get("urgency_score", 0),
+            "explanation": r.get("explanation"),
+            "matching_skills": r["matching_skills"],
+            "missing_skills": r["missing_skills"],
+        }
+
+    @classmethod
+    def _apply_scores(cls, row: MatchResult, r: dict) -> None:
+        """Copia scores/campos derivados de un result a la fila (update).
 
         NO toca feedback/application_status/draft_letter → los conserva en un UPDATE.
         """
-        row.score_embedding = r["score_embedding"]
-        row.score_salary = r["score_salary"]
-        row.score_location = r["score_location"]
-        row.score_recency = r["score_recency"]
-        row.score_llm = r["score_llm"]
-        row.score_final = r["score_final"]
-        row.urgency_score = r.get("urgency_score", 0)
-        row.explanation = r.get("explanation")
-        row.matching_skills = r["matching_skills"]
-        row.missing_skills = r["missing_skills"]
+        for key, value in cls._score_values(r).items():
+            setattr(row, key, value)
 
     @staticmethod
     def _has_engagement(row: MatchResult) -> bool:
@@ -459,12 +473,14 @@ class MatchService:
            - Si tiene feedback, application_status != "detected", o
              draft_letter → conservar (frozen, sin actualizar scores).
            - Si está "limpio" (sin engagement del usuario) → borrar.
+
+        Los INSERT son upserts ON CONFLICT (uq_match_user_job): una fila de
+        feedback commiteada FUERA DE BANDA (peticion de la API) en la ventana
+        entre el snapshot y el commit ya no aborta la corrida con
+        IntegrityError — se actualizan SOLO los scores y el feedback/estado
+        del usuario de la fila ganadora se preserva.
         """
-        existing_stmt = select(MatchResult).where(MatchResult.user_id == user_id)
-        existing_rows = (await self.db.execute(existing_stmt)).scalars().all()
-        existing_by_hash: dict[str, MatchResult] = {
-            row.job_hash: row for row in existing_rows
-        }
+        existing_by_hash = await self._load_existing(user_id)
 
         new_hashes: set[str] = set()
         for r in results:
@@ -476,9 +492,17 @@ class MatchService:
                 # NO se tocan — son del usuario (los conserva _apply_scores al no tocarlos).
                 self._apply_scores(existing, r)
             else:
-                row = MatchResult(user_id=user_id, job_hash=job_hash)
-                self._apply_scores(row, r)
-                self.db.add(row)
+                # INSERT idempotente: si la fila aparecio tras el snapshot
+                # (upsert minimo de feedback de la API), solo pisa scores.
+                stmt = (
+                    pg_insert(MatchResult)
+                    .values(user_id=user_id, job_hash=job_hash, **self._score_values(r))
+                    .on_conflict_do_update(
+                        index_elements=["user_id", "job_hash"],
+                        set_=self._score_values(r),
+                    )
+                )
+                await self.db.execute(stmt)
 
         # Prune: borrar solo huérfanas SIN engagement del usuario.
         to_delete = [
@@ -496,6 +520,12 @@ class MatchService:
             )
 
         await self.db.commit()
+
+    async def _load_existing(self, user_id: uuid.UUID) -> dict[str, MatchResult]:
+        """Snapshot de los MatchResult del usuario, indexado por job_hash."""
+        existing_stmt = select(MatchResult).where(MatchResult.user_id == user_id)
+        existing_rows = (await self.db.execute(existing_stmt)).scalars().all()
+        return {row.job_hash: row for row in existing_rows}
 
     @staticmethod
     def _priority_watchlist(results: list[dict]) -> list[dict]:

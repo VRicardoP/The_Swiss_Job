@@ -295,11 +295,13 @@ class CoreMatching:
             )
 
         results: list[dict] = []
+        excluded_not_actionable = 0
         for item, (job_ref, is_legacy) in zip(items, refs):
             if not is_legacy or job_ref not in actionable_hashes:
                 # EXCLUSION POR ACCIONABILIDAD (docstring del modulo): sin
                 # Job local el feedback devolveria 404. Cota: reaparecen en
                 # Fase C con el flip de escritor + idempotency key.
+                excluded_not_actionable += 1
                 continue
             local = local_by_hash.get(job_ref)
             if local is not None and local.feedback in NEGATIVE_FEEDBACK:
@@ -318,7 +320,39 @@ class CoreMatching:
             )
 
         total = len(results)
+        self._log_exclusions(user_id, total, excluded_not_actionable, len(items))
         return results[offset : offset + limit], total
+
+    @staticmethod
+    def _log_exclusions(
+        user_id: uuid.UUID, served: int, excluded: int, fetched: int
+    ) -> None:
+        """Observabilidad de la EXCLUSION POR ACCIONABILIDAD (canary §15bis).
+
+        Sin esta senal, un canary cuyo feed core fuese mayormente core-nativo
+        se quedaria vacio EN SILENCIO. Por peticion: INFO con servidos/
+        excluidos cuando hay exclusion; WARNING especifico si el feed queda
+        VACIO solo por exclusiones (todo lo que el core sirvio era
+        no-accionable) — la senal del canary vacuo.
+        """
+        if excluded == 0:
+            return
+        if served == 0 and excluded == fetched:
+            logger.warning(
+                "matching core: feed VACIO solo por exclusion de accionabilidad "
+                "para user %s — %d items del core sin respaldo local "
+                "(canary sin senal util; cota Fase C)",
+                user_id,
+                excluded,
+            )
+        else:
+            logger.info(
+                "matching core: user %s — %d items servidos, %d excluidos "
+                "por accionabilidad (sin respaldo local; cota Fase C)",
+                user_id,
+                served,
+                excluded,
+            )
 
     async def saved(
         self, user_id: uuid.UUID, limit: int = 100, offset: int = 0

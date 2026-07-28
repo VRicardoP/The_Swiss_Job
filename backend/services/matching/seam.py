@@ -32,8 +32,11 @@ local puede ser inaccesible. Consecuencias en esta etapa:
   cuando el flip de escritor (escritura sincrona + idempotency key) los
   haga accionables.
 - El feedback sobre un huerfano legacy (Job local SIN fila MatchResult,
-  visible via feed del core) upserta una fila minima en el escritor local
-  (MatchResultService.submit_feedback): "not for me" desaparece tambien ahi.
+  visible via feed del core) upserta una fila minima en el escritor local —
+  tanto el EXPLICITO (MatchResultService.submit_feedback: "not for me"
+  desaparece tambien ahi) como el IMPLICITO (record_implicit_feedback:
+  misma simetria; la fila con feedback_implicit queda ademas protegida del
+  cleanup de ofertas caducadas).
 
 Cota registrada (NO implementada): los schedulers legacy (matching_tasks,
 digest) siguen ejecutando para TODOS los perfiles en esta etapa — correcto

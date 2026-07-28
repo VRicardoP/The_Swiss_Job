@@ -94,9 +94,13 @@ class _Result:
 class _FakeSession:
     def __init__(self, profiles):
         self._profiles = profiles
+        self.rollbacks = 0
 
     async def execute(self, _stmt):
         return _Result(self._profiles)
+
+    async def rollback(self):
+        self.rollbacks += 1
 
 
 class _FakeCtx:
@@ -134,4 +138,34 @@ async def test_run_all_matches_iterates_profiles_and_aggregates():
 
     assert summary["profiles"] == 2
     assert summary["results"] == 6  # 3 por perfil
+    assert fake_service.run_matching.await_count == 2
+
+
+async def test_run_all_matches_rolls_back_session_after_error():
+    """Un fallo en un perfil no envenena la sesion COMPARTIDA del bucle: el
+    except hace rollback (sin el, el siguiente perfil moriria con
+    PendingRollbackError en cascada) y el siguiente perfil se procesa."""
+    from tasks.matching_tasks import _run_all_matches_async
+
+    profiles = [_Profile("u1"), _Profile("u2")]
+    session = _FakeSession(profiles)
+    fake_service = AsyncMock()
+    fake_service.run_matching = AsyncMock(
+        side_effect=[
+            RuntimeError("IntegrityError simulada en el commit"),
+            {"status": "success", "results_count": 2},
+        ]
+    )
+
+    with (
+        patch("database.task_session", return_value=_FakeCtx(session)),
+        patch("services.groq_service.GroqService"),
+        patch("services.gemini_service.GeminiService"),
+        patch("services.match_service.MatchService", return_value=fake_service),
+    ):
+        summary = await _run_all_matches_async()
+
+    assert summary["errors"] == 1
+    assert summary["results"] == 2  # el segundo perfil SI se proceso
+    assert session.rollbacks == 1  # sesion saneada tras el fallo del primero
     assert fake_service.run_matching.await_count == 2

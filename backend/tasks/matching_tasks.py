@@ -71,6 +71,11 @@ async def _run_all_matches_async() -> dict[str, Any]:
                 logger.error(
                     "run_matching failed for user %s: %s", profile.user_id, exc
                 )
+                # La sesion es compartida por todos los perfiles: tras un
+                # fallo de flush/commit queda invalidada y el siguiente
+                # perfil moriria con PendingRollbackError en cascada. El
+                # rollback la deja usable para continuar el bucle.
+                await db.rollback()
 
     logger.info("run_all_matches complete: %s", summary)
     return summary

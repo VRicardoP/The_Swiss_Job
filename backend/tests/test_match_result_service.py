@@ -135,6 +135,58 @@ class TestClearFeedback:
 
 
 @pytest.mark.anyio
+class TestRecordImplicitFeedback:
+    """Simetria implicit/explicit (2ª rev. A.SEAM matching): el huerfano
+    legacy con Job local comparte el camino de upsert minimo del explicito."""
+
+    async def test_orphan_with_local_job_upserts_minimal_row(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        user_id = await _register(client)
+        await _insert_job(db_session, "imp1")  # Job local, SIN fila MatchResult
+
+        match = await _svc(db_session).record_implicit_feedback(
+            user_id, "imp1", "opened"
+        )
+
+        assert match is not None
+        # La senal queda registrada => proteccion anti-cleanup por
+        # feedback_implicit (criterio `attached` de maintenance_tasks).
+        assert match.feedback_implicit == [{"action": "opened"}]
+        assert match.feedback is None  # el camino implicit no toca el explicito
+        assert match.score_final == 0.0  # fila minima: el proximo run la rellena
+
+    async def test_returns_none_when_job_missing(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        """Sin Job local no hay respaldo accionable: None => 404 del router."""
+        user_id = await _register(client)
+        assert (
+            await _svc(db_session).record_implicit_feedback(user_id, "nope", "opened")
+        ) is None
+
+    async def test_appends_signal_to_existing_row(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        """Con fila existente el comportamiento previo se conserva (append)."""
+        user_id = await _register(client)
+        await _insert_job(db_session, "imp2")
+        await _seed(
+            db_session, user_id, "imp2", feedback_implicit=[{"action": "opened"}]
+        )
+
+        match = await _svc(db_session).record_implicit_feedback(
+            user_id, "imp2", "view_time", duration_ms=12000
+        )
+
+        assert match is not None
+        assert match.feedback_implicit == [
+            {"action": "opened"},
+            {"action": "view_time", "duration_ms": 12000},
+        ]
+
+
+@pytest.mark.anyio
 class TestGetSavedJobs:
     async def test_returns_only_positive_feedback_sorted(
         self, client: AsyncClient, db_session: AsyncSession

@@ -126,6 +126,44 @@ class TestSaveResultsUpsert:
         # C: PRUNED (limpio, ya no en results).
         assert "ccc" not in by_hash
 
+    async def test_insert_race_with_feedback_row_is_idempotent(
+        self, client: AsyncClient, db_session: AsyncSession, monkeypatch
+    ):
+        """Colision fuera de banda con el motor: una fila de feedback
+        commiteada por la API (upsert minimo del escritor) DESPUES del
+        snapshot de _save_results. Antes: INSERT plano => IntegrityError
+        (uq_match_user_job) que abortaba la corrida. Ahora: upsert ON
+        CONFLICT — scores actualizados, feedback del usuario INTACTO."""
+        user_id = await _register(client)
+        await _insert_job(db_session, "race1")
+        # La fila de feedback YA esta commiteada en BD...
+        await _seed_result(
+            db_session, user_id, "race1", feedback="thumbs_down", score_final=0.0
+        )
+
+        svc = MatchService(db_session)
+
+        # ...pero llego DENTRO de la ventana: el snapshot del motor no la vio.
+        async def snapshot_sin_la_fila(_user_id):
+            return {}
+
+        monkeypatch.setattr(svc, "_load_existing", snapshot_sin_la_fila)
+
+        # No lanza IntegrityError (antes abortaba aqui la corrida).
+        await svc._save_results(user_id, [_result("race1", 88.0)])
+
+        db_session.expire_all()  # el upsert fue en Core: releer de BD
+        row = (
+            await db_session.execute(
+                select(MatchResult).where(
+                    MatchResult.user_id == user_id,
+                    MatchResult.job_hash == "race1",
+                )
+            )
+        ).scalar_one()  # UNA sola fila: la unicidad se respeto
+        assert row.score_final == 88.0  # scores refrescados por el motor
+        assert row.feedback == "thumbs_down"  # feedback del usuario preservado
+
     async def test_empty_results_prunes_clean_keeps_engaged(
         self, client: AsyncClient, db_session: AsyncSession
     ):
