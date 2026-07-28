@@ -15,6 +15,9 @@ def _base_settings(mock, *, daily_harvest: bool) -> None:
     mock.SCHEDULER_SEARCH_INTERVAL_MINUTES = 60
     mock.SCHEDULER_SCRAPER_INTERVAL_HOURS = 6
     mock.SCHEDULER_TEACHER_ALERT_INTERVAL_HOURS = 6
+    # Sin esto, el MagicMock truthy activaba el digest y CronTrigger recibia
+    # un MagicMock como hour -> ValueError (regresion del commit 07a5c20).
+    mock.DAILY_DIGEST_ENABLED = False
 
 
 class TestScheduler:

@@ -188,6 +188,19 @@ class Settings(BaseSettings):
     # por check más antiguo). Acota peticiones salientes del job semanal.
     MAINTENANCE_URL_CHECK_LIMIT: int = 200
 
+    # A.SEAM (plan §15bis) — costura por capacidad + jobhunt_routing
+    # URL interna del /v1 del core (plan §21: puerto dedicado, SOLO red
+    # interna de compose, nunca ngrok). El servicio compose es `core-api`.
+    CORE_API_BASE_URL: str = "http://core-api:8000/v1"
+    # Credencial de consumer emitida por el core: "key_id.secret" (ADR-09).
+    # Vacia => toda ruta a core falla como CoreUnavailable (y core_read cae
+    # a local); no se hace ni una peticion sin credencial.
+    CORE_CONSUMER_KEY: str = ""
+    CORE_HTTP_TIMEOUT_SECONDS: float = 5.0
+    # TTL de la cache en proceso del routing: acota la staleness entre
+    # procesos/workers (la invalidacion transaccional cubre el proceso local).
+    ROUTING_CACHE_TTL_SECONDS: float = 5.0
+
     # Compliance (TD-06)
     COMPLIANCE_BLOCK_THRESHOLD: int = 3
 
