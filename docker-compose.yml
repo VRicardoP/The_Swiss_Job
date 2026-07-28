@@ -65,6 +65,11 @@ services:
       dockerfile: Dockerfile
     container_name: swissjob-worker
     command: celery -A celery_app worker -l info -Q default,scraping --concurrency=4 -P prefork
+    # Recuperación NO-GO 2026-07-28 (DECISIÓN DELEGADA del propietario):
+    # un fallo DNS transitorio ("Temporary failure in name resolution" hacia
+    # redis) tumbó este worker y quedó 7 días caído por no tener política de
+    # reinicio. Convención homelab del propietario: restart: unless-stopped.
+    restart: unless-stopped
     volumes:
       - ./backend:/app
     env_file:
@@ -83,6 +88,10 @@ services:
       dockerfile: Dockerfile
     container_name: swissjob-worker-ai
     command: celery -A celery_app worker -l info -Q ai --concurrency=1 -P prefork
+    # Recuperación NO-GO 2026-07-28 (DECISIÓN DELEGADA del propietario): misma
+    # política que `worker` — el fallo DNS transitorio de redis lo dejó caído
+    # sin reinicio. Convención homelab: restart: unless-stopped.
+    restart: unless-stopped
     volumes:
       - ./backend:/app
     env_file:

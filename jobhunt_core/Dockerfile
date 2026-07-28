@@ -17,3 +17,7 @@ USER core
 
 # Comando por defecto: la API. worker/migrate pasan su propio command en compose.
 CMD ["uvicorn", "jobhunt_core.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# Caché HF escribible: el usuario core tiene HOME=/nonexistent y la descarga
+# del modelo fallaba por permisos (decisión delegada 2026-07-28).
+ENV HF_HOME=/tmp/hf-cache
