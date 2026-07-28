@@ -81,7 +81,14 @@ class FallbackCatalog:
 
     @staticmethod
     def _warn(op: str, exc: Exception) -> None:
-        logger.warning("catalogo core_read: %s cayo a local (%s)", op, exc)
+        # 2ª rev. A.SEAM: el fallback por Unsupported es ESPERADO por contrato
+        # (el /v1 aún no expone search/stats/sources) y ocurre a ritmo de
+        # tráfico — a WARNING ahogaba la ÚNICA señal accionable del canary
+        # (CoreUnavailableError = core caído). Severidades separadas.
+        if isinstance(exc, CatalogUnsupportedError):
+            logger.debug("catalogo core_read: %s cayo a local (cota /v1: %s)", op, exc)
+        else:
+            logger.warning("catalogo core_read: %s cayo a local (%s)", op, exc)
 
 
 async def resolve_catalog(db: AsyncSession, profile_id=None) -> CatalogPort:

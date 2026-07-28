@@ -343,3 +343,37 @@ async def test_core_down_raises_unavailable():
     catalog = make_core_catalog(transport=httpx.MockTransport(refuse))
     with pytest.raises(CoreUnavailableError):
         await catalog.get(CASE_CORE_REFS["python_zurich"])
+
+
+@pytest.mark.asyncio
+async def test_canary_warn_levels_separate_expected_from_actionable(caplog):
+    """2ª rev. A.SEAM: Unsupported (cota /v1, esperado) va a DEBUG; el core
+    CAÍDO (CoreUnavailableError) es el ÚNICO WARNING — la señal del canary
+    no puede ahogarse en ruido esperado por contrato."""
+    import logging
+
+    from services.catalog.core_client import CatalogUnsupportedError, CoreUnavailableError
+    from services.catalog.seam import FallbackCatalog
+
+    class _Primary:
+        async def search(self, params):
+            raise CatalogUnsupportedError("cota /v1")
+
+        async def get(self, job_ref):
+            raise CoreUnavailableError("core caido")
+
+    class _Fallback:
+        async def search(self, params):
+            return {"items": []}
+
+        async def get(self, job_ref):
+            return None
+
+    seam = FallbackCatalog(_Primary(), _Fallback())
+    with caplog.at_level(logging.DEBUG, logger="services.catalog.seam"):
+        await seam.search(None)
+        await seam.get("x")
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+    debugs = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert len(warns) == 1 and "core caido" in warns[0].getMessage()
+    assert len(debugs) == 1 and "cota /v1" in debugs[0].getMessage()
