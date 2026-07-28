@@ -2,15 +2,15 @@
 
 Aplica la cadena REAL de Alembic (subprocess, mismo patron que
 jobhunt_core/tests/alembic_runner.py) sobre una BD desechable y compara el
-esquema resultante de `jobhunt_routing` con el que produce
+esquema resultante de las tablas de la costura con el que produce
 `Base.metadata.create_all` del modelo: columnas, PK (nombre incluido),
 check constraints e indices.
 
-Alcance deliberado — SOLO `jobhunt_routing` (la tabla de b7d1a5c9e402):
-el resto del esquema legacy tiene divergencias conocidas y deliberadas
-fuera del ORM (columna tsvector `search_vector` + trigger creados por
-migracion/conftest, indice HNSW de pgvector), asi que una comparacion
-global daria ruido, no señal.
+Alcance deliberado — SOLO las tablas de A.SEAM (`jobhunt_routing` de
+b7d1a5c9e402 y `jobhunt_profile_map` de c81f4d2e9a57): el resto del esquema
+legacy tiene divergencias conocidas y deliberadas fuera del ORM (columna
+tsvector `search_vector` + trigger creados por migracion/conftest, indice
+HNSW de pgvector), asi que una comparacion global daria ruido, no señal.
 """
 
 import os
@@ -32,7 +32,11 @@ _BASE_URL = settings.DATABASE_URL.rsplit("/", 1)[0]
 _SMOKE_DB = "swissjobhunter_migration_smoke"
 _SMOKE_URL = f"{_BASE_URL}/{_SMOKE_DB}"
 
-TABLE = "jobhunt_routing"
+# tabla de costura -> nombre de PK exigido por el plan/modelo
+SEAM_TABLES = {
+    "jobhunt_routing": "pk_jobhunt_routing",
+    "jobhunt_profile_map": "pk_jobhunt_profile_map",
+}
 
 
 def run_alembic(db_url: str, *args: str) -> subprocess.CompletedProcess:
@@ -70,28 +74,32 @@ async def _recreate_smoke_db() -> None:
 
 
 def _snapshot(sync_conn) -> dict:
-    """Esquema observable de `jobhunt_routing`: columnas + PK + checks + indices."""
+    """Esquema observable de las tablas de costura: columnas + PK + checks +
+    indices, por tabla."""
     insp = inspect(sync_conn)
     return {
-        "columns": {
-            c["name"]: {
-                "type": repr(c["type"]),
-                "nullable": c["nullable"],
-                "server_default": c.get("default"),
-            }
-            for c in insp.get_columns(TABLE)
-        },
-        "pk": {
-            "name": insp.get_pk_constraint(TABLE)["name"],
-            "columns": insp.get_pk_constraint(TABLE)["constrained_columns"],
-        },
-        "checks": {
-            ck["name"]: ck["sqltext"] for ck in insp.get_check_constraints(TABLE)
-        },
-        "indexes": {
-            ix["name"]: {"columns": ix["column_names"], "unique": ix["unique"]}
-            for ix in insp.get_indexes(TABLE)
-        },
+        table: {
+            "columns": {
+                c["name"]: {
+                    "type": repr(c["type"]),
+                    "nullable": c["nullable"],
+                    "server_default": c.get("default"),
+                }
+                for c in insp.get_columns(table)
+            },
+            "pk": {
+                "name": insp.get_pk_constraint(table)["name"],
+                "columns": insp.get_pk_constraint(table)["constrained_columns"],
+            },
+            "checks": {
+                ck["name"]: ck["sqltext"] for ck in insp.get_check_constraints(table)
+            },
+            "indexes": {
+                ix["name"]: {"columns": ix["column_names"], "unique": ix["unique"]}
+                for ix in insp.get_indexes(table)
+            },
+        }
+        for table in SEAM_TABLES
     }
 
 
@@ -104,7 +112,7 @@ async def _reflect_snapshot() -> dict:
         await engine.dispose()
 
 
-async def test_jobhunt_routing_schema_migration_equals_model():
+async def test_seam_tables_schema_migration_equals_model():
     """La migracion real y create_all del modelo producen el MISMO esquema."""
     # Fase 1: cadena Alembic completa sobre BD vacia.
     await _recreate_smoke_db()
@@ -127,8 +135,9 @@ async def test_jobhunt_routing_schema_migration_equals_model():
         await engine.dispose()
     from_model = await _reflect_snapshot()
 
-    # La PK compuesta debe llevar el nombre del plan en AMBOS esquemas
-    # (era la divergencia: create_all generaba 'jobhunt_routing_pkey').
-    assert migrated["pk"]["name"] == "pk_jobhunt_routing"
-    assert from_model["pk"]["name"] == "pk_jobhunt_routing"
+    # Las PK deben llevar el nombre del plan en AMBOS esquemas (era la
+    # divergencia original: create_all generaba '<tabla>_pkey').
+    for table, pk_name in SEAM_TABLES.items():
+        assert migrated[table]["pk"]["name"] == pk_name, table
+        assert from_model[table]["pk"]["name"] == pk_name, table
     assert migrated == from_model

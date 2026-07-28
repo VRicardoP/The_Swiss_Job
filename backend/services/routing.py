@@ -33,8 +33,9 @@ from models.jobhunt_routing import (
 logger = logging.getLogger(__name__)
 
 # Capacidades del plan §15bis (subinterfaces POR CAPACIDAD, no fachada unica).
-# En esta etapa solo 'catalog' tiene costura implementada; el resto queda como
-# vocabulario cerrado para las siguientes verticales.
+# En esta etapa 'catalog' Y 'matching' tienen costura implementada
+# (services/catalog, services/matching); el resto queda como vocabulario
+# cerrado para las siguientes verticales.
 CAPABILITY_CATALOG = "catalog"
 CAPABILITY_MATCHING = "matching"
 CAPABILITY_PROFILES = "profiles"

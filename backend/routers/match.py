@@ -1,4 +1,17 @@
-"""AI Match endpoints — analyze, results, history, feedback, implicit."""
+"""AI Match endpoints — analyze, results, history, feedback, implicit.
+
+A.SEAM (plan §15bis): las LECTURAS DEL FEED (/results, /history, /saved)
+consumen la capacidad MATCHING a traves de la costura (services/matching) —
+la implementacion (local|core) la decide `jobhunt_routing` POR PERFIL
+(users.id), con default 'local' (comportamiento byte-identico al previo:
+LocalMatching delega verbatim en MatchResultService).
+
+Las ESCRITURAS (analyze, feedback explicito/implicito) quedan SIEMPRE en
+local en esta etapa — cota registrada: la matriz de escritor del plan §15bis
+mantiene al legacy como escritor autoritativo hasta el cutover; el cambio de
+escritor llega en Fase C como escritura sincrona contra el escritor activo
++ idempotency key.
+"""
 
 import logging
 
@@ -26,6 +39,12 @@ from services.groq_service import GroqService
 from services.job_matcher import DEFAULT_WEIGHTS
 from services.match_result_service import MatchResultService
 from services.match_service import MatchService
+from services.matching import (
+    CoreUnavailableError,
+    MatchingError,
+    MatchingUnsupportedError,
+    resolve_matching,
+)
 from services.translation_service import TranslationService
 
 logger = logging.getLogger(__name__)
@@ -37,6 +56,21 @@ def _get_groq(request: Request) -> GroqService:
     """Build GroqService with Redis from app state."""
     redis_client = getattr(request.app.state, "redis_client", None)
     return GroqService(redis_client=redis_client)
+
+
+def _matching_http_error(exc: MatchingError) -> HTTPException:
+    """Traduce errores de la costura a HTTP (solo alcanzable con routing a core)."""
+    if isinstance(exc, CoreUnavailableError):
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Match feed temporarily unavailable",
+        )
+    if isinstance(exc, MatchingUnsupportedError):
+        return HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Operation not available on the active matching backend",
+        )
+    raise exc  # error de programacion: no enmascarar como HTTP
 
 
 @router.post("/analyze", response_model=MatchAnalyzeResponse)
@@ -179,12 +213,15 @@ async def get_match_results(
     translate=false omite la traducción de títulos (útil para carga masiva
     de categorización donde las traducciones no son necesarias).
     """
-    service = MatchResultService(db)
-    results, total = await service.get_results(
-        user_id=current_user.id,
-        limit=limit,
-        offset=offset,
-    )
+    matching = await resolve_matching(db, current_user.id)
+    try:
+        results, total = await matching.results(
+            current_user.id,
+            limit=limit,
+            offset=offset,
+        )
+    except MatchingError as exc:
+        raise _matching_http_error(exc) from exc
 
     await db.refresh(current_user, ["profile"])
     weights = (
@@ -205,13 +242,20 @@ async def get_match_history(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
-    """Get full match history for the current user (all past results)."""
-    service = MatchResultService(db)
-    results, total = await service.get_results(
-        user_id=current_user.id,
-        limit=limit,
-        offset=offset,
-    )
+    """Get full match history for the current user (all past results).
+
+    Hoy el legacy sirve history con la MISMA lectura que /results; la
+    costura conserva esa igualdad (una sola operacion `results` del puerto).
+    """
+    matching = await resolve_matching(db, current_user.id)
+    try:
+        results, total = await matching.results(
+            current_user.id,
+            limit=limit,
+            offset=offset,
+        )
+    except MatchingError as exc:
+        raise _matching_http_error(exc) from exc
 
     await db.refresh(current_user, ["profile"])
     weights = (
@@ -287,12 +331,15 @@ async def get_saved_jobs(
     offset: int = Query(0, ge=0),
 ):
     """Devuelve los empleos marcados como 'Good' (thumbs_up o applied)."""
-    service = MatchResultService(db)
-    results, total = await service.get_saved_jobs(
-        user_id=current_user.id,
-        limit=limit,
-        offset=offset,
-    )
+    matching = await resolve_matching(db, current_user.id)
+    try:
+        results, total = await matching.saved(
+            current_user.id,
+            limit=limit,
+            offset=offset,
+        )
+    except MatchingError as exc:
+        raise _matching_http_error(exc) from exc
 
     await db.refresh(current_user, ["profile"])
     weights = (

@@ -5,6 +5,13 @@ Cubre:
 - Generación de borrador de carta (POST /draft)
 - Exportación de eventos de calendario (.ics) (GET /calendar.ics)
 - Listado de colegios vigilados con metadata (GET /schools)
+
+A.SEAM (plan §15bis): este router queda ENTERO en local en esta etapa —
+son escrituras del state machine y lecturas de estado escrito localmente
+(status/draft/calendar sobre MatchResult), cuyo escritor autoritativo sigue
+siendo el legacy hasta Fase C (cambio de escritor con idempotency key —
+cota registrada, no implementada). Solo las lecturas del FEED van por la
+costura (routers/match.py + services/matching).
 """
 
 import logging

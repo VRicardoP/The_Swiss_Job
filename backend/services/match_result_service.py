@@ -8,6 +8,7 @@ feedback explícito e implícito). Solo depende de la sesión de BD.
 import uuid
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.job import Job
@@ -82,14 +83,63 @@ class MatchResultService:
         job_hash: str,
         feedback: str,
     ) -> MatchResult | None:
-        """Record user feedback on a match result."""
+        """Record user feedback on a match result.
+
+        Huerfano legacy (existe el Job local pero NO la fila MatchResult —
+        p.ej. visible via feed del core, criterio unificador en
+        services/matching/seam.py): se upserta una fila MINIMA con el
+        feedback para que "not for me" desaparezca tambien ahi. Solo si el
+        Job tampoco existe se devuelve None (404 del router).
+        """
         match = await self._get_one(user_id, job_hash)
-        if match is None:
+        if match is not None:
+            match.feedback = feedback
+            await self.db.commit()
+            await self.db.refresh(match)
+            return match
+        return await self._upsert_minimal_feedback(user_id, job_hash, feedback)
+
+    async def _upsert_minimal_feedback(
+        self,
+        user_id: uuid.UUID,
+        job_hash: str,
+        feedback: str,
+    ) -> MatchResult | None:
+        """Crea (o pisa el feedback de) una fila minima para un Job existente.
+
+        Upsert real (ON CONFLICT sobre uq_match_user_job): una carrera con el
+        motor de matching o con otra peticion no rompe la unicidad. Scores a
+        0.0 y skills vacias: el proximo run de matching los rellenara; el
+        feedback es lo unico que este camino escribe.
+        """
+        job_exists = (
+            await self.db.execute(select(Job.hash).where(Job.hash == job_hash))
+        ).scalar_one_or_none()
+        if job_exists is None:
             return None
-        match.feedback = feedback
+        stmt = (
+            pg_insert(MatchResult)
+            .values(
+                user_id=user_id,
+                job_hash=job_hash,
+                score_embedding=0.0,
+                score_salary=0.0,
+                score_location=0.0,
+                score_recency=0.0,
+                score_llm=0.0,
+                score_final=0.0,
+                matching_skills=[],
+                missing_skills=[],
+                feedback=feedback,
+            )
+            .on_conflict_do_update(
+                index_elements=["user_id", "job_hash"],
+                set_={"feedback": feedback},
+            )
+        )
+        await self.db.execute(stmt)
         await self.db.commit()
-        await self.db.refresh(match)
-        return match
+        return await self._get_one(user_id, job_hash)
 
     async def clear_feedback(
         self,

@@ -12,6 +12,7 @@ from models.generated_document import GeneratedDocument
 from models.job import Job
 from models.job_application import JobApplication
 from models.job_filter import JobFilter, PatternSuggestion
+from models.jobhunt_profile_map import JobhuntProfileMap
 from models.jobhunt_routing import JobhuntRouting
 from models.match_result import MatchResult
 from models.notification import Notification
@@ -28,6 +29,7 @@ __all__ = [
     "Job",
     "JobApplication",
     "JobFilter",
+    "JobhuntProfileMap",
     "JobhuntRouting",
     "MatchFeedback",
     "MatchResult",
