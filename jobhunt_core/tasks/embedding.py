@@ -10,13 +10,19 @@ import asyncio
 import logging
 from typing import Any
 
-from jobhunt_core import embeddings
-from jobhunt_core import profiles as core_profiles
+from jobhunt_core import embedding_recipes, embeddings
 from jobhunt_core.celery_app import celery_app
 from jobhunt_core.database import task_session_factory
-from jobhunt_core.harvest.normalize import build_offer_text
 
 logger = logging.getLogger(__name__)
+
+
+def _model_key(model) -> str:
+    suffix = (
+        "" if model.recipe_version == embedding_recipes.LEGACY_V1
+        else f"#{model.recipe_version}"
+    )
+    return f"{model.name}/{model.version}{suffix}"
 
 
 @celery_app.task(name="jobhunt.embedding.run_pending", bind=True, max_retries=1)
@@ -57,7 +63,7 @@ async def _run_pending_with(session_factory, limit: int) -> dict[str, Any]:
                 model.name, model.version, model.dim, embeddings.EMBED_DIM,
             )
             continue
-        key = f"{model.name}/{model.version}"
+        key = _model_key(model)
         # Backend POR MODELO (rev. A-06 #3), resuelto de forma perezosa:
         # model_id identifica al encoder real. A-07 (perfiles) reutiliza
         # EXACTAMENTE esta resolución.
@@ -69,10 +75,13 @@ async def _run_pending_with(session_factory, limit: int) -> dict[str, Any]:
             )
         n = 0
         if pending:
-            texts = [build_offer_text(r.content) for r in pending]
+            views = [
+                embedding_recipes.offer_views(r.content, model.recipe_version)
+                for r in pending
+            ]
             # ENCODE fuera de transacción (CPU): la sesión no queda colgada.
             backend = embeddings.get_backend(model.name, model.version)
-            vectors = backend.encode_batch(texts)
+            vectors = embedding_recipes.encode_views(backend, views)
             items = [
                 {"text_hash": r.text_hash, "vector": v}
                 for r, v in zip(pending, vectors)
@@ -104,12 +113,14 @@ async def _run_pending_with(session_factory, limit: int) -> dict[str, Any]:
                 for r in remaining:
                     by_th.setdefault(r.text_hash, []).append(r)
                 ths = sorted(by_th)
-                texts_p = [
-                    core_profiles.build_profile_text(by_th[th][0].content)
+                views_p = [
+                    embedding_recipes.profile_views(
+                        by_th[th][0].content, model.recipe_version
+                    )
                     for th in ths
                 ]
                 backend = backend or embeddings.get_backend(model.name, model.version)
-                vectors_p = backend.encode_batch(texts_p)
+                vectors_p = embedding_recipes.encode_views(backend, views_p)
                 items_p = [
                     {"revision_id": r.id, "profile_id": r.profile_id, "vector": v}
                     for th, v in zip(ths, vectors_p)

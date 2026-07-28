@@ -58,7 +58,7 @@ async def _run_profile_with(
             # Perfil eliminado tras encolar: permanente y normal, sin retry
             # (disciplina de clasificación de A-04).
             return {"status": "not_found", "results": {}}
-        models = await embeddings.active_models(session)  # ORDER BY name, version
+        models = await embeddings.active_models(session)
         policies = (
             await session.execute(
                 sa.text(
@@ -92,8 +92,13 @@ async def _run_profile_with(
                 # (modelo sin embeddings de ofertas) NO lo consume — el
                 # siguiente modelo puede poblar el feed.
                 canonical_pending = False
-            # La clave incluye la VERSIÓN del modelo (auditoría A-08: dos
-            # modelos con el mismo name colapsaban en una sola entrada).
-            key = f"{model.name}@{model.version}/{policy.name}@{policy.prompt_version}"
+            recipe = (
+                "" if model.recipe_version == "legacy_v1"
+                else f"#{model.recipe_version}"
+            )
+            key = (
+                f"{model.name}@{model.version}{recipe}/"
+                f"{policy.name}@{policy.prompt_version}"
+            )
             results[key] = r
     return {"status": "ok", "results": results}

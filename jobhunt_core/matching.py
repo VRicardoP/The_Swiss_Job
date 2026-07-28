@@ -293,6 +293,22 @@ async def evaluate_profile(
             if (r["vid"], r["key"]) in winners
         ]
         if state_rows:
+            # El feed representa el conjunto CANÓNICO de esta ejecución, no
+            # la unión histórica de antiguos top-K. La interacción estable se
+            # conserva en su fila; solo se retira el puntero de evaluación.
+            await session.execute(
+                sa.text(
+                    "UPDATE profile_vacancy_state "
+                    "SET current_eval_id = NULL, "
+                    "updated_at = GREATEST(updated_at, clock_timestamp()) "
+                    "WHERE profile_id = :pid AND current_eval_id IS NOT NULL "
+                    "AND NOT (vacancy_id = ANY(CAST(:vids AS uuid[])))"
+                ),
+                {
+                    "pid": profile_id,
+                    "vids": [str(row["vid"]) for row in state_rows],
+                },
+            )
             # Estado: SOLO current_eval_id/updated_at — feedback/dismissed/
             # saved/notes se preservan SIEMPRE (ADR-03: estado estable).
             # clock_timestamp() + GREATEST (rev. A-08 #3): now() es la HORA DE

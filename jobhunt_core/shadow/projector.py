@@ -127,7 +127,10 @@ logger = logging.getLogger(__name__)
 SHADOW_CONSUMER = "swissjob-shadow"
 LEGACY_PREFIX = legacy_shadow.LEGACY_PREFIX
 DEFAULT_BATCH_SIZE = 500
-EVAL_LIMIT = 100  # top-K de evaluate_profile (el default de la tarea A-08)
+# Benchmark congelado 2026-07-28: la receta role_composite_v2 necesita 1496
+# candidatos para cubrir todos los relevantes; 1800 deja margen sin barrer
+# el corpus completo.
+EVAL_LIMIT = 1800
 
 # Clave del SINGLE-FLIGHT del proyector: pg_advisory_lock de SESIÓN sobre
 # conexión dedicada (clave distinta de los locks por fuente del sink).

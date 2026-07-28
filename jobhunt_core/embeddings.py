@@ -19,6 +19,7 @@ import uuid
 
 import sqlalchemy as sa
 
+from jobhunt_core import embedding_recipes
 from jobhunt_core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,8 @@ def set_backend_factory(factory) -> None:
 
 
 async def register_model(
-    session, name: str, version: str, dim: int = EMBED_DIM, active: bool = True
+    session, name: str, version: str, dim: int = EMBED_DIM, active: bool = True,
+    recipe_version: str = embedding_recipes.LEGACY_V1,
 ) -> uuid.UUID:
     """Alta idempotente del modelo + SU partición de offer_embeddings.
 
@@ -106,15 +108,17 @@ async def register_model(
             "modelo: una ref móvil (main/tag) resolvería a pesos distintos bajo "
             "el mismo model_id (rev. A-06 2ª #3)"
         )
+    embedding_recipes.validate(recipe_version)
     await session.execute(
         sa.text(
-            "INSERT INTO embedding_models (id, name, version, dim, active) "
-            "VALUES (:id, :name, :version, :dim, :active) "
-            "ON CONFLICT (name, version) DO NOTHING"
+            "INSERT INTO embedding_models "
+            "(id, name, version, recipe_version, dim, active) "
+            "VALUES (:id, :name, :version, :recipe, :dim, :active) "
+            "ON CONFLICT (name, version, recipe_version) DO NOTHING"
         ),
         {
             "id": uuid.uuid4(), "name": name, "version": version,
-            "dim": dim, "active": active,
+            "recipe": recipe_version, "dim": dim, "active": active,
         },
     )
     # Validar la fila REAL bajo lock (rev. A-06 #4): tras el DO NOTHING la
@@ -123,9 +127,10 @@ async def register_model(
         await session.execute(
             sa.text(
                 "SELECT id, dim, active FROM embedding_models "
-                "WHERE name = :name AND version = :version FOR UPDATE"
+                "WHERE name = :name AND version = :version "
+                "AND recipe_version = :recipe FOR UPDATE"
             ),
-            {"name": name, "version": version},
+            {"name": name, "version": version, "recipe": recipe_version},
         )
     ).one()
     if row.dim != dim:
@@ -155,14 +160,13 @@ async def register_model(
 
 
 async def active_models(session) -> list:
-    """Orden DETERMINISTA (name, version): el evaluador canónico del matching
-    y cualquier iteración por modelos no dependen del orden físico del heap
-    (auditoría A-08)."""
+    """Orden determinista; legacy precede a v2 durante el backfill sombra."""
     return (
         await session.execute(
             sa.text(
-                "SELECT id, name, version, dim FROM embedding_models "
-                "WHERE active ORDER BY name, version"
+                "SELECT id, name, version, recipe_version, dim "
+                "FROM embedding_models WHERE active "
+                "ORDER BY name, version, recipe_version"
             )
         )
     ).all()

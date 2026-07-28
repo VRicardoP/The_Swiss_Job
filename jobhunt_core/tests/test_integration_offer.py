@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import jobhunt_core.harvest.providers  # noqa: F401 — registra extractor/normalizador
-from jobhunt_core import embeddings
+from jobhunt_core import embedding_recipes, embeddings
 from jobhunt_core.config import settings
 from jobhunt_core.harvest.normalize import offer_content_hash, offer_text_hash
 from jobhunt_core.harvest.sink import RawListingSink
@@ -246,6 +246,77 @@ def test_register_model_idempotent_partition_and_dim_guard(db):
 
     with pytest.raises(ValueError, match="expand/contract"):
         asyncio.run(bad_dim())
+
+
+def test_same_weights_can_register_distinct_versioned_recipes(db):
+    factory, created = db
+    legacy = _register(factory, created)
+
+    async def register_composite():
+        async with factory() as s:
+            mid = await embeddings.register_model(
+                s, "modelo-test", SHA_A,
+                recipe_version=embedding_recipes.ROLE_COMPOSITE_V2,
+            )
+            await s.commit()
+            return mid
+
+    composite = asyncio.run(register_composite())
+    created["models"].append(composite)
+    assert composite != legacy
+
+    async def ordered_models():
+        async with factory() as s:
+            return await embeddings.active_models(s)
+
+    models = asyncio.run(ordered_models())
+    assert [m.recipe_version for m in models if m.id in (legacy, composite)] == [
+        embedding_recipes.LEGACY_V1, embedding_recipes.ROLE_COMPOSITE_V2,
+    ]
+
+
+
+def test_embedding_task_uses_versioned_composite_recipe(db):
+    """La tarea aplica dos vistas y no reutiliza el vector legacy."""
+    from jobhunt_core.tasks.embedding import run_pending_task
+
+    factory, created = db
+    scope = _seed(factory, created, "arbeitnow")
+    _sink(
+        factory, scope,
+        [_listing("j-v2", title="Python Dev", tags=["py", "sql"])],
+    )
+
+    async def register_composite():
+        async with factory() as s:
+            mid = await embeddings.register_model(
+                s, "modelo-v2", SHA_B,
+                recipe_version=embedding_recipes.ROLE_COMPOSITE_V2,
+            )
+            await s.commit()
+            return mid
+
+    mid = asyncio.run(register_composite())
+    created["models"].append(mid)
+
+    calls = []
+
+    class Fake:
+        def encode_batch(self, texts):
+            calls.append(list(texts))
+            return [[1.0] + [0.0] * (embeddings.EMBED_DIM - 1) for _ in texts]
+
+    embeddings.set_backend_factory(lambda _name, _version: Fake())
+    try:
+        result = run_pending_task.apply(kwargs={"limit": 50})
+        key = f"modelo-v2/{SHA_B}#{embedding_recipes.ROLE_COMPOSITE_V2}"
+        assert result.successful() and result.result["embedded"][key] == 1
+    finally:
+        embeddings.set_backend_factory(None)
+    assert calls == [
+        ["Python Dev py sql ACME AG backend dev"],
+        ["Python Dev"],
+    ]
 
 
 def test_embedding_task_by_text_hash_no_reembed_and_optimistic(db):

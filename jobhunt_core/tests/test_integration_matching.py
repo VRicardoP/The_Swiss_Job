@@ -262,6 +262,46 @@ def test_feed_orders_filters_and_paginates(db):
     assert vacs["qa manual"] in {r.vacancy_id for r in rows}
 
 
+def test_smaller_canonical_top_k_retires_old_feed_pointers(db):
+    """El feed es el top-K vigente; el estado del usuario sobre excluidos vive."""
+    factory, created = db
+    pid, mid, polid, _vacs = _setup(
+        factory, created, ["backend python", "data eng", "qa manual"]
+    )
+    _evaluate(factory, pid, mid, polid, limit=3)
+
+    rows, _ = _feed(factory, pid)
+    excluded = rows[-1].vacancy_id
+
+    async def add_user_state():
+        async with factory() as s:
+            await matching.set_saved(s, pid, excluded, True)
+            await s.execute(
+                sa.text(
+                    "UPDATE profile_vacancy_state SET notes = 'conservar' "
+                    "WHERE profile_id = :p AND vacancy_id = :v"
+                ),
+                {"p": pid, "v": excluded},
+            )
+            await s.commit()
+
+    asyncio.run(add_user_state())
+    _evaluate(factory, pid, mid, polid, limit=1)
+
+    rows, _ = _feed(factory, pid)
+    assert len(rows) == 1 and rows[0].vacancy_id != excluded
+
+    state = _rows(
+        factory,
+        "SELECT current_eval_id, saved_at, notes "
+        "FROM profile_vacancy_state WHERE profile_id = :p AND vacancy_id = :v",
+        p=pid, v=excluded,
+    )[0]
+    assert state.current_eval_id is None
+    assert state.saved_at is not None
+    assert state.notes == "conservar"
+
+
 def test_keyset_tie_breaks_by_vacancy_id(db):
     """Empate REAL de score (dos vacantes con el MISMO texto → mismo vector):
     el keyset desempata por vacancy_id sin repetir ni saltar filas."""
