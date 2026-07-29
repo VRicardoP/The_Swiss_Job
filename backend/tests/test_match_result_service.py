@@ -218,3 +218,75 @@ class TestGetSavedJobs:
         )
         assert total == 3
         assert len(results) == 2  # limit aplicado
+
+
+@pytest.mark.anyio
+class TestConcurrentImplicitFeedback:
+    """P2 lost update (rev. externa A.SEAM): las señales implicitas se
+    concatenan con SQL ATOMICO (COALESCE(...,'[]'::jsonb) || excluded...) —
+    dos sesiones concurrentes no se pisan en NINGUNO de los dos caminos
+    (fila existente y alta huerfana)."""
+
+    async def test_two_sessions_existing_row_both_signals_survive(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        """ESCENARIO DEL REVISOR: dos sesiones han LEIDO la fila (misma
+        lista en memoria) antes de que la otra escriba. Con el
+        read-modify-write anterior, el segundo commit pisaba la señal del
+        primero; con la concatenacion atomica sobreviven AMBAS."""
+        from tests.conftest import TestSessionLocal
+
+        user_id = await _register(client)
+        await _insert_job(db_session, "race1")
+        await _seed(db_session, user_id, "race1", feedback_implicit=[])
+
+        async with TestSessionLocal() as sa_, TestSessionLocal() as sb_:
+            svc_a, svc_b = MatchResultService(sa_), MatchResultService(sb_)
+            # Ambas sesiones cargan el estado ANTES de que la otra escriba.
+            assert await svc_a._get_one(user_id, "race1") is not None
+            assert await svc_b._get_one(user_id, "race1") is not None
+            await svc_a.record_implicit_feedback(user_id, "race1", "opened")
+            match = await svc_b.record_implicit_feedback(
+                user_id, "race1", "view_time", duration_ms=12000
+            )
+            # La respuesta de la segunda sesion ya refleja AMBAS señales.
+            assert match is not None
+            assert [s["action"] for s in match.feedback_implicit] == [
+                "opened",
+                "view_time",
+            ]
+
+        # Y en BD (lectura fresca): ninguna señal perdida, orden de llegada.
+        row = await _svc(db_session)._get_one(user_id, "race1")
+        assert row.feedback_implicit == [
+            {"action": "opened"},
+            {"action": "view_time", "duration_ms": 12000},
+        ]
+
+    async def test_two_sessions_orphan_insert_both_signals_survive(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        """Alta huerfana en carrera (dos sesiones, sin fila previa): una
+        inserta y la otra cae en ON CONFLICT — la concatenacion con
+        excluded conserva las dos señales en UNA sola fila."""
+        import asyncio
+
+        from tests.conftest import TestSessionLocal
+
+        user_id = await _register(client)
+        await _insert_job(db_session, "race2")  # Job local, SIN MatchResult
+
+        async with TestSessionLocal() as sa_, TestSessionLocal() as sb_:
+            await asyncio.gather(
+                MatchResultService(sa_).record_implicit_feedback(
+                    user_id, "race2", "opened"
+                ),
+                MatchResultService(sb_).record_implicit_feedback(
+                    user_id, "race2", "saved"
+                ),
+            )
+
+        row = await _svc(db_session)._get_one(user_id, "race2")
+        assert row is not None  # una sola fila (uq_match_user_job)
+        assert {s["action"] for s in row.feedback_implicit} == {"opened", "saved"}
+        assert len(row.feedback_implicit) == 2  # ninguna señal perdida

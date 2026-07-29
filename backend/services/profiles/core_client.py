@@ -8,11 +8,13 @@ ownership por consumer con 404 indistinguible de ausente.
 
 DECISIONES (documentadas; las fija test_profiles_contract.py):
 
-IDENTIDAD DE PERFIL. El /v1 solo busca perfiles por SU UUID y el ownership
-es del consumer REAL del BFF (no del consumer sombra `swissjob-shadow`, que
-es quien proyecta external_ref=str(users.id) — perfiles de OTRO tenant e
-invisibles para nuestra credencial). El vinculo usuario legacy -> perfil
-core se resuelve por tanto en la tabla LOCAL `jobhunt_profile_map`
+IDENTIDAD DE PERFIL. El /v1 solo busca perfiles por SU UUID. El consumer del
+BFF ES `swissjob-shadow` (DECISION DELEGADA sobre CONTRATOS §3: es el
+consumer de SwissJob — el mismo bajo el que la sombra proyecta
+external_ref=str(users.id); el flip de Fase C lo consolida), de modo que los
+perfiles proyectados SON de nuestro tenant y visibles con CORE_CONSUMER_KEY.
+Como el /v1 no expone lookup por external_ref, el vinculo usuario legacy ->
+perfil core se resuelve en la tabla LOCAL `jobhunt_profile_map`
 (services/matching/identity.py — el vinculo es POR USUARIO, no por
 capacidad: la misma fila sirve a matching y a perfiles). La puebla el
 operador al enrolar el canary. Sin vinculo o sin CORE_CONSUMER_KEY:
@@ -67,6 +69,12 @@ logger = logging.getLogger(__name__)
 
 # Claves del content proyectado por la sombra (PF.5; proyector B-02).
 PROJECTED_FIELDS = ("title", "cv_text", "skills")
+
+# Errores de FORMA de un 200 del core (JSON ilegible, esquema incompatible,
+# tipos inesperados): se traducen a CoreUnavailableError — payload invalido =
+# tan inutilizable como el core caido => fallback REAL en core_read
+# (hallazgo P2 rev. externa A.SEAM; mismo criterio en catalogo y matching).
+_PAYLOAD_ERRORS = (ValueError, KeyError, TypeError, AttributeError, IndexError)
 
 # Cache de representaciones por ETag: clave str(core_profile_id) ->
 # (etag, body). En proceso y acotada (mismo espiritu que la cache del feed
@@ -174,17 +182,32 @@ class CoreProfile:
             raise CoreUnavailableError("CORE_CONSUMER_KEY no configurada")
 
         body = await self._fetch_profile(core_profile_id)
-        revision = body.get("current_revision")
-        if revision is None or any(
-            key not in (revision.get("content") or {}) for key in PROJECTED_FIELDS
-        ):
+        try:
+            revision = body.get("current_revision")
+            incomplete = revision is None or any(
+                key not in (revision.get("content") or {}) for key in PROJECTED_FIELDS
+            )
+        except _PAYLOAD_ERRORS as exc:
+            # 200 con forma incompatible (revision no-dict, content no
+            # indexable...): payload invalido => misma senal que caida.
+            raise CoreUnavailableError(
+                f"payload invalido del core para el perfil {core_profile_id}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+        if incomplete:
             # REVISION VIGENTE OBLIGATORIA (docstring): proyeccion ausente o
             # anomala — señal accionable, nunca un perfil con huecos.
             raise CoreUnavailableError(
                 f"perfil core {core_profile_id} sin revision vigente completa "
                 f"(proyeccion sombra no aterrizada o anomala)"
             )
-        return _view(local, revision["content"])
+        try:
+            return _view(local, revision["content"])
+        except _PAYLOAD_ERRORS as exc:
+            raise CoreUnavailableError(
+                f"payload invalido del core para el perfil {core_profile_id}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
     async def _fetch_profile(self, core_profile_id: uuid.UUID) -> dict:
         cache_key = str(core_profile_id)
@@ -209,7 +232,17 @@ class CoreProfile:
             raise CoreUnavailableError(
                 f"core /v1 devolvio {resp.status_code} para el perfil {core_profile_id}"
             )
-        body = resp.json()
+        try:
+            body = resp.json()
+        except ValueError as exc:  # JSON ilegible en un 200
+            raise CoreUnavailableError(
+                f"JSON invalido del core para el perfil {core_profile_id}: {exc}"
+            ) from exc
+        if not isinstance(body, dict):
+            # ProfileDTO es un objeto: cualquier otra forma es incompatible.
+            raise CoreUnavailableError(
+                f"payload no-objeto del core para el perfil {core_profile_id}"
+            )
         etag = resp.headers.get("etag")
         if etag:
             if len(_etag_cache) >= _ETAG_CACHE_MAX:

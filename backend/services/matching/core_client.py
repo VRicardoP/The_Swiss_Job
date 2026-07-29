@@ -18,15 +18,20 @@ usuario legacy -> perfil core se resuelve en la tabla LOCAL
 vinculo o sin credencial: CoreUnavailableError SIN emitir peticiones.
 
 IDENTIDAD DE VACANTE (leccion del MD5). Cada item del feed se presenta con
-el `job_hash` LEGACY cuando la vacante procede de la sombra: el proyector
-B-02 crea fuentes `legacy:<source>` con `external_id` = hash MD5 del job, y
-ese external_id viaja en `primary_listing`. Asi las ESCRITURAS (feedback,
-status), que siguen en local, operan sobre la misma identidad que el usuario
-esta viendo. Si la vacante no tiene listing legacy (core-nativa), su
-identidad presentable seria el UUID en FORMA CANONICA con guiones —
-round-trip `str(UUID(x))` — nunca una forma que colisione con un MD5 de
-32 hex (lo fija `legacy_job_ref`); pero en esta etapa esos items NO llegan
-al feed (ver EXCLUSION POR ACCIONABILIDAD).
+el `job_hash` LEGACY cuando la vacante tiene ALGUN listing de la sombra: el
+proyector B-02 crea fuentes `legacy:<source>` con `external_id` = hash MD5
+del job, y ese external_id viaja en el listing (primary o no — con orden de
+ingestion core→legacy el attach por URL deja el listing legacy como
+NO-primary; P2 rev. externa). La resolucion es DETERMINISTA: candidatos =
+external_id del primary si es `legacy:*`, luego los de los demas listings
+`legacy:*` ordenados por (source, external_id); se sirve el PRIMER candidato
+con Job local de respaldo — asi las ESCRITURAS (feedback, status), que
+siguen en local, operan sobre la misma identidad que el usuario esta viendo.
+Si la vacante no tiene listing legacy (core-nativa), su identidad
+presentable seria el UUID en FORMA CANONICA con guiones — round-trip
+`str(UUID(x))` — nunca una forma que colisione con un MD5 de 32 hex (lo
+fija `legacy_job_ref`); pero en esta etapa esos items NO llegan al feed
+(ver EXCLUSION POR ACCIONABILIDAD).
 
 OVERLAY DEL ESCRITOR LOCAL. Hasta Fase C el BFF es el escritor de
 feedback/status/borradores y la sombra NO proyecta match_results: leer ese
@@ -83,6 +88,12 @@ MAX_FEED_PAGES = 100  # 10k items; por encima => cursor en bucle o feed anomalo
 
 # Prefijo de las fuentes sombra del proyector B-02 (jobhunt_core/shadow).
 _LEGACY_SOURCE_PREFIX = "legacy:"
+
+# Errores de FORMA de un 200 del core (JSON ilegible, esquema incompatible,
+# tipos inesperados): se traducen a CoreUnavailableError — payload invalido =
+# tan inutilizable como el core caido => fallback REAL en core_read
+# (hallazgo P2 rev. externa A.SEAM; mismo criterio en catalogo y perfiles).
+_PAYLOAD_ERRORS = (ValueError, KeyError, TypeError, AttributeError, IndexError)
 
 # Cache de paginas por ETag: clave (perfil core, cursor) -> (etag, body).
 # En proceso y acotado (mismo espiritu que la cache de routing): en el 99%
@@ -161,18 +172,44 @@ def _parse_dt(value) -> datetime | None:
         return None
 
 
+def legacy_job_refs(vacancy: dict) -> list[tuple[str, str]]:
+    """Candidatos (external_id MD5, source sombra) de un VacancyDTO,
+    DETERMINISTAS.
+
+    Orden: el primary_listing si es fuente sombra `legacy:*`; despues el
+    resto de listings `legacy:*` ordenados por (source, external_id) — con
+    orden de ingestion core→legacy el attach por URL deja el listing legacy
+    como NO-primary y su MD5 sigue siendo la identidad accionable (P2 rev.
+    externa). Sin external_id duplicados."""
+    candidates: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    primary = vacancy.get("primary_listing") or {}
+    primary_source = primary.get("source") or ""
+    if primary_source.startswith(_LEGACY_SOURCE_PREFIX) and primary.get("external_id"):
+        candidates.append((primary["external_id"], primary_source))
+        seen.add(primary["external_id"])
+    others = sorted(
+        ((listing.get("source") or "", listing.get("external_id") or ""))
+        for listing in (vacancy.get("listings") or [])
+        if (listing.get("source") or "").startswith(_LEGACY_SOURCE_PREFIX)
+    )
+    for source, external_id in others:
+        if external_id and external_id not in seen:
+            candidates.append((external_id, source))
+            seen.add(external_id)
+    return candidates
+
+
 def legacy_job_ref(vacancy: dict) -> tuple[str, bool]:
     """(job_ref presentable, es_identidad_legacy) de un VacancyDTO.
 
-    Identidad legacy = external_id del primary_listing de una fuente sombra
-    `legacy:*` (hash MD5 del job). En su defecto, la identidad core en forma
-    CANONICA del UUID (leccion del MD5: jamas presentar una forma no
-    canonica que parsee ambigua)."""
-    primary = vacancy.get("primary_listing") or {}
-    source = primary.get("source") or ""
-    external_id = primary.get("external_id")
-    if source.startswith(_LEGACY_SOURCE_PREFIX) and external_id:
-        return external_id, True
+    Identidad legacy = primer candidato de `legacy_job_refs` (hash MD5 del
+    job en CUALQUIER listing sombra `legacy:*`, no solo el primary). En su
+    defecto, la identidad core en forma CANONICA del UUID (leccion del MD5:
+    jamas presentar una forma no canonica que parsee ambigua)."""
+    candidates = legacy_job_refs(vacancy)
+    if candidates:
+        return candidates[0][0], True
     return str(uuid.UUID(str(vacancy["id"]))), False
 
 
@@ -269,9 +306,17 @@ class CoreMatching:
 
         items = await self._fetch_full_feed(core_profile_id)
 
-        # Identidad por item + respaldo accionable + overlay local en lotes.
-        refs = [legacy_job_ref(it["vacancy"]) for it in items]
-        legacy_refs = [ref for ref, is_legacy in refs if is_legacy]
+        # Identidad por item (candidatos DETERMINISTAS: cualquier listing
+        # `legacy:*`, no solo el primary) + respaldo accionable + overlay
+        # local en lotes. Los errores de FORMA del payload se traducen a
+        # CoreUnavailableError (P2: fallback real, nunca un 500).
+        try:
+            candidates_per_item = [legacy_job_refs(it["vacancy"]) for it in items]
+        except _PAYLOAD_ERRORS as exc:
+            raise CoreUnavailableError(
+                f"payload invalido del feed del core: {type(exc).__name__}: {exc}"
+            ) from exc
+        legacy_refs = [ref for cands in candidates_per_item for ref, _source in cands]
         local_by_hash: dict[str, MatchResult] = {}
         actionable_hashes: set[str] = set()
         if legacy_refs:
@@ -296,28 +341,40 @@ class CoreMatching:
 
         results: list[dict] = []
         excluded_not_actionable = 0
-        for item, (job_ref, is_legacy) in zip(items, refs):
-            if not is_legacy or job_ref not in actionable_hashes:
-                # EXCLUSION POR ACCIONABILIDAD (docstring del modulo): sin
-                # Job local el feedback devolveria 404. Cota: reaparecen en
-                # Fase C con el flip de escritor + idempotency key.
-                excluded_not_actionable += 1
-                continue
-            local = local_by_hash.get(job_ref)
-            if local is not None and local.feedback in NEGATIVE_FEEDBACK:
-                # El escritor local manda: "not for me" desaparece aunque el
-                # core (sin escritor de feedback) aun lo sirva.
-                continue
-            source = (item["vacancy"].get("primary_listing") or {}).get("source")
-            if source and source.startswith(_LEGACY_SOURCE_PREFIX):
-                # Presentar la fuente ORIGINAL, no el prefijo interno sombra.
-                source = source[len(_LEGACY_SOURCE_PREFIX) :]
-            results.append(
-                {
-                    "match": _match_view(item, job_ref, local),
-                    "job": _job_view(item["vacancy"], source),
-                }
-            )
+        try:
+            for item, candidates in zip(items, candidates_per_item):
+                # Resolucion DETERMINISTA: primer candidato con Job local de
+                # respaldo (primary legacy primero; despues los listings
+                # legacy no-primary en orden (source, external_id)).
+                chosen = next(
+                    (c for c in candidates if c[0] in actionable_hashes), None
+                )
+                if chosen is None:
+                    # EXCLUSION POR ACCIONABILIDAD (docstring del modulo):
+                    # sin Job local el feedback devolveria 404. Cota:
+                    # reaparecen en Fase C con el flip de escritor +
+                    # idempotency key.
+                    excluded_not_actionable += 1
+                    continue
+                job_ref, ref_source = chosen
+                local = local_by_hash.get(job_ref)
+                if local is not None and local.feedback in NEGATIVE_FEEDBACK:
+                    # El escritor local manda: "not for me" desaparece aunque
+                    # el core (sin escritor de feedback) aun lo sirva.
+                    continue
+                # Presentar la fuente ORIGINAL del listing resuelto, no el
+                # prefijo interno sombra.
+                source = ref_source[len(_LEGACY_SOURCE_PREFIX) :] or None
+                results.append(
+                    {
+                        "match": _match_view(item, job_ref, local),
+                        "job": _job_view(item["vacancy"], source),
+                    }
+                )
+        except _PAYLOAD_ERRORS as exc:
+            raise CoreUnavailableError(
+                f"payload invalido del feed del core: {type(exc).__name__}: {exc}"
+            ) from exc
 
         total = len(results)
         self._log_exclusions(user_id, total, excluded_not_actionable, len(items))
@@ -375,7 +432,14 @@ class CoreMatching:
         async with self._client_factory() as client:
             for _ in range(MAX_FEED_PAGES):
                 page = await self._fetch_page(client, core_profile_id, cursor)
-                items.extend(page.get("items") or [])
+                page_items = page.get("items") or []
+                if not isinstance(page_items, list):
+                    # MatchesPageDTO.items es una lista: otra forma es
+                    # payload incompatible (P2), no una pagina servible.
+                    raise CoreUnavailableError(
+                        "feed del core con 'items' no-lista (payload invalido)"
+                    )
+                items.extend(page_items)
                 cursor = page.get("next_cursor")
                 if cursor is None:
                     return items
@@ -420,7 +484,17 @@ class CoreMatching:
                 f"core /v1 devolvio {resp.status_code} para el feed de "
                 f"{core_profile_id}"
             )
-        body = resp.json()
+        try:
+            body = resp.json()
+        except ValueError as exc:  # JSON ilegible en un 200
+            raise CoreUnavailableError(
+                f"JSON invalido del core en el feed de {core_profile_id}: {exc}"
+            ) from exc
+        if not isinstance(body, dict):
+            # MatchesPageDTO es un objeto: cualquier otra forma es incompatible.
+            raise CoreUnavailableError(
+                f"payload no-objeto del core en el feed de {core_profile_id}"
+            )
         etag = resp.headers.get("etag")
         if etag:
             if len(_etag_cache) >= _ETAG_CACHE_MAX:

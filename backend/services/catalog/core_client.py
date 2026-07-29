@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 import httpx
+from pydantic import ValidationError
 
 from config import settings
 from schemas.job import JobResponse
@@ -41,6 +42,19 @@ from .port import (
 logger = logging.getLogger(__name__)
 
 _UNSUPPORTED_MSG = "el /v1 del core no expone esta operacion de catalogo"
+
+# Errores de FORMA de un 200 del core (JSON ilegible, esquema incompatible,
+# tipos inesperados): se traducen a CoreUnavailableError — un payload invalido
+# es tan inutilizable como el core caido, y asi core_read tiene fallback REAL
+# en vez de un 500 (hallazgo P2 rev. externa A.SEAM).
+_PAYLOAD_ERRORS = (
+    ValueError,  # incluye json.JSONDecodeError de resp.json()
+    KeyError,
+    TypeError,
+    AttributeError,
+    IndexError,
+    ValidationError,
+)
 
 
 def default_client_factory() -> httpx.AsyncClient:
@@ -120,7 +134,15 @@ class CoreCatalog:
             raise CoreUnavailableError(
                 f"core /v1 devolvio {resp.status_code} para {vacancy_id}"
             )
-        return vacancy_to_job_response(resp.json())
+        try:
+            return vacancy_to_job_response(resp.json())
+        except _PAYLOAD_ERRORS as exc:
+            # 200 con payload invalido/incompatible = tan inutilizable como
+            # una caida => fallback real en core_read (P2 rev. externa).
+            raise CoreUnavailableError(
+                f"payload invalido del core para {vacancy_id}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
     async def search(self, params: CatalogSearchParams):
         raise CatalogUnsupportedError(_UNSUPPORTED_MSG)

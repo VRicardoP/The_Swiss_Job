@@ -352,7 +352,10 @@ async def test_canary_warn_levels_separate_expected_from_actionable(caplog):
     no puede ahogarse en ruido esperado por contrato."""
     import logging
 
-    from services.catalog.core_client import CatalogUnsupportedError, CoreUnavailableError
+    from services.catalog.core_client import (
+        CatalogUnsupportedError,
+        CoreUnavailableError,
+    )
     from services.catalog.seam import FallbackCatalog
 
     class _Primary:
@@ -377,3 +380,68 @@ async def test_canary_warn_levels_separate_expected_from_actionable(caplog):
     debugs = [r for r in caplog.records if r.levelno == logging.DEBUG]
     assert len(warns) == 1 and "core caido" in warns[0].getMessage()
     assert len(debugs) == 1 and "cota /v1" in debugs[0].getMessage()
+
+
+# ---------------------------------------------------------------------------
+# Payloads invalidos en un 200 (P2 rev. externa): CoreUnavailableError
+# ---------------------------------------------------------------------------
+
+
+def _transport_returning(content: bytes, json_body=None) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if json_body is not None:
+            return httpx.Response(200, json=json_body)
+        return httpx.Response(
+            200, content=content, headers={"content-type": "application/json"}
+        )
+
+    return httpx.MockTransport(handler)
+
+
+async def test_core_invalid_json_200_is_unavailable():
+    """200 con JSON ilegible = tan inutilizable como el core caido — nunca un
+    JSONDecodeError sin traducir (que reventaria el router con un 500)."""
+    catalog = make_core_catalog(transport=_transport_returning(b"<html>oops"))
+    with pytest.raises(CoreUnavailableError, match="payload invalido"):
+        await catalog.get(CASE_CORE_REFS["python_zurich"])
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        [1, 2, 3],  # lista donde va un objeto VacancyDTO (AttributeError)
+        {"title": "sin id"},  # falta la clave id (KeyError)
+        {"id": str(uuid.uuid4()), "tags": "no-lista"},  # tags rompe JobResponse
+        {"id": str(uuid.uuid4()), "title": "x", "primary_listing": "no-dict"},
+    ],
+)
+async def test_core_incompatible_schema_200_is_unavailable(body):
+    """200 con esquema incompatible => CoreUnavailableError (fallback real en
+    core_read), sea cual sea la forma del desvio."""
+    catalog = make_core_catalog(transport=_transport_returning(b"", json_body=body))
+    with pytest.raises(CoreUnavailableError, match="payload invalido"):
+        await catalog.get(CASE_CORE_REFS["python_zurich"])
+
+
+async def test_core_read_falls_back_to_local_on_invalid_payload(db_session, caplog):
+    """core_read con payload invalido del core: FallbackCatalog cae al motor
+    LOCAL (fallback REAL con su WARNING de canary) en vez de propagar un
+    error de forma como 500."""
+    import logging
+
+    from services.catalog import LocalCatalog
+    from services.catalog.seam import FallbackCatalog
+
+    await seed_local_cases(db_session)
+    seam = FallbackCatalog(
+        make_core_catalog(transport=_transport_returning(b"not-json")),
+        LocalCatalog(db_session),
+    )
+    with caplog.at_level(logging.WARNING, logger="services.catalog.seam"):
+        # Ref UUID del core: el payload roto NO revienta la peticion...
+        assert await seam.get(CASE_CORE_REFS["python_zurich"]) is None
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warns and "payload invalido" in warns[0].getMessage()
+    # ...y el resto del catalogo local sigue sirviendose con normalidad.
+    job = await seam.get(CASE_LOCAL_REFS["python_zurich"])
+    assert job is not None and job.title == CASES["python_zurich"]["title"]

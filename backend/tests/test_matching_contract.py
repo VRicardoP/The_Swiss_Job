@@ -946,3 +946,168 @@ async def test_router_default_local_untouched(client, db_session):
     )
     assert resp.status_code == 200
     assert resp.json()["total"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Alias legacy NO-primary (P2 rev. externa): el MD5 accionable se conserva
+# ---------------------------------------------------------------------------
+
+
+def _core_first_dto(name: str, md5: str) -> dict:
+    """Vacante con orden de ingestion CORE→LEGACY: el primary_listing es la
+    fuente core-nativa y el listing sombra `legacy:*` llego DESPUES (attach
+    por URL) — el MD5 accionable viaja en listings[], no en el primary."""
+    dto = _match_dto(name, legacy=False)
+    url = CASES[name]["url"]
+    dto["vacancy"]["listings"] = [
+        {
+            "source": "partner_feed",
+            "external_id": f"ext-{name}",
+            "url": url,
+            "apply_url": None,
+        },
+        {
+            "source": f"legacy:{LEGACY_SOURCE}",
+            "external_id": md5,
+            "url": url,
+            "apply_url": None,
+        },
+    ]
+    return dto
+
+
+def test_legacy_job_refs_deterministic_order():
+    """Resolucion DETERMINISTA: primary legacy primero; despues el resto de
+    listings `legacy:*` ordenados por (source, external_id), sin duplicados."""
+    from services.matching.core_client import legacy_job_refs
+
+    dto = _match_dto("python_zurich")["vacancy"]  # primary legacy
+    dto["listings"] = [
+        {
+            "source": "legacy:zzz",
+            "external_id": "b" * 32,
+            "url": "u",
+            "apply_url": None,
+        },
+        {
+            "source": "legacy:aaa",
+            "external_id": "a" * 32,
+            "url": "u",
+            "apply_url": None,
+        },
+        {"source": "partner_feed", "external_id": "ext", "url": "u", "apply_url": None},
+        # duplicado del primary: no debe repetirse
+        {
+            "source": f"legacy:{LEGACY_SOURCE}",
+            "external_id": CASE_HASHES["python_zurich"],
+            "url": "u",
+            "apply_url": None,
+        },
+    ]
+    refs = legacy_job_refs(dto)
+    assert [r for r, _s in refs] == [
+        CASE_HASHES["python_zurich"],  # primary legacy manda
+        "a" * 32,  # despues orden (source, external_id)
+        "b" * 32,
+    ]
+
+
+async def test_core_first_ingestion_keeps_actionable_md5(db_session):
+    """ESCENARIO DEL REVISOR (P2): vacante ingerida primero por el core y
+    despues adjuntada al legacy por URL — el listing `legacy:*` NO es el
+    primary. El item debe conservar su MD5 accionable (antes: se resolvia a
+    UUID y la exclusion por accionabilidad lo tiraba del feed)."""
+    user_id = await seed_local(db_session)
+    core_profile_id = uuid.uuid4()
+    await set_profile_link(db_session, user_id, core_profile_id)
+    md5 = "9" * 32
+    _add_job(db_session, md5)  # respaldo local accionable del alias legacy
+    await db_session.commit()
+    fake = FakeFeed(core_profile_id, [_core_first_dto("devops_remote", md5)])
+    core = make_core_matching(db_session, fake.transport())
+    items, total = await core.results(user_id)
+    assert total == 1  # NO excluido
+    assert items[0]["match"].job_hash == md5  # identidad MD5 accionable
+    # La fuente presentada es la ORIGINAL del listing resuelto, sin prefijo.
+    assert items[0]["job"].source == LEGACY_SOURCE
+
+
+# ---------------------------------------------------------------------------
+# Payloads invalidos en un 200 (P2 rev. externa): CoreUnavailableError
+# ---------------------------------------------------------------------------
+
+
+async def _linked_user(db_session) -> uuid.UUID:
+    user_id = await seed_local(db_session)
+    await set_profile_link(db_session, user_id, uuid.uuid4())
+    return user_id
+
+
+async def test_core_invalid_json_200_is_unavailable(db_session):
+    """200 con JSON ilegible en el feed => CoreUnavailableError (fallback
+    real en core_read), nunca un JSONDecodeError => 500."""
+    user_id = await _linked_user(db_session)
+
+    def garbled(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b"<html>oops", headers={"content-type": "application/json"}
+        )
+
+    core = make_core_matching(db_session, httpx.MockTransport(garbled))
+    with pytest.raises(CoreUnavailableError, match="JSON invalido"):
+        await core.results(user_id)
+
+
+@pytest.mark.parametrize(
+    "body,pattern",
+    [
+        ([1, 2, 3], "no-objeto"),  # MatchesPageDTO no es una lista
+        ({"items": {"x": 1}}, "no-lista"),  # items no es lista
+        ({"items": [{"inesperado": True}]}, "payload invalido"),  # sin vacancy
+        ({"items": [None]}, "payload invalido"),  # item nulo
+    ],
+)
+async def test_core_incompatible_schema_200_is_unavailable(db_session, body, pattern):
+    user_id = await _linked_user(db_session)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    core = make_core_matching(db_session, httpx.MockTransport(handler))
+    with pytest.raises(CoreUnavailableError, match=pattern):
+        await core.results(user_id)
+
+
+async def test_core_item_with_missing_evaluation_is_unavailable(db_session):
+    """Vacancy bien formada y accionable pero SIN evaluation: forma
+    incompatible con MatchDTO => indisponibilidad, no un KeyError => 500."""
+    user_id = await seed_local(db_session)
+    core_profile_id = uuid.uuid4()
+    await set_profile_link(db_session, user_id, core_profile_id)
+    dto = _match_dto("python_zurich")
+    del dto["evaluation"]
+    fake = FakeFeed(core_profile_id, [dto])
+    core = make_core_matching(db_session, fake.transport())
+    with pytest.raises(CoreUnavailableError, match="payload invalido"):
+        await core.results(user_id)
+
+
+async def test_fallback_serves_local_on_invalid_payload(seeded, db_session, caplog):
+    """core_read con payload invalido: FallbackMatching sirve el feed LOCAL
+    (fallback REAL con su WARNING de canary) — el escenario del revisor."""
+    import logging
+
+    user_id, matchings, _ = seeded
+
+    def garbled(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"items": [{"basura": 1}]})
+
+    seam = FallbackMatching(
+        make_core_matching(db_session, httpx.MockTransport(garbled)),
+        matchings["local"],
+    )
+    with caplog.at_level(logging.WARNING, logger="services.matching.seam"):
+        items, total = await seam.results(user_id)
+    assert total == len(VISIBLE_ORDER)  # servido por el motor local
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warns and "payload invalido" in warns[0].getMessage()

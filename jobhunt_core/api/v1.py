@@ -143,7 +143,10 @@ async def _vacancy_dtos(session, vacancy_ids) -> dict:
     for r in (
         await session.execute(
             sa.text(
-                "SELECT i.vacancy_id, s.name AS source, i.url, i.apply_url "
+                # external_id en TODOS los listings (P2 rev. externa): los
+                # alias legacy no-primary tambien portan su MD5 accionable.
+                "SELECT i.vacancy_id, s.name AS source, sl.external_id, "
+                "i.url, i.apply_url "
                 "FROM source_listing_incarnations i "
                 "JOIN source_listings sl ON sl.id = i.source_listing_id "
                 "JOIN sources s ON s.id = sl.source_id "
@@ -154,7 +157,10 @@ async def _vacancy_dtos(session, vacancy_ids) -> dict:
         )
     ).all():
         listings.setdefault(r.vacancy_id, []).append(
-            schemas.ListingDTO(source=r.source, url=r.url, apply_url=r.apply_url)
+            schemas.ListingDTO(
+                source=r.source, external_id=r.external_id,
+                url=r.url, apply_url=r.apply_url,
+            )
         )
     out = {}
     for row in contents:

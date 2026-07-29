@@ -2,10 +2,11 @@
 
 El core identifica perfiles por su propio UUID (`profiles.id`) y solo permite
 buscar por el (GET /v1/profiles/{id}); el vinculo con el legacy vive en el
-CORE como `profiles.external_ref = str(users.id)` bajo el consumer sombra
-(proyector B-02), pero el BFF NO puede leer el esquema del core (frontera
-estricta del plan §21: API /v1 + esquema propio) y el /v1 no expone lookup
-por external_ref.
+CORE como `profiles.external_ref = str(users.id)` bajo `swissjob-shadow` —
+que ES el consumer del BFF (CONTRATOS §3; el flip de Fase C lo consolida),
+asi que esos perfiles son de NUESTRO tenant. Pero el BFF NO puede leer el
+esquema del core (frontera estricta del plan §21: API /v1 + esquema propio)
+y el /v1 no expone lookup por external_ref.
 
 Por eso el vinculo se registra AQUI, en una tabla LOCAL al BFF (mismo
 principio que `jobhunt_routing`): dinamica, transaccional, auditable y

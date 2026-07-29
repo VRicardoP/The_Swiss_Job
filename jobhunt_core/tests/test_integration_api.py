@@ -475,3 +475,83 @@ def test_openapi_schema_exposed(db):
         assert "422" not in resps, p
         for status in ("400", "401", "403", "404", "304", "500"):
             assert status in resps, (p, status)
+
+def test_listings_expose_external_id_and_etag_versioning(db):
+    """P2 rev. externa A.SEAM: `external_id` en TODOS los listings activos —
+    el alias legacy NO-primary (orden de ingestión core→legacy, attach por
+    URL) también porta su MD5 accionable. Y el cambio de REPRESENTACIÓN
+    queda versionado por el ETag: un If-None-Match calculado sobre la forma
+    ANTIGUA (listings sin external_id) ya no revalida — 200 con la forma
+    nueva, jamás un 304 sirviendo la vieja."""
+    from jobhunt_core.api.v1 import _etag_of
+
+    factory, created = db
+    pid, vacs, token = _seed_matches(factory, created, titles=("backend python",))
+    vid = vacs["backend python"]
+    md5 = "d41d8cd98f00b204e9800998ecf8427e"
+    legacy_source = f"legacy:apitest-{uuid.uuid4().hex[:6]}"
+
+    # Attach de un segundo listing (fuente sombra legacy:*) a la MISMA
+    # vacante: el primary sigue siendo arbeitnow; el alias llega después.
+    async def attach_legacy():
+        async with factory() as s:
+            source_id, listing_id = uuid.uuid4(), uuid.uuid4()
+            created["sources"].append(source_id)
+            await s.execute(
+                sa.text("INSERT INTO sources (id, name, tier) VALUES (:id, :n, 0)"),
+                {"id": source_id, "n": legacy_source},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO source_listings "
+                    "(id, source_id, external_id, url_normalized) "
+                    "VALUES (:id, :sid, :ext, :u)"
+                ),
+                {"id": listing_id, "sid": source_id, "ext": md5,
+                 "u": f"https://x/alias-{md5[:8]}"},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO source_listing_incarnations "
+                    "(id, source_listing_id, vacancy_id, seq, url) "
+                    "VALUES (:id, :lid, :vid, 1, :u)"
+                ),
+                {"id": uuid.uuid4(), "lid": listing_id, "vid": vid,
+                 "u": f"https://x/alias-{md5[:8]}"},
+            )
+            await s.commit()
+
+    asyncio.run(attach_legacy())
+
+    r = _api(factory, f"/v1/vacancies/{vid}", token=token)
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["listings"]) == 2
+    # external_id en TODOS los listings, incluido el alias legacy no-primary.
+    assert all(x.get("external_id") for x in body["listings"])
+    by_source = {x["source"]: x["external_id"] for x in body["listings"]}
+    assert by_source[legacy_source] == md5
+    assert body["primary_listing"]["source"] == "arbeitnow"  # primary intacto
+
+    # Sanidad: el ETag servido ES el de la representación nueva…
+    assert _etag_of(body) == r.headers["etag"]
+    # …y la forma ANTIGUA (sin external_id en listings) YA NO revalida.
+    old_shape = {
+        **body,
+        "listings": [
+            {k: v for k, v in x.items() if k != "external_id"}
+            for x in body["listings"]
+        ],
+    }
+    r_old = _api(
+        factory, f"/v1/vacancies/{vid}", token=token,
+        headers={"If-None-Match": _etag_of(old_shape)},
+    )
+    assert r_old.status_code == 200  # la representación cambió: no revalida
+
+    # El ETag real de la forma nueva sí revalida (304).
+    r304 = _api(
+        factory, f"/v1/vacancies/{vid}", token=token,
+        headers={"If-None-Match": r.headers["etag"]},
+    )
+    assert r304.status_code == 304

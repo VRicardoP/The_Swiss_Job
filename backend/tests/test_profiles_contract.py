@@ -623,3 +623,72 @@ async def test_router_serves_core_content_and_local_write_receipt(
     resp = await client.get("/api/v1/profile", headers=headers)
     assert resp.status_code == 200
     assert resp.json()["title"] == "Projected Title"
+
+
+# ---------------------------------------------------------------------------
+# Payloads invalidos en un 200 (P2 rev. externa): CoreUnavailableError
+# ---------------------------------------------------------------------------
+
+
+async def _linked_user_with_profile(db_session):
+    user = await seed_local(db_session)
+    await set_profile_link(db_session, user.id, uuid.uuid4())
+    return user
+
+
+async def test_core_invalid_json_200_is_unavailable(db_session):
+    """200 con JSON ilegible => CoreUnavailableError (fallback real en
+    core_read), nunca un JSONDecodeError => 500."""
+    user = await _linked_user_with_profile(db_session)
+
+    def garbled(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b"<html>oops", headers={"content-type": "application/json"}
+        )
+
+    core = make_core_profile(db_session, httpx.MockTransport(garbled))
+    with pytest.raises(CoreUnavailableError, match="JSON invalido"):
+        await core.get(user)
+
+
+@pytest.mark.parametrize(
+    "body,pattern",
+    [
+        ([1, 2], "no-objeto"),  # ProfileDTO no es una lista
+        ({"current_revision": "no-dict"}, "payload invalido"),  # revision no-objeto
+        (
+            {"current_revision": {"content": ["title", "cv_text", "skills"]}},
+            "payload invalido",  # content indexable pero no-dict (TypeError)
+        ),
+    ],
+)
+async def test_core_incompatible_schema_200_is_unavailable(db_session, body, pattern):
+    user = await _linked_user_with_profile(db_session)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    core = make_core_profile(db_session, httpx.MockTransport(handler))
+    with pytest.raises(CoreUnavailableError, match=pattern):
+        await core.get(user)
+
+
+async def test_fallback_serves_local_on_invalid_payload(seeded, db_session, caplog):
+    """core_read con payload invalido: FallbackProfile sirve el perfil LOCAL
+    (fallback REAL con su WARNING de canary) — el escenario del revisor."""
+    import logging
+
+    user, ports, _ = seeded
+
+    def garbled(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"current_revision": "no-dict"})
+
+    seam = FallbackProfile(
+        make_core_profile(db_session, httpx.MockTransport(garbled)),
+        ports["local"],
+    )
+    with caplog.at_level(logging.WARNING, logger="services.profiles.seam"):
+        view = await seam.get(user)
+    assert view is not None and view.title == LOCAL_PROFILE["title"]
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warns and "payload invalido" in warns[0].getMessage()

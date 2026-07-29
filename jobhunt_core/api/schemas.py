@@ -14,13 +14,21 @@ class ErrorDTO(BaseModel):
 
 
 class ListingDTO(BaseModel):
+    """`external_id` en TODOS los listings activos (P2 rev. externa A.SEAM):
+    los alias legacy NO-primary tambien portan su MD5 accionable — sin el,
+    el BFF no puede resolver la identidad legacy de un attach por URL.
+    OJO ETag: añadirlo cambio la REPRESENTACION; el ETag se deriva del
+    payload (v1._etag_of), asi que un If-None-Match previo al cambio deja de
+    revalidar y el cliente recibe 200 con la forma nueva (versionado
+    correcto por construccion — test_integration_api lo fija)."""
+
     source: str
+    external_id: str
     url: str
     apply_url: str | None = None
 
 
 class PrimaryListingDTO(ListingDTO):
-    external_id: str
     first_seen_at: datetime
     last_seen_at: datetime
 

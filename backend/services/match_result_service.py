@@ -7,7 +7,8 @@ feedback explícito e implícito). Solo depende de la sesión de BD.
 
 import uuid
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import cast, func, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -107,7 +108,7 @@ class MatchResultService:
         job_hash: str,
         values: dict,
     ) -> MatchResult | None:
-        """Crea (o pisa el estado de) una fila minima para un Job existente.
+        """Upsert de una fila minima para un Job existente.
 
         Camino COMUN del feedback explicito e implicito sobre huerfanos
         legacy (Job local SIN fila MatchResult, visibles via feed del core).
@@ -115,32 +116,45 @@ class MatchResultService:
         motor de matching o con otra peticion no rompe la unicidad. Scores a
         0.0 y skills vacias: el proximo run de matching los rellenara;
         `values` (feedback o feedback_implicit) es lo unico que este camino
-        escribe.
+        escribe. Semantica por clave (P2 lost update, rev. externa A.SEAM):
+        - feedback (escalar): se PISA — ultimo gesto explicito gana.
+        - feedback_implicit (lista de señales): se CONCATENA de forma
+          ATOMICA en SQL (COALESCE(...,'[]'::jsonb) || excluded...) tanto en
+          la fila existente como en la carrera de dos altas huerfanas — un
+          read-modify-write en Python perderia señales concurrentes.
         """
         job_exists = (
             await self.db.execute(select(Job.hash).where(Job.hash == job_hash))
         ).scalar_one_or_none()
         if job_exists is None:
             return None
-        stmt = (
-            pg_insert(MatchResult)
-            .values(
-                user_id=user_id,
-                job_hash=job_hash,
-                score_embedding=0.0,
-                score_salary=0.0,
-                score_location=0.0,
-                score_recency=0.0,
-                score_llm=0.0,
-                score_final=0.0,
-                matching_skills=[],
-                missing_skills=[],
-                **values,
+        stmt = pg_insert(MatchResult).values(
+            user_id=user_id,
+            job_hash=job_hash,
+            score_embedding=0.0,
+            score_salary=0.0,
+            score_location=0.0,
+            score_recency=0.0,
+            score_llm=0.0,
+            score_final=0.0,
+            matching_skills=[],
+            missing_skills=[],
+            **values,
+        )
+        set_ = {
+            key: (
+                func.coalesce(
+                    MatchResult.__table__.c.feedback_implicit,
+                    cast("[]", JSONB),
+                ).op("||")(stmt.excluded.feedback_implicit)
+                if key == "feedback_implicit"
+                else stmt.excluded[key]
             )
-            .on_conflict_do_update(
-                index_elements=["user_id", "job_hash"],
-                set_=values,
-            )
+            for key in values
+        }
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["user_id", "job_hash"],
+            set_=set_,
         )
         await self.db.execute(stmt)
         await self.db.commit()
@@ -211,32 +225,34 @@ class MatchResultService:
         Job tampoco existe se devuelve None (404 del router). La fila creada
         con feedback_implicit queda ademas protegida del cleanup de ofertas
         caducadas (criterio `attached` de maintenance_tasks).
+
+        UN SOLO camino ATOMICO (P2 lost update, rev. externa A.SEAM): el
+        upsert concatena la señal en SQL (COALESCE(...,'[]'::jsonb) ||
+        excluded...) tanto si la fila existe como si es alta huerfana — el
+        read-modify-write anterior (leer lista, append, commit) perdia
+        señales con dos sesiones concurrentes (ultimo commit pisaba). La
+        existencia del Job cubre ambos casos: una fila MatchResult sin Job
+        es imposible (FK job_hash).
         """
         signal = {"action": action}
         if duration_ms is not None:
             signal["duration_ms"] = duration_ms
-
-        match = await self._get_one(user_id, job_hash)
-        if match is None:
-            return await self._upsert_minimal_feedback(
-                user_id, job_hash, {"feedback_implicit": [signal]}
-            )
-
-        # Copia de la lista: JSONB sin MutableList — mutar in-place el mismo
-        # objeto no genera historia de cambio y el flush NO persistiria la
-        # senal (las posteriores a la primera se perdian en silencio).
-        signals = list(match.feedback_implicit or [])
-        signals.append(signal)
-        match.feedback_implicit = signals
-
-        await self.db.commit()
-        await self.db.refresh(match)
-        return match
+        return await self._upsert_minimal_feedback(
+            user_id, job_hash, {"feedback_implicit": [signal]}
+        )
 
     async def _get_one(self, user_id: uuid.UUID, job_hash: str) -> MatchResult | None:
-        """Carga el MatchResult (user_id, job_hash) o None."""
-        stmt = select(MatchResult).where(
-            MatchResult.user_id == user_id,
-            MatchResult.job_hash == job_hash,
+        """Carga el MatchResult (user_id, job_hash) o None.
+
+        populate_existing: las señales implicitas se escriben con SQL atomico
+        (fuera del ORM) — sin esto, una instancia ya presente en la identity
+        map de la sesion se devolveria con el estado ANTERIOR al upsert."""
+        stmt = (
+            select(MatchResult)
+            .where(
+                MatchResult.user_id == user_id,
+                MatchResult.job_hash == job_hash,
+            )
+            .execution_options(populate_existing=True)
         )
         return (await self.db.execute(stmt)).scalar_one_or_none()
