@@ -9,8 +9,10 @@ core_primary, sin fallback que enmascare) => 200 con ownership correcto.
 
 Requisitos de entorno (skipif en su ausencia — CI sin core dev):
 - core-api accesible desde el contenedor backend (red default de compose);
-- CORE_CONSUMER_KEY real en el entorno o en <repo>/.env.aseam.local
-  (docker compose exec -e CORE_CONSUMER_KEY=... backend pytest ...);
+- CORE_CONSUMER_KEY real en el ENTORNO del contenedor: la inyecta docker
+  compose desde <repo>/.env.aseam.local (env_file OPCIONAL del servicio
+  backend — P2 rev. externa: el fichero del host no es visible aqui) o un
+  `docker compose exec -e CORE_CONSUMER_KEY=... backend pytest ...`;
 - BD core dev accesible como jobhunt_core (para MAPEAR usuario legacy ->
   UUID proyectado: operacion de OPERADOR de enrolamiento — el /v1 no expone
   lookup por external_ref, racional en models/jobhunt_profile_map.py).
@@ -20,7 +22,6 @@ Solo LEE del core dev; escribe unicamente en la BD de test legacy.
 
 import os
 import uuid
-from pathlib import Path
 
 import httpx
 import pytest
@@ -47,16 +48,11 @@ from services.routing import (
 
 
 def _credential() -> str | None:
-    """CORE_CONSUMER_KEY real: entorno > settings > .env.aseam.local (host)."""
-    key = os.environ.get("CORE_CONSUMER_KEY") or settings.CORE_CONSUMER_KEY
-    if key:
-        return key
-    local = Path(__file__).resolve().parents[2] / ".env.aseam.local"
-    if local.is_file():
-        for line in local.read_text().splitlines():
-            if line.startswith("CORE_CONSUMER_KEY="):
-                return line.split("=", 1)[1].strip() or None
-    return None
+    """CORE_CONSUMER_KEY real, SOLO del entorno del contenedor: la inyecta
+    docker compose (env_file OPCIONAL .env.aseam.local) o un `exec -e
+    CORE_CONSUMER_KEY=...`. La antigua busqueda por ruta del host
+    (parents[2]) nunca resolvia dentro del contenedor (P2 rev. externa)."""
+    return os.environ.get("CORE_CONSUMER_KEY") or None
 
 
 def _core_reachable() -> bool:

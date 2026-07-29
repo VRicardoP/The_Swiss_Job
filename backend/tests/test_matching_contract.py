@@ -1092,6 +1092,54 @@ async def test_core_item_with_missing_evaluation_is_unavailable(db_session):
         await core.results(user_id)
 
 
+async def test_core_non_str_next_cursor_is_unavailable(db_session):
+    """Repro EXACTO del revisor (P2): {"items": [], "next_cursor": []} en un
+    200 => CoreUnavailableError (fallback real) — antes el TypeError
+    (unhashable) del guard de cursores escapaba FUERA del fallback."""
+    user_id = await _linked_user(db_session)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"items": [], "next_cursor": []})
+
+    core = make_core_matching(db_session, httpx.MockTransport(handler))
+    with pytest.raises(CoreUnavailableError, match="payload invalido"):
+        await core.results(user_id)
+
+
+@pytest.mark.parametrize(
+    "section,field,value",
+    [
+        ("evaluation", "matching_skills", "python"),  # skills no-lista
+        ("vacancy", "tags", "python"),  # tags no-lista
+        ("evaluation", "score_final", float("nan")),  # numero no finito
+    ],
+    ids=["matching_skills_no_lista", "tags_no_lista", "score_no_finito"],
+)
+async def test_core_broken_item_types_are_unavailable(
+    db_session, section, field, value
+):
+    """Tipos rotos en un item de un 200 (skills/tags no-lista, score no
+    finito): el DTO privado los detecta ANTES de construir vistas =>
+    CoreUnavailableError, nunca el response model reventando FUERA del
+    fallback (P2)."""
+    user_id = await seed_local(db_session)
+    await set_profile_link(db_session, user_id, uuid.uuid4())
+    dto = _match_dto("python_zurich")
+    dto[section][field] = value
+    # json.dumps de stdlib (allow_nan=True) SI emite `NaN` como lo haria un
+    # core roto; el json= de httpx lo rechazaria (allow_nan=False).
+    body = json.dumps({"items": [dto], "next_cursor": None})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=body.encode(), headers={"content-type": "application/json"}
+        )
+
+    core = make_core_matching(db_session, httpx.MockTransport(handler))
+    with pytest.raises(CoreUnavailableError, match="payload invalido"):
+        await core.results(user_id)
+
+
 async def test_fallback_serves_local_on_invalid_payload(seeded, db_session, caplog):
     """core_read con payload invalido: FallbackMatching sirve el feed LOCAL
     (fallback REAL con su WARNING de canary) — el escenario del revisor."""

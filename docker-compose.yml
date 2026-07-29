@@ -47,6 +47,14 @@ services:
       - ./backend:/app
     env_file:
       - .env
+      # Credencial REAL del E2E A.SEAM (CORE_CONSUMER_KEY del consumer
+      # swissjob-shadow): OPCIONAL — sin el fichero el E2E se salta y nada
+      # mas cambia. DECISION DELEGADA registrada (P2 rev. externa
+      # 2026-07-29): compose DEV-only, mismo alcance que la modificacion
+      # delegada previa (restart de workers, 2026-07-28). El fichero esta en
+      # .gitignore y con permisos 0600.
+      - path: .env.aseam.local
+        required: false
     depends_on:
       postgres:
         condition: service_healthy

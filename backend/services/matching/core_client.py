@@ -69,6 +69,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 import httpx
+from pydantic import BaseModel, ConfigDict, FiniteFloat
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -105,6 +106,72 @@ _etag_cache: dict[tuple[str, str], tuple[str, dict]] = {}
 def clear_feed_cache() -> None:
     """Vacia la cache de paginas del feed (tests / operacion)."""
     _etag_cache.clear()
+
+
+# ------------------------------------------------------------- DTOs privados
+# DTOs Pydantic PRIVADOS y ESTRECHOS del feed (P2 rev. externa): validan
+# TIPOS ademas de presencia, SOLO en los campos que este cliente consume del
+# MatchesPageDTO del /v1 — sin importar nada de jobhunt_core (frontera
+# estricta, plan §21; el contrato se replica aqui como en los tests). Un 200
+# bien formado en JSON pero con tipos rotos (next_cursor no-str,
+# matching_skills/tags no-lista, scores no finitos) reventaba FUERA del
+# fallback (TypeError del guard de cursores, o el response model del router):
+# validado AQUI se traduce a CoreUnavailableError (fallback real).
+
+
+class _ListingDTO(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    source: str | None = None
+    external_id: str | None = None
+    url: str | None = None
+    first_seen_at: str | None = None
+
+
+class _VacancyDTO(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    title: str | None = None
+    company: str | None = None
+    description: str | None = None
+    tags: list | None = None
+    location: str | None = None
+    primary_listing: _ListingDTO | None = None
+    listings: list[_ListingDTO] | None = None
+
+
+class _EvaluationDTO(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    eval_key: str
+    # FiniteFloat: NaN/inf pasarian float() y romperian la serializacion
+    # JSON de la respuesta del router fuera del fallback.
+    score_final: FiniteFloat
+    scores: dict[str, FiniteFloat] | None = None
+    explanation: str | None = None
+    matching_skills: list | None = None
+    missing_skills: list | None = None
+
+
+class _StateDTO(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    feedback: str | None = None
+
+
+class _FeedItemDTO(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    vacancy: _VacancyDTO
+    evaluation: _EvaluationDTO
+    state: _StateDTO | None = None
+
+
+class _FeedPageDTO(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[_FeedItemDTO] | None = None
+    next_cursor: str | None = None
 
 
 def default_client_factory() -> httpx.AsyncClient:
@@ -439,8 +506,19 @@ class CoreMatching:
                     raise CoreUnavailableError(
                         "feed del core con 'items' no-lista (payload invalido)"
                     )
+                # Validacion de FORMA con el DTO privado ANTES de consumir la
+                # pagina: tipos rotos (next_cursor no-str, skills/tags
+                # no-lista, scores no finitos) => CoreUnavailableError, nunca
+                # un TypeError/ValidationError fuera del fallback (P2).
+                try:
+                    page_dto = _FeedPageDTO.model_validate(page)
+                except _PAYLOAD_ERRORS as exc:
+                    raise CoreUnavailableError(
+                        f"payload invalido del feed del core: "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
                 items.extend(page_items)
-                cursor = page.get("next_cursor")
+                cursor = page_dto.next_cursor
                 if cursor is None:
                     return items
                 if cursor in seen_cursors:

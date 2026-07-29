@@ -673,6 +673,28 @@ async def test_core_incompatible_schema_200_is_unavailable(db_session, body, pat
         await core.get(user)
 
 
+async def test_core_non_list_skills_in_content_is_unavailable(db_session):
+    """Repro EXACTO del revisor (P2): content {"title": "ok", "cv_text":
+    null, "skills": "python"} — claves presentes, tipos rotos — pasaba la
+    vista y reventaba ProfileResponse FUERA del fallback; el DTO privado lo
+    detecta => CoreUnavailableError (fallback real)."""
+    user = await _linked_user_with_profile(db_session)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "current_revision": {
+                    "content": {"title": "ok", "cv_text": None, "skills": "python"}
+                }
+            },
+        )
+
+    core = make_core_profile(db_session, httpx.MockTransport(handler))
+    with pytest.raises(CoreUnavailableError, match="payload invalido"):
+        await core.get(user)
+
+
 async def test_fallback_serves_local_on_invalid_payload(seeded, db_session, caplog):
     """core_read con payload invalido: FallbackProfile sirve el perfil LOCAL
     (fallback REAL con su WARNING de canary) — el escenario del revisor."""

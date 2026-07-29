@@ -56,6 +56,7 @@ from datetime import datetime
 from typing import Callable
 
 import httpx
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -69,6 +70,22 @@ logger = logging.getLogger(__name__)
 
 # Claves del content proyectado por la sombra (PF.5; proyector B-02).
 PROJECTED_FIELDS = ("title", "cv_text", "skills")
+
+
+class _ProjectedContentDTO(BaseModel):
+    """DTO Pydantic PRIVADO y ESTRECHO del content proyectado (P2 rev.
+    externa): valida TIPOS ademas de presencia, sin importar nada de
+    jobhunt_core (frontera estricta, plan §21). Un content como
+    {"title": "ok", "cv_text": null, "skills": "python"} pasaba la vista y
+    reventaba ProfileResponse FUERA del fallback; validado AQUI se traduce a
+    CoreUnavailableError (fallback real)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    title: str | None = None
+    cv_text: str | None = None
+    skills: list[str] | None = None
+
 
 # Errores de FORMA de un 200 del core (JSON ilegible, esquema incompatible,
 # tipos inesperados): se traducen a CoreUnavailableError — payload invalido =
@@ -122,15 +139,15 @@ class CoreProfileView:
     updated_at: datetime
 
 
-def _view(local: UserProfile, content: dict) -> CoreProfileView:
+def _view(local: UserProfile, content: _ProjectedContentDTO) -> CoreProfileView:
     return CoreProfileView(
         # Ids del CONTRATO LEGACY (ProfileResponse.id/user_id): los locales.
         # El UUID del perfil core es interno a la costura y no se filtra.
         id=local.id,
         user_id=local.user_id,
-        title=content["title"],
-        skills=content["skills"] or [],
-        cv_text=content["cv_text"],
+        title=content.title,
+        skills=content.skills or [],
+        cv_text=content.cv_text,
         experience_years=local.experience_years,
         languages=local.languages,
         locations=local.locations,
@@ -202,12 +219,16 @@ class CoreProfile:
                 f"(proyeccion sombra no aterrizada o anomala)"
             )
         try:
-            return _view(local, revision["content"])
+            # Validacion de TIPOS con el DTO privado ANTES de construir la
+            # vista (P2): un content con claves presentes pero tipos rotos
+            # jamas debe llegar a ProfileResponse fuera del fallback.
+            content = _ProjectedContentDTO.model_validate(revision["content"])
         except _PAYLOAD_ERRORS as exc:
             raise CoreUnavailableError(
                 f"payload invalido del core para el perfil {core_profile_id}: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
+        return _view(local, content)
 
     async def _fetch_profile(self, core_profile_id: uuid.UUID) -> dict:
         cache_key = str(core_profile_id)
