@@ -535,3 +535,200 @@ def test_erase_ack_unique_per_consumer(conn):
             sa.text("INSERT INTO erase_acks (erase_id, consumer_id) VALUES (:e, :c)"),
             {"e": erase_id, "c": p["consumer"]},
         )
+
+
+# ---------- C-ESQ (core0011): candidaturas, búsquedas guardadas, idempotencia ----------
+
+
+def _insert_application(conn, c, p, app_id=None, incarnation=None) -> uuid.UUID:
+    app_id = app_id or uuid.uuid4()
+    conn.execute(
+        sa.text(
+            "INSERT INTO applications "
+            "(id, profile_id, vacancy_id, source_listing_incarnation_id, snapshot) "
+            "VALUES (:id, :pr, :v, :i, '{}'::jsonb)"
+        ),
+        {"id": app_id, "pr": p["profile"], "v": c["vacancy"], "i": incarnation},
+    )
+    return app_id
+
+
+def test_application_unique_per_profile_vacancy(conn):
+    """UNIQUE(profile_id, vacancy_id): una sola candidatura por par (§1)."""
+    c, p = _seed_corpus(conn), _seed_profile(conn)
+    _insert_application(conn, c, p)
+    with pytest.raises(sa.exc.IntegrityError, match="uq_application_profile_vacancy"):
+        _insert_application(conn, c, p)
+
+
+def test_application_status_enum_starts_applied(conn):
+    """status[start=applied] (§1): default del ENUM + valores exactos del contrato."""
+    c, p = _seed_corpus(conn), _seed_profile(conn)
+    app_id = _insert_application(conn, c, p)
+    status = conn.execute(
+        sa.text("SELECT status FROM applications WHERE id = :id"), {"id": app_id}
+    ).scalar()
+    assert status == "applied"
+    labels = conn.execute(
+        sa.text(
+            "SELECT e.enumlabel FROM pg_enum e "
+            "JOIN pg_type t ON t.oid = e.enumtypid "
+            "JOIN pg_namespace n ON n.oid = t.typnamespace "
+            "WHERE t.typname = 'application_status' AND n.nspname = :s "
+            "ORDER BY e.enumsortorder"
+        ),
+        {"s": settings.CORE_DB_SCHEMA},
+    ).scalars().all()
+    assert labels == [
+        "saved", "applied", "phone_screen", "technical",
+        "interview", "offer", "rejected", "withdrawn",
+    ]
+
+
+def test_application_rejects_status_outside_enum(conn):
+    c, p = _seed_corpus(conn), _seed_profile(conn)
+    with pytest.raises(sa.exc.DataError, match="application_status"):
+        conn.execute(
+            sa.text(
+                "INSERT INTO applications (profile_id, vacancy_id, status) "
+                "VALUES (:pr, :v, 'ghosted')"
+            ),
+            {"pr": p["profile"], "v": c["vacancy"]},
+        )
+
+
+def test_application_composite_fk_rejects_foreign_incarnation(conn):
+    """fk_application_incarnation_same_vacancy: la incarnación citada debe ser
+    de ESA vacante — la mezcla se rechaza (§1 #2)."""
+    c1, c2, p = _seed_corpus(conn), _seed_corpus(conn), _seed_profile(conn)
+    with pytest.raises(
+        sa.exc.IntegrityError, match="fk_application_incarnation_same_vacancy"
+    ):
+        _insert_application(conn, c1, p, incarnation=c2["inc"])  # inc AJENA
+
+
+def test_application_incarnation_set_null_only_nulls_pointer(conn):
+    """SET NULL por-columna: borrar la incarnación apuntada nulifica SOLO el
+    puntero — la candidatura (dato de usuario) sobrevive intacta (PF.3)."""
+    c, p = _seed_corpus(conn), _seed_profile(conn)
+    # Incarnación fresca sin revisiones (borrable), patrón del test de vacancies.
+    conn.execute(
+        sa.text("UPDATE source_listing_incarnations SET ended_at = now() WHERE id = :i"),
+        {"i": c["inc"]},
+    )
+    fresh = uuid.uuid4()
+    conn.execute(
+        sa.text(
+            "INSERT INTO source_listing_incarnations (id, source_listing_id, vacancy_id, seq, url) "
+            "VALUES (:id, :l, :v, 2, 'u2')"
+        ),
+        {"id": fresh, "l": c["listing"], "v": c["vacancy"]},
+    )
+    app_id = _insert_application(conn, c, p, incarnation=fresh)
+    conn.execute(
+        sa.text("DELETE FROM source_listing_incarnations WHERE id = :i"), {"i": fresh}
+    )
+    row = conn.execute(
+        sa.text(
+            "SELECT vacancy_id, source_listing_incarnation_id FROM applications "
+            "WHERE id = :id"
+        ),
+        {"id": app_id},
+    ).one()
+    assert row.vacancy_id == c["vacancy"]  # la columna NOT NULL sobrevive
+    assert row.source_listing_incarnation_id is None  # el puntero se nulifica
+
+
+def test_status_event_requires_application_and_cascades(conn):
+    """application_status_events cuelga de applications: FK obligatoria y el
+    borrado del padre (erase GDPR) arrastra su historial (CASCADE).
+
+    El raises va AL FINAL: tras un IntegrityError la transacción del test
+    queda abortada (misma disciplina que el resto del fichero)."""
+    c, p = _seed_corpus(conn), _seed_profile(conn)
+    app_id = _insert_application(conn, c, p)
+    conn.execute(
+        sa.text(
+            "INSERT INTO application_status_events (application_id, status) "
+            "VALUES (:a, 'phone_screen')"
+        ),
+        {"a": app_id},
+    )
+    conn.execute(sa.text("DELETE FROM applications WHERE id = :a"), {"a": app_id})
+    left = conn.execute(
+        sa.text(
+            "SELECT count(*) FROM application_status_events WHERE application_id = :a"
+        ),
+        {"a": app_id},
+    ).scalar()
+    assert left == 0
+    with pytest.raises(sa.exc.IntegrityError, match="application_status_events"):
+        conn.execute(
+            sa.text(
+                "INSERT INTO application_status_events (application_id, status) "
+                "VALUES (:a, 'applied')"
+            ),
+            {"a": uuid.uuid4()},  # candidatura inexistente
+        )
+
+
+def test_saved_search_defaults_and_profile_fk(conn):
+    """saved_searches: defaults del modelo origen (filters {}, min_score 0,
+    daily, push, activa, 0 matches) + FK a profiles obligatoria (raises AL
+    FINAL — tras el IntegrityError la transacción queda abortada)."""
+    p = _seed_profile(conn)
+    sid = uuid.uuid4()
+    conn.execute(
+        sa.text("INSERT INTO saved_searches (id, profile_id, name) VALUES (:id, :p, 'remote py')"),
+        {"id": sid, "p": p["profile"]},
+    )
+    row = conn.execute(
+        sa.text(
+            "SELECT filters::text, min_score, notify_frequency, notify_push, "
+            "is_active, last_run_at, total_matches FROM saved_searches WHERE id = :id"
+        ),
+        {"id": sid},
+    ).one()
+    assert row == ("{}", 0, "daily", True, True, None, 0)
+    with pytest.raises(sa.exc.IntegrityError, match="saved_searches"):
+        conn.execute(
+            sa.text("INSERT INTO saved_searches (profile_id, name) VALUES (:p, 'x')"),
+            {"p": uuid.uuid4()},  # perfil inexistente
+        )
+
+
+def test_idempotency_pk_blocks_replay(conn):
+    """pk_idempotency_records (consumer_id, key, route): el reintento con la
+    misma key sobre la misma ruta NO crea segunda fila; otra ruta u otro
+    consumer sí son registros distintos (PLAN §4 / §15bis)."""
+    p1 = _seed_profile(conn)
+    ins = sa.text(
+        "INSERT INTO idempotency_records "
+        "(consumer_id, key, route, request_hash, expires_at) "
+        "VALUES (:c, :k, :r, 'h1', now() + interval '1 day')"
+    )
+    conn.execute(ins, {"c": p1["consumer"], "k": "k1", "r": "PUT /v1/profiles/x"})
+    # Mismo candado exacto → bloqueado.
+    with pytest.raises(sa.exc.IntegrityError, match="pk_idempotency_records"):
+        conn.execute(ins, {"c": p1["consumer"], "k": "k1", "r": "PUT /v1/profiles/x"})
+
+
+def test_idempotency_scoped_by_consumer_and_route(conn):
+    p1, p2 = _seed_profile(conn), _seed_profile(conn)
+    ins = sa.text(
+        "INSERT INTO idempotency_records "
+        "(consumer_id, key, route, request_hash, expires_at) "
+        "VALUES (:c, :k, :r, 'h1', now() + interval '1 day')"
+    )
+    conn.execute(ins, {"c": p1["consumer"], "k": "k1", "r": "PUT /v1/profiles/x"})
+    conn.execute(ins, {"c": p1["consumer"], "k": "k1", "r": "POST /v1/applications"})
+    conn.execute(ins, {"c": p2["consumer"], "k": "k1", "r": "PUT /v1/profiles/x"})
+    # Índice de purga por expiración presente (DoD C-ESQ).
+    idx = conn.execute(
+        sa.text(
+            "SELECT count(*) FROM pg_indexes WHERE schemaname = :s "
+            "AND indexname = 'ix_idem_expires_at'"
+        ),
+        {"s": settings.CORE_DB_SCHEMA},
+    ).scalar()
+    assert idx == 1
