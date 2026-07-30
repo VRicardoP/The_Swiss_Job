@@ -236,7 +236,14 @@ async def list_vacancies(
     `q` = búsqueda MÍNIMA y HONESTA: substring case-insensitive (position, sin
     comodines LIKE que escapar) sobre title/company del content canónico.
     yagni: el ranking SEMÁNTICO no entra aquí — vive en /profiles/{id}/matches
-    (cota registrada en CONTRATOS_FASE_C C-API-R)."""
+    (cota registrada en CONTRATOS_FASE_C C-API-R).
+
+    COTA de `q` (1ª rev. C-API-R): NO está indexado — el keyset barre
+    ix_vacancies_feed_keyset en orden y `position` filtra por fila, de modo
+    que una `q` poco selectiva recorre el índice PARCIAL de activas completo
+    hasta llenar la página (O(activas), NO seq scan del corpus; sigue siendo
+    index scan ordenado). Un GIN trigram es trabajo futuro solo si el volumen
+    lo exige — hoy el corpus es pequeño y `q` es el filtro mínimo, no ranking."""
     cur = decode_vacancy_cursor(cursor) if cursor else None
     where = ["v.archived_at IS NULL", "v.merged_into IS NULL"]
     params: dict = {"lim": limit}
