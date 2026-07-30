@@ -51,6 +51,14 @@ class VacancyDTO(BaseModel):
     translations: list = []
 
 
+class VacanciesPageDTO(BaseModel):
+    """Página del feed de catálogo (C-API-R): VacancyDTO reutilizado + cursor
+    keyset OPACO. Misma forma de página que MatchesPageDTO."""
+
+    items: list[VacancyDTO]
+    next_cursor: str | None = None
+
+
 class ModelRefDTO(BaseModel):
     name: str
     version: str

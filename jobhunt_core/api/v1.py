@@ -14,6 +14,7 @@ import base64
 import hashlib
 import json
 import uuid
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 import sqlalchemy as sa
@@ -65,6 +66,30 @@ def decode_cursor(cursor: str) -> tuple[Decimal, uuid.UUID]:
             # (primera página en bucle) y -Infinity vacía la paginación.
             raise InvalidOperation("cursor fuera de dominio")
         return score_dec, uuid.UUID(vid)
+    except (ValueError, InvalidOperation, UnicodeDecodeError) as exc:
+        raise ApiError(
+            400, "invalid_cursor", "cursor ilegible", {"cursor": cursor[:64]}
+        ) from exc
+
+
+def encode_vacancy_cursor(created_at: datetime, vacancy_id) -> str:
+    raw = f"{created_at.isoformat()}|{vacancy_id}"
+    return base64.urlsafe_b64encode(raw.encode()).decode()
+
+
+def decode_vacancy_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    """Keyset del feed de catálogo = (created_at, vacancy_id). Cota PROPIA
+    (análoga a CURSOR_SCORE_BOUND del feed de matches): se exige timestamp CON
+    zona horaria — uno naive compararía ambiguamente contra timestamptz en el
+    driver; y datetime.fromisoformat ya acota el año a <= 9999, dentro del
+    rango de Postgres timestamptz (sin DataError→500 por año desbordado)."""
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        ts, _, vid = raw.partition("|")
+        created = datetime.fromisoformat(ts)
+        if created.tzinfo is None:
+            raise ValueError("cursor sin zona horaria")
+        return created, uuid.UUID(vid)
     except (ValueError, InvalidOperation, UnicodeDecodeError) as exc:
         raise ApiError(
             400, "invalid_cursor", "cursor ilegible", {"cursor": cursor[:64]}
@@ -188,6 +213,68 @@ async def _vacancy_dtos(session, vacancy_ids) -> dict:
             listings=listings.get(row.id, []),
         )
     return out
+
+
+@router.get("/vacancies", response_model=schemas.VacanciesPageDTO,
+            responses={304: {"description": "Not Modified"}})
+async def list_vacancies(
+    request: Request,
+    session=Depends(get_session),
+    principal: Principal = Depends(require_scope("vacancies:read")),
+    limit: int = Query(20, ge=1, le=MAX_PAGE_LIMIT),
+    cursor: str | None = Query(None),
+    q: str | None = Query(None, max_length=200),
+):
+    """Feed/búsqueda de catálogo (C-API-R): corpus GLOBAL (cualquier credencial
+    con vacancies:read; sin ownership) — solo vacantes ACTIVAS y presentables
+    (archived_at IS NULL, merged_into IS NULL, con offer_revision canónica
+    vigente). Orden DETERMINISTA (created_at DESC, id DESC) para keyset opaco
+    base64(created_at|vacancy_id), apoyado en ix_vacancies_feed_keyset
+    (core0012). ETag de la página; los límites de `limit` los declara Query
+    (ge/le → OpenAPI).
+
+    `q` = búsqueda MÍNIMA y HONESTA: substring case-insensitive (position, sin
+    comodines LIKE que escapar) sobre title/company del content canónico.
+    yagni: el ranking SEMÁNTICO no entra aquí — vive en /profiles/{id}/matches
+    (cota registrada en CONTRATOS_FASE_C C-API-R)."""
+    cur = decode_vacancy_cursor(cursor) if cursor else None
+    where = ["v.archived_at IS NULL", "v.merged_into IS NULL"]
+    params: dict = {"lim": limit}
+    if cur is not None:
+        where.append(
+            "(v.created_at < :cts OR (v.created_at = :cts AND v.id < :cid))"
+        )
+        params["cts"], params["cid"] = cur
+    if q is not None and q.strip():
+        where.append(
+            "(position(lower(:q) in lower(coalesce(o.content->>'title', ''))) > 0 "
+            "OR position(lower(:q) in lower(coalesce(o.content->>'company', ''))) > 0)"
+        )
+        params["q"] = q.strip()
+    rows = (
+        await session.execute(
+            sa.text(
+                "SELECT v.id, v.created_at FROM vacancies v "
+                "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
+                "WHERE " + " AND ".join(where) + " "
+                "ORDER BY v.created_at DESC, v.id DESC LIMIT :lim"
+            ),
+            params,
+        )
+    ).all()
+    # _vacancy_dtos re-filtra por presentabilidad: el JOIN de arriba ya lo
+    # garantiza, pero el guard `if r.id in dtos` tolera un archivado a mitad de
+    # request (rarísimo) — misma disciplina que el feed de matches.
+    dtos = await _vacancy_dtos(session, [r.id for r in rows])
+    items = [dtos[r.id] for r in rows if r.id in dtos]
+    next_cur = (
+        (rows[-1].created_at, rows[-1].id) if rows and len(rows) == limit else None
+    )
+    page = schemas.VacanciesPageDTO(
+        items=items,
+        next_cursor=encode_vacancy_cursor(*next_cur) if next_cur else None,
+    )
+    return _with_etag(request, page.model_dump(mode="json"))
 
 
 @router.get("/vacancies/{vacancy_id}", response_model=schemas.VacancyDTO,

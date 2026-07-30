@@ -109,6 +109,17 @@ def _seed_matches(factory, created, titles=("backend python", "data eng")):
     return pid, vacs, token
 
 
+def _seed_catalog(factory, created, n=3):
+    """n vacantes ACTIVAS presentables con un TOKEN único en el title: el feed
+    /v1/vacancies es GLOBAL, así que `q=token` aísla el conjunto del test del
+    ruido del corpus compartido (la BD de la suite). Devuelve (token, {título:
+    vid}, token_de_auth con ALL_SCOPES)."""
+    token = "capir" + uuid.uuid4().hex[:8]
+    titles = tuple(f"{token}v{i}" for i in range(n))
+    _pid, vacs, auth = _seed_matches(factory, created, titles=titles)
+    return token, vacs, auth
+
+
 def test_auth_negative_catalog(db):
     """Contract tests NEGATIVOS de credencial: cualquier causa → 401 con la
     forma {code, message, details}, sin distinguir motivo."""
@@ -555,3 +566,127 @@ def test_listings_expose_external_id_and_etag_versioning(db):
         headers={"If-None-Match": r.headers["etag"]},
     )
     assert r304.status_code == 304
+
+
+# ---------- C-API-R: feed/búsqueda de catálogo GET /v1/vacancies ----------
+
+def test_catalog_feed_only_active_and_by_id_coherent(db):
+    """Feed §2/C-API-R: solo vacantes ACTIVAS y presentables; archivada/fundida
+    salen del feed y son coherentes con el GET by id (404)."""
+    factory, created = db
+    token, vacs, auth = _seed_catalog(factory, created, n=3)
+    base = "/v1/vacancies"
+
+    body = _api(factory, base + f"?q={token}", token=auth).json()
+    assert len(body["items"]) == 3
+    assert all(token in it["title"] for it in body["items"])
+
+    # Cross con el GET by id: la lectura directa del primero coincide.
+    first = body["items"][0]
+    r_one = _api(factory, base + f"/{first['id']}", token=auth)
+    assert r_one.status_code == 200
+    assert (r_one.json()["id"], r_one.json()["title"]) == (first["id"], first["title"])
+
+    ids = [it["id"] for it in body["items"]]
+
+    async def hide():
+        async with factory() as s:
+            await s.execute(
+                sa.text("UPDATE vacancies SET archived_at = now() WHERE id = :v"),
+                {"v": ids[0]},
+            )
+            winner = uuid.uuid4()
+            created["extra_vacs"].append(winner)
+            await s.execute(sa.text("INSERT INTO vacancies (id) VALUES (:w)"), {"w": winner})
+            await s.execute(
+                sa.text("UPDATE vacancies SET merged_into = :w WHERE id = :v"),
+                {"w": winner, "v": ids[1]},
+            )
+            await s.commit()
+
+    asyncio.run(hide())
+    remaining = [it["id"] for it in _api(factory, base + f"?q={token}", token=auth).json()["items"]]
+    assert remaining == [ids[2]]  # solo la ACTIVA queda
+    assert _api(factory, base + f"/{ids[0]}", token=auth).status_code == 404  # coherente
+
+
+def test_catalog_keyset_pagination_stable(db):
+    """Keyset OPACO estable: paginar en trozos == la página completa, sin
+    solapes ni huecos (created_at idéntico ⇒ ejercita el desempate por id)."""
+    factory, created = db
+    token, vacs, auth = _seed_catalog(factory, created, n=5)
+    base = f"/v1/vacancies?q={token}"
+
+    full = _api(factory, base, token=auth).json()
+    assert len(full["items"]) == 5 and full["next_cursor"] is None
+    order = [it["id"] for it in full["items"]]
+
+    collected: list = []
+    cursor = None
+    for _ in range(10):  # cota de seguridad contra bucle infinito
+        url = base + "&limit=2" + (f"&cursor={cursor}" if cursor else "")
+        page = _api(factory, url, token=auth).json()
+        collected += [it["id"] for it in page["items"]]
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert collected == order  # mismo orden, sin solapes
+    assert len(collected) == len(set(collected)) == 5  # sin huecos ni duplicados
+
+
+def test_catalog_q_substring_case_insensitive(db):
+    """`q` = substring case-insensitive (mínimo honesto) sobre title/company."""
+    factory, created = db
+    token, vacs, auth = _seed_catalog(factory, created, n=3)
+    base = "/v1/vacancies"
+
+    assert len(_api(factory, base + f"?q={token}", token=auth).json()["items"]) == 3
+    # Mayúsculas filtran igual (case-insensitive).
+    assert len(_api(factory, base + f"?q={token.upper()}", token=auth).json()["items"]) == 3
+    # Substring presente en un solo title.
+    only = f"{token}v1"
+    got = _api(factory, base + f"?q={only}", token=auth).json()["items"]
+    assert len(got) == 1 and got[0]["title"] == only
+    # Token inexistente ⇒ 0 filas.
+    assert _api(factory, base + f"?q={token}zzz", token=auth).json()["items"] == []
+
+
+def test_catalog_cursor_and_limit_errors(db):
+    """Cursor OPACO inválido ⇒ 400 invalid_cursor (incl. la COTA propia:
+    timestamp sin zona horaria); limit fuera de rango ⇒ 400 invalid_request."""
+    import base64 as b64
+
+    factory, created = db
+    _cid, _kid, auth = _issue(factory, created, "tenant-a", ALL_SCOPES)
+    base = "/v1/vacancies"
+
+    r = _api(factory, base + "?cursor=%21%21%21no-cursor", token=auth)
+    assert (r.status_code, r.json()["code"]) == (400, "invalid_cursor")
+    # base64 válido pero timestamp NAIVE (sin tz) y timestamp basura ⇒ 400.
+    for payload in (f"2026-07-30T00:00:00|{uuid.uuid4()}", f"no-es-fecha|{uuid.uuid4()}"):
+        cur = b64.urlsafe_b64encode(payload.encode()).decode()
+        r = _api(factory, base + f"?cursor={cur}", token=auth)
+        assert (r.status_code, r.json()["code"]) == (400, "invalid_cursor"), payload
+    for badlim in (0, 101):
+        r = _api(factory, base + f"?limit={badlim}", token=auth)
+        assert (r.status_code, r.json()["code"]) == (400, "invalid_request")
+
+
+def test_catalog_etag_304(db):
+    factory, created = db
+    token, vacs, auth = _seed_catalog(factory, created, n=2)
+    url = f"/v1/vacancies?q={token}"
+    r1 = _api(factory, url, token=auth)
+    etag = r1.headers["etag"]
+    r2 = _api(factory, url, token=auth, headers={"If-None-Match": etag})
+    assert r2.status_code == 304 and r2.headers["etag"] == etag
+
+
+def test_catalog_scope_required(db):
+    """Sin credencial ⇒ 401; credencial válida sin vacancies:read ⇒ 403."""
+    factory, created = db
+    _cid, _kid, only_prof = _issue(factory, created, "tenant-a", ["profiles:read"])
+    base = "/v1/vacancies"
+    assert _api(factory, base).status_code == 401
+    r = _api(factory, base, token=only_prof)
+    assert (r.status_code, r.json()["details"]["required_scope"]) == (403, "vacancies:read")
