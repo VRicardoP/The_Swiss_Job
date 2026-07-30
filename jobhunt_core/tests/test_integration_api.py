@@ -798,6 +798,42 @@ def test_put_profile_if_match_precondition_412(db):
     assert (r_weak.status_code, r_weak.json()["code"]) == (412, "precondition_failed")
 
 
+def test_idempotency_purge_removes_expired_only(db):
+    """La tarea de purga (2º análisis C-API-W) borra SOLO las reservas
+    caducadas — la ventana viva (con su cv_text en response) sobrevive."""
+    from jobhunt_core.tasks.idempotency import purge_expired_task
+
+    factory, created = db
+    pid, _vacs, token = _seed_writable(factory, created)
+    cid = created["consumers"][0]
+    url = f"/v1/profiles/{pid}"
+    # Reserva viva vía un PUT idempotente real (response con cv_text).
+    _api(factory, url, token=token, method="PUT",
+         headers={"Idempotency-Key": "live-key"},
+         json_body={"title": "t", "cv_text": "curriculum"})
+
+    async def seed_expired():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "INSERT INTO idempotency_records "
+                "(consumer_id, key, route, request_hash, response, expires_at) "
+                "VALUES (:c, 'old', 'PUT /v1/x', 'h', '{}'::jsonb, now() - interval '1 hour')"
+            ), {"c": cid})
+            await s.commit()
+
+    asyncio.run(seed_expired())
+    res = purge_expired_task.apply().result
+    assert res["deleted"] == 1  # solo la caducada
+
+    async def count_live():
+        async with factory() as s:
+            return (await s.execute(sa.text(
+                "SELECT count(*) FROM idempotency_records "
+                "WHERE consumer_id = :c AND key = 'live-key'"), {"c": cid})).scalar_one()
+
+    assert asyncio.run(count_live()) == 1  # la viva sobrevive
+
+
 def test_idempotency_same_key_replays_without_reexecution(db):
     """Idempotency-Key: el reintento con la MISMA key y MISMO cuerpo devuelve
     la respuesta GUARDADA sin re-ejecutar el handler — probado con una

@@ -121,10 +121,11 @@ async def run_idempotent(session, principal, route, request_hash, key, handler):
 
 
 async def purge_expired(session) -> int:
-    """Purga de reservas caducadas (barrido por ix_idem_expires_at). DIFERIDA:
-    no hay entrada de beat que la invoque todavía — la wiring del scheduler es
-    trabajo de C-2 (kill-switch/arpones). yagni: función mínima lista para
-    engancharse; sin cron propio hasta que el volumen lo pida."""
+    """Purga de reservas caducadas (barrido por ix_idem_expires_at). CABLEADA
+    en el beat del core-worker vía `jobhunt.idempotency.purge_expired`
+    (celery_app.py, cadencia CORE_IDEMPOTENCY_PURGE_EVERY_S) — 2º análisis de
+    C-API-W: la deferral a C-2 era huérfana (su DoD son arpones del piloto).
+    Además acota la retención del cv_text guardado en `response` al TTL."""
     return (
         await session.execute(
             sa.text(

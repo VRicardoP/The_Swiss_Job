@@ -47,6 +47,7 @@ celery_app.conf.update(
         "jobhunt.shadow.sample_outbox_lag": {"queue": "core.default"},
         "jobhunt.shadow.compute_cycle": {"queue": "core.default"},
         "jobhunt.shadow.purge_staging": {"queue": "core.default"},
+        "jobhunt.idempotency.purge_expired": {"queue": "core.default"},
         # Harness GATE-SOMBRA (B-05): el ciclo orquestado es ingesta (drena
         # el staging vía el proyector) — serializa en core.harvest; la
         # vigilancia del slot es observabilidad ligera — core.default.
@@ -92,6 +93,12 @@ celery_app.conf.update(
             "task": "jobhunt.delivery.dispatch_outbox",
             "schedule": float(settings.CORE_DELIVERY_DISPATCH_EVERY_S),
         },
+        # C-API-W 2º análisis: la purga de idempotency_records vive AQUÍ (beat
+        # del core-worker), no en C-2 (cuyo DoD son arpones del piloto).
+        "idempotency-purge-expired": {
+            "task": "jobhunt.idempotency.purge_expired",
+            "schedule": float(settings.CORE_IDEMPOTENCY_PURGE_EVERY_S),
+        },
     },
 )
 
@@ -101,5 +108,6 @@ celery_app.conf.include = [
     "jobhunt_core.tasks.embedding",
     "jobhunt_core.tasks.matching",
     "jobhunt_core.tasks.delivery",
+    "jobhunt_core.tasks.idempotency",
     "jobhunt_core.tasks.shadow",
 ]

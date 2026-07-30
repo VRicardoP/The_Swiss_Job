@@ -65,6 +65,9 @@ class CoreSettings(BaseSettings):
     # matemáticamente imposibles.
     CORE_SHADOW_PROJECT_EVERY_S: int = 300         # jobhunt.shadow.project
     CORE_DELIVERY_DISPATCH_EVERY_S: int = 300      # jobhunt.delivery.dispatch_outbox
+    # C-API-W 2º análisis: barrido de idempotency_records caducados (acota la
+    # retención del cv_text guardado en response al TTL de 24h).
+    CORE_IDEMPOTENCY_PURGE_EVERY_S: int = 3600
 
     model_config = {"extra": "ignore"}
 
