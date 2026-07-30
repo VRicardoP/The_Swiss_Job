@@ -102,6 +102,23 @@ def _etag_of(payload: dict) -> str:
     return '"' + hashlib.sha256(canonical.encode()).hexdigest()[:32] + '"'
 
 
+def _if_match_matches(header: str, etag: str) -> bool:
+    """Semántica HTTP real de If-Match (RFC 9110 §13.1.1): comparación FUERTE
+    — `*` casa cualquier entidad existente; un validador DÉBIL (W/) JAMÁS
+    satisface la precondición (a diferencia de If-None-Match, que sí admite la
+    comparación débil). Se usa en la escritura optimista del PUT."""
+    header = header.strip()
+    if header == "*":
+        return True
+    for part in header.split(","):
+        cand = part.strip()
+        if cand.startswith("W/"):
+            continue  # validador débil: no equivale bajo comparación fuerte
+        if cand == etag:
+            return True
+    return False
+
+
 def _if_none_match_matches(header: str, etag: str) -> bool:
     """Semántica HTTP real de If-None-Match (rev. A-09 #5): lista de
     entidades, comodín `*` y comparación DÉBIL (W/ se ignora para GET)."""
@@ -407,11 +424,12 @@ async def put_profile(
             raise error_404("perfil")
         current = await _profile_dto(session, profile_id, principal.consumer_id)
         if_match = request.headers.get("if-match")
-        if if_match is not None and not _if_none_match_matches(
+        if if_match is not None and not _if_match_matches(
             if_match, _etag_of(current.model_dump(mode="json"))
         ):
-            # If-Match (RFC 9110): `*` exige existencia (ya garantizada);
-            # en lista, comparación con el ETag ACTUAL.
+            # If-Match (RFC 9110 §13.1.1): comparación FUERTE con el ETag
+            # ACTUAL (1ª rev.); `*` exige existencia (ya garantizada). Un
+            # validador débil (W/) nunca satisface la precondición.
             raise ApiError(
                 412, "precondition_failed",
                 "If-Match no coincide con el ETag actual del perfil",

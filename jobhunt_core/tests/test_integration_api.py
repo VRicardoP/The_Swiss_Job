@@ -789,6 +789,14 @@ def test_put_profile_if_match_precondition_412(db):
     assert _api(factory, url, token=token).json()[
         "current_revision"]["content"]["title"] == "nuevo"  # 'otro' no se escribió
 
+    # If-Match con validador DÉBIL del ETag ACTUAL (1ª rev.): RFC 9110 §13.1.1
+    # exige comparación FUERTE → W/ nunca satisface la precondición ⇒ 412
+    # (a diferencia de If-None-Match, que sí admite la débil).
+    cur = _api(factory, url, token=token).headers["etag"]
+    r_weak = _api(factory, url, token=token, method="PUT",
+                  headers={"If-Match": "W/" + cur}, json_body={"title": "via-debil"})
+    assert (r_weak.status_code, r_weak.json()["code"]) == (412, "precondition_failed")
+
 
 def test_idempotency_same_key_replays_without_reexecution(db):
     """Idempotency-Key: el reintento con la MISMA key y MISMO cuerpo devuelve

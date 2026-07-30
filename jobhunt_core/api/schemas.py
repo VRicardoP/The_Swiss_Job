@@ -4,7 +4,7 @@ aquí queda el esquema FORMAL (tipos/nullabilidad) que expone OpenAPI."""
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ErrorDTO(BaseModel):
@@ -121,6 +121,9 @@ class ProfileWriteDTO(BaseModel):
     normalize_profile los deja en su default. save_profile_revision es
     idempotente por content_hash (re-PUT del mismo CV no crea revisión)."""
 
-    title: str | None = None
-    cv_text: str | None = None
-    skills: list[str] = []
+    # Cotas de tamaño en la FRONTERA (1ª rev.): el CV push viene del BFF; un
+    # cv_text sin tope inflaría la revisión y su embedding. Holgados pero
+    # finitos.
+    title: str | None = Field(None, max_length=500)
+    cv_text: str | None = Field(None, max_length=100_000)
+    skills: list[str] = Field(default=[], max_length=200)
