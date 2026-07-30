@@ -58,6 +58,12 @@ async def purge_consumer_graph(
         ("profile_embeddings", "profile_id"),
         ("profile_revision_activations", "profile_id"),
         ("profile_revisions", "profile_id"),
+        # C-API-W (core0011): candidaturas y búsquedas guardadas — FK a profiles
+        # SIN CASCADE, así que el teardown del primer test durable las tumba
+        # ANTES que profiles. application_status_events cae por CASCADE de
+        # applications; idempotency_records va aparte (cuelga de consumers).
+        ("applications", "profile_id"),
+        ("saved_searches", "profile_id"),
     ):
         await s.execute(
             sa.text(
@@ -68,6 +74,12 @@ async def purge_consumer_graph(
         )
     await s.execute(
         sa.text("DELETE FROM profiles WHERE consumer_id = ANY(:c)"), {"c": cons}
+    )
+    # idempotency_records → consumers (FK SIN CASCADE): antes del DELETE del
+    # consumer (C-API-W).
+    await s.execute(
+        sa.text("DELETE FROM idempotency_records WHERE consumer_id = ANY(:c)"),
+        {"c": cons},
     )
     await s.execute(sa.text("DELETE FROM consumers WHERE id = ANY(:c)"), {"c": cons})
 

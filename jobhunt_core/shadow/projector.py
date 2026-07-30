@@ -170,6 +170,11 @@ _ERASE_TABLES = (
     "profile_embeddings",
     "profile_revision_activations",
     "profile_revisions",
+    # C-API-W: el ESCRITOR hace poblables applications/saved_searches (FK a
+    # profiles SIN CASCADE) — el erase GDPR debe arrastrarlas o el DELETE del
+    # perfil fallaría. application_status_events cae por CASCADE de applications.
+    "applications",
+    "saved_searches",
 )
 
 

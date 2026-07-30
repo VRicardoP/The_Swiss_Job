@@ -58,7 +58,7 @@ def db():
     asyncio.run(cleanup())
 
 
-def _api(factory, url, token=None, headers=None, method="GET"):
+def _api(factory, url, token=None, headers=None, method="GET", json_body=None):
     """Petición contra la app real (ASGITransport) con la sesión inyectada."""
 
     async def go():
@@ -79,7 +79,8 @@ def _api(factory, url, token=None, headers=None, method="GET"):
                 h = dict(headers or {})
                 if token is not None:
                     h["Authorization"] = f"Bearer {token}"
-                return await client.request(method, url, headers=h)
+                kw = {"json": json_body} if json_body is not None else {}
+                return await client.request(method, url, headers=h, **kw)
         finally:
             app.dependency_overrides.clear()
 
@@ -690,3 +691,271 @@ def test_catalog_scope_required(db):
     assert _api(factory, base).status_code == 401
     r = _api(factory, base, token=only_prof)
     assert (r.status_code, r.json()["details"]["required_scope"]) == (403, "vacancies:read")
+
+
+# ---------- C-API-W: escritura del /v1 (PUT perfil + idempotency key) ----------
+
+WRITE_SCOPES = ALL_SCOPES + ["profiles:write"]
+
+
+def _seed_writable(factory, created):
+    """Perfil PROPIO de un tenant + token que incluye profiles:write. El perfil
+    lo crea _seed_matches bajo el consumer 'tenant-match'; ensure_consumer es
+    idempotente, así que el token de escritura pertenece al MISMO tenant."""
+    pid, vacs, _ro = _seed_matches(factory, created)
+    _cid, _kid, token = _issue(factory, created, "tenant-match", WRITE_SCOPES)
+    return pid, vacs, token
+
+
+def _activation_count(factory, pid):
+    async def go():
+        async with factory() as s:
+            return (
+                await s.execute(
+                    sa.text(
+                        "SELECT count(*) FROM profile_revision_activations "
+                        "WHERE profile_id = :p"
+                    ),
+                    {"p": pid},
+                )
+            ).scalar_one()
+
+    return asyncio.run(go())
+
+
+def test_put_profile_creates_revision_and_returns_etag(db):
+    """PUT perfil (C-3 CV push): escribe una revisión VIGENTE y devuelve la
+    representación nueva con su ETag — coherente con el GET posterior."""
+    factory, created = db
+    pid, _vacs, token = _seed_writable(factory, created)
+    url = f"/v1/profiles/{pid}"
+    body = {"title": "staff engineer", "cv_text": "20 anios", "skills": ["python", "pg"]}
+
+    r = _api(factory, url, token=token, method="PUT", json_body=body)
+    assert r.status_code == 200
+    assert r.json()["current_revision"]["content"]["title"] == "staff engineer"
+    assert r.json()["current_revision"]["content"]["skills"] == ["python", "pg"]
+    assert "etag" in r.headers
+
+    g = _api(factory, url, token=token)
+    assert g.json()["current_revision"]["content"]["title"] == "staff engineer"
+    assert g.headers["etag"] == r.headers["etag"]  # la escritura ES la vigente
+
+
+def test_put_profile_cross_tenant_and_absent_404(db):
+    """Ownership por tenant: el perfil de A escrito por B → 404 INDISTINGUIBLE
+    de un perfil ausente (no revela existencia, como el GET)."""
+    factory, created = db
+    pid, _vacs, _tok = _seed_writable(factory, created)
+    _cidb, _kidb, token_b = _issue(factory, created, "tenant-b", WRITE_SCOPES)
+
+    r_cross = _api(factory, f"/v1/profiles/{pid}", token=token_b, method="PUT",
+                   json_body={"title": "hijack"})
+    r_absent = _api(factory, f"/v1/profiles/{uuid.uuid4()}", token=token_b,
+                    method="PUT", json_body={"title": "x"})
+    assert r_cross.status_code == r_absent.status_code == 404
+    assert r_cross.json() == r_absent.json()
+    # La escritura ajena NO ocurrió: el título del dueño sigue intacto.
+    _cid, _kid, token_a = _issue(factory, created, "tenant-match", WRITE_SCOPES)
+    assert _api(factory, f"/v1/profiles/{pid}", token=token_a).json()[
+        "current_revision"]["content"]["title"] == "python dev"
+
+
+def test_put_profile_requires_write_scope(db):
+    """Matriz ruta→scope: credencial de solo-lectura sin profiles:write → 403."""
+    factory, created = db
+    pid, _vacs, _tok = _seed_writable(factory, created)
+    _cid, _kid, ro = _issue(factory, created, "tenant-match", ALL_SCOPES)
+    r = _api(factory, f"/v1/profiles/{pid}", token=ro, method="PUT",
+             json_body={"title": "x"})
+    assert (r.status_code, r.json()["details"]["required_scope"]) == (403, "profiles:write")
+
+
+def test_put_profile_if_match_precondition_412(db):
+    """Precondición optimista If-Match: con el ETag ACTUAL escribe (200);
+    con un ETag OBSOLETO → 412 y la escritura no ocurre."""
+    factory, created = db
+    pid, _vacs, token = _seed_writable(factory, created)
+    url = f"/v1/profiles/{pid}"
+    stale = _api(factory, url, token=token).headers["etag"]
+
+    r_ok = _api(factory, url, token=token, method="PUT",
+                headers={"If-Match": stale}, json_body={"title": "nuevo"})
+    assert r_ok.status_code == 200 and r_ok.headers["etag"] != stale
+
+    r_stale = _api(factory, url, token=token, method="PUT",
+                   headers={"If-Match": stale}, json_body={"title": "otro"})
+    assert (r_stale.status_code, r_stale.json()["code"]) == (412, "precondition_failed")
+    assert _api(factory, url, token=token).json()[
+        "current_revision"]["content"]["title"] == "nuevo"  # 'otro' no se escribió
+
+
+def test_idempotency_same_key_replays_without_reexecution(db):
+    """Idempotency-Key: el reintento con la MISMA key y MISMO cuerpo devuelve
+    la respuesta GUARDADA sin re-ejecutar el handler — probado con una
+    intervención externa entre ambas llamadas: si re-ejecutara, re-activaría la
+    revisión (activación nueva); no lo hace."""
+    factory, created = db
+    pid, _vacs, token = _seed_writable(factory, created)
+    url = f"/v1/profiles/{pid}"
+    body = {"title": "idem-title", "skills": ["go"]}
+    h = {"Idempotency-Key": "put-key-1"}
+
+    r1 = _api(factory, url, token=token, method="PUT", headers=h, json_body=body)
+    assert r1.status_code == 200
+
+    # Intervención externa: activa OTRA revisión (la vigente deja de ser idem-title).
+    async def bump():
+        async with factory() as s:
+            await profiles.save_profile_revision(
+                s, uuid.UUID(str(pid)), {"title": "cambiado-por-fuera"}
+            )
+            await s.commit()
+
+    asyncio.run(bump())
+    before = _activation_count(factory, pid)
+
+    r2 = _api(factory, url, token=token, method="PUT", headers=h, json_body=body)
+    assert r2.status_code == 200
+    assert r2.json() == r1.json() and r2.headers["etag"] == r1.headers["etag"]
+    # Respuesta GUARDADA (refleja el estado de r1, no la intervención externa).
+    assert r2.json()["current_revision"]["content"]["title"] == "idem-title"
+    # Y CERO re-ejecución: ninguna activación nueva.
+    assert _activation_count(factory, pid) == before
+
+
+def test_idempotency_different_key_reexecutes(db):
+    """Key DISTINTA (o ausente) ⇒ ejecución nueva: la segunda escritura sí muta."""
+    factory, created = db
+    pid, _vacs, token = _seed_writable(factory, created)
+    url = f"/v1/profiles/{pid}"
+    r1 = _api(factory, url, token=token, method="PUT",
+              headers={"Idempotency-Key": "k-a"}, json_body={"title": "aaa"})
+    r2 = _api(factory, url, token=token, method="PUT",
+              headers={"Idempotency-Key": "k-b"}, json_body={"title": "bbb"})
+    assert r1.json()["current_revision"]["content"]["title"] == "aaa"
+    assert r2.json()["current_revision"]["content"]["title"] == "bbb"
+
+
+def test_idempotency_same_key_different_body_409(db):
+    """Misma key + cuerpo DISTINTO ⇒ 409 idempotency_conflict; el estado no
+    avanza al segundo cuerpo (la key ya está ligada al primero)."""
+    factory, created = db
+    pid, _vacs, token = _seed_writable(factory, created)
+    url = f"/v1/profiles/{pid}"
+    h = {"Idempotency-Key": "k-x"}
+    r1 = _api(factory, url, token=token, method="PUT", headers=h, json_body={"title": "one"})
+    assert r1.status_code == 200
+    r2 = _api(factory, url, token=token, method="PUT", headers=h, json_body={"title": "two"})
+    assert (r2.status_code, r2.json()["code"]) == (409, "idempotency_conflict")
+    assert _api(factory, url, token=token).json()[
+        "current_revision"]["content"]["title"] == "one"
+
+
+def test_idempotency_concurrent_same_key_single_execution(db):
+    """Dos requests SIMULTÁNEOS con la misma key: el candado (PK natural +
+    espera acotada en el INSERT ON CONFLICT) garantiza UNA sola ejecución;
+    ambos devuelven la MISMA respuesta."""
+    factory, created = db
+    pid, _vacs, token = _seed_writable(factory, created)
+    url = f"/v1/profiles/{pid}"
+    body = {"title": "concurrent", "skills": ["rust"]}
+    h = {"Authorization": f"Bearer {token}", "Idempotency-Key": "k-conc"}
+
+    calls = {"n": 0}
+    orig = profiles.save_profile_revision
+
+    async def counting(*a, **k):
+        calls["n"] += 1
+        return await orig(*a, **k)
+
+    async def go():
+        from httpx import ASGITransport, AsyncClient
+
+        from jobhunt_core.api import deps
+        from jobhunt_core.api.main import app
+
+        async def override_session():
+            async with factory() as s:
+                yield s
+
+        app.dependency_overrides[deps.get_session] = override_session
+        profiles.save_profile_revision = counting
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                return await asyncio.gather(
+                    client.put(url, json=body, headers=h),
+                    client.put(url, json=body, headers=h),
+                )
+        finally:
+            profiles.save_profile_revision = orig
+            app.dependency_overrides.clear()
+
+    r1, r2 = asyncio.run(go())
+    assert {r1.status_code, r2.status_code} == {200}
+    assert r1.json() == r2.json() and r1.headers["etag"] == r2.headers["etag"]
+    assert calls["n"] == 1  # UNA ejecución pese a la key compartida
+
+
+def test_erase_gdpr_removes_applications_and_saved_searches(db):
+    """DoD C-API-W: con el escritor activo, el erase GDPR (erase_shadow_profile
+    / _ERASE_TABLES) arrastra applications + saved_searches (FK a profiles SIN
+    CASCADE) — si no, el DELETE del perfil fallaría."""
+    from jobhunt_core.shadow.projector import erase_shadow_profile
+
+    factory, created = db
+    pid, vacs, _tok = _seed_matches(factory, created)
+    vid = vacs["backend python"]
+
+    async def seed_durables():
+        async with factory() as s:
+            ref, cname = (
+                await s.execute(
+                    sa.text(
+                        "SELECT p.external_ref, c.name FROM profiles p "
+                        "JOIN consumers c ON c.id = p.consumer_id WHERE p.id = :p"
+                    ),
+                    {"p": pid},
+                )
+            ).one()
+            await s.execute(
+                sa.text(
+                    "INSERT INTO applications (profile_id, vacancy_id, status) "
+                    "VALUES (:p, :v, 'applied')"
+                ),
+                {"p": pid, "v": vid},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO saved_searches (profile_id, name) "
+                    "VALUES (:p, 'remote python')"
+                ),
+                {"p": pid},
+            )
+            await s.commit()
+            return ref, cname
+
+    ref, cname = asyncio.run(seed_durables())
+
+    async def do_erase():
+        async with factory() as s:
+            erased = await erase_shadow_profile(s, ref, consumer_name=cname)
+            await s.commit()
+            return erased
+
+    assert asyncio.run(do_erase()) == pid
+
+    async def counts():
+        async with factory() as s:
+            out = []
+            for q in (
+                "SELECT count(*) FROM applications WHERE profile_id = :p",
+                "SELECT count(*) FROM saved_searches WHERE profile_id = :p",
+                "SELECT count(*) FROM profiles WHERE id = :p",
+            ):
+                out.append((await s.execute(sa.text(q), {"p": pid})).scalar_one())
+            return tuple(out)
+
+    assert asyncio.run(counts()) == (0, 0, 0)

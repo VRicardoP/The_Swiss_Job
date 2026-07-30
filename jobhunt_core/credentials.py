@@ -3,7 +3,8 @@
 Formato del token: `Authorization: Bearer <key_id>.<secret>` — el secreto solo
 existe en el momento de la emisión; en BD queda su sha256 (`hash`). La
 verificación es en tiempo constante (hmac.compare_digest). Scopes = lista
-JSONB (`vacancies:read`, `matches:read`, `profiles:read`).
+JSONB — vocabulario: `vacancies:read`, `matches:read`, `profiles:read` y
+`profiles:write` (escritura del CV push, C-API-W).
 """
 
 import hashlib

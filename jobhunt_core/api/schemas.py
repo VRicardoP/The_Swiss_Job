@@ -112,3 +112,15 @@ class ProfileDTO(BaseModel):
     external_ref: str
     created_at: datetime
     current_revision: ProfileRevisionDTO | None = None
+
+
+class ProfileWriteDTO(BaseModel):
+    """Cuerpo del PUT /v1/profiles/{pid} (C-3 CV push, contenido PF.5): el
+    subconjunto EMBEBIBLE del perfil (title + cv_text + skills). El resto de
+    CONTENT_FIELDS (idiomas/ubicaciones/salario…) NO viaja en el CV push —
+    normalize_profile los deja en su default. save_profile_revision es
+    idempotente por content_hash (re-PUT del mismo CV no crea revisión)."""
+
+    title: str | None = None
+    cv_text: str | None = None
+    skills: list[str] = []

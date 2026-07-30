@@ -20,7 +20,7 @@ from decimal import Decimal, InvalidOperation
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from jobhunt_core import matching
+from jobhunt_core import matching, profiles
 from jobhunt_core.api import schemas
 from jobhunt_core.api.deps import (
     ApiError,
@@ -29,6 +29,7 @@ from jobhunt_core.api.deps import (
     get_session,
     require_scope,
 )
+from jobhunt_core.api.idempotency import run_idempotent
 
 # Los errores del contrato quedan DOCUMENTADOS en OpenAPI (auditoría A-09:
 # ErrorDTO debe aparecer en components, no ser código muerto).
@@ -301,39 +302,37 @@ async def get_vacancy(
     return _with_etag(request, dto.model_dump(mode="json"))
 
 
-@router.get("/profiles/{profile_id}", response_model=schemas.ProfileDTO,
-            responses={304: {"description": "Not Modified"}})
-async def get_profile(
-    profile_id: uuid.UUID,
-    request: Request,
-    session=Depends(get_session),
-    principal: Principal = Depends(require_scope("profiles:read")),
-):
-    # OWNERSHIP EN SQL y en UNA sola sentencia (rev. A-09 #1): el filtro por
-    # consumer_id va en la query (§2) y la identidad + revisión vigente salen
-    # del MISMO snapshot — sin ventana TOCTOU entre comprobación y contenido.
-    # Cross-tenant y ausente son INDISTINGUIBLES: 404 (no revelar).
+# OWNERSHIP EN SQL y en UNA sola sentencia (rev. A-09 #1): el filtro por
+# consumer_id va en la query (§2) y la identidad + revisión vigente salen del
+# MISMO snapshot — sin ventana TOCTOU entre comprobación y contenido.
+# Cross-tenant y ausente son INDISTINGUIBLES: None → 404 (no revelar).
+_PROFILE_SELECT = (
+    "SELECT p.id, p.external_ref, p.created_at, "
+    "pr.content, pr.content_hash, pr.text_hash "
+    "FROM profiles p "
+    "LEFT JOIN (SELECT DISTINCT ON (a.profile_id) a.profile_id, "
+    "           r.content, r.content_hash, r.text_hash "
+    "           FROM profile_revision_activations a "
+    "           JOIN profile_revisions r ON r.id = a.revision_id "
+    "           WHERE a.profile_id = :pid "
+    "           ORDER BY a.profile_id, a.seq DESC) pr "
+    "  ON pr.profile_id = p.id "
+    "WHERE p.id = :pid AND p.consumer_id = :cid"
+)
+
+
+async def _profile_dto(session, profile_id, consumer_id) -> schemas.ProfileDTO | None:
+    """Identidad + revisión VIGENTE del perfil PROPIO del tenant, en UNA
+    sentencia. None si cross-tenant o ausente. Compartido por el GET y por el
+    PUT (la representación cuyo ETag firma la precondición If-Match)."""
     row = (
         await session.execute(
-            sa.text(
-                "SELECT p.id, p.external_ref, p.created_at, "
-                "pr.content, pr.content_hash, pr.text_hash "
-                "FROM profiles p "
-                "LEFT JOIN (SELECT DISTINCT ON (a.profile_id) a.profile_id, "
-                "           r.content, r.content_hash, r.text_hash "
-                "           FROM profile_revision_activations a "
-                "           JOIN profile_revisions r ON r.id = a.revision_id "
-                "           WHERE a.profile_id = :pid "
-                "           ORDER BY a.profile_id, a.seq DESC) pr "
-                "  ON pr.profile_id = p.id "
-                "WHERE p.id = :pid AND p.consumer_id = :cid"
-            ),
-            {"pid": profile_id, "cid": principal.consumer_id},
+            sa.text(_PROFILE_SELECT), {"pid": profile_id, "cid": consumer_id}
         )
     ).one_or_none()
     if row is None:
-        raise error_404("perfil")
-    dto = schemas.ProfileDTO(
+        return None
+    return schemas.ProfileDTO(
         id=row.id, external_ref=row.external_ref, created_at=row.created_at,
         current_revision=(
             schemas.ProfileRevisionDTO(
@@ -344,9 +343,107 @@ async def get_profile(
             else None
         ),
     )
+
+
+@router.get("/profiles/{profile_id}", response_model=schemas.ProfileDTO,
+            responses={304: {"description": "Not Modified"}})
+async def get_profile(
+    profile_id: uuid.UUID,
+    request: Request,
+    session=Depends(get_session),
+    principal: Principal = Depends(require_scope("profiles:read")),
+):
+    dto = await _profile_dto(session, profile_id, principal.consumer_id)
+    if dto is None:
+        raise error_404("perfil")
     return _with_etag(request, dto.model_dump(mode="json"))
 
 
+@router.put("/profiles/{profile_id}", response_model=schemas.ProfileDTO,
+            responses={409: {"model": schemas.ErrorDTO},
+                       412: {"model": schemas.ErrorDTO}})
+async def put_profile(
+    profile_id: uuid.UUID,
+    request: Request,
+    body: schemas.ProfileWriteDTO,
+    session=Depends(get_session),
+    principal: Principal = Depends(require_scope("profiles:write")),
+):
+    """CV push del portfolio (C-3, C-API-W): escritura MÍNIMA del perfil PROPIO
+    del tenant.
+
+    - Ownership por tenant: cross-tenant/ausente → 404 (como el GET; no revela
+      existencia). El chequeo va bajo el LOCK del perfil (FOR UPDATE) para
+      cerrar el TOCTOU entre la precondición y la escritura.
+    - Precondición optimista If-Match → 412 si el ETag no coincide con la
+      representación ACTUAL (ausencia del header ⇒ sin precondición).
+    - Idempotencia por header Idempotency-Key (api/idempotency): reintento con
+      MISMA key y MISMO cuerpo devuelve la respuesta guardada sin re-ejecutar;
+      misma key con cuerpo distinto → 409.
+    - Reutiliza profiles.save_profile_revision (revisión INMUTABLE + activación,
+      idempotente por content_hash: re-PUT del mismo CV no crea revisión nueva).
+      Devuelve la representación nueva con su ETag."""
+    idem_key = request.headers.get("idempotency-key")
+    route = f"PUT {request.url.path}"
+    req_hash = hashlib.sha256(
+        json.dumps(
+            body.model_dump(mode="json"), sort_keys=True, ensure_ascii=False
+        ).encode()
+    ).hexdigest()
+
+    async def handler():
+        # Lock + ownership en la MISMA sentencia (disciplina de A-07:
+        # perfil→estado). save_profile_revision re-toma este mismo FOR UPDATE
+        # (re-entrante en la transacción): sin carrera con otro escritor.
+        owner = (
+            await session.execute(
+                sa.text(
+                    "SELECT consumer_id FROM profiles WHERE id = :pid FOR UPDATE"
+                ),
+                {"pid": profile_id},
+            )
+        ).scalar_one_or_none()
+        if owner is None or owner != principal.consumer_id:
+            raise error_404("perfil")
+        current = await _profile_dto(session, profile_id, principal.consumer_id)
+        if_match = request.headers.get("if-match")
+        if if_match is not None and not _if_none_match_matches(
+            if_match, _etag_of(current.model_dump(mode="json"))
+        ):
+            # If-Match (RFC 9110): `*` exige existencia (ya garantizada);
+            # en lista, comparación con el ETag ACTUAL.
+            raise ApiError(
+                412, "precondition_failed",
+                "If-Match no coincide con el ETag actual del perfil",
+            )
+        rid = await profiles.save_profile_revision(
+            session, profile_id, body.model_dump()
+        )
+        if rid is None:
+            raise ApiError(
+                400, "empty_profile",
+                "el CV no tiene texto embebible (title/cv_text/skills)",
+            )
+        new = await _profile_dto(session, profile_id, principal.consumer_id)
+        return 200, new.model_dump(mode="json")
+
+    status, payload = await run_idempotent(
+        session, principal, route, req_hash, idem_key, handler
+    )
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, default=str),
+        media_type="application/json",
+        status_code=status,
+        headers={"ETag": _etag_of(payload)},
+    )
+
+
+# COTA C-API-W (registrada): NO se implementa `POST /v1/applications` ni la
+# transición de estado de candidatura. El DoD sólo exige el PUT perfil (CV push
+# de C-3); C-4 migra los durables de candidaturas por MIGRACIÓN directa
+# (ensayada sobre copia del NAS), no vía este /v1. Si C-4 decidiera necesitar la
+# escritura HTTP de candidaturas, se añade aquí reutilizando run_idempotent
+# (mismo candado) + scope nuevo `applications:write`. Diferido a C-4.
 @router.get("/profiles/{profile_id}/matches", response_model=schemas.MatchesPageDTO,
             responses={304: {"description": "Not Modified"}})
 async def get_matches(
