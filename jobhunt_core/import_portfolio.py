@@ -112,16 +112,25 @@ def durable_to_raw_listing(
 
 async def synthesize_vacancies(
     session: AsyncSession, scope_id: uuid.UUID, items: list[dict]
-) -> None:
+) -> set[str]:
     """Sintetiza vacantes-sombra para los items del portfolio CON url.
 
     items = [{url, title, company, description}]. Los items sin url se OMITEN
     con log (sin URL no hay identidad resoluble; el staging llega en una parte
     futura de C-4). El lote entero pasa por el sink real: toda la cadena
     (slots, incarnaciones, revisiones, canónica) y su idempotencia son suyas.
+
+    Devuelve el CONJUNTO de URLs COLISIONADAS (la 2ª+ URL distinta que comparte
+    clave normalizada con otra ya vista): NO se sintetiza vacante propia para
+    ellas y, como resolve_vacancy_by_url las mapearía a la vacante de la 1ª
+    (vínculo equivocado), el llamador debe enrutarlas a staging en vez de
+    resolverlas (P1 análisis 2). Para detectar colisiones ENTRE usuarios, pasa
+    TODOS los items en UNA sola llamada (un `seen` por-usuario las dejaría
+    escapar).
     """
     listings = []
     seen: dict[str, str] = {}  # external_id -> url completa (detección de colisión)
+    collided: set[str] = set()  # URLs colisionadas (2ª+ distinta con misma clave)
     skipped = {"no_url": 0, "malformed": 0, "collision": 0, "dup": 0}
     for item in items:
         url = item.get("url")
@@ -166,6 +175,7 @@ async def synthesize_vacancies(
                 # log de AUDITORÍA en vez de una fusión falsa silenciosa (P2 análisis
                 # 2) — reconciliación manual / staging futuro.
                 skipped["collision"] += 1
+                collided.add(url)
                 logger.warning(
                     "import_portfolio: COLISIÓN de URL normalizada — %r y %r comparten "
                     "clave de identidad; se OMITE la 2ª (posible fusión falsa) — "
@@ -189,8 +199,9 @@ async def synthesize_vacancies(
         skipped["dup"],
     )
     if not listings:
-        return
+        return collided
     await RawListingSink().handle(session, str(scope_id), tuple(listings))
+    return collided
 
 
 async def resolve_vacancy_by_url(

@@ -181,9 +181,12 @@ async def _scenario(factory):
             {"url": "https://spa.example.ch/#/vacancy/bbb", "title": "Second Offer", "company": "B"},
         ]
         before = await _count(s, "vacancies")
-        await ip.synthesize_vacancies(s, scope_id, collide)
+        collided = await ip.synthesize_vacancies(s, scope_id, collide)
         await s.commit()
         assert await _count(s, "vacancies") == before + 1  # SOLO una (la 2ª omitida)
+        # Devuelve la 2ª URL como colisionada (el llamador la enruta a staging en
+        # vez de que resolve la mapee a la vacante de la 1ª — P1 análisis 2 parte 3).
+        assert collided == {collide[1]["url"]}
         cvid = await ip.resolve_vacancy_by_url(s, collide[0]["url"])
         assert cvid is not None
         ctitle = (

@@ -147,7 +147,7 @@ async def _scenario(factory, caplog):
     ]
     expected_counts = {
         "applications": 3, "bookmarks": 3, "unresolved": 2,
-        "consolidated": 1, "invalid_status": 0,
+        "consolidated": 1, "invalid_status": 0, "collision": 0,
     }
 
     async with factory() as s:

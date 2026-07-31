@@ -28,6 +28,7 @@ validaciones NAS). Ejecutar vía core-migrate.
 import asyncio
 import os
 import uuid
+from collections import Counter
 from datetime import date, datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 
@@ -51,11 +52,15 @@ U_SHARED = "https://jobs.example.ch/shared"
 U_U2_SAVED = "https://jobs.example.ch/u2-saved"
 
 # Todas las tablas que la migración ESCRIBE (tracking + cadena de identidad del
-# corpus + tenant): el dry-run debe revertirlas TODAS (fidelidad del rollback).
+# corpus completa que toca el sink + tenant): el dry-run debe revertirlas TODAS
+# (fidelidad del rollback). Incluye source_listing_revisions/offer_revision_sources
+# (el sink las escribe por cada vacante-sombra) y dedup_candidates/link_evidence
+# (cross-source, 0 en este dataset pero parte del contrato del sink).
 FULL_WRITE_SET = (
     "applications", "application_status_events", "profile_vacancy_state",
-    "saved_searches", "vacancies", "offer_revisions", "source_listings",
-    "source_listing_incarnations", "sources", "harvest_scopes",
+    "saved_searches", "vacancies", "offer_revisions", "offer_revision_sources",
+    "source_listings", "source_listing_incarnations", "source_listing_revisions",
+    "dedup_candidates", "link_evidence", "sources", "harvest_scopes",
     "consumers", "profiles",
 )
 
@@ -126,7 +131,7 @@ def _representative_users() -> list[dict]:
 # Conteos agregados esperados (clasificación de las partes 1+2).
 EXPECTED_APPS = {
     "applications": 5, "bookmarks": 4, "unresolved": 1,
-    "consolidated": 1, "invalid_status": 0,
+    "consolidated": 1, "invalid_status": 0, "collision": 0,
 }
 EXPECTED_SS = {"migrated": 5, "existing": 0, "invalid_filters": 1, "no_name": 0}
 # Filas resultantes por objetivo de reconciliación (4 tracking + canónica
@@ -206,6 +211,77 @@ def test_checksums_portable_across_databases():
     assert all(t["checksum"] != ipm.EMPTY_CHECKSUM for t in chk_a.values())
 
 
+def test_collision_routed_to_staging():
+    """P1 análisis 2: dos URLs SPA DISTINTAS que normalizan a la MISMA clave (el id
+    vive en el fragmento que normalize_url descarta) NO deben fundirse: se sintetiza
+    UNA vacante (la 1ª) y el 2º durable se ENRUTA a staging (razón 'collision') en
+    vez de resolverse a la vacante equivocada. Ejercita el caso CROSS-USUARIO (la
+    síntesis GLOBAL de migrate_portfolio detecta la colisión entre usuarios)."""
+    from jobhunt_core import import_portfolio_migrate as ipm
+
+    users = [
+        {"external_ref": 1, "applications": [
+            {"url": "https://spa.ch/jobs#/detail/111", "status": "applied",
+             "title": "Job 111", "company": "A",
+             "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+        ], "saved_searches": []},
+        {"external_ref": 2, "applications": [
+            {"url": "https://spa.ch/jobs#/detail/222", "status": "applied",
+             "title": "Job 222", "company": "B",
+             "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
+        ], "saved_searches": []},
+    ]
+
+    async def _run(factory):
+        async with factory() as s:
+            report = await ipm.migrate_portfolio(s, users)
+            await s.commit()
+            assert await _count(s, "vacancies") == 1  # solo la 1ª URL sintetizada
+            assert await _count(s, "applications") == 1  # la 2ª a staging, no resuelta
+            assert report["applications"]["collision"] == 1
+            assert report["applications"]["applications"] == 1
+            staged = report["staged"]
+            assert len(staged) == 1
+            assert staged[0]["reason"] == "collision"
+            assert staged[0]["external_ref"] == "2"
+            assert staged[0]["durable"]["title"] == "Job 222"
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_consolidated_real_enumerated():
+    """P3 análisis 2: dos candidaturas REALES del mismo perfil a la MISMA url
+    (UNIQUE(profile_id, vacancy_id) ⇒ una application) — gana la más reciente y la
+    PERDEDORA se ENUMERA en staged (razón 'consolidated_real'), no solo un log
+    (distinguible de un fold benigno saved+follow_up)."""
+    from jobhunt_core import import_portfolio_migrate as ipm
+
+    users = [{"external_ref": 1, "applications": [
+        {"url": "https://x.ch/dup", "status": "applied", "title": "Dup",
+         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+        {"url": "https://x.ch/dup", "status": "rejected", "title": "Dup",
+         "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},  # más reciente
+    ], "saved_searches": []}]
+
+    async def _run(factory):
+        async with factory() as s:
+            report = await ipm.migrate_portfolio(s, users)
+            await s.commit()
+            assert await _count(s, "applications") == 1
+            assert report["applications"]["applications"] == 1
+            assert report["applications"]["consolidated"] == 1
+            staged = report["staged"]
+            assert len(staged) == 1
+            assert staged[0]["reason"] == "consolidated_real"
+            assert staged[0]["durable"]["status"] == "applied"  # la perdedora
+            st = (
+                await s.execute(sa.text("SELECT status FROM applications LIMIT 1"))
+            ).scalar_one()
+            assert st == "rejected"  # la application lleva el status más reciente
+
+    asyncio.run(_on_disposable_db(_run))
+
+
 async def _scenario(factory):
     from jobhunt_core import import_portfolio as ip
     from jobhunt_core import import_portfolio_migrate as ipm
@@ -235,14 +311,14 @@ async def _scenario(factory):
         assert report["applications"] == EXPECTED_APPS, report["applications"]
         assert report["saved_searches"] == EXPECTED_SS, report["saved_searches"]
 
-        # ENUMERACIÓN de irrecuperables: identidad contable (nada sin auditar).
-        # El único irrecuperable del dataset es la oferta sin url del usuario 1.
-        assert len(report["staged"]) == (
-            report["applications"]["unresolved"]
-            + report["applications"]["invalid_status"]
-            + report["saved_searches"]["no_name"]
-        )
-        assert len(report["staged"]) == 1
+        # ENUMERACIÓN por razón: identidad contable contra los conteos (nada sin
+        # auditar). El único durable fuera del dataset es la oferta sin url.
+        reasons = Counter(r["reason"] for r in report["staged"])
+        assert reasons["unresolved"] == report["applications"]["unresolved"]
+        assert reasons["invalid_status"] == report["applications"]["invalid_status"]
+        assert reasons["collision"] == report["applications"]["collision"]
+        assert reasons["no_name"] == report["saved_searches"]["no_name"]
+        assert reasons == Counter({"unresolved": 1})  # ni collision ni consolidated_real
         rec = report["staged"][0]
         assert rec["external_ref"] == "1"
         assert rec["kind"] == "application" and rec["reason"] == "unresolved"

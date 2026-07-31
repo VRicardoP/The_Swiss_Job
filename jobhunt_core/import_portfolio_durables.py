@@ -78,6 +78,7 @@ async def migrate_applications(
     rows: list[dict],
     *,
     staging: list | None = None,
+    collided: set | None = None,
 ) -> dict:
     """Escribe los durables de job_application en el tracking del core.
 
@@ -85,17 +86,24 @@ async def migrate_applications(
     applications (una por vacante con candidatura), bookmarks (saved),
     unresolved (sin url o url irresoluble — omitidos con log), consolidated
     (durables extra fundidos en una application existente del lote),
-    invalid_status (status fuera del enum — cuarentena por-item).
+    invalid_status (status fuera del enum — cuarentena por-item), collision
+    (url que comparte clave normalizada con otra distinta — ver `collided`).
+
+    `collided` (opcional): conjunto de URLs COLISIONADAS que devolvió
+    synthesize_vacancies. Un durable con una de esas URLs NO se resuelve
+    (resolve_vacancy_by_url lo mapearía a la vacante de OTRA URL → vínculo
+    equivocado): se enruta a staging con razón 'collision' (P1 análisis 2).
 
     `staging` (opcional): si se pasa una lista, cada durable IRRECUPERABLE
-    (unresolved / invalid_status) se ENUMERA en ella {kind, reason, durable} —
-    para que la reconciliación no reporte verde con pérdida silenciosa. El
-    staging PERSISTENTE (tabla) llega en una parte futura de C-4; aquí solo se
-    enumera en memoria (el origen es de solo lectura, nada se destruye).
+    (unresolved / invalid_status / collision) o DEGRADADO (consolidated_real: la
+    candidatura real perdedora de una consolidación) se ENUMERA en ella
+    {kind, reason, durable} — para que la reconciliación no reporte verde con
+    pérdida silenciosa. El staging PERSISTENTE (tabla) llega en una parte futura
+    de C-4; aquí solo se enumera en memoria (el origen es de solo lectura).
     """
     counts = {
         "applications": 0, "bookmarks": 0, "unresolved": 0,
-        "consolidated": 0, "invalid_status": 0,
+        "consolidated": 0, "invalid_status": 0, "collision": 0,
     }
     # AGRUPAR por vacancy_id ANTES de insertar: dos durables sobre la misma
     # vacante deben consolidarse en UNA application (UNIQUE del esquema).
@@ -114,6 +122,19 @@ async def migrate_applications(
             _record_skipped(staging, "application", "invalid_status", row)
             continue
         url = row.get("url")
+        if url and collided and url in collided:
+            # URL colisionada: resolve la mapearía a la vacante de OTRA URL
+            # distinta (vínculo equivocado). Se enruta a staging, NUNCA se
+            # resuelve a ciegas (P1 análisis 2) — reconciliación manual.
+            counts["collision"] += 1
+            logger.warning(
+                "import_portfolio_durables: durable con URL COLISIONADA OMITIDO "
+                "(title=%r, url=%r) — vincularía a la vacante equivocada; a staging",
+                row.get("title"),
+                url,
+            )
+            _record_skipped(staging, "application", "collision", row)
+            continue
         vacancy_id = await resolve_vacancy_by_url(session, url) if url else None
         if vacancy_id is None:
             counts["unresolved"] += 1
@@ -177,6 +198,11 @@ async def migrate_applications(
                         r.get("title"),
                         winner.get("status"),
                     )
+                    # DEGRADACIÓN, no fold benigno: se pierde el status/historial de
+                    # una candidatura real (notes/follow_up sí se coalescen). Se
+                    # ENUMERA en staging (razón distinta) para que la reconciliación
+                    # no lo confunda con un saved+fu plegado (P3 análisis 2).
+                    _record_skipped(staging, "application", "consolidated_real", r)
         else:
             winner = saved_fu[0]
         counts["consolidated"] += len(candidates) - 1
@@ -229,13 +255,14 @@ async def migrate_applications(
             )
     logger.info(
         "import_portfolio_durables: %d durables → %d applications, %d bookmarks "
-        "(%d sin resolver, %d consolidados, %d status inválidos)",
+        "(%d sin resolver, %d consolidados, %d status inválidos, %d colisiones)",
         len(rows),
         counts["applications"],
         counts["bookmarks"],
         counts["unresolved"],
         counts["consolidated"],
         counts["invalid_status"],
+        counts["collision"],
     )
     return counts
 

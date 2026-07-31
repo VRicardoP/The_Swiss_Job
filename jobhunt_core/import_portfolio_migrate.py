@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 # Claves de los conteos de clasificación (parte 2) — se agregan entre usuarios.
 _APP_COUNT_KEYS = (
     "applications", "bookmarks", "unresolved", "consolidated", "invalid_status",
+    "collision",
 )
 _SS_COUNT_KEYS = ("migrated", "existing", "invalid_filters", "no_name")
 
@@ -82,36 +83,41 @@ def _vac_key(col: str) -> str:
 
 
 def _checksum(inner: str) -> str:
-    """md5 de las filas de `inner` (alias r) ordenadas por su propia
-    representación completa ⇒ determinista e inmune a empates. coalesce('') ⇒
-    tabla vacía = md5('') (EMPTY_CHECKSUM)."""
+    """md5 de las filas de `inner` (alias r, un json_build_array(...)::text)
+    ordenadas por su propia representación ⇒ determinista e inmune a empates.
+    La codificación JSON entrecomilla y escapa CADA campo (los saltos de línea →
+    \\n, las comillas → \\"), así que ni el separador de filas chr(10) ni ningún
+    delimitador embebido en datos de usuario (notes/name con '|' o multilínea)
+    pueden fundir dos filas distintas en una — inyectiva (P3 análisis 2).
+    coalesce('') ⇒ objetivo vacío = md5('') (EMPTY_CHECKSUM)."""
     return (
         "SELECT md5(coalesce(string_agg(r, chr(10) ORDER BY r), '')) "
         f"FROM ({inner}) sub"
     )
 
 
-# Checksum + count por objetivo de reconciliación. Proyección de CLAVES DE
-# NEGOCIO PORTABLES (external_ref, url_normalized) — jamás PK uuid4 — para que
-# dos migraciones del mismo origen coincidan AUNQUE corran en BDs distintas
-# (copia NAS vs core). Se ignoran timestamps de reloj (saved_at/created_at) vía
-# IS NOT NULL. `portfolio_vacancies` cubre la canónica SINTETIZADA (title/company
-# de un bookmark puro solo vive ahí, no en las 4 tablas de tracking).
+# Checksum + count por objetivo de reconciliación. Cada fila se serializa con
+# json_build_array (codificación INYECTIVA, a prueba de delimitadores) sobre
+# CLAVES DE NEGOCIO PORTABLES (external_ref, url_normalized) — jamás PK uuid4 —
+# para que dos migraciones del mismo origen coincidan AUNQUE corran en BDs
+# distintas (copia NAS vs core). Los timestamps de reloj (saved_at) se reducen a
+# boolean; last_run_at/follow_up_date vienen del origen (deterministas).
+# `portfolio_vacancies` cubre la canónica SINTETIZADA (title/company de un
+# bookmark puro solo vive ahí, no en las 4 tablas de tracking).
 _CHECKSUM_SPECS = {
     "applications": {
         "count": "SELECT count(*) FROM applications",
         "checksum": _checksum(
-            "SELECT concat_ws('|', p.external_ref, " + _vac_key("a.vacancy_id")
-            + ", a.status, coalesce(a.notes,''), coalesce(a.follow_up_date::text,''), "
-            "a.snapshot::text) AS r "
+            "SELECT json_build_array(p.external_ref, " + _vac_key("a.vacancy_id")
+            + ", a.status, a.notes, a.follow_up_date, a.snapshot)::text AS r "
             "FROM applications a JOIN profiles p ON p.id = a.profile_id"
         ),
     },
     "application_status_events": {
         "count": "SELECT count(*) FROM application_status_events",
         "checksum": _checksum(
-            "SELECT concat_ws('|', p.external_ref, " + _vac_key("a.vacancy_id")
-            + ", e.status) AS r "
+            "SELECT json_build_array(p.external_ref, " + _vac_key("a.vacancy_id")
+            + ", e.status)::text AS r "
             "FROM application_status_events e "
             "JOIN applications a ON a.id = e.application_id "
             "JOIN profiles p ON p.id = a.profile_id"
@@ -120,17 +126,17 @@ _CHECKSUM_SPECS = {
     "profile_vacancy_state": {
         "count": "SELECT count(*) FROM profile_vacancy_state",
         "checksum": _checksum(
-            "SELECT concat_ws('|', p.external_ref, " + _vac_key("pvs.vacancy_id")
-            + ", (pvs.saved_at IS NOT NULL)::text, (pvs.dismissed_at IS NOT NULL)::text, "
-            "coalesce(pvs.notes,'')) AS r "
+            "SELECT json_build_array(p.external_ref, " + _vac_key("pvs.vacancy_id")
+            + ", (pvs.saved_at IS NOT NULL), (pvs.dismissed_at IS NOT NULL), "
+            "pvs.notes)::text AS r "
             "FROM profile_vacancy_state pvs JOIN profiles p ON p.id = pvs.profile_id"
         ),
     },
     "saved_searches": {
         "count": "SELECT count(*) FROM saved_searches",
         "checksum": _checksum(
-            "SELECT concat_ws('|', p.external_ref, ss.name, ss.filters::text, "
-            "ss.min_score::text, ss.is_active::text, coalesce(ss.last_run_at::text,'')) AS r "
+            "SELECT json_build_array(p.external_ref, ss.name, ss.filters, "
+            "ss.min_score, ss.is_active, ss.last_run_at)::text AS r "
             "FROM saved_searches ss JOIN profiles p ON p.id = ss.profile_id"
         ),
     },
@@ -142,8 +148,8 @@ _CHECKSUM_SPECS = {
             + "WHERE v.merged_into IS NULL AND v.archived_at IS NULL"
         ),
         "checksum": _checksum(
-            "SELECT concat_ws('|', sl.url_normalized, coalesce(o.content->>'title',''), "
-            "coalesce(o.content->>'company',''), coalesce(o.content->>'description','')) AS r "
+            "SELECT json_build_array(sl.url_normalized, o.content->>'title', "
+            "o.content->>'company', o.content->>'description')::text AS r "
             "FROM vacancies v "
             "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
             + _PORTFOLIO_VACANCY_JOIN
@@ -159,9 +165,13 @@ CHECKSUM_TARGETS = tuple(_CHECKSUM_SPECS)
 
 
 def _accumulate(total: dict, counts: dict) -> None:
-    """Suma in-place los conteos de un usuario en el acumulado del lote."""
+    """Suma in-place los conteos de un usuario en el acumulado del lote.
+
+    `total.get(key, 0)`: si la parte 2 añadiese una clasificación nueva no
+    presente en _APP_COUNT_KEYS/_SS_COUNT_KEYS, se AGREGA en vez de reventar con
+    KeyError (desacople parte 2↔parte 3, P3 análisis 2)."""
     for key, value in counts.items():
-        total[key] += value
+        total[key] = total.get(key, 0) + value
 
 
 async def migrate_portfolio(
@@ -170,15 +180,17 @@ async def migrate_portfolio(
     """Migra los durables de una lista de usuarios del portfolio.
 
     users = [{external_ref, applications: [dict], saved_searches: [dict]}].
-    Por cada usuario, en ORDEN: provision_profile → síntesis de las vacantes-
-    sombra de SUS candidaturas (parte 1) → migrate_applications →
-    migrate_saved_searches (parte 2). El scope `portfolio-import` se da de alta
-    UNA vez (idempotente). NO commitea (todo-o-nada del llamador).
+    ORDEN: alta del scope `portfolio-import` (idempotente) → síntesis GLOBAL de
+    TODAS las vacantes-sombra en una pasada (parte 1; detecta colisiones de URL
+    entre usuarios) → por cada usuario: provision_profile → migrate_applications
+    → migrate_saved_searches (parte 2). NO commitea (todo-o-nada del llamador).
 
     Devuelve conteos AGREGADOS (mismas claves que las partes) + `per_user` con
-    el desglose + `staged` (ENUMERACIÓN de los durables irrecuperables:
-    {external_ref, kind, reason, durable}) — la reconciliación lista QUÉ se
-    quedó fuera, no solo cuántos. Re-ejecución IDEMPOTENTE a nivel de datos (los
+    el desglose + `staged` (ENUMERACIÓN, por PASE, de los durables que NO se
+    mapearon limpiamente: {external_ref, kind, reason, durable} — irrecuperables
+    unresolved/invalid_status/collision/no_name y degradados consolidated_real)
+    — la reconciliación lista QUÉ se quedó fuera, no solo cuántos. Re-ejecución
+    IDEMPOTENTE a nivel de datos (los
     checksums no cambian): los conteos de `applications` son estables (clasifican
     el durable, no si ya existía la fila), pero los de `saved_searches` desplazan
     migrated→existing en el segundo pase — la verificación de "sin duplicar" es
@@ -189,27 +201,31 @@ async def migrate_portfolio(
     ss_totals = {k: 0 for k in _SS_COUNT_KEYS}
     per_user: list[dict] = []
     staged: list[dict] = []
+    # Síntesis GLOBAL (parte 1) de TODAS las vacantes-sombra ANTES de mapear: una
+    # sola pasada detecta las colisiones de URL normalizada TAMBIÉN entre usuarios
+    # (un `seen` por-usuario las dejaría escapar → mis-resolución silenciosa). El
+    # sink dedup global ⇒ una URL compartida reutiliza la misma vacante. `collided`
+    # (2ª+ URL distinta con misma clave) se enruta a staging en migrate_applications
+    # en vez de resolverse a la vacante equivocada (P1 análisis 2).
+    collided = await synthesize_vacancies(
+        session,
+        scope_id,
+        [
+            {k: row.get(k) for k in ("url", "title", "company", "description")}
+            for user in users
+            for row in (user.get("applications") or [])
+            if row.get("url")
+        ],
+    )
     for user in users:
         external_ref = str(user["external_ref"])
         profile_id = await provision_profile(session, external_ref)
         apps = list(user.get("applications") or [])
-        # Síntesis SOLO de las candidaturas con url (parte 1): las sin url las
-        # clasifica migrate_applications como 'unresolved'. El sink dedup global
-        # ⇒ una URL compartida por varios usuarios reutiliza la misma vacante.
-        await synthesize_vacancies(
-            session,
-            scope_id,
-            [
-                {k: row.get(k) for k in ("url", "title", "company", "description")}
-                for row in apps
-                if row.get("url")
-            ],
-        )
         # Sink de staging POR USUARIO → se etiqueta con external_ref al agregar
         # (parte 2 solo conoce el profile_id).
         user_staged: list[dict] = []
         app_counts = await migrate_applications(
-            session, profile_id, apps, staging=user_staged
+            session, profile_id, apps, staging=user_staged, collided=collided
         )
         ss_counts = await migrate_saved_searches(
             session,
