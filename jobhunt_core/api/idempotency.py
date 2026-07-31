@@ -14,11 +14,14 @@ Mecanismo — UNA sola transacción (atomicidad reserva+efecto+respuesta):
    cierre de sesión hace rollback: la key queda LIBRE (un crash JAMÁS envenena
    una key, a diferencia del patrón de dos commits del que hablaría un
    response=NULL persistido).
-3. Si hay CONFLICTO: Postgres hizo BLOQUEAR nuestro INSERT hasta que la
-   transacción dueña terminó — ESPERA ACOTADA por la duración del handler
-   (decisión documentada frente al 409-en-vuelo: un reintento legítimo espera
-   y recibe la MISMA respuesta, en vez de un 409 que el cliente tendría que
-   reintentar). Al resolverse la fila dueña ya está COMMITEADA:
+3. Si hay CONFLICTO: Postgres BLOQUEA nuestro INSERT hasta que la transacción
+   dueña termina — pero la espera está DOBLEMENTE acotada (P1 rev. externa):
+   por la duración del handler Y por `lock_timeout` local
+   (CORE_IDEMPOTENCY_LOCK_TIMEOUT_MS). Si el dueño se cuelga y se vence el
+   lock_timeout, el INSERT aborta con 55P03 ⇒ rollback + 409
+   idempotency_in_progress (un reintento del cliente, jamás doble ejecución ni
+   un worker bloqueado sine die). Si el dueño termina a tiempo, su fila ya está
+   COMMITEADA y el reintento la replica:
    - request_hash DISTINTO ⇒ 409 `idempotency_conflict` (la key se reusó para
      otro cuerpo).
    - request_hash IGUAL ⇒ devolvemos la respuesta guardada SIN re-ejecutar.
@@ -35,8 +38,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
+from sqlalchemy.exc import DBAPIError
 
 from jobhunt_core.api.deps import ApiError
+from jobhunt_core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +50,16 @@ logger = logging.getLogger(__name__)
 # reintento de red del BFF.
 IDEM_TTL = timedelta(hours=24)
 KEY_MAX_LEN = 200  # = longitud de idempotency_records.key
+# SQLSTATE 55P03 = lock_not_available: lo emite Postgres al vencer lock_timeout.
+_LOCK_NOT_AVAILABLE = "55P03"
+
+
+def _is_lock_timeout(exc: DBAPIError) -> bool:
+    """True si el error es un vencimiento de lock_timeout (55P03). Cubre psycopg2
+    (`pgcode`) y psycopg3/asyncpg (`sqlstate`) sin acoplar al driver."""
+    orig = getattr(exc, "orig", None)
+    code = getattr(orig, "pgcode", None) or getattr(orig, "sqlstate", None)
+    return code == _LOCK_NOT_AVAILABLE
 
 
 async def run_idempotent(session, principal, route, request_hash, key, handler):
@@ -67,20 +82,49 @@ async def run_idempotent(session, principal, route, request_hash, key, handler):
     expires = datetime.now(timezone.utc) + IDEM_TTL
     keys = {"cid": principal.consumer_id, "k": key, "r": route}
 
-    owned = (
-        await session.execute(
-            sa.text(
-                "INSERT INTO idempotency_records "
-                "(consumer_id, key, route, request_hash, response, expires_at) "
-                "VALUES (:cid, :k, :r, :h, NULL, :exp) "
-                "ON CONFLICT (consumer_id, key, route) DO NOTHING "
-                "RETURNING consumer_id"
-            ),
-            {**keys, "h": request_hash, "exp": expires},
-        )
-    ).scalar_one_or_none()
+    # ACOTA la espera del INSERT-reserva sobre el índice único (P1 rev. externa):
+    # `set_config(..., is_local=true)` fija lock_timeout SOLO para esta
+    # transacción. Si otro dueño retiene la reserva más de lo permitido, el
+    # INSERT aborta con 55P03 en vez de bloquear indefinidamente.
+    await session.execute(
+        sa.text("SELECT set_config('lock_timeout', :ms, true)"),
+        {"ms": str(settings.CORE_IDEMPOTENCY_LOCK_TIMEOUT_MS)},
+    )
+    try:
+        owned = (
+            await session.execute(
+                sa.text(
+                    "INSERT INTO idempotency_records "
+                    "(consumer_id, key, route, request_hash, response, expires_at) "
+                    "VALUES (:cid, :k, :r, :h, NULL, :exp) "
+                    "ON CONFLICT (consumer_id, key, route) DO NOTHING "
+                    "RETURNING consumer_id"
+                ),
+                {**keys, "h": request_hash, "exp": expires},
+            )
+        ).scalar_one_or_none()
+    except DBAPIError as exc:
+        # asyncpg envuelve el 55P03 como DBAPIError (no siempre OperationalError):
+        # se captura la base y se filtra por sqlstate. Cualquier otro error de BD
+        # se re-lanza intacto.
+        if not _is_lock_timeout(exc):
+            raise
+        # El dueño sigue en curso más allá del lock_timeout: la transacción
+        # queda abortada ⇒ rollback y 409 en-vuelo (un reintible legítimo del
+        # cliente, no una doble ejecución). Libera el worker de inmediato.
+        await session.rollback()
+        raise ApiError(
+            409, "idempotency_in_progress",
+            "otra petición con la misma Idempotency-Key sigue en curso "
+            "(espera de reserva agotada)",
+            {"key": key},
+        ) from exc
 
     if owned is not None:
+        # La cota de espera protegía SOLO la reserva; el handler corre con la
+        # semántica de bloqueo por defecto (0 = sin límite) para no alterar su
+        # comportamiento previo ante contención legítima de sus propias filas.
+        await session.execute(sa.text("SELECT set_config('lock_timeout', '0', true)"))
         # Reserva NUESTRA: ejecuta y persiste la respuesta en el MISMO commit.
         status, payload = await handler()
         await session.execute(

@@ -635,6 +635,33 @@ def test_catalog_keyset_pagination_stable(db):
     assert len(collected) == len(set(collected)) == 5  # sin huecos ni duplicados
 
 
+def test_catalog_no_phantom_cursor_on_exact_multiple(db):
+    """P2 rev. externa C-API-R: con EXACTAMENTE `limit` filas que casan `q`, el
+    feed NO emite next_cursor (antes sí, y la página siguiente salía vacía).
+    Reproducción: una sola página con limit==total, y una paginación cuyo total
+    es múltiplo exacto del limit (4 filas de 2 en 2 ⇒ 2 páginas, jamás una 3ª)."""
+    factory, created = db
+    token, _vacs, auth = _seed_catalog(factory, created, n=4)
+    base = f"/v1/vacancies?q={token}"
+
+    # (a) Página única, limit == total exacto: sin cursor fantasma.
+    page = _api(factory, base + "&limit=4", token=auth).json()
+    assert len(page["items"]) == 4 and page["next_cursor"] is None
+
+    # (b) Borde múltiplo exacto: 4 filas paginadas de 2 en 2 ⇒ exactamente 2
+    # páginas llenas y la 2ª cierra con next_cursor None (no una 3ª vacía).
+    pages, total, cursor = 0, 0, None
+    for _ in range(10):  # cota de seguridad
+        url = base + "&limit=2" + (f"&cursor={cursor}" if cursor else "")
+        body = _api(factory, url, token=auth).json()
+        pages += 1
+        total += len(body["items"])
+        cursor = body["next_cursor"]
+        if cursor is None:
+            break
+    assert (pages, total) == (2, 4)
+
+
 def test_catalog_q_substring_case_insensitive(db):
     """`q` = substring case-insensitive (mínimo honesto) sobre title/company."""
     factory, created = db
@@ -941,6 +968,56 @@ def test_idempotency_concurrent_same_key_single_execution(db):
     assert {r1.status_code, r2.status_code} == {200}
     assert r1.json() == r2.json() and r1.headers["etag"] == r2.headers["etag"]
     assert calls["n"] == 1  # UNA ejecución pese a la key compartida
+
+
+def test_idempotency_reservation_wait_bounded_by_lock_timeout(db, monkeypatch):
+    """P1 rev. externa C-API-W: si el DUEÑO de la reserva se cuelga (handler que
+    no cierra su transacción), un 2º request con la MISMA key NO bloquea sine
+    die — lock_timeout vence, la espera aborta y devuelve 409
+    idempotency_in_progress, liberando el worker. El dueño acaba (tarde) con 200."""
+    monkeypatch.setattr(settings, "CORE_IDEMPOTENCY_LOCK_TIMEOUT_MS", 200)
+    factory, created = db
+    pid, _vacs, token = _seed_writable(factory, created)
+    url = f"/v1/profiles/{pid}"
+    body = {"title": "colgado"}
+    h = {"Authorization": f"Bearer {token}", "Idempotency-Key": "k-held"}
+
+    orig = profiles.save_profile_revision
+
+    async def hanging(*a, **k):
+        # El dueño retiene la reserva MÁS que el lock_timeout (200ms).
+        await asyncio.sleep(1.0)
+        return await orig(*a, **k)
+
+    async def go():
+        from httpx import ASGITransport, AsyncClient
+
+        from jobhunt_core.api import deps
+        from jobhunt_core.api.main import app
+
+        async def override_session():
+            async with factory() as s:
+                yield s
+
+        app.dependency_overrides[deps.get_session] = override_session
+        profiles.save_profile_revision = hanging
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                # El 1º reserva y se cuelga; el 2º (con ventaja de reserva) choca
+                # con la fila bloqueada y debe vencer por lock_timeout.
+                first = asyncio.create_task(client.put(url, json=body, headers=h))
+                await asyncio.sleep(0.15)  # deja que el 1º inserte la reserva
+                second = await client.put(url, json=body, headers=h)
+                return await first, second
+        finally:
+            profiles.save_profile_revision = orig
+            app.dependency_overrides.clear()
+
+    r1, r2 = asyncio.run(go())
+    assert r1.status_code == 200  # el dueño acaba (tarde) y commitea
+    assert (r2.status_code, r2.json()["code"]) == (409, "idempotency_in_progress")
 
 
 def test_erase_gdpr_removes_applications_and_saved_searches(db):

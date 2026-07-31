@@ -68,6 +68,11 @@ class CoreSettings(BaseSettings):
     # C-API-W 2º análisis: barrido de idempotency_records caducados (acota la
     # retención del cv_text guardado en response al TTL de 24h).
     CORE_IDEMPOTENCY_PURGE_EVERY_S: int = 3600
+    # P1 rev. externa C-API-W: cota de ESPERA del INSERT-reserva de idempotencia
+    # sobre el índice único. Sin ella, si el handler del dueño se cuelga, un
+    # reintento de la MISMA key bloquea indefinidamente (no es deadlock que
+    # Postgres detecte) y agota workers. Al superarse ⇒ 409 idempotency_in_progress.
+    CORE_IDEMPOTENCY_LOCK_TIMEOUT_MS: int = 3000
 
     model_config = {"extra": "ignore"}
 

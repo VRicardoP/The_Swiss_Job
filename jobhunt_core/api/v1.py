@@ -264,7 +264,11 @@ async def list_vacancies(
     lo exige — hoy el corpus es pequeño y `q` es el filtro mínimo, no ranking."""
     cur = decode_vacancy_cursor(cursor) if cursor else None
     where = ["v.archived_at IS NULL", "v.merged_into IS NULL"]
-    params: dict = {"lim": limit}
+    # Se pide UNA fila de más (limit+1) SOLO para saber si hay página siguiente
+    # (P2 rev. externa C-API-R): emitir cursor cuando len(rows)==limit mentía en
+    # el múltiplo exacto (justo `limit` filas ⇒ cursor pero la página siguiente
+    # está vacía). La fila extra se descarta de `items`; solo decide has_more.
+    params: dict = {"lim": limit + 1}
     if cur is not None:
         where.append(
             "(v.created_at < :cts OR (v.created_at = :cts AND v.id < :cid))"
@@ -287,14 +291,18 @@ async def list_vacancies(
             params,
         )
     ).all()
+    # Solo las primeras `limit` filas son la página; la (limit+1)-ésima —si
+    # existe— únicamente prueba que hay más, y NO se serializa.
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
     # _vacancy_dtos re-filtra por presentabilidad: el JOIN de arriba ya lo
     # garantiza, pero el guard `if r.id in dtos` tolera un archivado a mitad de
     # request (rarísimo) — misma disciplina que el feed de matches.
-    dtos = await _vacancy_dtos(session, [r.id for r in rows])
-    items = [dtos[r.id] for r in rows if r.id in dtos]
-    next_cur = (
-        (rows[-1].created_at, rows[-1].id) if rows and len(rows) == limit else None
-    )
+    dtos = await _vacancy_dtos(session, [r.id for r in page_rows])
+    items = [dtos[r.id] for r in page_rows if r.id in dtos]
+    # El cursor apunta a la ÚLTIMA fila devuelta (keyset), y solo si hay una
+    # fila más allá de ella (has_more) — nunca en el múltiplo exacto.
+    next_cur = (page_rows[-1].created_at, page_rows[-1].id) if has_more and page_rows else None
     page = schemas.VacanciesPageDTO(
         items=items,
         next_cursor=encode_vacancy_cursor(*next_cur) if next_cur else None,
