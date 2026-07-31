@@ -11,7 +11,7 @@ import re
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 # Credenciales que SOLO valen en dev; en prod el arranque falla si siguen presentes.
@@ -72,7 +72,10 @@ class CoreSettings(BaseSettings):
     # sobre el índice único. Sin ella, si el handler del dueño se cuelga, un
     # reintento de la MISMA key bloquea indefinidamente (no es deadlock que
     # Postgres detecte) y agota workers. Al superarse ⇒ 409 idempotency_in_progress.
-    CORE_IDEMPOTENCY_LOCK_TIMEOUT_MS: int = 3000
+    # gt=0 OBLIGATORIO (2ª rev. externa): Postgres interpreta lock_timeout=0 como
+    # DESACTIVADO — un 0 reintroduciría la espera infinita que este setting cierra.
+    # Cota superior operativa (le=60s): más allá no acota nada útil.
+    CORE_IDEMPOTENCY_LOCK_TIMEOUT_MS: int = Field(3000, gt=0, le=60_000)
 
     model_config = {"extra": "ignore"}
 

@@ -148,3 +148,23 @@ class TestPasswordCrossCheck:
         monkeypatch.setenv("CORE_DB_PASSWORD", "OtraPassword_123")
         with pytest.raises(ValueError, match="no coincide"):
             _bootstrap()
+
+
+class TestIdempotencyLockTimeout:
+    """P1 (2ª rev. externa C-API-W): Postgres interpreta lock_timeout=0 como
+    DESACTIVADO (espera infinita) — el setting DEBE rechazar 0 y negativos, que
+    reintroducirían el bloqueo sine die que este mecanismo cierra."""
+
+    @pytest.mark.parametrize("bad", ["0", "-1"])
+    def test_zero_or_negative_rejected(self, monkeypatch, bad):
+        from jobhunt_core.config import CoreSettings
+
+        monkeypatch.setenv("CORE_IDEMPOTENCY_LOCK_TIMEOUT_MS", bad)
+        with pytest.raises(Exception):  # ValidationError de Pydantic (gt=0)
+            CoreSettings()
+
+    def test_positive_accepted(self, monkeypatch):
+        from jobhunt_core.config import CoreSettings
+
+        monkeypatch.setenv("CORE_IDEMPOTENCY_LOCK_TIMEOUT_MS", "500")
+        assert CoreSettings().CORE_IDEMPOTENCY_LOCK_TIMEOUT_MS == 500
