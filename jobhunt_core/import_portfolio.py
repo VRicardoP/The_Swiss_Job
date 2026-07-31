@@ -121,9 +121,12 @@ async def synthesize_vacancies(
     (slots, incarnaciones, revisiones, canónica) y su idempotencia son suyas.
     """
     listings = []
+    seen: dict[str, str] = {}  # external_id -> url completa (detección de colisión)
+    skipped = {"no_url": 0, "malformed": 0, "collision": 0, "dup": 0}
     for item in items:
         url = item.get("url")
         if not url:
+            skipped["no_url"] += 1
             logger.warning(
                 "import_portfolio: item sin url OMITIDO (title=%r) — "
                 "pendiente de staging en una parte futura de C-4",
@@ -131,13 +134,11 @@ async def synthesize_vacancies(
             )
             continue
         try:
-            listings.append(
-                durable_to_raw_listing(
-                    url,
-                    item.get("title") or "",
-                    item.get("company"),
-                    item.get("description"),
-                )
+            listing = durable_to_raw_listing(
+                url,
+                item.get("title") or "",
+                item.get("company"),
+                item.get("description"),
             )
         except ValueError as exc:
             # URL malformada: CUARENTENA por-item, no abortar el lote válido. El
@@ -145,6 +146,7 @@ async def synthesize_vacancies(
             # cuarentena (_preprocess); sin esto un solo durable tóxico envenenaría
             # el lote entero y, al ser determinista, lo bloquearía indefinidamente
             # (P1 análisis 1) — justo lo que la cuarentena del sink evita.
+            skipped["malformed"] += 1
             logger.warning(
                 "import_portfolio: URL malformada OMITIDA (%s: %s) — title=%r",
                 exc.__class__.__name__,
@@ -152,6 +154,40 @@ async def synthesize_vacancies(
                 item.get("title"),
             )
             continue
+        prev = seen.get(listing.external_id)
+        if prev is not None:
+            if prev == url:
+                skipped["dup"] += 1  # duplicado EXACTO: ya lo tenemos
+            else:
+                # COLISIÓN: dos URLs DISTINTAS normalizan a la MISMA clave (p.ej. el
+                # id de la oferta vive en el fragmento que normalize_url descarta,
+                # portales SPA) → el sink las fundiría en silencio (by_ext, la última
+                # gana), perdiendo el vínculo de una candidatura. Se OMITE la 2ª con
+                # log de AUDITORÍA en vez de una fusión falsa silenciosa (P2 análisis
+                # 2) — reconciliación manual / staging futuro.
+                skipped["collision"] += 1
+                logger.warning(
+                    "import_portfolio: COLISIÓN de URL normalizada — %r y %r comparten "
+                    "clave de identidad; se OMITE la 2ª (posible fusión falsa) — "
+                    "reconciliar a mano",
+                    prev,
+                    url,
+                )
+            continue
+        seen[listing.external_id] = url
+        listings.append(listing)
+    logger.info(
+        "import_portfolio: %d items → %d a sintetizar (omitidos: %d sin url, %d "
+        "malformadas, %d colisiones, %d duplicados). NOTA: el sink puede además "
+        "descartar en cuarentena (url>1000/NUL/…); el vínculo de esos durables se "
+        "detecta como resolve→None en el paso de applications.",
+        len(items),
+        len(listings),
+        skipped["no_url"],
+        skipped["malformed"],
+        skipped["collision"],
+        skipped["dup"],
+    )
     if not listings:
         return
     await RawListingSink().handle(session, str(scope_id), tuple(listings))
@@ -163,9 +199,12 @@ async def resolve_vacancy_by_url(
     """vacancy_id de la vacante-sombra activa para esa URL, o None.
 
     Resuelve por (fuente 'portfolio-import', url_normalized) → incarnación
-    ACTIVA (ended_at IS NULL). Las UNIQUE del esquema garantizan a lo sumo
-    una fila. Una URL MALFORMADA ⇒ None (jamás se sintetizó una vacante suya;
-    honra el contrato uuid|None — el llamador no envuelve en try/except).
+    ACTIVA (ended_at IS NULL) y una vacante PRESENTABLE (merged_into IS NULL,
+    archived_at IS NULL — misma guarda que toda otra resolución de vacancy_id del
+    core: nunca se enlaza una candidatura a una vacante fundida/archivada). Las
+    UNIQUE del esquema garantizan a lo sumo una fila. Una URL MALFORMADA ⇒ None
+    (jamás se sintetizó una vacante suya; honra el contrato uuid|None — el
+    llamador no envuelve en try/except).
     """
     try:
         url_normalized = normalize_url(url)
@@ -178,6 +217,9 @@ async def resolve_vacancy_by_url(
                 "JOIN sources s ON s.id = sl.source_id AND s.name = :src "
                 "JOIN source_listing_incarnations i "
                 "  ON i.source_listing_id = sl.id AND i.ended_at IS NULL "
+                "JOIN vacancies v "
+                "  ON v.id = i.vacancy_id AND v.merged_into IS NULL "
+                "  AND v.archived_at IS NULL "
                 "WHERE sl.url_normalized = :urln"
             ),
             {"src": PORTFOLIO_IMPORT_SOURCE, "urln": url_normalized},

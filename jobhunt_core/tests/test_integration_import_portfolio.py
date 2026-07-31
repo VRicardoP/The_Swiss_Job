@@ -171,6 +171,46 @@ async def _scenario(factory):
         assert await ip.resolve_vacancy_by_url(s, good["url"]) is not None
         assert await ip.resolve_vacancy_by_url(s, "https://[invalid") is None
 
+        # --- COLISIÓN de URL normalizada (P2 análisis 2): dos URLs DISTINTAS cuyo id
+        # vive en el fragmento (que normalize_url descarta) → misma clave. El import
+        # DETECTA y OMITE la 2ª (audit log), conservando la 1ª — en vez de la fusión
+        # falsa silenciosa del sink (última gana). Solo se crea UNA vacante, con el
+        # title de la PRIMERA (no de la segunda).
+        collide = [
+            {"url": "https://spa.example.ch/#/vacancy/aaa", "title": "First Offer", "company": "A"},
+            {"url": "https://spa.example.ch/#/vacancy/bbb", "title": "Second Offer", "company": "B"},
+        ]
+        before = await _count(s, "vacancies")
+        await ip.synthesize_vacancies(s, scope_id, collide)
+        await s.commit()
+        assert await _count(s, "vacancies") == before + 1  # SOLO una (la 2ª omitida)
+        cvid = await ip.resolve_vacancy_by_url(s, collide[0]["url"])
+        assert cvid is not None
+        ctitle = (
+            await s.execute(
+                sa.text(
+                    "SELECT o.content->>'title' FROM vacancies v JOIN offer_revisions o "
+                    "ON o.id = v.current_offer_revision_id WHERE v.id = :v"
+                ),
+                {"v": cvid},
+            )
+        ).scalar_one()
+        assert ctitle == "First Offer"  # gana la 1ª; fusión falsa evitada
+
+        # --- resolve HONRA merged_into (P3 análisis 2): una vacante-sombra fundida
+        # ya no se resuelve (nunca enlazar una candidatura a una vacante fuera de
+        # corpus) → None, como toda otra resolución de vacancy_id del core.
+        gvid = await ip.resolve_vacancy_by_url(s, with_url[0]["url"])
+        assert gvid is not None
+        winner = uuid.uuid4()
+        await s.execute(sa.text("INSERT INTO vacancies (id) VALUES (:w)"), {"w": winner})
+        await s.execute(
+            sa.text("UPDATE vacancies SET merged_into = :w WHERE id = :v"),
+            {"w": winner, "v": gvid},
+        )
+        await s.commit()
+        assert await ip.resolve_vacancy_by_url(s, with_url[0]["url"]) is None
+
 
 async def _count(session, table: str) -> int:
     return (
