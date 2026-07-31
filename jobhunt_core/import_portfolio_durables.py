@@ -20,23 +20,26 @@ Reglas C-4:
 - CONSOLIDACIÓN: varios durables del mismo perfil que resuelven a la MISMA
   vacante no pueden producir dos applications (UNIQUE(profile_id,
   vacancy_id)) → se AGRUPA por vacancy_id ANTES de insertar y gana la
-  candidatura REAL (status != 'saved'), conservando follow_up_date/notes de
-  las demás (coalesce, el ganador primero).
+  candidatura REAL MÁS RECIENTE (por updated_at/created_at, no por el orden
+  del lote), conservando follow_up_date/notes de las demás (coalesce). Si se
+  descarta otra candidatura real (status distinto), se LOGUEA (auditable).
 - Durables sin url o con url irresoluble (nunca sintetizada, cuarentena del
   sink, vacante fundida/archivada) → 'unresolved' con log: se OMITEN (staging
   en una parte futura de C-4), jamás se inserta un vínculo a ciegas.
 - IDEMPOTENTE: applications con INSERT ... ON CONFLICT (profile_id,
   vacancy_id) DO NOTHING (el evento inicial SOLO si la fila es nueva —
-  RETURNING); saved_searches con dedup por (profile_id, name) vía
-  existence-check (el esquema no trae UNIQUE y no se añaden constraints
-  aquí). Los conteos devueltos CLASIFICAN el lote (no cuentan inserciones):
+  RETURNING); saved_searches con dedup por (profile_id, name, FILTERS) vía
+  existence-check con LIMIT 1 (el esquema no trae UNIQUE y no se añaden
+  constraints aquí; el name solo perdería búsquedas distintas homónimas, y
+  scalar_one_or_none envenenaría el re-run ante un duplicado preexistente).
+  Los conteos devueltos CLASIFICAN el lote (no cuentan inserciones):
   re-ejecutar produce los MISMOS conteos.
 """
 
 import json
 import logging
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -114,22 +117,25 @@ async def migrate_applications(
         groups.setdefault(vacancy_id, []).append(row)
 
     for vacancy_id, group in groups.items():
-        # --- BOOKMARKS: cada saved marca saved_at (+notes); coexiste con la
-        # application de la misma vacante (estado estable ADR-03).
-        for row in group:
-            if row.get("status") == SAVED_STATUS:
-                await matching.set_saved(session, profile_id, vacancy_id, True)
-                if row.get("notes"):
-                    # No hay helper de notes: UPDATE directo tras el upsert
-                    # de set_saved (la fila ya existe seguro).
-                    await session.execute(
-                        sa.text(
-                            "UPDATE profile_vacancy_state SET notes = :n "
-                            "WHERE profile_id = :pid AND vacancy_id = :vid"
-                        ),
-                        {"n": row["notes"], "pid": profile_id, "vid": vacancy_id},
-                    )
-                counts["bookmarks"] += 1
+        # --- BOOKMARKS: los saved marcan saved_at (upsert idempotente, una vez por
+        # vacante) y coexisten con la application (estado estable ADR-03). Las notes
+        # se COALESCEN (primera no vacía entre los saved de la vacante) en UN solo
+        # UPDATE — no last-write-wins por-durable (P2 análisis 2).
+        saved_rows = [r for r in group if r.get("status") == SAVED_STATUS]
+        if saved_rows:
+            await matching.set_saved(session, profile_id, vacancy_id, True)
+            counts["bookmarks"] += len(saved_rows)
+            bookmark_note = next((r.get("notes") for r in saved_rows if r.get("notes")), None)
+            if bookmark_note is not None:
+                # No hay helper de notes: UPDATE directo tras el upsert de set_saved
+                # (la fila de profile_vacancy_state ya existe seguro).
+                await session.execute(
+                    sa.text(
+                        "UPDATE profile_vacancy_state SET notes = :n "
+                        "WHERE profile_id = :pid AND vacancy_id = :vid"
+                    ),
+                    {"n": bookmark_note, "pid": profile_id, "vid": vacancy_id},
+                )
 
         # --- APPLICATION consolidada de la vacante: candidaturas reales +
         # bookmarks con follow_up_date (regla C-4: ese dato no se pierde).
@@ -141,9 +147,26 @@ async def migrate_applications(
         candidates = real + saved_fu
         if not candidates:
             continue
-        # Gana la candidatura REAL; entre varias reales, la última del lote
-        # (el export del portfolio llega en orden de creación).
-        winner = real[-1] if real else saved_fu[0]
+        # Gana la candidatura REAL MÁS RECIENTE — por updated_at/created_at, NO por
+        # la posición en el lote (P3 análisis 2: no confiar en el orden del export;
+        # el estado actual es el del durable más nuevo). Las OTRAS candidaturas
+        # reales de la misma vacante (UNIQUE ⇒ una sola application) se descartan:
+        # su status/evento se pierden, así que se LOGUEA para auditoría (paridad
+        # con invalid_status/unresolved; migración reconciliable).
+        if real:
+            winner = max(real, key=_recency_key)
+            for r in real:
+                if r is not winner:
+                    logger.warning(
+                        "import_portfolio_durables: candidatura real DESCARTADA por "
+                        "consolidación (vacante compartida) — status=%r title=%r; "
+                        "gana la más reciente (status=%r)",
+                        r.get("status"),
+                        r.get("title"),
+                        winner.get("status"),
+                    )
+        else:
+            winner = saved_fu[0]
         counts["consolidated"] += len(candidates) - 1
         counts["applications"] += 1
         follow_up = next(
@@ -252,15 +275,23 @@ async def migrate_saved_searches(
                 name,
             )
             filters = {}
+        filters_json = json.dumps(filters, ensure_ascii=False)
+        # Dedup por (profile_id, name, FILTERS): el name SOLO perdería en silencio
+        # dos búsquedas legítimas distintas con el mismo nombre (el origen no impone
+        # UNIQUE(user_id, name)) — P2 análisis 2. `.first()`/LIMIT 1 (no
+        # scalar_one_or_none): un duplicado preexistente ya no envenena el re-run con
+        # MultipleResultsFound — P3 análisis 2. Aún es check-then-act (no atómico);
+        # aceptable para la migración one-shot en freeze (un solo escritor).
         exists = (
             await session.execute(
                 sa.text(
                     "SELECT 1 FROM saved_searches "
-                    "WHERE profile_id = :pid AND name = :n"
+                    "WHERE profile_id = :pid AND name = :n "
+                    "AND filters = CAST(:f AS jsonb) LIMIT 1"
                 ),
-                {"pid": profile_id, "n": name},
+                {"pid": profile_id, "n": name, "f": filters_json},
             )
-        ).scalar_one_or_none()
+        ).first()
         if exists:
             counts["existing"] += 1
             continue
@@ -272,7 +303,7 @@ async def migrate_saved_searches(
             ),
             {
                 "id": uuid.uuid4(), "pid": profile_id, "n": name,
-                "f": json.dumps(filters, ensure_ascii=False),
+                "f": filters_json,
                 "ms": int(row.get("min_score") or 0),
                 "act": bool(row.get("is_active", True)),
                 "lra": _as_datetime(row.get("last_notified_at")),
@@ -315,3 +346,11 @@ def _as_datetime(value) -> datetime | None:
         except ValueError:
             return None
     return None
+
+
+def _recency_key(row: dict) -> datetime:
+    """Clave de recencia ORDEN-INDEPENDIENTE para elegir la candidatura ganadora:
+    updated_at, si no created_at, si no epoch (las filas sin fecha van al fondo,
+    deterministas). No confiar en la posición del durable en el lote."""
+    dt = _as_datetime(row.get("updated_at")) or _as_datetime(row.get("created_at"))
+    return dt or datetime.min.replace(tzinfo=timezone.utc)
