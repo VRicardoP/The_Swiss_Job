@@ -9,11 +9,17 @@ del NAS, gated) exigirá:
 - VACANTE COMPARTIDA entre usuarios: una URL común resuelve a UNA vacante-sombra,
   con una application por perfil (UNIQUE(profile_id, vacancy_id) intacto).
 - DRY-RUN REVERSIBLE: migrar, ver checksums NO vacíos, y ROLLBACK ⇒ nada persiste
-  (el origen jamás se muta; la migración es todo-o-nada del llamador).
-- RECONCILIACIÓN: conteos agregados + count/checksum por tabla; los checksums son
-  != md5('') (DoD: "checksums de cero = confianza falsa").
-- IDEMPOTENCIA a nivel de DATOS: re-migrar el mismo origen NO cambia los checksums
-  (sin duplicar, sin divergir), aunque saved_searches desplace migrated→existing.
+  en NINGUNA tabla que escribe la migración (tracking + corpus global: vacancies,
+  sources, profiles…) — el origen jamás se muta; todo-o-nada del llamador.
+- RECONCILIACIÓN: conteos agregados + count/checksum por objetivo (4 tablas de
+  tracking + la canónica sintetizada); los checksums son != md5('') (DoD:
+  "checksums de cero = confianza falsa").
+- ENUMERACIÓN de irrecuperables: los durables sin vacante (unresolved) / status
+  inválido / sin name se LISTAN en report['staged'] (identidad + razón), no solo
+  se cuentan — identidad contable: nada se pierde sin auditar.
+- IDEMPOTENCIA a nivel de DATOS: re-migrar el mismo origen NO cambia los checksums.
+- PORTABILIDAD cross-BD: el mismo origen migrado en DOS BDs distintas produce
+  checksums IDÉNTICOS (claves de negocio portables, no PK uuid4).
 
 El ensayo REAL sobre los datos del NAS queda GATED (mismo criterio que las demás
 validaciones NAS). Ejecutar vía core-migrate.
@@ -44,6 +50,15 @@ U_BOTH = "https://jobs.example.ch/u1-both"
 U_SHARED = "https://jobs.example.ch/shared"
 U_U2_SAVED = "https://jobs.example.ch/u2-saved"
 
+# Todas las tablas que la migración ESCRIBE (tracking + cadena de identidad del
+# corpus + tenant): el dry-run debe revertirlas TODAS (fidelidad del rollback).
+FULL_WRITE_SET = (
+    "applications", "application_status_events", "profile_vacancy_state",
+    "saved_searches", "vacancies", "offer_revisions", "source_listings",
+    "source_listing_incarnations", "sources", "harvest_scopes",
+    "consumers", "profiles",
+)
+
 
 def _representative_users() -> list[dict]:
     """Dataset REPRESENTATIVO: 2 usuarios que ejercen todas las ramas (applied,
@@ -69,7 +84,7 @@ def _representative_users() -> list[dict]:
                 {"url": U_BOTH, "status": "applied", "title": "DevOps",
                  "company": "Delta", "description": "IaC",
                  "created_at": datetime(2026, 6, 5, tzinfo=timezone.utc)},
-                # Sin url → unresolved (no persiste, se audita).
+                # Sin url → unresolved (no persiste, se ENUMERA en staged).
                 {"url": None, "status": "offer", "title": "Sin URL",
                  "created_at": datetime(2026, 6, 6, tzinfo=timezone.utc)},
                 # URL compartida con el usuario 2.
@@ -114,14 +129,19 @@ EXPECTED_APPS = {
     "consolidated": 1, "invalid_status": 0,
 }
 EXPECTED_SS = {"migrated": 5, "existing": 0, "invalid_filters": 1, "no_name": 0}
-# Filas resultantes por tabla de tracking.
+# Filas resultantes por objetivo de reconciliación (4 tracking + canónica
+# sintetizada: 6 URLs distintas → 6 vacantes-sombra portfolio-import).
 EXPECTED_ROWS = {
     "applications": 5, "application_status_events": 5,
     "profile_vacancy_state": 4, "saved_searches": 5,
+    "portfolio_vacancies": 6,
 }
 
 
-def test_migration_rehearsal_portfolio_local():
+async def _on_disposable_db(async_fn):
+    """Crea una BD DESECHABLE (extensión+esquema+alembic head), ejecuta
+    async_fn(factory) y la elimina en finally. Devuelve lo que async_fn retorne.
+    Jamás toca la BD compartida."""
     admin_url = os.environ["CORE_ADMIN_DATABASE_URL"].replace(
         "postgresql://", "postgresql+asyncpg://"
     )
@@ -131,13 +151,9 @@ def test_migration_rehearsal_portfolio_local():
     admin_engine = create_async_engine(
         admin_url, poolclass=sa.pool.NullPool, isolation_level="AUTOCOMMIT"
     )
-
-    async def create_db():
+    try:
         async with admin_engine.connect() as c:
             await c.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
-
-    asyncio.run(create_db())
-    try:
         temp_engine = create_async_engine(
             temp_url, poolclass=sa.pool.NullPool,
             connect_args={
@@ -146,29 +162,48 @@ def test_migration_rehearsal_portfolio_local():
                 }
             },
         )
-        factory = async_sessionmaker(temp_engine, expire_on_commit=False)
-
-        async def bootstrap():
+        try:
             async with temp_engine.begin() as c:
                 await c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
                 await c.execute(
                     sa.text(f'CREATE SCHEMA IF NOT EXISTS "{settings.CORE_DB_SCHEMA}"')
                 )
-
-        asyncio.run(bootstrap())
-        run_alembic(temp_url, "upgrade", "head")
-        asyncio.run(_scenario(factory))
-        asyncio.run(temp_engine.dispose())
+            run_alembic(temp_url, "upgrade", "head")  # sync (subprocess)
+            factory = async_sessionmaker(temp_engine, expire_on_commit=False)
+            return await async_fn(factory)
+        finally:
+            await temp_engine.dispose()
     finally:
+        async with admin_engine.connect() as c:
+            await c.execute(
+                sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)')
+            )
+        await admin_engine.dispose()
 
-        async def drop_db():
-            async with admin_engine.connect() as c:
-                await c.execute(
-                    sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)')
-                )
-            await admin_engine.dispose()
 
-        asyncio.run(drop_db())
+def test_migration_rehearsal_portfolio_local():
+    asyncio.run(_on_disposable_db(_scenario))
+
+
+def test_checksums_portable_across_databases():
+    """PORTABILIDAD cross-BD (reproducción del hallazgo P2 análisis 1): el MISMO
+    origen migrado en dos BDs frescas independientes produce checksums IDÉNTICOS
+    — los PK uuid4 (profile_id/vacancy_id) difieren entre BDs pero la proyección
+    usa claves de negocio portables (external_ref, url_normalized)."""
+    from jobhunt_core import import_portfolio_migrate as ipm
+
+    users = _representative_users()
+
+    async def _migrate_and_checksum(factory):
+        async with factory() as s:
+            await ipm.migrate_portfolio(s, users)
+            await s.commit()
+            return await ipm.table_checksums(s)
+
+    chk_a = asyncio.run(_on_disposable_db(_migrate_and_checksum))
+    chk_b = asyncio.run(_on_disposable_db(_migrate_and_checksum))
+    assert chk_a == chk_b  # claves de negocio portables → coincidencia cross-BD
+    assert all(t["checksum"] != ipm.EMPTY_CHECKSUM for t in chk_a.values())
 
 
 async def _scenario(factory):
@@ -178,7 +213,8 @@ async def _scenario(factory):
     users = _representative_users()
 
     # --- DRY-RUN REVERSIBLE: migrar en una sesión, verificar checksums NO vacíos
-    # (la migración corrió contra datos reales), y ROLLBACK ⇒ nada persiste.
+    # (la migración corrió contra datos reales), y ROLLBACK ⇒ nada persiste en
+    # NINGUNA tabla que escribe la migración (tracking + corpus global + tenant).
     async with factory() as s:
         await ipm.migrate_portfolio(s, users)
         chk_dry = await ipm.table_checksums(s)
@@ -188,8 +224,8 @@ async def _scenario(factory):
         ), chk_dry
         await s.rollback()
     async with factory() as s:
-        for table in ipm.CORE_TRACKING_TABLES:
-            assert await _count(s, table) == 0  # rollback ⇒ migración descartada
+        for table in FULL_WRITE_SET:
+            assert await _count(s, table) == 0, table  # rollback ⇒ todo descartado
 
     # --- CUTOVER real: migrar + commit + reconciliar.
     async with factory() as s:
@@ -199,10 +235,23 @@ async def _scenario(factory):
         assert report["applications"] == EXPECTED_APPS, report["applications"]
         assert report["saved_searches"] == EXPECTED_SS, report["saved_searches"]
 
+        # ENUMERACIÓN de irrecuperables: identidad contable (nada sin auditar).
+        # El único irrecuperable del dataset es la oferta sin url del usuario 1.
+        assert len(report["staged"]) == (
+            report["applications"]["unresolved"]
+            + report["applications"]["invalid_status"]
+            + report["saved_searches"]["no_name"]
+        )
+        assert len(report["staged"]) == 1
+        rec = report["staged"][0]
+        assert rec["external_ref"] == "1"
+        assert rec["kind"] == "application" and rec["reason"] == "unresolved"
+        assert rec["durable"]["title"] == "Sin URL"
+
         chk1 = await ipm.table_checksums(s)
-        for table, rows in EXPECTED_ROWS.items():
-            assert chk1[table]["count"] == rows, (table, chk1[table])
-            assert chk1[table]["checksum"] != ipm.EMPTY_CHECKSUM, table
+        for target, rows in EXPECTED_ROWS.items():
+            assert chk1[target]["count"] == rows, (target, chk1[target])
+            assert chk1[target]["checksum"] != ipm.EMPTY_CHECKSUM, target
 
         # VACANTE COMPARTIDA: la URL común resuelve a UNA vacante, con DOS
         # applications (una por perfil) — UNIQUE(profile_id, vacancy_id) intacto.
@@ -215,8 +264,6 @@ async def _scenario(factory):
             )
         ).scalar_one()
         assert n_shared == 2
-        # Solo se sintetizó UNA vacante por URL distinta (6 URLs → 6 vacantes).
-        assert await _count(s, "vacancies") == 6
 
     # --- IDEMPOTENCIA a nivel de DATOS: re-migrar NO cambia los checksums ni las
     # filas (sin duplicar, sin divergir); applications mantiene su clasificación,

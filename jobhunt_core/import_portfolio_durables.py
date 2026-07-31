@@ -73,7 +73,11 @@ async def provision_profile(session: AsyncSession, external_ref: str) -> uuid.UU
 
 
 async def migrate_applications(
-    session: AsyncSession, profile_id: uuid.UUID, rows: list[dict]
+    session: AsyncSession,
+    profile_id: uuid.UUID,
+    rows: list[dict],
+    *,
+    staging: list | None = None,
 ) -> dict:
     """Escribe los durables de job_application en el tracking del core.
 
@@ -82,6 +86,12 @@ async def migrate_applications(
     unresolved (sin url o url irresoluble — omitidos con log), consolidated
     (durables extra fundidos en una application existente del lote),
     invalid_status (status fuera del enum — cuarentena por-item).
+
+    `staging` (opcional): si se pasa una lista, cada durable IRRECUPERABLE
+    (unresolved / invalid_status) se ENUMERA en ella {kind, reason, durable} —
+    para que la reconciliación no reporte verde con pérdida silenciosa. El
+    staging PERSISTENTE (tabla) llega en una parte futura de C-4; aquí solo se
+    enumera en memoria (el origen es de solo lectura, nada se destruye).
     """
     counts = {
         "applications": 0, "bookmarks": 0, "unresolved": 0,
@@ -101,6 +111,7 @@ async def migrate_applications(
                 row.get("status"),
                 row.get("title"),
             )
+            _record_skipped(staging, "application", "invalid_status", row)
             continue
         url = row.get("url")
         vacancy_id = await resolve_vacancy_by_url(session, url) if url else None
@@ -113,6 +124,7 @@ async def migrate_applications(
                 row.get("title"),
                 url,
             )
+            _record_skipped(staging, "application", "unresolved", row)
             continue
         groups.setdefault(vacancy_id, []).append(row)
 
@@ -229,7 +241,11 @@ async def migrate_applications(
 
 
 async def migrate_saved_searches(
-    session: AsyncSession, profile_id: uuid.UUID, rows: list[dict]
+    session: AsyncSession,
+    profile_id: uuid.UUID,
+    rows: list[dict],
+    *,
+    staging: list | None = None,
 ) -> dict:
     """Escribe los durables de saved_search en saved_searches del core.
 
@@ -237,8 +253,13 @@ async def migrate_saved_searches(
     {} con log — el original sigue en el portfolio), last_notified_at →
     last_run_at; notify_frequency/notify_push/total_matches los cubren los
     server defaults de core0011 ('daily'/true/0). IDEMPOTENTE por
-    existence-check sobre (profile_id, name) — el esquema no trae UNIQUE y no
-    se añaden constraints aquí.
+    existence-check sobre (profile_id, name, filters) — el esquema no trae
+    UNIQUE y no se añaden constraints aquí.
+
+    `staging` (opcional): las búsquedas IRRECUPERABLES (no_name — sin clave de
+    dedup) se ENUMERAN en la lista {kind, reason, durable}. Las de filters
+    inválido NO se enumeran: se migran con {} (el original sigue en el
+    portfolio), no son pérdida.
     """
     counts = {"migrated": 0, "existing": 0, "invalid_filters": 0, "no_name": 0}
     for row in rows:
@@ -249,6 +270,7 @@ async def migrate_saved_searches(
             logger.warning(
                 "import_portfolio_durables: saved_search sin name — OMITIDA"
             )
+            _record_skipped(staging, "saved_search", "no_name", row)
             continue
         if len(name) > SAVED_SEARCH_NAME_MAX:
             # Recorte defensivo al tope del esquema: consistente en cada
@@ -320,6 +342,19 @@ async def migrate_saved_searches(
         counts["no_name"],
     )
     return counts
+
+
+def _record_skipped(
+    staging: list | None, kind: str, reason: str, row: dict
+) -> None:
+    """Enumera un durable IRRECUPERABLE en el sink de staging (si se pasó).
+
+    Guarda el durable ÍNTEGRO (identidad completa: url/title/status/name/…) para
+    que la reconciliación pueda listar QUÉ se quedó fuera y por qué — no solo un
+    conteo agregado. El staging PERSISTENTE (tabla) es una parte futura de C-4;
+    este sink en memoria es su precursor (la lista que aquella parte volcará)."""
+    if staging is not None:
+        staging.append({"kind": kind, "reason": reason, "durable": row})
 
 
 def _as_date(value) -> date | None:
