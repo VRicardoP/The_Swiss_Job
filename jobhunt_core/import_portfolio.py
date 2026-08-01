@@ -198,32 +198,57 @@ async def synthesize_vacancies(
         listings.append(next(iter(grp["by_url"].values())))
         synthesized[grp["urln"]] = next(iter(batch_urls))
         skipped["dup"] += grp["count"] - 1  # exactos-dup del mismo url
-    if listings:
-        await RawListingSink().handle(session, str(scope_id), tuple(listings))
 
-    # --- REVALIDACIÓN POST-ATTACH (race-free): se lee el estado YA CONFIRMADO tras el
-    # attach del sink. Si la vacante resultante de una url sintetizada tiene otra
-    # incarnación activa con url ORIGINAL DISTINTA (cross-source o cross-run, incluida
-    # cualquiera confirmada concurrentemente por otro harvester del core), es colisión:
-    # su durable se enruta a staging. Un chequeo PREVIO no basta (TOCTOU); leer el
-    # resultado sí, porque ve toda escritura ya confirmada (P1 rev. externa 3).
-    incarnation_urls = await _vacancy_incarnation_urls(session, list(synthesized))
-    for urln, batch_url in synthesized.items():
-        urls = incarnation_urls.get(urln, {batch_url})
-        if len(urls - {batch_url}) > 0:  # otra url distinta comparte la vacante
-            collided.add(batch_url)
-            skipped["collision"] += 1
-            logger.warning(
-                "import_portfolio: COLISIÓN post-attach (%s) — la vacante tiene urls "
-                "%r ademas de %r; el durable a staging (reconciliar a mano)",
-                urln, sorted(urls - {batch_url}), batch_url,
-            )
+    collided |= await _synthesize_pruning_collisions(
+        session, scope_id, listings, skipped
+    )
     logger.info(
         "import_portfolio: %d items → %d sintetizadas (omitidos: %d sin url, %d "
         "malformadas, %d colisiones, %d duplicados).",
         len(items), len(listings), skipped["no_url"], skipped["malformed"],
         skipped["collision"], skipped["dup"],
     )
+    return collided
+
+
+async def _synthesize_pruning_collisions(
+    session: AsyncSession, scope_id: uuid.UUID, listings: list, skipped: dict
+) -> set[str]:
+    """Sintetiza `listings` y, si la REVALIDACIÓN post-attach detecta que una vacante
+    resultante tiene otra url ORIGINAL (colisión CROSS-SOURCE — el sink adjuntó por
+    url_normalized a una vacante de otra fuente), REVIERTE la cadena creada vía SAVEPOINT
+    y re-sintetiza SOLO las no colisionadas → NO deja un vínculo FALSO en el corpus (la
+    incarnación/revisión/evidencia se descartan, no solo se stagea el durable — rev.
+    externa 4). Devuelve las urls colisionadas (a staging por el llamador).
+
+    La ventana de carrera residual (un attach concurrente TRAS la revalidación) es
+    concern del bloqueo del sink; el cutover real la cierra el script del ensayo §4
+    (gated NAS)."""
+    collided: set[str] = set()
+    to_try = list(listings)
+    while to_try:
+        nested = await session.begin_nested()
+        await RawListingSink().handle(session, str(scope_id), tuple(to_try))
+        urln_of = {lst.url: normalize_url(lst.url) for lst in to_try}
+        incarnation_urls = await _vacancy_incarnation_urls(
+            session, list(urln_of.values())
+        )
+        new_collided = {
+            lst.url for lst in to_try
+            if len(incarnation_urls.get(urln_of[lst.url], {lst.url}) - {lst.url}) > 0
+        }
+        if not new_collided:
+            await nested.commit()
+            break
+        await nested.rollback()  # descarta TODA la cadena de este intento
+        collided |= new_collided
+        skipped["collision"] += len(new_collided)
+        for url in sorted(new_collided):
+            logger.warning(
+                "import_portfolio: COLISIÓN cross-source (%s) — cadena REVERTIDA, "
+                "durable a staging (reconciliar a mano)", url,
+            )
+        to_try = [lst for lst in to_try if lst.url not in new_collided]
     return collided
 
 

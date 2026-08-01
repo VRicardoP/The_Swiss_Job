@@ -1,22 +1,22 @@
-"""Reconciliación INDEPENDIENTE + manifiesto durable de la migración (C-4).
+"""Reconciliación (scaffold LOCAL) + inventario de rollback de la migración (C-4).
 
-Cierra el hueco de la reconciliación del cutover (rev. externa): los checksums de
-import_portfolio_migrate se computan DESDE el destino, así que un error DETERMINISTA
-(min_score=60→0, notas corruptas, snapshot equivocado…) pasaría rerun y comparación
-cross-BD porque AMBOS destinos fallan igual. Aquí:
+Los checksums de import_portfolio_migrate se computan DESDE el destino, así que un
+error DETERMINISTA (min_score=60→0, notas corruptas…) pasaría rerun y comparación
+cross-BD porque AMBOS destinos fallan igual. Este módulo lo ATAJA verificando VALORES
+MATERIALES contra el ORIGEN.
 
-- _classify_expected CLASIFICA el ORIGEN por una vía INDEPENDIENTE (segunda
-  implementación que lee los campos crudos del durable) para las 4 tablas de tracking
-  + la canónica sintetizada + el staging, con MATERIAL COMPLETO (no solo claves):
-  status/notes/follow_up/snapshot de applications, cardinalidad de eventos, notes del
-  bookmark, título/empresa/desc de la oferta, tupla material de saved_searches, e
-  IDENTIDADES del staging (no solo conteos). Las colisiones se determinan del ESTADO
-  FINAL (post-attach), no de un chequeo previo con carrera.
-- migrate_and_reconcile orquesta todo en UNA transacción: migra, reconcilia, captura
-  las IDENTIDADES exactas por CONSULTA SCOPEADA (consumer portfolio + fuente
-  portfolio-import — no snapshot-diff global, que atribuiría escrituras concurrentes
-  ajenas), y persiste el manifiesto antes del commit. El llamador confirma SOLO si
-  verdict=='ok'.
+ALCANCE — DIVISIÓN C-4 / ENSAYO §4 (gated NAS), decidida con el propietario:
+- AQUÍ (scaffold local): _classify_expected compara los VALORES materiales del destino
+  contra el origen (status/notes/follow_up/snapshot de applications, cardinalidad de
+  eventos, notes de bookmark, contenido canónico de oferta —normalizado—, tupla de
+  saved_searches) → atrapa el bug determinista. La ESTRUCTURA (qué durable resolvió) se
+  LEE del estado final; el staging se coteja CONTABLEMENTE por identidad. Es un scaffold
+  para el ensayo, con límites EXPLÍCITOS (ver reconcile y _captured_identities).
+- EN §4 (gated NAS): la verificación INDEPENDIENTE COMPLETA (que distingue una cuarentena
+  legítima de un fallo del sink que pierda listings válidos — exige un LEDGER verificable
+  del sink) y el MANIFIESTO DE PROCEDENCIA EXACTA + SCRIPT de rollback FK-safe (RUNBOOK
+  §3/§4). El artefacto de corpus en colisión SÍ se corrige aquí (savepoint, es integridad
+  de datos real — ver import_portfolio._synthesize_pruning_collisions).
 """
 
 import json
@@ -363,9 +363,17 @@ def _diff(expected: set, actual: set) -> dict:
 
 
 async def reconcile(session: AsyncSession, users: list[dict], report: dict) -> dict:
-    """Contrasta el DESTINO (ya migrado en esta sesión) contra el ESPERADO del ORIGEN
-    para las 4 tablas de tracking + oferta canónica + staging (identidades), con
-    material completo. Devuelve el manifiesto con veredicto."""
+    """Contrasta el DESTINO (ya migrado en esta sesión) contra el ESPERADO del ORIGEN.
+
+    ALCANCE (scaffold LOCAL — la verificación INDEPENDIENTE COMPLETA es del ensayo §4,
+    gated NAS): comprueba VALORES MATERIALES contra el ORIGEN (applications con notes/
+    follow_up/snapshot, cardinalidad de eventos, notes de bookmark, contenido canónico
+    de oferta, tupla de saved_searches) — atrapa el bug determinista (min_score 60→0,
+    notas corruptas…). La ESTRUCTURA (qué durable resolvió) se lee del estado final, así
+    que un fallo del SINK que pierda listings válidos NO lo distingue de una cuarentena
+    legítima: eso exige el LEDGER verificable del sink, que produce el §4. El staging se
+    coteja por IDENTIDAD (external_ref, url|name) — CONTABLE (nada sin auditar), no por
+    razón (la razón exacta la verifica el ledger del §4)."""
     expected = await _classify_expected(session, users)
     actual = await _actual(session)
 
@@ -382,17 +390,20 @@ async def reconcile(session: AsyncSession, users: list[dict], report: dict) -> d
             f"application_status_events: esperado {dict(expected['events'])} "
             f"vs {dict(actual['events'])}"
         )
-    # Staging por IDENTIDAD (reason, external_ref, url|name) con _ident (misma
-    # coerción robusta que el clasificador — None↔'' y no-str no divergen ni crashean).
-    actual_staged = Counter(
-        (r["reason"], r["external_ref"],
+    # Staging CONTABLE por IDENTIDAD (external_ref, url|name), reason-agnóstico: garantiza
+    # que ningún durable queda sin auditar (ni tracking ni staging). Un durable
+    # colisionado cuya cadena se revirtió (savepoint) se ve 'unresolved' en el estado
+    # final pero 'collision' en el report — la razón la fija el §4; la IDENTIDAD coincide.
+    expected_ids = Counter((ref, ident) for _, ref, ident in expected["staged"].elements())
+    actual_ids = Counter(
+        (r["external_ref"],
          _ident(r["durable"].get("url") if r["kind"] == "application"
                 else r["durable"].get("name")))
         for r in report.get("staged", [])
     )
-    if expected["staged"] != actual_staged:
+    if expected_ids != actual_ids:
         divergences.append(
-            f"staging: esperado {dict(expected['staged'])} vs {dict(actual_staged)}"
+            f"staging (identidades): esperado {dict(expected_ids)} vs {dict(actual_ids)}"
         )
 
     manifest = {
@@ -403,7 +414,7 @@ async def reconcile(session: AsyncSession, users: list[dict], report: dict) -> d
             "actual": {str(k): v for k, v in actual["events"].items()},
         },
         "staging": {"expected": {str(k): v for k, v in expected["staged"].items()},
-                    "actual": {str(k): v for k, v in actual_staged.items()}},
+                    "actual_ids": {str(k): v for k, v in actual_ids.items()}},
         "divergences": divergences,
     }
     if divergences:
@@ -424,19 +435,20 @@ async def _scoped(session: AsyncSession, sql: str, params: dict) -> list[str]:
 
 
 async def _captured_identities(session: AsyncSession) -> dict:
-    """MANIFIESTO DE ROLLBACK (RUNBOOK_CUTOVER_PILOTO §3): los PKs EXACTOS que C-4
-    INSERTÓ, por CONSULTA SCOPEADA (consumer portfolio para el tracking; fuente
-    portfolio-import para el corpus, incl. dedup_candidates/link_evidence que el sink
-    escribió por este import) — no snapshot-diff (no atribuye escrituras ajenas). Aparte,
-    new_vacancies (C-4 SINTETIZÓ: incarnación portfolio-import y NINGUNA de otra fuente)
-    vs reused_vacancies (C-4 REUTILIZÓ una preexistente: tiene incarnación de otra
-    fuente → solo se borra el ENLACE portfolio-import, jamás la vacante compartida).
+    """INVENTARIO SCOPEADO del alcance de C-4 (RUNBOOK §3), por consulta scopeada
+    (consumer portfolio para tracking; fuente portfolio-import para el corpus, incl.
+    dedup_candidates/link_evidence que el sink escribió por este import). new_vacancies
+    (incarnación portfolio-import y ninguna de otra fuente) vs reused_vacancies (con
+    incarnación de otra fuente → solo se borra el ENLACE).
 
-    La FK-safety del BORRADO real (orden child→parent, punteros circulares
-    current_offer_revision_id/primary_incarnation_id, merge, dedup/link, y ABORTAR ante
-    RESTRICT si algo COMPARTIDO —otra fuente u otro consumer— referencia una new_vacancy)
-    la implementa y PRUEBA el SCRIPT de rollback en el ensayo §4 (GATED por NAS), NO este
-    manifiesto: aquí solo se emiten los IDs sobre los que ese script opera."""
+    ALCANCE (scaffold — la PROCEDENCIA EXACTA es del §4, gated NAS): es un inventario por
+    SCOPE, NO la procedencia exacta 'insertado por ESTE run'. En un re-run idempotente
+    reaparecerían las filas del run previo; un offer_revision REUTILIZADO (preexistente de
+    otra fuente sobre una vacante que C-4 reutilizó) puede aparecer aunque C-4 no lo creara.
+    El manifiesto de PROCEDENCIA EXACTA (RETURNING de cada INSERT + ledger 'created/reused/
+    link' del sink) y el SCRIPT de borrado FK-safe (orden child→parent, punteros circulares,
+    merge, abort-on-RESTRICT) los produce y PRUEBA el ensayo §4. Este inventario le sirve de
+    partida y de cross-check."""
     src = {"src": PORTFOLIO_IMPORT_SOURCE}
     cons = {"cons": PORTFOLIO_CONSUMER}
     both = {**src, **cons}
@@ -522,11 +534,11 @@ async def _captured_identities(session: AsyncSession) -> dict:
 
 
 async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dict:
-    """ENTRYPOINT transaccional del cutover (rev. externa): MIGRA, RECONCILIA las 4
-    tablas + oferta + staging (material completo) contra el esperado del origen,
-    captura el MANIFIESTO DE ROLLBACK con los PKs EXACTOS insertados por tabla +
-    new/reused vacancies (RUNBOOK §3; la FK-safety del borrado es del script gated §4),
-    y PERSISTE el manifiesto antes del commit.
+    """ENTRYPOINT transaccional del cutover (scaffold LOCAL): MIGRA, RECONCILIA los
+    VALORES materiales contra el origen (la verificación estructural INDEPENDIENTE y la
+    procedencia EXACTA son del ensayo §4, gated NAS — ver reconcile/_captured_identities),
+    captura el inventario scopeado de rollback + new/reused vacancies, y PERSISTE el
+    manifiesto antes del commit.
     NO commitea: el llamador confirma SOLO si verdict=='ok' (si 'divergent', rollback —
     el DETALLE queda en el log ERROR y en el dict devuelto para volcar fuera de la tx).
 

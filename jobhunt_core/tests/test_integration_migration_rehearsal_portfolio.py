@@ -711,7 +711,7 @@ def test_cross_source_collision_staged():
             report = await ipm.migrate_portfolio(s, users)
             await s.commit()
             # Detectada en la REVALIDACIÓN post-attach (la vacante resultó tener la url
-            # de la otra fuente además de la del portfolio): el durable a staging.
+            # de la otra fuente además de la del portfolio): la cadena se REVIRTIÓ.
             assert report["applications"]["collision"] == 1
             assert report["applications"]["applications"] == 0
             assert await _count(s, "vacancies") == other_vac  # ninguna nueva
@@ -719,6 +719,15 @@ def test_cross_source_collision_staged():
             # NINGÚN dato de usuario (application/bookmark) vincula el durable.
             assert await _count(s, "applications") == 0
             assert await _count(s, "profile_vacancy_state") == 0
+            # Y NINGÚN artefacto de corpus portfolio-import para #/B (cadena revertida):
+            # resolve→None y cero source_listings portfolio-import con esa clave.
+            assert await ip.resolve_vacancy_by_url(s, "https://spa-other.ch/#/B") is None
+            n_pi = (await s.execute(sa.text(
+                "SELECT count(*) FROM source_listings sl JOIN sources s "
+                "ON s.id = sl.source_id AND s.name = 'portfolio-import' "
+                "WHERE sl.url_normalized = :u"),
+                {"u": "https://spa-other.ch/"})).scalar_one()
+            assert n_pi == 0
 
     asyncio.run(_on_disposable_db(_run))
 
@@ -798,8 +807,8 @@ def test_manifest_models_sink_quarantine():
         async with factory() as s:
             manifest = await man.migrate_and_reconcile(s, users)
             assert manifest["verdict"] == "ok", manifest["divergences"]
-            # El durable quedó en staging como unresolved (identidad, no solo conteo).
-            assert any("unresolved" in k for k in manifest["staging"]["actual"])
+            # El durable no-persistible quedó AUDITADO en staging (expected trae razón).
+            assert any("unresolved" in k for k in manifest["staging"]["expected"])
 
     asyncio.run(_on_disposable_db(_run))
 
