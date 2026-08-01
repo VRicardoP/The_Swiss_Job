@@ -424,49 +424,83 @@ async def _scoped(session: AsyncSession, sql: str, params: dict) -> list[str]:
 
 
 async def _captured_identities(session: AsyncSession) -> dict:
-    """Identidades de lo que C-4 escribió, por CONSULTA SCOPEADA al consumer portfolio
-    (tracking) y a la fuente portfolio-import (corpus) — ambos EXCLUSIVOS de C-4, así
-    que no atribuyen escrituras concurrentes ajenas ni cuestan O(corpus) como el
-    snapshot-diff (rev. externa). new_vacancies/reused_vacancies del estado final:
-    reused = vacante con también incarnación de OTRA fuente (C-4 la reutilizó, no borra
-    en rollback). El rollback es un borrado SCOPEADO (fuente + consumer) determinista."""
+    """MANIFIESTO DE ROLLBACK (RUNBOOK_CUTOVER_PILOTO §3): los PKs EXACTOS que C-4
+    INSERTÓ, por CONSULTA SCOPEADA (consumer portfolio para el tracking; fuente
+    portfolio-import para el corpus, incl. dedup_candidates/link_evidence que el sink
+    escribió por este import) — no snapshot-diff (no atribuye escrituras ajenas). Aparte,
+    new_vacancies (C-4 SINTETIZÓ: incarnación portfolio-import y NINGUNA de otra fuente)
+    vs reused_vacancies (C-4 REUTILIZÓ una preexistente: tiene incarnación de otra
+    fuente → solo se borra el ENLACE portfolio-import, jamás la vacante compartida).
+
+    La FK-safety del BORRADO real (orden child→parent, punteros circulares
+    current_offer_revision_id/primary_incarnation_id, merge, dedup/link, y ABORTAR ante
+    RESTRICT si algo COMPARTIDO —otra fuente u otro consumer— referencia una new_vacancy)
+    la implementa y PRUEBA el SCRIPT de rollback en el ensayo §4 (GATED por NAS), NO este
+    manifiesto: aquí solo se emiten los IDs sobre los que ese script opera."""
     src = {"src": PORTFOLIO_IMPORT_SOURCE}
     cons = {"cons": PORTFOLIO_CONSUMER}
+    both = {**src, **cons}
+    # Corpus: alcanzable desde la fuente portfolio-import (source_listings → incarnations
+    # → revisions → offer_revision_sources → offer_revisions). dedup_candidates/
+    # link_evidence: los que el import escribió (referencian una vacante/listing
+    # portfolio-import); en el freeze single-writer son los de C-4.
+    corpus_join = (
+        "FROM source_listings sl "
+        "JOIN sources s ON s.id = sl.source_id AND s.name = :src "
+    )
     ident = {
-        "applications": await _scoped(session,
-            "SELECT a.id::text k FROM applications a "
-            "JOIN profiles p ON p.id = a.profile_id "
-            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons", cons),
-        "saved_searches": await _scoped(session,
-            "SELECT ss.id::text k FROM saved_searches ss "
-            "JOIN profiles p ON p.id = ss.profile_id "
-            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons", cons),
         "source": await _scoped(session,
             "SELECT id::text k FROM sources WHERE name = :src", src),
         "consumer": await _scoped(session,
             "SELECT id::text k FROM consumers WHERE name = :cons", cons),
+        "applications": await _scoped(session,
+            "SELECT a.id::text k FROM applications a JOIN profiles p ON p.id = a.profile_id "
+            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons", cons),
+        "application_status_events": await _scoped(session,
+            "SELECT e.id::text k FROM application_status_events e "
+            "JOIN applications a ON a.id = e.application_id "
+            "JOIN profiles p ON p.id = a.profile_id "
+            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons", cons),
+        "profile_vacancy_state": await _scoped(session,
+            "SELECT (pvs.profile_id::text || ':' || pvs.vacancy_id::text) k "
+            "FROM profile_vacancy_state pvs JOIN profiles p ON p.id = pvs.profile_id "
+            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons", cons),
+        "saved_searches": await _scoped(session,
+            "SELECT ss.id::text k FROM saved_searches ss JOIN profiles p ON p.id = ss.profile_id "
+            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons", cons),
+        "source_listings": await _scoped(session,
+            "SELECT sl.id::text k " + corpus_join, src),
+        "source_listing_incarnations": await _scoped(session,
+            "SELECT i.id::text k " + corpus_join
+            + "JOIN source_listing_incarnations i ON i.source_listing_id = sl.id", src),
+        "source_listing_revisions": await _scoped(session,
+            "SELECT r.id::text k " + corpus_join
+            + "JOIN source_listing_incarnations i ON i.source_listing_id = sl.id "
+            "JOIN source_listing_revisions r ON r.incarnation_id = i.id", src),
+        "offer_revision_sources": await _scoped(session,
+            "SELECT (ors.offer_revision_id::text || ':' || ors.source_listing_revision_id::text) k "
+            + corpus_join
+            + "JOIN source_listing_incarnations i ON i.source_listing_id = sl.id "
+            "JOIN source_listing_revisions r ON r.incarnation_id = i.id "
+            "JOIN offer_revision_sources ors ON ors.source_listing_revision_id = r.id", src),
+        "offer_revisions": await _scoped(session,
+            "SELECT DISTINCT ors.offer_revision_id::text k " + corpus_join
+            + "JOIN source_listing_incarnations i ON i.source_listing_id = sl.id "
+            "JOIN source_listing_revisions r ON r.incarnation_id = i.id "
+            "JOIN offer_revision_sources ors ON ors.source_listing_revision_id = r.id", src),
+        "link_evidence": await _scoped(session,
+            "SELECT le.id::text k FROM link_evidence le "
+            "JOIN source_listings sl ON sl.id = le.source_listing_id "
+            "JOIN sources s ON s.id = sl.source_id AND s.name = :src", src),
+        "dedup_candidates": await _scoped(session,
+            "SELECT dc.id::text k FROM dedup_candidates dc WHERE EXISTS ("
+            "  SELECT 1 FROM source_listing_incarnations i "
+            "  JOIN source_listings sl ON sl.id = i.source_listing_id "
+            "  JOIN sources s ON s.id = sl.source_id AND s.name = :src "
+            "  WHERE i.ended_at IS NULL AND i.vacancy_id IN (dc.vacancy_a, dc.vacancy_b))", src),
     }
-    # Una vacante-sombra portfolio-import se CONSERVA en rollback (reused) si algo
-    # AJENO a C-4 la referencia: una incarnación de OTRA fuente, o una fila de tracking
-    # (application/bookmark/evaluación) de OTRO consumer. Esa vacante es de corpus
-    # PRESENTABLE y el matcher la evalúa sin filtrar por fuente, así que un consumer
-    # ajeno puede engancharse a ella; borrarla rompería su FK (NO ACTION) o borraría
-    # dato ajeno (rev. adversarial). Solo se BORRA (new) si NADA ajeno la referencia.
-    referenced = (
-        "(EXISTS (SELECT 1 FROM source_listing_incarnations oi "
-        "   JOIN source_listings osl ON osl.id = oi.source_listing_id "
-        "   JOIN sources os ON os.id = osl.source_id AND os.name <> :src "
-        "   WHERE oi.vacancy_id = v.id AND oi.ended_at IS NULL) "
-        " OR EXISTS (SELECT 1 FROM applications a2 JOIN profiles p2 ON p2.id = a2.profile_id "
-        "   JOIN consumers c2 ON c2.id = p2.consumer_id AND c2.name <> :cons "
-        "   WHERE a2.vacancy_id = v.id) "
-        " OR EXISTS (SELECT 1 FROM profile_vacancy_state pv2 JOIN profiles p3 ON p3.id = pv2.profile_id "
-        "   JOIN consumers c3 ON c3.id = p3.consumer_id AND c3.name <> :cons "
-        "   WHERE pv2.vacancy_id = v.id) "
-        " OR EXISTS (SELECT 1 FROM match_evaluations me JOIN profiles p4 ON p4.id = me.profile_id "
-        "   JOIN consumers c4 ON c4.id = p4.consumer_id AND c4.name <> :cons "
-        "   WHERE me.vacancy_id = v.id))"
-    )
+    # new = C-4 la sintetizó (sin incarnación de otra fuente); reused = preexistente
+    # que C-4 solo enganchó (tiene incarnación de otra fuente).
     portfolio_vac = (
         "FROM vacancies v "
         "JOIN source_listing_incarnations i ON i.vacancy_id = v.id AND i.ended_at IS NULL "
@@ -474,19 +508,25 @@ async def _captured_identities(session: AsyncSession) -> dict:
         "JOIN sources s ON s.id = sl.source_id AND s.name = :src "
         "WHERE v.merged_into IS NULL AND v.archived_at IS NULL "
     )
-    both = {**src, **cons}
+    other_source = (
+        "EXISTS (SELECT 1 FROM source_listing_incarnations oi "
+        "  JOIN source_listings osl ON osl.id = oi.source_listing_id "
+        "  JOIN sources os ON os.id = osl.source_id AND os.name <> :src "
+        "  WHERE oi.vacancy_id = v.id AND oi.ended_at IS NULL)"
+    )
     ident["new_vacancies"] = await _scoped(session,
-        "SELECT DISTINCT v.id::text k " + portfolio_vac + "AND NOT " + referenced, both)
+        "SELECT DISTINCT v.id::text k " + portfolio_vac + "AND NOT " + other_source, src)
     ident["reused_vacancies"] = await _scoped(session,
-        "SELECT DISTINCT v.id::text k " + portfolio_vac + "AND " + referenced, both)
+        "SELECT DISTINCT v.id::text k " + portfolio_vac + "AND " + other_source, src)
     return ident
 
 
 async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dict:
     """ENTRYPOINT transaccional del cutover (rev. externa): MIGRA, RECONCILIA las 4
     tablas + oferta + staging (material completo) contra el esperado del origen,
-    captura las IDENTIDADES exactas por consulta scopeada (consumer portfolio + fuente
-    portfolio-import; new/reused vacancies), y PERSISTE el manifiesto antes del commit.
+    captura el MANIFIESTO DE ROLLBACK con los PKs EXACTOS insertados por tabla +
+    new/reused vacancies (RUNBOOK §3; la FK-safety del borrado es del script gated §4),
+    y PERSISTE el manifiesto antes del commit.
     NO commitea: el llamador confirma SOLO si verdict=='ok' (si 'divergent', rollback —
     el DETALLE queda en el log ERROR y en el dict devuelto para volcar fuera de la tx).
 

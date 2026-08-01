@@ -577,10 +577,11 @@ def test_utf8_quarantine_modeled():
     asyncio.run(_on_disposable_db(_run))
 
 
-def test_rollback_excludes_cross_consumer_referenced():
-    """Verificación adversarial: una vacante-sombra que OTRO consumer referencia
-    (application) se clasifica REUSED, no new → el rollback no la borra (evita violar
-    FK NO ACTION / borrar dato ajeno) (P2)."""
+def test_rollback_new_reused_by_creation_not_refs():
+    """Verificación adversarial: new/reused distingue CREAR vs REUTILIZAR (incarnación de
+    otra fuente), NO por referencias de terceros — una vacante que C-4 SINTETIZÓ es new
+    aunque otro consumer la referencie (esa FK la trata el script gated §4 con
+    abort-on-RESTRICT); una que C-4 REUTILIZÓ es reused (solo se borra el enlace)."""
     from jobhunt_core import import_portfolio as ip
     from jobhunt_core import import_portfolio_manifest as man
     from jobhunt_core import import_portfolio_migrate as ipm
@@ -604,8 +605,10 @@ def test_rollback_excludes_cross_consumer_referenced():
                 {"i": uuid.uuid4(), "p": op, "v": vid})
             await s.commit()
             ident = await man._captured_identities(s)
-            assert str(vid) in ident["reused_vacancies"]  # conservar
-            assert str(vid) not in ident["new_vacancies"]  # NO borrar
+            # C-4 la sintetizó (sin incarnación de otra fuente) → NEW, aunque la
+            # referencie otro consumer (la FK-safety es del script gated §4).
+            assert str(vid) in ident["new_vacancies"]
+            assert str(vid) not in ident["reused_vacancies"]
 
     asyncio.run(_on_disposable_db(_run))
 
@@ -801,11 +804,11 @@ def test_manifest_models_sink_quarantine():
     asyncio.run(_on_disposable_db(_run))
 
 
-def test_rollback_identities_scoped():
-    """Verificación adversarial 3: las identidades de rollback se capturan por CONSULTA
-    SCOPEADA (fuente portfolio-import + consumer portfolio; new/reused vacancies) — el
-    rollback es un borrado scopeado determinista (el corpus del sink cae por la fuente),
-    no un diff global que atribuiría escrituras concurrentes ajenas."""
+def test_rollback_manifest_exact_pks():
+    """Verificación adversarial 3: el manifiesto de rollback (RUNBOOK §3) emite los PKs
+    EXACTOS insertados por tabla —incl. las hijas del sink (source_listing_revisions,
+    offer_revisions, dedup_candidates, link_evidence)— + new/reused vacancies. La
+    FK-safety del borrado es del script gated §4."""
     from jobhunt_core import import_portfolio_manifest as man
 
     users = _representative_users()
@@ -814,11 +817,16 @@ def test_rollback_identities_scoped():
         async with factory() as s:
             manifest = await man.migrate_and_reconcile(s, users)
             ident = manifest["identities"]
-            assert len(ident["source"]) == 1  # fuente portfolio-import (scope corpus)
-            assert len(ident["consumer"]) == 1  # consumer portfolio (scope tracking)
+            assert len(ident["source"]) == 1 and len(ident["consumer"]) == 1
             assert len(ident["new_vacancies"]) == 6
+            assert len(ident["reused_vacancies"]) == 0
             assert len(ident["applications"]) == 5
-            assert ident["reused_vacancies"] == []  # dataset sin reuse
+            assert len(ident["application_status_events"]) == 5
+            assert len(ident["source_listing_incarnations"]) == 6
+            assert len(ident["source_listing_revisions"]) == 6
+            assert len(ident["offer_revisions"]) == 6
+            # dedup_candidates/link_evidence presentes (posiblemente vacías sin drift).
+            assert "dedup_candidates" in ident and "link_evidence" in ident
 
     asyncio.run(_on_disposable_db(_run))
 
