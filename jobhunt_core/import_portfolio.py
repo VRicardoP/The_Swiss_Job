@@ -122,15 +122,20 @@ async def synthesize_vacancies(
 
     Devuelve el CONJUNTO de URLs COLISIONADAS. Una COLISIÓN = dos URLs DISTINTAS
     que normalizan a la MISMA clave (p.ej. el id de la oferta vive en el fragmento
-    que normalize_url descarta, portales SPA). Ante colisión NO se sintetiza y se
-    devuelven TODAS las URLs del grupo (ambigüedad no resoluble: no se elige
-    ganador por orden del lote): el llamador debe enrutarlas a staging en vez de
-    que resolve_vacancy_by_url las mapee a la vacante equivocada (P1 rev. externa).
-    La detección es DOS-PASADAS y consulta el estado PERSISTIDO de TODO el corpus
-    elegible para attach (incarnaciones activas y presentables de CUALQUIER fuente,
-    source_listing_incarnations.url), así que atrapa colisiones intra-lote, CROSS-RUN
-    (ejecución previa confirmada) y CROSS-SOURCE (el sink adjunta por url_normalized
-    a otra fuente). Pasa TODOS los items en UNA llamada.
+    que normalize_url descarta, portales SPA). Ante colisión NO queda vacante-sombra
+    y se devuelven TODAS las URLs del grupo (ambigüedad no resoluble): el llamador
+    las enruta a staging en vez de que resolve las mapee a la vacante equivocada.
+    Detección en TRES vías:
+      · INTRA-LOTE (>1 url distinta bajo el mismo external_id) — del propio lote.
+      · CROSS-RUN — pre-query SCOPEADA a portfolio-import (esa fuente no tiene escritor
+        concurrente: race-free) antes de sintetizar.
+      · CROSS-SOURCE — REVALIDACIÓN post-attach dentro de un SAVEPOINT: se sintetiza,
+        se lee el estado final (la vacante resultó tener la url de otra fuente) y, si
+        colisiona, se REVIERTE la cadena creada y se re-sintetiza sin ella — no queda
+        artefacto de corpus falso (ver _synthesize_pruning_collisions).
+    La ventana de carrera residual (attach concurrente TRAS la revalidación) es del
+    bloqueo del sink y la cierra el script del ensayo §4 (gated NAS). Pasa TODOS los
+    items en UNA llamada.
     """
     # --- Pasada 1: validar/normalizar y AGRUPAR por external_id (= clave de
     # identidad sha256(url_normalized)). Cuarentena por-item de sin-url/malformadas.

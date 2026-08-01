@@ -813,11 +813,13 @@ def test_manifest_models_sink_quarantine():
     asyncio.run(_on_disposable_db(_run))
 
 
-def test_rollback_manifest_exact_pks():
-    """Verificación adversarial 3: el manifiesto de rollback (RUNBOOK §3) emite los PKs
-    EXACTOS insertados por tabla —incl. las hijas del sink (source_listing_revisions,
-    offer_revisions, dedup_candidates, link_evidence)— + new/reused vacancies. La
-    FK-safety del borrado es del script gated §4."""
+def test_rollback_scope_inventory():
+    """El INVENTARIO SCOPEADO del alcance de C-4 enumera las filas alcanzables por la
+    fuente portfolio-import y el consumer portfolio —incl. las hijas del sink
+    (source_listing_revisions, offer_revisions, dedup_candidates, link_evidence)— +
+    new/reused vacancies. NO es procedencia exacta 'insertado por este run' (eso, con el
+    ledger del sink + RETURNING, y el borrado FK-safe, son del ensayo §4 gated); sirve de
+    partida y cross-check."""
     from jobhunt_core import import_portfolio_manifest as man
 
     users = _representative_users()

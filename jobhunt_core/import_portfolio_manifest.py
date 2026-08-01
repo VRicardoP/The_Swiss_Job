@@ -428,7 +428,7 @@ async def reconcile(session: AsyncSession, users: list[dict], report: dict) -> d
 
 
 # ---------------------------------------------------------------------------
-# Identidades EXACTAS por CONSULTA SCOPEADA (no snapshot-diff global).
+# INVENTARIO SCOPEADO del alcance de C-4 (NO procedencia exacta — eso es del §4).
 # ---------------------------------------------------------------------------
 async def _scoped(session: AsyncSession, sql: str, params: dict) -> list[str]:
     return [r.k for r in await session.execute(sa.text(sql), params)]
