@@ -440,6 +440,59 @@ def test_checksums_portable_across_timezones():
     assert _with_tz("UTC") == _with_tz("America/New_York")
 
 
+def test_manifest_reconciles_and_persists():
+    """P2 #8 rev. externa: la reconciliación INDEPENDIENTE (esperado del origen vs
+    destino) da 'ok' para una migración correcta, y el manifiesto se PERSISTE en la
+    tabla durable ANTES del commit (sobrevive aunque el proceso muera)."""
+    from jobhunt_core import import_portfolio_manifest as man
+    from jobhunt_core import import_portfolio_migrate as ipm
+
+    users = _representative_users()
+
+    async def _run(factory):
+        async with factory() as s:
+            await ipm.migrate_portfolio(s, users)
+            manifest = await man.reconcile(s, users)
+            assert manifest["verdict"] == "ok", manifest["divergences"]
+            assert manifest["vacancies"]["actual"] == manifest["vacancies"]["expected_clean"]
+            mid = await man.persist_manifest(s, manifest)
+            await s.commit()
+            row = (
+                await s.execute(sa.text(
+                    "SELECT verdict, manifest FROM portfolio_migration_manifest "
+                    "WHERE id = :i"), {"i": mid})
+            ).one()
+            assert row.verdict == "ok"
+            assert row.manifest["saved_searches"]["expected"] == \
+                row.manifest["saved_searches"]["actual"]
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_manifest_detects_deterministic_bug():
+    """P2 #8 rev. externa: un error DETERMINISTA de transformación (min_score 60→0)
+    —que pasaría rerun y comparación cross-BD porque ambos destinos fallan igual— lo
+    DETECTA la reconciliación contra el ESPERADO del origen."""
+    from jobhunt_core import import_portfolio_manifest as man
+    from jobhunt_core import import_portfolio_migrate as ipm
+
+    users = [{"external_ref": 1, "applications": [], "saved_searches": [
+        {"name": "s", "filters": '{"q": "x"}', "min_score": 60, "is_active": True},
+    ]}]
+
+    async def _run(factory):
+        async with factory() as s:
+            await ipm.migrate_portfolio(s, users)
+            # Simular el bug determinista: el destino queda con min_score 0.
+            await s.execute(sa.text("UPDATE saved_searches SET min_score = 0"))
+            manifest = await man.reconcile(s, users)
+            assert manifest["verdict"] == "divergent"
+            assert manifest["saved_searches"]["missing"]  # el esperado (min 60) falta
+            assert manifest["divergences"]
+
+    asyncio.run(_on_disposable_db(_run))
+
+
 async def _scenario(factory):
     from jobhunt_core import import_portfolio as ip
     from jobhunt_core import import_portfolio_migrate as ipm

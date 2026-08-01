@@ -231,9 +231,9 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
         # DOWNGRADE COMPLETO paso a paso (valida CADA down-migration con
         # datos reales delante) y vuelta a head.
         for target in (
-            "core0011", "core0010", "core0009", "core0008b", "core0008a",
-            "core0007", "core0006", "core0005", "core0004", "core0003",
-            "core0002", "core0001", "base",
+            "core0012", "core0011", "core0010", "core0009", "core0008b",
+            "core0008a", "core0007", "core0006", "core0005", "core0004",
+            "core0003", "core0002", "core0001", "base",
         ):
             run_alembic(temp_url, "downgrade", target)
         run_alembic(temp_url, "upgrade", "head")
@@ -243,7 +243,7 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                 version = (
                     await s.execute(sa.text("SELECT version_num FROM alembic_version"))
                 ).scalar_one()
-                assert version == "core0012"
+                assert version == "core0013"
                 # El esquema re-creado FUNCIONA: smoke de escritura real.
                 await s.execute(
                     sa.text("INSERT INTO consumers (id, name) VALUES (:i, 'post-cycle')"),
