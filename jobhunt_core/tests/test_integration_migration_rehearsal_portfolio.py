@@ -482,9 +482,9 @@ def test_migrate_and_reconcile_ok_and_persists():
         async with factory() as s:
             manifest = await man.migrate_and_reconcile(s, users)
             assert manifest["verdict"] == "ok", manifest["divergences"]
-            # Identidades de rollback: PK insertadas por esta ejecución.
-            assert len(manifest["identities"]["inserted"]["applications"]) == 5
-            assert len(manifest["identities"]["inserted"]["vacancies"]) == 6
+            # Identidades de rollback (scopeadas): PK del tracking + vacantes nuevas.
+            assert len(manifest["identities"]["applications"]) == 5
+            assert len(manifest["identities"]["new_vacancies"]) == 6
             await s.commit()
             row = (
                 await s.execute(sa.text(
@@ -492,7 +492,7 @@ def test_migrate_and_reconcile_ok_and_persists():
                     "WHERE id = :i"), {"i": manifest["id"]})
             ).one()
             assert row.verdict == "ok"
-            assert row.manifest["identities"]["inserted"]["applications"]
+            assert row.manifest["identities"]["applications"]
 
     asyncio.run(_on_disposable_db(_run))
 
@@ -512,11 +512,48 @@ def test_manifest_detects_deterministic_bug():
         async with factory() as s:
             report = await ipm.migrate_portfolio(s, users)
             await s.execute(sa.text("UPDATE saved_searches SET min_score = 0"))
-            manifest = await man.reconcile(s, users, {}, report)
+            manifest = await man.reconcile(s, users, report)
             assert manifest["verdict"] == "divergent"
             assert any("saved_searches" in d for d in manifest["divergences"])
 
     asyncio.run(_on_disposable_db(_run))
+
+
+def test_manifest_catches_material_corruption():
+    """Verificación adversarial 2: corromper columnas MATERIALES (notes, snapshot,
+    nota de bookmark, título de la oferta canónica) tras migrar → divergent — el
+    oráculo compara material completo, no solo (external_ref, url_normalized, status)."""
+    from jobhunt_core import import_portfolio_manifest as man
+    from jobhunt_core import import_portfolio_migrate as ipm
+
+    users = [{"external_ref": 1, "applications": [
+        {"url": "https://x.ch/a", "status": "applied", "title": "A", "company": "Acme",
+         "notes": "n", "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+        {"url": "https://x.ch/b", "status": "saved", "notes": "bm",
+         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+    ], "saved_searches": []}]
+
+    def _corrupt(sql):
+        async def _run(factory):
+            async with factory() as s:
+                report = await ipm.migrate_portfolio(s, users)
+                if sql:
+                    await s.execute(sa.text(sql))
+                return (await man.reconcile(s, users, report))["verdict"]
+
+        return asyncio.run(_on_disposable_db(_run))
+
+    assert _corrupt(None) == "ok"  # baseline
+    assert _corrupt("UPDATE applications SET notes = 'X'") == "divergent"
+    assert _corrupt(
+        "UPDATE applications SET snapshot = jsonb_set(snapshot, '{title}', '\"Z\"')"
+    ) == "divergent"
+    assert _corrupt(
+        "UPDATE profile_vacancy_state SET notes = 'X' WHERE notes IS NOT NULL"
+    ) == "divergent"
+    assert _corrupt(
+        "UPDATE offer_revisions SET content = jsonb_set(content, '{title}', '\"Z\"')"
+    ) == "divergent"
 
 
 def test_manifest_catches_missing_tracking():
@@ -535,7 +572,7 @@ def test_manifest_catches_missing_tracking():
             report = await ipm.migrate_portfolio(s, users)
             await s.execute(sa.text("DELETE FROM application_status_events"))
             await s.execute(sa.text("DELETE FROM applications"))
-            manifest = await man.reconcile(s, users, {}, report)
+            manifest = await man.reconcile(s, users, report)
             assert manifest["verdict"] == "divergent"
             assert any("applications" in d for d in manifest["divergences"])
             assert any("events" in d for d in manifest["divergences"])
@@ -579,12 +616,15 @@ def test_cross_source_collision_staged():
 
             report = await ipm.migrate_portfolio(s, users)
             await s.commit()
+            # Detectada en la REVALIDACIÓN post-attach (la vacante resultó tener la url
+            # de la otra fuente además de la del portfolio): el durable a staging.
             assert report["applications"]["collision"] == 1
             assert report["applications"]["applications"] == 0
             assert await _count(s, "vacancies") == other_vac  # ninguna nueva
             assert [r for r in report["staged"] if r["reason"] == "collision"]
-            # El durable NO quedó vinculado a la vacante de la otra fuente.
-            assert await ip.resolve_vacancy_by_url(s, "https://spa-other.ch/#/B") is None
+            # NINGÚN dato de usuario (application/bookmark) vincula el durable.
+            assert await _count(s, "applications") == 0
+            assert await _count(s, "profile_vacancy_state") == 0
 
     asyncio.run(_on_disposable_db(_run))
 
@@ -664,16 +704,17 @@ def test_manifest_models_sink_quarantine():
         async with factory() as s:
             manifest = await man.migrate_and_reconcile(s, users)
             assert manifest["verdict"] == "ok", manifest["divergences"]
-            assert manifest["staging"]["actual"].get("unresolved") == 1
-            assert manifest["staging"]["expected"].get("unresolved") == 1
+            # El durable quedó en staging como unresolved (identidad, no solo conteo).
+            assert any("unresolved" in k for k in manifest["staging"]["actual"])
 
     asyncio.run(_on_disposable_db(_run))
 
 
-def test_rollback_identities_include_sink_tables():
-    """Verificación adversarial: las identidades de rollback registran también las 4
-    tablas hijas que el sink escribe (FK NO ACTION) — sin ellas el borrado por
-    identidades quedaría bloqueado."""
+def test_rollback_identities_scoped():
+    """Verificación adversarial 3: las identidades de rollback se capturan por CONSULTA
+    SCOPEADA (fuente portfolio-import + consumer portfolio; new/reused vacancies) — el
+    rollback es un borrado scopeado determinista (el corpus del sink cae por la fuente),
+    no un diff global que atribuiría escrituras concurrentes ajenas."""
     from jobhunt_core import import_portfolio_manifest as man
 
     users = _representative_users()
@@ -681,10 +722,55 @@ def test_rollback_identities_include_sink_tables():
     async def _run(factory):
         async with factory() as s:
             manifest = await man.migrate_and_reconcile(s, users)
-            ins = manifest["identities"]["inserted"]
-            assert len(ins["source_listing_revisions"]) == 6
-            assert len(ins["offer_revision_sources"]) == 6
-            assert "link_evidence" in ins and "dedup_candidates" in ins
+            ident = manifest["identities"]
+            assert len(ident["source"]) == 1  # fuente portfolio-import (scope corpus)
+            assert len(ident["consumer"]) == 1  # consumer portfolio (scope tracking)
+            assert len(ident["new_vacancies"]) == 6
+            assert len(ident["applications"]) == 5
+            assert ident["reused_vacancies"] == []  # dataset sin reuse
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_identities_exclude_concurrent_foreign():
+    """Verificación adversarial 3 (bis): una vacante de OTRA fuente confirmada en medio
+    NO se atribuye a C-4 (la captura es scopeada a portfolio-import, no un diff global
+    bajo READ COMMITTED)."""
+    import jobhunt_core.harvest.providers  # noqa: F401
+    from jobhunt_core.harvest.sink import RawListingSink
+    from jobhunt_core.harvest.types import RawListing
+    from jobhunt_core import import_portfolio_manifest as man
+
+    users = [{"external_ref": 1, "applications": [
+        {"url": "https://x.ch/a", "status": "applied", "title": "A",
+         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+    ], "saved_searches": []}]
+
+    async def _run(factory):
+        async with factory() as s:
+            # Escritura AJENA (otra fuente, otra URL) confirmada antes de reconciliar.
+            src, scope = uuid.uuid4(), uuid.uuid4()
+            await s.execute(sa.text(
+                "INSERT INTO sources (id, name, tier) VALUES (:i, 'arbeitnow', 0)"),
+                {"i": src})
+            await s.execute(sa.text(
+                "INSERT INTO harvest_scopes (id, source_id, params, tier) "
+                "VALUES (:i, :s, '{}'::jsonb, 0)"), {"i": scope, "s": src})
+            await s.commit()
+            await RawListingSink().handle(s, str(scope), (RawListing(
+                external_id="foreign", url="https://foreign.ch/x",
+                payload={"title": "F", "company_name": "Y",
+                         "description": "d", "tags": []}),))
+            await s.commit()
+            foreign_vid = str((
+                await s.execute(sa.text("SELECT id FROM vacancies LIMIT 1"))
+            ).scalar_one())
+
+            manifest = await man.migrate_and_reconcile(s, users)
+            ident = manifest["identities"]
+            assert foreign_vid not in ident["new_vacancies"]  # no atribuida a C-4
+            assert foreign_vid not in ident["reused_vacancies"]
+            assert len(ident["new_vacancies"]) == 1  # solo la de x.ch/a
 
     asyncio.run(_on_disposable_db(_run))
 
