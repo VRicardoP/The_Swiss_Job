@@ -126,9 +126,11 @@ async def synthesize_vacancies(
     devuelven TODAS las URLs del grupo (ambigüedad no resoluble: no se elige
     ganador por orden del lote): el llamador debe enrutarlas a staging en vez de
     que resolve_vacancy_by_url las mapee a la vacante equivocada (P1 rev. externa).
-    La detección es DOS-PASADAS y consulta el estado PERSISTIDO (source_listing_
-    incarnations.url), así que atrapa colisiones tanto intra-lote como CROSS-RUN
-    (una ejecución previa ya confirmada). Pasa TODOS los items en UNA llamada.
+    La detección es DOS-PASADAS y consulta el estado PERSISTIDO de TODO el corpus
+    elegible para attach (incarnaciones activas y presentables de CUALQUIER fuente,
+    source_listing_incarnations.url), así que atrapa colisiones intra-lote, CROSS-RUN
+    (ejecución previa confirmada) y CROSS-SOURCE (el sink adjunta por url_normalized
+    a otra fuente). Pasa TODOS los items en UNA llamada.
     """
     # --- Pasada 1: validar/normalizar y AGRUPAR por external_id (= clave de
     # identidad sha256(url_normalized)). Cuarentena por-item de sin-url/malformadas.
@@ -178,28 +180,27 @@ async def synthesize_vacancies(
     collided: set[str] = set()
     for grp in groups.values():
         batch_urls = set(grp["by_url"])
-        prior_url = persisted.get(grp["urln"])
-        all_urls = batch_urls | ({prior_url} if prior_url else set())
+        prior_urls = persisted.get(grp["urln"], set())
+        all_urls = batch_urls | prior_urls
         if len(all_urls) > 1:
-            # COLISIÓN (intra-lote o cross-run): ambigüedad no resoluble → NO se
-            # sintetiza; TODAS las URLs del grupo van a staging (no se vincula a la
-            # vacante equivocada, no se elige ganador por orden).
+            # COLISIÓN (intra-lote, cross-run o CROSS-SOURCE): dos URLs ORIGINALES
+            # distintas comparten url_normalized — el sink las fundiría (attach por
+            # url_normalized a la vacante de CUALQUIER fuente). Ambigüedad no
+            # resoluble → NO se sintetiza; TODAS las del lote a staging (no se elige
+            # ganador por orden ni se vincula a la vacante equivocada).
             skipped["collision"] += grp["count"]
             collided.update(batch_urls)
             logger.warning(
-                "import_portfolio: COLISIÓN de URL normalizada (%s) — urls=%r "
-                "(persistida=%r); TODAS a staging (reconciliar a mano)",
-                grp["urln"], sorted(batch_urls), prior_url,
+                "import_portfolio: COLISIÓN de URL normalizada (%s) — lote=%r "
+                "corpus=%r; TODAS a staging (reconciliar a mano)",
+                grp["urln"], sorted(batch_urls), sorted(prior_urls),
             )
             continue
-        if prior_url is None:
-            # Grupo limpio y NUEVO: sintetizar una vacante-sombra.
-            listings.append(next(iter(grp["by_url"].values())))
-            skipped["dup"] += grp["count"] - 1  # exactos-dup del mismo url
-        else:
-            # Re-import EXACTO (misma url ya persistida): idempotente, la vacante ya
-            # existe → no re-sintetizar; el durable resolverá igual.
-            skipped["dup"] += grp["count"]
+        # Grupo LIMPIO (una sola url original en lote+corpus): sintetizar. El sink es
+        # idempotente (dedup por external_id portfolio-import) y ADJUNTA cross-source
+        # si la url ya existe en otra fuente → reutiliza esa vacante (no duplica).
+        listings.append(next(iter(grp["by_url"].values())))
+        skipped["dup"] += grp["count"] - 1  # exactos-dup del mismo url
     logger.info(
         "import_portfolio: %d items → %d a sintetizar (omitidos: %d sin url, %d "
         "malformadas, %d colisiones, %d duplicados). NOTA: el sink puede además "
@@ -215,24 +216,32 @@ async def synthesize_vacancies(
 
 async def _persisted_urls(
     session: AsyncSession, url_normalizeds: list[str]
-) -> dict[str, str]:
-    """{url_normalized: url ORIGINAL} de las incarnaciones ACTIVAS ya persistidas
-    en portfolio-import — para detectar colisiones CROSS-RUN (una ejecución previa
-    confirmada importó otra URL con la misma clave)."""
+) -> dict[str, set[str]]:
+    """{url_normalized: {urls ORIGINALES}} de las incarnaciones ACTIVAS y
+    PRESENTABLES de CUALQUIER fuente — no solo portfolio-import. El sink ADJUNTA
+    cross-source por url_normalized (a la vacante activa/no-fundida/no-archivada de
+    otra fuente que comparta clave), así que una URL del portfolio que colisiona con
+    OTRA fuente se fundiría igual: la comprobación debe abarcar todo el corpus
+    elegible para attach (P1 rev. externa 2). El freeze del cutover (un solo
+    escritor, sin cosecha concurrente) elimina la carrera consulta↔attach."""
     keys = list({u for u in url_normalizeds if u})
     if not keys:
         return {}
     rows = await session.execute(
         sa.text(
             "SELECT sl.url_normalized, i.url FROM source_listings sl "
-            "JOIN sources s ON s.id = sl.source_id AND s.name = :src "
             "JOIN source_listing_incarnations i "
             "  ON i.source_listing_id = sl.id AND i.ended_at IS NULL "
+            "JOIN vacancies v ON v.id = i.vacancy_id "
+            "  AND v.merged_into IS NULL AND v.archived_at IS NULL "
             "WHERE sl.url_normalized IN :keys"
         ).bindparams(sa.bindparam("keys", expanding=True)),
-        {"src": PORTFOLIO_IMPORT_SOURCE, "keys": keys},
+        {"keys": keys},
     )
-    return {r.url_normalized: r.url for r in rows}
+    out: dict[str, set[str]] = {}
+    for r in rows:
+        out.setdefault(r.url_normalized, set()).add(r.url)
+    return out
 
 
 async def resolve_vacancy_by_url(

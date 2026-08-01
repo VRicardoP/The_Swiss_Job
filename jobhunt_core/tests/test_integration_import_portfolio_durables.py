@@ -296,10 +296,9 @@ async def _scenario(factory, caplog):
         # REGRESIONES análisis 2 (parte 2): pérdida silenciosa auditable.
         # =============================================================
 
-        # --- P2 notes de bookmark COALESCEN (no last-write-wins por-durable): tres
-        # saved de la MISMA vacante, la 1ª con notes vacías → gana la PRIMERA no
-        # vacía ('nota buena'), NO la última del lote ('nota tardía'), en un solo
-        # UPDATE.
+        # --- P2 notes de bookmark COALESCEN DETERMINISTA por RECENCIA (no por orden
+        # del lote — P2 rev. externa): tres saved de la MISMA vacante → gana la nota
+        # MÁS RECIENTE no vacía ('nota tardía'), en un solo UPDATE.
         await ip.synthesize_vacancies(
             s, scope_id,
             [{"url": URL_MULTI, "title": "Multi Note", "company": "M",
@@ -323,7 +322,7 @@ async def _scenario(factory, caplog):
         assert cm["bookmarks"] == 3 and cm["applications"] == 0
         vid_multi = await ip.resolve_vacancy_by_url(s, URL_MULTI)
         pvs_multi = await _pvs(s, profile_id, vid_multi)
-        assert pvs_multi.notes == "nota buena"  # 1ª no vacía, no last-write
+        assert pvs_multi.notes == "nota tardía"  # la más reciente, determinista
 
         # --- P3 consolidación por RECENCIA (no por orden del lote): dos candidaturas
         # reales de la MISMA vacante con status distinto; la MÁS RECIENTE va PRIMERA

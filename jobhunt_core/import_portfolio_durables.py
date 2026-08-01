@@ -160,19 +160,25 @@ async def migrate_applications(
         # externa). Los reales priman sobre los saved+follow_up.
         winner = max(real or saved_fu, key=_recency_key) if candidates else None
 
-        # Valores de la application (coalesce determinista del ganador y candidatos).
+        # Coalesce DETERMINISTA: los candidatos se ordenan por _recency_key (más
+        # reciente primero, con desempate por contenido), NO por el orden del lote —
+        # así el valor elegido y el checksum del destino no dependen del snapshot
+        # (P2 rev. externa 2). El ganador va primero (su valor prima).
+        ordered = (
+            [winner, *sorted(candidates, key=_recency_key, reverse=True)]
+            if winner else []
+        )
         follow_up = next(
-            (d for d in (_as_date(r.get("follow_up_date"))
-                         for r in ([winner, *candidates] if winner else [])) if d),
+            (d for d in (_as_date(r.get("follow_up_date")) for r in ordered) if d),
             None,
         )
-        notes = next(
-            (r.get("notes") for r in ([winner, *candidates] if winner else [])
-             if r.get("notes")),
-            None,
+        notes = next((r.get("notes") for r in ordered if r.get("notes")), None)
+        # Nota del BOOKMARK (una sola columna profile_vacancy_state.notes): 1ª no
+        # vacía entre los saved ORDENADOS por recencia (determinista).
+        ordered_saved = sorted(saved_rows, key=_recency_key, reverse=True)
+        bookmark_note = next(
+            (r.get("notes") for r in ordered_saved if r.get("notes")), None
         )
-        # Nota del BOOKMARK (una sola columna profile_vacancy_state.notes): 1ª no vacía.
-        bookmark_note = next((r.get("notes") for r in saved_rows if r.get("notes")), None)
 
         # --- STAGING de lo que NO cabe: sin pérdida silenciosa (P1/P3 rev. externa).
         staged_ids: set[int] = set()
@@ -426,8 +432,15 @@ def _recency_key(row: dict) -> tuple:
     contenido difiere, gana el mayor lexicográfico, determinista."""
     dt = _as_datetime(row.get("updated_at")) or _as_datetime(row.get("created_at"))
     dt = dt or datetime.min.replace(tzinfo=timezone.utc)
+    # Desempate por TODOS los campos que viajan al destino (snapshot company/
+    # description + columna follow_up_date), no solo status/url/title/notes — si no,
+    # dos durables que empatan en la clave parcial pero difieren en company/
+    # description/follow_up dejan el ganador (y el checksum) a merced del orden del
+    # lote (P2 rev. externa 2).
     tiebreak = (
         str(row.get("status") or ""), str(row.get("url") or ""),
         str(row.get("title") or ""), str(row.get("notes") or ""),
+        str(row.get("company") or ""), str(row.get("description") or ""),
+        str(_as_date(row.get("follow_up_date")) or ""),
     )
     return (dt, tiebreak)
