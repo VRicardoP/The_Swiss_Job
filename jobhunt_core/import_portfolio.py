@@ -120,17 +120,19 @@ async def synthesize_vacancies(
     futura de C-4). El lote entero pasa por el sink real: toda la cadena
     (slots, incarnaciones, revisiones, canónica) y su idempotencia son suyas.
 
-    Devuelve el CONJUNTO de URLs COLISIONADAS (la 2ª+ URL distinta que comparte
-    clave normalizada con otra ya vista): NO se sintetiza vacante propia para
-    ellas y, como resolve_vacancy_by_url las mapearía a la vacante de la 1ª
-    (vínculo equivocado), el llamador debe enrutarlas a staging en vez de
-    resolverlas (P1 análisis 2). Para detectar colisiones ENTRE usuarios, pasa
-    TODOS los items en UNA sola llamada (un `seen` por-usuario las dejaría
-    escapar).
+    Devuelve el CONJUNTO de URLs COLISIONADAS. Una COLISIÓN = dos URLs DISTINTAS
+    que normalizan a la MISMA clave (p.ej. el id de la oferta vive en el fragmento
+    que normalize_url descarta, portales SPA). Ante colisión NO se sintetiza y se
+    devuelven TODAS las URLs del grupo (ambigüedad no resoluble: no se elige
+    ganador por orden del lote): el llamador debe enrutarlas a staging en vez de
+    que resolve_vacancy_by_url las mapee a la vacante equivocada (P1 rev. externa).
+    La detección es DOS-PASADAS y consulta el estado PERSISTIDO (source_listing_
+    incarnations.url), así que atrapa colisiones tanto intra-lote como CROSS-RUN
+    (una ejecución previa ya confirmada). Pasa TODOS los items en UNA llamada.
     """
-    listings = []
-    seen: dict[str, str] = {}  # external_id -> url completa (detección de colisión)
-    collided: set[str] = set()  # URLs colisionadas (2ª+ distinta con misma clave)
+    # --- Pasada 1: validar/normalizar y AGRUPAR por external_id (= clave de
+    # identidad sha256(url_normalized)). Cuarentena por-item de sin-url/malformadas.
+    groups: dict[str, dict] = {}
     skipped = {"no_url": 0, "malformed": 0, "collision": 0, "dup": 0}
     for item in items:
         url = item.get("url")
@@ -143,6 +145,7 @@ async def synthesize_vacancies(
             )
             continue
         try:
+            url_normalized = normalize_url(url)
             listing = durable_to_raw_listing(
                 url,
                 item.get("title") or "",
@@ -150,58 +153,86 @@ async def synthesize_vacancies(
                 item.get("description"),
             )
         except ValueError as exc:
-            # URL malformada: CUARENTENA por-item, no abortar el lote válido. El
+            # URL malformada: CUARENTENA por-item, no abortar el lote válido (el
             # external_id se calcula con normalize_url ANTES del sink, FUERA de su
-            # cuarentena (_preprocess); sin esto un solo durable tóxico envenenaría
-            # el lote entero y, al ser determinista, lo bloquearía indefinidamente
-            # (P1 análisis 1) — justo lo que la cuarentena del sink evita.
+            # cuarentena; sin esto un durable tóxico envenenaría el lote entero).
             skipped["malformed"] += 1
             logger.warning(
                 "import_portfolio: URL malformada OMITIDA (%s: %s) — title=%r",
-                exc.__class__.__name__,
-                exc,
-                item.get("title"),
+                exc.__class__.__name__, exc, item.get("title"),
             )
             continue
-        prev = seen.get(listing.external_id)
-        if prev is not None:
-            if prev == url:
-                skipped["dup"] += 1  # duplicado EXACTO: ya lo tenemos
-            else:
-                # COLISIÓN: dos URLs DISTINTAS normalizan a la MISMA clave (p.ej. el
-                # id de la oferta vive en el fragmento que normalize_url descarta,
-                # portales SPA) → el sink las fundiría en silencio (by_ext, la última
-                # gana), perdiendo el vínculo de una candidatura. Se OMITE la 2ª con
-                # log de AUDITORÍA en vez de una fusión falsa silenciosa (P2 análisis
-                # 2) — reconciliación manual / staging futuro.
-                skipped["collision"] += 1
-                collided.add(url)
-                logger.warning(
-                    "import_portfolio: COLISIÓN de URL normalizada — %r y %r comparten "
-                    "clave de identidad; se OMITE la 2ª (posible fusión falsa) — "
-                    "reconciliar a mano",
-                    prev,
-                    url,
-                )
+        grp = groups.setdefault(
+            listing.external_id, {"urln": url_normalized, "by_url": {}, "count": 0}
+        )
+        grp["count"] += 1
+        grp["by_url"].setdefault(url, listing)  # una RawListing por url distinta
+
+    # --- Estado PERSISTIDO: url ORIGINAL de la incarnación activa por url_normalized
+    # (colisión CROSS-RUN — P1 rev. externa: una ejecución previa importó otra URL
+    # con la misma clave y ya está confirmada).
+    persisted = await _persisted_urls(session, [g["urln"] for g in groups.values()])
+
+    # --- Pasada 2: por grupo, sintetizar (limpio) o colisión (stage-all).
+    listings = []
+    collided: set[str] = set()
+    for grp in groups.values():
+        batch_urls = set(grp["by_url"])
+        prior_url = persisted.get(grp["urln"])
+        all_urls = batch_urls | ({prior_url} if prior_url else set())
+        if len(all_urls) > 1:
+            # COLISIÓN (intra-lote o cross-run): ambigüedad no resoluble → NO se
+            # sintetiza; TODAS las URLs del grupo van a staging (no se vincula a la
+            # vacante equivocada, no se elige ganador por orden).
+            skipped["collision"] += grp["count"]
+            collided.update(batch_urls)
+            logger.warning(
+                "import_portfolio: COLISIÓN de URL normalizada (%s) — urls=%r "
+                "(persistida=%r); TODAS a staging (reconciliar a mano)",
+                grp["urln"], sorted(batch_urls), prior_url,
+            )
             continue
-        seen[listing.external_id] = url
-        listings.append(listing)
+        if prior_url is None:
+            # Grupo limpio y NUEVO: sintetizar una vacante-sombra.
+            listings.append(next(iter(grp["by_url"].values())))
+            skipped["dup"] += grp["count"] - 1  # exactos-dup del mismo url
+        else:
+            # Re-import EXACTO (misma url ya persistida): idempotente, la vacante ya
+            # existe → no re-sintetizar; el durable resolverá igual.
+            skipped["dup"] += grp["count"]
     logger.info(
         "import_portfolio: %d items → %d a sintetizar (omitidos: %d sin url, %d "
         "malformadas, %d colisiones, %d duplicados). NOTA: el sink puede además "
         "descartar en cuarentena (url>1000/NUL/…); el vínculo de esos durables se "
         "detecta como resolve→None en el paso de applications.",
-        len(items),
-        len(listings),
-        skipped["no_url"],
-        skipped["malformed"],
-        skipped["collision"],
-        skipped["dup"],
+        len(items), len(listings), skipped["no_url"], skipped["malformed"],
+        skipped["collision"], skipped["dup"],
     )
-    if not listings:
-        return collided
-    await RawListingSink().handle(session, str(scope_id), tuple(listings))
+    if listings:
+        await RawListingSink().handle(session, str(scope_id), tuple(listings))
     return collided
+
+
+async def _persisted_urls(
+    session: AsyncSession, url_normalizeds: list[str]
+) -> dict[str, str]:
+    """{url_normalized: url ORIGINAL} de las incarnaciones ACTIVAS ya persistidas
+    en portfolio-import — para detectar colisiones CROSS-RUN (una ejecución previa
+    confirmada importó otra URL con la misma clave)."""
+    keys = list({u for u in url_normalizeds if u})
+    if not keys:
+        return {}
+    rows = await session.execute(
+        sa.text(
+            "SELECT sl.url_normalized, i.url FROM source_listings sl "
+            "JOIN sources s ON s.id = sl.source_id AND s.name = :src "
+            "JOIN source_listing_incarnations i "
+            "  ON i.source_listing_id = sl.id AND i.ended_at IS NULL "
+            "WHERE sl.url_normalized IN :keys"
+        ).bindparams(sa.bindparam("keys", expanding=True)),
+        {"src": PORTFOLIO_IMPORT_SOURCE, "keys": keys},
+    )
+    return {r.url_normalized: r.url for r in rows}
 
 
 async def resolve_vacancy_by_url(

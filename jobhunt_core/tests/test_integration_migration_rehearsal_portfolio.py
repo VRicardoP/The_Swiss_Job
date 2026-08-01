@@ -212,11 +212,11 @@ def test_checksums_portable_across_databases():
 
 
 def test_collision_routed_to_staging():
-    """P1 análisis 2: dos URLs SPA DISTINTAS que normalizan a la MISMA clave (el id
-    vive en el fragmento que normalize_url descarta) NO deben fundirse: se sintetiza
-    UNA vacante (la 1ª) y el 2º durable se ENRUTA a staging (razón 'collision') en
-    vez de resolverse a la vacante equivocada. Ejercita el caso CROSS-USUARIO (la
-    síntesis GLOBAL de migrate_portfolio detecta la colisión entre usuarios)."""
+    """P1 rev. externa: dos URLs SPA DISTINTAS que normalizan a la MISMA clave (el
+    id vive en el fragmento que normalize_url descarta) NO deben fundirse ni elegir
+    ganador por orden: ambigüedad no resoluble ⇒ NO se sintetiza NINGUNA vacante y
+    AMBOS durables se enrutan a staging (razón 'collision'). Caso CROSS-USUARIO (la
+    síntesis GLOBAL detecta la colisión entre usuarios)."""
     from jobhunt_core import import_portfolio_migrate as ipm
 
     users = [
@@ -236,15 +236,16 @@ def test_collision_routed_to_staging():
         async with factory() as s:
             report = await ipm.migrate_portfolio(s, users)
             await s.commit()
-            assert await _count(s, "vacancies") == 1  # solo la 1ª URL sintetizada
-            assert await _count(s, "applications") == 1  # la 2ª a staging, no resuelta
-            assert report["applications"]["collision"] == 1
-            assert report["applications"]["applications"] == 1
+            # STAGE-ALL: ni vacante ni application; ambos durables a staging.
+            assert await _count(s, "vacancies") == 0
+            assert await _count(s, "applications") == 0
+            assert report["applications"]["collision"] == 2
+            assert report["applications"]["applications"] == 0
             staged = report["staged"]
-            assert len(staged) == 1
-            assert staged[0]["reason"] == "collision"
-            assert staged[0]["external_ref"] == "2"
-            assert staged[0]["durable"]["title"] == "Job 222"
+            assert len(staged) == 2
+            assert {r["reason"] for r in staged} == {"collision"}
+            assert {r["durable"]["title"] for r in staged} == {"Job 111", "Job 222"}
+            assert {r["external_ref"] for r in staged} == {"1", "2"}
 
     asyncio.run(_on_disposable_db(_run))
 
@@ -282,6 +283,163 @@ def test_consolidated_real_enumerated():
     asyncio.run(_on_disposable_db(_run))
 
 
+def test_bookmark_value_loss_staged():
+    """P1 #2 rev. externa: dos bookmarks (saved) de la MISMA vacante con notas
+    DISTINTAS — una sola columna profile_vacancy_state.notes ⇒ una gana y la otra
+    se ENUMERA (razón 'consolidated_saved'), no se pierde en silencio."""
+    from jobhunt_core import import_portfolio_migrate as ipm
+
+    users = [{"external_ref": 1, "applications": [
+        {"url": "https://x.ch/b", "status": "saved", "notes": "primera",
+         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+        {"url": "https://x.ch/b", "status": "saved", "notes": "segunda",
+         "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
+    ], "saved_searches": []}]
+
+    async def _run(factory):
+        async with factory() as s:
+            report = await ipm.migrate_portfolio(s, users)
+            await s.commit()
+            lost = [r for r in report["staged"] if r["reason"] == "consolidated_saved"]
+            assert len(lost) == 1
+            assert lost[0]["durable"]["notes"] == "segunda"  # la no elegida
+            note = (
+                await s.execute(sa.text("SELECT notes FROM profile_vacancy_state LIMIT 1"))
+            ).scalar_one()
+            assert note == "primera"
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_invalid_filter_disabled_and_staged():
+    """P1 #3 rev. externa: un filtro inválido NO se convierte en búsqueda ACTIVA con
+    {} (alertaría de todo): se importa DESACTIVADA + se ENUMERA el original."""
+    from jobhunt_core import import_portfolio_migrate as ipm
+
+    users = [{"external_ref": 1, "applications": [], "saved_searches": [
+        {"name": "alertas", "filters": "{broken", "is_active": True},
+    ]}]
+
+    async def _run(factory):
+        async with factory() as s:
+            report = await ipm.migrate_portfolio(s, users)
+            await s.commit()
+            assert report["saved_searches"]["invalid_filters"] == 1
+            assert report["saved_searches"]["migrated"] == 1
+            assert [r for r in report["staged"] if r["reason"] == "invalid_filters"]
+            row = (
+                await s.execute(sa.text(
+                    "SELECT is_active, filters FROM saved_searches WHERE name = 'alertas'"))
+            ).one()
+            assert row.is_active is False and row.filters == {}  # inerte, no alerta
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_saved_search_material_dedup():
+    """P1 #4 rev. externa: mismo name+filters pero min_score DISTINTO = DOS búsquedas
+    materiales distintas → AMBAS migran (no se colapsa una config en silencio)."""
+    from jobhunt_core import import_portfolio_migrate as ipm
+
+    users = [{"external_ref": 1, "applications": [], "saved_searches": [
+        {"name": "s", "filters": '{"q": "x"}', "min_score": 20, "is_active": True},
+        {"name": "s", "filters": '{"q": "x"}', "min_score": 80, "is_active": True},
+    ]}]
+
+    async def _run(factory):
+        async with factory() as s:
+            report = await ipm.migrate_portfolio(s, users)
+            await s.commit()
+            assert report["saved_searches"]["migrated"] == 2
+            assert await _count(s, "saved_searches") == 2
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_recency_tie_deterministic():
+    """P2 #7 rev. externa: dos candidaturas reales con IGUAL recencia y status
+    distinto ganan lo MISMO al invertir el orden del lote (desempate por contenido,
+    no por posición)."""
+    from jobhunt_core import import_portfolio_migrate as ipm
+
+    same = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    apps = [
+        {"url": "https://x.ch/t", "status": "applied", "title": "T", "created_at": same},
+        {"url": "https://x.ch/t", "status": "rejected", "title": "T", "created_at": same},
+    ]
+
+    def _winner(order):
+        users = [{"external_ref": 1, "applications": order, "saved_searches": []}]
+
+        async def _run(factory):
+            async with factory() as s:
+                await ipm.migrate_portfolio(s, users)
+                await s.commit()
+                return (
+                    await s.execute(sa.text("SELECT status FROM applications LIMIT 1"))
+                ).scalar_one()
+
+        return asyncio.run(_on_disposable_db(_run))
+
+    assert _winner(apps) == _winner(list(reversed(apps)))  # orden-independiente
+
+
+def test_checksums_scoped_to_consumer():
+    """P2 #5 rev. externa: los conteos/checksums SOLO cuentan el consumer `portfolio`
+    — una fila de otro tenant en el core NO altera el manifiesto."""
+    from jobhunt_core import import_portfolio as ip
+    from jobhunt_core import import_portfolio_migrate as ipm
+    from jobhunt_core import profiles
+
+    users = [{"external_ref": 1, "applications": [
+        {"url": "https://x.ch/a", "status": "applied", "title": "A",
+         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+    ], "saved_searches": []}]
+
+    async def _run(factory):
+        async with factory() as s:
+            await ipm.migrate_portfolio(s, users)
+            await s.commit()
+            chk_before = await ipm.table_checksums(s)
+            # Fila de OTRO tenant contra la misma vacante (UNIQUE profile+vacancy ok).
+            vid = await ip.resolve_vacancy_by_url(s, "https://x.ch/a")
+            oc = await profiles.ensure_consumer(s, "other-tenant")
+            op = await profiles.upsert_profile(s, oc, "z")
+            await s.execute(
+                sa.text("INSERT INTO applications (id, profile_id, vacancy_id, snapshot) "
+                        "VALUES (:i, :p, :v, '{}'::jsonb)"),
+                {"i": uuid.uuid4(), "p": op, "v": vid},
+            )
+            await s.commit()
+            assert await ipm.table_checksums(s) == chk_before  # ignora el ajeno
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_checksums_portable_across_timezones():
+    """P2 #6 rev. externa: el mismo origen migrado con TimeZone de sesión DISTINTO
+    produce checksums IDÉNTICOS (last_run_at→epoch, ORDER BY COLLATE "C")."""
+    from jobhunt_core import import_portfolio_migrate as ipm
+
+    users = [{"external_ref": 1, "applications": [], "saved_searches": [
+        {"name": "s", "filters": '{"q": "x"}', "min_score": 0, "is_active": True,
+         "last_notified_at": datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)},
+    ]}]
+
+    def _with_tz(tz):
+        async def _run(factory):
+            async with factory() as s:
+                await s.execute(sa.text(f"SET TIME ZONE '{tz}'"))
+                await ipm.migrate_portfolio(s, users)
+                await s.commit()
+                await s.execute(sa.text(f"SET TIME ZONE '{tz}'"))  # NullPool renovó conexión
+                return await ipm.table_checksums(s)
+
+        return asyncio.run(_on_disposable_db(_run))
+
+    assert _with_tz("UTC") == _with_tz("America/New_York")
+
+
 async def _scenario(factory):
     from jobhunt_core import import_portfolio as ip
     from jobhunt_core import import_portfolio_migrate as ipm
@@ -312,17 +470,19 @@ async def _scenario(factory):
         assert report["saved_searches"] == EXPECTED_SS, report["saved_searches"]
 
         # ENUMERACIÓN por razón: identidad contable contra los conteos (nada sin
-        # auditar). El único durable fuera del dataset es la oferta sin url.
+        # auditar). El dataset deja fuera 1 oferta sin url (unresolved) y 1 búsqueda
+        # con filtros inválidos (importada desactivada + enumerada).
         reasons = Counter(r["reason"] for r in report["staged"])
         assert reasons["unresolved"] == report["applications"]["unresolved"]
         assert reasons["invalid_status"] == report["applications"]["invalid_status"]
         assert reasons["collision"] == report["applications"]["collision"]
         assert reasons["no_name"] == report["saved_searches"]["no_name"]
-        assert reasons == Counter({"unresolved": 1})  # ni collision ni consolidated_real
-        rec = report["staged"][0]
-        assert rec["external_ref"] == "1"
-        assert rec["kind"] == "application" and rec["reason"] == "unresolved"
-        assert rec["durable"]["title"] == "Sin URL"
+        assert reasons["invalid_filters"] == report["saved_searches"]["invalid_filters"]
+        assert reasons == Counter({"unresolved": 1, "invalid_filters": 1})
+        unresolved_rec = next(r for r in report["staged"] if r["reason"] == "unresolved")
+        assert unresolved_rec["external_ref"] == "1"
+        assert unresolved_rec["kind"] == "application"
+        assert unresolved_rec["durable"]["title"] == "Sin URL"
 
         chk1 = await ipm.table_checksums(s)
         for target, rows in EXPECTED_ROWS.items():

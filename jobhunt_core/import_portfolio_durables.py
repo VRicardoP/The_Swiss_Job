@@ -150,15 +150,58 @@ async def migrate_applications(
         groups.setdefault(vacancy_id, []).append(row)
 
     for vacancy_id, group in groups.items():
-        # --- BOOKMARKS: los saved marcan saved_at (upsert idempotente, una vez por
-        # vacante) y coexisten con la application (estado estable ADR-03). Las notes
-        # se COALESCEN (primera no vacía entre los saved de la vacante) en UN solo
-        # UPDATE — no last-write-wins por-durable (P2 análisis 2).
         saved_rows = [r for r in group if r.get("status") == SAVED_STATUS]
+        real = [r for r in group if r.get("status") != SAVED_STATUS]
+        saved_fu = [r for r in saved_rows if _as_date(r.get("follow_up_date"))]
+        candidates = real + saved_fu
+
+        # GANADOR DETERMINISTA de la application: la candidatura MÁS RECIENTE
+        # (recencia + desempate por contenido, NUNCA el orden del lote — P2 rev.
+        # externa). Los reales priman sobre los saved+follow_up.
+        winner = max(real or saved_fu, key=_recency_key) if candidates else None
+
+        # Valores de la application (coalesce determinista del ganador y candidatos).
+        follow_up = next(
+            (d for d in (_as_date(r.get("follow_up_date"))
+                         for r in ([winner, *candidates] if winner else [])) if d),
+            None,
+        )
+        notes = next(
+            (r.get("notes") for r in ([winner, *candidates] if winner else [])
+             if r.get("notes")),
+            None,
+        )
+        # Nota del BOOKMARK (una sola columna profile_vacancy_state.notes): 1ª no vacía.
+        bookmark_note = next((r.get("notes") for r in saved_rows if r.get("notes")), None)
+
+        # --- STAGING de lo que NO cabe: sin pérdida silenciosa (P1/P3 rev. externa).
+        staged_ids: set[int] = set()
+        if winner is not None:
+            for r in real:
+                if r is not winner:
+                    # Candidatura real perdedora: su status/historial se pierde
+                    # (notes/follow_up se coalescen) — DEGRADACIÓN, no fold benigno.
+                    logger.warning(
+                        "import_portfolio_durables: candidatura real DESCARTADA por "
+                        "consolidación — status=%r title=%r; gana status=%r",
+                        r.get("status"), r.get("title"), winner.get("status"),
+                    )
+                    staged_ids.add(id(r))
+                    _record_skipped(staging, "application", "consolidated_real", r)
+        for r in saved_rows:
+            note = r.get("notes")
+            fu = _as_date(r.get("follow_up_date"))
+            # Nota o follow_up de un bookmark que NO es el elegido (una sola columna
+            # de cada): valor material distinto perdido → se enumera (P1 rev. externa).
+            lost = (note and note != bookmark_note) or (fu is not None and fu != follow_up)
+            if lost and id(r) not in staged_ids:
+                staged_ids.add(id(r))
+                _record_skipped(staging, "application", "consolidated_saved", r)
+
+        # --- BOOKMARKS: marcar saved_at (idempotente) + la nota coalescida.
         if saved_rows:
             await matching.set_saved(session, profile_id, vacancy_id, True)
             counts["bookmarks"] += len(saved_rows)
-            bookmark_note = next((r.get("notes") for r in saved_rows if r.get("notes")), None)
             if bookmark_note is not None:
                 # No hay helper de notes: UPDATE directo tras el upsert de set_saved
                 # (la fila de profile_vacancy_state ya existe seguro).
@@ -170,54 +213,10 @@ async def migrate_applications(
                     {"n": bookmark_note, "pid": profile_id, "vid": vacancy_id},
                 )
 
-        # --- APPLICATION consolidada de la vacante: candidaturas reales +
-        # bookmarks con follow_up_date (regla C-4: ese dato no se pierde).
-        real = [r for r in group if r.get("status") != SAVED_STATUS]
-        saved_fu = [
-            r for r in group
-            if r.get("status") == SAVED_STATUS and _as_date(r.get("follow_up_date"))
-        ]
-        candidates = real + saved_fu
-        if not candidates:
+        if winner is None:
             continue
-        # Gana la candidatura REAL MÁS RECIENTE — por updated_at/created_at, NO por
-        # la posición en el lote (P3 análisis 2: no confiar en el orden del export;
-        # el estado actual es el del durable más nuevo). Las OTRAS candidaturas
-        # reales de la misma vacante (UNIQUE ⇒ una sola application) se descartan:
-        # su status/evento se pierden, así que se LOGUEA para auditoría (paridad
-        # con invalid_status/unresolved; migración reconciliable).
-        if real:
-            winner = max(real, key=_recency_key)
-            for r in real:
-                if r is not winner:
-                    logger.warning(
-                        "import_portfolio_durables: candidatura real DESCARTADA por "
-                        "consolidación (vacante compartida) — status=%r title=%r; "
-                        "gana la más reciente (status=%r)",
-                        r.get("status"),
-                        r.get("title"),
-                        winner.get("status"),
-                    )
-                    # DEGRADACIÓN, no fold benigno: se pierde el status/historial de
-                    # una candidatura real (notes/follow_up sí se coalescen). Se
-                    # ENUMERA en staging (razón distinta) para que la reconciliación
-                    # no lo confunda con un saved+fu plegado (P3 análisis 2).
-                    _record_skipped(staging, "application", "consolidated_real", r)
-        else:
-            winner = saved_fu[0]
         counts["consolidated"] += len(candidates) - 1
         counts["applications"] += 1
-        follow_up = next(
-            (
-                d
-                for d in (_as_date(r.get("follow_up_date")) for r in [winner] + candidates)
-                if d
-            ),
-            None,
-        )
-        notes = next(
-            (r.get("notes") for r in [winner] + candidates if r.get("notes")), None
-        )
         # Lo presentable del durable: conserva el texto original aunque la
         # vacante-sombra sea mínima. source_listing_incarnation_id queda NULL
         # (el vínculo por vacante basta para el piloto).
@@ -276,17 +275,16 @@ async def migrate_saved_searches(
 ) -> dict:
     """Escribe los durables de saved_search en saved_searches del core.
 
-    Mapeo: filters (JSON como STRING) → JSONB (objeto; si no parsea a dict →
-    {} con log — el original sigue en el portfolio), last_notified_at →
+    Mapeo: filters (JSON como STRING) → JSONB; filters inválido → {} + is_active
+    FALSE (no alertar de todo) + enumerado en staging; last_notified_at →
     last_run_at; notify_frequency/notify_push/total_matches los cubren los
-    server defaults de core0011 ('daily'/true/0). IDEMPOTENTE por
-    existence-check sobre (profile_id, name, filters) — el esquema no trae
-    UNIQUE y no se añaden constraints aquí.
+    server defaults de core0011 ('daily'/true/0). IDEMPOTENTE por existence-check
+    sobre la TUPLA MATERIAL (name, filters, min_score, is_active, last_run_at) —
+    el esquema no trae UNIQUE y no se añaden constraints aquí.
 
-    `staging` (opcional): las búsquedas IRRECUPERABLES (no_name — sin clave de
-    dedup) se ENUMERAN en la lista {kind, reason, durable}. Las de filters
-    inválido NO se enumeran: se migran con {} (el original sigue en el
-    portfolio), no son pérdida.
+    `staging` (opcional): las búsquedas sin name (no_name — sin clave) y las de
+    filters inválido (importadas desactivadas) se ENUMERAN en la lista
+    {kind, reason, durable} para arreglo/reconciliación manual.
     """
     counts = {"migrated": 0, "existing": 0, "invalid_filters": 0, "no_name": 0}
     for row in rows:
@@ -314,31 +312,42 @@ async def migrate_saved_searches(
             filters = json.loads(raw_filters) if raw_filters else {}
         except (TypeError, ValueError):
             filters = None
+        min_score = int(row.get("min_score") or 0)
+        is_active = bool(row.get("is_active", True))
+        last_run = _as_datetime(row.get("last_notified_at"))
         if not isinstance(filters, dict):
-            # Inválido = no parsea o no es objeto JSON (un array/escalar no es
-            # un conjunto de filtros): fallback {} con log de auditoría.
+            # Filtro INVÁLIDO (no parsea o no es objeto): un {} ACTIVO alertaría de
+            # TODAS las ofertas → NO se activa. Se importa DESACTIVADA con {} (para
+            # que el usuario la vea) y el durable ORIGINAL se ENUMERA en staging para
+            # arreglo manual — degradación conservadora, no pérdida silenciosa (P1
+            # rev. externa).
             counts["invalid_filters"] += 1
+            is_active = False
             logger.warning(
-                "import_portfolio_durables: filters INVÁLIDO en búsqueda %r — "
-                "se importa con {} (el original queda en el portfolio)",
+                "import_portfolio_durables: filters INVÁLIDO en búsqueda %r — se "
+                "importa DESACTIVADA con {} y se enumera el original en staging",
                 name,
             )
+            _record_skipped(staging, "saved_search", "invalid_filters", row)
             filters = {}
         filters_json = json.dumps(filters, ensure_ascii=False)
-        # Dedup por (profile_id, name, FILTERS): el name SOLO perdería en silencio
-        # dos búsquedas legítimas distintas con el mismo nombre (el origen no impone
-        # UNIQUE(user_id, name)) — P2 análisis 2. `.first()`/LIMIT 1 (no
-        # scalar_one_or_none): un duplicado preexistente ya no envenena el re-run con
-        # MultipleResultsFound — P3 análisis 2. Aún es check-then-act (no atómico);
-        # aceptable para la migración one-shot en freeze (un solo escritor).
+        # Dedup por la TUPLA MATERIAL COMPLETA (name, filters, min_score, is_active,
+        # last_run_at): dos búsquedas con igual name+filters pero distinto min_score/
+        # is_active/last_run son DISTINTAS (el origen no impone UNIQUE) → ambas migran,
+        # no se colapsa una config material en silencio (P1 rev. externa). La igualdad
+        # EXACTA de las 5 columnas ⇒ re-run idempotente; IS NOT DISTINCT FROM iguala
+        # NULL con NULL. `.first()`/LIMIT 1 evita MultipleResultsFound.
         exists = (
             await session.execute(
                 sa.text(
                     "SELECT 1 FROM saved_searches "
                     "WHERE profile_id = :pid AND name = :n "
-                    "AND filters = CAST(:f AS jsonb) LIMIT 1"
+                    "AND filters = CAST(:f AS jsonb) AND min_score = :ms "
+                    "AND is_active = :act "
+                    "AND last_run_at IS NOT DISTINCT FROM :lra LIMIT 1"
                 ),
-                {"pid": profile_id, "n": name, "f": filters_json},
+                {"pid": profile_id, "n": name, "f": filters_json,
+                 "ms": min_score, "act": is_active, "lra": last_run},
             )
         ).first()
         if exists:
@@ -352,10 +361,8 @@ async def migrate_saved_searches(
             ),
             {
                 "id": uuid.uuid4(), "pid": profile_id, "n": name,
-                "f": filters_json,
-                "ms": int(row.get("min_score") or 0),
-                "act": bool(row.get("is_active", True)),
-                "lra": _as_datetime(row.get("last_notified_at")),
+                "f": filters_json, "ms": min_score, "act": is_active,
+                "lra": last_run,
             },
         )
         counts["migrated"] += 1
@@ -410,9 +417,17 @@ def _as_datetime(value) -> datetime | None:
     return None
 
 
-def _recency_key(row: dict) -> datetime:
+def _recency_key(row: dict) -> tuple:
     """Clave de recencia ORDEN-INDEPENDIENTE para elegir la candidatura ganadora:
-    updated_at, si no created_at, si no epoch (las filas sin fecha van al fondo,
-    deterministas). No confiar en la posición del durable en el lote."""
+    updated_at, si no created_at, si no epoch (las filas sin fecha van al fondo).
+    DESEMPATE por contenido material (status/url/title/notes) para que un empate
+    de fechas NO dependa del orden del lote (P2 rev. externa): dos durables con
+    misma fecha Y mismo contenido son equivalentes (da igual cuál gane); si el
+    contenido difiere, gana el mayor lexicográfico, determinista."""
     dt = _as_datetime(row.get("updated_at")) or _as_datetime(row.get("created_at"))
-    return dt or datetime.min.replace(tzinfo=timezone.utc)
+    dt = dt or datetime.min.replace(tzinfo=timezone.utc)
+    tiebreak = (
+        str(row.get("status") or ""), str(row.get("url") or ""),
+        str(row.get("title") or ""), str(row.get("notes") or ""),
+    )
+    return (dt, tiebreak)

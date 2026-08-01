@@ -171,11 +171,10 @@ async def _scenario(factory):
         assert await ip.resolve_vacancy_by_url(s, good["url"]) is not None
         assert await ip.resolve_vacancy_by_url(s, "https://[invalid") is None
 
-        # --- COLISIÓN de URL normalizada (P2 análisis 2): dos URLs DISTINTAS cuyo id
-        # vive en el fragmento (que normalize_url descarta) → misma clave. El import
-        # DETECTA y OMITE la 2ª (audit log), conservando la 1ª — en vez de la fusión
-        # falsa silenciosa del sink (última gana). Solo se crea UNA vacante, con el
-        # title de la PRIMERA (no de la segunda).
+        # --- COLISIÓN INTRA-LOTE (P1 rev. externa): dos URLs DISTINTAS cuyo id vive
+        # en el fragmento (que normalize_url descarta) → misma clave. Ambigüedad no
+        # resoluble ⇒ STAGE-ALL: NO se sintetiza ninguna (no se elige ganador por
+        # orden) y AMBAS URLs se devuelven colisionadas para enrutar a staging.
         collide = [
             {"url": "https://spa.example.ch/#/vacancy/aaa", "title": "First Offer", "company": "A"},
             {"url": "https://spa.example.ch/#/vacancy/bbb", "title": "Second Offer", "company": "B"},
@@ -183,22 +182,27 @@ async def _scenario(factory):
         before = await _count(s, "vacancies")
         collided = await ip.synthesize_vacancies(s, scope_id, collide)
         await s.commit()
-        assert await _count(s, "vacancies") == before + 1  # SOLO una (la 2ª omitida)
-        # Devuelve la 2ª URL como colisionada (el llamador la enruta a staging en
-        # vez de que resolve la mapee a la vacante de la 1ª — P1 análisis 2 parte 3).
-        assert collided == {collide[1]["url"]}
-        cvid = await ip.resolve_vacancy_by_url(s, collide[0]["url"])
-        assert cvid is not None
-        ctitle = (
-            await s.execute(
-                sa.text(
-                    "SELECT o.content->>'title' FROM vacancies v JOIN offer_revisions o "
-                    "ON o.id = v.current_offer_revision_id WHERE v.id = :v"
-                ),
-                {"v": cvid},
-            )
-        ).scalar_one()
-        assert ctitle == "First Offer"  # gana la 1ª; fusión falsa evitada
+        assert await _count(s, "vacancies") == before  # NINGUNA nueva
+        assert collided == {collide[0]["url"], collide[1]["url"]}  # ambas
+        assert await ip.resolve_vacancy_by_url(s, collide[0]["url"]) is None
+        assert await ip.resolve_vacancy_by_url(s, collide[1]["url"]) is None
+
+        # --- COLISIÓN CROSS-RUN (P1 rev. externa): una URL SPA se sintetiza y CONFIRMA;
+        # una 2ª ejecución con OTRA URL de la MISMA clave normalizada la detecta contra
+        # el estado PERSISTIDO (incarnación activa), no contra un `seen` en memoria.
+        run1 = [{"url": "https://cross.example.ch/#/run/xxx", "title": "Run1", "company": "A"}]
+        assert await ip.synthesize_vacancies(s, scope_id, run1) == set()  # sin colisión
+        await s.commit()
+        v1 = await ip.resolve_vacancy_by_url(s, run1[0]["url"])
+        assert v1 is not None
+        run2 = [{"url": "https://cross.example.ch/#/run/yyy", "title": "Run2", "company": "B"}]
+        c2 = await ip.synthesize_vacancies(s, scope_id, run2)
+        await s.commit()
+        assert c2 == {run2[0]["url"]}  # colisión detectada contra lo persistido
+        assert await _count(s, "vacancies") == before + 1  # solo v1 (run2 NO sintetizada)
+        # resolve(run2) mapearía a v1 por url_normalized — por eso el llamador DEBE
+        # enrutar por `collided`, no fiarse de resolve (el vínculo sería equivocado).
+        assert await ip.resolve_vacancy_by_url(s, run2[0]["url"]) == v1
 
         # --- resolve HONRA merged_into (P3 análisis 2): una vacante-sombra fundida
         # ya no se resuelve (nunca enlazar una candidatura a una vacante fuera de

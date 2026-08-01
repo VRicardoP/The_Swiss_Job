@@ -38,6 +38,7 @@ from jobhunt_core.import_portfolio import (
     synthesize_vacancies,
 )
 from jobhunt_core.import_portfolio_durables import (
+    PORTFOLIO_CONSUMER,
     migrate_applications,
     migrate_saved_searches,
     provision_profile,
@@ -84,60 +85,82 @@ def _vac_key(col: str) -> str:
 
 def _checksum(inner: str) -> str:
     """md5 de las filas de `inner` (alias r, un json_build_array(...)::text)
-    ordenadas por su propia representación ⇒ determinista e inmune a empates.
-    La codificación JSON entrecomilla y escapa CADA campo (los saltos de línea →
-    \\n, las comillas → \\"), así que ni el separador de filas chr(10) ni ningún
-    delimitador embebido en datos de usuario (notes/name con '|' o multilínea)
-    pueden fundir dos filas distintas en una — inyectiva (P3 análisis 2).
+    ordenadas por `r COLLATE "C"` (orden BINARIO, ajeno a la colación del servidor
+    — P2 rev. externa) ⇒ determinista e inmune a empates. La codificación JSON
+    entrecomilla y escapa CADA campo (saltos de línea → \\n, comillas → \\"), así
+    que ni el separador chr(10) ni un delimitador embebido en datos de usuario
+    (notes/name con '|' o multilínea) funden dos filas distintas — inyectiva.
     coalesce('') ⇒ objetivo vacío = md5('') (EMPTY_CHECKSUM)."""
     return (
-        "SELECT md5(coalesce(string_agg(r, chr(10) ORDER BY r), '')) "
+        'SELECT md5(coalesce(string_agg(r, chr(10) ORDER BY r COLLATE "C"), \'\')) '
         f"FROM ({inner}) sub"
     )
 
 
+# Scope al consumer del piloto: los conteos/checksums SOLO cuentan filas del
+# tenant `portfolio`, no toda la BD (una app de otro tenant en el core NO debe
+# alterar el manifiesto — P2 rev. externa).
+_CONSUMER_SCOPE = (
+    f"JOIN consumers c ON c.id = p.consumer_id AND c.name = '{PORTFOLIO_CONSUMER}' "
+)
+
 # Checksum + count por objetivo de reconciliación. Cada fila se serializa con
-# json_build_array (codificación INYECTIVA, a prueba de delimitadores) sobre
-# CLAVES DE NEGOCIO PORTABLES (external_ref, url_normalized) — jamás PK uuid4 —
-# para que dos migraciones del mismo origen coincidan AUNQUE corran en BDs
-# distintas (copia NAS vs core). Los timestamps de reloj (saved_at) se reducen a
-# boolean; last_run_at/follow_up_date vienen del origen (deterministas).
-# `portfolio_vacancies` cubre la canónica SINTETIZADA (title/company de un
-# bookmark puro solo vive ahí, no en las 4 tablas de tracking).
+# json_build_array (INYECTIVA, a prueba de delimitadores) sobre CLAVES DE NEGOCIO
+# PORTABLES (external_ref, url_normalized) — jamás PK uuid4 — para coincidir cross-BD
+# (copia NAS vs core). Timestamps: saved_at→boolean; last_run_at→EPOCH (mismo
+# instante en cualquier TimeZone del servidor — P2 rev. externa); follow_up_date es
+# DATE (sin tz). Todo scopeado al consumer `portfolio`. `portfolio_vacancies` cubre
+# la canónica SINTETIZADA (title/company de un bookmark puro solo vive ahí).
 _CHECKSUM_SPECS = {
     "applications": {
-        "count": "SELECT count(*) FROM applications",
+        "count": (
+            "SELECT count(*) FROM applications a "
+            "JOIN profiles p ON p.id = a.profile_id " + _CONSUMER_SCOPE
+        ),
         "checksum": _checksum(
             "SELECT json_build_array(p.external_ref, " + _vac_key("a.vacancy_id")
             + ", a.status, a.notes, a.follow_up_date, a.snapshot)::text AS r "
-            "FROM applications a JOIN profiles p ON p.id = a.profile_id"
+            "FROM applications a JOIN profiles p ON p.id = a.profile_id "
+            + _CONSUMER_SCOPE
         ),
     },
     "application_status_events": {
-        "count": "SELECT count(*) FROM application_status_events",
+        "count": (
+            "SELECT count(*) FROM application_status_events e "
+            "JOIN applications a ON a.id = e.application_id "
+            "JOIN profiles p ON p.id = a.profile_id " + _CONSUMER_SCOPE
+        ),
         "checksum": _checksum(
             "SELECT json_build_array(p.external_ref, " + _vac_key("a.vacancy_id")
             + ", e.status)::text AS r "
             "FROM application_status_events e "
             "JOIN applications a ON a.id = e.application_id "
-            "JOIN profiles p ON p.id = a.profile_id"
+            "JOIN profiles p ON p.id = a.profile_id " + _CONSUMER_SCOPE
         ),
     },
     "profile_vacancy_state": {
-        "count": "SELECT count(*) FROM profile_vacancy_state",
+        "count": (
+            "SELECT count(*) FROM profile_vacancy_state pvs "
+            "JOIN profiles p ON p.id = pvs.profile_id " + _CONSUMER_SCOPE
+        ),
         "checksum": _checksum(
             "SELECT json_build_array(p.external_ref, " + _vac_key("pvs.vacancy_id")
             + ", (pvs.saved_at IS NOT NULL), (pvs.dismissed_at IS NOT NULL), "
             "pvs.notes)::text AS r "
-            "FROM profile_vacancy_state pvs JOIN profiles p ON p.id = pvs.profile_id"
+            "FROM profile_vacancy_state pvs JOIN profiles p ON p.id = pvs.profile_id "
+            + _CONSUMER_SCOPE
         ),
     },
     "saved_searches": {
-        "count": "SELECT count(*) FROM saved_searches",
+        "count": (
+            "SELECT count(*) FROM saved_searches ss "
+            "JOIN profiles p ON p.id = ss.profile_id " + _CONSUMER_SCOPE
+        ),
         "checksum": _checksum(
             "SELECT json_build_array(p.external_ref, ss.name, ss.filters, "
-            "ss.min_score, ss.is_active, ss.last_run_at)::text AS r "
-            "FROM saved_searches ss JOIN profiles p ON p.id = ss.profile_id"
+            "ss.min_score, ss.is_active, extract(epoch from ss.last_run_at))::text AS r "
+            "FROM saved_searches ss JOIN profiles p ON p.id = ss.profile_id "
+            + _CONSUMER_SCOPE
         ),
     },
     "portfolio_vacancies": {
