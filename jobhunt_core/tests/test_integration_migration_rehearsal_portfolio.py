@@ -519,6 +519,97 @@ def test_manifest_detects_deterministic_bug():
     asyncio.run(_on_disposable_db(_run))
 
 
+def test_offer_oracle_strips_whitespace():
+    """Verificación adversarial: una descripción con salto de línea final (el sink la
+    normaliza con strip) NO debe dar falso divergent — el oráculo de oferta normaliza
+    igual (P1)."""
+    from jobhunt_core import import_portfolio_manifest as man
+
+    users = [{"external_ref": 1, "applications": [
+        {"url": "https://x.ch/a", "status": "applied", "title": "Engineer",
+         "company": "Acme", "description": "Great role.\n",
+         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+    ], "saved_searches": []}]
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, users)
+            assert manifest["verdict"] == "ok", manifest["divergences"]
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_staging_identity_robust():
+    """Verificación adversarial: name vacío ('') y name NO-str (['x']) en saved_searches
+    → verdict ok (identidad de staging robusta None↔'' + coerción str, sin crash)."""
+    from jobhunt_core import import_portfolio_manifest as man
+
+    users = [{"external_ref": 1, "applications": [], "saved_searches": [
+        {"name": "", "filters": "{}"},
+        {"name": ["x"], "filters": "{}"},
+    ]}]
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, users)
+            assert manifest["verdict"] == "ok", manifest["divergences"]
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_utf8_quarantine_modeled():
+    """Verificación adversarial: un surrogate suelto en title (el sink cuarentena por
+    UnicodeEncodeError) → el durable queda unresolved; el oráculo lo lee del estado
+    final (sin incarnación) → verdict ok (P2)."""
+    from jobhunt_core import import_portfolio_manifest as man
+
+    users = [{"external_ref": 1, "applications": [
+        {"url": "https://ok.ch/j1", "status": "applied", "title": "T\ud800",
+         "company": "X", "description": "d",
+         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+    ], "saved_searches": []}]
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, users)
+            assert manifest["verdict"] == "ok", manifest["divergences"]
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_excludes_cross_consumer_referenced():
+    """Verificación adversarial: una vacante-sombra que OTRO consumer referencia
+    (application) se clasifica REUSED, no new → el rollback no la borra (evita violar
+    FK NO ACTION / borrar dato ajeno) (P2)."""
+    from jobhunt_core import import_portfolio as ip
+    from jobhunt_core import import_portfolio_manifest as man
+    from jobhunt_core import import_portfolio_migrate as ipm
+    from jobhunt_core import profiles
+
+    users = [{"external_ref": 1, "applications": [
+        {"url": "https://x.ch/a", "status": "applied", "title": "A",
+         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+    ], "saved_searches": []}]
+
+    async def _run(factory):
+        async with factory() as s:
+            await ipm.migrate_portfolio(s, users)
+            await s.commit()
+            vid = await ip.resolve_vacancy_by_url(s, "https://x.ch/a")
+            oc = await profiles.ensure_consumer(s, "other-tenant")
+            op = await profiles.upsert_profile(s, oc, "z")
+            await s.execute(sa.text(
+                "INSERT INTO applications (id, profile_id, vacancy_id, snapshot) "
+                "VALUES (:i, :p, :v, '{}'::jsonb)"),
+                {"i": uuid.uuid4(), "p": op, "v": vid})
+            await s.commit()
+            ident = await man._captured_identities(s)
+            assert str(vid) in ident["reused_vacancies"]  # conservar
+            assert str(vid) not in ident["new_vacancies"]  # NO borrar
+
+    asyncio.run(_on_disposable_db(_run))
+
+
 def test_manifest_catches_material_corruption():
     """Verificación adversarial 2: corromper columnas MATERIALES (notes, snapshot,
     nota de bookmark, título de la oferta canónica) tras migrar → divergent — el

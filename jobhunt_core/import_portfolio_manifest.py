@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jobhunt_core.harvest.sink import MAX_URL_LEN, normalize_url
+from jobhunt_core.harvest.sink import normalize_url
 from jobhunt_core.import_portfolio import PORTFOLIO_IMPORT_SOURCE
 from jobhunt_core.import_portfolio_durables import (
     APPLICATION_STATUSES,
@@ -60,51 +60,65 @@ def _ts_key(dt: datetime | None) -> str | None:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")
 
 
-def _sink_quarantines(row: dict, url_normalized: str) -> bool:
-    """Replica la cuarentena por LÍMITES DE ESQUEMA del sink (_limit_violations):
-    url/url_normalized > MAX_URL_LEN o NUL en url/title/company/description. Un durable
-    así NO se sintetiza → resolve→None → 'unresolved'; el clasificador debe modelarlo
-    o daría falso divergent (rev. externa)."""
-    url = row.get("url") or ""
-    if len(url) > MAX_URL_LEN or len(url_normalized) > MAX_URL_LEN:
-        return True
-    return any(
-        v and "\x00" in v
-        for v in (url, row.get("title"), row.get("company"), row.get("description"))
-    )
+def _norm_text(value) -> str | None:
+    """Replica normalize._text del sink: strip + vacío→None. El oráculo de oferta
+    compara contra la canónica YA normalizada, así que sin esto un salto de línea o
+    espacio final (habitual en descripciones) daría falso divergent (rev. adversarial)."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _ident(value) -> str:
+    """Identidad de staging ROBUSTA y hashable, IDÉNTICA en ambos lados: None→'',
+    str tal cual, no-str→str(). Evita el falso divergent None↔'' y el crash del
+    Counter con un name no-str (rev. adversarial)."""
+    return "" if value is None else str(value)
 
 
 # ---------------------------------------------------------------------------
-# Consultas del ESTADO FINAL (post-migración) — colisión y reutilización se leen
-# del resultado confirmado, no se infieren de un pre-estado con carrera.
+# Estructura del ESTADO FINAL (post-migración): qué se sintetizó/adjuntó realmente.
+# Se LEE el resultado (no se replica la lógica del sink: cuarentena UTF-8/NUL/long.,
+# cross-run y consolidación quedan cubiertas por construcción).
 # ---------------------------------------------------------------------------
-async def _final_collided_keys(session: AsyncSession, keys: set[str]) -> set[str]:
-    """De `keys`, las url_normalized cuya vacante-sombra portfolio-import tiene >1 url
-    ORIGINAL activa (colisión cross-source/cross-run detectada en el estado FINAL)."""
+async def _incarnation_urls(
+    session: AsyncSession, keys: set[str], all_sources: bool
+) -> dict[str, set[str]]:
+    """{url_normalized: {urls activas}} de las vacantes-sombra portfolio-import de
+    `keys`: solo las incarnaciones portfolio-import (all_sources=False) o TODAS las de
+    la vacante (all_sources=True, para detectar colisión cross-source)."""
     if not keys:
-        return set()
+        return {}
+    join = (
+        "JOIN source_listing_incarnations u ON u.vacancy_id = v.id AND u.ended_at IS NULL "
+        if all_sources else ""
+    )
+    url_col = "u.url" if all_sources else "i.url"
     rows = await session.execute(
         sa.text(
-            "SELECT sl.url_normalized FROM source_listings sl "
+            f"SELECT sl.url_normalized, {url_col} AS url FROM source_listings sl "
             "JOIN sources s ON s.id = sl.source_id AND s.name = :src "
             "JOIN source_listing_incarnations i "
             "  ON i.source_listing_id = sl.id AND i.ended_at IS NULL "
             "JOIN vacancies v ON v.id = i.vacancy_id "
             "  AND v.merged_into IS NULL AND v.archived_at IS NULL "
-            "JOIN source_listing_incarnations all_i "
-            "  ON all_i.vacancy_id = v.id AND all_i.ended_at IS NULL "
-            "WHERE sl.url_normalized IN :keys "
-            "GROUP BY sl.url_normalized HAVING count(DISTINCT all_i.url) > 1"
+            + join
+            + "WHERE sl.url_normalized IN :keys"
         ).bindparams(sa.bindparam("keys", expanding=True)),
         {"src": PORTFOLIO_IMPORT_SOURCE, "keys": list(keys)},
     )
-    return {r.url_normalized for r in rows}
+    out: dict[str, set[str]] = {}
+    for r in rows:
+        out.setdefault(r.url_normalized, set()).add(r.url)
+    return out
 
 
-async def _reused_keys(session: AsyncSession) -> set[str]:
-    """url_normalized de vacantes-sombra portfolio-import que ADEMÁS tienen una
-    incarnación activa de OTRA fuente = vacantes REUTILIZADAS (la oferta canónica no
-    la creó C-4; se excluyen del oráculo de contenido de oferta)."""
+async def _reused_keys(session: AsyncSession, keys: set[str]) -> set[str]:
+    """De `keys`, las cuya vacante-sombra tiene ADEMÁS una incarnación de OTRA fuente =
+    REUTILIZADAS (la oferta canónica no la creó C-4; se excluyen del oráculo de oferta)."""
+    if not keys:
+        return set()
     rows = await session.execute(
         sa.text(
             "SELECT DISTINCT sl.url_normalized FROM source_listings sl "
@@ -113,27 +127,29 @@ async def _reused_keys(session: AsyncSession) -> set[str]:
             "  ON i.source_listing_id = sl.id AND i.ended_at IS NULL "
             "JOIN vacancies v ON v.id = i.vacancy_id "
             "  AND v.merged_into IS NULL AND v.archived_at IS NULL "
-            "WHERE EXISTS (SELECT 1 FROM source_listing_incarnations o "
+            "WHERE sl.url_normalized IN :keys AND EXISTS ("
+            "  SELECT 1 FROM source_listing_incarnations o "
             "  JOIN source_listings osl ON osl.id = o.source_listing_id "
             "  JOIN sources os ON os.id = osl.source_id AND os.name <> :src "
             "  WHERE o.vacancy_id = v.id AND o.ended_at IS NULL)"
-        ),
-        {"src": PORTFOLIO_IMPORT_SOURCE},
+        ).bindparams(sa.bindparam("keys", expanding=True)),
+        {"src": PORTFOLIO_IMPORT_SOURCE, "keys": list(keys)},
     )
     return {r.url_normalized for r in rows}
 
 
 # ---------------------------------------------------------------------------
-# Clasificador INDEPENDIENTE del origen (material completo).
+# Clasificador: ESTRUCTURA del estado final + VALORES del origen.
 # ---------------------------------------------------------------------------
 async def _classify_expected(
     session: AsyncSession, users: list[dict]
 ) -> dict:
-    """Deriva del ORIGEN lo que el destino DEBE contener (4 tablas + oferta + staging)
-    con material COMPLETO. Las colisiones (intra-lote + cross-source/cross-run) se
-    toman del estado FINAL. reused_keys excluye del oráculo de oferta las vacantes cuya
-    canónica no creó C-4."""
-    # Claves candidatas del lote (por url_normalized).
+    """Deriva lo que el destino DEBE contener. La ESTRUCTURA (qué durable resolvió a una
+    vacante, cuál colisionó/quedó unresolved) se lee del ESTADO FINAL — `synth`
+    (incarnaciones portfolio-import por clave) refleja lo que REALMENTE se sintetizó, así
+    que cuarentena (UTF-8/NUL/longitud), cross-run y consolidación quedan cubiertas sin
+    replicar el sink. Los VALORES materiales (status/notes/follow_up/snapshot/oferta) se
+    comparan contra el ORIGEN (independencia para el bug determinista)."""
     batch_by_key: dict[str, set[str]] = {}
     for user in users:
         for row in user.get("applications") or []:
@@ -141,41 +157,51 @@ async def _classify_expected(
             if not url:
                 continue
             try:
-                key = normalize_url(url)
+                batch_by_key.setdefault(normalize_url(url), set()).add(url)
             except ValueError:
                 continue
-            batch_by_key.setdefault(key, set()).add(url)
     intra = {k for k, urls in batch_by_key.items() if len(urls) > 1}
-    cross = await _final_collided_keys(session, set(batch_by_key) - intra)
-    collided_keys = intra | cross
-    reused = await _reused_keys(session)
+    keys = set(batch_by_key)
+    synth = await _incarnation_urls(session, keys, all_sources=False)
+    allsrc = await _incarnation_urls(session, keys, all_sources=True)
+    reused = await _reused_keys(session, keys)
+
+    def _route(row):
+        """Devuelve ('grouped', key) o ('staged', (reason, ref, ident))-parcial."""
+        url = row.get("url")
+        if not url:
+            return ("staged", "unresolved", _ident(None))
+        try:
+            key = normalize_url(url)
+        except ValueError:
+            return ("staged", "unresolved", _ident(url))
+        if key in intra:
+            return ("staged", "collision", _ident(url))
+        if url not in synth.get(key, set()):
+            # No se sintetizó esta url: cross-run (hay otra portfolio con la clave) o
+            # cuarentena/irresoluble (nada portfolio con la clave).
+            return ("staged", "collision" if synth.get(key) else "unresolved", _ident(url))
+        if len(allsrc.get(key, {url})) > 1:  # cross-source: la vacante tiene otra url
+            return ("staged", "collision", _ident(url))
+        return ("grouped", key)
 
     apps: set[tuple] = set()
     events: Counter = Counter()
     bookmarks: set[tuple] = set()
-    offer: set[tuple] = set()
     staged: Counter = Counter()
 
-    # Oferta canónica: primer durable (orden GLOBAL, status-agnóstico) por
-    # url_normalized que SÍ se sintetiza (no colisión, no cuarentena, no reutilizada) —
-    # su title/company/description es el payload que el sink usa. SIN título el sink NO
-    # crea revisión canónica → sin oferta (se excluye, igual que el destino).
+    # Oferta canónica: primer durable (orden GLOBAL) cuya url SÍ se sintetizó (no
+    # colisión/cuarentena/reutilizada) → su payload NORMALIZADO (strip). SIN título tras
+    # normalizar el sink no crea revisión → sin oferta.
     offer_first: dict[str, dict] = {}
     for user in users:
         for row in user.get("applications") or []:
-            url = row.get("url")
-            if not url:
-                continue
-            try:
-                key = normalize_url(url)
-            except ValueError:
-                continue
-            if key in collided_keys or key in reused or _sink_quarantines(row, key):
-                continue
-            offer_first.setdefault(key, row)
+            if _route(row)[0] == "grouped" and normalize_url(row["url"]) not in reused:
+                offer_first.setdefault(normalize_url(row["url"]), row)
     offer = {
-        (key, r.get("title") or "", r.get("company") or "", r.get("description") or "")
-        for key, r in offer_first.items() if r.get("title")
+        (key, _norm_text(r.get("title")) or "", _norm_text(r.get("company")) or "",
+         _norm_text(r.get("description")) or "")
+        for key, r in offer_first.items() if _norm_text(r.get("title"))
     }
 
     for user in users:
@@ -183,24 +209,13 @@ async def _classify_expected(
         groups: dict[str, list[dict]] = {}
         for row in user.get("applications") or []:
             if row.get("status") not in APPLICATION_STATUSES:
-                staged[("invalid_status", ref, row.get("url"))] += 1
+                staged[("invalid_status", ref, _ident(row.get("url")))] += 1
                 continue
-            url = row.get("url")
-            if not url:
-                staged[("unresolved", ref, None)] += 1
+            routed = _route(row)
+            if routed[0] == "staged":
+                staged[(routed[1], ref, routed[2])] += 1
                 continue
-            try:
-                key = normalize_url(url)
-            except ValueError:
-                staged[("unresolved", ref, url)] += 1
-                continue
-            if key in collided_keys:
-                staged[("collision", ref, url)] += 1
-                continue
-            if _sink_quarantines(row, key):
-                staged[("unresolved", ref, url)] += 1
-                continue
-            groups.setdefault(key, []).append(row)
+            groups.setdefault(routed[1], []).append(row)
 
         for key, group in groups.items():
             saved_rows = [r for r in group if r.get("status") == SAVED_STATUS]
@@ -233,25 +248,26 @@ async def _classify_expected(
                 events[(ref, key, winner["status"])] += 1
                 for r in real:
                     if r is not winner:
-                        staged[("consolidated_real", ref, r.get("url"))] += 1
+                        staged[("consolidated_real", ref, _ident(r.get("url")))] += 1
             if saved_rows:
                 bookmarks.add((ref, key, bookmark_note or ""))
             for r in saved_rows:
                 note = r.get("notes")
                 fu = _as_date(r.get("follow_up_date"))
                 if (note and note != bookmark_note) or (fu is not None and fu != follow_up):
-                    staged[("consolidated_saved", ref, r.get("url"))] += 1
+                    staged[("consolidated_saved", ref, _ident(r.get("url")))] += 1
 
-    # saved_searches: tupla material COMPLETA (incl. last_run canónico).
+    # saved_searches: tupla material COMPLETA (incl. last_run canónico). La identidad
+    # de staging usa el name CRUDO (_ident) — igual que reconcile lee durable.get('name'),
+    # sin truncar y sin None↔'' (rev. adversarial).
     searches: set[tuple] = set()
     for user in users:
         ref = str(user["external_ref"])
         for row in user.get("saved_searches") or []:
             name = row.get("name")
             if not name or not isinstance(name, str):
-                staged[("no_name", ref, None)] += 1
+                staged[("no_name", ref, _ident(row.get("name")))] += 1
                 continue
-            name = name[:SAVED_SEARCH_NAME_MAX]
             raw = row.get("filters")
             try:
                 filters = json.loads(raw) if raw else {}
@@ -259,8 +275,9 @@ async def _classify_expected(
                 filters = None
             invalid = not isinstance(filters, dict)
             if invalid:
-                staged[("invalid_filters", ref, name)] += 1
+                staged[("invalid_filters", ref, _ident(name))] += 1
                 filters = {}
+            name = name[:SAVED_SEARCH_NAME_MAX]
             min_score = int(row.get("min_score") or 0)
             is_active = False if invalid else bool(row.get("is_active", True))
             last_run = _ts_key(_as_datetime(row.get("last_notified_at")))
@@ -365,10 +382,12 @@ async def reconcile(session: AsyncSession, users: list[dict], report: dict) -> d
             f"application_status_events: esperado {dict(expected['events'])} "
             f"vs {dict(actual['events'])}"
         )
-    # Staging por IDENTIDAD (reason, external_ref, url|name), no solo conteo.
+    # Staging por IDENTIDAD (reason, external_ref, url|name) con _ident (misma
+    # coerción robusta que el clasificador — None↔'' y no-str no divergen ni crashean).
     actual_staged = Counter(
         (r["reason"], r["external_ref"],
-         r["durable"].get("url") if r["kind"] == "application" else r["durable"].get("name"))
+         _ident(r["durable"].get("url") if r["kind"] == "application"
+                else r["durable"].get("name")))
         for r in report.get("staged", [])
     )
     if expected["staged"] != actual_staged:
@@ -427,26 +446,39 @@ async def _captured_identities(session: AsyncSession) -> dict:
         "consumer": await _scoped(session,
             "SELECT id::text k FROM consumers WHERE name = :cons", cons),
     }
+    # Una vacante-sombra portfolio-import se CONSERVA en rollback (reused) si algo
+    # AJENO a C-4 la referencia: una incarnación de OTRA fuente, o una fila de tracking
+    # (application/bookmark/evaluación) de OTRO consumer. Esa vacante es de corpus
+    # PRESENTABLE y el matcher la evalúa sin filtrar por fuente, así que un consumer
+    # ajeno puede engancharse a ella; borrarla rompería su FK (NO ACTION) o borraría
+    # dato ajeno (rev. adversarial). Solo se BORRA (new) si NADA ajeno la referencia.
+    referenced = (
+        "(EXISTS (SELECT 1 FROM source_listing_incarnations oi "
+        "   JOIN source_listings osl ON osl.id = oi.source_listing_id "
+        "   JOIN sources os ON os.id = osl.source_id AND os.name <> :src "
+        "   WHERE oi.vacancy_id = v.id AND oi.ended_at IS NULL) "
+        " OR EXISTS (SELECT 1 FROM applications a2 JOIN profiles p2 ON p2.id = a2.profile_id "
+        "   JOIN consumers c2 ON c2.id = p2.consumer_id AND c2.name <> :cons "
+        "   WHERE a2.vacancy_id = v.id) "
+        " OR EXISTS (SELECT 1 FROM profile_vacancy_state pv2 JOIN profiles p3 ON p3.id = pv2.profile_id "
+        "   JOIN consumers c3 ON c3.id = p3.consumer_id AND c3.name <> :cons "
+        "   WHERE pv2.vacancy_id = v.id) "
+        " OR EXISTS (SELECT 1 FROM match_evaluations me JOIN profiles p4 ON p4.id = me.profile_id "
+        "   JOIN consumers c4 ON c4.id = p4.consumer_id AND c4.name <> :cons "
+        "   WHERE me.vacancy_id = v.id))"
+    )
+    portfolio_vac = (
+        "FROM vacancies v "
+        "JOIN source_listing_incarnations i ON i.vacancy_id = v.id AND i.ended_at IS NULL "
+        "JOIN source_listings sl ON sl.id = i.source_listing_id "
+        "JOIN sources s ON s.id = sl.source_id AND s.name = :src "
+        "WHERE v.merged_into IS NULL AND v.archived_at IS NULL "
+    )
+    both = {**src, **cons}
     ident["new_vacancies"] = await _scoped(session,
-        "SELECT v.id::text k FROM vacancies v "
-        "JOIN source_listing_incarnations i ON i.vacancy_id = v.id AND i.ended_at IS NULL "
-        "JOIN source_listings sl ON sl.id = i.source_listing_id "
-        "JOIN sources s ON s.id = sl.source_id AND s.name = :src "
-        "WHERE v.merged_into IS NULL AND v.archived_at IS NULL "
-        "AND NOT EXISTS (SELECT 1 FROM source_listing_incarnations oi "
-        "  JOIN source_listings osl ON osl.id = oi.source_listing_id "
-        "  JOIN sources os ON os.id = osl.source_id AND os.name <> :src "
-        "  WHERE oi.vacancy_id = v.id AND oi.ended_at IS NULL)", src)
+        "SELECT DISTINCT v.id::text k " + portfolio_vac + "AND NOT " + referenced, both)
     ident["reused_vacancies"] = await _scoped(session,
-        "SELECT DISTINCT v.id::text k FROM vacancies v "
-        "JOIN source_listing_incarnations i ON i.vacancy_id = v.id AND i.ended_at IS NULL "
-        "JOIN source_listings sl ON sl.id = i.source_listing_id "
-        "JOIN sources s ON s.id = sl.source_id AND s.name = :src "
-        "WHERE v.merged_into IS NULL AND v.archived_at IS NULL "
-        "AND EXISTS (SELECT 1 FROM source_listing_incarnations oi "
-        "  JOIN source_listings osl ON osl.id = oi.source_listing_id "
-        "  JOIN sources os ON os.id = osl.source_id AND os.name <> :src "
-        "  WHERE oi.vacancy_id = v.id AND oi.ended_at IS NULL)", src)
+        "SELECT DISTINCT v.id::text k " + portfolio_vac + "AND " + referenced, both)
     return ident
 
 
@@ -456,7 +488,11 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
     captura las IDENTIDADES exactas por consulta scopeada (consumer portfolio + fuente
     portfolio-import; new/reused vacancies), y PERSISTE el manifiesto antes del commit.
     NO commitea: el llamador confirma SOLO si verdict=='ok' (si 'divergent', rollback —
-    el DETALLE queda en el log ERROR y en el dict devuelto para volcar fuera de la tx)."""
+    el DETALLE queda en el log ERROR y en el dict devuelto para volcar fuera de la tx).
+
+    SINGLE-CALL: el cutover migra TODOS los durables en UNA llamada; la reconciliación
+    compara el destino COMPLETO (scope portfolio) contra TODO `users`. No es para
+    migración incremental multi-tanda (una 2ª tanda vería la 1ª como 'extra')."""
     report = await migrate_portfolio(session, users)
     manifest = await reconcile(session, users, report)
     manifest["report"] = {
@@ -475,12 +511,16 @@ async def persist_manifest(session: AsyncSession, manifest: dict) -> uuid.UUID:
     transacción del llamador → atómico con la migración (se revierte con ella en un
     dry-run o en 'divergent'; el log ERROR conserva el detalle). Devuelve el id."""
     manifest_id = uuid.uuid4()
+    # Los durables staged pueden traer contenido TÓXICO (surrogates UTF-8 no
+    # codificables, del mismo mojibake que el sink cuarentena). Se SANEA el JSON del
+    # manifiesto (→ carácter de reemplazo) para que el propio informe sea persistible.
+    payload = json.dumps(manifest, ensure_ascii=False, default=str)
+    payload = payload.encode("utf-8", "replace").decode("utf-8")
     await session.execute(
         sa.text(
             "INSERT INTO portfolio_migration_manifest (id, verdict, manifest) "
             "VALUES (:id, :v, CAST(:m AS jsonb))"
         ),
-        {"id": manifest_id, "v": manifest["verdict"],
-         "m": json.dumps(manifest, ensure_ascii=False, default=str)},
+        {"id": manifest_id, "v": manifest["verdict"], "m": payload},
     )
     return manifest_id

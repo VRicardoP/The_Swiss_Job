@@ -207,8 +207,9 @@ async def synthesize_vacancies(
     # cualquiera confirmada concurrentemente por otro harvester del core), es colisión:
     # su durable se enruta a staging. Un chequeo PREVIO no basta (TOCTOU); leer el
     # resultado sí, porque ve toda escritura ya confirmada (P1 rev. externa 3).
+    incarnation_urls = await _vacancy_incarnation_urls(session, list(synthesized))
     for urln, batch_url in synthesized.items():
-        urls = await _vacancy_incarnation_urls(session, urln)
+        urls = incarnation_urls.get(urln, {batch_url})
         if len(urls - {batch_url}) > 0:  # otra url distinta comparte la vacante
             collided.add(batch_url)
             skipped["collision"] += 1
@@ -253,13 +254,18 @@ async def _portfolio_incarnation_urls(
     return out
 
 
-async def _vacancy_incarnation_urls(session: AsyncSession, url_normalized: str) -> set[str]:
-    """{urls ORIGINALES} de TODAS las incarnaciones activas de la vacante PRESENTABLE a
-    la que resuelve `url_normalized` en portfolio-import — para la revalidación
-    post-attach de colisiones cross-source/cross-run."""
+async def _vacancy_incarnation_urls(
+    session: AsyncSession, url_normalizeds: list[str]
+) -> dict[str, set[str]]:
+    """{url_normalized: {urls activas de TODA la vacante}} para las claves dadas — UNA
+    consulta batched (no N) para la revalidación post-attach de colisiones cross-source/
+    cross-run."""
+    keys = list({u for u in url_normalizeds if u})
+    if not keys:
+        return {}
     rows = await session.execute(
         sa.text(
-            "SELECT all_i.url FROM source_listings pi_sl "
+            "SELECT pi_sl.url_normalized, all_i.url FROM source_listings pi_sl "
             "JOIN sources pi_s ON pi_s.id = pi_sl.source_id AND pi_s.name = :src "
             "JOIN source_listing_incarnations pi_i "
             "  ON pi_i.source_listing_id = pi_sl.id AND pi_i.ended_at IS NULL "
@@ -267,11 +273,14 @@ async def _vacancy_incarnation_urls(session: AsyncSession, url_normalized: str) 
             "  AND v.merged_into IS NULL AND v.archived_at IS NULL "
             "JOIN source_listing_incarnations all_i "
             "  ON all_i.vacancy_id = v.id AND all_i.ended_at IS NULL "
-            "WHERE pi_sl.url_normalized = :urln"
-        ),
-        {"src": PORTFOLIO_IMPORT_SOURCE, "urln": url_normalized},
+            "WHERE pi_sl.url_normalized IN :keys"
+        ).bindparams(sa.bindparam("keys", expanding=True)),
+        {"src": PORTFOLIO_IMPORT_SOURCE, "keys": keys},
     )
-    return {r.url for r in rows}
+    out: dict[str, set[str]] = {}
+    for r in rows:
+        out.setdefault(r.url_normalized, set()).add(r.url)
+    return out
 
 
 async def resolve_vacancy_by_url(
