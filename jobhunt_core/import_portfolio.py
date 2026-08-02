@@ -22,6 +22,7 @@ import uuid
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jobhunt_core import import_portfolio_ledger as pil
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.sink import RawListingSink, normalize_url
@@ -111,7 +112,11 @@ def durable_to_raw_listing(
 
 
 async def synthesize_vacancies(
-    session: AsyncSession, scope_id: uuid.UUID, items: list[dict]
+    session: AsyncSession,
+    scope_id: uuid.UUID,
+    items: list[dict],
+    *,
+    ledger: list | None = None,
 ) -> set[str]:
     """Sintetiza vacantes-sombra para los items del portfolio CON url.
 
@@ -119,6 +124,12 @@ async def synthesize_vacancies(
     con log (sin URL no hay identidad resoluble; el staging llega en una parte
     futura de C-4). El lote entero pasa por el sink real: toda la cadena
     (slots, incarnaciones, revisiones, canónica) y su idempotencia son suyas.
+
+    `ledger` (opcional, colector MUTADO in-place — mismo patrón que `staging` en
+    migrate_applications): si se pasa una lista, se le EXTIENDEN `LedgerEntry` con la
+    disposición de CADA url (created/reused/quarantine+razón+vacancy_id) — el entregable
+    "ledger del sink" del §4 (import_portfolio_ledger). Sin él (None), cero coste extra:
+    no se toma el snapshot pre-síntesis ni se clasifica created/reused.
 
     Devuelve el CONJUNTO de URLs COLISIONADAS. Una COLISIÓN = dos URLs DISTINTAS
     que normalizan a la MISMA clave (p.ej. el id de la oferta vive en el fragmento
@@ -141,6 +152,8 @@ async def synthesize_vacancies(
     # identidad sha256(url_normalized)). Cuarentena por-item de sin-url/malformadas.
     groups: dict[str, dict] = {}
     skipped = {"no_url": 0, "malformed": 0, "collision": 0, "dup": 0}
+    # Colector de razones de cuarentena por url (para el ledger; barato aunque no se pida).
+    quarantined: dict[str, str] = {}
     for item in items:
         url = item.get("url")
         if not url:
@@ -164,6 +177,7 @@ async def synthesize_vacancies(
             # external_id se calcula con normalize_url ANTES del sink, FUERA de su
             # cuarentena; sin esto un durable tóxico envenenaría el lote entero).
             skipped["malformed"] += 1
+            quarantined[url] = pil.Q_MALFORMED
             logger.warning(
                 "import_portfolio: URL malformada OMITIDA (%s: %s) — title=%r",
                 exc.__class__.__name__, exc, item.get("title"),
@@ -174,6 +188,15 @@ async def synthesize_vacancies(
         )
         grp["count"] += 1
         grp["by_url"].setdefault(url, listing)  # una RawListing por url distinta
+
+    # Snapshot de las vacantes portfolio-import PRESENTABLES ANTES de sintetizar: una vacante
+    # resultante ya presente aquí PREEXISTÍA (created vs reused EXACTO del ledger). Solo si se
+    # pide ledger (una query; cero coste en caso contrario). Race-free (single-writer).
+    before_vac = (
+        await pil.snapshot_portfolio_vacancy_ids(session, PORTFOLIO_IMPORT_SOURCE)
+        if ledger is not None
+        else set()
+    )
 
     # --- Estado PORTFOLIO-IMPORT ya persistido (colisión CROSS-RUN, race-free: esa
     # fuente no tiene escritor concurrente — su scope nace deshabilitado). Detectar
@@ -194,6 +217,11 @@ async def synthesize_vacancies(
         if len(batch_urls) > 1 or len(batch_urls | prior_urls) > 1:
             skipped["collision"] += grp["count"]
             collided.update(batch_urls)
+            reason = (
+                pil.Q_COLLISION_INTRA if len(batch_urls) > 1 else pil.Q_COLLISION_CROSS_RUN
+            )
+            for u in batch_urls:
+                quarantined[u] = reason
             logger.warning(
                 "import_portfolio: COLISIÓN intra-lote/cross-run (%s) — lote=%r "
                 "portfolio=%r; a staging",
@@ -204,9 +232,26 @@ async def synthesize_vacancies(
         synthesized[grp["urln"]] = next(iter(batch_urls))
         skipped["dup"] += grp["count"] - 1  # exactos-dup del mismo url
 
-    collided |= await _synthesize_pruning_collisions(
+    cross_source = await _synthesize_pruning_collisions(
         session, scope_id, listings, skipped
     )
+    collided |= cross_source
+    for u in cross_source:
+        quarantined[u] = pil.Q_COLLISION_CROSS_SOURCE
+    # Las urls revertidas (cross-source) YA no tienen vacante: quítalas de `synthesized`
+    # antes de clasificar el ledger (si no, se marcarían created/reused sin vacante).
+    synthesized = {k: v for k, v in synthesized.items() if v not in cross_source}
+    if ledger is not None:
+        ledger.extend(
+            await pil.build_ledger(
+                session,
+                synthesized,
+                quarantined,
+                before_vac,
+                skipped["no_url"],
+                PORTFOLIO_IMPORT_SOURCE,
+            )
+        )
     logger.info(
         "import_portfolio: %d items → %d sintetizadas (omitidos: %d sin url, %d "
         "malformadas, %d colisiones, %d duplicados).",
@@ -313,6 +358,21 @@ async def _vacancy_incarnation_urls(
     return out
 
 
+def normalized_key(url: str) -> str | None:
+    """Clave de dedup ESTABLE (url normalizada) o None si la url NO es una clave usable:
+    no normalizable (ValueError de normalize_url, p.ej. IPv6 con corchete) o NO codificable
+    en utf-8 (surrogate suelto — normalize_url NO falla porque urlsplit no codifica, pero esa
+    clave revienta como bind-param en Postgres: asyncpg DataError). El sink cuarentena esas
+    mismas urls (_preprocess); este helper CENTRALIZA "¿es esta url una clave usable?" para
+    que ningún módulo C-4 pase una clave tóxica a una query. UnicodeEncodeError ⊂ ValueError."""
+    try:
+        key = normalize_url(url)
+        key.encode()
+    except ValueError:
+        return None
+    return key
+
+
 async def resolve_vacancy_by_url(
     session: AsyncSession, url: str
 ) -> uuid.UUID | None:
@@ -322,13 +382,12 @@ async def resolve_vacancy_by_url(
     ACTIVA (ended_at IS NULL) y una vacante PRESENTABLE (merged_into IS NULL,
     archived_at IS NULL — misma guarda que toda otra resolución de vacancy_id del
     core: nunca se enlaza una candidatura a una vacante fundida/archivada). Las
-    UNIQUE del esquema garantizan a lo sumo una fila. Una URL MALFORMADA ⇒ None
-    (jamás se sintetizó una vacante suya; honra el contrato uuid|None — el
-    llamador no envuelve en try/except).
+    UNIQUE del esquema garantizan a lo sumo una fila. Una URL no usable como clave
+    (malformada o con mojibake no codificable) ⇒ None (jamás se sintetizó una vacante
+    suya; honra el contrato uuid|None — el llamador no envuelve en try/except).
     """
-    try:
-        url_normalized = normalize_url(url)
-    except ValueError:
+    url_normalized = normalized_key(url)
+    if url_normalized is None:
         return None
     return (
         await session.execute(

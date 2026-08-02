@@ -230,6 +230,10 @@ async def migrate_portfolio(
     # sink dedup global ⇒ una URL compartida reutiliza la misma vacante. `collided`
     # (2ª+ URL distinta con misma clave) se enruta a staging en migrate_applications
     # en vez de resolverse a la vacante equivocada (P1 análisis 2).
+    # `ledger` (colector §4): la disposición por url de la síntesis (created/reused/
+    # quarantine+razón+vacancy_id). Se persiste en el manifiesto y lo consume el verificador
+    # independiente (§4). No altera el flujo si queda vacío.
+    ledger: list = []
     collided = await synthesize_vacancies(
         session,
         scope_id,
@@ -239,6 +243,7 @@ async def migrate_portfolio(
             for row in (user.get("applications") or [])
             if row.get("url")
         ],
+        ledger=ledger,
     )
     for user in users:
         external_ref = str(user["external_ref"])
@@ -280,6 +285,7 @@ async def migrate_portfolio(
         "saved_searches": ss_totals,
         "staged": staged,
         "per_user": per_user,
+        "ledger": [e.as_dict() for e in ledger],
     }
 
 

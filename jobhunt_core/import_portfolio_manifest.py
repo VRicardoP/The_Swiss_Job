@@ -29,7 +29,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jobhunt_core.harvest.sink import normalize_url
-from jobhunt_core.import_portfolio import PORTFOLIO_IMPORT_SOURCE
+from jobhunt_core.import_portfolio import PORTFOLIO_IMPORT_SOURCE, normalized_key
 from jobhunt_core.import_portfolio_durables import (
     APPLICATION_STATUSES,
     PORTFOLIO_CONSUMER,
@@ -156,10 +156,13 @@ async def _classify_expected(
             url = row.get("url")
             if not url:
                 continue
-            try:
-                batch_by_key.setdefault(normalize_url(url), set()).add(url)
-            except ValueError:
+            # normalized_key excluye las urls no usables como clave (malformadas O con
+            # mojibake no codificable): así NUNCA entran en `keys` → ninguna query recibe un
+            # bind-param tóxico (asyncpg DataError). El durable cae a 'unresolved' en _route.
+            key = normalized_key(url)
+            if key is None:
                 continue
+            batch_by_key.setdefault(key, set()).add(url)
     intra = {k for k, urls in batch_by_key.items() if len(urls) > 1}
     keys = set(batch_by_key)
     synth = await _incarnation_urls(session, keys, all_sources=False)
@@ -552,6 +555,9 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
         "saved_searches": report["saved_searches"],
     }
     manifest["staged"] = report["staged"]
+    # Ledger del sink (§4): disposición verificable por url de la síntesis (created/reused/
+    # quarantine+razón+vacancy_id). Base del verificador independiente (§4, parte 3).
+    manifest["ledger"] = report["ledger"]
     manifest["identities"] = await _captured_identities(session)
     manifest["checksums"] = await table_checksums(session)
     manifest["id"] = str(await persist_manifest(session, manifest))
