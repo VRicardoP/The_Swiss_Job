@@ -78,6 +78,29 @@ def test_verify_detects_lost_listing():
     asyncio.run(_on_disposable_db(_run))
 
 
+def test_verify_lost_listing_in_ledger_reports_not_crashes():
+    """REGRESIÓN análisis 1 (P2): un `created` con vacancy_id None en el ledger (anomalía del
+    sink: listing PERDIDO) debía crashear el cross-check (sorted mezclando None y str). Ahora
+    se reporta como discrepant/PERDIDO limpiamente, sin TypeError."""
+
+    async def _run(factory):
+        async with factory() as s:
+            url = "https://lost2.example.ch/z"
+            users = [_user([_app(url)])]
+            ledger = [
+                {"url": url, "url_normalized": url, "external_id": "x",
+                 "disposition": "created", "reason": None, "vacancy_id": None},
+            ]
+            report = await verify_migration(
+                s, users, ledger, {"vacancies": []}, PORTFOLIO_IMPORT_SOURCE
+            )
+            assert report["verdict"] == "discrepant"  # no crashea
+            assert any("PERDIDO" in d for d in report["discrepancies"])
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
 def test_verify_detects_oracle_disagreement():
     """Si la procedencia de vacancies NO coincide con las created del ledger (dos oráculos
     independientes), el verificador lo marca — es la señal de un fallo de uno u otro."""

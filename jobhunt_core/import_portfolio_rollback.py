@@ -15,7 +15,13 @@ orden child→parent, para deshacer la migración sin tocar nada ajeno. DESTRUCT
 - SEGURIDAD (abort): si una vacante REUTILIZADA (no creada este run) apunta vía
   current_offer_revision_id/primary_incarnation_id a un offer_revision/incarnación de la
   PROCEDENCIA, borrarlo nulificaría su canónica → se ABORTA sin borrar nada (restaurar el
-  puntero previo exige un snapshot pre-migración: paso del §4 completo / manual).
+  puntero previo exige un snapshot pre-migración: paso del §4 completo / manual). El guard
+  cubre esos DOS punteros SET NULL (los que pueden corromper en SILENCIO). El TERCER SET NULL,
+  `merged_into`, NO se comprueba a propósito: los merges (Fase B) no se producen durante el
+  cutover (freeze; la dedup solo deja dedup_candidates 'pending', jamás funde), y si un merge
+  POST-commit apuntara a una vacante de la procedencia, sus propias filas dedup_candidates/
+  merge_log (NO ACTION hacia la vacante) harían FALLAR el DELETE de forma RUIDOSA (sin commit),
+  no en silencio. Este rollback está pensado para la ventana single-writer del cutover.
 
 El módulo NO importa import_portfolio (opera solo sobre la procedencia) — sin ciclo.
 """

@@ -4,9 +4,18 @@ ejecución sobre datos reales gated al NAS).
 `_captured_identities` (scaffold C-4) es un INVENTARIO SCOPEADO, NO procedencia: en un re-run
 reaparecen las filas del run previo, y un offer_revision REUTILIZADO (preexistente de otra
 fuente que C-4 solo enganchó) aparece aunque C-4 no lo creara. Aquí se produce la PROCEDENCIA
-EXACTA — las filas que insertó ESTE run — vía SNAPSHOT ANTES/DESPUÉS de los PK-sets. La fuente
-portfolio-import es single-writer (scope deshabilitado) y el cutover corre bajo freeze
-(migración = único escritor), así que `después − antes` = exactamente lo insertado por este run.
+EXACTA — las filas que insertó ESTE run — vía SNAPSHOT ANTES/DESPUÉS de los PK-sets.
+
+ALCANCE Y LÍMITE DE CONCURRENCIA (honesto): la fuente portfolio-import es single-writer (scope
+deshabilitado) → las tablas OWNED son race-free. Las REUSABLE (vacancies/offer_revisions/
+dedup_candidates) se snapshotean FULL-id, y el CORE COMPARTIDO SIGUE COSECHANDO durante el
+cutover (el freeze congela el BFF del portfolio, no el harvest del core — RUNBOOK §0): una
+vacante AJENA insertada por el core entre `antes` y `después` se COLARÍA en `después − antes`.
+Esto NO es un borrado silencioso: (a) el ensayo §4 y los tests corren sobre una COPIA DESECHABLE
+del core (sin harvest → single-writer real), y (b) toda sobre-captura la DETECTA el cross-check
+del verificador (parte 3: created del ledger ≠ procedencia de vacancies → discrepant), jamás en
+silencio. El artefacto INMUNE a concurrencia (procedencia por RETURNING en cada INSERT) es el
+entregable del §4-REAL (gated NAS, RUNBOOK §4); este snapshot-diff es el ADELANTO en LOCAL.
 
 SCOPING por tabla (clave para la exactitud):
 - OWNED portfolio-import (scoped): source_listings/incarnations/revisions/offer_revision_sources/

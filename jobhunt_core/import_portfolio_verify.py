@@ -17,6 +17,13 @@ DIJO haber hecho, y contrastándolo contra el estado real leído de forma INDEPE
 - CROSS-CHECK entre oráculos INDEPENDIENTES: {vacancy_id de las `created` del ledger} ==
   procedencia exacta de `vacancies` (parte 2). Dos derivaciones distintas del mismo hecho.
 
+ALCANCE (división con reconcile): este verificador cubre la ESTRUCTURA del CORPUS (síntesis del
+sink: lo que reconcile NO podía distinguir — perdido vs cuarentena). Los DURABLES
+(applications/profile_vacancy_state/saved_searches) los verifica `reconcile` por VALORES
+MATERIALES contra el ORIGEN, en la MISMA transacción que aborta el cutover si divergen. Juntos
+(reconcile material + verify estructural) cubren durables y corpus; por eso aquí no se re-verifican
+los durables (sería redundante con reconcile).
+
 Es de SOLO LECTURA (no muta). Devuelve verdict 'verified' | 'discrepant' + la lista de
 discrepancias. NO importa import_portfolio (recibe source_name) — sin ciclo. La query del estado
 final es PROPIA (no reusa la del ledger) para que un bug en la síntesis no se enmascare a sí mismo.
@@ -129,7 +136,14 @@ async def verify_migration(
             )
 
     # 6. CROSS-CHECK oráculos independientes: created del ledger == procedencia de vacancies.
-    created_vac = {e["vacancy_id"] for e in ledger if e["disposition"] == _CREATED}
+    # Un created con vacancy_id None es un LISTING PERDIDO (build_ledger, anomalía del sink) — ya
+    # se marcó como PERDIDO en el paso 2-4; se EXCLUYE aquí (si no, mezclaría None y str y
+    # `sorted` lanzaría TypeError, crasheando el verificador en el caso que existe para detectar).
+    created_vac = {
+        e["vacancy_id"]
+        for e in ledger
+        if e["disposition"] == _CREATED and e["vacancy_id"] is not None
+    }
     prov_vac = set(provenance.get("vacancies", []))
     if created_vac != prov_vac:
         discrepancies.append(
