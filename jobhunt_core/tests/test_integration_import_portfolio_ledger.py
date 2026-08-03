@@ -235,6 +235,31 @@ def test_ledger_quarantine_collision_cross_source():
     asyncio.run(_on_disposable_db(_run))
 
 
+def test_ledger_non_ascii_url_is_created_not_over_quarantined():
+    """ANÁLISIS 2 (frontera del fix normalized_key): una URL no-ASCII VÁLIDA (IDN + CJK)
+    es codificable en utf-8 → NO debe caer como malformed. normalized_key solo rechaza lo
+    NO codificable (surrogates), nunca Unicode válido. Se sintetiza (created) y resuelve."""
+
+    async def _run(factory):
+        async with factory() as s:
+            scope_id = await ip.ensure_import_scope(s)
+            await s.commit()
+            url = "https://例え.example.ch/求人-42"  # IDN + path CJK, utf-8 válido
+            led: list = []
+            await ip.synthesize_vacancies(
+                s, scope_id, [{"url": url, "title": "仕事", "company": "会社"}], ledger=led
+            )
+            await s.commit()
+            e = _by_url(led)[url]
+            assert e.disposition == pil.CREATED  # NO malformed
+            assert e.vacancy_id is not None
+            assert e.url_normalized is not None and e.external_id is not None
+            assert await ip.resolve_vacancy_by_url(s, url) == e.vacancy_id
+            assert ip.normalized_key(url) is not None  # clave usable
+
+    asyncio.run(_on_disposable_db(_run))
+
+
 def test_ledger_surrogate_url_does_not_abort_migration():
     """REGRESIÓN análisis 1 (P1): una URL con surrogate suelto pasa normalize_url pero su
     .encode() estricto lanza UnicodeEncodeError. Antes, build_ledger crasheaba FUERA del
