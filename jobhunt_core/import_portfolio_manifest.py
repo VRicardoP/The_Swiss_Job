@@ -40,6 +40,7 @@ from jobhunt_core.import_portfolio_durables import (
     _recency_key,
 )
 from jobhunt_core.import_portfolio_migrate import migrate_portfolio, table_checksums
+from jobhunt_core.import_portfolio_provenance import exact_provenance, snapshot_row_ids
 
 logger = logging.getLogger(__name__)
 
@@ -538,16 +539,19 @@ async def _captured_identities(session: AsyncSession) -> dict:
 
 async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dict:
     """ENTRYPOINT transaccional del cutover (scaffold LOCAL): MIGRA, RECONCILIA los
-    VALORES materiales contra el origen (la verificación estructural INDEPENDIENTE y la
-    procedencia EXACTA son del ensayo §4, gated NAS — ver reconcile/_captured_identities),
-    captura el inventario scopeado de rollback + new/reused vacancies, y PERSISTE el
-    manifiesto antes del commit.
+    VALORES materiales contra el origen, captura el LEDGER del sink (§4 parte 1), la
+    PROCEDENCIA EXACTA (§4 parte 2, snapshot antes/después) y el inventario scopeado de
+    rollback + new/reused vacancies, y PERSISTE el manifiesto antes del commit.
     NO commitea: el llamador confirma SOLO si verdict=='ok' (si 'divergent', rollback —
     el DETALLE queda en el log ERROR y en el dict devuelto para volcar fuera de la tx).
 
     SINGLE-CALL: el cutover migra TODOS los durables en UNA llamada; la reconciliación
     compara el destino COMPLETO (scope portfolio) contra TODO `users`. No es para
     migración incremental multi-tanda (una 2ª tanda vería la 1ª como 'extra')."""
+    # Snapshot ANTES de migrar: base de la procedencia EXACTA (después−antes = lo insertado
+    # por ESTE run; distingue re-run y offer_revisions reutilizados, que el inventario
+    # scopeado no puede — §4 parte 2). DEBE tomarse antes de migrate_portfolio.
+    before = await snapshot_row_ids(session, PORTFOLIO_IMPORT_SOURCE, PORTFOLIO_CONSUMER)
     report = await migrate_portfolio(session, users)
     manifest = await reconcile(session, users, report)
     manifest["report"] = {
@@ -558,6 +562,10 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
     # Ledger del sink (§4): disposición verificable por url de la síntesis (created/reused/
     # quarantine+razón+vacancy_id). Base del verificador independiente (§4, parte 3).
     manifest["ledger"] = report["ledger"]
+    # Procedencia EXACTA (§4 parte 2): filas insertadas por ESTE run (después−antes). El
+    # inventario scopeado (`identities`) se conserva como CROSS-CHECK.
+    after = await snapshot_row_ids(session, PORTFOLIO_IMPORT_SOURCE, PORTFOLIO_CONSUMER)
+    manifest["provenance"] = exact_provenance(before, after)
     manifest["identities"] = await _captured_identities(session)
     manifest["checksums"] = await table_checksums(session)
     manifest["id"] = str(await persist_manifest(session, manifest))
