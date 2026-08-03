@@ -38,11 +38,19 @@ async def _seed_other_source(s, url: str, external_id: str) -> None:
     from jobhunt_core.harvest.sink import RawListingSink
     from jobhunt_core.harvest.types import RawListing
 
-    src, scope = uuid.uuid4(), uuid.uuid4()
+    # Fuente 'arbeitnow' IDEMPOTENTE: varios seeds en un mismo test comparten la fuente
+    # (cada uno con su scope y su listing) sin violar UNIQUE(name).
     await s.execute(
-        sa.text("INSERT INTO sources (id, name, tier) VALUES (:i, 'arbeitnow', 0)"),
-        {"i": src},
+        sa.text(
+            "INSERT INTO sources (id, name, tier) VALUES (:i, 'arbeitnow', 0) "
+            "ON CONFLICT (name) DO NOTHING"
+        ),
+        {"i": uuid.uuid4()},
     )
+    src = (
+        await s.execute(sa.text("SELECT id FROM sources WHERE name = 'arbeitnow'"))
+    ).scalar_one()
+    scope = uuid.uuid4()
     await s.execute(
         sa.text(
             "INSERT INTO harvest_scopes (id, source_id, params, tier) "

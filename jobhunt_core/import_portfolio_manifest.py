@@ -41,6 +41,7 @@ from jobhunt_core.import_portfolio_durables import (
 )
 from jobhunt_core.import_portfolio_migrate import migrate_portfolio, table_checksums
 from jobhunt_core.import_portfolio_provenance import exact_provenance, snapshot_row_ids
+from jobhunt_core.import_portfolio_verify import verify_migration
 
 logger = logging.getLogger(__name__)
 
@@ -566,6 +567,12 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
     # inventario scopeado (`identities`) se conserva como CROSS-CHECK.
     after = await snapshot_row_ids(session, PORTFOLIO_IMPORT_SOURCE, PORTFOLIO_CONSUMER)
     manifest["provenance"] = exact_provenance(before, after)
+    # Verificación estructural INDEPENDIENTE (§4 parte 3): usa el ledger como contrato y lee el
+    # estado final con queries PROPIAS — distingue un listing PERDIDO de una cuarentena legítima
+    # y cruza los oráculos (created del ledger == procedencia de vacancies). Solo lectura.
+    manifest["verification"] = await verify_migration(
+        session, users, manifest["ledger"], manifest["provenance"], PORTFOLIO_IMPORT_SOURCE
+    )
     manifest["identities"] = await _captured_identities(session)
     manifest["checksums"] = await table_checksums(session)
     manifest["id"] = str(await persist_manifest(session, manifest))
