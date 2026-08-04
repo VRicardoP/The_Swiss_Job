@@ -301,8 +301,10 @@ SELECT name, prompt_version, active FROM jobhunt.scoring_policies;"
 
 Idempotente: re-ejecutarlo no crea filas nuevas (ON CONFLICT + relectura bajo
 lock). El orden importa poco — si el proyector corre antes del bootstrap, las
-ofertas quedan sin vector hasta que `run_pending` (beat, 5 min) las recoja al
-existir el modelo activo; convergen solas.
+ofertas quedan sin vector hasta que el **proyector sombra** (beat `shadow-project`,
+cada `CORE_SHADOW_PROJECT_EVERY_S` ≈ 5 min) drene los embeddings pendientes vía
+`run_pending` al existir el modelo activo; convergen solas. (NO hay un beat
+`run_pending` propio: `run_pending` se invoca DENTRO del proyector — `_drain_embeddings`.)
 
 ## 8. ORÁCULO sobre los datos reales del NAS
 
