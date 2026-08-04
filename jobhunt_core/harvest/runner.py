@@ -89,10 +89,12 @@ async def run_scope(
 
         params = row.params or {}
         snapshot = row.cursor  # tal cual en BD: base del check de concurrencia
-        # (cursor, last_complete_at) = ESTADO pre-fetch para la autoritatividad del run sin token:
-        # last_complete_at es el EPOCH MONOTÓNICO (now() en cada cosecha COMPLETA, que es JUSTO
-        # cuando run_all resetea consecutive_failures=0). El VALOR del cursor no basta: un feed
-        # estacionario re-escribe el MISMO valor (P2 rev. externa integral ronda 3).
+        # (cursor, last_complete_at) = ESTADO pre-fetch para la autoritatividad del run sin token.
+        # Clave: `last_complete_at` recibe un now() FRESCO (≠ el previo) en CADA cosecha COMPLETA,
+        # que es EXACTAMENTE cuando run_all resetea consecutive_failures=0 → "failures reseteado"
+        # ⟺ "last_complete_at cambió". El VALOR del cursor NO basta: un feed estacionario re-escribe
+        # el MISMO valor (P2 rev. externa integral ronda 3). Un reloj hacia atrás solo da falsos
+        # NEGATIVOS (dirección segura), jamás un clobber.
         state_snapshot = (row.cursor, row.last_complete_at)
         fingerprint = provider.params_fingerprint(params)
         provider_cursor = _provider_cursor(snapshot, fingerprint, scope_id)
@@ -226,10 +228,12 @@ async def _still_authoritative(session, scope_id: str, token, state_snapshot) ->
     - CON token (vía run_all): el claim sigue vigente (_still_claim_owner, FOR UPDATE).
     - SIN token pero CON state_snapshot=(cursor, last_complete_at) (vía run_scope_task individual,
       que NO reclama): el ESTADO del scope NO ha cambiado desde antes del fetch. La clave es
-      `last_complete_at`, EPOCH MONOTÓNICO (now() en cada cosecha COMPLETA — que es EXACTAMENTE
-      cuando run_all resetea consecutive_failures=0): si avanzó, otro run cosechó y este quedó
-      OBSOLETO → no debe pisar su estado. El VALOR del cursor NO basta (un feed estacionario
+      `last_complete_at`: recibe un now() FRESCO (≠ el previo) en cada cosecha COMPLETA — que es
+      EXACTAMENTE cuando run_all resetea consecutive_failures=0; si cambió, otro run cosechó y este
+      quedó OBSOLETO → no debe pisar su estado. El VALOR del cursor NO basta (un feed estacionario
       re-escribe el mismo valor y daría falso-autoritativo — P2 rev. externa integral ronda 3).
+      INVARIANTE del que depende: `runner.py` es el ÚNICO escritor de source_scope_state; si un
+      futuro endpoint reseteara consecutive_failures sin tocar last_complete_at, el clobber volvería.
     - Sin ninguno (llamada directa legacy): autoritativo (comportamiento previo)."""
     if token is not None:
         return await _still_claim_owner(session, scope_id, token)
