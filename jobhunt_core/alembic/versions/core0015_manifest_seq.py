@@ -34,6 +34,14 @@ def upgrade() -> None:
         sa.Column("seq", sa.BigInteger, sa.Identity(always=False, start=1), nullable=False),
         schema=S,
     )
+    # El `seq` de las filas PREEXISTENTES (creadas mientras la BD estaba en core0014, sin seq) se
+    # asigna por el recorrido FÍSICO de Postgres, NO por su orden de inserción — un CLUSTER
+    # previo lo invertiría, rompiendo el LIFO (P1 rev. externa 5). Como su orden no se puede
+    # reconstruir (created_at=now() puede empatar), esas filas 'applied' pasan a 'unknown': no
+    # atestables ni deshacibles por seq. Los manifiestos NUEVOS (post-core0015) reciben seq fiable.
+    op.execute(
+        f"UPDATE {S}.portfolio_migration_manifest SET status = 'unknown' WHERE status = 'applied'"
+    )
 
 
 def downgrade() -> None:

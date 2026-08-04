@@ -49,7 +49,7 @@ def test_rollback_removes_created_migration():
             manifest = await man.migrate_and_reconcile(s, [_user("https://r.example.ch/1")])
             assert await _count(s, "vacancies") == 1
             assert await _count(s, "applications") == 1
-            result = await rollback_migration(s, manifest["provenance"])
+            result = await rollback_migration(s, manifest["id"])
             assert result["status"] == "rolled_back"
             assert result["deleted"]["vacancies"] == 1
             assert result["deleted"]["applications"] == 1
@@ -77,7 +77,7 @@ def test_rollback_preserves_reused_other_source_vacancy():
             await _seed_other_source(s, url, "rb-x")
             before_vac = await _count(s, "vacancies")  # 1 (la de arbeitnow)
             manifest = await man.migrate_and_reconcile(s, [_user(url)])
-            result = await rollback_migration(s, manifest["provenance"])
+            result = await rollback_migration(s, manifest["id"])
             assert result["status"] == "rolled_back"
             # La vacante reutilizada sigue; el enlace portfolio-import y la application, no.
             assert await _count(s, "vacancies") == before_vac
@@ -105,53 +105,6 @@ def test_rollback_preserves_reused_other_source_vacancy():
     asyncio.run(_on_disposable_db(_run))
 
 
-def test_rollback_empty_provenance_is_noop():
-    """Procedencia vacía (re-run idempotente): no borra nada."""
-
-    async def _run(factory):
-        async with factory() as s:
-            empty = {
-                t: []
-                for t in (
-                    "application_status_events", "applications", "saved_searches",
-                    "link_evidence", "dedup_candidates", "source_listing_revisions",
-                    "source_listing_incarnations", "offer_revisions", "source_listings",
-                    "vacancies", "harvest_scopes", "sources", "profile_vacancy_state",
-                    "offer_revision_sources",
-                )
-            }
-            result = await rollback_migration(s, empty)
-            assert result["status"] == "rolled_back"
-            assert all(v == 0 for v in result["deleted"].values())
-            await s.rollback()
-
-    asyncio.run(_on_disposable_db(_run))
-
-
-def test_rollback_aborts_if_nonprovenance_vacancy_points_to_provenance_offrev():
-    """SEGURIDAD: si una vacante NO listada en la procedencia apunta (current_offer_revision)
-    a un offer_revision de la procedencia, borrarlo nulificaría su canónica → ABORTA sin
-    borrar. Se simula omitiendo la vacante creada de la procedencia (como si fuera reutilizada)."""
-
-    async def _run(factory):
-        async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user("https://ab.example.ch/1")])
-            vid = manifest["provenance"]["vacancies"][0]
-            # La vacante `vid` apunta a su offer_revision (en la procedencia). Si la tratamos
-            # como NO-procedencia (reutilizada), el guard debe detectar el puntero → abort.
-            prov = dict(manifest["provenance"])
-            prov["vacancies"] = []
-            result = await rollback_migration(s, prov)
-            assert result["status"] == "aborted"
-            assert vid in result["unsafe_vacancies"]
-            # No borró nada (la vacante y la application siguen).
-            assert await _count(s, "vacancies") == 1
-            assert await _count(s, "applications") == 1
-            await s.rollback()
-
-    asyncio.run(_on_disposable_db(_run))
-
-
 async def _manifest_status(s, mid: str) -> str:
     return (
         await s.execute(
@@ -170,7 +123,7 @@ def test_rollback_marks_manifest_rolled_back():
             mid = manifest["id"]
             await s.commit()
             assert await _manifest_status(s, mid) == "applied"  # recién persistido
-            r = await rollback_migration(s, manifest["provenance"], manifest_id=mid)
+            r = await rollback_migration(s, mid)
             assert r["status"] == "rolled_back"
             await s.commit()
             assert await _manifest_status(s, mid) == "rolled_back"
@@ -199,7 +152,7 @@ def test_rollback_aborted_marks_manifest_rollback_aborted():
                 {"id": mid},
             )
             await s.commit()
-            r = await rollback_migration(s, {}, manifest_id=mid)
+            r = await rollback_migration(s, mid)
             assert r["status"] == "aborted"
             await s.commit()
             assert await _manifest_status(s, mid) == "rollback_aborted"
@@ -261,8 +214,33 @@ def test_core0015_upgrade_from_core0014_adds_seq():
         asyncio.run(_bootstrap())
         run_alembic(temp_url, "upgrade", "core0014")  # SOLO hasta status (sin seq)
         assert asyncio.run(_has_seq()) == 0
-        run_alembic(temp_url, "upgrade", "head")  # core0015 añade seq
+        # Fila PREEXISTENTE creada mientras la BD está en core0014 (applied): su seq se asignaría
+        # por orden físico → tras core0015 debe quedar 'unknown' (no atestable), no 'applied'.
+        pre_id = _uuid.uuid4()
+
+        async def _seed():
+            async with temp_engine.begin() as c:
+                await c.execute(
+                    sa.text(
+                        "INSERT INTO portfolio_migration_manifest (id, verdict, manifest, status) "
+                        "VALUES (:i, 'ok', '{}'::jsonb, 'applied')"
+                    ),
+                    {"i": pre_id},
+                )
+
+        async def _pre_status() -> str:
+            async with temp_engine.connect() as c:
+                return (
+                    await c.execute(
+                        sa.text("SELECT status FROM portfolio_migration_manifest WHERE id = :i"),
+                        {"i": pre_id},
+                    )
+                ).scalar_one()
+
+        asyncio.run(_seed())
+        run_alembic(temp_url, "upgrade", "head")  # core0015: seq + backfill applied→unknown
         assert asyncio.run(_has_seq()) == 1
+        assert asyncio.run(_pre_status()) == "unknown"  # la preexistente ya no es atestable
         asyncio.run(temp_engine.dispose())
     finally:
 
@@ -283,9 +261,7 @@ def test_rollback_invalid_manifest_id_aborts_without_deleting():
         async with factory() as s:
             manifest = await man.migrate_and_reconcile(s, [_user("https://iv.example.ch/1")])
             await s.commit()
-            r = await rollback_migration(
-                s, manifest["provenance"], manifest_id=str(uuid.uuid4())
-            )
+            r = await rollback_migration(s, str(uuid.uuid4()))
             assert r["status"] == "aborted" and "no existe" in r["reason"]
             assert await _count(s, "vacancies") == 1  # NADA borrado
             assert await _count(s, "applications") == 1
@@ -294,10 +270,11 @@ def test_rollback_invalid_manifest_id_aborts_without_deleting():
     asyncio.run(_on_disposable_db(_run))
 
 
-def test_rollback_uses_stored_provenance_not_caller():
-    """REGRESIÓN P1 ronda 3: rollback_migration usa la procedencia ALMACENADA en el manifiesto
-    (vinculada al id), NO la que pase el llamador — no se puede borrar la procedencia de m1
-    marcando m2 (antes borraba datos de m1 y dejaba m1 'applied')."""
+def test_rollback_uses_stored_provenance_bound_to_manifest_id():
+    """REGRESIÓN P1 ronda 3/5: rollback_migration toma SOLO manifest_id y borra la procedencia
+    ALMACENADA en ESE manifiesto — el ataque cross-manifest (procedencia de m1, id de m2) es
+    IMPOSIBLE por construcción (no hay parámetro provenance). Deshacer m2 (idempotente, procedencia
+    vacía) no borra nada y los datos de m1 siguen intactos."""
 
     async def _run(factory):
         users = [_user("https://bind.example.ch/1")]
@@ -306,8 +283,7 @@ def test_rollback_uses_stored_provenance_not_caller():
             await s.commit()
             m2 = await man.migrate_and_reconcile(s, users)  # idempotente, procedencia VACÍA
             await s.commit()
-            # Ataque: procedencia de m1 pero manifest_id de m2 → usa la de m2 (vacía), no borra.
-            r = await rollback_migration(s, m1["provenance"], manifest_id=m2["id"])
+            r = await rollback_migration(s, m2["id"])  # usa la procedencia de m2 (vacía)
             assert r["status"] == "rolled_back"
             assert sum(r["deleted"].values()) == 0  # m2 no borra nada (procedencia vacía)
             assert await _count(s, "vacancies") == 1  # los datos de m1 SIGUEN intactos
@@ -327,7 +303,7 @@ def test_rollback_lifo_uses_seq_not_created_at():
         async with factory() as s:
             m1 = await man.migrate_and_reconcile(s, users)
             await man.migrate_and_reconcile(s, users)  # m2, MISMA tx (sin commit) → mismo now()
-            r = await rollback_migration(s, m1["provenance"], manifest_id=m1["id"])
+            r = await rollback_migration(s, m1["id"])
             assert r["status"] == "aborted" and "LIFO" in r["reason"]
             await s.rollback()
 
@@ -346,7 +322,7 @@ def test_rollback_refuses_older_manifest_lifo():
             await s.commit()
             await man.migrate_and_reconcile(s, users)  # m2 idempotente, también 'applied'
             await s.commit()
-            r = await rollback_migration(s, m1["provenance"], manifest_id=m1["id"])
+            r = await rollback_migration(s, m1["id"])
             assert r["status"] == "aborted" and "LIFO" in r["reason"]
             assert await _count(s, "vacancies") == 1  # NADA borrado
             await s.rollback()
@@ -372,7 +348,7 @@ def test_rollback_aborts_on_manifest_missing_provenance():
                 {"id": mid},
             )
             await s.commit()
-            r = await rollback_migration(s, {}, manifest_id=mid)
+            r = await rollback_migration(s, mid)
             assert r["status"] == "aborted" and "provenance" in r["reason"]
             assert await _count(s, "vacancies") == 1  # datos INTACTOS
             assert await _manifest_status(s, mid) == "applied"  # NO marcado rolled_back
@@ -400,8 +376,36 @@ def test_rollback_lifo_blocks_on_later_rollback_aborted():
                 {"id": m2["id"]},
             )
             await s.commit()
-            r = await rollback_migration(s, m1["provenance"], manifest_id=m1["id"])
+            r = await rollback_migration(s, m1["id"])
             assert r["status"] == "aborted" and "LIFO" in r["reason"]
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_aborts_on_malformed_provenance_value():
+    """REGRESIÓN P1 ronda 5: un VALOR de procedencia no-list[str] (p.ej. vacancies=null tras
+    tamper) → abort fail-closed, NO rolled_back (antes lo interpretaba como 0 filas y marcaba
+    deshecho sin borrar). Los datos siguen y el manifiesto sigue 'applied'."""
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, [_user("https://mv.example.ch/1")])
+            mid = manifest["id"]
+            await s.commit()
+            await s.execute(
+                sa.text(
+                    "UPDATE portfolio_migration_manifest "
+                    "SET manifest = jsonb_set(manifest, '{provenance,vacancies}', 'null') "
+                    "WHERE id = :id"
+                ),
+                {"id": mid},
+            )
+            await s.commit()
+            r = await rollback_migration(s, mid)
+            assert r["status"] == "aborted" and "list[str]" in r["reason"]
+            assert await _count(s, "vacancies") == 1  # datos INTACTOS
+            assert await _manifest_status(s, mid) == "applied"  # NO marcado rolled_back
             await s.rollback()
 
     asyncio.run(_on_disposable_db(_run))
@@ -416,10 +420,13 @@ def test_migrate_rollback_migrate_roundtrip_is_verified():
         async with factory() as s:
             m1 = await man.migrate_and_reconcile(s, users)
             assert m1["verification"]["verdict"] == "verified"
-            r = await rollback_migration(s, m1["provenance"])
+            r = await rollback_migration(s, m1["id"])
             assert r["status"] == "rolled_back"
             await s.commit()
             assert await _count(s, "vacancies") == 0
+            # P1 ronda 5: manifest_id obligatorio → m1 queda marcado rolled_back (no 'applied'
+            # obsoleto tras borrar los datos).
+            assert await _manifest_status(s, m1["id"]) == "rolled_back"
         async with factory() as s:
             m2 = await man.migrate_and_reconcile(s, users)
             assert m2["verdict"] == "ok", m2["divergences"]

@@ -54,6 +54,9 @@ _SINGLE_PK_TABLES = (
     "sources",  # raíz
 )
 
+# Tablas de PK COMPUESTA (id = 'a:b'); sus ids deben contener el separador ':'.
+_COMPOSITE_TABLES = ("profile_vacancy_state", "offer_revision_sources")
+
 
 async def _del_single(session: AsyncSession, table: str, ids: list[str]) -> int:
     """DELETE ... WHERE id IN ids (por texto, sin importar el tipo de la PK). `table` viene
@@ -185,28 +188,37 @@ async def _validate_manifest(
     provenance = manifest_json["provenance"]
     if not isinstance(provenance, dict):
         return f"manifest {manifest_id}: 'provenance' no es un objeto — fallo cerrado", None
+    # Cada valor debe ser list[str] (una [] es legítima); un `null`/escalar/objeto sería
+    # interpretado como "0 filas" y daría un rolled_back falso sin borrar (P1 rev. externa 5).
+    for table, ids in provenance.items():
+        if not isinstance(ids, list) or not all(isinstance(x, str) for x in ids):
+            return (
+                f"manifest {manifest_id}: procedencia['{table}'] no es list[str] — fallo cerrado",
+                None,
+            )
+        if table in _COMPOSITE_TABLES and not all(":" in x for x in ids):
+            return (
+                f"manifest {manifest_id}: procedencia['{table}'] con PK compuesta malformada "
+                f"(sin ':') — fallo cerrado",
+                None,
+            )
     return None, provenance
 
 
-async def rollback_migration(
-    session: AsyncSession, provenance: dict[str, list[str]], manifest_id: str | None = None
-) -> dict:
-    """Deshace la migración borrando las filas de `provenance` (parte 2) en orden FK-safe.
-    DESTRUCTIVO y NO commitea. Si se pasa `manifest_id`, VALIDA su fila (applied + más reciente,
-    fail-closed) ANTES de borrar y la marca con el estado resultante (rolled_back|
-    rollback_aborted) para que un `verdict='ok'` obsoleto no alimente un falso GATE-C. Devuelve
-    {status: 'rolled_back'|'aborted', deleted|reason}."""
-    # VALIDACIÓN fail-closed ANTES de tocar nada: un manifest_id inexistente/no-applied/no-más-
-    # reciente aborta SIN borrar (P1 rev. externa 2/3). El FOR UPDATE bloquea la fila hasta el
-    # commit del llamador, así el estado no cambia bajo nuestros pies. Si es válido, se BORRA la
-    # procedencia ALMACENADA en el manifiesto (vinculada al id), NO la del parámetro — así no se
-    # puede borrar la procedencia de m1 marcando m2 (P1 rev. externa 3).
-    if manifest_id is not None:
-        abort_reason, stored_provenance = await _validate_manifest(session, manifest_id)
-        if abort_reason is not None:
-            logger.error("import_portfolio_rollback: ABORTADO (validación) — %s", abort_reason)
-            return {"status": "aborted", "reason": abort_reason}
-        provenance = stored_provenance
+async def rollback_migration(session: AsyncSession, manifest_id: str) -> dict:
+    """Deshace la migración del manifiesto `manifest_id` borrando su procedencia ALMACENADA
+    (leída del propio manifiesto) en orden FK-safe. `manifest_id` es OBLIGATORIO: un rollback
+    confirmado SIN él dejaría el manifiesto 'applied' tras borrar los datos → falso GATE-C
+    (P1 rev. externa 5). No hay parámetro `provenance` (era atacable: borrar m1 marcando m2).
+    DESTRUCTIVO y NO commitea. VALIDA fail-closed (applied + más reciente + procedencia bien
+    formada) ANTES de borrar; marca la fila con el estado resultante (rolled_back|
+    rollback_aborted). Devuelve {status: 'rolled_back'|'aborted', deleted|reason}."""
+    # VALIDACIÓN fail-closed ANTES de tocar nada (FOR UPDATE bloquea la fila hasta el commit del
+    # llamador). Se borra la procedencia ALMACENADA en el manifiesto, vinculada al id.
+    abort_reason, provenance = await _validate_manifest(session, manifest_id)
+    if abort_reason is not None:
+        logger.error("import_portfolio_rollback: ABORTADO (validación) — %s", abort_reason)
+        return {"status": "aborted", "reason": abort_reason}
 
     unsafe = await _reused_pointing_to_provenance(session, provenance)
     if unsafe:
