@@ -702,6 +702,49 @@ def test_labels_ready_red_with_two_sets_one_profile(db):
     assert gates["labels_ready"]["ok"] is False
 
 
+def test_labels_ready_red_when_effective_set_is_small(db):
+    """REGRESIÓN P1 rev. externa integral RONDA 2: labels_ready debe usar el set EFECTIVO (el MÁS
+    RECIENTE, el que MIDEN nDCG/falsos_negativos vía _measured_profiles), no 'cualquier set >=30'.
+    Dos perfiles con un set VIEJO de 30 juicios + un set NUEVO de 1 juicio: el gate NO debe abrir
+    (se mide sobre el set de 1 juicio → oráculo insuficiente, nDCG=1/recall=1 vacuos), aunque
+    exista un set viejo válido."""
+    factory = db
+    src = _mk_source(factory, "legacy:lreff")
+    p = uuid.uuid4().hex[:6]
+    for who in ("a", "b"):
+        pid = _mk_profile(factory, str(uuid.uuid4()))
+        _mk_frozen_set(
+            factory, pid, {f"{p}-{who}old{i:02d}": i % 4 for i in range(30)}, name="ronda-1"
+        )
+        # Set NUEVO (más reciente) de UN solo juicio → es el EFECTIVO que se mide.
+        _mk_frozen_set(factory, pid, {f"{p}-{who}new": 3}, name="ronda-2")
+    # Pares dedup suficientes (>=50, >=20 mapeables): el ROJO viene SOLO del set efectivo pequeño.
+    for i in range(25):
+        ra, rb = f"{p}-m{i:02d}a", f"{p}-m{i:02d}b"
+        vid, _, _ = _mk_slot(factory, src, ra)
+        _mk_slot(factory, src, rb, active=False, vacancy_id=vid)
+        _exec(
+            factory,
+            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
+            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            {"a": ra, "b": rb},
+        )
+    for i in range(25):
+        _exec(
+            factory,
+            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
+            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            {"a": f"{p}-u{i:02d}a", "b": f"{p}-u{i:02d}b"},
+        )
+    _compute(factory)
+    lr = _metric_row(factory, "labels_ready")
+    assert float(lr.value) == 0  # ROJO: el set EFECTIVO de cada perfil tiene 1 juicio
+    assert lr.details["sets_congelados_ok"] == 2  # existen 2 sets viejos >=30 (informativo)…
+    assert lr.details["perfiles_ok"] == 0  # …pero 0 perfiles con set EFECTIVO >=30
+    gates = _gates(factory)
+    assert gates["labels_ready"]["ok"] is False
+
+
 def test_inactive_profile_excluded_from_metrics_and_labels_ready(db):
     """Regresión NO-GO 2 (decisión delegada 2026-07-28): un perfil cuyo
     external_ref está INACTIVO (último estado `users` del staging aplicado —

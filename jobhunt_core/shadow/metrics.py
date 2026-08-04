@@ -462,7 +462,9 @@ async def _measured_profiles(session: AsyncSession) -> list:
         await session.execute(
             sa.text(
                 "SELECT DISTINCT ON (p.id) p.id, p.external_ref, "
-                "  ls.id AS set_id, ls.name AS set_name "
+                "  ls.id AS set_id, ls.name AS set_name, "
+                "  (SELECT count(*) FROM labeled_judgments j WHERE j.set_id = ls.id) "
+                "    AS n_juicios "
                 "FROM profiles p "
                 "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cn "
                 "JOIN labeled_sets ls ON ls.profile_id = p.id "
@@ -804,7 +806,8 @@ async def _labels_ready_row(session: AsyncSession) -> tuple:
     excluded_inactive = sum(
         1 for r in frozen_rows if r.external_ref in inactive
     )
-    # Sets congelados VÁLIDOS (>= min juicios) de perfiles ACTIVOS (informativo)…
+    # Sets congelados VÁLIDOS (>= min juicios) de perfiles ACTIVOS (INFORMATIVO — todos los sets,
+    # no solo el efectivo)…
     ok_sets = [
         r
         for r in frozen_rows
@@ -812,9 +815,14 @@ async def _labels_ready_row(session: AsyncSession) -> tuple:
         and int(r.n_juicios) >= LABELS_MIN_JUDGMENTS_PER_SET
     ]
     frozen_ok = len(ok_sets)
-    # …pero el GATE cuenta PERFILES DISTINTOS: el DoD B-03 exige ">= 2 PERFILES reales", no 2 sets
-    # — dos sets del MISMO perfil no bastan (P1 rev. externa integral).
-    perfiles_ok = len({r.external_ref for r in ok_sets})
+    # …pero el GATE cuenta PERFILES cuyo set EFECTIVO (el MÁS RECIENTE, el que REALMENTE se mide en
+    # nDCG/falsos_negativos vía _measured_profiles) tiene >= min juicios. Contar "cualquier set
+    # >=30" dejaría abrir el gate por un set viejo mientras se mide sobre uno nuevo de 1 juicio
+    # (nDCG=1/recall=1 vacuos) — P1 rev. externa integral ronda 2. Medición y gate: MISMO set.
+    measured = await _measured_profiles(session)
+    perfiles_ok = sum(
+        1 for r in measured if int(r.n_juicios) >= LABELS_MIN_JUDGMENTS_PER_SET
+    )
     pairs = (
         await session.execute(
             sa.text("SELECT job_ref_a, job_ref_b FROM labeled_dedup_pairs")
