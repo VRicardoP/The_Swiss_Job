@@ -655,6 +655,27 @@ def test_readiness_blocks_when_required_column_missing(capture):
     ) == 0
 
 
+def test_readiness_blocks_when_jobs_source_missing(capture):
+    """REGRESIÓN P1 rev. externa integral (calibración): `jobs.source` es REQUERIDA — sin ella un
+    job fresco no resuelve fuente y el proyector lo DESCARTA en silencio ("sin fuente resoluble").
+    Readiness debe bloquear el slot si falta."""
+    make, slot, engine = capture
+    with engine.begin() as c:
+        c.execute(sa.text("CREATE SCHEMA IF NOT EXISTS partialsrc"))
+        # jobs SIN source (columna REQUERIDA):
+        c.execute(sa.text(
+            "CREATE TABLE IF NOT EXISTS partialsrc.jobs ("
+            "hash varchar(32) PRIMARY KEY, title varchar(500), url varchar(2048), "
+            "is_active boolean NOT NULL DEFAULT true, duplicate_of varchar(32))"
+        ))
+    cap = make(tables="partialsrc.jobs", ready_max_retries=2)
+    with pytest.raises(RuntimeError, match="esquema legacy aún sin migrar"):
+        cap.start()
+    assert _scalar(
+        engine, "SELECT count(*) FROM pg_replication_slots WHERE slot_name = :n", n=slot
+    ) == 0
+
+
 # ------------------------------------------- (h) healthcheck con slot inactivo
 
 

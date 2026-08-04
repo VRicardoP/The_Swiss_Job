@@ -87,17 +87,24 @@ TABLE_WHITELIST: dict[str, dict] = {
             "salary_currency", "salary_period", "url", "source",
             "is_active", "duplicate_of", "content_hash",
         }),
-        # Columnas CRÍTICAS para la corrección (identidad/canónica/dedup/activación): si faltan, el
-        # snapshot se confirmaría SIN ellas y añadirlas después no genera UPDATE WAL para las filas
-        # viejas → histórico irrecuperable (P1 rev. externa integral). El resto de `columns` es
-        # payload opcional (su ausencia la absorbe el intersect del backfill). El slot NO se crea
-        # hasta que TODAS las `required` existan.
-        "required": frozenset({"title", "url", "content_hash", "is_active"}),
+        # Columnas CRÍTICAS para la corrección (si faltan, el snapshot se confirmaría SIN ellas y
+        # añadirlas después no genera UPDATE WAL para las filas viejas → histórico irrecuperable —
+        # P1 rev. externa integral). Calibradas por lo que el PROYECTOR consume (verificado):
+        # `source` enruta el upsert (sin ella `_upsert_source` → "sin fuente resoluble: descartado"
+        # = DROP silencioso de TODO job nuevo); `url` es la identidad de la RawListing (un job sin
+        # url se SALTA); `is_active`/`duplicate_of` gobiernan el CIERRE por dedup/inactividad;
+        # `title` es el contenido presentable. NO `content_hash` (el sink calcula el suyo; el legacy
+        # no se lee). El resto de `columns` es payload opcional (lo absorbe el intersect del
+        # backfill). El slot NO se crea hasta que TODAS las `required` existan.
+        "required": frozenset({"title", "url", "source", "is_active", "duplicate_of"}),
     },
     "user_profiles": {
         "pk": "id",
         "columns": frozenset({"user_id", "title", "cv_text", "skills", "updated_at"}),
-        "required": frozenset({"user_id", "title", "cv_text", "skills", "updated_at"}),
+        # `user_id` resuelve el perfil (sin ella → "sin user_id resoluble: descartado"); title/
+        # cv_text/skills son el CONTENIDO del perfil sombra (PROFILE_FIELDS → embeddings). NO
+        # `updated_at` (el proyector no la consume). Calibrado por lo que consume el proyector.
+        "required": frozenset({"user_id", "title", "cv_text", "skills"}),
         # TOAST (§2/§8): cv_text es contractual para canónica/embeddings — si
         # wal2json lo omite (UPDATE que no lo toca), se COMPLETA re-leyendo
         # por PK con la conexión normal (SELECT RO de §1). jobs NO lleva esta
