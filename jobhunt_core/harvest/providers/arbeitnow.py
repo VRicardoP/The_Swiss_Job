@@ -123,7 +123,10 @@ class ArbeitnowProvider(BaseProvider):
                         "arbeitnow: item malformado saltado (%s): %r",
                         exc, item.get("slug") or item.get("url"),
                     )
-            if not (body.get("links") or {}).get("next"):
+            links = body.get("links")
+            # `links` truthy no-objeto (string/lista/número) → tratar como FIN de paginación en vez
+            # de reventar con AttributeError (P2 rev. externa integral ronda 2).
+            if not (isinstance(links, dict) and links.get("next")):
                 exhausted = True
                 break
             page += 1

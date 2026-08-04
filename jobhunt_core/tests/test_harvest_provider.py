@@ -208,6 +208,16 @@ def test_malformed_body_treated_as_empty_not_fatal():
     assert _ids(result) == [] and result.complete is True
 
 
+def test_malformed_links_treated_as_end_not_fatal():
+    """REGRESIÓN P2 rev. externa integral RONDA 2: un `links` truthy NO-objeto (string/lista/número)
+    reventaba `(body.get('links') or {}).get('next')` con AttributeError y perdía la página entera.
+    Ahora se trata como FIN de paginación; las ofertas válidas de la página SÍ se emiten."""
+    pages = {1: {"data": [{"slug": "ok", "url": "https://x/ok", "title": "T", "tags": []}],
+                 "links": "?page=2"}}  # links es un STRING, no un objeto
+    result, _ = _fetch(pages=pages)
+    assert _ids(result) == ["ok"] and result.complete is True
+
+
 def test_max_pages_below_minimum_rejected():
     with pytest.raises(ValueError, match="max_pages"):
         _fetch(params={"max_pages": 1})

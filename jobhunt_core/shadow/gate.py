@@ -429,15 +429,16 @@ async def check_slot_health(
 ) -> dict:
     """ALERTA (logger.error persistente) si el slot retiene WAL > 2 GiB
     (pg_wal_lsn_diff sobre restart_lsn) o el consumidor lleva parado > 30
-    min (slot inactivo en pg_replication_slots + antigüedad de
-    shadow_capture_state.updated_at). Umbrales de §6 como constantes,
-    inyectables SOLO para tests.
+    min (antigüedad de `shadow_capture_state.heartbeat_at` —LIVENESS: keepalive
+    del stream + tx aplicada—, INDEPENDIENTE de `active`: un consumidor colgado
+    con walsender aún conectado también deja de latir). `updated_at` es solo
+    progreso de DATOS. Umbrales de §6 como constantes, inyectables SOLO para tests.
 
     Estados sin alerta: sin slot NI estado = sombra sin bootstrap (nada
-    retiene WAL: no hay riesgo que vigilar); slot inactivo con updated_at
-    reciente = parada dentro de la gracia de 30 min; slot presente sin
-    estado = bootstrap en curso (backfill antes de START_REPLICATION,
-    mismo matiz que el healthcheck de B-01) — warning, no alerta."""
+    retiene WAL: no hay riesgo que vigilar); heartbeat reciente = consumidor
+    vivo (dentro de la gracia de 30 min); slot presente sin estado = bootstrap
+    en curso (backfill antes de START_REPLICATION, mismo matiz que el
+    healthcheck de B-01) — warning, no alerta."""
     moment = now or datetime.now(timezone.utc)
     slot_row = (
         await session.execute(
