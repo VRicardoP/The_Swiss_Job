@@ -31,11 +31,20 @@ El módulo NO importa import_portfolio (opera solo sobre la procedencia) — sin
 """
 
 import logging
+import uuid
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
 
 # Orden de borrado child→parent (single-PK). Los compuestos y el abort-check se intercalan
 # en rollback_migration en su posición correcta.
@@ -188,18 +197,39 @@ async def _validate_manifest(
     provenance = manifest_json["provenance"]
     if not isinstance(provenance, dict):
         return f"manifest {manifest_id}: 'provenance' no es un objeto — fallo cerrado", None
-    # Cada valor debe ser list[str] (una [] es legítima); un `null`/escalar/objeto sería
-    # interpretado como "0 filas" y daría un rolled_back falso sin borrar (P1 rev. externa 5).
+    # Cada valor debe ser list[str] de PKs VÁLIDAS: UUID para las simples, exactamente DOS UUID
+    # ('uuid:uuid') para las compuestas. Una [] es legítima. Un null/escalar/objeto o una PK
+    # malformada (no-UUID, ":" suelto, 'a:b:c') → abort: si no, el borrado no matcharía y se
+    # marcaría rolled_back sin borrar (P1 rev. externa 5/6). La completitud del borrado se
+    # re-verifica tras borrar (savepoint), por si un UUID VÁLIDO no existe (stale/inconsistente).
     for table, ids in provenance.items():
+        if table not in _SINGLE_PK_TABLES and table not in _COMPOSITE_TABLES:
+            # Una tabla que el rollback NO borra (deriva de esquema: una migración futura la
+            # inserta y registra en la procedencia sin actualizar las listas de borrado; o
+            # tamper) → dejaría residuo bajo un manifiesto marcado rolled_back. Fail-closed
+            # (defense-in-depth, verificación ronda 6): productor y consumidor deben cubrir el
+            # MISMO conjunto de tablas.
+            return (
+                f"manifest {manifest_id}: procedencia con tabla DESCONOCIDA '{table}' que el "
+                f"rollback no borra — fallo cerrado",
+                None,
+            )
         if not isinstance(ids, list) or not all(isinstance(x, str) for x in ids):
             return (
                 f"manifest {manifest_id}: procedencia['{table}'] no es list[str] — fallo cerrado",
                 None,
             )
-        if table in _COMPOSITE_TABLES and not all(":" in x for x in ids):
+        if table in _COMPOSITE_TABLES:
+            ok = all(
+                len(parts := x.split(":")) == 2 and _is_uuid(parts[0]) and _is_uuid(parts[1])
+                for x in ids
+            )
+        else:
+            ok = all(_is_uuid(x) for x in ids)
+        if not ok:
             return (
-                f"manifest {manifest_id}: procedencia['{table}'] con PK compuesta malformada "
-                f"(sin ':') — fallo cerrado",
+                f"manifest {manifest_id}: procedencia['{table}'] con PK malformada (no-UUID) — "
+                f"fallo cerrado",
                 None,
             )
     return None, provenance
@@ -236,8 +266,12 @@ async def rollback_migration(session: AsyncSession, manifest_id: str) -> dict:
             "unsafe_vacancies": unsafe,
         }
 
+    # Borrado dentro de un SAVEPOINT: si alguna tabla NO borra EXACTAMENTE sus identidades
+    # esperadas (borrado ≠ len(procedencia) — una PK stale/inconsistente que no existe), se
+    # REVIERTE TODO el bloque y se aborta SIN marcar rolled_back — jamás dejar datos presentes
+    # bajo un manifiesto que dice estar deshecho (P1 rev. externa 6).
     deleted: dict[str, int] = {}
-    # Compuestos, en su posición del orden child→parent:
+    nested = await session.begin_nested()
     deleted["profile_vacancy_state"] = await _del_composite(
         session, "profile_vacancy_state", "profile_id", "vacancy_id",
         provenance.get("profile_vacancy_state", []),
@@ -246,10 +280,26 @@ async def rollback_migration(session: AsyncSession, manifest_id: str) -> dict:
         session, "offer_revision_sources", "offer_revision_id", "source_listing_revision_id",
         provenance.get("offer_revision_sources", []),
     )
-    # Single-PK en orden:
     for table in _SINGLE_PK_TABLES:
         deleted[table] = await _del_single(session, table, provenance.get(table, []))
-
+    incomplete = {
+        t: {"borrado": n, "esperado": len(provenance.get(t, []))}
+        for t, n in deleted.items()
+        if n != len(provenance.get(t, []))
+    }
+    if incomplete:
+        await nested.rollback()
+        logger.error(
+            "import_portfolio_rollback: ABORTADO — borrado INCOMPLETO (procedencia "
+            "inconsistente con el destino): %s",
+            incomplete,
+        )
+        return {
+            "status": "aborted",
+            "reason": f"borrado incompleto: identidades no encontradas en {sorted(incomplete)}",
+            "incomplete": incomplete,
+        }
+    await nested.commit()
     await _mark_manifest_status(session, manifest_id, "rolled_back")
     logger.info("import_portfolio_rollback: rolled_back — %s", deleted)
     return {"status": "rolled_back", "deleted": deleted}

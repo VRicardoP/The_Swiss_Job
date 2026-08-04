@@ -211,11 +211,6 @@ def test_core0015_upgrade_from_core0014_adds_seq():
                     )
                 ).scalar_one()
 
-        asyncio.run(_bootstrap())
-        run_alembic(temp_url, "upgrade", "core0014")  # SOLO hasta status (sin seq)
-        assert asyncio.run(_has_seq()) == 0
-        # Fila PREEXISTENTE creada mientras la BD está en core0014 (applied): su seq se asignaría
-        # por orden físico → tras core0015 debe quedar 'unknown' (no atestable), no 'applied'.
         pre_id = _uuid.uuid4()
 
         async def _seed():
@@ -237,10 +232,16 @@ def test_core0015_upgrade_from_core0014_adds_seq():
                     )
                 ).scalar_one()
 
-        asyncio.run(_seed())
-        run_alembic(temp_url, "upgrade", "head")  # core0015: seq + backfill applied→unknown
+        asyncio.run(_bootstrap())
+        run_alembic(temp_url, "upgrade", "core0014")  # status (sin seq)
+        assert asyncio.run(_has_seq()) == 0
+        run_alembic(temp_url, "upgrade", "core0015")  # seq (SIN backfill, como se publicó)
         assert asyncio.run(_has_seq()) == 1
-        assert asyncio.run(_pre_status()) == "unknown"  # la preexistente ya no es atestable
+        # BD YA EN core0015 con una fila 'applied' (seq físico no fiable): tras core0016 debe
+        # quedar 'unknown' — prueba que el backfill alcanza una BD parada en la revisión previa.
+        asyncio.run(_seed())
+        run_alembic(temp_url, "upgrade", "head")  # core0016 backfillea applied→unknown
+        assert asyncio.run(_pre_status()) == "unknown"
         asyncio.run(temp_engine.dispose())
     finally:
 
@@ -406,6 +407,95 @@ def test_rollback_aborts_on_malformed_provenance_value():
             assert r["status"] == "aborted" and "list[str]" in r["reason"]
             assert await _count(s, "vacancies") == 1  # datos INTACTOS
             assert await _manifest_status(s, mid) == "applied"  # NO marcado rolled_back
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_aborts_on_non_uuid_pk():
+    """REGRESIÓN P1 ronda 6: una PK no-UUID en la procedencia (list[str] válida pero 'not-a-uuid')
+    → abort fail-closed (validación UUID), NO rolled_back sin borrar."""
+    import json
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, [_user("https://nu.example.ch/1")])
+            mid = manifest["id"]
+            await s.commit()
+            await s.execute(
+                sa.text(
+                    "UPDATE portfolio_migration_manifest "
+                    "SET manifest = jsonb_set(manifest, '{provenance,vacancies}', CAST(:v AS jsonb)) "
+                    "WHERE id = :id"
+                ),
+                {"v": json.dumps(["not-a-uuid"]), "id": mid},
+            )
+            await s.commit()
+            r = await rollback_migration(s, mid)
+            assert r["status"] == "aborted" and "no-UUID" in r["reason"]
+            assert await _count(s, "vacancies") == 1
+            assert await _manifest_status(s, mid) == "applied"
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_aborts_on_unknown_table_in_provenance():
+    """DEFENSE-IN-DEPTH (verificación ronda 6): una tabla DESCONOCIDA en la procedencia (que el
+    rollback NO borra — deriva de esquema o tamper) → abort fail-closed, no un rolled_back con
+    residuo. Productor y consumidor deben cubrir el MISMO conjunto de tablas."""
+    import json
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, [_user("https://ut.example.ch/1")])
+            mid = manifest["id"]
+            await s.commit()
+            await s.execute(
+                sa.text(
+                    "UPDATE portfolio_migration_manifest "
+                    "SET manifest = jsonb_set(manifest, '{provenance,some_future_table}', CAST(:v AS jsonb)) "
+                    "WHERE id = :id"
+                ),
+                {"v": json.dumps([]), "id": mid},
+            )
+            await s.commit()
+            r = await rollback_migration(s, mid)
+            assert r["status"] == "aborted" and "DESCONOCIDA" in r["reason"]
+            assert await _count(s, "vacancies") == 1  # intacto
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_aborts_and_reverts_on_incomplete_delete():
+    """REGRESIÓN P1 ronda 6: una PK VÁLIDA (UUID) pero INEXISTENTE → el borrado no la alcanza →
+    el savepoint REVIERTE todo el bloque (incluidas las tablas que sí borraron) y aborta; NO
+    rolled_back. Los datos quedan INTACTOS."""
+    import json
+    import uuid as _uuid
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, [_user("https://ic.example.ch/1")])
+            mid = manifest["id"]
+            await s.commit()
+            # saved_searches (hoja, fuera del guard unsafe y sin bloquear vacancies) con un UUID
+            # VÁLIDO pero INEXISTENTE → el borrado no lo alcanza → incompleto.
+            await s.execute(
+                sa.text(
+                    "UPDATE portfolio_migration_manifest "
+                    "SET manifest = jsonb_set(manifest, '{provenance,saved_searches}', CAST(:v AS jsonb)) "
+                    "WHERE id = :id"
+                ),
+                {"v": json.dumps([str(_uuid.uuid4())]), "id": mid},
+            )
+            await s.commit()
+            r = await rollback_migration(s, mid)
+            assert r["status"] == "aborted" and "incompleto" in r["reason"]
+            assert await _count(s, "vacancies") == 1  # el savepoint revirtió TODO
+            assert await _count(s, "applications") == 1  # incluidas las que sí borraron
+            assert await _manifest_status(s, mid) == "applied"
             await s.rollback()
 
     asyncio.run(_on_disposable_db(_run))
