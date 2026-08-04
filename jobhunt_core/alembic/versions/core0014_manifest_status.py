@@ -27,8 +27,7 @@ S = settings.CORE_DB_SCHEMA  # "jobhunt"
 
 
 def upgrade() -> None:
-    # 'applied' por defecto: un manifiesto persistido es 'applied' hasta que un rollback lo
-    # marque. Las filas previas (si las hubiera) se asumen aplicadas.
+    # 'applied' por defecto para los INSERT FUTUROS (persist_manifest no fija status).
     op.add_column(
         "portfolio_migration_manifest",
         sa.Column(
@@ -36,6 +35,10 @@ def upgrade() -> None:
         ),
         schema=S,
     )
+    # Backfill: las filas PREVIAS al lifecycle NO son atestables (no sabemos si su migración
+    # sigue aplicada o fue deshecha a mano) → 'unknown', nunca fuente de migration_verdict
+    # (P1 rev. externa 2). En una BD fresca esto no afecta a ninguna fila.
+    op.execute(f"UPDATE {S}.portfolio_migration_manifest SET status = 'unknown'")
 
 
 def downgrade() -> None:

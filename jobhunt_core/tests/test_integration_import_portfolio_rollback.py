@@ -196,6 +196,46 @@ def test_rollback_aborted_marks_manifest_rollback_aborted():
     asyncio.run(_on_disposable_db(_run))
 
 
+def test_rollback_invalid_manifest_id_aborts_without_deleting():
+    """REGRESIÓN P1 ronda 2: un manifest_id INEXISTENTE aborta ANTES de borrar (fail-closed);
+    los datos siguen intactos (antes borraba todo y el manifiesto real quedaba 'applied')."""
+    import uuid
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, [_user("https://iv.example.ch/1")])
+            await s.commit()
+            r = await rollback_migration(
+                s, manifest["provenance"], manifest_id=str(uuid.uuid4())
+            )
+            assert r["status"] == "aborted" and "no existe" in r["reason"]
+            assert await _count(s, "vacancies") == 1  # NADA borrado
+            assert await _count(s, "applications") == 1
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_refuses_older_manifest_lifo():
+    """REGRESIÓN P1 ronda 2: con dos manifiestos 'applied' (m1 real, m2 idempotente), deshacer
+    m1 aborta — hay un 'applied' posterior; hay que deshacer el más reciente primero (LIFO) o su
+    evidencia obsoleta sobreviviría."""
+
+    async def _run(factory):
+        users = [_user("https://lifo.example.ch/1")]
+        async with factory() as s:
+            m1 = await man.migrate_and_reconcile(s, users)
+            await s.commit()
+            await man.migrate_and_reconcile(s, users)  # m2 idempotente, también 'applied'
+            await s.commit()
+            r = await rollback_migration(s, m1["provenance"], manifest_id=m1["id"])
+            assert r["status"] == "aborted" and "LIFO" in r["reason"]
+            assert await _count(s, "vacancies") == 1  # NADA borrado
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
 def test_migrate_rollback_migrate_roundtrip_is_verified():
     """Round-trip: migrar → rollback (commit) → migrar de nuevo → 'verified'. Prueba que el
     rollback deja el estado LIMPIO para una re-migración (sin residuos que la ensucien)."""

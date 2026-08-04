@@ -127,6 +127,93 @@ def test_verify_flags_vacancy_without_canonical():
     asyncio.run(_on_disposable_db(_run))
 
 
+def test_no_title_durable_staged_even_if_sibling_shares_url():
+    """REGRESIÓN P1 ronda 2: un durable SIN título cuya url SÍ sintetiza (por un hermano válido
+    con la misma url) se STAGEA por-durable (snapshot vacío = impresentable), NO se migra. El
+    ledger de la url es created (el hermano); NO hay doble entrada created+no_title para la url."""
+    url = "https://shared.example.ch/j"
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {"url": url, "status": "saved", "title": "Good title",
+                 "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+                {"url": url, "status": "applied", "title": "   ",  # sin título → staging
+                 "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
+            ],
+            "saved_searches": [],
+        }
+    ]
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, users)
+            assert manifest["verdict"] == "ok", manifest["divergences"]
+            assert manifest["verification"]["verdict"] == "verified", manifest["verification"]
+            # La url se sintetizó (por el hermano) → created; SIN doble entrada no_title para la url.
+            url_entries = [e for e in manifest["ledger"] if e["url"] == url]
+            assert len(url_entries) == 1 and url_entries[0]["disposition"] == "created"
+            # El durable sin título está en staging, NO en applications con snapshot vacío.
+            assert any(
+                r["reason"] == "no_title" for r in manifest["staged"] if r["external_ref"] == "1"
+            )
+            n_apps = (await s.execute(sa.text("SELECT count(*) FROM applications"))).scalar_one()
+            assert n_apps == 0  # el 'saved' es bookmark; el 'applied' sin título → staging
+            await s.commit()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_surrogate_title_quarantined_not_false_lost():
+    """REGRESIÓN P2 ronda 2: un título con surrogate (el sink lo cuarentena por UnicodeEncode)
+    pasaba el precheck y quedaba created sin vacante → falso PERDIDO. Ahora _synthesizable
+    reutiliza la frontera del sink (_preprocess) → cuarentena malformed, verified."""
+
+    async def _run(factory):
+        async with factory() as s:
+            url = "https://sur.example.ch/1"
+            users = [_user([_app(url, title="T\ud800bad")])]  # título no codificable
+            manifest = await man.migrate_and_reconcile(s, users)
+            assert manifest["verdict"] == "ok", manifest["divergences"]
+            assert manifest["verification"]["verdict"] == "verified", manifest["verification"]
+            e = [x for x in manifest["ledger"] if x["url"] == url][0]
+            assert e["disposition"] == "quarantine" and e["reason"] == "malformed"
+            await s.commit()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_toxic_titled_sibling_no_false_divergent():
+    """REGRESIÓN P1 (verificación ronda 2): dos durables de la MISMA url — D_a titulado pero con
+    payload no codificable (surrogate → el sink lo cuarentena) y D_b limpio + más reciente. El
+    sink sintetiza la canónica de D_b; el oráculo de oferta debe elegir TAMBIÉN a D_b
+    (is_synthesizable), no al primer grouped D_a → sin falso divergent."""
+    url = "https://toxic-sib.example.ch/1"
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {"url": url, "status": "applied", "title": "Engineer\ud800", "company": "ACME",
+                 "description": "Great job",
+                 "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc)},
+                {"url": url, "status": "applied", "title": "Engineer", "company": "ACME",
+                 "description": "Great job",
+                 "created_at": datetime(2026, 1, 2, tzinfo=timezone.utc)},  # más reciente, limpio
+            ],
+            "saved_searches": [],
+        }
+    ]
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, users)
+            assert manifest["verdict"] == "ok", manifest["divergences"]
+            assert manifest["verification"]["verdict"] == "verified", manifest["verification"]
+            await s.commit()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
 def test_verify_reused_without_canonical_is_not_flagged():
     """REGRESIÓN P1 (verificación de fixes): una vacante REUTILIZADA de otra fuente con canónica
     NULL (contenido ACTUAL ajeno no normalizable — condición preexistente que C-4 ni causó ni

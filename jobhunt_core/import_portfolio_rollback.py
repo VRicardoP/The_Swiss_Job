@@ -129,13 +129,58 @@ async def _mark_manifest_status(
     )
 
 
+async def _validate_manifest(session: AsyncSession, manifest_id: str) -> str | None:
+    """Valida (con FOR UPDATE, ANTES de borrar) que `manifest_id` sea una fila 'applied' y la
+    MÁS RECIENTE. Devuelve el motivo de abort o None si es válido. FAIL-CLOSED: si no existe,
+    no está 'applied', o hay una fila 'applied' POSTERIOR (rollback LIFO: su evidencia obsoleta
+    sobreviviría), se aborta SIN borrar nada (P1 rev. externa 2)."""
+    row = (
+        await session.execute(
+            sa.text(
+                "SELECT status, created_at FROM portfolio_migration_manifest "
+                "WHERE id = :id FOR UPDATE"
+            ),
+            {"id": manifest_id},
+        )
+    ).first()
+    if row is None:
+        return f"manifest_id {manifest_id} no existe — fallo cerrado, no se borra nada"
+    if row.status != "applied":
+        return f"manifest {manifest_id} no está 'applied' (status={row.status}) — no se borra nada"
+    later = (
+        await session.execute(
+            sa.text(
+                "SELECT count(*) FROM portfolio_migration_manifest "
+                "WHERE status = 'applied' AND created_at > :ts"
+            ),
+            {"ts": row.created_at},
+        )
+    ).scalar_one()
+    if later:
+        return (
+            f"hay {later} manifiesto(s) 'applied' POSTERIOR(es) — deshaz el más reciente "
+            f"primero (rollback LIFO); si no, su evidencia obsoleta sobreviviría"
+        )
+    return None
+
+
 async def rollback_migration(
     session: AsyncSession, provenance: dict[str, list[str]], manifest_id: str | None = None
 ) -> dict:
     """Deshace la migración borrando las filas de `provenance` (parte 2) en orden FK-safe.
-    DESTRUCTIVO y NO commitea. Si se pasa `manifest_id`, marca su fila durable con el estado
-    resultante (rolled_back|rollback_aborted) para que un `verdict='ok'` obsoleto no alimente
-    un falso GATE-C. Devuelve {status: 'rolled_back'|'aborted', deleted|reason}."""
+    DESTRUCTIVO y NO commitea. Si se pasa `manifest_id`, VALIDA su fila (applied + más reciente,
+    fail-closed) ANTES de borrar y la marca con el estado resultante (rolled_back|
+    rollback_aborted) para que un `verdict='ok'` obsoleto no alimente un falso GATE-C. Devuelve
+    {status: 'rolled_back'|'aborted', deleted|reason}."""
+    # VALIDACIÓN fail-closed ANTES de tocar nada: un manifest_id inexistente/no-applied/no-más-
+    # reciente aborta SIN borrar (P1 rev. externa 2). El FOR UPDATE bloquea la fila hasta el
+    # commit del llamador, así el estado no cambia bajo nuestros pies.
+    if manifest_id is not None:
+        abort_reason = await _validate_manifest(session, manifest_id)
+        if abort_reason is not None:
+            logger.error("import_portfolio_rollback: ABORTADO (validación) — %s", abort_reason)
+            return {"status": "aborted", "reason": abort_reason}
+
     unsafe = await _reused_pointing_to_provenance(session, provenance)
     if unsafe:
         logger.error(

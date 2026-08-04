@@ -29,7 +29,12 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jobhunt_core.harvest.sink import normalize_url
-from jobhunt_core.import_portfolio import PORTFOLIO_IMPORT_SOURCE, normalized_key
+from jobhunt_core.import_portfolio import (
+    PORTFOLIO_IMPORT_SOURCE,
+    is_synthesizable,
+    normalized_key,
+    title_normalizable,
+)
 from jobhunt_core.import_portfolio_durables import (
     APPLICATION_STATUSES,
     PORTFOLIO_CONSUMER,
@@ -176,6 +181,10 @@ async def _classify_expected(
         url = row.get("url")
         if not url:
             return ("staged", "unresolved", _ident(None))
+        if not title_normalizable(row.get("title")):
+            # Durable sin título normalizable → staging por-durable (aunque su url sintetice por
+            # un hermano). Debe COINCIDIR con migrate_applications (P1 rev. externa 2).
+            return ("staged", "no_title", _ident(url))
         try:
             key = normalize_url(url)
         except ValueError:
@@ -195,13 +204,20 @@ async def _classify_expected(
     bookmarks: set[tuple] = set()
     staged: Counter = Counter()
 
-    # Oferta canónica: primer durable (orden GLOBAL) cuya url SÍ se sintetizó (no
-    # colisión/cuarentena/reutilizada) → su payload NORMALIZADO (strip). SIN título tras
-    # normalizar el sink no crea revisión → sin oferta.
+    # Oferta canónica: primer durable (orden GLOBAL) SINTETIZABLE cuya url SÍ se sintetizó (no
+    # colisión/cuarentena/reutilizada) → su payload NORMALIZADO (strip). Se exige `is_synthesizable`
+    # —el MISMO criterio que grp["synth"] de la síntesis (título normalizable + frontera del
+    # sink)— para elegir el MISMO durable representante que el sink; si no, un durable tóxico
+    # (payload no codificable) pero titulado con un hermano limpio daría un falso divergent
+    # (P1 verificación ronda 2). SIN título el sink no crea revisión → sin oferta.
     offer_first: dict[str, dict] = {}
     for user in users:
         for row in user.get("applications") or []:
-            if _route(row)[0] == "grouped" and normalize_url(row["url"]) not in reused:
+            if (
+                _route(row)[0] == "grouped"
+                and normalize_url(row["url"]) not in reused
+                and is_synthesizable(row)
+            ):
                 offer_first.setdefault(normalize_url(row["url"]), row)
     offer = {
         (key, _norm_text(r.get("title")) or "", _norm_text(r.get("company")) or "",

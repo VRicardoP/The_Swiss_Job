@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jobhunt_core import import_portfolio_ledger as pil
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
-from jobhunt_core.harvest.sink import MAX_URL_LEN, RawListingSink, normalize_url
+from jobhunt_core.harvest.sink import MAX_URL_LEN, RawListingSink, _preprocess, normalize_url
 from jobhunt_core.harvest.types import RawListing
 
 logger = logging.getLogger(__name__)
@@ -111,6 +111,54 @@ def durable_to_raw_listing(
     )
 
 
+def title_normalizable(value) -> bool:
+    """True si `value` es un título que el sink normalizaría a canónica: un str no vacío tras
+    strip (replica normalize._text). Un no-str (int/list del feed) o vacío/espacios → False (el
+    sink no crea offer_revision → vacante impresentable). DEFINICIÓN ÚNICA usada por la síntesis,
+    migrate_applications y reconcile — deben coincidir o el destino y el esperado divergirían."""
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _synthesizable(item: dict, listing: RawListing, url_normalized: str) -> tuple[bool, str | None]:
+    """(True, None) si este durable produciría una vacante-sombra PRESENTABLE; (False, razón)
+    si no. Razones: no_title (título no normalizable → el sink no crea canónica → impresentable),
+    limit (url > MAX_URL_LEN) o malformed (payload/url no codificable —surrogate— o con NUL). La
+    frontera del sink se REUTILIZA (`_preprocess`), no se replica: la partición sintetizable/no
+    debe coincidir EXACTA con la del sink (P2 rev. externa 2). Es POR DURABLE — un grupo (url)
+    sintetiza si ≥1 de sus durables es sintetizable; la razón solo aplica si NINGUNO lo es."""
+    if not title_normalizable(item.get("title")):
+        return False, pil.Q_NO_TITLE
+    if len(listing.url) > MAX_URL_LEN or len(url_normalized) > MAX_URL_LEN:
+        return False, pil.Q_LIMIT
+    if _preprocess(listing) is None:  # no codificable (surrogate) / NUL — el sink la cuarentena
+        return False, pil.Q_MALFORMED
+    return True, None
+
+
+def is_synthesizable(row: dict) -> bool:
+    """True si este durable (dict con url/title/company/description) produciría una vacante-
+    sombra presentable. Lo usa reconcile para elegir el MISMO durable representante que la
+    síntesis (grp["synth"] = primer sintetizable): si el oráculo de oferta eligiera otro (p.ej.
+    el primer 'grouped' sin mirar la frontera del sink), un durable tóxico-pero-titulado con un
+    hermano limpio daría un falso divergent (P1 verificación ronda 2)."""
+    url = row.get("url")
+    if not url:
+        return False
+    try:
+        url_normalized = normalize_url(url)
+        raw_title = row.get("title")
+        listing = durable_to_raw_listing(
+            url,
+            raw_title if isinstance(raw_title, str) else "",
+            row.get("company"),
+            row.get("description"),
+        )
+    except ValueError:
+        return False
+    ok, _ = _synthesizable(row, listing, url_normalized)
+    return ok
+
+
 async def synthesize_vacancies(
     session: AsyncSession,
     scope_id: uuid.UUID,
@@ -148,8 +196,13 @@ async def synthesize_vacancies(
     bloqueo del sink y la cierra el script del ensayo §4 (gated NAS). Pasa TODOS los
     items en UNA llamada.
     """
-    # --- Pasada 1: validar/normalizar y AGRUPAR por external_id (= clave de
-    # identidad sha256(url_normalized)). Cuarentena por-item de sin-url/malformadas.
+    # --- Pasada 1: validar/normalizar y AGRUPAR por external_id (= clave sha256(url_norm)).
+    # La cuarentena de TÍTULO/frontera-del-sink es POR GRUPO, no por item: un grupo sintetiza
+    # si ≥1 de sus durables es SINTETIZABLE (`_synthesizable`), y la razón (no_title/limit/
+    # malformed) solo aplica si NINGUNO lo es — así un hermano válido con la misma url NO deja
+    # el grupo sin sintetizar (P1 rev. externa 2). El staging POR DURABLE del hermano no
+    # sintetizable lo hace migrate_applications. Solo sin-url y url-malformada son por-item
+    # (deterministas por url). `grp["synth"]` = una listing sintetizable que representa al grupo.
     groups: dict[str, dict] = {}
     skipped = {"no_url": 0, "malformed": 0, "no_title": 0, "limit": 0, "collision": 0, "dup": 0}
     # Colector de razones de cuarentena por url (para el ledger; barato aunque no se pida).
@@ -158,62 +211,38 @@ async def synthesize_vacancies(
         url = item.get("url")
         if not url:
             skipped["no_url"] += 1
-            logger.warning(
-                "import_portfolio: item sin url OMITIDO (title=%r) — "
-                "pendiente de staging en una parte futura de C-4",
-                item.get("title"),
-            )
+            logger.warning("import_portfolio: item sin url OMITIDO (title=%r)", item.get("title"))
             continue
+        raw_title = item.get("title")
         try:
             url_normalized = normalize_url(url)
             listing = durable_to_raw_listing(
                 url,
-                item.get("title") or "",
+                raw_title if isinstance(raw_title, str) else "",
                 item.get("company"),
                 item.get("description"),
             )
         except ValueError as exc:
-            # URL malformada: CUARENTENA por-item, no abortar el lote válido (el
-            # external_id se calcula con normalize_url ANTES del sink, FUERA de su
-            # cuarentena; sin esto un durable tóxico envenenaría el lote entero).
+            # URL malformada (o no codificable): CUARENTENA por-item — determinista por url, no
+            # aborta el lote válido (el external_id se calcula con normalize_url ANTES del sink).
             skipped["malformed"] += 1
             quarantined[url] = pil.Q_MALFORMED
             logger.warning(
-                "import_portfolio: URL malformada OMITIDA (%s: %s) — title=%r",
-                exc.__class__.__name__, exc, item.get("title"),
-            )
-            continue
-        # FRONTERA DEL SINK REPLICADA (rev. externa): una url que el sink CUARENTENARÍA no debe
-        # entrar en `synthesized` — si no, el ledger la marcaría created SIN vacante (falso
-        # PERDIDO) o crearía una vacante IMPRESENTABLE. Se cuarentena aquí, antes de sintetizar.
-        if len(url) > MAX_URL_LEN or len(url_normalized) > MAX_URL_LEN:
-            skipped["limit"] += 1
-            quarantined[url] = pil.Q_LIMIT
-            logger.warning(
-                "import_portfolio: url > %d OMITIDA (el sink la cuarentena) — %s…",
-                MAX_URL_LEN, url[:80],
-            )
-            continue
-        # SIN título normalizable → el sink NO crea canónica (offer_revision): la vacante-sombra
-        # sería IMPRESENTABLE en el catálogo. Se cuarentena → la candidatura va a staging
-        # (auditable), en vez de ligarse a una vacante sin contenido (P1 rev. externa). Se
-        # replica el sink con `isinstance(str)`: un título NO-str (int/bool/list del feed) NO es
-        # normalizable → cuarentena no_title; jamás `.strip()` sobre un no-str (envenenaría el
-        # lote con AttributeError, el poison-pill que este propio módulo evita, rev. externa 2).
-        title = item.get("title")
-        if not (isinstance(title, str) and title.strip()):
-            skipped["no_title"] += 1
-            quarantined[url] = pil.Q_NO_TITLE
-            logger.warning(
-                "import_portfolio: durable SIN título normalizable OMITIDO (url=%s) — a staging",
-                url,
+                "import_portfolio: URL malformada OMITIDA (%s: %s)", exc.__class__.__name__, exc
             )
             continue
         grp = groups.setdefault(
-            listing.external_id, {"urln": url_normalized, "by_url": {}, "count": 0}
+            listing.external_id,
+            {"urln": url_normalized, "by_url": {}, "count": 0, "synth": None, "reason": None},
         )
         grp["count"] += 1
         grp["by_url"].setdefault(url, listing)  # una RawListing por url distinta
+        ok, reason = _synthesizable(item, listing, url_normalized)
+        if ok:
+            if grp["synth"] is None:
+                grp["synth"] = listing  # una listing sintetizable representa al grupo
+        elif grp["reason"] is None:
+            grp["reason"] = reason  # razón TENTATIVA (solo aplica si el grupo NO sintetiza)
 
     # Snapshot de las vacantes portfolio-import PRESENTABLES ANTES de sintetizar: una vacante
     # resultante ya presente aquí PREEXISTÍA (created vs reused EXACTO del ledger). Solo si se
@@ -254,8 +283,22 @@ async def synthesize_vacancies(
                 grp["urln"], sorted(batch_urls), sorted(prior_urls),
             )
             continue
-        listings.append(next(iter(grp["by_url"].values())))
-        synthesized[grp["urln"]] = next(iter(batch_urls))
+        url = next(iter(batch_urls))
+        if grp["synth"] is None:
+            # NINGÚN durable de esta url es sintetizable (todos sin título / frontera del sink):
+            # no se crea vacante (ni impresentable ni created-null); a staging con la razón real.
+            reason = grp["reason"] or pil.Q_NO_TITLE
+            skipped[{pil.Q_NO_TITLE: "no_title", pil.Q_LIMIT: "limit"}.get(reason, "malformed")] += (
+                grp["count"]
+            )
+            quarantined[url] = reason
+            logger.warning(
+                "import_portfolio: url sin durable sintetizable (%s) OMITIDA (%s) — a staging",
+                url, reason,
+            )
+            continue
+        listings.append(grp["synth"])  # la listing SINTETIZABLE (título + frontera del sink ok)
+        synthesized[grp["urln"]] = url
         skipped["dup"] += grp["count"] - 1  # exactos-dup del mismo url
 
     cross_source = await _synthesize_pruning_collisions(

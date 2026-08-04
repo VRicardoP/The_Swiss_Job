@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 # Claves de los conteos de clasificación (parte 2) — se agregan entre usuarios.
 _APP_COUNT_KEYS = (
     "applications", "bookmarks", "unresolved", "consolidated", "invalid_status",
-    "collision",
+    "collision", "no_title",
 )
 _SS_COUNT_KEYS = ("migrated", "existing", "invalid_filters", "no_name")
 

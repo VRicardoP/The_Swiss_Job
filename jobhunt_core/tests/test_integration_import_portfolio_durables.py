@@ -147,7 +147,7 @@ async def _scenario(factory, caplog):
     ]
     expected_counts = {
         "applications": 3, "bookmarks": 3, "unresolved": 2,
-        "consolidated": 1, "invalid_status": 0, "collision": 0,
+        "consolidated": 1, "invalid_status": 0, "collision": 0, "no_title": 0,
     }
 
     async with factory() as s:
@@ -306,14 +306,14 @@ async def _scenario(factory, caplog):
         )
         await s.commit()
         multi = [
-            {"user_id": 7, "url": URL_MULTI, "status": "saved", "notes": None,
-             "follow_up_date": None,
+            {"user_id": 7, "url": URL_MULTI, "status": "saved", "title": "Multi Note",
+             "notes": None, "follow_up_date": None,
              "created_at": datetime(2026, 6, 10, tzinfo=timezone.utc)},
-            {"user_id": 7, "url": URL_MULTI, "status": "saved", "notes": "nota buena",
-             "follow_up_date": None,
+            {"user_id": 7, "url": URL_MULTI, "status": "saved", "title": "Multi Note",
+             "notes": "nota buena", "follow_up_date": None,
              "created_at": datetime(2026, 6, 11, tzinfo=timezone.utc)},
-            {"user_id": 7, "url": URL_MULTI, "status": "saved", "notes": "nota tardía",
-             "follow_up_date": None,
+            {"user_id": 7, "url": URL_MULTI, "status": "saved", "title": "Multi Note",
+             "notes": "nota tardía", "follow_up_date": None,
              "created_at": datetime(2026, 6, 12, tzinfo=timezone.utc)},
         ]
         cm = await ipd.migrate_applications(s, profile_id, multi)
@@ -335,11 +335,11 @@ async def _scenario(factory, caplog):
         )
         await s.commit()
         two_real = [
-            {"user_id": 7, "url": URL_TWO_REAL, "status": "rejected", "notes": None,
-             "follow_up_date": None,
+            {"user_id": 7, "url": URL_TWO_REAL, "status": "rejected", "title": "Two Real",
+             "notes": None, "follow_up_date": None,
              "created_at": datetime(2026, 7, 20, tzinfo=timezone.utc)},  # reciente, 1ª
-            {"user_id": 7, "url": URL_TWO_REAL, "status": "applied", "notes": None,
-             "follow_up_date": None,
+            {"user_id": 7, "url": URL_TWO_REAL, "status": "applied", "title": "Two Real",
+             "notes": None, "follow_up_date": None,
              "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},  # antigua, última
         ]
         caplog.clear()
