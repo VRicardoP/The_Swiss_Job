@@ -29,12 +29,34 @@ logger = logging.getLogger(__name__)
 FINGERPRINT_KEY = "_params_fp"
 
 
+async def _still_claim_owner(session, scope_id: str, token) -> bool:
+    """True si el scope sigue reclamado por ESTE `token` y en 'running'. Un worker cuyo lease venció
+    y fue RE-ARMADO por otro (claim_token sobrescrito en claim_scope_run) ya NO es dueño: no debe
+    mutar `source_scope_state` (cursor / consecutive_failures) porque pisaría el estado del worker
+    VIGENTE (P1 rev. externa integral ronda 2). `FOR UPDATE` bloquea un re-arm concurrente entre la
+    comprobación y la escritura → check+write atómico. `token` None (llamada directa/legacy)
+    preserva el comportamiento previo (sin fencing)."""
+    if token is None:
+        return True
+    row = (
+        await session.execute(
+            sa.text(
+                "SELECT 1 FROM source_harvest_runs WHERE scope_id = :sid "
+                "AND claim_token = :tok AND status = 'running' FOR UPDATE"
+            ),
+            {"sid": scope_id, "tok": token},
+        )
+    ).first()
+    return row is not None
+
+
 async def run_scope(
     scope_id: str,
     provider: BaseProvider,
     sink: ListingSink,
     http: httpx.AsyncClient,
     session_factory=SessionLocal,
+    claim_token=None,
 ) -> ScopeRunResult:
     async with session_factory() as session:
         row = (
@@ -77,7 +99,7 @@ async def run_scope(
             # fuente (sin backoff) — sube a la tarea, que falla sin retry.
             raise
         except Exception as exc:
-            await _record_failure_safe(session, scope_id)
+            await _record_failure_safe(session, scope_id, claim_token)
             logger.warning("scope %s: fetch falló: %s", scope_id, exc)
             return ScopeRunResult(scope_id=scope_id, status="error", error=str(exc)[:200])
 
@@ -123,6 +145,15 @@ async def run_scope(
                 await session.rollback()
                 logger.info("scope %s: %s, stale", scope_id, stale_reason)
                 return ScopeRunResult(scope_id=scope_id, status="stale")
+            # FENCING: si el lease venció y otro worker re-armó el scope, este run YA NO es dueño —
+            # NO debe escribir cursor/consecutive_failures pisando al vigente (P1 rev. externa
+            # integral ronda 2). El FOR UPDATE del guard es de la MISMA tx que la persistencia.
+            if not await _still_claim_owner(session, scope_id, claim_token):
+                await session.rollback()
+                logger.info(
+                    "scope %s: lease vencido y re-armado por otro worker, stale", scope_id
+                )
+                return ScopeRunResult(scope_id=scope_id, status="stale")
 
             await sink.handle(session, scope_id, result.listings)
             new_cursor = {**result.next_cursor, FINGERPRINT_KEY: fingerprint}
@@ -147,7 +178,7 @@ async def run_scope(
             await session.commit()
         except Exception as exc:
             await session.rollback()  # ni listings a medias ni cursor avanzado
-            await _record_failure_safe(session, scope_id)
+            await _record_failure_safe(session, scope_id, claim_token)
             logger.warning("scope %s: persistencia falló, cursor intacto: %s", scope_id, exc)
             return ScopeRunResult(scope_id=scope_id, status="error", error=str(exc)[:200])
 
@@ -177,8 +208,13 @@ def _provider_cursor(stored: dict | None, fingerprint: str, scope_id: str) -> di
     return cursor or None
 
 
-async def _record_failure_safe(session, scope_id: str) -> None:
+async def _record_failure_safe(session, scope_id: str, token=None) -> None:
     """Cuenta el fallo SIN tocar el cursor (insumo del backoff, ADR-05).
+
+    FENCING (P1 rev. externa integral ronda 2): solo cuenta el fallo si este run sigue siendo el
+    dueño del claim (token vigente). Un worker desahuciado (lease vencido, scope re-armado por otro
+    que ya cosechó con consecutive_failures=0) NO debe incrementar el contador y disparar un backoff
+    espurio sobre el estado del vigente.
 
     NUNCA propaga: si la propia contabilización falla (p.ej. BD caída — la
     causa probable del fallo original), se loguea y el runner devuelve igual
@@ -186,6 +222,13 @@ async def _record_failure_safe(session, scope_id: str) -> None:
     """
     try:
         await session.rollback()  # asegura sesión utilizable tras el fallo previo
+        if not await _still_claim_owner(session, scope_id, token):
+            await session.rollback()
+            logger.info(
+                "scope %s: lease vencido/re-armado — fallo NO contabilizado (dueño actual otro "
+                "worker)", scope_id,
+            )
+            return
         await session.execute(
             sa.text(
                 "INSERT INTO source_scope_state (scope_id, consecutive_failures) "

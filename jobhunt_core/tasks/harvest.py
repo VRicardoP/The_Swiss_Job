@@ -88,7 +88,9 @@ async def _run_all_impl(run_key: str) -> dict[str, Any]:
                 results[str(scope_id)] = "skipped"
                 continue
             try:
-                result = await _run_scope_impl(str(scope_id))
+                # El token del claim FENCE también el fetch/persistencia: un worker desahuciado no
+                # muta source_scope_state del vigente (P1 rev. externa integral ronda 2).
+                result = await _run_scope_impl(str(scope_id), token)
                 status = result.status
             except Exception as exc:  # el run sigue con el resto de scopes
                 logger.warning("run %s: scope %s falló: %s", run_key, scope_id, exc)
@@ -109,7 +111,7 @@ async def _run_all_impl(run_key: str) -> dict[str, Any]:
     }
 
 
-async def _run_scope_impl(scope_id: str) -> ScopeRunResult:
+async def _run_scope_impl(scope_id: str, claim_token=None) -> ScopeRunResult:
     # Engine DESECHABLE por invocación (rev. 2ª #1): cada asyncio.run crea un
     # loop nuevo — el engine global quedaría ligado al primero y la segunda
     # tarea del proceso worker moriría ('Future attached to a different loop').
@@ -135,5 +137,5 @@ async def _run_scope_impl(scope_id: str) -> ScopeRunResult:
         async with httpx.AsyncClient() as http:
             return await run_scope(
                 scope_id, provider, RawListingSink(), http,
-                session_factory=session_factory,
+                session_factory=session_factory, claim_token=claim_token,
             )

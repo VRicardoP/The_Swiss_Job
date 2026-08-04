@@ -118,7 +118,7 @@ def test_retry_skips_done_and_reruns_errors(db, monkeypatch):
     scope_a, scope_b = _seed_scopes(factory, created, n=2)
     calls: list[str] = []
 
-    async def fake_impl(scope_id):
+    async def fake_impl(scope_id, claim_token=None):
         calls.append(scope_id)
         if scope_id == str(scope_b) and len([c for c in calls if c == scope_id]) == 1:
             raise RuntimeError("fuente rota (simulada)")
@@ -176,7 +176,7 @@ def test_hung_scope_is_rerun_on_retry(db, monkeypatch):
 
     calls: list[str] = []
 
-    async def fake_impl(scope_id):
+    async def fake_impl(scope_id, claim_token=None):
         calls.append(scope_id)
         return ScopeRunResult(scope_id=scope_id, status="ok")
 
@@ -220,7 +220,7 @@ def test_disabled_scope_between_attempts_does_not_poison_run(db, monkeypatch):
     factory, created = db
     scope_a, scope_b = _seed_scopes(factory, created, n=2)
 
-    async def fake_fail_b(scope_id):
+    async def fake_fail_b(scope_id, claim_token=None):
         if scope_id == str(scope_b):
             raise RuntimeError("rota")
         return ScopeRunResult(scope_id=scope_id, status="ok")
@@ -259,7 +259,7 @@ def test_second_retry_all_skipped_recomputes_ok(db, monkeypatch):
     _seed_scopes(factory, created, n=2)
     calls: list[str] = []
 
-    async def fake_ok(scope_id):
+    async def fake_ok(scope_id, claim_token=None):
         calls.append(scope_id)
         return ScopeRunResult(scope_id=scope_id, status="ok")
 
@@ -363,6 +363,134 @@ def test_finish_scope_run_fenced_by_claim_token(db):
             await s.commit()
 
     asyncio.run(flow())
+
+
+def test_record_failure_fenced_by_claim_token(db):
+    """REGRESIÓN P1 rev. externa integral ronda 2: el token protegía SOLO el cierre; un worker
+    DESAHUCIADO (lease vencido, scope re-armado por otro) seguía mutando source_scope_state — su
+    _record_failure_safe incrementaba consecutive_failures pisando al vigente (que cosechó con 0).
+    Ahora toda mutación se condiciona al token vigente."""
+    from jobhunt_core.harvest.runner import _record_failure_safe, _still_claim_owner
+
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+
+    async def flow():
+        async with factory() as s:
+            run_id = await runs.start_run(s, "ventana-failfence")
+            created["runs"].append(run_id)
+            tok_old = await runs.claim_scope_run(s, run_id, scope_a)  # worker A
+            # Backdate → lease vencido → worker B re-arma con token NUEVO.
+            await s.execute(
+                sa.text(
+                    "UPDATE source_harvest_runs SET started_at = clock_timestamp() "
+                    "- make_interval(secs => 3600) WHERE run_id = :r AND scope_id = :s"
+                ),
+                {"r": run_id, "s": scope_a},
+            )
+            tok_new = await runs.claim_scope_run(s, run_id, scope_a)
+            assert tok_new is not None and tok_new != tok_old
+            # Estado del VIGENTE (B): cosecha OK, 0 fallos.
+            await s.execute(
+                sa.text(
+                    "INSERT INTO source_scope_state (scope_id, consecutive_failures) "
+                    "VALUES (:s, 0) ON CONFLICT (scope_id) DO UPDATE SET consecutive_failures = 0"
+                ),
+                {"s": scope_a},
+            )
+            await s.commit()
+        # Worker A (desahuciado) intenta contabilizar un fallo → NO debe incrementar.
+        async with factory() as s:
+            assert await _still_claim_owner(s, str(scope_a), tok_old) is False
+            await s.rollback()
+        async with factory() as s:
+            await _record_failure_safe(s, str(scope_a), tok_old)
+        async with factory() as s:
+            cf = (
+                await s.execute(
+                    sa.text(
+                        "SELECT consecutive_failures FROM source_scope_state WHERE scope_id = :s"
+                    ),
+                    {"s": scope_a},
+                )
+            ).scalar_one()
+            assert cf == 0  # FENCING: el desahuciado NO incrementó
+        # Worker B (vigente) sí contabiliza su propio fallo.
+        async with factory() as s:
+            await _record_failure_safe(s, str(scope_a), tok_new)
+        async with factory() as s:
+            cf2 = (
+                await s.execute(
+                    sa.text(
+                        "SELECT consecutive_failures FROM source_scope_state WHERE scope_id = :s"
+                    ),
+                    {"s": scope_a},
+                )
+            ).scalar_one()
+            assert cf2 == 1
+
+    asyncio.run(flow())
+
+
+def test_run_scope_success_fenced_by_claim_token(db):
+    """REGRESIÓN P1 rev. externa integral ronda 2 (camino de ÉXITO): un worker DESAHUCIADO cuyo
+    fetch tiene ÉXITO NO debe persistir cursor/listings — el guard _still_claim_owner ANTES de
+    sink.handle lo detecta (stale) y no pisa el estado del vigente; el vigente sí persiste."""
+    import httpx
+
+    from jobhunt_core.harvest.runner import run_scope
+    from jobhunt_core.tests.test_integration_harvest import (
+        CollectSink,
+        FakeProvider,
+        _provider_cursor_of,
+        _state,
+    )
+
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+
+    async def claim_and_rearm():
+        async with factory() as s:
+            run_id = await runs.start_run(s, "ventana-succ-fence")
+            created["runs"].append(run_id)
+            tok_old = await runs.claim_scope_run(s, run_id, scope_a)
+            await s.execute(
+                sa.text(
+                    "UPDATE source_harvest_runs SET started_at = clock_timestamp() "
+                    "- make_interval(secs => 3600) WHERE run_id = :r AND scope_id = :s"
+                ),
+                {"r": run_id, "s": scope_a},
+            )
+            tok_new = await runs.claim_scope_run(s, run_id, scope_a)
+            await s.commit()
+            return tok_old, tok_new
+
+    tok_old, tok_new = asyncio.run(claim_and_rearm())
+
+    def _run_tok(sink, token):
+        async def go():
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda r: httpx.Response(500))
+            ) as http:
+                return await run_scope(
+                    scope_a, FakeProvider(), sink, http,
+                    session_factory=factory, claim_token=token,
+                )
+
+        return asyncio.run(go())
+
+    # Worker DESAHUCIADO (tok_old): fetch OK, pero el guard aborta ANTES de sink.handle.
+    sink = CollectSink()
+    result = _run_tok(sink, tok_old)
+    assert result.status == "stale"  # fenceado antes de persistir
+    assert sink.batches == []  # sink.handle NO se llamó
+    assert _state(factory, scope_a) is None  # cursor NO escrito
+
+    # Worker VIGENTE (tok_new): persiste normalmente.
+    sink2 = CollectSink()
+    result2 = _run_tok(sink2, tok_new)
+    assert result2.status == "ok"
+    assert sink2.batches and _provider_cursor_of(_state(factory, scope_a)) is not None
 
 
 def test_run_all_task_registered():
