@@ -45,7 +45,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jobhunt_core import matching
-from jobhunt_core.import_portfolio import resolve_vacancy_by_url, title_normalizable
+from jobhunt_core.import_portfolio import durable_synthesizable, resolve_vacancy_by_url
 from jobhunt_core.profiles import ensure_consumer, upsert_profile
 
 logger = logging.getLogger(__name__)
@@ -135,19 +135,23 @@ async def migrate_applications(
             )
             _record_skipped(staging, "application", "collision", row)
             continue
-        if not title_normalizable(row.get("title")):
-            # SIN título normalizable: aunque la url resuelva (una candidatura hermana con la
-            # misma url pudo sintetizar la vacante), ESTE durable tendría snapshot vacío →
-            # impresentable. A staging (auditable), NUNCA migrado con snapshot vacío. La
-            # cuarentena es POR DURABLE, no por url (P1 rev. externa 2).
-            counts["no_title"] += 1
-            logger.warning(
-                "import_portfolio_durables: durable SIN título normalizable OMITIDO "
-                "(url=%r) — a staging",
-                url,
-            )
-            _record_skipped(staging, "application", "no_title", row)
-            continue
+        if url:
+            ok, reason = durable_synthesizable(row)
+            if not ok:
+                # NO sintetizable (sin título O frontera del sink: url>límite, payload no
+                # codificable —surrogate— o NUL). Aunque su url resuelva (un hermano válido la
+                # sintetizó), ESTE durable tendría snapshot impresentable/TÓXICO — un surrogate
+                # en el snapshot reventaría el INSERT CAST(:snap AS jsonb) y abortaría el lote
+                # (P1 rev. externa 3). MISMA clasificación que reconcile._route y la síntesis.
+                counts["no_title"] += 1
+                logger.warning(
+                    "import_portfolio_durables: durable NO sintetizable (%s) OMITIDO "
+                    "(url=%r) — a staging",
+                    reason,
+                    url,
+                )
+                _record_skipped(staging, "application", reason or "no_title", row)
+                continue
         vacancy_id = await resolve_vacancy_by_url(session, url) if url else None
         if vacancy_id is None:
             counts["unresolved"] += 1

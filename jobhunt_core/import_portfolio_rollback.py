@@ -129,39 +129,47 @@ async def _mark_manifest_status(
     )
 
 
-async def _validate_manifest(session: AsyncSession, manifest_id: str) -> str | None:
-    """Valida (con FOR UPDATE, ANTES de borrar) que `manifest_id` sea una fila 'applied' y la
-    MÁS RECIENTE. Devuelve el motivo de abort o None si es válido. FAIL-CLOSED: si no existe,
-    no está 'applied', o hay una fila 'applied' POSTERIOR (rollback LIFO: su evidencia obsoleta
-    sobreviviría), se aborta SIN borrar nada (P1 rev. externa 2)."""
+async def _validate_manifest(
+    session: AsyncSession, manifest_id: str
+) -> tuple[str | None, dict | None]:
+    """Valida (con FOR UPDATE, ANTES de borrar) que `manifest_id` sea una fila 'applied' y la MÁS
+    RECIENTE (por `seq`, orden total). Devuelve (motivo_abort|None, procedencia_ALMACENADA). La
+    procedencia se lee del PROPIO manifiesto (manifest->'provenance'), NO de la que pase el
+    llamador — así el borrado queda VINCULADO al manifest_id y no se puede borrar la procedencia
+    de m1 marcando m2 (P1 rev. externa 3). FAIL-CLOSED: no existe / no 'applied' / hay una
+    'applied' con seq mayor (LIFO) → abort sin borrar nada."""
     row = (
         await session.execute(
             sa.text(
-                "SELECT status, created_at FROM portfolio_migration_manifest "
+                "SELECT status, seq, manifest FROM portfolio_migration_manifest "
                 "WHERE id = :id FOR UPDATE"
             ),
             {"id": manifest_id},
         )
     ).first()
     if row is None:
-        return f"manifest_id {manifest_id} no existe — fallo cerrado, no se borra nada"
+        return f"manifest_id {manifest_id} no existe — fallo cerrado, no se borra nada", None
     if row.status != "applied":
-        return f"manifest {manifest_id} no está 'applied' (status={row.status}) — no se borra nada"
+        return (
+            f"manifest {manifest_id} no está 'applied' (status={row.status}) — no se borra nada",
+            None,
+        )
     later = (
         await session.execute(
             sa.text(
                 "SELECT count(*) FROM portfolio_migration_manifest "
-                "WHERE status = 'applied' AND created_at > :ts"
+                "WHERE status = 'applied' AND seq > :seq"
             ),
-            {"ts": row.created_at},
+            {"seq": row.seq},
         )
     ).scalar_one()
     if later:
         return (
             f"hay {later} manifiesto(s) 'applied' POSTERIOR(es) — deshaz el más reciente "
-            f"primero (rollback LIFO); si no, su evidencia obsoleta sobreviviría"
+            f"primero (rollback LIFO); si no, su evidencia obsoleta sobreviviría",
+            None,
         )
-    return None
+    return None, (row.manifest or {}).get("provenance", {})
 
 
 async def rollback_migration(
@@ -173,13 +181,16 @@ async def rollback_migration(
     rollback_aborted) para que un `verdict='ok'` obsoleto no alimente un falso GATE-C. Devuelve
     {status: 'rolled_back'|'aborted', deleted|reason}."""
     # VALIDACIÓN fail-closed ANTES de tocar nada: un manifest_id inexistente/no-applied/no-más-
-    # reciente aborta SIN borrar (P1 rev. externa 2). El FOR UPDATE bloquea la fila hasta el
-    # commit del llamador, así el estado no cambia bajo nuestros pies.
+    # reciente aborta SIN borrar (P1 rev. externa 2/3). El FOR UPDATE bloquea la fila hasta el
+    # commit del llamador, así el estado no cambia bajo nuestros pies. Si es válido, se BORRA la
+    # procedencia ALMACENADA en el manifiesto (vinculada al id), NO la del parámetro — así no se
+    # puede borrar la procedencia de m1 marcando m2 (P1 rev. externa 3).
     if manifest_id is not None:
-        abort_reason = await _validate_manifest(session, manifest_id)
+        abort_reason, stored_provenance = await _validate_manifest(session, manifest_id)
         if abort_reason is not None:
             logger.error("import_portfolio_rollback: ABORTADO (validación) — %s", abort_reason)
             return {"status": "aborted", "reason": abort_reason}
+        provenance = stored_provenance
 
     unsafe = await _reused_pointing_to_provenance(session, provenance)
     if unsafe:

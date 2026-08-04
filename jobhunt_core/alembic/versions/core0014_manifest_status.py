@@ -39,7 +39,17 @@ def upgrade() -> None:
     # sigue aplicada o fue deshecha a mano) → 'unknown', nunca fuente de migration_verdict
     # (P1 rev. externa 2). En una BD fresca esto no afecta a ninguna fila.
     op.execute(f"UPDATE {S}.portfolio_migration_manifest SET status = 'unknown'")
+    # Ordinal MONOTÓNICO de inserción para el rollback LIFO: created_at usa now(), CONSTANTE
+    # durante toda la transacción → dos migraciones en la MISMA tx empatarían y el guard `>` no
+    # vería al gemelo; el UUID no ordena por inserción (P1 rev. externa 3). IDENTITY es un orden
+    # TOTAL. Los INSERT de persist_manifest no fijan seq → autogenerado.
+    op.add_column(
+        "portfolio_migration_manifest",
+        sa.Column("seq", sa.BigInteger, sa.Identity(always=False, start=1), nullable=False),
+        schema=S,
+    )
 
 
 def downgrade() -> None:
+    op.drop_column("portfolio_migration_manifest", "seq", schema=S)
     op.drop_column("portfolio_migration_manifest", "status", schema=S)

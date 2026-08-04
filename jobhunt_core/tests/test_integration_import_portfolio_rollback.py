@@ -186,9 +186,20 @@ def test_rollback_aborted_marks_manifest_rollback_aborted():
         async with factory() as s:
             manifest = await man.migrate_and_reconcile(s, [_user("https://ab2.example.ch/1")])
             mid = manifest["id"]
-            prov = dict(manifest["provenance"])
-            prov["vacancies"] = []  # fuerza el abort (la vacante apunta a un offrev de procedencia)
-            r = await rollback_migration(s, prov, manifest_id=mid)
+            await s.commit()
+            # Tamper la procedencia ALMACENADA (el rollback usa ESA, no la del llamador): quita
+            # las vacancies → la vacante creada queda "no-procedencia" pero apunta a su
+            # offer_revision de la procedencia → unsafe abort.
+            await s.execute(
+                sa.text(
+                    "UPDATE portfolio_migration_manifest "
+                    "SET manifest = jsonb_set(manifest, '{provenance,vacancies}', '[]') "
+                    "WHERE id = :id"
+                ),
+                {"id": mid},
+            )
+            await s.commit()
+            r = await rollback_migration(s, {}, manifest_id=mid)
             assert r["status"] == "aborted"
             await s.commit()
             assert await _manifest_status(s, mid) == "rollback_aborted"
@@ -211,6 +222,46 @@ def test_rollback_invalid_manifest_id_aborts_without_deleting():
             assert r["status"] == "aborted" and "no existe" in r["reason"]
             assert await _count(s, "vacancies") == 1  # NADA borrado
             assert await _count(s, "applications") == 1
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_uses_stored_provenance_not_caller():
+    """REGRESIÓN P1 ronda 3: rollback_migration usa la procedencia ALMACENADA en el manifiesto
+    (vinculada al id), NO la que pase el llamador — no se puede borrar la procedencia de m1
+    marcando m2 (antes borraba datos de m1 y dejaba m1 'applied')."""
+
+    async def _run(factory):
+        users = [_user("https://bind.example.ch/1")]
+        async with factory() as s:
+            m1 = await man.migrate_and_reconcile(s, users)
+            await s.commit()
+            m2 = await man.migrate_and_reconcile(s, users)  # idempotente, procedencia VACÍA
+            await s.commit()
+            # Ataque: procedencia de m1 pero manifest_id de m2 → usa la de m2 (vacía), no borra.
+            r = await rollback_migration(s, m1["provenance"], manifest_id=m2["id"])
+            assert r["status"] == "rolled_back"
+            assert sum(r["deleted"].values()) == 0  # m2 no borra nada (procedencia vacía)
+            assert await _count(s, "vacancies") == 1  # los datos de m1 SIGUEN intactos
+            assert await _manifest_status(s, m1["id"]) == "applied"  # m1 intacto
+            await s.commit()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_lifo_uses_seq_not_created_at():
+    """REGRESIÓN P1 ronda 3: dos manifiestos en la MISMA transacción comparten created_at
+    (now() es constante en la tx), pero `seq` (identity) los ordena. Deshacer el primero aborta
+    (LIFO por seq, no por created_at empatado)."""
+
+    async def _run(factory):
+        users = [_user("https://seq.example.ch/1")]
+        async with factory() as s:
+            m1 = await man.migrate_and_reconcile(s, users)
+            await man.migrate_and_reconcile(s, users)  # m2, MISMA tx (sin commit) → mismo now()
+            r = await rollback_migration(s, m1["provenance"], manifest_id=m1["id"])
+            assert r["status"] == "aborted" and "LIFO" in r["reason"]
             await s.rollback()
 
     asyncio.run(_on_disposable_db(_run))

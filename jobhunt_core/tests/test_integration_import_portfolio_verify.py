@@ -183,6 +183,40 @@ def test_surrogate_title_quarantined_not_false_lost():
     asyncio.run(_on_disposable_db(_run))
 
 
+def test_toxic_titled_winner_staged_no_crash():
+    """REGRESIÓN P1 ronda 3: un durable titulado-TÓXICO (surrogate) que GANARÍA la consolidación
+    por recencia se STAGEA por-durable (misma frontera que la síntesis), NO se migra — su
+    snapshot reventaría el INSERT CAST(:snap AS jsonb). La migración COMPLETA y el hermano limpio
+    (más antiguo) migra con su título."""
+    url = "https://toxwin.example.ch/1"
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {"url": url, "status": "applied", "title": "Engineer", "company": "A",
+                 "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc)},  # limpio, antiguo
+                {"url": url, "status": "applied", "title": "Engineer\ud800", "company": "A",
+                 "created_at": datetime(2026, 1, 2, tzinfo=timezone.utc)},  # tóxico, RECIENTE
+            ],
+            "saved_searches": [],
+        }
+    ]
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, users)  # NO debe reventar
+            assert manifest["verdict"] == "ok", manifest["divergences"]
+            assert manifest["verification"]["verdict"] == "verified", manifest["verification"]
+            title = (
+                await s.execute(sa.text("SELECT snapshot->>'title' FROM applications"))
+            ).scalar_one()
+            assert title == "Engineer"  # el LIMPIO, no el tóxico ganador por recencia
+            assert any(r["external_ref"] == "1" for r in manifest["staged"])  # tóxico staged
+            await s.commit()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
 def test_toxic_titled_sibling_no_false_divergent():
     """REGRESIÓN P1 (verificación ronda 2): dos durables de la MISMA url — D_a titulado pero con
     payload no codificable (surrogate → el sink lo cuarentena) y D_b limpio + más reciente. El

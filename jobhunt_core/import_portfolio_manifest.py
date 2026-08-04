@@ -31,9 +31,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jobhunt_core.harvest.sink import normalize_url
 from jobhunt_core.import_portfolio import (
     PORTFOLIO_IMPORT_SOURCE,
-    is_synthesizable,
+    durable_synthesizable,
     normalized_key,
-    title_normalizable,
 )
 from jobhunt_core.import_portfolio_durables import (
     APPLICATION_STATUSES,
@@ -181,10 +180,12 @@ async def _classify_expected(
         url = row.get("url")
         if not url:
             return ("staged", "unresolved", _ident(None))
-        if not title_normalizable(row.get("title")):
-            # Durable sin título normalizable → staging por-durable (aunque su url sintetice por
-            # un hermano). Debe COINCIDIR con migrate_applications (P1 rev. externa 2).
-            return ("staged", "no_title", _ident(url))
+        ok, reason = durable_synthesizable(row)
+        if not ok:
+            # Durable NO sintetizable (sin título O frontera del sink) → staging por-durable,
+            # aunque su url sintetice por un hermano. MISMA clasificación que migrate_applications
+            # y la síntesis, o el esperado y el destino divergirían (P1 rev. externa 3).
+            return ("staged", reason or "no_title", _ident(url))
         try:
             key = normalize_url(url)
         except ValueError:
@@ -216,7 +217,7 @@ async def _classify_expected(
             if (
                 _route(row)[0] == "grouped"
                 and normalize_url(row["url"]) not in reused
-                and is_synthesizable(row)
+                and durable_synthesizable(row)[0]
             ):
                 offer_first.setdefault(normalize_url(row["url"]), row)
     offer = {

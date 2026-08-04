@@ -135,15 +135,23 @@ def _synthesizable(item: dict, listing: RawListing, url_normalized: str) -> tupl
     return True, None
 
 
-def is_synthesizable(row: dict) -> bool:
-    """True si este durable (dict con url/title/company/description) produciría una vacante-
-    sombra presentable. Lo usa reconcile para elegir el MISMO durable representante que la
-    síntesis (grp["synth"] = primer sintetizable): si el oráculo de oferta eligiera otro (p.ej.
-    el primer 'grouped' sin mirar la frontera del sink), un durable tóxico-pero-titulado con un
-    hermano limpio daría un falso divergent (P1 verificación ronda 2)."""
+def durable_synthesizable(row: dict) -> tuple[bool, str | None]:
+    """(True, None)/(False, razón) para un durable (dict con url/title/company/description),
+    con la MISMA frontera que la síntesis (título normalizable + frontera del sink). DEFINICIÓN
+    ÚNICA por-durable, usada por: la síntesis (representante del grupo), migrate_applications
+    (staging), reconcile._route (esperado) y offer_first (oráculo de oferta). Todas DEBEN usarla
+    o el destino y el esperado divergen — o un durable tóxico-titulado ganaría la consolidación y
+    reventaría el INSERT del snapshot (P1 rev. externa 3).
+
+    ALCANCE: cubre la partición del SINK (título/company/description/url via _preprocess). Las
+    columnas de DURABLE que se insertan RAW y NO pasan por el sink —`notes`/`bookmark_note`—
+    quedan FUERA: provienen de columnas `text` de Postgres (job_applications.notes), que NO pueden
+    almacenar surrogates sueltos, así que en el cutover real (copia del NAS, también Postgres) no
+    son un vector. Una fuente NO-Postgres exigiría cubrirlas (defensa que persist_manifest ya
+    aplica al serializar) — corresponde al §4-REAL gated."""
     url = row.get("url")
     if not url:
-        return False
+        return False, pil.Q_NO_URL
     try:
         url_normalized = normalize_url(url)
         raw_title = row.get("title")
@@ -154,9 +162,8 @@ def is_synthesizable(row: dict) -> bool:
             row.get("description"),
         )
     except ValueError:
-        return False
-    ok, _ = _synthesizable(row, listing, url_normalized)
-    return ok
+        return False, pil.Q_MALFORMED
+    return _synthesizable(row, listing, url_normalized)
 
 
 async def synthesize_vacancies(

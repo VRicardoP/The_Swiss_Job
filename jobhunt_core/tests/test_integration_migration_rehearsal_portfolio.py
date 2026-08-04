@@ -807,8 +807,9 @@ def test_manifest_models_sink_quarantine():
         async with factory() as s:
             manifest = await man.migrate_and_reconcile(s, users)
             assert manifest["verdict"] == "ok", manifest["divergences"]
-            # El durable no-persistible quedó AUDITADO en staging (expected trae razón).
-            assert any("unresolved" in k for k in manifest["staging"]["expected"])
+            # El durable no-persistible quedó AUDITADO en staging con su razón real 'limit'
+            # (durable_synthesizable replica la frontera del sink), NO un falso divergent.
+            assert any("limit" in k for k in manifest["staging"]["expected"])
 
     asyncio.run(_on_disposable_db(_run))
 
