@@ -90,20 +90,39 @@ class ArbeitnowProvider(BaseProvider):
             resp = await http.get(API_URL, params={"page": page}, timeout=HTTP_TIMEOUT_S)
             resp.raise_for_status()
             body = resp.json()
-            items = body.get("data") or []
+            data = body.get("data") if isinstance(body, dict) else None
+            items = data if isinstance(data, list) else []
+            if not isinstance(body, dict) or not isinstance(data, list):
+                # Cuerpo/'data' no conforme (API cambiada o respuesta corrupta): se trata como
+                # vacío en vez de reventar con AttributeError (P2 rev. externa integral).
+                logger.warning(
+                    "arbeitnow: página %d con cuerpo/'data' no conforme — tratada como vacía", page
+                )
             pages += 1
             if not items:
                 exhausted = True
                 break
             for item in items:
-                created = _parse_created_at(item)
-                if created is not None:
-                    top_seen = max(top_seen, created)
-                # EMISIÓN TOTAL de lo válido que casa con el scope: el watermark
-                # ya NO filtra (A-04 refresca last_seen_at/revisiones con esto).
-                listing = _to_listing(item, keyword)
-                if listing is not None:
-                    collected.append(listing)
+                # AISLAMIENTO por item: un item malformado (no-objeto, tags no-string, fecha
+                # rara…) se SALTA con log — jamás revienta la página entera dejando el scope
+                # reintentando la misma página tóxica (P2 rev. externa integral).
+                if not isinstance(item, dict):
+                    logger.warning("arbeitnow: item no-objeto saltado: %r", item)
+                    continue
+                try:
+                    created = _parse_created_at(item)
+                    if created is not None:
+                        top_seen = max(top_seen, created)
+                    # EMISIÓN TOTAL de lo válido que casa con el scope: el watermark
+                    # ya NO filtra (A-04 refresca last_seen_at/revisiones con esto).
+                    listing = _to_listing(item, keyword)
+                    if listing is not None:
+                        collected.append(listing)
+                except Exception as exc:  # frontera de datos externos: nunca tumbar el barrido
+                    logger.warning(
+                        "arbeitnow: item malformado saltado (%s): %r",
+                        exc, item.get("slug") or item.get("url"),
+                    )
             if not (body.get("links") or {}).get("next"):
                 exhausted = True
                 break
@@ -211,7 +230,9 @@ def _matches_keyword(item: dict, keyword: str) -> bool:
         [
             str(item.get("title") or ""),
             str(item.get("description") or ""),
-            " ".join(item.get("tags") or []),
+            # Solo tags STRING: un tag no-string (p.ej. tags=[1]) reventaría el join
+            # (P2 rev. externa integral).
+            " ".join(t for t in (item.get("tags") or []) if isinstance(t, str)),
         ]
     ).lower()
     return keyword in haystack

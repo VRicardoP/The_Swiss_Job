@@ -180,6 +180,34 @@ def test_missing_url_or_slug_is_skipped():
     assert _ids(result) == ["ok"]
 
 
+def test_malformed_items_isolated_not_fatal():
+    """REGRESIÓN P2 rev. externa integral: un item malformado (tag no-string → reventaba
+    `" ".join(tags)` en el filtro de keyword; o item no-objeto) NO debe tumbar el barrido ni dejar
+    el scope reintentando la página tóxica. Se aíslan; los válidos de la MISMA página se emiten."""
+    pages = {
+        1: {"data": [
+            {"slug": "ok", "url": "https://x/ok", "title": "Python Dev", "created_at": 10,
+             "tags": ["remote"]},
+            {"slug": "bad", "url": "https://x/bad", "title": "Python Toxic", "created_at": 9,
+             "tags": [1]},            # tag NO-string: rompía el join del filtro keyword
+            "no-soy-un-objeto",       # item no-dict
+        ], "links": {}},
+    }
+    # keyword fuerza _matches_keyword (el join de tags) sobre CADA item → antes crasheaba.
+    result, _ = _fetch(params={"keyword": "python"}, pages=pages)
+    ids = _ids(result)
+    assert "ok" in ids and "bad" in ids  # ambos emitidos, SIN crash por el tag no-string
+    assert result.complete is True       # barrido TERMINÓ (no reintento infinito de página tóxica)
+
+
+def test_malformed_body_treated_as_empty_not_fatal():
+    """REGRESIÓN P2 rev. externa integral: un cuerpo/'data' no conforme (no-objeto o data no-lista)
+    se trata como página vacía en vez de reventar con AttributeError."""
+    pages = {1: {"data": "no-soy-una-lista", "links": {}}}
+    result, _ = _fetch(pages=pages)
+    assert _ids(result) == [] and result.complete is True
+
+
 def test_max_pages_below_minimum_rejected():
     with pytest.raises(ValueError, match="max_pages"):
         _fetch(params={"max_pages": 1})
