@@ -403,3 +403,33 @@ def test_ledger_persisted_in_manifest():
             await s.commit()
 
     asyncio.run(_on_disposable_db(_run))
+
+
+def test_ledger_group_reason_is_order_independent():
+    """REGRESIÓN P2 ronda 8: varios durables NO sintetizables con la MISMA url pero razones
+    DISTINTAS (uno sin título → no_title, otro con surrogate → malformed) daban una razón de
+    cuarentena dependiente del ORDEN del lote (se guardaba la del primero). Ahora se acumulan y
+    se elige por precedencia determinista (malformed > limit > no_title): el ledger auditable es
+    reproducible al invertir el lote."""
+    url = "https://ord.example.ch/1"
+    no_title = {"url": url, "title": "   ", "company": "A"}          # solo espacios → no_title
+    malformed = {"url": url, "title": "Job \ud800", "company": "B"}  # surrogate → malformed
+
+    async def _reason_for(items: list) -> pil.LedgerEntry:
+        async def _run(factory):
+            async with factory() as s:
+                scope_id = await ip.ensure_import_scope(s)
+                await s.commit()
+                led: list = []
+                await ip.synthesize_vacancies(s, scope_id, items, ledger=led)
+                await s.rollback()
+                return _by_url(led)[url]
+
+        return await _on_disposable_db(_run)
+
+    forward = asyncio.run(_reason_for([no_title, malformed]))
+    reverse = asyncio.run(_reason_for([malformed, no_title]))
+    # Misma razón en ambos órdenes: la del MÁS severo (malformed), no la del primero del lote.
+    assert forward.disposition == pil.QUARANTINE and forward.reason == pil.Q_MALFORMED, forward
+    assert reverse.disposition == pil.QUARANTINE and reverse.reason == pil.Q_MALFORMED, reverse
+    assert forward.reason == reverse.reason

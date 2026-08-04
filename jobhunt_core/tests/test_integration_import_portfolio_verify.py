@@ -342,3 +342,44 @@ def test_verify_reused_and_collision_are_legitimate():
             await s.commit()
 
     asyncio.run(_on_disposable_db(_run))
+
+
+def test_entrypoint_downgrades_verdict_on_structural_discrepancy(monkeypatch):
+    """REGRESIÓN P1 ronda 8: si la verificación estructural es 'discrepant' (listing PERDIDO por
+    un fallo del sink) pero `reconcile` —que solo compara VALORES materiales contra el origen—
+    dice 'ok', el ENTRYPOINT debe degradar el verdict SUPERIOR (el que se PERSISTE y gobierna la
+    confirmación del llamador: confirma SOLO si 'ok') a 'divergent' y anexar sus discrepancias.
+    Sin esto, el falso verde que el 4º artefacto debe impedir. La DETECCIÓN ya la cubre
+    test_verify_detects_lost_listing; aquí se prueba la PROPAGACIÓN forzando el verificador."""
+
+    async def _fake_verify(session, users, ledger, provenance, source_name):
+        return {
+            "verdict": "discrepant",
+            "discrepancies": ["LISTING PERDIDO: url=https://x.example.ch/1 sin vacante"],
+            "checked": {},
+        }
+
+    monkeypatch.setattr(man, "verify_migration", _fake_verify)
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, [_user([_app("https://prop.example.ch/1")])])
+            # reconcile por sí solo daría 'ok' (destino material coherente); la verificación
+            # estructural degrada el verdict superior y aporta la discrepancia.
+            assert manifest["verification"]["verdict"] == "discrepant"
+            assert manifest["verdict"] == "divergent", manifest["verdict"]
+            assert any(
+                "verificación estructural" in d and "PERDIDO" in d
+                for d in manifest["divergences"]
+            ), manifest["divergences"]
+            # La COLUMNA persistida (la que un GATE-C ingenuo leería) también es 'divergent'.
+            persisted = (
+                await s.execute(
+                    sa.text("SELECT verdict FROM portfolio_migration_manifest WHERE id = :i"),
+                    {"i": manifest["id"]},
+                )
+            ).scalar_one()
+            assert persisted == "divergent"
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))

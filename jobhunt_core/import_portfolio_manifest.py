@@ -590,6 +590,22 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
     manifest["verification"] = await verify_migration(
         session, users, manifest["ledger"], manifest["provenance"], PORTFOLIO_IMPORT_SOURCE
     )
+    # El verdict SUPERIOR (el que se PERSISTE y gobierna la confirmación del llamador — contrato:
+    # confirma SOLO si verdict=='ok') DEBE incorporar la verificación estructural: `reconcile`
+    # compara VALORES materiales y NO ve un listing PERDIDO por un fallo del sink (destino vacío y
+    # su staging concuerdan → 'ok'), pero el verificador SÍ. Sin esto, un discrepant estructural
+    # quedaría como falso 'ok' — el falso verde que el 4º artefacto debe impedir (P1 rev. externa
+    # §4-LOCAL ronda 8). Se degrada a 'divergent' y se anexan sus discrepancias.
+    if manifest["verification"]["verdict"] != "verified":
+        manifest["verdict"] = "divergent"
+        manifest["divergences"] = list(manifest.get("divergences", [])) + [
+            f"verificación estructural: {d}" for d in manifest["verification"]["discrepancies"]
+        ]
+        logger.error(
+            "migrate_and_reconcile: verdict DEGRADADO a 'divergent' por la verificación "
+            "estructural (reconcile no lo veía) — %s",
+            " | ".join(manifest["verification"]["discrepancies"]),
+        )
     manifest["identities"] = await _captured_identities(session)
     manifest["checksums"] = await table_checksums(session)
     manifest["id"] = str(await persist_manifest(session, manifest))

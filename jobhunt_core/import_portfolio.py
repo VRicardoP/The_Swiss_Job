@@ -135,6 +135,22 @@ def _synthesizable(item: dict, listing: RawListing, url_normalized: str) -> tupl
     return True, None
 
 
+# Precedencia DETERMINISTA de la razón de cuarentena de un grupo (url) cuando NINGÚN durable
+# sintetiza y varios fallan por motivos DISTINTOS: se reporta el MÁS ESPECÍFICO/severo (contenido
+# tóxico > url excesiva > sin título), para que el ledger AUDITABLE no dependa del ORDEN de entrada
+# del lote (P2 rev. externa §4-LOCAL ronda 8).
+_QUARANTINE_REASON_PRECEDENCE = (pil.Q_MALFORMED, pil.Q_LIMIT, pil.Q_NO_TITLE)
+
+
+def _group_reason(reasons: set[str]) -> str:
+    """Razón de cuarentena de un grupo por precedencia determinista (malformed > limit > no_title),
+    independiente del orden del lote. Fallback no_title si el set viniera vacío (no debería)."""
+    for r in _QUARANTINE_REASON_PRECEDENCE:
+        if r in reasons:
+            return r
+    return pil.Q_NO_TITLE
+
+
 def durable_synthesizable(row: dict) -> tuple[bool, str | None]:
     """(True, None)/(False, razón) para un durable (dict con url/title/company/description),
     con la MISMA frontera que la síntesis (título normalizable + frontera del sink). DEFINICIÓN
@@ -240,7 +256,7 @@ async def synthesize_vacancies(
             continue
         grp = groups.setdefault(
             listing.external_id,
-            {"urln": url_normalized, "by_url": {}, "count": 0, "synth": None, "reason": None},
+            {"urln": url_normalized, "by_url": {}, "count": 0, "synth": None, "reasons": set()},
         )
         grp["count"] += 1
         grp["by_url"].setdefault(url, listing)  # una RawListing por url distinta
@@ -248,8 +264,10 @@ async def synthesize_vacancies(
         if ok:
             if grp["synth"] is None:
                 grp["synth"] = listing  # una listing sintetizable representa al grupo
-        elif grp["reason"] is None:
-            grp["reason"] = reason  # razón TENTATIVA (solo aplica si el grupo NO sintetiza)
+        else:
+            # Se ACUMULAN TODAS las razones del grupo (no la del primero): la definitiva se elige
+            # por precedencia determinista si el grupo NO sintetiza (P2 rev. externa 8).
+            grp["reasons"].add(reason)
 
     # Snapshot de las vacantes portfolio-import PRESENTABLES ANTES de sintetizar: una vacante
     # resultante ya presente aquí PREEXISTÍA (created vs reused EXACTO del ledger). Solo si se
@@ -293,8 +311,9 @@ async def synthesize_vacancies(
         url = next(iter(batch_urls))
         if grp["synth"] is None:
             # NINGÚN durable de esta url es sintetizable (todos sin título / frontera del sink):
-            # no se crea vacante (ni impresentable ni created-null); a staging con la razón real.
-            reason = grp["reason"] or pil.Q_NO_TITLE
+            # no se crea vacante (ni impresentable ni created-null); a staging con la razón real,
+            # elegida por precedencia determinista (independiente del orden del lote).
+            reason = _group_reason(grp["reasons"])
             skipped[{pil.Q_NO_TITLE: "no_title", pil.Q_LIMIT: "limit"}.get(reason, "malformed")] += (
                 grp["count"]
             )
