@@ -30,6 +30,7 @@ final es PROPIA (no reusa la del ledger) para que un bug en la síntesis no se e
 """
 
 import logging
+from collections import Counter
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -89,22 +90,52 @@ async def verify_migration(
 ) -> dict:
     """Verifica que cada url de origen está contabilizada (migrada o cuarentena legítima),
     distinguiendo un listing PERDIDO de una cuarentena. `ledger`/`provenance` = los del
-    manifiesto (parte 1/2). Solo lectura. Devuelve {verdict, discrepancies, checked}."""
+    manifiesto (parte 1/2). Solo lectura. Devuelve {verdict, discrepancies, checked}.
+
+    FRONTERA §4-LOCAL/§4-REAL (contraste ledger↔origen, no corpus-real↔origen): este oráculo
+    confía en el LEDGER como conjunto de urls procesadas (derivado de la SÍNTESIS, no del sink —
+    el sink no se modifica). Cruza el estado final REAL de las vacantes (pasos 2-6) pero la
+    COMPLETITUD (paso 1) se apoya en el ledger. Una incarnación portfolio-import creada FUERA de
+    la síntesis (un bug del sink no impulsado por `listings`) no estaría en el ledger y, si es
+    `reused` (no crea vacante), sería invisible aquí — aunque `provenance[source_listing_
+    incarnations]` SÍ la captura. El oráculo plenamente independiente (enumerar el corpus real e
+    inmune a un ledger equivocado) exige el LEDGER A NIVEL DEL SINK, que es el entregable §4-REAL
+    gated (división de alcance aceptada por la revisión externa)."""
     discrepancies: list[str] = []
 
-    # 1. COMPLETITUD: cada url de origen (no vacía) tiene entrada en el ledger.
+    # 1. COMPLETITUD BIDIRECCIONAL: las urls (no vacías) del ledger deben ser EXACTAMENTE las de
+    # origen, cada una UNA vez. No basta con detectar las FALTANTES (perdidas antes de sintetizar):
+    # una url ADICIONAL en el ledger es una entrada que el pipeline procesó y NO viene del origen —
+    # el caso peligroso es una `reused` inyectada, que no crea vacante y por tanto burla el
+    # cross-check created==procedencia y el oráculo material, dejando un enlace portfolio-import
+    # ajeno al origen con verdict verde (P1 rev. externa §4-LOCAL ronda 9). Una url REPETIDA rompe
+    # el contrato POR-URL del ledger. Se comparan como multiconjuntos. INVARIANTE del que depende
+    # la corrección: `e["url"]` es la url CRUDA de origen (la misma string que `row["url"]`), NO la
+    # normalizada — si un refactor guardara aquí `url_normalized`, lost/extra se dispararían en masa.
     input_urls = {
         row["url"]
         for u in users
         for row in (u.get("applications") or [])
         if row.get("url")
     }
-    ledger_urls = {e["url"] for e in ledger if e["url"] is not None}
-    lost_before = input_urls - ledger_urls
+    actual_urls = Counter(e["url"] for e in ledger if e["url"] is not None)
+    lost_before = sorted(input_urls - set(actual_urls))
+    extra_urls = sorted(set(actual_urls) - input_urls)
+    repeated_urls = sorted(u for u, n in actual_urls.items() if n > 1)
     if lost_before:
         discrepancies.append(
             f"{len(lost_before)} url(s) de origen SIN entrada en el ledger (perdidas antes "
-            f"de sintetizar): {sorted(lost_before)[:5]}"
+            f"de sintetizar): {lost_before[:5]}"
+        )
+    if extra_urls:
+        discrepancies.append(
+            f"{len(extra_urls)} url(s) en el ledger AUSENTES del origen (entradas ajenas al "
+            f"origen, p.ej. reused inyectada): {extra_urls[:5]}"
+        )
+    if repeated_urls:
+        discrepancies.append(
+            f"{len(repeated_urls)} url(s) con entradas DUPLICADAS en el ledger (el contrato "
+            f"del ledger es POR-URL): {repeated_urls[:5]}"
         )
     # Completitud de los durables SIN url: cada uno debe tener su entrada quarantine:no_url en
     # el ledger (contrato por-entrada del ledger, P2 rev. externa — no solo en staging).

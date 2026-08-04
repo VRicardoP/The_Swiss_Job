@@ -383,3 +383,46 @@ def test_entrypoint_downgrades_verdict_on_structural_discrepancy(monkeypatch):
             await s.rollback()
 
     asyncio.run(_on_disposable_db(_run))
+
+
+def test_verify_detects_extra_url_not_in_origin(monkeypatch):
+    """REGRESIÓN P1 ronda 9: la completitud era UNIDIRECCIONAL (solo urls de origen SIN entrada en
+    el ledger). Una url ADICIONAL en el ledger, AUSENTE del origen, se colaba — el caso peligroso
+    es una `reused` inyectada: NO crea vacante (el cross-check created==procedencia cuadra), se
+    excluye del oráculo material, RESUELVE a una vacante válida... y quedaba 'verified', pese a
+    añadir al corpus un enlace portfolio-import que no procede del origen. La completitud
+    BIDIRECCIONAL (Counter) la marca discrepant y la propagación de la ronda 8 degrada el verdict
+    superior a 'divergent'."""
+    import jobhunt_core.import_portfolio_migrate as mig
+
+    extra_url = "https://extra.example.ch/injected"
+    orig_synth = mig.synthesize_vacancies
+
+    async def _inject(session, scope_id, items, *args, **kwargs):
+        # El pipeline procesa una url EXTRA que NO está en `users` (reutiliza la vacante sembrada
+        # de otra fuente) → entra al ledger como 'reused' sin crear vacante.
+        items = list(items) + [
+            {"url": extra_url, "title": "Inj", "company": "X", "description": "d"}
+        ]
+        return await orig_synth(session, scope_id, items, *args, **kwargs)
+
+    monkeypatch.setattr(mig, "synthesize_vacancies", _inject)
+
+    async def _run(factory):
+        async with factory() as s:
+            await _seed_other_source(s, extra_url, "inj-x")  # otra fuente → la extra será reused
+            manifest = await man.migrate_and_reconcile(
+                s, [_user([_app("https://normal.example.ch/1")])]
+            )
+            # La url extra entró al ledger como reused (no está en users → ajena al origen).
+            extra = [e for e in manifest["ledger"] if e["url"] == extra_url]
+            assert len(extra) == 1 and extra[0]["disposition"] == "reused", manifest["ledger"]
+            # El verificador la caza como AUSENTE del origen; el verdict superior se degrada.
+            assert manifest["verification"]["verdict"] == "discrepant", manifest["verification"]
+            assert any(
+                "AUSENTES del origen" in d for d in manifest["verification"]["discrepancies"]
+            ), manifest["verification"]["discrepancies"]
+            assert manifest["verdict"] == "divergent", manifest["verdict"]
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
