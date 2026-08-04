@@ -154,22 +154,38 @@ async def _validate_manifest(
             f"manifest {manifest_id} no está 'applied' (status={row.status}) — no se borra nada",
             None,
         )
+    # LIFO: bloquear si hay un manifiesto POSTERIOR cuyos datos PUEDEN seguir presentes —
+    # 'applied' O 'rollback_aborted' (un rollback inseguro NO borró sus datos). Deshacer el más
+    # reciente primero, o su evidencia sobreviviría (P1 rev. externa 4).
     later = (
         await session.execute(
             sa.text(
                 "SELECT count(*) FROM portfolio_migration_manifest "
-                "WHERE status = 'applied' AND seq > :seq"
+                "WHERE status IN ('applied', 'rollback_aborted') AND seq > :seq"
             ),
             {"seq": row.seq},
         )
     ).scalar_one()
     if later:
         return (
-            f"hay {later} manifiesto(s) 'applied' POSTERIOR(es) — deshaz el más reciente "
-            f"primero (rollback LIFO); si no, su evidencia obsoleta sobreviviría",
+            f"hay {later} manifiesto(s) POSTERIOR(es) con datos aún presentes (applied/"
+            f"rollback_aborted) — deshaz el más reciente primero (rollback LIFO)",
             None,
         )
-    return None, (row.manifest or {}).get("provenance", {})
+    # Procedencia ALMACENADA, validada FAIL-CLOSED: `manifest` debe ser objeto, contener la clave
+    # 'provenance' EXPLÍCITAMENTE y ser un dict. Una {} es legítima (rerun idempotente); AUSENTE o
+    # malformada → abort, JAMÁS marcar rolled_back sin borrar (P1 rev. externa 4).
+    manifest_json = row.manifest
+    if not isinstance(manifest_json, dict) or "provenance" not in manifest_json:
+        return (
+            f"manifest {manifest_id} malformado o sin clave 'provenance' — fallo cerrado, "
+            f"no se borra ni se marca nada",
+            None,
+        )
+    provenance = manifest_json["provenance"]
+    if not isinstance(provenance, dict):
+        return f"manifest {manifest_id}: 'provenance' no es un objeto — fallo cerrado", None
+    return None, provenance
 
 
 async def rollback_migration(

@@ -207,6 +207,73 @@ def test_rollback_aborted_marks_manifest_rollback_aborted():
     asyncio.run(_on_disposable_db(_run))
 
 
+def test_core0015_upgrade_from_core0014_adds_seq():
+    """REGRESIÓN P1 ronda 4: una BD ya en core0014 (status, SIN seq) al hacer upgrade a head
+    obtiene `seq` vía core0015 — core0014 NO se reescribió. Prueba el CAMINO de upgrade
+    incremental, no solo una BD creada desde cero."""
+    import uuid as _uuid
+    from urllib.parse import urlsplit, urlunsplit
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from jobhunt_core.config import settings
+    from jobhunt_core.tests.alembic_runner import run_alembic
+
+    admin_url = os.environ["CORE_ADMIN_DATABASE_URL"].replace(
+        "postgresql://", "postgresql+asyncpg://"
+    )
+    dbname = f"jobhunt_upg_{_uuid.uuid4().hex[:12]}"
+    parts = urlsplit(admin_url)
+    temp_url = urlunsplit((parts.scheme, parts.netloc, f"/{dbname}", "", ""))
+    admin_engine = create_async_engine(
+        admin_url, poolclass=sa.pool.NullPool, isolation_level="AUTOCOMMIT"
+    )
+
+    async def _create():
+        async with admin_engine.connect() as c:
+            await c.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+
+    asyncio.run(_create())
+    try:
+        temp_engine = create_async_engine(
+            temp_url, poolclass=sa.pool.NullPool,
+            connect_args={"server_settings": {"search_path": f"{settings.CORE_DB_SCHEMA}, public"}},
+        )
+
+        async def _bootstrap():
+            async with temp_engine.begin() as c:
+                await c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+                await c.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS "{settings.CORE_DB_SCHEMA}"'))
+
+        async def _has_seq() -> int:
+            async with temp_engine.connect() as c:
+                return (
+                    await c.execute(
+                        sa.text(
+                            "SELECT count(*) FROM information_schema.columns WHERE "
+                            "table_schema = :s AND table_name = 'portfolio_migration_manifest' "
+                            "AND column_name = 'seq'"
+                        ),
+                        {"s": settings.CORE_DB_SCHEMA},
+                    )
+                ).scalar_one()
+
+        asyncio.run(_bootstrap())
+        run_alembic(temp_url, "upgrade", "core0014")  # SOLO hasta status (sin seq)
+        assert asyncio.run(_has_seq()) == 0
+        run_alembic(temp_url, "upgrade", "head")  # core0015 añade seq
+        assert asyncio.run(_has_seq()) == 1
+        asyncio.run(temp_engine.dispose())
+    finally:
+
+        async def _drop():
+            async with admin_engine.connect() as c:
+                await c.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+            await admin_engine.dispose()
+
+        asyncio.run(_drop())
+
+
 def test_rollback_invalid_manifest_id_aborts_without_deleting():
     """REGRESIÓN P1 ronda 2: un manifest_id INEXISTENTE aborta ANTES de borrar (fail-closed);
     los datos siguen intactos (antes borraba todo y el manifiesto real quedaba 'applied')."""
@@ -282,6 +349,59 @@ def test_rollback_refuses_older_manifest_lifo():
             r = await rollback_migration(s, m1["provenance"], manifest_id=m1["id"])
             assert r["status"] == "aborted" and "LIFO" in r["reason"]
             assert await _count(s, "vacancies") == 1  # NADA borrado
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_aborts_on_manifest_missing_provenance():
+    """REGRESIÓN P1 ronda 4: un manifiesto SIN la clave 'provenance' (malformado) → abort
+    fail-closed; NO se marca rolled_back ni se borra (antes daba rolled_back con 0 borrados y el
+    manifiesto quedaba deshecho con sus datos aún presentes)."""
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, [_user("https://mp.example.ch/1")])
+            mid = manifest["id"]
+            await s.commit()
+            await s.execute(
+                sa.text(
+                    "UPDATE portfolio_migration_manifest SET manifest = manifest - 'provenance' "
+                    "WHERE id = :id"
+                ),
+                {"id": mid},
+            )
+            await s.commit()
+            r = await rollback_migration(s, {}, manifest_id=mid)
+            assert r["status"] == "aborted" and "provenance" in r["reason"]
+            assert await _count(s, "vacancies") == 1  # datos INTACTOS
+            assert await _manifest_status(s, mid) == "applied"  # NO marcado rolled_back
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_lifo_blocks_on_later_rollback_aborted():
+    """REGRESIÓN P1 ronda 4: un manifiesto POSTERIOR en 'rollback_aborted' (rollback inseguro
+    que NO borró sus datos) también bloquea el rollback de uno anterior — LIFO cubre applied Y
+    rollback_aborted, no solo applied."""
+
+    async def _run(factory):
+        users = [_user("https://ra.example.ch/1")]
+        async with factory() as s:
+            m1 = await man.migrate_and_reconcile(s, users)
+            await s.commit()
+            m2 = await man.migrate_and_reconcile(s, users)  # idempotente, seq mayor
+            await s.execute(
+                sa.text(
+                    "UPDATE portfolio_migration_manifest SET status = 'rollback_aborted' "
+                    "WHERE id = :id"
+                ),
+                {"id": m2["id"]},
+            )
+            await s.commit()
+            r = await rollback_migration(s, m1["provenance"], manifest_id=m1["id"])
+            assert r["status"] == "aborted" and "LIFO" in r["reason"]
             await s.rollback()
 
     asyncio.run(_on_disposable_db(_run))
