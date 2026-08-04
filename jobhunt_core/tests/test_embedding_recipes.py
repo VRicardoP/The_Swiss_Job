@@ -70,6 +70,34 @@ def test_legacy_recipe_preserves_single_backend_call():
     assert vectors == [[1.0, 0.0]]
 
 
+class ShortBackend:
+    """Devuelve MENOS vectores que filas (p.ej. [] — 'pierde' filas)."""
+
+    def encode_batch(self, texts):
+        return []
+
+
+class NonFiniteBackend:
+    def encode_batch(self, texts):
+        return [[float("nan"), 1.0] for _ in texts]
+
+
+def test_encode_views_rejects_short_backend_single_view():
+    """REGRESIÓN P2 rev. externa integral: en el camino de UNA vista, un backend que devuelve menos
+    vectores que filas (p.ej. []) hacía que encode_views devolviera [] SIN error → el drenador
+    tomaría la cola por VACÍA con filas pendientes. Ahora falla por cardinalidad."""
+    with pytest.raises(ValueError, match="vectores para"):
+        embedding_recipes.encode_views(
+            ShortBackend(), [(("legacy", 1.0),), (("otra", 1.0),)]
+        )
+
+
+def test_encode_views_rejects_non_finite_vector():
+    """REGRESIÓN P2 rev. externa integral: un vector con NaN/Inf (envenenaría la ANN) se rechaza."""
+    with pytest.raises(ValueError, match="no finitos"):
+        embedding_recipes.encode_views(NonFiniteBackend(), [(("legacy", 1.0),)])
+
+
 def test_unknown_recipe_is_rejected():
     with pytest.raises(ValueError, match="receta de embedding desconocida"):
         embedding_recipes.profile_views({}, "future_v99")
