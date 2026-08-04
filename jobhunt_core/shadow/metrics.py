@@ -396,7 +396,7 @@ async def compute_cycle(
         {"c": cid, "scopes": [f"profile:{p.id}" for p in profiles]},
     )
     for metric, value, details, merge in await _global_metric_rows(
-        session, cid, start, end, legacy_schema, moment
+        session, cid, start, end, legacy_schema, moment, profiles
     ):
         await _upsert_metric(
             session, cid, metric, SCOPE_GLOBAL, value, details,
@@ -703,12 +703,16 @@ async def _global_metric_rows(
     end: datetime,
     legacy_schema: str,
     moment: datetime,
+    measured_profiles: list,
 ) -> list[tuple]:
     """[(metric, value, details, merge_details)] de las métricas globales.
     outbox_lag_p99 puede devolver None (p99 sellado post-purga): se omite
-    del upsert — la fila persistida se preserva tal cual."""
+    del upsert — la fila persistida se preserva tal cual. `measured_profiles` es el MISMO snapshot
+    que midió las métricas por-perfil (compute_cycle) — labels_ready debe gatear sobre ÉL, no
+    re-consultar (bajo READ COMMITTED una 2ª consulta veria otro estado — P1 rev. externa integral
+    ronda 3)."""
     rows: list[tuple] = []
-    rows.append(await _labels_ready_row(session))
+    rows.append(await _labels_ready_row(session, measured_profiles))
     rows += await _dedup_rows(session)
     rows += await _perdida_rows(session, legacy_schema, moment)
     lag_row = await _outbox_lag_row(session, cid)
@@ -769,7 +773,7 @@ async def _dedup_rows(session: AsyncSession) -> list[tuple]:
     return rows
 
 
-async def _labels_ready_row(session: AsyncSession) -> tuple:
+async def _labels_ready_row(session: AsyncSession, measured_profiles: list) -> tuple:
     """Gate `labels_ready` (P1-2): precondición del ORÁCULO según el DoD de
     B-03/§4 — >= LABELS_MIN_FROZEN_SETS sets CONGELADOS con >=
     LABELS_MIN_JUDGMENTS_PER_SET juicios cada uno, >= LABELS_MIN_DEDUP_PAIRS
@@ -818,10 +822,13 @@ async def _labels_ready_row(session: AsyncSession) -> tuple:
     # …pero el GATE cuenta PERFILES cuyo set EFECTIVO (el MÁS RECIENTE, el que REALMENTE se mide en
     # nDCG/falsos_negativos vía _measured_profiles) tiene >= min juicios. Contar "cualquier set
     # >=30" dejaría abrir el gate por un set viejo mientras se mide sobre uno nuevo de 1 juicio
-    # (nDCG=1/recall=1 vacuos) — P1 rev. externa integral ronda 2. Medición y gate: MISMO set.
-    measured = await _measured_profiles(session)
+    # (nDCG=1/recall=1 vacuos) — P1 rev. externa integral ronda 2. Se usa el MISMO snapshot
+    # `measured_profiles` que midió las métricas (compute_cycle), NO una 2ª consulta: bajo READ
+    # COMMITTED una reactivación/congelado concurrente entre ambas haría contar un perfil NO medido
+    # (falso verde) o no contar uno medido (P1 rev. externa integral ronda 3). Medición y gate:
+    # MISMO snapshot, no solo el mismo helper.
     perfiles_ok = sum(
-        1 for r in measured if int(r.n_juicios) >= LABELS_MIN_JUDGMENTS_PER_SET
+        1 for r in measured_profiles if int(r.n_juicios) >= LABELS_MIN_JUDGMENTS_PER_SET
     )
     pairs = (
         await session.execute(

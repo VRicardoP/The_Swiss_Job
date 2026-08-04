@@ -493,6 +493,81 @@ def test_run_scope_success_fenced_by_claim_token(db):
     assert sink2.batches and _provider_cursor_of(_state(factory, scope_a)) is not None
 
 
+def test_record_failure_tokenless_fenced_by_state(db):
+    """REGRESIÓN P2 rev. externa integral ronda 3: run_scope_task individual corre SIN token. Si
+    OTRO run (run_all) COSECHÓ mientras corría, su _record_failure_safe NO debe incrementar
+    consecutive_failures pisando el estado del vigente (que cosechó con 0). La autoritatividad se
+    condiciona al ESTADO (cursor, last_complete_at) inalterado — CLAVE: last_complete_at es el epoch
+    monotónico; el VALOR del cursor NO basta porque un feed ESTACIONARIO re-escribe el mismo valor
+    (la refutación adversarial de la 1ª versión del fix)."""
+    from jobhunt_core.harvest.runner import _record_failure_safe
+
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+    sid = str(scope_a)
+
+    async def _cf():
+        async with factory() as s:
+            return (
+                await s.execute(
+                    sa.text(
+                        "SELECT consecutive_failures FROM source_scope_state WHERE scope_id = :s"
+                    ),
+                    {"s": sid},
+                )
+            ).scalar_one()
+
+    async def _snap():
+        async with factory() as s:
+            r = (
+                await s.execute(
+                    sa.text(
+                        "SELECT cursor, last_complete_at FROM source_scope_state "
+                        "WHERE scope_id = :s"
+                    ),
+                    {"s": sid},
+                )
+            ).one()
+            return (r.cursor, r.last_complete_at)
+
+    async def flow():
+        # Estado inicial: cursor C, 5 fallos, SIN cosecha completa aún.
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "INSERT INTO source_scope_state (scope_id, cursor, consecutive_failures) "
+                    "VALUES (:s, CAST(:c AS jsonb), 5)"
+                ),
+                {"s": sid, "c": '{"last_top_seen": 300}'},
+            )
+            await s.commit()
+        stale_snap = await _snap()  # snapshot pre-fetch del run OBSOLETO (cursor C, last_complete NULL)
+
+        # El VIGENTE (run_all) cosecha COMPLETO — feed ESTACIONARIO: MISMO valor de cursor, pero
+        # avanza last_complete_at y resetea a 0.
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "UPDATE source_scope_state SET last_complete_at = clock_timestamp(), "
+                    "consecutive_failures = 0 WHERE scope_id = :s"  # cursor NO cambia (mismo valor)
+                ),
+                {"s": sid},
+            )
+            await s.commit()
+
+        # Run OBSOLETO sin token: aunque el cursor VALE lo mismo, last_complete_at cambió → NO cuenta.
+        async with factory() as s:
+            await _record_failure_safe(s, sid, token=None, state_snapshot=stale_snap)
+        assert await _cf() == 0  # obsoleto: NO pisó el 0 del vigente
+
+        # Run legítimo sin token cuyo snapshot COINCIDE con el estado actual → sí cuenta.
+        async with factory() as s:
+            await _record_failure_safe(s, sid, token=None, state_snapshot=await _snap())
+        assert await _cf() == 1
+
+    asyncio.run(flow())
+
+
 def test_run_all_task_registered():
     from jobhunt_core.celery_app import celery_app
 

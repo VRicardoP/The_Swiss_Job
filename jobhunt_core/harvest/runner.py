@@ -62,7 +62,8 @@ async def run_scope(
         row = (
             await session.execute(
                 sa.text(
-                    "SELECT hs.params, hs.enabled, s.name AS source_name, sss.cursor "
+                    "SELECT hs.params, hs.enabled, s.name AS source_name, sss.cursor, "
+                    "  sss.last_complete_at "
                     "FROM harvest_scopes hs "
                     "JOIN sources s ON s.id = hs.source_id "
                     "LEFT JOIN source_scope_state sss ON sss.scope_id = hs.id "
@@ -88,6 +89,11 @@ async def run_scope(
 
         params = row.params or {}
         snapshot = row.cursor  # tal cual en BD: base del check de concurrencia
+        # (cursor, last_complete_at) = ESTADO pre-fetch para la autoritatividad del run sin token:
+        # last_complete_at es el EPOCH MONOTÓNICO (now() en cada cosecha COMPLETA, que es JUSTO
+        # cuando run_all resetea consecutive_failures=0). El VALOR del cursor no basta: un feed
+        # estacionario re-escribe el MISMO valor (P2 rev. externa integral ronda 3).
+        state_snapshot = (row.cursor, row.last_complete_at)
         fingerprint = provider.params_fingerprint(params)
         provider_cursor = _provider_cursor(snapshot, fingerprint, scope_id)
         await session.rollback()  # cierra la tx de lectura: el fetch va fuera de tx
@@ -99,7 +105,9 @@ async def run_scope(
             # fuente (sin backoff) — sube a la tarea, que falla sin retry.
             raise
         except Exception as exc:
-            await _record_failure_safe(session, scope_id, claim_token)
+            await _record_failure_safe(
+                session, scope_id, claim_token, state_snapshot=state_snapshot
+            )
             logger.warning("scope %s: fetch falló: %s", scope_id, exc)
             return ScopeRunResult(scope_id=scope_id, status="error", error=str(exc)[:200])
 
@@ -178,7 +186,9 @@ async def run_scope(
             await session.commit()
         except Exception as exc:
             await session.rollback()  # ni listings a medias ni cursor avanzado
-            await _record_failure_safe(session, scope_id, claim_token)
+            await _record_failure_safe(
+                session, scope_id, claim_token, state_snapshot=state_snapshot
+            )
             logger.warning("scope %s: persistencia falló, cursor intacto: %s", scope_id, exc)
             return ScopeRunResult(scope_id=scope_id, status="error", error=str(exc)[:200])
 
@@ -208,13 +218,46 @@ def _provider_cursor(stored: dict | None, fingerprint: str, scope_id: str) -> di
     return cursor or None
 
 
-async def _record_failure_safe(session, scope_id: str, token=None) -> None:
+_NO_SNAPSHOT = object()  # centinela: distingue "sin snapshot" (legacy) de "snapshot=None" (sin estado)
+
+
+async def _still_authoritative(session, scope_id: str, token, state_snapshot) -> bool:
+    """True si este run sigue siendo AUTORITATIVO sobre el scope para mutar su estado:
+    - CON token (vía run_all): el claim sigue vigente (_still_claim_owner, FOR UPDATE).
+    - SIN token pero CON state_snapshot=(cursor, last_complete_at) (vía run_scope_task individual,
+      que NO reclama): el ESTADO del scope NO ha cambiado desde antes del fetch. La clave es
+      `last_complete_at`, EPOCH MONOTÓNICO (now() en cada cosecha COMPLETA — que es EXACTAMENTE
+      cuando run_all resetea consecutive_failures=0): si avanzó, otro run cosechó y este quedó
+      OBSOLETO → no debe pisar su estado. El VALOR del cursor NO basta (un feed estacionario
+      re-escribe el mismo valor y daría falso-autoritativo — P2 rev. externa integral ronda 3).
+    - Sin ninguno (llamada directa legacy): autoritativo (comportamiento previo)."""
+    if token is not None:
+        return await _still_claim_owner(session, scope_id, token)
+    if state_snapshot is _NO_SNAPSHOT:
+        return True
+    row = (
+        await session.execute(
+            sa.text(
+                "SELECT cursor, last_complete_at FROM source_scope_state "
+                "WHERE scope_id = :sid FOR UPDATE"
+            ),
+            {"sid": scope_id},
+        )
+    ).one_or_none()
+    current = (row.cursor, row.last_complete_at) if row is not None else (None, None)
+    return current == state_snapshot
+
+
+async def _record_failure_safe(
+    session, scope_id: str, token=None, state_snapshot=_NO_SNAPSHOT
+) -> None:
     """Cuenta el fallo SIN tocar el cursor (insumo del backoff, ADR-05).
 
-    FENCING (P1 rev. externa integral ronda 2): solo cuenta el fallo si este run sigue siendo el
-    dueño del claim (token vigente). Un worker desahuciado (lease vencido, scope re-armado por otro
-    que ya cosechó con consecutive_failures=0) NO debe incrementar el contador y disparar un backoff
-    espurio sobre el estado del vigente.
+    FENCING (P1/P2 rev. externa integral ronda 2/3): solo cuenta el fallo si este run sigue siendo
+    AUTORITATIVO sobre el scope (_still_authoritative) — por claim vigente (run_all) o por estado
+    (cursor, last_complete_at) inalterado (run_scope_task sin claim). Un run obsoleto (lease vencido
+    y re-armado, o superado por otro que ya cosechó con consecutive_failures=0) NO debe incrementar
+    el contador ni disparar un backoff espurio sobre el estado del vigente.
 
     NUNCA propaga: si la propia contabilización falla (p.ej. BD caída — la
     causa probable del fallo original), se loguea y el runner devuelve igual
@@ -222,11 +265,11 @@ async def _record_failure_safe(session, scope_id: str, token=None) -> None:
     """
     try:
         await session.rollback()  # asegura sesión utilizable tras el fallo previo
-        if not await _still_claim_owner(session, scope_id, token):
+        if not await _still_authoritative(session, scope_id, token, state_snapshot):
             await session.rollback()
             logger.info(
-                "scope %s: lease vencido/re-armado — fallo NO contabilizado (dueño actual otro "
-                "worker)", scope_id,
+                "scope %s: run OBSOLETO (otro run avanzó/reclama el scope) — fallo NO contabilizado",
+                scope_id,
             )
             return
         await session.execute(

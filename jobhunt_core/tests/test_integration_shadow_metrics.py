@@ -745,6 +745,34 @@ def test_labels_ready_red_when_effective_set_is_small(db):
     assert gates["labels_ready"]["ok"] is False
 
 
+def test_labels_ready_gates_on_passed_snapshot_not_fresh_query(db):
+    """REGRESIÓN P1 rev. externa integral RONDA 3: labels_ready debe gatear sobre el MISMO snapshot
+    `measured_profiles` que midió las métricas (compute_cycle), NO re-consultar. Bajo READ COMMITTED
+    una reactivación/congelado concurrente entre ambas consultas haría contar un perfil NO medido
+    (falso verde). Discriminante: aunque la BD tenga 2 perfiles con set >=30, un snapshot PASADO
+    vacío da perfiles_ok=0 (el código viejo re-consultaba y daría 2)."""
+    factory = db
+    p = uuid.uuid4().hex[:6]
+    for who in ("a", "b"):
+        pid = _mk_profile(factory, str(uuid.uuid4()))
+        _mk_frozen_set(factory, pid, {f"{p}-{who}{i:02d}": i % 4 for i in range(30)})
+
+    async def labels_ready_with(snapshot):
+        async with factory() as s:
+            _metric, _value, details, _merge = await metrics._labels_ready_row(s, snapshot)
+            return details
+
+    # Snapshot VACÍO → perfiles_ok=0 aunque existan 2 perfiles con set >=30 (NO re-consulta).
+    assert asyncio.run(labels_ready_with([]))["perfiles_ok"] == 0
+
+    # Snapshot con los 2 perfiles reales → perfiles_ok=2 (mismo helper, mismo estado).
+    async def real_snapshot():
+        async with factory() as s:
+            return await metrics._measured_profiles(s)
+
+    assert asyncio.run(labels_ready_with(asyncio.run(real_snapshot())))["perfiles_ok"] == 2
+
+
 def test_inactive_profile_excluded_from_metrics_and_labels_ready(db):
     """Regresión NO-GO 2 (decisión delegada 2026-07-28): un perfil cuyo
     external_ref está INACTIVO (último estado `users` del staging aplicado —
