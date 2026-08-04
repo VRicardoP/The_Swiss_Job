@@ -30,8 +30,10 @@ SCOPING por tabla (clave para la exactitud):
   profile_vacancy_state. Bajo el freeze la migración es el único escritor del consumer.
 
 Captura INSERTS (después−antes). Un UPDATE sobre una fila PREEXISTENTE (p.ej. set_saved sobre
-un profile_vacancy_state ya presente) NO es un insert → no aparece en procedencia; en el
-cutover fresco los durables son nuevos (sin match_evaluations previos para las vacantes-sombra).
+un profile_vacancy_state ya presente) NO es un insert → no aparecería en procedencia y el
+rollback no lo desharía; por eso `migrate_applications` hace un PREFLIGHT fail-closed que ABORTA
+(`PreexistingStateError`) si un profile_vacancy_state a bookmarkear ya existe — C-4 solo INSERTA
+durables frescos (cota mono-piloto), jamás muta una fila que no creó (P1 rev. externa integral).
 
 INTENCIONADAMENTE FUERA: `consumers` y `profiles` NO se capturan — son IDENTIDAD compartida
 (el consumer/perfil los provisiona C-0/C-3 y los escribe el push de CV); el rollback de C-4

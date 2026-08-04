@@ -15,6 +15,7 @@ import pytest
 import sqlalchemy as sa
 
 from jobhunt_core import import_portfolio_manifest as man
+from jobhunt_core.import_portfolio_durables import PreexistingStateError
 from jobhunt_core.import_portfolio_rollback import rollback_migration
 from jobhunt_core.tests.test_integration_import_portfolio_ledger import _seed_other_source
 from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import _on_disposable_db
@@ -561,6 +562,67 @@ def test_rollback_aborts_on_alien_cascade_event():
             assert await _count(s, "applications") == 1
             assert await _count(s, "application_status_events") == 2
             assert await _manifest_status(s, manifest["id"]) == "applied"
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_aborts_on_incomplete_provenance():
+    """REGRESIÓN P1 rev. externa integral: la validación rechazaba tablas DESCONOCIDAS pero no
+    FALTANTES. Borrar una clave de la procedencia (provenance.saved_searches) la interpretaba como
+    [] → no se borraba, los demás conteos cuadraban y el manifiesto podía marcarse rolled_back
+    dejando residuo. Ahora se exige el conjunto EXACTO de tablas → aborta fail-closed sin borrar."""
+    users = [
+        {"external_ref": 1, "applications": [], "saved_searches": [
+            {"name": "Zurich devops", "filters": '{"q": "devops"}', "min_score": 0,
+             "is_active": True, "last_notified_at": None}]},
+    ]
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, users)
+            mid = manifest["id"]
+            assert await _count(s, "saved_searches") == 1
+            # Tamper: eliminar la clave saved_searches de la procedencia almacenada (JSONB).
+            await s.execute(
+                sa.text(
+                    "UPDATE portfolio_migration_manifest SET manifest = jsonb_set("
+                    "manifest, '{provenance}', (manifest->'provenance') - 'saved_searches') "
+                    "WHERE id = :i"
+                ),
+                {"i": mid},
+            )
+            r = await rollback_migration(s, mid)
+            assert r["status"] == "aborted" and "INCOMPLETA" in r["reason"], r
+            assert await _count(s, "saved_searches") == 1  # NO se borró
+            assert await _manifest_status(s, mid) == "applied"  # NO rolled_back
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_cutover_aborts_on_preexisting_pvs():
+    """REGRESIÓN P1 rev. externa integral: un profile_vacancy_state que YA existía ANTES del
+    cutover sería MUTADO por un bookmark (set_saved + UPDATE de notes) sin que la procedencia
+    (solo INSERTs) lo capture ni el rollback lo deshaga. El preflight de migrate_and_reconcile lo
+    detecta (set `before`) y aborta fail-closed. Un cutover FRESCO no aborta (set vacío)."""
+    users = [
+        {"external_ref": 1, "applications": [
+            {"url": "https://pvs.example.ch/1", "status": "saved", "title": "T", "company": "C",
+             "notes": "portfolio", "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)}],
+         "saved_searches": []},
+    ]
+
+    async def _run(factory):
+        async with factory() as s:
+            m1 = await man.migrate_and_reconcile(s, users)  # fresco → NO aborta
+            assert m1["verdict"] == "ok", m1["divergences"]
+            assert await _count(s, "profile_vacancy_state") == 1
+            await s.commit()  # el PVS del bookmark queda PREEXISTENTE
+        async with factory() as s:
+            # 2º cutover: el PVS ahora preexiste (en el snapshot `before`) → abort fail-closed.
+            with pytest.raises(PreexistingStateError):
+                await man.migrate_and_reconcile(s, users)
             await s.rollback()
 
     asyncio.run(_on_disposable_db(_run))

@@ -570,7 +570,12 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
     # por ESTE run; distingue re-run y offer_revisions reutilizados, que el inventario
     # scopeado no puede — §4 parte 2). DEBE tomarse antes de migrate_portfolio.
     before = await snapshot_row_ids(session, PORTFOLIO_IMPORT_SOURCE, PORTFOLIO_CONSUMER)
-    report = await migrate_portfolio(session, users)
+    # Los profile_vacancy_state PREEXISTENTES (antes del cutover) se pasan como preflight: un
+    # bookmark que apunte a uno lo mutaría sin poder deshacerlo → abort fail-closed (P1 rev.
+    # externa integral). En un cutover fresco este set está vacío (nada que abortar).
+    report = await migrate_portfolio(
+        session, users, preexisting_pvs=before["profile_vacancy_state"]
+    )
     manifest = await reconcile(session, users, report)
     manifest["report"] = {
         "users": report["users"], "applications": report["applications"],

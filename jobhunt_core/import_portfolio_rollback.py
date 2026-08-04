@@ -80,6 +80,11 @@ _SINGLE_PK_TABLES = (
 # Tablas de PK COMPUESTA (id = 'a:b'); sus ids deben contener el separador ':'.
 _COMPOSITE_TABLES = ("profile_vacancy_state", "offer_revision_sources")
 
+# Conjunto EXACTO de tablas que la procedencia de un manifiesto válido DEBE cubrir (las que el
+# rollback borra). `snapshot_row_ids`/`exact_provenance` snapshotean estas 14 SIEMPRE (incluso un
+# rerun idempotente → todas con lista vacía), así que un manifiesto legítimo las trae todas.
+_ALL_ROLLBACK_TABLES = frozenset(_SINGLE_PK_TABLES) | frozenset(_COMPOSITE_TABLES)
+
 
 async def _del_single(session: AsyncSession, table: str, ids: list[str]) -> int:
     """DELETE ... WHERE id IN ids (por texto, sin importar el tipo de la PK). `table` viene
@@ -211,6 +216,19 @@ async def _validate_manifest(
     provenance = manifest_json["provenance"]
     if not isinstance(provenance, dict):
         return f"manifest {manifest_id}: 'provenance' no es un objeto — fallo cerrado", None
+    # COMPLETITUD: la procedencia debe traer TODAS las tablas que el rollback borra. Una clave
+    # FALTANTE se interpretaría como [] (no borrar nada) y dejaría residuo bajo un manifiesto
+    # marcado rolled_back — p.ej. borrar `provenance.saved_searches` del JSON deja la búsqueda viva
+    # con los demás conteos cuadrando (P1 rev. externa integral). Un rerun idempotente almacena
+    # TODAS las claves con listas vacías (nunca {} ni parcial), así que un manifiesto legítimo pasa.
+    # (Las tablas EXTRA/desconocidas las caza el bucle siguiente, fail-closed con su propio mensaje.)
+    missing = _ALL_ROLLBACK_TABLES - set(provenance)
+    if missing:
+        return (
+            f"manifest {manifest_id}: procedencia INCOMPLETA (faltan {sorted(missing)}) — "
+            f"fallo cerrado, no se borra ni se marca nada",
+            None,
+        )
     # Cada valor debe ser list[str] de PKs VÁLIDAS: UUID para las simples, exactamente DOS UUID
     # ('uuid:uuid') para las compuestas. Una [] es legítima. Un null/escalar/objeto o una PK
     # malformada (no-UUID, ":" suelto, 'a:b:c') → abort: si no, el borrado no matcharía y se

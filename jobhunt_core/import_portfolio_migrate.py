@@ -198,9 +198,14 @@ def _accumulate(total: dict, counts: dict) -> None:
 
 
 async def migrate_portfolio(
-    session: AsyncSession, users: list[dict]
+    session: AsyncSession, users: list[dict], *, preexisting_pvs: set[str] | None = None
 ) -> dict:
     """Migra los durables de una lista de usuarios del portfolio.
+
+    `preexisting_pvs` (opcional, provisto SOLO por el cutover migrate_and_reconcile): claves
+    'profile_id:vacancy_id' de los profile_vacancy_state que ya existían ANTES del cutover — si un
+    bookmark apunta a uno, C-4 lo mutaría sin poder deshacerlo → aborta (P1 rev. externa integral).
+    Las llamadas directas (idempotencia a nivel de datos) lo omiten → sin preflight.
 
     users = [{external_ref, applications: [dict], saved_searches: [dict]}].
     ORDEN: alta del scope `portfolio-import` (idempotente) → síntesis GLOBAL de
@@ -252,7 +257,8 @@ async def migrate_portfolio(
         # (parte 2 solo conoce el profile_id).
         user_staged: list[dict] = []
         app_counts = await migrate_applications(
-            session, profile_id, apps, staging=user_staged, collided=collided
+            session, profile_id, apps, staging=user_staged, collided=collided,
+            preexisting_pvs=preexisting_pvs,
         )
         ss_counts = await migrate_saved_searches(
             session,

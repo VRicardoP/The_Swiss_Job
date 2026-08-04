@@ -65,6 +65,23 @@ APPLICATION_STATUSES = frozenset(
 SAVED_SEARCH_NAME_MAX = 200
 
 
+class PreexistingStateError(RuntimeError):
+    """El cutover intentó BOOKMARKear una vacante cuyo `profile_vacancy_state` YA existía (creado
+    por otro consumer/proceso, NO por este run). C-4 solo INSERTA durables frescos: mutar (el
+    upsert de set_saved + el UPDATE de notes) una fila preexistente deja una mutación que el
+    snapshot antes/después (solo INSERTs) NO registra y el rollback-script NO puede deshacer
+    (P1 rev. externa integral). Se ABORTA fail-closed (cota mono-piloto): jamás mutar una fila
+    que C-4 no creó."""
+
+    def __init__(self, profile_id, vacancy_id):
+        super().__init__(
+            f"profile_vacancy_state preexistente (profile={profile_id}, vacancy={vacancy_id}) — "
+            f"C-4 no puede mutarla sin poder deshacerla; cutover abortado (fail-closed)"
+        )
+        self.profile_id = profile_id
+        self.vacancy_id = vacancy_id
+
+
 async def provision_profile(session: AsyncSession, external_ref: str) -> uuid.UUID:
     """Perfil del piloto: consumer 'portfolio' + external_ref (idempotente,
     reutiliza los helpers ON CONFLICT de profiles.py)."""
@@ -79,6 +96,7 @@ async def migrate_applications(
     *,
     staging: list | None = None,
     collided: set | None = None,
+    preexisting_pvs: set[str] | None = None,
 ) -> dict:
     """Escribe los durables de job_application en el tracking del core.
 
@@ -223,6 +241,18 @@ async def migrate_applications(
 
         # --- BOOKMARKS: marcar saved_at (idempotente) + la nota coalescida.
         if saved_rows:
+            # PREFLIGHT fail-closed (solo por la vía del cutover, `preexisting_pvs` provisto): si el
+            # profile_vacancy_state ya EXISTÍA ANTES del cutover (creado por el core/otro proceso),
+            # el upsert de set_saved + el UPDATE de notes lo MUTARÍAN — mutación que la procedencia
+            # (solo INSERTs) no captura y el rollback no deshace (P1 rev. externa integral). Se
+            # aborta (cota mono-piloto): jamás mutar una fila ajena. Las llamadas DIRECTAS a
+            # migrate_portfolio (idempotencia a nivel de datos, sin manifiesto) no pasan el set →
+            # no se activa el preflight.
+            if (
+                preexisting_pvs is not None
+                and f"{profile_id}:{vacancy_id}" in preexisting_pvs
+            ):
+                raise PreexistingStateError(profile_id, vacancy_id)
             await matching.set_saved(session, profile_id, vacancy_id, True)
             counts["bookmarks"] += len(saved_rows)
             if bookmark_note is not None:
