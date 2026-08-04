@@ -570,11 +570,12 @@ def test_slot_health_consumer_stopped_over_30min_alerts(capture, db, caplog):
     fresh = _health(factory, slot)  # parada RECIENTE: gracia de 30 min
     assert fresh["ok"] is True and fresh["active"] is False
 
-    # 31 minutos de parada simulados con updated_at viejo (§6).
+    # 31 min sin LATIDO (heartbeat_at viejo) con updated_at FRESCO: prueba que la salud usa
+    # heartbeat_at, no updated_at (P2 rev. externa integral) — el código viejo no habría alertado.
     _exec(
         factory,
         "UPDATE shadow_capture_state "
-        "SET updated_at = now() - interval '31 minutes' WHERE id = 1",
+        "SET heartbeat_at = now() - interval '31 minutes' WHERE id = 1",
     )
     with caplog.at_level(logging.ERROR, logger="jobhunt_core.shadow.gate"):
         res = _health(factory, slot)
@@ -1023,11 +1024,11 @@ def test_consumer_down_30min_alert_and_lossless_recovery(capture, db, caplog):
     _seed_legacy_job(factory, "dw-2")
     _exec(factory, "UPDATE public.jobs SET is_active = false WHERE hash = 'dw-0'")
 
-    # 30 minutos de caída simulados (updated_at viejo) ⇒ ALERTA persistente.
+    # 30+ min sin LATIDO (heartbeat_at viejo) ⇒ ALERTA persistente.
     _exec(
         factory,
         "UPDATE shadow_capture_state "
-        "SET updated_at = now() - interval '31 minutes' WHERE id = 1",
+        "SET heartbeat_at = now() - interval '31 minutes' WHERE id = 1",
     )
     with caplog.at_level(logging.ERROR, logger="jobhunt_core.shadow.gate"):
         res = _health(factory, slot)

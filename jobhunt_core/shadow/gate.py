@@ -453,7 +453,7 @@ async def check_slot_health(
     state = (
         await session.execute(
             sa.text(
-                "SELECT slot_name, updated_at FROM shadow_capture_state "
+                "SELECT slot_name, updated_at, heartbeat_at FROM shadow_capture_state "
                 "WHERE id = 1"
             )
         )
@@ -483,24 +483,29 @@ async def check_slot_health(
                     "drop-slot del RUNBOOK.md"
                 ),
             })
-        if not active:
-            if state is None:
-                logger.warning(
-                    "gate: slot %s presente sin estado (bootstrap en curso o "
-                    "interrumpido) — sin alerta todavía", slot,
-                )
-            else:
-                stalled_s = (moment - state.updated_at).total_seconds()
-                if stalled_s > stalled_max_s:
-                    alerts.append({
-                        "code": "consumidor_parado",
-                        "msg": (
-                            f"slot {slot} INACTIVO y sin progreso desde hace "
-                            f"{stalled_s:.0f}s (> {stalled_max_s:.0f}s): "
-                            "consumidor parado — reiniciar core-capture "
-                            "(RTO <= 1h, RUNBOOK.md)"
-                        ),
-                    })
+        # LIVENESS por heartbeat_at, INDEPENDIENTE de `active`: un consumidor COLGADO con el
+        # walsender aún conectado (active=true) deja de LATIR aunque el slot siga activo — el
+        # chequeo anterior solo miraba updated_at cuando active=false y no lo veía (P2 rev. externa
+        # integral). `updated_at` es progreso de DATOS (puede no avanzar sin cambios legítimos); el
+        # heartbeat lo refresca cada keepalive del stream + cada tx aplicada.
+        if state is None:
+            # slot presente sin estado = bootstrap en curso (backfill antes de START_REPLICATION).
+            logger.warning(
+                "gate: slot %s presente sin estado (bootstrap en curso o "
+                "interrumpido) — sin alerta todavía", slot,
+            )
+        else:
+            hb = state.heartbeat_at or state.updated_at  # backfill core0009 pudo dejarlo null
+            stalled_s = (moment - hb).total_seconds()
+            if stalled_s > stalled_max_s:
+                alerts.append({
+                    "code": "consumidor_parado",
+                    "msg": (
+                        f"slot {slot} sin LATIDO desde hace {stalled_s:.0f}s "
+                        f"(> {stalled_max_s:.0f}s; active={active}): consumidor "
+                        "parado/colgado — reiniciar core-capture (RTO <= 1h, RUNBOOK.md)"
+                    ),
+                })
     for alert in alerts:
         logger.error("gate: ALERTA slot — %s", alert["msg"])
     return {
