@@ -262,13 +262,20 @@ async def project_pending(
 async def _project_all(totals, batch_size, max_batches) -> None:
     """Cuerpo de la proyección (YA bajo el single-flight): drenado del
     staging por lotes + recuperación del flujo post-lote a la SALIDA (tras
-    las marcas de lote — ver _replay_after_batch)."""
+    las marcas de lote — ver _replay_after_batch).
+
+    La EVALUACIÓN (cara: ANN por perfil) se hace UNA sola vez tras drenar TODO el backlog, no por
+    lote: un backlog de B lotes con corpus nuevo evaluaba ~B×P veces los P perfiles (evaluaciones
+    idempotentes, mismo estado final pero B× el coste — P2 rev. externa integral). Se ACUMULA el
+    efecto de los lotes y se evalúa el agregado al final."""
     sink = RawListingSink()
-    evaluated: set = set()  # perfiles ya evaluados por _after_batch en ESTA invocación
     async with task_session_factory() as session_factory:
         totals["batches_recovered"] = await _recover_orphan_batches(session_factory)
         async with session_factory() as session:
             await _register_known_legacy_sources(session)
+        agg_corpus_changed = False
+        agg_affected: set = set()
+        agg_revisions_new = 0
         while max_batches is None or totals["batches"] < max_batches:
             result = await _project_batch(session_factory, sink, batch_size)
             if result is None:
@@ -276,9 +283,17 @@ async def _project_all(totals, batch_size, max_batches) -> None:
             totals["batches"] += 1
             for key in ("changes", "upserts", "closes", "erased", "revisions_new"):
                 totals[key] += getattr(result, key)
-            targets = await _after_batch(session_factory, result)
-            evaluated.update(targets)
-            totals["profiles_evaluated"] += len(targets)
+            agg_corpus_changed = agg_corpus_changed or result.corpus_changed
+            agg_affected |= result.affected_profiles
+            agg_revisions_new += result.revisions_new
+        aggregate = _BatchResult(
+            changes=0, upserts=0, closes=0, erased=0,
+            revisions_new=agg_revisions_new,
+            corpus_changed=agg_corpus_changed,
+            affected_profiles=agg_affected,
+        )
+        evaluated = set(await _after_batch(session_factory, aggregate))
+        totals["profiles_evaluated"] += len(evaluated)
         totals["recovery_evaluated"] = await _replay_after_batch(
             session_factory, evaluated
         )
@@ -1224,11 +1239,15 @@ async def _replay_after_batch(session_factory, evaluated: set) -> int:
 
 
 async def _recovery_targets(session, evaluated: set) -> list:
-    """Perfiles sombra activos NO evaluados en esta invocación cuya señal de
-    recuperación está encendida. La detección es UNA consulta para todos los
-    candidatos (jamás una por perfil): número de queries constante."""
+    """Perfiles activos (de CUALQUIER consumer) NO evaluados en esta invocación cuya señal de
+    recuperación está encendida. Cubre TODOS los perfiles —no solo los sombra— para que un perfil
+    cuyo CV cambió (p.ej. PUT /profiles del piloto, que activa una revisión pero no dispara
+    embedding+matching) reciba embedding + evaluación de su revisión vigente en la siguiente
+    pasada del proyector; sin esto, matching.feed serviría la evaluación ANTERIOR (P1 rev. externa
+    integral). La detección es UNA consulta para todos los candidatos (jamás una por perfil):
+    número de queries constante; la señal (_RECOVERY_NEEDED_SQL) evita trabajo inútil."""
     candidates = [
-        pid for pid in await _active_shadow_profiles(session) if pid not in evaluated
+        pid for pid in await _all_active_profiles(session) if pid not in evaluated
     ]
     if not candidates:
         return []
@@ -1296,8 +1315,8 @@ async def _eval_targets(session, result: _BatchResult) -> list:
 async def _active_shadow_profiles(session) -> list:
     """TODOS los perfiles del consumer sombra menos los excluidos por
     users.is_active=false (mecanismo de exclusión de cabecera) — los
-    objetivos de 'corpus nuevo' y los candidatos de la recuperación de
-    salida (que además filtra por señal en _recovery_targets)."""
+    objetivos de 'corpus nuevo' de _eval_targets (los cambios de corpus vienen del CDC legacy →
+    solo afectan a los perfiles sombra)."""
     cid = await _shadow_consumer_id(session)
     if cid is None:
         return []
@@ -1306,6 +1325,17 @@ async def _active_shadow_profiles(session) -> list:
             sa.text("SELECT id, external_ref FROM profiles WHERE consumer_id = :c"),
             {"c": cid},
         )
+    ).all()
+    return await _filter_inactive(session, rows)
+
+
+async def _all_active_profiles(session) -> list:
+    """TODOS los perfiles activos, de CUALQUIER consumer, menos los excluidos por is_active — los
+    candidatos de la RECUPERACIÓN de salida (que además filtra por señal en _recovery_targets). No
+    solo los sombra: el piloto (u otro consumer) también necesita re-evaluación cuando su revisión
+    cambia (P1 rev. externa integral)."""
+    rows = (
+        await session.execute(sa.text("SELECT id, external_ref FROM profiles"))
     ).all()
     return await _filter_inactive(session, rows)
 

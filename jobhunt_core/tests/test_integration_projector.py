@@ -1143,7 +1143,7 @@ class _CountingSession:
 
 def test_recovery_detection_is_one_query_not_one_per_profile(db, monkeypatch):
     """La detección de recuperación cuesta un número CONSTANTE de queries por
-    invocación (consumer + perfiles + exclusión de inactivos + detección = 4)
+    invocación (perfiles (todos los consumers) + exclusión de inactivos + detección = 3)
     con N perfiles candidatos — jamás una consulta por perfil."""
     factory = db
     _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
@@ -1176,7 +1176,32 @@ def test_recovery_detection_is_one_query_not_one_per_profile(db, monkeypatch):
     executed, targets = _run(measure())
     # Los 3 perfiles necesitan recuperación (revisión vigente sin evaluación).
     assert len(targets) == 3
-    assert executed == 4  # constante: NO escala con el número de perfiles
+    assert executed == 3  # constante: NO escala con el número de perfiles (sin lookup de consumer)
+
+
+def test_recovery_covers_non_shadow_profiles(db):
+    """REGRESIÓN P1 rev. externa integral: un perfil de OTRO consumer (p.ej. el piloto) cuya
+    revisión vigente no tiene evaluación (CV cambiado por PUT /profiles, que NO dispara matching)
+    DEBE ser candidato de la recuperación del proyector — antes solo se recuperaban los sombra, así
+    que matching.feed le serviría la evaluación ANTERIOR (o ninguna)."""
+    from jobhunt_core import profiles as core_profiles
+
+    factory = db
+    _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+
+    async def setup_and_check():
+        async with factory() as s:
+            cid = await core_profiles.ensure_consumer(s, "piloto")  # NO es swissjob-shadow
+            pid = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:6]}")
+            await core_profiles.save_profile_revision(
+                s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
+            )
+            await s.commit()
+        async with factory() as s:
+            return pid, await projector._recovery_targets(s, set())
+
+    pid, targets = _run(setup_and_check())
+    assert pid in targets  # el perfil NO-sombra es candidato de recuperación
 
 
 def test_batches_recorded_with_coherent_marks(db):
