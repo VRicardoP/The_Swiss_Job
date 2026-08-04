@@ -353,6 +353,10 @@ async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=No
             "OR (e.score_final = :cs AND e.vacancy_id > :cv)) "
         )
         params["cs"], params["cv"] = cursor
+    # Se pide una fila EXTRA (limit+1) para distinguir "hay página siguiente" de "esta es la
+    # última": si el resto es EXACTAMENTE `limit`, devolver cursor daría una página siguiente
+    # VACÍA (cursor fantasma, P3 rev. externa integral).
+    params["lim"] = limit + 1
     rows = (
         await session.execute(
             sa.text(
@@ -372,11 +376,11 @@ async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=No
             params,
         )
     ).all()
-    # `rows and`: con limit=0 no hay última fila (auditoría A-08).
+    has_more = len(rows) > limit  # existió la fila extra → hay página siguiente REAL
+    rows = rows[:limit]
+    # Cursor SOLO si hay una fila más allá de las devueltas (con limit=0, rows=[] → None).
     next_cursor = (
-        (rows[-1].score_final, rows[-1].vacancy_id)
-        if rows and len(rows) == limit
-        else None
+        (rows[-1].score_final, rows[-1].vacancy_id) if has_more and rows else None
     )
     return rows, next_cursor
 

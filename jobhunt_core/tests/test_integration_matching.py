@@ -262,6 +262,26 @@ def test_feed_orders_filters_and_paginates(db):
     assert vacs["qa manual"] in {r.vacancy_id for r in rows}
 
 
+def test_feed_no_phantom_cursor_on_exact_last_page(db):
+    """REGRESIÓN P3 rev. externa integral: si el resto de filas es EXACTAMENTE `limit`, el feed NO
+    debe devolver cursor (la página siguiente saldría VACÍA). Internamente se pide limit+1 para
+    distinguir 'hay más' de 'esta es la última'."""
+    factory, created = db
+    pid, mid, polid, _vacs = _setup(factory, created, ["backend python", "data eng"])
+    _evaluate(factory, pid, mid, polid)
+    rows, _ = _feed(factory, pid)
+    n = len(rows)
+    assert n == 2
+    # limit == total → última página EXACTA → SIN cursor fantasma.
+    page, cur = _feed(factory, pid, limit=n)
+    assert len(page) == n and cur is None
+    # limit < total → SÍ cursor; la página siguiente trae el resto y ya no da cursor.
+    p1, cur1 = _feed(factory, pid, limit=n - 1)
+    assert len(p1) == n - 1 and cur1 is not None
+    p2, cur2 = _feed(factory, pid, limit=20, cursor=cur1)
+    assert len(p2) == 1 and cur2 is None
+
+
 def test_smaller_canonical_top_k_retires_old_feed_pointers(db):
     """El feed es el top-K vigente; el estado del usuario sobre excluidos vive."""
     factory, created = db

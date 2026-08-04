@@ -208,7 +208,7 @@ def test_concurrent_claim_only_one_winner(db):
             return first, second
 
     first, second = asyncio.run(two_claims())
-    assert (first, second) == (True, False)  # UN solo ganador
+    assert first is not None and second is None  # UN solo ganador (token vs None)
 
 
 def test_disabled_scope_between_attempts_does_not_poison_run(db, monkeypatch):
@@ -290,10 +290,12 @@ def test_finish_run_leaves_run_open_while_other_worker_in_flight(db):
         async with factory() as s:
             run_id = await runs.start_run(s, "ventana-en-vuelo")
             created["runs"].append(run_id)
-            assert await runs.claim_scope_run(s, run_id, scope_x)
-            await runs.finish_scope_run(s, run_id, scope_x, "ok")
+            tok_x = await runs.claim_scope_run(s, run_id, scope_x)
+            assert tok_x is not None
+            assert await runs.finish_scope_run(s, run_id, scope_x, "ok", tok_x)
             # 'Otro worker' reclama Y y sigue trabajando (lease vigente):
-            assert await runs.claim_scope_run(s, run_id, scope_y)
+            tok_y = await runs.claim_scope_run(s, run_id, scope_y)
+            assert tok_y is not None
             overall_1 = await runs.finish_run(s, run_id)
             await s.commit()
             run_row_1 = (
@@ -303,7 +305,7 @@ def test_finish_run_leaves_run_open_while_other_worker_in_flight(db):
                 )
             ).one()
             # El otro worker termina; el ÚLTIMO cierra el run:
-            await runs.finish_scope_run(s, run_id, scope_y, "ok")
+            assert await runs.finish_scope_run(s, run_id, scope_y, "ok", tok_y)
             overall_2 = await runs.finish_run(s, run_id)
             await s.commit()
             run_row_2 = (
@@ -318,6 +320,49 @@ def test_finish_run_leaves_run_open_while_other_worker_in_flight(db):
     assert overall_1 == "running"  # NO 'error' con trabajo en vuelo
     assert row_1.status == "running" and row_1.finished_at is None  # sin mentir
     assert overall_2 == "ok" and row_2.finished_at is not None  # convergencia
+
+
+def test_finish_scope_run_fenced_by_claim_token(db):
+    """REGRESIÓN P1 rev. externa integral: tras un REARM por lease vencido, el worker VIEJO no debe
+    poder cerrar el scope del NUEVO. finish_scope_run exige el claim_token VIGENTE: el token viejo
+    devuelve False (no sobrescribe) y el estado del worker nuevo permanece; el nuevo sí cierra."""
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+
+    async def flow():
+        async with factory() as s:
+            run_id = await runs.start_run(s, "ventana-fencing")
+            created["runs"].append(run_id)
+            tok_old = await runs.claim_scope_run(s, run_id, scope_a)  # worker A
+            assert tok_old is not None
+            # Backdate started_at: el lease (900s) vence sin tocar SCOPE_LEASE_S.
+            await s.execute(
+                sa.text(
+                    "UPDATE source_harvest_runs SET started_at = clock_timestamp() "
+                    "- make_interval(secs => 3600) WHERE run_id = :r AND scope_id = :s"
+                ),
+                {"r": run_id, "s": scope_a},
+            )
+            tok_new = await runs.claim_scope_run(s, run_id, scope_a)  # worker B re-arma
+            assert tok_new is not None and tok_new != tok_old
+            # Worker A (desahuciado) intenta cerrar con su token VIEJO → False, no sobrescribe.
+            assert await runs.finish_scope_run(s, run_id, scope_a, "error", tok_old) is False
+            row = (
+                await s.execute(
+                    sa.text(
+                        "SELECT status, claim_token::text ct, finished_at "
+                        "FROM source_harvest_runs WHERE run_id = :r AND scope_id = :s"
+                    ),
+                    {"r": run_id, "s": scope_a},
+                )
+            ).one()
+            assert row.status == "running" and row.finished_at is None  # estado de B intacto
+            assert row.ct == str(tok_new)
+            # Worker B sí cierra con su token vigente.
+            assert await runs.finish_scope_run(s, run_id, scope_a, "ok", tok_new) is True
+            await s.commit()
+
+    asyncio.run(flow())
 
 
 def test_run_all_task_registered():

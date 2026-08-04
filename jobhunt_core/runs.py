@@ -44,51 +44,63 @@ async def start_run(session, run_key: str) -> uuid.UUID:
     return run_id
 
 
-async def claim_scope_run(session, run_id, scope_id) -> bool:
-    """Claim ATÓMICO (rev. 1ª A-11): True solo si ESTE worker gana el scope.
-    - Fila nueva: el propio INSERT es el claim exclusivo.
+async def claim_scope_run(session, run_id, scope_id) -> uuid.UUID | None:
+    """Claim ATÓMICO (rev. 1ª A-11): devuelve un `claim_token` NUEVO si ESTE worker gana el scope,
+    o None si no. El token FENCE (rev. externa integral): `finish_scope_run` solo cierra el scope si
+    presenta el token del claim VIGENTE, así un worker desahuciado (cuyo lease venció y otro re-armó
+    el scope con un token nuevo) no puede sobrescribir el estado del worker actual.
+    - Fila nueva: el propio INSERT es el claim exclusivo (fija el token).
     - Terminada con éxito/decisión: nadie la gana (no duplicar).
-    - 'error' terminado o colgada con LEASE vencido: se re-arma en el MISMO
-      UPDATE condicional — dos workers solapados no pueden ganarla ambos."""
+    - 'error' terminado o colgada con LEASE vencido: se re-arma en el MISMO UPDATE condicional con
+      un token NUEVO — dos workers solapados no pueden ganarla ambos."""
+    token = uuid.uuid4()
     inserted = (
         await session.execute(
             sa.text(
-                "INSERT INTO source_harvest_runs (run_id, scope_id) "
-                "VALUES (:rid, :sid) ON CONFLICT (run_id, scope_id) DO NOTHING "
+                "INSERT INTO source_harvest_runs (run_id, scope_id, claim_token) "
+                "VALUES (:rid, :sid, :tok) ON CONFLICT (run_id, scope_id) DO NOTHING "
                 "RETURNING run_id"
             ),
-            {"rid": run_id, "sid": scope_id},
+            {"rid": run_id, "sid": scope_id, "tok": token},
         )
     ).one_or_none()
     if inserted is not None:
-        return True
+        return token
     rearmed = (
         await session.execute(
             sa.text(
                 "UPDATE source_harvest_runs "
                 "SET status = 'running', started_at = clock_timestamp(), "
-                "finished_at = NULL "
+                "finished_at = NULL, claim_token = :tok "
                 "WHERE run_id = :rid AND scope_id = :sid "
                 "AND ((finished_at IS NOT NULL AND status = 'error') "
                 "     OR (finished_at IS NULL AND started_at < "
                 "         clock_timestamp() - make_interval(secs => :lease))) "
                 "RETURNING run_id"
             ),
-            {"rid": run_id, "sid": scope_id, "lease": SCOPE_LEASE_S},
+            {"rid": run_id, "sid": scope_id, "tok": token, "lease": SCOPE_LEASE_S},
         )
     ).one_or_none()
-    return rearmed is not None
+    return token if rearmed is not None else None
 
 
-async def finish_scope_run(session, run_id, scope_id, status: str) -> None:
-    await session.execute(
-        sa.text(
-            "UPDATE source_harvest_runs "
-            "SET status = :st, finished_at = clock_timestamp() "
-            "WHERE run_id = :rid AND scope_id = :sid"
-        ),
-        {"st": status, "rid": run_id, "sid": scope_id},
-    )
+async def finish_scope_run(session, run_id, scope_id, status: str, token) -> bool:
+    """Cierra el scope SOLO si `token` es el del claim VIGENTE y sigue 'running' (fencing, rev.
+    externa integral). Devuelve True si cerró; False si el scope fue re-armado por otro worker (el
+    desahuciado no debe sobrescribirlo). token NULL nunca matchea (fail-closed)."""
+    updated = (
+        await session.execute(
+            sa.text(
+                "UPDATE source_harvest_runs "
+                "SET status = :st, finished_at = clock_timestamp() "
+                "WHERE run_id = :rid AND scope_id = :sid "
+                "AND claim_token = :tok AND status = 'running' "
+                "RETURNING run_id"
+            ),
+            {"st": status, "rid": run_id, "sid": scope_id, "tok": token},
+        )
+    ).one_or_none()
+    return updated is not None
 
 
 async def finish_run(session, run_id) -> str:

@@ -811,7 +811,7 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
                 c.execute(
                     sa.text(f"SELECT version_num FROM {S}.alembic_version")
                 ).scalar()
-                == "core0016"
+                == "core0017"
             )
             c.execute(
                 sa.text(
@@ -925,7 +925,7 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
                 c.execute(
                     sa.text(f"SELECT version_num FROM {S}.alembic_version")
                 ).scalar()
-                == "core0016"
+                == "core0017"
             )
             idx = c.execute(
                 sa.text(

@@ -79,9 +79,9 @@ async def _run_all_impl(run_key: str) -> dict[str, Any]:
             await session.commit()
         for scope_id in scope_ids:
             async with session_factory() as session:
-                should = await runs.claim_scope_run(session, run_id, scope_id)
+                token = await runs.claim_scope_run(session, run_id, scope_id)
                 await session.commit()
-            if not should:
+            if token is None:
                 # Ya hecho en este run — o en marcha por OTRO worker (claim
                 # atómico con lease): en ambos casos NO se duplica.
                 skipped += 1
@@ -95,9 +95,11 @@ async def _run_all_impl(run_key: str) -> dict[str, Any]:
                 status = "error"
             executed += 1
             async with session_factory() as session:
-                await runs.finish_scope_run(session, run_id, scope_id, status)
+                # Fencing: si el lease venció y OTRO worker re-armó el scope, finish devuelve
+                # False (no sobrescribe el estado ajeno) — se registra pero no cuenta como cierre.
+                closed = await runs.finish_scope_run(session, run_id, scope_id, status, token)
                 await session.commit()
-            results[str(scope_id)] = status
+            results[str(scope_id)] = status if closed else "superseded"
         async with session_factory() as session:
             overall = await runs.finish_run(session, run_id)
             await session.commit()
