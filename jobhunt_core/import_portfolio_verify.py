@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 _CREATED = "created"
 _REUSED = "reused"
 _QUARANTINE = "quarantine"
+_Q_NO_URL = "no_url"
 _COLLISION_REASONS = ("collision_intra", "collision_cross_run", "collision_cross_source")
 
 
@@ -53,7 +54,8 @@ async def _portfolio_vacancies_for_keys(
         return {}
     rows = await session.execute(
         sa.text(
-            "SELECT sl.url_normalized AS urln, v.id::text AS vacancy_id, EXISTS ("
+            "SELECT sl.url_normalized AS urln, v.id::text AS vacancy_id, "
+            "(v.current_offer_revision_id IS NOT NULL) AS has_canonical, EXISTS ("
             "  SELECT 1 FROM source_listing_incarnations oi "
             "  JOIN source_listings osl ON osl.id = oi.source_listing_id "
             "  JOIN sources os ON os.id = osl.source_id AND os.name <> :src "
@@ -68,7 +70,14 @@ async def _portfolio_vacancies_for_keys(
         ).bindparams(sa.bindparam("keys", expanding=True)),
         {"src": source_name, "keys": keys},
     )
-    return {r.urln: {"vacancy_id": r.vacancy_id, "has_other_source": r.has_other_source} for r in rows}
+    return {
+        r.urln: {
+            "vacancy_id": r.vacancy_id,
+            "has_other_source": r.has_other_source,
+            "has_canonical": r.has_canonical,
+        }
+        for r in rows
+    }
 
 
 async def verify_migration(
@@ -97,6 +106,19 @@ async def verify_migration(
             f"{len(lost_before)} url(s) de origen SIN entrada en el ledger (perdidas antes "
             f"de sintetizar): {sorted(lost_before)[:5]}"
         )
+    # Completitud de los durables SIN url: cada uno debe tener su entrada quarantine:no_url en
+    # el ledger (contrato por-entrada del ledger, P2 rev. externa — no solo en staging).
+    input_no_url = sum(
+        1 for u in users for row in (u.get("applications") or []) if not row.get("url")
+    )
+    ledger_no_url = sum(
+        1 for e in ledger if e["disposition"] == _QUARANTINE and e["reason"] == _Q_NO_URL
+    )
+    if input_no_url != ledger_no_url:
+        discrepancies.append(
+            f"durables sin url: {input_no_url} en origen vs {ledger_no_url} entradas "
+            f"no_url en el ledger"
+        )
 
     # 2-4. Estado FINAL independiente de las urls sintetizadas (created/reused).
     synth = [e for e in ledger if e["disposition"] in (_CREATED, _REUSED)]
@@ -120,6 +142,17 @@ async def verify_migration(
             discrepancies.append(
                 f"ledger created de {e['url']} pero la vacante tiene OTRA fuente → "
                 f"debería ser reused (clasificación errónea)"
+            )
+        # Una vacante CREADA por C-4 debe tener cadena canónica (current_offer_revision) — si no,
+        # el catálogo no puede presentarla y la candidatura sería un falso verde (P1 rev. externa).
+        # C-4 garantiza título en sus created (no_title ya se cuarentena), así que una created sin
+        # canónica es un fallo real. Se GATEA a created: una REUSED puede tener canónica NULL
+        # legítima (contenido ACTUAL de la OTRA fuente no normalizable — el sink nulifica el
+        # puntero sin archivar); eso es ajeno a C-4 y NO debe bloquear el cutover (rev. externa 2).
+        if e["disposition"] == _CREATED and not got["has_canonical"]:
+            discrepancies.append(
+                f"ledger created de {e['url']}: la vacante NO tiene cadena canónica "
+                f"(current_offer_revision NULL) → IMPRESENTABLE (C-4 la creó sin canónica)"
             )
 
     # 5. QUARANTINE por colisión: la url ORIGINAL colisionada NO debe quedar VINCULADA a una

@@ -23,6 +23,10 @@ orden child→parent, para deshacer la migración sin tocar nada ajeno. DESTRUCT
   merge_log (NO ACTION hacia la vacante) harían FALLAR el DELETE de forma RUIDOSA (sin commit),
   no en silencio. Este rollback está pensado para la ventana single-writer del cutover.
 
+Marca además el CICLO DE VIDA de la fila durable del manifiesto (core0014: status
+applied|rolled_back|rollback_aborted) si se le pasa `manifest_id`, para que un `verdict='ok'`
+obsoleto tras el rollback no alimente un falso GATE-C (P1 rev. externa §4-LOCAL).
+
 El módulo NO importa import_portfolio (opera solo sobre la procedencia) — sin ciclo.
 """
 
@@ -111,11 +115,27 @@ async def _reused_pointing_to_provenance(
     return [r.k for r in rows]
 
 
+async def _mark_manifest_status(
+    session: AsyncSession, manifest_id: str | None, status: str
+) -> None:
+    """Marca el ciclo de vida de la fila durable del manifiesto (core0014): tras un rollback
+    el `verdict='ok'` queda OBSOLETO; `status` (rolled_back|rollback_aborted) evita que el
+    operador/GATE-C atesten un ok caduco (P1 rev. externa). No-op si no se pasa manifest_id."""
+    if manifest_id is None:
+        return
+    await session.execute(
+        sa.text("UPDATE portfolio_migration_manifest SET status = :s WHERE id = :id"),
+        {"s": status, "id": manifest_id},
+    )
+
+
 async def rollback_migration(
-    session: AsyncSession, provenance: dict[str, list[str]]
+    session: AsyncSession, provenance: dict[str, list[str]], manifest_id: str | None = None
 ) -> dict:
     """Deshace la migración borrando las filas de `provenance` (parte 2) en orden FK-safe.
-    DESTRUCTIVO y NO commitea. Devuelve {status: 'rolled_back'|'aborted', deleted|reason}."""
+    DESTRUCTIVO y NO commitea. Si se pasa `manifest_id`, marca su fila durable con el estado
+    resultante (rolled_back|rollback_aborted) para que un `verdict='ok'` obsoleto no alimente
+    un falso GATE-C. Devuelve {status: 'rolled_back'|'aborted', deleted|reason}."""
     unsafe = await _reused_pointing_to_provenance(session, provenance)
     if unsafe:
         logger.error(
@@ -124,6 +144,7 @@ async def rollback_migration(
             len(unsafe),
             unsafe[:5],
         )
+        await _mark_manifest_status(session, manifest_id, "rollback_aborted")
         return {
             "status": "aborted",
             "reason": "vacantes reutilizadas apuntan a offer_revisions/incarnaciones de la "
@@ -145,5 +166,6 @@ async def rollback_migration(
     for table in _SINGLE_PK_TABLES:
         deleted[table] = await _del_single(session, table, provenance.get(table, []))
 
+    await _mark_manifest_status(session, manifest_id, "rolled_back")
     logger.info("import_portfolio_rollback: rolled_back — %s", deleted)
     return {"status": "rolled_back", "deleted": deleted}

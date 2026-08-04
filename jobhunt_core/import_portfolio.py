@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jobhunt_core import import_portfolio_ledger as pil
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
-from jobhunt_core.harvest.sink import RawListingSink, normalize_url
+from jobhunt_core.harvest.sink import MAX_URL_LEN, RawListingSink, normalize_url
 from jobhunt_core.harvest.types import RawListing
 
 logger = logging.getLogger(__name__)
@@ -151,7 +151,7 @@ async def synthesize_vacancies(
     # --- Pasada 1: validar/normalizar y AGRUPAR por external_id (= clave de
     # identidad sha256(url_normalized)). Cuarentena por-item de sin-url/malformadas.
     groups: dict[str, dict] = {}
-    skipped = {"no_url": 0, "malformed": 0, "collision": 0, "dup": 0}
+    skipped = {"no_url": 0, "malformed": 0, "no_title": 0, "limit": 0, "collision": 0, "dup": 0}
     # Colector de razones de cuarentena por url (para el ledger; barato aunque no se pida).
     quarantined: dict[str, str] = {}
     for item in items:
@@ -181,6 +181,32 @@ async def synthesize_vacancies(
             logger.warning(
                 "import_portfolio: URL malformada OMITIDA (%s: %s) — title=%r",
                 exc.__class__.__name__, exc, item.get("title"),
+            )
+            continue
+        # FRONTERA DEL SINK REPLICADA (rev. externa): una url que el sink CUARENTENARÍA no debe
+        # entrar en `synthesized` — si no, el ledger la marcaría created SIN vacante (falso
+        # PERDIDO) o crearía una vacante IMPRESENTABLE. Se cuarentena aquí, antes de sintetizar.
+        if len(url) > MAX_URL_LEN or len(url_normalized) > MAX_URL_LEN:
+            skipped["limit"] += 1
+            quarantined[url] = pil.Q_LIMIT
+            logger.warning(
+                "import_portfolio: url > %d OMITIDA (el sink la cuarentena) — %s…",
+                MAX_URL_LEN, url[:80],
+            )
+            continue
+        # SIN título normalizable → el sink NO crea canónica (offer_revision): la vacante-sombra
+        # sería IMPRESENTABLE en el catálogo. Se cuarentena → la candidatura va a staging
+        # (auditable), en vez de ligarse a una vacante sin contenido (P1 rev. externa). Se
+        # replica el sink con `isinstance(str)`: un título NO-str (int/bool/list del feed) NO es
+        # normalizable → cuarentena no_title; jamás `.strip()` sobre un no-str (envenenaría el
+        # lote con AttributeError, el poison-pill que este propio módulo evita, rev. externa 2).
+        title = item.get("title")
+        if not (isinstance(title, str) and title.strip()):
+            skipped["no_title"] += 1
+            quarantined[url] = pil.Q_NO_TITLE
+            logger.warning(
+                "import_portfolio: durable SIN título normalizable OMITIDO (url=%s) — a staging",
+                url,
             )
             continue
         grp = groups.setdefault(
@@ -253,10 +279,10 @@ async def synthesize_vacancies(
             )
         )
     logger.info(
-        "import_portfolio: %d items → %d sintetizadas (omitidos: %d sin url, %d "
-        "malformadas, %d colisiones, %d duplicados).",
+        "import_portfolio: %d items → %d sintetizadas (omitidos: %d sin url, %d malformadas, "
+        "%d sin título, %d sobre-límite, %d colisiones, %d duplicados).",
         len(items), len(listings), skipped["no_url"], skipped["malformed"],
-        skipped["collision"], skipped["dup"],
+        skipped["no_title"], skipped["limit"], skipped["collision"], skipped["dup"],
     )
     return collided
 

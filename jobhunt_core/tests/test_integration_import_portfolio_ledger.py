@@ -268,6 +268,65 @@ def test_ledger_non_ascii_url_is_created_not_over_quarantined():
     asyncio.run(_on_disposable_db(_run))
 
 
+def test_ledger_no_title_and_over_limit_quarantined():
+    """REGRESIÓN P1/P3 rev. externa: un durable SIN título normalizable (→ el sink no crearía
+    canónica, vacante impresentable) y uno con url > MAX_URL_LEN (→ el sink la cuarentena) se
+    cuarentenan ANTES de sintetizar (no crean vacante), con razón real en el ledger."""
+
+    async def _run(factory):
+        async with factory() as s:
+            scope_id = await ip.ensure_import_scope(s)
+            await s.commit()
+            long_url = "https://x.example.ch/" + "a" * 1100  # > 1000
+            items = [
+                {"url": "https://ok.example.ch/1", "title": "Ok", "company": "A"},
+                {"url": "https://nt.example.ch/2", "title": "   ", "company": "B"},  # solo espacios
+                {"url": long_url, "title": "Long", "company": "C"},
+            ]
+            led: list = []
+            await ip.synthesize_vacancies(s, scope_id, items, ledger=led)
+            await s.commit()
+            by = _by_url(led)
+            assert by["https://ok.example.ch/1"].disposition == pil.CREATED
+            nt = by["https://nt.example.ch/2"]
+            assert nt.disposition == pil.QUARANTINE and nt.reason == pil.Q_NO_TITLE
+            assert nt.vacancy_id is None
+            lim = by[long_url]
+            assert lim.disposition == pil.QUARANTINE and lim.reason == pil.Q_LIMIT
+            # Ninguna de las cuarentenadas creó vacante.
+            assert await ip.resolve_vacancy_by_url(s, "https://nt.example.ch/2") is None
+            assert await ip.resolve_vacancy_by_url(s, long_url) is None
+            n_vac = (await s.execute(sa.text("SELECT count(*) FROM vacancies"))).scalar_one()
+            assert n_vac == 1  # solo la buena
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_ledger_non_str_title_quarantined_not_crash():
+    """REGRESIÓN P1 (verificación de fixes): un título truthy NO-str (int/list del feed) NO debe
+    reventar el lote (AttributeError en `.strip()`) — se cuarentena no_title como cualquier
+    título no normalizable (el sink degrada un no-str a None; aquí se replica con isinstance)."""
+
+    async def _run(factory):
+        async with factory() as s:
+            scope_id = await ip.ensure_import_scope(s)
+            await s.commit()
+            items = [
+                {"url": "https://ok.example.ch/1", "title": "Ok", "company": "A"},
+                {"url": "https://n1.example.ch/2", "title": 123, "company": "B"},  # int
+                {"url": "https://n2.example.ch/3", "title": ["x"], "company": "C"},  # list
+            ]
+            led: list = []
+            await ip.synthesize_vacancies(s, scope_id, items, ledger=led)  # NO debe lanzar
+            await s.commit()
+            by = _by_url(led)
+            assert by["https://ok.example.ch/1"].disposition == pil.CREATED
+            for u in ("https://n1.example.ch/2", "https://n2.example.ch/3"):
+                assert by[u].disposition == pil.QUARANTINE and by[u].reason == pil.Q_NO_TITLE
+
+    asyncio.run(_on_disposable_db(_run))
+
+
 def test_ledger_surrogate_url_does_not_abort_migration():
     """REGRESIÓN análisis 1 (P1): una URL con surrogate suelto pasa normalize_url pero su
     .encode() estricto lanza UnicodeEncodeError. Antes, build_ledger crasheaba FUERA del

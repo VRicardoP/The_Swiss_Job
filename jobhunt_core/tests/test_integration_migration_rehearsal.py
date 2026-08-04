@@ -243,7 +243,7 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                 version = (
                     await s.execute(sa.text("SELECT version_num FROM alembic_version"))
                 ).scalar_one()
-                assert version == "core0013"
+                assert version == "core0014"
                 # El esquema re-creado FUNCIONA: smoke de escritura real.
                 await s.execute(
                     sa.text("INSERT INTO consumers (id, name) VALUES (:i, 'post-cycle')"),

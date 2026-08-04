@@ -241,7 +241,6 @@ async def migrate_portfolio(
             {k: row.get(k) for k in ("url", "title", "company", "description")}
             for user in users
             for row in (user.get("applications") or [])
-            if row.get("url")
         ],
         ledger=ledger,
     )

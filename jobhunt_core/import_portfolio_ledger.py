@@ -43,6 +43,8 @@ QUARANTINE = "quarantine"
 # Razones de cuarentena (solo cuando disposition == QUARANTINE).
 Q_NO_URL = "no_url"
 Q_MALFORMED = "malformed"
+Q_NO_TITLE = "no_title"  # sin título normalizable → el sink no crearía canónica (impresentable)
+Q_LIMIT = "limit"  # url > MAX_URL_LEN → el sink la cuarentena (frontera replicada, rev. externa)
 Q_COLLISION_INTRA = "collision_intra"
 Q_COLLISION_CROSS_RUN = "collision_cross_run"
 Q_COLLISION_CROSS_SOURCE = "collision_cross_source"

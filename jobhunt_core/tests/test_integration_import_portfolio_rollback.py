@@ -152,6 +152,50 @@ def test_rollback_aborts_if_nonprovenance_vacancy_points_to_provenance_offrev():
     asyncio.run(_on_disposable_db(_run))
 
 
+async def _manifest_status(s, mid: str) -> str:
+    return (
+        await s.execute(
+            sa.text("SELECT status FROM portfolio_migration_manifest WHERE id = :i"), {"i": mid}
+        )
+    ).scalar_one()
+
+
+def test_rollback_marks_manifest_rolled_back():
+    """REGRESIÓN P1 rev. externa: tras el rollback, la fila durable del manifiesto pasa a
+    'rolled_back' — un verdict='ok' obsoleto ya no puede atestarse como GATE-C verde."""
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, [_user("https://ml.example.ch/1")])
+            mid = manifest["id"]
+            await s.commit()
+            assert await _manifest_status(s, mid) == "applied"  # recién persistido
+            r = await rollback_migration(s, manifest["provenance"], manifest_id=mid)
+            assert r["status"] == "rolled_back"
+            await s.commit()
+            assert await _manifest_status(s, mid) == "rolled_back"
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_aborted_marks_manifest_rollback_aborted():
+    """REGRESIÓN P1 rev. externa: un rollback ABORTADO marca la fila 'rollback_aborted' (ni
+    'applied' ni 'rolled_back') — el estado real queda registrado durablemente."""
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, [_user("https://ab2.example.ch/1")])
+            mid = manifest["id"]
+            prov = dict(manifest["provenance"])
+            prov["vacancies"] = []  # fuerza el abort (la vacante apunta a un offrev de procedencia)
+            r = await rollback_migration(s, prov, manifest_id=mid)
+            assert r["status"] == "aborted"
+            await s.commit()
+            assert await _manifest_status(s, mid) == "rollback_aborted"
+
+    asyncio.run(_on_disposable_db(_run))
+
+
 def test_migrate_rollback_migrate_roundtrip_is_verified():
     """Round-trip: migrar → rollback (commit) → migrar de nuevo → 'verified'. Prueba que el
     rollback deja el estado LIMPIO para una re-migración (sin residuos que la ensucien)."""

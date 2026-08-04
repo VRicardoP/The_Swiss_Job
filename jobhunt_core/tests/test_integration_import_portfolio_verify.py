@@ -101,6 +101,78 @@ def test_verify_lost_listing_in_ledger_reports_not_crashes():
     asyncio.run(_on_disposable_db(_run))
 
 
+def test_verify_flags_vacancy_without_canonical():
+    """REGRESIÓN P1 rev. externa: una vacante `created` SIN cadena canónica
+    (current_offer_revision NULL → impresentable en el catálogo) da discrepant, no verified."""
+
+    async def _run(factory):
+        async with factory() as s:
+            url = "https://nocanon.example.ch/1"
+            users = [_user([_app(url)])]
+            manifest = await man.migrate_and_reconcile(s, users)
+            assert manifest["verification"]["verdict"] == "verified"
+            vid = [e["vacancy_id"] for e in manifest["ledger"] if e["disposition"] == "created"][0]
+            # Simular canónica perdida (un fallo del sink que dejara la vacante impresentable).
+            await s.execute(
+                sa.text("UPDATE vacancies SET current_offer_revision_id = NULL WHERE id = :v"),
+                {"v": vid},
+            )
+            report = await verify_migration(
+                s, users, manifest["ledger"], manifest["provenance"], PORTFOLIO_IMPORT_SOURCE
+            )
+            assert report["verdict"] == "discrepant"
+            assert any("IMPRESENTABLE" in d for d in report["discrepancies"])
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_verify_reused_without_canonical_is_not_flagged():
+    """REGRESIÓN P1 (verificación de fixes): una vacante REUTILIZADA de otra fuente con canónica
+    NULL (contenido ACTUAL ajeno no normalizable — condición preexistente que C-4 ni causó ni
+    puede arreglar) NO debe dar discrepant. El check de canónica se GATEA a created."""
+
+    async def _run(factory):
+        async with factory() as s:
+            url = "https://reuse-nc.example.ch/1"
+            await _seed_other_source(s, url, "nc-1")
+            users = [_user([_app(url)])]
+            manifest = await man.migrate_and_reconcile(s, users)
+            reused = [e["vacancy_id"] for e in manifest["ledger"] if e["disposition"] == "reused"]
+            assert reused, "el durable debía resolver como reused"
+            # Nulificar la canónica de la vacante reutilizada (estado ajeno de la otra fuente).
+            await s.execute(
+                sa.text("UPDATE vacancies SET current_offer_revision_id = NULL WHERE id = :v"),
+                {"v": reused[0]},
+            )
+            report = await verify_migration(
+                s, users, manifest["ledger"], manifest["provenance"], PORTFOLIO_IMPORT_SOURCE
+            )
+            assert report["verdict"] == "verified", report["discrepancies"]  # no bloquea por lo ajeno
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_verify_no_url_ledger_completeness():
+    """REGRESIÓN P2 rev. externa: un durable SIN url tiene su entrada quarantine:no_url en el
+    ledger (contrato por-entrada), y la verificación de completitud no_url pasa."""
+
+    async def _run(factory):
+        async with factory() as s:
+            users = [_user([_app("https://u.example.ch/1"), _app(None, status="saved")])]
+            manifest = await man.migrate_and_reconcile(s, users)
+            assert manifest["verification"]["verdict"] == "verified", manifest["verification"]
+            no_url = [
+                e for e in manifest["ledger"]
+                if e["disposition"] == "quarantine" and e["reason"] == "no_url"
+            ]
+            assert len(no_url) == 1
+            await s.commit()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
 def test_verify_detects_oracle_disagreement():
     """Si la procedencia de vacancies NO coincide con las created del ledger (dos oráculos
     independientes), el verificador lo marca — es la señal de un fallo de uno u otro."""

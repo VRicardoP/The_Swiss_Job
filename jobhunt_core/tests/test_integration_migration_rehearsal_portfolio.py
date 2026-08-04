@@ -291,9 +291,9 @@ def test_bookmark_value_loss_staged():
     from jobhunt_core import import_portfolio_migrate as ipm
 
     users = [{"external_ref": 1, "applications": [
-        {"url": "https://x.ch/b", "status": "saved", "notes": "vieja",
+        {"url": "https://x.ch/b", "status": "saved", "title": "Job B", "notes": "vieja",
          "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-        {"url": "https://x.ch/b", "status": "saved", "notes": "nueva",
+        {"url": "https://x.ch/b", "status": "saved", "title": "Job B", "notes": "nueva",
          "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
     ], "saved_searches": []}]
 
@@ -318,9 +318,9 @@ def test_coalescence_deterministic():
     from jobhunt_core import import_portfolio_migrate as ipm
 
     saved = [
-        {"url": "https://x.ch/c", "status": "saved", "notes": "vieja",
+        {"url": "https://x.ch/c", "status": "saved", "title": "Job C", "notes": "vieja",
          "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-        {"url": "https://x.ch/c", "status": "saved", "notes": "nueva",
+        {"url": "https://x.ch/c", "status": "saved", "title": "Job C", "notes": "nueva",
          "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
     ]
 
@@ -623,7 +623,7 @@ def test_manifest_catches_material_corruption():
     users = [{"external_ref": 1, "applications": [
         {"url": "https://x.ch/a", "status": "applied", "title": "A", "company": "Acme",
          "notes": "n", "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-        {"url": "https://x.ch/b", "status": "saved", "notes": "bm",
+        {"url": "https://x.ch/b", "status": "saved", "title": "B", "notes": "bm",
          "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
     ], "saved_searches": []}]
 
