@@ -630,6 +630,31 @@ def test_cold_start_without_legacy_schema_retries_and_creates_no_slot(
     assert _scalar(engine, f"SELECT count(*) FROM {S}.shadow_capture_state") == 0
 
 
+def test_readiness_blocks_when_required_column_missing(capture):
+    """REGRESIÓN P1 rev. externa integral: la readiness solo exigía tabla + PK, así que una tabla a
+    la que le falta una columna CONTRACTUAL requerida (p.ej. cv_text) pasaba y el backfill la
+    omitía EN SILENCIO (intersect columns & existing); añadirla luego no genera UPDATE WAL para las
+    filas viejas → histórico irrecuperable. Ahora readiness exige las `required` → el slot NO se
+    crea, se espera con backoff."""
+    make, slot, engine = capture
+    with engine.begin() as c:
+        c.execute(sa.text("CREATE SCHEMA IF NOT EXISTS partialcv"))
+        # user_profiles SIN cv_text (columna REQUERIDA):
+        c.execute(sa.text(
+            "CREATE TABLE IF NOT EXISTS partialcv.user_profiles ("
+            "id uuid PRIMARY KEY, user_id uuid, title varchar(200), "
+            "skills jsonb NOT NULL DEFAULT '[]'::jsonb, "
+            "updated_at timestamptz NOT NULL DEFAULT now())"
+        ))
+    cap = make(tables="partialcv.user_profiles", ready_max_retries=2)
+    with pytest.raises(RuntimeError, match="esquema legacy aún sin migrar"):
+        cap.start()
+    # Sin la columna requerida NO hay bootstrap: jamás se crea el slot.
+    assert _scalar(
+        engine, "SELECT count(*) FROM pg_replication_slots WHERE slot_name = :n", n=slot
+    ) == 0
+
+
 # ------------------------------------------- (h) healthcheck con slot inactivo
 
 

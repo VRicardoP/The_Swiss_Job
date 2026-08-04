@@ -87,10 +87,17 @@ TABLE_WHITELIST: dict[str, dict] = {
             "salary_currency", "salary_period", "url", "source",
             "is_active", "duplicate_of", "content_hash",
         }),
+        # Columnas CRÍTICAS para la corrección (identidad/canónica/dedup/activación): si faltan, el
+        # snapshot se confirmaría SIN ellas y añadirlas después no genera UPDATE WAL para las filas
+        # viejas → histórico irrecuperable (P1 rev. externa integral). El resto de `columns` es
+        # payload opcional (su ausencia la absorbe el intersect del backfill). El slot NO se crea
+        # hasta que TODAS las `required` existan.
+        "required": frozenset({"title", "url", "content_hash", "is_active"}),
     },
     "user_profiles": {
         "pk": "id",
         "columns": frozenset({"user_id", "title", "cv_text", "skills", "updated_at"}),
+        "required": frozenset({"user_id", "title", "cv_text", "skills", "updated_at"}),
         # TOAST (§2/§8): cv_text es contractual para canónica/embeddings — si
         # wal2json lo omite (UPDATE que no lo toca), se COMPLETA re-leyendo
         # por PK con la conexión normal (SELECT RO de §1). jobs NO lleva esta
@@ -100,6 +107,7 @@ TABLE_WHITELIST: dict[str, dict] = {
     "users": {
         "pk": "id",
         "columns": frozenset({"id", "is_active"}),
+        "required": frozenset({"is_active"}),
     },
 }
 
@@ -310,8 +318,11 @@ class ShadowCapture:
         )
 
     def _legacy_missing(self) -> list[str]:
-        """Tablas capturadas AÚN no listas: ausentes o sin su PK contractual
-        (misma consulta de information_schema que usa el backfill)."""
+        """Tablas capturadas AÚN no listas: ausentes, sin su PK contractual, o sin ALGUNA columna
+        `required` (crítica para la corrección). Bloquear el slot hasta que todas existan evita
+        confirmar un snapshot al que le falta una columna contractual —p.ej. cv_text— que después
+        no generaría UPDATE WAL para las filas viejas (P1 rev. externa integral). Misma consulta de
+        information_schema que usa el backfill."""
         missing = []
         with self._core.cursor() as cur:
             for qualified in self.tables:
@@ -319,7 +330,9 @@ class ShadowCapture:
                 spec = TABLE_WHITELIST.get(table)
                 if spec is None:
                     continue  # sin whitelist contractual: el backfill la ignora
-                if spec["pk"] not in self._table_columns(cur, src_schema, table):
+                existing = self._table_columns(cur, src_schema, table)
+                needed = {spec["pk"]} | spec.get("required", frozenset())
+                if needed - existing:
                     missing.append(qualified)
         return missing
 
@@ -369,6 +382,14 @@ class ShadowCapture:
         pk_col = spec["pk"]
         if pk_col not in existing:
             raise RuntimeError(f"{src_schema}.{table} sin su PK contractual {pk_col!r}")
+        # Las `required` NO se intersectan (eso las omitiría en silencio): su ausencia FALLA
+        # ruidosa — readiness ya debió bloquear, esto es defensa en profundidad (P1 rev. externa).
+        missing_required = spec.get("required", frozenset()) - existing
+        if missing_required:
+            raise RuntimeError(
+                f"{src_schema}.{table} sin columna(s) contractual(es) requerida(s): "
+                f"{sorted(missing_required)}"
+            )
         selected = sorted(spec["columns"] & existing)
         col_list = ", ".join([f'"{pk_col}"'] + [f'"{c}"' for c in selected])
         # Cursor DECLARE del lado servidor (dentro de la tx del snapshot):
