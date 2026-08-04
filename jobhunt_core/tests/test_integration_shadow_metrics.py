@@ -663,6 +663,45 @@ def test_labels_ready_green_with_dod_oracle(db):
     assert gates["dedup_recall"]["ok"] is True
 
 
+def test_labels_ready_red_with_two_sets_one_profile(db):
+    """REGRESIÓN P1 rev. externa integral: dos sets congelados del MISMO perfil (cada uno >= 30
+    juicios) NO satisfacen el DoD B-03 (">= 2 PERFILES reales"). labels_ready debe quedar ROJO: el
+    gate cuenta PERFILES distintos (perfiles_ok=1), no sets (sets_congelados_ok=2)."""
+    factory = db
+    src = _mk_source(factory, "legacy:lr1p")
+    p = uuid.uuid4().hex[:6]
+    pid = _mk_profile(factory, str(uuid.uuid4()))  # UN solo perfil, DOS sets
+    _mk_frozen_set(factory, pid, {f"{p}-a{i:02d}": i % 4 for i in range(30)})
+    _mk_frozen_set(
+        factory, pid, {f"{p}-b{i:02d}": i % 4 for i in range(30)}, name="ronda-2"
+    )
+    # Pares dedup suficientes (>=50, >=20 mapeables): el ROJO viene SOLO del conteo de perfiles.
+    for i in range(25):
+        ra, rb = f"{p}-m{i:02d}a", f"{p}-m{i:02d}b"
+        vid, _, _ = _mk_slot(factory, src, ra)
+        _mk_slot(factory, src, rb, active=False, vacancy_id=vid)
+        _exec(
+            factory,
+            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
+            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            {"a": ra, "b": rb},
+        )
+    for i in range(25):
+        _exec(
+            factory,
+            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
+            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            {"a": f"{p}-u{i:02d}a", "b": f"{p}-u{i:02d}b"},
+        )
+    _compute(factory)
+    lr = _metric_row(factory, "labels_ready")
+    assert float(lr.value) == 0  # ROJO: 1 solo perfil
+    assert lr.details["sets_congelados_ok"] == 2  # 2 sets válidos…
+    assert lr.details["perfiles_ok"] == 1  # …pero de UN solo perfil
+    gates = _gates(factory)
+    assert gates["labels_ready"]["ok"] is False
+
+
 def test_inactive_profile_excluded_from_metrics_and_labels_ready(db):
     """Regresión NO-GO 2 (decisión delegada 2026-07-28): un perfil cuyo
     external_ref está INACTIVO (último estado `users` del staging aplicado —

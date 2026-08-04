@@ -170,7 +170,11 @@ STAGING_RETENTION_DAYS = 7     # retención §2: ciclos cerrados + 7 días
 
 # Precondición del ORÁCULO (gate `labels_ready`, P1-2 — DoD B-03/§4): sin
 # esto los gates de calidad no son DEMOSTRABLES y el ciclo no puede sumar.
-LABELS_MIN_FROZEN_SETS = 2         # >= 2 sets CONGELADOS…
+# Consumer sombra (el ÚNICO cuyos sets cuentan para el oráculo; = projector.SHADOW_CONSUMER,
+# duplicado aquí para no acoplar metrics→projector). Un set de otro consumer (p.ej. portfolio)
+# NO es evidencia del oráculo sombra (P1 rev. externa integral).
+SHADOW_CONSUMER = "swissjob-shadow"
+LABELS_MIN_FROZEN_SETS = 2         # >= 2 PERFILES sombra con set congelado válido (DoD B-03)…
 LABELS_MIN_JUDGMENTS_PER_SET = 30  # …con >= 30 juicios cada uno (DoD B-03)
 LABELS_MIN_DEDUP_PAIRS = 50        # >= 50 pares dedup etiquetados
 LABELS_MIN_MAPPED_DEDUP_PAIRS = 20  # >= N pares MAPEABLES a vacantes core
@@ -785,10 +789,12 @@ async def _labels_ready_row(session: AsyncSession) -> tuple:
                 "SELECT ls.id, p.external_ref, count(j.job_ref) AS n_juicios "
                 "FROM labeled_sets ls "
                 "JOIN profiles p ON p.id = ls.profile_id "
+                "JOIN consumers c ON c.id = p.consumer_id AND c.name = :shadow "
                 "LEFT JOIN labeled_judgments j ON j.set_id = ls.id "
                 "WHERE ls.frozen_at IS NOT NULL "
                 "GROUP BY ls.id, p.external_ref"
-            )
+            ),
+            {"shadow": SHADOW_CONSUMER},
         )
     ).all()
     inactive = await inactive_user_refs(
@@ -798,12 +804,17 @@ async def _labels_ready_row(session: AsyncSession) -> tuple:
     excluded_inactive = sum(
         1 for r in frozen_rows if r.external_ref in inactive
     )
-    frozen_ok = sum(
-        1
+    # Sets congelados VÁLIDOS (>= min juicios) de perfiles ACTIVOS (informativo)…
+    ok_sets = [
+        r
         for r in frozen_rows
         if r.external_ref not in inactive
         and int(r.n_juicios) >= LABELS_MIN_JUDGMENTS_PER_SET
-    )
+    ]
+    frozen_ok = len(ok_sets)
+    # …pero el GATE cuenta PERFILES DISTINTOS: el DoD B-03 exige ">= 2 PERFILES reales", no 2 sets
+    # — dos sets del MISMO perfil no bastan (P1 rev. externa integral).
+    perfiles_ok = len({r.external_ref for r in ok_sets})
     pairs = (
         await session.execute(
             sa.text("SELECT job_ref_a, job_ref_b FROM labeled_dedup_pairs")
@@ -815,13 +826,14 @@ async def _labels_ready_row(session: AsyncSession) -> tuple:
         1 for p in pairs if p.job_ref_a in mapping and p.job_ref_b in mapping
     )
     ok = (
-        frozen_ok >= LABELS_MIN_FROZEN_SETS
+        perfiles_ok >= LABELS_MIN_FROZEN_SETS
         and len(pairs) >= LABELS_MIN_DEDUP_PAIRS
         and mapped_pairs >= LABELS_MIN_MAPPED_DEDUP_PAIRS
     )
     details = {
         "sets_congelados": frozen_total,
         "sets_congelados_ok": frozen_ok,
+        "perfiles_ok": perfiles_ok,
         "sets_excluidos_inactivos": excluded_inactive,
         "pares_dedup": len(pairs),
         "pares_mapeables": mapped_pairs,
