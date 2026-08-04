@@ -525,3 +525,42 @@ def test_migrate_rollback_migrate_roundtrip_is_verified():
             await s.commit()
 
     asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_aborts_on_alien_cascade_event():
+    """REGRESIÓN P1 ronda 7: un evento AJENO (fuera de la procedencia) que referencia a una
+    application de la procedencia lo borraría el CASCADE (application_status_events.application_id
+    → applications ON DELETE CASCADE) en SILENCIO al borrar la application — el rowcount de
+    applications no cuenta los eventos cascadeados, el control de cardinalidad no lo vería y se
+    marcaría rolled_back perdiendo una fila ajena. El rollback lo detecta ANTES de borrar → aborta
+    con TODO intacto (la application + AMBOS eventos) y el manifiesto sigue 'applied' (recuperable:
+    quitar el ajeno y reintentar)."""
+    import uuid
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, [_user("https://cas.example.ch/1")])
+            assert await _count(s, "applications") == 1
+            assert await _count(s, "application_status_events") == 1
+            # 2º evento para la MISMA application, NO en la procedencia (simula un evento
+            # posterior a la migración: cambio de estado registrado tras el freeze).
+            app_id = (
+                await s.execute(sa.text("SELECT id FROM applications LIMIT 1"))
+            ).scalar_one()
+            await s.execute(
+                sa.text(
+                    "INSERT INTO application_status_events (id, application_id, status) "
+                    "VALUES (:i, :a, :st)"
+                ),
+                {"i": uuid.uuid4(), "a": app_id, "st": "phone_screen"},
+            )
+            result = await rollback_migration(s, manifest["id"])
+            assert result["status"] == "aborted"
+            assert "cascade_mismatch" in result and result["cascade_mismatch"]
+            # NADA borrado: la application y AMBOS eventos siguen; el manifiesto sigue 'applied'.
+            assert await _count(s, "applications") == 1
+            assert await _count(s, "application_status_events") == 2
+            assert await _manifest_status(s, manifest["id"]) == "applied"
+            await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))

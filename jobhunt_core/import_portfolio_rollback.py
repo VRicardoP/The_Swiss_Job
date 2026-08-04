@@ -22,6 +22,20 @@ orden child→parent, para deshacer la migración sin tocar nada ajeno. DESTRUCT
   POST-commit apuntara a una vacante de la procedencia, sus propias filas dedup_candidates/
   merge_log (NO ACTION hacia la vacante) harían FALLAR el DELETE de forma RUIDOSA (sin commit),
   no en silencio. Este rollback está pensado para la ventana single-writer del cutover.
+- SEGURIDAD (abort, CASCADE): al borrar una `application` el CASCADE
+  application_status_events→applications arrastra TODOS sus eventos; uno AJENO (fuera de la
+  procedencia — p.ej. un cambio de estado registrado tras el freeze) se borraría en SILENCIO
+  porque el rowcount de `applications` no cuenta los cascadeados. Antes de borrar se comprueba que
+  los eventos que referencian a las applications de la procedencia son EXACTAMENTE
+  provenance['application_status_events'] (`_cascade_event_mismatch`, con FOR UPDATE que bloquea
+  inserts hijos concurrentes vía FOR KEY SHARE); cualquier ajeno o ausente ABORTA sin borrar ni
+  marcar, recuperable (quitar el ajeno y reintentar) — P1 rev. externa §4-LOCAL ronda 7.
+- FUERA DE ALCANCE (single-writer): el CUARTO SET NULL,
+  applications.source_listing_incarnation_id→source_listing_incarnations (per-columna, core0011),
+  NO se guarda — a diferencia de los tres de `vacancies` es una nulificación de puntero, no un
+  borrado. Las applications de ESTE run nacen con ese puntero NULL (no se inserta la columna), y
+  una application AJENA apuntando a una incarnación de la procedencia solo ocurre en una BD VIVA
+  multi-writer, que este rollback no soporta. Su nulificación silenciosa queda para el §4-REAL.
 
 Marca además el CICLO DE VIDA de la fila durable del manifiesto (core0014: status
 applied|rolled_back|rollback_aborted) si se le pasa `manifest_id`, para que un `verdict='ok'`
@@ -235,6 +249,37 @@ async def _validate_manifest(
     return None, provenance
 
 
+async def _cascade_event_mismatch(
+    session: AsyncSession, provenance: dict[str, list[str]]
+) -> list[str]:
+    """IDs de application_status_events donde el CASCADE (application_status_events.application_id
+    → applications ON DELETE CASCADE) NO coincide con la procedencia: los que ACTUALMENTE
+    referencian a las applications de la procedencia deben ser EXACTAMENTE
+    provenance['application_status_events']. Un evento AJENO (añadido tras la migración) se
+    borraría en SILENCIO al borrar su application (el rowcount de applications no lo cuenta) y el
+    rollback afirmaría 'rolled_back' habiendo perdido una fila ajena (P1 rev. externa 7). Bloquea
+    las applications (FOR UPDATE) para que no entre un evento nuevo entre la comprobación y el
+    borrado. Devuelve la diferencia SIMÉTRICA (ajenos o ausentes); [] si coincide."""
+    app_ids = provenance.get("applications", [])
+    if not app_ids:
+        return []
+    await session.execute(
+        sa.text("SELECT 1 FROM applications WHERE id::text IN :ids FOR UPDATE").bindparams(
+            sa.bindparam("ids", expanding=True)
+        ),
+        {"ids": app_ids},
+    )
+    rows = await session.execute(
+        sa.text(
+            "SELECT id::text k FROM application_status_events WHERE application_id::text IN :ids"
+        ).bindparams(sa.bindparam("ids", expanding=True)),
+        {"ids": app_ids},
+    )
+    current = {r.k for r in rows}
+    expected = set(provenance.get("application_status_events", []))
+    return sorted(current ^ expected)
+
+
 async def rollback_migration(session: AsyncSession, manifest_id: str) -> dict:
     """Deshace la migración del manifiesto `manifest_id` borrando su procedencia ALMACENADA
     (leída del propio manifiesto) en orden FK-safe. `manifest_id` es OBLIGATORIO: un rollback
@@ -264,6 +309,26 @@ async def rollback_migration(session: AsyncSession, manifest_id: str) -> dict:
             "reason": "vacantes reutilizadas apuntan a offer_revisions/incarnaciones de la "
             "procedencia; restaurar su puntero previo es un paso del §4 completo",
             "unsafe_vacancies": unsafe,
+        }
+
+    # El borrado de una application CASCADEA (application_status_events.application_id → applications
+    # ON DELETE CASCADE) sus eventos: un evento AJENO añadido tras la migración (fuera de la
+    # procedencia) se borraría en SILENCIO — el rowcount de applications no lo cuenta, así que el
+    # control de cardinalidad no lo vería y se marcaría rolled_back perdiendo una fila ajena
+    # (P1 rev. externa 7). Se comprueba ANTES de borrar; recuperable (quitar el ajeno y reintentar)
+    # → aborta SIN marcar ni borrar, el manifiesto sigue 'applied'.
+    cascade_mismatch = await _cascade_event_mismatch(session, provenance)
+    if cascade_mismatch:
+        logger.error(
+            "import_portfolio_rollback: ABORTADO — los eventos que el CASCADE afectaría no "
+            "coinciden con la procedencia (ajenos o ausentes): %s",
+            cascade_mismatch[:5],
+        )
+        return {
+            "status": "aborted",
+            "reason": "eventos de application_status_events ajenos a la procedencia serían "
+            "borrados por el CASCADE; el borrado explícito no los cuenta",
+            "cascade_mismatch": cascade_mismatch,
         }
 
     # Borrado dentro de un SAVEPOINT: si alguna tabla NO borra EXACTAMENTE sus identidades
