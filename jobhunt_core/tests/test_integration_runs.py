@@ -877,6 +877,75 @@ def test_heartbeat_aborts_the_fetch_when_evicted(db, monkeypatch):
     asyncio.run(flow())
 
 
+def test_heartbeat_abort_does_not_swallow_a_concurrent_external_cancel(db, monkeypatch):
+    """REGRESIÓN P1 rev. externa ronda 2: si el apagado del worker cancela el fetch en la MISMA
+    ventana que el watchdog, hay DOS solicitudes de cancelación. Retirar solo la nuestra y
+    convertirla en LeaseLostError dejaba pendiente la ajena — el worker seguía con los demás scopes
+    ignorando el shutdown. Ahora, si tras uncancel() queda alguna, se propaga CancelledError."""
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+    monkeypatch.setattr(runs, "SCOPE_HEARTBEAT_S", 0.05)
+
+    async def flow():
+        async with factory() as s:
+            run_id = await runs.start_run(s, "ventana-hb-doble-cancel")
+            created["runs"].append(run_id)
+            tok = await runs.claim_scope_run(s, run_id, scope_a)
+            await s.commit()
+        body = asyncio.current_task()
+
+        async def evicted(session, run_id_, scope_id_, token_):
+            body.cancel()  # cancelación EXTERNA (apagado) en la misma ventana...
+            return False  # ...y a la vez el watchdog decide abortar
+
+        monkeypatch.setattr(runs, "beat_scope_run", evicted)
+        raised = None
+        try:
+            async with runs.scope_heartbeat(factory, run_id, scope_a, tok):
+                await asyncio.sleep(5)
+        except BaseException as exc:  # noqa: BLE001 — se comprueba el TIPO exacto abajo
+            raised = exc
+        # CancelledError, NO LeaseLostError: el apagado no puede quedar tragado...
+        assert isinstance(raised, asyncio.CancelledError)
+        # ...y su solicitud sigue PENDIENTE (solo se retiró la del watchdog).
+        assert body.cancelling() > 0
+        body.uncancel()  # limpieza: que asyncio.run cierre sin cancelación colgada
+
+    asyncio.run(flow())
+
+
+def test_heartbeat_aborts_within_the_lease_margin_not_at_expiry(db, monkeypatch):
+    """REGRESIÓN P1 rev. externa ronda 2: el margen se comprobaba solo TRAS el intento, así que un
+    reintento podía arrancar con el margen consumido y colgarse un timeout entero más — el aborto
+    caía justo al vencer el lease, cuando un competidor ya puede re-armar. Ahora el deadline es
+    absoluto y cada espera/timeout se recorta a lo que queda."""
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+    monkeypatch.setattr(runs, "SCOPE_HEARTBEAT_S", 0.1)
+    monkeypatch.setattr(runs, "SCOPE_LEASE_S", 0.4)  # margen seguro = 0.3
+
+    async def hangs(session, run_id_, scope_id_, token_):
+        await asyncio.sleep(10)  # cada intento se cuelga hasta su timeout
+
+    monkeypatch.setattr(runs, "beat_scope_run", hangs)
+
+    async def flow():
+        async with factory() as s:
+            run_id = await runs.start_run(s, "ventana-hb-margen")
+            created["runs"].append(run_id)
+            tok = await runs.claim_scope_run(s, run_id, scope_a)
+            await s.commit()
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(runs.LeaseLostError):
+            async with runs.scope_heartbeat(factory, run_id, scope_a, tok):
+                await asyncio.sleep(5)
+        elapsed = asyncio.get_running_loop().time() - started
+        # Aborta DENTRO del margen (0.3), no al vencimiento del lease (0.4).
+        assert elapsed < runs.SCOPE_LEASE_S
+
+    asyncio.run(flow())
+
+
 def test_run_all_task_registered():
     from jobhunt_core.celery_app import celery_app
 

@@ -177,6 +177,7 @@ _ERASE_TABLES = (
     "profile_vacancy_state",
     "profile_vacancy_events",
     "match_evaluations",
+    "profile_recovery_state",  # core0019: watermark de intentos (FK a profiles y revisiones)
     "profile_embeddings",
     "profile_revision_activations",
     "profile_revisions",
@@ -1167,39 +1168,43 @@ async def erase_shadow_profile(
 # ------------------------------------------------- flujo normal tras el lote
 
 
-# Señal de RECUPERACIÓN (2º análisis B-02, P2): UNA sola consulta por
-# invocación para TODOS los candidatos — jamás una por perfil. Un candidato
-# la enciende si, para algún (modelo activo dim=384, política activa):
-#   (a) su revisión VIGENTE no tiene ninguna match_evaluation, o
-#   (b) existe una offer_revision canónica EMBEBIDA para ese modelo más
-#       reciente (created_at) que su última evaluación con ese combo.
-# El máximo del corpus por combo es escalar (no depende del perfil): se
-# calcula una vez en el CTE. Subconsultas sobre índices EXISTENTES:
-# ix_pract_profile_seq (vigente por max(seq)), uq_eval_profile_vacancy_key
-# (prefijo profile_id en match_evaluations), ix_vacancies_archived_at +
-# ix_offrev_text_hash + pk_offer_embeddings (corpus embebido por modelo).
-_RECOVERY_NEEDED_SQL = """
-WITH combos AS (
-    SELECT m.id AS model_id, sp.id AS policy_id,
-           (SELECT max(orv.created_at)
-              FROM vacancies v
-              JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id
-              JOIN offer_embeddings oe
-                ON oe.text_hash = orv.text_hash AND oe.model_id = m.id
-             WHERE v.archived_at IS NULL AND v.merged_into IS NULL) AS corpus_max
-      FROM embedding_models m
-      CROSS JOIN scoring_policies sp
-     WHERE m.active AND m.dim = :dim AND sp.active
-)
--- Solo combos con CORPUS embebido: un modelo activo sin ofertas embebidas satisface para siempre
--- el NOT EXISTS de abajo, y evaluarlo no escribe evaluación (0 candidatos) — el perfil conservaría
--- su last_eval y ocuparía la cabeza del lote acotado indefinidamente, tapando a perfiles que SÍ
--- necesitan una evaluación real (P1 rev. externa del cierre de residuales). En cuanto ese modelo
--- tenga corpus, el combo vuelve y la señal se enciende con normalidad.
+# Corpus EMBEBIDO por modelo: `max(offer_embeddings.created_at)` de las vacantes activas. Es la
+# fecha del EMBEDDING, no la de la revisión de oferta (P1 rev. externa del cierre de residuales,
+# ronda 2): una revisión ANTIGUA embebida DESPUÉS se vuelve elegible sin mover su `created_at`, así
+# que usar el de la revisión perdía la señal en silencio. Escalar por modelo (no depende del perfil).
+_ACTIVE_COMBOS_SQL = """
+SELECT m.id AS model_id, sp.id AS policy_id,
+       (SELECT max(oe.created_at)
+          FROM vacancies v
+          JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id
+          JOIN offer_embeddings oe
+            ON oe.text_hash = orv.text_hash AND oe.model_id = m.id
+         WHERE v.archived_at IS NULL AND v.merged_into IS NULL) AS corpus_max
+  FROM embedding_models m
+  CROSS JOIN scoring_policies sp
+ WHERE m.active AND m.dim = :dim AND sp.active
+"""
+
+# Señal de RECUPERACIÓN (2º análisis B-02, P2): UNA sola consulta por invocación para TODOS los
+# candidatos — jamás una por perfil. La señal es por INTENTO, no por fila escrita (P1 rev. externa
+# del cierre de residuales, ronda 2): un intento puede no crear NINGUNA match_evaluation (el top-K
+# ya evaluado choca con el ON CONFLICT DO NOTHING, p. ej. cuando el corpus crece con una oferta que
+# queda FUERA del top-K), y derivar la señal de esas filas dejaba al perfil encendido para siempre
+# — con el lote acotado, tapando indefinidamente a quien sí necesitaba evaluación real.
+# Un candidato enciende la señal si, para algún (modelo activo dim=384, política activa) CON corpus:
+#   (a) no hay intento registrado para su revisión VIGENTE con ese combo (revisión nueva, política
+#       nueva, o intento que nunca ocurrió), o
+#   (b) el corpus embebido creció por encima del watermark del último intento.
+# Todo intento avanza `attempted_at` (ver _record_recovery_attempt) ⇒ la cola ROTA y nadie se queda
+# clavado en la cabeza. Subconsultas sobre índices EXISTENTES: ix_pract_profile_seq (vigente por
+# max(seq)), ix_prs_profile_attempted, ix_vacancies_archived_at + ix_offrev_text_hash +
+# pk_offer_embeddings (corpus embebido por modelo).
+_RECOVERY_NEEDED_SQL = f"""
+WITH combos AS ({_ACTIVE_COMBOS_SQL})
 SELECT DISTINCT p.id,
-       (SELECT max(e.created_at)
-          FROM match_evaluations e
-         WHERE e.profile_id = p.id) AS last_eval
+       (SELECT min(rs.attempted_at)
+          FROM profile_recovery_state rs
+         WHERE rs.profile_id = p.id) AS last_try
   FROM profiles p
   JOIN LATERAL (
         SELECT a.revision_id
@@ -1209,34 +1214,37 @@ SELECT DISTINCT p.id,
          LIMIT 1
        ) cur ON true
   CROSS JOIN combos c
+  LEFT JOIN profile_recovery_state w
+    ON w.profile_revision_id = cur.revision_id
+   AND w.model_id = c.model_id
+   AND w.policy_id = c.policy_id
  WHERE p.id NOT IN :excluded
    AND p.id NOT IN :evaluated
    -- Solo perfiles con vector de ESE modelo: sin él, evaluate_profile devuelve 'sin_vector' sin
-   -- escribir evaluación, así que el perfil conservaría last_eval NULL y, con el lote acotado,
-   -- ocuparía la cabeza del orden para siempre (inanición del resto). Los embeddings pendientes ya
-   -- se drenaron antes de llegar aquí, así que "sin vector" aquí significa "aún no embebible" —
-   -- vuelve a ser candidato en cuanto tenga vector, sin haber gastado una pasada en un no-op.
+   -- hacer nada; el intento se registraría igual, pero gastaría una plaza del lote en un no-op.
+   -- Los embeddings pendientes ya se drenaron antes de llegar aquí.
    AND EXISTS (
         SELECT 1 FROM profile_embeddings pe
          WHERE pe.profile_revision_id = cur.revision_id AND pe.model_id = c.model_id)
+   -- Un combo sin corpus embebido no puede producir trabajo: evaluarlo es un no-op garantizado.
    AND c.corpus_max IS NOT NULL
-   AND (
-        NOT EXISTS (
-            SELECT 1
-              FROM match_evaluations e
-             WHERE e.profile_id = p.id
-               AND e.profile_revision_id = cur.revision_id
-               AND e.model_id = c.model_id
-               AND e.scoring_policy_id = c.policy_id)
-        OR c.corpus_max > (
-            SELECT max(e.created_at)
-              FROM match_evaluations e
-             WHERE e.profile_id = p.id
-               AND e.model_id = c.model_id
-               AND e.scoring_policy_id = c.policy_id)
-       )
- ORDER BY last_eval ASC NULLS FIRST, p.id
+   AND (w.profile_revision_id IS NULL OR c.corpus_max > w.corpus_watermark)
+ ORDER BY last_try ASC NULLS FIRST, p.id
  LIMIT :cap
+"""
+
+# Registro del INTENTO (idempotente por combo): watermark = corpus observado ANTES de evaluar — si
+# el corpus crece DURANTE la evaluación, el siguiente ciclo lo vuelve a coger (dirección segura).
+_RECORD_ATTEMPT_SQL = """
+INSERT INTO profile_recovery_state
+    (profile_revision_id, profile_id, model_id, policy_id, corpus_watermark, attempted_at)
+SELECT cur.revision_id, :pid, t.model_id, t.policy_id, t.watermark, now()
+  FROM (SELECT a.revision_id FROM profile_revision_activations a
+         WHERE a.profile_id = :pid ORDER BY a.seq DESC LIMIT 1) cur
+  CROSS JOIN unnest(CAST(:models AS uuid[]), CAST(:policies AS uuid[]),
+                    CAST(:watermarks AS timestamptz[])) AS t(model_id, policy_id, watermark)
+ON CONFLICT (profile_revision_id, model_id, policy_id) DO UPDATE
+SET corpus_watermark = EXCLUDED.corpus_watermark, attempted_at = EXCLUDED.attempted_at
 """
 
 
@@ -1255,17 +1263,46 @@ async def _replay_after_batch(session_factory, evaluated: set) -> int:
     es un no-op real); la evaluación NO es incondicional: solo los perfiles
     sombra activos que _after_batch no evaluó en ESTA invocación
     (`evaluated`) y cuya señal de recuperación está encendida — detección en
-    UNA consulta (_RECOVERY_NEEDED_SQL): revisión vigente sin
-    match_evaluation para algún (modelo, política) activos, o corpus
-    canónico embebido más reciente que su última evaluación. La evaluación
-    de recuperación sigue siendo dedup por eval_key (jamás duplica).
+    UNA consulta (_RECOVERY_NEEDED_SQL): sin INTENTO registrado para su
+    revisión vigente con algún (modelo, política) activos, o corpus embebido
+    por encima del watermark de ese intento. La evaluación de recuperación
+    sigue siendo dedup por eval_key (jamás duplica).
     Devuelve los perfiles evaluados en la recuperación."""
     await _drain_embeddings(session_factory)
     async with session_factory() as session:
         targets = await _recovery_targets(session, evaluated)
+        combos = await _active_combos(session)
     for pid in targets:
-        await _run_profile_impl(str(pid), EVAL_LIMIT, session_factory=session_factory)
+        await _evaluate_and_record(session_factory, pid, combos)
     return len(targets)
+
+
+async def _active_combos(session) -> list:
+    """(modelo, política, corpus_max) activos — el watermark que registra cada intento."""
+    return (
+        await session.execute(sa.text(_ACTIVE_COMBOS_SQL), {"dim": EMBED_DIM})
+    ).all()
+
+
+async def _evaluate_and_record(session_factory, pid, combos) -> None:
+    """Evalúa el perfil y REGISTRA el intento contra el corpus observado. El registro es lo que
+    hace avanzar la cola: sin él, un intento que no crea filas nuevas (top-K ya evaluado) dejaría
+    al perfil encendido y clavado en la cabeza del lote acotado (P1 rev. externa, ronda 2)."""
+    await _run_profile_impl(str(pid), EVAL_LIMIT, session_factory=session_factory)
+    usable = [c for c in combos if c.corpus_max is not None]
+    if not usable:
+        return  # sin corpus no hay señal que apagar (el combo ya no es candidato)
+    async with session_factory() as session:
+        await session.execute(
+            sa.text(_RECORD_ATTEMPT_SQL),
+            {
+                "pid": pid,
+                "models": [c.model_id for c in usable],
+                "policies": [c.policy_id for c in usable],
+                "watermarks": [c.corpus_max for c in usable],
+            },
+        )
+        await session.commit()
 
 
 async def _recovery_targets(session, evaluated: set) -> list:
@@ -1324,9 +1361,12 @@ async def _after_batch(session_factory, result: _BatchResult) -> list:
     await _drain_embeddings(session_factory)
     async with session_factory() as session:
         targets = await _eval_targets(session, result)
+        combos = await _active_combos(session)
     for pid in targets:
-        # Mismo top-K por defecto que la tarea jobhunt.matching.run_profile.
-        await _run_profile_impl(str(pid), EVAL_LIMIT, session_factory=session_factory)
+        # Mismo top-K por defecto que la tarea jobhunt.matching.run_profile. El intento se registra
+        # también aquí: si no, la recuperación de salida volvería a coger cada perfil ya evaluado
+        # por el flujo normal solo para descubrir que no hay nada que hacer.
+        await _evaluate_and_record(session_factory, pid, combos)
     return targets
 
 

@@ -1338,6 +1338,73 @@ def test_recovery_is_capped_per_pass(db, monkeypatch):
     assert set(targets) <= set(pids)
 
 
+def test_recovery_attempt_advances_the_queue_even_without_new_evaluations(db):
+    """REGRESIÓN P1 rev. externa ronda 2: un intento puede no crear NINGUNA match_evaluation (el
+    top-K ya evaluado choca con el ON CONFLICT DO NOTHING — p. ej. el corpus crece con una oferta
+    fuera del top-K). Derivando la señal de esas filas, el perfil seguía encendido y, con el lote
+    acotado, tapaba para siempre a los demás. Ahora la señal es por INTENTO: tras registrarlo, el
+    perfil se apaga mientras el corpus no crezca."""
+    factory = db
+    _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    _seed_corpus(factory)
+    user = uuid.uuid4()
+    embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
+    try:
+        _seed(factory, [
+            ("users", "I", str(user), {"id": str(user), "is_active": True}),
+            ("user_profiles", "I", f"prof-{user}", _profile(user)),
+        ])
+        _project()  # el flujo normal evalúa Y registra el intento
+
+        async def check():
+            async with factory() as s:
+                return await projector._recovery_targets(s, set())
+
+        assert _run(check()) == []  # nada pendiente: el intento quedó registrado
+        # Una SEGUNDA evaluación idéntica no escribe filas nuevas (dedup por eval_key) y aun así el
+        # perfil sigue apagado — es el intento, no la fila, lo que gobierna.
+        evals = _scalar(factory, "SELECT count(*) FROM match_evaluations")
+        _project()
+        assert _scalar(factory, "SELECT count(*) FROM match_evaluations") == evals
+        assert _run(check()) == []
+    finally:
+        embeddings.set_backend_factory(None)
+
+
+def test_recovery_signal_uses_embedding_time_not_offer_revision_time(db):
+    """REGRESIÓN P1 rev. externa ronda 2 (variante de PÉRDIDA): el corpus se medía por
+    `offer_revisions.created_at`. Una revisión ANTIGUA embebida DESPUÉS se vuelve elegible sin mover
+    esa fecha → la señal no se encendía y el perfil se quedaba con matching viejo en silencio. El
+    watermark usa `offer_embeddings.created_at`."""
+    factory = db
+    _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    _seed_corpus(factory)
+    user = uuid.uuid4()
+    embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
+    try:
+        _seed(factory, [
+            ("users", "I", str(user), {"id": str(user), "is_active": True}),
+            ("user_profiles", "I", f"prof-{user}", _profile(user)),
+        ])
+        _project()
+
+        async def check():
+            async with factory() as s:
+                return await projector._recovery_targets(s, set())
+
+        assert _run(check()) == []  # intento registrado con el corpus de ese momento
+        # Embebido TARDÍO de una revisión ya existente (backfill de vectores): la fecha de la
+        # REVISIÓN de oferta no se mueve; solo la del EMBEDDING delata que el corpus es elegible.
+        _exec(factory, "UPDATE offer_embeddings SET created_at = now()")
+        assert _scalar(
+            factory,
+            "SELECT max(created_at) < max(now()) FROM offer_revisions",
+        ) is True  # la revisión sigue siendo ANTERIOR: la señal no puede venir de ella
+        assert _run(check()) != []  # la señal SÍ se enciende
+    finally:
+        embeddings.set_backend_factory(None)
+
+
 def test_recovery_ignores_active_models_without_corpus(db):
     """REGRESIÓN P1 rev. externa del cierre de residuales: un modelo ACTIVO sin ofertas embebidas
     satisface para SIEMPRE el NOT EXISTS de la señal, y evaluarlo no escribe evaluación (0

@@ -151,47 +151,65 @@ async def scope_heartbeat(session_factory, run_id, scope_id, token):
     body = asyncio.current_task()
     aborted: list[str] = []  # razón, si el watchdog canceló el bloque
 
+    def _abort(reason: str) -> None:
+        aborted.append(reason)
+        body.cancel()
+
     async def beat() -> None:
-        # El claim acaba de fijar heartbeat_at: el margen se cuenta desde ahora.
+        # El claim acaba de fijar heartbeat_at: el margen se cuenta desde ahora. `deadline` es el
+        # instante ABSOLUTO en que hay que haber renovado; todas las esperas y timeouts se recortan
+        # a lo que queda de él, para que el aborto ocurra DENTRO del margen y no al vencer el lease
+        # (P1 rev. externa, ronda 2: un reintento podía empezar con el margen ya consumido y
+        # colgarse un timeout entero más).
         last_ok = loop.time()
+        failed = False
         while True:
-            await asyncio.sleep(SCOPE_HEARTBEAT_S)
+            deadline = last_ok + max(SCOPE_LEASE_S - SCOPE_HEARTBEAT_S, 0)
+            # Tras un fallo se reintenta ANTES (sin otra espera completa), pero no en bucle cerrado.
+            wait = SCOPE_HEARTBEAT_S / 5 if failed else SCOPE_HEARTBEAT_S
+            await asyncio.sleep(max(min(wait, deadline - loop.time()), 0))
+            budget = deadline - loop.time()
+            if budget <= 0:
+                _abort("sin latido dentro del margen del lease")
+                return
             try:
-                async with asyncio.timeout(SCOPE_HEARTBEAT_S):
+                async with asyncio.timeout(min(SCOPE_HEARTBEAT_S, budget)):
                     async with session_factory() as session:
                         alive = await beat_scope_run(session, run_id, scope_id, token)
                         await session.commit()
             except asyncio.CancelledError:
                 raise  # salida normal del bloque: jamás se confunde con un fallo
             except Exception as exc:
-                # Transitorio (BD, red, timeout): se reintenta con sesión NUEVA en el próximo ciclo
-                # mientras quede margen de lease.
+                # Transitorio (BD, red, timeout): se reintenta con sesión NUEVA mientras quede
+                # margen; el propio timeout ya está recortado a lo que resta.
                 logger.warning("scope %s: latido falló (%s) — se reintenta", scope_id, exc)
-                if loop.time() - last_ok >= max(SCOPE_LEASE_S - SCOPE_HEARTBEAT_S, 0):
-                    aborted.append("sin latido dentro del margen del lease")
-                    body.cancel()
-                    return
+                failed = True
                 continue
             if not alive:
-                aborted.append("el claim ya no es de este worker")
-                body.cancel()
+                _abort("el claim ya no es de este worker")
                 return
             last_ok = loop.time()
+            failed = False
 
     task = asyncio.create_task(beat())
     try:
         yield
     except asyncio.CancelledError:
-        if not aborted:
-            raise  # cancelación AJENA (apagado del worker): se propaga tal cual
-        body.uncancel()
+        # `aborted` prueba que el watchdog PIDIÓ cancelar, no que esta cancelación sea SOLO suya:
+        # un apagado concurrente añade su propia solicitud. uncancel() retira la nuestra y devuelve
+        # las que quedan — si queda alguna, es ajena y debe seguir su curso (P1 rev. externa,
+        # ronda 2: convertirla en LeaseLostError dejaba al worker ignorando el shutdown).
+        if not aborted or body.uncancel() > 0:
+            raise
         raise LeaseLostError(f"scope {scope_id}: {aborted[0]} — fetch abortado") from None
     finally:
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
-            pass
+            # Si la cancelación pendiente es del PADRE (apagado), no es la del latido: propagar.
+            if body.cancelling() > 0:
+                raise
         except Exception as exc:  # el latido jamás debe decidir el resultado del fetch
             logger.error("scope %s: el latido terminó con error: %s", scope_id, exc)
 

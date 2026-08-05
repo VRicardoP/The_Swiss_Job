@@ -55,6 +55,7 @@ async def purge_consumer_graph(
     for tbl, col in (
         ("profile_vacancy_state", "profile_id"),
         ("match_evaluations", "profile_id"),
+        ("profile_recovery_state", "profile_id"),  # core0019
         ("profile_embeddings", "profile_id"),
         ("profile_revision_activations", "profile_id"),
         ("profile_revisions", "profile_id"),
@@ -236,6 +237,10 @@ async def purge_model(s: AsyncSession, model_id: uuid.UUID) -> None:
     pudo vectorizar perfiles AJENOS al grafo del test (cualquier perfil con
     revisión activa en la BD): sin este DELETE, el DELETE del modelo
     revienta por FK y el registro queda como residuo."""
+    await s.execute(
+        # core0019: el watermark de intentos también referencia el modelo.
+        sa.text("DELETE FROM profile_recovery_state WHERE model_id = :m"), {"m": model_id}
+    )
     await s.execute(
         sa.text("DELETE FROM profile_embeddings WHERE model_id = :m"), {"m": model_id}
     )
