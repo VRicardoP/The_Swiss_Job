@@ -1191,6 +1191,11 @@ WITH combos AS (
       CROSS JOIN scoring_policies sp
      WHERE m.active AND m.dim = :dim AND sp.active
 )
+-- Solo combos con CORPUS embebido: un modelo activo sin ofertas embebidas satisface para siempre
+-- el NOT EXISTS de abajo, y evaluarlo no escribe evaluación (0 candidatos) — el perfil conservaría
+-- su last_eval y ocuparía la cabeza del lote acotado indefinidamente, tapando a perfiles que SÍ
+-- necesitan una evaluación real (P1 rev. externa del cierre de residuales). En cuanto ese modelo
+-- tenga corpus, el combo vuelve y la señal se enciende con normalidad.
 SELECT DISTINCT p.id,
        (SELECT max(e.created_at)
           FROM match_evaluations e
@@ -1214,6 +1219,7 @@ SELECT DISTINCT p.id,
    AND EXISTS (
         SELECT 1 FROM profile_embeddings pe
          WHERE pe.profile_revision_id = cur.revision_id AND pe.model_id = c.model_id)
+   AND c.corpus_max IS NOT NULL
    AND (
         NOT EXISTS (
             SELECT 1

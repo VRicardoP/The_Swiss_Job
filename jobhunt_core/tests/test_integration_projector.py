@@ -244,6 +244,24 @@ def _rev_counts(factory, source_id):
     }
 
 
+def _seed_corpus(factory):
+    """Una vacante con su oferta EMBEBIDA para los modelos activos, por la vía real (proyector +
+    backend direccional). Sin corpus, un combo (modelo, política) no genera señal de recuperación:
+    evaluarlo no escribiría evaluación (0 candidatos) — ver
+    test_recovery_ignores_active_models_without_corpus."""
+    embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
+    try:
+        pk = f"job-corpus-{uuid.uuid4().hex[:6]}"
+        _seed(factory, [
+            ("jobs", "I", pk, _job(pk, f"fx{uuid.uuid4().hex[:6]}",
+                                   title="Python Developer",
+                                   description="backend python fastapi")),
+        ])
+        _project()
+    finally:
+        embeddings.set_backend_factory(None)
+
+
 async def _insert_vectors(session, model_id):
     """Vector para la revisión VIGENTE de cada perfil. En el flujo real lo deja _drain_embeddings
     (consumer-agnóstico: `pending_profile_revisions` no filtra por consumer) ANTES de que la
@@ -1174,6 +1192,7 @@ def test_recovery_detection_is_one_query_not_one_per_profile(db, monkeypatch):
     con N perfiles candidatos — jamás una consulta por perfil."""
     factory = db
     model_id, _ = _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    _seed_corpus(factory)  # sin corpus, ningún combo genera señal (va antes del monkeypatch)
     users = [uuid.uuid4() for _ in range(3)]
 
     async def no_after_batch(session_factory, result):
@@ -1216,6 +1235,7 @@ def test_recovery_covers_non_shadow_profiles(db):
 
     factory = db
     model_id, _ = _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    _seed_corpus(factory)
 
     async def setup_and_check():
         async with factory() as s:
@@ -1244,6 +1264,7 @@ def test_recovery_excludes_inactive_only_for_shadow_consumer(db):
 
     factory = db
     model_id, _ = _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    _seed_corpus(factory)
     victim = uuid.uuid4()  # id de user legacy INACTIVO...
     embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
     try:
@@ -1292,6 +1313,7 @@ def test_recovery_is_capped_per_pass(db, monkeypatch):
 
     factory = db
     model_id, _ = _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    _seed_corpus(factory)
     monkeypatch.setattr(projector, "RECOVERY_MAX_PROFILES", 2)
 
     async def setup_and_check():
@@ -1316,6 +1338,42 @@ def test_recovery_is_capped_per_pass(db, monkeypatch):
     assert set(targets) <= set(pids)
 
 
+def test_recovery_ignores_active_models_without_corpus(db):
+    """REGRESIÓN P1 rev. externa del cierre de residuales: un modelo ACTIVO sin ofertas embebidas
+    satisface para SIEMPRE el NOT EXISTS de la señal, y evaluarlo no escribe evaluación (0
+    candidatos) → con el lote acotado, esos perfiles se quedaban clavados en la cabeza del orden
+    tapando a los que sí necesitan una evaluación real. Un combo sin corpus no genera candidatos."""
+    factory = db
+    _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")  # modelo A, con corpus
+    user = uuid.uuid4()
+    src = f"fx{uuid.uuid4().hex[:6]}"
+    embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
+    try:
+        _seed(factory, [
+            ("jobs", "I", "job-nc", _job("job-nc", src, title="Python Developer",
+                                         description="backend python fastapi")),
+            ("users", "I", str(user), {"id": str(user), "is_active": True}),
+            ("user_profiles", "I", "prof-nc", _profile(user)),
+        ])
+        _project()  # deja corpus embebido, perfil y su evaluación para A → señal APAGADA
+    finally:
+        embeddings.set_backend_factory(None)
+    assert _scalar(factory, "SELECT count(*) FROM match_evaluations") > 0
+
+    async def add_model_b_and_check():
+        async with factory() as s:
+            # Modelo B ACTIVO y sin NINGUNA oferta embebida; el perfil sí tiene vector para él.
+            model_b = await embeddings.register_model(
+                s, f"modelo-b-{uuid.uuid4().hex[:6]}", "c" * 40
+            )
+            await _insert_vectors(s, model_b)
+            await s.commit()
+        async with factory() as s:
+            return await projector._recovery_targets(s, set())
+
+    assert _run(add_model_b_and_check()) == []  # B no puede generar trabajo: no es señal
+
+
 def test_recovery_skips_profiles_without_vector_so_they_cannot_starve_the_batch(db, monkeypatch):
     """REGRESIÓN residual pre-Fase D (inanición): un perfil SIN vector no puede evaluarse
     (evaluate_profile → 'sin_vector', que NO escribe match_evaluation), así que conservaría
@@ -1325,6 +1383,7 @@ def test_recovery_skips_profiles_without_vector_so_they_cannot_starve_the_batch(
 
     factory = db
     model_id, _ = _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    _seed_corpus(factory)
     monkeypatch.setattr(projector, "RECOVERY_MAX_PROFILES", 1)
 
     async def setup_and_check():

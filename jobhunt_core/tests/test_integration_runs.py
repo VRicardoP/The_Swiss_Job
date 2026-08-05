@@ -765,6 +765,118 @@ def test_scope_heartbeat_beats_while_the_block_runs(db, monkeypatch):
     asyncio.run(flow())
 
 
+def test_heartbeat_survives_a_transient_failure(db, monkeypatch):
+    """REGRESIÓN P1 rev. externa del cierre de residuales: un fallo puntual del latido (BD, red)
+    mataba la tarea para SIEMPRE y el lease dejaba de renovarse en silencio. Ahora se reintenta con
+    sesión nueva mientras quede margen de lease."""
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+    monkeypatch.setattr(runs, "SCOPE_HEARTBEAT_S", 0.05)
+    real_beat = runs.beat_scope_run
+    calls = {"n": 0}
+
+    async def flaky_beat(session, run_id, scope_id, token):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("caída transitoria de la BD")
+        return await real_beat(session, run_id, scope_id, token)
+
+    monkeypatch.setattr(runs, "beat_scope_run", flaky_beat)
+
+    async def flow():
+        async with factory() as s:
+            run_id = await runs.start_run(s, "ventana-hb-flaky")
+            created["runs"].append(run_id)
+            tok = await runs.claim_scope_run(s, run_id, scope_a)
+            await s.execute(
+                sa.text(
+                    "UPDATE source_harvest_runs SET heartbeat_at = clock_timestamp() "
+                    "- make_interval(secs => 3600) WHERE run_id = :r AND scope_id = :s"
+                ),
+                {"r": run_id, "s": scope_a},
+            )
+            await s.commit()
+
+        async def read_beat():
+            async with factory() as s:
+                return (
+                    await s.execute(
+                        sa.text(
+                            "SELECT heartbeat_at FROM source_harvest_runs "
+                            "WHERE run_id = :r AND scope_id = :s"
+                        ),
+                        {"r": run_id, "s": scope_a},
+                    )
+                ).scalar_one()
+
+        stale = await read_beat()
+        async with runs.scope_heartbeat(factory, run_id, scope_a, tok):
+            await asyncio.sleep(0.3)
+        assert calls["n"] >= 2  # reintentó tras el fallo
+        assert await read_beat() > stale  # y acabó renovando
+
+    asyncio.run(flow())
+
+
+def test_heartbeat_aborts_the_fetch_when_it_cannot_renew(db, monkeypatch):
+    """REGRESIÓN P1 rev. externa del cierre de residuales: si el latido NO consigue renovar dentro
+    del margen del lease, otro run_all puede re-armar el scope — seguir el fetch solo duplicaría el
+    tráfico externo. El bloque se aborta con LeaseLostError (no con CancelledError suelto)."""
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+    monkeypatch.setattr(runs, "SCOPE_HEARTBEAT_S", 0.05)
+    monkeypatch.setattr(runs, "SCOPE_LEASE_S", 0.1)
+
+    async def always_fails(session, run_id, scope_id, token):
+        raise RuntimeError("BD caída")
+
+    monkeypatch.setattr(runs, "beat_scope_run", always_fails)
+
+    async def flow():
+        async with factory() as s:
+            run_id = await runs.start_run(s, "ventana-hb-abort")
+            created["runs"].append(run_id)
+            tok = await runs.claim_scope_run(s, run_id, scope_a)
+            await s.commit()
+        with pytest.raises(runs.LeaseLostError):
+            async with runs.scope_heartbeat(factory, run_id, scope_a, tok):
+                await asyncio.sleep(5)  # "fetch" largo que debe quedar abortado
+        # La tarea sigue viva y utilizable tras el uncancel (no queda 'cancelling').
+        await asyncio.sleep(0)
+
+    asyncio.run(flow())
+
+
+def test_heartbeat_aborts_the_fetch_when_evicted(db, monkeypatch):
+    """Si OTRO worker re-arma el scope, el latido lo detecta (token viejo → False) y aborta el fetch
+    de este: continuar solo produciría tráfico externo duplicado."""
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+    monkeypatch.setattr(runs, "SCOPE_HEARTBEAT_S", 0.05)
+
+    async def flow():
+        async with factory() as s:
+            run_id = await runs.start_run(s, "ventana-hb-evict")
+            created["runs"].append(run_id)
+            tok = await runs.claim_scope_run(s, run_id, scope_a)
+            # Otro worker re-arma (lease vencido) → el token de este deja de ser el vigente.
+            await s.execute(
+                sa.text(
+                    "UPDATE source_harvest_runs SET started_at = clock_timestamp() "
+                    "- make_interval(secs => 3600), heartbeat_at = clock_timestamp() "
+                    "- make_interval(secs => 3600) WHERE run_id = :r AND scope_id = :s"
+                ),
+                {"r": run_id, "s": scope_a},
+            )
+            assert await runs.claim_scope_run(s, run_id, scope_a) is not None
+            await s.commit()
+        with pytest.raises(runs.LeaseLostError):
+            async with runs.scope_heartbeat(factory, run_id, scope_a, tok):
+                await asyncio.sleep(5)
+
+    asyncio.run(flow())
+
+
 def test_run_all_task_registered():
     from jobhunt_core.celery_app import celery_app
 

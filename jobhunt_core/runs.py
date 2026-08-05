@@ -122,39 +122,78 @@ async def beat_scope_run(session, run_id, scope_id, token) -> bool:
     return updated is not None
 
 
+class LeaseLostError(Exception):
+    """El worker dejó de poder sostener su lease (no logró latir a tiempo, o fue desahuciado) y su
+    fetch se ABORTÓ. No es un fallo de la fuente: el scope queda para el worker vigente."""
+
+
 @contextlib.asynccontextmanager
 async def scope_heartbeat(session_factory, run_id, scope_id, token):
     """Mantiene VIVO el lease del scope mientras dura el bloque (el fetch). Sin esto, un fetch más
     largo que SCOPE_LEASE_S deja que otro run_all re-arme el scope y golpee la fuente externa por
     duplicado.
 
-    El latido va en su PROPIA sesión: la del run está en plena transacción de persistencia. Si el
-    latido descubre que este worker ya fue desahuciado, PARA (no resucita un lease ajeno) y avisa;
-    el fencing de core0017 se encarga de que sus escrituras no cuenten.
+    El latido va en su PROPIA sesión (la del run está en plena transacción de persistencia) y cada
+    intento va ACOTADO por timeout: una consulta colgada no puede dejar el lease sin renovar en
+    silencio. Un fallo transitorio NO mata el latido — se reintenta con sesión nueva.
 
-    CONTRAPARTIDA aceptada: mientras el proceso viva, el scope no se re-arma — un worker COLGADO
-    (no muerto) lo retiene más de SCOPE_LEASE_S. Es la dirección segura (antes se duplicaba el
-    tráfico externo) y está acotada por los timeouts del cliente HTTP; si el proceso muere, el
+    ABORTA EL FETCH (LeaseLostError en el bloque) en los dos casos en que seguir solo produce
+    tráfico externo duplicado (P1 rev. externa del cierre de residuales):
+    - desahuciado: el claim ya es de otro worker (beat_scope_run False);
+    - sin latido dentro del margen seguro del lease: aunque el proceso siga vivo, otro run_all puede
+      re-armar el scope en cuanto el lease venza.
+
+    CONTRAPARTIDA aceptada: mientras el worker LATE, el scope no se re-arma — uno colgado en el
+    fetch (pero latiendo) lo retiene más de SCOPE_LEASE_S. Es la dirección segura (antes se
+    duplicaba el tráfico) y está acotada por los timeouts del cliente HTTP; si el proceso muere, el
     latido cesa y el lease vence como siempre."""
+    loop = asyncio.get_running_loop()
+    body = asyncio.current_task()
+    aborted: list[str] = []  # razón, si el watchdog canceló el bloque
+
     async def beat() -> None:
+        # El claim acaba de fijar heartbeat_at: el margen se cuenta desde ahora.
+        last_ok = loop.time()
         while True:
             await asyncio.sleep(SCOPE_HEARTBEAT_S)
-            async with session_factory() as session:
-                alive = await beat_scope_run(session, run_id, scope_id, token)
-                await session.commit()
+            try:
+                async with asyncio.timeout(SCOPE_HEARTBEAT_S):
+                    async with session_factory() as session:
+                        alive = await beat_scope_run(session, run_id, scope_id, token)
+                        await session.commit()
+            except asyncio.CancelledError:
+                raise  # salida normal del bloque: jamás se confunde con un fallo
+            except Exception as exc:
+                # Transitorio (BD, red, timeout): se reintenta con sesión NUEVA en el próximo ciclo
+                # mientras quede margen de lease.
+                logger.warning("scope %s: latido falló (%s) — se reintenta", scope_id, exc)
+                if loop.time() - last_ok >= max(SCOPE_LEASE_S - SCOPE_HEARTBEAT_S, 0):
+                    aborted.append("sin latido dentro del margen del lease")
+                    body.cancel()
+                    return
+                continue
             if not alive:
-                logger.warning(
-                    "scope %s: heartbeat detuvo — el claim ya no es de este worker", scope_id
-                )
+                aborted.append("el claim ya no es de este worker")
+                body.cancel()
                 return
+            last_ok = loop.time()
 
     task = asyncio.create_task(beat())
     try:
         yield
+    except asyncio.CancelledError:
+        if not aborted:
+            raise  # cancelación AJENA (apagado del worker): se propaga tal cual
+        body.uncancel()
+        raise LeaseLostError(f"scope {scope_id}: {aborted[0]} — fetch abortado") from None
     finally:
         task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        try:
             await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # el latido jamás debe decidir el resultado del fetch
+            logger.error("scope %s: el latido terminó con error: %s", scope_id, exc)
 
 
 async def finish_scope_run(session, run_id, scope_id, status: str, token) -> bool:
