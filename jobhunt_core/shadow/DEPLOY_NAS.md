@@ -43,6 +43,23 @@
 | 7 | **Volumen nuevo `core_hf_cache`** (desviación deliberada de dev): la imagen core fija `HF_HOME=/tmp/hf-cache`; sin volumen cada Recreate re-descargaría el modelo (~120 MB) — misma lección que la incidencia #6 del legacy. | ☐ |
 | 8 | **`start_period: 600s`** en el healthcheck de core-capture (dev: 300s): el backfill del corpus real corre en la CPU del NAS. | ☐ |
 
+> **Vigencia del paquete (revisado 2026-08-06).** Se preparó el 2026-07-28 y desde entonces el core
+> ha cambiado bastante (Fase C completa, §4-LOCAL, revisión integral del motor con 5 rondas, cierre
+> de residuales pre-Fase D y la propia Fase D). Lo revisado y su efecto sobre ESTE despliegue:
+>
+> - **Cadena Alembic**: era `core0001..core0010`, hoy `core0023` — §6.1 corregido. La cadena trae
+>   objetos nuevos que la sombra necesita (versión del corpus por triggers); verificación en §9.
+> - **Readiness del CDC**: ahora exige columnas contractuales una a una, no solo tabla+PK. En el NAS
+>   el esquema legacy es real y puede ser más viejo que el de dev — comprobación previa en §6.2.
+> - **`deploy_nas_composes.patch`**: verificado que sigue aplicando limpio sobre los composes
+>   actuales (`git apply --check`). Sigue SIN aplicar al repo a propósito.
+> - **Fase D (gate anti-doble-motor, D.1/D.2)**: NO afecta a este despliegue. Vive en la imagen
+>   LEGACY, que este paquete no rebuilda. Si la rebuildas por otro motivo, su comportamiento es
+>   idéntico mientras `jobhunt_routing` esté vacía (ausencia de fila ⇒ modo `local`).
+> - **Cota de la recuperación** (`RECOVERY_MAX_PROFILES = 200` por pasada): irrelevante con los
+>   usuarios reales de hoy; si algún día hay más perfiles que la cota, alcanzar "todos los perfiles
+>   evaluados contra su revisión vigente" (precondición del GATE-C) tarda varias pasadas de 5 min.
+
 ## 1. Prerrequisitos
 
 - Container Station 3.x + Tailscale activos; stack legacy `swissjob` funcionando.
@@ -205,6 +222,14 @@ Alembic `core0001..core0023` (head al preparar este paquete; **verificar contra 
 de desplegar** — la cadena creció con Fase C, §4-LOCAL y el cierre de residuales pre-Fase D:
 `ls jobhunt_core/alembic/versions/ | tail -1`). Si falla, NADA más del core arranca (correcto).
 
+Desde `core0022`/`core0023` la cadena crea además **objetos de BD nuevos**: la tabla
+`jobhunt.corpus_generation`, la función `jobhunt.bump_corpus_generation()` y sus triggers sobre
+`vacancies` y `offer_embeddings` (incluidas las particiones por modelo). Son la versión del corpus
+de la que depende la señal de recuperación del proyector: sin ellos, un perfil cuyo CV cambie
+dejaría de re-evaluarse en silencio. Alembic corre con el rol del core, que es DUEÑO del esquema
+(verificado: `current_user` = `jobhunt_core` y `tableowner` = `jobhunt_core`), así que crear
+funciones y triggers no exige privilegio adicional. Verificación en §9.
+
 ### 6.2 core-capture — bootstrap: slot + snapshot + BACKFILL del corpus REAL
 
 ```bash
@@ -216,6 +241,34 @@ docker logs -f swissjob-core-capture
 #   frontera snapshot↔LSN registrada
 #   Streaming wal2json v2 arrancado          ← a partir de aquí, streaming
 ```
+
+**Si la readiness FALLA, el slot NO se crea y capture entra en crash-loop — es lo correcto, no
+un fallo del despliegue.** Desde la revisión integral (#6) la comprobación ya no se conforma con
+que la tabla y su PK existan: exige las columnas CONTRACTUALES una a una, porque una ausente se
+omitía en silencio (el caso grave era `jobs.source`: sin ella, las vacantes nuevas se descartaban
+sin dejar rastro). Conjunto exigido hoy — contrastar contra el esquema REAL del NAS, que puede ser
+más viejo que el de dev:
+
+| Tabla legacy | Columnas exigidas |
+|---|---|
+| `public.jobs` | `title`, `url`, `source`, `is_active`, `duplicate_of` |
+| `public.user_profiles` | `user_id`, `title`, `cv_text`, `skills` |
+| `public.users` | `is_active` |
+
+```bash
+# Verificación PREVIA (antes de arrancar capture, sin efectos):
+docker exec swissjob-postgres psql -U swissjob -d swissjobhunter -c "
+SELECT table_name, string_agg(column_name, ', ' ORDER BY column_name) AS presentes
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND (table_name = 'jobs'          AND column_name IN ('title','url','source','is_active','duplicate_of')
+    OR table_name = 'user_profiles' AND column_name IN ('user_id','title','cv_text','skills')
+    OR table_name = 'users'         AND column_name IN ('is_active'))
+GROUP BY table_name;"
+```
+
+Si falta alguna, la causa es que el legacy del NAS está por debajo del head de sus migraciones:
+aplicarlas (el entrypoint del backend legacy corre `alembic upgrade head` al arrancar) y repetir.
 
 Verificar backfill consistente (DoD B-01 — conteos legacy == staging):
 
@@ -412,6 +465,20 @@ Infra:
       el único puerto publicado del stack sigue siendo `4000` del frontend).
 - [ ] `docker logs swissjob-core-migrate`: "Aislamiento verificado" y
       "Rol de captura verificado".
+- [ ] **Versión del corpus operativa** (core0022/0023): la fila existe y los triggers están puestos
+      — sin ellos la señal de recuperación NO se enciende nunca y un CV nuevo se queda sin
+      re-evaluar EN SILENCIO:
+      ```
+      docker exec swissjob-postgres psql -U swissjob -d swissjobhunter -c "
+      SELECT (SELECT generation FROM jobhunt.corpus_generation WHERE id = 1) AS generacion,
+             (SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+               WHERE NOT t.tgisinternal AND t.tgname LIKE 'trg_corpus_generation%') AS triggers;"
+      ```
+      `generacion` ≥ 1 y `triggers` ≥ 4 (dos tablas × escritura/TRUNCATE; suma una más por cada
+      partición de `offer_embeddings`, que `register_model` crea al alta de cada modelo).
+- [ ] La generación AVANZA con el backfill: repetir la consulta tras unos minutos de proyección —
+      `generacion` mayor que antes (si no se mueve con corpus entrando, los triggers no están
+      cubriendo la vía de escritura que use el sink).
 
 CDC:
 
