@@ -1187,56 +1187,66 @@ SELECT m.id AS model_id, sp.id AS policy_id,
 # ya evaluado choca con el ON CONFLICT DO NOTHING, p. ej. cuando el corpus crece con una oferta que
 # queda FUERA del top-K), y derivar la señal de esas filas dejaba al perfil encendido para siempre
 # — con el lote acotado, tapando indefinidamente a quien sí necesitaba evaluación real.
-# Un candidato enciende la señal si, para algún (modelo activo dim=384, política activa) CON corpus:
+# Un candidato enciende la señal si, para algún (modelo activo dim=384, política activa) CON corpus
+# y con vector suyo:
 #   (a) no hay intento registrado para su revisión VIGENTE con ese combo (revisión nueva, política
 #       nueva, o intento que nunca ocurrió), o
-#   (b) la huella del corpus DIFIERE de la del último intento.
+#   (b) la GENERACIÓN del corpus (contador monotónico de core0022) difiere de la del intento.
 # El ORDEN (antigüedad de la cola) mira SOLO los intentos de la revisión VIGENTE y de combos HOY
 # activos: incluir el histórico dejaba un mínimo que ningún intento nuevo movía, así que un perfil
 # con revisiones viejas se quedaba en la cabeza pasada tras pasada (P1 rev. externa ronda 3).
 # Subconsultas sobre índices EXISTENTES: ix_pract_profile_seq (vigente por max(seq)),
 # pk_profile_recovery_state, ix_vacancies_archived_at + ix_offrev_text_hash + pk_offer_embeddings.
 _RECOVERY_NEEDED_SQL = f"""
-WITH combos AS ({_ACTIVE_COMBOS_SQL})
-SELECT DISTINCT p.id,
+WITH combos AS ({_ACTIVE_COMBOS_SQL}),
+gen AS (SELECT generation FROM corpus_generation WHERE id = 1),
+-- Candidatos primero (EXISTS: para al primer combo que enciende la señal), y solo DESPUÉS la
+-- antigüedad de la cola. Calcularla en el CROSS JOIN la evaluaba una vez por perfil × combo aunque
+-- solo depende del perfil.
+candidatos AS (
+    SELECT p.id, cur.revision_id
+      FROM profiles p
+      JOIN LATERAL (
+            SELECT a.revision_id
+              FROM profile_revision_activations a
+             WHERE a.profile_id = p.id
+             ORDER BY a.seq DESC
+             LIMIT 1
+           ) cur ON true
+     WHERE p.id NOT IN :excluded
+       AND p.id NOT IN :evaluated
+       AND EXISTS (
+            SELECT 1
+              FROM combos c
+              LEFT JOIN profile_recovery_state w
+                ON w.profile_revision_id = cur.revision_id
+               AND w.model_id = c.model_id
+               AND w.policy_id = c.policy_id
+             WHERE c.has_corpus  -- sin corpus, evaluar es un no-op garantizado
+               -- Solo perfiles con vector de ESE modelo: sin él, evaluate_profile devuelve
+               -- 'sin_vector' sin hacer nada y gastaría una plaza del lote. Los embeddings
+               -- pendientes ya se drenaron antes de llegar aquí.
+               AND EXISTS (SELECT 1 FROM profile_embeddings pe
+                            WHERE pe.profile_revision_id = cur.revision_id
+                              AND pe.model_id = c.model_id)
+               AND (w.profile_revision_id IS NULL
+                    OR w.corpus_generation IS DISTINCT FROM (SELECT generation FROM gen)))
+)
+SELECT ca.id,
        (SELECT min(rs.attempted_at)
           FROM profile_recovery_state rs
           JOIN combos c2
             ON c2.model_id = rs.model_id AND c2.policy_id = rs.policy_id
-         WHERE rs.profile_revision_id = cur.revision_id
+         WHERE rs.profile_revision_id = ca.revision_id
            -- SOLO combos capaces de dar señal HOY: el intento de uno que perdió el corpus (o cuyo
            -- vector no está) jamás se actualiza, y su antigüedad daba prioridad PERPETUA a ese
            -- perfil en la cabeza del lote (P1 rev. externa ronda 4).
            AND c2.has_corpus
            AND EXISTS (SELECT 1 FROM profile_embeddings pe2
-                        WHERE pe2.profile_revision_id = cur.revision_id
+                        WHERE pe2.profile_revision_id = ca.revision_id
                           AND pe2.model_id = c2.model_id)) AS last_try
-  FROM profiles p
-  JOIN LATERAL (
-        SELECT a.revision_id
-          FROM profile_revision_activations a
-         WHERE a.profile_id = p.id
-         ORDER BY a.seq DESC
-         LIMIT 1
-       ) cur ON true
-  CROSS JOIN combos c
-  LEFT JOIN profile_recovery_state w
-    ON w.profile_revision_id = cur.revision_id
-   AND w.model_id = c.model_id
-   AND w.policy_id = c.policy_id
- WHERE p.id NOT IN :excluded
-   AND p.id NOT IN :evaluated
-   -- Solo perfiles con vector de ESE modelo: sin él, evaluate_profile devuelve 'sin_vector' sin
-   -- hacer nada; el intento se registraría igual, pero gastaría una plaza del lote en un no-op.
-   -- Los embeddings pendientes ya se drenaron antes de llegar aquí.
-   AND EXISTS (
-        SELECT 1 FROM profile_embeddings pe
-         WHERE pe.profile_revision_id = cur.revision_id AND pe.model_id = c.model_id)
-   -- Un combo sin corpus elegible no puede producir trabajo: evaluarlo es un no-op garantizado.
-   AND c.has_corpus
-   AND (w.profile_revision_id IS NULL
-        OR w.corpus_generation IS DISTINCT FROM (SELECT generation FROM corpus_generation))
- ORDER BY last_try ASC NULLS FIRST, p.id
+  FROM candidatos ca
+ ORDER BY last_try ASC NULLS FIRST, ca.id
  LIMIT :cap
 """
 

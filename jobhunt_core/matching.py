@@ -185,13 +185,12 @@ async def evaluate_profile(
     )
     eligible = (
         await session.execute(
+            # MISMO fragmento que usa la señal de recuperación del proyector: duplicarlo permitiría
+            # que "corpus elegible" significara cosas distintas en cada sitio.
             sa.text(
-                "SELECT count(*) FROM (SELECT 1 FROM vacancies v "
-                "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
-                "JOIN offer_embeddings oe "
-                "  ON oe.text_hash = orv.text_hash AND oe.model_id = :mid "
-                "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
-                "LIMIT :k) t"
+                "SELECT count(*) FROM (SELECT 1 "
+                + ELIGIBLE_CORPUS_FROM.format(model=":mid")
+                + " LIMIT :k) t"
             ),
             {"mid": model_id, "k": limit},
         )

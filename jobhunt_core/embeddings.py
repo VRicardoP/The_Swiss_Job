@@ -156,6 +156,17 @@ async def register_model(
             f"FOR VALUES IN ('{model_id}')"
         )
     )
+    # Generación del corpus (core0022/0023): un trigger de SENTENCIA del padre NO se dispara con una
+    # sentencia dirigida a la PARTICIÓN (el enrutado de filas no lo propaga). El código siempre
+    # escribe por el padre, pero un backfill manual sobre la partición dejaría la generación quieta
+    # y la señal de recuperación apagada con trabajo pendiente. CREATE OR REPLACE ⇒ idempotente.
+    await session.execute(
+        sa.text(
+            f"CREATE OR REPLACE TRIGGER trg_corpus_generation_part "
+            f"AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON {schema}.{partition} "
+            f"FOR EACH STATEMENT EXECUTE FUNCTION {schema}.bump_corpus_generation()"
+        )
+    )
     return model_id
 
 

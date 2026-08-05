@@ -1606,6 +1606,23 @@ def test_corpus_generation_triggers_cover_every_eligibility_transition(db):
                    "WHERE id = :v", v=vac)
     assert gen() == g4
 
+    # Escritura DIRECTA a la partición del modelo: un trigger de SENTENCIA del padre no se dispara
+    # con una sentencia dirigida a la partición (comprobado contra PG16) — core0023 replica el
+    # trigger en cada partición para que un backfill manual no deje la generación quieta.
+    parte = f"offer_embeddings_{model_id.hex[:16]}"
+    _exec(
+        factory,
+        f"INSERT INTO {parte} (text_hash, model_id, vector) "
+        "SELECT :h, :m, vector FROM offer_embeddings WHERE model_id = :m LIMIT 1",
+        h=hash_, m=model_id,
+    )
+    g5 = gen()
+    assert g5 > g4
+
+    # TRUNCATE tampoco dispara INSERT/UPDATE/DELETE: core0023 añade el trigger AFTER TRUNCATE.
+    _exec(factory, "TRUNCATE offer_embeddings CASCADE")
+    assert gen() > g5
+
 
 def test_recovery_generation_detects_a_same_size_corpus_swap(db):
     """REGRESIÓN P1 rondas 4 y 5: ninguna huella derivada del contenido identificaba el conjunto —
