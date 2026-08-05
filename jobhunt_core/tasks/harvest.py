@@ -89,8 +89,12 @@ async def _run_all_impl(run_key: str) -> dict[str, Any]:
                 continue
             try:
                 # El token del claim FENCE también el fetch/persistencia: un worker desahuciado no
-                # muta source_scope_state del vigente (P1 rev. externa integral ronda 2).
-                result = await _run_scope_impl(str(scope_id), token)
+                # muta source_scope_state del vigente (P1 rev. externa integral ronda 2). El
+                # heartbeat mantiene VIVO ese claim mientras dura el fetch: sin él, una fuente lenta
+                # (>SCOPE_LEASE_S) hacía que otro run_all re-armara el scope y golpeara la fuente
+                # externa por duplicado (residual conocido, bloqueante en Fase D).
+                async with runs.scope_heartbeat(session_factory, run_id, scope_id, token):
+                    result = await _run_scope_impl(str(scope_id), token)
                 status = result.status
             except Exception as exc:  # el run sigue con el resto de scopes
                 logger.warning("run %s: scope %s falló: %s", run_key, scope_id, exc)

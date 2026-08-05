@@ -8,6 +8,8 @@ propio; un scope ya TERMINADO con éxito en ese run se SALTA en el reintento
 (el que quedó en error o colgado se re-ejecuta — el sink es idempotente).
 """
 
+import asyncio
+import contextlib
 import logging
 import uuid
 
@@ -18,9 +20,24 @@ logger = logging.getLogger(__name__)
 RUNS_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "jobhunt-core/harvest-runs")
 
 # Lease por scope (rev. 1ª A-11): una fila 'running' SIN finished_at solo se
-# re-arma si su started_at superó este lease — distingue "worker corriendo
-# AHORA" (otro run_all solapado: se salta) de "worker muerto" (se re-ejecuta).
+# re-arma si su ÚLTIMA SEÑAL DE VIDA superó este lease — distingue "worker
+# corriendo AHORA" (otro run_all solapado: se salta) de "worker muerto" (se
+# re-ejecuta).
 SCOPE_LEASE_S = 900
+
+# Cadencia del heartbeat que renueva el lease durante un fetch largo. Un fetch legítimamente lento
+# superaba el lease (medido desde `started_at`, inmutable) y otro run_all re-armaba el scope: el
+# token de core0017 impide la corrupción de estado, pero AMBOS workers golpeaban la fuente externa
+# (residual conocido de la revisión integral). A lease/3 caben dos latidos perdidos antes de que
+# otro worker considere muerto a este; el primero es a los 300 s, así que una cosecha normal (que
+# dura mucho menos) NO paga ninguna consulta extra.
+SCOPE_HEARTBEAT_S = SCOPE_LEASE_S // 3
+
+def _alive_at(alias: str = "") -> str:
+    """Señal de vida vigente de la fila: las filas anteriores a core0018 no tienen heartbeat y
+    conservan la semántica de siempre (started_at)."""
+    p = f"{alias}." if alias else ""
+    return f"COALESCE({p}heartbeat_at, {p}started_at)"
 
 
 def run_id_for(run_key: str) -> uuid.UUID:
@@ -57,8 +74,10 @@ async def claim_scope_run(session, run_id, scope_id) -> uuid.UUID | None:
     inserted = (
         await session.execute(
             sa.text(
-                "INSERT INTO source_harvest_runs (run_id, scope_id, claim_token) "
-                "VALUES (:rid, :sid, :tok) ON CONFLICT (run_id, scope_id) DO NOTHING "
+                "INSERT INTO source_harvest_runs "
+                "(run_id, scope_id, claim_token, heartbeat_at) "
+                "VALUES (:rid, :sid, :tok, clock_timestamp()) "
+                "ON CONFLICT (run_id, scope_id) DO NOTHING "
                 "RETURNING run_id"
             ),
             {"rid": run_id, "sid": scope_id, "tok": token},
@@ -71,10 +90,11 @@ async def claim_scope_run(session, run_id, scope_id) -> uuid.UUID | None:
             sa.text(
                 "UPDATE source_harvest_runs "
                 "SET status = 'running', started_at = clock_timestamp(), "
+                "heartbeat_at = clock_timestamp(), "
                 "finished_at = NULL, claim_token = :tok "
                 "WHERE run_id = :rid AND scope_id = :sid "
                 "AND ((finished_at IS NOT NULL AND status = 'error') "
-                "     OR (finished_at IS NULL AND started_at < "
+                f"     OR (finished_at IS NULL AND {_alive_at()} < "
                 "         clock_timestamp() - make_interval(secs => :lease))) "
                 "RETURNING run_id"
             ),
@@ -82,6 +102,59 @@ async def claim_scope_run(session, run_id, scope_id) -> uuid.UUID | None:
         )
     ).one_or_none()
     return token if rearmed is not None else None
+
+
+async def beat_scope_run(session, run_id, scope_id, token) -> bool:
+    """Renueva la señal de vida del claim. Devuelve True si ESTE worker sigue siendo el dueño
+    (mismo fencing que finish_scope_run: token vigente y 'running'); False si fue desahuciado —
+    seguir latiendo entonces resucitaría un lease ajeno. token NULL nunca matchea (fail-closed)."""
+    updated = (
+        await session.execute(
+            sa.text(
+                "UPDATE source_harvest_runs SET heartbeat_at = clock_timestamp() "
+                "WHERE run_id = :rid AND scope_id = :sid "
+                "AND claim_token = :tok AND status = 'running' "
+                "RETURNING run_id"
+            ),
+            {"rid": run_id, "sid": scope_id, "tok": token},
+        )
+    ).one_or_none()
+    return updated is not None
+
+
+@contextlib.asynccontextmanager
+async def scope_heartbeat(session_factory, run_id, scope_id, token):
+    """Mantiene VIVO el lease del scope mientras dura el bloque (el fetch). Sin esto, un fetch más
+    largo que SCOPE_LEASE_S deja que otro run_all re-arme el scope y golpee la fuente externa por
+    duplicado.
+
+    El latido va en su PROPIA sesión: la del run está en plena transacción de persistencia. Si el
+    latido descubre que este worker ya fue desahuciado, PARA (no resucita un lease ajeno) y avisa;
+    el fencing de core0017 se encarga de que sus escrituras no cuenten.
+
+    CONTRAPARTIDA aceptada: mientras el proceso viva, el scope no se re-arma — un worker COLGADO
+    (no muerto) lo retiene más de SCOPE_LEASE_S. Es la dirección segura (antes se duplicaba el
+    tráfico externo) y está acotada por los timeouts del cliente HTTP; si el proceso muere, el
+    latido cesa y el lease vence como siempre."""
+    async def beat() -> None:
+        while True:
+            await asyncio.sleep(SCOPE_HEARTBEAT_S)
+            async with session_factory() as session:
+                alive = await beat_scope_run(session, run_id, scope_id, token)
+                await session.commit()
+            if not alive:
+                logger.warning(
+                    "scope %s: heartbeat detuvo — el claim ya no es de este worker", scope_id
+                )
+                return
+
+    task = asyncio.create_task(beat())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 async def finish_scope_run(session, run_id, scope_id, status: str, token) -> bool:
@@ -125,7 +198,7 @@ async def finish_run(session, run_id) -> str:
         await session.execute(
             sa.text(
                 "SELECT shr.status, "
-                "(shr.finished_at IS NULL AND shr.started_at < "
+                f"(shr.finished_at IS NULL AND {_alive_at('shr')} < "
                 " clock_timestamp() - make_interval(secs => :lease)) AS stale "
                 "FROM source_harvest_runs shr "
                 "JOIN harvest_scopes hs ON hs.id = shr.scope_id AND hs.enabled "

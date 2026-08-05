@@ -335,10 +335,12 @@ def test_finish_scope_run_fenced_by_claim_token(db):
             created["runs"].append(run_id)
             tok_old = await runs.claim_scope_run(s, run_id, scope_a)  # worker A
             assert tok_old is not None
-            # Backdate started_at: el lease (900s) vence sin tocar SCOPE_LEASE_S.
+            # Backdate de la señal de vida (started_at Y heartbeat_at — un worker MUERTO deja de
+            # latir): el lease (900s) vence sin tocar SCOPE_LEASE_S.
             await s.execute(
                 sa.text(
                     "UPDATE source_harvest_runs SET started_at = clock_timestamp() "
+                    "- make_interval(secs => 3600), heartbeat_at = clock_timestamp() "
                     "- make_interval(secs => 3600) WHERE run_id = :r AND scope_id = :s"
                 ),
                 {"r": run_id, "s": scope_a},
@@ -384,6 +386,7 @@ def test_record_failure_fenced_by_claim_token(db):
             await s.execute(
                 sa.text(
                     "UPDATE source_harvest_runs SET started_at = clock_timestamp() "
+                    "- make_interval(secs => 3600), heartbeat_at = clock_timestamp() "
                     "- make_interval(secs => 3600) WHERE run_id = :r AND scope_id = :s"
                 ),
                 {"r": run_id, "s": scope_a},
@@ -457,6 +460,7 @@ def test_run_scope_success_fenced_by_claim_token(db):
             await s.execute(
                 sa.text(
                     "UPDATE source_harvest_runs SET started_at = clock_timestamp() "
+                    "- make_interval(secs => 3600), heartbeat_at = clock_timestamp() "
                     "- make_interval(secs => 3600) WHERE run_id = :r AND scope_id = :s"
                 ),
                 {"r": run_id, "s": scope_a},
@@ -632,6 +636,131 @@ def test_still_authoritative_serializes_on_harvest_scope_lock(db):
             assert "lock" in str(exc.value).lower() or "timeout" in str(exc.value).lower()
             await a.rollback()
             await b.rollback()
+
+    asyncio.run(flow())
+
+
+def test_heartbeat_keeps_lease_alive_during_long_fetch(db):
+    """REGRESIÓN residual pre-Fase D: el lease se medía desde `started_at`, inmutable, así que un
+    fetch legítimamente largo (> SCOPE_LEASE_S) dejaba que OTRO run_all re-armara el scope y
+    golpeara la fuente externa por duplicado. Con el latido, el worker vivo renueva `heartbeat_at`
+    y el competidor NO re-arma."""
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+
+    async def flow():
+        async with factory() as s:
+            run_id = await runs.start_run(s, "ventana-heartbeat")
+            created["runs"].append(run_id)
+            tok = await runs.claim_scope_run(s, run_id, scope_a)
+            # Fetch LARGO: la señal de vida inicial (started_at y heartbeat_at) ya venció...
+            await s.execute(
+                sa.text(
+                    "UPDATE source_harvest_runs SET started_at = clock_timestamp() "
+                    "- make_interval(secs => 3600), heartbeat_at = clock_timestamp() "
+                    "- make_interval(secs => 3600) WHERE run_id = :r AND scope_id = :s"
+                ),
+                {"r": run_id, "s": scope_a},
+            )
+            # ...pero el worker sigue VIVO y late.
+            assert await runs.beat_scope_run(s, run_id, scope_a, tok) is True
+            await s.commit()
+        async with factory() as s:
+            # El competidor NO re-arma: para él el scope está en marcha (sin el latido, sí lo haría).
+            assert await runs.claim_scope_run(s, run_id, scope_a) is None
+            await s.commit()
+
+    asyncio.run(flow())
+
+
+def test_beat_scope_run_is_fenced_by_token(db):
+    """El latido usa el MISMO fencing que el cierre: un worker desahuciado no puede resucitar el
+    lease del vigente. Con token viejo devuelve False y NO toca heartbeat_at."""
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+
+    async def flow():
+        async with factory() as s:
+            run_id = await runs.start_run(s, "ventana-beat-fencing")
+            created["runs"].append(run_id)
+            tok_old = await runs.claim_scope_run(s, run_id, scope_a)
+            await s.execute(
+                sa.text(
+                    "UPDATE source_harvest_runs SET started_at = clock_timestamp() "
+                    "- make_interval(secs => 3600), heartbeat_at = clock_timestamp() "
+                    "- make_interval(secs => 3600) WHERE run_id = :r AND scope_id = :s"
+                ),
+                {"r": run_id, "s": scope_a},
+            )
+            tok_new = await runs.claim_scope_run(s, run_id, scope_a)  # B re-arma
+            assert tok_new is not None and tok_new != tok_old
+            before = (
+                await s.execute(
+                    sa.text(
+                        "SELECT heartbeat_at FROM source_harvest_runs "
+                        "WHERE run_id = :r AND scope_id = :s"
+                    ),
+                    {"r": run_id, "s": scope_a},
+                )
+            ).scalar_one()
+            assert await runs.beat_scope_run(s, run_id, scope_a, tok_old) is False
+            assert await runs.beat_scope_run(s, run_id, scope_a, None) is False  # fail-closed
+            after = (
+                await s.execute(
+                    sa.text(
+                        "SELECT heartbeat_at FROM source_harvest_runs "
+                        "WHERE run_id = :r AND scope_id = :s"
+                    ),
+                    {"r": run_id, "s": scope_a},
+                )
+            ).scalar_one()
+            assert after == before  # el desahuciado no renovó nada
+            await s.commit()
+
+    asyncio.run(flow())
+
+
+def test_scope_heartbeat_beats_while_the_block_runs(db, monkeypatch):
+    """El gestor `scope_heartbeat` late en su PROPIA sesión mientras dura el bloque (el fetch) y
+    para al salir — sin él, el latido no llegaría nunca a la BD durante una cosecha larga."""
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+    monkeypatch.setattr(runs, "SCOPE_HEARTBEAT_S", 0.05)
+
+    async def flow():
+        async with factory() as s:
+            run_id = await runs.start_run(s, "ventana-hb-ctx")
+            created["runs"].append(run_id)
+            tok = await runs.claim_scope_run(s, run_id, scope_a)
+            await s.execute(
+                sa.text(
+                    "UPDATE source_harvest_runs SET heartbeat_at = clock_timestamp() "
+                    "- make_interval(secs => 3600) WHERE run_id = :r AND scope_id = :s"
+                ),
+                {"r": run_id, "s": scope_a},
+            )
+            await s.commit()
+
+        async def read_beat():
+            async with factory() as s:
+                return (
+                    await s.execute(
+                        sa.text(
+                            "SELECT heartbeat_at FROM source_harvest_runs "
+                            "WHERE run_id = :r AND scope_id = :s"
+                        ),
+                        {"r": run_id, "s": scope_a},
+                    )
+                ).scalar_one()
+
+        stale = await read_beat()
+        async with runs.scope_heartbeat(factory, run_id, scope_a, tok):
+            await asyncio.sleep(0.25)  # "fetch" largo
+        # La lectura va TRAS salir del bloque: leerla dentro compite con el propio latido.
+        renewed = await read_beat()
+        assert renewed > stale  # latió DURANTE el bloque
+        await asyncio.sleep(0.15)
+        assert await read_beat() == renewed  # y paró al salir
 
     asyncio.run(flow())
 
