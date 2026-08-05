@@ -224,6 +224,12 @@ async def purge_policies(s: AsyncSession, policy_ids: Sequence[uuid.UUID]) -> No
     if not policy_ids:
         return
     await s.execute(
+        # core0019: el watermark de intentos referencia la política (P2 rev. externa ronda 3 — sin
+        # esto, purgar políticas AISLADAMENTE revienta por fk_prs_policy).
+        sa.text("DELETE FROM profile_recovery_state WHERE policy_id = ANY(:p)"),
+        {"p": list(policy_ids)},
+    )
+    await s.execute(
         sa.text("DELETE FROM scoring_policies WHERE id = ANY(:p)"),
         {"p": list(policy_ids)},
     )

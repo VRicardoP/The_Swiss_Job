@@ -193,7 +193,10 @@ async def evaluate_profile(
         await session.execute(sa.text("SET LOCAL enable_indexscan = on"))
         await session.execute(sa.text("SET LOCAL enable_bitmapscan = on"))
     if not candidates:
-        return {"status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False}
+        return {
+            "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
+            "profile_revision_id": prof.revision_id,
+        }
 
     eval_rows = []
     for c in candidates:
@@ -330,6 +333,9 @@ async def evaluate_profile(
     return {
         "status": "ok", "evaluated": len(eval_rows), "new_evals": new_evals,
         "moved_current": moved,
+        # La revisión REALMENTE evaluada (la que se leyó bajo el lock del perfil): quien registre
+        # el intento debe usar ESTA, no re-consultar la vigente (podría haber cambiado ya).
+        "profile_revision_id": prof.revision_id,
     }
 
 

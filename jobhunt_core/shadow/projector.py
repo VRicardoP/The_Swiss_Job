@@ -1168,21 +1168,33 @@ async def erase_shadow_profile(
 # ------------------------------------------------- flujo normal tras el lote
 
 
-# Corpus EMBEBIDO por modelo: `max(offer_embeddings.created_at)` de las vacantes activas. Es la
-# fecha del EMBEDDING, no la de la revisión de oferta (P1 rev. externa del cierre de residuales,
-# ronda 2): una revisión ANTIGUA embebida DESPUÉS se vuelve elegible sin mover su `created_at`, así
-# que usar el de la revisión perdía la señal en silencio. Escalar por modelo (no depende del perfil).
+# HUELLA del corpus ELEGIBLE por modelo (vacantes vivas con embedding de ese modelo). Ningún
+# timestamp solo sirve como versión (P1 rev. externa ronda 3): una vacante nueva que reutiliza un
+# text_hash ya embebido no crea fila de embedding, y DESARCHIVAR una antigua no mueve ninguna fecha
+# — la señal se quedaba apagada con trabajo real. La huella combina cardinalidad y ambos máximos, y
+# se compara por DESIGUALDAD: toda alta, baja, desarchivado, cambio de canónica o materialización de
+# embedding la altera, y no necesita ser monotónica (retroceder también es cambiar).
+# Escalar por MODELO (no depende del perfil ni de la política): se calcula una vez por pasada.
 _ACTIVE_COMBOS_SQL = """
-SELECT m.id AS model_id, sp.id AS policy_id,
-       (SELECT max(oe.created_at)
-          FROM vacancies v
-          JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id
-          JOIN offer_embeddings oe
-            ON oe.text_hash = orv.text_hash AND oe.model_id = m.id
-         WHERE v.archived_at IS NULL AND v.merged_into IS NULL) AS corpus_max
-  FROM embedding_models m
+WITH models AS (
+    SELECT id FROM embedding_models WHERE active AND dim = :dim
+), corpus AS (
+    SELECT mo.id AS model_id,
+           count(*)::text || '|'
+             || coalesce(max(oe.created_at)::text, '') || '|'
+             || coalesce(max(orv.created_at)::text, '') AS fingerprint
+      FROM models mo
+      JOIN offer_embeddings oe ON oe.model_id = mo.id
+      JOIN offer_revisions orv ON orv.text_hash = oe.text_hash
+      JOIN vacancies v ON v.current_offer_revision_id = orv.id
+     WHERE v.archived_at IS NULL AND v.merged_into IS NULL
+     GROUP BY mo.id
+)
+SELECT mo.id AS model_id, sp.id AS policy_id, c.fingerprint AS corpus_fp
+  FROM models mo
   CROSS JOIN scoring_policies sp
- WHERE m.active AND m.dim = :dim AND sp.active
+  LEFT JOIN corpus c ON c.model_id = mo.id
+ WHERE sp.active
 """
 
 # Señal de RECUPERACIÓN (2º análisis B-02, P2): UNA sola consulta por invocación para TODOS los
@@ -1194,17 +1206,20 @@ SELECT m.id AS model_id, sp.id AS policy_id,
 # Un candidato enciende la señal si, para algún (modelo activo dim=384, política activa) CON corpus:
 #   (a) no hay intento registrado para su revisión VIGENTE con ese combo (revisión nueva, política
 #       nueva, o intento que nunca ocurrió), o
-#   (b) el corpus embebido creció por encima del watermark del último intento.
-# Todo intento avanza `attempted_at` (ver _record_recovery_attempt) ⇒ la cola ROTA y nadie se queda
-# clavado en la cabeza. Subconsultas sobre índices EXISTENTES: ix_pract_profile_seq (vigente por
-# max(seq)), ix_prs_profile_attempted, ix_vacancies_archived_at + ix_offrev_text_hash +
-# pk_offer_embeddings (corpus embebido por modelo).
+#   (b) la huella del corpus DIFIERE de la del último intento.
+# El ORDEN (antigüedad de la cola) mira SOLO los intentos de la revisión VIGENTE y de combos HOY
+# activos: incluir el histórico dejaba un mínimo que ningún intento nuevo movía, así que un perfil
+# con revisiones viejas se quedaba en la cabeza pasada tras pasada (P1 rev. externa ronda 3).
+# Subconsultas sobre índices EXISTENTES: ix_pract_profile_seq (vigente por max(seq)),
+# pk_profile_recovery_state, ix_vacancies_archived_at + ix_offrev_text_hash + pk_offer_embeddings.
 _RECOVERY_NEEDED_SQL = f"""
 WITH combos AS ({_ACTIVE_COMBOS_SQL})
 SELECT DISTINCT p.id,
        (SELECT min(rs.attempted_at)
           FROM profile_recovery_state rs
-         WHERE rs.profile_id = p.id) AS last_try
+          JOIN combos c2
+            ON c2.model_id = rs.model_id AND c2.policy_id = rs.policy_id
+         WHERE rs.profile_revision_id = cur.revision_id) AS last_try
   FROM profiles p
   JOIN LATERAL (
         SELECT a.revision_id
@@ -1227,24 +1242,22 @@ SELECT DISTINCT p.id,
         SELECT 1 FROM profile_embeddings pe
          WHERE pe.profile_revision_id = cur.revision_id AND pe.model_id = c.model_id)
    -- Un combo sin corpus embebido no puede producir trabajo: evaluarlo es un no-op garantizado.
-   AND c.corpus_max IS NOT NULL
-   AND (w.profile_revision_id IS NULL OR c.corpus_max > w.corpus_watermark)
+   AND c.corpus_fp IS NOT NULL
+   AND (w.profile_revision_id IS NULL OR w.corpus_fingerprint IS DISTINCT FROM c.corpus_fp)
  ORDER BY last_try ASC NULLS FIRST, p.id
  LIMIT :cap
 """
 
-# Registro del INTENTO (idempotente por combo): watermark = corpus observado ANTES de evaluar — si
-# el corpus crece DURANTE la evaluación, el siguiente ciclo lo vuelve a coger (dirección segura).
+# Registro del INTENTO, con la revisión y el combo REALMENTE evaluados (los pasa la costura
+# on_evaluated, dentro de la MISMA transacción que la evaluación y bajo su lock del perfil). La
+# huella es la observada al empezar la pasada: si el corpus cambia DURANTE la evaluación, la del
+# próximo ciclo diferirá y se vuelve a coger (dirección segura).
 _RECORD_ATTEMPT_SQL = """
 INSERT INTO profile_recovery_state
-    (profile_revision_id, profile_id, model_id, policy_id, corpus_watermark, attempted_at)
-SELECT cur.revision_id, :pid, t.model_id, t.policy_id, t.watermark, now()
-  FROM (SELECT a.revision_id FROM profile_revision_activations a
-         WHERE a.profile_id = :pid ORDER BY a.seq DESC LIMIT 1) cur
-  CROSS JOIN unnest(CAST(:models AS uuid[]), CAST(:policies AS uuid[]),
-                    CAST(:watermarks AS timestamptz[])) AS t(model_id, policy_id, watermark)
+    (profile_revision_id, profile_id, model_id, policy_id, corpus_fingerprint, attempted_at)
+VALUES (:rev, :pid, :model, :policy, :fp, now())
 ON CONFLICT (profile_revision_id, model_id, policy_id) DO UPDATE
-SET corpus_watermark = EXCLUDED.corpus_watermark, attempted_at = EXCLUDED.attempted_at
+SET corpus_fingerprint = EXCLUDED.corpus_fingerprint, attempted_at = EXCLUDED.attempted_at
 """
 
 
@@ -1277,32 +1290,43 @@ async def _replay_after_batch(session_factory, evaluated: set) -> int:
     return len(targets)
 
 
-async def _active_combos(session) -> list:
-    """(modelo, política, corpus_max) activos — el watermark que registra cada intento."""
-    return (
+async def _active_combos(session) -> dict:
+    """{(modelo, política): huella del corpus} de los combos activos CON corpus — la versión contra
+    la que se registra cada intento. Los combos sin corpus quedan fuera: evaluarlos es un no-op."""
+    rows = (
         await session.execute(sa.text(_ACTIVE_COMBOS_SQL), {"dim": EMBED_DIM})
     ).all()
+    return {
+        (r.model_id, r.policy_id): r.corpus_fp
+        for r in rows
+        if r.corpus_fp is not None
+    }
 
 
-async def _evaluate_and_record(session_factory, pid, combos) -> None:
-    """Evalúa el perfil y REGISTRA el intento contra el corpus observado. El registro es lo que
-    hace avanzar la cola: sin él, un intento que no crea filas nuevas (top-K ya evaluado) dejaría
-    al perfil encendido y clavado en la cabeza del lote acotado (P1 rev. externa, ronda 2)."""
-    await _run_profile_impl(str(pid), EVAL_LIMIT, session_factory=session_factory)
-    usable = [c for c in combos if c.corpus_max is not None]
-    if not usable:
-        return  # sin corpus no hay señal que apagar (el combo ya no es candidato)
-    async with session_factory() as session:
+async def _evaluate_and_record(session_factory, pid, combos: dict) -> None:
+    """Evalúa el perfil registrando el intento DENTRO de la transacción de cada evaluación efectiva.
+
+    El registro es lo que hace avanzar la cola: sin él, un intento que no crea filas nuevas (top-K
+    ya evaluado) dejaría al perfil encendido y clavado en la cabeza del lote acotado (P1 ronda 2).
+    Y va por la costura `on_evaluated` —no en un paso aparte— porque hacerlo después, re-leyendo la
+    revisión vigente, podía apagar la señal de una revisión que NADIE evaluó, o la de un combo que
+    devolvió 'sin_vector' (P1 ronda 3). Un combo que dejó de estar activo (o perdió el corpus)
+    durante la pasada NO se registra: ya no gobierna ninguna señal."""
+    async def record(session, revision_id, model_id, policy_id) -> None:
+        fingerprint = combos.get((model_id, policy_id))
+        if fingerprint is None:
+            return
         await session.execute(
             sa.text(_RECORD_ATTEMPT_SQL),
             {
-                "pid": pid,
-                "models": [c.model_id for c in usable],
-                "policies": [c.policy_id for c in usable],
-                "watermarks": [c.corpus_max for c in usable],
+                "rev": revision_id, "pid": pid, "model": model_id,
+                "policy": policy_id, "fp": fingerprint,
             },
         )
-        await session.commit()
+
+    await _run_profile_impl(
+        str(pid), EVAL_LIMIT, session_factory=session_factory, on_evaluated=record
+    )
 
 
 async def _recovery_targets(session, evaluated: set) -> list:

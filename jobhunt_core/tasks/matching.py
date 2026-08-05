@@ -30,21 +30,27 @@ def run_profile_task(self, profile_id: str, limit: int = 100) -> dict[str, Any]:
 
 
 async def _run_profile_impl(
-    profile_id: str, limit: int, session_factory=None
+    profile_id: str, limit: int, session_factory=None, on_evaluated=None
 ) -> dict[str, Any]:
     """`session_factory` opcional (2º análisis B-02, P3): el proyector de la
     sombra corre TODO dentro de un único asyncio.run y pasa SU propia factory
     — sin crear/desechar un engine NullPool por llamada. Sin ella (tarea
     Celery standalone: event loop nuevo por asyncio.run), el engine
-    desechable de task_session_factory sigue siendo obligatorio."""
+    desechable de task_session_factory sigue siendo obligatorio.
+
+    `on_evaluated` (opcional): corrutina (session, profile_revision_id, model_id, policy_id) que se
+    invoca SOLO tras una evaluación efectiva y DENTRO de su misma transacción — con el lock del
+    perfil aún tomado. Es la costura que usa el proyector para registrar su watermark de intento sin
+    que este módulo sepa nada de él (P1 rev. externa ronda 3: registrarlo aparte y re-consultando la
+    revisión vigente podía apagar la señal de una revisión que NADIE evaluó)."""
     if session_factory is not None:
-        return await _run_profile_with(session_factory, profile_id, limit)
+        return await _run_profile_with(session_factory, profile_id, limit, on_evaluated)
     async with task_session_factory() as factory:
-        return await _run_profile_with(factory, profile_id, limit)
+        return await _run_profile_with(factory, profile_id, limit, on_evaluated)
 
 
 async def _run_profile_with(
-    session_factory, profile_id: str, limit: int
+    session_factory, profile_id: str, limit: int, on_evaluated=None
 ) -> dict[str, Any]:
     results: dict[str, dict] = {}
     async with session_factory() as session:
@@ -85,6 +91,11 @@ async def _run_profile_with(
                     session, profile_id, model.id, policy.id, limit=limit,
                     move_current=canonical_pending,
                 )
+                # MISMA transacción que la evaluación: o se registran ambas o ninguna.
+                if on_evaluated is not None and r.get("status") == "ok":
+                    await on_evaluated(
+                        session, r["profile_revision_id"], model.id, policy.id
+                    )
                 await session.commit()
             if r.get("moved_current"):
                 # El canónico es el primer combo que DE VERDAD movió el
