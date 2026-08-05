@@ -201,7 +201,9 @@ docker inspect -f '{{.State.ExitCode}}' swissjob-core-migrate   # 0
 
 Crea/converge: rol `jobhunt_core` (mínimo privilegio) + esquema `jobhunt` +
 rol `jobhunt_capture` (LOGIN REPLICATION) + GRANTs RO enumerados + cadena
-Alembic `core0001..core0010`. Si falla, NADA más del core arranca (correcto).
+Alembic `core0001..core0023` (head al preparar este paquete; **verificar contra el repo antes
+de desplegar** — la cadena creció con Fase C, §4-LOCAL y el cierre de residuales pre-Fase D:
+`ls jobhunt_core/alembic/versions/ | tail -1`). Si falla, NADA más del core arranca (correcto).
 
 ### 6.2 core-capture — bootstrap: slot + snapshot + BACKFILL del corpus REAL
 

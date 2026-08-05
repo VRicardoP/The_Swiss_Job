@@ -5,6 +5,13 @@
 > build-en-NAS). Acceso final en producción:
 > `http://capsule.tailebc81d.ts.net:4000` desde cualquier dispositivo
 > de la tailnet (Mac, Linux, iPhone, iPad).
+>
+> **ALCANCE: solo el stack LEGACY** (postgres, redis, backend, worker, frontend).
+> El core y la SOMBRA (`core-api`, `core-worker`, `core-capture`, `redis-core`, y el
+> Postgres con wal2json que exige `wal_level=logical`) tienen su propio paquete:
+> [`jobhunt_core/shadow/DEPLOY_NAS.md`](../jobhunt_core/shadow/DEPLOY_NAS.md), con
+> ventana de mantenimiento propia (reiniciar Postgres) y su
+> `deploy_nas_composes.patch` — que NO está aplicado al repo a propósito.
 
 ---
 
