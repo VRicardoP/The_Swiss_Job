@@ -3,6 +3,12 @@
 Corre periódicamente (ver services/scheduler.py). Usa una marca de agua en
 Redis (`first_seen_at` de la última corrida) para avisar SOLO de ofertas nuevas
 y no re-enviar. Patrón `def task(): asyncio.run(_impl())` (Celery no es async).
+
+DECISIÓN D.1 (gate anti-doble-motor, §15bis): esta tarea NO consulta
+`jobhunt_routing` A PROPÓSITO. El core no tiene la capacidad de colegios/
+docencia (diferida a Fase E): si se omitiera para un perfil migrado, NADIE
+enviaría esta alerta. Es el reverso del invariante — se gatea lo que el core
+puede duplicar (matching, digest), no todo. Revisar cuando el core la asuma.
 """
 
 import asyncio

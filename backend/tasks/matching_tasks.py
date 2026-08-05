@@ -45,22 +45,42 @@ async def _run_all_matches_async() -> dict[str, Any]:
     from services.gemini_service import GeminiService
     from services.groq_service import GroqService
     from services.match_service import MatchService
+    from services.routing import CAPABILITY_MATCHING, legacy_owns, resolve_modes
 
     # Un proveedor LLM por corrida; Gemini de fallback ante fallo/caducidad de Groq.
     groq = GroqService()
     gemini = GeminiService()
 
-    summary: dict[str, Any] = {"profiles": 0, "results": 0, "skipped": 0, "errors": 0}
+    summary: dict[str, Any] = {
+        "profiles": 0,
+        "results": 0,
+        "skipped": 0,
+        "skipped_routing": 0,
+        "errors": 0,
+    }
 
     async with task_session() as db:
-        stmt = select(UserProfile).where(UserProfile.cv_embedding.is_not(None))
-        profiles = list((await db.execute(stmt)).scalars().all())
+        # SOLO el id: el bucle no usa ningun otro campo del perfil, y traer el
+        # ORM completo arrastraria el `cv_embedding` (vector de 384) de CADA
+        # perfil — incluidos los que el gate va a descartar.
+        stmt = select(UserProfile.user_id).where(UserProfile.cv_embedding.is_not(None))
+        user_ids = list((await db.execute(stmt)).scalars().all())
+
+        # Gate anti-doble-motor D.1 (plan §15bis): routing resuelto EN BLOQUE
+        # (una consulta para los N perfiles) y descarte de los migrados ANTES
+        # de cualquier trabajo caro — en core_read/core_primary/rollback_pending
+        # el core ejecuta su propio matching y correr aqui lo duplicaria (y
+        # gastaria rerank LLM/embeddings para un perfil que ya no es nuestro).
+        modes = await resolve_modes(db, CAPABILITY_MATCHING, user_ids)
 
         service = MatchService(db, groq=groq, gemini=gemini)
 
-        for profile in profiles:
+        for user_id in user_ids:
+            if not legacy_owns(modes[user_id]):
+                summary["skipped_routing"] += 1
+                continue
             try:
-                result = await service.run_matching(profile.user_id)
+                result = await service.run_matching(user_id)
                 summary["profiles"] += 1
                 if result.get("status") == "success":
                     summary["results"] += result.get("results_count", 0)
@@ -68,9 +88,7 @@ async def _run_all_matches_async() -> dict[str, Any]:
                     summary["skipped"] += 1
             except Exception as exc:
                 summary["errors"] += 1
-                logger.error(
-                    "run_matching failed for user %s: %s", profile.user_id, exc
-                )
+                logger.error("run_matching failed for user %s: %s", user_id, exc)
                 # La sesion es compartida por todos los perfiles: tras un
                 # fallo de flush/commit queda invalidada y el siguiente
                 # perfil moriria con PendingRollbackError en cascada. El

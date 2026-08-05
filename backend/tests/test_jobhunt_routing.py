@@ -176,6 +176,103 @@ async def test_set_routing_bumps_revision_and_records_author(db_session):
 
 
 # ---------------------------------------------------------------------------
+# Resolucion MASIVA (resolve_modes) y predicado legacy_owns — D.1
+# ---------------------------------------------------------------------------
+
+
+class _CountingSession:
+    """Envuelve la sesion real y cuenta las ejecuciones de SQL (gate de D.1:
+    N perfiles deben resolverse con UNA consulta, no una por perfil)."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.executes = 0
+
+    async def execute(self, *args, **kwargs):
+        self.executes += 1
+        return await self._inner.execute(*args, **kwargs)
+
+
+async def test_resolve_modes_empty_list_never_touches_db():
+    session = _CountingSession(None)  # cualquier execute reventaria (inner None)
+    assert await routing.resolve_modes(session, CAP, []) == {}
+    assert session.executes == 0
+
+
+async def test_resolve_modes_precedence_in_one_query(db_session):
+    """Exacta > comodin > local para N perfiles, con UNA sola consulta."""
+    profile_a, profile_b, profile_c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    await routing.set_routing(db_session, CAP, routing.MODE_CORE_PRIMARY)  # comodin
+    await routing.set_routing(
+        db_session, CAP, routing.MODE_CORE_READ, profile_id=profile_a
+    )
+    session = _CountingSession(db_session)
+    modes = await routing.resolve_modes(
+        db=session,
+        capability=CAP,
+        profile_ids=[profile_a, profile_b, profile_c, profile_a],  # con duplicado
+    )
+    assert modes == {
+        profile_a: routing.MODE_CORE_READ,  # fila exacta gana
+        profile_b: routing.MODE_CORE_PRIMARY,  # comodin del consumer
+        profile_c: routing.MODE_CORE_PRIMARY,
+    }
+    assert session.executes == 1
+
+
+async def test_resolve_modes_defaults_local_without_rows(db_session):
+    profile_a = uuid.uuid4()
+    session = _CountingSession(db_session)
+    assert await routing.resolve_modes(session, CAP, [profile_a]) == {
+        profile_a: routing.MODE_LOCAL
+    }
+    assert session.executes == 1
+
+
+async def test_resolve_modes_shares_cache_with_resolve_mode(db_session):
+    """MISMA cache en ambos sentidos: lo que resuelve uno lo reutiliza el otro
+    sin tocar la BD (dentro de la TTL)."""
+    profile_a, profile_b = uuid.uuid4(), uuid.uuid4()
+    # resolve_modes puebla la cache -> resolve_mode no consulta.
+    session = _CountingSession(db_session)
+    await routing.resolve_modes(session, CAP, [profile_a])
+    assert await routing.resolve_mode(session, CAP, profile_a) == routing.MODE_LOCAL
+    assert session.executes == 1
+    # resolve_mode puebla la cache -> resolve_modes con todo cacheado no consulta.
+    await routing.resolve_mode(session, CAP, profile_b)
+    assert session.executes == 2
+    assert await routing.resolve_modes(session, CAP, [profile_a, profile_b]) == {
+        profile_a: routing.MODE_LOCAL,
+        profile_b: routing.MODE_LOCAL,
+    }
+    assert session.executes == 2  # cero consultas nuevas
+
+
+async def test_resolve_modes_respects_transactional_invalidation(db_session):
+    """Tras un set_routing (commit + invalidacion), resolve_modes ve el cambio."""
+    profile_a = uuid.uuid4()
+    assert (await routing.resolve_modes(db_session, CAP, [profile_a]))[
+        profile_a
+    ] == routing.MODE_LOCAL
+    await routing.set_routing(
+        db_session, CAP, routing.MODE_CORE_READ, profile_id=profile_a
+    )
+    assert (await routing.resolve_modes(db_session, CAP, [profile_a]))[
+        profile_a
+    ] == routing.MODE_CORE_READ
+
+
+def test_legacy_owns_matrix():
+    """Matriz de escritor del §15bis: legacy actua SOLO en local y shadow; en
+    rollback_pending el core sigue siendo autoritativo hasta el replay final."""
+    assert routing.legacy_owns(routing.MODE_LOCAL)
+    assert routing.legacy_owns(routing.MODE_SHADOW)
+    assert not routing.legacy_owns(routing.MODE_CORE_READ)
+    assert not routing.legacy_owns(routing.MODE_CORE_PRIMARY)
+    assert not routing.legacy_owns(routing.MODE_ROLLBACK_PENDING)
+
+
+# ---------------------------------------------------------------------------
 # Cache corta con invalidacion transaccional
 # ---------------------------------------------------------------------------
 

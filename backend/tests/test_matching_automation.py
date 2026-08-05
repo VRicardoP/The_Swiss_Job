@@ -114,15 +114,15 @@ class _FakeCtx:
         return False
 
 
-class _Profile:
-    def __init__(self, uid):
-        self.user_id = uid
+def _all_local(user_ids):
+    """Doble de resolve_modes: todos los perfiles en 'local' (legacy-owned)."""
+    return AsyncMock(return_value={uid: "local" for uid in user_ids})
 
 
 async def test_run_all_matches_iterates_profiles_and_aggregates():
     from tasks.matching_tasks import _run_all_matches_async
 
-    profiles = [_Profile("u1"), _Profile("u2")]
+    profiles = ["u1", "u2"]
     fake_service = AsyncMock()
     fake_service.run_matching = AsyncMock(
         return_value={"status": "success", "results_count": 3}
@@ -130,6 +130,7 @@ async def test_run_all_matches_iterates_profiles_and_aggregates():
 
     with (
         patch("database.task_session", return_value=_FakeCtx(_FakeSession(profiles))),
+        patch("services.routing.resolve_modes", _all_local(profiles)),
         patch("services.groq_service.GroqService"),
         patch("services.gemini_service.GeminiService"),
         patch("services.match_service.MatchService", return_value=fake_service),
@@ -138,6 +139,7 @@ async def test_run_all_matches_iterates_profiles_and_aggregates():
 
     assert summary["profiles"] == 2
     assert summary["results"] == 6  # 3 por perfil
+    assert summary["skipped_routing"] == 0  # todos legacy => nadie omitido
     assert fake_service.run_matching.await_count == 2
 
 
@@ -147,7 +149,7 @@ async def test_run_all_matches_rolls_back_session_after_error():
     PendingRollbackError en cascada) y el siguiente perfil se procesa."""
     from tasks.matching_tasks import _run_all_matches_async
 
-    profiles = [_Profile("u1"), _Profile("u2")]
+    profiles = ["u1", "u2"]
     session = _FakeSession(profiles)
     fake_service = AsyncMock()
     fake_service.run_matching = AsyncMock(
@@ -159,6 +161,7 @@ async def test_run_all_matches_rolls_back_session_after_error():
 
     with (
         patch("database.task_session", return_value=_FakeCtx(session)),
+        patch("services.routing.resolve_modes", _all_local(profiles)),
         patch("services.groq_service.GroqService"),
         patch("services.gemini_service.GeminiService"),
         patch("services.match_service.MatchService", return_value=fake_service),

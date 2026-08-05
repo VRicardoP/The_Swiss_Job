@@ -1,4 +1,12 @@
-"""Celery tasks: execute saved searches and dispatch notifications."""
+"""Celery tasks: execute saved searches and dispatch notifications.
+
+DECISIÓN D.1 (gate anti-doble-motor, §15bis): esta tarea NO se gatea. Las
+búsquedas guardadas se resuelven contra el CORPUS de ofertas legacy —que se
+sigue cosechando mientras quede algún perfil local—, no contra `match_results`,
+así que no se quedan viejas al migrar un perfil; y la capacidad `saved_searches`
+se sirve de local en TODOS los modos (el /v1 del core no la expone), luego el
+core no puede duplicar este aviso. Revisar cuando el core la asuma.
+"""
 
 import asyncio
 import logging

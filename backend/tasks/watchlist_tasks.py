@@ -5,6 +5,12 @@
   bloqueo en compliance están altos. Emite notificaciones a los usuarios
   con watchlist_schools_enabled=True.
 
+DECISIÓN D.1 (gate anti-doble-motor, §15bis): `send_watchlist_digest` SÍ se
+gatea por la capacidad `matching` (se alimenta de `match_results` legacy, que
+para un perfil migrado dejan de actualizarse). `check_watchlist_health` NO: avisa
+del estado de las FUENTES, no del matching de nadie — es operativo y el core no
+lo emite.
+
 - send_watchlist_digest: digest diario con matches de la watchlist en el
   rango score 40-69 (los que NO disparan push inmediato).
 """
@@ -199,6 +205,7 @@ async def _send_digest_async() -> dict[str, Any]:
     from models.notification import Notification
     from models.user import User
     from models.user_profile import UserProfile
+    from services.routing import CAPABILITY_MATCHING, legacy_owned_sql
 
     # Ventana digest: matches creados en las últimas 24h
     since = datetime.now(timezone.utc) - timedelta(hours=24)
@@ -211,6 +218,12 @@ async def _send_digest_async() -> dict[str, Any]:
             .where(
                 User.is_active.is_(True),
                 UserProfile.watchlist_schools_enabled.is_(True),
+                # Gate anti-doble-motor D.1 (§15bis), EN SQL: este digest se
+                # construye desde `match_results` LEGACY igual que el diario.
+                # Para un perfil migrado esos matches YA NO se actualizan (el
+                # gate de run_all_matches lo omite), así que seguir enviándolo
+                # sería correo con recomendaciones viejas para siempre.
+                legacy_owned_sql(User.id, CAPABILITY_MATCHING),
             )
         )
         users = (await db.execute(users_stmt)).scalars().all()
