@@ -38,12 +38,13 @@ local puede ser inaccesible. Consecuencias en esta etapa:
   misma simetria; la fila con feedback_implicit queda ademas protegida del
   cleanup de ofertas caducadas).
 
-Cota registrada (NO implementada): los schedulers legacy (matching_tasks,
-digest) siguen ejecutando para TODOS los perfiles en esta etapa — correcto
-mientras el legacy sea el escritor (local/shadow/core_read: su copia debe
-seguir completa para el fallback). La consciencia de routing de los
-schedulers (omitir perfiles en core_primary) llega con el flip de escritor
-en Fase C, junto a la idempotency key de las escrituras interactivas.
+Fase D CIERRA la cota que aqui quedaba registrada: desde D.1 los schedulers
+legacy omiten los perfiles no legacy-owned (services/routing.legacy_owns) y
+desde D.2 el disparo interactivo del pipeline (/analyze) responde 409 para
+ellos. Consecuencia asumida en core_read: la copia local que sirve el
+fallback queda CONGELADA en el momento de la migracion — accionable pero
+potencialmente desactualizada si el core cae (residual conocido del §15bis:
+preferible al doble motor).
 """
 
 import logging

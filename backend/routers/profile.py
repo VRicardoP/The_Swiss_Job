@@ -179,6 +179,11 @@ async def upload_cv(
     # Emite progreso por SSE (`cv_analysis_progress`) para la barra del frontend.
     # Esta tarea regenera el embedding al final, así que reemplaza al dispatch
     # directo de generate_profile_embedding.
+    # SIN gate de routing D.2 (decisión registrada): esta tarea NO ejecuta el
+    # motor de matching — escribe el PERFIL (capacidad `profiles`, escritor
+    # local hasta Fase C) y su embedding legacy. Es precisamente la señal
+    # "cambió el CV" con la que el core re-evalúa por su lado; se gatea lo que
+    # el core puede duplicar (el matching), no la edición del perfil.
     task_id = None
     try:
         from tasks.profile_tasks import analyze_cv_and_autofill

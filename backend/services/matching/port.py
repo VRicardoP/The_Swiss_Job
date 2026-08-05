@@ -6,9 +6,14 @@ son las LECTURAS DEL FEED que hoy consumen los routers de match
 /history la comparten hoy en el legacy — la costura conserva esa igualdad)
 y `saved` (marcados positivos).
 
-ESCRITURAS FUERA DEL PUERTO — cota REGISTRADA, no implementada:
-feedback explicito/implicito y el disparo del pipeline (/analyze) quedan
-SIEMPRE en local en esta etapa. El state machine de candidatura (watchlist:
+ESCRITURAS FUERA DEL PUERTO: el puerto sigue siendo de LECTURA. El feedback
+explicito/implicito queda SIEMPRE en local en esta etapa. El disparo del
+pipeline (/analyze) dejo de ser "siempre local" en Fase D (gate
+anti-doble-motor D.2, routers/match.py): con el matching gobernado por el
+core responde 409 y el motor local NO se ejecuta — y NO entra al puerto
+porque en ningun modo se dispara el pipeline del core desde aqui (el core
+re-evalua solo al cambiar el CV o el corpus).
+El state machine de candidatura (watchlist:
 status/draft/calendar) tiene desde A.SEAM candidaturas su propia costura
 (services/applications) — sigue sirviendose SIEMPRE de local en todos los
 modos (criterio unificador: su unico escritor es local). Matriz de escritor del plan §15bis: el legacy es el

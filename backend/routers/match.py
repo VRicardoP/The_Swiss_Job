@@ -6,11 +6,15 @@ la implementacion (local|core) la decide `jobhunt_routing` POR PERFIL
 (users.id), con default 'local' (comportamiento byte-identico al previo:
 LocalMatching delega verbatim en MatchResultService).
 
-Las ESCRITURAS (analyze, feedback explicito/implicito) quedan SIEMPRE en
-local en esta etapa — cota registrada: la matriz de escritor del plan §15bis
-mantiene al legacy como escritor autoritativo hasta el cutover; el cambio de
-escritor llega en Fase C como escritura sincrona contra el escritor activo
-+ idempotency key.
+El DISPARO DEL PIPELINE (/analyze) respeta el routing desde Fase D (gate
+anti-doble-motor D.2, complemento interactivo del D.1 de los schedulers):
+con el matching del perfil gobernado por el core
+(core_read/core_primary/rollback_pending) responde 409 SIN instanciar
+servicios LLM ni tocar el motor local. El feedback explicito/implicito
+sigue SIEMPRE en local: el legacy es su escritor autoritativo en TODOS los
+modos (criterio unificador de la costura; el feed del core lo superpone
+como overlay) hasta el flip de escritor de Fase C (escritura sincrona
+contra el escritor activo + idempotency key).
 """
 
 import logging
@@ -45,6 +49,7 @@ from services.matching import (
     MatchingUnsupportedError,
     resolve_matching,
 )
+from services.routing import CAPABILITY_MATCHING, legacy_owns, resolve_mode
 from services.translation_service import TranslationService
 
 logger = logging.getLogger(__name__)
@@ -87,6 +92,30 @@ async def analyze_matches(
     Stage 2: Multi-factor scoring (embedding + salary + location + recency)
     Stage 3: LLM re-ranking via Groq (if API key configured) — top-K only
     """
+    # Gate anti-doble-motor D.2 (plan §15bis): descartar el perfil migrado
+    # ANTES de instanciar servicios LLM o tocar el motor, con UNA consulta de
+    # routing (resolve_mode, con cache en proceso) — cero coste para el
+    # migrado.
+    mode = await resolve_mode(db, CAPABILITY_MATCHING, current_user.id)
+    if not legacy_owns(mode):
+        # 409 y no 501: 501 (via _matching_http_error) significa "el backend
+        # activo no sabe servir esta operacion" (cota de contrato del /v1).
+        # Aqui la operacion es valida, pero ejecutarla chocaria con el estado
+        # del recurso: el ESCRITOR autoritativo del matching de este perfil
+        # es el core (matriz de escritor §15bis) y un recalculo local seria
+        # el doble motor que D.1 cerro en los schedulers. Ese conflicto con
+        # el estado actual del recurso es la semantica de 409 Conflict; y no
+        # es una carencia permanente (tras un rollback completo el perfil
+        # vuelve a ser analizable en local).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Matching for this profile is governed by the core engine; "
+                "results recompute automatically when your CV or the job "
+                "corpus changes. Local analysis is disabled."
+            ),
+        )
+
     groq = _get_groq(request)
     service = MatchService(db, groq=groq, gemini=GeminiService())
     result = await service.run_matching(
