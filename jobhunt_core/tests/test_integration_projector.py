@@ -251,11 +251,14 @@ def _seed_corpus(factory):
     test_recovery_ignores_active_models_without_corpus."""
     embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
     try:
-        pk = f"job-corpus-{uuid.uuid4().hex[:6]}"
+        marca = uuid.uuid4().hex[:6]
+        pk = f"job-corpus-{marca}"
+        # Contenido ÚNICO por llamada: dos ofertas idénticas comparten text_hash (y por tanto
+        # embedding), así que el corpus no crecería y los tests del conjunto no probarían nada.
         _seed(factory, [
-            ("jobs", "I", pk, _job(pk, f"fx{uuid.uuid4().hex[:6]}",
-                                   title="Python Developer",
-                                   description="backend python fastapi")),
+            ("jobs", "I", pk, _job(pk, f"fx{marca}",
+                                   title=f"Python Developer {marca}",
+                                   description=f"backend python fastapi {marca}")),
         ])
         _project()
     finally:
@@ -1398,7 +1401,7 @@ def test_recovery_attempt_records_the_revision_actually_evaluated(db):
         return pid, rev1
 
     pid, rev1 = _run(setup())
-    _run(projector._evaluate_and_record(factory, pid, _run(_combos(factory))))
+    _run(projector._evaluate_and_record(factory, pid))
 
     async def activate_second_revision():
         async with factory() as s:
@@ -1427,11 +1430,6 @@ def test_recovery_attempt_records_the_revision_actually_evaluated(db):
             return await projector._recovery_targets(s, set())
 
     assert pid in _run(check())  # y por tanto sigue pendiente de evaluar
-
-
-async def _combos(factory):
-    async with factory() as s:
-        return await projector._active_combos(s)
 
 
 def test_recovery_does_not_record_a_combo_without_vector(db):
@@ -1474,7 +1472,7 @@ def test_recovery_does_not_record_a_combo_without_vector(db):
         return pid, rev
 
     pid, rev = _run(setup())
-    _run(projector._evaluate_and_record(factory, pid, _run(_combos(factory))))
+    _run(projector._evaluate_and_record(factory, pid))
     models = {
         r.model_id
         for r in _rows(
@@ -1484,38 +1482,206 @@ def test_recovery_does_not_record_a_combo_without_vector(db):
     assert models == {model_a}  # B NO se registró: no se evaluó nada para él
 
 
-def test_recovery_signal_uses_embedding_time_not_offer_revision_time(db):
-    """REGRESIÓN P1 rev. externa ronda 2 (variante de PÉRDIDA): el corpus se medía por
-    `offer_revisions.created_at`. Una revisión ANTIGUA embebida DESPUÉS se vuelve elegible sin mover
-    esa fecha → la señal no se encendía y el perfil se quedaba con matching viejo en silencio. El
-    watermark usa `offer_embeddings.created_at`."""
+def test_recovery_signal_detects_a_late_materialized_embedding(db):
+    """REGRESIÓN (rondas 3 y 4): una revisión de oferta solo es ELEGIBLE cuando su embedding existe
+    para ese modelo. Si se materializa DESPUÉS del intento, ninguna fecha del corpus se mueve —
+    antes la señal se quedaba apagada. La huella cuenta el CONJUNTO, así que entrar en él la cambia.
+    """
+    from jobhunt_core import profiles as core_profiles
+
+    factory = db
+    model_id, _ = _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    _seed_corpus(factory)
+    _seed_corpus(factory)
+    # Una oferta se queda SIN embedding: fuera del corpus elegible cuando se evalúe.
+    huerfana = _scalar(
+        factory,
+        "SELECT orv.text_hash FROM vacancies v "
+        "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
+        "ORDER BY orv.text_hash LIMIT 1",
+    )
+    _exec(factory, "DELETE FROM offer_embeddings WHERE text_hash = :h", h=huerfana)
+
+    async def setup():
+        async with factory() as s:
+            cid = await core_profiles.ensure_consumer(s, "piloto")
+            pid = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+            await core_profiles.save_profile_revision(
+                s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
+            )
+            await s.commit()
+        async with factory() as s:
+            await _insert_vectors(s, model_id)
+            await s.commit()
+        await projector._evaluate_and_record(factory, pid)
+        return pid
+
+    pid = _run(setup())
+
+    async def check():
+        async with factory() as s:
+            return await projector._recovery_targets(s, set())
+
+    assert _run(check()) == []  # intento registrado con el corpus REDUCIDO
+    # El embedding se materializa AHORA (backfill tardío): esa oferta ENTRA en el corpus.
+    _exec(
+        factory,
+        "INSERT INTO offer_embeddings (text_hash, model_id, vector) "
+        "SELECT :h, model_id, vector FROM offer_embeddings WHERE model_id = :m LIMIT 1",
+        h=huerfana, m=model_id,
+    )
+    assert _run(check()) == [pid]
+
+
+def test_recovery_survives_an_active_model_without_corpus(db):
+    """REGRESIÓN P1 rev. externa ronda 4: un modelo activo SIN corpus sale de evaluate_profile por
+    'ok' con evaluated=0 — la costura lo trataba como evaluación efectiva y reventaba con KeyError
+    (y, de no hacerlo, habría registrado un intento que nadie atendió)."""
+    from jobhunt_core import profiles as core_profiles
+
+    factory = db
+    model_a, _ = _seed_model_policy(factory, f"modelo-a-{uuid.uuid4().hex[:6]}")
+    _seed_corpus(factory)  # corpus SOLO para A (B se registra después)
+
+    async def setup_and_run():
+        async with factory() as s:
+            model_b = await embeddings.register_model(
+                s, f"modelo-b-{uuid.uuid4().hex[:6]}", "e" * 40
+            )
+            cid = await core_profiles.ensure_consumer(s, "piloto")
+            pid = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+            await core_profiles.save_profile_revision(
+                s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
+            )
+            await s.commit()
+        async with factory() as s:  # vector para AMBOS modelos; corpus solo para A
+            await _insert_vectors(s, model_a)
+            await _insert_vectors(s, model_b)
+            await s.commit()
+        await projector._evaluate_and_record(factory, pid)  # no debe reventar
+        return pid, model_b
+
+    pid, model_b = _run(setup_and_run())
+    models = {
+        r.model_id
+        for r in _rows(
+            factory, "SELECT model_id FROM profile_recovery_state WHERE profile_id = :p", p=pid
+        )
+    }
+    assert models == {model_a}  # B no se dio por intentado: no evaluó nada
+
+
+def test_recovery_fingerprint_detects_a_same_size_corpus_swap(db):
+    """REGRESIÓN P1 rev. externa ronda 4: una huella por (recuento, máximos de fecha) NO identifica
+    el conjunto. Con la vacante más reciente SIEMPRE dentro, intercambiar una archivada por una viva
+    conserva recuento y ambos máximos: la versión era idéntica con un corpus distinto. La huella
+    lleva el XOR de los pares vacante:revisión."""
     factory = db
     _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
-    _seed_corpus(factory)
+    _seed_corpus(factory)  # v0 (la más antigua)
+    _seed_corpus(factory)  # v1
+    _seed_corpus(factory)  # v2 (la más reciente: se queda dentro en los dos estados)
     user = uuid.uuid4()
     embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
     try:
+        vac = [
+            r.id
+            for r in _rows(
+                factory,
+                "SELECT v.id FROM vacancies v "
+                "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
+                "ORDER BY orv.created_at, v.id",
+            )
+        ]
+        assert len(vac) == 3
+        _exec(factory, "UPDATE vacancies SET archived_at = now() WHERE id = :v", v=vac[1])
         _seed(factory, [
             ("users", "I", str(user), {"id": str(user), "is_active": True}),
             ("user_profiles", "I", f"prof-{user}", _profile(user)),
         ])
-        _project()
+        _project()  # evalúa con {v0, v2}
 
         async def check():
             async with factory() as s:
                 return await projector._recovery_targets(s, set())
 
-        assert _run(check()) == []  # intento registrado con el corpus de ese momento
-        # Embebido TARDÍO de una revisión ya existente (backfill de vectores): la fecha de la
-        # REVISIÓN de oferta no se mueve; solo la del EMBEDDING delata que el corpus es elegible.
-        _exec(factory, "UPDATE offer_embeddings SET created_at = now()")
-        assert _scalar(
+        assert _run(check()) == []
+        # INTERCAMBIO {v0,v2} → {v1,v2}: mismo recuento y mismos máximos (v2 sigue dentro).
+        _exec(
             factory,
-            "SELECT max(created_at) < max(now()) FROM offer_revisions",
-        ) is True  # la revisión sigue siendo ANTERIOR: la señal no puede venir de ella
-        assert _run(check()) != []  # la señal SÍ se enciende
+            "UPDATE vacancies SET archived_at = CASE WHEN id = :out THEN now() ELSE NULL END "
+            "WHERE id IN (:out, :in_)",
+            out=vac[0], in_=vac[1],
+        )
+        assert _run(check()) != []  # el CONJUNTO cambió: la señal se enciende
     finally:
         embeddings.set_backend_factory(None)
+
+
+def test_recovery_order_ignores_combos_that_lost_their_corpus(db, monkeypatch):
+    """REGRESIÓN P1 rev. externa ronda 4: el orden contaba intentos de combos activos SIN corpus.
+    Ese intento nunca se actualiza (evaluarlo es un no-op), así que mantenía al perfil en la cabeza
+    del lote pasada tras pasada."""
+    from jobhunt_core import profiles as core_profiles
+
+    factory = db
+    model_a, _ = _seed_model_policy(factory, f"modelo-a-{uuid.uuid4().hex[:6]}")
+
+    async def add_b():
+        async with factory() as s:
+            mid = await embeddings.register_model(s, f"modelo-b-{uuid.uuid4().hex[:6]}", "f" * 40)
+            await s.commit()
+            return mid
+
+    model_b = _run(add_b())
+    _seed_corpus(factory)  # corpus para A y B
+    _seed_corpus(factory)
+    monkeypatch.setattr(projector, "RECOVERY_MAX_PROFILES", 1)
+
+    async def new_profile():
+        async with factory() as s:
+            cid = await core_profiles.ensure_consumer(s, "piloto")
+            pid = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+            await core_profiles.save_profile_revision(
+                s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
+            )
+            await s.commit()
+        async with factory() as s:
+            await _insert_vectors(s, model_a)
+            await _insert_vectors(s, model_b)
+            await s.commit()
+        return pid
+
+    p1 = _run(new_profile())
+    _run(projector._evaluate_and_record(factory, p1))
+    p2 = _run(new_profile())
+    _run(projector._evaluate_and_record(factory, p2))
+    # B pierde TODO su corpus y el intento de B de p1 se hace muy viejo.
+    _exec(factory, "DELETE FROM offer_embeddings WHERE model_id = :m", m=model_b)
+    _exec(
+        factory,
+        "UPDATE profile_recovery_state SET attempted_at = now() - make_interval(days => 10) "
+        "WHERE profile_id = :p AND model_id = :m",
+        p=p1, m=model_b,
+    )
+    # p2 queda con el intento (de A) más antiguo de los que HOY cuentan.
+    _exec(
+        factory,
+        "UPDATE profile_recovery_state SET attempted_at = now() - make_interval(days => 1) "
+        "WHERE profile_id = :p AND model_id = :m",
+        p=p2, m=model_a,
+    )
+    _exec(
+        factory,
+        "UPDATE vacancies SET archived_at = now() WHERE id = "
+        "(SELECT id FROM vacancies WHERE archived_at IS NULL ORDER BY id LIMIT 1)",
+    )
+
+    async def check():
+        async with factory() as s:
+            return await projector._recovery_targets(s, set())
+
+    assert _run(check()) == [p2]  # el intento fósil de B no da prioridad a p1
 
 
 def test_recovery_signal_detects_an_unarchived_vacancy(db):
@@ -1589,7 +1755,7 @@ def test_recovery_order_ignores_attempts_of_older_revisions(db, monkeypatch):
 
     # p1: intento MUY viejo de una revisión superada + intento RECIENTE de la vigente.
     p1 = _run(new_profile())
-    _run(projector._evaluate_and_record(factory, p1, _run(_combos(factory))))
+    _run(projector._evaluate_and_record(factory, p1))
     backdate(p1, 10)
 
     async def second_revision():
@@ -1603,11 +1769,11 @@ def test_recovery_order_ignores_attempts_of_older_revisions(db, monkeypatch):
             await s.commit()
 
     _run(second_revision())
-    _run(projector._evaluate_and_record(factory, p1, _run(_combos(factory))))
+    _run(projector._evaluate_and_record(factory, p1))
 
     # p2: un solo intento, MÁS ANTIGUO que el vigente de p1 pero más nuevo que el histórico.
     p2 = _run(new_profile())
-    _run(projector._evaluate_and_record(factory, p2, _run(_combos(factory))))
+    _run(projector._evaluate_and_record(factory, p2))
     backdate(p2, 1)
 
     # Cambia el corpus: ambos encienden la señal y compiten por la ÚNICA plaza del lote.

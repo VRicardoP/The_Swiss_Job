@@ -108,6 +108,7 @@ from dataclasses import dataclass, field
 import sqlalchemy as sa
 from sqlalchemy.pool import NullPool
 
+from jobhunt_core import matching
 from jobhunt_core import profiles as core_profiles
 from jobhunt_core.database import create_core_engine, task_session_factory
 from jobhunt_core.embeddings import EMBED_DIM
@@ -1168,21 +1169,18 @@ async def erase_shadow_profile(
 # ------------------------------------------------- flujo normal tras el lote
 
 
-# HUELLA del corpus ELEGIBLE por modelo (vacantes vivas con embedding de ese modelo). Ningún
-# timestamp solo sirve como versión (P1 rev. externa ronda 3): una vacante nueva que reutiliza un
-# text_hash ya embebido no crea fila de embedding, y DESARCHIVAR una antigua no mueve ninguna fecha
-# — la señal se quedaba apagada con trabajo real. La huella combina cardinalidad y ambos máximos, y
-# se compara por DESIGUALDAD: toda alta, baja, desarchivado, cambio de canónica o materialización de
-# embedding la altera, y no necesita ser monotónica (retroceder también es cambiar).
+# Combos activos con la HUELLA de su corpus elegible. La definición de "corpus elegible" y de su
+# huella vive en `matching` — fuente ÚNICA, la misma que observa cada evaluación al registrar su
+# intento. Ningún timestamp sirve como versión (rondas 3 y 4): reutilizar un text_hash ya embebido
+# no crea fila, DESARCHIVAR no mueve fechas, y sustituir una vacante por otra conservando recuentos
+# y máximos daba la MISMA versión con un corpus distinto. La huella identifica el CONJUNTO y se
+# compara por DESIGUALDAD (no necesita ser monotónica: retroceder también es cambiar).
 # Escalar por MODELO (no depende del perfil ni de la política): se calcula una vez por pasada.
-_ACTIVE_COMBOS_SQL = """
+_ACTIVE_COMBOS_SQL = f"""
 WITH models AS (
     SELECT id FROM embedding_models WHERE active AND dim = :dim
 ), corpus AS (
-    SELECT mo.id AS model_id,
-           count(*)::text || '|'
-             || coalesce(max(oe.created_at)::text, '') || '|'
-             || coalesce(max(orv.created_at)::text, '') AS fingerprint
+    SELECT mo.id AS model_id, {matching.CORPUS_FINGERPRINT_EXPR} AS fingerprint
       FROM models mo
       JOIN offer_embeddings oe ON oe.model_id = mo.id
       JOIN offer_revisions orv ON orv.text_hash = oe.text_hash
@@ -1219,7 +1217,14 @@ SELECT DISTINCT p.id,
           FROM profile_recovery_state rs
           JOIN combos c2
             ON c2.model_id = rs.model_id AND c2.policy_id = rs.policy_id
-         WHERE rs.profile_revision_id = cur.revision_id) AS last_try
+         WHERE rs.profile_revision_id = cur.revision_id
+           -- SOLO combos capaces de dar señal HOY: el intento de uno que perdió el corpus (o cuyo
+           -- vector no está) jamás se actualiza, y su antigüedad daba prioridad PERPETUA a ese
+           -- perfil en la cabeza del lote (P1 rev. externa ronda 4).
+           AND c2.corpus_fp IS NOT NULL
+           AND EXISTS (SELECT 1 FROM profile_embeddings pe2
+                        WHERE pe2.profile_revision_id = cur.revision_id
+                          AND pe2.model_id = c2.model_id)) AS last_try
   FROM profiles p
   JOIN LATERAL (
         SELECT a.revision_id
@@ -1277,50 +1282,37 @@ async def _replay_after_batch(session_factory, evaluated: set) -> int:
     sombra activos que _after_batch no evaluó en ESTA invocación
     (`evaluated`) y cuya señal de recuperación está encendida — detección en
     UNA consulta (_RECOVERY_NEEDED_SQL): sin INTENTO registrado para su
-    revisión vigente con algún (modelo, política) activos, o corpus embebido
-    por encima del watermark de ese intento. La evaluación de recuperación
+    revisión vigente con algún (modelo, política) activos, o huella del corpus
+    distinta de la de ese intento. La evaluación de recuperación
     sigue siendo dedup por eval_key (jamás duplica).
     Devuelve los perfiles evaluados en la recuperación."""
     await _drain_embeddings(session_factory)
     async with session_factory() as session:
         targets = await _recovery_targets(session, evaluated)
-        combos = await _active_combos(session)
     for pid in targets:
-        await _evaluate_and_record(session_factory, pid, combos)
+        await _evaluate_and_record(session_factory, pid)
     return len(targets)
 
 
-async def _active_combos(session) -> dict:
-    """{(modelo, política): huella del corpus} de los combos activos CON corpus — la versión contra
-    la que se registra cada intento. Los combos sin corpus quedan fuera: evaluarlos es un no-op."""
-    rows = (
-        await session.execute(sa.text(_ACTIVE_COMBOS_SQL), {"dim": EMBED_DIM})
-    ).all()
-    return {
-        (r.model_id, r.policy_id): r.corpus_fp
-        for r in rows
-        if r.corpus_fp is not None
-    }
-
-
-async def _evaluate_and_record(session_factory, pid, combos: dict) -> None:
+async def _evaluate_and_record(session_factory, pid) -> None:
     """Evalúa el perfil registrando el intento DENTRO de la transacción de cada evaluación efectiva.
 
     El registro es lo que hace avanzar la cola: sin él, un intento que no crea filas nuevas (top-K
     ya evaluado) dejaría al perfil encendido y clavado en la cabeza del lote acotado (P1 ronda 2).
-    Y va por la costura `on_evaluated` —no en un paso aparte— porque hacerlo después, re-leyendo la
+    Va por la costura `on_evaluated` —no en un paso aparte— porque hacerlo después, re-leyendo la
     revisión vigente, podía apagar la señal de una revisión que NADIE evaluó, o la de un combo que
-    devolvió 'sin_vector' (P1 ronda 3). Un combo que dejó de estar activo (o perdió el corpus)
-    durante la pasada NO se registra: ya no gobierna ninguna señal."""
-    async def record(session, revision_id, model_id, policy_id) -> None:
-        fingerprint = combos.get((model_id, policy_id))
-        if fingerprint is None:
+    devolvió 'sin_vector' (P1 ronda 3). Y la huella es la que la PROPIA evaluación observó, en su
+    misma transacción y ANTES de elegir candidatos (P1 ronda 4): si el corpus cambia después, se
+    registra la versión vieja y el siguiente ciclo lo vuelve a coger — dirección segura. Un combo
+    sin corpus llega con huella NULL y no se registra: no gobierna ninguna señal."""
+    async def record(session, result, model_id, policy_id) -> None:
+        if result["corpus_fingerprint"] is None:
             return
         await session.execute(
             sa.text(_RECORD_ATTEMPT_SQL),
             {
-                "rev": revision_id, "pid": pid, "model": model_id,
-                "policy": policy_id, "fp": fingerprint,
+                "rev": result["profile_revision_id"], "pid": pid, "model": model_id,
+                "policy": policy_id, "fp": result["corpus_fingerprint"],
             },
         )
 
@@ -1385,12 +1377,11 @@ async def _after_batch(session_factory, result: _BatchResult) -> list:
     await _drain_embeddings(session_factory)
     async with session_factory() as session:
         targets = await _eval_targets(session, result)
-        combos = await _active_combos(session)
     for pid in targets:
         # Mismo top-K por defecto que la tarea jobhunt.matching.run_profile. El intento se registra
         # también aquí: si no, la recuperación de salida volvería a coger cada perfil ya evaluado
         # por el flujo normal solo para descubrir que no hay nada que hacer.
-        await _evaluate_and_record(session_factory, pid, combos)
+        await _evaluate_and_record(session_factory, pid)
     return targets
 
 

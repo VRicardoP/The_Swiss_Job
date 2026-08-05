@@ -38,9 +38,9 @@ async def _run_profile_impl(
     Celery standalone: event loop nuevo por asyncio.run), el engine
     desechable de task_session_factory sigue siendo obligatorio.
 
-    `on_evaluated` (opcional): corrutina (session, profile_revision_id, model_id, policy_id) que se
-    invoca SOLO tras una evaluación efectiva y DENTRO de su misma transacción — con el lock del
-    perfil aún tomado. Es la costura que usa el proyector para registrar su watermark de intento sin
+    `on_evaluated` (opcional): corrutina (session, resultado, model_id, policy_id) que se invoca
+    SOLO tras una evaluación EFECTIVA (`ok` con candidatos) y DENTRO de su misma transacción — con
+    el lock del perfil aún tomado. Su presencia activa además el cálculo de la huella del corpus. Es la costura que usa el proyector para registrar su watermark de intento sin
     que este módulo sepa nada de él (P1 rev. externa ronda 3: registrarlo aparte y re-consultando la
     revisión vigente podía apagar la señal de una revisión que NADIE evaluó)."""
     if session_factory is not None:
@@ -90,12 +90,13 @@ async def _run_profile_with(
                 r = await matching.evaluate_profile(
                     session, profile_id, model.id, policy.id, limit=limit,
                     move_current=canonical_pending,
+                    with_corpus_fingerprint=on_evaluated is not None,
                 )
-                # MISMA transacción que la evaluación: o se registran ambas o ninguna.
-                if on_evaluated is not None and r.get("status") == "ok":
-                    await on_evaluated(
-                        session, r["profile_revision_id"], model.id, policy.id
-                    )
+                # MISMA transacción que la evaluación: o se registran ambas o ninguna. Solo cuenta
+                # como intento si de verdad se evaluó algo: un combo sin corpus sale por 'ok' con
+                # evaluated=0 y registrarlo apagaría una señal que nadie atendió (P1 rev. ronda 4).
+                if on_evaluated is not None and r.get("status") == "ok" and r["evaluated"]:
+                    await on_evaluated(session, r, model.id, policy.id)
                 await session.commit()
             if r.get("moved_current"):
                 # El canónico es el primer combo que DE VERDAD movió el

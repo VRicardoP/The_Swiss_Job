@@ -95,9 +95,30 @@ async def ensure_policy(
     return row.id
 
 
+# Corpus ELEGIBLE de un modelo (vacantes vivas cuya revisión canónica está embebida para él) y su
+# HUELLA. La huella IDENTIFICA el conjunto (cardinalidad + XOR de los pares vacante:revisión), no su
+# antigüedad: sustituir una vacante por otra conservando recuentos y fechas daba la misma versión con
+# un corpus distinto (P1 rev. externa ronda 4). bit_xor no necesita orden ni construir cadenas, así
+# que es UNA pasada sin sort; los pares son únicos (vacancy_id es PK), así que nada se cancela.
+ELIGIBLE_CORPUS_FROM = (
+    "FROM vacancies v "
+    "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
+    "JOIN offer_embeddings oe ON oe.text_hash = orv.text_hash AND oe.model_id = {model} "
+    "WHERE v.archived_at IS NULL AND v.merged_into IS NULL"
+)
+CORPUS_FINGERPRINT_EXPR = (
+    "CASE WHEN count(*) = 0 THEN NULL ELSE count(*)::text || '|' "
+    "  || bit_xor(hashtext(v.id::text || ':' || orv.id::text))::text END"
+)
+_CORPUS_FINGERPRINT_SQL = (
+    f"SELECT {CORPUS_FINGERPRINT_EXPR} " + ELIGIBLE_CORPUS_FROM.format(model=":mid")
+)
+
+
 async def evaluate_profile(
     session, profile_id, model_id, policy_id, limit: int = 100,
     move_current: bool = True,
+    with_corpus_fingerprint: bool = False,
 ) -> dict:
     """Evalúa el perfil (revisión VIGENTE + su vector) contra las ofertas
     ACTIVAS con vector del mismo modelo, por coseno (HNSW).
@@ -175,8 +196,17 @@ async def evaluate_profile(
         )
     ).scalar_one()
     target = min(limit, int(eligible))
+    # La huella se toma AQUÍ, en la misma transacción y ANTES de elegir candidatos: quien registre
+    # el intento debe guardar la versión del corpus que ESTA evaluación vio, no una posterior.
+    corpus_fp = (
+        (await session.execute(sa.text(_CORPUS_FINGERPRINT_SQL), {"mid": model_id})).scalar()
+        if with_corpus_fingerprint else None
+    )
     if target == 0:
-        return {"status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False}
+        return {
+            "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
+            "profile_revision_id": prof.revision_id, "corpus_fingerprint": corpus_fp,
+        }
     params = {"vec": prof.vec, "mid": model_id, "k": limit}
     ef_search = min(max(limit, 40), 1000)
     await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(ef_search)}"))
@@ -195,7 +225,7 @@ async def evaluate_profile(
     if not candidates:
         return {
             "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
-            "profile_revision_id": prof.revision_id,
+            "profile_revision_id": prof.revision_id, "corpus_fingerprint": corpus_fp,
         }
 
     eval_rows = []
@@ -336,6 +366,7 @@ async def evaluate_profile(
         # La revisión REALMENTE evaluada (la que se leyó bajo el lock del perfil): quien registre
         # el intento debe usar ESTA, no re-consultar la vigente (podría haber cambiado ya).
         "profile_revision_id": prof.revision_id,
+        "corpus_fingerprint": corpus_fp,
     }
 
 
