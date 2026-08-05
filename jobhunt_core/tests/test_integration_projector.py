@@ -244,6 +244,33 @@ def _rev_counts(factory, source_id):
     }
 
 
+async def _insert_vectors(session, model_id):
+    """Vector para la revisión VIGENTE de cada perfil. En el flujo real lo deja _drain_embeddings
+    (consumer-agnóstico: `pending_profile_revisions` no filtra por consumer) ANTES de que la
+    recuperación mire; aquí se inyecta para probar la recuperación aislada del backend."""
+    await session.execute(
+        sa.text(
+            "INSERT INTO profile_embeddings "
+            "(profile_revision_id, profile_id, model_id, vector) "
+            "SELECT DISTINCT ON (a.profile_id) a.revision_id, a.profile_id, :m, "
+            "       CAST(:v AS vector) "
+            "FROM profile_revision_activations a ORDER BY a.profile_id, a.seq DESC "
+            "ON CONFLICT DO NOTHING"
+        ),
+        {"m": model_id, "v": "[" + ",".join(["0.1"] * projector.EMBED_DIM) + "]"},
+    )
+
+
+def _seed_vectors(factory, model_id):
+    """Envoltorio SÍNCRONO de _insert_vectors (fuera de corrutina)."""
+    async def go():
+        async with factory() as s:
+            await _insert_vectors(s, model_id)
+            await s.commit()
+
+    _run(go())
+
+
 def _seed_model_policy(factory, name):
     async def go():
         async with factory() as s:
@@ -1146,7 +1173,7 @@ def test_recovery_detection_is_one_query_not_one_per_profile(db, monkeypatch):
     invocación (perfiles (todos los consumers) + exclusión de inactivos + detección = 3)
     con N perfiles candidatos — jamás una consulta por perfil."""
     factory = db
-    _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    model_id, _ = _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
     users = [uuid.uuid4() for _ in range(3)]
 
     async def no_after_batch(session_factory, result):
@@ -1166,6 +1193,7 @@ def test_recovery_detection_is_one_query_not_one_per_profile(db, monkeypatch):
         ]
     ])
     _project()
+    _seed_vectors(factory, model_id)  # el drenado está monkeypatcheado: lo suple el helper
 
     async def measure():
         async with factory() as s:
@@ -1187,7 +1215,7 @@ def test_recovery_covers_non_shadow_profiles(db):
     from jobhunt_core import profiles as core_profiles
 
     factory = db
-    _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    model_id, _ = _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
 
     async def setup_and_check():
         async with factory() as s:
@@ -1197,11 +1225,139 @@ def test_recovery_covers_non_shadow_profiles(db):
                 s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
             )
             await s.commit()
+        async with factory() as s:  # lo que deja _drain_embeddings en el flujo real
+            await _insert_vectors(s, model_id)
+            await s.commit()
         async with factory() as s:
             return pid, await projector._recovery_targets(s, set())
 
     pid, targets = _run(setup_and_check())
     assert pid in targets  # el perfil NO-sombra es candidato de recuperación
+
+
+def test_recovery_excludes_inactive_only_for_shadow_consumer(db):
+    """REGRESIÓN residual pre-Fase D: la exclusión por `users.is_active` es del consumer SOMBRA
+    (sus external_ref son ids de users legacy). Un perfil de OTRO consumer cuyo external_ref
+    COLISIONA con el de un usuario legacy inactivo NO debe quedar excluido de su recuperación —
+    antes `_filter_inactive` se aplicaba a los perfiles de todos los consumers."""
+    from jobhunt_core import profiles as core_profiles
+
+    factory = db
+    model_id, _ = _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    victim = uuid.uuid4()  # id de user legacy INACTIVO...
+    embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
+    try:
+        _seed(factory, [
+            ("users", "I", str(victim), {"id": str(victim), "is_active": True}),
+            ("user_profiles", "I", f"prof-{victim}", _profile(victim)),
+            ("users", "U", str(victim), {"id": str(victim), "is_active": False}),
+        ])
+        _project()
+    finally:
+        embeddings.set_backend_factory(None)
+
+    async def setup_and_check():
+        async with factory() as s:
+            cid = await core_profiles.ensure_consumer(s, "piloto")
+            # ...MISMO external_ref en el consumer piloto (colisión de espacios de nombres).
+            pid = await core_profiles.upsert_profile(s, cid, str(victim))
+            await core_profiles.save_profile_revision(
+                s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
+            )
+            await s.commit()
+        async with factory() as s:
+            await _insert_vectors(s, model_id)
+            await s.commit()
+        async with factory() as s:
+            return pid, await projector._recovery_targets(s, set())
+
+    pid, targets = _run(setup_and_check())
+    assert pid in targets  # el perfil del piloto NO hereda la exclusión de la sombra
+    # ...y el perfil SOMBRA del usuario inactivo sí sigue excluido.
+    shadow_pid = _scalar(
+        factory,
+        "SELECT p.id FROM profiles p JOIN consumers c ON c.id = p.consumer_id "
+        "AND c.name = :shadow WHERE p.external_ref = :ref",
+        shadow=projector.SHADOW_CONSUMER, ref=str(victim),
+    )
+    assert shadow_pid is not None and shadow_pid not in targets
+
+
+def test_recovery_is_capped_per_pass(db, monkeypatch):
+    """REGRESIÓN residual pre-Fase D: la recuperación atiende como mucho RECOVERY_MAX_PROFILES por
+    pasada (en multi-tenant, corpus nuevo enciende la señal de TODOS los perfiles). El orden del
+    lote es por evaluación más antigua primero (NULLS FIRST), así que no hay inanición: aquí los 4
+    están sin evaluar y entran 2; los otros 2 entran en la pasada siguiente."""
+    from jobhunt_core import profiles as core_profiles
+
+    factory = db
+    model_id, _ = _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    monkeypatch.setattr(projector, "RECOVERY_MAX_PROFILES", 2)
+
+    async def setup_and_check():
+        pids = []
+        async with factory() as s:
+            cid = await core_profiles.ensure_consumer(s, "piloto")
+            for _ in range(4):
+                pid = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+                await core_profiles.save_profile_revision(
+                    s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
+                )
+                pids.append(pid)
+            await s.commit()
+        async with factory() as s:
+            await _insert_vectors(s, model_id)
+            await s.commit()
+        async with factory() as s:
+            return pids, await projector._recovery_targets(s, set())
+
+    pids, targets = _run(setup_and_check())
+    assert len(targets) == 2  # acotado, no los 4
+    assert set(targets) <= set(pids)
+
+
+def test_recovery_skips_profiles_without_vector_so_they_cannot_starve_the_batch(db, monkeypatch):
+    """REGRESIÓN residual pre-Fase D (inanición): un perfil SIN vector no puede evaluarse
+    (evaluate_profile → 'sin_vector', que NO escribe match_evaluation), así que conservaría
+    `last_eval` NULL y, con el lote acotado y el orden NULLS FIRST, ocuparía su sitio en TODAS las
+    pasadas. Queda fuera de los candidatos hasta que tenga vector — y entonces sí entra."""
+    from jobhunt_core import profiles as core_profiles
+
+    factory = db
+    model_id, _ = _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+    monkeypatch.setattr(projector, "RECOVERY_MAX_PROFILES", 1)
+
+    async def setup_and_check():
+        async with factory() as s:
+            cid = await core_profiles.ensure_consumer(s, "piloto")
+            sin_vector = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+            con_vector = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+            revs = {}
+            for pid in (sin_vector, con_vector):
+                revs[pid] = await core_profiles.save_profile_revision(
+                    s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
+                )
+            await s.commit()
+        async with factory() as s:
+            # Solo UNO recibe vector (el otro simula el embedding aún no materializado).
+            await s.execute(
+                sa.text(
+                    "INSERT INTO profile_embeddings "
+                    "(profile_revision_id, profile_id, model_id, vector) "
+                    "VALUES (:r, :p, :m, CAST(:v AS vector))"
+                ),
+                {
+                    "r": revs[con_vector], "p": con_vector, "m": model_id,
+                    "v": "[" + ",".join(["0.1"] * projector.EMBED_DIM) + "]",
+                },
+            )
+            await s.commit()
+        async with factory() as s:
+            return sin_vector, con_vector, await projector._recovery_targets(s, set())
+
+    sin_vector, con_vector, targets = _run(setup_and_check())
+    assert targets == [con_vector]  # el único candidato es el que SÍ puede evaluarse
+    assert sin_vector not in targets
 
 
 def test_batches_recorded_with_coherent_marks(db):

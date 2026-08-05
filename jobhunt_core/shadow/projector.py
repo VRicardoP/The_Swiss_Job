@@ -132,6 +132,16 @@ DEFAULT_BATCH_SIZE = 500
 # el corpus completo.
 EVAL_LIMIT = 1800
 
+# COTA por pasada de la recuperación de salida (residual pre-Fase D, por delegación): la
+# recuperación cubre perfiles de CUALQUIER consumer y `corpus_max` enciende la señal de TODOS los
+# perfiles no evaluados cada vez que entra corpus nuevo — en multi-tenant eso es una cola sin cota
+# dentro del single-flight. Se atiende un lote por pasada, los MENOS recientemente evaluados
+# primero (sin inanición: evaluar un perfil lo manda al final del orden). Los sombra NO dependen de
+# esta cota para su completitud: _after_batch evalúa todos los del consumer sombra ante corpus nuevo.
+RECOVERY_MAX_PROFILES = 200
+# Centinela de "lista vacía" para los NOT IN de la recuperación (ver _recovery_targets).
+_NO_PROFILE = uuid.UUID(int=0)
+
 # Clave del SINGLE-FLIGHT del proyector: pg_advisory_lock de SESIÓN sobre
 # conexión dedicada (clave distinta de los locks por fuente del sink).
 _PROJECTOR_LOCK = "jobhunt:shadow-projector"
@@ -1181,7 +1191,10 @@ WITH combos AS (
       CROSS JOIN scoring_policies sp
      WHERE m.active AND m.dim = :dim AND sp.active
 )
-SELECT DISTINCT p.id
+SELECT DISTINCT p.id,
+       (SELECT max(e.created_at)
+          FROM match_evaluations e
+         WHERE e.profile_id = p.id) AS last_eval
   FROM profiles p
   JOIN LATERAL (
         SELECT a.revision_id
@@ -1191,7 +1204,16 @@ SELECT DISTINCT p.id
          LIMIT 1
        ) cur ON true
   CROSS JOIN combos c
- WHERE p.id = ANY(:pids)
+ WHERE p.id NOT IN :excluded
+   AND p.id NOT IN :evaluated
+   -- Solo perfiles con vector de ESE modelo: sin él, evaluate_profile devuelve 'sin_vector' sin
+   -- escribir evaluación, así que el perfil conservaría last_eval NULL y, con el lote acotado,
+   -- ocuparía la cabeza del orden para siempre (inanición del resto). Los embeddings pendientes ya
+   -- se drenaron antes de llegar aquí, así que "sin vector" aquí significa "aún no embebible" —
+   -- vuelve a ser candidato en cuanto tenga vector, sin haber gastado una pasada en un no-op.
+   AND EXISTS (
+        SELECT 1 FROM profile_embeddings pe
+         WHERE pe.profile_revision_id = cur.revision_id AND pe.model_id = c.model_id)
    AND (
         NOT EXISTS (
             SELECT 1
@@ -1207,6 +1229,8 @@ SELECT DISTINCT p.id
                AND e.model_id = c.model_id
                AND e.scoring_policy_id = c.policy_id)
        )
+ ORDER BY last_eval ASC NULLS FIRST, p.id
+ LIMIT :cap
 """
 
 
@@ -1239,25 +1263,46 @@ async def _replay_after_batch(session_factory, evaluated: set) -> int:
 
 
 async def _recovery_targets(session, evaluated: set) -> list:
-    """Perfiles activos (de CUALQUIER consumer) NO evaluados en esta invocación cuya señal de
-    recuperación está encendida. Cubre TODOS los perfiles —no solo los sombra— para que un perfil
-    cuyo CV cambió (p.ej. PUT /profiles del piloto, que activa una revisión pero no dispara
-    embedding+matching) reciba embedding + evaluación de su revisión vigente en la siguiente
-    pasada del proyector; sin esto, matching.feed serviría la evaluación ANTERIOR (P1 rev. externa
-    integral). La detección es UNA consulta para todos los candidatos (jamás una por perfil):
-    número de queries constante; la señal (_RECOVERY_NEEDED_SQL) evita trabajo inútil."""
-    candidates = [
-        pid for pid in await _all_active_profiles(session) if pid not in evaluated
-    ]
-    if not candidates:
-        return []
+    """Perfiles (de CUALQUIER consumer) NO evaluados en esta invocación cuya señal de recuperación
+    está encendida, hasta RECOVERY_MAX_PROFILES por pasada. Cubre TODOS los perfiles —no solo los
+    sombra— para que un perfil cuyo CV cambió (p.ej. PUT /profiles del piloto, que activa una
+    revisión pero no dispara embedding+matching) reciba embedding + evaluación de su revisión
+    vigente en la siguiente pasada del proyector; sin esto, matching.feed serviría la evaluación
+    ANTERIOR (P1 rev. externa integral). La detección es UNA consulta para todos los candidatos
+    (jamás una por perfil): número de queries constante; la señal (_RECOVERY_NEEDED_SQL) evita
+    trabajo inútil.
+
+    La EXCLUSIÓN de usuarios inactivos es del consumer SOMBRA y solo se aplica a SUS perfiles: sus
+    `external_ref` son ids de `users` legacy, mientras que los de otro consumer viven en un espacio
+    de nombres ajeno — aplicársela a todos hacía que una colisión de refs excluyera en silencio a un
+    perfil de otro tenant de su recuperación (residual pre-Fase D). El descarte va DENTRO de la
+    consulta, no después: si no, un perfil excluido (que jamás se evalúa) ocuparía su sitio del lote
+    para siempre."""
+    excluded = await _shadow_inactive_profiles(session)
     rows = (
         await session.execute(
-            sa.text(_RECOVERY_NEEDED_SQL),
-            {"pids": candidates, "dim": EMBED_DIM},
+            sa.text(_RECOVERY_NEEDED_SQL).bindparams(
+                sa.bindparam("excluded", expanding=True),
+                sa.bindparam("evaluated", expanding=True),
+            ),
+            {
+                # Centinela para la lista VACÍA: el NOT IN vacío de SQLAlchemy 2.0 se rinde como
+                # `NOT IN (SELECT 1 ...)` → Postgres rechaza `uuid = integer`. El UUID nulo nunca
+                # es el id de un perfil (uuid4), así que no excluye a nadie. [None] NO vale:
+                # `NOT IN (NULL)` es NULL ⇒ descartaría TODAS las filas.
+                "excluded": excluded or [_NO_PROFILE],
+                "evaluated": sorted(evaluated, key=str) or [_NO_PROFILE],
+                "dim": EMBED_DIM,
+                "cap": RECOVERY_MAX_PROFILES,
+            },
         )
-    ).scalars().all()
-    return sorted(rows, key=str)
+    ).all()
+    if len(rows) == RECOVERY_MAX_PROFILES:
+        logger.info(
+            "projector: recuperación acotada a %d perfiles en esta pasada (el resto sigue en "
+            "cola, orden por evaluación más antigua)", RECOVERY_MAX_PROFILES,
+        )
+    return sorted((r.id for r in rows), key=str)
 
 
 async def _after_batch(session_factory, result: _BatchResult) -> list:
@@ -1329,15 +1374,21 @@ async def _active_shadow_profiles(session) -> list:
     return await _filter_inactive(session, rows)
 
 
-async def _all_active_profiles(session) -> list:
-    """TODOS los perfiles activos, de CUALQUIER consumer, menos los excluidos por is_active — los
-    candidatos de la RECUPERACIÓN de salida (que además filtra por señal en _recovery_targets). No
-    solo los sombra: el piloto (u otro consumer) también necesita re-evaluación cuando su revisión
-    cambia (P1 rev. externa integral)."""
+async def _shadow_inactive_profiles(session) -> list:
+    """Ids de los perfiles del consumer SOMBRA cuyo usuario legacy está inactivo — lo que la
+    recuperación descarta (mecanismo de exclusión de cabecera). El consumer se resuelve en el JOIN
+    de la MISMA consulta: el coste sigue siendo constante en número de queries."""
     rows = (
-        await session.execute(sa.text("SELECT id, external_ref FROM profiles"))
+        await session.execute(
+            sa.text(
+                "SELECT p.id, p.external_ref FROM profiles p "
+                "JOIN consumers c ON c.id = p.consumer_id AND c.name = :shadow"
+            ),
+            {"shadow": SHADOW_CONSUMER},
+        )
     ).all()
-    return await _filter_inactive(session, rows)
+    inactive = await inactive_user_refs(session, [r.external_ref for r in rows])
+    return [r.id for r in rows if r.external_ref in inactive]
 
 
 async def _shadow_consumer_id(session):
