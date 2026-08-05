@@ -568,6 +568,74 @@ def test_record_failure_tokenless_fenced_by_state(db):
     asyncio.run(flow())
 
 
+def test_record_failure_tokenless_first_run_no_state_row(db):
+    """REGRESIÓN P2 rev. externa integral ronda 4: en el PRIMER run source_scope_state AÚN NO existe;
+    FOR UPDATE no bloquea el hueco de una fila inexistente. Con el lock de harvest_scopes primero, un
+    run sin token (snapshot (None,None)) que llega DESPUÉS de que el vigente (B) insertara su cosecha
+    (failures=0) observa el estado nuevo y DESCARTA su fallo — no lo pisa a 1."""
+    from jobhunt_core.harvest.runner import _record_failure_safe
+
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+    sid = str(scope_a)
+
+    async def flow():
+        # NO existe fila (primer run). El VIGENTE (B) cosecha COMPLETO e inserta failures=0.
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "INSERT INTO source_scope_state (scope_id, cursor, consecutive_failures, "
+                    "last_complete_at) VALUES (:s, CAST(:c AS jsonb), 0, clock_timestamp())"
+                ),
+                {"s": sid, "c": '{"last_top_seen": 300}'},
+            )
+            await s.commit()
+        # A tenía snapshot (None, None) (sin fila al empezar su fetch) → OBSOLETO → NO cuenta.
+        async with factory() as s:
+            await _record_failure_safe(s, sid, token=None, state_snapshot=(None, None))
+        async with factory() as s:
+            cf = (
+                await s.execute(
+                    sa.text(
+                        "SELECT consecutive_failures FROM source_scope_state WHERE scope_id = :s"
+                    ),
+                    {"s": sid},
+                )
+            ).scalar_one()
+            assert cf == 0  # observó el estado del vigente y descartó su fallo
+
+    asyncio.run(flow())
+
+
+def test_still_authoritative_serializes_on_harvest_scope_lock(db):
+    """REGRESIÓN P2 rev. externa integral ronda 4: _still_authoritative (sin token) bloquea
+    harvest_scopes ANTES de leer source_scope_state, para que el camino de éxito (FOR UPDATE OF hs)
+    no intercale un INSERT del estado inexistente. Se comprueba que, mientras un run sostiene ese
+    lock, un FOR UPDATE OF hs competidor BLOQUEA (lock_timeout)."""
+    from jobhunt_core.harvest.runner import _still_authoritative
+
+    factory, created = db
+    (scope_a,) = _seed_scopes(factory, created, n=1)
+    sid = str(scope_a)
+
+    async def flow():
+        async with factory() as a, factory() as b:
+            # A bloquea harvest_scopes (la fila de sss NO existe → (None,None)); NO commitea.
+            assert await _still_authoritative(a, sid, None, (None, None)) is True
+            # B (camino de éxito) intenta el mismo lock con timeout corto → BLOQUEA.
+            await b.execute(sa.text("SET LOCAL lock_timeout = '400ms'"))
+            with pytest.raises(Exception) as exc:
+                await b.execute(
+                    sa.text("SELECT 1 FROM harvest_scopes WHERE id = :s FOR UPDATE"),
+                    {"s": sid},
+                )
+            assert "lock" in str(exc.value).lower() or "timeout" in str(exc.value).lower()
+            await a.rollback()
+            await b.rollback()
+
+    asyncio.run(flow())
+
+
 def test_run_all_task_registered():
     from jobhunt_core.celery_app import celery_app
 

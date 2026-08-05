@@ -239,11 +239,20 @@ async def _still_authoritative(session, scope_id: str, token, state_snapshot) ->
         return await _still_claim_owner(session, scope_id, token)
     if state_snapshot is _NO_SNAPSHOT:
         return True
+    # Se BLOQUEA primero la fila PERMANENTE del scope (harvest_scopes), NO la de source_scope_state:
+    # en el PRIMER run esa fila AÚN NO EXISTE y FOR UPDATE no bloquea el "hueco" de una fila
+    # inexistente → otro run podría INSERTarla entre esta comprobación y el upsert (P2 rev. externa
+    # integral ronda 4). El lock de hs coincide con el orden del camino de ÉXITO (FOR UPDATE OF hs →
+    # source_scope_state): serializa ambos (si este run gana, registra y el vigente resetea después;
+    # si gana el vigente, este observa el estado nuevo y descarta) y no abre deadlock.
+    await session.execute(
+        sa.text("SELECT 1 FROM harvest_scopes WHERE id = :sid FOR UPDATE"),
+        {"sid": scope_id},
+    )
     row = (
         await session.execute(
             sa.text(
-                "SELECT cursor, last_complete_at FROM source_scope_state "
-                "WHERE scope_id = :sid FOR UPDATE"
+                "SELECT cursor, last_complete_at FROM source_scope_state WHERE scope_id = :sid"
             ),
             {"sid": scope_id},
         )
