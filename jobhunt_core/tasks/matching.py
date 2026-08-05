@@ -40,7 +40,7 @@ async def _run_profile_impl(
 
     `on_evaluated` (opcional): corrutina (session, resultado, model_id, policy_id) que se invoca
     SOLO tras una evaluación EFECTIVA (`ok` con candidatos) y DENTRO de su misma transacción — con
-    el lock del perfil aún tomado. Su presencia activa además el cálculo de la huella del corpus. Es la costura que usa el proyector para registrar su watermark de intento sin
+    el lock del perfil aún tomado. Su presencia activa además la lectura de la generación del corpus. Es la costura que usa el proyector para registrar su watermark de intento sin
     que este módulo sepa nada de él (P1 rev. externa ronda 3: registrarlo aparte y re-consultando la
     revisión vigente podía apagar la señal de una revisión que NADIE evaluó)."""
     if session_factory is not None:
@@ -90,7 +90,7 @@ async def _run_profile_with(
                 r = await matching.evaluate_profile(
                     session, profile_id, model.id, policy.id, limit=limit,
                     move_current=canonical_pending,
-                    with_corpus_fingerprint=on_evaluated is not None,
+                    with_corpus_generation=on_evaluated is not None,
                 )
                 # MISMA transacción que la evaluación: o se registran ambas o ninguna. Solo cuenta
                 # como intento si de verdad se evaluó algo: un combo sin corpus sale por 'ok' con

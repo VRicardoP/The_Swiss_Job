@@ -1571,11 +1571,47 @@ def test_recovery_survives_an_active_model_without_corpus(db):
     assert models == {model_a}  # B no se dio por intentado: no evaluó nada
 
 
-def test_recovery_fingerprint_detects_a_same_size_corpus_swap(db):
-    """REGRESIÓN P1 rev. externa ronda 4: una huella por (recuento, máximos de fecha) NO identifica
-    el conjunto. Con la vacante más reciente SIEMPRE dentro, intercambiar una archivada por una viva
-    conserva recuento y ambos máximos: la versión era idéntica con un corpus distinto. La huella
-    lleva el XOR de los pares vacante:revisión."""
+def test_corpus_generation_triggers_cover_every_eligibility_transition(db):
+    """REGRESIÓN P1 rev. externa ronda 5: la versión del corpus es un contador monotónico mantenido
+    por TRIGGERS (core0022), no un valor derivado del contenido — así ningún camino de escritura
+    puede olvidarse de moverlo, y volver al estado anterior también produce una versión NUEVA (el
+    A→B→A dejaba de detectarse). Se comprueban las transiciones de elegibilidad, una a una."""
+    factory = db
+    model_id, _ = _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
+
+    def gen():
+        return _scalar(factory, "SELECT generation FROM corpus_generation WHERE id = 1")
+
+    g0 = gen()
+    _seed_corpus(factory)  # alta de vacante + materialización de embeddings
+    g1 = gen()
+    assert g1 > g0
+
+    vac = _scalar(factory, "SELECT id FROM vacancies ORDER BY id LIMIT 1")
+    _exec(factory, "UPDATE vacancies SET archived_at = now() WHERE id = :v", v=vac)
+    g2 = gen()
+    assert g2 > g1  # archivado
+
+    _exec(factory, "UPDATE vacancies SET archived_at = NULL WHERE id = :v", v=vac)
+    g3 = gen()
+    assert g3 > g2  # desarchivado: MISMO conjunto que en g1, versión DISTINTA (A→B→A)
+
+    hash_ = _scalar(factory, "SELECT text_hash FROM offer_embeddings LIMIT 1")
+    _exec(factory, "DELETE FROM offer_embeddings WHERE text_hash = :h", h=hash_)
+    g4 = gen()
+    assert g4 > g3  # retirada de embedding
+
+    # Una columna AJENA a la elegibilidad no mueve la generación (el trigger va POR COLUMNAS).
+    _exec(factory, "UPDATE vacancies SET primary_incarnation_id = primary_incarnation_id "
+                   "WHERE id = :v", v=vac)
+    assert gen() == g4
+
+
+def test_recovery_generation_detects_a_same_size_corpus_swap(db):
+    """REGRESIÓN P1 rondas 4 y 5: ninguna huella derivada del contenido identificaba el conjunto —
+    ni (recuento, máximos de fecha), ni el XOR de hashes de 32 bits (colisionable). Con la vacante
+    más reciente SIEMPRE dentro, intercambiar una archivada por una viva conserva recuento y ambos
+    máximos. La generación monotónica de core0022 incrementa en CADA transición, así que lo ve."""
     factory = db
     _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
     _seed_corpus(factory)  # v0 (la más antigua)

@@ -1169,30 +1169,16 @@ async def erase_shadow_profile(
 # ------------------------------------------------- flujo normal tras el lote
 
 
-# Combos activos con la HUELLA de su corpus elegible. La definición de "corpus elegible" y de su
-# huella vive en `matching` — fuente ÚNICA, la misma que observa cada evaluación al registrar su
-# intento. Ningún timestamp sirve como versión (rondas 3 y 4): reutilizar un text_hash ya embebido
-# no crea fila, DESARCHIVAR no mueve fechas, y sustituir una vacante por otra conservando recuentos
-# y máximos daba la MISMA versión con un corpus distinto. La huella identifica el CONJUNTO y se
-# compara por DESIGUALDAD (no necesita ser monotónica: retroceder también es cambiar).
-# Escalar por MODELO (no depende del perfil ni de la política): se calcula una vez por pasada.
+# Combos activos y si su modelo tiene corpus ELEGIBLE. Ya no se calcula huella alguna aquí: la
+# versión del corpus es el contador monotónico de core0022 (lectura O(1)), y lo único que hace falta
+# saber por modelo es si HAY corpus — un combo sin él no puede producir trabajo. EXISTS acotado, no
+# agregado del corpus completo (P1 rev. externa ronda 5: la huella costaba un escaneo por evaluación).
 _ACTIVE_COMBOS_SQL = f"""
-WITH models AS (
-    SELECT id FROM embedding_models WHERE active AND dim = :dim
-), corpus AS (
-    SELECT mo.id AS model_id, {matching.CORPUS_FINGERPRINT_EXPR} AS fingerprint
-      FROM models mo
-      JOIN offer_embeddings oe ON oe.model_id = mo.id
-      JOIN offer_revisions orv ON orv.text_hash = oe.text_hash
-      JOIN vacancies v ON v.current_offer_revision_id = orv.id
-     WHERE v.archived_at IS NULL AND v.merged_into IS NULL
-     GROUP BY mo.id
-)
-SELECT mo.id AS model_id, sp.id AS policy_id, c.fingerprint AS corpus_fp
-  FROM models mo
+SELECT m.id AS model_id, sp.id AS policy_id,
+       EXISTS (SELECT 1 {matching.ELIGIBLE_CORPUS_FROM.format(model="m.id")} LIMIT 1) AS has_corpus
+  FROM embedding_models m
   CROSS JOIN scoring_policies sp
-  LEFT JOIN corpus c ON c.model_id = mo.id
- WHERE sp.active
+ WHERE m.active AND m.dim = :dim AND sp.active
 """
 
 # Señal de RECUPERACIÓN (2º análisis B-02, P2): UNA sola consulta por invocación para TODOS los
@@ -1221,7 +1207,7 @@ SELECT DISTINCT p.id,
            -- SOLO combos capaces de dar señal HOY: el intento de uno que perdió el corpus (o cuyo
            -- vector no está) jamás se actualiza, y su antigüedad daba prioridad PERPETUA a ese
            -- perfil en la cabeza del lote (P1 rev. externa ronda 4).
-           AND c2.corpus_fp IS NOT NULL
+           AND c2.has_corpus
            AND EXISTS (SELECT 1 FROM profile_embeddings pe2
                         WHERE pe2.profile_revision_id = cur.revision_id
                           AND pe2.model_id = c2.model_id)) AS last_try
@@ -1246,9 +1232,10 @@ SELECT DISTINCT p.id,
    AND EXISTS (
         SELECT 1 FROM profile_embeddings pe
          WHERE pe.profile_revision_id = cur.revision_id AND pe.model_id = c.model_id)
-   -- Un combo sin corpus embebido no puede producir trabajo: evaluarlo es un no-op garantizado.
-   AND c.corpus_fp IS NOT NULL
-   AND (w.profile_revision_id IS NULL OR w.corpus_fingerprint IS DISTINCT FROM c.corpus_fp)
+   -- Un combo sin corpus elegible no puede producir trabajo: evaluarlo es un no-op garantizado.
+   AND c.has_corpus
+   AND (w.profile_revision_id IS NULL
+        OR w.corpus_generation IS DISTINCT FROM (SELECT generation FROM corpus_generation))
  ORDER BY last_try ASC NULLS FIRST, p.id
  LIMIT :cap
 """
@@ -1259,10 +1246,10 @@ SELECT DISTINCT p.id,
 # próximo ciclo diferirá y se vuelve a coger (dirección segura).
 _RECORD_ATTEMPT_SQL = """
 INSERT INTO profile_recovery_state
-    (profile_revision_id, profile_id, model_id, policy_id, corpus_fingerprint, attempted_at)
-VALUES (:rev, :pid, :model, :policy, :fp, now())
+    (profile_revision_id, profile_id, model_id, policy_id, corpus_generation, attempted_at)
+VALUES (:rev, :pid, :model, :policy, :gen, now())
 ON CONFLICT (profile_revision_id, model_id, policy_id) DO UPDATE
-SET corpus_fingerprint = EXCLUDED.corpus_fingerprint, attempted_at = EXCLUDED.attempted_at
+SET corpus_generation = EXCLUDED.corpus_generation, attempted_at = EXCLUDED.attempted_at
 """
 
 
@@ -1301,18 +1288,18 @@ async def _evaluate_and_record(session_factory, pid) -> None:
     ya evaluado) dejaría al perfil encendido y clavado en la cabeza del lote acotado (P1 ronda 2).
     Va por la costura `on_evaluated` —no en un paso aparte— porque hacerlo después, re-leyendo la
     revisión vigente, podía apagar la señal de una revisión que NADIE evaluó, o la de un combo que
-    devolvió 'sin_vector' (P1 ronda 3). Y la huella es la que la PROPIA evaluación observó, en su
-    misma transacción y ANTES de elegir candidatos (P1 ronda 4): si el corpus cambia después, se
+    devolvió 'sin_vector' (P1 ronda 3). Y la GENERACIÓN es la que la PROPIA evaluación leyó, en su
+    misma transacción y ANTES de mirar el corpus (P1 rondas 4 y 5): si el corpus cambia después, se
     registra la versión vieja y el siguiente ciclo lo vuelve a coger — dirección segura. Un combo
-    sin corpus llega con huella NULL y no se registra: no gobierna ninguna señal."""
+    sin corpus llega con generación NULL y no se registra: no gobierna ninguna señal."""
     async def record(session, result, model_id, policy_id) -> None:
-        if result["corpus_fingerprint"] is None:
+        if result["corpus_generation"] is None:
             return
         await session.execute(
             sa.text(_RECORD_ATTEMPT_SQL),
             {
                 "rev": result["profile_revision_id"], "pid": pid, "model": model_id,
-                "policy": policy_id, "fp": result["corpus_fingerprint"],
+                "policy": policy_id, "gen": result["corpus_generation"],
             },
         )
 

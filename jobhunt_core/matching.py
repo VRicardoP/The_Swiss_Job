@@ -95,30 +95,24 @@ async def ensure_policy(
     return row.id
 
 
-# Corpus ELEGIBLE de un modelo (vacantes vivas cuya revisión canónica está embebida para él) y su
-# HUELLA. La huella IDENTIFICA el conjunto (cardinalidad + XOR de los pares vacante:revisión), no su
-# antigüedad: sustituir una vacante por otra conservando recuentos y fechas daba la misma versión con
-# un corpus distinto (P1 rev. externa ronda 4). bit_xor no necesita orden ni construir cadenas, así
-# que es UNA pasada sin sort; los pares son únicos (vacancy_id es PK), así que nada se cancela.
+# Corpus ELEGIBLE de un modelo: vacantes vivas cuya revisión canónica está embebida para él. El
+# fragmento es la fuente ÚNICA que comparten la evaluación y la señal de recuperación del proyector.
 ELIGIBLE_CORPUS_FROM = (
     "FROM vacancies v "
     "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
     "JOIN offer_embeddings oe ON oe.text_hash = orv.text_hash AND oe.model_id = {model} "
     "WHERE v.archived_at IS NULL AND v.merged_into IS NULL"
 )
-CORPUS_FINGERPRINT_EXPR = (
-    "CASE WHEN count(*) = 0 THEN NULL ELSE count(*)::text || '|' "
-    "  || bit_xor(hashtext(v.id::text || ':' || orv.id::text))::text END"
-)
-_CORPUS_FINGERPRINT_SQL = (
-    f"SELECT {CORPUS_FINGERPRINT_EXPR} " + ELIGIBLE_CORPUS_FROM.format(model=":mid")
-)
+# VERSIÓN del corpus: contador monotónico global que los triggers de core0022 incrementan en cada
+# transición de elegibilidad. Sustituye a la huella hash (colisionable, cara y dependiente del
+# snapshot). Lectura O(1) por PK; se compara por DESIGUALDAD.
+CORPUS_GENERATION_SQL = "SELECT generation FROM corpus_generation WHERE id = 1"
 
 
 async def evaluate_profile(
     session, profile_id, model_id, policy_id, limit: int = 100,
     move_current: bool = True,
-    with_corpus_fingerprint: bool = False,
+    with_corpus_generation: bool = False,
 ) -> dict:
     """Evalúa el perfil (revisión VIGENTE + su vector) contra las ofertas
     ACTIVAS con vector del mismo modelo, por coseno (HNSW).
@@ -182,6 +176,13 @@ async def evaluate_profile(
     # Enteros validados (SET no admite binds).
     if limit < 1:
         raise ValueError(f"limit={limit}: el top-K debe ser >= 1")
+    # ANTES de mirar el corpus: si algo cambia después, se registra la generación VIEJA y el
+    # siguiente ciclo vuelve a coger el perfil. Al revés (registrar una posterior a lo evaluado)
+    # se perdería trabajo en silencio.
+    corpus_gen = (
+        (await session.execute(sa.text(CORPUS_GENERATION_SQL))).scalar()
+        if with_corpus_generation else None
+    )
     eligible = (
         await session.execute(
             sa.text(
@@ -196,16 +197,10 @@ async def evaluate_profile(
         )
     ).scalar_one()
     target = min(limit, int(eligible))
-    # La huella se toma AQUÍ, en la misma transacción y ANTES de elegir candidatos: quien registre
-    # el intento debe guardar la versión del corpus que ESTA evaluación vio, no una posterior.
-    corpus_fp = (
-        (await session.execute(sa.text(_CORPUS_FINGERPRINT_SQL), {"mid": model_id})).scalar()
-        if with_corpus_fingerprint else None
-    )
     if target == 0:
         return {
             "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
-            "profile_revision_id": prof.revision_id, "corpus_fingerprint": corpus_fp,
+            "profile_revision_id": prof.revision_id, "corpus_generation": corpus_gen,
         }
     params = {"vec": prof.vec, "mid": model_id, "k": limit}
     ef_search = min(max(limit, 40), 1000)
@@ -225,7 +220,7 @@ async def evaluate_profile(
     if not candidates:
         return {
             "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
-            "profile_revision_id": prof.revision_id, "corpus_fingerprint": corpus_fp,
+            "profile_revision_id": prof.revision_id, "corpus_generation": corpus_gen,
         }
 
     eval_rows = []
@@ -366,7 +361,7 @@ async def evaluate_profile(
         # La revisión REALMENTE evaluada (la que se leyó bajo el lock del perfil): quien registre
         # el intento debe usar ESTA, no re-consultar la vigente (podría haber cambiado ya).
         "profile_revision_id": prof.revision_id,
-        "corpus_fingerprint": corpus_fp,
+        "corpus_generation": corpus_gen,
     }
 
 
