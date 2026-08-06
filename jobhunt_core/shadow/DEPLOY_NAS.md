@@ -487,11 +487,20 @@ CDC:
 - [ ] Backfill == corpus legacy (consulta de §6.2).
 - [ ] Heartbeat fresco: `SELECT now() - heartbeat_at FROM
       jobhunt.shadow_capture_state;` < 1 min.
-- [ ] GDPR: los payloads de `users` en staging solo llevan id/is_active —
-      `SELECT bool_and(payload - '_omitted' - '_backfilled' <@
-      '{}'::jsonb || jsonb_build_object('id', payload->'id', 'is_active',
-      payload->'is_active')) FROM jobhunt.shadow_change_log WHERE src_table =
-      'public.users';` → `t` (jamás email/hashed_password/gdpr_*).
+- [ ] GDPR: los payloads de `users` en staging solo llevan id/is_active.
+      ⚠ **`src_table` NO lleva prefijo de esquema**: es `users`, no `public.users`
+      — la versión anterior de esta consulta filtraba por `'public.users'`,
+      no casaba con nada y devolvía VACÍO en vez de fallar (falso OK en plena
+      verificación de PII, Apéndice B.3). Consulta correcta:
+      ```
+      docker exec -i swissjob-postgres psql -U swissjob -d swissjobhunter <<'SQL'
+      SELECT count(*) FILTER (WHERE payload ?| array['email','hashed_password','gdpr_consent','full_name']) AS con_pii,
+             count(*) AS total
+      FROM jobhunt.shadow_change_log WHERE src_table = 'users';
+      SQL
+      ```
+      `con_pii = 0` y `total > 0` (si `total = 0`, la consulta NO está midiendo
+      nada: revisar el nombre antes de dar el contrato por bueno).
 
 Pipeline:
 
@@ -625,6 +634,90 @@ async def main():
 asyncio.run(main())
 "
 ```
+
+---
+
+## Apéndice B. EJECUCIÓN REAL del 2026-08-06 — lo que este paquete no previó
+
+> Bitácora del despliegue efectivo. **Cinco defectos, todos de ENTORNO** (ninguno de lógica):
+> no aparecían en dev. Estado y hoja de ruta completos en `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md`.
+
+### B.1 El volumen `core_hf_cache` nace `root:root` — PARA LOS EMBEDDINGS EN SILENCIO
+
+La decisión #7 del §0 introduce el volumen para no re-descargar el modelo en cada Recreate, pero un
+volumen Docker recién creado **nace vacío y propiedad de root**, y el core corre como `core`
+(uid 100, gid 101). Resultado: `PermissionError: [Errno 13] ... '/tmp/hf-cache/hub'` →
+`_drain_embeddings` revienta → `shadow.project` reintenta cada 120 s **indefinidamente**, con TODOS
+los contenedores en `Up`/`healthy`. Estuvo 1,5 h parado sin ninguna señal en `docker ps`.
+
+```bash
+# Arreglo (hacerlo ANTES de arrancar core-worker, o en cuanto se detecte):
+docker run --rm --user root -v swissjob_core_hf_cache:/hf swissjob-core:prod \
+  sh -c 'chown -R 100:101 /hf && ls -ld /hf'
+# Verificar desde el contenedor real:
+docker exec swissjob-core-worker sh -c 'touch /tmp/hf-cache/.ok && rm /tmp/hf-cache/.ok && echo OK'
+```
+
+**Arreglo definitivo pendiente:** crear el directorio con el owner correcto en el `Dockerfile` del
+core, para que el volumen herede la propiedad al inicializarse.
+
+### B.2 El healthcheck de `core-capture` es imposible en este hardware
+
+`timeout: 10s` pero el subcomando `--health` tarda **~32 s** en el NAS (arranque de Python +
+imports del paquete core con load ~18) ⇒ `unhealthy` permanente con el CDC perfectamente sano
+(heartbeat de 0,05 s, slot activo, streaming). Corregido a `timeout: 60s` / `interval: 120s`.
+El interval nunca debe ser menor que lo que tarda el propio comando.
+
+### B.3 ⚠ La consulta GDPR del §9 NO COMPRUEBA NADA
+
+`src_table` se almacena **SIN el prefijo de esquema** (`users`, no `public.users`). La consulta del
+checklist filtra por `'public.users'` ⇒ **devuelve vacío en vez de fallar**: un falso OK silencioso
+justo en la verificación de PII. La correcta:
+
+```bash
+docker exec -i swissjob-postgres psql -U swissjob -d swissjobhunter <<'SQL'
+SELECT count(*) FILTER (WHERE payload ?| array['email','hashed_password','gdpr_consent','full_name']) AS con_pii,
+       count(*) AS total
+FROM jobhunt.shadow_change_log WHERE src_table='users';
+SQL
+# Verificado el 2026-08-06: con_pii = 0 de 2 filas (payload = solo id + is_active). Contrato OK.
+```
+
+### B.4 El compose del repo NO era desplegable
+
+`docker-compose.qnap.yml` referenciaba `worker`/`worker-ai` → `swissjob-worker:prod`, imagen que no
+existe ni en el NAS ni en dev ⇒ `pull access denied`. El NAS corría (y corre) el worker sobre
+`swissjob-backend:prod` con colas `default,scraping,ai`. **Corregido en el repo alineándolo con lo
+desplegado.** ⚠ Eso ata el worker a que `swissjob-backend:prod` se construya **con Chromium**
+(`INSTALL_BROWSERS=true`): `docker-compose.prod.yml:84` lo construye esbelto, y un rebuild desde ahí
+rompería TODO scraper Playwright en silencio.
+
+### B.5 La UI de Container Station rechaza YAML que su propio motor acepta
+
+**`Recreate` NO lee `/share/Public/swissjob/docker-compose.qnap.yml`**: usa su copia interna en
+`.qpkg/container-station/data/application/swissjob/docker-compose.yml`, que **regenera desde su BD
+en cada operación** (sobrescribirla por SSH es inútil). Y al pegar el YAML en la UI, su validador da
+❌ sobre un fichero que `docker-compose config -q` acepta sin una queja (sospecha principal, sin
+confirmar: `condition: service_completed_successfully`).
+
+**Se desplegó por CLI** copiando el binario estático de dev:
+
+```bash
+# En dev: scp /usr/libexec/docker/cli-plugins/docker-compose → /share/Public/swissjob/bin-docker-compose
+./bin-docker-compose -p swissjob -f docker-compose.sombra.yml up -d
+```
+
+> ⚠⚠ **El proyecto `swissjob` es OBLIGATORIO** (reutiliza `swissjob_pgdata`; con otro nombre compose
+> crea volúmenes vacíos y la BD aparece EN BLANCO). **Pulsar Recreate en la UI ahora revierte a la
+> definición vieja** — sin sombra y con `wal_level=replica` — y **con el slot presente el Postgres NO
+> ARRANCA** (§10.2). **Nunca borrar la aplicación en la UI**: puede llevarse los volúmenes.
+
+### B.6 Datos reales del despliegue (para calibrar expectativas)
+
+Backfill 23 817 filas en **~3 min** · proyección completa del corpus en **~2 h** · embeddings a
+**~14/min** ⇒ ~22 h para 19 284 vacantes · ventana de mantenimiento efectiva **6 min 50 s**.
+
+---
 
 > ⚠️ PAQUETE INERTE (reprioridad del propietario 2026-07-28): los cambios de los composes
 > qnap/prod NO están aplicados en el repo — viven en `deploy_nas_composes.patch` y se aplican
