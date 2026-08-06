@@ -49,6 +49,7 @@ class BaseScraper(BaseJobProvider):
     - MAX_RETRIES / RETRY_BACKOFF_SECONDS: reintento de errores transitorios
     - JITTER_RATIO: aleatoriedad añadida al rate-limit (anti-patrón de bot)
     - SOFT_BLOCK_MARKERS: substrings que delatan una pantalla anti-bot
+    - WATCHLIST_SOURCE: fuente vigilada de baja rotación → sin backoff
     """
 
     LISTING_URL: str = ""
@@ -57,6 +58,12 @@ class BaseScraper(BaseJobProvider):
     NEEDS_PLAYWRIGHT: bool = False
     FETCH_DETAILS: bool = True
     PAGE_SIZE: int = 20
+    # Fuente de WATCHLIST: pocas ofertas y muy espaciadas, pero que no se
+    # pueden perder. Exime del backoff de frecuencia del CrawlerBudgetService
+    # (que castiga precisamente a las fuentes sin novedades), NO del early-stop
+    # ni del presupuesto de páginas. La declara el scraper porque es él quien
+    # conoce su naturaleza — el servicio de presupuesto no debe saber nombres.
+    WATCHLIST_SOURCE: bool = False
 
     # Anti-detección (valores por defecto desde settings; sobreescribibles).
     JITTER_RATIO: float = settings.SCRAPER_DELAY_JITTER_RATIO

@@ -27,6 +27,11 @@ class SwissSchoolsISPScraper(BaseJobProvider):
     SOURCE_NAME = "swiss_schools_isp"
     PAGE_SIZE = 20
     MAX_PAGES = 10
+    # Watchlist igual que el resto de colegios (exención del backoff). Se declara
+    # aquí a mano porque este scraper NO hereda de SwissSchoolBaseScraper: usa la
+    # API de Workday, no el flujo HTML. Sin esta línea quedaría aparcado mientras
+    # los otros 7 colegios se consultan a diario.
+    WATCHLIST_SOURCE = True
 
     def __init__(self):
         super().__init__()

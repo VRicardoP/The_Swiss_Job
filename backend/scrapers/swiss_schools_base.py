@@ -18,6 +18,11 @@ class SwissSchoolBaseScraper(BaseScraper):
     """Scraper de colegio suizo: listado sin detalle, normalize solo añade hash."""
 
     FETCH_DETAILS = False
+    # Watchlist: un colegio publica una vacante cada varios meses, así que el
+    # backoff por "runs sin novedades" los aparcaría PERMANENTEMENTE — justo las
+    # fuentes cuyo evento raro es el más valioso para el perfil objetivo
+    # (docencia). Decisión del propietario 2026-08-06; ver CrawlerBudgetService.
+    WATCHLIST_SOURCE = True
 
     def parse_job_detail(self, soup: BeautifulSoup) -> dict:
         """Sin uso — FETCH_DETAILS=False."""

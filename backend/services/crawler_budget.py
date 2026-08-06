@@ -49,6 +49,8 @@ class CrawlerBudgetService:
         cursor: SourceCursor,
         base_interval_hours: float,
         now: datetime | None = None,
+        *,
+        exempt_from_backoff: bool = False,
     ) -> bool:
         """Indica si toca consultar la fuente o el backoff manda saltar el run.
 
@@ -56,7 +58,20 @@ class CrawlerBudgetService:
         (o sin historial) siempre se ejecuta. A partir del umbral, el intervalo
         exigido se duplica por cada run vacío extra, con tope en
         CRAWLER_BUDGET_BACKOFF_MAX_MULTIPLIER x el intervalo base.
+
+        `exempt_from_backoff` (fuentes de WATCHLIST, decisión del propietario
+        2026-08-06): el backoff penaliza a las fuentes de BAJA ROTACIÓN, que son
+        justo las que no se pueden perder. Un colegio publica una vacante cada
+        varios meses ⇒ `avg_new_jobs_per_run = 0.0` ⇒ backoff MÁXIMO permanente
+        ⇒ se consultaría cada 4 días y la vacante llegaría tarde. Medido en el
+        NAS: los 8 `swiss_schools_*` llevaban 5 días sin consultarse por esto.
+        El ahorro que justifica el backoff (8 peticiones diarias) no compensa
+        perder el evento que la watchlist existe para detectar.
+        NO exime del early-stop ni del presupuesto de páginas: sigue siendo
+        cosecha incremental de solo novedades, igual que el resto (ADR-10).
         """
+        if exempt_from_backoff:
+            return True
         streak = cursor.consecutive_empty_runs or 0
         threshold = settings.CRAWLER_BUDGET_EMPTY_RUNS_THRESHOLD
         if streak < threshold or cursor.last_run_at is None:

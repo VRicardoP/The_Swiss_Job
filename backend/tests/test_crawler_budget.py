@@ -64,6 +64,31 @@ class TestMaxPagesThisRun:
 class TestShouldRun:
     BASE_HOURS = 6.0
 
+    def test_watchlist_nunca_entra_en_backoff(self):
+        """Una fuente de watchlist se consulta SIEMPRE, por larga que sea su racha.
+
+        El backoff castiga a las fuentes sin novedades, que es justo la
+        naturaleza de un colegio (una vacante cada varios meses): sin esta
+        exención quedan aparcadas de forma permanente y la vacante llega tarde.
+        """
+        now = datetime.now(timezone.utc)
+        cursor = _cursor(
+            consecutive_empty_runs=99,  # racha extrema: backoff saturado
+            last_run_at=now,            # y recién ejecutada
+        )
+        assert (
+            CrawlerBudgetService.should_run(
+                cursor, self.BASE_HOURS, now=now, exempt_from_backoff=True
+            )
+            is True
+        )
+
+    def test_sin_exencion_la_misma_racha_si_aparca(self):
+        """Control del test anterior: el backoff SIGUE aplicando por defecto."""
+        now = datetime.now(timezone.utc)
+        cursor = _cursor(consecutive_empty_runs=99, last_run_at=now)
+        assert CrawlerBudgetService.should_run(cursor, self.BASE_HOURS, now=now) is False
+
     def test_runs_without_history(self):
         assert CrawlerBudgetService.should_run(_cursor(), self.BASE_HOURS) is True
 

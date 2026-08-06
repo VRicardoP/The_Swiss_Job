@@ -99,7 +99,13 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 if budget_on and cursor is not None:
                     # Backoff: fuente sin novedades N runs seguidos → saltar el
                     # run hasta cumplir el intervalo ampliado (0 peticiones).
-                    if not CrawlerBudgetService.should_run(cursor, base_interval_hours):
+                    if not CrawlerBudgetService.should_run(
+                        cursor,
+                        base_interval_hours,
+                        exempt_from_backoff=getattr(
+                            scraper, "WATCHLIST_SOURCE", False
+                        ),
+                    ):
                         summary["skipped"] += 1
                         logger.info(
                             "%s saltado por presupuesto: %d runs sin novedades",
