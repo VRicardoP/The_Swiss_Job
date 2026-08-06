@@ -30,9 +30,17 @@
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    # B-01 (sombra en PRODUCCIÓN — autorización del propietario 2026-07-28):
+    # imagen custom pgvector+wal2json (docker/postgres-core/) y
+    # wal_level=logical vía command. wal_level NO es recargable: aplicar este
+    # cambio exige REINICIO del Postgres COMPARTIDO con el legacy (ventana de
+    # mantenimiento — ver jobhunt_core/shadow/DEPLOY_NAS.md).
+    build:
+      context: ./docker/postgres-core
+    image: swissjob-postgres-core:pg16
     container_name: swissjob-postgres
     restart: unless-stopped
+    command: -c wal_level=logical -c max_replication_slots=4 -c max_wal_senders=4
     # env_file en lugar de ${VARS}: misma fuente de credenciales que el
     # backend (imposible que se desincronicen) y compatible con Container
     # Station, que no expande ${VARS} del compose.
@@ -163,14 +171,18 @@ services:
     networks:
       - swissjob-net
 
-  # ---- jobhunt-core (Fase A, A-01) — perfil "core": NO arranca en prod hasta la
-  # Fase B (sombra). Activar con: docker compose --profile core up -d
-  # AISLAMIENTO de secretos (revisión A-01 #1): los servicios core NO reciben el
-  # .env.prod legacy. Runtime → .env.core.prod; credencial admin → SOLO
-  # core-migrate vía .env.core.admin.prod (plantillas .example en el repo).
+  # ---- jobhunt-core — SOMBRA EN PRODUCCIÓN (Fase B, autorización del
+  # propietario 2026-07-28; contrato §0 "cero efectos visibles a usuarios"
+  # SIGUE VIGENTE — el outbox solo entrega al inbox sombra).
+  # SIN `profiles:`: la sombra ya es producción y debe arrancar con `up -d`
+  # a secas (un profile la dejaría parada en silencio).
+  # AISLAMIENTO de secretos (revisión A-01 #1): los servicios core NO reciben
+  # el .env.prod legacy. Runtime → .env.core.prod; credencial admin
+  # (+ CORE_CAPTURE_PASSWORD, B-01) → SOLO core-migrate vía .env.core.admin.prod;
+  # DSN de REPLICACIÓN (CAPTURE_DSN) → SOLO core-capture vía
+  # .env.core.capture.prod (plantillas .example en el repo).
 
   redis-core:
-    profiles: ["core"]
     image: redis:7-alpine
     container_name: swissjob-redis-core
     restart: unless-stopped
@@ -197,7 +209,6 @@ services:
       - core-net
 
   core-migrate:
-    profiles: ["core"]
     build:
       context: .
       dockerfile: jobhunt_core/Dockerfile
@@ -219,7 +230,6 @@ services:
       - core-net
 
   core-api:
-    profiles: ["core"]
     image: swissjob-core:prod
     container_name: swissjob-core-api
     restart: unless-stopped
@@ -242,16 +252,22 @@ services:
       - core-net
 
   core-worker:
-    profiles: ["core"]
     image: swissjob-core:prod
     container_name: swissjob-core-worker
     restart: unless-stopped
     # SOLO colas core.* — el worker legacy escucha default/scraping/ai en OTRO broker.
-    command: celery -A jobhunt_core.celery_app worker -l info -Q core.default,core.harvest,core.embedding,core.matching,core.notifications --concurrency=2
+    # Beat EMBEBIDO (-B, B-05, alineado con dev): cadencias de la sombra cada
+    # 5 min + run_cycle 06:05 rearrancan con cada recreate. `-s /tmp/...`:
+    # el proceso corre como usuario `core` y /app es de root.
+    command: celery -A jobhunt_core.celery_app worker -l info -Q core.default,core.harvest,core.embedding,core.matching,core.notifications --concurrency=2 -B -s /tmp/celerybeat-schedule
     env_file:
       - .env.core.prod
     environment:
       - CORE_ENV=prod
+    volumes:
+      # Caché HF persistente del core (HF_HOME=/tmp/hf-cache en la imagen):
+      # evita re-descargar el modelo embedding (~120 MB) en cada recreate.
+      - core_hf_cache:/tmp/hf-cache
     depends_on:
       redis-core:
         condition: service_healthy
@@ -260,6 +276,38 @@ services:
     networks:
       - swissjob-net
       - core-net
+
+  core-capture:
+    # Consumidor CDC de la sombra (B-01): slot lógico `jobhunt_shadow` +
+    # wal2json v2. Replica con el rol jobhunt_capture (CAPTURE_DSN — SOLO en
+    # .env.core.capture.prod) y escribe SOLO en jobhunt.shadow_change_log/
+    # shadow_capture_state como jobhunt_core; ack al slot SIEMPRE tras el
+    # commit (RPO=0, §2). No necesita redis-core.
+    image: swissjob-core:prod
+    container_name: swissjob-core-capture
+    restart: unless-stopped
+    command: python -m jobhunt_core.shadow.capture
+    env_file:
+      - .env.core.prod
+      - .env.core.capture.prod
+    environment:
+      - CORE_ENV=prod
+    healthcheck:
+      # --health: conexión core OK + slot presente y ACTIVO + heartbeat < 26h.
+      # start_period generoso: el bootstrap hace el backfill COMPLETO del
+      # corpus real antes de START_REPLICATION (slot aún INACTIVO legítimo).
+      test: ["CMD", "python", "-m", "jobhunt_core.shadow.capture", "--health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      core-migrate:
+        condition: service_completed_successfully
+    networks:
+      - swissjob-net
 
   frontend:
     build:
@@ -299,4 +347,6 @@ volumes:
   hfcache:
     driver: local
   redis_core_data:
+    driver: local
+  core_hf_cache:
     driver: local

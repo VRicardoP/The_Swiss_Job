@@ -7,9 +7,16 @@
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    # B-01 (sombra en PRODUCCIÓN — autorización del propietario 2026-07-28):
+    # imagen custom pgvector+wal2json. Container Station NO construye: cargar
+    # antes por tar (docker load -i swissjob-postgres-core.tar) o registry
+    # local — ver jobhunt_core/shadow/DEPLOY_NAS.md. wal_level=logical va por
+    # command y NO es recargable: aplicar este YAML exige REINICIO del
+    # Postgres COMPARTIDO con el legacy (ventana de mantenimiento).
+    image: swissjob-postgres-core:pg16
     container_name: swissjob-postgres
     restart: unless-stopped
+    command: -c wal_level=logical -c max_replication_slots=4 -c max_wal_senders=4
     # env_file con path absoluto (Container Station QNAP no resuelve paths
     # relativos). Misma fuente de credenciales que backend y worker:
     # imposible que postgres y backend usen passwords distintos.
@@ -71,37 +78,25 @@ services:
       - swissjob-net
 
   worker:
-    # Imagen CON Chromium: el worker ejecuta los scrapers Playwright. NO puede
-    # usar swissjob-backend:prod, que se construye esbelta (INSTALL_BROWSERS=false).
-    # Container Station no construye: carga swissjob-worker:prod (build en dev con
-    # docker-compose.prod.yml → docker save → docker load en el NAS).
-    image: swissjob-worker:prod
+    # Worker ÚNICO: consume default + scraping + ai. Alineado con lo REALMENTE
+    # desplegado en el NAS (verificado 2026-08-06); la separación worker/worker-ai
+    # del repo nunca llegó a desplegarse y su imagen swissjob-worker:prod no existe
+    # ni en el NAS ni en dev → un `up` con ella daba "pull access denied".
+    #
+    # ⚠ ACOPLE: este servicio ejecuta los scrapers Playwright, así que
+    # swissjob-backend:prod DEBE construirse CON Chromium (INSTALL_BROWSERS=true).
+    # La imagen cargada hoy en el NAS lo lleva (/ms-playwright/chromium-1228,
+    # verificado lanzando Chromium 149). Pero docker-compose.prod.yml:84 construye
+    # el backend con INSTALL_BROWSERS=false: si se rebuildea el backend desde ahí y
+    # se carga en el NAS, el worker pierde Chromium y TODO scraper Playwright
+    # (jobs.admin.ch, medjobs...) falla. Rebuild del backend ⇒ INSTALL_BROWSERS=true,
+    # o restaurar la separación worker/worker-ai construyendo swissjob-worker:prod.
+    #
+    # ⚠ DEUDA PF.4: con concurrency=2 sobre la cola "ai" pueden coexistir 2 copias
+    # del modelo de embeddings (~400MB c/u). La separación worker-ai existía para
+    # dejarlo en 1 sola carga. Al alinear con lo desplegado, esa mejora queda fuera.
+    image: swissjob-backend:prod
     container_name: swissjob-worker
-    restart: unless-stopped
-    env_file:
-      - /share/Public/swissjob/.env.prod
-    depends_on:
-      backend:
-        condition: service_healthy
-    entrypoint: []
-    command:
-      - celery
-      - -A
-      - celery_app
-      - worker
-      - -Q
-      - default,scraping
-      - --concurrency=2
-      - --loglevel=info
-    networks:
-      - swissjob-net
-
-  worker-ai:
-    # Worker DEDICADO a la cola "ai": carga el modelo de embeddings UNA sola vez
-    # (concurrency=1). El worker general ya no escucha "ai", así que
-    # no lo carga → 1 copia del modelo (~400MB) en vez de hasta 3 (PF.4).
-    image: swissjob-worker:prod
-    container_name: swissjob-worker-ai
     restart: unless-stopped
     env_file:
       - /share/Public/swissjob/.env.prod
@@ -110,9 +105,6 @@ services:
         condition: service_healthy
     volumes:
       - hfcache:/home/app/.cache/huggingface
-    environment:
-      # Sin reciclado del hijo prefork → NO recarga el modelo de embeddings (rev.3 #2).
-      - CELERY_MAX_TASKS_PER_CHILD=0
     entrypoint: []
     command:
       - celery
@@ -120,21 +112,26 @@ services:
       - celery_app
       - worker
       - -Q
-      - ai
-      - --concurrency=1
+      - default,scraping,ai
+      - --concurrency=2
       - --loglevel=info
     networks:
       - swissjob-net
 
-  # ---- jobhunt-core (Fase A, A-01) — perfil "core": NO arranca hasta Fase B
-  # (sombra). Activar con: docker compose --profile core up -d
+  # ---- jobhunt-core — SOMBRA EN PRODUCCIÓN (Fase B, autorización del
+  # propietario 2026-07-28: el equipo local no está 24h; contrato §0 "cero
+  # efectos visibles a usuarios" SIGUE VIGENTE — el outbox solo entrega al
+  # inbox sombra jobhunt.shadow_inbox).
+  # SIN `profiles:`: Container Station ejecuta `up -d` sin --profile, así que
+  # un servicio con profile jamás arrancaría — el core arranca con la app.
   # Imagen swissjob-core:prod cargada por tar (como worker).
   # AISLAMIENTO de secretos (revisión A-01 #1): el core NO recibe el .env.prod
-  # legacy. Runtime → /share/Public/swissjob/.env.core.prod; credencial admin →
-  # SOLO core-migrate vía /share/Public/swissjob/.env.core.admin.prod.
+  # legacy. Runtime → /share/Public/swissjob/.env.core.prod; credencial admin
+  # (+ CORE_CAPTURE_PASSWORD, B-01) → SOLO core-migrate vía
+  # /share/Public/swissjob/.env.core.admin.prod; DSN de REPLICACIÓN
+  # (CAPTURE_DSN) → SOLO core-capture vía /share/Public/swissjob/.env.core.capture.prod.
 
   redis-core:
-    profiles: ["core"]
     image: redis:7-alpine
     container_name: swissjob-redis-core
     restart: unless-stopped
@@ -161,7 +158,6 @@ services:
       - core-net
 
   core-migrate:
-    profiles: ["core"]
     image: swissjob-core:prod
     container_name: swissjob-core-migrate
     command: python -m jobhunt_core.migrate
@@ -179,7 +175,6 @@ services:
       - core-net
 
   core-api:
-    profiles: ["core"]
     image: swissjob-core:prod
     container_name: swissjob-core-api
     restart: unless-stopped
@@ -201,16 +196,25 @@ services:
       - core-net
 
   core-worker:
-    profiles: ["core"]
     image: swissjob-core:prod
     container_name: swissjob-core-worker
     restart: unless-stopped
     # SOLO colas core.* — el worker legacy escucha default/scraping/ai en OTRO broker.
-    command: celery -A jobhunt_core.celery_app worker -l info -Q core.default,core.harvest,core.embedding,core.matching,core.notifications --concurrency=2
+    # Beat EMBEBIDO (-B, B-05, alineado con dev): las cadencias de la sombra
+    # (proyección/salud del slot/muestreo outbox/despacho cada 5 min +
+    # run_cycle 06:05 Europe/Zurich) rearrancan con cada Recreate — un beat
+    # aparte moría EN SILENCIO y apagaba la alerta de retención WAL (§6/§8).
+    # `-s /tmp/...`: el proceso corre como usuario `core` y /app es de root.
+    command: celery -A jobhunt_core.celery_app worker -l info -Q core.default,core.harvest,core.embedding,core.matching,core.notifications --concurrency=2 -B -s /tmp/celerybeat-schedule
     env_file:
       - /share/Public/swissjob/.env.core.prod
     environment:
       - CORE_ENV=prod
+    volumes:
+      # Caché HF persistente del core (la imagen fija HF_HOME=/tmp/hf-cache):
+      # sin volumen, cada Recreate re-descarga el modelo embedding (~120 MB)
+      # en la CPU del NAS — misma lección que la incidencia #6 del legacy.
+      - core_hf_cache:/tmp/hf-cache
     depends_on:
       redis-core:
         condition: service_healthy
@@ -219,6 +223,47 @@ services:
     networks:
       - swissjob-net
       - core-net
+
+  core-capture:
+    # Consumidor CDC de la sombra (B-01): slot lógico `jobhunt_shadow` +
+    # wal2json v2 sobre el Postgres COMPARTIDO. Replica con el rol
+    # jobhunt_capture (CAPTURE_DSN — SOLO en .env.core.capture.prod: el
+    # privilegio REPLICATION lee TODO el WAL del clúster) y escribe SOLO en
+    # jobhunt.shadow_change_log/shadow_capture_state como jobhunt_core; ack
+    # al slot SIEMPRE tras el commit (RPO=0, §2). No necesita redis-core:
+    # proceso dedicado, no worker Celery.
+    image: swissjob-core:prod
+    container_name: swissjob-core-capture
+    restart: unless-stopped
+    command: python -m jobhunt_core.shadow.capture
+    env_file:
+      - /share/Public/swissjob/.env.core.prod
+      - /share/Public/swissjob/.env.core.capture.prod
+    environment:
+      - CORE_ENV=prod
+    healthcheck:
+      # Subcomando --health del propio módulo: conexión core OK + slot
+      # presente y ACTIVO (walsender conectado) + heartbeat < 26h.
+      # start_period MÁS generoso que en dev (600s vs 300s): el bootstrap
+      # hace el backfill COMPLETO del corpus REAL en la CPU del NAS antes de
+      # START_REPLICATION (slot aún INACTIVO — inactivo legítimo cubierto).
+      # timeout 60s (dev: 10s) e interval 120s (dev: 60s): MEDIDO en el NAS el
+      # 2026-08-06 — el subcomando tarda ~32s (arranque de Python + imports del
+      # paquete core con el NAS a load ~18). Con 10s daba `unhealthy` permanente
+      # con el CDC perfectamente sano (heartbeat de 0,05s, slot activo, streaming).
+      # El interval no debe ser menor que lo que tarda el propio comando.
+      test: ["CMD", "python", "-m", "jobhunt_core.shadow.capture", "--health"]
+      interval: 120s
+      timeout: 60s
+      retries: 3
+      start_period: 600s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      core-migrate:
+        condition: service_completed_successfully
+    networks:
+      - swissjob-net
 
   frontend:
     image: swissjob-frontend:prod
@@ -233,7 +278,12 @@ services:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost/nginx-health || exit 1"]
+      # 127.0.0.1, NO localhost: dentro del contenedor `localhost` resuelve primero
+      # a ::1 y nginx solo escucha en IPv4 (el 10-listen-on-ipv6-by-default.sh no
+      # toca default.conf porque difiere del empaquetado) → "connection refused" y
+      # `unhealthy` PERMANENTE con nginx sirviendo perfectamente. Diagnosticado el
+      # 2026-08-06: 16.351 fallos seguidos mientras :4000 devolvía HTTP 200.
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/nginx-health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -255,4 +305,6 @@ volumes:
   hfcache:
     driver: local
   redis_core_data:
+    driver: local
+  core_hf_cache:
     driver: local
