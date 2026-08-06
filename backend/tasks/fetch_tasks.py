@@ -7,10 +7,14 @@ from typing import Any
 from celery_app import celery_app
 from config import settings
 from database import task_session
+from models.source_health import OUTCOME_EMPTY, OUTCOME_ERROR
 from providers import get_all_providers
+from services import source_health
 from services.data_normalizer import DataNormalizer
 from services.deduplicator import Deduplicator
 from services.job_repository import JobRepository
+from utils import fetch_diagnostics as diag
+from utils.fetch_diagnostics import KIND_NETWORK, FetchIssue
 
 logger = logging.getLogger(__name__)
 
@@ -161,21 +165,48 @@ async def _fetch_providers_async() -> dict[str, Any]:
         "updated": 0,
         "dupes": 0,
         "errors": 0,
+        # V.0 — un fetch fallido ya NO se confunde con una fuente vacía:
+        # `fetch_failed` = no trajo nada Y hubo fallo de descarga;
+        # `empty` = respondió sin ofertas, que es legítimo.
+        "fetch_failed": 0,
+        "empty": 0,
+        "unhealthy": [],
     }
 
     # Phase 1: parallel fetch
     sem = asyncio.Semaphore(settings.FETCH_CONCURRENCY)
 
     async def _fetch_one(provider):
+        """Descarga una fuente y emite su VEREDICTO, no solo sus ofertas.
+
+        `begin()` va dentro de la tarea (no fuera): cada tarea asyncio hereda
+        su propia copia del contexto, así que los fetches concurrentes no se
+        pisan los diagnósticos entre sí.
+        """
         source = provider.get_source_name()
         async with sem:
+            diag.begin()
             try:
                 jobs = await provider.fetch_jobs("", "Switzerland")
-                logger.info("Provider %s returned %d jobs", source, len(jobs))
-                return source, jobs
             except Exception as e:
                 logger.error("Provider %s fetch failed: %s", source, e)
-                return source, None
+                return source, None, OUTCOME_ERROR, [
+                    FetchIssue(KIND_NETWORK, url="", detail=f"{type(e).__name__}: {e}")
+                ]
+
+            collected = diag.issues()
+            outcome = diag.classify(len(jobs), collected)
+            if outcome == OUTCOME_ERROR:
+                # ANTES esto se registraba como "returned 0 jobs" y se contaba
+                # como éxito: el fallo sistémico que arregla V.0.
+                logger.error(
+                    "Provider %s SIN DATOS por fallo de descarga: %s",
+                    source,
+                    "; ".join(i.describe() for i in collected),
+                )
+            else:
+                logger.info("Provider %s returned %d jobs", source, len(jobs))
+            return source, jobs, outcome, collected
 
     fetch_results = await asyncio.gather(*[_fetch_one(p) for p in providers])
 
@@ -183,7 +214,20 @@ async def _fetch_providers_async() -> dict[str, Any]:
     async with task_session() as db:
         repo = JobRepository(db)
 
-        for source, jobs in fetch_results:
+        for source, jobs, outcome, collected in fetch_results:
+            # La salud se registra SIEMPRE, incluso si la descarga falló: es
+            # justamente el caso que antes no dejaba rastro.
+            motivo = await source_health.record_and_alert(
+                db, source, outcome, len(jobs or []), collected
+            )
+            if motivo:
+                summary["unhealthy"].append(f"{source}: {motivo}")
+
+            if outcome == OUTCOME_ERROR:
+                summary["fetch_failed"] += 1
+            elif outcome == OUTCOME_EMPTY:
+                summary["empty"] += 1
+
             if jobs is None:
                 summary["errors"] += 1
                 continue

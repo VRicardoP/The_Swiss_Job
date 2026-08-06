@@ -145,10 +145,13 @@ def setup_schedules() -> None:
         replace_existing=True,
     )
 
-    # URL health check: weekly Sunday at 03:00 CET
+    # URL health check: DIARIA a las 03:00 CET (antes: semanal los domingos).
+    # V.4 — con 3000 ofertas por ejecución, una pasada completa del corpus
+    # (~19k activas) tarda <=7 días. Semanal + 200/run tardaba ~2,3 años y
+    # dejaba el 43% del corpus marcado activo sin haberse comprobado jamás.
     scheduler.add_job(
         _dispatch_check_urls,
-        CronTrigger(day_of_week="sun", hour=3, timezone="Europe/Zurich"),
+        CronTrigger(hour=3, timezone="Europe/Zurich"),
         id="check_job_urls",
         replace_existing=True,
     )

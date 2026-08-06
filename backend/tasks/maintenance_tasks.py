@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 from celery_app import celery_app
 
@@ -82,6 +83,11 @@ _URL_CHECK_UA = (
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 _URL_CHECK_CONCURRENCY = 10
+# Concurrencia POR HOST (V.4): con 3000 sondas diarias y un corpus donde
+# arbeitnow+ostjob son el 56%, el límite global no basta — un solo portal
+# recibiría ~1200 peticiones a ráfagas de 10 y podría bloquearnos, que es
+# justo el fallo que estamos arreglando en otras fuentes (proz/zebis dan 403).
+_URL_CHECK_HOST_CONCURRENCY = 2
 _URL_CHECK_TIMEOUT_SECONDS = 10.0
 # Solo estos códigos significan "la oferta ya no existe". 403/405/5xx/timeouts NO
 # desactivan (pueden ser bloqueos anti-bot o caídas transitorias, no bajas).
@@ -130,9 +136,18 @@ async def _check_job_urls_async(limit: int) -> dict[str, Any]:
 
         sem = asyncio.Semaphore(_URL_CHECK_CONCURRENCY)
         timeout = httpx.Timeout(_URL_CHECK_TIMEOUT_SECONDS)
+        # Un semáforo por host, creado perezosamente. Acota las peticiones
+        # SIMULTÁNEAS a un mismo portal sin frenar el barrido global.
+        host_sems: dict[str, asyncio.Semaphore] = {}
+
+        def _host_sem(url: str) -> asyncio.Semaphore:
+            host = urlparse(url).netloc or "?"
+            if host not in host_sems:
+                host_sems[host] = asyncio.Semaphore(_URL_CHECK_HOST_CONCURRENCY)
+            return host_sems[host]
 
         async def _probe(client: httpx.AsyncClient, job_hash: str, url: str):
-            async with sem:
+            async with sem, _host_sem(url):
                 try:
                     resp = await client.head(url, follow_redirects=True)
                     return job_hash, resp.status_code

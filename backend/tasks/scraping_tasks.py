@@ -11,12 +11,15 @@ from typing import Any
 from celery_app import celery_app
 from config import settings
 from database import task_session
+from models.source_health import OUTCOME_ERROR
 from scrapers import get_all_scrapers
+from services import source_health
 from services.crawler_budget import CrawlerBudgetService
 from services.cursor_store import CursorStore
 from services.data_normalizer import DataNormalizer
 from services.deduplicator import Deduplicator
 from services.job_repository import JobRepository
+from utils import fetch_diagnostics as diag
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +70,7 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
         if settings.SCHEDULER_DAILY_HARVEST_ENABLED
         else float(settings.SCHEDULER_SCRAPER_INTERVAL_HOURS)
     )
-    summary = {
+    summary: dict[str, Any] = {
         "scrapers": 0,
         "skipped": 0,
         "fetched": 0,
@@ -75,6 +78,11 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
         "updated": 0,
         "dupes": 0,
         "errors": 0,
+        # V.0 — `fetch_failed`: no trajo nada Y hubo fallo de descarga.
+        # Distinto de `skipped` (backoff del presupuesto) y de 0 ofertas por
+        # early-stop incremental, que son resultados legítimos.
+        "fetch_failed": 0,
+        "unhealthy": [],
     }
 
     async with task_session() as db:
@@ -106,8 +114,29 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                         )
                     )
 
+                diag.begin()
                 jobs = await scraper.fetch_jobs("", "Switzerland")
-                logger.info("Scraper %s returned %d jobs", source, len(jobs))
+
+                # V.0 — veredicto explícito: un 404/403 ya NO se confunde con
+                # "el portal no tiene ofertas nuevas". Aquí importa el doble,
+                # porque el early-stop incremental hace que 0 ofertas sea un
+                # resultado NORMAL y por eso un fallo pasaba aún más inadvertido.
+                collected = diag.issues()
+                outcome = diag.classify(len(jobs), collected)
+                motivo = await source_health.record_and_alert(
+                    db, source, outcome, len(jobs), collected
+                )
+                if motivo:
+                    summary["unhealthy"].append(f"{source}: {motivo}")
+                if outcome == OUTCOME_ERROR:
+                    summary["fetch_failed"] += 1
+                    logger.error(
+                        "Scraper %s SIN DATOS por fallo de descarga: %s",
+                        source,
+                        "; ".join(i.describe() for i in collected),
+                    )
+                else:
+                    logger.info("Scraper %s returned %d jobs", source, len(jobs))
 
                 # Identidades de lo recién visto (antes de normalizar; la URL persiste).
                 fetched_identities = [scraper.job_identity(j) for j in jobs]

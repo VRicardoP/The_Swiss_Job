@@ -186,7 +186,15 @@ class Settings(BaseSettings):
 
     # Health-check de URLs: nº máximo de ofertas comprobadas por corrida (rotación
     # por check más antiguo). Acota peticiones salientes del job semanal.
-    MAINTENANCE_URL_CHECK_LIMIT: int = 200
+    # V.4 — caducidad real de ofertas. Sube de 200/SEMANA a 3000/DÍA porque la
+    # calibración anterior tardaba ~2,3 AÑOS en una pasada completa del corpus
+    # (19k ofertas / 200 por semana) y por eso solo 272 de 23.813 se habían
+    # comprobado nunca: el 43% del corpus llevaba >30 días sin re-verse pero
+    # seguía `is_active=true`. Con 3000/día una oferta caducada se cierra en
+    # <=7 días. NO se sustituye por una regla sobre `last_seen_at`: el % de
+    # refresco varía del 3% (jobgether) al 92% (schuljobs) según cómo pagine
+    # cada fuente, así que un umbral uniforme cerraría ofertas VIVAS.
+    MAINTENANCE_URL_CHECK_LIMIT: int = 3000
 
     # A.SEAM (plan §15bis) — costura por capacidad + jobhunt_routing
     # URL interna del /v1 del core (plan §21: puerto dedicado, SOLO red
@@ -203,6 +211,17 @@ class Settings(BaseSettings):
 
     # Compliance (TD-06)
     COMPLIANCE_BLOCK_THRESHOLD: int = 3
+    # Reintento del kill-switch (V.0): horas tras el último bloqueo antes de
+    # volver a permitir la fuente. Sin esto el apagado era PERMANENTE y fuentes
+    # como gastrojob/swiss_schools_isb llevaban meses caídas sin reintentarse.
+    # 0 = desactivado (comportamiento anterior).
+    COMPLIANCE_RETRY_AFTER_HOURS: int = 24
+
+    # Salud de fuentes (V.0): rachas a partir de las cuales se alerta.
+    # Separadas porque un error (feed muerto/bloqueo) y un vacío (fuente que
+    # responde pero no trae nada) exigen acciones distintas.
+    SOURCE_HEALTH_ERROR_STREAK: int = 3
+    SOURCE_HEALTH_EMPTY_STREAK: int = 5
 
     # Scraper defaults (TD-06)
     SCRAPER_HTTPX_TIMEOUT: float = 20.0
