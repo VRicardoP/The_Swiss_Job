@@ -14,6 +14,7 @@ import httpx
 
 from services.circuit_breaker import CircuitBreakerOpen
 from services.job_service import BaseJobProvider
+from utils.dates import parse_published_at
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -152,6 +153,8 @@ class NavArbeidsplassenProvider(BaseJobProvider):
             "seniority": None,
             "contract_type": None,
             "employment_type": None,
+            # Fecha del PORTAL (_source.published, ISO8601 con offset).
+            "published_at": parse_published_at(source.get("published")),
         }
 
     @staticmethod

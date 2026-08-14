@@ -10,6 +10,7 @@ import logging
 from bs4 import BeautifulSoup
 
 from services.scraper_engine import BaseScraper
+from utils.dates import parse_published_at
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,11 @@ class FinancejobsScraper(BaseScraper):
 
         # Navigate the Next.js data structure (verified 2026-02-28)
         # Path: props.initialProps.pageProps.jobsSSR.jobs
+        # OJO (2026-08-14): sonda en vivo contra el portal muestra que la ruta
+        # real hoy es props.pageProps.jobsSSR.jobs (sin "initialProps"), así
+        # que esto devuelve SIEMPRE lista vacía (published_at incluido queda
+        # como código muerto). NO se corrige aquí: hay ticket en la fase de
+        # recuperación de fuentes.
         jobs_data = (
             data.get("props", {})
             .get("initialProps", {})
@@ -81,6 +87,8 @@ class FinancejobsScraper(BaseScraper):
                     "salary_original": job.get("salary"),
                     "logo": logo,
                     "tags": job.get("tags", []),
+                    # Fecha de publicación del portal (ISO8601 en __NEXT_DATA__).
+                    "date_posted": job.get("datePosted"),
                 }
             )
 
@@ -121,4 +129,5 @@ class FinancejobsScraper(BaseScraper):
             "seniority": None,
             "contract_type": None,
             "employment_type": raw.get("employment_type"),
+            "published_at": parse_published_at(raw.get("date_posted")),
         }

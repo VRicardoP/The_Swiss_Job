@@ -10,6 +10,7 @@ import logging
 from bs4 import BeautifulSoup
 
 from services.scraper_engine import BaseScraper
+from utils.dates import parse_published_at
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,10 @@ class TESScraper(BaseScraper):
             contract_terms = job.get("contractTerms", [])
             contract_types = job.get("contractTypes", [])
 
+            # Fecha de publicación del anuncio (advert.startDate, ISO8601 Z)
+            advert = job.get("advert") or {}
+            date_posted = advert.get("startDate")
+
             # Salary
             salary = job.get("salary") or {}
             salary_range = salary.get("range", "")
@@ -103,6 +108,7 @@ class TESScraper(BaseScraper):
                     "contract_term": contract_terms[0] if contract_terms else None,
                     "salary_original": salary_range if salary_range else None,
                     "logo": logo,
+                    "date_posted": date_posted,
                 }
             )
 
@@ -143,4 +149,5 @@ class TESScraper(BaseScraper):
             "seniority": None,
             "contract_type": None,
             "employment_type": raw.get("employment_type"),
+            "published_at": parse_published_at(raw.get("date_posted")),
         }

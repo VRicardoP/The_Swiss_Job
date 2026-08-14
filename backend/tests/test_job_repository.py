@@ -1,5 +1,7 @@
 """Tests for JobRepository — upsert, dedup marking, and active counts."""
 
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import select, update
 
@@ -387,3 +389,45 @@ class TestUpsertContentVersioning:
             await db_session.execute(select(Job.embedding).where(Job.hash == h))
         ).scalar_one()
         assert emb is not None  # conservado
+
+
+@pytest.mark.anyio
+class TestUpsertPublishedAt:
+    """V.1 / ADR-10: el re-upsert sin fecha NO borra la fecha ya conocida."""
+
+    async def test_reupsert_without_date_preserves_stored_value(self, db_session):
+        """COALESCE del on_conflict: si un run posterior no trae la fecha (fallo
+        del detalle, cambio de DOM), el NULL entrante no machaca el valor bueno."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+        known = datetime(2026, 8, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+        await repo.upsert_job(_job_dict(published_at=known))
+        await db_session.commit()
+
+        await repo.upsert_job(_job_dict(published_at=None))
+        await db_session.commit()
+
+        stored = (
+            await db_session.execute(select(Job.published_at).where(Job.hash == h))
+        ).scalar_one()
+        assert stored == known  # conservado, no NULL
+
+    async def test_reupsert_with_new_date_updates_value(self, db_session):
+        """El COALESCE deja pasar una fecha fresca del portal (corrección aguas
+        arriba): solo protege contra el NULL entrante."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+        old = datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc)
+        new = datetime(2026, 8, 10, 0, 0, 0, tzinfo=timezone.utc)
+
+        await repo.upsert_job(_job_dict(published_at=old))
+        await db_session.commit()
+
+        await repo.upsert_job(_job_dict(published_at=new))
+        await db_session.commit()
+
+        stored = (
+            await db_session.execute(select(Job.published_at).where(Job.hash == h))
+        ).scalar_one()
+        assert stored == new

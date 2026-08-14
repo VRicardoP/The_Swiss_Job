@@ -185,7 +185,7 @@ class TestIrishJobsScraper:
         assert result["salary_min_chf"] is None
         assert result["logo"] is None
 
-    def test_normalize_job_has_21_keys(self):
+    def test_normalize_job_has_22_keys(self):
         raw = {"title": "X", "url": "https://www.jobs.ie/job/x/y-job2"}
         result = IrishJobsScraper().normalize_job(raw)
         expected = {
@@ -210,6 +210,7 @@ class TestIrishJobsScraper:
             "seniority",
             "contract_type",
             "employment_type",
+            "published_at",
         }
         assert set(result.keys()) == expected
 

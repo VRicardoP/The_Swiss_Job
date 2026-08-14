@@ -12,6 +12,7 @@ import logging
 import httpx
 
 from services.job_service import BaseJobProvider
+from utils.dates import parse_published_at
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -140,9 +141,9 @@ class ReliefWebProvider(BaseJobProvider):
         )
         contract_type = _map_contract_type(job_type)
 
-        # Fecha
+        # Fecha de publicación del PORTAL (fields.date.created, ISO8601).
         date_info = fields.get("date", {}) or {}
-        _ = date_info.get("created", "")  # informativo, no usado en schema
+        published_at = parse_published_at(date_info.get("created"))
 
         return {
             "hash": self.compute_hash(title, company, url),
@@ -166,6 +167,7 @@ class ReliefWebProvider(BaseJobProvider):
             "seniority": None,
             "contract_type": contract_type,
             "employment_type": job_type or None,
+            "published_at": published_at,
         }
 
 

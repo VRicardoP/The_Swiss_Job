@@ -8,6 +8,13 @@ Estrategia:
 - POST con cuerpo {searchText, limit, offset} devuelve lista paginada
 - Filtramos por nombre del colegio en locationsText (ej. "Mosaic School")
 - Categoría fijada a "A" para saltarse la penalización H
+
+⚠ `published_at` se deja DELIBERADAMENTE en None (ticket 2A / ADR-10):
+Workday solo expone `postedOn` como texto relativo en buckets
+("Posted 30+ Days Ago"), no una fecha. Aproximarla inventaría precisión
+que no existe y rozaría la prohibición de derivar la fecha de cuándo la
+vimos nosotros. NO lo "arregles": la política por fuente del ticket 2B
+decide qué hacer con las fuentes sin fecha.
 """
 
 import logging

@@ -97,6 +97,13 @@ class JobRepository:
             if col not in _SYSTEM_MANAGED
         }
         set_["last_seen_at"] = datetime.now(timezone.utc)
+        # published_at: si el run actual NO trae la fecha (fallo del detalle,
+        # cambio de DOM), conservar el valor bueno ya conocido en vez de
+        # machacarlo con NULL. Única excepción al SET genérico (V.1 / ADR-10).
+        if "published_at" in set_:
+            set_["published_at"] = func.coalesce(
+                stmt.excluded.published_at, Job.published_at
+            )
         # Reactivar SOLO si NO es duplicado: una oferta archivada que reaparece se
         # reactiva; un duplicado re-visto sigue inactivo (no vuelve a los feeds).
         set_["is_active"] = case((Job.duplicate_of.isnot(None), False), else_=True)

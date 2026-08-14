@@ -93,6 +93,7 @@ _EXPECTED_KEYS = {
     "seniority",
     "contract_type",
     "employment_type",
+    "published_at",
 }
 
 

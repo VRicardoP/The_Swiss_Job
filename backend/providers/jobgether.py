@@ -9,6 +9,7 @@ import httpx
 from services.circuit_breaker import CircuitBreakerOpen
 from services.job_service import BaseJobProvider
 from services.scraper_stealth import realistic_headers
+from utils.dates import parse_published_at
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills
 
@@ -124,6 +125,8 @@ class JobgetherProvider(BaseJobProvider):
             "seniority": None,
             "contract_type": None,
             "employment_type": employment_type,
+            # Fecha del PORTAL (createdAt, ISO8601 Z).
+            "published_at": parse_published_at(raw.get("createdAt")),
         }
 
     def _build_tags(self, raw: dict, title: str) -> list[str]:

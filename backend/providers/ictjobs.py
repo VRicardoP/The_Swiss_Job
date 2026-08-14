@@ -8,6 +8,7 @@ import httpx
 
 from services.circuit_breaker import CircuitBreakerOpen
 from services.job_service import BaseJobProvider
+from utils.dates import parse_published_at
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -171,4 +172,7 @@ class ICTJobsProvider(BaseJobProvider):
             "seniority": None,
             "contract_type": None,
             "employment_type": terms["employment_type"],
+            # Fecha del PORTAL: date_gmt (sin zona pero YA en UTC) con fallback
+            # a date (hora local del sitio; asumir UTC es el menor error posible).
+            "published_at": parse_published_at(raw.get("date_gmt") or raw.get("date")),
         }

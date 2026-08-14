@@ -1,6 +1,7 @@
 """Shared helpers for CH Media job portals (Ostjob, Zentraljob)."""
 
 from services.job_service import BaseJobProvider
+from utils.dates import parse_published_at
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
 
@@ -80,4 +81,6 @@ def normalize_chmedia_job(raw: dict, source: str, domain: str) -> dict:
         "language": None,
         "seniority": None,
         "contract_type": None,
+        # Fecha del PORTAL (ISO8601 con offset); None si la API no la trae.
+        "published_at": parse_published_at(raw.get("dateFirstPublished")),
     }

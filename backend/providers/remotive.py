@@ -5,6 +5,7 @@ import logging
 import httpx
 
 from services.job_service import BaseJobProvider
+from utils.dates import parse_published_at
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -80,4 +81,6 @@ class RemotiveProvider(BaseJobProvider):
             "seniority": None,
             "contract_type": None,
             "employment_type": employment_type,
+            # Fecha del PORTAL (publication_date, ISO8601 sin zona ⇒ UTC).
+            "published_at": parse_published_at(raw.get("publication_date")),
         }

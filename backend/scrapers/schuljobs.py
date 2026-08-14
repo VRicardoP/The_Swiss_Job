@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 
 from services.circuit_breaker import CircuitBreakerOpen
 from services.scraper_engine import BaseScraper
+from utils.dates import parse_published_at
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
 logger = logging.getLogger(__name__)
@@ -296,6 +297,11 @@ class SchulJobsScraper(BaseScraper):
             if data.get("employmentType"):
                 detail["employment_type"] = data["employmentType"]
 
+            # Fecha de publicación del JSON-LD (YYYY-MM-DD). El detalle YA se
+            # descarga (FETCH_DETAILS=True): esto no añade ninguna petición.
+            if data.get("datePosted"):
+                detail["date_posted"] = data["datePosted"]
+
             break  # Only need the first JobPosting
 
         return detail
@@ -335,4 +341,5 @@ class SchulJobsScraper(BaseScraper):
             "seniority": None,
             "contract_type": None,
             "employment_type": raw.get("employment_type"),
+            "published_at": parse_published_at(raw.get("date_posted")),
         }

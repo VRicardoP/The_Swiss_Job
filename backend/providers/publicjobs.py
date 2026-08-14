@@ -9,6 +9,7 @@ import logging
 import httpx
 
 from services.job_service import BaseJobProvider
+from utils.dates import parse_published_at
 from utils.text import extract_job_skills
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,8 @@ class PublicJobsProvider(BaseJobProvider):
                     "employment_type": employment_type,
                     "logo": job.get("contactLogo"),
                     "category": job.get("jobCategory"),
+                    # Fecha de publicación del portal (ISO8601 Z).
+                    "public_from": job.get("publicFrom"),
                 }
             )
 
@@ -184,4 +187,5 @@ class PublicJobsProvider(BaseJobProvider):
             "seniority": None,
             "contract_type": None,
             "employment_type": raw.get("employment_type"),
+            "published_at": parse_published_at(raw.get("public_from")),
         }

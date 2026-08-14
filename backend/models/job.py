@@ -71,6 +71,15 @@ class Job(Base):
         Boolean, default=True, nullable=False, index=True
     )
     url_last_check: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Fecha de publicación según el PORTAL (V.1 / ADR-10) — NUNCA derivada de
+    # first_seen_at/last_seen_at/now(). None = "la fuente no la expone",
+    # no "no la hemos mirado". Indexada: la usan la ventana de bootstrap (2B)
+    # y las consultas de caducidad. Si el filtro por ventana acaba siendo por
+    # fuente y el corpus crece un orden de magnitud, el índice adecuado será
+    # el compuesto (source, published_at), no este simple.
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
     # Categoría del análisis maestro (A–M o "otros"), asignada en DataNormalizer
     category: Mapped[str | None] = mapped_column(String(10), index=True)

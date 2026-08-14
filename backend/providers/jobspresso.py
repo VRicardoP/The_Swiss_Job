@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 import httpx
 
 from services.job_service import BaseJobProvider
+from utils.dates import parse_published_at
 from utils.http import fetch_rss
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -135,6 +136,8 @@ class JobspressoProvider(BaseJobProvider):
             "seniority": None,
             "contract_type": None,
             "employment_type": None,
+            # Fecha del PORTAL (pubDate RFC822 del feed WordPress).
+            "published_at": parse_published_at(item.findtext("pubDate")),
         }
 
 
