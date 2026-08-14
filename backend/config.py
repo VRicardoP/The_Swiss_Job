@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -266,6 +267,41 @@ class Settings(BaseSettings):
     CRAWLER_BUDGET_EMPTY_RUNS_THRESHOLD: int = 3
     # Tope del multiplicador de backoff (x intervalo base entre runs).
     CRAWLER_BUDGET_BACKOFF_MAX_MULTIPLIER: int = 4
+
+    # Ventana de cosecha (ADR-10 rev. J1, fase 2B): en las fuentes WINDOW el
+    # filtro aplica en TODOS los runs, y SOLO a ALTAS — una oferta que ya está
+    # en `jobs` sigue pasando por el upsert para refrescar last_seen_at. (La
+    # versión "solo en bootstrap" era decorativa: el run siguiente re-ingería
+    # todo lo descartado.) Interruptor aparte porque este cambio DESCARTA
+    # ofertas y debe poder apagarse sin redesplegar código.
+    # ⚠ APAGARLO NO restaura solo el comportamiento previo en los SCRAPERS:
+    # las identidades descartadas por antigüedad ya aprendidas por el cursor
+    # siguen suprimiendo la paginación vía early-stop, así que las ofertas
+    # viejas aún listadas NO se re-descargan. Apagar el interruptor — igual
+    # que reclasificar una fuente a FULL o corregir una deriva de identidad —
+    # exige vaciar `recent_identities` de las fuentes WINDOW afectadas:
+    #   UPDATE source_cursors SET recent_identities = '[]'::jsonb
+    #    WHERE source_key IN ('<fuentes WINDOW afectadas>');
+    HARVEST_WINDOW_ENABLED: bool = True
+    # Ventana MÓVIL en días — la "semana en curso" de ADR-10, precisada por
+    # delegación: con la semana natural el resultado dependería del día de la
+    # semana del run. N=7 lo decidió el propietario; se revisará con los datos
+    # de `window_skipped` de la primera semana (en especial zebis/schuljobs/tes)
+    # — OJO: en providers ese contador es FLUJO por run, no ofertas únicas
+    # (ver docstring de services/harvest_window.py). ge=1 (K4): con 0 el corte
+    # sería "ahora" (solo entrarían ofertas del futuro) y con negativo ni
+    # esas — un typo en el .env dejaría TODAS las fuentes WINDOW sin altas.
+    # ⚠ Al SUBIR N: vaciar `recent_identities` de las fuentes WINDOW en
+    # `source_cursors` — las identidades descartadas ya aprendidas impiden que
+    # el early-stop vuelva a paginar sobre ellas (K3).
+    HARVEST_WINDOW_DAYS: int = Field(default=7, ge=1)
+    # K1/L4 — tamaño mínimo del lote para las TRES alertas de la ventana
+    # (deriva de identidad + los dos escalones de fechas de
+    # log_window_summary): con lotes minúsculos — lo normal con early-stop —
+    # "nada reconocido" o "sin fechas" no es evidencia y dispararía falsos
+    # positivos. (Renombrado desde HARVEST_DRIFT_MIN_BATCH cuando pasó a
+    # servir a los tres guardarraíles.)
+    HARVEST_ALERT_MIN_BATCH: int = Field(default=10, ge=1)
 
     # Fuentes RESTRINGIDAS (jobs.ch/jobup.ch, LinkedIn, Indeed, Glassdoor, XING).
     # Vacío = conector deshabilitado (auth_missing, 0 peticiones). NO scraping

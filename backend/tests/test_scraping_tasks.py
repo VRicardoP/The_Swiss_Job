@@ -8,6 +8,7 @@ de VD.3 la fuente seguía marcada `ok` en `source_health`.
 """
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from sqlalchemy import select
@@ -113,6 +114,78 @@ class TestCursorSoloAprendeLoPersistido:
         assert "http://scr.test/taken" not in cursor.recent_identities
 
 
+class TestCursorAprendeDescartadasPorVentana:
+    """K3 — excepción ACOTADA a VD.2: una descartada por FECHA fuera de
+    ventana SÍ entra en el cursor (destino resuelto por política, determinista
+    y monótono: su fecha no cambia y el corte solo avanza). Los fallos de
+    persistencia y las sin-fecha siguen SIN entrar — VD.2 intacto para ellos.
+    """
+
+    @staticmethod
+    def _windowed_job(title: str, url: str, published_at) -> dict:
+        job = _sample_job(title, "School", url)
+        job["source"] = "schuljobs"  # política WINDOW real
+        job["published_at"] = published_at
+        return job
+
+    @patch("tasks.scraping_tasks.get_all_scrapers")
+    async def test_descartada_por_fecha_si_entra_fallo_de_guardado_no(
+        self, mock_scrapers, monkeypatch, db_session
+    ):
+        """En un mismo run: la aceptada persistida entra; la descartada por
+        fecha entra (K3 — sin esto se re-descarga y re-cuenta cada run y el
+        early-stop nunca corta); la descartada SIN fecha no entra (su destino
+        no está resuelto: un run posterior puede traer la fecha); la que
+        FALLA al guardar no entra (VD.2 tal cual)."""
+        monkeypatch.setattr(settings, "CURSOR_INCREMENTAL_ENABLED", True)
+        monkeypatch.setattr(settings, "CRAWLER_BUDGET_ENABLED", False)
+        now = datetime.now(timezone.utc)
+
+        await _occupy_url(db_session, "http://schuljobs.test/taken")
+        jobs = [
+            self._windowed_job(
+                "Lehrperson OK", "http://schuljobs.test/ok", now - timedelta(days=1)
+            ),
+            self._windowed_job(
+                "Lehrperson Stale",
+                "http://schuljobs.test/stale",
+                now - timedelta(days=30),
+            ),
+            self._windowed_job(
+                "Lehrperson NoDate", "http://schuljobs.test/nodate", None
+            ),
+            # Mismo modo de fallo que stelle_admin: URL ocupada, hash distinto.
+            self._windowed_job(
+                "Lehrperson Fail",
+                "http://schuljobs.test/taken",
+                now - timedelta(days=1),
+            ),
+        ]
+        mock_scrapers.return_value = [_make_mock_scraper("schuljobs", jobs)]
+
+        with patch(
+            "tasks.scraping_tasks.task_session",
+            new=_mock_session_factory(db_session),
+        ):
+            summary = await _fetch_scrapers_async()
+
+        assert summary["window_skipped"] == 1
+        assert summary["window_no_date"] == 1
+        assert summary["errors"] == 1
+        cursor = (
+            await db_session.execute(
+                select(SourceCursor).where(SourceCursor.source_key == "schuljobs")
+            )
+        ).scalar_one()
+        assert "http://schuljobs.test/ok" in cursor.recent_identities
+        # K3: la descartada por fecha SÍ se aprende.
+        assert "http://schuljobs.test/stale" in cursor.recent_identities
+        # Sin fecha: destino NO resuelto — no se aprende.
+        assert "http://schuljobs.test/nodate" not in cursor.recent_identities
+        # VD.2 intacto: el fallo de persistencia no se aprende.
+        assert "http://schuljobs.test/taken" not in cursor.recent_identities
+
+
 class TestSaludDePersistencia:
     """VD.3 — descargar N>0 y guardar 0 debe acabar en fuente degradada."""
 
@@ -207,3 +280,210 @@ class TestFalloDeLote:
             )
         ).scalar_one()
         assert fila.consecutive_unstored == 2
+
+
+class TestFalloAntesDelBucle:
+    """L2 — un fallo en la pre-pasada de la ventana (known_hashes, conteo de
+    corpus) pierde el lote entero ANTES de que el bucle arranque. Con
+    `attempted_count = 0` la racha de persistencia no se movía y la fuente
+    jamás se degradaba: el fallo-disfrazado-de-éxito de F1, reabierto."""
+
+    @patch("tasks.scraping_tasks.get_all_scrapers")
+    async def test_fallo_en_la_prepasada_mueve_la_racha(
+        self, mock_scrapers, monkeypatch, db_session
+    ):
+        """Dos runs con statement timeout recurrente en `known_hashes`
+        (contención de locks sobre `jobs` durante el cleanup): el except
+        registra la talla del lote descargado y la fuente acaba degradada."""
+        monkeypatch.setattr(settings, "CURSOR_INCREMENTAL_ENABLED", False)
+        monkeypatch.setattr(settings, "SOURCE_HEALTH_UNSTORED_STREAK", 2)
+
+        async def timing_out(self, hashes):
+            raise RuntimeError("statement timeout en known_hashes")
+
+        monkeypatch.setattr(JobRepository, "known_hashes", timing_out)
+        now = datetime.now(timezone.utc)
+
+        with patch(
+            "tasks.scraping_tasks.task_session",
+            new=_mock_session_factory(db_session),
+        ):
+            for run in range(2):
+                job = _sample_job(
+                    f"Stale {run}", "School", f"http://schuljobs.test/pre{run}"
+                )
+                job["source"] = "schuljobs"  # política WINDOW real
+                # Fuera de ventana: la pre-pasada SÍ consulta known_hashes.
+                job["published_at"] = now - timedelta(days=30)
+                mock_scrapers.return_value = [_make_mock_scraper("schuljobs", [job])]
+                summary = await _fetch_scrapers_async()
+
+        assert summary["errors"] >= 1
+        assert any(entry.startswith("schuljobs:") for entry in summary["unhealthy"]), (
+            f"la fuente no se degradó pese a perder el lote cada run: "
+            f"{summary['unhealthy']}"
+        )
+        fila = (
+            await db_session.execute(
+                select(SourceHealth).where(SourceHealth.source_key == "schuljobs")
+            )
+        ).scalar_one()
+        assert fila.consecutive_unstored == 2, (
+            "la racha de persistencia no se movió con el fallo pre-bucle"
+        )
+
+
+class TestVentanaCosechaScrapers:
+    """V.2/ADR-10 rev. J1 en el pipeline de scrapers: la excepción de los
+    colegios, el filtro solo-altas y el anti-falso-positivo de la señal de
+    persistencia."""
+
+    @staticmethod
+    def _scraper_job(source: str, title: str, url: str, published_at) -> dict:
+        job = _sample_job(title, "School", url)
+        job["source"] = source
+        job["published_at"] = published_at
+        return job
+
+    @patch("tasks.scraping_tasks.get_all_scrapers")
+    async def test_colegio_entra_entero_en_cualquier_run(
+        self, mock_scrapers, monkeypatch, db_session
+    ):
+        """Excepción de ADR-10: un swiss_schools_* (política FULL) se cosecha
+        ENTERO aunque no traiga ni una fecha — también en un run posterior,
+        con la fuente ya poblada (rev. J1: no hay noción de bootstrap)."""
+        monkeypatch.setattr(settings, "CURSOR_INCREMENTAL_ENABLED", False)
+
+        with patch(
+            "tasks.scraping_tasks.task_session",
+            new=_mock_session_factory(db_session),
+        ):
+            # Run 1 — fuente vacía.
+            mock_scrapers.return_value = [
+                _make_mock_scraper(
+                    "swiss_schools_nae",
+                    [
+                        self._scraper_job(
+                            "swiss_schools_nae",
+                            "Teacher Primary",
+                            "http://nae.test/1",
+                            None,
+                        ),
+                        self._scraper_job(
+                            "swiss_schools_nae",
+                            "Teacher Music",
+                            "http://nae.test/2",
+                            None,
+                        ),
+                    ],
+                )
+            ]
+            summary1 = await _fetch_scrapers_async()
+            assert summary1["new"] == 2
+
+            # Run 2 — la fuente ya tiene filas: sigue entrando todo.
+            mock_scrapers.return_value = [
+                _make_mock_scraper(
+                    "swiss_schools_nae",
+                    [
+                        self._scraper_job(
+                            "swiss_schools_nae",
+                            "Teacher Arts",
+                            "http://nae.test/3",
+                            None,
+                        ),
+                    ],
+                )
+            ]
+            summary2 = await _fetch_scrapers_async()
+
+        assert summary2["new"] == 1
+        assert summary2["window_skipped"] == 0
+        assert summary2["window_no_date"] == 0
+
+    @patch("tasks.scraping_tasks.get_all_scrapers")
+    async def test_lote_fuera_de_ventana_no_degrada_la_fuente(
+        self, mock_scrapers, monkeypatch, db_session
+    ):
+        """El anti-falso-positivo (la trampa F1, camino de scrapers): un lote
+        entero de ALTAS de una fuente WINDOW cae fuera de la ventana →
+        descarte deliberado, NO racha de no-guardados ni fuente en unhealthy.
+        En ningún run (rev. J1)."""
+        monkeypatch.setattr(settings, "CURSOR_INCREMENTAL_ENABLED", False)
+        monkeypatch.setattr(settings, "SOURCE_HEALTH_UNSTORED_STREAK", 2)
+        now = datetime.now(timezone.utc)
+
+        with patch(
+            "tasks.scraping_tasks.task_session",
+            new=_mock_session_factory(db_session),
+        ):
+            # Dos runs de `schuljobs` (política WINDOW real): nada se guarda
+            # y el lote entero (siempre altas) cae fuera en ambos.
+            for run in range(2):
+                mock_scrapers.return_value = [
+                    _make_mock_scraper(
+                        "schuljobs",
+                        [
+                            self._scraper_job(
+                                "schuljobs",
+                                f"Lehrperson {run}",
+                                f"http://schuljobs.test/stale{run}",
+                                now - timedelta(days=60),
+                            )
+                        ],
+                    )
+                ]
+                summary = await _fetch_scrapers_async()
+
+        assert summary["window_skipped"] == 1
+        assert summary["unhealthy"] == []
+        fila = (
+            await db_session.execute(
+                select(SourceHealth).where(SourceHealth.source_key == "schuljobs")
+            )
+        ).scalar_one()
+        assert fila.consecutive_unstored == 0
+        assert fila.last_stored_count == 0
+
+    @patch("tasks.scraping_tasks.get_all_scrapers")
+    async def test_revista_fuera_de_ventana_se_sigue_refrescando(
+        self, mock_scrapers, monkeypatch, db_session
+    ):
+        """Punto 2 de J1 en el camino de scrapers: una oferta vieja que YA
+        está en `jobs` pasa por el upsert (updated, no descartada) y su
+        last_seen_at avanza."""
+        from models.job import Job
+
+        monkeypatch.setattr(settings, "CURSOR_INCREMENTAL_ENABLED", False)
+        now = datetime.now(timezone.utc)
+        vieja = self._scraper_job(
+            "schuljobs",
+            "Lehrperson Vintage",
+            "http://schuljobs.test/vintage",
+            now - timedelta(days=30),
+        )
+        repo = JobRepository(db_session)
+        await repo.upsert_job(dict(vieja))
+        await db_session.commit()
+        before = (
+            await db_session.execute(
+                select(Job.last_seen_at).where(Job.hash == vieja["hash"])
+            )
+        ).scalar_one()
+
+        mock_scrapers.return_value = [_make_mock_scraper("schuljobs", [dict(vieja)])]
+        with patch(
+            "tasks.scraping_tasks.task_session",
+            new=_mock_session_factory(db_session),
+        ):
+            summary = await _fetch_scrapers_async()
+
+        assert summary["updated"] == 1
+        assert summary["window_skipped"] == 0
+        db_session.expire_all()
+        after = (
+            await db_session.execute(
+                select(Job.last_seen_at).where(Job.hash == vieja["hash"])
+            )
+        ).scalar_one()
+        assert after > before, "la re-vista fuera de ventana no se refrescó"

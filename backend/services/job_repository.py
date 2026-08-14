@@ -131,6 +131,37 @@ class JobRepository:
         )
         return is_new
 
+    async def known_hashes(self, hashes: set[str]) -> set[str]:
+        """De un conjunto de hashes, devuelve los que YA existen en `jobs`.
+
+        Sustituye a `exists` por-oferta (K5): la ventana de cosecha (ADR-10
+        rev. J1) solo puede rechazar ALTAS, nunca re-vistas — una oferta ya
+        en `jobs` debe seguir pasando por el upsert para que se refresque
+        `last_seen_at` (si se saltara, `cleanup_stale_jobs` la archivaría por
+        "desaparecida del feed"). `precheck_batch` la llama UNA vez por
+        fuente con los hashes fuera de ventana (`hash` es clave primaria),
+        en vez de una consulta por oferta.
+        """
+        if not hashes:
+            return set()
+        result = await self.db.execute(select(Job.hash).where(Job.hash.in_(hashes)))
+        return set(result.scalars())
+
+    async def count_jobs(self, source_key: str) -> int:
+        """Nº de filas de la fuente en `jobs`.
+
+        Para la detección de deriva de identidad (K1, sustituye a
+        `has_any_job` en la ronda 2): la deriva exige un corpus COMPARABLE al
+        lote (`count >= len(lote)`) — con 2 filas en corpus y un lote de 10,
+        no reconocer nada no es anómalo. Solo se consulta en el camino raro
+        (lote con tamaño mínimo, descartes por fecha y nada reconocido),
+        nunca por oferta ni por run normal.
+        """
+        result = await self.db.execute(
+            select(func.count()).select_from(Job).where(Job.source == source_key)
+        )
+        return result.scalar_one()
+
     async def mark_duplicate(self, job_hash: str, canonical_hash: str) -> None:
         """Mark a job as a duplicate of another (deactivate it)."""
         await self.db.execute(

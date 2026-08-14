@@ -9,7 +9,7 @@ from config import settings
 from database import task_session
 from models.source_health import OUTCOME_EMPTY, OUTCOME_ERROR
 from providers import get_all_providers
-from services import source_health
+from services import harvest_window, source_health
 from services.data_normalizer import DataNormalizer
 from services.deduplicator import Deduplicator
 from services.job_repository import JobRepository
@@ -170,6 +170,18 @@ async def _fetch_providers_async() -> dict[str, Any]:
         # `empty` = respondió sin ofertas, que es legítimo.
         "fetch_failed": 0,
         "empty": 0,
+        # V.2/ADR-10 rev. J1 — descartes DELIBERADOS de la ventana de cosecha
+        # (solo ALTAS; las re-vistas nunca se descartan). Separados a
+        # propósito: `window_skipped` (fecha fuera de ventana) es el filtro
+        # funcionando; `window_no_date` (política WINDOW sin published_at) es
+        # una anomalía del inventario que pide revisión.
+        # ⚠ K3 — semántica de `window_skipped` en PROVIDERS: es FLUJO POR
+        # RUN, no ofertas únicas. Sin cursor se re-baja el listado entero y
+        # la misma oferta fuera de ventana se re-cuenta en cada run hasta que
+        # el portal la retire: leído en bruto sobreestima la pérdida real en
+        # un factor de ~7 a 23. No revisar N con este número sin corregirlo.
+        "window_skipped": 0,
+        "window_no_date": 0,
         "unhealthy": [],
     }
 
@@ -243,14 +255,62 @@ async def _fetch_providers_async() -> dict[str, Any]:
             # señal de PERSISTENCIA para source_health.
             stored_count = 0
             # `attempted_count` para la señal de persistencia = ofertas que se
-            # INTENTARON guardar: las descartadas por el filtro tech nunca
-            # entran en el camino del savepoint y contarlas produciría falsos
-            # "FUENTE DEGRADADA" en providers cuyo lote entero se filtra.
-            attempted_count = 0
+            # INTENTARON guardar: las descartadas por el filtro tech o por la
+            # ventana nunca entran en el camino del savepoint y contarlas
+            # produciría falsos "FUENTE DEGRADADA" en providers cuyo lote
+            # entero se filtra (F1).
+            # L2 — `None` = "el bucle no llegó a arrancar": la pre-pasada de
+            # la ventana mete consultas a BD ANTES del bucle (known_hashes,
+            # conteo de corpus) y un fallo recurrente ahí perdía el lote
+            # entero con 0 intentos registrados — la racha de persistencia no
+            # se movía y la fuente jamás se degradaba (el fallo-disfrazado-
+            # de-éxito de F1, reabierto). Se pone a 0 justo antes del bucle.
+            attempted_count: int | None = None
+            # Lote post-filtro tech: el except externo lo usa como talla
+            # honesta del lote si el fallo ocurrió antes del bucle.
+            batch: list | None = None
             try:
-                for job in jobs:
-                    # Descartar empleos tech antes de normalizar o guardar en DB
-                    if _is_tech_job(job.get("title", "")):
+                # Descartar empleos tech antes de normalizar o guardar en DB.
+                # Las filtradas tampoco entran en la pre-pasada de la ventana:
+                # no aportan fecha ni contadores (comportamiento previo).
+                # ⚠ DEFECTO PREEXISTENTE, registrado a propósito y SIN
+                # cambiar (decisión de producto pendiente, aparte): este
+                # filtro salta re-vistas sin comprobar si ya están en el
+                # corpus — el mismo defecto que J1 corrigió para la ventana.
+                # Una oferta ya guardada cuyo título pase a casar con una
+                # keyword tech deja de refrescar last_seen_at y acaba borrada
+                # por cleanup_stale_jobs a los 60 días.
+                batch = [job for job in jobs if not _is_tech_job(job.get("title", ""))]
+
+                # V.2/ADR-10 rev. J1 + K5 — ventana de cosecha en pre-pasada:
+                # aplica SIEMPRE y solo puede rechazar ALTAS, nunca re-vistas
+                # (una oferta ya en `jobs` sigue pasando por el upsert, que es
+                # lo que refresca last_seen_at; saltarla acabaría en archivado
+                # indebido por cleanup_stale_jobs). Una única consulta por
+                # fuente (`known_hashes`) en vez de una por oferta. El
+                # descarte es DELIBERADO, antes del savepoint y SIN contar
+                # como intento de persistencia (VD.3). OJO al leer
+                # `window_skipped` en providers: es FLUJO por run, no ofertas
+                # únicas — sin cursor se re-baja el listado entero y la misma
+                # oferta se re-cuenta cada run (K3).
+                precheck = await harvest_window.precheck_batch(source, batch, repo)
+                summary["window_skipped"] += precheck.skipped_by_date
+                summary["window_no_date"] += precheck.skipped_no_date
+                # K1 — se decide ANTES de los upserts si hay que vigilar la
+                # deriva de identidad (el corpus que importa es el previo al
+                # run); el veredicto final llega tras el bucle, con los
+                # upserts contados.
+                watch_drift = await harvest_window.watch_drift(repo, source, precheck)
+                # Contadores por-fuente de este run (guardarraíles K1/K2).
+                new_before = summary["new"]
+                updated_before = summary["updated"]
+                dupes_before = summary["dupes"]
+
+                # L2 — el bucle arranca: a partir de aquí 0 intentos significa
+                # "todo descartado deliberadamente", no "fallo pre-bucle".
+                attempted_count = 0
+                for job, verdict in zip(batch, precheck.verdicts):
+                    if verdict != harvest_window.ACCEPT:
                         continue
 
                     attempted_count += 1
@@ -284,6 +344,30 @@ async def _fetch_providers_async() -> dict[str, Any]:
                         summary["errors"] += 1
                         logger.error("Error processing job from %s: %s", source, e)
 
+                # V.2 rev. J1 — la ventana descarta datos en CUALQUIER run:
+                # rastro por fuente + guardarraíles de fechas (ERROR total /
+                # WARNING parcial, K2). Las altas conseguidas = nuevas +
+                # duplicados fuzzy (ambas se ingirieron).
+                harvest_window.log_window_summary(
+                    source,
+                    precheck,
+                    new_count=(summary["new"] - new_before)
+                    + (summary["dupes"] - dupes_before),
+                )
+
+                # K1 — deriva de identidad: reconocidas POR MISMO HASH =
+                # re-vistas fuera de ventana (precheck) + upserts no-nuevos.
+                # Los dupes NO cuentan (cláusula 1 de watch_drift: son
+                # cross-source y silenciaban la deriva real).
+                if watch_drift:
+                    motivo = harvest_window.report_identity_drift(
+                        source,
+                        precheck,
+                        updated_in_upserts=summary["updated"] - updated_before,
+                    )
+                    if motivo:
+                        summary["unhealthy"].append(f"{source}: {motivo}")
+
                 await db.commit()
 
                 # VD.3 — señal de persistencia, DESPUÉS del commit del lote a
@@ -311,6 +395,12 @@ async def _fetch_providers_async() -> dict[str, Any]:
                 # dispararía el retry de Celery (re-descarga del lote entero).
                 # Se aísla del todo. Si `attempted_count` es 0 no toca la
                 # racha, que es justo lo correcto.
+                # L2 — pero si el bucle NI ARRANCÓ (fallo en la pre-pasada:
+                # known_hashes, conteo de corpus...), 0 mentiría: en ese
+                # camino no hubo ningún descarte deliberado y la talla del
+                # lote descargado (post-filtro tech) es el valor honesto.
+                if attempted_count is None:
+                    attempted_count = len(batch) if batch is not None else len(jobs)
                 try:
                     motivo = await source_health.record_storage(
                         db, source, attempted_count, 0

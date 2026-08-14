@@ -2,6 +2,43 @@
 
 Follows the same per-job savepoint pipeline as fetch_tasks.py but runs
 on a separate schedule (every 6h vs 30min for API providers).
+
+K3 — el cursor TAMBIÉN aprende las identidades descartadas por FECHA fuera de
+ventana (`SKIP_STALE`). La premisa: ese descarte es CASI determinista y
+monótono — la fecha que publica el portal no suele cambiar y el corte solo
+avanza, así que una oferta fuera de ventana hoy lo estará casi siempre; su
+destino está resuelto por POLÍTICA, no por un fallo transitorio. Beneficios:
+no se re-descarga ni se re-cuenta cada run (`window_skipped` se aproxima a
+ofertas únicas) y el early-stop vuelve a poder cortar en páginas que
+contienen descartadas (financejobs/tes/irishjobs/schuljobs pagaban el
+presupuesto completo de páginas en cada run). El invariante de VD.2 sigue
+INTACTO para los fallos de persistencia: esos NO entran en el cursor. Las
+`SKIP_NO_DATE` tampoco: su destino no está resuelto (un run posterior puede
+traer la fecha).
+
+Dos residuales de esa premisa (ronda 2 — registrados a propósito, sin
+arreglo):
+
+- La fecha la pone el PORTAL, no nosotros: un anuncio RENOVADO con la misma
+  URL y fecha nueva (patrón real de `tes`) ya está aprendido como stale — si
+  es la única novedad de su página, el early-stop hace que nunca se
+  re-evalúe pese a estar ahora dentro de ventana. Antes de este cambio sí se
+  recuperaba.
+- El tope del cursor: en listados grandes (`irishjobs`) el caudal de stale
+  puede superar `CURSOR_RECENT_IDENTITIES_MAX` — las identidades expulsadas
+  se re-descargan y se re-cuentan, así que `window_skipped` se desliza de
+  nuevo hacia "flujo por run" y el early-stop deja de cortar en esas
+  páginas. Sin pérdida de datos: solo coste de crawl y contador inflado.
+
+⚠ Las identidades stale ya aprendidas suprimen la paginación vía early-stop.
+SUBIR `HARVEST_WINDOW_DAYS`, APAGAR `HARVEST_WINDOW_ENABLED` (sin vaciado,
+el interruptor NO restaura el comportamiento previo: las ofertas viejas aún
+listadas no se re-descargan), RECLASIFICAR una fuente a FULL o CORREGIR una
+deriva de identidad exigen vaciar `recent_identities` de las fuentes WINDOW
+afectadas:
+
+    UPDATE source_cursors SET recent_identities = '[]'::jsonb
+     WHERE source_key IN ('<fuentes WINDOW afectadas>');
 """
 
 import asyncio
@@ -13,7 +50,7 @@ from config import settings
 from database import task_session
 from models.source_health import OUTCOME_ERROR
 from scrapers import get_all_scrapers
-from services import source_health
+from services import harvest_window, source_health
 from services.crawler_budget import CrawlerBudgetService
 from services.cursor_store import CursorStore
 from services.data_normalizer import DataNormalizer
@@ -82,6 +119,16 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
         # Distinto de `skipped` (backoff del presupuesto) y de 0 ofertas por
         # early-stop incremental, que son resultados legítimos.
         "fetch_failed": 0,
+        # V.2/ADR-10 rev. J1 — descartes DELIBERADOS de la ventana de cosecha
+        # (solo ALTAS; las re-vistas nunca se descartan). Separados a
+        # propósito: `window_skipped` (fecha fuera de ventana) es el filtro
+        # funcionando; `window_no_date` (política WINDOW sin published_at) es
+        # una anomalía del inventario que pide revisión. K3: en scrapers las
+        # descartadas por fecha entran en el cursor y no se re-cuentan en
+        # runs siguientes — este contador se aproxima a ofertas ÚNICAS (a
+        # diferencia del de providers, que es flujo por run).
+        "window_skipped": 0,
+        "window_no_date": 0,
         "unhealthy": [],
     }
 
@@ -94,6 +141,19 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
             # `None` hasta que la descarga responde: el except externo lo usa
             # para saber si hubo descargas que registrar como no-guardadas.
             jobs = None
+            # V.2 — `attempted_count` para la señal de persistencia (VD.3) =
+            # ofertas que se INTENTARON guardar. NO es `len(jobs)`: las
+            # descartadas por la ventana de cosecha nunca entran en el camino
+            # del savepoint y contarlas produciría falsos "FUENTE DEGRADADA"
+            # (mismo falso positivo que el filtro tech, F1).
+            # L2 — `None` = "el bucle no llegó a arrancar": la pre-pasada de
+            # la ventana mete consultas a BD ANTES del bucle (known_hashes,
+            # conteo de corpus) y un fallo recurrente ahí perdía el lote
+            # entero con 0 intentos registrados — la racha de persistencia no
+            # se movía y la fuente jamás se degradaba (el fallo-disfrazado-
+            # de-éxito de F1, reabierto). Se pone a 0 justo antes del bucle;
+            # el except externo distingue ambos casos.
+            attempted_count: int | None = None
             try:
                 if store is not None:
                     cursor = await store.load(db, source)
@@ -102,6 +162,11 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 if budget_on and cursor is not None:
                     # Backoff: fuente sin novedades N runs seguidos → saltar el
                     # run hasta cumplir el intervalo ampliado (0 peticiones).
+                    # Registrado a propósito, sin arreglo: una fuente WINDOW
+                    # dominada por ofertas viejas acumula runs sin novedades y
+                    # el backoff la espacia hasta 4x (96 h con cosecha diaria)
+                    # — es latencia, no pérdida, muy por debajo de los 60 días
+                    # del cleanup.
                     if not CrawlerBudgetService.should_run(
                         cursor,
                         base_interval_hours,
@@ -145,17 +210,52 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 else:
                     logger.info("Scraper %s returned %d jobs", source, len(jobs))
 
+                # V.2/ADR-10 rev. J1 + K5 — ventana de cosecha en pre-pasada:
+                # aplica SIEMPRE y solo puede rechazar ALTAS, nunca re-vistas
+                # (una oferta ya en `jobs` sigue pasando por el upsert, que
+                # es lo que refresca last_seen_at; saltarla acabaría en
+                # archivado indebido por cleanup_stale_jobs). Una única
+                # consulta por fuente (`known_hashes`) en vez de una por
+                # oferta. El descarte es DELIBERADO, antes del savepoint: NO
+                # cuenta como intento de persistencia (VD.3).
+                precheck = await harvest_window.precheck_batch(source, jobs, repo)
+                summary["window_skipped"] += precheck.skipped_by_date
+                summary["window_no_date"] += precheck.skipped_no_date
+                # K1 — se decide ANTES de los upserts si hay que vigilar la
+                # deriva de identidad (el corpus que importa es el previo al
+                # run); el veredicto final llega tras el bucle.
+                watch_drift = await harvest_window.watch_drift(repo, source, precheck)
+
                 new_before = summary["new"]
+                updated_before = summary["updated"]
+                dupes_before = summary["dupes"]
                 # VD.2 — el cursor solo aprende identidades REALMENTE
                 # persistidas: si aprendiera todo lo descargado, un fallo de
                 # guardado lo envenenaría para siempre (el early-stop daría
                 # esas URLs por conocidas y la fuente quedaría muda).
                 stored_identities: list[str] = []
+                # K3 — EXCEPCIÓN acotada y deliberada a VD.2: las descartadas
+                # por FECHA fuera de ventana SÍ entran en el cursor (destino
+                # resuelto por política, determinista y monótono — ver
+                # docstring del módulo). Los fallos de persistencia y las
+                # SKIP_NO_DATE siguen SIN entrar.
+                window_stale_identities: list[str] = []
                 # VD.3 — ofertas que completan su savepoint sin excepción:
                 # es la señal de PERSISTENCIA para source_health.
                 stored_count = 0
 
-                for job in jobs:
+                # L2 — el bucle arranca: a partir de aquí 0 intentos
+                # significa "todo descartado deliberadamente", no "fallo
+                # pre-bucle".
+                attempted_count = 0
+                for job, verdict in zip(jobs, precheck.verdicts):
+                    if verdict == harvest_window.SKIP_STALE:
+                        window_stale_identities.append(scraper.job_identity(job))
+                        continue
+                    if verdict != harvest_window.ACCEPT:
+                        continue
+
+                    attempted_count += 1
                     # Identidad sobre el job CRUDO: `normalize` reasigna `job`
                     # dentro del savepoint y la perdería.
                     identity = scraper.job_identity(job)
@@ -194,6 +294,30 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                             e,
                         )
 
+                # V.2 rev. J1 — la ventana descarta datos en CUALQUIER run:
+                # rastro por fuente + guardarraíles de fechas (ERROR total /
+                # WARNING parcial, K2). Las altas conseguidas = nuevas +
+                # duplicados fuzzy (ambas se ingirieron).
+                harvest_window.log_window_summary(
+                    source,
+                    precheck,
+                    new_count=(summary["new"] - new_before)
+                    + (summary["dupes"] - dupes_before),
+                )
+
+                # K1 — deriva de identidad: reconocidas POR MISMO HASH =
+                # re-vistas fuera de ventana (precheck) + upserts no-nuevos.
+                # Los dupes NO cuentan (cláusula 1 de watch_drift: son
+                # cross-source y silenciaban la deriva real).
+                if watch_drift:
+                    motivo = harvest_window.report_identity_drift(
+                        source,
+                        precheck,
+                        updated_in_upserts=summary["updated"] - updated_before,
+                    )
+                    if motivo:
+                        summary["unhealthy"].append(f"{source}: {motivo}")
+
                 if store is not None and cursor is not None:
                     # `pages_read` mide esfuerzo de CRAWL (lo descargado), no
                     # persistencia: sigue calculándose sobre `jobs`.
@@ -202,7 +326,9 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                     )
                     store.update_after_run(
                         cursor,
-                        stored_identities,
+                        # K3: lo persistido + lo descartado por fecha (destino
+                        # resuelto): ninguna de las dos hace falta re-bajarla.
+                        [*stored_identities, *window_stale_identities],
                         new_count=summary["new"] - new_before,
                         pages_read=pages_read,
                     )
@@ -213,7 +339,7 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 # `record_storage` usa su propia transacción acotada y no
                 # arrastra ni el lote de ofertas ni el cursor.
                 motivo = await source_health.record_storage(
-                    db, source, len(jobs), stored_count
+                    db, source, attempted_count, stored_count
                 )
                 if motivo:
                     summary["unhealthy"].append(f"{source}: {motivo}")
@@ -227,16 +353,25 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 # Perder el LOTE entero (commit o cursor fallidos) también es
                 # señal de persistencia: sin esto la racha quedaba congelada y
                 # el fallo se presentaba como éxito un nivel más arriba. Solo
-                # si hubo descarga (`jobs` asignado). `record_storage` degrada
+                # si hubo descarga (`jobs` asignado). Se registra
+                # `attempted_count` (no `len(jobs)`): las descartadas por la
+                # ventana de cosecha fueron un descarte deliberado, no un
+                # fallo de persistencia (V.2). `record_storage` degrada
                 # a None ante fallos ordinarios, pero si la BD está caída
                 # (causa probable de estar aquí) su propio rollback también
                 # puede lanzar — y una excepción escapando del manejador
                 # mataría el bucle de las fuentes restantes y dispararía el
                 # retry de Celery (re-descarga del lote entero). Se aísla.
+                # L2 — si el bucle NI ARRANCÓ (fallo en la pre-pasada:
+                # known_hashes, conteo de corpus...), 0 mentiría: en ese
+                # camino no hubo ningún descarte deliberado y la talla del
+                # lote descargado es el valor honesto.
                 if jobs is not None:
+                    if attempted_count is None:
+                        attempted_count = len(jobs)
                     try:
                         motivo = await source_health.record_storage(
-                            db, source, len(jobs), 0
+                            db, source, attempted_count, 0
                         )
                     except Exception as health_err:  # noqa: BLE001 — no empeorar
                         motivo = None
