@@ -696,9 +696,16 @@ rompería TODO scraper Playwright en silencio.
 
 **`Recreate` NO lee `/share/Public/swissjob/docker-compose.qnap.yml`**: usa su copia interna en
 `.qpkg/container-station/data/application/swissjob/docker-compose.yml`, que **regenera desde su BD
-en cada operación** (sobrescribirla por SSH es inútil). Y al pegar el YAML en la UI, su validador da
-❌ sobre un fichero que `docker-compose config -q` acepta sin una queja (sospecha principal, sin
-confirmar: `condition: service_completed_successfully`).
+en cada operación** (sobrescribirla por SSH es inútil).
+
+**Sobre el ❌ del validador de la UI — hipótesis CORREGIDA (2026-08-07).** El rechazo se atribuyó
+primero a `condition: service_completed_successfully`. **Refutado por el propietario:**
+`docker-compose.sombra.yml` **SÍ valida** y contiene esas mismas tres condiciones. La diferencia
+real entre el YAML rechazado y el aceptado es la **imagen inexistente**: el `qnap.yml` de entonces
+declaraba `worker`/`worker-ai` con `swissjob-worker:prod`, que no está cargada en el NAS. Encaja con
+que Container Station —que NO construye— exija que las imágenes referenciadas existan.
+⇒ **La UI vuelve a ser una vía válida** para gestionar el stack, siempre que toda `image:` esté
+cargada por `docker load` ANTES de pegar el YAML.
 
 **Se desplegó por CLI** copiando el binario estático de dev:
 
