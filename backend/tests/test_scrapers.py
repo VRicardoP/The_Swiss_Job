@@ -9,7 +9,7 @@ from scrapers.gastrojob import GastrojobScraper
 from scrapers.medjobs import MedJobsScraper
 from scrapers.myscience import MyScienceScraper
 from scrapers.schuljobs import SchulJobsScraper
-from scrapers.stelle_admin import StelleAdminScraper
+from scrapers.stelle_admin import StelleAdminScraper, _resolve_job_url
 from scrapers.tes import TESScraper
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -302,6 +302,179 @@ class TestStelleAdminScraper:
 
     def test_fetch_details_disabled(self):
         assert StelleAdminScraper.FETCH_DETAILS is False
+
+    def test_registro_sin_url_propia_se_salta(self):
+        """VD.1: un card sin <a href> (o con enlace a portada/listado) NO puede
+        salir con la URL base — las 7 ofertas colisionaban en ix_jobs_url."""
+        html = """
+        <div class="job-card">
+          <h3 class="title"><a href="/job/abc123">Informatiker/in EFZ</a></h3>
+        </div>
+        <div class="job-card">
+          <h3 class="title">Jurist/in ohne Link zur Stelle</h3>
+        </div>
+        <div class="job-card">
+          <h3 class="title">Sachbearbeiter/in Paginierung</h3>
+          <a href="/?lang=de&page=2">weiter</a>
+        </div>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        stubs = StelleAdminScraper().parse_listing_page(soup)
+
+        assert len(stubs) == 1
+        assert stubs[0]["url"] == "https://jobs.admin.ch/job/abc123"
+        urls = {s["url"].rstrip("/") for s in stubs}
+        assert "https://jobs.admin.ch" not in urls
+
+    def test_estrategia3_casa_con_offene_stellen(self):
+        """VD.1: los enlaces reales del DOM renderizado tienen la forma
+        /offene-stellen/<slug>/<uuid> y el fallback debe reconocerlos."""
+        html = """
+        <a href="/offene-stellen/informatiker-in-efz/1a2b3c4d">
+          Informatiker/in EFZ 80-100%
+        </a>
+        <a href="/impressum">Impressum</a>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        stubs = StelleAdminScraper().parse_listing_page(soup)
+
+        assert len(stubs) == 1
+        assert (
+            stubs[0]["url"]
+            == "https://jobs.admin.ch/offene-stellen/informatiker-in-efz/1a2b3c4d"
+        )
+
+    def test_host_ajeno_rechazado_y_relativo_sin_barra_resuelto(self):
+        """F4: un href hacia un host ajeno presente en el DOM renderizado no
+        puede persistirse como URL clicable (host confusion / phishing), y un
+        relativo sin '/' inicial se resuelve con urljoin en vez de producir un
+        host corrupto (`jobs.admin.choffene-stellen/...`)."""
+        html = """
+        <div class="job-card">
+          <h3 class="title">
+            <a href="https://evil.com/stelle/phishing-angebot">
+              Sachbearbeiter/in Bundesverwaltung
+            </a>
+          </h3>
+        </div>
+        <div class="job-card">
+          <h3 class="title">
+            <a href="offene-stellen/informatiker-in/1a2b3c4d">
+              Informatiker/in EFZ
+            </a>
+          </h3>
+        </div>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        stubs = StelleAdminScraper().parse_listing_page(soup)
+
+        assert len(stubs) == 1
+        assert (
+            stubs[0]["url"]
+            == "https://jobs.admin.ch/offene-stellen/informatiker-in/1a2b3c4d"
+        )
+
+        # La estrategia 3 (fallback por patrón) tampoco puede aceptar un host
+        # ajeno aunque su path imite la forma de una oferta real.
+        html3 = """
+        <a href="https://evil.com/offene-stellen/jurist-in/9f8e7d6c">
+          Jurist/in Völkerrecht (portal falso)
+        </a>
+        """
+        soup3 = BeautifulSoup(html3, "lxml")
+        assert StelleAdminScraper().parse_listing_page(soup3) == []
+
+    def test_backslash_y_variantes_de_url_maliciosa_rechazadas(self):
+        """G1: diferencial de parsers urllib/WHATWG — urllib solo corta el
+        netloc en `/ ? #`, el navegador tambien en `\\`: con
+        `https://evil.com\\@jobs.admin.ch/...` urllib ve un netloc que termina
+        en `.admin.ch` (aceptado) pero el navegador del usuario navega a
+        `evil.com`. Las cuatro validaciones van juntas."""
+        # 1. El href del escenario reproducido (backslash antes de la `@`).
+        evil = "https://evil.com\\@jobs.admin.ch/offene-stellen/jurist-in/9f8e7d6c"
+        assert _resolve_job_url(evil) is None
+
+        # 2. Variante protocolo-relativa del mismo ataque.
+        assert (
+            _resolve_job_url("//evil.com\\@jobs.admin.ch/offene-stellen/x/1a2b") is None
+        )
+
+        # 3. Esquema no-http con autoridad: pasaba la comprobacion de host.
+        assert _resolve_job_url("ftp://x.admin.ch/stelle/y") is None
+
+        # 4. Userinfo hacia un host legitimo: spoofing visual del enlace.
+        assert _resolve_job_url("https://cualquier-cosa@sub.admin.ch/x") is None
+
+        # Control: un href legitimo sigue resolviendo igual que antes.
+        assert (
+            _resolve_job_url("/offene-stellen/jurist-in/9f8e7d6c")
+            == "https://jobs.admin.ch/offene-stellen/jurist-in/9f8e7d6c"
+        )
+
+        # Extremo a extremo contra parse_listing_page: el href del ataque en
+        # el DOM renderizado no emite stub por NINGUNA estrategia (la card lo
+        # prueba en 1/2 y, al quedar stubs vacio, el fallback lo reintenta).
+        html = f"""
+        <div class="job-card">
+          <h3 class="title">
+            <a href="{evil}">Jurist/in V&#246;lkerrecht (Bundesverwaltung)</a>
+          </h3>
+        </div>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        assert StelleAdminScraper().parse_listing_page(soup) == []
+
+    def test_estrategia3_patron_sobre_url_resuelta(self):
+        """G4: un relativo sin '/' inicial no contiene `/offene-stellen/` en
+        crudo — el patron del fallback se comprueba sobre la URL RESUELTA,
+        igual que hacen el dedup y las estrategias 1/2."""
+        html = """
+        <a href="offene-stellen/informatiker-in/1a2b3c4d">
+          Informatiker/in EFZ 80-100%
+        </a>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        stubs = StelleAdminScraper().parse_listing_page(soup)
+
+        assert len(stubs) == 1
+        assert (
+            stubs[0]["url"]
+            == "https://jobs.admin.ch/offene-stellen/informatiker-in/1a2b3c4d"
+        )
+
+    def test_estrategias12_no_repiten_url_entre_records(self):
+        """F5: dos cards sin enlace propio cuyo primer <a> es el MISMO enlace
+        de paginación CON path emitirían la misma URL y reventarían de nuevo
+        contra ix_jobs_url (el modo de fallo histórico de VD.1): dentro del
+        run, una URL ya emitida por otro record se descarta."""
+        html = """
+        <div class="job-card">
+          <h3 class="title">Wissenschaftliche/r Mitarbeiter/in</h3>
+          <a href="/offene-stellen?page=2">weiter</a>
+        </div>
+        <div class="job-card">
+          <h3 class="title">Fachspezialist/in Digitalisierung</h3>
+          <a href="/offene-stellen?page=2">weiter</a>
+        </div>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        stubs = StelleAdminScraper().parse_listing_page(soup)
+
+        assert len(stubs) == 1
+
+    def test_estrategia3_dedup_por_url_absoluta(self):
+        """VD.1: el mismo enlace en forma relativa y absoluta es UNA identidad
+        (el dedup por href crudo los contaba como dos)."""
+        html = """
+        <a href="/offene-stellen/jurist-in/9f8e7d6c">Jurist/in Völkerrecht</a>
+        <a href="https://jobs.admin.ch/offene-stellen/jurist-in/9f8e7d6c">
+          Jurist/in Völkerrecht (mismo enlace absoluto)
+        </a>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        stubs = StelleAdminScraper().parse_listing_page(soup)
+
+        assert len(stubs) == 1
 
 
 # ---------------------------------------------------------------------------

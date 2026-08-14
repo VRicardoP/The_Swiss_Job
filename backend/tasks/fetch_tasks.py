@@ -190,9 +190,16 @@ async def _fetch_providers_async() -> dict[str, Any]:
                 jobs = await provider.fetch_jobs("", "Switzerland")
             except Exception as e:
                 logger.error("Provider %s fetch failed: %s", source, e)
-                return source, None, OUTCOME_ERROR, [
-                    FetchIssue(KIND_NETWORK, url="", detail=f"{type(e).__name__}: {e}")
-                ]
+                return (
+                    source,
+                    None,
+                    OUTCOME_ERROR,
+                    [
+                        FetchIssue(
+                            KIND_NETWORK, url="", detail=f"{type(e).__name__}: {e}"
+                        )
+                    ],
+                )
 
             collected = diag.issues()
             outcome = diag.classify(len(jobs), collected)
@@ -232,12 +239,21 @@ async def _fetch_providers_async() -> dict[str, Any]:
                 summary["errors"] += 1
                 continue
 
+            # VD.3 — ofertas que completan su savepoint sin excepción: es la
+            # señal de PERSISTENCIA para source_health.
+            stored_count = 0
+            # `attempted_count` para la señal de persistencia = ofertas que se
+            # INTENTARON guardar: las descartadas por el filtro tech nunca
+            # entran en el camino del savepoint y contarlas produciría falsos
+            # "FUENTE DEGRADADA" en providers cuyo lote entero se filtra.
+            attempted_count = 0
             try:
                 for job in jobs:
                     # Descartar empleos tech antes de normalizar o guardar en DB
                     if _is_tech_job(job.get("title", "")):
                         continue
 
+                    attempted_count += 1
                     try:
                         async with db.begin_nested():
                             job = DataNormalizer.normalize(job)
@@ -262,17 +278,53 @@ async def _fetch_providers_async() -> dict[str, Any]:
 
                             summary["fetched"] += 1
 
+                        stored_count += 1
+
                     except Exception as e:
                         summary["errors"] += 1
                         logger.error("Error processing job from %s: %s", source, e)
 
                 await db.commit()
+
+                # VD.3 — señal de persistencia, DESPUÉS del commit del lote a
+                # propósito: `record_storage` usa su propia transacción acotada
+                # y no arrastra el lote del provider.
+                motivo = await source_health.record_storage(
+                    db, source, attempted_count, stored_count
+                )
+                if motivo:
+                    summary["unhealthy"].append(f"{source}: {motivo}")
+
                 summary["providers"] += 1
 
             except Exception as e:
                 await db.rollback()
                 summary["errors"] += 1
                 logger.error("Provider %s persist failed: %s", source, e)
+                # Perder el LOTE entero (commit fallido) también es señal de
+                # persistencia: sin esto la racha quedaba congelada y el fallo
+                # se presentaba como éxito un nivel más arriba. `record_storage`
+                # degrada a None ante fallos ordinarios, pero si la BD está
+                # caída (causa probable de estar aquí) su propio rollback
+                # también puede lanzar — y una excepción escapando del
+                # manejador mataría el bucle de las fuentes restantes y
+                # dispararía el retry de Celery (re-descarga del lote entero).
+                # Se aísla del todo. Si `attempted_count` es 0 no toca la
+                # racha, que es justo lo correcto.
+                try:
+                    motivo = await source_health.record_storage(
+                        db, source, attempted_count, 0
+                    )
+                except Exception as health_err:  # noqa: BLE001 — no empeorar el error
+                    motivo = None
+                    logger.error(
+                        "No se pudo registrar la persistencia de %s en el "
+                        "camino de error: %s",
+                        source,
+                        health_err,
+                    )
+                if motivo:
+                    summary["unhealthy"].append(f"{source}: {motivo}")
 
     logger.info("Fetch complete: %s", summary)
     return summary

@@ -57,6 +57,16 @@ class SourceHealth(Base):
     consecutive_errors: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     consecutive_empty: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # VD.3 — señal de PERSISTENCIA, separada de la de descarga: una fuente
+    # puede descargar perfectamente y no guardar ni una fila (colisiones de
+    # clave, datos inválidos). Racha propia porque pide una acción distinta.
+    last_stored_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Runs consecutivos con `fetched > 0` y `stored == 0`. Con `fetched == 0`
+    # no hay información y la racha no se toca.
+    consecutive_unstored: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

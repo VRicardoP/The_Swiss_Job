@@ -222,6 +222,11 @@ class Settings(BaseSettings):
     # responde pero no trae nada) exigen acciones distintas.
     SOURCE_HEALTH_ERROR_STREAK: int = 3
     SOURCE_HEALTH_EMPTY_STREAK: int = 5
+    # VD.3 — racha de PERSISTENCIA: runs seguidos que descargan ofertas
+    # (fetched > 0) sin guardar ninguna (stored == 0). Umbral 2: un solo run
+    # puede ser un hipo transitorio de BD, y alertar al primero erosionaría
+    # la señal con falsos positivos; dos seguidos perdiéndolo todo no es un blip.
+    SOURCE_HEALTH_UNSTORED_STREAK: int = 2
 
     # Scraper defaults (TD-06)
     SCRAPER_HTTPX_TIMEOUT: float = 20.0

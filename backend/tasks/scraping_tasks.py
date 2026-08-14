@@ -91,6 +91,9 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
         for scraper in scrapers:
             source = scraper.get_source_name()
             cursor = None
+            # `None` hasta que la descarga responde: el except externo lo usa
+            # para saber si hubo descargas que registrar como no-guardadas.
+            jobs = None
             try:
                 if store is not None:
                     cursor = await store.load(db, source)
@@ -102,9 +105,7 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                     if not CrawlerBudgetService.should_run(
                         cursor,
                         base_interval_hours,
-                        exempt_from_backoff=getattr(
-                            scraper, "WATCHLIST_SOURCE", False
-                        ),
+                        exempt_from_backoff=getattr(scraper, "WATCHLIST_SOURCE", False),
                     ):
                         summary["skipped"] += 1
                         logger.info(
@@ -144,11 +145,20 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 else:
                     logger.info("Scraper %s returned %d jobs", source, len(jobs))
 
-                # Identidades de lo recién visto (antes de normalizar; la URL persiste).
-                fetched_identities = [scraper.job_identity(j) for j in jobs]
                 new_before = summary["new"]
+                # VD.2 — el cursor solo aprende identidades REALMENTE
+                # persistidas: si aprendiera todo lo descargado, un fallo de
+                # guardado lo envenenaría para siempre (el early-stop daría
+                # esas URLs por conocidas y la fuente quedaría muda).
+                stored_identities: list[str] = []
+                # VD.3 — ofertas que completan su savepoint sin excepción:
+                # es la señal de PERSISTENCIA para source_health.
+                stored_count = 0
 
                 for job in jobs:
+                    # Identidad sobre el job CRUDO: `normalize` reasigna `job`
+                    # dentro del savepoint y la perdería.
+                    identity = scraper.job_identity(job)
                     try:
                         async with db.begin_nested():
                             job = DataNormalizer.normalize(job)
@@ -171,6 +181,11 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
 
                             summary["fetched"] += 1
 
+                        # El savepoint se completó sin excepción: SOLO ahora la
+                        # identidad puede entrar en el cursor (VD.2).
+                        stored_identities.append(identity)
+                        stored_count += 1
+
                     except Exception as e:
                         summary["errors"] += 1
                         logger.error(
@@ -180,23 +195,59 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                         )
 
                 if store is not None and cursor is not None:
+                    # `pages_read` mide esfuerzo de CRAWL (lo descargado), no
+                    # persistencia: sigue calculándose sobre `jobs`.
                     pages_read = max(
                         1, math.ceil(len(jobs) / max(scraper.PAGE_SIZE, 1))
                     )
                     store.update_after_run(
                         cursor,
-                        fetched_identities,
+                        stored_identities,
                         new_count=summary["new"] - new_before,
                         pages_read=pages_read,
                     )
 
                 await db.commit()
+
+                # VD.3 — señal de persistencia, DESPUÉS del commit a propósito:
+                # `record_storage` usa su propia transacción acotada y no
+                # arrastra ni el lote de ofertas ni el cursor.
+                motivo = await source_health.record_storage(
+                    db, source, len(jobs), stored_count
+                )
+                if motivo:
+                    summary["unhealthy"].append(f"{source}: {motivo}")
+
                 summary["scrapers"] += 1
 
             except Exception as e:
                 await db.rollback()
                 summary["errors"] += 1
                 logger.error("Scraper %s failed: %s", source, e)
+                # Perder el LOTE entero (commit o cursor fallidos) también es
+                # señal de persistencia: sin esto la racha quedaba congelada y
+                # el fallo se presentaba como éxito un nivel más arriba. Solo
+                # si hubo descarga (`jobs` asignado). `record_storage` degrada
+                # a None ante fallos ordinarios, pero si la BD está caída
+                # (causa probable de estar aquí) su propio rollback también
+                # puede lanzar — y una excepción escapando del manejador
+                # mataría el bucle de las fuentes restantes y dispararía el
+                # retry de Celery (re-descarga del lote entero). Se aísla.
+                if jobs is not None:
+                    try:
+                        motivo = await source_health.record_storage(
+                            db, source, len(jobs), 0
+                        )
+                    except Exception as health_err:  # noqa: BLE001 — no empeorar
+                        motivo = None
+                        logger.error(
+                            "No se pudo registrar la persistencia de %s en el "
+                            "camino de error: %s",
+                            source,
+                            health_err,
+                        )
+                    if motivo:
+                        summary["unhealthy"].append(f"{source}: {motivo}")
 
     logger.info("Scraper fetch complete: %s", summary)
     return summary
