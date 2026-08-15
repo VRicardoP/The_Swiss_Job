@@ -96,7 +96,7 @@ Los skills leen los prompts canónicos en `.ai/prompts/` y añaden contexto del 
 ## Arquitectura en una página
 
 ```
-providers/          # 28 providers (23 activos + 5 restringidos gated); BaseJobProvider + CircuitBreaker
+providers/          # 25 providers (20 activos + 5 restringidos gated); BaseJobProvider + CircuitBreaker
   restricted.py     # jobs.ch/LinkedIn/Indeed/Glassdoor/XING SOLO por ruta autorizada (partner/feed); OFF por defecto
 scrapers/           # 15 scrapers (7 base incl. irishjobs + 8 swiss_schools_*); BaseScraper extends BaseJobProvider
 services/

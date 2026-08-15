@@ -47,8 +47,14 @@ def _resolve_job_url(href: str) -> str | None:
     # de jobs.admin.ch lo contiene.
     if "\\" in href:
         return None
-    url = urljoin(BASE_URL, href)
-    parts = urlsplit(url)
+    try:
+        url = urljoin(BASE_URL, href)
+        parts = urlsplit(url)
+    except ValueError:
+        # p. ej. "https://[evil/..." (IPv6 inválido): urljoin/urlsplit LANZAN
+        # en vez de parsear (mismo defecto latente que zebis, VD.9/H4). Sin
+        # capturarlo, un href malformado en el DOM tumbaba el lote entero.
+        return None
     # Solo http(s): otros esquemas con autoridad (`ftp://x.admin.ch/...`)
     # pasarían la comprobación de host sin ser una oferta navegable.
     if parts.scheme not in ("http", "https"):

@@ -8,7 +8,7 @@ sin que saltara nada (ver ESTADO_Y_HOJA_DE_RUTA.md §3.3).
 
 Diseño: los helpers HTTP REGISTRAN el fallo en un contexto de ejecución; el
 pipeline lo lee al terminar cada fuente. Se usa `contextvars` a propósito, para
-NO cambiar la firma de `fetch_jobs()` en los 28 providers y sus scrapers: el
+NO cambiar la firma de `fetch_jobs()` en los 25 providers y sus scrapers: el
 acoplamiento se mantiene en una sola dirección (http → contexto → pipeline).
 
 Cada tarea asyncio hereda una COPIA del contexto en su creación, así que los
@@ -47,9 +47,7 @@ class FetchIssue:
 # None = no hay recolección activa (p.ej. una llamada suelta desde un test o un
 # script). En ese caso `record()` no hace nada: no se cambia el comportamiento
 # de quien no participa del pipeline.
-_issues: ContextVar[list[FetchIssue] | None] = ContextVar(
-    "fetch_issues", default=None
-)
+_issues: ContextVar[list[FetchIssue] | None] = ContextVar("fetch_issues", default=None)
 
 
 def begin() -> None:

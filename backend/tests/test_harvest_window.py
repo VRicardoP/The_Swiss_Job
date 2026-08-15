@@ -87,6 +87,19 @@ class TestRegistroCompleto:
         )
         assert not sin_motivo, f"Políticas sin motivo registrado: {sin_motivo}"
 
+    def test_thehub_es_window(self):
+        """VD.9 (2026-08-15): la API v2 de thehub confirmó `createdAt` como
+        fecha de publicación (la página pública lo muestra como 'Posted') —
+        la fuente dejó de ser INCIERTO/FULL."""
+        assert harvest_window.policy_for("thehub").mode == WINDOW
+
+    def test_gastrojob_es_window(self):
+        """VD.4b (2026-08-15): el endpoint AJAX del listado imprime la primera
+        activación de cada anuncio ('Erstmals aktiviert') y el detalle la
+        confirma como datePosted de la microdata schema.org/JobPosting — la
+        fuente dejó de ser INCIERTO/FULL."""
+        assert harvest_window.policy_for("gastrojob").mode == WINDOW
+
     def test_colegios_son_full(self):
         """La excepción de ADR-10: los 8 swiss_schools_* se cosechan enteros
         en el bootstrap — swiss_schools_isp incluido (postedOn no es fecha)."""

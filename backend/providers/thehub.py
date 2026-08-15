@@ -2,16 +2,33 @@
 
 import asyncio
 import logging
+import re
 
 import httpx
 
 from services.job_service import BaseJobProvider
+from utils.dates import parse_published_at
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
 logger = logging.getLogger(__name__)
 
 PAGE_DELAY_SECONDS = 0.5
+# Mismo ritmo entre peticiones de detalle que entre páginas (~46 detalles por
+# run con el volumen actual): flat 0.5s, la pauta de todos los providers.
+DETAIL_DELAY_SECONDS = 0.5
+
+# id de Mongo (ObjectId, 24 hex minúsculas). Se valida ANTES de interpolarlo
+# en URLs (detalle y pública): un id inyectado por la API acabaría persistido
+# como URL clicable y dispararía un GET con path traversal contra
+# api.thehub.io. Las 40 filas antiguas de thehub en BD son 40/40 de esta forma.
+_OBJECT_ID_RE = re.compile(r"^[0-9a-f]{24}$")
+
+
+def _valid_job_id(value: object) -> str:
+    """Devuelve el id saneado, o "" si no es un ObjectId (se trata como ausente)."""
+    job_id = value.strip() if isinstance(value, str) else ""
+    return job_id if _OBJECT_ID_RE.fullmatch(job_id) else ""
 
 
 class TheHubProvider(BaseJobProvider):
@@ -20,10 +37,24 @@ class TheHubProvider(BaseJobProvider):
     La API no requiere auth ni gating de User-Agent. Devuelve las ofertas en
     `response["docs"]` (15 por página), con la paginación en la raíz
     (`total`, `limit`, `page`, `pages`). Filtramos por `isRemote=true`.
+
+    Desde el rediseño SPA/Nuxt del portal (verificado 2026-08-14/15, VD.9)
+    la API vive en api.thehub.io — la vieja `thehub.io/api/jobs` devuelve un
+    404 de Keystone. El listado v2 viene ADELGAZADO (sin `absoluteJobUrl`,
+    sin `description`, sin fechas), así que cada oferta necesita un paso de
+    detalle (`/jobs/single/<id>`) para description, location completa y
+    `createdAt`.
     """
 
     SOURCE_NAME = "thehub"
-    API_URL = "https://thehub.io/api/jobs"
+    API_URL = "https://api.thehub.io/v2/jobs"
+    # El detalle funciona por `id` (Mongo); por `key` (slug) da 404.
+    DETAIL_URL = "https://api.thehub.io/jobs/single/{job_id}"
+    # URL pública propia del portal. Se CONSTRUYE (ya no llega
+    # absoluteJobUrl) y por `id`, no por `key` (/jobs/<key> da 404): es
+    # exactamente el formato de las filas antiguas en BD, así que la
+    # deduplicación por URL/hash se conserva sin migración.
+    PUBLIC_JOB_URL = "https://thehub.io/jobs/{job_id}"
     # Los logos se sirven desde el CDN imgix, no desde thehub.io (allí dan 404).
     LOGO_BASE = "https://thehub-io.imgix.net"
     MAX_PAGES = 5
@@ -48,10 +79,21 @@ class TheHubProvider(BaseJobProvider):
                     break
 
                 raw_jobs = data.get("docs", [])
+                # API malformada (docs no es una lista): cortar la paginación
+                # conservando lo ya procesado — misma tolerancia que un `data`
+                # vacío, en vez de tirar el lote entero con un AttributeError.
+                if not isinstance(raw_jobs, list):
+                    logger.warning(
+                        "thehub: respuesta malformada en la página %s — "
+                        "'docs' no es una lista; se corta la paginación",
+                        page,
+                    )
+                    break
                 if not raw_jobs:
                     break
 
-                results.extend(self._process_raw_jobs(raw_jobs))
+                enriched = await self._enrich(client, raw_jobs)
+                results.extend(self._process_raw_jobs(enriched))
 
                 # `pages` es el total de páginas; parar al alcanzar la última.
                 total_pages = self._safe_int(data.get("pages"))
@@ -62,6 +104,64 @@ class TheHubProvider(BaseJobProvider):
                     await asyncio.sleep(PAGE_DELAY_SECONDS)
 
         return self._finalize_fetch(results)
+
+    async def _enrich(
+        self, client: httpx.AsyncClient, raw_jobs: list[dict]
+    ) -> list[dict]:
+        """Completa cada doc adelgazado del listado v2 con su detalle.
+
+        Si el detalle de UNA oferta falla (fetch_with_retry devuelve None
+        tras sus reintentos), NO se tira el run: la oferta se emite con lo
+        del listado — misma tolerancia a fallos parciales que el bucle de
+        páginas (un `data` vacío corta la paginación pero conserva lo ya
+        procesado). Un doc malformado (no-dict) se salta con log, y un `id`
+        que no sea un ObjectId válido se trata como ausente.
+
+        El hash (title|company|url) sale idéntico con o sin detalle, así una
+        re-vista sigue refrescando `last_seen_at` en vez de caducar por un
+        fallo transitorio. OJO: una re-vista sin detalle se emite DEGRADADA —
+        description vacía, snippet None, tags [] (salen de
+        extract_job_skills(title, description)), location "" — y es el upsert
+        (JobRepository) quien conserva los valores buenos ya almacenados
+        (description/snippet/tags/location/canton) y NO invalida el embedding,
+        porque el contenido efectivo de la fila no cambia; aquí solo se
+        garantiza la identidad. Residuales que SÍ quedan: `content_hash`
+        versiona el payload entrante y oscila un run tras la degradación
+        (cosmético, ver V2-2 en JobRepository.upsert_job), y un ALTA sin
+        detalle queda sin `createdAt` — la ventana la contabiliza como
+        `window_no_date`.
+        """
+        enriched: list[dict] = []
+        for i, doc in enumerate(raw_jobs):
+            # Un doc malformado NO tira el lote: se salta con log, la misma
+            # política con la que _process_raw_jobs descarta un raw inválido.
+            if not isinstance(doc, dict):
+                logger.warning(
+                    "thehub: doc de listado malformado (%s) — se salta",
+                    type(doc).__name__,
+                )
+                continue
+            job_id = _valid_job_id(doc.get("id"))
+            detail = None
+            if job_id:
+                detail = await self._circuit.call(
+                    lambda j=job_id: fetch_with_retry(
+                        client, self.DETAIL_URL.format(job_id=j)
+                    )
+                )
+            if isinstance(detail, dict):
+                # El detalle manda; el doc del listado aporta lo que falte.
+                enriched.append({**doc, **detail})
+            else:
+                logger.warning(
+                    "thehub: sin detalle para la oferta %s — se emite con "
+                    "los campos del listado",
+                    job_id or "<sin id>",
+                )
+                enriched.append(doc)
+            if i < len(raw_jobs) - 1:
+                await asyncio.sleep(DETAIL_DELAY_SECONDS)
+        return enriched
 
     @staticmethod
     def _safe_int(value: object) -> int:
@@ -84,7 +184,13 @@ class TheHubProvider(BaseJobProvider):
         company_data = raw.get("company") or {}
         company = (company_data.get("name") or "").strip()
 
-        url = (raw.get("absoluteJobUrl") or "").strip()
+        # La API v2 ya no expone absoluteJobUrl: la URL pública se construye
+        # por `id` (por `key` da 404), validado como ObjectId — un id
+        # inyectado no debe interpolarse en una URL persistida. Sin id válido
+        # → url vacía → _process_raw_jobs descarta la oferta (sin URL no hay
+        # identidad utilizable).
+        job_id = _valid_job_id(raw.get("id"))
+        url = self.PUBLIC_JOB_URL.format(job_id=job_id) if job_id else ""
         description = strip_html_tags(raw.get("description") or "")
 
         # location suele venir {} → toleramos ausencia (location vacío, canton None).
@@ -120,4 +226,9 @@ class TheHubProvider(BaseJobProvider):
             "seniority": None,
             "contract_type": None,
             "employment_type": None,
+            # Fecha del PORTAL: `createdAt` del detalle. Es la fecha de
+            # publicación real — la propia página pública la embebe como
+            # "Posted" con el MISMO valor y el portal ordena "New jobs" por
+            # createdAt (verificado 2026-08-15, VD.9).
+            "published_at": parse_published_at(raw.get("createdAt")),
         }

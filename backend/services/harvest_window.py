@@ -157,6 +157,14 @@ _POLICIES: dict[str, HarvestPolicy] = {
     "publicjobs": HarvestPolicy(WINDOW, "API: publicFrom (ISO8601 Z)"),
     "jobgether": HarvestPolicy(WINDOW, "API: createdAt (ISO8601 Z)"),
     "arbeitnow": HarvestPolicy(WINDOW, "API: created_at (epoch en segundos)"),
+    # Reclasificada de FULL ("INCIERTO: /api/jobs devolvió página de error")
+    # en VD.9: la API real es api.thehub.io y su detalle SÍ trae fecha.
+    "thehub": HarvestPolicy(
+        WINDOW,
+        "API v2 (api.thehub.io): createdAt del detalle (ISO8601 Z) — es la"
+        " fecha de publicación: la página pública lo muestra como 'Posted'"
+        " con el mismo valor (sonda VD.9, 2026-08-15)",
+    ),
     "remotive": HarvestPolicy(WINDOW, "API: publication_date (ISO8601 sin TZ)"),
     "workingnomads": HarvestPolicy(WINDOW, "API: pub_date (ISO8601 con offset)"),
     "weworkremotely": HarvestPolicy(WINDOW, "RSS: pubDate (RFC822)"),
@@ -253,17 +261,29 @@ _POLICIES: dict[str, HarvestPolicy] = {
         "INCIERTO: sin API key no sondeable (doc sugiere job_posted_at_datetime_utc)",
     ),
     "proz": HarvestPolicy(FULL, "INCIERTO: feed muerto/bloqueado en la sonda"),
+    # Feeds RETIRADOS por el portal (VD.6, re-sondeados 2026-08-14) — fuera del
+    # registro de providers. Decisión conservada por si el portal republica.
     "translatorscafe": HarvestPolicy(
-        FULL, "INCIERTO: feed muerto/bloqueado en la sonda"
+        FULL, "RETIRADA VD.6 (2026-08-14): feed eliminado por el portal (404)"
     ),
-    "dailyremote": HarvestPolicy(FULL, "INCIERTO: feed muerto/bloqueado en la sonda"),
-    "authenticjobs": HarvestPolicy(FULL, "INCIERTO: feed muerto/bloqueado en la sonda"),
+    "dailyremote": HarvestPolicy(
+        FULL, "RETIRADA VD.6 (2026-08-14): feed eliminado por el portal (404)"
+    ),
+    "authenticjobs": HarvestPolicy(
+        FULL,
+        "RETIRADA VD.6 (2026-08-14): feed de empleo eliminado; /feed/ es el blog",
+    ),
     "remoteco": HarvestPolicy(FULL, "INCIERTO: feed muerto/bloqueado en la sonda"),
-    "gastrojob": HarvestPolicy(FULL, "INCIERTO: fuente muda hoy, sin sonda posible"),
-    "stelle_admin": HarvestPolicy(FULL, "INCIERTO: fuente muda hoy, sin sonda posible"),
-    "thehub": HarvestPolicy(
-        FULL, "INCIERTO: /api/jobs devolvió página de error en la sonda"
+    # Reclasificada de FULL ("INCIERTO: fuente muda hoy, sin sonda posible")
+    # en VD.4b: el endpoint AJAX del listado imprime la primera activación de
+    # cada anuncio y el detalle la confirma como datePosted de la microdata.
+    "gastrojob": HarvestPolicy(
+        WINDOW,
+        "listado AJAX: 'Erstmals aktiviert: DD.MM.YYYY (HH:MM)' hora suiza,"
+        " confirmado por meta[itemprop=datePosted] (YYYY-MM-DD) del detalle"
+        " schema.org/JobPosting (sonda VD.4b, 2026-08-15)",
     ),
+    "stelle_admin": HarvestPolicy(FULL, "INCIERTO: fuente muda hoy, sin sonda posible"),
     "myscience": HarvestPolicy(
         FULL, "INCIERTO: viva pero la sonda quedó bloqueada sin la capa stealth"
     ),
@@ -302,6 +322,11 @@ SOURCES_DECIDED_IN_ADVANCE: frozenset[str] = frozenset(
         "impactpool",
         "untalent",
         "medjobs",
+        # Feeds retirados por el portal (VD.6, 2026-08-14): sacadas del
+        # registro de providers, política conservada por si republican.
+        "authenticjobs",
+        "dailyremote",
+        "translatorscafe",
     }
 )
 

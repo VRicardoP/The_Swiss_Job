@@ -392,6 +392,189 @@ class TestUpsertContentVersioning:
 
 
 @pytest.mark.anyio
+class TestUpsertDescription:
+    """VD.9/H2: una description vacía entrante NO pisa una existente no vacía."""
+
+    async def test_reupsert_with_empty_description_preserves_stored(self, db_session):
+        """Un fallo parcial del detalle (p. ej. thehub) emite la re-vista con
+        description="" — sin el COALESCE (patrón published_at + NULLIF) la
+        description buena se perdía, cambiaba el content_hash y el embedding
+        pasaba a NULL para re-embeberse sobre texto vacío (matching
+        degradado) y otra vez al recuperarse el detalle. Se comprueba que la
+        description se conserva Y que el embedding NO se invalida (el texto
+        efectivo de la fila no ha cambiado)."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(_job_dict(description="Good detailed text"))
+        await db_session.commit()
+        # Simular el embedding ya generado por el pipeline.
+        await db_session.execute(
+            update(Job).where(Job.hash == h).values(embedding=[0.6] * 384)
+        )
+        await db_session.commit()
+
+        # Re-vista degradada: el detalle falló y llega sin description.
+        await repo.upsert_job(_job_dict(description="", description_snippet=None))
+        await db_session.commit()
+
+        row = (
+            await db_session.execute(
+                select(Job.description, Job.embedding).where(Job.hash == h)
+            )
+        ).one()
+        assert row.description == "Good detailed text"  # conservada, no ""
+        assert row.embedding is not None  # sin churn de re-embed
+
+    async def test_reupsert_with_new_description_still_updates(self, db_session):
+        """El COALESCE solo protege contra el vacío entrante: una description
+        no vacía fresca sigue refrescando la fila (PF.1 intacto)."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(_job_dict(description="v1"))
+        await db_session.commit()
+
+        await repo.upsert_job(_job_dict(description="v2"))
+        await db_session.commit()
+
+        stored = (
+            await db_session.execute(select(Job.description).where(Job.hash == h))
+        ).scalar_one()
+        assert stored == "v2"
+
+
+@pytest.mark.anyio
+class TestUpsertDegradedRevisit:
+    """VD.9/V2-1: la re-vista degradada (detalle fallido, p. ej. thehub) no
+    debe machacar snippet, tags ni location/canton — la protección de la ronda
+    anterior solo cubría description. Réplica de la matriz C5/C9/C10 ejecutada
+    contra BD real."""
+
+    async def test_c9_degraded_revisit_preserves_tags_and_embedding(self, db_session):
+        """C9: las tags salen de extract_job_skills(title, description) — un
+        detalle fallido las degrada a []. Señal (description entrante vacía Y
+        tags entrantes vacías) ⇒ conservar Job.tags y NO invalidar el
+        embedding: sin esto había re-embed sobre tags degradadas y OTRO
+        re-embed al recuperarse el detalle."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(
+            _job_dict(
+                description="Fluent in English and Spanish", tags=["english", "spanish"]
+            )
+        )
+        await db_session.commit()
+        await db_session.execute(
+            update(Job).where(Job.hash == h).values(embedding=[0.7] * 384)
+        )
+        await db_session.commit()
+
+        # Re-vista degradada: sin detalle no hay description ⇒ tags a [].
+        await repo.upsert_job(
+            _job_dict(description="", description_snippet=None, tags=[])
+        )
+        await db_session.commit()
+
+        row = (
+            await db_session.execute(
+                select(Job.tags, Job.embedding).where(Job.hash == h)
+            )
+        ).one()
+        assert row.tags == ["english", "spanish"]  # conservadas, no []
+        assert row.embedding is not None  # sin churn de re-embed
+
+    async def test_c9_empty_tags_with_real_description_still_update(self, db_session):
+        """La señal exige AMBOS vacíos: con description entrante real, unas
+        tags vacías son un re-cálculo legítimo y SÍ pisan — ninguna fuente
+        pierde la capacidad de vaciar tags con texto presente."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(_job_dict(description="Some text", tags=["python"]))
+        await db_session.commit()
+
+        await repo.upsert_job(_job_dict(description="Some text", tags=[]))
+        await db_session.commit()
+
+        stored = (
+            await db_session.execute(select(Job.tags).where(Job.hash == h))
+        ).scalar_one()
+        assert stored == []
+
+    async def test_c5_degraded_revisit_preserves_snippet(self, db_session):
+        """C5: el snippet entrante degradado llega como NULL (_snippet("") →
+        None) y machacaba el snippet bueno — la UI perdía el extracto hasta el
+        siguiente run sano."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(
+            _job_dict(
+                description="Good detailed text",
+                description_snippet="Good detailed text",
+            )
+        )
+        await db_session.commit()
+
+        await repo.upsert_job(_job_dict(description="", description_snippet=None))
+        await db_session.commit()
+
+        stored = (
+            await db_session.execute(
+                select(Job.description_snippet).where(Job.hash == h)
+            )
+        ).scalar_one()
+        assert stored == "Good detailed text"  # conservado, no NULL
+
+    async def test_c10_degraded_revisit_preserves_location_and_canton(self, db_session):
+        """C10: el listado v2 sin detalle trae location {} ⇒ location "" y
+        canton None machacaban la ubicación buena (canton alimenta filtros)."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(_job_dict(location="Zurich, ZH", canton="ZH"))
+        await db_session.commit()
+
+        await repo.upsert_job(
+            _job_dict(
+                description="", description_snippet=None, location="", canton=None
+            )
+        )
+        await db_session.commit()
+
+        row = (
+            await db_session.execute(
+                select(Job.location, Job.canton).where(Job.hash == h)
+            )
+        ).one()
+        assert row.location == "Zurich, ZH"
+        assert row.canton == "ZH"
+
+    async def test_c10_real_location_updates_and_canton_follows(self, db_session):
+        """Decisión V2-1: una location entrante REAL siempre pasa (reubicación
+        legítima) y entonces el canton entrante manda AUNQUE sea None — mejor
+        sin cantón que un cantón obsoleto de la ubicación anterior."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(_job_dict(location="Zurich, ZH", canton="ZH"))
+        await db_session.commit()
+
+        await repo.upsert_job(_job_dict(location="Remote (Europe)", canton=None))
+        await db_session.commit()
+
+        row = (
+            await db_session.execute(
+                select(Job.location, Job.canton).where(Job.hash == h)
+            )
+        ).one()
+        assert row.location == "Remote (Europe)"
+        assert row.canton is None  # el canton entrante manda con location real
+
+
+@pytest.mark.anyio
 class TestUpsertPublishedAt:
     """V.1 / ADR-10: el re-upsert sin fecha NO borra la fecha ya conocida."""
 

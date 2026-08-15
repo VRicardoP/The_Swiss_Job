@@ -11,13 +11,19 @@ from services.job_service import BaseJobProvider
 
 class TestProviderRegistry:
     def test_get_provider_names_registered(self):
-        # 23 providers "clásicos" (20 + 3 remoto UE-norte: thehub/jobgether/
-        # nav_arbeidsplassen) + 5 fuentes RESTRINGIDAS (restricted_ready) = 28.
+        # 20 providers "clásicos" (17 + 3 remoto UE-norte: thehub/jobgether/
+        # nav_arbeidsplassen) + 5 fuentes RESTRINGIDAS (restricted_ready) = 25.
         # jobicy/remoteok/himalayas/ictjobs/swisstechjobs están desactivados a
-        # propósito (tech-only). Las restringidas se registran pero arrancan
-        # deshabilitadas (gated por credencial de partner).
+        # propósito (tech-only); authenticjobs/dailyremote/translatorscafe
+        # retirados en VD.6 (2026-08-14): sus feeds ya no existen en el portal.
+        # Las restringidas se registran pero arrancan deshabilitadas (gated
+        # por credencial de partner).
         names = get_provider_names()
-        assert len(names) == 28
+        assert len(names) == 25
+        # Las retiradas de VD.6 NO deben reaparecer sin decisión explícita.
+        assert "authenticjobs" not in names
+        assert "dailyremote" not in names
+        assert "translatorscafe" not in names
         assert "remotive" in names
         assert "jooble" in names
         assert "careerjet" in names
@@ -75,7 +81,7 @@ class TestProviderRegistry:
 
     def test_log_provider_status_returns_all_providers(self):
         status = log_provider_status()
-        assert len(status) == 28
+        assert len(status) == 25
         # Free providers should be enabled
         assert status["remotive"] == "enabled"
         assert status["arbeitnow"] == "enabled"

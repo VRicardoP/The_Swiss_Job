@@ -1,11 +1,13 @@
 """Tests for all 7 scraper normalize_job + parse_listing_page methods."""
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from bs4 import BeautifulSoup
 
 from scrapers.financejobs import FinancejobsScraper
 from scrapers.gastrojob import GastrojobScraper
+from scrapers.gastrojob import _resolve_job_url as _resolve_gastrojob_url
 from scrapers.medjobs import MedJobsScraper
 from scrapers.myscience import MyScienceScraper
 from scrapers.schuljobs import SchulJobsScraper
@@ -119,7 +121,24 @@ class TestFinancejobsScraper:
     def test_source_name(self):
         assert FinancejobsScraper().get_source_name() == "financejobs"
 
-    def test_parse_listing_page_from_next_data(self):
+    def test_parse_listing_page_current_structure(self):
+        """Estructura ACTUAL de Next.js: props.pageProps.jobsSSR (sin
+        initialProps). Fixture capturado en vivo el 2026-08-14 (VD.7) — con la
+        ruta antigua este parseo devolvía SIEMPRE lista vacía."""
+        html = (FIXTURES / "financejobs_listing_current.html").read_text()
+        soup = BeautifulSoup(html, "lxml")
+        stubs = FinancejobsScraper().parse_listing_page(soup)
+        assert len(stubs) == 3
+        assert stubs[0]["title"] == "Junior Data Analyst im Controlling"
+        assert stubs[0]["company"] == "PharmaFocus AG"
+        assert stubs[0]["url"].endswith("/de/job/14697110")
+        # El datePosted del portal debe llegar al stub (alimenta published_at).
+        assert stubs[0]["date_posted"] == "2026-08-14T16:32:34+00:00"
+
+    def test_parse_listing_page_legacy_structure(self):
+        """Tolerancia a la estructura HISTÓRICA (props.initialProps.pageProps):
+        Next.js ya cambió la forma una vez y puede revertirla. Un arreglo
+        ingenuo que solo mueva la ruta rompería este fixture."""
         html = (FIXTURES / "financejobs_listing.html").read_text()
         soup = BeautifulSoup(html, "lxml")
         stubs = FinancejobsScraper().parse_listing_page(soup)
@@ -130,9 +149,234 @@ class TestFinancejobsScraper:
         assert "/de/job/1846066401" in stubs[0]["url"]
         assert stubs[0]["salary_original"] == "120000-150000 CHF"
 
-    def test_parse_listing_page_no_next_data(self):
-        soup = BeautifulSoup("<html><body></body></html>", "lxml")
+    def test_normalize_publishes_aware_datetime(self):
+        """El published_at (datePosted, VD.7) deja de ser código muerto: con el
+        fixture real debe salir timezone-aware para la ventana de cosecha."""
+        html = (FIXTURES / "financejobs_listing_current.html").read_text()
+        soup = BeautifulSoup(html, "lxml")
+        stubs = FinancejobsScraper().parse_listing_page(soup)
+        result = FinancejobsScraper().normalize_job(stubs[0])
+        assert result["published_at"] is not None
+        assert result["published_at"].tzinfo is not None
+
+    def test_unknown_structure_records_fetch_issue(self):
+        """Si NINGUNA ruta conocida hacia jobsSSR existe, el fallo debe ser
+        VISIBLE (error de fetch), no un "0 ofertas" silencioso — el bucle
+        exacto que apagó esta fuente (VD.7)."""
+        from utils import fetch_diagnostics as diag
+
+        payload = '{"props": {"pageProps": {"otraCosa": 1}, "__N_SSP": true}}'
+        html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            f"{payload}</script></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
         assert FinancejobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "jobsSSR" in issues[0].detail
+
+    def test_parse_listing_page_no_next_data(self):
+        """Sin __NEXT_DATA__ tampoco hay "vacío legítimo": se registra fallo."""
+        from utils import fetch_diagnostics as diag
+
+        soup = BeautifulSoup("<html><body></body></html>", "lxml")
+        diag.begin()
+        assert FinancejobsScraper().parse_listing_page(soup) == []
+        assert len(diag.issues()) == 1
+
+    def test_empty_jobs_ssr_is_legitimate_empty(self):
+        """jobsSSR presente con 0 ofertas ⇒ vacío legítimo, SIN fallo de fetch."""
+        from utils import fetch_diagnostics as diag
+
+        payload = '{"props": {"pageProps": {"jobsSSR": {"jobs": []}}, "__N_SSP": true}}'
+        html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            f"{payload}</script></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert FinancejobsScraper().parse_listing_page(soup) == []
+        assert diag.issues() == []
+
+    def test_null_jobs_records_fetch_issue(self):
+        """jobsSSR.jobs = null NO es "0 ofertas": sin guard de tipo lanzaba
+        TypeError ('NoneType' is not iterable) que escapaba hasta
+        scraping_tasks y dejaba el run SIN clasificar en source_health."""
+        from utils import fetch_diagnostics as diag
+
+        payload = (
+            '{"props": {"pageProps": {"jobsSSR": {"jobs": null}}, "__N_SSP": true}}'
+        )
+        html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            f"{payload}</script></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert FinancejobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "jobsSSR.jobs" in issues[0].detail
+
+    def test_non_list_jobs_records_fetch_issue(self):
+        """jobsSSR.jobs con tipo inesperado (una cadena) es estructura
+        desconocida: sin guard se iteraba carácter a carácter y salía []
+        con 0 issues ⇒ veredicto `empty` falso."""
+        from utils import fetch_diagnostics as diag
+
+        payload = (
+            '{"props": {"pageProps": {"jobsSSR": {"jobs": "oops"}}, "__N_SSP": true}}'
+        )
+        html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            f"{payload}</script></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert FinancejobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "jobsSSR.jobs" in issues[0].detail
+
+    def test_missing_jobs_key_records_fetch_issue(self):
+        """jobsSSR presente pero SIN la clave `jobs` no es vacío legítimo: en
+        el portal real `jobs` existe siempre (sonda 2026-08-14), así que su
+        ausencia es estructura desconocida y debe ser VISIBLE."""
+        from utils import fetch_diagnostics as diag
+
+        payload = (
+            '{"props": {"pageProps": {"jobsSSR": {"resultCount": 0}}, "__N_SSP": true}}'
+        )
+        html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            f"{payload}</script></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert FinancejobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "jobsSSR.jobs" in issues[0].detail
+
+    def test_non_object_next_data_records_fetch_issue(self):
+        """__NEXT_DATA__ con JSON válido pero no-objeto (una lista): sin guard,
+        _extract_jobs_ssr lanzaba AttributeError no capturado con la misma
+        invisibilidad en source_health que el caso jobs=null."""
+        from utils import fetch_diagnostics as diag
+
+        html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            "[1, 2, 3]</script></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert FinancejobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "__NEXT_DATA__" in issues[0].detail
+
+    def test_null_location_keeps_offer(self):
+        """`location: null` es JSON perfectamente normal (oferta sin
+        ubicación) y la clave EXISTE, así que `job.get("location", "")`
+        devolvía None y el `.strip()` tumbaba la página ENTERA con
+        AttributeError que escapaba hasta scraping_tasks (run sin veredicto).
+        La oferta debe CONSERVARSE con ubicación vacía, sin fallo de fetch."""
+        from utils import fetch_diagnostics as diag
+
+        payload = (
+            '{"props": {"pageProps": {"jobsSSR": {"jobs": ['
+            '{"jobId": "111", "title": "Analyst", "companyName": "UBS",'
+            ' "location": null, "description": "Bank job"}'
+            ']}}, "__N_SSP": true}}'
+        )
+        html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            f"{payload}</script></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        stubs = FinancejobsScraper().parse_listing_page(soup)
+        assert len(stubs) == 1
+        assert stubs[0]["location"] == ""
+        assert stubs[0]["title"] == "Analyst"
+        assert diag.issues() == []
+
+    def test_non_string_field_degrades_offer_not_page(self):
+        """Un campo de texto con tipo inesperado (companyName numérico)
+        reventaba en `.strip()` y una sola oferta rara tumbaba la página
+        entera. Debe degradar SOLO ese campo: la oferta sobrevive con el
+        fallback "Unknown"."""
+        from utils import fetch_diagnostics as diag
+
+        payload = (
+            '{"props": {"pageProps": {"jobsSSR": {"jobs": ['
+            '{"jobId": "222", "title": "Controller", "companyName": 12345,'
+            ' "location": "Zug"}'
+            ']}}, "__N_SSP": true}}'
+        )
+        html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            f"{payload}</script></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        stubs = FinancejobsScraper().parse_listing_page(soup)
+        assert len(stubs) == 1
+        assert stubs[0]["company"] == "Unknown"
+        assert diag.issues() == []
+
+    def test_no_parseable_offers_records_fetch_issue(self):
+        """`jobs` NO vacía de la que no sale ni un stub (p. ej. el portal
+        renombró `title` → `jobTitle`): todo caía en los `continue`
+        silenciosos y el run salía `empty` con 0 issues — el bug original
+        de VD.7 con otra ropa. Debe ser VISIBLE como fallo de estructura."""
+        from utils import fetch_diagnostics as diag
+
+        payload = (
+            '{"props": {"pageProps": {"jobsSSR": {"jobs": ["raro", "raro2"]}},'
+            ' "__N_SSP": true}}'
+        )
+        html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            f"{payload}</script></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert FinancejobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "ninguno es parseable" in issues[0].detail
+
+    def test_partially_degraded_page_keeps_good_offer(self):
+        """Degradación PARCIAL (1 oferta buena + 1 con title no-string): la
+        buena se devuelve y NO se registra fallo de estructura — con >=1 stub
+        el run sigue siendo `ok`, no `error`."""
+        from utils import fetch_diagnostics as diag
+
+        payload = (
+            '{"props": {"pageProps": {"jobsSSR": {"jobs": ['
+            '{"jobId": "333", "title": "Risk Manager", "companyName": "CS",'
+            ' "location": "Basel"},'
+            '{"jobId": "444", "title": {"weird": true}, "companyName": "X"}'
+            ']}}, "__N_SSP": true}}'
+        )
+        html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            f"{payload}</script></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        stubs = FinancejobsScraper().parse_listing_page(soup)
+        assert len(stubs) == 1
+        assert stubs[0]["title"] == "Risk Manager"
+        assert diag.issues() == []
+
+    def test_page_size_matches_portal(self):
+        """El portal pagina de 10 en 10 (jobsSSR.pageSize, sonda 2026-08-14);
+        con PAGE_SIZE=20 el motor cortaba la paginación tras la página 1."""
+        assert FinancejobsScraper.PAGE_SIZE == 10
 
     def test_normalize_job(self):
         raw = {
@@ -170,26 +414,411 @@ class TestGastrojobScraper:
     def test_source_name(self):
         assert GastrojobScraper().get_source_name() == "gastrojob"
 
-    def test_parse_listing_page(self):
-        html = (FIXTURES / "gastrojob_listing.html").read_text()
+    def test_parse_listing_page_ajax_fragment(self):
+        """Fragmento REAL del endpoint AJAX (capturado 2026-08-15, VD.4b):
+        10 ofertas por página. El scraper anterior (selectores .job-item /
+        .stellenangebot / hrefs /stelle/) devolvía 0 stubs contra este DOM."""
+        html = (FIXTURES / "gastrojob_listing_ajax_p1.html").read_text()
         soup = BeautifulSoup(html, "lxml")
         stubs = GastrojobScraper().parse_listing_page(soup)
-        assert len(stubs) == 2
-        assert "Küchenchef" in stubs[0]["title"]
-        assert stubs[0]["company"] == "Hotel Bellevue"
-        assert stubs[0]["location"] == "Bern"
+        assert len(stubs) == 10
+        first = stubs[0]
+        assert first["title"] == "Pâtissier(ère)"
+        assert first["company"] == "Cinq Sens Sàrl"
+        assert first["location"] == "Neuenburg"
+        assert first["employment_type"] == "Teilzeit/Vollzeit"
+        # href relativo del fragmento resuelto con urljoin sobre BASE_URL.
+        assert first["url"] == "https://www.gastrojob.ch/stellen/stelleninserat/55327"
+        assert first["detail_url"] == first["url"]
+        assert first["source_id"] == "55327"
+        # "Erstmals aktiviert: 14.08.2026 (14:08)" — hora suiza (CEST = +02:00).
+        assert first["date_posted"] == "2026-08-14T14:08:00+02:00"
+        # Jornada vacía (" bei Landgasthaus... in Aargau") degrada SOLO ese campo.
+        koch = next(s for s in stubs if s["source_id"] == "55246")
+        assert koch["employment_type"] is None
+        assert koch["company"] == "Landgasthaus zum Hirschen AG"
+        assert koch["location"] == "Aargau"
+        # Ninguna oferta puede salir con la URL base (la colisión de VD.1).
+        assert all(s["url"].rstrip("/") != "https://www.gastrojob.ch" for s in stubs)
 
-    def test_parse_listing_page_empty(self):
-        html = "<html><body><div>0 Stellen gefunden</div></body></html>"
+    def test_parse_listing_page_ajax_p2_ofertas_distintas(self):
+        """La página 2 real trae otras 10 ofertas: la paginación del endpoint
+        AJAX cambia el contenido de verdad (no repite la página 1)."""
+        p1 = (FIXTURES / "gastrojob_listing_ajax_p1.html").read_text()
+        p2 = (FIXTURES / "gastrojob_listing_ajax_p2.html").read_text()
+        stubs_p1 = GastrojobScraper().parse_listing_page(BeautifulSoup(p1, "lxml"))
+        stubs_p2 = GastrojobScraper().parse_listing_page(BeautifulSoup(p2, "lxml"))
+        assert len(stubs_p2) == 10
+        assert {s["url"] for s in stubs_p1}.isdisjoint(s["url"] for s in stubs_p2)
+
+    def test_hrefs_no_utilizables_descartados(self):
+        """Una oferta sin URL propia no es utilizable (regla de stelle_admin,
+        VD.1) y el host se valida para no abrir un bypass: href vacío,
+        protocolo-relativo a host ajeno, esquema no-http, userinfo, backslash
+        (diferencial urllib/WHATWG) y paths ajenos ⇒ None."""
+        assert _resolve_gastrojob_url("") is None
+        assert _resolve_gastrojob_url(None) is None
+        assert _resolve_gastrojob_url("//evil.com/stellen/stelleninserat/1") is None
+        assert _resolve_gastrojob_url("javascript:alert(1)") is None
+        assert (
+            _resolve_gastrojob_url(
+                "https://x@www.gastrojob.ch/stellen/stelleninserat/2"
+            )
+            is None
+        )
+        assert (
+            _resolve_gastrojob_url(
+                "https://evil.com\\@www.gastrojob.ch/stellen/stelleninserat/3"
+            )
+            is None
+        )
+        # Caso load-bearing del `\` SIN `@` (VD.4b H2): urllib parsea el
+        # hostname como "evil.com\.gastrojob.ch", que TERMINA en
+        # ".gastrojob.ch" y pasaría el check de host; un navegador WHATWG
+        # corta el netloc en `\` y navegaría a evil.com. El caso con `@` de
+        # arriba NO fija la defensa del backslash (lo caza el check de
+        # userinfo); este sí.
+        assert (
+            _resolve_gastrojob_url(
+                "https://evil.com\\.gastrojob.ch/stellen/stelleninserat/1"
+            )
+            is None
+        )
+        # Path que no es una oferta: portada, listado, id no numérico.
+        assert _resolve_gastrojob_url("/") is None
+        assert _resolve_gastrojob_url("/stellen") is None
+        assert _resolve_gastrojob_url("/stellen/stelleninserat/abc") is None
+        # Control: el href legítimo del fixture resuelve a URL + source_id.
+        assert _resolve_gastrojob_url("/stellen/stelleninserat/55327") == (
+            "https://www.gastrojob.ch/stellen/stelleninserat/55327",
+            "55327",
+        )
+
+    def test_hrefs_maliciosos_no_emiten_stub(self):
+        """Extremo a extremo: hrefs de ataque que SÍ casan con el selector de
+        ítems no emiten stub; el legítimo del mismo fragmento sobrevive."""
+        html = """
+        <div data-mxn-advertisements-count="4"></div>
+        <a href="//evil.com/stellen/stelleninserat/1">
+          <article class="row column"><div><h2>Phishing Koch</h2></div></article>
+        </a>
+        <a href="javascript:alert(1)//stellen/stelleninserat/2">
+          <article class="row column"><div><h2>XSS Kellner</h2></div></article>
+        </a>
+        <a href="https://x@www.gastrojob.ch/stellen/stelleninserat/3">
+          <article class="row column"><div><h2>Spoof Chef</h2></div></article>
+        </a>
+        <a href="/stellen/stelleninserat/55327">
+          <article class="row column"><div>
+            <h2>Pâtissier(ère)</h2>
+            <div class="description">Teilzeit bei Cinq Sens Sàrl in Neuenburg</div>
+          </div></article>
+        </a>
+        """
         soup = BeautifulSoup(html, "lxml")
+        stubs = GastrojobScraper().parse_listing_page(soup)
+        assert len(stubs) == 1
+        assert (
+            stubs[0]["url"] == "https://www.gastrojob.ch/stellen/stelleninserat/55327"
+        )
+
+    def test_href_malformado_no_revienta_la_pagina(self):
+        """VD.4b H1: un `[` en posición de autoridad hace que urlsplit lance
+        ValueError ("Invalid IPv6 URL"). Sin captura, la excepción escapa de
+        parse_listing_page → scraper_engine → scraping_tasks saltándose
+        diag.classify y source_health: el run se queda sin veredicto. Un href
+        malformado debe degradar ESA oferta, nunca la página ni el run."""
+        assert _resolve_gastrojob_url("//[evil/stellen/stelleninserat/1") is None
+        # Extremo a extremo: el href malformado casa con el selector de ítems
+        # pero no revienta el parseo; el legítimo del mismo fragmento vive.
+        html = """
+        <div data-mxn-advertisements-count="2"></div>
+        <a href="//[evil/stellen/stelleninserat/1">
+          <article class="row column"><div><h2>Crash Koch</h2></div></article>
+        </a>
+        <a href="/stellen/stelleninserat/55327">
+          <article class="row column"><div><h2>Pâtissier(ère)</h2></div></article>
+        </a>
+        """
+        stubs = GastrojobScraper().parse_listing_page(BeautifulSoup(html, "lxml"))
+        assert len(stubs) == 1
+        assert stubs[0]["source_id"] == "55327"
+
+    def test_url_emitida_canonica(self):
+        """VD.4b H4: la URL emitida se RECONSTRUYE canónica (esquema y host
+        fijos, sin query/fragment/puerto) porque el hash de dedup
+        (title|company|url) e ix_jobs_url comparan la URL literal: un
+        `?tracking=` del portal crearía una fila nueva por oferta. Y el id se
+        restringe a [0-9]: `\\d` casa dígitos unicode (٢١)."""
+        canonical = (
+            "https://www.gastrojob.ch/stellen/stelleninserat/55327",
+            "55327",
+        )
+        assert _resolve_gastrojob_url("/stellen/stelleninserat/55327?x=1") == canonical
+        assert _resolve_gastrojob_url("/stellen/stelleninserat/55327#frag") == canonical
+        assert (
+            _resolve_gastrojob_url("https://GASTROJOB.CH/stellen/stelleninserat/55327")
+            == canonical
+        )
+        assert (
+            _resolve_gastrojob_url(
+                "https://gastrojob.ch:8443/stellen/stelleninserat/55327"
+            )
+            == canonical
+        )
+        # Dígitos árabes-índicos (U+0662 U+0661): un id no-ASCII nunca es una
+        # oferta del portal y no debe emitirse tal cual.
+        assert _resolve_gastrojob_url("/stellen/stelleninserat/٢١") is None
+
+    def test_href_duplicado_emite_un_solo_stub(self):
+        """VD.4b H6: el mismo href repetido en el fragmento (p. ej. un anuncio
+        destacado que también sale en el listado) debe emitir UN solo stub —
+        dos filas con la misma URL colisionarían en ix_jobs_url dentro del
+        mismo lote (la colisión exacta de stelle_admin/VD.1)."""
+        html = """
+        <div data-mxn-advertisements-count="2"></div>
+        <a href="/stellen/stelleninserat/55327">
+          <article class="row column"><div><h2>Pâtissier(ère)</h2></div></article>
+        </a>
+        <a href="/stellen/stelleninserat/55327">
+          <article class="row column"><div><h2>Pâtissier(ère)</h2></div></article>
+        </a>
+        """
+        stubs = GastrojobScraper().parse_listing_page(BeautifulSoup(html, "lxml"))
+        assert len(stubs) == 1
+
+    def test_pagina_fuera_de_rango_tras_pagina_valida_no_registra_issue(self):
+        """VD.4b H5: una página fuera de rango devuelve el contador TOTAL
+        (1104) con 0 ítems — indistinguible de "estructura desconocida"
+        mirando solo esa página. Si una página anterior del MISMO run ya se
+        parseó bien, es fin de paginación legítimo: sin falso fetch-issue."""
+        from utils import fetch_diagnostics as diag
+
+        scraper = GastrojobScraper()
+        p1 = (FIXTURES / "gastrojob_listing_ajax_p1.html").read_text()
+        diag.begin()
+        assert len(scraper.parse_listing_page(BeautifulSoup(p1, "lxml"))) == 10
+        fuera_de_rango = '<div data-mxn-advertisements-count="1104"></div>'
+        assert scraper.parse_listing_page(BeautifulSoup(fuera_de_rango, "lxml")) == []
+        assert diag.issues() == []
+
+    def test_markup_sin_contador_tras_pagina_valida_registra_issue(self):
+        """VD.4b r2-H1: el guard de fin de paginación solo puede silenciar
+        fragmentos CON contador — la página fuera de rango real siempre lo
+        trae. Un markup totalmente desconocido y SIN contador tras una página
+        buena es un cambio de estructura a mitad de run: fallo VISIBLE, no
+        fin de paginación."""
+        from utils import fetch_diagnostics as diag
+
+        scraper = GastrojobScraper()
+        p1 = (FIXTURES / "gastrojob_listing_ajax_p1.html").read_text()
+        diag.begin()
+        assert len(scraper.parse_listing_page(BeautifulSoup(p1, "lxml"))) == 10
+        desconocido = "<html><body><div class='otro-markup'>x</div></body></html>"
+        assert scraper.parse_listing_page(BeautifulSoup(desconocido, "lxml")) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "estructura desconocida" in issues[0].detail
+
+    async def test_flag_de_estructura_se_rearma_entre_runs(self):
+        """VD.4b r2-H2: _structure_seen_ok se rearma en el override de
+        fetch_jobs porque las instancias se reutilizan entre cosechas. Sin el
+        rearme, el éxito del run 1 silenciaría en el run 2 una página 1 rota
+        (contador 1104, 0 ítems) — exactamente la clase de fallo invisible
+        que VD.4b vino a cerrar."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from utils import fetch_diagnostics as diag
+
+        scraper = GastrojobScraper()
+        scraper._pre_check = AsyncMock(return_value=True)
+        scraper._reset_compliance_blocks = AsyncMock()
+        # Solo el listado importa para el flag: sin detalle y sin pausas.
+        scraper.FETCH_DETAILS = False
+        scraper.RATE_LIMIT_SECONDS = 0.01
+
+        def _resp(html: str) -> MagicMock:
+            response = MagicMock()
+            response.status_code = 200
+            response.text = html
+            return response
+
+        p1 = (FIXTURES / "gastrojob_listing_ajax_p1.html").read_text()
+        fuera_de_rango = '<div data-mxn-advertisements-count="1104"></div>'
+
+        # Run 1: página 1 buena + fuera de rango ⇒ 10 ofertas y 0 issues.
+        diag.begin()
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            side_effect=[_resp(p1), _resp(fuera_de_rango)],
+        ):
+            assert len(await scraper.fetch_jobs("")) == 10
+        assert diag.issues() == []
+
+        # Run 2 (MISMA instancia): la página 1 llega rota. El rearme obliga a
+        # registrar el fallo; sin él quedaría silenciado por el run 1.
+        diag.begin()
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            side_effect=[_resp(fuera_de_rango)],
+        ):
+            assert await scraper.fetch_jobs("") == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "1104" in issues[0].detail
+
+    def test_published_at_aware_desde_hora_suiza(self):
+        """El listado imprime la hora LOCAL suiza sin zona: 14:08 CEST debe
+        salir como 12:08 UTC timezone-aware, no asumirse UTC (±1-2 h)."""
+        html = (FIXTURES / "gastrojob_listing_ajax_p1.html").read_text()
+        soup = BeautifulSoup(html, "lxml")
+        stubs = GastrojobScraper().parse_listing_page(soup)
+        result = GastrojobScraper().normalize_job(stubs[0])
+        assert result["published_at"] is not None
+        assert result["published_at"].tzinfo is not None
+        assert result["published_at"] == datetime(
+            2026, 8, 14, 12, 8, tzinfo=timezone.utc
+        )
+
+    def test_fecha_con_digitos_unicode_no_casa(self):
+        """VD.4b r2-H3: misma regla que la URL canónica — `\\d` casa dígitos
+        unicode (١٤.٠٨) que el portal nunca imprime; el patrón de fecha se
+        restringe a [0-9] para no fabricar un published_at a partir de una
+        entrada que no es del portal."""
+        from scrapers.gastrojob import _parse_erstmals_aktiviert
+
+        # Dígitos árabes-índicos en día/mes: no debe casar (con `\\d` casaba
+        # y producía "2026-08-14T14:08:00+02:00" vía int()).
+        assert (
+            _parse_erstmals_aktiviert("Erstmals aktiviert: ١٤.٠٨.2026 (14:08)") is None
+        )
+        # Control: la forma real del portal sigue casando.
+        assert (
+            _parse_erstmals_aktiviert("Erstmals aktiviert: 14.08.2026 (14:08)")
+            == "2026-08-14T14:08:00+02:00"
+        )
+
+    def test_parse_job_detail_microdata(self):
+        """Detalle REAL (captura 2026-08-15): microdata schema.org/JobPosting
+        con descripción, datePosted, empresa canónica y localidad."""
+        html = (FIXTURES / "gastrojob_detail.html").read_text()
+        soup = BeautifulSoup(html, "lxml")
+        detail = GastrojobScraper().parse_job_detail(soup)
+        assert "pâtissier(ère)" in detail["description"].lower()
+        assert detail["detail_date_posted"] == "2026-08-14"
+        assert detail["detail_company"] == "Cinq Sens Sàrl"
+        assert detail["address_locality"] == "Fontaines"
+
+    def test_normalize_combina_listado_y_detalle(self):
+        """La empresa del LISTADO manda (identidad estable aunque el detalle
+        falle un run); la localidad del detalle se combina con el cantón del
+        listado sin perder la extracción de cantón."""
+        raw = {
+            "title": "Pâtissier(ère)",
+            "company": "Cinq Sens Sàrl",
+            "location": "Neuenburg",
+            "url": "https://www.gastrojob.ch/stellen/stelleninserat/55327",
+            "detail_company": "Otra Empresa SA",
+            "address_locality": "Fontaines",
+        }
+        result = GastrojobScraper().normalize_job(raw)
+        _assert_normalized(result, "gastrojob")
+        assert result["company"] == "Cinq Sens Sàrl"
+        assert result["location"] == "Fontaines, Neuenburg"
+        assert result["canton"] == "NE"
+
+    def test_normalize_fecha_cae_al_datePosted_del_detalle(self):
+        """Sin fecha en el listado, el meta[itemprop=datePosted] del detalle
+        (solo YYYY-MM-DD) sigue produciendo published_at timezone-aware."""
+        raw = {
+            "title": "Koch",
+            "company": "X",
+            "url": "https://www.gastrojob.ch/stellen/stelleninserat/1",
+            "detail_date_posted": "2026-08-14",
+        }
+        result = GastrojobScraper().normalize_job(raw)
+        assert result["published_at"] == datetime(2026, 8, 14, tzinfo=timezone.utc)
+
+    def test_estructura_desconocida_registra_fetch_issue(self):
+        """Respuesta 200 NO vacía en la que el parseo no reconoce NADA (ni el
+        contador de anuncios): estructura desconocida, no '0 ofertas' — el
+        bucle exacto que apagó esta fuente (selectores obsoletos ⇒ 0 stubs ⇒
+        soft-block ⇒ kill-switch, VD.4b)."""
+        from utils import fetch_diagnostics as diag
+
+        html = "<html><body><div class='otra-cosa'>contenido</div></body></html>"
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
         assert GastrojobScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "estructura desconocida" in issues[0].detail
+
+    def test_contador_a_cero_es_vacio_legitimo(self):
+        """El contador real del fragmento a 0 ⇒ vacío legítimo, SIN issue."""
+        from utils import fetch_diagnostics as diag
+
+        html = '<div data-mxn-advertisements-count="0"></div>'
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert GastrojobScraper().parse_listing_page(soup) == []
+        assert diag.issues() == []
+
+    def test_contador_anuncia_ofertas_sin_stub_registra_issue(self):
+        """El portal anuncia ofertas pero ningún ítem es reconocible (p. ej.
+        cambió la forma de los <a>): fallo VISIBLE, no `empty` silencioso."""
+        from utils import fetch_diagnostics as diag
+
+        html = (
+            '<div data-mxn-advertisements-count="1104"></div>'
+            '<section class="nuevo-markup">10 Stellen</section>'
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert GastrojobScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "1104" in issues[0].detail
+
+    def test_build_listing_url_endpoint_ajax(self):
+        """La URL del run es el endpoint AJAX de paginación del frontend, con
+        el mismo percent-encoding que los href de la paginación del sitio."""
+        url = GastrojobScraper().build_listing_url(3, "")
+        assert url.startswith("https://www.gastrojob.ch/?")
+        assert "type=5000" in url
+        assert "tx_mxngastrojob_ajax%5Baction%5D=filteredAds" in url
+        assert "tx_mxngastrojob_ajax%5B%40widget_0%5D%5BcurrentPage%5D=3" in url
+
+    def test_referer_del_listado(self):
+        """El frontend envía Referer en su llamada AJAX; el scraper también."""
+        assert (
+            GastrojobScraper.DEFAULT_HEADERS["Referer"]
+            == "https://www.gastrojob.ch/stellen"
+        )
+
+    def test_page_size_matches_portal(self):
+        """El fragmento AJAX trae 10 ofertas por página (fixtures p1/p2); con
+        PAGE_SIZE=20 el motor cortaría la paginación tras la página 1."""
+        assert GastrojobScraper.PAGE_SIZE == 10
+
+    def test_httpx_puro_sin_playwright(self):
+        """El endpoint AJAX responde a httpx puro (sonda 2026-08-15): menos
+        coste y menos fragilidad que renderizar /stellen con Playwright."""
+        assert GastrojobScraper.NEEDS_PLAYWRIGHT is False
+
+    def test_fetch_details_enabled(self):
+        assert GastrojobScraper.FETCH_DETAILS is True
 
     def test_normalize_job(self):
         raw = {
             "title": "Sous Chef",
             "company": "Grand Hotel Zermatt",
-            "url": "https://gastrojob.ch/stelle/789",
-            "location": "Zermatt",
+            "url": "https://www.gastrojob.ch/stellen/stelleninserat/789",
+            "location": "Wallis",
             "description": "Lead the kitchen brigade for our 5-star restaurant.",
         }
         result = GastrojobScraper().normalize_job(raw)
@@ -199,10 +828,11 @@ class TestGastrojobScraper:
         raw = {
             "title": "Koch",
             "company": "",
-            "url": "https://gastrojob.ch/stelle/111",
+            "url": "https://www.gastrojob.ch/stellen/stelleninserat/111",
         }
         result = GastrojobScraper().normalize_job(raw)
         _assert_normalized(result, "gastrojob")
+        assert result["company"] == "Unknown"
 
 
 # ---------------------------------------------------------------------------

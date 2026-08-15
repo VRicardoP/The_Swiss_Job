@@ -6,9 +6,7 @@ from config import settings
 from services.job_service import BaseJobProvider
 from providers.adzuna import AdzunaProvider
 from providers.arbeitnow import ArbeitnowProvider
-from providers.authenticjobs import AuthenticJobsProvider
 from providers.careerjet import CareerjetProvider
-from providers.dailyremote import DailyRemoteProvider
 from providers.euremotejobs import EURemoteJobsProvider
 from providers.jobspresso import JobspressoProvider
 from providers.jooble import JoobleProvider
@@ -18,7 +16,6 @@ from providers.proz import ProzProvider
 from providers.publicjobs import PublicJobsProvider
 from providers.remoteco import RemoteCoProvider
 from providers.remotive import RemotiveProvider
-from providers.translatorscafe import TranslatorsCafeProvider
 from providers.weworkremotely import WeWorkRemotelyProvider
 from providers.workingnomads import WorkingNomadsProvider
 from providers.zebis import ZebisProvider
@@ -49,18 +46,22 @@ _PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {
     "remotive": RemotiveProvider,
     "weworkremotely": WeWorkRemotelyProvider,
     "workingnomads": WorkingNomadsProvider,
-    "dailyremote": DailyRemoteProvider,
     "euremotejobs": EURemoteJobsProvider,
     "remoteco": RemoteCoProvider,
     "jobspresso": JobspressoProvider,
-    "authenticjobs": AuthenticJobsProvider,
+    # Feeds RETIRADOS por el portal (VD.6, re-sondeados 2026-08-14): los sitios
+    # viven pero sus feeds ya no existen. Nunca aportaron una oferta y son
+    # tableros remotos genéricos, lejos del perfil objetivo. Ficheros
+    # conservados por si el portal vuelve a publicar un feed.
+    # "dailyremote": DailyRemoteProvider,  # /rss eliminado (404, también /feed)
+    # "authenticjobs": AuthenticJobsProvider,  # rss/custom.php 404; /feed/ es el BLOG editorial (contaminaría el corpus)
     # Remoto europeo/nórdico (estudio portales UE-norte, API pública sin key)
     "thehub": TheHubProvider,  # startups nórdicas, flag isRemote estructural
     "jobgether": JobgetherProvider,  # remoto paneuropeo (requiere UA de navegador)
     "nav_arbeidsplassen": NavArbeidsplassenProvider,  # servicio público noruego
     # Localización y contenido lingüístico
     "proz": ProzProvider,
-    "translatorscafe": TranslatorsCafeProvider,
+    # "translatorscafe": TranslatorsCafeProvider,  # Feed retirado (VD.6, 2026-08-14): rss.aspx?type=joboffers eliminado (404)
     # Organismos internacionales y ONGs
     # "reliefweb": ReliefWebProvider,     # API v2 requiere appname registrado en apidoc.reliefweb.int
     # "impactpool": ImpactPoolProvider,   # Feed RSS eliminado (404)

@@ -1,6 +1,10 @@
 """Tests for all 16 provider normalize_job methods."""
 
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
 
 from providers.adzuna import AdzunaProvider
 from providers.arbeitnow import ArbeitnowProvider
@@ -518,10 +522,163 @@ class TestCareerjetProvider:
 
 DC_NS = "http://purl.org/dc/elements/1.1/"
 
+# Feed REAL recortado (sonda 2026-08-14, VD.9): el portal emite link/guid con
+# su base mal configurada (https://0.0.0.0:3000/stellen/<slug>).
+_ZEBIS_FIXTURE = Path(__file__).parent / "fixtures" / "zebis_feed.xml"
+
+
+def _zebis_fixture_items() -> list[ET.Element]:
+    root = ET.parse(_ZEBIS_FIXTURE).getroot()
+    return root.find("channel").findall("item")
+
 
 class TestZebisProvider:
     def test_source_name(self):
         assert ZebisProvider().get_source_name() == "zebis"
+
+    def test_canonical_url_from_broken_feed_base(self):
+        """El host del feed (0.0.0.0:3000) NUNCA se emite: la URL se
+        reconstituye sobre www.zebis.ch a partir del path del link real."""
+        provider = ZebisProvider()
+        results = provider._process_raw_jobs(_zebis_fixture_items())
+        assert len(results) == 5  # ningún item real se pierde
+        for job in results:
+            assert "0.0.0.0" not in job["url"]
+            assert job["url"].startswith("https://www.zebis.ch/stellen/")
+        assert results[0]["url"] == (
+            "https://www.zebis.ch/stellen/"
+            "fachlehrperson-daz-kindergartenstufe-3-lektionen-0"
+        )
+
+    def test_pubdate_to_published_at_aware(self):
+        # pubDate RFC822 del feed real → published_at timezone-aware en UTC.
+        result = ZebisProvider().normalize_job(_zebis_fixture_items()[0])
+        assert result["published_at"] == datetime(
+            2026, 8, 13, 13, 16, 35, tzinfo=timezone.utc
+        )
+
+    @pytest.mark.parametrize(
+        "raw_url",
+        [
+            # Diferencial urllib/WHATWG: el navegador corta el host en "\".
+            "https://evil.com\\@www.zebis.ch/stellen/x",
+            # Protocolo-relativo: el "host" ajeno cae en netloc.
+            "//evil.com/stellen/x",
+            # Esquema no navegable.
+            "javascript:alert(1)",
+            # Userinfo: spoofing visual del enlace.
+            "https://user@0.0.0.0:3000/stellen/x",
+            # Path ajeno al listado de ofertas.
+            "https://0.0.0.0:3000/otra-cosa/x",
+            # Path con segmentos extra.
+            "https://0.0.0.0:3000/stellen/a/b",
+            # Portada, sin oferta propia.
+            "https://0.0.0.0:3000/",
+            "",
+        ],
+    )
+    def test_canonical_url_rejects_unsafe(self, raw_url):
+        from providers.zebis import _canonical_job_url
+
+        assert _canonical_job_url(raw_url) is None
+
+    def test_canonical_url_invalid_ipv6_falls_back_to_guid(self):
+        """VD.9/H4: un link con IPv6 inválido ("https://[evil/...") hacía que
+        urlsplit propagara ValueError en vez de devolver None — la excepción
+        escapaba del parseo y una oferta legítima con guid BUENO se perdía
+        porque el fallback al guid nunca llegaba a ejecutarse."""
+        from providers.zebis import _canonical_job_url
+
+        assert _canonical_job_url("https://[evil/stellen/x") is None
+
+        # Oferta real: link roto pero guid utilizable ⇒ la oferta se emite.
+        item = ET.Element("item")
+        ET.SubElement(item, "title").text = "Lehrperson"
+        ET.SubElement(item, "link").text = "https://[evil/stellen/x"
+        ET.SubElement(item, "guid").text = "https://0.0.0.0:3000/stellen/lehrperson-1"
+        result = ZebisProvider().normalize_job(item)
+        assert result["url"] == "https://www.zebis.ch/stellen/lehrperson-1"
+
+    def test_canonical_url_rejects_control_chars(self):
+        """VD.9/H5 (+V2-4): caracteres de control (< 0x20 y DEL 0x7f) en el
+        slug no deben sobrevivir hasta una URL persistida (calidad de dato —
+        el host es siempre nuestro, no hay riesgo de host). El espacio se
+        deja pasar a propósito: no es de control. Residual documentado: un
+        "%00" LITERAL (tres chars imprimibles) pasa el filtro."""
+        from providers.zebis import _canonical_job_url
+
+        # \t\r\n no se prueban: urlsplit los ELIMINA antes de parsear
+        # (unsafe URL bytes) y nunca llegan al regex del path.
+        assert _canonical_job_url("https://0.0.0.0:3000/stellen/x\x01") is None
+        assert _canonical_job_url("https://0.0.0.0:3000/stellen/x\x1f") is None
+        # V2-4: DEL (0x7f) también se rechaza — antes atravesaba el filtro.
+        assert _canonical_job_url("https://0.0.0.0:3000/stellen/x\x7f") is None
+        # El espacio sobrevive (documentado): no es carácter de control.
+        assert (
+            _canonical_job_url("https://0.0.0.0:3000/stellen/a b")
+            == "https://www.zebis.ch/stellen/a b"
+        )
+
+    def test_stelle_admin_resolve_url_invalid_ipv6_returns_none(self):
+        """VD.9/H4 (defecto gemelo): `_resolve_job_url()` de stelle_admin
+        compartía el patrón — urljoin/urlsplit lanzan ValueError con un href
+        IPv6 inválido y tumbaban el lote del scraper. Vive aquí (y no en
+        test_scrapers.py) porque ese fichero lo están tocando otros agentes
+        durante VD.9."""
+        from scrapers.stelle_admin import _resolve_job_url
+
+        assert _resolve_job_url("https://[evil/job/x") is None
+
+    def test_workload_lookbehind_ignores_years(self):
+        """VD.9/H6: cubre el lookbehind (?<!\\d) anti-años del regex de
+        pensum — la mutación de quitarlo dejaba los 21 tests en verde.
+        Primer título: REAL del feed (2026-08-15), con "Schuljahr 2026/27".
+        Segundo: composición mínima de dos formas reales del feed (año con
+        guión espaciado, como en "… ab Mitte Oktober 2026 - bis …", + pensum
+        "100 %") que discrimina la mutación: sin el lookbehind el regex
+        muerde dentro del año y extrae "026 - 100 %"."""
+        real_title = (
+            "Zwei Klassenlehrpersonen gesucht - für unsere 5. Klasse und "
+            "unsere 6. Klasse, Schuljahr 2026/27 für 24-28 Lektionen"
+        )
+        cases = [
+            (real_title, None),  # el año nunca produce un pensum
+            ("Stellvertretung ab Oktober 2026 - 100 %", "100 %"),
+        ]
+        for title, expected in cases:
+            item = ET.Element("item")
+            ET.SubElement(item, "title").text = title
+            ET.SubElement(item, "link").text = "https://www.zebis.ch/stellen/x"
+            result = ZebisProvider().normalize_job(item)
+            assert result["employment_type"] == expected, title
+
+    def test_item_without_usable_url_is_dropped(self):
+        # Ni link ni guid utilizables ⇒ url vacía ⇒ _process_raw_jobs
+        # descarta el item ("title and url must be non-empty").
+        item = ET.Element("item")
+        ET.SubElement(item, "title").text = "Lehrperson"
+        ET.SubElement(item, "link").text = "javascript:alert(1)"
+        ET.SubElement(item, "guid").text = "//evil.com/stellen/x"
+        provider = ZebisProvider()
+        assert provider.normalize_job(item)["url"] == ""
+        assert provider._process_raw_jobs([item]) == []
+
+    @pytest.mark.parametrize(
+        ("index", "expected"),
+        [
+            (0, None),  # "(3 Lektionen)" no es un pensum
+            (1, "46%"),  # "(13 Lektionen / 46%)"
+            (2, "80 – 100 %"),  # sin paréntesis, con guión largo
+            (3, "90 %"),  # "(90 %)" — la forma que ya cubría el regex viejo
+            (4, "80 %"),  # ", 80 %" al final del título
+        ],
+    )
+    def test_workload_from_real_titles(self, index, expected):
+        """Pensum extraído de los títulos REALES del feed (con y sin
+        paréntesis) — el regex viejo exigía paréntesis al final y perdía
+        la mayoría de las formas reales."""
+        result = ZebisProvider().normalize_job(_zebis_fixture_items()[index])
+        assert result["employment_type"] == expected
 
     def test_normalize_job(self):
         item = ET.Element("item")
@@ -576,8 +733,9 @@ class TestZebisProvider:
         result = ZebisProvider().normalize_job(item)
         _assert_normalized(result, "zebis")
         assert result["company"] == "Schule Giswil"
-        # No parenthesized workload → employment_type is None
-        assert result["employment_type"] is None
+        # Pensum sin paréntesis también se extrae (formas reales del feed,
+        # VD.9 — antes exigía "(...%)" al final y salía None).
+        assert result["employment_type"] == "50 %"
 
 
 # ---------------------------------------------------------------------------

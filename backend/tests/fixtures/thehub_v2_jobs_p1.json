@@ -1,0 +1,74 @@
+{
+ "total": 46,
+ "limit": 15,
+ "page": 1,
+ "pages": 4,
+ "docs": [
+  {
+   "id": "6a728411650cb842b85b5040",
+   "key": "director-of-creative-strategy",
+   "title": "Director of Creative Strategy",
+   "location": {
+    "address": "Colombia",
+    "country": "Colombia",
+    "locality": "Colombia"
+   },
+   "isRemote": true,
+   "jobPositionTypes": [
+    "5b8e46b3853f039706b6ea70"
+   ],
+   "isFeatured": false,
+   "views": {
+    "week": 2090,
+    "total": 2366
+   },
+   "company": {
+    "id": "63da62370a7c4b7564f3c18d",
+    "key": "superside",
+    "name": "Superside",
+    "website": "http://superside.com/",
+    "numberOfEmployees": "200+",
+    "video": "",
+    "founded": "2015",
+    "logoImage": {
+     "size": 24733,
+     "filetype": "image/png",
+     "originalname": "Screen Shot 2023-04-13 at 00.19.14.png",
+     "id": "643807bfd642463cd288d68b",
+     "path": "/files/s3/20230413134639-fd77455089345a11e758a84d126a6f83.png"
+    }
+   },
+   "saved": false
+  },
+  {
+   "id": "6a630388ec77206d10a2cd74",
+   "key": "no-title-63825",
+   "title": "Tech Lead  / Cofounder",
+   "isRemote": true,
+   "jobPositionTypes": [
+    "5b8e46b3853f039706b6ea74"
+   ],
+   "isFeatured": false,
+   "views": {
+    "week": 1088,
+    "total": 3490
+   },
+   "company": {
+    "id": "6a58fbf3b3e5e78fdbb25156",
+    "key": "greppet",
+    "name": "Greppet",
+    "website": "https://greppet.com/",
+    "numberOfEmployees": "1-10",
+    "founded": "2026",
+    "logoImage": {
+     "size": 64642,
+     "filetype": "image/png",
+     "originalname": "Screenshot 2026-05-23 at 20.41.07.png",
+     "id": "6a58f388b3e5e78fdbb1c1be",
+     "path": "/files/s3/20260716150648-f3f7fe30349dac5e641ba27d818e6228.png"
+    }
+   },
+   "saved": false
+  }
+ ]
+}

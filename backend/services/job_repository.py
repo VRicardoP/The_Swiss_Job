@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import case, func, null, or_, select, update
+from sqlalchemy import and_, case, func, null, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -104,9 +104,78 @@ class JobRepository:
             set_["published_at"] = func.coalesce(
                 stmt.excluded.published_at, Job.published_at
             )
+        # description: mismo patrón que published_at — si el run actual llega
+        # con description vacía (fallo parcial del detalle, p. ej. thehub), se
+        # conserva la no vacía ya almacenada en vez de machacarla; NULLIF
+        # equipara "" a NULL para el COALESCE. Sin esto, la description buena
+        # se perdía en la re-vista, cambiaba el content_hash y el embedding se
+        # re-generaba sobre texto vacío (y otra vez al recuperarse el detalle).
+        effective_description = stmt.excluded.description
+        if "description" in set_:
+            effective_description = func.coalesce(
+                func.nullif(stmt.excluded.description, ""), Job.description
+            )
+            set_["description"] = effective_description
+        # description_snippet: misma protección que description. El entrante
+        # degradado llega como NULL, no como "" (verificado: _snippet("")
+        # devuelve None en BaseJobProvider, y jobgether emite None siempre),
+        # así que basta el COALESCE sin NULLIF (V2-1/C5, VD.9).
+        if "description_snippet" in set_:
+            set_["description_snippet"] = func.coalesce(
+                stmt.excluded.description_snippet, Job.description_snippet
+            )
+        # tags: en los providers salen de extract_job_skills(title, description),
+        # así que un detalle fallido (thehub) las degrada a [] aunque la fila
+        # tenga tags buenas. Señal de degradación: description entrante vacía Y
+        # tags entrantes vacías ⇒ se conservan las almacenadas. Con description
+        # entrante real, unas tags vacías SÍ pisan (re-cálculo legítimo). Las
+        # fuentes que emiten description "" SIEMPRE (jobgether, publicjobs,
+        # stelle_admin) derivan sus tags de título/campos de la API — fijados
+        # por el hash — así que para ellas conservar es un no-op o la misma
+        # protección deseada, nunca una pérdida (V2-1/C9, VD.9).
+        effective_tags = stmt.excluded.tags
+        if "tags" in set_:
+            effective_tags = case(
+                (
+                    and_(
+                        func.coalesce(stmt.excluded.description, "") == "",
+                        func.jsonb_array_length(stmt.excluded.tags) == 0,
+                    ),
+                    Job.tags,
+                ),
+                else_=stmt.excluded.tags,
+            )
+            set_["tags"] = effective_tags
+        # location/canton: nunca pisar un valor REAL con uno vacío — un listado
+        # degradado (thehub sin detalle trae location {}) llegaba con "" y
+        # machacaba la ubicación buena. Una location entrante no vacía siempre
+        # pasa (una oferta puede reubicarse legítimamente) y entonces el canton
+        # entrante manda AUNQUE sea None: canton se deriva de location y
+        # alimenta filtros — mejor sin cantón que un cantón obsoleto de la
+        # ubicación anterior (V2-1/C10, VD.9).
+        if "location" in set_:
+            set_["location"] = func.coalesce(
+                func.nullif(stmt.excluded.location, ""), Job.location
+            )
+        if "canton" in set_:
+            # canton sigue la MISMA señal que location: solo se conserva
+            # cuando la location entrante viene vacía (fetch degradado).
+            set_["canton"] = case(
+                (func.coalesce(stmt.excluded.location, "") == "", Job.canton),
+                else_=stmt.excluded.canton,
+            )
         # Reactivar SOLO si NO es duplicado: una oferta archivada que reaparece se
         # reactiva; un duplicado re-visto sigue inactivo (no vuelve a los feeds).
         set_["is_active"] = case((Job.duplicate_of.isnot(None), False), else_=True)
+        # OJO (V2-2, VD.9): content_hash versiona el payload ENTRANTE, no la
+        # fila efectiva — tras una re-vista degradada (campos conservados por
+        # los COALESCE/CASE de arriba) el hash guardado NO coincide con el
+        # contenido real de la fila y oscila un run hasta el siguiente fetch
+        # sano. Hoy es cosmético: el único lector (tasks/embedding_tasks.py)
+        # lo usa como CAS auto-consistente (snapshot vs. relectura de la misma
+        # columna) y ni dedup, ni last_seen_at, ni caducidad, ni el core lo
+        # consumen. Un consumidor futuro NO debe diffear content_hash entre
+        # runs sin tener esta oscilación en cuenta.
         set_["content_hash"] = stmt.excluded.content_hash
         # El embedding se construye de title+company+description+tags
         # (JobMatcher.build_job_text). En un conflicto, title/company están fijados
@@ -115,11 +184,16 @@ class JobRepository:
         # independiente de content_hash (que versiona MÁS campos): así ni un cambio
         # de logo/salario re-embebe texto idéntico (eficiencia), ni una fila anterior
         # a la columna (content_hash NULL) conserva un embedding obsoleto (correctitud).
+        # Se compara contra la description y las tags EFECTIVAS (las que de
+        # verdad quedan en la fila tras los COALESCE/CASE de arriba): un
+        # entrante degradado que se conserva NO debe invalidar el embedding
+        # (texto final idéntico) — comparar contra excluded.tags re-embebía en
+        # cada transición degradada↔sana (V2-1/C9, VD.9).
         set_["embedding"] = case(
             (
                 or_(
-                    Job.description.is_distinct_from(stmt.excluded.description),
-                    Job.tags.is_distinct_from(stmt.excluded.tags),
+                    Job.description.is_distinct_from(effective_description),
+                    Job.tags.is_distinct_from(effective_tags),
                 ),
                 null(),
             ),

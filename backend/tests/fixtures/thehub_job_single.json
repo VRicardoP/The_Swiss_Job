@@ -1,0 +1,59 @@
+{
+ "key": "director-of-creative-strategy",
+ "title": "Director of Creative Strategy",
+ "company": {
+  "key": "superside",
+  "name": "Superside",
+  "website": "http://superside.com/",
+  "numberOfEmployees": "200+",
+  "video": "",
+  "founded": "2015",
+  "communityProgramStatus": "DEFAULT",
+  "instantClaimStatus": "DISABLED",
+  "id": "63da62370a7c4b7564f3c18d",
+  "logoImage": {
+   "size": 24733,
+   "filetype": "image/png",
+   "originalname": "Screen Shot 2023-04-13 at 00.19.14.png",
+   "id": "643807bfd642463cd288d68b",
+   "path": "/files/s3/20230413134639-fd77455089345a11e758a84d126a6f83.png"
+  },
+  "claim": false
+ },
+ "salary": "competitive",
+ "equity": "undisclosed",
+ "countryCode": "NO",
+ "location": {
+  "address": "Colombia",
+  "country": "Colombia",
+  "locality": "Colombia"
+ },
+ "jobRoles": [
+  "69b0f3249990650fc9aa18a5",
+  "69b0f3be9990650fc9aa1c86",
+  "69b0f2f62cf799102df45cc6"
+ ],
+ "jobPositionTypes": [
+  "5b8e46b3853f039706b6ea70"
+ ],
+ "createdAt": "2026-08-05T00:30:09.123Z",
+ "approvedAt": "2026-08-05T04:57:05.066Z",
+ "status": "ACTIVE",
+ "scraped": true,
+ "link": "https://jobs.lever.co/superside/f4e64669-0dbb-4279-b27a-97658b90d465",
+ "isRemote": true,
+ "isFeatured": false,
+ "showVouchWidget": false,
+ "equityPercentage": null,
+ "equityPercentageRange": null,
+ "id": "6a728411650cb842b85b5040",
+ "description": "\n            <p>Superside is hiring a Director of Creative Strategy to lead and evolve our Strategy function. You'll shape how strategy drives creative excellence across the business, leading a team of strategists while partnering with executive customers and internal leaders to solve complex business challenges through insight-driven creativity.</p>\n<p>You'll define the future of strategy at Supe",
+ "views": {
+  "week": 2091,
+  "total": 2367
+ },
+ "expirationDate": "2027-02-14",
+ "socialImageUrl": "https://thehub-io.imgix.net/jobs/6a728411650cb842b85b5040/social.jpeg?hash=0&v=3",
+ "interestedAt": null,
+ "saved": false
+}
