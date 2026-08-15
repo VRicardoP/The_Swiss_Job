@@ -124,10 +124,22 @@ El diseño **no** intenta sortear WAF, CAPTCHA, login ni paywalls. Un bloqueo es
 de parada, no un problema a rodear:
 
 - **Soft-block** (HTTP 200 sin datos + marcador anti-bot de alta confianza:
-  `/cdn-cgi/challenge-platform`, `verify you are human`, etc.) → se reporta a compliance.
-  "captcha" a secas se excluye a propósito (falsos positivos con widgets legítimos).
+  `cf-challenge`, `verify you are human`, `checking your browser before accessing`, etc.)
+  → se reporta a compliance. "captcha" a secas se excluye a propósito (falsos positivos con
+  widgets legítimos).
+  ⚠ **`/cdn-cgi/challenge-platform` se RETIRÓ de los marcadores (VD.4a, 2026-08-15)**: es la
+  ruta del beacon **pasivo** de telemetría de Cloudflare, presente en el HTML normal de cualquier
+  sitio servido por Cloudflare — no solo en las pantallas de challenge. Con él, un board vacío
+  legítimo tras Cloudflare contaba como soft-block en cada visita y alimentaba el kill-switch en
+  bucle perpetuo (así estuvo `swiss_schools_isb` apagada durante meses sin haber sido bloqueada
+  nunca). Los challenges reales se siguen cazando por sus frases de texto.
 - **403 / 429 / 503** → `_report_block()` y se deja de paginar.
 - **Kill-switch de compliance:** 3 bloqueos consecutivos → la fuente se auto-deshabilita.
+  La **rehabilitación** (`reset_blocks`) depende desde VD.4a (2026-08-15) de que el run termine
+  **sin bloqueo** — un vacío verificado también rehabilita. Antes solo rehabilitaba `if results:`,
+  y una watchlist con 0 vacantes (su estado normal durante meses) no se rehabilitaba nunca; un
+  no-200 en Playwright tampoco cuenta ya como "vacío verificado". La sequedad no es asunto del
+  kill-switch: de ella se ocupan la racha de vacíos de source_health y el backoff del crawler.
 - Caso real: **med-jobs.com deshabilitado** por un challenge duro de Cloudflare que el
   Playwright local no supera. No se insiste; se reactivaría solo con un browser stealth remoto de pago.
 
@@ -170,7 +182,7 @@ CRAWLER_BUDGET_BACKOFF_MAX_MULTIPLIER = 4
 | Presupuesto (`max_pages_this_run`, `should_run`) | `tests/test_crawler_budget.py` |
 | Presupuesto en el engine (`_pages_budget`, tope httpx) | `tests/test_scraper_engine.py::TestBaseScraperPageBudget` |
 
-Suite completa: **647 tests** (2026-07-18), ruff limpio.
+Suite completa: **1207 passed, 3 skipped** (2026-08-15).
 
 ---
 

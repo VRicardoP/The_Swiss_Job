@@ -223,7 +223,7 @@ la red `swissjob-net`.
   Carga `paraphrase-multilingual-MiniLM-L12-v2` en lifespan. Healthcheck
   HTTP `/health`. Volumen: `hfcache`.
 - **worker** (`swissjob-backend:prod`) — Celery con tres queues:
-  - `default`: fetchs cada 6h de los 16 providers vía API.
+  - `default`: fetchs cada 6h de los providers vía API (25 registrados a 2026-08-15: 20 activos + 5 restringidos gated).
   - `scraping`: scrapers HTTP/Playwright cada 6h.
   - `ai`: matching, traducción, generación de documentos vía Groq.
   Comparte `hfcache` con backend.
