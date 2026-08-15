@@ -33,13 +33,30 @@ DEFAULT_SOFT_BLOCK_MARKERS: tuple[str, ...] = (
     # (reCAPTCHA/hCaptcha, p.ej. "g-recaptcha") y dispararía falsos positivos en
     # páginas de resultados válidas — un falso soft-block cuenta hacia el kill-switch
     # de compliance. Se usan frases de challenge de alta confianza en su lugar.
+    # "/cdn-cgi/challenge-platform" NO se incluye (VD.4a, 2026-08-15): es la ruta
+    # del beacon PASIVO de telemetría de Cloudflare (scripts/jsd/main.js), presente
+    # en el HTML NORMAL de cualquier sitio servido por Cloudflare — no solo en las
+    # pantallas de challenge. Con él, todo board vacío legítimo tras Cloudflare
+    # (p.ej. swiss_schools_isb con "No post to display.") contaba como soft-block
+    # en CADA visita → kill-switch perpetuo. Los challenges reales se siguen
+    # cazando: sus pantallas contienen "cf-challenge" / "cf-browser-verification"
+    # o el texto "enable javascript and cookies to continue".
     "complete the captcha",
     "captcha to continue",
     "cf-challenge",
     "cf-browser-verification",
-    "/cdn-cgi/challenge-platform",
     "px-captcha",
     "verify you are human",
+    # Turnstile "managed challenge": usa el gerundio — NO es substring del
+    # marcador anterior, sin esta frase el challenge contaba como vacío limpio.
+    "verifying you are human",
+    # Variante clásica del interstitial de Cloudflare, aún servida por
+    # instalaciones antiguas; puede llegar sin ningún div cf-*.
+    "checking your browser before accessing",
+    # Pantalla 1020 de Cloudflare ("Access denied"): normalmente llega con 403 y
+    # la corta _listing_status_stops antes de parsear, pero una regla WAF custom
+    # puede servirla con otro estado — esta frase de alta confianza la caza ahí.
+    "sorry, you have been blocked",
     "are you a robot",
     "unusual traffic from your",
     "enable javascript and cookies to continue",

@@ -26,6 +26,7 @@ from services.scraper_stealth import (
     looks_soft_blocked,
     realistic_headers,
 )
+from utils import fetch_diagnostics as diag
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,19 @@ class BaseScraper(BaseJobProvider):
     # Cabeceras realistas de un Chrome real (User-Agent, client hints, Sec-Fetch).
     DEFAULT_HEADERS: dict[str, str] = realistic_headers()
 
+    # Estado de compliance del run en curso (VD.4a). Se rearma en fetch_jobs;
+    # a nivel de clase para que los paths de scraping sean invocables sueltos
+    # (tests, overrides) sin AttributeError.
+    # NO compartir una instancia de scraper entre runs CONCURRENTES: el rearme
+    # del segundo run borraría el flag de bloqueo del primero. Hoy producción
+    # crea instancias frescas por run y las ejecuta en secuencia, así que no es
+    # un bug — pero es una precondición de estos flags, no una casualidad.
+    # - _run_block_reported: este run reportó al menos un bloqueo a compliance.
+    # - _run_verified_empty: este run parseó una página 200 sin datos y SIN
+    #   marcador anti-bot — un "vacío verificado" (estado normal de una watchlist).
+    _run_block_reported: bool = False
+    _run_verified_empty: bool = False
+
     async def fetch_jobs(self, query: str, location: str = "Switzerland") -> list[dict]:
         """Fetch jobs via scraping. Overrides BaseJobProvider.fetch_jobs().
 
@@ -95,6 +109,12 @@ class BaseScraper(BaseJobProvider):
         if not await self._pre_check():
             return []
 
+        # Rearmar el estado del run. Producción crea instancias frescas por run
+        # (get_all_scrapers instancia en cada llamada), así que esto es defensa
+        # en profundidad para instancias reutilizadas (tests, invocaciones sueltas).
+        self._run_block_reported = False
+        self._run_verified_empty = False
+
         if self.NEEDS_PLAYWRIGHT:
             all_raw = await self._scrape_with_playwright(query)
         else:
@@ -102,7 +122,14 @@ class BaseScraper(BaseJobProvider):
 
         results = self._process_raw_jobs(all_raw)
 
-        if results:
+        # Rehabilitación (VD.4a): un run cuenta como éxito si trajo ofertas O si
+        # verificó un board vacío legítimo — y en ningún caso si reportó un
+        # bloqueo. Antes era `if results:` a secas, y una watchlist de colegios
+        # (0 vacantes durante meses es su estado NORMAL) apagada por el
+        # kill-switch no se rehabilitaba jamás ni marcaba last_success_at. La
+        # "sequedad" de una fuente la vigilan source_health y el backoff del
+        # crawler; el kill-switch va solo de bloqueos.
+        if (results or self._run_verified_empty) and not self._run_block_reported:
             await self._reset_compliance_blocks()
 
         return self._finalize_fetch(results)
@@ -133,6 +160,9 @@ class BaseScraper(BaseJobProvider):
         from database import task_session
         from services.compliance import ComplianceEngine
 
+        # Se marca ANTES del intento de persistir: aunque la BD falle, un run
+        # que detectó un bloqueo no debe rehabilitar la fuente (VD.4a).
+        self._run_block_reported = True
         try:
             async with task_session() as db:
                 engine = ComplianceEngine(db)
@@ -165,14 +195,23 @@ class BaseScraper(BaseJobProvider):
         base = self.RETRY_BACKOFF_SECONDS * (2**attempt)
         return jittered_delay(base, self.JITTER_RATIO)
 
-    async def _request_with_retry(self, do_request):
+    async def _request_with_retry(self, do_request, url: str = ""):
         """Ejecuta una petición por el circuit breaker reintentando lo transitorio.
 
         Reintenta ante errores de red (timeouts, conexión) y estados de
         RETRYABLE_STATUS, con backoff exponencial. El circuito abierto es
         terminal (no se reintenta). Devuelve la respuesta final aunque su estado
         sea de error: el llamante decide qué hacer.
+
+        VD.10 — el fallo DEFINITIVO (reintentos agotados, circuito abierto,
+        estado final no-200) se registra en `fetch_diagnostics`, igual que hace
+        `utils.http.fetch_with_retry` para los providers: sin esto, un 404 o un
+        timeout del listado acababa en `classify(0, [])` = `empty` y la fuente
+        rota se presentaba como fuente seca. `url` es solo para ese registro;
+        el override que no la pasa (schuljobs) queda identificado por su
+        LISTING_URL — exacto en su fetch inicial, aproximado en el scroll AJAX.
         """
+        diag_url = url or self.LISTING_URL
         # Una config negativa no debe saltar el bucle (dejaría response=None → crash).
         max_retries = max(self.MAX_RETRIES, 0)
         response = None
@@ -180,15 +219,29 @@ class BaseScraper(BaseJobProvider):
             is_last = attempt == max_retries
             try:
                 response = await self._circuit.call(do_request)
-            except CircuitBreakerOpen:
+            except CircuitBreakerOpen as exc:
+                # El circuito abierto también es "no se pudo descargar",
+                # nunca "no había ofertas".
+                diag.record(diag.KIND_NETWORK, diag_url, detail=str(exc))
                 raise
-            except httpx.HTTPError:
+            except httpx.HTTPError as exc:
                 if is_last:
+                    diag.record(
+                        diag.KIND_NETWORK,
+                        diag_url,
+                        detail=f"{type(exc).__name__}: {exc}",
+                    )
                     raise
                 await asyncio.sleep(self._backoff_delay(attempt))
                 continue
 
             if response.status_code not in self.RETRYABLE_STATUS or is_last:
+                if response.status_code != 200:
+                    # Estado final no-200 (bloqueos incluidos): se registra AQUÍ,
+                    # donde ya es definitivo — `_listing_status_stops` decide el
+                    # corte y el reporte a compliance pero NO vuelve a registrar,
+                    # para no duplicar el issue.
+                    diag.record(diag.KIND_HTTP, diag_url, status=response.status_code)
                 return response
 
             logger.info(
@@ -227,8 +280,10 @@ class BaseScraper(BaseJobProvider):
                 url = self.build_listing_url(page, query)
 
                 try:
+                    # El propio helper registra el fallo definitivo en
+                    # fetch_diagnostics (VD.10): aquí solo se corta.
                     response = await self._request_with_retry(
-                        lambda u=url: client.get(u)
+                        lambda u=url: client.get(u), url=url
                     )
                 except (CircuitBreakerOpen, httpx.HTTPError) as e:
                     logger.error(
@@ -270,6 +325,12 @@ class BaseScraper(BaseJobProvider):
 
         Un estado de BLOCK_STATUS se reporta a compliance; cualquier otro distinto
         de 200 solo se registra. En ambos casos no tiene sentido seguir paginando.
+
+        VD.10 — el issue de diagnóstico del no-200 NO se registra aquí sino en
+        quien hizo la petición (`_request_with_retry` en el path httpx, el
+        bucle de `_scrape_with_playwright` en el de Playwright): este método lo
+        llaman ambos paths y también tras el helper (irishjobs), y registrar en
+        los dos sitios duplicaría el mismo fallo.
         """
         if status_code in self.BLOCK_STATUS:
             logger.warning(
@@ -299,8 +360,28 @@ class BaseScraper(BaseJobProvider):
                 self.SOURCE_NAME,
                 page,
             )
+            # VD.10 — un bloqueo también es "falló la descarga", no "no hay
+            # ofertas": sin issue el run saldría `empty` y `source_health`
+            # registraría una fuente SECA donde hay una ROTA (señal de salud
+            # y alerta equivocadas). El backoff del crawler no cambia con
+            # esto: se alimenta de las novedades persistidas (el
+            # `consecutive_empty_runs` del cursor), no del veredicto, y
+            # aparca la fuente igual. Compliance sigue recibiendo su
+            # report_block exactamente igual que antes.
+            diag.record(
+                diag.KIND_NETWORK,
+                self.LISTING_URL,
+                detail=f"soft-block: HTTP 200 con marcador anti-bot en página {page}",
+            )
             await self._report_block(200)
             return True
+        # Página 200 sin datos y sin marcador: vacío VERIFICADO (VD.4a).
+        # "Verificado" = el sitio sirvió contenido normal, NO "confirmamos que
+        # era el board": unos selectores obsoletos o un redirect a portada
+        # también acaban aquí. Es el techo deliberado del flag — el kill-switch
+        # modela BLOQUEOS; de la sequedad o rotura de una fuente se ocupan
+        # source_health y el backoff del crawler.
+        self._run_verified_empty = True
         return False
 
     async def _collect_page_jobs(
@@ -327,6 +408,11 @@ class BaseScraper(BaseJobProvider):
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, "lxml")
                 return self.parse_job_detail(soup)
+            # VD.10 — el detalle caído no corta el run (el stub del listado ya
+            # es una oferta mínima), pero se anota: con ofertas el veredicto
+            # sigue siendo `ok` con issues — degradación parcial, la semántica
+            # documentada de `classify`.
+            diag.record(diag.KIND_HTTP, url, status=response.status_code)
             # Sin retry aquí: un 503 transitorio no debe contar como bloqueo (solo el
             # path de listado, que sí reintenta, reporta el 503 si persiste).
             if response.status_code in self.IMMEDIATE_BLOCK_STATUS:
@@ -338,6 +424,7 @@ class BaseScraper(BaseJobProvider):
                 url,
                 e,
             )
+            diag.record(diag.KIND_NETWORK, url, detail=f"{type(e).__name__}: {e}")
         return None
 
     # ------------------------------------------------------------------
@@ -406,10 +493,36 @@ class BaseScraper(BaseJobProvider):
                             pg_num,
                             e,
                         )
+                        # VD.10 — mismo tratamiento que el error de red httpx:
+                        # un timeout/crash de goto es `error`, no `empty`.
+                        diag.record(
+                            diag.KIND_NETWORK, url, detail=f"{type(e).__name__}: {e}"
+                        )
                         break
 
-                    if response and response.status in self.BLOCK_STATUS:
-                        await self._report_block(response.status)
+                    # goto puede devolver None (p.ej. navegación same-document):
+                    # sin respuesta no hay nada verificado — parar sin tocar los
+                    # flags del run, como el error de red en el path httpx.
+                    if response is None:
+                        logger.warning(
+                            "%s Playwright page %d: goto sin respuesta",
+                            self.SOURCE_NAME,
+                            pg_num,
+                        )
+                        diag.record(diag.KIND_NETWORK, url, detail="goto sin respuesta")
+                        break
+
+                    # VD.10 — este path no pasa por _request_with_retry, así que
+                    # el estado final no-200 se registra aquí (una sola vez:
+                    # _listing_status_stops no registra, ver su docstring).
+                    if response.status != 200:
+                        diag.record(diag.KIND_HTTP, url, status=response.status)
+
+                    # Mismo corte por estado que el path httpx (VD.4a, 2ª ronda):
+                    # un no-200 jamás alcanza _maybe_report_soft_block, así el
+                    # HTML de una página de error (404/500) no puede contar como
+                    # "vacío verificado" y rehabilitar la fuente.
+                    if await self._listing_status_stops(response.status, pg_num):
                         break
 
                     html = await page.content()

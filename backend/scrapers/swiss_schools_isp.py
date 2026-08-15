@@ -17,6 +17,7 @@ vimos nosotros. NO lo "arregles": la política por fuente del ticket 2B
 decide qué hacer con las fuentes sin fecha.
 """
 
+import json
 import logging
 
 import httpx
@@ -24,6 +25,7 @@ import httpx
 from scrapers.swiss_schools_config import WatchedSchool, schools_by_strategy
 from services.circuit_breaker import CircuitBreakerOpen
 from services.job_service import BaseJobProvider
+from utils import fetch_diagnostics as diag
 
 logger = logging.getLogger(__name__)
 
@@ -92,13 +94,34 @@ class SwissSchoolsISPScraper(BaseJobProvider):
                 )
             except (CircuitBreakerOpen, httpx.HTTPError) as e:
                 logger.error("ISP Workday fetch error: %s", e)
+                # VD.10 — misma forma que `_request_with_retry` en BaseScraper:
+                # sin issue este `break` acababa en `classify(0, [])` = `empty`
+                # y la fuente ROTA se presentaba como fuente SECA.
+                diag.record(
+                    diag.KIND_NETWORK, api_url, detail=f"{type(e).__name__}: {e}"
+                )
                 break
 
             if resp.status_code != 200:
                 logger.warning("ISP Workday HTTP %d", resp.status_code)
+                # VD.10 — estado final no-200 (sin retry aquí: ya es definitivo).
+                diag.record(diag.KIND_HTTP, api_url, status=resp.status_code)
                 break
 
-            data = resp.json()
+            try:
+                data = resp.json()
+            except json.JSONDecodeError as e:
+                # Un 200 con cuerpo ilegible es la API rota (redeploy, WAF
+                # sirviendo HTML), no un board vacío. KIND_NETWORK y no
+                # KIND_HTTP: el transporte respondió 200 (no hay estado de
+                # error que reportar) y `fetch_diagnostics` asigna los fallos
+                # de parseo a `network_error` — igual que `utils.http`, que
+                # agrupa JSONDecodeError con los errores de red.
+                logger.error("ISP Workday invalid JSON body: %s", e)
+                diag.record(
+                    diag.KIND_NETWORK, api_url, detail=f"{type(e).__name__}: {e}"
+                )
+                break
             postings = data.get("jobPostings", [])
 
             # Filtro estricto por locationsText (ej. "Mosaic School / Ecole Mosaic")

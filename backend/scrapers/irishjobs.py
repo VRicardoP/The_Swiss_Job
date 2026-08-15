@@ -263,7 +263,12 @@ class IrishJobsScraper(BaseScraper):
         for page in range(1, self._pages_budget() + 1):
             url = self._page_url(host, page)
             try:
-                response = await self._request_with_retry(lambda u=url: client.get(u))
+                # `url=` explícita: con DOS hosts, el diagnóstico debe culpar
+                # al que cayó — sin ella el fallback a LISTING_URL atribuía
+                # los fallos de jobs.ie a irishjobs.ie (VD.10, H3).
+                response = await self._request_with_retry(
+                    lambda u=url: client.get(u), url=url
+                )
             except (CircuitBreakerOpen, httpx.HTTPError) as e:
                 logger.error("%s %s page %d error: %s", self.SOURCE_NAME, host, page, e)
                 break

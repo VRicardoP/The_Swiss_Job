@@ -487,3 +487,40 @@ class TestVentanaCosechaScrapers:
             )
         ).scalar_one()
         assert after > before, "la re-vista fuera de ventana no se refrescó"
+
+
+class TestScraperQueLanzaDejaSenalDeSalud:
+    """VD.10 (H5) — asimetría con providers: si `fetch_jobs` de un scraper
+    LANZA, el flujo normal nunca llega a `record_and_alert` y el run no dejaba
+    NINGUNA señal de descarga en source_health — un scraper petando en cada
+    run era invisible. El camino análogo de `fetch_tasks` sí sintetiza el
+    OUTCOME_ERROR."""
+
+    @patch("tasks.scraping_tasks.get_all_scrapers")
+    async def test_fetch_que_lanza_registra_error_de_descarga(
+        self, mock_scrapers, monkeypatch, db_session
+    ):
+        monkeypatch.setattr(settings, "CURSOR_INCREMENTAL_ENABLED", False)
+
+        scraper = _make_mock_scraper("scr_boom", [])
+        scraper.fetch_jobs = AsyncMock(side_effect=RuntimeError("TLS handshake roto"))
+        mock_scrapers.return_value = [scraper]
+
+        with patch(
+            "tasks.scraping_tasks.task_session",
+            new=_mock_session_factory(db_session),
+        ):
+            summary = await _fetch_scrapers_async()
+
+        assert summary["errors"] == 1
+        assert summary["fetch_failed"] == 1
+        fila = (
+            await db_session.execute(
+                select(SourceHealth).where(SourceHealth.source_key == "scr_boom")
+            )
+        ).scalar_one()
+        assert fila.last_outcome == "error"
+        assert fila.consecutive_errors == 1
+        assert "RuntimeError" in (fila.last_error_detail or "")
+        # Sin descarga no hay señal de persistencia (no se inventa racha).
+        assert fila.consecutive_unstored == 0

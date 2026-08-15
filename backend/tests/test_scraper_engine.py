@@ -1,5 +1,7 @@
 """Tests for BaseScraper engine — compliance, rate limiting, mode selection."""
 
+from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -7,6 +9,9 @@ import pytest
 from bs4 import BeautifulSoup
 
 from services.scraper_engine import BaseScraper
+from utils import fetch_diagnostics as diag
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class ConcreteScraper(BaseScraper):
@@ -512,6 +517,207 @@ class TestBaseScraperSoftBlock:
         scraper._report_block.assert_not_called()
 
 
+@contextmanager
+def _mock_compliance(mock_engine):
+    """Intercepta task_session + ComplianceEngine para todo el flujo de fetch_jobs."""
+    with patch("database.task_session") as mock_ts:
+        mock_ts.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_ts.return_value.__aexit__ = AsyncMock(return_value=False)
+        with patch("services.compliance.ComplianceEngine", return_value=mock_engine):
+            yield
+
+
+class TestBaseScraperRehabilitation:
+    """VD.4a: la rehabilitación depende de "run sin bloqueo", no de traer ofertas.
+
+    Para una watchlist de colegios, 0 vacantes durante meses es el estado NORMAL:
+    con el antiguo `if results:` una fuente apagada por el kill-switch jamás
+    volvía a habilitarse ni marcaba last_success_at.
+    """
+
+    def _engine(self, allowed: bool = True) -> AsyncMock:
+        engine = AsyncMock()
+        engine.can_scrape = AsyncMock(return_value=allowed)
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_verified_empty_run_resets_blocks(self):
+        # HTML real de ISB: 200, board vacío legítimo, CON el beacon pasivo de
+        # Cloudflare. Debe rehabilitar la fuente aunque traiga 0 ofertas.
+        scraper = ConcreteScraper()
+        engine = self._engine()
+        html = (FIXTURES / "swiss_schools_isb_listing_empty.html").read_text()
+
+        with _mock_compliance(engine):
+            with patch.object(
+                scraper._circuit,
+                "call",
+                new_callable=AsyncMock,
+                return_value=_resp(200, html),
+            ):
+                result = await scraper.fetch_jobs("test")
+
+        assert result == []
+        engine.report_block.assert_not_called()
+        engine.reset_blocks.assert_called_once_with("test_scraper")
+
+    @pytest.mark.asyncio
+    async def test_soft_blocked_run_does_not_reset_blocks(self):
+        # Un challenge real (200 sin datos + marcador) reporta y NO rehabilita.
+        scraper = ConcreteScraper()
+        engine = self._engine()
+        html = "<html><body>Enable JavaScript and cookies to continue</body></html>"
+
+        with _mock_compliance(engine):
+            with patch.object(
+                scraper._circuit,
+                "call",
+                new_callable=AsyncMock,
+                return_value=_resp(200, html),
+            ):
+                result = await scraper.fetch_jobs("test")
+
+        assert result == []
+        engine.report_block.assert_called_once_with("test_scraper", 200)
+        engine.reset_blocks.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_hard_blocked_run_does_not_reset_blocks(self):
+        scraper = ConcreteScraper()
+        engine = self._engine()
+
+        with _mock_compliance(engine):
+            with patch.object(
+                scraper._circuit,
+                "call",
+                new_callable=AsyncMock,
+                return_value=_resp(403),
+            ):
+                result = await scraper.fetch_jobs("test")
+
+        assert result == []
+        engine.report_block.assert_called_once_with("test_scraper", 403)
+        engine.reset_blocks.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_network_error_run_does_not_reset_blocks(self):
+        # Sin página verificada no hay evidencia de éxito: el sitio puede estar
+        # caído (o cortando conexiones como bloqueo) — no rehabilitar.
+        scraper = ConcreteScraper()
+        engine = self._engine()
+
+        with _mock_compliance(engine):
+            with patch.object(
+                scraper._circuit,
+                "call",
+                new_callable=AsyncMock,
+                side_effect=httpx.ConnectError("connection reset"),
+            ):
+                result = await scraper.fetch_jobs("test")
+
+        assert result == []
+        engine.report_block.assert_not_called()
+        engine.reset_blocks.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_blocked_run_with_results_does_not_reset_blocks(self):
+        # Página 1 llena de ofertas, página 2 bloqueada con 403: el run reportó
+        # un bloqueo, así que NO debe rehabilitar aunque haya traído resultados
+        # (antes `if results:` limpiaba el contador y anulaba el kill-switch).
+        scraper = ConcreteScraper()
+        engine = self._engine()
+        full_page = (
+            '<html><body><div class="job">A</div><div class="job">B</div></body></html>'
+        )
+
+        with _mock_compliance(engine):
+            with patch.object(
+                scraper._circuit,
+                "call",
+                new_callable=AsyncMock,
+                side_effect=[_resp(200, full_page), _resp(403)],
+            ):
+                result = await scraper.fetch_jobs("test")
+
+        assert len(result) == 2
+        engine.report_block.assert_called_once_with("test_scraper", 403)
+        engine.reset_blocks.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_failed_block_report_still_prevents_reset(self):
+        # _run_block_reported se marca ANTES de intentar persistir el bloqueo:
+        # si la BD falla al reportarlo, el run sigue contando como bloqueado y
+        # NO rehabilita aunque trajera resultados. (Discrimina la mutación de
+        # mover la asignación del flag dentro del try, tras report_block.)
+        scraper = ConcreteScraper()
+        engine = self._engine()
+        engine.report_block = AsyncMock(side_effect=Exception("db down"))
+        full_page = (
+            '<html><body><div class="job">A</div><div class="job">B</div></body></html>'
+        )
+
+        with _mock_compliance(engine):
+            with patch.object(
+                scraper._circuit,
+                "call",
+                new_callable=AsyncMock,
+                side_effect=[_resp(200, full_page), _resp(403)],
+            ):
+                result = await scraper.fetch_jobs("test")
+
+        assert len(result) == 2
+        engine.report_block.assert_called_once_with("test_scraper", 403)
+        engine.reset_blocks.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reused_instance_rearms_flags_between_runs(self):
+        # Instancia reutilizada entre cosechas: el bloqueo del primer run no
+        # debe contaminar al segundo — un run posterior con vacío limpio SÍ
+        # rehabilita. (Discrimina la mutación de quitar el rearme de flags al
+        # inicio de fetch_jobs.)
+        scraper = ConcreteScraper()
+        engine = self._engine()
+        clean_empty = "<html><body><p>No results found</p></body></html>"
+
+        with _mock_compliance(engine):
+            with patch.object(
+                scraper._circuit,
+                "call",
+                new_callable=AsyncMock,
+                return_value=_resp(403),
+            ):
+                await scraper.fetch_jobs("test")
+            engine.reset_blocks.assert_not_called()
+
+            with patch.object(
+                scraper._circuit,
+                "call",
+                new_callable=AsyncMock,
+                return_value=_resp(200, clean_empty),
+            ):
+                await scraper.fetch_jobs("test")
+
+        engine.reset_blocks.assert_called_once_with("test_scraper")
+
+    @pytest.mark.asyncio
+    async def test_run_with_results_still_resets_blocks(self):
+        # El camino clásico (ofertas y sin bloqueos) sigue rehabilitando.
+        scraper = ConcreteScraper()
+        engine = self._engine()
+
+        with _mock_compliance(engine):
+            with patch.object(
+                scraper._circuit,
+                "call",
+                new_callable=AsyncMock,
+                return_value=_resp(200, _JOB_HTML),
+            ):
+                result = await scraper.fetch_jobs("test")
+
+        assert len(result) == 1
+        engine.reset_blocks.assert_called_once_with("test_scraper")
+
+
 class TestBaseScraperDelays:
     @pytest.mark.asyncio
     async def test_rate_limit_delay_within_jitter_bounds(self):
@@ -716,3 +922,322 @@ class TestBaseScraperPlaywrightStealth:
 
         assert result == []
         scraper._report_block.assert_called_once_with(200)
+
+
+class TestBaseScraperPlaywrightStatusStops:
+    """VD.4a 2ª ronda (H1): un no-200 en Playwright NO es "vacío verificado".
+
+    Antes solo se cortaba en BLOCK_STATUS: un 404/500 (o un goto sin respuesta)
+    seguía adelante, parseaba el HTML de error, sacaba 0 stubs y el run acababa
+    rehabilitando la fuente vía reset_blocks — asimetría con el path httpx, que
+    corta cualquier no-200 en _listing_status_stops sin tocar los flags del run.
+    """
+
+    def _engine(self) -> AsyncMock:
+        engine = AsyncMock()
+        engine.can_scrape = AsyncMock(return_value=True)
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_http_500_error_page_does_not_rehabilitate(self, monkeypatch):
+        _install_fake_playwright(
+            monkeypatch, "<html><body>Internal Server Error</body></html>", status=500
+        )
+        scraper = PlaywrightScraper()
+        engine = self._engine()
+
+        with _mock_compliance(engine):
+            result = await scraper.fetch_jobs("test")
+
+        assert result == []
+        engine.report_block.assert_not_called()  # 500 no está en BLOCK_STATUS
+        engine.reset_blocks.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_goto_without_response_does_not_rehabilitate(self, monkeypatch):
+        # goto puede devolver None (navegación same-document): sin respuesta no
+        # hay nada verificado, así que tampoco debe rehabilitar.
+        _, _, _, page = _install_fake_playwright(monkeypatch, "<html></html>")
+
+        async def _goto_none(url, wait_until=None, timeout=None):
+            return None
+
+        monkeypatch.setattr(page, "goto", _goto_none)
+        scraper = PlaywrightScraper()
+        engine = self._engine()
+
+        with _mock_compliance(engine):
+            result = await scraper.fetch_jobs("test")
+
+        assert result == []
+        engine.report_block.assert_not_called()
+        engine.reset_blocks.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_block_status_still_reported(self, monkeypatch):
+        # El corte reutiliza _listing_status_stops: un 403 se sigue reportando
+        # a compliance igual que antes del cambio.
+        _install_fake_playwright(monkeypatch, "<html></html>", status=403)
+        scraper = PlaywrightScraper()
+        engine = self._engine()
+
+        with _mock_compliance(engine):
+            result = await scraper.fetch_jobs("test")
+
+        assert result == []
+        engine.report_block.assert_called_once_with("pw_scraper", 403)
+        engine.reset_blocks.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# VD.10 — fallos de descarga del listado registrados en fetch_diagnostics
+# ---------------------------------------------------------------------------
+
+
+class TestListingFailuresRecordDiagnostics:
+    """VD.10: la mitad scraper del "bucle de fuentes mudas".
+
+    BaseScraper baja los listados con httpx directo (no `utils.http`), así que
+    un 404/timeout/circuito abierto hacía `break` sin registrar nada y
+    `classify(0, [])` devolvía `empty` — la fuente ROTA se presentaba como
+    fuente SECA, la racha de vacíos crecía y el backoff la aparcaba con el
+    diagnóstico equivocado. Cada test afirma el VEREDICTO final del run
+    (`diag.classify`), no solo que exista un issue.
+    """
+
+    @pytest.mark.asyncio
+    async def test_http_404_on_page_1_is_error(self):
+        scraper = ConcreteScraper()
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit, "call", new_callable=AsyncMock, return_value=_resp(404)
+        ):
+            result = await scraper._scrape_with_httpx("")
+
+        assert result == []
+        issues = diag.issues()
+        # Exactamente 1: _request_with_retry registra y _listing_status_stops
+        # NO vuelve a registrar (sin duplicados entre los dos caminos).
+        assert len(issues) == 1
+        assert issues[0].kind == diag.KIND_HTTP
+        assert issues[0].status == 404
+        assert diag.classify(len(result), issues) == "error"
+
+    @pytest.mark.asyncio
+    async def test_network_error_after_retries_is_error(self):
+        scraper = RetryScraper()
+        scraper._circuit.call = AsyncMock(side_effect=httpx.ConnectError("down"))
+        diag.begin()
+
+        result = await scraper._scrape_with_httpx("")
+
+        assert result == []
+        assert scraper._circuit.call.call_count == 3  # reintentos agotados
+        issues = diag.issues()
+        # Solo el fallo DEFINITIVO se registra, no cada reintento intermedio.
+        assert len(issues) == 1
+        assert issues[0].kind == diag.KIND_NETWORK
+        assert "ConnectError" in issues[0].detail
+        assert diag.classify(len(result), issues) == "error"
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_open_is_error(self):
+        from services.circuit_breaker import CircuitBreakerOpen
+
+        scraper = ConcreteScraper()
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            side_effect=CircuitBreakerOpen("test_scraper", 60),
+        ):
+            result = await scraper._scrape_with_httpx("")
+
+        assert result == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].kind == diag.KIND_NETWORK
+        assert "Circuit breaker open" in issues[0].detail
+        assert diag.classify(len(result), issues) == "error"
+
+    @pytest.mark.asyncio
+    async def test_block_403_is_error_and_still_reports_block(self):
+        # Decisión VD.10: un bloqueo TAMBIÉN registra issue — para source_health
+        # es "no se pudo descargar" (la fuente puede tener ofertas), no "la
+        # fuente no tenía nada". El reporte a compliance no cambia.
+        scraper = ConcreteScraper()
+        scraper._report_block = AsyncMock()
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit, "call", new_callable=AsyncMock, return_value=_resp(403)
+        ):
+            result = await scraper._scrape_with_httpx("")
+
+        assert result == []
+        scraper._report_block.assert_called_once_with(403)
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].status == 403
+        assert diag.classify(len(result), issues) == "error"
+
+    @pytest.mark.asyncio
+    async def test_soft_block_is_error_and_still_reports_block(self):
+        scraper = ConcreteScraper()
+        scraper._report_block = AsyncMock()
+        html = "<html><body>Please complete the captcha</body></html>"
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_resp(200, html),
+        ):
+            result = await scraper._scrape_with_httpx("")
+
+        assert result == []
+        scraper._report_block.assert_called_once_with(200)
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "soft-block" in issues[0].detail
+        assert diag.classify(len(result), issues) == "error"
+
+    @pytest.mark.asyncio
+    async def test_playwright_non_200_is_error(self, monkeypatch):
+        _install_fake_playwright(
+            monkeypatch, "<html><body>Not Found</body></html>", status=404
+        )
+        scraper = PlaywrightScraper()
+        diag.begin()
+
+        result = await scraper._scrape_with_playwright("")
+
+        assert result == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].kind == diag.KIND_HTTP
+        assert issues[0].status == 404
+        assert diag.classify(len(result), issues) == "error"
+
+    @pytest.mark.asyncio
+    async def test_playwright_goto_without_response_is_error(self, monkeypatch):
+        _, _, _, page = _install_fake_playwright(monkeypatch, "<html></html>")
+
+        async def _goto_none(url, wait_until=None, timeout=None):
+            return None
+
+        monkeypatch.setattr(page, "goto", _goto_none)
+        scraper = PlaywrightScraper()
+        diag.begin()
+
+        result = await scraper._scrape_with_playwright("")
+
+        assert result == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].detail == "goto sin respuesta"
+        assert diag.classify(len(result), issues) == "error"
+
+    @pytest.mark.asyncio
+    async def test_playwright_goto_exception_is_error(self, monkeypatch):
+        _, _, _, page = _install_fake_playwright(monkeypatch, "<html></html>")
+
+        async def _goto_boom(url, wait_until=None, timeout=None):
+            raise TimeoutError("Navigation timeout")
+
+        monkeypatch.setattr(page, "goto", _goto_boom)
+        scraper = PlaywrightScraper()
+        diag.begin()
+
+        result = await scraper._scrape_with_playwright("")
+
+        assert result == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].kind == diag.KIND_NETWORK
+        assert diag.classify(len(result), issues) == "error"
+
+    @pytest.mark.asyncio
+    async def test_legitimate_empty_stays_empty_with_zero_issues(self):
+        # No-regresión VD.4a: un 200 bien parseado con 0 ofertas es `empty`,
+        # NUNCA registra issue — un board de colegios sin vacantes debe seguir
+        # rehabilitando la fuente, no aparecer como rota.
+        scraper = ConcreteScraper()
+        html = "<html><body><p>No results found</p></body></html>"
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_resp(200, html),
+        ):
+            result = await scraper._scrape_with_httpx("")
+
+        assert result == []
+        assert diag.issues() == []
+        assert diag.classify(len(result), diag.issues()) == "empty"
+
+    @pytest.mark.asyncio
+    async def test_failure_on_later_page_is_ok_with_issue(self):
+        # Página 1 llena, página 2 con 404: degradación parcial — `ok` con el
+        # issue registrado, la semántica documentada de classify. No cambia.
+        scraper = ConcreteScraper()
+        full_page = (
+            '<html><body><div class="job">A</div><div class="job">B</div></body></html>'
+        )
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            side_effect=[_resp(200, full_page), _resp(404)],
+        ):
+            result = await scraper._scrape_with_httpx("")
+
+        assert len(result) == 2
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].status == 404
+        assert diag.classify(len(result), issues) == "ok"
+
+    @pytest.mark.asyncio
+    async def test_detail_failure_records_issue_without_breaking_run(self):
+        # El detalle caído no aborta el run (el stub del listado sigue): queda
+        # como issue para que un run con ofertas salga `ok` con degradación.
+        scraper = ConcreteScraper()
+        client = MagicMock()
+        client.get = AsyncMock(return_value=_resp(404))
+        diag.begin()
+
+        result = await scraper._fetch_detail_httpx(client, "https://example.com/d")
+
+        assert result is None
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].status == 404
+        assert issues[0].url == "https://example.com/d"
+
+    @pytest.mark.asyncio
+    async def test_detail_network_error_records_issue_without_breaking_run(self):
+        # Gemelo del anterior para el path de EXCEPCIÓN: el `diag.record` del
+        # except de _fetch_detail_httpx era un mutante superviviente (borrarlo
+        # dejaba la suite en verde). Este test lo mata.
+        scraper = ConcreteScraper()
+        client = MagicMock()
+        client.get = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
+        diag.begin()
+
+        result = await scraper._fetch_detail_httpx(client, "https://example.com/d")
+
+        assert result is None
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].kind == diag.KIND_NETWORK
+        assert issues[0].url == "https://example.com/d"
+        assert "ConnectError" in issues[0].detail

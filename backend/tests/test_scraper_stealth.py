@@ -1,6 +1,7 @@
 """Tests for scraper_stealth — anti-detection helper functions."""
 
 import random
+from pathlib import Path
 
 from services.scraper_stealth import (
     DEFAULT_SOFT_BLOCK_MARKERS,
@@ -10,6 +11,20 @@ from services.scraper_stealth import (
     looks_soft_blocked,
     realistic_headers,
 )
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+# Pantalla de challenge REAL de Cloudflare (interstitial moderno): título
+# "Just a moment..." + texto de error + orquestador activo de challenge-platform.
+# Debe seguir detectándose por sus marcadores de texto tras VD.4a.
+_CF_CHALLENGE_HTML = """<!DOCTYPE html><html lang="en-US">
+<head><title>Just a moment...</title></head>
+<body class="no-js">
+<div class="main-wrapper" role="main">
+<h1><span id="challenge-error-text">Enable JavaScript and cookies to continue</span></h1>
+</div>
+<script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script>
+</body></html>"""
 
 
 class TestRealisticHeaders:
@@ -82,8 +97,64 @@ class TestLooksSoftBlocked:
         html = "<html><body>Please complete the CAPTCHA to continue</body></html>"
         assert looks_soft_blocked(html, DEFAULT_SOFT_BLOCK_MARKERS) is True
 
-    def test_cloudflare_marker_detected(self):
-        html = "<html><body>Checking /cdn-cgi/challenge-platform ...</body></html>"
+    def test_passive_cloudflare_beacon_is_not_blocked(self):
+        # Regresión VD.4a: el HTML REAL de ISB (200, board vacío legítimo) incluye
+        # el beacon pasivo de telemetría /cdn-cgi/challenge-platform/scripts/jsd/
+        # — presente en CUALQUIER sitio tras Cloudflare. No es un challenge y no
+        # debe contar como soft-block (antes disparaba el kill-switch en bucle).
+        html = (FIXTURES / "swiss_schools_isb_listing_empty.html").read_text()
+        assert "/cdn-cgi/challenge-platform" in html  # el beacon está presente
+        assert looks_soft_blocked(html, DEFAULT_SOFT_BLOCK_MARKERS) is False
+
+    def test_real_cloudflare_challenge_detected(self):
+        # Un challenge REAL se sigue cazando por sus marcadores de texto
+        # ("enable javascript and cookies to continue"), sin necesitar la ruta
+        # del beacon.
+        assert looks_soft_blocked(_CF_CHALLENGE_HTML, DEFAULT_SOFT_BLOCK_MARKERS)
+
+    def test_cloudflare_1020_access_denied_detected(self):
+        # Pantalla 1020 de Cloudflare ("Access denied"): normalmente llega con
+        # 403 y la corta _listing_status_stops antes de parsear, pero una regla
+        # WAF custom que la devuelva con otro estado debe cazarse por su texto.
+        html = (
+            "<!DOCTYPE html><html><head><title>Access denied | example.ch"
+            " used Cloudflare to restrict access</title></head><body>"
+            '<h1><span class="error-description">Sorry, you have been blocked</span></h1>'
+            '<h2 class="cf-subheadline">You are unable to access example.ch</h2>'
+            '<div class="cf-error-footer">Cloudflare Ray ID: 8f2a1b3c4d5e6f70</div>'
+            "</body></html>"
+        )
+        assert looks_soft_blocked(html, DEFAULT_SOFT_BLOCK_MARKERS) is True
+
+    def test_legacy_cloudflare_verification_detected(self):
+        # Variante clásica de Cloudflare: página con cf-browser-verification.
+        html = (
+            "<html><body><div id='cf-content'>Checking your browser before"
+            " accessing…</div><div class='cf-browser-verification'></div>"
+            "</body></html>"
+        )
+        assert looks_soft_blocked(html, DEFAULT_SOFT_BLOCK_MARKERS) is True
+
+    def test_turnstile_managed_challenge_detected(self):
+        # VD.4a 2ª ronda: Turnstile "managed challenge" sin <noscript> ni divs
+        # cf-*, solo el texto en gerundio. OJO: "verify you are human" NO es
+        # substring de "verifying you are human" — sin marcador propio, este
+        # challenge contaba como vacío verificado y rehabilitaba la fuente.
+        html = (
+            "<html><head><title>Just a moment...</title></head><body>"
+            "<p>Verifying you are human. This may take a few seconds.</p>"
+            "</body></html>"
+        )
+        assert looks_soft_blocked(html, DEFAULT_SOFT_BLOCK_MARKERS) is True
+
+    def test_checking_your_browser_without_cf_div_detected(self):
+        # VD.4a 2ª ronda: interstitial clásico de Cloudflare servido por
+        # instalaciones antiguas SIN div cf-* — debe cazarse por la frase sola
+        # (el test de arriba lo detecta vía cf-browser-verification, no por texto).
+        html = (
+            "<html><body><p>Checking your browser before accessing"
+            " example.ch.</p></body></html>"
+        )
         assert looks_soft_blocked(html, DEFAULT_SOFT_BLOCK_MARKERS) is True
 
     def test_case_insensitive(self):

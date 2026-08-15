@@ -350,6 +350,41 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 await db.rollback()
                 summary["errors"] += 1
                 logger.error("Scraper %s failed: %s", source, e)
+                # VD.10/H5 — si `fetch_jobs` LANZÓ (`jobs is None`), el flujo
+                # normal nunca llegó a `record_and_alert` y el run no dejaba
+                # NINGUNA señal de descarga: un scraper petando en cada run
+                # era invisible para source_health. Se sintetiza el
+                # OUTCOME_ERROR igual que hace `_fetch_one` en fetch_tasks.
+                # Con `jobs` asignado NO se registra: la señal de descarga ya
+                # la dejó el flujo normal y aquí se duplicaría. Mismo
+                # aislamiento que `record_storage` abajo: si la BD está caída
+                # el propio registro puede lanzar y mataría el bucle.
+                if jobs is None:
+                    summary["fetch_failed"] += 1
+                    try:
+                        motivo = await source_health.record_and_alert(
+                            db,
+                            source,
+                            OUTCOME_ERROR,
+                            0,
+                            [
+                                diag.FetchIssue(
+                                    diag.KIND_NETWORK,
+                                    url="",
+                                    detail=f"{type(e).__name__}: {e}",
+                                )
+                            ],
+                        )
+                    except Exception as health_err:  # noqa: BLE001 — no empeorar
+                        motivo = None
+                        logger.error(
+                            "No se pudo registrar la salud de %s en el camino "
+                            "de error: %s",
+                            source,
+                            health_err,
+                        )
+                    if motivo:
+                        summary["unhealthy"].append(f"{source}: {motivo}")
                 # Perder el LOTE entero (commit o cursor fallidos) también es
                 # señal de persistencia: sin esto la racha quedaba congelada y
                 # el fallo se presentaba como éxito un nivel más arriba. Solo

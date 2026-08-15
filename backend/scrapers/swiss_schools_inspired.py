@@ -46,20 +46,21 @@ class SwissSchoolsInspiredScraper(SwissSchoolBaseScraper):
         self._schools: list[WatchedSchool] = schools_by_strategy("inspired_sf")
         self._current_school: WatchedSchool | None = None
 
-    async def fetch_jobs(self, query: str, location: str = "Switzerland") -> list[dict]:
-        if not await self._pre_check():
-            return []
+    async def _scrape_with_httpx(self, query: str) -> list[dict]:
+        """Una pasada del flujo base de scraping por cada colegio vigilado.
 
+        Se sobreescribe ESTE punto y no fetch_jobs (VD.4a): así se hereda el
+        ciclo de compliance completo del BaseScraper — pre-check, rearme de
+        flags del run y la rehabilitación por "vacío verificado". El antiguo
+        override de fetch_jobs conservaba `if results:` para rehabilitar, y en
+        una watchlist donde 0 vacantes durante meses es lo NORMAL eso dejaba la
+        fuente apagada para siempre si caía en el kill-switch.
+        """
         all_jobs: list[dict] = []
         for school in self._schools:
             self._current_school = school
-            jobs = await self._scrape_with_httpx(query)
-            all_jobs.extend(jobs)
-
-        results = self._process_raw_jobs(all_jobs)
-        if results:
-            await self._reset_compliance_blocks()
-        return self._finalize_fetch(results)
+            all_jobs.extend(await super()._scrape_with_httpx(query))
+        return all_jobs
 
     def build_listing_url(self, page: int, query: str) -> str:
         keyword = (self._current_school.params or {}).get("keyword", "")

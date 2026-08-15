@@ -7,10 +7,12 @@ Puros, sin red: el parser se prueba contra una fixture HTML recortada
 """
 
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 from bs4 import BeautifulSoup
 
 from scrapers.irishjobs import IrishJobsScraper, _parse_salary
+from utils import fetch_diagnostics as diag
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -307,3 +309,27 @@ class TestIrishJobsScraper:
         fresh2 = IrishJobsScraper._dedupe_new(page2, seen)
         assert [j["id"] for j in fresh1] == [1, 2]
         assert [j["id"] for j in fresh2] == [3]  # id 2 ya visto en el otro host
+
+    # ------------------------------------------------------------------
+    # Diagnóstico por host (VD.10, H3)
+    # ------------------------------------------------------------------
+
+    async def test_failed_host_records_its_own_url(self):
+        # Fuente de DOS hosts: el issue debe culpar a la URL del host que
+        # cayó. Sin `url=` en _request_with_retry, el fallback atribuía los
+        # fallos de jobs.ie a la LISTING_URL de irishjobs.ie (el diagnóstico
+        # mentía sobre cuál de los dos estaba roto).
+        scraper = IrishJobsScraper()
+        client = MagicMock()
+        resp = MagicMock()
+        resp.status_code = 404  # no-200 fuera de BLOCK_STATUS: sin retry ni BD
+        client.get = AsyncMock(return_value=resp)
+        diag.begin()
+
+        stubs = await scraper._harvest_host(client, "https://www.jobs.ie", set())
+
+        assert stubs == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].status == 404
+        assert issues[0].url == "https://www.jobs.ie/jobs/work-from-home?page=1"
