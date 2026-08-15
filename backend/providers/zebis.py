@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from services.job_service import BaseJobProvider
+from utils import fetch_diagnostics as diag
 from utils.dates import parse_published_at
 from utils.http import fetch_rss
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
@@ -97,6 +98,17 @@ class ZebisProvider(BaseJobProvider):
 
     SOURCE_NAME = "zebis"
 
+    def _record_structure_failure(self, detail: str) -> None:
+        """Registra un fallo de estructura como error de fetch VISIBLE.
+
+        Un HTTP 200 cuyo contenido no podemos leer NO es "no hay ofertas": se
+        anota en fetch_diagnostics para que el veredicto del run sea `error`
+        (source_health), no `empty` en silencio — la misma garantía que
+        financejobs (VD.7) y el resto de la fase de recuperación.
+        """
+        logger.error("zebis: %s", detail)
+        diag.record(diag.KIND_NETWORK, FEED_URL, detail=detail)
+
     async def fetch_jobs(self, query: str, location: str = "Switzerland") -> list[dict]:
         """Fetch teaching jobs from zebis.ch RSS feed."""
         async with httpx.AsyncClient() as client:
@@ -104,22 +116,42 @@ class ZebisProvider(BaseJobProvider):
                 lambda: fetch_rss(client, FEED_URL, headers=self.DEFAULT_HEADERS)
             )
 
-        if not xml_text:
+        # SOLO el None de fetch_rss corta aquí: es un fetch fallido cuyo
+        # issue ya registró utils.http. Un "" (200 con cuerpo vacío) NO es lo
+        # mismo — con `if not xml_text` salía como `empty` en silencio; ahora
+        # fluye a ET.fromstring y el ParseError lo registra como fallo
+        # visible de estructura.
+        if xml_text is None:
             return []
 
+        # Un 200 con XML ilegible o sin la estructura RSS esperada es fallo de
+        # estructura, nunca un feed vacío. Un <channel> válido con cero <item>
+        # SÍ es vacío legítimo (sin issue): es lo que permite rehabilitarse a
+        # un board sin vacantes.
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError as e:
-            logger.error("Failed to parse zebis RSS XML: %s", e)
+            self._record_structure_failure(f"RSS XML ilegible: {e}")
             return []
 
         channel = root.find("channel")
         if channel is None:
-            logger.warning("No <channel> element in zebis RSS feed")
+            self._record_structure_failure("RSS sin <channel>: estructura desconocida")
             return []
 
         items = channel.findall("item")
         all_jobs = self._process_raw_jobs(items)
+
+        # Feed bien formado del que no sale NI UNA oferta normalizable (p. ej.
+        # el portal migra el path de /stellen/<slug> a /jobs/<slug> y todos
+        # los <item> pierden la URL utilizable): estructura desconocida, no
+        # vacío legítimo — la misma regla que thehub/financejobs ("N elementos
+        # y ninguno parseable"). ANTES del filtro por query: un query que
+        # descarta todos los resultados SÍ es vacío legítimo (G2, sin issue).
+        if items and not all_jobs:
+            self._record_structure_failure(
+                f"el feed trae {len(items)} items y ninguno es normalizable"
+            )
 
         if query:
             q_lower = query.lower()

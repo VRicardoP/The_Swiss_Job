@@ -109,6 +109,29 @@ async def test_fetch_with_retry_registra_el_403():
 
 
 @pytest.mark.asyncio
+async def test_fetch_with_retry_registra_el_200_con_json_null():
+    """Fase 3 r2/H1: `response.json()` sobre el cuerpo `null` devuelve None
+    por el camino de ÉXITO (sin excepción) — sin registro rompía el contrato
+    del que dependen los 20 providers ("el None de fetch_with_retry es un
+    fetch fallido cuyo issue ya registró utils.http") y el run salía
+    `empty` en silencio en vez de `error` (G1)."""
+
+    def handler(request):
+        return httpx.Response(200, content=b"null")
+
+    diag.begin()
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        assert await fetch_with_retry(client, "https://x/api", max_retries=0) is None
+
+    fallos = diag.issues()
+    assert len(fallos) == 1
+    assert fallos[0].kind == diag.KIND_NETWORK
+    assert "null" in fallos[0].detail
+    assert diag.classify(0, fallos) == OUTCOME_ERROR
+
+
+@pytest.mark.asyncio
 async def test_sin_begin_no_registra_y_no_rompe():
     """Una llamada fuera del pipeline (script, test suelto) no se ve afectada."""
     diag._issues.set(None)

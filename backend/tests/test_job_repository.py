@@ -575,6 +575,100 @@ class TestUpsertDegradedRevisit:
 
 
 @pytest.mark.anyio
+class TestUpsertProtectionEdges:
+    """Fase 3/H4: dos bordes de la protección del upsert que se escapaban.
+
+    (1) Un description_snippet="" entrante pisaba el snippet bueno: el
+    COALESCE solo cubría NULL. (2) Un campo AUSENTE del payload hacía que
+    effective_description/effective_tags fueran excluded.<campo> = NULL y el
+    is_distinct_from contra la columna invalidara el embedding aunque el
+    texto efectivo de la fila no cambiara."""
+
+    async def test_empty_string_snippet_does_not_clobber_stored(self, db_session):
+        """Borde 1: `_snippet("")` devuelve None, pero quien asigne "" a mano
+        también es un entrante degradado — el NULLIF debe equipararlo a NULL
+        y conservar el snippet bueno."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(
+            _job_dict(
+                description="Good detailed text",
+                description_snippet="Good detailed text",
+            )
+        )
+        await db_session.commit()
+
+        await repo.upsert_job(
+            _job_dict(description="Good detailed text", description_snippet="")
+        )
+        await db_session.commit()
+
+        stored = (
+            await db_session.execute(
+                select(Job.description_snippet).where(Job.hash == h)
+            )
+        ).scalar_one()
+        assert stored == "Good detailed text"  # conservado, no ""
+
+    async def test_omitted_description_preserves_embedding(self, db_session):
+        """Borde 2a: payload SIN la clave description — el ON CONFLICT no toca
+        la columna, así que el embedding NO debe invalidarse (el texto
+        efectivo de la fila es idéntico). Antes, excluded.description = NULL
+        era "distinto" del texto almacenado y el embedding caía a NULL."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(_job_dict(description="Stable text"))
+        await db_session.commit()
+        await db_session.execute(
+            update(Job).where(Job.hash == h).values(embedding=[0.8] * 384)
+        )
+        await db_session.commit()
+
+        # Payload sin description ni snippet (p. ej. un caller parcial).
+        partial = _job_dict()
+        del partial["description"]
+        del partial["description_snippet"]
+        await repo.upsert_job(partial)
+        await db_session.commit()
+
+        row = (
+            await db_session.execute(
+                select(Job.description, Job.embedding).where(Job.hash == h)
+            )
+        ).one()
+        assert row.description == "Stable text"  # la columna no se tocó
+        assert row.embedding is not None  # y el embedding tampoco
+
+    async def test_omitted_tags_preserves_embedding(self, db_session):
+        """Borde 2b: misma protección para tags — un payload sin la clave no
+        cambia las tags efectivas y no debe invalidar el embedding."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(_job_dict(tags=["python", "fastapi"]))
+        await db_session.commit()
+        await db_session.execute(
+            update(Job).where(Job.hash == h).values(embedding=[0.9] * 384)
+        )
+        await db_session.commit()
+
+        partial = _job_dict()
+        del partial["tags"]
+        await repo.upsert_job(partial)
+        await db_session.commit()
+
+        row = (
+            await db_session.execute(
+                select(Job.tags, Job.embedding).where(Job.hash == h)
+            )
+        ).one()
+        assert row.tags == ["python", "fastapi"]
+        assert row.embedding is not None
+
+
+@pytest.mark.anyio
 class TestUpsertPublishedAt:
     """V.1 / ADR-10: el re-upsert sin fecha NO borra la fecha ya conocida."""
 

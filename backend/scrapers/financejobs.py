@@ -6,6 +6,7 @@ which is more reliable than CSS selectors on styled-components.
 
 import json
 import logging
+import re
 
 from bs4 import BeautifulSoup
 
@@ -28,6 +29,38 @@ _JOBS_SSR_PATHS: tuple[tuple[str, ...], ...] = (
     ("pageProps", "jobsSSR"),  # estructura actual (sonda 2026-08-14)
     ("initialProps", "pageProps", "jobsSSR"),  # estructura histórica (2026-02-28)
 )
+
+
+# jobId REAL del portal: entero (fixtures y sonda 2026-08-14/15, p. ej.
+# 14697110). Como string solo se acepta decimal ASCII — `[0-9]` y no
+# isdigit()/`\d`, que casan dígitos unicode (١٤) que el portal nunca emite
+# (misma regla que gastrojob, VD.4b r2).
+_DECIMAL_ID_RE = re.compile(r"^[0-9]+$")
+# jcJobId: UUID canónico en minúsculas, la forma real del portal
+# ("cbbceba0-ab30-4f23-91fc-9fe4cf3bc8a0").
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def _job_url_id(job: dict) -> str:
+    """Devuelve el id de la oferta validado para interpolar en la URL, o "".
+
+    Se blindaron los campos de texto pero el id se interpolaba tal cual: un
+    jobId arbitrario ({'x': 1}, '42?utm=x', '42#frag', '../admin') produce
+    URLs distintas para la misma identidad y rompe la estabilidad de la
+    deduplicación (hash title|company|url + ix_jobs_url). Lo que no case con
+    las formas reales del portal se trata como oferta sin URL utilizable y se
+    salta (misma regla que el resto de la fase).
+    """
+    job_id = job.get("jobId")
+    # bool es subclase de int: `true` no es un id y saldría como "True".
+    if isinstance(job_id, int) and not isinstance(job_id, bool) and job_id >= 0:
+        return str(job_id)
+    if isinstance(job_id, str) and _DECIMAL_ID_RE.fullmatch(job_id):
+        return job_id
+    jc_job_id = job.get("jcJobId")
+    if isinstance(jc_job_id, str) and _UUID_RE.fullmatch(jc_job_id):
+        return jc_job_id
+    return ""
 
 
 def _s(value: object) -> str:
@@ -129,7 +162,7 @@ class FinancejobsScraper(BaseScraper):
             if not isinstance(job, dict):
                 continue
 
-            job_id = job.get("jobId") or job.get("jcJobId") or ""
+            job_id = _job_url_id(job)
             title = _s(job.get("title"))
             company = _s(job.get("companyName")) or "Unknown"
             location = _s(job.get("location"))
@@ -157,11 +190,6 @@ class FinancejobsScraper(BaseScraper):
                 }
             )
 
-        # Página NO vacía de la que no sale ni un stub: estructura desconocida
-        # (p. ej. el portal renombró `title` y todo cayó en los `continue`),
-        # no vacío legítimo — sin este guard el run saldría `empty` con 0
-        # issues, el bug original de VD.7 con otra ropa. El vacío legítimo
-        # (`jobs: []`) no entra, y con 1 stub válido el run sigue siendo `ok`.
         # Página NO vacía de la que no sale ni un stub: estructura desconocida
         # (p. ej. el portal renombró `title` y todo cayó en los `continue`),
         # no vacío legítimo — sin este guard el run saldría `empty` con 0

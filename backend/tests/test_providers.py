@@ -721,6 +721,142 @@ class TestZebisProvider:
         result = ZebisProvider().normalize_job(item)
         _assert_normalized(result, "zebis")
 
+    async def test_rss_ilegible_registra_fetch_issue(self, monkeypatch):
+        """Fase 3/H2 rama 1: un 200 cuyo XML no parsea (ET.ParseError) salía
+        como `empty` con 0 issues (G1 rota) — solo se logeaba. Debe
+        registrarse como fallo de fetch para que classify dé `error`."""
+        import providers.zebis as zebis_module
+        from utils import fetch_diagnostics as diag
+
+        async def fake_rss(client, url, **kwargs):
+            return "<rss><channel><item>truncado"  # XML inválido
+
+        monkeypatch.setattr(zebis_module, "fetch_rss", fake_rss)
+        diag.begin()
+        assert await ZebisProvider().fetch_jobs("") == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "ilegible" in issues[0].detail
+
+    async def test_rss_sin_channel_registra_fetch_issue(self, monkeypatch):
+        """Fase 3/H2 rama 2: XML válido pero sin <channel> es estructura
+        desconocida (no es el RSS del portal), nunca un feed vacío."""
+        import providers.zebis as zebis_module
+        from utils import fetch_diagnostics as diag
+
+        async def fake_rss(client, url, **kwargs):
+            return "<html><body>Not an RSS feed</body></html>"
+
+        monkeypatch.setattr(zebis_module, "fetch_rss", fake_rss)
+        diag.begin()
+        assert await ZebisProvider().fetch_jobs("") == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "channel" in issues[0].detail
+
+    async def test_channel_sin_items_es_vacio_legitimo(self, monkeypatch):
+        """No-regresión G2: un <channel> válido con cero <item> es vacío
+        legítimo (0 issues) — la vía de rehabilitación de un board sin
+        vacantes no debe convertirse en `error`."""
+        import providers.zebis as zebis_module
+        from utils import fetch_diagnostics as diag
+
+        async def fake_rss(client, url, **kwargs):
+            return (
+                '<?xml version="1.0"?><rss version="2.0"><channel>'
+                "<title>Stellen</title></channel></rss>"
+            )
+
+        monkeypatch.setattr(zebis_module, "fetch_rss", fake_rss)
+        diag.begin()
+        assert await ZebisProvider().fetch_jobs("") == []
+        assert diag.issues() == []
+
+    async def test_cuerpo_vacio_registra_fetch_issue(self, monkeypatch):
+        """Fase 3/H2: un 200 con cuerpo VACÍO ("") salía como `empty` con 0
+        issues — `if not xml_text` lo confundía con el None de fetch_rss
+        (fetch fallido cuyo issue ya registró utils.http). El "" debe fluir
+        a ET.fromstring para que el ParseError lo haga visible."""
+        import providers.zebis as zebis_module
+        from utils import fetch_diagnostics as diag
+
+        async def fake_rss(client, url, **kwargs):
+            return ""  # 200 con body vacío: fetch "exitoso" sin contenido
+
+        monkeypatch.setattr(zebis_module, "fetch_rss", fake_rss)
+        diag.begin()
+        assert await ZebisProvider().fetch_jobs("") == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "ilegible" in issues[0].detail
+
+    async def test_fetch_fallido_none_corta_sin_issue_propio(self, monkeypatch):
+        """Fija la decisión (NO discrimina un bug: pasaba también antes del
+        arreglo de H2): el None de fetch_rss corta sin registrar issue
+        PROPIO — el fallo de red/HTTP ya lo registró utils.http y duplicarlo
+        inflaría el recuento de issues del run."""
+        import providers.zebis as zebis_module
+        from utils import fetch_diagnostics as diag
+
+        async def fake_rss(client, url, **kwargs):
+            return None  # fetch fallido: utils.http ya registró su issue
+
+        monkeypatch.setattr(zebis_module, "fetch_rss", fake_rss)
+        diag.begin()
+        assert await ZebisProvider().fetch_jobs("") == []
+        assert diag.issues() == []
+
+    async def test_items_y_ninguno_normalizable_registra_fetch_issue(self, monkeypatch):
+        """Fase 3 r2/H2: feed bien formado cuyos <item> pierden TODOS la URL
+        utilizable (p. ej. el portal migra el path de /stellen/<slug> a
+        /jobs/<slug> — y este portal YA demostró tener la base del feed mal
+        configurada): todos caían en los descartes de _process_raw_jobs y el
+        run salía `empty` con 0 issues. Misma regla que thehub/financejobs
+        ("N elementos y ninguno parseable")."""
+        import providers.zebis as zebis_module
+        from utils import fetch_diagnostics as diag
+
+        items = "".join(
+            f"<item><title>Lehrperson {i}</title>"
+            f"<link>https://www.zebis.ch/jobs/lehrperson-{i}</link></item>"
+            for i in range(3)
+        )
+        feed = (
+            f'<?xml version="1.0"?><rss version="2.0"><channel>{items}</channel></rss>'
+        )
+
+        async def fake_rss(client, url, **kwargs):
+            return feed
+
+        monkeypatch.setattr(zebis_module, "fetch_rss", fake_rss)
+        diag.begin()
+        assert await ZebisProvider().fetch_jobs("") == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "3 items y ninguno es normalizable" in issues[0].detail
+
+    async def test_query_que_filtra_todo_es_vacio_legitimo(self, monkeypatch):
+        """No-regresión G2 (Fase 3 r2/H2): el guard va ANTES del filtro por
+        query — un query que descarta todos los resultados normalizados es
+        vacío legítimo, SIN issue (la vía de rehabilitación no se rompe)."""
+        import providers.zebis as zebis_module
+        from utils import fetch_diagnostics as diag
+
+        feed = (
+            '<?xml version="1.0"?><rss version="2.0"><channel>'
+            "<item><title>Klassenlehrperson (80 %)</title>"
+            "<link>https://www.zebis.ch/stellen/klassenlehrperson-80</link>"
+            "</item></channel></rss>"
+        )
+
+        async def fake_rss(client, url, **kwargs):
+            return feed
+
+        monkeypatch.setattr(zebis_module, "fetch_rss", fake_rss)
+        diag.begin()
+        assert await ZebisProvider().fetch_jobs("zzz-sin-coincidencia") == []
+        assert diag.issues() == []
+
     def test_normalize_job_title_with_percentage(self):
         item = ET.Element("item")
         ET.SubElement(

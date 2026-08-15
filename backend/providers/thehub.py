@@ -7,6 +7,7 @@ import re
 import httpx
 
 from services.job_service import BaseJobProvider
+from utils import fetch_diagnostics as diag
 from utils.dates import parse_published_at
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
@@ -59,6 +60,17 @@ class TheHubProvider(BaseJobProvider):
     LOGO_BASE = "https://thehub-io.imgix.net"
     MAX_PAGES = 5
 
+    def _record_structure_failure(self, detail: str) -> None:
+        """Registra un fallo de estructura como error de fetch VISIBLE.
+
+        Un HTTP 200 cuyo contenido no podemos leer NO es "no hay ofertas": se
+        anota en fetch_diagnostics para que el veredicto del run sea `error`
+        (source_health), no `empty` en silencio — la misma garantía que
+        financejobs (VD.7) y el resto de la fase de recuperación.
+        """
+        logger.error("thehub: %s", detail)
+        diag.record(diag.KIND_NETWORK, self.API_URL, detail=detail)
+
     async def fetch_jobs(self, query: str, location: str = "Switzerland") -> list[dict]:
         """Fetch remote jobs from The Hub, paginating hasta MAX_PAGES."""
         results: list[dict] = []
@@ -75,25 +87,66 @@ class TheHubProvider(BaseJobProvider):
                     )
                 )
 
-                if not data:
+                # SOLO el None de fetch_with_retry corta aquí: es un fetch
+                # fallido cuyo issue ya registró utils.http. Un `{}` (200 con
+                # JSON vacío) NO es lo mismo — con `if not data` caía en este
+                # corte y el 200 ilegible salía `empty` en silencio; ahora
+                # fluye al guard de la clave `docs`.
+                if data is None:
                     break
 
-                raw_jobs = data.get("docs", [])
+                # JSON válido pero no-objeto (p. ej. una lista): no hay dónde
+                # leer `docs` — sin este guard, `.get()` tiraba el lote con un
+                # AttributeError. Mismo isinstance que ya aplica financejobs.
+                if not isinstance(data, dict):
+                    self._record_structure_failure(
+                        f"respuesta malformada en la página {page} — "
+                        "no es un objeto JSON; se corta la paginación"
+                    )
+                    break
+
+                # La API real incluye `docs` SIEMPRE, incluso fuera de rango
+                # (sonda 2026-08-15: page=9999 responde con docs: [] y las
+                # claves de paginación). Un 200 sin la clave es la API
+                # renombrando el campo — estructura desconocida, no "no hay
+                # más ofertas": el default [] de .get() caía en el corte de
+                # paginación sin issue y el run salía `empty` en silencio.
+                if "docs" not in data:
+                    self._record_structure_failure(
+                        f"respuesta sin la clave 'docs' en la página {page}: "
+                        "estructura desconocida; se corta la paginación"
+                    )
+                    break
+
+                raw_jobs = data["docs"]
                 # API malformada (docs no es una lista): cortar la paginación
-                # conservando lo ya procesado — misma tolerancia que un `data`
-                # vacío, en vez de tirar el lote entero con un AttributeError.
+                # conservando lo ya procesado. El corte se registra como
+                # fallo de estructura: un 200 con `docs` ilegible NO es "no
+                # hay más ofertas", y sin issue el run saldría `empty` en
+                # silencio.
                 if not isinstance(raw_jobs, list):
-                    logger.warning(
-                        "thehub: respuesta malformada en la página %s — "
-                        "'docs' no es una lista; se corta la paginación",
-                        page,
+                    self._record_structure_failure(
+                        f"respuesta malformada en la página {page} — "
+                        "'docs' no es una lista; se corta la paginación"
                     )
                     break
                 if not raw_jobs:
                     break
 
                 enriched = await self._enrich(client, raw_jobs)
-                results.extend(self._process_raw_jobs(enriched))
+                page_jobs = self._process_raw_jobs(enriched)
+                # Página NO vacía de la que no sale ni una oferta normalizable
+                # (p. ej. la API renombró `title` o `id`): estructura
+                # desconocida, no vacío legítimo — la misma regla que
+                # financejobs ("N elementos y ninguno parseable"). `docs: []`
+                # no entra aquí (corta arriba sin issue) y con 1 oferta válida
+                # el run sigue siendo `ok`.
+                if not page_jobs:
+                    self._record_structure_failure(
+                        f"la página {page} trae {len(raw_jobs)} docs y ninguno "
+                        "es normalizable (estructura desconocida)"
+                    )
+                results.extend(page_jobs)
 
                 # `pages` es el total de páginas; parar al alcanzar la última.
                 total_pages = self._safe_int(data.get("pages"))

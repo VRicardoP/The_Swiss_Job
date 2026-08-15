@@ -80,7 +80,15 @@ async def fetch_with_retry(
                     return None
                 continue
 
-            return response.json()
+            data = response.json()
+            if data is None:
+                # Un 200 con cuerpo `null` parsea a None por el camino de
+                # ÉXITO (sin JSONDecodeError): sin registro aquí se rompía el
+                # contrato del que dependen todos los llamantes — "el None de
+                # fetch_with_retry es un fetch fallido cuyo issue ya registró
+                # utils.http" — y el run salía `empty` en silencio.
+                diag.record(diag.KIND_NETWORK, url, detail="200 con cuerpo JSON null")
+            return data
 
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             last_error = f"{type(exc).__name__}: {exc}"

@@ -241,6 +241,141 @@ class TestTheHubProvider:
         # GET (listado o detalle) contiene el path inyectado.
         assert all("../" not in u and "admin" not in u for u in requested_urls)
 
+    async def test_docs_no_lista_registra_fetch_issue(self, monkeypatch):
+        """Fase 3/H1 rama 1: un 200 con `docs` que no es una lista es
+        estructura ilegible — cortaba la paginación SIN issue y el run salía
+        `empty` en silencio (G1 rota). Debe registrarse como fallo de fetch
+        para que classify dé `error`, no `empty`."""
+        from utils import fetch_diagnostics as diag
+
+        async def fake_fetch(client, url, **kwargs):
+            return {"docs": {"inesperado": 1}}
+
+        monkeypatch.setattr(thehub_module, "fetch_with_retry", fake_fetch)
+        monkeypatch.setattr(thehub_module, "PAGE_DELAY_SECONDS", 0)
+
+        diag.begin()
+        assert await TheHubProvider().fetch_jobs("") == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "docs" in issues[0].detail
+
+    async def test_docs_ausente_registra_fetch_issue(self, monkeypatch):
+        """Fase 3/H1: un 200 SIN la clave `docs` salía como `empty` con 0
+        issues — el default [] de .get() caía en el corte de paginación sin
+        issue (y `{}`, además, moría antes en `if not data`). La API real
+        incluye `docs` SIEMPRE, incluso fuera de rango (sonda 2026-08-15:
+        page=9999 → claves ['docs','limit','page','pages','suggestions',
+        'total'] con docs: []): un 200 sin la clave es la API renombrando el
+        campo ⇒ estructura desconocida, fallo VISIBLE."""
+        from utils import fetch_diagnostics as diag
+
+        # T1 (clave renombrada) y T3 (JSON vacío) de la evidencia de la ronda.
+        for payload in ({"total": 5, "results": [{"id": "x"}]}, {}):
+
+            async def fake_fetch(client, url, *, _payload=payload, **kwargs):
+                return _payload
+
+            monkeypatch.setattr(thehub_module, "fetch_with_retry", fake_fetch)
+            monkeypatch.setattr(thehub_module, "PAGE_DELAY_SECONDS", 0)
+
+            diag.begin()
+            assert await TheHubProvider().fetch_jobs("") == []
+            issues = diag.issues()
+            assert len(issues) == 1, payload
+            assert "docs" in issues[0].detail
+
+    async def test_data_no_dict_registra_fetch_issue(self, monkeypatch):
+        """Fase 3/H6: un 200 cuyo JSON raíz es una lista reventaba con
+        AttributeError en `data.get` — el except de fetch_tasks lo convertía
+        en OUTCOME_ERROR (G1 aguantaba de rebote), pero financejobs ya trata
+        este caso con un isinstance explícito: se iguala y el fallo queda
+        registrado como estructura, sin excepción que escape."""
+        from utils import fetch_diagnostics as diag
+
+        async def fake_fetch(client, url, **kwargs):
+            return [{"id": "6a728411650cb842b85b5040", "title": "X"}]
+
+        monkeypatch.setattr(thehub_module, "fetch_with_retry", fake_fetch)
+        monkeypatch.setattr(thehub_module, "PAGE_DELAY_SECONDS", 0)
+
+        diag.begin()
+        assert await TheHubProvider().fetch_jobs("") == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "no es un objeto JSON" in issues[0].detail
+
+    async def test_docs_con_elementos_no_normalizables_registra_fetch_issue(
+        self, monkeypatch
+    ):
+        """Fase 3/H1 rama 2: `docs` NO vacío del que no sale ni una oferta
+        normalizable (p. ej. la API renombró `id` y todas quedan sin URL)
+        salía como `empty` con 0 issues — la misma regla que ya aplica
+        financejobs ("N elementos y ninguno parseable") debe aplicar aquí."""
+        from utils import fetch_diagnostics as diag
+
+        async def fake_fetch(client, url, **kwargs):
+            if url == TheHubProvider.API_URL:
+                if kwargs.get("params", {}).get("page") == 1:
+                    # Sin `id` válido no hay URL ⇒ _process_raw_jobs descarta.
+                    return {"docs": [{"title": "Ghost 1"}, {"title": "Ghost 2"}]}
+                return {"docs": []}
+            return None
+
+        monkeypatch.setattr(thehub_module, "fetch_with_retry", fake_fetch)
+        monkeypatch.setattr(thehub_module, "PAGE_DELAY_SECONDS", 0)
+        monkeypatch.setattr(thehub_module, "DETAIL_DELAY_SECONDS", 0)
+
+        diag.begin()
+        assert await TheHubProvider().fetch_jobs("") == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "ninguno es normalizable" in issues[0].detail
+
+    async def test_docs_vacios_es_vacio_legitimo(self, monkeypatch):
+        """No-regresión G2: `docs: []` (estructura reconocida, 0 ofertas) debe
+        seguir siendo vacío legítimo con 0 issues — es lo que permite que una
+        fuente sin ofertas se rehabilite en source_health."""
+        from utils import fetch_diagnostics as diag
+
+        async def fake_fetch(client, url, **kwargs):
+            return {"docs": [], "pages": 0}
+
+        monkeypatch.setattr(thehub_module, "fetch_with_retry", fake_fetch)
+        monkeypatch.setattr(thehub_module, "PAGE_DELAY_SECONDS", 0)
+
+        diag.begin()
+        assert await TheHubProvider().fetch_jobs("") == []
+        assert diag.issues() == []
+
+    async def test_pagina_parcialmente_normalizable_no_registra_issue(
+        self, monkeypatch
+    ):
+        """Con >=1 oferta normalizable en la página NO hay fallo de
+        estructura: el run es `ok` (degradación parcial, no fuente rota)."""
+        from utils import fetch_diagnostics as diag
+
+        async def fake_fetch(client, url, **kwargs):
+            if url == TheHubProvider.API_URL:
+                if kwargs.get("params", {}).get("page") == 1:
+                    return {
+                        "docs": [
+                            {"id": "6a728411650cb842b85b5040", "title": "Valid"},
+                            {"title": "Ghost"},
+                        ]
+                    }
+                return {"docs": []}
+            return None
+
+        monkeypatch.setattr(thehub_module, "fetch_with_retry", fake_fetch)
+        monkeypatch.setattr(thehub_module, "PAGE_DELAY_SECONDS", 0)
+        monkeypatch.setattr(thehub_module, "DETAIL_DELAY_SECONDS", 0)
+
+        diag.begin()
+        jobs = await TheHubProvider().fetch_jobs("")
+        assert [j["title"] for j in jobs] == ["Valid"]
+        assert diag.issues() == []
+
     async def test_fetch_jobs_v2_listing_plus_detail(self, monkeypatch):
         """Camino completo con las fixtures reales: listado v2 → detalle por
         id. El detalle de la 2ª oferta FALLA (None) y la oferta se emite

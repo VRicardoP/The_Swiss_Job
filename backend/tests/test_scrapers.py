@@ -378,6 +378,77 @@ class TestFinancejobsScraper:
         con PAGE_SIZE=20 el motor cortaba la paginación tras la página 1."""
         assert FinancejobsScraper.PAGE_SIZE == 10
 
+    @staticmethod
+    def _page_with_jobs(jobs_json: str) -> BeautifulSoup:
+        """Página __NEXT_DATA__ mínima con la lista de jobs dada (JSON)."""
+        payload = (
+            '{"props": {"pageProps": {"jobsSSR": {"jobs": '
+            f"{jobs_json}"
+            '}}, "__N_SSP": true}}'
+        )
+        html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            f"{payload}</script></body></html>"
+        )
+        return BeautifulSoup(html, "lxml")
+
+    def test_job_id_invalido_no_emite_url(self):
+        """Fase 3/H5: el jobId se interpolaba sin validar — tipos arbitrarios,
+        query, fragmento o traversal producían URLs distintas para la misma
+        identidad (hash title|company|url + ix_jobs_url). El portal usa ids
+        ENTEROS (fixtures + sonda): lo que no sea entero no negativo o
+        decimal ASCII ⇒ oferta sin URL utilizable ⇒ se salta; con el resto
+        de la página sana no hay issue."""
+        from utils import fetch_diagnostics as diag
+
+        soup = self._page_with_jobs(
+            '[{"jobId": {"x": 1}, "title": "Dict Id", "companyName": "A"},'
+            ' {"jobId": "42?utm=x", "title": "Query Id", "companyName": "B"},'
+            ' {"jobId": "42#frag", "title": "Frag Id", "companyName": "C"},'
+            ' {"jobId": "../admin", "title": "Traversal Id", "companyName": "D"},'
+            ' {"jobId": true, "title": "Bool Id", "companyName": "E"},'
+            ' {"jobId": -5, "title": "Negative Id", "companyName": "F"},'
+            ' {"jobId": 14697110, "title": "Valid Int Id", "companyName": "G"}]'
+        )
+        diag.begin()
+        stubs = FinancejobsScraper().parse_listing_page(soup)
+        assert [s["title"] for s in stubs] == ["Valid Int Id"]
+        assert stubs[0]["url"] == "https://www.financejobs.ch/de/job/14697110"
+        assert diag.issues() == []
+
+    def test_jc_job_id_fallback_exige_uuid_canonico(self):
+        """Fase 3/H5: el fallback jcJobId solo se interpola si es un UUID
+        canónico en minúsculas (la forma real del portal); cualquier otra
+        cosa deja la oferta sin URL y se salta."""
+        soup = self._page_with_jobs(
+            '[{"jcJobId": "cbbceba0-ab30-4f23-91fc-9fe4cf3bc8a0",'
+            ' "title": "UUID Valido", "companyName": "A"},'
+            ' {"jcJobId": "../admin", "title": "UUID Traversal", "companyName": "B"},'
+            ' {"jcJobId": "CBBCEBA0-AB30-4F23-91FC-9FE4CF3BC8A0",'
+            ' "title": "UUID Mayusculas", "companyName": "C"}]'
+        )
+        stubs = FinancejobsScraper().parse_listing_page(soup)
+        assert [s["title"] for s in stubs] == ["UUID Valido"]
+        assert stubs[0]["url"] == (
+            "https://www.financejobs.ch/de/job/cbbceba0-ab30-4f23-91fc-9fe4cf3bc8a0"
+        )
+
+    def test_pagina_entera_con_ids_invalidos_registra_issue(self):
+        """Si NINGUNA oferta de una página no vacía tiene id utilizable, el
+        guard existente ("ninguno es parseable") la hace VISIBLE: ids rotos
+        en masa son un cambio de forma del portal, no '0 ofertas'."""
+        from utils import fetch_diagnostics as diag
+
+        soup = self._page_with_jobs(
+            '[{"jobId": "../admin", "title": "T1", "companyName": "A"},'
+            ' {"jobId": "42?utm=x", "title": "T2", "companyName": "B"}]'
+        )
+        diag.begin()
+        assert FinancejobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "ninguno es parseable" in issues[0].detail
+
     def test_normalize_job(self):
         raw = {
             "title": "Portfolio Manager",
@@ -587,20 +658,186 @@ class TestGastrojobScraper:
         stubs = GastrojobScraper().parse_listing_page(BeautifulSoup(html, "lxml"))
         assert len(stubs) == 1
 
-    def test_pagina_fuera_de_rango_tras_pagina_valida_no_registra_issue(self):
-        """VD.4b H5: una página fuera de rango devuelve el contador TOTAL
-        (1104) con 0 ítems — indistinguible de "estructura desconocida"
-        mirando solo esa página. Si una página anterior del MISMO run ya se
-        parseó bien, es fin de paginación legítimo: sin falso fetch-issue."""
+    def test_pagina_fuera_de_rango_no_registra_issue(self):
+        """No-regresión G2 (VD.4b H5, rev. fase 3): la página fuera de rango
+        real devuelve el contador TOTAL (1104 ⇒ 111 páginas) con 0 ítems —
+        verificado en vivo 2026-08-15 (la 112+ llega así y el widget del
+        portal termina en la 111). "Fuera de rango" se decide por el número
+        de página frente a ceil(anunciadas/PAGE_SIZE): fin de paginación
+        legítimo, sin falso fetch-issue."""
         from utils import fetch_diagnostics as diag
 
         scraper = GastrojobScraper()
         p1 = (FIXTURES / "gastrojob_listing_ajax_p1.html").read_text()
         diag.begin()
+        scraper.build_listing_url(1, "")
         assert len(scraper.parse_listing_page(BeautifulSoup(p1, "lxml"))) == 10
         fuera_de_rango = '<div data-mxn-advertisements-count="1104"></div>'
+        scraper.build_listing_url(112, "")  # ceil(1104/10) = 111 ⇒ 112 fuera
         assert scraper.parse_listing_page(BeautifulSoup(fuera_de_rango, "lxml")) == []
         assert diag.issues() == []
+
+    def test_pagina_vacia_dentro_de_rango_registra_issue(self):
+        """Fase 3/H3: tras una página válida, un fragmento vacío con contador
+        en una página DENTRO del rango esperado (la 2 de 111) se aceptaba
+        como fin de paginación — un cambio de markup a mitad de run se
+        tragaba esa página y todas las siguientes en silencio. Debe ser
+        fallo VISIBLE de estructura."""
+        from utils import fetch_diagnostics as diag
+
+        scraper = GastrojobScraper()
+        p1 = (FIXTURES / "gastrojob_listing_ajax_p1.html").read_text()
+        diag.begin()
+        scraper.build_listing_url(1, "")
+        assert len(scraper.parse_listing_page(BeautifulSoup(p1, "lxml"))) == 10
+        vacia_en_rango = '<div data-mxn-advertisements-count="1104"></div>'
+        scraper.build_listing_url(2, "")  # 2 <= 111: dentro del rango
+        assert scraper.parse_listing_page(BeautifulSoup(vacia_en_rango, "lxml")) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "estructura desconocida" in issues[0].detail
+
+    def test_pagina_de_solo_anuncios_partner_es_vacio_legitimo(self):
+        """Fija la decisión de la sonda 2026-08-15: el listado real termina en
+        páginas compuestas SOLO por anuncios de partner externo
+        (/stellen/externe-partner/, "powered by hoteljob-schweiz.de") que el
+        parser no cosecha a propósito — las 110-111 de 111 llegan así con
+        fuente SANA. Dentro del rango, esa composición es estructura
+        reconocida con 0 ofertas propias: sin issue (marcarla rota sería el
+        fallo inverso al que la fase vino a eliminar)."""
+        from utils import fetch_diagnostics as diag
+
+        # Réplica mínima de la página 110 real (sonda en vivo).
+        html = """
+        <div data-mxn-advertisements-count="1108"></div>
+        <a href="/stellen/externe-partner/47577">
+          <article class="row column"><div>
+            <h2>Lehrstelle Restaurationsfachfrau/ -mann EFZ</h2>
+            <div class="description">Praktikum bei Hotel Blausee in Bern</div>
+            <div class="description"><i>powered by hoteljob-schweiz.de</i></div>
+          </div></article>
+        </a>
+        """
+        scraper = GastrojobScraper()
+        diag.begin()
+        scraper.build_listing_url(110, "")  # dentro del rango (<= 111)
+        assert scraper.parse_listing_page(BeautifulSoup(html, "lxml")) == []
+        assert diag.issues() == []
+
+    def test_enlaces_propios_rotos_registran_issue_incluso_fuera_de_rango(self):
+        """Fase 3/H3: un fragmento que CONTIENE enlaces de oferta propia y
+        produce 0 stubs es ilegible se mire como se mire — el contador y el
+        número de página son irrelevantes para ese veredicto. Antes, el corte
+        "fuera de rango" se evaluaba primero y silenciaba estos fragmentos
+        (E1: contador=0; E2: contador=10 ⇒ última esperada la 1, página 2;
+        E7: fuera de rango del contador real)."""
+        from utils import fetch_diagnostics as diag
+
+        # <a> propio SIN h2 ⇒ 0 stubs pese al enlace reconocible.
+        broken_link_html = (
+            '<div data-mxn-advertisements-count="{count}"></div>'
+            '<a href="/stellen/stelleninserat/123">'
+            '<article class="row column"><div>Sin titulo</div></article></a>'
+        )
+        for count, page in [(0, 1), (10, 2), (1104, 112)]:
+            scraper = GastrojobScraper()
+            diag.begin()
+            scraper.build_listing_url(page, "")
+            html = broken_link_html.format(count=count)
+            assert scraper.parse_listing_page(BeautifulSoup(html, "lxml")) == []
+            issues = diag.issues()
+            assert len(issues) == 1, (count, page)
+            assert "ninguno es parseable" in issues[0].detail
+
+    def test_contador_negativo_registra_issue(self):
+        """Fase 3/H4: int("-5") parsea y ceil(-5/10) = 0 dejaba CUALQUIER
+        página "fuera de rango" ⇒ el fallo salía como vacío legítimo
+        silencioso. Un contador negativo es tan ilegible como uno no
+        numérico y registra el mismo issue."""
+        from utils import fetch_diagnostics as diag
+
+        html = '<div data-mxn-advertisements-count="-5"></div>'
+        diag.begin()
+        assert GastrojobScraper().parse_listing_page(BeautifulSoup(html, "lxml")) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "ilegible" in issues[0].detail
+
+    def test_contador_laxo_de_int_registra_issue(self):
+        """Fase 3 r2/H3: int() es más laxo que la regla [0-9] del propio
+        fichero — "١٠٤" (dígitos árabes) parsea como 104, y "+20", " 20 " y
+        "1_0" también parsean. El rango derivado de un contador así puede
+        SILENCIAR páginas como falsos "fuera de rango" (aquí: página 500,
+        que con el contador parseado salía como fin de paginación legítimo
+        con 0 issues). Debe aplicarse el mismo [0-9] estricto que
+        _JOB_PATH_RE y _ERSTMALS_RE."""
+        from utils import fetch_diagnostics as diag
+
+        for raw in ("١٠٤", "+20", " 20 ", "1_0"):
+            html = f'<div data-mxn-advertisements-count="{raw}"></div>'
+            scraper = GastrojobScraper()
+            diag.begin()
+            scraper.build_listing_url(500, "")  # "fuera de rango" del bogus
+            assert scraper.parse_listing_page(BeautifulSoup(html, "lxml")) == []
+            issues = diag.issues()
+            assert len(issues) == 1, raw
+            assert "ilegible" in issues[0].detail
+
+    def test_ultima_pagina_esperada_vacia_registra_issue(self):
+        """Fase 3/H5 (mutante superviviente: `>` → `>=` en el rango): la
+        frontera exacta — 1104 anunciadas ⇒ última esperada la 111 — está
+        DENTRO del rango: vacía y sin ningún enlace debe registrar issue;
+        solo la 112+ es fin de paginación legítimo."""
+        from utils import fetch_diagnostics as diag
+
+        scraper = GastrojobScraper()
+        html = '<div data-mxn-advertisements-count="1104"></div>'
+        diag.begin()
+        scraper.build_listing_url(111, "")  # ceil(1104/10) = 111: el borde
+        assert scraper.parse_listing_page(BeautifulSoup(html, "lxml")) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "1104" in issues[0].detail
+
+    def test_enlaces_propios_rotos_dominan_sobre_partner(self):
+        """Fase 3/H5 (mutante superviviente: invertir el orden
+        partner/propios): con enlaces propios rotos Y anuncios de partner en
+        el MISMO fragmento debe dominar el veredicto de ilegible (issue) —
+        la rama partner solo puede silenciar fragmentos sin ningún enlace
+        propio."""
+        from utils import fetch_diagnostics as diag
+
+        html = """
+        <div data-mxn-advertisements-count="1108"></div>
+        <a href="/stellen/stelleninserat/123">
+          <article class="row column"><div>Sin titulo</div></article>
+        </a>
+        <a href="/stellen/externe-partner/47577">
+          <article class="row column"><div>
+            <h2>Lehrstelle EFZ</h2>
+            <div class="description"><i>powered by hoteljob-schweiz.de</i></div>
+          </div></article>
+        </a>
+        """
+        scraper = GastrojobScraper()
+        diag.begin()
+        scraper.build_listing_url(10, "")  # dentro de rango (<= 111)
+        assert scraper.parse_listing_page(BeautifulSoup(html, "lxml")) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "ninguno es parseable" in issues[0].detail
+
+    def test_contador_ilegible_registra_issue(self):
+        """Fija la decisión: un contador no numérico no permite derivar el
+        rango de páginas ⇒ estructura desconocida, fallo VISIBLE."""
+        from utils import fetch_diagnostics as diag
+
+        html = '<div data-mxn-advertisements-count="muchas"></div>'
+        diag.begin()
+        assert GastrojobScraper().parse_listing_page(BeautifulSoup(html, "lxml")) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "ilegible" in issues[0].detail
 
     def test_markup_sin_contador_tras_pagina_valida_registra_issue(self):
         """VD.4b r2-H1: el guard de fin de paginación solo puede silenciar
@@ -620,12 +857,15 @@ class TestGastrojobScraper:
         assert len(issues) == 1
         assert "estructura desconocida" in issues[0].detail
 
-    async def test_flag_de_estructura_se_rearma_entre_runs(self):
-        """VD.4b r2-H2: _structure_seen_ok se rearma en el override de
-        fetch_jobs porque las instancias se reutilizan entre cosechas. Sin el
-        rearme, el éxito del run 1 silenciaría en el run 2 una página 1 rota
-        (contador 1104, 0 ítems) — exactamente la clase de fallo invisible
-        que VD.4b vino a cerrar."""
+    async def test_cambio_de_estructura_a_mitad_de_run_es_visible(self):
+        """Fase 3/H3, extremo a extremo por fetch_jobs: la página 1 parsea
+        bien y la 2 llega con markup nuevo que CONSERVA el contador (1104 ⇒
+        111 páginas: la 2 está dentro del rango). Antes se aceptaba como fin
+        de paginación y se perdían esa página y las siguientes en silencio;
+        ahora el run conserva las 10 ofertas de la página 1 Y registra el
+        fallo (`ok` con issues = degradación parcial visible). El estado de
+        página se rearma entre runs de la MISMA instancia: la página 1 rota
+        del run 2 también registra su fallo."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from utils import fetch_diagnostics as diag
@@ -633,7 +873,7 @@ class TestGastrojobScraper:
         scraper = GastrojobScraper()
         scraper._pre_check = AsyncMock(return_value=True)
         scraper._reset_compliance_blocks = AsyncMock()
-        # Solo el listado importa para el flag: sin detalle y sin pausas.
+        # Solo el listado importa aquí: sin detalle y sin pausas.
         scraper.FETCH_DETAILS = False
         scraper.RATE_LIMIT_SECONDS = 0.01
 
@@ -644,32 +884,34 @@ class TestGastrojobScraper:
             return response
 
         p1 = (FIXTURES / "gastrojob_listing_ajax_p1.html").read_text()
-        fuera_de_rango = '<div data-mxn-advertisements-count="1104"></div>'
+        vacia_con_contador = '<div data-mxn-advertisements-count="1104"></div>'
 
-        # Run 1: página 1 buena + fuera de rango ⇒ 10 ofertas y 0 issues.
+        # Run 1: página 1 buena + página 2 vacía DENTRO del rango ⇒ las 10
+        # ofertas se conservan y el cambio de estructura queda registrado.
         diag.begin()
         with patch.object(
             scraper._circuit,
             "call",
             new_callable=AsyncMock,
-            side_effect=[_resp(p1), _resp(fuera_de_rango)],
+            side_effect=[_resp(p1), _resp(vacia_con_contador)],
         ):
             assert len(await scraper.fetch_jobs("")) == 10
-        assert diag.issues() == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "estructura desconocida" in issues[0].detail
 
-        # Run 2 (MISMA instancia): la página 1 llega rota. El rearme obliga a
-        # registrar el fallo; sin él quedaría silenciado por el run 1.
+        # Run 2 (MISMA instancia): la página 1 llega rota ⇒ también visible.
         diag.begin()
         with patch.object(
             scraper._circuit,
             "call",
             new_callable=AsyncMock,
-            side_effect=[_resp(fuera_de_rango)],
+            side_effect=[_resp(vacia_con_contador)],
         ):
             assert await scraper.fetch_jobs("") == []
         issues = diag.issues()
         assert len(issues) == 1
-        assert "1104" in issues[0].detail
+        assert "estructura desconocida" in issues[0].detail
 
     def test_published_at_aware_desde_hora_suiza(self):
         """El listado imprime la hora LOCAL suiza sin zona: 14:08 CEST debe

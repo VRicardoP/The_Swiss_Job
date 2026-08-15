@@ -110,19 +110,26 @@ class JobRepository:
         # equipara "" a NULL para el COALESCE. Sin esto, la description buena
         # se perdía en la re-vista, cambiaba el content_hash y el embedding se
         # re-generaba sobre texto vacío (y otra vez al recuperarse el detalle).
-        effective_description = stmt.excluded.description
+        # Los valores EFECTIVOS (los que de verdad quedan en la fila) parten
+        # de la columna almacenada: si el campo NO viene en el payload, el
+        # ON CONFLICT no lo toca y `excluded.<campo>` sería NULL — comparar
+        # el embedding contra ese NULL (is_distinct_from) lo invalidaba
+        # aunque el texto de la fila no cambiara.
+        effective_description = Job.description
         if "description" in set_:
             effective_description = func.coalesce(
                 func.nullif(stmt.excluded.description, ""), Job.description
             )
             set_["description"] = effective_description
         # description_snippet: misma protección que description. El entrante
-        # degradado llega como NULL, no como "" (verificado: _snippet("")
-        # devuelve None en BaseJobProvider, y jobgether emite None siempre),
-        # así que basta el COALESCE sin NULLIF (V2-1/C5, VD.9).
+        # degradado suele llegar como NULL (_snippet("") devuelve None en
+        # BaseJobProvider), pero un "" asignado directamente también debe
+        # contar como degradado — de ahí el NULLIF, como en description
+        # (sin él, un "" entrante pisaba el snippet bueno).
         if "description_snippet" in set_:
             set_["description_snippet"] = func.coalesce(
-                stmt.excluded.description_snippet, Job.description_snippet
+                func.nullif(stmt.excluded.description_snippet, ""),
+                Job.description_snippet,
             )
         # tags: en los providers salen de extract_job_skills(title, description),
         # así que un detalle fallido (thehub) las degrada a [] aunque la fila
@@ -133,7 +140,9 @@ class JobRepository:
         # stelle_admin) derivan sus tags de título/campos de la API — fijados
         # por el hash — así que para ellas conservar es un no-op o la misma
         # protección deseada, nunca una pérdida (V2-1/C9, VD.9).
-        effective_tags = stmt.excluded.tags
+        # Mismo arranque que effective_description: sin `tags` en el payload
+        # la columna se conserva y el embedding no debe invalidarse.
+        effective_tags = Job.tags
         if "tags" in set_:
             effective_tags = case(
                 (
