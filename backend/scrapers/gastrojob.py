@@ -14,7 +14,6 @@ y gastrojob_detail.html).
 """
 
 import logging
-import math
 import re
 from datetime import datetime
 from urllib.parse import urlencode, urljoin, urlsplit
@@ -171,6 +170,19 @@ def _parse_erstmals_aktiviert(text: str) -> str | None:
         # Fecha imposible (32.13...): se degrada ESTA fecha, no la oferta.
         return None
     return local_dt.isoformat()
+
+
+def _unreadable_count_detail(raw: str) -> str:
+    """Mensaje ÚNICO del veredicto "contador ilegible" (los tests lo fijan).
+
+    Lo comparten el rechazo por regex y el ValueError de int() (r2/H4): un
+    contador que exceda el límite de conversión decimal de CPython (4300
+    dígitos) es tan ilegible como uno no numérico. Se trunca el valor solo en
+    el caso patológico para no arrastrar miles de dígitos al diagnóstico
+    (last_error_detail es String(500)).
+    """
+    shown = raw if len(raw) <= 64 else f"{raw[:64]}… [{len(raw)} chars]"
+    return f"contador de anuncios ilegible ({shown!r}): estructura desconocida"
 
 
 class GastrojobScraper(BaseScraper):
@@ -337,12 +349,16 @@ class GastrojobScraper(BaseScraper):
         # como falsos "fuera de rango". El fullmatch también rechaza el "-",
         # así que cubre el contador negativo sin check aparte.
         if not re.fullmatch(r"[0-9]+", announced_raw):
-            self._record_structure_failure(
-                f"contador de anuncios ilegible ({announced_raw!r}): "
-                "estructura desconocida"
-            )
+            self._record_structure_failure(_unreadable_count_detail(announced_raw))
             return stubs
-        announced = int(announced_raw)
+        try:
+            announced = int(announced_raw)
+        except ValueError:
+            # Un contador de miles de dígitos pasa el [0-9]+ pero int() lanza
+            # (límite CPython de 4300 dígitos, r2/H4) y la excepción escapaba
+            # del parser. Mismo veredicto y mismo issue que el no numérico.
+            self._record_structure_failure(_unreadable_count_detail(announced_raw))
+            return stubs
 
         if soup.select_one(_OWN_AD_SELECTOR) is not None:
             # Hay enlaces de oferta propia pero ninguno produjo stub (título
@@ -359,7 +375,10 @@ class GastrojobScraper(BaseScraper):
         # Última página que el contador puede cubrir. Con 0 anunciadas sale
         # 0 y CUALQUIER página queda fuera de rango: el vacío legítimo de un
         # listado sin ofertas no registra issue (la vía de rehabilitación).
-        last_expected_page = math.ceil(announced / self.PAGE_SIZE)
+        # Ceil ENTERO y no math.ceil (r3/H3): la división float de un
+        # contador de 310-4300 dígitos lanza OverflowError, que escapaba del
+        # parser. Idéntico a math.ceil para todo entero >= 0.
+        last_expected_page = (announced + self.PAGE_SIZE - 1) // self.PAGE_SIZE
         if self._current_page > last_expected_page:
             return stubs
 

@@ -573,6 +573,99 @@ class TestUpsertDegradedRevisit:
         assert row.location == "Remote (Europe)"
         assert row.canton is None  # el canton entrante manda con location real
 
+    async def test_tags_none_does_not_destroy_stored_text_state(self, db_session):
+        """Fase 3 r2/H3: SQLAlchemy serializa tags=None como `null` JSONB y
+        jsonb_array_length(excluded.tags) sobre un escalar abortaba el
+        savepoint en PostgreSQL — la oferta NO se persistía. None se
+        normaliza a [] en la frontera: el upsert completa y, con description
+        entrante vacía, el CASE existente conserva las tags buenas."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(_job_dict(description="Real text", tags=["python"]))
+        await db_session.commit()
+
+        # Re-vista degradada con tags=None: ni aborta ni machaca.
+        await repo.upsert_job(
+            _job_dict(description="", description_snippet=None, tags=None)
+        )
+        await db_session.commit()
+
+        row = (
+            await db_session.execute(
+                select(Job.tags, Job.description).where(Job.hash == h)
+            )
+        ).one()
+        assert row.tags == ["python"]  # conservadas, no perdidas ni null
+        assert row.description == "Real text"
+
+        # Y en un ALTA, tags=None almacena una lista válida ([]), no null.
+        alta = _job_dict(
+            hash="ffffffffffffffffffffffffffffffff",
+            url="https://example.com/job/none-tags",
+            tags=None,
+        )
+        await repo.upsert_job(alta)
+        await db_session.commit()
+        stored = (
+            await db_session.execute(select(Job.tags).where(Job.hash == alta["hash"]))
+        ).scalar_one()
+        assert stored == []
+
+    async def test_tags_no_lista_se_rechaza_en_la_frontera(self, db_session):
+        """Fase 3 r2/H3 (fija la decisión, no discrimina un comportamiento
+        externo): un `tags` no-lista (p. ej. una cadena) es un bug del
+        productor, no un dato degradado — coaccionarlo a [] podría machacar
+        tags buenas con description real. Se rechaza con ValueError ANTES de
+        tocar la BD; ningún productor actual emite no-listas."""
+        repo = JobRepository(db_session)
+        with pytest.raises(ValueError, match="tags"):
+            await repo.upsert_job(_job_dict(tags="python"))
+
+    async def test_location_real_sin_clave_canton_anula_canton_obsoleto(
+        self, db_session
+    ):
+        """Fase 3 r2/H5: cambiar location OMITIENDO la clave canton dejaba el
+        cantón de la ubicación ANTERIOR alimentando los filtros geográficos —
+        contradice la semántica V2-1/C10 ("mejor sin cantón que un cantón
+        obsoleto"). Con location entrante real y canton ausente ⇒ canton NULL;
+        con location entrante vacía se conservan ambos."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(_job_dict(location="Zurich, ZH", canton="ZH"))
+        await db_session.commit()
+
+        entrante = _job_dict(location="Remote (Europe)")
+        del entrante["canton"]
+        await repo.upsert_job(entrante)
+        await db_session.commit()
+
+        row = (
+            await db_session.execute(
+                select(Job.location, Job.canton).where(Job.hash == h)
+            )
+        ).one()
+        assert row.location == "Remote (Europe)"
+        assert row.canton is None  # NULL, no el "ZH" obsoleto
+
+        # Con location entrante VACÍA y canton omitido: fetch degradado, se
+        # conservan la ubicación y el cantón buenos (sin falso positivo G2).
+        await repo.upsert_job(_job_dict(location="Basel, BS", canton="BS"))
+        await db_session.commit()
+        degradado = _job_dict(location="", description="", description_snippet=None)
+        del degradado["canton"]
+        await repo.upsert_job(degradado)
+        await db_session.commit()
+
+        row = (
+            await db_session.execute(
+                select(Job.location, Job.canton).where(Job.hash == h)
+            )
+        ).one()
+        assert row.location == "Basel, BS"
+        assert row.canton == "BS"
+
 
 @pytest.mark.anyio
 class TestUpsertProtectionEdges:

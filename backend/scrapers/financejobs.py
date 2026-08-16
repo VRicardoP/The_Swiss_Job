@@ -40,6 +40,12 @@ _DECIMAL_ID_RE = re.compile(r"^[0-9]+$")
 # ("cbbceba0-ab30-4f23-91fc-9fe4cf3bc8a0").
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
+# Cota del id interpolable (r2/H6): la columna `url` de Job es String(2048)
+# (models/job.py) — un id que con el prefijo /de/job/ no quepa ahí no puede
+# persistirse (desbordaría el INSERT y abortaría el savepoint de la oferta),
+# así que se trata como id inutilizable, igual que uno malformado.
+_MAX_DECIMAL_ID_LEN = 2048 - len(f"{BASE_URL}/de/job/")
+
 
 def _job_url_id(job: dict) -> str:
     """Devuelve el id de la oferta validado para interpolar en la URL, o "".
@@ -54,9 +60,19 @@ def _job_url_id(job: dict) -> str:
     job_id = job.get("jobId")
     # bool es subclase de int: `true` no es un id y saldría como "True".
     if isinstance(job_id, int) and not isinstance(job_id, bool) and job_id >= 0:
-        return str(job_id)
+        # Misma cota que la vía string (r3/H1): un número JSON de miles de
+        # dígitos (< 4300, json.loads lo parsea) entraba por aquí sin acotar
+        # y desbordaba igualmente la columna url.
+        canonical = str(job_id)
+        return canonical if len(canonical) <= _MAX_DECIMAL_ID_LEN else ""
     if isinstance(job_id, str) and _DECIMAL_ID_RE.fullmatch(job_id):
-        return job_id
+        # Canonicalizar el decimal (r2/H6): "00042" y 42 son la MISMA oferta
+        # en el portal — sin quitar los ceros a la izquierda, un cambio de
+        # forma (número JSON → cadena rellenada) movería la URL de /42 a
+        # /00042: hash nuevo y posible duplicado (G4). Y acotar: una cadena
+        # decimal kilométrica pasaba el regex y desbordaba la columna url.
+        canonical = job_id.lstrip("0") or "0"
+        return canonical if len(canonical) <= _MAX_DECIMAL_ID_LEN else ""
     jc_job_id = job.get("jcJobId")
     if isinstance(jc_job_id, str) and _UUID_RE.fullmatch(jc_job_id):
         return jc_job_id
@@ -128,7 +144,12 @@ class FinancejobsScraper(BaseScraper):
 
         try:
             data = json.loads(script_el.string)
-        except json.JSONDecodeError as e:
+        except ValueError as e:
+            # ValueError y no JSONDecodeError (r3/H2): un número de >4300
+            # dígitos en cualquier punto del JSON hace que json.loads lance
+            # un ValueError PLANO (límite CPython de conversión decimal) que
+            # escapaba del parser. Se captura la base, que cubre también
+            # JSONDecodeError (su subclase) — mismo criterio que utils/http.
             self._record_structure_failure(f"failed to parse __NEXT_DATA__: {e}")
             return []
 
@@ -163,7 +184,14 @@ class FinancejobsScraper(BaseScraper):
                 continue
 
             job_id = _job_url_id(job)
-            title = _s(job.get("title"))
+            # El título se limpia ANTES de validar (r2/H2): " <b></b> " pasaba
+            # el guard, creaba un stub cuyo title normalizaba a "" y que
+            # _process_raw_jobs descartaba después — y con >=1 stub creado, el
+            # guard "ninguno es parseable" ya no saltaba: falso `empty` con 0
+            # issues (G1). Validando sobre el limpio, la oferta cae en el
+            # `continue` y, si cae la página entera, el guard registra su
+            # único issue correcto.
+            title = strip_html_tags(_s(job.get("title"))).strip()
             company = _s(job.get("companyName")) or "Unknown"
             location = _s(job.get("location"))
             description = _s(job.get("description")) or _s(job.get("summary"))
@@ -177,7 +205,7 @@ class FinancejobsScraper(BaseScraper):
 
             stubs.append(
                 {
-                    "title": strip_html_tags(title).strip(),
+                    "title": title,
                     "company": company.strip(),
                     "location": location.strip(),
                     "url": url,

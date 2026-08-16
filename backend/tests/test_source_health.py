@@ -132,6 +132,53 @@ async def test_fetch_with_retry_registra_el_200_con_json_null():
 
 
 @pytest.mark.asyncio
+async def test_fetch_with_retry_registra_el_200_no_utf8():
+    """Fase 3 r2/H1: un 200 cuyo cuerpo no es UTF-8 hace que response.json()
+    lance UnicodeDecodeError — solo se capturaba JSONDecodeError y la
+    excepción ESCAPABA del helper, rompiendo el contrato "None ⇒ issue ya
+    registrado" y la parte de G1 que prohíbe excepciones de parseo escapando.
+    Ahora cae en la rama ValueError (que cubre ambas) y agota reintentos con
+    su issue de red registrado."""
+
+    def handler(request):
+        return httpx.Response(200, content=b"\xff")
+
+    diag.begin()
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        assert await fetch_with_retry(client, "https://x/api", max_retries=0) is None
+
+    fallos = diag.issues()
+    assert len(fallos) == 1
+    assert fallos[0].kind == diag.KIND_NETWORK
+    assert "UnicodeDecodeError" in fallos[0].detail
+    assert diag.classify(0, fallos) == OUTCOME_ERROR
+
+
+@pytest.mark.asyncio
+async def test_fetch_with_retry_registra_el_200_no_json():
+    """Fase 3 r3/H4 (mata M4): gemelo del caso no-UTF8 con cuerpo UTF-8 que
+    no es JSON — response.json() lanza json.JSONDecodeError, la OTRA subclase
+    de ValueError que la rama debe cubrir. Fija que la captura no puede
+    estrecharse (p. ej. a UnicodeDecodeError) sin perder esta pata del
+    contrato "None ⇒ issue ya registrado" (G1)."""
+
+    def handler(request):
+        return httpx.Response(200, content=b"not json")
+
+    diag.begin()
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        assert await fetch_with_retry(client, "https://x/api", max_retries=0) is None
+
+    fallos = diag.issues()
+    assert len(fallos) == 1
+    assert fallos[0].kind == diag.KIND_NETWORK
+    assert "JSONDecodeError" in fallos[0].detail
+    assert diag.classify(0, fallos) == OUTCOME_ERROR
+
+
+@pytest.mark.asyncio
 async def test_sin_begin_no_registra_y_no_rompe():
     """Una llamada fuera del pipeline (script, test suelto) no se ve afectada."""
     diag._issues.set(None)

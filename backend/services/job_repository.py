@@ -80,6 +80,24 @@ class JobRepository:
         # Filtrar a columnas que existen en el modelo Job.
         valid_columns = {c.key for c in Job.__table__.columns}
         values = {k: v for k, v in job_dict.items() if k in valid_columns}
+        # tags en la frontera (r2/H3): la columna es JSONB y el CASE del
+        # ON CONFLICT aplica jsonb_array_length sobre el entrante — un None
+        # (serializado como `null` JSONB) o cualquier no-lista abortaba el
+        # savepoint en PostgreSQL y la oferta NO se persistía. None significa
+        # "sin tags" y se normaliza a [] (en altas guarda lista válida; en
+        # re-vistas el CASE de abajo decide igual que con [] explícito). Un
+        # no-lista (una cadena, un dict) es un bug del productor, no un dato
+        # degradado: coaccionarlo a [] podría machacar tags buenas con
+        # description real, así que se rechaza ANTES de tocar la BD. Ningún
+        # productor actual emite None ni no-listas (comprobado): esto es una
+        # aserción de frontera, no puede crear falsos positivos (G2).
+        if "tags" in values:
+            if values["tags"] is None:
+                values["tags"] = []
+            elif not isinstance(values["tags"], list):
+                raise ValueError(
+                    f"tags debe ser una lista, no {type(values['tags']).__name__}"
+                )
         values["content_hash"] = _content_hash(values)
 
         # Determinar si es nueva antes del upsert (para el valor de retorno).
@@ -172,6 +190,17 @@ class JobRepository:
             set_["canton"] = case(
                 (func.coalesce(stmt.excluded.location, "") == "", Job.canton),
                 else_=stmt.excluded.canton,
+            )
+        elif "location" in set_:
+            # canton OMITIDO del payload con location presente (r2/H5): si la
+            # location entrante es real, dejar la columna intacta conservaba
+            # el cantón de la ubicación ANTERIOR alimentando los filtros
+            # geográficos — la semántica ya decidida (V2-1/C10) es "mejor sin
+            # cantón que un cantón obsoleto", así que canton = NULL. Con
+            # location entrante vacía (fetch degradado) se conservan ambos.
+            set_["canton"] = case(
+                (func.coalesce(stmt.excluded.location, "") == "", Job.canton),
+                else_=null(),
             )
         # Reactivar SOLO si NO es duplicado: una oferta archivada que reaparece se
         # reactiva; un duplicado re-visto sigue inactivo (no vuelve a los feeds).

@@ -449,6 +449,132 @@ class TestFinancejobsScraper:
         assert len(issues) == 1
         assert "ninguno es parseable" in issues[0].detail
 
+    def test_titulo_vacio_tras_limpiar_no_crea_stub_y_registra_issue(self):
+        """Fase 3 r2/H2: `if not title` se evaluaba ANTES de
+        strip_html_tags(title).strip() — un título " <b></b> " creaba el
+        stub, se normalizaba a "" y _process_raw_jobs lo descartaba; con el
+        stub YA creado, el guard "ninguno es parseable" no saltaba: falso
+        `empty` completo con 0 issues (G1). Validando sobre el título LIMPIO,
+        la página entera degradada registra su único issue…"""
+        from utils import fetch_diagnostics as diag
+
+        soup = self._page_with_jobs(
+            '[{"jobId": 42, "title": " <b></b> ", "companyName": "A"}]'
+        )
+        diag.begin()
+        assert FinancejobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "ninguno es parseable" in issues[0].detail
+
+        # …y la degradación PARCIAL sigue sin falso positivo (G2): la oferta
+        # buena sale y no hay issue.
+        soup = self._page_with_jobs(
+            '[{"jobId": 42, "title": " <b></b> ", "companyName": "A"},'
+            ' {"jobId": 43, "title": "Risk Manager", "companyName": "CS"}]'
+        )
+        diag.begin()
+        stubs = FinancejobsScraper().parse_listing_page(soup)
+        assert [s["title"] for s in stubs] == ["Risk Manager"]
+        assert diag.issues() == []
+
+    def test_id_decimal_se_canonicaliza_y_se_acota(self):
+        """Fase 3 r2/H6 (fija la decisión): "00042" y 42 son la MISMA oferta —
+        sin canonicalizar, un cambio de forma del portal (número JSON →
+        cadena rellenada) movía la URL de /42 a /00042: hash nuevo y posible
+        duplicado (G4). Cota: el id debe caber en la columna `url` del modelo
+        (String(2048)) con el prefijo /de/job/ — el que no quepa es
+        inutilizable, no una URL que reviente el INSERT."""
+        from utils import fetch_diagnostics as diag
+
+        huge = "9" * 3000
+        soup = self._page_with_jobs(
+            '[{"jobId": "00042", "title": "Padded", "companyName": "A"},'
+            f' {{"jobId": "{huge}", "title": "Huge", "companyName": "B"}},'
+            ' {"jobId": "000", "title": "Zeros", "companyName": "C"}]'
+        )
+        diag.begin()
+        stubs = FinancejobsScraper().parse_listing_page(soup)
+        assert [s["title"] for s in stubs] == ["Padded", "Zeros"]
+        assert stubs[0]["url"] == "https://www.financejobs.ch/de/job/42"
+        assert stubs[1]["url"] == "https://www.financejobs.ch/de/job/0"
+        assert all(len(s["url"]) <= 2048 for s in stubs)
+        # Con >=1 stub sano la página no registra issue (sin falsos positivos).
+        assert diag.issues() == []
+
+    def test_id_int_kilometrico_se_acota_igual_que_el_string(self):
+        """Fase 3 r3/H1: la cota del id solo se aplicaba en la vía string —
+        un jobId NUMÉRICO de 3000 dígitos (< 4300: json.loads lo parsea sin
+        quejarse) entraba por isinstance(int) y salía sin cota, creando una
+        URL de 3034 chars que desbordaba la columna url (String(2048)).
+        Misma regla que la vía string: id que no cabe ⇒ inutilizable."""
+        from utils import fetch_diagnostics as diag
+
+        huge_int = "9" * 3000  # número JSON, sin comillas
+        soup = self._page_with_jobs(
+            f'[{{"jobId": {huge_int}, "title": "Huge Int", "companyName": "A"}},'
+            ' {"jobId": 14697110, "title": "Valid Int", "companyName": "B"}]'
+        )
+        diag.begin()
+        stubs = FinancejobsScraper().parse_listing_page(soup)
+        # La oferta buena sale y no hay issue (G2: sin falsos positivos).
+        assert [s["title"] for s in stubs] == ["Valid Int"]
+        assert all(len(s["url"]) <= 2048 for s in stubs)
+        assert diag.issues() == []
+
+        # Página entera con el id desbordado: fallo VISIBLE, no `empty`.
+        soup = self._page_with_jobs(
+            f'[{{"jobId": {huge_int}, "title": "Huge Int", "companyName": "A"}}]'
+        )
+        diag.begin()
+        assert FinancejobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "ninguno es parseable" in issues[0].detail
+
+    def test_numero_de_mas_de_4300_digitos_en_next_data_no_lanza(self):
+        """Fase 3 r3/H2: json.loads con un número de >4300 dígitos en
+        cualquier punto del __NEXT_DATA__ lanza un ValueError PLANO (límite
+        CPython de conversión decimal, NO JSONDecodeError) que ESCAPABA de
+        parse_listing_page. Debe caer en el mismo issue visible que el JSON
+        malformado — mismo bug ya cerrado en gastrojob y utils/http."""
+        from utils import fetch_diagnostics as diag
+
+        payload = f'{{"props": {{"pageProps": {{"jobsSSR": {"9" * 5000}}}}}}}'
+        html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            f"{payload}</script></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert FinancejobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "failed to parse __NEXT_DATA__" in issues[0].detail
+
+    def test_cota_del_id_en_el_borde_exacto_en_ambas_vias(self):
+        """Fase 3 r3/H4 (mata M1 y M2): el id más largo cuyo URL cabe en la
+        columna (String(2048)) se acepta y el de UN dígito más se rechaza —
+        en la vía string Y en la int. La cota se deriva aquí del invariante
+        real (2048 − prefijo) y NO de _MAX_DECIMAL_ID_LEN, para que una
+        derivación rota de la constante no mueva el test con ella."""
+        from utils import fetch_diagnostics as diag
+
+        max_len = 2048 - len("https://www.financejobs.ch/de/job/")
+        fits, overflows = "9" * max_len, "9" * (max_len + 1)
+        soup = self._page_with_jobs(
+            f'[{{"jobId": "{fits}", "title": "Str Cabe", "companyName": "A"}},'
+            f' {{"jobId": "{overflows}", "title": "Str No Cabe", "companyName": "B"}},'
+            f' {{"jobId": {fits}, "title": "Int Cabe", "companyName": "C"}},'
+            f' {{"jobId": {overflows}, "title": "Int No Cabe", "companyName": "D"}}]'
+        )
+        diag.begin()
+        stubs = FinancejobsScraper().parse_listing_page(soup)
+        assert [s["title"] for s in stubs] == ["Str Cabe", "Int Cabe"]
+        # El borde aceptado llena la columna EXACTAMENTE: ni un char más.
+        assert all(len(s["url"]) == 2048 for s in stubs)
+        assert diag.issues() == []
+
     def test_normalize_job(self):
         raw = {
             "title": "Portfolio Manager",
@@ -782,6 +908,41 @@ class TestGastrojobScraper:
             issues = diag.issues()
             assert len(issues) == 1, raw
             assert "ilegible" in issues[0].detail
+
+    def test_contador_kilometrico_registra_issue_sin_lanzar(self):
+        """Fase 3 r2/H4: un contador de >4300 dígitos pasa el [0-9]+ pero
+        int() lanza ValueError (límite CPython de conversión decimal) y la
+        excepción ESCAPABA del parser, que promete no lanzar ante contenido
+        roto. Mismo issue de "contador ilegible" que el no numérico, con el
+        valor truncado en el detalle."""
+        from utils import fetch_diagnostics as diag
+
+        html = f'<div data-mxn-advertisements-count="{"9" * 5000}"></div>'
+        diag.begin()
+        assert GastrojobScraper().parse_listing_page(BeautifulSoup(html, "lxml")) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "ilegible" in issues[0].detail
+        assert len(issues[0].detail) < 500  # truncado, no 5000 dígitos
+
+    def test_contador_310_a_4300_digitos_no_desborda_el_ceil(self):
+        """Fase 3 r3/H3: un contador de 310-4300 dígitos pasa el [0-9]+ y
+        pasa int() (bajo el límite CPython), pero math.ceil(announced /
+        PAGE_SIZE) hacía división FLOAT: OverflowError que escapaba del
+        parser (no es ValueError, nadie lo capturaba). El arreglo anterior
+        solo tapó el tramo >4300. Con el ceil entero, el tramo cae en el
+        issue visible "no trae ninguna reconocible", que es lo correcto."""
+        from utils import fetch_diagnostics as diag
+
+        for digits in (310, 4300):
+            html = f'<div data-mxn-advertisements-count="{"9" * digits}"></div>'
+            diag.begin()
+            assert (
+                GastrojobScraper().parse_listing_page(BeautifulSoup(html, "lxml")) == []
+            )
+            issues = diag.issues()
+            assert len(issues) == 1, digits
+            assert "no trae ninguna reconocible" in issues[0].detail
 
     def test_ultima_pagina_esperada_vacia_registra_issue(self):
         """Fase 3/H5 (mutante superviviente: `>` → `>=` en el rango): la

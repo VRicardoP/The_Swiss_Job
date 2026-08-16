@@ -1,7 +1,6 @@
 """HTTP utilities: retry with exponential backoff using httpx."""
 
 import asyncio
-import json
 import logging
 from typing import Any
 
@@ -101,7 +100,13 @@ async def fetch_with_retry(
             if attempt < max_retries:
                 await asyncio.sleep(backoff_factor * (2**attempt))
             continue
-        except (httpx.HTTPError, json.JSONDecodeError) as exc:
+        except (httpx.HTTPError, ValueError) as exc:
+            # ValueError cubre TODO fallo de parseo de response.json():
+            # json.JSONDecodeError y también UnicodeDecodeError (un 200 cuyo
+            # cuerpo no es UTF-8), que ANTES escapaba del helper y rompía el
+            # contrato "None ⇒ issue ya registrado" (r2/H1, G1). Ambas derivan
+            # de ValueError; se captura la base — mismo patrón que fetch_rss —
+            # y no traga de más: el resto del try lanza errores tipados httpx.
             last_error = f"{type(exc).__name__}: {exc}"
             logger.error(
                 "Unexpected error (attempt %d): %s: %s",
