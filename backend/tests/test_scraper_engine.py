@@ -1107,6 +1107,55 @@ class TestListingFailuresRecordDiagnostics:
         assert diag.classify(len(result), issues) == "error"
 
     @pytest.mark.asyncio
+    async def test_soft_block_tras_fallo_del_parser_resume_la_causa_raiz(self):
+        """Fase 3 r3/H5 (r4: la costura es el flag `root_cause` de FetchIssue,
+        ya no un prefijo compartido): con un challenge servido como 200, el
+        parser registra su fallo estructural ANTES que el detector de
+        soft-block y el resumen de salud (collected[0]) enseñaba el síntoma.
+        Este test recorre el flujo REAL parser→detector y fija la costura
+        completa: el issue del motor viene marcado `root_cause`, no se pierde
+        ningún issue y la cabecera nombra la causa raíz."""
+        from services.source_health import _summarize
+
+        class StructureFailingScraper(ConcreteScraper):
+            """Parser que, como financejobs, registra su fallo estructural."""
+
+            def parse_listing_page(self, soup: BeautifulSoup) -> list[dict]:
+                diag.record(
+                    diag.KIND_NETWORK, self.LISTING_URL, detail="no __NEXT_DATA__ found"
+                )
+                return []
+
+        scraper = StructureFailingScraper()
+        scraper._report_block = AsyncMock()
+        html = "<html><body>Verifying you are human</body></html>"
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_resp(200, html),
+        ):
+            result = await scraper._scrape_with_httpx("")
+
+        assert result == []
+        issues = diag.issues()
+        # No se pierde información: el issue del parser sigue registrado.
+        assert len(issues) == 2
+        assert issues[0].detail == "no __NEXT_DATA__ found"
+        assert issues[0].root_cause is False
+        assert issues[1].root_cause is True
+        # El "soft-block:" del detail queda SOLO para humanos.
+        assert issues[1].detail.startswith("soft-block:")
+        # La cabecera del resumen nombra la causa raíz, con el contador intacto.
+        resumen = _summarize(issues)
+        assert resumen.startswith("soft-block:")
+        assert "(+1 más)" in resumen
+        # El veredicto no cambia: sigue siendo `error`.
+        assert diag.classify(len(result), issues) == "error"
+
+    @pytest.mark.asyncio
     async def test_playwright_non_200_is_error(self, monkeypatch):
         _install_fake_playwright(
             monkeypatch, "<html><body>Not Found</body></html>", status=404

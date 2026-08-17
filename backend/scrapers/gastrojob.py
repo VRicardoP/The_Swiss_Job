@@ -291,7 +291,9 @@ class GastrojobScraper(BaseScraper):
             seen_urls.add(url)
 
             # "<Jornada> bei <Empresa> in <Cantón>" — si el patrón no casa,
-            # no se inventa nada: la microdata del detalle rellena la empresa.
+            # no se inventa nada: la oferta queda como "Unknown". El detalle
+            # NO rellena la empresa (r3/H3): participa en la identidad y solo
+            # el listado es estable run a run — ver parse_job_detail.
             desc_el = link.select_one("div.description")
             desc_match = _DESCRIPTION_RE.match(desc_el.get_text()) if desc_el else None
             workload = desc_match.group("workload").strip() if desc_match else ""
@@ -423,14 +425,19 @@ class GastrojobScraper(BaseScraper):
         if date_el and date_el.get("content"):
             detail["detail_date_posted"] = date_el["content"]
 
-        # La empresa canónica de la microdata NO pisa la del listado (la
-        # identidad/hash debe ser estable aunque el fetch de detalle falle un
-        # run); solo rellena si el listado no la dio (ver normalize_job).
-        org_el = section.select_one("[itemprop=hiringOrganization] [itemprop=name]")
-        if org_el:
-            org_name = org_el.get("content") or org_el.get_text(strip=True)
-            if org_name:
-                detail["detail_company"] = org_name
+        # La empresa de la microdata ([itemprop=hiringOrganization]) NO se
+        # extrae A PROPÓSITO (r3/H3): la empresa participa en la identidad
+        # (hash title|company|url) y solo el LISTADO es estable run a run —
+        # usar el detalle como fallback hacía que un fetch de detalle fallido
+        # produjera "Unknown" y el sano "Hotel X": dos hashes para la misma
+        # URL, choque con ix_jobs_url y la oferta dejaba de actualizarse
+        # hasta que cleanup_stale_jobs la borraba. Coste medido (dos sondas
+        # el 2026-08-17: 4/30 y 1/30; 0/20 en los fixtures): entre ~3% y ~13%
+        # de las ofertas son anuncios anonimizados cuyo listado no imprime
+        # "bei <empresa>" — la proporción VARÍA por día, no es una cifra
+        # fija. Esas quedan como "Unknown" AUNQUE la microdata del detalle
+        # conozca la empresa. Pérdida asumida: la identidad manda sobre el
+        # enriquecimiento.
 
         # Localidad concreta (el listado solo trae el cantón).
         loc_el = section.select_one("[itemprop=jobLocation] [itemprop=addressLocality]")
@@ -443,11 +450,11 @@ class GastrojobScraper(BaseScraper):
 
     def normalize_job(self, raw: dict) -> dict:
         title = raw.get("title", "").strip()
+        # SOLO la empresa del LISTADO: es identidad (hash estable run a run).
+        # El detalle NO participa — ni siquiera para rellenar "Unknown"
+        # (r3/H3): un fallo transitorio del detalle cambiaba el hash con la
+        # misma URL. Ver el comentario de parse_job_detail para el coste.
         company = raw.get("company", "Unknown").strip() or "Unknown"
-        # La empresa del LISTADO es la identidad (hash estable run a run); la
-        # microdata del detalle solo rellena el hueco si el listado no la dio.
-        if company == "Unknown":
-            company = (raw.get("detail_company") or "").strip() or "Unknown"
         url = raw.get("url", "").strip()
         description = raw.get("description", "")
 

@@ -29,10 +29,23 @@ _DETAIL_MAX = 500
 
 
 def _summarize(collected: list[FetchIssue]) -> str:
-    """Resumen legible de los fallos: el primero + cuántos más hubo."""
+    """Resumen legible de los fallos: la causa raíz + cuántos más hubo.
+
+    La cabecera es el primer issue registrado SALVO que alguno venga marcado
+    `root_cause` (r3/H5, r4: flag tipado en FetchIssue, no prefijo de texto):
+    hoy lo marca el detector de soft-blocks de BaseScraper — el parser
+    registra su fallo estructural ANTES que el detector y `last_error_detail`
+    acababa nombrando el síntoma. No se pierde nada: todos los issues siguen
+    registrados (y logueados por el pipeline) y el contador "+N más" no
+    cambia. Para cualquier run sin causa raíz marcada —todos los providers y
+    el resto de caminos de los scrapers— la cabecera sigue siendo
+    `collected[0]`, idéntica que antes. Empate (varias causas raíz): gana la
+    PRIMERA registrada, igual que sin flag.
+    """
     if not collected:
         return ""
-    head = collected[0].describe()
+    root_cause = next((i for i in collected if i.root_cause), collected[0])
+    head = root_cause.describe()
     if len(collected) > 1:
         head = f"{head} (+{len(collected) - 1} más)"
     return head[:_DETAIL_MAX]

@@ -552,6 +552,42 @@ class TestFinancejobsScraper:
         assert len(issues) == 1
         assert "failed to parse __NEXT_DATA__" in issues[0].detail
 
+    def test_company_en_blanco_no_rompe_la_identidad(self):
+        """Fase 3 r3/H2 (fija la decisión): companyName elegía el fallback
+        ANTES de limpiar — "   " pasaba el `or` y acababa como "", mientras
+        que None acababa como "Unknown": dos hashes para la MISMA URL, choque
+        con ix_jobs_url y la oferta dejaba de actualizarse hasta que
+        cleanup_stale_jobs la borraba (G4). Blanco, None y HTML vacío deben
+        normalizar TODOS a "Unknown" — misma identidad."""
+        scraper = FinancejobsScraper()
+        hashes = set()
+        for variant in ('"   "', "null", '"<b> </b>"'):
+            soup = self._page_with_jobs(
+                f'[{{"jobId": 42, "title": "Risk Manager", "companyName": {variant}}}]'
+            )
+            stubs = scraper.parse_listing_page(soup)
+            assert [s["company"] for s in stubs] == ["Unknown"], variant
+            hashes.add(scraper.normalize_job(stubs[0])["hash"])
+        assert len(hashes) == 1  # misma URL ⇒ un solo hash
+
+    def test_anidamiento_extremo_en_next_data_no_lanza(self):
+        """Fase 3 r3/R10: json.loads con anidamiento extremo lanza
+        RecursionError (ni ValueError ni JSONDecodeError), que escapaba de
+        parse_listing_page. Mismo issue visible que el resto de cuerpos 200
+        ilegibles — la letra de G1, no solo su materialidad."""
+        from utils import fetch_diagnostics as diag
+
+        html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            f"{'[' * 100000}</script></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert FinancejobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "failed to parse __NEXT_DATA__" in issues[0].detail
+
     def test_cota_del_id_en_el_borde_exacto_en_ambas_vias(self):
         """Fase 3 r3/H4 (mata M1 y M2): el id más largo cuyo URL cabe en la
         columna (String(2048)) se acepta y el de UN dígito más se rechaza —
@@ -1107,13 +1143,15 @@ class TestGastrojobScraper:
 
     def test_parse_job_detail_microdata(self):
         """Detalle REAL (captura 2026-08-15): microdata schema.org/JobPosting
-        con descripción, datePosted, empresa canónica y localidad."""
+        con descripción, datePosted y localidad. La empresa de la microdata
+        NO se extrae (r3/H3): participaría en la identidad y solo el listado
+        es estable run a run."""
         html = (FIXTURES / "gastrojob_detail.html").read_text()
         soup = BeautifulSoup(html, "lxml")
         detail = GastrojobScraper().parse_job_detail(soup)
         assert "pâtissier(ère)" in detail["description"].lower()
         assert detail["detail_date_posted"] == "2026-08-14"
-        assert detail["detail_company"] == "Cinq Sens Sàrl"
+        assert "detail_company" not in detail
         assert detail["address_locality"] == "Fontaines"
 
     def test_normalize_combina_listado_y_detalle(self):
@@ -1125,7 +1163,6 @@ class TestGastrojobScraper:
             "company": "Cinq Sens Sàrl",
             "location": "Neuenburg",
             "url": "https://www.gastrojob.ch/stellen/stelleninserat/55327",
-            "detail_company": "Otra Empresa SA",
             "address_locality": "Fontaines",
         }
         result = GastrojobScraper().normalize_job(raw)
@@ -1133,6 +1170,28 @@ class TestGastrojobScraper:
         assert result["company"] == "Cinq Sens Sàrl"
         assert result["location"] == "Fontaines, Neuenburg"
         assert result["canton"] == "NE"
+
+    def test_h3_empresa_del_detalle_no_participa_en_la_identidad(self):
+        """Fase 3 r3/H3 (fija la decisión): el fallback desde la microdata del
+        detalle hacía inestable el hash — detalle caído ⇒ company="Unknown",
+        detalle sano ⇒ company="Hotel X": misma URL, dos identidades, choque
+        con ix_jobs_url y la oferta dejaba de actualizarse hasta el borrado a
+        los 60 días (G4). El detalle NO toca ni company ni hash. Coste medido
+        y asumido (sonda 2026-08-17): ~13% de ofertas anonimizadas (sin "bei
+        <empresa>" en el listado) quedan como Unknown aunque el detalle
+        conozca la empresa — la identidad manda sobre el enriquecimiento."""
+        base = {
+            "title": "Chef de Partie",
+            "company": "Unknown",
+            "location": "Bern",
+            "url": "https://www.gastrojob.ch/stellen/stelleninserat/55366",
+        }
+        sin_detalle = GastrojobScraper().normalize_job(dict(base))
+        con_detalle = GastrojobScraper().normalize_job(
+            {**base, "detail_company": "Active Gastro Eng GmbH"}
+        )
+        assert con_detalle["company"] == "Unknown"
+        assert con_detalle["hash"] == sin_detalle["hash"]  # identidad estable
 
     def test_normalize_fecha_cae_al_datePosted_del_detalle(self):
         """Sin fecha en el listado, el meta[itemprop=datePosted] del detalle

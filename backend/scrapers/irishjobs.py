@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 
 from services.circuit_breaker import CircuitBreakerOpen
 from services.scraper_engine import BaseScraper
+from utils import fetch_diagnostics as diag
 from utils.dates import parse_published_at
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -146,29 +147,70 @@ class IrishJobsScraper(BaseScraper):
     # Extracción del blob __PRELOADED_STATE__
     # ------------------------------------------------------------------
 
-    def _decode_state(self, script_text: str) -> dict | None:
-        """Decodifica el literal de `app-unifiedResultlist`. None si falla el formato."""
-        match = _STATE_ANCHOR_RE.search(script_text)
-        if not match:
-            logger.error(_REDEPLOY_MSG)
-            return None
-        literal = _extract_balanced_object(script_text, match.end())
+    def _decode_state(self, script_text: str, start: int, url: str) -> dict | None:
+        """Decodifica el literal de `app-unifiedResultlist`. None si falla el formato.
+
+        `start` es el offset donde empieza el literal `{...}` — lo localiza el
+        ÚNICO llamante (`_decode_state_from_soup`) al casar el ancla; pasarlo
+        evita re-buscar el regex aquí y elimina la antigua rama "sin ancla",
+        que era inalcanzable por construcción (r5/H4: su mutante sobrevivía a
+        toda la suite). `url` es la página cuyo blob se decodifica: con DOS
+        hosts, el issue debe culpar al que sirvió el blob ilegible (VD.10, H3).
+        """
+        # Los DOS modos de fallo de esta función registran issue (r4/R3-1):
+        # literal truncado y JSON ilegible son la misma avería (un redeploy de
+        # StepStone) y sin registro el run salía `empty` con 0 issues — fuente
+        # ROTA presentada como SECA (violación material de G1). El tercer modo
+        # (ancla ausente) lo registra `_decode_state_from_soup`, que es quien
+        # busca el ancla. G2 verificado en vivo (2026-08-17): una página
+        # legítimamente vacía de AMBOS hosts (búsqueda sin resultados,
+        # "total": 0) SÍ trae el blob con `items: []`, así que un vacío sano
+        # nunca pisa estos caminos.
+        literal = _extract_balanced_object(script_text, start)
         if literal is None:
             logger.error(_REDEPLOY_MSG)
+            diag.record(
+                diag.KIND_NETWORK,
+                url,
+                detail=f"{_REDEPLOY_MSG} (truncated state literal)",
+            )
             return None
         try:
             return json.loads(literal)
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError) as e:
+            # ValueError y no JSONDecodeError (r3/H4): un entero JSON de
+            # miles de dígitos hace que json.loads lance un ValueError PLANO
+            # ("Exceeds the limit...") que escapaba del parser; el
+            # RecursionError del anidamiento extremo, igual (r3/R10). Y se
+            # registra EXACTAMENTE un issue: capturar sin registrar dejaría
+            # un 200 ilegible como falso `empty` con 0 issues, que es peor
+            # que la excepción (G1) — misma forma que utils/http.py y
+            # financejobs.
             logger.error(_REDEPLOY_MSG)
+            diag.record(
+                diag.KIND_NETWORK,
+                url,
+                detail=f"{_REDEPLOY_MSG} ({type(e).__name__}: {e})",
+            )
             return None
 
-    def _decode_state_from_soup(self, soup: BeautifulSoup) -> dict | None:
+    def _decode_state_from_soup(self, soup: BeautifulSoup, url: str) -> dict | None:
         """Busca el <script> con la asignación exacta y decodifica su blob."""
         for script in soup.find_all("script"):
             text = script.string if script.string is not None else script.get_text()
-            if text and _STATE_ANCHOR_RE.search(text):
-                return self._decode_state(text)
+            if not text:
+                continue
+            match = _STATE_ANCHOR_RE.search(text)
+            if match:
+                # El literal empieza donde acaba la asignación casada; el
+                # decode NO re-busca el ancla (r5/H4).
+                return self._decode_state(text, match.end(), url)
+        # Ningún <script> con la asignación: mismo redeploy y mismo registro
+        # que los fallos de _decode_state (r4/R3-1, ver el comentario allí).
         logger.error(_REDEPLOY_MSG)
+        diag.record(
+            diag.KIND_NETWORK, url, detail=f"{_REDEPLOY_MSG} (no state script found)"
+        )
         return None
 
     @staticmethod
@@ -179,9 +221,39 @@ class IrishJobsScraper(BaseScraper):
             return None
         return logo
 
-    def _items_to_stubs(self, data: dict, host: str) -> list[dict]:
-        """Convierte `searchResults.items` en stubs normalizables (URLs absolutas)."""
-        items = (data.get("searchResults") or {}).get("items") or []
+    def _items_to_stubs(self, data: dict, host: str, url: str) -> list[dict]:
+        """Convierte `searchResults.items` en stubs normalizables (URLs absolutas).
+
+        `url` es la página cuyo blob se convierte: el issue de deriva de
+        estructura debe culpar al host/página que la sirvió (VD.10, H3).
+        """
+        # La estructura INTERNA del blob también registra issue (r5/H1): con
+        # el JSON ya decodificado, `searchResults` no-objeto, `items` no-lista
+        # o una lista no vacía de la que no sale ni un stub son el mismo
+        # redeploy de StepStone — sin registro, el run salía `empty` con 0
+        # issues (violación MATERIAL de G1), el peldaño siguiente de la avería
+        # que r4/R3-1 cerró hasta decodificar. Solo `items: []` es vacío
+        # legítimo (G2): sonda 2026-08-17 en ambos hosts — los items reales
+        # traen id/title/url/... y la búsqueda sin resultados devuelve
+        # `items: []` con `total: 0`, nunca estas formas.
+        search_results = data.get("searchResults")
+        if not isinstance(search_results, dict):
+            logger.error(_REDEPLOY_MSG)
+            diag.record(
+                diag.KIND_NETWORK,
+                url,
+                detail=f"{_REDEPLOY_MSG} (searchResults is not an object)",
+            )
+            return []
+        items = search_results.get("items")
+        if not isinstance(items, list):
+            logger.error(_REDEPLOY_MSG)
+            diag.record(
+                diag.KIND_NETWORK,
+                url,
+                detail=f"{_REDEPLOY_MSG} (searchResults.items is not a list)",
+            )
+            return []
         stubs: list[dict] = []
         for item in items:
             if not isinstance(item, dict):
@@ -191,7 +263,10 @@ class IrishJobsScraper(BaseScraper):
             if not title or not rel_url:
                 continue  # se descartaría luego; evitamos crear stubs inservibles
 
-            url = rel_url if rel_url.startswith("http") else f"{host}{rel_url}"
+            # `abs_url` y NO `url`: no pisar el parámetro (la URL de la página),
+            # que el guard final "ninguno parseable" pasa a diag.record — con la
+            # local pisada culparía a la última oferta en vez de a la página.
+            abs_url = rel_url if rel_url.startswith("http") else f"{host}{rel_url}"
             description = strip_html_tags(item.get("textSnippet") or "")
             # Solo currency+period del display; los importes vienen en EUR/GBP y la
             # conversión a CHF + anualización la hace DataNormalizer.normalize_salary
@@ -207,7 +282,7 @@ class IrishJobsScraper(BaseScraper):
                     "title": title,
                     "company": (item.get("companyName") or "").strip() or "Unknown",
                     "location": (item.get("location") or "").strip(),
-                    "url": url,
+                    "url": abs_url,
                     "remote": True,  # DERIVADO DEL SCOPE /jobs/work-from-home, no del item
                     "description": description,
                     "logo": self._clean_logo(item.get("companyLogoUrl") or ""),
@@ -220,14 +295,30 @@ class IrishJobsScraper(BaseScraper):
                     "date_posted": item.get("datePosted"),
                 }
             )
+
+        # Lista NO vacía de la que no sale ni un stub: estructura desconocida
+        # (p. ej. StepStone renombró `title`/`url` y todo cayó en los
+        # `continue`), no vacío legítimo — mismo guard que financejobs
+        # ("N elementos y ninguno parseable"). `items == []` no entra, y con
+        # >=1 stub válido el run sigue siendo `ok`.
+        if items and not stubs:
+            logger.error(_REDEPLOY_MSG)
+            diag.record(
+                diag.KIND_NETWORK,
+                url,
+                detail=(
+                    f"{_REDEPLOY_MSG} (searchResults.items trae "
+                    f"{len(items)} elementos y ninguno es parseable)"
+                ),
+            )
         return stubs
 
     def parse_listing_page(self, soup: BeautifulSoup) -> list[dict]:
         """Entrada testeable: stubs de una página usando el host primario."""
-        data = self._decode_state_from_soup(soup)
+        data = self._decode_state_from_soup(soup, self.LISTING_URL)
         if data is None:
             return []
-        return self._items_to_stubs(data, self.HOSTS[0])
+        return self._items_to_stubs(data, self.HOSTS[0], self.LISTING_URL)
 
     def parse_job_detail(self, soup: BeautifulSoup) -> dict:
         """No se usa — FETCH_DETAILS es False (todo sale del listado)."""
@@ -277,19 +368,27 @@ class IrishJobsScraper(BaseScraper):
                 break
 
             soup = BeautifulSoup(response.text, "lxml")
-            data = self._decode_state_from_soup(soup)
+            data = self._decode_state_from_soup(soup, url)
             if data is None:
                 # Decode falló (redeploy ya logueado): abortar este host, no petar.
                 await self._maybe_report_soft_block(response.text, page)
                 break
 
-            page_stubs = self._items_to_stubs(data, host)
+            page_stubs = self._items_to_stubs(data, host, url)
             if not page_stubs:
                 break
 
             if total is None:
-                meta = (data.get("searchResults") or {}).get("meta") or {}
-                total = meta.get("total")
+                # `meta`/`total` degenerados no deben tumbar la cosecha (r5/H1,
+                # letra de G1): aquí YA hay stubs (searchResults es dict — lo
+                # verificó _items_to_stubs), así que un total ilegible solo
+                # pierde el corte por total; siguen cortando la página
+                # incompleta y el tope de páginas.
+                meta = data["searchResults"].get("meta")
+                candidate = meta.get("total") if isinstance(meta, dict) else None
+                # bool es subclase de int: `true` no es un total utilizable.
+                if isinstance(candidate, int) and not isinstance(candidate, bool):
+                    total = candidate
 
             stubs.extend(self._dedupe_new(page_stubs, seen_ids))
 

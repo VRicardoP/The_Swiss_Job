@@ -17,7 +17,6 @@ vimos nosotros. NO lo "arregles": la política por fuente del ticket 2B
 decide qué hacer con las fuentes sin fecha.
 """
 
-import json
 import logging
 
 import httpx
@@ -110,25 +109,82 @@ class SwissSchoolsISPScraper(BaseJobProvider):
 
             try:
                 data = resp.json()
-            except json.JSONDecodeError as e:
+            except (ValueError, RecursionError) as e:
                 # Un 200 con cuerpo ilegible es la API rota (redeploy, WAF
                 # sirviendo HTML), no un board vacío. KIND_NETWORK y no
                 # KIND_HTTP: el transporte respondió 200 (no hay estado de
                 # error que reportar) y `fetch_diagnostics` asigna los fallos
                 # de parseo a `network_error` — igual que `utils.http`, que
                 # agrupa JSONDecodeError con los errores de red.
+                # ValueError y no JSONDecodeError (r3/H4): un cuerpo que no es
+                # UTF-8 (b'\xff') lanza UnicodeDecodeError — otra subclase de
+                # ValueError — que escapaba con 0 issues y el run salía
+                # `empty` (falso vacío, G1). RecursionError (r3/R10): el
+                # anidamiento extremo también escapa del parseo de JSON.
                 logger.error("ISP Workday invalid JSON body: %s", e)
                 diag.record(
                     diag.KIND_NETWORK, api_url, detail=f"{type(e).__name__}: {e}"
                 )
                 break
-            postings = data.get("jobPostings", [])
+
+            # Camino gemelo del cuerpo ilegible (r4/R3-2): un 200 con JSON
+            # válido pero NO-objeto (`null`, una lista) hacía que
+            # `data.get(...)` lanzara AttributeError que escapaba de
+            # fetch_jobs con 0 issues. `utils.http` ya trata explícitamente
+            # el "200 con cuerpo JSON null"; mismo guard que financejobs y
+            # thehub.
+            if not isinstance(data, dict):
+                logger.error("ISP Workday malformed JSON body: not an object")
+                diag.record(
+                    diag.KIND_NETWORK,
+                    api_url,
+                    detail="JSON body is not an object (Workday redeploy?)",
+                )
+                break
+
+            # `jobPostings` degenerado (null, string, objeto…) es el mismo
+            # redeploy un nivel más adentro (r5/H2): `data.get` con default
+            # devuelve el null EXISTENTE, no el default, y el bucle lanzaba
+            # TypeError/AttributeError que escapaba de fetch_jobs con 0 issues
+            # (letra de G1). Solo la lista es la forma reconocida; la API real
+            # de Workday la devuelve SIEMPRE, incluida la búsqueda vacía
+            # (`jobPostings: []`, `total: 0`) — G2: `[]` sigue siendo vacío
+            # legítimo sin issue.
+            postings = data.get("jobPostings")
+            if not isinstance(postings, list):
+                logger.error("ISP Workday malformed JSON body: jobPostings")
+                diag.record(
+                    diag.KIND_NETWORK,
+                    api_url,
+                    detail="jobPostings is not a list (Workday redeploy?)",
+                )
+                break
 
             # Filtro estricto por locationsText (ej. "Mosaic School / Ecole Mosaic")
+            parseable = 0
             for p in postings:
+                if not isinstance(p, dict):
+                    continue  # elemento degenerado: degrada ese item, no la página
+                parseable += 1
                 location_text = (p.get("locationsText") or "").lower()
                 if school_filter in location_text:
                     results.append(p)
+
+            # Página NO vacía sin un solo objeto: estructura desconocida, no un
+            # board vacío. El guard mira el TIPO y no el filtro: 0 matches con
+            # objetos reales es lo normal (tenant compartido con otros
+            # colegios) y marcarlo rompería G2.
+            if postings and not parseable:
+                logger.error("ISP Workday malformed JSON body: jobPostings items")
+                diag.record(
+                    diag.KIND_NETWORK,
+                    api_url,
+                    detail=(
+                        f"jobPostings trae {len(postings)} elementos y ninguno "
+                        "es un objeto (Workday redeploy?)"
+                    ),
+                )
+                break
 
             if len(postings) < self.PAGE_SIZE:
                 break

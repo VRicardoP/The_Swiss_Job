@@ -144,12 +144,14 @@ class FinancejobsScraper(BaseScraper):
 
         try:
             data = json.loads(script_el.string)
-        except ValueError as e:
+        except (ValueError, RecursionError) as e:
             # ValueError y no JSONDecodeError (r3/H2): un número de >4300
             # dígitos en cualquier punto del JSON hace que json.loads lance
             # un ValueError PLANO (límite CPython de conversión decimal) que
             # escapaba del parser. Se captura la base, que cubre también
             # JSONDecodeError (su subclase) — mismo criterio que utils/http.
+            # RecursionError (r3/R10): un anidamiento extremo también escapa
+            # de json.loads; mismo veredicto (200 ilegible = fallo VISIBLE).
             self._record_structure_failure(f"failed to parse __NEXT_DATA__: {e}")
             return []
 
@@ -192,7 +194,12 @@ class FinancejobsScraper(BaseScraper):
             # `continue` y, si cae la página entera, el guard registra su
             # único issue correcto.
             title = strip_html_tags(_s(job.get("title"))).strip()
-            company = _s(job.get("companyName")) or "Unknown"
+            # La empresa se limpia ANTES del fallback (r3/H2): "   " (o un
+            # HTML vacío) pasaba el `or`, acababa como "" y producía un hash
+            # DISTINTO del de `None` (→ "Unknown") para la misma URL — choque
+            # con ix_jobs_url y la oferta dejaba de actualizarse (G4). Misma
+            # disciplina que title: limpiar primero, decidir después.
+            company = strip_html_tags(_s(job.get("companyName"))).strip() or "Unknown"
             location = _s(job.get("location"))
             description = _s(job.get("description")) or _s(job.get("summary"))
             employment_type = _s(job.get("workload"))
@@ -206,7 +213,7 @@ class FinancejobsScraper(BaseScraper):
             stubs.append(
                 {
                     "title": title,
-                    "company": company.strip(),
+                    "company": company,
                     "location": location.strip(),
                     "url": url,
                     "description": strip_html_tags(description),

@@ -368,10 +368,18 @@ class BaseScraper(BaseJobProvider):
             # `consecutive_empty_runs` del cursor), no del veredicto, y
             # aparca la fuente igual. Compliance sigue recibiendo su
             # report_block exactamente igual que antes.
+            # `root_cause=True` es la costura con `source_health._summarize`
+            # (r3/H5, r4: flag tipado de FetchIssue, no prefijo de texto):
+            # marca este issue como CAUSA RAÍZ para que el resumen lo prefiera
+            # al fallo estructural que el parser registró antes sobre el mismo
+            # HTML de challenge. El issue del parser NO se suprime: sigue
+            # registrado (y logueado) — solo cambia qué cabecera se enseña.
+            # El "soft-block:" del detail es SOLO para humanos.
             diag.record(
                 diag.KIND_NETWORK,
                 self.LISTING_URL,
                 detail=f"soft-block: HTTP 200 con marcador anti-bot en página {page}",
+                root_cause=True,
             )
             await self._report_block(200)
             return True

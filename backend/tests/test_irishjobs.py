@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from bs4 import BeautifulSoup
 
-from scrapers.irishjobs import IrishJobsScraper, _parse_salary
+from scrapers.irishjobs import IrishJobsScraper, _STATE_ANCHOR_RE, _parse_salary
 from utils import fetch_diagnostics as diag
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -143,6 +143,209 @@ class TestIrishJobsScraper:
         soup = BeautifulSoup(html, "lxml")
         assert IrishJobsScraper().parse_listing_page(soup) == []
 
+    def test_entero_kilometrico_en_el_blob_registra_issue_sin_lanzar(self):
+        """Fase 3 r3/H4: un entero JSON de 5000 dígitos hace que json.loads
+        lance un ValueError PLANO ("Exceeds the limit…", límite CPython de
+        conversión decimal, NO JSONDecodeError) que ESCAPABA de
+        parse_listing_page. Capturarlo SIN registrar sería peor (falso
+        `empty` con 0 issues): se exige EXACTAMENTE un issue KIND_NETWORK y
+        veredicto `error` — misma forma que utils/http y financejobs."""
+        html = (
+            "<html><head><script>"
+            'window.__PRELOADED_STATE__["app-unifiedResultlist"] = '
+            f'{{"searchResults": {"9" * 5000}}};'
+            "</script></head><body></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert IrishJobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].kind == diag.KIND_NETWORK
+        assert "StepStone redeploy" in issues[0].detail
+        assert diag.classify(0, issues) == "error"
+
+    def test_anidamiento_extremo_registra_issue_sin_lanzar(self):
+        """No bloqueante r6: la pata RecursionError del except estaba sin
+        fijar — estrecharlo a solo ValueError sobrevivía a toda la batería.
+        100k corchetes anidados hacen que el scanner C de json lance
+        RecursionError (NO ValueError): no debe escapar y se exige
+        EXACTAMENTE un issue KIND_NETWORK con veredicto `error` (G1)."""
+        blob = '{"searchResults": ' + "[" * 100_000 + "]" * 100_000 + "}"
+        html = (
+            "<html><head><script>"
+            'window.__PRELOADED_STATE__["app-unifiedResultlist"] = '
+            f"{blob};"
+            "</script></head><body></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert IrishJobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].kind == diag.KIND_NETWORK
+        assert "RecursionError" in issues[0].detail
+        assert diag.classify(0, issues) == "error"
+
+    def test_blob_truncado_registra_issue_y_es_error(self):
+        """Fase 4 r4/R3-1: un 200 con el literal TRUNCADO (redeploy que corta
+        el blob) devolvía [] sin registrar nada — como no escapa ninguna
+        excepción, la red por-fuente de los tasks tampoco sintetizaba
+        OUTCOME_ERROR y la fuente ROTA salía `empty` con 0 issues (violación
+        MATERIAL de G1). G2 protegido: una página legítimamente vacía de
+        ambos hosts (sonda 2026-08-17, búsqueda sin resultados con
+        "total": 0) SÍ trae el blob con items: [] — nunca pisa este camino."""
+        html = (
+            "<html><head><script>"
+            'window.__PRELOADED_STATE__["app-unifiedResultlist"] = {"searchResults":'
+            "</script></head><body></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert IrishJobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].kind == diag.KIND_NETWORK
+        assert "StepStone redeploy" in issues[0].detail
+        assert diag.classify(0, issues) == "error"
+
+    def test_sin_ancla_registra_issue_y_es_error(self):
+        """Fase 4 r4/R3-1 (el modo de fallo hermano): un 200 SIN la asignación
+        del blob (redeploy que la retira; quedan solo señuelos) también salía
+        `empty` con 0 issues. Mismo registro que financejobs cuando no
+        encuentra su __NEXT_DATA__."""
+        html = (
+            "<html><head>"
+            '<script>window.__PRELOADED_STATE__["google-onetap"] = '
+            '{"clientId":"x","items":[{"id":1}]};</script>'
+            "</head><body></body></html>"
+        )
+        soup = BeautifulSoup(html, "lxml")
+        diag.begin()
+        assert IrishJobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].kind == diag.KIND_NETWORK
+        assert "StepStone redeploy" in issues[0].detail
+        assert diag.classify(0, issues) == "error"
+
+    # ------------------------------------------------------------------
+    # Estructura INTERNA del blob (r5/H1): la deriva post-decode también
+    # registra issue — el peldaño siguiente de r4/R3-1, que solo cubría
+    # hasta decodificar. Solo `items: []` es vacío legítimo (G2).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _soup_with_blob(blob_json: str) -> BeautifulSoup:
+        html = (
+            "<html><head><script>"
+            'window.__PRELOADED_STATE__["app-unifiedResultlist"] = '
+            f"{blob_json};"
+            "</script></head><body></body></html>"
+        )
+        return BeautifulSoup(html, "lxml")
+
+    def _assert_blob_records_single_issue(self, blob_json: str) -> None:
+        """El blob decodifica pero su estructura deriva: [] + UN issue = error."""
+        diag.begin()
+        assert (
+            IrishJobsScraper().parse_listing_page(self._soup_with_blob(blob_json)) == []
+        )
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].kind == diag.KIND_NETWORK
+        assert "StepStone redeploy" in issues[0].detail
+        assert diag.classify(0, issues) == "error"
+
+    def test_search_results_no_objeto_registra_issue_sin_lanzar(self):
+        """r5/H1: `searchResults` no-dict ("maintenance") hacía que
+        `.get("items")` lanzara AttributeError que ESCAPABA del parser."""
+        self._assert_blob_records_single_issue('{"searchResults": "maintenance"}')
+
+    def test_items_renombrado_registra_issue(self):
+        """r5/H1: StepStone renombra `items` (p. ej. a `results`) → antes
+        `empty` con 0 issues — fuente ROTA presentada como SECA (material)."""
+        self._assert_blob_records_single_issue(
+            '{"searchResults": {"results": [{"id": 1, "title": "Dev", '
+            '"url": "/job/dev"}]}}'
+        )
+
+    def test_items_no_lista_registra_issue(self):
+        """r5/H1: `items` no-lista → antes `empty` con 0 issues. El payload 42
+        NO es iterable y por eso discrimina el guard de tipo: sin él, el `for`
+        lanzaría TypeError. El string "maintenance" solo NO discrimina — es
+        iterable y el guard final "ninguno parseable" lo enmascara."""
+        self._assert_blob_records_single_issue('{"searchResults": {"items": 42}}')
+        self._assert_blob_records_single_issue(
+            '{"searchResults": {"items": "maintenance"}}'
+        )
+
+    def test_items_de_strings_registra_issue(self):
+        """r5/H1: lista no vacía cuyos elementos no son objetos → todos caían
+        en el `continue` y el run salía `empty` con 0 issues."""
+        self._assert_blob_records_single_issue(
+            '{"searchResults": {"items": ["a", "b", "c"]}}'
+        )
+
+    def test_items_sin_title_url_registra_issue(self):
+        """r5/H1: objetos reales pero sin title/url parseables (renombrado de
+        campos) → guard "N elementos y ninguno parseable" como financejobs."""
+        self._assert_blob_records_single_issue(
+            '{"searchResults": {"items": [{"id": 1}, {"id": 2}]}}'
+        )
+
+    def test_items_vacios_es_empty_sin_issue(self):
+        """G2 (NO puede romperse): la búsqueda sin resultados real devuelve
+        `items: []` con `total: 0` — vacío legítimo, CERO issues."""
+        diag.begin()
+        soup = self._soup_with_blob(
+            '{"searchResults": {"items": [], "meta": {"total": 0}}}'
+        )
+        assert IrishJobsScraper().parse_listing_page(soup) == []
+        assert diag.issues() == []
+        assert diag.classify(0, diag.issues()) == "empty"
+
+    async def test_meta_degenerado_no_tumba_la_cosecha(self):
+        """r5/H1 (letra de G1): con stubs válidos, un `meta` no-dict hacía que
+        `meta.get("total")` lanzara AttributeError y tumbara el host entero —
+        las ofertas ya parseadas se perdían. Ahora solo se pierde el corte por
+        total (siguen cortando la página incompleta y el tope de páginas)."""
+        scraper = IrishJobsScraper()
+        client = MagicMock()
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.text = (
+            "<html><head><script>"
+            'window.__PRELOADED_STATE__["app-unifiedResultlist"] = '
+            '{"searchResults": {"items": [{"id": 7, "title": "Dev", '
+            '"url": "/job/dev/acme-job7"}], "meta": "maintenance"}};'
+            "</script></head><body></body></html>"
+        )
+        client.get = AsyncMock(return_value=resp)
+        diag.begin()
+
+        stubs = await scraper._harvest_host(client, "https://www.irishjobs.ie", set())
+
+        # 1 stub < PAGE_SIZE → corta tras la primera página; sin excepción.
+        assert len(stubs) == 1
+        assert stubs[0]["id"] == 7
+        assert diag.issues() == []  # hubo ofertas: no es un fallo de la fuente
+
+    def test_decode_state_literal_truncado_registra_issue(self):
+        """r5/H4: contrato de la nueva costura — `_decode_state` recibe el
+        offset del literal ya anclado por su llamante y registra el fallo de
+        un literal truncado (la rama "sin ancla" duplicada se eliminó: era
+        inalcanzable y su mutante sobrevivía a toda la suite)."""
+        text = 'window.__PRELOADED_STATE__["app-unifiedResultlist"] = {"searchRes'
+        scraper = IrishJobsScraper()
+        match = _STATE_ANCHOR_RE.search(text)
+        assert match is not None
+        diag.begin()
+        assert scraper._decode_state(text, match.end(), scraper.LISTING_URL) is None
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "truncated state literal" in issues[0].detail
+
     # ------------------------------------------------------------------
     # normalize_job → esquema unificado
     # ------------------------------------------------------------------
@@ -258,7 +461,11 @@ class TestIrishJobsScraper:
                 ]
             }
         }
-        stubs = IrishJobsScraper()._items_to_stubs(data, "https://www.irishjobs.ie")
+        stubs = IrishJobsScraper()._items_to_stubs(
+            data,
+            "https://www.irishjobs.ie",
+            "https://www.irishjobs.ie/jobs/work-from-home?page=1",
+        )
         assert stubs[0]["salary_min_chf"] is None
         assert stubs[0]["salary_max_chf"] is None
         assert stubs[0]["salary_currency"] == "EUR"

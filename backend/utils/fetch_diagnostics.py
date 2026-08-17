@@ -30,12 +30,22 @@ KIND_NETWORK = "network_error"
 
 @dataclass(frozen=True)
 class FetchIssue:
-    """Un fallo de descarga concreto, ya definitivo (reintentos agotados)."""
+    """Un fallo de descarga concreto, ya definitivo (reintentos agotados).
+
+    `root_cause` (r4/H5): marca el issue que EXPLICA el run — hoy solo lo usa
+    el detector de soft-blocks de BaseScraper: el fallo estructural que el
+    parser registró ANTES sobre ese mismo HTML de challenge es su síntoma.
+    `source_health._summarize` prefiere el primer issue marcado como cabecera
+    del resumen; el resto de issues no cambia (default False). Es un flag
+    tipado y no un prefijo de texto en `detail`: un detail ajeno que empezara
+    igual no puede secuestrar la cabecera.
+    """
 
     kind: str
     url: str
     status: int | None = None
     detail: str = ""
+    root_cause: bool = False
 
     def describe(self) -> str:
         """Texto corto para logs y para la columna de salud."""
@@ -59,12 +69,22 @@ def begin() -> None:
     _issues.set([])
 
 
-def record(kind: str, url: str, status: int | None = None, detail: str = "") -> None:
+def record(
+    kind: str,
+    url: str,
+    status: int | None = None,
+    detail: str = "",
+    root_cause: bool = False,
+) -> None:
     """Registra un fallo DEFINITIVO de descarga (no un reintento intermedio)."""
     current = _issues.get()
     if current is None:
         return
-    current.append(FetchIssue(kind=kind, url=url, status=status, detail=detail))
+    current.append(
+        FetchIssue(
+            kind=kind, url=url, status=status, detail=detail, root_cause=root_cause
+        )
+    )
 
 
 def issues() -> list[FetchIssue]:

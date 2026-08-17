@@ -13,6 +13,49 @@ from models.job import Job
 
 logger = logging.getLogger(__name__)
 
+
+def _column_max_len(column) -> int:
+    """Cota de una columna String, verificada en el ARRANQUE (r4/R3-4).
+
+    Si la columna migrara a Text, `type.length` sería None y `len(...) > None`
+    lanzaría TypeError en CADA upsert — todas las ofertas degradadas hasta
+    detectarlo. Mejor un fallo de import explícito que pérdida silenciosa
+    por oferta.
+    """
+    length = getattr(column.type, "length", None)
+    if length is None:
+        # `raise` y no `assert` (r5/H3): con `-O`/PYTHONOPTIMIZE los asserts
+        # se eliminan y el guard devolvía None en silencio — reproduciendo el
+        # TypeError por-upsert que existe para evitar. Ningún arranque usa -O
+        # hoy, pero eso es convención de despliegue, no garantía del código.
+        raise TypeError(
+            f"jobs.{column.key} sin cota de longitud (¿migrada a Text?): "
+            "la frontera de upsert_job necesita el límite del modelo"
+        )
+    return length
+
+
+# Cotas de columna (r3/R11): derivadas del modelo para no duplicar el número.
+# `url` es la única columna que la identidad exige respetar sin truncar
+# (hash + ix_jobs_url comparan la URL literal); `logo` comparte el String(2048)
+# pero es decorativa — políticas distintas en upsert_job.
+# Extensión opcional (r4/R3-7): title(500)/company(300)/location(300)/
+# salary_original(200)/employment_type(100) siguen sin cota central — mismo
+# modo de fallo pre-cota (savepoint abortado con error del driver) y mismo
+# radio (solo esa oferta); solo se pierde claridad de mensaje. Añadirlas aquí
+# si algún portal empieza a desbordarlas.
+_URL_MAX_LEN: int = _column_max_len(Job.__table__.c.url)
+_LOGO_MAX_LEN: int = _column_max_len(Job.__table__.c.logo)
+
+# Strings de contenido con protección NULLIF(valor, '') en el ON CONFLICT:
+# se normalizan en la frontera para que "solo espacios" cuente como vacío
+# (r3/H1, ver upsert_job). title/company/url NO entran: son identidad.
+_BLANKABLE_TEXT_FIELDS: tuple[str, ...] = (
+    "description",
+    "description_snippet",
+    "location",
+)
+
 # Campos de contenido que un provider re-suministra y que afectan a
 # visualización/matching. title/company/url NO entran: están fijados por el hash
 # (hash = MD5(title+company+url)), así que no cambian en un conflicto.
@@ -98,6 +141,51 @@ class JobRepository:
                 raise ValueError(
                     f"tags debe ser una lista, no {type(values['tags']).__name__}"
                 )
+        # Solo-espacios en la frontera (r3/H1): para NULLIF(valor, '') un
+        # "   " o un "\t" son datos REALES — pisaban la description/snippet/
+        # location buenas — y además hacían falsa la señal de degradación que
+        # protege tags (coalesce(excluded.description,'') == ''), con lo que
+        # una re-vista degradada destruía los cinco valores útiles e
+        # invalidaba el embedding. Normalizar a "" ANTES de construir el
+        # INSERT hace que la cascada de protecciones existente los vea como
+        # vacíos. Los strings NO vacíos no se recortan: cambiar el contenido
+        # real cambiaría content_hash y el texto del embedding (G4/G5).
+        for field in _BLANKABLE_TEXT_FIELDS:
+            value = values.get(field)
+            if isinstance(value, str) and not value.strip():
+                values[field] = ""
+        # url en la frontera (r3/R11): varios scrapers construyen la URL con
+        # datos del portal sin acotar y un desborde de String(2048) abortaba
+        # el savepoint con un error del driver. Mismo patrón y justificación
+        # que el rechazo del tags no-lista: degradar ESTA oferta con un
+        # mensaje claro, aquí, donde vive la columna. Truncar no es opción:
+        # la URL es identidad (hash + ix_jobs_url). La cota local de
+        # financejobs se conserva (allí evita además perseguir una URL
+        # absurda); esta es la red central para el resto de fuentes.
+        # Residual conocido (r4/R3-6): una oferta con URL desbordada nunca se
+        # persiste, así que no entra en el cursor (correcto por VD.2) y se
+        # re-intenta y rechaza en CADA run — ruido de log permanente hasta
+        # que la fuente deje de emitirla. Asumido: preferible a truncar la
+        # identidad o a meter en el cursor URLs no persistidas.
+        url = values.get("url")
+        if isinstance(url, str) and len(url) > _URL_MAX_LEN:
+            raise ValueError(
+                f"url excede String({_URL_MAX_LEN}): {len(url)} caracteres"
+            )
+        # logo comparte el String(2048) pero es decorativo: un logo
+        # kilométrico no debe costar la oferta entera — se degrada SOLO el
+        # campo (None: la columna admite NULL y "" no es una URL). Con
+        # rastro (r4/R3-5): misma disciplina que el resto de degradaciones
+        # del fichero.
+        logo = values.get("logo")
+        if isinstance(logo, str) and len(logo) > _LOGO_MAX_LEN:
+            logger.info(
+                "logo excede String(%d) (%d caracteres): degradado a None (url=%s)",
+                _LOGO_MAX_LEN,
+                len(logo),
+                values.get("url"),
+            )
+            values["logo"] = None
         values["content_hash"] = _content_hash(values)
 
         # Determinar si es nueva antes del upsert (para el valor de retorno).

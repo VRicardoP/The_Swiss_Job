@@ -552,6 +552,100 @@ class TestUpsertDegradedRevisit:
         assert row.location == "Zurich, ZH"
         assert row.canton == "ZH"
 
+    async def test_h1_solo_espacios_cuenta_como_vacio_y_no_destruye(self, db_session):
+        """Fase 3 r3/H1: para NULLIF(valor, '') un "   " o un "\\t" son datos
+        REALES, y además hacen falsa la señal que protege tags
+        (coalesce(excluded.description,'') == ''): la re-vista degradada con
+        blancos dejaba ('   ', '\\t', [], '  ', None, None) — perdía
+        description, snippet, tags, location y canton E invalidaba el
+        embedding. Los solo-espacios se normalizan a "" en la frontera y la
+        cascada de protecciones existente vuelve a actuar."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(
+            _job_dict(
+                description="Good detailed text",
+                description_snippet="Good detailed text",
+                tags=["python", "fastapi"],
+                location="Zurich, ZH",
+                canton="ZH",
+            )
+        )
+        await db_session.commit()
+        await db_session.execute(
+            update(Job).where(Job.hash == h).values(embedding=[0.7] * 384)
+        )
+        await db_session.commit()
+
+        # La re-vista del hallazgo: blancos en vez de vacíos.
+        await repo.upsert_job(
+            _job_dict(
+                description="   ",
+                description_snippet="\t",
+                tags=[],
+                location="  ",
+                canton=None,
+            )
+        )
+        await db_session.commit()
+
+        row = (
+            await db_session.execute(
+                select(
+                    Job.description,
+                    Job.description_snippet,
+                    Job.tags,
+                    Job.location,
+                    Job.canton,
+                    Job.embedding,
+                ).where(Job.hash == h)
+            )
+        ).one()
+        assert row.description == "Good detailed text"
+        assert row.description_snippet == "Good detailed text"
+        assert row.tags == ["python", "fastapi"]
+        assert row.location == "Zurich, ZH"
+        assert row.canton == "ZH"
+        assert row.embedding is not None  # sin re-embed sobre texto degradado
+
+        # Control (G2/G4): un string NO vacío con espacios alrededor no se
+        # recorta — cambiar el contenido real cambiaría content_hash y el
+        # material del embedding.
+        await repo.upsert_job(_job_dict(description=" nuevo texto "))
+        await db_session.commit()
+        stored = (
+            await db_session.execute(select(Job.description).where(Job.hash == h))
+        ).scalar_one()
+        assert stored == " nuevo texto "
+
+    async def test_s1_alta_con_blancos_almacena_cadena_vacia(self, db_session):
+        """Fase 4 r4/S1 — mata al mutante superviviente de r3/H1: hacer
+        `values.pop(field)` en vez de asignar "" pasaba el test de la
+        re-vista degradada. La diferencia observable está en un ALTA con
+        blancos: con pop la columna queda NULL en vez de "" y el
+        content_hash difiere. Se fija el valor ALMACENADO."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+
+        await repo.upsert_job(
+            _job_dict(description="   ", description_snippet="\t", location="  ")
+        )
+        await db_session.commit()
+
+        row = (
+            await db_session.execute(
+                select(Job.description, Job.description_snippet, Job.location).where(
+                    Job.hash == h
+                )
+            )
+        ).one()
+        # "" y no NULL: los blancos se NORMALIZAN en la frontera, no se
+        # eliminan del payload.
+        assert row.description == ""
+        assert row.description_snippet == ""
+        assert row.location == ""
+
     async def test_c10_real_location_updates_and_canton_follows(self, db_session):
         """Decisión V2-1: una location entrante REAL siempre pasa (reubicación
         legítima) y entonces el canton entrante manda AUNQUE sea None — mejor
@@ -801,3 +895,67 @@ class TestUpsertPublishedAt:
             await db_session.execute(select(Job.published_at).where(Job.hash == h))
         ).scalar_one()
         assert stored == new
+
+
+@pytest.mark.anyio
+class TestUpsertColumnBounds:
+    """Fase 3 r3/R11: la cota "cabe en la columna" vive donde vive la columna.
+    Solo financejobs acotaba la URL; el resto de scrapers construyen URLs con
+    datos del portal sin acotar y un desborde de String(2048) abortaba el
+    savepoint con un error del driver. Mismo patrón que el rechazo del tags
+    no-lista: degradar ESA oferta con un mensaje claro."""
+
+    async def test_url_desbordada_se_rechaza_con_mensaje_claro(self, db_session):
+        """Truncar no es opción: la URL es identidad (hash + ix_jobs_url)."""
+        repo = JobRepository(db_session)
+        url = "https://example.com/job/" + "9" * 3000
+        with pytest.raises(ValueError, match="url excede"):
+            await repo.upsert_job(_job_dict(url=url))
+
+    async def test_url_en_el_borde_exacto_se_acepta(self, db_session):
+        """G2 del residual: la cota no puede crear falsos rechazos — una URL
+        de exactamente 2048 chars cabe y la oferta se persiste."""
+        repo = JobRepository(db_session)
+        prefix = "https://example.com/job/"
+        url = prefix + "9" * (2048 - len(prefix))
+        assert len(url) == 2048
+        assert await repo.upsert_job(_job_dict(url=url)) is True
+        await db_session.commit()
+
+    async def test_logo_desbordado_degrada_solo_el_campo(self, db_session):
+        """logo comparte el String(2048) pero es decorativo: un logo
+        kilométrico no debe costar la oferta entera — se persiste con NULL."""
+        repo = JobRepository(db_session)
+        h = _job_dict()["hash"]
+        oversized = "https://cdn.example.com/" + "x" * 3000
+        assert await repo.upsert_job(_job_dict(logo=oversized)) is True
+        await db_session.commit()
+        row = (
+            await db_session.execute(select(Job.logo).where(Job.hash == h))
+        ).scalar_one()
+        assert row is None
+
+
+class TestColumnBoundGuard:
+    """Fase 4 r4/R3-4: la cota derivada del modelo debe FALLAR EN EL ARRANQUE
+    si la columna pierde la longitud (p. ej. migrada a Text): sin el guard,
+    `len(url) > None` lanzaba TypeError en CADA upsert y todas las ofertas se
+    degradaban hasta detectarlo."""
+
+    def test_columna_sin_cota_es_fallo_de_arranque(self):
+        # TypeError y no AssertionError (r5/H3): un `assert` desaparece bajo
+        # `-O`/PYTHONOPTIMIZE y el guard devolvía None en silencio — el raise
+        # explícito protege también en ese modo.
+        from sqlalchemy import Column, Text
+
+        from services.job_repository import _column_max_len
+
+        with pytest.raises(TypeError, match="sin cota de longitud"):
+            _column_max_len(Column("url", Text()))
+
+    def test_cota_actual_derivada_del_modelo(self):
+        """Control: con el modelo real el guard devuelve la cota, no peta."""
+        from services.job_repository import _column_max_len
+
+        assert _column_max_len(Job.__table__.c.url) == 2048
+        assert _column_max_len(Job.__table__.c.logo) == 2048

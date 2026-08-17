@@ -40,6 +40,99 @@ def test_clasifica_ok_aunque_haya_fallos_parciales():
     assert diag.classify(12, fallos) == OUTCOME_OK
 
 
+# ------------------------------------------------------------------- resumen
+
+
+def test_resumen_prefiere_la_causa_raiz_soft_block():
+    """Fase 3 r3/H5 (fija la decisión; r4: la marca es el flag `root_cause`
+    de FetchIssue, no un prefijo de texto): ante un challenge anti-bot
+    servido como 200, el parser registra su fallo estructural ANTES que el
+    detector de soft-block, y `last_error_detail` (= collected[0]) enseñaba
+    el síntoma ("no __NEXT_DATA__ found") en vez de la causa raíz (nos
+    sirvieron un challenge). El resumen debe nombrar el soft-block SIN perder
+    nada: los dos issues siguen registrados y el contador "+N más" no
+    cambia."""
+    sintoma = diag.FetchIssue(
+        diag.KIND_NETWORK, "https://x/jobs", detail="no __NEXT_DATA__ found"
+    )
+    causa = diag.FetchIssue(
+        diag.KIND_NETWORK,
+        "https://x/jobs",
+        detail="soft-block: HTTP 200 con marcador anti-bot en página 1",
+        root_cause=True,
+    )
+    resumen = source_health._summarize([sintoma, causa])
+    assert resumen.startswith("soft-block:")
+    assert "(+1 más)" in resumen
+    # El veredicto de classify NO cambia: `error` con o sin la preferencia.
+    assert diag.classify(0, [sintoma, causa]) == OUTCOME_ERROR
+
+
+def test_resumen_ignora_un_prefijo_textual_sin_flag():
+    """r4/H5 — la mina desactivada: con el matching por prefijo, un detail
+    AJENO que empezara por "soft-block:" secuestraba la cabecera del resumen.
+    La preferencia es ahora el flag tipado `root_cause`: sin él, la cabecera
+    sigue siendo collected[0] aunque el texto coincida."""
+    primero = diag.FetchIssue(diag.KIND_HTTP, "https://x/p1", status=404)
+    ajeno = diag.FetchIssue(
+        diag.KIND_NETWORK,
+        "https://x/p2",
+        detail="soft-block: texto ajeno sin marcar como causa raíz",
+    )
+    assert (
+        source_health._summarize([primero, ajeno])
+        == "HTTP 404 en https://x/p1 (+1 más)"
+    )
+
+
+def test_resumen_con_varias_causas_raiz_gana_la_primera():
+    """r4/S2 — fija el desempate (mutante superviviente: preferir la ÚLTIMA
+    causa raíz pasaba los tres tests): con varias causas raíz marcadas, la
+    cabecera es la PRIMERA registrada — misma regla de orden que collected[0]
+    cuando no hay flag."""
+    sintoma = diag.FetchIssue(
+        diag.KIND_NETWORK, "https://x/jobs", detail="no __NEXT_DATA__ found"
+    )
+    causa1 = diag.FetchIssue(
+        diag.KIND_NETWORK,
+        "https://x/jobs",
+        detail="soft-block: HTTP 200 con marcador anti-bot en página 1",
+        root_cause=True,
+    )
+    causa2 = diag.FetchIssue(
+        diag.KIND_NETWORK,
+        "https://x/jobs",
+        detail="soft-block: HTTP 200 con marcador anti-bot en página 2",
+        root_cause=True,
+    )
+    resumen = source_health._summarize([sintoma, causa1, causa2])
+    assert resumen == f"{causa1.describe()} (+2 más)"
+
+
+def test_resumen_sin_soft_block_sigue_siendo_el_primer_issue():
+    """No-regresión de r3/H5: `_summarize` lo comparten TODAS las fuentes —
+    cualquier run sin issue de soft-block (todos los providers y el resto de
+    caminos de los scrapers) conserva la cabecera de siempre: collected[0]."""
+    fallos = [
+        diag.FetchIssue(diag.KIND_HTTP, "https://x/p1", status=404),
+        diag.FetchIssue(diag.KIND_NETWORK, "https://x/p2", detail="timeout"),
+    ]
+    assert source_health._summarize(fallos) == "HTTP 404 en https://x/p1 (+1 más)"
+
+
+def test_resumen_con_soft_block_como_unico_issue_no_cambia():
+    """No-regresión de r3/H5 (el camino histórico): cuando el soft-block es el
+    ÚNICO issue del run —parser sin fallo estructural— ya era collected[0] y
+    el resumen queda idéntico al de antes del cambio."""
+    causa = diag.FetchIssue(
+        diag.KIND_NETWORK,
+        "https://x/jobs",
+        detail="soft-block: HTTP 200 con marcador anti-bot en página 1",
+        root_cause=True,
+    )
+    assert source_health._summarize([causa]) == causa.describe()
+
+
 # ------------------------------------------------- registro desde los helpers
 
 
@@ -175,6 +268,29 @@ async def test_fetch_with_retry_registra_el_200_no_json():
     assert len(fallos) == 1
     assert fallos[0].kind == diag.KIND_NETWORK
     assert "JSONDecodeError" in fallos[0].detail
+    assert diag.classify(0, fallos) == OUTCOME_ERROR
+
+
+@pytest.mark.asyncio
+async def test_fetch_with_retry_registra_el_200_con_anidamiento_extremo():
+    """Fase 3 r3/R10: un 200 cuyo cuerpo JSON anida miles de niveles hace que
+    response.json() lance RecursionError — que NO es ValueError y escapaba
+    del helper, rompiendo la letra de G1 (la red por-fuente lo convertía en
+    `error`, pero el contrato "None ⇒ issue ya registrado" quedaba roto).
+    Mismo destino que el resto de cuerpos 200 ilegibles."""
+
+    def handler(request):
+        return httpx.Response(200, content=b"[" * 100000)
+
+    diag.begin()
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        assert await fetch_with_retry(client, "https://x/api", max_retries=0) is None
+
+    fallos = diag.issues()
+    assert len(fallos) == 1
+    assert fallos[0].kind == diag.KIND_NETWORK
+    assert "RecursionError" in fallos[0].detail
     assert diag.classify(0, fallos) == OUTCOME_ERROR
 
 
