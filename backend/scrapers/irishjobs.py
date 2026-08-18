@@ -14,6 +14,7 @@ equivocado) y se parsea el literal balanceado una sola vez por página.
 import json
 import logging
 import re
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from bs4 import BeautifulSoup
@@ -40,6 +41,90 @@ _SALARY_NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 _REDEPLOY_MSG = (
     "IrishJobs: possible StepStone redeploy — check __PRELOADED_STATE__ format"
 )
+
+# Dos hosts StepStone cosechados en la misma corrida (dedupe por id de
+# plataforma). A nivel de módulo y no solo en la clase: `_resolve_job_url`
+# deriva de aquí su lista blanca de hostnames sin duplicar los literales.
+_HOSTS: tuple[str, ...] = ("https://www.irishjobs.ie", "https://www.jobs.ie")
+
+# Hostnames PROPIOS admitidos en una URL absoluta del blob (r6/H1, G3):
+# cualquier otro host es ajeno al portal y no puede acabar clicable en el
+# corpus. Derivado de _HOSTS para que añadir un host actualice ambas cosas.
+_ALLOWED_HOSTNAMES: frozenset[str] = frozenset(
+    urlsplit(h).hostname or "" for h in _HOSTS
+)
+
+
+def _s(value: object) -> str:
+    """Devuelve `value` solo si es str; cadena vacía en caso contrario.
+
+    Blindaje por-campo (r6/H2, misma forma que financejobs): un escalar
+    inesperado en un campo interior (`title: 42`) hacía que el `.strip()`
+    lanzara AttributeError. La red por-fuente lo convertía en `error` (la
+    letra de G1 quedaba intacta), pero UNA oferta corrupta perdía la cosecha
+    entera de esa página. Un campo de tipo inesperado debe degradar ESA
+    oferta, nunca la página.
+    """
+    return value if isinstance(value, str) else ""
+
+
+def _resolve_job_url(raw: str, host: str) -> str | None:
+    """Resuelve `item.url` del blob a la URL absoluta de la oferta, o None.
+
+    Mismo criterio que `_resolve_job_url` en stelle_admin/gastrojob (r6/H1):
+    el `url` del item se aceptaba SIN validar y una URL absoluta hacia
+    CUALQUIER host acababa persistida como enlace clicable para el usuario
+    (host confusion / phishing, G3). Las relativas se resuelven sobre `host`
+    (el que sirvió la página); las absolutas solo se aceptan hacia los
+    hostnames de _HOSTS. Se emite RECONSTRUIDA (https + hostname + path, sin
+    query/fragment/puerto): el hash de dedup e ix_jobs_url comparan la URL
+    literal, y cada variante sería una fila nueva por oferta (G4).
+    """
+    if not raw:
+        return None
+    # Diferencial de parsers urllib/WHATWG: urllib solo corta el netloc en
+    # `/ ? #`; los navegadores también en `\`. Con
+    # `https://evil.com\@www.irishjobs.ie/...` urllib ve un netloc que acaba
+    # en el host propio, pero el navegador del usuario navega a evil.com.
+    # También percent-encoded (%5C): un decode aguas abajo lo reactivaría.
+    # Ningún url legítimo del blob contiene ninguna de las dos formas.
+    if "\\" in raw or "%5c" in raw.lower():
+        return None
+    # Caracteres de control (\t, \n, \x00...): urlsplit los RECORTA en
+    # silencio (alineado con WHATWG) y el resultado ya no es el enlace que
+    # emitió el portal — se rechazan antes de parsear.
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in raw):
+        return None
+    try:
+        parts = urlsplit(urljoin(f"{host}/", raw))
+        # `.port` valida el puerto AL ACCEDER y lanza ValueError con uno no
+        # numérico o fuera de rango — dentro del try, como el parseo.
+        port = parts.port
+    except ValueError:
+        # p. ej. "https://[evil/..." (IPv6 malformado): urljoin/urlsplit
+        # LANZAN en vez de parsear — degrada ESTA oferta, nunca la página.
+        return None
+    # Solo http(s): otros esquemas con autoridad no son ofertas navegables.
+    if parts.scheme not in ("http", "https"):
+        return None
+    # Sin userinfo: `https://algo@www.irishjobs.ie/...` permite spoofing
+    # visual del enlace. `username` es "" (no None) con userinfo vacío.
+    if parts.username is not None:
+        return None
+    # Sin puerto explícito: StepStone nunca lo emite — uno "inesperado" solo
+    # aparece en URLs manipuladas.
+    if port is not None:
+        return None
+    # `.hostname` minusculiza y quita el puerto; un lookalike (punycode,
+    # sufijo ajeno) no está en la lista blanca y queda fuera.
+    hostname = parts.hostname or ""
+    if hostname not in _ALLOWED_HOSTNAMES:
+        return None
+    # Sin path real no hay oferta que enlazar: ninguna oferta se emite sin
+    # URL propia (G3).
+    if not parts.path or parts.path == "/":
+        return None
+    return f"https://{hostname}{parts.path}"
 
 
 def _extract_balanced_object(text: str, start: int) -> str | None:
@@ -102,9 +187,13 @@ def _parse_salary(
     def to_int(raw: str) -> int | None:
         try:
             value = float(raw.replace(",", ""))
-        except ValueError:
+            # int() DENTRO del try (r6/H2): un token de miles de dígitos
+            # desborda float a inf e int(inf) lanza OverflowError — fuera
+            # del try escapaba y una sola oferta perdía la página entera.
+            result = int(value)
+        except (ValueError, OverflowError):
             return None
-        return int(value) if value > 0 else None  # <= 0 se considera basura
+        return result if value > 0 else None  # <= 0 se considera basura
 
     if len(tokens) == 1:
         val = to_int(tokens[0])
@@ -123,8 +212,10 @@ def _parse_salary(
 
 class IrishJobsScraper(BaseScraper):
     SOURCE_NAME = "irishjobs"
-    # Dos hosts StepStone cosechados en la misma corrida; dedupe por id de plataforma.
-    HOSTS: tuple[str, ...] = ("https://www.irishjobs.ie", "https://www.jobs.ie")
+    # Dos hosts StepStone cosechados en la misma corrida; dedupe por id de
+    # plataforma. El literal vive en _HOSTS (módulo): _resolve_job_url deriva
+    # de él su lista blanca de hostnames (r6/H1).
+    HOSTS: tuple[str, ...] = _HOSTS
     LISTING_PATH = "/jobs/work-from-home"
     # Requerido por BaseScraper (no se usa directamente: el override cosecha ambos hosts).
     LISTING_URL = "https://www.irishjobs.ie/jobs/work-from-home"
@@ -258,35 +349,57 @@ class IrishJobsScraper(BaseScraper):
         for item in items:
             if not isinstance(item, dict):
                 continue
-            title = (item.get("title") or "").strip()
-            rel_url = (item.get("url") or "").strip()
+            # `_s` en cada campo interior (r6/H2): los niveles exteriores ya
+            # están validados, pero un escalar inesperado (`title: 42`) hacía
+            # que el `.strip()` lanzara AttributeError y perdiera la página.
+            title = _s(item.get("title")).strip()
+            rel_url = _s(item.get("url")).strip()
             if not title or not rel_url:
                 continue  # se descartaría luego; evitamos crear stubs inservibles
 
             # `abs_url` y NO `url`: no pisar el parámetro (la URL de la página),
             # que el guard final "ninguno parseable" pasa a diag.record — con la
             # local pisada culparía a la última oferta en vez de a la página.
-            abs_url = rel_url if rel_url.startswith("http") else f"{host}{rel_url}"
-            description = strip_html_tags(item.get("textSnippet") or "")
+            # None = URL no utilizable (host ajeno, esquema raro, malformada):
+            # sin URL propia la oferta NO se emite (r6/H1, G3); si cae la
+            # página entera, el guard final registra su issue.
+            abs_url = _resolve_job_url(rel_url, host)
+            if abs_url is None:
+                continue
+            description = strip_html_tags(_s(item.get("textSnippet")))
             # Solo currency+period del display; los importes vienen en EUR/GBP y la
             # conversión a CHF + anualización la hace DataNormalizer.normalize_salary
             # aguas abajo. Prellenar salary_*_chf con EUR haría que su early-return
             # los guardase como CHF sin convertir (p.ej. €22/h → 22 CHF/año).
-            _, _, currency, period = _parse_salary(item.get("salary") or "")
+            _, _, currency, period = _parse_salary(_s(item.get("salary")))
+
+            # `id` saneado como el resto de campos (misma familia que r6/H2,
+            # pero el coste era MAYOR): crudo, un id no-hashable (lista/dict)
+            # lanzaba TypeError en el set de `_dedupe_new` y escapaba hasta la
+            # red externa del task — UNA oferta corrupta perdía la cosecha de
+            # AMBOS hosts. int o str pasan (el portal real emite siempre int);
+            # cualquier otro tipo degrada a None, el mismo camino que un item
+            # sin id: el stub entra sin dedupe.
+            raw_id = item.get("id")
+            # bool es subclase de int: `true` no es un id utilizable (True == 1
+            # colisionaría en el set de dedupe con un id entero real).
+            job_id = (
+                raw_id
+                if isinstance(raw_id, (int, str)) and not isinstance(raw_id, bool)
+                else None
+            )
 
             stubs.append(
                 {
-                    "id": item.get(
-                        "id"
-                    ),  # id de plataforma StepStone (dedupe entre hosts)
+                    "id": job_id,  # id de plataforma StepStone (dedupe entre hosts)
                     "title": title,
-                    "company": (item.get("companyName") or "").strip() or "Unknown",
-                    "location": (item.get("location") or "").strip(),
+                    "company": _s(item.get("companyName")).strip() or "Unknown",
+                    "location": _s(item.get("location")).strip(),
                     "url": abs_url,
                     "remote": True,  # DERIVADO DEL SCOPE /jobs/work-from-home, no del item
                     "description": description,
-                    "logo": self._clean_logo(item.get("companyLogoUrl") or ""),
-                    "salary_original": (item.get("salary") or "").strip() or None,
+                    "logo": self._clean_logo(_s(item.get("companyLogoUrl"))),
+                    "salary_original": _s(item.get("salary")).strip() or None,
                     "salary_min_chf": None,  # lo rellena normalize_salary tras convertir
                     "salary_max_chf": None,
                     "salary_currency": currency,

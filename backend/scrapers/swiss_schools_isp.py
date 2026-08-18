@@ -166,8 +166,26 @@ class SwissSchoolsISPScraper(BaseJobProvider):
                 if not isinstance(p, dict):
                     continue  # elemento degenerado: degrada ese item, no la página
                 parseable += 1
-                location_text = (p.get("locationsText") or "").lower()
-                if school_filter in location_text:
+                location_text = p.get("locationsText")
+                # locationsText no-string (lista, número...) es un item
+                # estructuralmente inválido (r6/H3): el `.lower()` lanzaba
+                # AttributeError y tumbaba el LOTE entero. Se registra issue
+                # y se sigue con los objetos válidos — degrada el item, no la
+                # página. La señal es el TIPO, nunca el nº de matches del
+                # filtro: el tenant de Workday es compartido y 0 matches con
+                # objetos válidos sigue siendo vacío legítimo (G2).
+                if location_text is not None and not isinstance(location_text, str):
+                    logger.error("ISP Workday malformed jobPosting: locationsText")
+                    diag.record(
+                        diag.KIND_NETWORK,
+                        api_url,
+                        detail=(
+                            "locationsText no es string "
+                            f"({type(location_text).__name__}): item degradado"
+                        ),
+                    )
+                    continue
+                if school_filter in (location_text or "").lower():
                     results.append(p)
 
             # Página NO vacía sin un solo objeto: estructura desconocida, no un

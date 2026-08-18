@@ -380,3 +380,78 @@ class TestISPFetchDiagnostics:
         assert jobs == []
         assert diag.issues() == []
         assert diag.classify(len(jobs), diag.issues()) == "empty"
+
+
+class TestISPLocationsTextDegenerado:
+    """r6/H3: `locationsText` no-string tumbaba el LOTE entero — evidencia
+    ejecutada: `{"jobPostings": [{"locationsText": ["Mosaic"]}]}` lanzaba
+    AttributeError con issues=0. Un item estructuralmente inválido debe
+    degradar ESE item (con issue) y seguir con los objetos válidos."""
+
+    @pytest.mark.asyncio
+    async def test_locations_text_no_string_degrada_item_no_pagina(self):
+        scraper = SwissSchoolsISPScraper()
+        postings = [
+            # El vector EXACTO de la evidencia ejecutada.
+            {"locationsText": ["Mosaic"]},
+            {
+                "title": "Primary Teacher",
+                "locationsText": "Mosaic School / Ecole Mosaic, Geneva",
+                "externalPath": "/job/Primary-Teacher_JR123",
+                "bulletFields": ["JR123"],
+            },
+        ]
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response(postings),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        # El objeto válido sobrevive; el degenerado registra SU issue.
+        assert len(jobs) == 1
+        assert jobs[0]["title"] == "Primary Teacher"
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert "locationsText" in issues[0].detail
+
+    @pytest.mark.asyncio
+    async def test_locations_text_ausente_o_none_sigue_siendo_vacio_legitimo(self):
+        """G2 (NO puede romperse): el tenant de Workday es COMPARTIDO — cero
+        matches con objetos válidos (locationsText ausente/None incluido) es
+        un vacío legítimo, jamás un issue. El guard mira el TIPO, no el nº de
+        coincidencias del filtro."""
+        scraper = SwissSchoolsISPScraper()
+        postings = [
+            # Posting válido de OTRO colegio del tenant: no matchea el filtro.
+            {
+                "title": "Maths Teacher",
+                "locationsText": "Other ISP School, Madrid",
+                "externalPath": "/job/Maths_JR9",
+                "bulletFields": ["JR9"],
+            },
+            # locationsText ausente y None explícito: formas normales de la API.
+            {"title": "No Location", "externalPath": "/job/x", "bulletFields": ["J1"]},
+            {
+                "title": "Null Location",
+                "locationsText": None,
+                "externalPath": "/job/y",
+                "bulletFields": ["J2"],
+            },
+        ]
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response(postings),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        assert jobs == []
+        assert diag.issues() == []
+        assert diag.classify(len(jobs), diag.issues()) == "empty"

@@ -11,7 +11,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 from bs4 import BeautifulSoup
 
-from scrapers.irishjobs import IrishJobsScraper, _STATE_ANCHOR_RE, _parse_salary
+from scrapers.irishjobs import (
+    IrishJobsScraper,
+    _STATE_ANCHOR_RE,
+    _parse_salary,
+    _resolve_job_url,
+)
 from utils import fetch_diagnostics as diag
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -517,6 +522,53 @@ class TestIrishJobsScraper:
         assert [j["id"] for j in fresh1] == [1, 2]
         assert [j["id"] for j in fresh2] == [3]  # id 2 ya visto en el otro host
 
+    def test_id_no_hashable_degrada_la_oferta_no_el_run(self):
+        """El `id` viajaba CRUDO del blob al set de dedupe: uno no-hashable
+        (lista/dict) lanzaba TypeError en `_dedupe_new`, escapaba hasta la red
+        externa del task y UNA oferta corrupta perdía la cosecha de AMBOS
+        hosts (peor que perder la página: el run entero). Saneado como el
+        resto de campos: int/str pasan; el resto degrada a None, el mismo
+        camino que un item sin id (el stub entra sin dedupe). Incluye el
+        control de que un id entero real sigue dedupando igual."""
+        soup = _soup_with_items(
+            '[{"id": [1], "title": "Lista", "url": "/job/a/x-job1"},'
+            ' {"id": {"x": 1}, "title": "Dict", "url": "/job/b/y-job2"},'
+            ' {"id": 107715623, "title": "Real", "url": "/job/c/z-job3"}]'
+        )
+        stubs = IrishJobsScraper().parse_listing_page(soup)
+        seen: set = set()
+        # Sin el arreglo, aquí lanza TypeError: unhashable type: 'list'.
+        fresh = IrishJobsScraper._dedupe_new(stubs, seen)
+        assert [s["title"] for s in fresh] == ["Lista", "Dict", "Real"]
+        assert [s["id"] for s in fresh] == [None, None, 107715623]
+        # Control: el id entero real sigue dedupando igual entre hosts;
+        # los degradados a None pasan sin dedupe, como hoy sin id.
+        assert [s["title"] for s in IrishJobsScraper._dedupe_new(stubs, seen)] == [
+            "Lista",
+            "Dict",
+        ]
+
+    def test_id_bool_degrada_a_none(self):
+        """bool es subclase de int: un `"id": true` pasaba el guard int/str y
+        entraba en el set de dedupe, donde True == 1 — colisión con un id
+        entero 1 que descartaría una oferta legítima. Como el guard de
+        `total`, bool degrada a None, el mismo camino que un item sin id.
+        Control: un id entero real sigue dedupando igual."""
+        soup = _soup_with_items(
+            '[{"id": true, "title": "Bool", "url": "/job/a/x-job1"},'
+            ' {"id": 107715623, "title": "Real", "url": "/job/b/y-job2"}]'
+        )
+        stubs = IrishJobsScraper().parse_listing_page(soup)
+        assert [s["id"] for s in stubs] == [None, 107715623]
+        seen: set = set()
+        fresh = IrishJobsScraper._dedupe_new(stubs, seen)
+        assert [s["title"] for s in fresh] == ["Bool", "Real"]
+        assert seen == {107715623}
+        # Control: el id real deduplica entre hosts; el None pasa sin dedupe.
+        assert [s["title"] for s in IrishJobsScraper._dedupe_new(stubs, seen)] == [
+            "Bool"
+        ]
+
     # ------------------------------------------------------------------
     # Diagnóstico por host (VD.10, H3)
     # ------------------------------------------------------------------
@@ -540,3 +592,246 @@ class TestIrishJobsScraper:
         assert len(issues) == 1
         assert issues[0].status == 404
         assert issues[0].url == "https://www.jobs.ie/jobs/work-from-home?page=1"
+
+
+def _soup_with_items(items_json: str) -> BeautifulSoup:
+    """Página mínima con `searchResults.items` dado (JSON), como el blob real."""
+    html = (
+        "<html><head><script>"
+        'window.__PRELOADED_STATE__["app-unifiedResultlist"] = '
+        f'{{"searchResults": {{"items": {items_json}}}}};'
+        "</script></head><body></body></html>"
+    )
+    return BeautifulSoup(html, "lxml")
+
+
+class TestResolveJobUrl:
+    """r6/H1 (G3 MATERIAL): `item.url` absoluta se aceptaba hacia CUALQUIER
+    host sin validar esquema, userinfo ni hostname — evidencia ejecutada de la
+    revisión: con `url=https://evil.example/job/1` el scraper emitía
+    `'url': 'https://evil.example/job/1'` con issues=0 y acababa en el corpus
+    CLICABLE para el usuario. Batería de host confusion de stelle_admin/
+    gastrojob + control de que las rutas relativas reales siguen pasando."""
+
+    HOST = "https://www.irishjobs.ie"
+
+    def test_absoluta_de_host_ajeno_rechazada(self):
+        # El vector EXACTO de la evidencia ejecutada de la revisión.
+        assert _resolve_job_url("https://evil.example/job/1", self.HOST) is None
+        # Y con path que imita la forma real de una oferta StepStone.
+        assert _resolve_job_url("https://evil.com/job/dev/acme-job1", self.HOST) is None
+
+    def test_control_backslash_y_percent_encoded_rechazados(self):
+        """Control: el pre-check de `\\`/%5c es defensa REDUNDANTE bajo fallo
+        único — los vectores con backslash en posición de autoridad los para
+        ya el check de userinfo, y los de posición de path se emiten
+        reconstruidos sobre el host propio. La defensa SE CONSERVA porque
+        protege frente a un refactor futuro que devolviera la URL cruda en
+        vez de reconstruirla: el diferencial urllib/WHATWG (urllib ve un
+        netloc que acaba en www.irishjobs.ie; el navegador navega a evil.com,
+        y %5C se reactivaría con un decode aguas abajo) volvería a ser
+        explotable."""
+        assert (
+            _resolve_job_url("https://evil.com\\@www.irishjobs.ie/job/1", self.HOST)
+            is None
+        )
+        assert (
+            _resolve_job_url("https://evil.com%5C@www.irishjobs.ie/job/1", self.HOST)
+            is None
+        )
+        # Variante protocolo-relativa del mismo ataque.
+        assert (
+            _resolve_job_url("//evil.com\\@www.irishjobs.ie/job/1", self.HOST) is None
+        )
+
+    def test_userinfo_rechazado(self):
+        """Userinfo hacia un host legítimo: spoofing visual del enlace."""
+        assert (
+            _resolve_job_url("https://cualquier@www.irishjobs.ie/job/1", self.HOST)
+            is None
+        )
+        # userinfo VACÍO también: `username` es "" (no None) con `https://@...`
+        assert _resolve_job_url("https://@www.irishjobs.ie/job/1", self.HOST) is None
+
+    def test_protocolo_relativa_hacia_host_ajeno_rechazada(self):
+        assert _resolve_job_url("//evil.com/job/1", self.HOST) is None
+
+    def test_punycode_y_sufijo_lookalike_rechazados(self):
+        # Homógrafo punycode: hostname bien formado pero AJENO al portal.
+        assert (
+            _resolve_job_url("https://www.xn--irishjbs-hcb.ie/job/1", self.HOST) is None
+        )
+        # Host propio como PREFIJO de un dominio ajeno.
+        assert (
+            _resolve_job_url("https://www.irishjobs.ie.evil.com/job/1", self.HOST)
+            is None
+        )
+
+    def test_esquema_no_http_rechazado(self):
+        assert _resolve_job_url("ftp://www.irishjobs.ie/job/1", self.HOST) is None
+        assert _resolve_job_url("javascript:alert(1)", self.HOST) is None
+
+    def test_ipv6_malformado_no_lanza(self):
+        """`urlsplit` LANZA ValueError ("Invalid IPv6 URL") con `[` en la
+        autoridad: debe degradar esta oferta, nunca la página."""
+        assert _resolve_job_url("https://[evil/job/1", self.HOST) is None
+        assert _resolve_job_url("//[evil/job/1", self.HOST) is None
+
+    def test_puerto_explicito_rechazado(self):
+        """StepStone nunca emite puerto explícito: solo aparece en URLs
+        manipuladas. FIJA LA DECISIÓN "sin puerto, ni siquiera el propio"."""
+        assert (
+            _resolve_job_url("https://www.irishjobs.ie:8443/job/1", self.HOST) is None
+        )
+        # Puerto no numérico: `.port` valida al ACCEDER y lanza ValueError —
+        # debe estar capturado dentro del try.
+        assert _resolve_job_url("https://www.irishjobs.ie:abc/job/1", self.HOST) is None
+
+    def test_caracteres_de_control_rechazados(self):
+        """urlsplit RECORTA \\t/\\n/\\r en silencio (WHATWG): el resultado ya
+        no es el enlace que emitió el portal."""
+        assert _resolve_job_url("/job/1\n", self.HOST) is None
+        assert _resolve_job_url("https://www.irishjobs.ie/job/\t1", self.HOST) is None
+        assert _resolve_job_url("/job/\x001", self.HOST) is None
+
+    def test_traversal_relativo_queda_normalizado_en_el_host_propio(self):
+        """urljoin normaliza los dot-segments: el path emitido es canónico y
+        no arrastra `..` literales a la identidad (hash + ix_jobs_url)."""
+        assert (
+            _resolve_job_url("/job/../../x", self.HOST) == "https://www.irishjobs.ie/x"
+        )
+
+    def test_query_y_fragmento_se_eliminan(self):
+        """La URL se emite RECONSTRUIDA sin query/fragment (G4): un
+        `?tracking=` del portal crearía una fila nueva por oferta."""
+        assert (
+            _resolve_job_url("/job/x?utm=1#frag", self.HOST)
+            == "https://www.irishjobs.ie/job/x"
+        )
+
+    def test_mayusculas_se_canonicalizan(self):
+        """`.hostname` minusculiza: la variante en mayúsculas es el host
+        PROPIO y debe emitirse canónica — una URL por identidad (G4)."""
+        assert (
+            _resolve_job_url("HTTPS://WWW.IRISHJOBS.IE/job/x", self.HOST)
+            == "https://www.irishjobs.ie/job/x"
+        )
+
+    def test_sin_path_propio_no_emite(self):
+        """G3: ninguna oferta se emite sin URL propia — la raíz del portal no
+        es una oferta."""
+        assert _resolve_job_url("https://www.irishjobs.ie", self.HOST) is None
+        assert _resolve_job_url("https://www.irishjobs.ie/", self.HOST) is None
+        assert _resolve_job_url("", self.HOST) is None
+
+    def test_control_rutas_relativas_reales_siguen_pasando(self):
+        """Control de falsos positivos (G2): las TRES rutas relativas de la
+        fixture real resuelven exactamente igual que antes del arreglo."""
+        for rel in (
+            "/job/legal-pa-commercial-litigation/lex-consultancy-job107715623",
+            "/job/documentation-platform-engineer/"
+            "bentley-systems-international-limited-job107715450",
+            "/job/lead-mechanical-engineer-building-services/pm-group-job107715321",
+        ):
+            assert _resolve_job_url(rel, self.HOST) == f"https://www.irishjobs.ie{rel}"
+
+    def test_ambos_hosts_legitimos_siguen_pasando(self):
+        """NO es un control: es el único test que caza una derivación
+        incorrecta de la whitelist de hostnames (_ALLOWED_HOSTNAMES) desde
+        _HOSTS — p. ej. derivar solo el host primario, o comparar contra los
+        literales con esquema. Los DOS hosts pasan: en relativo sobre su
+        propio host y en absoluto cruzado (misma plataforma, dedupe por id
+        entre hosts)."""
+        assert (
+            _resolve_job_url("/job/x/y-job1", "https://www.jobs.ie")
+            == "https://www.jobs.ie/job/x/y-job1"
+        )
+        assert (
+            _resolve_job_url("https://www.jobs.ie/job/x/y-job1", self.HOST)
+            == "https://www.jobs.ie/job/x/y-job1"
+        )
+        assert (
+            _resolve_job_url("https://www.irishjobs.ie/job/x/y-job1", self.HOST)
+            == "https://www.irishjobs.ie/job/x/y-job1"
+        )
+
+    def test_end_to_end_host_ajeno_no_emite_stub(self):
+        """La evidencia ejecutada, extremo a extremo: el item con URL ajena no
+        emite stub; el legítimo de la misma página vive y no hay issue."""
+        soup = _soup_with_items(
+            '[{"id": 1, "title": "Phishing Job", "url": "https://evil.example/job/1"},'
+            ' {"id": 2, "title": "Real Job", "url": "/job/real/acme-job2"}]'
+        )
+        diag.begin()
+        stubs = IrishJobsScraper().parse_listing_page(soup)
+        assert [s["title"] for s in stubs] == ["Real Job"]
+        assert stubs[0]["url"] == "https://www.irishjobs.ie/job/real/acme-job2"
+        assert diag.issues() == []  # hubo >=1 stub válido: la página está sana
+
+    def test_pagina_solo_con_urls_ajenas_registra_issue(self):
+        """Si TODA la página cae por URLs no utilizables, el guard "ninguno
+        parseable" registra su issue: fuente rara VISIBLE, no falso empty (G1)."""
+        soup = _soup_with_items(
+            '[{"id": 1, "title": "Phishing", "url": "https://evil.example/job/1"}]'
+        )
+        diag.begin()
+        assert IrishJobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert diag.classify(0, issues) == "error"
+
+
+class TestScalarInnerFields:
+    """r6/H2: los niveles exteriores están validados pero los campos
+    interiores asumían strings — evidencia ejecutada: `title=42` lanzaba
+    AttributeError con issues=0 y UNA oferta corrupta perdía la cosecha
+    completa de la página (G1 material intacta vía la red del task, pero
+    pérdida evitable)."""
+
+    def test_title_no_string_degrada_la_oferta_no_la_pagina(self):
+        # El vector EXACTO de la evidencia ejecutada (title=42).
+        soup = _soup_with_items(
+            '[{"id": 1, "title": 42, "url": "/job/a/x-job1"},'
+            ' {"id": 2, "title": "Real Job", "url": "/job/real/acme-job2"}]'
+        )
+        diag.begin()
+        stubs = IrishJobsScraper().parse_listing_page(soup)
+        assert [s["title"] for s in stubs] == ["Real Job"]
+        assert diag.issues() == []
+
+    def test_todos_los_campos_interiores_toleran_escalares(self):
+        """companyName/location/textSnippet/salary/companyLogoUrl no-string:
+        se degrada el CAMPO (vacío/None), nunca la oferta ni la página."""
+        soup = _soup_with_items(
+            '[{"id": 1, "title": "Dev", "url": "/job/dev/acme-job1",'
+            ' "companyName": 7, "location": ["Remote"], "textSnippet": {"x": 1},'
+            ' "salary": 42000, "companyLogoUrl": true}]'
+        )
+        diag.begin()
+        stubs = IrishJobsScraper().parse_listing_page(soup)
+        assert len(stubs) == 1
+        job = stubs[0]
+        assert job["company"] == "Unknown"
+        assert job["location"] == ""
+        assert job["description"] == ""
+        assert job["salary_original"] is None
+        assert job["salary_currency"] is None
+        assert job["logo"] is None
+        assert diag.issues() == []
+
+    def test_salary_de_miles_de_digitos_no_lanza(self):
+        """Evidencia ejecutada: `'9'*5000` desborda float a inf y el
+        `int(inf)` vivía FUERA del try → OverflowError escapaba."""
+        assert _parse_salary("9" * 5000) == (None, None, None, None)
+        # Con símbolo de moneda: min/max ilegibles ⇒ todo None igualmente.
+        assert _parse_salary("€" + "9" * 5000) == (None, None, None, None)
+
+    def test_guard_pagina_de_escalares_sigue_registrando_issue(self):
+        """El guard existente se MANTIENE: lista no vacía sin ningún stub ⇒
+        un issue (estructura desconocida, no vacío legítimo)."""
+        soup = _soup_with_items('[{"id": 1, "title": 42, "url": 17}]')
+        diag.begin()
+        assert IrishJobsScraper().parse_listing_page(soup) == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert diag.classify(0, issues) == "error"

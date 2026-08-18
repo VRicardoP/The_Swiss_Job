@@ -959,3 +959,59 @@ class TestColumnBoundGuard:
 
         assert _column_max_len(Job.__table__.c.url) == 2048
         assert _column_max_len(Job.__table__.c.logo) == 2048
+
+
+@pytest.mark.anyio
+class TestLogoOversizedRevisit:
+    """r6/H4 (G5): la degradación hacía `values["logo"] = None` y ese None
+    ENTRABA en el ON CONFLICT pisando el logo bueno almacenado — evidencia
+    ejecutada contra Postgres: alta con logo bueno + re-vista con logo de
+    3020 caracteres ⇒ LOGO_AFTER_OVERSIZED_REVISIT None. El campo inválido
+    ahora se OMITE (`pop`) y no destruye el válido."""
+
+    GOOD_LOGO = "https://cdn.example.com/logo.png"
+
+    async def _stored_logo(self, db_session) -> str | None:
+        h = _job_dict()["hash"]
+        return (
+            await db_session.execute(select(Job.logo).where(Job.hash == h))
+        ).scalar_one()
+
+    async def test_logo_desbordado_en_revisita_no_pisa_el_logo_bueno(self, db_session):
+        """La evidencia ejecutada de la revisión, ahora en verde: el logo
+        bueno sobrevive a la re-vista con logo desbordado."""
+        repo = JobRepository(db_session)
+        assert await repo.upsert_job(_job_dict(logo=self.GOOD_LOGO)) is True
+        await db_session.commit()
+
+        oversized = "https://cdn.example.com/" + "x" * 3000
+        assert await repo.upsert_job(_job_dict(logo=oversized)) is False
+        await db_session.commit()
+
+        assert await self._stored_logo(db_session) == self.GOOD_LOGO
+
+    async def test_logo_valido_en_revisita_sigue_actualizando(self, db_session):
+        """Control (sin cambio de comportamiento): un logo VÁLIDO re-suministrado
+        sigue refrescando la columna."""
+        repo = JobRepository(db_session)
+        assert await repo.upsert_job(_job_dict(logo=self.GOOD_LOGO)) is True
+        await db_session.commit()
+
+        new_logo = "https://cdn.example.com/logo-v2.png"
+        assert await repo.upsert_job(_job_dict(logo=new_logo)) is False
+        await db_session.commit()
+
+        assert await self._stored_logo(db_session) == new_logo
+
+    async def test_none_explicito_del_productor_sigue_pisando(self, db_session):
+        """Control (sin cambio de comportamiento): un None EXPLÍCITO del
+        productor es dato real ("la oferta ya no trae logo") y debe seguir
+        escribiéndose — la omisión aplica SOLO al desbordado degradado."""
+        repo = JobRepository(db_session)
+        assert await repo.upsert_job(_job_dict(logo=self.GOOD_LOGO)) is True
+        await db_session.commit()
+
+        assert await repo.upsert_job(_job_dict(logo=None)) is False
+        await db_session.commit()
+
+        assert await self._stored_logo(db_session) is None

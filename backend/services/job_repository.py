@@ -174,18 +174,21 @@ class JobRepository:
             )
         # logo comparte el String(2048) pero es decorativo: un logo
         # kilométrico no debe costar la oferta entera — se degrada SOLO el
-        # campo (None: la columna admite NULL y "" no es una URL). Con
-        # rastro (r4/R3-5): misma disciplina que el resto de degradaciones
-        # del fichero.
+        # campo. `pop` y no `= None` (r6/H4, G5): el None asignado ENTRABA en
+        # el ON CONFLICT y pisaba el logo bueno ya almacenado — degradar el
+        # dato inválido no puede destruir el válido. Omitido del INSERT, en
+        # un alta la columna queda en su default (NULL) y en una re-vista el
+        # SET no la toca. Con rastro (r4/R3-5): misma disciplina que el resto
+        # de degradaciones del fichero.
         logo = values.get("logo")
         if isinstance(logo, str) and len(logo) > _LOGO_MAX_LEN:
             logger.info(
-                "logo excede String(%d) (%d caracteres): degradado a None (url=%s)",
+                "logo excede String(%d) (%d caracteres): campo descartado (url=%s)",
                 _LOGO_MAX_LEN,
                 len(logo),
                 values.get("url"),
             )
-            values["logo"] = None
+            values.pop("logo", None)
         values["content_hash"] = _content_hash(values)
 
         # Determinar si es nueva antes del upsert (para el valor de retorno).
