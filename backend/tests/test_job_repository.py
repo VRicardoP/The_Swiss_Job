@@ -1050,3 +1050,44 @@ class TestLogoOversizedRevisit:
         await db_session.commit()
 
         assert await self._stored_logo(db_session) is None
+
+
+@pytest.mark.anyio
+class TestLogoNulByte:
+    """Sexta revisión / H2: un logo con byte NUL (\\x00) abortaba el INSERT
+    entero en Postgres (CharacterNotInRepertoireError) y costaba la OFERTA:
+    en un alta se perdía y en una re-vista no refrescaba last_seen_at (a 60
+    días, cleanup_stale_jobs la borra). El logo es decorativo — se omite el
+    campo (mismo mecanismo que None/""/no-string) y la oferta se persiste."""
+
+    GOOD_LOGO = "https://cdn.example.com/logo.png"
+    NUL_LOGO = "https://cdn.example.com/logo\x00.png"
+
+    async def _stored_logo(self, db_session) -> str | None:
+        h = _job_dict()["hash"]
+        return (
+            await db_session.execute(select(Job.logo).where(Job.hash == h))
+        ).scalar_one()
+
+    async def test_alta_con_logo_nul_persiste_la_oferta_sin_logo(self, db_session):
+        """El caso del alta: sin el fix el INSERT reventaba y la oferta se
+        PERDÍA. Con él, la oferta entra y solo el logo queda NULL."""
+        repo = JobRepository(db_session)
+        assert await repo.upsert_job(_job_dict(logo=self.NUL_LOGO)) is True
+        await db_session.commit()
+
+        assert await self._stored_logo(db_session) is None
+
+    async def test_logo_nul_en_revisita_no_pisa_el_logo_bueno(self, db_session):
+        """El caso de la re-vista: sin el fix el upsert reventaba y la oferta
+        no refrescaba last_seen_at (camino a cleanup_stale_jobs). Con él, se
+        refresca y el logo bueno almacenado sobrevive (G5, mismo mecanismo
+        que el resto de degradaciones de logo)."""
+        repo = JobRepository(db_session)
+        assert await repo.upsert_job(_job_dict(logo=self.GOOD_LOGO)) is True
+        await db_session.commit()
+
+        assert await repo.upsert_job(_job_dict(logo=self.NUL_LOGO)) is False
+        await db_session.commit()
+
+        assert await self._stored_logo(db_session) == self.GOOD_LOGO

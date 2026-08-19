@@ -193,7 +193,19 @@ class JobRepository:
         # genérico.
         if "logo" in values:
             logo = values["logo"]
-            if isinstance(logo, str) and len(logo) > _LOGO_MAX_LEN:
+            if isinstance(logo, str) and "\x00" in logo:
+                # Un byte NUL revienta el INSERT entero en Postgres
+                # (CharacterNotInRepertoireError) y costaba la OFERTA: en un
+                # alta se pierde y en una re-vista no refresca last_seen_at
+                # (a 60 días, cleanup_stale_jobs la borra). El logo es
+                # decorativo: se degrada SOLO el campo, con rastro — misma
+                # disciplina que el logo desbordado de abajo.
+                logger.info(
+                    "logo con byte NUL: campo descartado (url=%s)",
+                    values.get("url"),
+                )
+                values.pop("logo")
+            elif isinstance(logo, str) and len(logo) > _LOGO_MAX_LEN:
                 logger.info(
                     "logo excede String(%d) (%d caracteres): campo descartado (url=%s)",
                     _LOGO_MAX_LEN,

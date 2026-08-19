@@ -18,6 +18,7 @@ decide qué hacer con las fuentes sin fecha.
 """
 
 import logging
+import re
 
 import httpx
 
@@ -27,6 +28,66 @@ from services.job_service import BaseJobProvider
 from utils import fetch_diagnostics as diag
 
 logger = logging.getLogger(__name__)
+
+# Esquema URI según RFC 3986 (letra seguida de letras/dígitos/+/-/.): "http:",
+# "https:", "javascript:", etc. Cualquier esquema convierte el valor en URL
+# absoluta, no en ruta de oferta.
+_URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+
+
+def _external_path_shape_issue(path: str) -> str | None:
+    """Motivo (en español) por el que `path` NO tiene forma de ruta de oferta.
+
+    Devuelve None si la forma es la esperada: ruta relativa bajo /job/ con
+    al menos un segmento no vacío, sin query, fragmento, esquema, autoridad,
+    barras invertidas, caracteres de control ni segmentos de travesía
+    ('.'/'..', también codificados). `path` llega ya con strip aplicado.
+    La sonda en vivo (r6/H1)
+    demostró que un externalPath="?job=123" pasaba el guard de tipo y se
+    persistía como URL "válida" que no lleva a ninguna oferta: la forma es
+    parte del contrato, no solo el tipo.
+    """
+    if not path.startswith("/job/"):
+        # Cubre también "?job=123", "#job", "/not-a-job", rutas relativas
+        # sin barra inicial y la autoridad "//host/..." (su 2º carácter es
+        # '/'): nada de eso es una ruta de oferta bajo el career site.
+        if path.startswith("//"):
+            return "empieza por '//' (autoridad, no ruta relativa)"
+        if _URI_SCHEME_RE.match(path):
+            return "lleva esquema URI, no es ruta relativa"
+        return "no empieza por /job/"
+    if "?" in path:
+        return "contiene query ('?')"
+    if "#" in path:
+        return "contiene fragmento ('#')"
+    if "\\" in path or "%5c" in path.lower():
+        return "contiene barra invertida ('\\' o '%5C')"
+    # Controles C0 (incluye \t\n\r internos) y DEL: jamás forman parte de una
+    # ruta legítima y romperían la URL construida por concatenación.
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in path):
+        return "contiene caracteres de control"
+    # Tras el strip cualquier espacio es interno: una URL con espacio crudo
+    # no identifica una oferta (Workday los codifica como %20 o guiones).
+    if any(ch.isspace() for ch in path):
+        return "contiene espacios internos"
+    # Travesía codificada (r6 ronda 2 / A): "%2E%2E" no lo normaliza el
+    # navegador antes de enviarlo, pero tampoco existe en las rutas reales
+    # de Workday (slugs planos sin percent-encoding, verificado en vivo).
+    if "%2e" in path.lower():
+        return "contiene punto codificado ('%2E')"
+    # Segmentos tras el prefijo: "/job/x/y" → ["x", "y"]; "/job/" → [""].
+    segments = path.split("/")[2:]
+    # (B) "/job/" a secas es la página de LISTADO, no una vacante; un
+    # segmento vacío intermedio ("//") o final (barra final) tampoco tiene
+    # forma de oferta — las rutas reales llevan ≥1 segmento no vacío.
+    if any(segment == "" for segment in segments):
+        return "sin segmento de oferta tras /job/ (segmento vacío)"
+    # (A) Travesía de directorio: "/job/../admin" pasaba todo lo anterior y
+    # el navegador normaliza ".." — la URL persistida acababa FUERA de
+    # /job/, la misma clase de defecto que H1 por otra puerta.
+    if any(segment in (".", "..") for segment in segments):
+        return "contiene segmento de travesía ('.' o '..')"
+    return None
 
 
 class SwissSchoolsISPScraper(BaseJobProvider):
@@ -224,6 +285,32 @@ class SwissSchoolsISPScraper(BaseJobProvider):
                         ),
                     )
                     continue
+                # FORMA de externalPath (r6/H1): el guard de tipo dejaba pasar
+                # "?job=123", "/not-a-job" o valores con esquema, que acababan
+                # persistidos como URL "válida" sin oferta detrás (outcome=ok
+                # con jobs fantasma). Solo una ruta relativa bajo /job/ (la
+                # forma real de Workday, verificada en vivo) identifica una
+                # oferta. Igual que el resto de guards de item: se degrada
+                # SOLO este elemento, nunca la fuente. Y vive DESPUÉS del
+                # filtro de colegio a propósito (G2, ver arriba): validar
+                # elementos de otros colegios del tenant compartido apagaría
+                # una fuente sana con 0 matches legítimos.
+                external_path = external_path.strip()
+                path_issue = _external_path_shape_issue(external_path)
+                if path_issue is not None:
+                    logger.error("ISP Workday malformed jobPosting: externalPath shape")
+                    diag.record(
+                        diag.KIND_NETWORK,
+                        api_url,
+                        detail=(
+                            f"externalPath sin forma de ruta de oferta "
+                            f"({path_issue}): item degradado"
+                        ),
+                    )
+                    continue
+                # Canonizar el valor ya validado: normalize_job y el fallback
+                # de source_id trabajan con la ruta sin espacios de borde.
+                p["externalPath"] = external_path
                 results.append(p)
 
             # Página NO vacía sin un solo objeto: estructura desconocida, no un
@@ -261,8 +348,9 @@ class SwissSchoolsISPScraper(BaseJobProvider):
         # (escalar, lista sin string) hacía `bullet[0]` → TypeError y la
         # oferta COINCIDENTE se descartaba en _process_raw_jobs sin issue
         # (r7/H1, material de G1). Es solo material de source_id: se repara
-        # con externalPath — ya garantizado string no vacío por el guard de
-        # _fetch_workday — y la oferta se emite, no se degrada.
+        # con externalPath — ya garantizado por los guards de _fetch_workday
+        # como ruta /job/ válida y sin espacios de borde — y la oferta se
+        # emite, no se degrada.
         bullet = raw.get("bulletFields")
         if isinstance(bullet, list) and bullet and isinstance(bullet[0], str):
             source_id = bullet[0] or external_path

@@ -664,3 +664,178 @@ class TestISPLocationsTextDegenerado:
         assert jobs == []
         assert diag.issues() == []
         assert diag.classify(len(jobs), diag.issues()) == "empty"
+
+
+class TestISPExternalPathShape:
+    """Sexta revisión / H1: el guard de tipo dejaba pasar externalPath que NO
+    identifican una oferta — la sonda en vivo con externalPath="?job=123"
+    persistió una oferta con URL .../ISPCareers?job=123 y outcome=ok. La
+    validación ahora exige la FORMA real de Workday (ruta relativa bajo
+    /job/, verificada contra la API en vivo), no solo el tipo."""
+
+    MATCHING_VALID = {
+        "title": "Primary Teacher",
+        "locationsText": "Mosaic School / Ecole Mosaic, Geneva",
+        "externalPath": "/job/Primary-Teacher_JR123",
+        "bulletFields": ["JR123"],
+    }
+
+    @pytest.mark.parametrize(
+        ("path", "reason_fragment"),
+        [
+            ("?job=123", "no empieza por /job/"),  # vector de la sonda en vivo
+            ("#job", "no empieza por /job/"),
+            ("/not-a-job", "no empieza por /job/"),
+            ("job/x_JR1", "no empieza por /job/"),  # relativa sin barra inicial
+            ("https://evil.example/job/x", "esquema"),
+            ("mailto:hr@example.com", "esquema"),
+            ("//evil.example/job/x", "autoridad"),
+            ("/job/x?see=1", "query"),
+            ("/job/x#frag", "fragmento"),
+            ("/job/x\\y", "barra invertida"),
+            ("/job/x%5Cy", "barra invertida"),
+            ("/job/x%5cy", "barra invertida"),  # forma escapada en minúscula
+            ("/job/x\ty", "caracteres de control"),
+            ("/job/x\x00y", "caracteres de control"),
+            ("/job/x y", "espacios internos"),
+            ("/job/../admin", "travesía"),
+            ("/job/..", "travesía"),
+            ("/job/./x", "travesía"),
+            ("/job/x/../y", "travesía"),
+            ("/job/%2e%2e/admin", "punto codificado"),
+            ("/job/%2E%2E/admin", "punto codificado"),
+            ("/job/", "segmento vacío"),
+            ("/job//x", "segmento vacío"),
+            ("/job/x/", "segmento vacío"),
+        ],
+        ids=[
+            "query_sin_ruta",
+            "fragmento_sin_ruta",
+            "ruta_fuera_de_job",
+            "relativa_sin_barra",
+            "esquema_https",
+            "esquema_mailto",
+            "autoridad",
+            "query_tras_job",
+            "fragmento_tras_job",
+            "backslash",
+            "backslash_escapado",
+            "backslash_escapado_minuscula",
+            "tabulador",
+            "nul",
+            "espacio_interno",
+            "travesia_directorio",
+            "travesia_final",
+            "segmento_punto",
+            "travesia_intermedia",
+            "travesia_codificada",
+            "travesia_codificada_mayuscula",
+            "indice_sin_oferta",
+            "segmento_vacio_intermedio",
+            "barra_final",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_forma_invalida_degrada_item_con_issue_y_es_error(
+        self, path, reason_fragment
+    ):
+        """Cada forma inválida pasa el guard de TIPO (str no vacío) pero debe
+        degradarse con issue descriptivo — nunca persistirse como URL."""
+        scraper = SwissSchoolsISPScraper()
+        postings = [dict(self.MATCHING_VALID, externalPath=path)]
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response(postings),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        assert jobs == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].kind == diag.KIND_NETWORK
+        assert "externalPath sin forma de ruta de oferta" in issues[0].detail
+        assert reason_fragment in issues[0].detail
+        assert diag.classify(len(jobs), issues) == "error"
+
+    @pytest.mark.asyncio
+    async def test_forma_valida_con_espacios_de_borde_se_canoniza(self):
+        """'Aplica strip': los espacios de borde no invalidan la ruta, pero la
+        URL construida no debe arrastrarlos (ni el source_id de fallback)."""
+        scraper = SwissSchoolsISPScraper()
+        postings = [
+            dict(
+                self.MATCHING_VALID,
+                externalPath="  /job/Primary-Teacher_JR123  ",
+                bulletFields=7,  # escalar → source_id cae al externalPath
+            )
+        ]
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response(postings),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        assert diag.issues() == []
+        assert len(jobs) == 1
+        assert jobs[0]["url"].endswith("/job/Primary-Teacher_JR123")
+        assert jobs[0]["source_id"] == "/job/Primary-Teacher_JR123"
+
+    @pytest.mark.asyncio
+    async def test_item_invalido_no_arrastra_al_valido_de_la_pagina(self):
+        """La forma inválida degrada SOLO su item: el resto de la página se
+        emite con normalidad."""
+        scraper = SwissSchoolsISPScraper()
+        postings = [
+            dict(self.MATCHING_VALID, externalPath="?job=123"),
+            dict(self.MATCHING_VALID, title="Teacher Assistant"),
+        ]
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response(postings),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        assert len(jobs) == 1
+        assert jobs[0]["title"] == "Teacher Assistant"
+        assert len(diag.issues()) == 1
+
+    @pytest.mark.asyncio
+    async def test_g2_forma_invalida_de_otro_colegio_no_se_diagnostica(self):
+        """G2 (NO puede romperse): el guard de forma vive DESPUÉS del filtro
+        de colegio — un externalPath basura en un posting de OTRO colegio del
+        tenant compartido no genera issue, y 0 matches sigue siendo vacío
+        legítimo (`empty`, nunca `error`)."""
+        scraper = SwissSchoolsISPScraper()
+        postings = [
+            {
+                "title": "Maths Teacher",
+                "locationsText": "Other ISP School, Madrid",
+                "externalPath": "?job=999",
+                "bulletFields": ["JR9"],
+            }
+        ]
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response(postings),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        assert jobs == []
+        assert diag.issues() == []
+        assert diag.classify(len(jobs), diag.issues()) == "empty"
