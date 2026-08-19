@@ -182,7 +182,7 @@ CRAWLER_BUDGET_BACKOFF_MAX_MULTIPLIER = 4
 | Presupuesto (`max_pages_this_run`, `should_run`) | `tests/test_crawler_budget.py` |
 | Presupuesto en el engine (`_pages_budget`, tope httpx) | `tests/test_scraper_engine.py::TestBaseScraperPageBudget` |
 
-Suite completa: **1314 passed, 3 skipped** (2026-08-18, tras `7d63d8d`).
+Suite completa: **1325 passed, 3 skipped** (2026-08-19, tras `747630f`).
 
 ---
 
