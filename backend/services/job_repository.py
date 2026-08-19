@@ -180,15 +180,41 @@ class JobRepository:
         # un alta la columna queda en su default (NULL) y en una re-vista el
         # SET no la toca. Con rastro (r4/R3-5): misma disciplina que el resto
         # de degradaciones del fichero.
-        logo = values.get("logo")
-        if isinstance(logo, str) and len(logo) > _LOGO_MAX_LEN:
-            logger.info(
-                "logo excede String(%d) (%d caracteres): campo descartado (url=%s)",
-                _LOGO_MAX_LEN,
-                len(logo),
-                values.get("url"),
-            )
-            values.pop("logo", None)
+        # r7/H5 (G5): el None/""/tipo inválido EXPLÍCITO del productor tampoco
+        # pisa el almacenado. Los productores construyen el valor con
+        # `.get("logo")`, así que NO pueden distinguir "el portal retiró el
+        # logo" de "este fetch no lo trajo": tratar None como borrado
+        # autoritativo es interpretar como intención lo que es ausencia de
+        # dato. Si algún día hace falta un borrado autoritativo, el DTO tendrá
+        # que distinguir "campo omitido" de "borrado explícito" (p. ej. un
+        # sentinel dedicado) — deliberadamente NO implementado. SOLO logo:
+        # False, 0 y algunos None sí son datos legítimos en otras columnas
+        # (canton entrante None con location real, p. ej.) — nada de coalesce
+        # genérico.
+        if "logo" in values:
+            logo = values["logo"]
+            if isinstance(logo, str) and len(logo) > _LOGO_MAX_LEN:
+                logger.info(
+                    "logo excede String(%d) (%d caracteres): campo descartado (url=%s)",
+                    _LOGO_MAX_LEN,
+                    len(logo),
+                    values.get("url"),
+                )
+                values.pop("logo")
+            elif not (isinstance(logo, str) and logo.strip()):
+                # Ausencia de dato (None, "" o solo espacios): se omite del
+                # INSERT sin log — es el estado normal de la mayoría de fetches.
+                # Un logo no-string (dict, int…) NO es ausencia sino un bug del
+                # productor (antes abortaba el savepoint con DBAPIError): se
+                # descarta igual pero con rastro (r4/R3-5), misma disciplina
+                # que el logo desbordado de arriba.
+                if logo is not None and not isinstance(logo, str):
+                    logger.info(
+                        "logo no-string (%s): campo descartado (url=%s)",
+                        type(logo).__name__,
+                        values.get("url"),
+                    )
+                values.pop("logo")
         values["content_hash"] = _content_hash(values)
 
         # Determinar si es nueva antes del upsert (para el valor de retorno).

@@ -1003,15 +1003,50 @@ class TestLogoOversizedRevisit:
 
         assert await self._stored_logo(db_session) == new_logo
 
-    async def test_none_explicito_del_productor_sigue_pisando(self, db_session):
-        """Control (sin cambio de comportamiento): un None EXPLÍCITO del
-        productor es dato real ("la oferta ya no trae logo") y debe seguir
-        escribiéndose — la omisión aplica SOLO al desbordado degradado."""
+    async def test_none_explicito_del_productor_ya_no_pisa(self, db_session):
+        """r7/H5 (G5) — CAMBIO DE PREMISA respecto a la fase anterior: este
+        test se llamaba `test_none_explicito_del_productor_sigue_pisando` y
+        fijaba que un None explícito era "dato real" que borraba el logo
+        almacenado. La quinta revisión tumbó esa premisa: los productores
+        construyen el valor con `.get("logo")`, así que NO pueden distinguir
+        "el portal retiró el logo" de "este fetch no lo trajo" — tratar None
+        como borrado autoritativo interpretaba como intención lo que es
+        ausencia de dato. Ahora None/"" preservan el valor bueno; un borrado
+        autoritativo exigiría un DTO que distinga "omitido" de "borrado
+        explícito" (no implementado a propósito)."""
         repo = JobRepository(db_session)
         assert await repo.upsert_job(_job_dict(logo=self.GOOD_LOGO)) is True
         await db_session.commit()
 
         assert await repo.upsert_job(_job_dict(logo=None)) is False
+        await db_session.commit()
+
+        assert await self._stored_logo(db_session) == self.GOOD_LOGO
+
+    @pytest.mark.parametrize(
+        "degraded",
+        ["", "   ", 123],
+        ids=["vacio", "solo_espacios", "tipo_invalido"],
+    )
+    async def test_logo_degradado_en_revisita_no_pisa_el_logo_bueno(
+        self, db_session, degraded
+    ):
+        """r7/H5 (G5): "", solo-espacios y un tipo inválido son la misma
+        ausencia de dato que None — ninguno destruye el valor almacenado."""
+        repo = JobRepository(db_session)
+        assert await repo.upsert_job(_job_dict(logo=self.GOOD_LOGO)) is True
+        await db_session.commit()
+
+        assert await repo.upsert_job(_job_dict(logo=degraded)) is False
+        await db_session.commit()
+
+        assert await self._stored_logo(db_session) == self.GOOD_LOGO
+
+    async def test_alta_con_logo_none_queda_null(self, db_session):
+        """Control: en un ALTA el logo omitido deja la columna en su default
+        (NULL) — la omisión del INSERT no rompe el camino sin conflicto."""
+        repo = JobRepository(db_session)
+        assert await repo.upsert_job(_job_dict(logo=None)) is True
         await db_session.commit()
 
         assert await self._stored_logo(db_session) is None

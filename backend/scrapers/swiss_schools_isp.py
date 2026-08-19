@@ -185,8 +185,46 @@ class SwissSchoolsISPScraper(BaseJobProvider):
                         ),
                     )
                     continue
-                if school_filter in (location_text or "").lower():
-                    results.append(p)
+                if school_filter not in (location_text or "").lower():
+                    continue
+                # Oferta COINCIDENTE ilegible (r7/H1): el cierre anterior solo
+                # validaba locationsText — un `title` no-string o un
+                # `externalPath` vacío llegaban a normalize_job, que la
+                # descartaba con log pero SIN issue: el run salía `empty`
+                # (material de G1). Y un externalPath "" produce la página de
+                # carreras del tenant como URL de oferta (G3: no es una URL
+                # propia). Un ÚNICO issue por elemento coincidente inválido,
+                # tenga uno o los dos campos rotos. El guard vive DESPUÉS del
+                # filtro a propósito (G2): los elementos de otros colegios del
+                # tenant compartido no se diagnostican — 0 matches con objetos
+                # válidos sigue siendo vacío legítimo.
+                title = p.get("title")
+                external_path = p.get("externalPath")
+                title_ok = isinstance(title, str) and bool(title.strip())
+                path_ok = isinstance(external_path, str) and bool(external_path.strip())
+                if not (title_ok and path_ok):
+                    logger.error("ISP Workday malformed jobPosting: title/externalPath")
+                    # El detail nombra SOLO los campos rotos: con `title="   "`
+                    # los dos tipos serían `str` y no se sabría cuál falló.
+                    # Presencia en la lista = campo ilegible (el tipo es
+                    # contexto extra, no la señal).
+                    broken = ", ".join(
+                        f"{name}={type(value).__name__}"
+                        for name, value, ok in (
+                            ("title", title, title_ok),
+                            ("externalPath", external_path, path_ok),
+                        )
+                        if not ok
+                    )
+                    diag.record(
+                        diag.KIND_NETWORK,
+                        api_url,
+                        detail=(
+                            f"oferta coincidente ilegible ({broken}): item degradado"
+                        ),
+                    )
+                    continue
+                results.append(p)
 
             # Página NO vacía sin un solo objeto: estructura desconocida, no un
             # board vacío. El guard mira el TIPO y no el filtro: 0 matches con
@@ -219,9 +257,17 @@ class SwissSchoolsISPScraper(BaseJobProvider):
         base = f"https://{tenant}.wd3.myworkdayjobs.com/en-US/{site}"
         url = f"{base}{external_path}"
 
-        # Source ID: JR... de bulletFields
-        bullet = raw.get("bulletFields") or []
-        source_id = bullet[0] if bullet else external_path
+        # Source ID: JR... de bulletFields. Un bulletFields degenerado
+        # (escalar, lista sin string) hacía `bullet[0]` → TypeError y la
+        # oferta COINCIDENTE se descartaba en _process_raw_jobs sin issue
+        # (r7/H1, material de G1). Es solo material de source_id: se repara
+        # con externalPath — ya garantizado string no vacío por el guard de
+        # _fetch_workday — y la oferta se emite, no se degrada.
+        bullet = raw.get("bulletFields")
+        if isinstance(bullet, list) and bullet and isinstance(bullet[0], str):
+            source_id = bullet[0] or external_path
+        else:
+            source_id = external_path
 
         title = raw.get("title", "")
         location_text = raw.get("locationsText", "")

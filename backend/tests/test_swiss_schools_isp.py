@@ -382,6 +382,215 @@ class TestISPFetchDiagnostics:
         assert diag.classify(len(jobs), diag.issues()) == "empty"
 
 
+class TestISPOfertaCoincidenteIlegible:
+    """r7/H1 (G1 material + G3): el cierre anterior solo validaba
+    locationsText — una oferta QUE SÍ coincide con el colegio pero con
+    `title` no-string o `bulletFields` escalar llegaba a normalize_job y
+    `_process_raw_jobs` la descartaba con log SIN issue (evidencia ejecutada:
+    `'list' object has no attribute 'strip'` / `'int' object is not
+    subscriptable` con class `empty`). Y un `externalPath=""` emitía la
+    página de carreras del tenant como URL de oferta (G3: no es una URL
+    propia)."""
+
+    MATCHING_VALID = {
+        "title": "Primary Teacher",
+        "locationsText": "Mosaic School / Ecole Mosaic, Geneva",
+        "externalPath": "/job/Primary-Teacher_JR123",
+        "bulletFields": ["JR123"],
+    }
+
+    @pytest.mark.asyncio
+    async def test_title_no_string_degrada_item_con_issue_y_es_error(self):
+        """El vector EXACTO de la evidencia (`title=[]`): oferta coincidente
+        ilegible ⇒ 1 issue y veredicto `error`, nunca `empty` silencioso."""
+        scraper = SwissSchoolsISPScraper()
+        postings = [
+            {
+                "title": [],
+                "locationsText": "Mosaic School / Ecole Mosaic, Geneva",
+                "externalPath": "/job/x_JR1",
+                "bulletFields": ["JR1"],
+            }
+        ]
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response(postings),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        assert jobs == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        assert issues[0].kind == diag.KIND_NETWORK
+        # El detail nombra SOLO el campo roto: aquí falla title (una lista)
+        # y externalPath es válido, así que no debe aparecer.
+        assert "title=list" in issues[0].detail
+        assert "externalPath" not in issues[0].detail
+        assert diag.classify(len(jobs), issues) == "error"
+
+    @pytest.mark.asyncio
+    async def test_external_path_vacio_degrada_item_no_emite_pagina_de_carreras(self):
+        """G3: `externalPath=""` producía la página de carreras
+        (https://...myworkdayjobs.com/en-US/{site}) como URL de la oferta —
+        una URL de listado, no propia. Ahora degrada el item con issue."""
+        scraper = SwissSchoolsISPScraper()
+        postings = [dict(self.MATCHING_VALID, externalPath="")]
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response(postings),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        # Ni oferta con URL de listado, ni `empty` silencioso.
+        assert jobs == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        # Solo externalPath (str vacío) está roto; title es válido y no
+        # debe aparecer en el detail.
+        assert "externalPath=str" in issues[0].detail
+        assert "title" not in issues[0].detail
+        assert diag.classify(len(jobs), issues) == "error"
+
+    @pytest.mark.asyncio
+    async def test_title_y_external_path_rotos_un_unico_issue(self):
+        """Un elemento coincidente inválido registra UN único issue, tenga
+        uno o los dos campos rotos — sin duplicar ruido por campo."""
+        scraper = SwissSchoolsISPScraper()
+        postings = [
+            {
+                "title": [],
+                "locationsText": "Mosaic School / Ecole Mosaic, Geneva",
+                "externalPath": "",
+            }
+        ]
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response(postings),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        assert jobs == []
+        issues = diag.issues()
+        assert len(issues) == 1
+        # Con los dos campos rotos, el ÚNICO issue señala a ambos.
+        assert "title=list" in issues[0].detail
+        assert "externalPath=str" in issues[0].detail
+
+    @pytest.mark.asyncio
+    async def test_bullet_fields_escalar_se_repara_con_external_path(self):
+        """El otro vector de la evidencia (`bulletFields=7`): es solo material
+        de source_id — la oferta coincidente se EMITE con externalPath como
+        identidad, sin issue (la fuente no está rota, el campo es reparable)."""
+        scraper = SwissSchoolsISPScraper()
+        postings = [dict(self.MATCHING_VALID, bulletFields=7)]
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response(postings),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        assert len(jobs) == 1
+        assert jobs[0]["title"] == "Primary Teacher"
+        assert jobs[0]["source_id"] == "/job/Primary-Teacher_JR123"
+        assert diag.issues() == []
+        assert diag.classify(len(jobs), diag.issues()) == "ok"
+
+    @pytest.mark.asyncio
+    async def test_item_invalido_no_arrastra_al_valido_coincidente(self):
+        """El ilegible degrada SU item: la oferta válida del mismo colegio en
+        la misma página sobrevive, con el issue del degradado registrado."""
+        scraper = SwissSchoolsISPScraper()
+        postings = [
+            {
+                "title": [],
+                "locationsText": "Mosaic School / Ecole Mosaic, Geneva",
+                "externalPath": "/job/broken",
+            },
+            self.MATCHING_VALID,
+        ]
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response(postings),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        assert len(jobs) == 1
+        assert jobs[0]["title"] == "Primary Teacher"
+        assert len(diag.issues()) == 1
+
+    @pytest.mark.asyncio
+    async def test_g2_item_invalido_de_otro_colegio_no_se_diagnostica(self):
+        """G2 (NO puede romperse): el guard vive DESPUÉS del filtro — un
+        elemento con title roto de OTRO colegio del tenant compartido no es
+        asunto nuestro: 0 matches con objetos válidos ⇒ `empty` con 0 issues."""
+        scraper = SwissSchoolsISPScraper()
+        postings = [
+            {
+                "title": [],
+                "locationsText": "Other ISP School, Madrid",
+                "externalPath": "",
+            },
+            {
+                "title": "Maths Teacher",
+                "locationsText": "Other ISP School, Madrid",
+                "externalPath": "/job/Maths_JR9",
+                "bulletFields": ["JR9"],
+            },
+        ]
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response(postings),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        assert jobs == []
+        assert diag.issues() == []
+        assert diag.classify(len(jobs), diag.issues()) == "empty"
+
+    @pytest.mark.asyncio
+    async def test_g2_board_vacio_sigue_siendo_empty_sin_issue(self):
+        """G2 (NO puede romperse): `jobPostings: []` sigue siendo el vacío
+        legítimo de Workday tras el guard — CERO issues."""
+        scraper = SwissSchoolsISPScraper()
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response([]),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        assert jobs == []
+        assert diag.issues() == []
+        assert diag.classify(len(jobs), diag.issues()) == "empty"
+
+
 class TestISPLocationsTextDegenerado:
     """r6/H3: `locationsText` no-string tumbaba el LOTE entero — evidencia
     ejecutada: `{"jobPostings": [{"locationsText": ["Mosaic"]}]}` lanzaba
