@@ -45,15 +45,24 @@ _WELL_FORMED_PERCENT_RE = re.compile(r"(?:[^%]|%[0-9A-Fa-f]{2})*")
 # decodifica una vez; el nivel extra es defensa contra evasión, no semántica.
 _INSPECTION_DECODE_LEVELS = 2
 
+# Triplete %HH sobre bytes: si tras las dos decodificaciones de inspección aún
+# queda uno, hay anidamiento a TRES o más niveles — la misma familia de evasión
+# un escalón más allá ("%25252E" → "%252E" → "%2E"). Subir el techo solo
+# movería el problema al nivel siguiente: se falla cerrado. Un '%' suelto sin
+# triplete ("%25y" → "%y") es dato legítimo y no dispara este guard.
+_PERCENT_TRIPLET_RE = re.compile(rb"%[0-9A-Fa-f]{2}")
+
 
 def _decoded_segment_issue(decoded: bytes) -> str | None:
     """Motivo por el que un segmento DECODIFICADO no es dato de una ruta.
 
     Opera sobre bytes (decodificación byte a byte, como hace el servidor)
-    para que la inspección no dependa de si los bytes forman UTF-8 válido.
-    Solo se rechaza lo que cambia QUÉ recurso direcciona la URL: controles
-    C0 y DEL, barra invertida, separador '/' y travesía '.'/'..'. El resto
-    del percent-encoding (espacios %20, UTF-8 %C3%A9...) es dato legítimo.
+    y, tras los checks estructurales, exige que esos bytes formen UTF-8
+    válido: la API real responde 400 a surrogates codificados (%ED%A0%80)
+    y a formas overlong (%C0%AF) — octava revisión. Se rechaza lo que
+    cambia QUÉ recurso direcciona la URL (controles C0 y DEL, barra
+    invertida, separador '/', travesía '.'/'..') y lo que no es texto. El
+    percent-encoding legítimo (%20, %C3%A9, CJK, emoji...) es dato válido.
     """
     if any(byte < 0x20 or byte == 0x7F for byte in decoded):
         return "codifica caracteres de control"
@@ -63,6 +72,12 @@ def _decoded_segment_issue(decoded: bytes) -> str | None:
         return "codifica separador de ruta ('%2F')"
     if decoded in (b".", b".."):
         return "codifica segmento de travesía ('.' o '..')"
+    try:
+        # La API real responde 400 a octetos que no forman texto UTF-8
+        # (surrogates, overlong): esos bytes no identifican una oferta.
+        decoded.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return "codifica bytes que no son UTF-8 válido"
     return None
 
 
@@ -71,10 +86,16 @@ def _percent_encoding_issue(path: str) -> str | None:
 
     Séptima revisión: la validación de forma miraba solo los caracteres
     CRUDOS — "%00", "%GG" o "%252E%252E" pasaban enteros y la API real los
-    responde con 400/404 (ninguno identifica una oferta). Tres pasos:
+    responde con 400/404 (ninguno identifica una oferta). Octava: los bytes
+    decodificados deben formar UTF-8 válido, y un triplete %HH que
+    sobreviva a las dos decodificaciones delata anidamiento a ≥3 niveles.
+    Pasos:
     1. sintaxis: todo '%' forma exactamente un triplete hexadecimal;
     2. decodificar cada segmento SOLO para inspección, máximo dos niveles;
-    3. sobre lo decodificado, rechazar controles, '\\', '/' y travesía.
+    3. sobre lo decodificado, rechazar controles, '\\', '/', travesía y
+       bytes que no formen UTF-8;
+    4. si tras las dos decodificaciones aún queda un triplete %HH, fallo
+       cerrado por codificación anidada excesiva.
     La ruta ORIGINAL es la que se persiste; aquí no se transforma nada.
     """
     if _WELL_FORMED_PERCENT_RE.fullmatch(path) is None:
@@ -88,6 +109,8 @@ def _percent_encoding_issue(path: str) -> str | None:
             issue = _decoded_segment_issue(decoded)
             if issue is not None:
                 return issue
+        if _PERCENT_TRIPLET_RE.search(decoded):
+            return "codificación anidada excesiva (%HH tras dos niveles)"
     return None
 
 
@@ -95,11 +118,11 @@ def _external_path_shape_issue(path: str) -> str | None:
     """Motivo (en español) por el que `path` NO tiene forma de ruta de oferta.
 
     Devuelve None si la forma es la esperada: ruta relativa bajo /job/ con
-    al menos un segmento no vacío; sin query, fragmento, esquema, autoridad
-    ni parámetros de path (';' CRUDO — el codificado %3B es dato literal);
-    y sin barras invertidas, separadores, travesía ni caracteres de control,
-    ni crudos ni escondidos tras percent-encoding (sintaxis %HH estricta,
-    inspección decodificada a dos niveles: ver `_percent_encoding_issue`).
+    al menos un segmento no vacío; sin query, fragmento, esquema ni
+    autoridad; y sin barras invertidas, separadores, travesía ni caracteres
+    de control — ni crudos ni escondidos tras percent-encoding (sintaxis
+    %HH estricta, inspección decodificada a dos niveles con UTF-8 estricto
+    y fallo cerrado ante anidamiento: ver `_percent_encoding_issue`).
     `path` llega ya con strip aplicado.
     La sonda en vivo (r6/H1)
     demostró que un externalPath="?job=123" pasaba el guard de tipo y se
@@ -121,14 +144,6 @@ def _external_path_shape_issue(path: str) -> str | None:
         return "contiene fragmento ('#')"
     if "\\" in path:
         return "contiene barra invertida ('\\')"
-    # Parámetros de path heredados (RFC 3986 §3.3): un ';' CRUDO activa el
-    # parseo de matrix params en stacks Java (";jsessionid=..." se recorta
-    # ANTES del routing), así que la URL puede no direccionar la oferta que
-    # aparenta — misma clase que '?' y '#'. Los slugs reales de Workday
-    # (título slugificado + _JR#) jamás lo llevan. El ';' CODIFICADO (%3B)
-    # es dato literal que se decodifica DESPUÉS del routing: se acepta.
-    if ";" in path:
-        return "contiene parámetro de path (';')"
     # Controles C0 (incluye \t\n\r internos) y DEL: jamás forman parte de una
     # ruta legítima y romperían la URL construida por concatenación.
     if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in path):

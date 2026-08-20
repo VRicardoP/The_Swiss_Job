@@ -709,7 +709,6 @@ class TestISPExternalPathShape:
             ("/job/x/", "segmento vacío"),
             # 7ª revisión: el encoding se validaba solo en crudo — todos estos
             # pasaban enteros y la API real los responde con 400/404.
-            ("/job/x;y", "parámetro de path"),
             ("/job/x%00y", "caracteres de control"),
             ("/job/x%0Ay", "caracteres de control"),
             ("/job/x%7Fy", "caracteres de control"),
@@ -720,6 +719,16 @@ class TestISPExternalPathShape:
             ("/job/x%255Cy", "barra invertida"),
             ("/job/x%2Fy", "separador de ruta"),
             ("/job/x%252Fy", "separador de ruta"),
+            # 8ª revisión: el techo de DOS decodificaciones dejaba pasar la
+            # misma evasión un nivel más allá — la API real responde 404.
+            # Fallo cerrado si tras dos niveles aún queda un triplete %HH.
+            ("/job/%25252E%25252E/admin", "anidada"),
+            ("/job/x%25255Cy", "anidada"),
+            ("/job/x%25252Fy", "anidada"),
+            # 8ª revisión: los octetos decodificados deben formar UTF-8
+            # válido — la API real responde 400 a surrogates y overlong.
+            ("/job/x%ED%A0%80y", "no son UTF-8"),
+            ("/job/x%C0%AFy", "no son UTF-8"),
             # json.loads acepta '"\\ud800"': sin el guard, el sustituto suelto
             # combinado con '%' crasheaba el encode de la inspección (clase G1).
             ("/job/x\ud800y", "sustitutos UTF-16"),
@@ -750,7 +759,6 @@ class TestISPExternalPathShape:
             "indice_sin_oferta",
             "segmento_vacio_intermedio",
             "barra_final",
-            "parametro_de_path",
             "nul_codificado",
             "salto_de_linea_codificado",
             "del_codificado",
@@ -761,6 +769,11 @@ class TestISPExternalPathShape:
             "backslash_doble_codificado",
             "barra_codificada",
             "barra_doble_codificada",
+            "travesia_triple_codificada",
+            "backslash_triple_codificado",
+            "barra_triple_codificada",
+            "surrogate_utf8_codificado",
+            "barra_overlong_codificada",
             "sustituto_utf16",
             "sustituto_utf16_con_encoding",
         ],
@@ -804,6 +817,15 @@ class TestISPExternalPathShape:
             "/job/x%25y",  # '%' literal codificado
             "/job/x%2Ey",  # '.' dentro de segmento: dato, no travesía
             "/job/x%3By",  # ';' codificado es dato literal, no delimitador
+            # ';' CRUDO (8ª revisión): la sonda en vivo resuelve 200 a la
+            # MISMA oferta — el recorte Java de ";jsessionid" es justo lo que
+            # mantiene el routing. Sin política anticipada (YAGNI): si Workday
+            # emitiera ";jsessionid" se canonizaría ESE parámetro concreto.
+            "/job/x;y",
+            # Unicode multi-byte VÁLIDO más allá de Latin-1: el check UTF-8
+            # de la 8ª revisión no puede rechazar texto legítimo.
+            "/job/%E6%95%99%E5%B8%AB_JR1",  # CJK ("教師")
+            "/job/x%F0%9F%8E%93y",  # emoji ("🎓")
         ],
         ids=[
             "ruta_real_teacher_assistant",
@@ -813,6 +835,9 @@ class TestISPExternalPathShape:
             "porcentaje_literal",
             "punto_codificado_en_segmento",
             "punto_y_coma_codificado",
+            "punto_y_coma_crudo",
+            "cjk_codificado",
+            "emoji_codificado",
         ],
     )
     @pytest.mark.asyncio
