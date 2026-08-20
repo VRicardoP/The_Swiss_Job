@@ -19,6 +19,7 @@ decide qué hacer con las fuentes sin fecha.
 
 import logging
 import re
+from urllib.parse import unquote_to_bytes
 
 import httpx
 
@@ -34,14 +35,72 @@ logger = logging.getLogger(__name__)
 # absoluta, no en ruta de oferta.
 _URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
+# Sintaxis de percent-encoding (RFC 3986 §2.1): todo '%' forma EXACTAMENTE un
+# triplete hexadecimal (%HH). Las dos ramas son excluyentes por su primer
+# carácter, así que el match es lineal. "x%", "x%2" y "x%GG" no cumplen.
+_WELL_FORMED_PERCENT_RE = re.compile(r"(?:[^%]|%[0-9A-Fa-f]{2})*")
+
+# Niveles de decodificación PARA INSPECCIÓN: dos, y solo dos — el segundo caza
+# la doble codificación ("%252E%252E" → "%2E%2E" → ".."). El servidor real
+# decodifica una vez; el nivel extra es defensa contra evasión, no semántica.
+_INSPECTION_DECODE_LEVELS = 2
+
+
+def _decoded_segment_issue(decoded: bytes) -> str | None:
+    """Motivo por el que un segmento DECODIFICADO no es dato de una ruta.
+
+    Opera sobre bytes (decodificación byte a byte, como hace el servidor)
+    para que la inspección no dependa de si los bytes forman UTF-8 válido.
+    Solo se rechaza lo que cambia QUÉ recurso direcciona la URL: controles
+    C0 y DEL, barra invertida, separador '/' y travesía '.'/'..'. El resto
+    del percent-encoding (espacios %20, UTF-8 %C3%A9...) es dato legítimo.
+    """
+    if any(byte < 0x20 or byte == 0x7F for byte in decoded):
+        return "codifica caracteres de control"
+    if 0x5C in decoded:  # '\'
+        return "codifica barra invertida ('%5C')"
+    if 0x2F in decoded:  # '/'
+        return "codifica separador de ruta ('%2F')"
+    if decoded in (b".", b".."):
+        return "codifica segmento de travesía ('.' o '..')"
+    return None
+
+
+def _percent_encoding_issue(path: str) -> str | None:
+    """Motivo por el que el percent-encoding de `path` invalida la ruta.
+
+    Séptima revisión: la validación de forma miraba solo los caracteres
+    CRUDOS — "%00", "%GG" o "%252E%252E" pasaban enteros y la API real los
+    responde con 400/404 (ninguno identifica una oferta). Tres pasos:
+    1. sintaxis: todo '%' forma exactamente un triplete hexadecimal;
+    2. decodificar cada segmento SOLO para inspección, máximo dos niveles;
+    3. sobre lo decodificado, rechazar controles, '\\', '/' y travesía.
+    La ruta ORIGINAL es la que se persiste; aquí no se transforma nada.
+    """
+    if _WELL_FORMED_PERCENT_RE.fullmatch(path) is None:
+        return "percent-encoding malformado ('%' sin triplete hexadecimal)"
+    for segment in path.split("/"):
+        decoded = segment.encode("utf-8")
+        for _ in range(_INSPECTION_DECODE_LEVELS):
+            if b"%" not in decoded:
+                break
+            decoded = unquote_to_bytes(decoded)
+            issue = _decoded_segment_issue(decoded)
+            if issue is not None:
+                return issue
+    return None
+
 
 def _external_path_shape_issue(path: str) -> str | None:
     """Motivo (en español) por el que `path` NO tiene forma de ruta de oferta.
 
     Devuelve None si la forma es la esperada: ruta relativa bajo /job/ con
-    al menos un segmento no vacío, sin query, fragmento, esquema, autoridad,
-    barras invertidas, caracteres de control ni segmentos de travesía
-    ('.'/'..', también codificados). `path` llega ya con strip aplicado.
+    al menos un segmento no vacío; sin query, fragmento, esquema, autoridad
+    ni parámetros de path (';' CRUDO — el codificado %3B es dato literal);
+    y sin barras invertidas, separadores, travesía ni caracteres de control,
+    ni crudos ni escondidos tras percent-encoding (sintaxis %HH estricta,
+    inspección decodificada a dos niveles: ver `_percent_encoding_issue`).
+    `path` llega ya con strip aplicado.
     La sonda en vivo (r6/H1)
     demostró que un externalPath="?job=123" pasaba el guard de tipo y se
     persistía como URL "válida" que no lleva a ninguna oferta: la forma es
@@ -60,21 +119,32 @@ def _external_path_shape_issue(path: str) -> str | None:
         return "contiene query ('?')"
     if "#" in path:
         return "contiene fragmento ('#')"
-    if "\\" in path or "%5c" in path.lower():
-        return "contiene barra invertida ('\\' o '%5C')"
+    if "\\" in path:
+        return "contiene barra invertida ('\\')"
+    # Parámetros de path heredados (RFC 3986 §3.3): un ';' CRUDO activa el
+    # parseo de matrix params en stacks Java (";jsessionid=..." se recorta
+    # ANTES del routing), así que la URL puede no direccionar la oferta que
+    # aparenta — misma clase que '?' y '#'. Los slugs reales de Workday
+    # (título slugificado + _JR#) jamás lo llevan. El ';' CODIFICADO (%3B)
+    # es dato literal que se decodifica DESPUÉS del routing: se acepta.
+    if ";" in path:
+        return "contiene parámetro de path (';')"
     # Controles C0 (incluye \t\n\r internos) y DEL: jamás forman parte de una
     # ruta legítima y romperían la URL construida por concatenación.
     if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in path):
         return "contiene caracteres de control"
+    # Sustitutos UTF-16 sueltos (r7 ronda de análisis 2): json.loads acepta
+    # '"\\ud800"' y produce un str NO codificable a UTF-8 — el encode de la
+    # inspección de percent-encoding lanzaría UnicodeEncodeError, que
+    # escaparía de fetch_jobs con 0 issues (la clase G1 otra vez). Además
+    # ningún sustituto suelto es Unicode intercambiable: ni una URL real ni
+    # la fila que persistiríamos pueden contenerlo.
+    if any(0xD800 <= ord(ch) <= 0xDFFF for ch in path):
+        return "contiene sustitutos UTF-16 sueltos"
     # Tras el strip cualquier espacio es interno: una URL con espacio crudo
     # no identifica una oferta (Workday los codifica como %20 o guiones).
     if any(ch.isspace() for ch in path):
         return "contiene espacios internos"
-    # Travesía codificada (r6 ronda 2 / A): "%2E%2E" no lo normaliza el
-    # navegador antes de enviarlo, pero tampoco existe en las rutas reales
-    # de Workday (slugs planos sin percent-encoding, verificado en vivo).
-    if "%2e" in path.lower():
-        return "contiene punto codificado ('%2E')"
     # Segmentos tras el prefijo: "/job/x/y" → ["x", "y"]; "/job/" → [""].
     segments = path.split("/")[2:]
     # (B) "/job/" a secas es la página de LISTADO, no una vacante; un
@@ -87,6 +157,13 @@ def _external_path_shape_issue(path: str) -> str | None:
     # /job/, la misma clase de defecto que H1 por otra puerta.
     if any(segment in (".", "..") for segment in segments):
         return "contiene segmento de travesía ('.' o '..')"
+    # Percent-encoding (7ª revisión): todo lo anterior mira los caracteres
+    # CRUDOS; esto valida sintaxis %HH y lo que el servidor DECODIFICARÍA
+    # (controles, '\', '/', travesía — incluida la doble codificación tipo
+    # "%252E"). Sustituye a la tirita del "%2E" de la ronda anterior. La
+    # URL se construye SIEMPRE con la ruta original, nunca la decodificada.
+    if "%" in path:
+        return _percent_encoding_issue(path)
     return None
 
 

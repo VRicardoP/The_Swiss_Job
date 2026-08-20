@@ -702,11 +702,28 @@ class TestISPExternalPathShape:
             ("/job/..", "travesía"),
             ("/job/./x", "travesía"),
             ("/job/x/../y", "travesía"),
-            ("/job/%2e%2e/admin", "punto codificado"),
-            ("/job/%2E%2E/admin", "punto codificado"),
+            ("/job/%2e%2e/admin", "travesía"),
+            ("/job/%2E%2E/admin", "travesía"),
             ("/job/", "segmento vacío"),
             ("/job//x", "segmento vacío"),
             ("/job/x/", "segmento vacío"),
+            # 7ª revisión: el encoding se validaba solo en crudo — todos estos
+            # pasaban enteros y la API real los responde con 400/404.
+            ("/job/x;y", "parámetro de path"),
+            ("/job/x%00y", "caracteres de control"),
+            ("/job/x%0Ay", "caracteres de control"),
+            ("/job/x%7Fy", "caracteres de control"),
+            ("/job/x%", "malformado"),
+            ("/job/x%2", "malformado"),
+            ("/job/x%GG", "malformado"),
+            ("/job/%252E%252E/admin", "travesía"),
+            ("/job/x%255Cy", "barra invertida"),
+            ("/job/x%2Fy", "separador de ruta"),
+            ("/job/x%252Fy", "separador de ruta"),
+            # json.loads acepta '"\\ud800"': sin el guard, el sustituto suelto
+            # combinado con '%' crasheaba el encode de la inspección (clase G1).
+            ("/job/x\ud800y", "sustitutos UTF-16"),
+            ("/job/x%20\ud800y", "sustitutos UTF-16"),
         ],
         ids=[
             "query_sin_ruta",
@@ -733,6 +750,19 @@ class TestISPExternalPathShape:
             "indice_sin_oferta",
             "segmento_vacio_intermedio",
             "barra_final",
+            "parametro_de_path",
+            "nul_codificado",
+            "salto_de_linea_codificado",
+            "del_codificado",
+            "porcentaje_suelto",
+            "triplete_incompleto",
+            "triplete_no_hexadecimal",
+            "travesia_doble_codificada",
+            "backslash_doble_codificado",
+            "barra_codificada",
+            "barra_doble_codificada",
+            "sustituto_utf16",
+            "sustituto_utf16_con_encoding",
         ],
     )
     @pytest.mark.asyncio
@@ -760,6 +790,53 @@ class TestISPExternalPathShape:
         assert "externalPath sin forma de ruta de oferta" in issues[0].detail
         assert reason_fragment in issues[0].detail
         assert diag.classify(len(jobs), issues) == "error"
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            # Las DOS rutas reales de ISP verificadas en vivo (200 OK).
+            "/job/Mosaic-School--Ecole-Mosaic-Switzerland-Geneva/Teacher-Assistant_JR210499",
+            "/job/Mosaic-School--Ecole-Mosaic-Switzerland-Geneva/Primary-Teacher---Maternity-cover_JR209013",
+            # Percent-encoding LEGÍTIMO (decisión mantenida por el revisor):
+            # rechazar sintaxis rota y controles, nunca el encoding en sí.
+            "/job/x%20y",  # espacio codificado
+            "/job/Caf%C3%A9-Teacher_JR1",  # UTF-8 multi-byte
+            "/job/x%25y",  # '%' literal codificado
+            "/job/x%2Ey",  # '.' dentro de segmento: dato, no travesía
+            "/job/x%3By",  # ';' codificado es dato literal, no delimitador
+        ],
+        ids=[
+            "ruta_real_teacher_assistant",
+            "ruta_real_primary_teacher",
+            "espacio_codificado",
+            "utf8_codificado",
+            "porcentaje_literal",
+            "punto_codificado_en_segmento",
+            "punto_y_coma_codificado",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_forma_valida_emite_oferta_con_url_original(self, path):
+        """Anti-falso-positivo (tan grave como el falso negativo — kill-switch):
+        las rutas reales y el encoding legítimo emiten oferta SIN issue, y la
+        URL se construye con la ruta ORIGINAL — la decodificación de la
+        inspección jamás se persiste."""
+        scraper = SwissSchoolsISPScraper()
+        postings = [dict(self.MATCHING_VALID, externalPath=path)]
+        diag.begin()
+
+        with patch.object(
+            scraper._circuit,
+            "call",
+            new_callable=AsyncMock,
+            return_value=_workday_response(postings),
+        ):
+            jobs = await scraper.fetch_jobs("")
+
+        assert diag.issues() == []
+        assert len(jobs) == 1
+        assert jobs[0]["url"].endswith(path)
+        assert diag.classify(len(jobs), diag.issues()) == "ok"
 
     @pytest.mark.asyncio
     async def test_forma_valida_con_espacios_de_borde_se_canoniza(self):
