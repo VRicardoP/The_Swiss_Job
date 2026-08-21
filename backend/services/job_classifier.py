@@ -626,18 +626,56 @@ CATEGORY_MULTIPLIERS: dict[str, float] = {
 # Esto evita falsos positivos como "ngo" matchando "django" o
 # "uno" matchando en el interior de otra palabra.
 # Los keywords con espacios (frases) usan boundary solo al inicio/fin de la frase.
+#
+# EXCEPCIÓN keyword a keyword: el alemán forma títulos por COMPOSICIÓN
+# (Kindergarten+lehrperson) y flexiona con sufijos (Pädagog-e/-in/-ik/-isch),
+# así que el \b estricto deja mudos esos stems: \blehrperson\b no casa
+# "Kindergartenlehrperson" ni \bpädagog\b "Pädagoge". Los dos sets de abajo
+# relajan el borde SOLO para esos keywords. NUNCA añadir aquí keywords cortos
+# ingleses ("ngo", "un", "uno", "who"...): el \b estricto es su protección.
+
+# Prefijo Y sufijo libres (\b\w*<kw>\w*\b) — stems alemanes que componen
+# por prefijo (Fach-, Kindergarten-, Sozial-...) y flexionan por sufijo.
+_OPEN_BOTH: frozenset[str] = frozenset(
+    {
+        "lehrperson",
+        "lehrer",
+        "lehrkraft",
+        "pädagog",
+        "sozialpädagog",
+        "heilpädagog",
+        "sonderpädagog",
+        "arbeitsagog",
+        "agogisch",
+    }
+)
+
+# Solo sufijo libre (\b<kw>\w*\b) — stems truncados no alemanes:
+# "secretar" debe casar secretary/secretariat/secretario, sin prefijo libre.
+_OPEN_SUFFIX: frozenset[str] = frozenset({"secretar"})
+
+
+# Normalización de puntuación: se aplica al TEXTO en classify_job y también a
+# cada KEYWORD antes de compilar. Sin la parte del keyword, "e-learning" o
+# "l&d" serían inalcanzables: el título llega normalizado ("e learning",
+# "l d") y el patrón exigiría el literal con puntuación.
 _PUNCT_RE = _re.compile(r"[^\w\s]")
+
+
+def _compile_keyword(kw: str) -> _re.Pattern:
+    """Compila el patrón de un keyword con el borde de palabra que le toca."""
+    escaped = _re.escape(_PUNCT_RE.sub(" ", kw).strip())
+    if kw in _OPEN_BOTH:
+        return _re.compile(r"\b\w*" + escaped + r"\w*\b", _re.IGNORECASE)
+    if kw in _OPEN_SUFFIX:
+        return _re.compile(r"\b" + escaped + r"\w*\b", _re.IGNORECASE)
+    return _re.compile(r"\b" + escaped + r"\b", _re.IGNORECASE)
+
+
 _COMPILED: list[tuple[str, list[_re.Pattern]]] = [
     (
         cat_id,
-        [
-            _re.compile(
-                r"\b" + _re.escape(kw.strip()) + r"\b",
-                _re.IGNORECASE,
-            )
-            for kw in keywords
-            if kw.strip()
-        ],
+        [_compile_keyword(kw.strip()) for kw in keywords if kw.strip()],
     )
     for cat_id, keywords in CATEGORIES
 ]
@@ -647,7 +685,9 @@ def classify_job(title: str, tags: list[str]) -> str:
     """Clasifica un job en una de las 13 categorías o devuelve 'otros'.
 
     Usa word-boundary matching (\\b) para evitar falsos positivos por substring
-    (ej: "ngo" NO debe hacer match en "django"; "un " NO en "running").
+    (ej: "ngo" NO debe hacer match en "django"; "un " NO en "running"), con
+    borde abierto SOLO para los stems alemanes de _OPEN_BOTH/_OPEN_SUFFIX
+    (composición: "Kindergartenlehrperson" debe casar "lehrperson").
 
     Orden A→M: primera coincidencia gana — las categorías objetivo tienen prioridad.
 
