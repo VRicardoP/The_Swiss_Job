@@ -251,3 +251,87 @@ class TestCleanupArchivesAttachedJobs:
             await db_session.execute(select(Job).where(Job.hash == h))
         ).scalar_one_or_none()
         assert job is not None and job.is_active is False
+
+
+@pytest.mark.anyio
+class TestCleanupPromotesOrphanedDuplicates:
+    """A1-1: duplicate_of no tiene FK — al borrar la canónica caducada, sus
+    duplicados quedaban apuntando a un hash inexistente e inactivos para
+    siempre (el upsert mantiene is_active=False mientras duplicate_of esté
+    puesto), aunque la oferta se siguiera publicando cada día."""
+
+    async def test_duplicate_of_deleted_canonical_is_promoted(self, db_session):
+        canon_h = "promcanon" + "0" * 23
+        dup_h = "promdup" + "0" * 25
+        # Canónica caducada SIN adjuntos → el cleanup la borrará.
+        await _make_stale_job(db_session, canon_h)
+        # Duplicado vigente (last_seen_at fresco) apuntando a la canónica.
+        db_session.add(
+            Job(
+                hash=dup_h,
+                source="other_source",
+                title="Still Published Job",
+                company="Acme",
+                url=f"https://example.com/{dup_h}",
+                is_active=False,
+                duplicate_of=canon_h,
+            )
+        )
+        await db_session.commit()
+
+        with patch("database.task_session", _mock_session_factory(db_session)):
+            result = await _cleanup_stale_jobs_async(max_age_days=60)
+
+        db_session.expire_all()
+        canon = (
+            await db_session.execute(select(Job).where(Job.hash == canon_h))
+        ).scalar_one_or_none()
+        dup = (
+            await db_session.execute(select(Job).where(Job.hash == dup_h))
+        ).scalar_one_or_none()
+        assert canon is None  # la canónica caducada se borra
+        # El duplicado queda promovido a canónico y activo, no colgante.
+        assert dup is not None
+        assert dup.duplicate_of is None
+        assert dup.is_active is True
+        assert result["promoted"] == 1
+
+    async def test_duplicate_of_surviving_canonical_is_untouched(self, db_session):
+        """Un duplicado cuya canónica NO se borra conserva su estado."""
+        canon_h = "keepcanon" + "0" * 23
+        dup_h = "keepdup" + "0" * 25
+        # Canónica vigente (last_seen_at fresco, sin envejecer).
+        db_session.add(
+            Job(
+                hash=canon_h,
+                source="src_a",
+                title="Fresh Canonical",
+                company="Acme",
+                url=f"https://example.com/{canon_h}",
+                is_active=True,
+            )
+        )
+        db_session.add(
+            Job(
+                hash=dup_h,
+                source="src_b",
+                title="Fresh Duplicate",
+                company="Acme",
+                url=f"https://example.com/{dup_h}",
+                is_active=False,
+                duplicate_of=canon_h,
+            )
+        )
+        await db_session.commit()
+
+        with patch("database.task_session", _mock_session_factory(db_session)):
+            result = await _cleanup_stale_jobs_async(max_age_days=60)
+
+        db_session.expire_all()
+        dup = (
+            await db_session.execute(select(Job).where(Job.hash == dup_h))
+        ).scalar_one_or_none()
+        assert dup is not None
+        assert dup.duplicate_of == canon_h
+        assert dup.is_active is False
+        assert result["promoted"] == 0

@@ -239,6 +239,23 @@ async def _cleanup_stale_jobs_async(max_age_days: int) -> dict[str, Any]:
     stale = "last_seen_at < NOW() - make_interval(days => :days)"
 
     async with task_session() as db:
+        # Promover a canónicos los duplicados cuya canónica va a borrarse
+        # (A1-1): duplicate_of no tiene FK, así que el DELETE los dejaría
+        # apuntando a un hash inexistente y el upsert los mantendría inactivos
+        # para siempre (is_active = CASE(duplicate_of IS NOT NULL -> False))
+        # aunque la oferta se siga publicando. El siguiente ciclo de dedup los
+        # re-agrupa si procede. MISMA transacción y ANTES del
+        # archive y del DELETE: así un promovido que además esté caducado con
+        # adjuntos lo recaptura el archivado en este mismo ciclo.
+        r_promoted = await db.execute(
+            text(  # noqa: S608 — idem
+                f"UPDATE jobs SET duplicate_of = NULL, is_active = TRUE "
+                f"WHERE duplicate_of IN ("
+                f"SELECT hash FROM jobs WHERE {stale} AND NOT ({attached})"
+                f")"
+            ),
+            {"days": max_age_days},
+        )
         # Archivar (no borrar) las caducadas CON adjuntos que sigan activas.
         r_archived = await db.execute(
             text(  # noqa: S608 — `stale`/`attached` son SQL estático de confianza
@@ -257,15 +274,19 @@ async def _cleanup_stale_jobs_async(max_age_days: int) -> dict[str, Any]:
         await db.commit()
 
     archived = r_archived.rowcount or 0
+    promoted = r_promoted.rowcount or 0
     deleted = r_deleted.rowcount or 0
     logger.info(
-        "cleanup_stale_jobs: %d archivadas (con adjuntos), %d borradas (sin adjuntos)",
+        "cleanup_stale_jobs: %d archivadas (con adjuntos), %d duplicados "
+        "promovidos a canónicos, %d borradas (sin adjuntos)",
         archived,
+        promoted,
         deleted,
     )
     return {
         "status": "success",
         "archived": archived,
+        "promoted": promoted,
         "deleted": deleted,
         "max_age_days": max_age_days,
     }

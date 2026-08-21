@@ -218,3 +218,87 @@ class TestFindFuzzyDuplicate:
             db_session, "fuzzydup01", "jooble"
         )
         assert result is None  # excluido por duplicate_of IS NOT NULL
+
+
+class TestFindSemanticDuplicates:
+    """B-2: el dedup semántico es SOLO cross-source y SOLO con descripción real.
+
+    Intra-fuente marcaba vacantes reales y distintas (696/742 en el corpus,
+    94%): los reposts dentro de una fuente ya los cubre la identidad exacta.
+    Y un embedding sin descripción es degenerado — mide el boilerplate de
+    empresa+tags, no la oferta — así que dos vacantes distintas del mismo
+    empleador superaban el umbral 0.95.
+    """
+
+    @staticmethod
+    def _job(hash_, source, description):
+        return Job(
+            hash=hash_.ljust(32, "0"),
+            source=source,
+            title=f"Job {hash_}",
+            company="Intl School",
+            url=f"http://example.com/{hash_}",
+            description=description,
+            embedding=[0.1] * 384,  # idénticos → coseno 1.0 > umbral 0.95
+            is_active=True,
+        )
+
+    async def test_same_source_empty_description_not_marked(self, db_session):
+        """Dos ofertas distintas de la MISMA fuente con descripción vacía y
+        coseno > 0.95 NO se marcan duplicadas (caso watchlist de colegios)."""
+        canonical = self._job("semcanon1", "swiss_schools_isp", None)
+        candidate = self._job("semdup1", "swiss_schools_isp", "")
+        db_session.add(canonical)
+        db_session.add(candidate)
+        await db_session.commit()
+
+        result = await Deduplicator.find_semantic_duplicates(db_session, candidate)
+        assert result == []
+
+    async def test_same_source_with_descriptions_not_marked(self, db_session):
+        """Intra-fuente NO se marca aunque ambas tengan descripción real:
+        "Billing Specialist" vs "Billing Manager" comparten boilerplate."""
+        canonical = self._job("semcanon2", "irishjobs", "Billing team, Dublin office")
+        candidate = self._job("semdup2", "irishjobs", "Billing team, Dublin office x")
+        db_session.add(canonical)
+        db_session.add(candidate)
+        await db_session.commit()
+
+        result = await Deduplicator.find_semantic_duplicates(db_session, candidate)
+        assert result == []
+
+    async def test_empty_description_candidate_excluded(self, db_session):
+        """Un candidato sin descripción (o solo whitespace) tiene embedding
+        degenerado y NO puede ser canónico, ni siquiera cross-source."""
+        canonical_empty = self._job("semcanon3", "publicjobs", "  \n\t ")
+        candidate = self._job("semdup3", "schuljobs", "Full real description here")
+        db_session.add(canonical_empty)
+        db_session.add(candidate)
+        await db_session.commit()
+
+        result = await Deduplicator.find_semantic_duplicates(db_session, candidate)
+        assert result == []
+
+    async def test_empty_description_input_returns_empty(self, db_session):
+        """Un job de entrada sin descripción no se compara: su embedding es
+        degenerado y el coseno es simétrico (invalida ambos lados)."""
+        canonical = self._job("semcanon4", "publicjobs", "Full real description")
+        stub = self._job("semdup4", "schuljobs", "")
+        db_session.add(canonical)
+        db_session.add(stub)
+        await db_session.commit()
+
+        result = await Deduplicator.find_semantic_duplicates(db_session, stub)
+        assert result == []
+
+    async def test_cross_source_with_descriptions_still_marked(self, db_session):
+        """El propósito de la función sigue intacto: cross-source con
+        descripciones reales y coseno > 0.95 SÍ se marca."""
+        canonical = self._job("semcanon5", "publicjobs", "Teach maths at our school")
+        candidate = self._job("semdup5", "schuljobs", "Teach maths at our school.")
+        db_session.add(canonical)
+        db_session.add(candidate)
+        await db_session.commit()
+
+        result = await Deduplicator.find_semantic_duplicates(db_session, candidate)
+        assert result == [canonical.hash]

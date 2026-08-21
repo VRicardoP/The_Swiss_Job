@@ -3,7 +3,7 @@
 import hashlib
 import re
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.job import Job
@@ -130,12 +130,27 @@ class Deduplicator:
     async def find_semantic_duplicates(
         db: AsyncSession, job: Job, threshold: float = 0.95
     ) -> list[str]:
-        """Find jobs with embedding cosine similarity > threshold.
+        """Find cross-source jobs with embedding cosine similarity > threshold.
 
         Uses pgvector cosine distance: distance < (1 - threshold).
         Returns list of canonical job hashes (oldest first).
+
+        Dos exclusiones (B-2):
+        - Misma fuente: como en find_fuzzy_duplicate, los reposts dentro de una
+          fuente ya los cubre la identidad exacta (hash / índice único de url);
+          dentro de una fuente, títulos distintos son vacantes distintas
+          ("Billing Specialist" vs "Billing Manager" superaban 0.95 por el
+          boilerplate compartido).
+        - Descripción vacía (en la entrada Y en los candidatos): el embedding
+          de un stub sin descripción es degenerado — mide empresa+tags, no la
+          vacante — y el coseno es simétrico, así que un stub a cualquiera de
+          los dos lados invalida la comparación. Su dedup cross-source real lo
+          sigue cubriendo la vía fuzzy (title+company).
         """
         if job.embedding is None:
+            return []
+        # Stub sin descripción → embedding degenerado; no comparar.
+        if not (job.description or "").strip():
             return []
 
         max_distance = 1.0 - threshold
@@ -144,9 +159,13 @@ class Deduplicator:
             select(Job.hash)
             .where(
                 Job.hash != job.hash,
+                Job.source != job.source,
                 Job.is_active.is_(True),
                 Job.duplicate_of.is_(None),
                 Job.embedding.is_not(None),
+                # Candidatos con descripción real (btrim del mismo whitespace
+                # ASCII que quita str.strip() en el filtro de la entrada).
+                func.btrim(func.coalesce(Job.description, ""), " \t\n\r\f\v") != "",
                 Job.embedding.cosine_distance(job.embedding) < max_distance,
             )
             .order_by(Job.first_seen_at.asc())
