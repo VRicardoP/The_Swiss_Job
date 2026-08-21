@@ -16,9 +16,11 @@ from sqlalchemy import select
 from config import settings
 from models.source_cursor import SourceCursor
 from models.source_health import SourceHealth
+from services.crawler_budget import CrawlerBudgetService
 from services.job_repository import JobRepository
 from services.job_service import BaseJobProvider
 from tasks.scraping_tasks import _fetch_scrapers_async
+from utils import fetch_diagnostics as diag
 
 
 def _make_mock_scraper(source_name: str, jobs: list[dict]):
@@ -524,3 +526,259 @@ class TestScraperQueLanzaDejaSenalDeSalud:
         assert "RuntimeError" in (fila.last_error_detail or "")
         # Sin descarga no hay señal de persistencia (no se inventa racha).
         assert fila.consecutive_unstored == 0
+
+
+# --- B-4 / A2-2 — el presupuesto no puede autolimitarse y el cursor no
+# --- aprende de runs fallidos -------------------------------------------------
+
+
+class _PagingScraper(BaseJobProvider):
+    """Scraper sintético con el contrato REAL de paginación de los scrapers:
+    respeta `_pages_budget()`, corta con `_page_all_known` (early-stop) y deja
+    `_stop_reason` — igual que scraper_engine/irishjobs/schuljobs. Reproduce
+    la cosecha newest-first de un portal; con PAGE_SIZE=1 es el caso agudo de
+    `tes` (el servidor impone 1 oferta por página)."""
+
+    SOURCE_NAME = "scr_paging"
+    PAGE_SIZE = 1
+    MAX_PAGES = 35
+
+    def __init__(self, listing: list[dict]):
+        super().__init__()
+        # Listado del portal, lo más nuevo primero (como un portal real).
+        self._listing = listing
+        self.pages_fetched = 0
+
+    async def fetch_jobs(self, query, location="Switzerland"):
+        results: list[dict] = []
+        for page in range(self._pages_budget()):
+            start = page * self.PAGE_SIZE
+            page_jobs = self._listing[start : start + self.PAGE_SIZE]
+            if not page_jobs:
+                break  # fin del listado
+            self.pages_fetched += 1
+            if self._page_all_known(page_jobs):
+                self._stop_reason = "known_page"
+                break
+            results.extend(page_jobs)
+        return results
+
+    def normalize_job(self, raw):
+        return raw
+
+
+async def _seed_cursor(
+    db_session,
+    source: str,
+    identities: list[str],
+    avg_new: float = 0.3,
+    **overrides,
+) -> SourceCursor:
+    """Cursor estacionario ya bootstrapeado, como el de una fuente en régimen."""
+    cursor = SourceCursor(
+        source_key=source,
+        scope_key="default",
+        recent_identities=identities,
+    )
+    cursor.bootstrap_complete = True
+    cursor.avg_new_jobs_per_run = avg_new
+    cursor.avg_pages_per_run = 1.0
+    cursor.consecutive_empty_runs = 0
+    for key, value in overrides.items():
+        setattr(cursor, key, value)
+    db_session.add(cursor)
+    await db_session.commit()
+    return cursor
+
+
+class TestPresupuestoNoSeAutolimita:
+    """B-4 — lazo de autolimitación: `avg_new` es una EMA de `new_count` y
+    `new_count` nunca puede superar `presupuesto × page_size`, así que la EMA
+    jamás aprende una demanda mayor que el techo que ella misma fija. Con
+    cosecha newest-first, lo que queda bajo el horizonte del presupuesto se
+    hunde y no se recupera nunca (la auditoría midió: ráfaga de 5 con
+    page_size=1 → [n1, n2] cosechadas, [n3, n4, n5] perdidas para siempre)."""
+
+    OLD_URL = "http://paging.test/old"
+    BURST_URLS = [f"http://paging.test/n{i}" for i in range(1, 6)]
+
+    def _listing(self) -> list[dict]:
+        """Listado fresco por run: el pipeline muta los dicts al normalizar."""
+        jobs = [
+            _sample_job(f"Burst {url.rsplit('/', 1)[-1]}", "Acme", url)
+            for url in self.BURST_URLS
+        ]
+        jobs.append(_sample_job("Old Offer", "Acme", self.OLD_URL))
+        for job in jobs:
+            job["source"] = "scr_paging"
+        return jobs
+
+    @patch("tasks.scraping_tasks.get_all_scrapers")
+    async def test_rafaga_sobre_el_presupuesto_acaba_cosechada(
+        self, mock_scrapers, monkeypatch, db_session
+    ):
+        """Ráfaga de 5 novedades con presupuesto estacionario de 2 páginas
+        (page_size=1): el run 1 corta por presupuesto SIN early-stop (run "con
+        hambre") → re-abre el bootstrap → el run 2 recibe la ventana completa
+        sin cursor inyectado y re-sincroniza. Las 5 acaban cosechadas y la
+        fuente vuelve a régimen (sin bucle de re-syncs)."""
+        monkeypatch.setattr(settings, "CURSOR_INCREMENTAL_ENABLED", True)
+        monkeypatch.setattr(settings, "CRAWLER_BUDGET_ENABLED", True)
+        # Fija el margen para que el presupuesto estacionario sea 2 páginas
+        # (el escenario medido por la auditoría), pase lo que pase en config.
+        monkeypatch.setattr(settings, "CRAWLER_BUDGET_SAFETY_PAGES", 1)
+        await _seed_cursor(db_session, "scr_paging", [self.OLD_URL])
+
+        pages_per_run: list[int] = []
+        with patch(
+            "tasks.scraping_tasks.task_session",
+            new=_mock_session_factory(db_session),
+        ):
+            for _ in range(3):
+                scraper = _PagingScraper(self._listing())
+                mock_scrapers.return_value = [scraper]
+                await _fetch_scrapers_async()
+                pages_per_run.append(scraper.pages_fetched)
+
+        cursor = (
+            await db_session.execute(
+                select(SourceCursor).where(SourceCursor.source_key == "scr_paging")
+            )
+        ).scalar_one()
+        perdidas = [u for u in self.BURST_URLS if u not in cursor.recent_identities]
+        assert perdidas == [], f"ofertas de la ráfaga NUNCA cosechadas: {perdidas}"
+        # Re-sincronizada: no se queda en bucle de bootstraps.
+        assert cursor.bootstrap_complete is True
+        # Coste acotado: 2 (hambre) + 6 (re-sync, el listado entero) + 1
+        # (tranquila, early-stop en página 1) — nada de 35 páginas por run.
+        assert pages_per_run == [2, 6, 1]
+
+    @patch("tasks.scraping_tasks.get_all_scrapers")
+    async def test_fuente_tranquila_no_dispara_paginas_extra(
+        self, mock_scrapers, monkeypatch, db_session
+    ):
+        """Control: una fuente sin novedades hace early-stop en la página 1,
+        NO se marca "con hambre" y su presupuesto sigue mínimo."""
+        monkeypatch.setattr(settings, "CURSOR_INCREMENTAL_ENABLED", True)
+        monkeypatch.setattr(settings, "CRAWLER_BUDGET_ENABLED", True)
+        await _seed_cursor(db_session, "scr_paging", [self.OLD_URL])
+
+        job = _sample_job("Old Offer", "Acme", self.OLD_URL)
+        job["source"] = "scr_paging"
+        scraper = _PagingScraper([job])
+        mock_scrapers.return_value = [scraper]
+        with patch(
+            "tasks.scraping_tasks.task_session",
+            new=_mock_session_factory(db_session),
+        ):
+            await _fetch_scrapers_async()
+
+        assert scraper.pages_fetched == 1
+        assert scraper._stop_reason == "known_page"
+        cursor = (
+            await db_session.execute(
+                select(SourceCursor).where(SourceCursor.source_key == "scr_paging")
+            )
+        ).scalar_one()
+        # Sin hambre: el bootstrap sigue completo y el próximo run seguirá
+        # presupuestado al mínimo (proporcional a novedades, doctrina capa 3).
+        assert cursor.bootstrap_complete is True
+        assert (
+            CrawlerBudgetService.max_pages_this_run(
+                cursor, _PagingScraper.PAGE_SIZE, _PagingScraper.MAX_PAGES
+            )
+            <= 1 + settings.CRAWLER_BUDGET_SAFETY_PAGES
+        )
+
+
+class TestCursorNoAprendeDeRunsFallidos:
+    """A2-2 — `update_after_run` se ejecutaba también con OUTCOME_ERROR
+    (404/timeout/soft-block devuelven [] sin excepción): marcaba
+    `bootstrap_complete=True` con `avg_new=0` (bootstrap perdido para
+    siempre, presupuestada a 2 páginas), engordaba `consecutive_empty_runs`
+    (backoff de sequía sobre una fuente ROTA) y `last_success_at` mentía.
+    Caso real en BD: gastrojob y myscience."""
+
+    @staticmethod
+    def _failing_scraper(source: str):
+        """Scraper cuyo run falla como en producción: registra el fallo de
+        descarga en fetch_diagnostics y devuelve [] sin lanzar."""
+        scraper = _make_mock_scraper(source, [])
+
+        async def _failing_fetch(query, location="Switzerland"):
+            diag.record(diag.KIND_HTTP, url=f"http://{source}.test/list", status=404)
+            return []
+
+        scraper.fetch_jobs = _failing_fetch
+        return scraper
+
+    @patch("tasks.scraping_tasks.get_all_scrapers")
+    async def test_primer_run_con_error_no_completa_bootstrap(
+        self, mock_scrapers, monkeypatch, db_session
+    ):
+        """Una fuente NUEVA cuyo primer run falla NO queda bootstrapeada: el
+        próximo run debe recibir la ventana completa, no 2 páginas."""
+        monkeypatch.setattr(settings, "CURSOR_INCREMENTAL_ENABLED", True)
+        monkeypatch.setattr(settings, "CRAWLER_BUDGET_ENABLED", True)
+
+        mock_scrapers.return_value = [self._failing_scraper("scr_err")]
+        with patch(
+            "tasks.scraping_tasks.task_session",
+            new=_mock_session_factory(db_session),
+        ):
+            summary = await _fetch_scrapers_async()
+
+        assert summary["fetch_failed"] == 1
+        cursor = (
+            await db_session.execute(
+                select(SourceCursor).where(SourceCursor.source_key == "scr_err")
+            )
+        ).scalar_one()
+        assert cursor.bootstrap_complete is False
+        assert cursor.last_success_at is None
+        assert (cursor.consecutive_empty_runs or 0) == 0
+        # El bootstrap con ventana completa sigue pendiente para cuando la
+        # fuente responda.
+        assert CrawlerBudgetService.max_pages_this_run(cursor, 1, 35) == 35
+
+    @patch("tasks.scraping_tasks.get_all_scrapers")
+    async def test_run_con_error_no_toca_el_cursor_sano(
+        self, mock_scrapers, monkeypatch, db_session
+    ):
+        """Un run fallido sobre una fuente en régimen no engorda la racha de
+        vacíos (a 3 entraría en backoff de sequía por un fallo), no decae la
+        EMA y no miente en last_success_at."""
+        monkeypatch.setattr(settings, "CURSOR_INCREMENTAL_ENABLED", True)
+        monkeypatch.setattr(settings, "CRAWLER_BUDGET_ENABLED", True)
+        t0 = datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc)
+        await _seed_cursor(
+            db_session,
+            "scr_err2",
+            ["http://scr_err2.test/known"],
+            avg_new=4.0,
+            consecutive_empty_runs=2,
+            last_success_at=t0,
+            last_run_at=t0,
+        )
+
+        mock_scrapers.return_value = [self._failing_scraper("scr_err2")]
+        with patch(
+            "tasks.scraping_tasks.task_session",
+            new=_mock_session_factory(db_session),
+        ):
+            summary = await _fetch_scrapers_async()
+
+        assert summary["fetch_failed"] == 1
+        db_session.expire_all()
+        cursor = (
+            await db_session.execute(
+                select(SourceCursor).where(SourceCursor.source_key == "scr_err2")
+            )
+        ).scalar_one()
+        assert cursor.consecutive_empty_runs == 2, (
+            "el run FALLIDO engordó la racha de vacíos (backoff de sequía "
+            "sobre una fuente rota)"
+        )
+        assert cursor.last_success_at == t0, "last_success_at miente"
+        assert cursor.avg_new_jobs_per_run == 4.0, "la EMA decayó por un fallo"
+        assert cursor.recent_identities == ["http://scr_err2.test/known"]

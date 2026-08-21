@@ -157,7 +157,16 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
             try:
                 if store is not None:
                     cursor = await store.load(db, source)
-                    scraper._known_urls = store.known_identities(cursor)
+                    # B-4 — con el bootstrap PENDIENTE no se inyecta el
+                    # cursor: el re-bootstrap tras un run "con hambre" debe
+                    # poder bajar POR DEBAJO del primer contenido ya visto.
+                    # Con las identidades inyectadas, el early-stop cortaría
+                    # en la página 1 (lo más nuevo ya es conocido, la cosecha
+                    # es newest-first) y lo hundido bajo el horizonte del
+                    # presupuesto no se recuperaría jamás. En el bootstrap
+                    # genuino la ventana está vacía y no cambia nada.
+                    if cursor.bootstrap_complete:
+                        scraper._known_urls = store.known_identities(cursor)
 
                 if budget_on and cursor is not None:
                     # Backoff: fuente sin novedades N runs seguidos → saltar el
@@ -318,7 +327,22 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                     if motivo:
                         summary["unhealthy"].append(f"{source}: {motivo}")
 
-                if store is not None and cursor is not None:
+                # A2-2 — en un run con OUTCOME_ERROR (404/timeout/soft-block
+                # devuelven [] SIN excepción) no se aprendió nada sobre
+                # novedades: el cursor NO se toca. Actualizarlo marcaba
+                # `bootstrap_complete=True` / `last_success_at=now` y engordaba
+                # `consecutive_empty_runs` sobre un run FALLIDO: una fuente
+                # nueva con el primer run caído perdía su bootstrap para
+                # siempre, y una rota entraba en el backoff de "sequía" como
+                # si solo estuviera seca. De los errores se ocupan
+                # source_health y compliance, no el cursor (doctrina, capas
+                # 3/4). VD.2 intacto: en un run con error `stored_identities`
+                # está vacío, así que aquí no se pierde aprendizaje.
+                if (
+                    store is not None
+                    and cursor is not None
+                    and outcome != OUTCOME_ERROR
+                ):
                     # `pages_read` mide esfuerzo de CRAWL (lo descargado), no
                     # persistencia: sigue calculándose sobre `jobs`.
                     pages_read = max(
@@ -332,6 +356,28 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                         new_count=summary["new"] - new_before,
                         pages_read=pages_read,
                     )
+                    # B-4 — lazo de autolimitación del presupuesto: `avg_new`
+                    # es una EMA de `new_count`, y `new_count` nunca puede
+                    # superar `presupuesto × page_size` — la EMA no puede
+                    # aprender una demanda mayor que el techo que ella misma
+                    # fija. Si el run AGOTÓ su presupuesto SIN early-stop
+                    # (`_stop_reason is None`), terminó "con hambre": puede
+                    # quedar contenido nuevo hundido bajo el horizonte y la
+                    # EMA no es fiable — se re-abre el bootstrap para que el
+                    # próximo run reciba la ventana completa (sin cursor
+                    # inyectado, ver arriba) y re-sincronice midiendo la
+                    # novedad REAL. Con `budget == MAX_PAGES` no hay nada más
+                    # que pedir (cubre también fuentes de página única), y en
+                    # una fuente tranquila el early-stop fija `_stop_reason`:
+                    # en esos casos no se activa nunca.
+                    budget_pages = scraper._max_pages_this_run
+                    if (
+                        scraper._stop_reason is None
+                        and budget_pages is not None
+                        and budget_pages < scraper.MAX_PAGES
+                        and pages_read >= budget_pages
+                    ):
+                        cursor.bootstrap_complete = False
 
                 await db.commit()
 
