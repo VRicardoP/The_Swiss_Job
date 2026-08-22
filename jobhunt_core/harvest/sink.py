@@ -116,13 +116,39 @@ def _payload_has_nul(value) -> bool:
     return False
 
 
+def _fragment_carries_identity(fragment: str) -> bool:
+    """True si el fragmento lleva ESTADO DE RUTA de una SPA (y por tanto la
+    identidad de la oferta) y no un ancla de documento.
+
+    Caso real que motivó esto (perdida=6 del GATE-SOMBRA, 2026-08-22): los ATS
+    pi-asp.de de ostjob publican TODAS sus ofertas bajo la misma query y
+    distinguen la oferta SOLO en el fragmento —
+    `...?company=100-FIRMA-ID#position,id=<uuid>,jobportalid=<uuid>` —, así que
+    descartar el fragmento colapsaba 7 ofertas reales en 2 slots y el sink
+    SALTABA el resto con un warning (UNIQUE url_normalized). zentraljob (misma
+    base CH Media) tiene 40 ofertas con fragmento: exposición idéntica.
+
+    Discriminador: un fragmento con `=` es estado clave=valor de SPA; uno que
+    empieza por `/` o `!` es hash-routing (`#/offre/123`, `#!/jobs/9`). Un
+    ancla de documento (#apply, #top, #content) no cumple ninguna. El fallo de
+    la heurística es BENIGNO por diseño: conservar un fragmento de más crea un
+    duplicado que el dedup semántico caza; descartar uno de menos PIERDE la
+    oferta — la asimetría decide (ADR-10: perder es peor que duplicar)."""
+    return "=" in fragment or fragment.startswith(("/", "!"))
+
+
 def normalize_url(url: str) -> str:
-    """Clave de dedup por URL: esquema/host en minúsculas, sin fragmento ni
-    barra final. La query SE CONSERVA (muchos portales llevan el id ahí)."""
+    """Clave de dedup por URL: esquema/host en minúsculas, sin barra final.
+    La query SE CONSERVA (muchos portales llevan el id ahí) y el fragmento
+    TAMBIÉN cuando lleva identidad (`_fragment_carries_identity`) — un ancla
+    de documento se sigue descartando."""
     parts = urlsplit(url.strip())
     path = parts.path.rstrip("/") or "/"
+    fragment = (
+        parts.fragment if _fragment_carries_identity(parts.fragment) else ""
+    )
     return urlunsplit(
-        (parts.scheme.lower(), parts.netloc.lower(), path, parts.query, "")
+        (parts.scheme.lower(), parts.netloc.lower(), path, parts.query, fragment)
     )
 
 

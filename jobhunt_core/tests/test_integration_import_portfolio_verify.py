@@ -323,12 +323,12 @@ def test_verify_reused_and_collision_are_legitimate():
         async with factory() as s:
             # Otra fuente tiene #/A; el portfolio pedirá #/B (colisión cross-source) y una url
             # exacta reutilizada.
-            await _seed_other_source(s, "https://coll.example.ch/#/A", "coll-A")
+            await _seed_other_source(s, "https://coll.example.ch/jobs#A", "coll-A")
             await _seed_other_source(s, "https://reuse.example.ch/r", "reuse-r")
             users = [
                 _user([
                     _app("https://reuse.example.ch/r"),        # reused (otra fuente exacta)
-                    _app("https://coll.example.ch/#/B"),        # collision_cross_source
+                    _app("https://coll.example.ch/jobs#B"),        # collision_cross_source
                     _app("https://fresh.example.ch/n"),         # created
                 ])
             ]
@@ -337,7 +337,7 @@ def test_verify_reused_and_collision_are_legitimate():
             assert v["verdict"] == "verified", v["discrepancies"]
             dispositions = {e["url"]: e["disposition"] for e in manifest["ledger"]}
             assert dispositions["https://reuse.example.ch/r"] == "reused"
-            assert dispositions["https://coll.example.ch/#/B"] == "quarantine"
+            assert dispositions["https://coll.example.ch/jobs#B"] == "quarantine"
             assert dispositions["https://fresh.example.ch/n"] == "created"
             await s.commit()
 

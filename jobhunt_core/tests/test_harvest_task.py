@@ -193,3 +193,43 @@ def test_normalize_url_canonical():
 def test_content_hash_stable_regardless_of_key_order():
     assert content_hash({"a": 1, "b": 2}) == content_hash({"b": 2, "a": 1})
     assert content_hash({"a": 1}) != content_hash({"a": 2})
+
+
+def test_normalize_url_keeps_identity_fragment():
+    """perdida=6 (2026-08-22): los ATS pi-asp.de distinguen la oferta SOLO en
+    el fragmento. Dos ofertas reales de ostjob deben producir claves DISTINTAS
+    — antes colapsaban en el mismo slot y el sink saltaba la segunda."""
+    a = normalize_url(
+        "https://ottosag.pi-asp.de/bewerber-web/?company=100-FIRMA-ID"
+        "&tenant=&lang=DS#position,id=c9dcd173,jobportalid=7d51b858"
+    )
+    b = normalize_url(
+        "https://ottosag.pi-asp.de/bewerber-web/?company=100-FIRMA-ID"
+        "&tenant=&lang=DS#position,id=b88c7d83,jobportalid=7d51b858"
+    )
+    assert a != b
+    assert "id=c9dcd173" in a and "id=b88c7d83" in b
+
+
+def test_normalize_url_keeps_hash_routing():
+    """Hash-routing de SPA ('#/x', '#!/x') también lleva identidad."""
+    assert normalize_url("https://x.ch/app#/offre/123").endswith("#/offre/123")
+    assert normalize_url("https://x.ch/app#!/jobs/9").endswith("#!/jobs/9")
+
+
+def test_normalize_url_drops_document_anchors():
+    """Un ancla de documento NO es identidad: dos URLs que solo difieren en
+    #apply/#top siguen siendo la MISMA oferta (comportamiento anterior)."""
+    base = normalize_url("https://x.ch/jobs/123")
+    assert normalize_url("https://x.ch/jobs/123#apply") == base
+    assert normalize_url("https://x.ch/jobs/123#top") == base
+    assert normalize_url("https://x.ch/jobs/123#") == base
+
+
+def test_normalize_url_base_behavior_unchanged():
+    """Sin fragmento, nada cambia: host/esquema en minúsculas, sin barra
+    final, query conservada."""
+    assert (
+        normalize_url("HTTPS://X.ch/Jobs/?id=7")
+        == "https://x.ch/Jobs?id=7"
+    )

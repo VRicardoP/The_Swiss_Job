@@ -176,8 +176,8 @@ async def _scenario(factory):
         # resoluble ⇒ STAGE-ALL: NO se sintetiza ninguna (no se elige ganador por
         # orden) y AMBAS URLs se devuelven colisionadas para enrutar a staging.
         collide = [
-            {"url": "https://spa.example.ch/#/vacancy/aaa", "title": "First Offer", "company": "A"},
-            {"url": "https://spa.example.ch/#/vacancy/bbb", "title": "Second Offer", "company": "B"},
+            {"url": "https://spa.example.ch/jobs#aaa", "title": "First Offer", "company": "A"},
+            {"url": "https://spa.example.ch/jobs#bbb", "title": "Second Offer", "company": "B"},
         ]
         before = await _count(s, "vacancies")
         collided = await ip.synthesize_vacancies(s, scope_id, collide)
@@ -190,12 +190,12 @@ async def _scenario(factory):
         # --- COLISIÓN CROSS-RUN (P1 rev. externa): una URL SPA se sintetiza y CONFIRMA;
         # una 2ª ejecución con OTRA URL de la MISMA clave normalizada la detecta contra
         # el estado PERSISTIDO (incarnación activa), no contra un `seen` en memoria.
-        run1 = [{"url": "https://cross.example.ch/#/run/xxx", "title": "Run1", "company": "A"}]
+        run1 = [{"url": "https://cross.example.ch/jobs#xxx", "title": "Run1", "company": "A"}]
         assert await ip.synthesize_vacancies(s, scope_id, run1) == set()  # sin colisión
         await s.commit()
         v1 = await ip.resolve_vacancy_by_url(s, run1[0]["url"])
         assert v1 is not None
-        run2 = [{"url": "https://cross.example.ch/#/run/yyy", "title": "Run2", "company": "B"}]
+        run2 = [{"url": "https://cross.example.ch/jobs#yyy", "title": "Run2", "company": "B"}]
         c2 = await ip.synthesize_vacancies(s, scope_id, run2)
         await s.commit()
         assert c2 == {run2[0]["url"]}  # colisión detectada contra lo persistido

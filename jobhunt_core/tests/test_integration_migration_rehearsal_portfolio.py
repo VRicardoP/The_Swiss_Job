@@ -212,21 +212,22 @@ def test_checksums_portable_across_databases():
 
 
 def test_collision_routed_to_staging():
-    """P1 rev. externa: dos URLs SPA DISTINTAS que normalizan a la MISMA clave (el
-    id vive en el fragmento que normalize_url descarta) NO deben fundirse ni elegir
-    ganador por orden: ambigüedad no resoluble ⇒ NO se sintetiza NINGUNA vacante y
+    """P1 rev. externa: dos URLs DISTINTAS que normalizan a la MISMA clave (difieren
+    solo en un ANCLA de documento, que normalize_url descarta — el fragmento con
+    identidad de SPA ya se CONSERVA desde el fix de perdida=6, 2026-08-22) NO deben
+    fundirse ni elegir ganador por orden: ambigüedad no resoluble ⇒ NO se sintetiza NINGUNA vacante y
     AMBOS durables se enrutan a staging (razón 'collision'). Caso CROSS-USUARIO (la
     síntesis GLOBAL detecta la colisión entre usuarios)."""
     from jobhunt_core import import_portfolio_migrate as ipm
 
     users = [
         {"external_ref": 1, "applications": [
-            {"url": "https://spa.ch/jobs#/detail/111", "status": "applied",
+            {"url": "https://spa.ch/jobs#anchor-111", "status": "applied",
              "title": "Job 111", "company": "A",
              "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
         ], "saved_searches": []},
         {"external_ref": 2, "applications": [
-            {"url": "https://spa.ch/jobs#/detail/222", "status": "applied",
+            {"url": "https://spa.ch/jobs#anchor-222", "status": "applied",
              "title": "Job 222", "company": "B",
              "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
         ], "saved_searches": []},
@@ -686,7 +687,7 @@ def test_cross_source_collision_staged():
     from jobhunt_core import import_portfolio_migrate as ipm
 
     users = [{"external_ref": 1, "applications": [
-        {"url": "https://spa-other.ch/#/B", "status": "applied", "title": "B",
+        {"url": "https://spa-other.ch/jobs#B", "status": "applied", "title": "B",
          "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
     ], "saved_searches": []}]
 
@@ -702,7 +703,7 @@ def test_cross_source_collision_staged():
                 "VALUES (:i, :s, '{}'::jsonb, 0)"), {"i": scope, "s": src})
             await s.commit()
             await RawListingSink().handle(s, str(scope), (RawListing(
-                external_id="other-A", url="https://spa-other.ch/#/A",
+                external_id="other-A", url="https://spa-other.ch/jobs#A",
                 payload={"title": "Other", "company_name": "X",
                          "description": "d", "tags": []}),))
             await s.commit()
@@ -721,7 +722,7 @@ def test_cross_source_collision_staged():
             assert await _count(s, "profile_vacancy_state") == 0
             # Y NINGÚN artefacto de corpus portfolio-import para #/B (cadena revertida):
             # resolve→None y cero source_listings portfolio-import con esa clave.
-            assert await ip.resolve_vacancy_by_url(s, "https://spa-other.ch/#/B") is None
+            assert await ip.resolve_vacancy_by_url(s, "https://spa-other.ch/jobs#B") is None
             n_pi = (await s.execute(sa.text(
                 "SELECT count(*) FROM source_listings sl JOIN sources s "
                 "ON s.id = sl.source_id AND s.name = 'portfolio-import' "

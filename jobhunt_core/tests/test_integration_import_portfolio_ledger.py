@@ -173,8 +173,8 @@ def test_ledger_quarantine_collision_intra():
         async with factory() as s:
             scope_id = await ip.ensure_import_scope(s)
             await s.commit()
-            a = {"url": "https://spa.example.ch/#/vacancy/aaa", "title": "A", "company": "A"}
-            b = {"url": "https://spa.example.ch/#/vacancy/bbb", "title": "B", "company": "B"}
+            a = {"url": "https://spa.example.ch/jobs#aaa", "title": "A", "company": "A"}
+            b = {"url": "https://spa.example.ch/jobs#bbb", "title": "B", "company": "B"}
 
             led: list = []
             collided = await ip.synthesize_vacancies(s, scope_id, [a, b], ledger=led)
@@ -197,8 +197,8 @@ def test_ledger_quarantine_collision_cross_run():
         async with factory() as s:
             scope_id = await ip.ensure_import_scope(s)
             await s.commit()
-            u1 = {"url": "https://cross.example.ch/#/run/xxx", "title": "R1", "company": "A"}
-            u2 = {"url": "https://cross.example.ch/#/run/yyy", "title": "R2", "company": "B"}
+            u1 = {"url": "https://cross.example.ch/jobs#xxx", "title": "R1", "company": "A"}
+            u2 = {"url": "https://cross.example.ch/jobs#yyy", "title": "R2", "company": "B"}
 
             led1: list = []
             await ip.synthesize_vacancies(s, scope_id, [u1], ledger=led1)
@@ -222,10 +222,10 @@ def test_ledger_quarantine_collision_cross_source():
 
     async def _run(factory):
         async with factory() as s:
-            await _seed_other_source(s, "https://spa-other.ch/#/A", "other-A")
+            await _seed_other_source(s, "https://spa-other.ch/jobs#A", "other-A")
             scope_id = await ip.ensure_import_scope(s)
             await s.commit()
-            b_url = "https://spa-other.ch/#/B"
+            b_url = "https://spa-other.ch/jobs#B"
 
             led: list = []
             collided = await ip.synthesize_vacancies(
