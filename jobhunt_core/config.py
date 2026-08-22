@@ -74,6 +74,14 @@ class CoreSettings(BaseSettings):
     # "sin visto y sin adjunto" del contrato ADR-07.
     CORE_ARCHIVE_GRACE_DAYS: int = 3
     CORE_CORPUS_STALE_DAYS: int = 120
+    # Dedup semántico nivel 3 (F-5): generador de candidatos cross-source.
+    # SIM_MIN hereda el umbral del dedup semántico legado (0,95) como punto
+    # de partida operativo — B.3 dejó los SIM_* abiertos y la precisión
+    # medida contra el oráculo dirá si hay que subirlo. KNN acota vecinos por
+    # vacante nueva; WINDOW = ventana incremental (48 h ≈ beat diario + margen).
+    CORE_DEDUP_SIM_MIN: float = 0.95
+    CORE_DEDUP_KNN: int = 5
+    CORE_DEDUP_SCAN_WINDOW_H: int = 48
     # P1 rev. externa C-API-W: cota de ESPERA del INSERT-reserva de idempotencia
     # sobre el índice único. Sin ella, si el handler del dueño se cuelga, un
     # reintento de la MISMA key bloquea indefinidamente (no es deadlock que

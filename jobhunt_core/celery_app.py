@@ -41,6 +41,7 @@ celery_app.conf.update(
         # invariante "todo lo del beat rutea a core.*" se verifica así.
         "jobhunt.maintenance.*": {"queue": "core.default"},
         "jobhunt.maintenance.archive_sweep": {"queue": "core.default"},
+        "jobhunt.maintenance.dedup_scan": {"queue": "core.default"},
         # Proyector de la sombra (B-02, contrato §3): comparte la cola de
         # cosecha — es ingesta, y serializa con los locks del sink.
         "jobhunt.shadow.project": {"queue": "core.harvest"},
@@ -109,6 +110,12 @@ celery_app.conf.update(
         "maintenance-archive-sweep": {
             "task": "jobhunt.maintenance.archive_sweep",
             "schedule": crontab(hour=5, minute=35),
+        },
+        # F-5: candidatos de dedup semántico ANTES del cierre de ciclo (y del
+        # barrido: un candidato sobre vacante recién archivada no estorba).
+        "maintenance-dedup-scan": {
+            "task": "jobhunt.maintenance.dedup_scan",
+            "schedule": crontab(hour=5, minute=20),
         },
     },
 )
