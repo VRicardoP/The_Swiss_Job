@@ -43,23 +43,33 @@ async def archive_sweep(session: AsyncSession) -> dict:
     grace_days = int(settings.CORE_ARCHIVE_GRACE_DAYS)
     stale_days = int(settings.CORE_CORPUS_STALE_DAYS)
 
+    # Una sola AGREGACIÓN por vacante alimenta ambas ramas. La versión
+    # anterior usaba subqueries CORRELACIONADAS con max(): el único índice
+    # útil de incarnations es PARCIAL (vacancy_id WHERE ended_at IS NULL),
+    # así que cada max() era un seq-scan de la tabla entera POR FILA —
+    # ~750M visitas y 10+ min en producción, con FOR UPDATE reteniendo
+    # locks todo ese tiempo. Un GROUP BY es UN pase (milisegundos).
+    # El JOIN a la agregación implica "tuvo vida": una vacante sin
+    # encarnación alguna (recién nacida de otro run, residuo de cuarentena)
+    # no aparece y no se toca.
+    agg = (
+        "SELECT vacancy_id, bool_or(ended_at IS NULL) AS tiene_activa, "
+        "       max(ended_at) AS ultimo_cierre, "
+        "       max(last_seen_at) AS ultimo_visto "
+        "FROM source_listing_incarnations GROUP BY vacancy_id"
+    )
+
     # --- rama 1: MUERTAS (sin encarnación activa, gracia cumplida) ---------
     dead = (
         await session.execute(
             sa.text(
-                "WITH candidatas AS ("
+                f"WITH agg AS ({agg}), "
+                "candidatas AS ("
                 "  SELECT v.id FROM vacancies v"
+                "  JOIN agg a ON a.vacancy_id = v.id"
                 "  WHERE v.archived_at IS NULL AND v.merged_into IS NULL"
-                "    AND NOT EXISTS (SELECT 1 FROM source_listing_incarnations i"
-                "                    WHERE i.vacancy_id = v.id AND i.ended_at IS NULL)"
-                # Tuvo vida: una vacante sin encarnación alguna no es una
-                # muerta — es una recién nacida de otro run o un residuo de
-                # cuarentena; no se toca desde aquí.
-                "    AND EXISTS (SELECT 1 FROM source_listing_incarnations i"
-                "                WHERE i.vacancy_id = v.id)"
-                "    AND (SELECT max(i.ended_at) FROM source_listing_incarnations i"
-                "         WHERE i.vacancy_id = v.id)"
-                "        < now() - make_interval(days => :grace)"
+                "    AND NOT a.tiene_activa"
+                "    AND a.ultimo_cierre < now() - make_interval(days => :grace)"
                 "  ORDER BY v.id FOR UPDATE OF v SKIP LOCKED"
                 ") "
                 "UPDATE vacancies v SET archived_at = now() "
@@ -73,17 +83,16 @@ async def archive_sweep(session: AsyncSession) -> dict:
     stale_rows = (
         await session.execute(
             sa.text(
+                f"WITH agg AS ({agg}) "
                 "SELECT v.id FROM vacancies v "
+                "JOIN agg a ON a.vacancy_id = v.id "
                 "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
-                "  AND EXISTS (SELECT 1 FROM source_listing_incarnations i "
-                "              WHERE i.vacancy_id = v.id AND i.ended_at IS NULL) "
-                "  AND (SELECT max(i.last_seen_at) FROM source_listing_incarnations i "
-                "       WHERE i.vacancy_id = v.id) "
-                "      < now() - make_interval(days => :stale) "
+                "  AND a.tiene_activa "
+                "  AND a.ultimo_visto < now() - make_interval(days => :stale) "
                 # PF.3: con candidatura se conserva (archivar no borra, pero
                 # el contrato dice conservar la vacante VIVA para el usuario).
-                "  AND NOT EXISTS (SELECT 1 FROM applications a "
-                "                  WHERE a.vacancy_id = v.id) "
+                "  AND NOT EXISTS (SELECT 1 FROM applications ap "
+                "                  WHERE ap.vacancy_id = v.id) "
                 "ORDER BY v.id FOR UPDATE OF v SKIP LOCKED"
             ),
             {"stale": stale_days},
