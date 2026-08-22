@@ -772,6 +772,29 @@ def test_heartbeat_advances_on_keepalive_without_traffic(capture):
     assert row1.updated_at == row0.updated_at  # datos: intacto
 
 
+def test_empty_tx_heartbeat_is_throttled(capture):
+    """Fix del BUCLE DE COLA (2026-08-22, mecanismo real de B-1): un torrente
+    de tx vacías late como máximo 1/s. Antes latía POR TX — un UPDATE por tx
+    consumida que generaba a su vez otra tx WAL vacía: con retraso, consumo ≈
+    generación y el catch-up no convergía NUNCA (11,5 h clavado tras un burst
+    de 53 MB, con el heartbeat fresco mintiendo liveness)."""
+    make, slot, engine = capture
+    cap = make()
+    cap._ack = False  # sin feedback: aquí solo interesa la rama del latido
+    beats = []
+    cap._touch_heartbeat = lambda: beats.append(1)  # sin DB: contamos llamadas
+
+    class _Msg:  # commit wal2json mínimo (solo se usa data_start)
+        data_start = 1
+
+    for _ in range(50):
+        cap._flush(_Msg())  # 50 tx vacías seguidas
+    assert sum(beats) == 1  # ...un solo latido
+    cap._last_hb -= 2.0  # "pasa" más de 1 s
+    cap._flush(_Msg())
+    assert sum(beats) == 2  # y vuelve a latir
+
+
 # ------------------------------------------------------------ (e) roles/grants
 
 

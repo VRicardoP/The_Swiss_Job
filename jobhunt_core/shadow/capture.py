@@ -182,6 +182,9 @@ class ShadowCapture:
         self._cur = None  # cursor de replicación
         self._tx: list[tuple] = []  # cambios de la tx wal2json en curso
         self._seq = 0  # seq_in_tx dentro de la tx en curso
+        # Throttle del latido (fix del BUCLE DE COLA, 2026-08-22): monotonic
+        # del último UPDATE de heartbeat emitido por la rama de tx VACÍA.
+        self._last_hb = 0.0
 
     # ------------------------------------------------------------- conexión
 
@@ -637,7 +640,20 @@ class ShadowCapture:
                 "Tx aplicada: %d cambios hasta %s", len(rows), int_to_lsn(flush_lsn)
             )
         else:
-            self._touch_heartbeat()
+            # ⚠ FIX BUCLE DE COLA (2026-08-22, mecanismo real de B-1): latir en
+            # CADA tx vacía era un UPDATE por tx consumida — y ese UPDATE genera
+            # a su vez una tx WAL que wal2json decodifica como OTRA tx vacía.
+            # En cabeza el lazo es estable (1:1 en tiempo real); con RETRASO,
+            # el consumo (~12 KB/s, un round-trip por tx) iguala a la generación
+            # (~13 KB/s) y capture NUNCA converge: el viejo consumidor llevaba
+            # 11,5 h clavado tras el burst del url-check de las 03:00, con el
+            # heartbeat FRESCO mintiendo liveness — la señal de vida ERA la
+            # avería. Throttle a 1/s: rompe el lazo (consumo ≫ generación) y
+            # sigue 5 órdenes de magnitud por debajo del umbral de salud (26 h).
+            now_hb = time.monotonic()
+            if now_hb - self._last_hb >= 1.0:
+                self._touch_heartbeat()
+                self._last_hb = now_hb
         # Tx vacías (add-tables filtró todo del lado servidor) avanzan el
         # flush igualmente: sin esto el slot retendría WAL ajeno (§8).
         if self._ack:
