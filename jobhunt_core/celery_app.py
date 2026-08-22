@@ -36,6 +36,11 @@ celery_app.conf.update(
         # verifica por nombre exacto.
         "jobhunt.delivery.*": {"queue": "core.default"},
         "jobhunt.delivery.dispatch_outbox": {"queue": "core.default"},
+        # Barrido de archivado (F-2/ADR-07): mantenimiento ligero del corpus.
+        # Entrada por nombre EXACTO además del comodín: va en el beat y el
+        # invariante "todo lo del beat rutea a core.*" se verifica así.
+        "jobhunt.maintenance.*": {"queue": "core.default"},
+        "jobhunt.maintenance.archive_sweep": {"queue": "core.default"},
         # Proyector de la sombra (B-02, contrato §3): comparte la cola de
         # cosecha — es ingesta, y serializa con los locks del sink.
         "jobhunt.shadow.project": {"queue": "core.harvest"},
@@ -99,10 +104,17 @@ celery_app.conf.update(
             "task": "jobhunt.idempotency.purge_expired",
             "schedule": float(settings.CORE_IDEMPOTENCY_PURGE_EVERY_S),
         },
+        # F-2 (ADR-07): la salida del corpus. ANTES del cierre de ciclo de
+        # las 06:05, para que las métricas del gate midan el corpus podado.
+        "maintenance-archive-sweep": {
+            "task": "jobhunt.maintenance.archive_sweep",
+            "schedule": crontab(hour=5, minute=35),
+        },
     },
 )
 
 celery_app.conf.include = [
+    "jobhunt_core.tasks.maintenance",
     "jobhunt_core.tasks.ping",
     "jobhunt_core.tasks.harvest",
     "jobhunt_core.tasks.embedding",

@@ -68,6 +68,12 @@ class CoreSettings(BaseSettings):
     # C-API-W 2º análisis: barrido de idempotency_records caducados (acota la
     # retención del cv_text guardado en response al TTL de 24h).
     CORE_IDEMPOTENCY_PURGE_EVERY_S: int = 3600
+    # Barrido de archivado ADR-07 (F-2, 2026-08-22) — la SALIDA del corpus.
+    # GRACE: días tras cerrar la última encarnación antes de archivar la
+    # vacante muerta (amortigua flaps cierre→reapertura). STALE: los 120 d
+    # "sin visto y sin adjunto" del contrato ADR-07.
+    CORE_ARCHIVE_GRACE_DAYS: int = 3
+    CORE_CORPUS_STALE_DAYS: int = 120
     # P1 rev. externa C-API-W: cota de ESPERA del INSERT-reserva de idempotencia
     # sobre el índice único. Sin ella, si el handler del dueño se cuelga, un
     # reintento de la MISMA key bloquea indefinidamente (no es deadlock que

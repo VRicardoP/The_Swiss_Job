@@ -802,6 +802,30 @@ def health_check() -> int:
                         file=sys.stderr,
                     )
                     return 1
+                # DRENADO del staging (auditoría B-1, 2026-08-22): la
+                # observabilidad del proyector vivía en el beat del MISMO
+                # worker que se caía — 22 días parado sin una alerta, y el
+                # healthcheck de capture en verde porque mide el latido del
+                # consumidor, no el drenado. Este chequeo vive AQUÍ, en otro
+                # contenedor, fuera de ese dominio de fallo: cambios sin
+                # aplicar más viejos que el umbral ⇒ unhealthy — compose lo
+                # hace VISIBLE aunque el worker esté colgado o su broker roto.
+                stale_max = float(
+                    os.getenv("CORE_CAPTURE_STAGING_STALE_MAX_S", str(2 * 3600))
+                )
+                cur.execute(
+                    "SELECT extract(epoch FROM now() - min(received_at)) "
+                    "FROM shadow_change_log WHERE applied_at IS NULL"
+                )
+                stale = cur.fetchone()[0]
+                if stale is not None and float(stale) > stale_max:
+                    print(
+                        f"unhealthy: staging SIN DRENAR (cambio pendiente más "
+                        f"viejo: {float(stale):.0f}s > {stale_max:.0f}s — "
+                        "¿proyector/beat/broker caídos?)",
+                        file=sys.stderr,
+                    )
+                    return 1
         finally:
             conn.close()
     except Exception as exc:  # cualquier fallo = unhealthy con motivo visible

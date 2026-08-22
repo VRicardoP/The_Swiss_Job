@@ -1121,26 +1121,26 @@ def test_sampler_appends_and_p99_exact(db):
     assert row.details["samples"][0]["ts"].startswith("2026-07-20T")
     assert row.details["samples"][0]["dead_total"] == 0
 
-    # p99 EXACTO (percentile_cont): samples deterministas [100, 200, 300, 400]
-    # → 0.99·3 = 2.97 → 300 + 0.97·100 = 397.0.
+    # p99 EXACTO (percentile_cont): samples deterministas [300, 600, 900, 1200]
+    # → 0.99·3 = 2.97 → 900 + 0.97·300 = 1191.0 (>900, umbral 2026-08-22).
     _exec(
         factory,
         "UPDATE shadow_cycle_metrics SET details = jsonb_set(details, "
         "'{samples}', CAST(:j AS jsonb)) WHERE cycle_id = :c AND metric = :m",
         {
             "j": json.dumps(
-                [{"ts": "t", "oldest_pending_s": v} for v in (100, 200, 300, 400)]
+                [{"ts": "t", "oldest_pending_s": v} for v in (300, 600, 900, 1200)]
             ),
             "c": CYCLE, "m": "outbox_lag_p99",
         },
     )
     _compute(factory)
     row = _metric_row(factory, "outbox_lag_p99")
-    assert float(row.value) == pytest.approx(397.0)
+    assert float(row.value) == pytest.approx(1191.0)
     assert row.details["samples_count"] == 4
     assert len(row.details["samples"]) == 4  # merge: los samples SOBREVIVEN
     g = _gates(factory)["outbox_lag_p99"]
-    assert g["ok"] is False  # 397 > 300
+    assert g["ok"] is False  # 1191 > 900
 
 
 def test_outbox_lag_without_samples_is_no_data_and_gate_fails(db):
@@ -1244,7 +1244,7 @@ def test_recompute_after_purge_preserves_sealed_p99(db):
     assert row.details["samples_pruned"] == 4
     assert row.finished_at == sealed_at  # ni re-sellado: intacta
     assert row.details["recomputed_at"]  # el force queda TRAZADO (P1-4)
-    assert _gates(factory)["outbox_lag_p99"]["ok"] is True  # 250 <= 300
+    assert _gates(factory)["outbox_lag_p99"]["ok"] is True  # 250 <= 900 (umbral recalibrado 2026-08-22)
 
 
 # --------------------------------------------------------- latencia_p95 (§5)
@@ -1283,7 +1283,7 @@ def test_latencia_p95_over_batches_tolerating_unsealed_and_foreign(db):
     # A MANO: p95 de [10,20,30,40] = 30 + 0.85·10 = 38.5 (percentile_cont).
     assert float(row.value) == pytest.approx(38.5)
     assert row.details["lotes"] == 4
-    assert _gates(factory)["latencia_p95"]["ok"] is True  # 38.5 <= 600
+    assert _gates(factory)["latencia_p95"]["ok"] is True  # 38.5 <= 3600 (umbral recalibrado 2026-08-22)
 
 
 # ---------------------------------------------------------------- coste (§5)
@@ -1578,7 +1578,7 @@ def test_evaluate_gates_ok_and_failed_with_forced_values(db):
         ("no_ingeribles", "global", 2, {}),                       # ALERTA (>0)
         ("outbox_lag_p99", "global", 299.0, {"samples_count": 9}),  # OK
         ("outbox_dead", "global", 1, {"dead_actual": 1}),           # FALLO (P2-6)
-        ("latencia_p95", "global", 700.0, {"lotes": 4}),            # FALLO
+        ("latencia_p95", "global", 4000.0, {"lotes": 4}),           # FALLO (>3600, umbral 2026-08-22)
         ("coste", "global", 1234.0, {}),                            # informativa
         ("reenlace_pct", "global", 0.06, {}),                       # ALERTA
     ]

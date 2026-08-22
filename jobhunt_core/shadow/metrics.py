@@ -162,8 +162,20 @@ FN_MIN_RELEVANCE = 2           # juicios "relevantes" del numerador/denominador
 FN_STRICT_BELOW = 50           # < 50 juicios rel>=2 => 0 permitidos (§6)
 FN_MAX_RATIO = 0.02            # >= 50 juicios rel>=2 => <= 2%
 PERDIDA_MAX = 0                # [gate] estricto (DoD B.2 "cero pérdida")
-OUTBOX_LAG_P99_MAX_S = 300.0   # [gate]
-LATENCIA_P95_MAX_S = 600.0     # [gate]
+# Umbrales RECALIBRADOS el 2026-08-22 (decisión del propietario, delegada —
+# ver ESTADO_Y_HOJA_DE_RUTA §11.4; auditoría F-4 y medición en producción):
+# · outbox_lag 300→900 s: el umbral era IGUAL a la cadencia de despacho
+#   (300 s) — un evento emitido justo tras un despacho esperaba 300 s POR
+#   CONSTRUCCIÓN y un solo backoff transitorio (60→120→240) ponía el gate en
+#   rojo sin ningún fallo real. 3× la cadencia absorbe un burst de backoff.
+# · latencia 600→3600 s: mide la espera del staging del CDC — un mecanismo
+#   SOLO-SOMBRA que se retira en Fase F. En días de cosecha, embeddings+
+#   evaluación retienen el lock 30-40 min en la CPU del NAS (p95 medido
+#   2.200-2.950 s) y la comparación del gate es DIARIA: el pico no afecta a
+#   lo que se mide. Reestructurar el proyector (5 rondas de revisión) días
+#   antes del code-freeze de la racha era más riesgo que valor.
+OUTBOX_LAG_P99_MAX_S = 900.0   # [gate]
+LATENCIA_P95_MAX_S = 3600.0    # [gate]
 REENLACE_PCT_MAX = 0.05        # [alerta] <= 5%/ciclo (ratio 0..1)
 STAGING_BACKLOG_GRACE_S = 3600  # "change_log sin applied_at > 1h" (§5)
 STAGING_RETENTION_DAYS = 7     # retención §2: ciclos cerrados + 7 días

@@ -752,6 +752,43 @@ def test_health_check_heartbeat_liveness_not_data_progress(
     assert "LATIDO" in capsys.readouterr().err
 
 
+def test_health_check_staging_sin_drenar_es_unhealthy(
+    capture, capture_db, monkeypatch, capsys
+):
+    """Auditoría B-1 (2026-08-22): la observabilidad del proyector vivía en el
+    beat del MISMO worker que se caía — 22 días de staging sin drenar y ni una
+    alerta. El chequeo del drenado vive ahora en el healthcheck de capture
+    (OTRO contenedor): cambio pendiente más viejo que el umbral ⇒ unhealthy,
+    aunque el worker esté colgado o su broker roto."""
+    make, slot, engine = capture
+    monkeypatch.setenv("CORE_DATABASE_URL", capture_db["core_dsn"])
+    monkeypatch.setenv("CORE_CAPTURE_SLOT", slot)
+
+    cap = make()
+    cap.start()
+    _wait_slot_active(engine, slot)
+    assert health_check() == 0  # staging vacío ⇒ sano
+
+    # Cambio SIN aplicar más viejo que el umbral ⇒ unhealthy con motivo.
+    _exec(
+        engine,
+        f"INSERT INTO {S}.shadow_change_log "
+        "(lsn, seq_in_tx, src_table, op, pk, payload, received_at) "
+        "VALUES (999999999, 0, 'jobs', 'U', 'hc-test', '{}'::jsonb, "
+        "now() - interval '3 hours')",
+    )
+    assert health_check() == 1
+    assert "SIN DRENAR" in capsys.readouterr().err
+
+    # Aplicado ⇒ vuelve a sano (el pendiente viejo era la única causa).
+    _exec(
+        engine,
+        f"UPDATE {S}.shadow_change_log SET applied_at = now() "
+        "WHERE pk = 'hc-test'",
+    )
+    assert health_check() == 0
+
+
 def test_heartbeat_advances_on_keepalive_without_traffic(capture):
     """P2-7: el latido avanza con los KEEPALIVES del stream aunque no llegue
     ninguna transacción — updated_at (progreso de datos) queda quieto."""

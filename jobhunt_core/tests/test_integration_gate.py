@@ -421,7 +421,7 @@ def _seed_metric(factory, cycle, metric, scope, value, details=None, sealed=True
 def _seed_green_cycle(factory, cycle, scope="profile:aaaa"):
     """Ciclo TODO en verde con los umbrales RATIFICADOS de §6: ndcg 0.90 >=
     max(0.60, 0.70−0.05); fn 0 en modo estricto; dedup 1.0; perdida 0;
-    outbox 10 <= 300; outbox_dead 0 (P2-6); latencia 20 <= 600; alertas en
+    outbox 10 <= 900; outbox_dead 0 (P2-6); latencia 20 <= 3600 (umbrales 2026-08-22); alertas en
     reposo."""
     rows = [
         ("ndcg@10", scope, 0.90, {}),
