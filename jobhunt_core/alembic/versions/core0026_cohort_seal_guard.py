@@ -63,7 +63,8 @@ def upgrade() -> None:
                 -- el timestamp de TRANSACCIÓN y una tx abierta antes del
                 -- instante real retrodataba el sello (ronda 2, B-1) —
                 -- movería el corte de elegibilidad y haría elegibles
-                -- ciclos anteriores al freeze.
+                -- ciclos anteriores al freeze. (Solo VALIDA la intención;
+                -- el valor persistido se canonicaliza tras el lock.)
                 IF NEW.frozen_at <> statement_timestamp() THEN
                     RAISE EXCEPTION
                         'sello RETRODATADO en cohorte %: frozen_at debe ser statement_timestamp() (core0026)',
@@ -73,6 +74,13 @@ def upgrade() -> None:
                 -- sello espera a los escritores de pares EN VUELO (entran
                 -- al snapshot) sea cual sea la vía — helper o DML directo.
                 LOCK TABLE {S}.labeled_dedup_pairs IN SHARE ROW EXCLUSIVE MODE;
+                -- Ronda 3 P-1: el instante EFECTIVO del sello es DESPUÉS
+                -- de drenar a los escritores — statement_timestamp() se
+                -- fijó al INICIO del intento y la espera del lock puede
+                -- ser arbitraria: un ciclo iniciado durante esa espera
+                -- habría sido declarado elegible con un freeze aún no
+                -- efectivo. Se persiste clock_timestamp() post-lock.
+                NEW.frozen_at := clock_timestamp();
             END IF;
             RETURN NEW;
         END;

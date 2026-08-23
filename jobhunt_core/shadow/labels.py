@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from datetime import datetime
 
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Mapeo feedback legacy → relevancia (§4): fuente única de verdad — el CASE
@@ -187,21 +188,25 @@ async def seed_dedup_pairs(
 async def freeze_dedup_cohort(
     session: AsyncSession, source: str, manifest: dict
 ) -> datetime:
-    """Congela la cohorte de pares dedup `source` (auditoría Nº2, B-1
-    BLOQUEANTE 2; endurecido tras la revisión solo-código):
+    """Congela la cohorte de pares dedup `source` (auditoría Nº2 B-1;
+    endurecido en las rondas 1-3 de la revisión solo-código):
 
-    - `manifest` es OBLIGATORIO y no vacío (revisión B-3: un freeze
-      accidental sin pre-registro activaba el corte de elegibilidad; el
-      CHECK de core0026 lo rechaza también en la BD).
-    - SERIALIZA el sellado con las mutaciones en vuelo (revisión B-1):
-      LOCK TABLE SHARE ROW EXCLUSIVE sobre labeled_dedup_pairs — espera a
-      que los escritores no confirmados terminen (sus pares ENTRAN al
-      snapshot) y los posteriores chocan ya con el trigger-guard. El lock
-      se mantiene hasta el commit del llamador.
-    - IDEMPOTENTE sin UPDATE vacío (revisión B-2: la fila congelada es
-      inmutable — trigger de core0026): re-congelar LEE y devuelve el
-      timestamp existente sin escribir; el lock serializa también a dos
-      congeladores concurrentes.
+    - `manifest` OBLIGATORIO y no vacío (ronda 2: el CHECK exige además
+      jsonb_typeof = 'object').
+    - La SERIALIZACIÓN con los escritores de pares vive en el TRIGGER de
+      core0026 (frontera común: LOCK TABLE + canonicalización del instante
+      efectivo post-lock — rondas 2 B-3 y 3 P-1). El helper NO toma locks
+      propios: el lock explícito que llevaba invertía el orden respecto al
+      UPDATE directo (fila de cohorte → pares) y PostgreSQL detectaba
+      deadlock (ronda 3 P-2).
+    - ORDEN DE ADQUISICIÓN consistente con el DML directo: primero UPDATE
+      de la fila existente sin sellar (fila → pares, como cualquier UPDATE);
+      si no hay fila, INSERT (pares → índice, como cualquier INSERT). Un
+      upsert ON CONFLICT mezclaría ambos (BEFORE INSERT toma pares ANTES de
+      la arbitración de la fila) y reabriría la inversión.
+    - IDEMPOTENTE también en concurrencia: el perdedor de la carrera relee
+      el sello confirmado y devuelve su timestamp (savepoint para que la
+      violación de unicidad no aborte la tx del llamador).
     """
     if not isinstance(manifest, dict) or not manifest:
         raise ValueError(
@@ -209,30 +214,45 @@ async def freeze_dedup_cohort(
             "SHA-256 del pre-registro) — sin él, el sello no vale como "
             "corte de elegibilidad"
         )
-    await session.execute(
-        sa.text("LOCK TABLE labeled_dedup_pairs IN SHARE ROW EXCLUSIVE MODE")
+    for _ in range(2):
+        ya = await dedup_cohort_frozen_at(session, source)
+        if ya is not None:
+            return ya
+        sellado = (
+            await session.execute(
+                sa.text(
+                    "UPDATE labeled_dedup_cohorts "
+                    "SET frozen_at = statement_timestamp(), "
+                    "    manifest = CAST(:m AS jsonb) "
+                    "WHERE source = :src AND frozen_at IS NULL "
+                    "RETURNING frozen_at"
+                ),
+                {"src": source, "m": json.dumps(manifest)},
+            )
+        ).scalar_one_or_none()
+        if sellado is not None:
+            return sellado
+        # Fila inexistente (o sellada por otro justo ahora): INSERT bajo
+        # savepoint — si otro congelador gana la creación, se relee.
+        try:
+            async with session.begin_nested():
+                return (
+                    await session.execute(
+                        sa.text(
+                            "INSERT INTO labeled_dedup_cohorts "
+                            "(source, frozen_at, manifest) "
+                            "VALUES (:src, statement_timestamp(), "
+                            "CAST(:m AS jsonb)) RETURNING frozen_at"
+                        ),
+                        {"src": source, "m": json.dumps(manifest)},
+                    )
+                ).scalar_one()
+        except IntegrityError:
+            continue  # otro congelador creó la fila: releer y devolver
+    raise RuntimeError(
+        f"freeze_dedup_cohort({source!r}): la cohorte no converge tras la "
+        "carrera — estado inesperado en labeled_dedup_cohorts"
     )
-    ya = await dedup_cohort_frozen_at(session, source)
-    if ya is not None:
-        return ya
-    return (
-        await session.execute(
-            sa.text(
-                # statement_timestamp(), NO now() (ronda 2 B-1): now() es
-                # el timestamp de TRANSACCIÓN — si el llamador abrió la tx
-                # antes del instante real, el sello quedaba retrodatado (y
-                # el trigger, que compara contra statement_timestamp(), lo
-                # rechazaría). Mismo statement ⇒ mismo valor ⇒ pasa el guard.
-                "INSERT INTO labeled_dedup_cohorts (source, frozen_at, manifest) "
-                "VALUES (:src, statement_timestamp(), CAST(:m AS jsonb)) "
-                "ON CONFLICT (source) DO UPDATE SET "
-                "  frozen_at = statement_timestamp(), manifest = CAST(:m AS jsonb) "
-                "WHERE labeled_dedup_cohorts.frozen_at IS NULL "
-                "RETURNING frozen_at"
-            ),
-            {"src": source, "m": json.dumps(manifest)},
-        )
-    ).scalar_one()
 
 
 async def dedup_cohort_frozen_at(

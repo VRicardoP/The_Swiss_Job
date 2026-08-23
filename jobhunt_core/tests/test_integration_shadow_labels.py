@@ -1045,6 +1045,154 @@ def test_sello_por_dml_directo_tambien_espera_al_escritor(db):
         _run(_desmonta_cohorte(factory, src))
 
 
+def test_p1_el_sello_no_precede_al_drenaje_del_escritor(db):
+    """Regresión ronda 3 (P-1): statement_timestamp() se fijaba al INICIO
+    del intento y el trigger podía esperar el lock arbitrariamente — el
+    sello persistido precedía al instante en que el freeze fue EFECTIVO, y
+    un ciclo iniciado durante esa espera habría sido elegible en falso
+    (reproducido por el revisor con boundary a 250 ms). Ahora el trigger
+    canonicaliza frozen_at = clock_timestamp() DESPUÉS del lock:
+    frozen_at >= boundary siempre."""
+    factory, created = db
+    p = f"p1-{uuid.uuid4().hex[:8]}"
+    ja, jb = f"{p}-a", f"{p}-b"
+    created["dedup_refs"] += [ja, jb]
+    src = f"cohorte-p1-{p}"
+
+    async def go():
+        async with factory() as sa_ses:  # escritor en vuelo
+            await sa_ses.execute(
+                sa.text(
+                    "INSERT INTO labeled_dedup_pairs "
+                    "(job_ref_a, job_ref_b, verdict, source) "
+                    "VALUES (:a, :b, 'duplicate', :src)"
+                ),
+                {"a": ja, "b": jb, "src": src},
+            )
+
+            async def sella():
+                async with factory() as sb:
+                    f = await labels.freeze_dedup_cohort(sb, src, {"sha": "x"})
+                    await sb.commit()
+                    return f
+
+            tarea = asyncio.create_task(sella())
+            await asyncio.sleep(0.25)  # B bloqueado en el lock del trigger
+            assert not tarea.done()
+            async with factory() as sc:
+                boundary = (
+                    await sc.execute(sa.text("SELECT clock_timestamp()"))
+                ).scalar_one()
+            await sa_ses.commit()  # drena al escritor: el freeze se hace efectivo
+            frozen = await tarea
+            # el instante persistido es POSTERIOR al drenaje, no al intento
+            assert frozen >= boundary
+
+    try:
+        _run(go())
+    finally:
+        _run(_desmonta_cohorte(factory, src))
+
+
+def test_p2_helper_y_dml_directo_no_se_interbloquean(db):
+    """Regresión ronda 3 (P-2): el lock explícito del helper invertía el
+    orden respecto al UPDATE directo (helper: pares→fila; DML: fila→pares)
+    y PostgreSQL abortaba con deadlock detected. El helper ya no toma locks
+    propios y sella UPDATE-primero: ambas vías adquieren fila→pares y el
+    concurrente ESPERA (lock timeout si se le acota), jamás deadlock."""
+    factory, created = db
+    src = f"cohorte-p2-{uuid.uuid4().hex[:8]}"
+
+    async def go():
+        async with factory() as s0:  # fila preexistente SIN sellar
+            await s0.execute(
+                sa.text("INSERT INTO labeled_dedup_cohorts (source) VALUES (:src)"),
+                {"src": src},
+            )
+            await s0.commit()
+
+        async with factory() as sa_ses:
+            # helper en vuelo (sin commit): fila → pares
+            fa = await labels.freeze_dedup_cohort(sa_ses, src, {"sha": "a"})
+            assert fa is not None
+            # DML directo concurrente: espera EN LA FILA — no deadlock
+            async with factory() as sb:
+                await sb.execute(sa.text("SET LOCAL lock_timeout = '500ms'"))
+                with pytest.raises(DBAPIError) as exc:
+                    await sb.execute(
+                        sa.text(
+                            "UPDATE labeled_dedup_cohorts SET "
+                            "frozen_at = statement_timestamp(), "
+                            "manifest = '{\"sha\": \"b\"}'::jsonb "
+                            "WHERE source = :src"
+                        ),
+                        {"src": src},
+                    )
+                assert "deadlock" not in str(exc.value).lower()
+                await sb.rollback()
+            await sa_ses.commit()
+
+        # tras el commit, el DML directo choca con el sello, no con un lock
+        with pytest.raises(DBAPIError, match="SELLADA"):
+            async with factory() as sc:
+                await sc.execute(
+                    sa.text(
+                        "UPDATE labeled_dedup_cohorts SET "
+                        "manifest = '{\"sha\": \"c\"}'::jsonb "
+                        "WHERE source = :src"
+                    ),
+                    {"src": src},
+                )
+                await sc.commit()
+
+    try:
+        _run(go())
+    finally:
+        _run(_desmonta_cohorte(factory, src))
+
+
+def test_dos_congeladores_concurrentes_convergen(db):
+    """Ronda 3 (P-2, idempotencia preservada): dos helpers concurrentes —
+    el perdedor de la carrera (violación de unicidad bajo savepoint) relee
+    el sello confirmado y devuelve el MISMO timestamp; el manifest es el
+    del ganador (el pre-registro no se pisa)."""
+    factory, created = db
+    src = f"cohorte-cc-{uuid.uuid4().hex[:8]}"
+
+    async def go():
+        async with factory() as sa_ses:
+            fa = await labels.freeze_dedup_cohort(sa_ses, src, {"sha": "gana"})
+
+            async def rival():
+                async with factory() as sb:
+                    fb = await labels.freeze_dedup_cohort(sb, src, {"sha": "pierde"})
+                    await sb.commit()
+                    return fb
+
+            tarea = asyncio.create_task(rival())
+            await asyncio.sleep(0.2)  # rival bloqueado (lock del trigger)
+            assert not tarea.done()
+            await sa_ses.commit()
+            fb = await tarea
+            assert fb == fa
+            async with factory() as sc:
+                sha = (
+                    await sc.execute(
+                        sa.text(
+                            "SELECT manifest->>'sha' FROM labeled_dedup_cohorts "
+                            "WHERE source = :src"
+                        ),
+                        {"src": src},
+                    )
+                ).scalar_one()
+            assert sha == "gana"
+
+    try:
+        _run(go())
+    finally:
+        _run(_desmonta_cohorte(factory, src))
+
+
 def test_freeze_serializa_con_escritores_en_vuelo(db):
     """Regresión revisión solo-código Nº2 (BLOQUEANTE 1): el trigger se
     evalúa al ejecutar la sentencia — un INSERT sin confirmar pasaba el
