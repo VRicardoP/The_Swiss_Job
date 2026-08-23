@@ -16,7 +16,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jobhunt_core import profiles
@@ -602,7 +602,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                     )
                 ).scalar_one()
 
-        assert asyncio.run(seed_and_version()) == "core0024"
+        assert asyncio.run(seed_and_version()) == "core0025"
 
         run_alembic(temp_url, "downgrade", "core0007")
 
@@ -636,7 +636,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                         sa.text("SELECT version_num FROM alembic_version")
                     )
                 ).scalar_one()
-                assert version == "core0024"
+                assert version == "core0025"
                 # El esquema re-creado FUNCIONA y con sus guardas: smoke real.
                 cid = await profiles.ensure_consumer(s, "b03-post")
                 pid = await profiles.upsert_profile(s, cid, "user-post")
@@ -666,3 +666,95 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
             await admin_engine.dispose()
 
         asyncio.run(drop_db())
+
+
+def test_core0025_cohorte_congelada_hace_inmutables_sus_pares(db):
+    """Regresión auditoría Nº2 (2026-08-23, BLOQUEANTE 2): "se congela" del
+    protocolo del holdout tiene que ser una operación REAL de la BD, no una
+    frase. freeze_dedup_cohort sella la cohorte y el trigger-guard de
+    core0025 bloquea INSERT/UPDATE/DELETE de sus pares (también el UPDATE
+    que intenta MOVER un par hacia la cohorte congelada); las cohortes no
+    congeladas siguen mutables. El freeze es idempotente y NO pisa el
+    manifest pre-registrado."""
+    factory, created = db
+    p = f"c25-{uuid.uuid4().hex[:8]}"
+    ja, jb, jc, jd = f"{p}-a", f"{p}-b", f"{p}-c", f"{p}-d"
+    created["dedup_refs"] += [ja, jb, jc, jd]
+    src = f"cohorte-test-{p}"
+
+    async def go():
+        async with factory() as s:
+            ins = sa.text(
+                "INSERT INTO labeled_dedup_pairs "
+                "(job_ref_a, job_ref_b, verdict, source) "
+                "VALUES (:a, :b, 'duplicate', :src)"
+            )
+            # antes del freeze: mutable (el par del holdout se inserta)
+            await s.execute(ins, {"a": ja, "b": jb, "src": src})
+            await s.execute(ins, {"a": ja, "b": jc, "src": "libre"})
+            await s.commit()
+
+            f1 = await labels.freeze_dedup_cohort(s, src, {"sha": "abc"})
+            await s.commit()
+            # idempotente: mismo timestamp, manifest intacto
+            f2 = await labels.freeze_dedup_cohort(s, src, {"sha": "OTRO"})
+            await s.commit()
+            assert f1 == f2
+            manifest = (
+                await s.execute(
+                    sa.text(
+                        "SELECT manifest->>'sha' FROM labeled_dedup_cohorts "
+                        "WHERE source = :src"
+                    ),
+                    {"src": src},
+                )
+            ).scalar_one()
+            assert manifest == "abc"
+
+        # cada mutación en su propia sesión (la excepción aborta la tx)
+        for sql, params in (
+            ("INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
+             "source) VALUES (:a, :b, 'duplicate', :src)",
+             {"a": ja, "b": jd, "src": src}),
+            ("UPDATE labeled_dedup_pairs SET verdict = 'distinct' "
+             "WHERE job_ref_a = :a AND job_ref_b = :b",
+             {"a": ja, "b": jb}),
+            ("DELETE FROM labeled_dedup_pairs "
+             "WHERE job_ref_a = :a AND job_ref_b = :b",
+             {"a": ja, "b": jb}),
+            # mover un par LIBRE hacia la cohorte congelada tampoco
+            ("UPDATE labeled_dedup_pairs SET source = :src "
+             "WHERE job_ref_a = :a AND job_ref_b = :b",
+             {"a": ja, "b": jc, "src": src}),
+        ):
+            with pytest.raises(DBAPIError, match="CONGELADA"):
+                async with factory() as s2:
+                    await s2.execute(sa.text(sql), params)
+                    await s2.commit()
+
+        # la cohorte NO congelada sigue mutable
+        async with factory() as s3:
+            await s3.execute(
+                sa.text(
+                    "UPDATE labeled_dedup_pairs SET verdict = 'distinct' "
+                    "WHERE job_ref_a = :a AND job_ref_b = :b"
+                ),
+                {"a": ja, "b": jc},
+            )
+            await s3.commit()
+
+    try:
+        _run(go())
+    finally:
+        # descongelar para que el purge del fixture pueda borrar los pares
+        async def unfreeze():
+            async with factory() as s:
+                await s.execute(
+                    sa.text(
+                        "DELETE FROM labeled_dedup_cohorts WHERE source = :src"
+                    ),
+                    {"src": src},
+                )
+                await s.commit()
+
+        _run(unfreeze())

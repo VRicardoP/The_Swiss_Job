@@ -11,6 +11,7 @@ desechable; producción usará 'public' (GRANTs RO enumerados en §1, B-01).
 El core JAMÁS escribe en el esquema legacy — aquí solo se hace SELECT.
 """
 
+import json
 import re
 import uuid
 from collections.abc import Sequence
@@ -31,6 +32,10 @@ SOURCE_SEED = "seed_feedback"
 SOURCE_MANUAL = "manual"
 # Origen trazable de los pares dedup sembrados (DoD B-03: "seeds trazables").
 DEDUP_SEED_SOURCE = "seed_duplicate_of"
+# Cohorte que el GATE evalúa (auditoría Nº2 BLOQUEANTE 1): el holdout ciego
+# del protocolo (PROTOCOLO_HOLDOUT_DEDUP.md). Todo lo demás (seed, curado)
+# es DEVELOPMENT: sirve para ajustar el detector, JAMÁS para puntuar el gate.
+DEDUP_EVAL_COHORT = "holdout-dedup-2026-08-23"
 
 # `legacy_schema` se interpola como identificador (no admite bind param):
 # misma validación que migrate.py antes de interpolar DDL.
@@ -177,6 +182,44 @@ async def seed_dedup_pairs(
         {"lim": limit},  # LIMIT NULL = sin límite (semántica Postgres)
     )
     return result.rowcount
+
+
+async def freeze_dedup_cohort(
+    session: AsyncSession, source: str, manifest: dict | None = None
+) -> datetime:
+    """Congela la cohorte de pares dedup `source` (auditoría Nº2, B-1
+    BLOQUEANTE 2): crea la fila en labeled_dedup_cohorts si no existe y
+    sella frozen_at — a partir de ahí el trigger-guard de core0025 hace
+    INMUTABLES los pares de esa cohorte (INSERT/UPDATE/DELETE ⇒ excepción).
+    IDEMPOTENTE como freeze_set: re-congelar devuelve el timestamp EXISTENTE
+    y NO pisa el manifest ya congelado (el pre-registro no se reescribe)."""
+    frozen_at = (
+        await session.execute(
+            sa.text(
+                "INSERT INTO labeled_dedup_cohorts (source, frozen_at, manifest) "
+                "VALUES (:src, now(), CAST(:m AS jsonb)) "
+                "ON CONFLICT (source) DO UPDATE SET "
+                "  frozen_at = COALESCE(labeled_dedup_cohorts.frozen_at, now()) "
+                "RETURNING frozen_at"
+            ),
+            {"src": source, "m": json.dumps(manifest or {})},
+        )
+    ).scalar_one()
+    return frozen_at
+
+
+async def dedup_cohort_frozen_at(
+    session: AsyncSession, source: str
+) -> datetime | None:
+    """frozen_at de la cohorte, o None si no existe o no está congelada."""
+    return (
+        await session.execute(
+            sa.text(
+                "SELECT frozen_at FROM labeled_dedup_cohorts WHERE source = :src"
+            ),
+            {"src": source},
+        )
+    ).scalar_one_or_none()
 
 
 async def freeze_set(session: AsyncSession, set_id: uuid.UUID) -> datetime:
