@@ -420,14 +420,27 @@ def _seed_metric(factory, cycle, metric, scope, value, details=None, sealed=True
 
 def _freeze_holdout(factory, when):
     """Congela la cohorte del gate con frozen_at=`when` (elegibilidad,
-    auditoría Nº2 B-3): los ciclos cuya ventana empieza >= when pueden
-    sumar; los anteriores no. Idempotente (pisa frozen_at para el test)."""
+    auditoría Nº2 B-3). El arnés RE-congela con timestamps distintos, cosa
+    que el sello de core0026 prohíbe a la aplicación: se puentea con DDL de
+    OWNER (DISABLE TRIGGER), el límite declarado en la migración — esto es
+    exactamente lo que el guard NO cubre y el test lo usa a sabiendas.
+    Manifest no vacío: el getter fail-closed ignora sellos sin acta."""
     _exec(
         factory,
-        "INSERT INTO labeled_dedup_cohorts (source, frozen_at) "
-        "VALUES (:src, :ts) "
+        "ALTER TABLE labeled_dedup_cohorts "
+        "DISABLE TRIGGER labeled_dedup_cohorts_frozen_guard",
+    )
+    _exec(
+        factory,
+        "INSERT INTO labeled_dedup_cohorts (source, frozen_at, manifest) "
+        "VALUES (:src, :ts, '{\"test\": true}'::jsonb) "
         "ON CONFLICT (source) DO UPDATE SET frozen_at = :ts",
         {"src": labels.DEDUP_EVAL_COHORT, "ts": when},
+    )
+    _exec(
+        factory,
+        "ALTER TABLE labeled_dedup_cohorts "
+        "ENABLE TRIGGER labeled_dedup_cohorts_frozen_guard",
     )
 
 
@@ -729,6 +742,37 @@ def test_tasks_registered_beat_cadences_and_core_queues(db):
 
 
 # ------------------------------------------------- run_cycle end-to-end (§7)
+
+
+def test_run_cycle_ciclo_mixto_inelegible_no_es_apto(db, gate_db):
+    """Regresión revisión solo-código Nº2 (IMPORTANTE 2): con todos los
+    gates verdes pero la ventana INICIADA ANTES del congelado del holdout,
+    _run_cycle_locked decía cycle_ok=true y logueaba APTO mientras el
+    contador quedaba 0/7 — dos veredictos contradictorios para el operador.
+    Ahora cycle_ok exige elegibilidad; el mismo ciclo con el freeze
+    anterior a su ventana sí es APTO."""
+    factory = db
+    _seed_green_cycle(factory, G0)  # sellado, todo verde
+
+    # Freeze a MITAD de la ventana de G0: ciclo mixto.
+    _freeze_holdout(
+        factory, metrics.cycle_bounds(G0)[0] + timedelta(hours=6)
+    )
+    result = _run(gate.run_cycle(legacy_schema="public", now=GNOW))
+    assert result["status"] == "ok"
+    assert result["gates_failed"] == []       # verde en todos los gates…
+    assert result["cycle_eligible"] is False  # …pero la ventana es mixta
+    assert result["cycle_ok"] is False        # UN solo veredicto: no apto
+    assert result["consecutive_ok"] == 0
+
+    # Freeze ANTERIOR a la ventana: el mismo ciclo pasa a APTO y computa.
+    _freeze_holdout(
+        factory, metrics.cycle_bounds(G0)[0] - timedelta(days=1)
+    )
+    result2 = _run(gate.run_cycle(legacy_schema="public", now=GNOW))
+    assert result2["cycle_eligible"] is True
+    assert result2["cycle_ok"] is True
+    assert result2["consecutive_ok"] == 1
 
 
 def test_run_cycle_end_to_end_projects_computes_purges_evaluates(db, gate_db):

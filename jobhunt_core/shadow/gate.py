@@ -245,13 +245,20 @@ async def _run_cycle_locked(
         async with factory() as session:
             gates = await evaluate_gates(session, cid)
             status = await gate_status(session, now=now)
+            frozen_at = await dedup_cohort_frozen_at(session, DEDUP_EVAL_COHORT)
     failed = sorted(
         k for k, g in gates.items() if g["kind"] == KIND_GATE and not g["ok"]
     )
     alerts = sorted(
         k for k, g in gates.items() if g["kind"] == KIND_ALERTA and not g["ok"]
     )
-    result["cycle_ok"] = not failed
+    # Revisión solo-código Nº2 (I-2): un ciclo INELEGIBLE (ventana anterior
+    # al congelado del holdout) no puede llamarse APTO aunque sus gates
+    # estén verdes — antes cycle_ok=true + log "APTO" convivían con un
+    # contador 0/7 y el operador leía dos veredictos contradictorios.
+    eligible = frozen_at is not None and cycle_bounds(cid)[0] >= frozen_at
+    result["cycle_eligible"] = eligible
+    result["cycle_ok"] = not failed and eligible
     result["gates_failed"] = failed
     result["alertas"] = alerts
     result["consecutive_ok"] = status["consecutive_ok"]
@@ -260,6 +267,13 @@ async def _run_cycle_locked(
         logger.warning(
             "gate: ciclo %s NO APTO (gates en rojo: %s) — contador a 0",
             cid, ", ".join(failed),
+        )
+    elif not eligible:
+        logger.warning(
+            "gate: ciclo %s INELEGIBLE (ventana anterior al congelado del "
+            "holdout%s) — gates en verde pero NO computa para la racha",
+            cid,
+            "" if frozen_at else "; cohorte SIN congelar",
         )
     else:
         logger.info(
@@ -410,6 +424,8 @@ async def render_gate_report(
     for e in st["per_cycle"]:
         if e.get("recomputado"):
             estado = "RECOMP"  # P1-4: recomputado tras sellado, no computable
+        elif not e.get("elegible", True):
+            estado = "INELIG"  # revisión Nº2 I-2: prioridad sobre OK
         else:
             estado = "OK" if e["ok"] else ("FALLO" if e["computado"] else "—")
         detalle = []
