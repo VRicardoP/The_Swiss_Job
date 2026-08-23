@@ -843,6 +843,47 @@ def test_core0026_el_sello_es_inmutable(db):
 
         with pytest.raises(DBAPIError, match="RETRODATADO"):
             _run(retrodata())
+
+        # Ronda 2 B-1: retrodatado por TRANSACCIÓN LARGA — now() se fija al
+        # abrir la tx; una tx abierta antes del instante real sellaba con
+        # un frozen_at viejo (reproducido por el revisor con 150 ms; el
+        # caso real: abrir a las 05:59:59 y sellar tras las 06:00:00).
+        # statement_timestamp() lo cierra; sellar con now() en tx vieja
+        # falla, y con statement_timestamp() pasa.
+        async def tx_larga():
+            async with factory() as s6:
+                await s6.execute(sa.text("SELECT now()"))  # fija el tx-ts
+                await asyncio.sleep(0.2)
+                await s6.execute(
+                    sa.text(
+                        "INSERT INTO labeled_dedup_cohorts "
+                        "(source, frozen_at, manifest) "
+                        "VALUES (:s3, now(), '{\"sha\": \"x\"}'::jsonb)"
+                    ),
+                    {"s3": f"{src}-txl"},
+                )
+                await s6.commit()
+
+        with pytest.raises(DBAPIError, match="RETRODATADO"):
+            _run(tx_larga())
+
+        async def tx_larga_bien():
+            async with factory() as s7:
+                await s7.execute(sa.text("SELECT now()"))
+                await asyncio.sleep(0.2)
+                await s7.execute(
+                    sa.text(
+                        "INSERT INTO labeled_dedup_cohorts "
+                        "(source, frozen_at, manifest) "
+                        "VALUES (:s4, statement_timestamp(), "
+                        "'{\"sha\": \"x\"}'::jsonb)"
+                    ),
+                    {"s4": f"{src}-txok"},
+                )
+                await s7.commit()
+
+        _run(tx_larga_bien())
+        _run(_desmonta_cohorte(factory, f"{src}-txok"))
     finally:
         _run(_desmonta_cohorte(factory, src))
 
@@ -865,23 +906,32 @@ def test_freeze_exige_manifest_no_vacio(db):
     with pytest.raises(ValueError, match="manifest"):
         _run(sin_manifest(None))
 
-    # CHECK en la BD: sellar a mano con manifest vacío no pasa.
-    async def sello_vacio():
-        async with factory() as s:
-            await s.execute(
-                sa.text(
-                    "INSERT INTO labeled_dedup_cohorts (source, frozen_at) "
-                    "VALUES (:src, now())"
-                ),
-                {"src": src},
-            )
-            await s.commit()
+    # CHECK en la BD: sellar a mano con manifest vacío O de tipo no-objeto
+    # no pasa (ronda 2 B-2: 'null'::jsonb, arrays, strings y escalares
+    # superaban el filtro anterior — JSON null NO es NULL SQL).
+    for mal in ("'{}'::jsonb", "'null'::jsonb", "'[]'::jsonb",
+                "'\"x\"'::jsonb", "'1'::jsonb"):
+        async def sello_mal(m=mal):
+            async with factory() as s:
+                await s.execute(
+                    sa.text(
+                        "INSERT INTO labeled_dedup_cohorts "
+                        "(source, frozen_at, manifest) "
+                        f"VALUES (:src, statement_timestamp(), {m})"
+                    ),
+                    {"src": src},
+                )
+                await s.commit()
 
-    with pytest.raises(IntegrityError, match="ck_cohort_frozen_requires_manifest"):
-        _run(sello_vacio())
+        with pytest.raises(
+            IntegrityError, match="ck_cohort_frozen_requires_manifest"
+        ):
+            _run(sello_mal())
 
-    # Fila legada (pre-core0026) simulada SIN CHECK: el getter la ignora.
-    async def legada_y_lee():
+    # Filas legadas (pre-core0026) simuladas SIN CHECK NI TRIGGER: el
+    # getter las ignora — tanto el {} vacío como el 'null' de tipo no
+    # objeto (fail-closed en ambos ejes).
+    async def legadas_y_lee():
         async with factory() as s:
             await s.execute(
                 sa.text(
@@ -891,6 +941,12 @@ def test_freeze_exige_manifest_no_vacio(db):
             )
             await s.execute(
                 sa.text(
+                    "ALTER TABLE labeled_dedup_cohorts "
+                    "DISABLE TRIGGER labeled_dedup_cohorts_frozen_guard"
+                )
+            )
+            await s.execute(
+                sa.text(
                     "INSERT INTO labeled_dedup_cohorts (source, frozen_at) "
                     "VALUES (:src, now())"
                 ),
@@ -898,17 +954,93 @@ def test_freeze_exige_manifest_no_vacio(db):
             )
             await s.execute(
                 sa.text(
+                    "INSERT INTO labeled_dedup_cohorts "
+                    "(source, frozen_at, manifest) "
+                    "VALUES (:s2, now(), 'null'::jsonb)"
+                ),
+                {"s2": f"{src}-null"},
+            )
+            await s.execute(
+                sa.text(
+                    "ALTER TABLE labeled_dedup_cohorts "
+                    "ENABLE TRIGGER labeled_dedup_cohorts_frozen_guard"
+                )
+            )
+            await s.execute(
+                sa.text(
                     "ALTER TABLE labeled_dedup_cohorts "
                     "ADD CONSTRAINT ck_cohort_frozen_requires_manifest "
-                    "CHECK (frozen_at IS NULL OR manifest <> '{}'::jsonb) "
-                    "NOT VALID"
+                    "CHECK (frozen_at IS NULL OR (jsonb_typeof(manifest) = "
+                    "'object' AND manifest <> '{}'::jsonb)) NOT VALID"
                 )
             )
             await s.commit()
-            return await labels.dedup_cohort_frozen_at(s, src)
+            a = await labels.dedup_cohort_frozen_at(s, src)
+            b = await labels.dedup_cohort_frozen_at(s, f"{src}-null")
+            return a, b
 
     try:
-        assert _run(legada_y_lee()) is None  # fail-closed
+        assert _run(legadas_y_lee()) == (None, None)  # fail-closed
+    finally:
+        _run(_desmonta_cohorte(factory, src))
+        _run(_desmonta_cohorte(factory, f"{src}-null"))
+
+
+def test_sello_por_dml_directo_tambien_espera_al_escritor(db):
+    """Regresión ronda 2 (BLOQUEANTE 3): el lock vivía solo en el helper —
+    el trigger y el CHECK convierten el INSERT directo en una vía ADMITIDA
+    de sellado, pero esa vía no serializaba con los escritores de pares y
+    reabría la carrera B1 (reproducido: el DML confirmó en 150 ms sin
+    esperar). El LOCK TABLE vive ahora en el trigger (frontera común):
+    cualquier sellado espera a los escritores en vuelo."""
+    factory, created = db
+    p = f"dml-{uuid.uuid4().hex[:8]}"
+    ja, jb = f"{p}-a", f"{p}-b"
+    created["dedup_refs"] += [ja, jb]
+    src = f"cohorte-dml-{p}"
+    sello = sa.text(
+        "INSERT INTO labeled_dedup_cohorts (source, frozen_at, manifest) "
+        "VALUES (:src, statement_timestamp(), '{\"sha\": \"x\"}'::jsonb)"
+    )
+
+    async def go():
+        async with factory() as sa_ses:  # escritor A: INSERT sin confirmar
+            await sa_ses.execute(
+                sa.text(
+                    "INSERT INTO labeled_dedup_pairs "
+                    "(job_ref_a, job_ref_b, verdict, source) "
+                    "VALUES (:a, :b, 'duplicate', :src)"
+                ),
+                {"a": ja, "b": jb, "src": src},
+            )
+            # sellado por DML DIRECTO en otra sesión: debe CHOCAR con el
+            # lock del escritor en vuelo (antes confirmaba sin esperar)
+            async with factory() as sb:
+                await sb.execute(sa.text("SET LOCAL lock_timeout = '500ms'"))
+                with pytest.raises(DBAPIError):
+                    await sb.execute(sello, {"src": src})
+                await sb.rollback()
+            await sa_ses.commit()
+
+        async with factory() as sb2:  # tras el commit de A, el DML sella
+            await sb2.execute(sello, {"src": src})
+            await sb2.commit()
+
+        # y el par de A quedó DENTRO del snapshot sellado
+        async with factory() as s3:
+            n = (
+                await s3.execute(
+                    sa.text(
+                        "SELECT count(*) FROM labeled_dedup_pairs "
+                        "WHERE source = :src"
+                    ),
+                    {"src": src},
+                )
+            ).scalar_one()
+            assert n == 1
+
+    try:
+        _run(go())
     finally:
         _run(_desmonta_cohorte(factory, src))
 

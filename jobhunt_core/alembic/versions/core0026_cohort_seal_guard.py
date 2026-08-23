@@ -8,10 +8,17 @@ Revisión solo-código del cierre Nº2 (2026-08-23), BLOQUEANTES 2 y 3:
   otro manifest — sin rastro. Reproducido por el revisor. Ahora un trigger
   sobre labeled_dedup_cohorts prohíbe UPDATE/DELETE cuando OLD.frozen_at
   IS NOT NULL: la única transición permitida es NULL → sellado, una vez.
-  Y el sello NO es retrodatable (agujero encontrado al preparar la
-  re-confirmación): un INSERT/UPDATE que ponga frozen_at exige
-  frozen_at = now() — un frozen_at en el pasado movería el corte de
-  elegibilidad del gate y haría elegibles ciclos anteriores al freeze.
+  Y el sello NO es retrodatable (agujero del autor + BLOQUEANTE 1 de la
+  ronda 2): sellar exige frozen_at = statement_timestamp() — now() era
+  burlable con una transacción abierta ANTES del instante real (now() es
+  el timestamp de TRANSACCIÓN; reproducido por el revisor con 150 ms).
+- B3 ronda 2: el lock que serializa el sello con los escritores de pares
+  vive AQUÍ, en el trigger (frontera común de la BD) — el sellado por DML
+  directo es una vía admitida y sin esto no tomaba el lock del helper y
+  reabría la carrera B1. El del helper se conserva para la idempotencia
+  (dos congeladores: el segundo espera y LEE, sin chocar con el guard).
+- B2 ronda 2: 'null'::jsonb, arrays y escalares pasaban el CHECK
+  (JSON null NO es NULL SQL) — el manifest exige jsonb_typeof = object.
 - B-3: `manifest={}` activaba igualmente el corte de elegibilidad. CHECK:
   una fila congelada exige manifest NO vacío (el pre-registro SHA-256).
 
@@ -51,13 +58,21 @@ def upgrade() -> None:
             IF TG_OP = 'DELETE' THEN
                 RETURN OLD;
             END IF;
-            -- Sellar (INSERT o transición NULL→valor) exige frozen_at =
-            -- now(): un sello RETRODATADO movería el corte de elegibilidad
-            -- al pasado y haría elegibles ciclos anteriores al freeze.
-            IF NEW.frozen_at IS NOT NULL AND NEW.frozen_at <> now() THEN
-                RAISE EXCEPTION
-                    'sello RETRODATADO en cohorte %: frozen_at debe ser now() (core0026)',
-                    NEW.source;
+            IF NEW.frozen_at IS NOT NULL THEN
+                -- Sellar exige frozen_at = statement_timestamp(): now() es
+                -- el timestamp de TRANSACCIÓN y una tx abierta antes del
+                -- instante real retrodataba el sello (ronda 2, B-1) —
+                -- movería el corte de elegibilidad y haría elegibles
+                -- ciclos anteriores al freeze.
+                IF NEW.frozen_at <> statement_timestamp() THEN
+                    RAISE EXCEPTION
+                        'sello RETRODATADO en cohorte %: frozen_at debe ser statement_timestamp() (core0026)',
+                        NEW.source;
+                END IF;
+                -- Serialización en la FRONTERA de la BD (ronda 2, B-3): el
+                -- sello espera a los escritores de pares EN VUELO (entran
+                -- al snapshot) sea cual sea la vía — helper o DML directo.
+                LOCK TABLE {S}.labeled_dedup_pairs IN SHARE ROW EXCLUSIVE MODE;
             END IF;
             RETURN NEW;
         END;
@@ -75,7 +90,8 @@ def upgrade() -> None:
         f"""
         ALTER TABLE {S}.labeled_dedup_cohorts
         ADD CONSTRAINT ck_cohort_frozen_requires_manifest
-        CHECK (frozen_at IS NULL OR manifest <> '{{}}'::jsonb)
+        CHECK (frozen_at IS NULL OR (jsonb_typeof(manifest) = 'object'
+               AND manifest <> '{{}}'::jsonb))
         """
     )
 

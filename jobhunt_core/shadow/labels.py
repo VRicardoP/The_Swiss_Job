@@ -218,10 +218,15 @@ async def freeze_dedup_cohort(
     return (
         await session.execute(
             sa.text(
+                # statement_timestamp(), NO now() (ronda 2 B-1): now() es
+                # el timestamp de TRANSACCIÓN — si el llamador abrió la tx
+                # antes del instante real, el sello quedaba retrodatado (y
+                # el trigger, que compara contra statement_timestamp(), lo
+                # rechazaría). Mismo statement ⇒ mismo valor ⇒ pasa el guard.
                 "INSERT INTO labeled_dedup_cohorts (source, frozen_at, manifest) "
-                "VALUES (:src, now(), CAST(:m AS jsonb)) "
+                "VALUES (:src, statement_timestamp(), CAST(:m AS jsonb)) "
                 "ON CONFLICT (source) DO UPDATE SET "
-                "  frozen_at = now(), manifest = CAST(:m AS jsonb) "
+                "  frozen_at = statement_timestamp(), manifest = CAST(:m AS jsonb) "
                 "WHERE labeled_dedup_cohorts.frozen_at IS NULL "
                 "RETURNING frozen_at"
             ),
@@ -234,14 +239,17 @@ async def dedup_cohort_frozen_at(
     session: AsyncSession, source: str
 ) -> datetime | None:
     """frozen_at de la cohorte, o None si no existe o no está congelada.
-    FAIL-CLOSED (revisión B-3): un sello sin manifest de pre-registro
-    (jsonb vacío — solo posible en filas anteriores a core0026) NO cuenta
-    como congelado: la elegibilidad no se activa con un freeze sin acta."""
+    FAIL-CLOSED (revisión B-3 + ronda 2 B-2): un sello sin manifest de
+    pre-registro REAL no cuenta como congelado — ni jsonb vacío ni un tipo
+    no-objeto ('null'::jsonb, arrays, strings, escalares: JSON null NO es
+    NULL SQL y pasaba el filtro anterior). Solo posible en filas anteriores
+    a core0026; la elegibilidad no se activa con un freeze sin acta."""
     return (
         await session.execute(
             sa.text(
                 "SELECT frozen_at FROM labeled_dedup_cohorts "
-                "WHERE source = :src AND manifest <> '{}'::jsonb"
+                "WHERE source = :src AND jsonb_typeof(manifest) = 'object' "
+                "  AND manifest <> '{}'::jsonb"
             ),
             {"src": source},
         )
