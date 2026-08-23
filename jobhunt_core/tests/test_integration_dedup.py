@@ -100,7 +100,8 @@ def _listing(ext, title):
     )
 
 
-def _setup(factory, created, por_fuente, backend_cls=KeywordBackend):
+def _setup(factory, created, por_fuente, backend_cls=KeywordBackend,
+           name_prefix="dedup-src"):
     """Siembra N fuentes con sus títulos, registra modelo y embebe con el
     backend determinista (mismo título ⇒ mismo vector ⇒ sim 1.0)."""
     from jobhunt_core.tasks.embedding import run_pending_task
@@ -111,7 +112,7 @@ def _setup(factory, created, por_fuente, backend_cls=KeywordBackend):
                 source_id, scope_id = uuid.uuid4(), uuid.uuid4()
                 created["sources"].append(source_id)
                 created["scopes"].append(scope_id)
-                name = f"dedup-src-{i}-{source_id.hex[:6]}"
+                name = f"{name_prefix}-{i}-{source_id.hex[:6]}"
                 # Sin normalizador el sink NO crea la revisión canónica
                 # (current_offer_revision_id queda NULL) y el corpus del
                 # generador no ve la vacante. Uno trivial por fuente.
@@ -307,3 +308,121 @@ def test_exacto_intra_respeta_multi_ciudad(db):
     # exacto... aunque el ANN puede añadirlos si comparten vector — por eso
     # se comprueba el DESGLOSE del exacto, no el total.
     assert r["candidatos_exactos_intra"] == 1
+
+
+def test_gate_puntua_solo_la_cohorte_holdout(db):
+    """Regresión auditoría Nº2 (2026-08-23, BLOQUEANTE 1): _dedup_rows y
+    _labels_ready_row puntúan SOLO la cohorte DEDUP_EVAL_COHORT. Con la
+    mezcla antigua, un TP de development absorbía el FN del holdout
+    (recall 1/2 = 0.5); filtrado, el holdout suspende solo: recall 0.0."""
+    from jobhunt_core.shadow.labels import DEDUP_EVAL_COHORT
+    from jobhunt_core.shadow.metrics import M_DEDUP_RECALL, _dedup_rows, _labels_ready_row
+
+    factory, created = db
+    # 4 fuentes legacy:* — s0/s1 mismo título (candidato cross = detección);
+    # s2/s3 ortogonales (sin candidato). external_ids únicos por run.
+    _setup(
+        factory, created,
+        [["python dev"], ["python dev"], ["python dev x"], ["guardabosques"]],
+        name_prefix="legacy:dedup-test",
+    )
+    _scan(factory)  # genera el candidato del par s0-s1
+
+    refs = {}
+
+    async def prepara():
+        async with factory() as s:
+            rows = (
+                await s.execute(
+                    sa.text(
+                        "SELECT l.external_id, s2.name FROM source_listings l "
+                        "JOIN sources s2 ON s2.id = l.source_id "
+                        "WHERE l.source_id = ANY(:srcs)"
+                    ),
+                    {"srcs": created["sources"]},
+                )
+            ).all()
+            for r in rows:
+                # name = legacy:dedup-test-<i>-<hex>: índice de fuente
+                refs[int(r.name.split("-")[2])] = r.external_id
+            ins = sa.text(
+                "INSERT INTO labeled_dedup_pairs "
+                "(job_ref_a, job_ref_b, verdict, source) "
+                "VALUES (:a, :b, 'duplicate', :src) "
+                "ON CONFLICT (LEAST(job_ref_a, job_ref_b), "
+                "GREATEST(job_ref_a, job_ref_b)) DO NOTHING"
+            )
+            # development: el par DETECTADO (TP si contara)
+            await s.execute(ins, {"a": refs[0], "b": refs[1], "src": "curado-test"})
+            # holdout: par NO detectado (FN real del examen)
+            await s.execute(
+                ins, {"a": refs[2], "b": refs[3], "src": DEDUP_EVAL_COHORT}
+            )
+            await s.commit()
+
+    asyncio.run(prepara())
+    try:
+        async def evalua():
+            async with factory() as s:
+                rows = await _dedup_rows(s)
+                ready = await _labels_ready_row(s, [])
+                return rows, ready
+
+        rows, ready = asyncio.run(evalua())
+        recall = next(r for r in rows if r[0] == M_DEDUP_RECALL)
+        # SOLO el holdout: tp=0, fn=1 ⇒ 0.0 (mezclado habría sido 0.5)
+        assert recall[1] == 0.0
+        assert recall[2]["cohorte"] == DEDUP_EVAL_COHORT
+        assert recall[2]["pares"] == 1
+        # la precondición cuenta lo que el gate puntúa: 1 par, no 2
+        assert ready[2]["pares_dedup"] == 1
+    finally:
+        async def limpia():
+            async with factory() as s:
+                await s.execute(
+                    sa.text(
+                        "DELETE FROM labeled_dedup_pairs "
+                        "WHERE job_ref_a = ANY(:refs) OR job_ref_b = ANY(:refs)"
+                    ),
+                    {"refs": list(refs.values())},
+                )
+                await s.commit()
+
+        asyncio.run(limpia())
+
+
+def test_hnsw_underfill_cae_al_scan_exacto(db):
+    """Regresión auditoría Nº2 (2026-08-23, IMPORTANTE 1): pgvector aplica
+    el WHERE tras sacar candidatos del HNSW — con el presupuesto del scan
+    estrangulado (max_scan_tuples=1) y el seq scan desactivado, el índice
+    devuelve MENOS vecinos cross-source de los que existen. El fallback
+    exacto debe recuperarlos: misma geometría que B-2 (6 intra + 1 cross a
+    0.96), resultado completo de 6 pares igualmente."""
+    import jobhunt_core.dedup as dedup_mod
+
+    factory, created = db
+    _setup(
+        factory, created,
+        [[f"python dev {j}" for j in range(6)], ["casi python dev"]],
+        backend_cls=CasiBackend,
+    )
+
+    original = dedup_mod.MAX_SCAN_TUPLES
+    dedup_mod.MAX_SCAN_TUPLES = 1  # estrangula el scan iterativo
+    try:
+        async def go():
+            async with factory() as s:
+                # forzar el uso del índice (corpus diminuto ⇒ seq scan)
+                await s.execute(sa.text("SET LOCAL enable_seqscan = off"))
+                r = await scan_semantic_candidates(s, window_hours=0)
+                await s.commit()
+                return r
+
+        r = asyncio.run(go())
+    finally:
+        dedup_mod.MAX_SCAN_TUPLES = original
+
+    assert r["status"] == "ok"
+    pares = _pairs(factory, created)
+    assert len(pares) == 6
+    assert all(abs(float(p.similarity) - 0.96) < 0.005 for p in pares)

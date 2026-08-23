@@ -567,9 +567,12 @@ def test_dedup_precision_recall_with_built_confusion_matrix(db):
     for a, b, v in pairs:
         _exec(
             factory,
+            # Cohorte del GATE (auditoría Nº2 BLOQUEANTE 1): _dedup_rows
+            # SOLO puntúa DEDUP_EVAL_COHORT — con 'manual' este test no
+            # vería ningún par.
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, source) "
-            "VALUES (:a, :b, :v, 'manual')",
-            {"a": a, "b": b, "v": v},
+            "VALUES (:a, :b, :v, :src)",
+            {"a": a, "b": b, "v": v, "src": labels.DEDUP_EVAL_COHORT},
         )
 
     _compute(factory)
@@ -635,14 +638,16 @@ def test_labels_ready_green_with_dod_oracle(db):
         _exec(
             factory,
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            "source) VALUES (:a, :b, 'duplicate', '"
+            + labels.DEDUP_EVAL_COHORT + "')",
             {"a": ra, "b": rb},
         )
     for i in range(25):
         _exec(
             factory,
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            "source) VALUES (:a, :b, 'duplicate', '"
+            + labels.DEDUP_EVAL_COHORT + "')",
             {"a": f"{p}-u{i:02d}a", "b": f"{p}-u{i:02d}b"},
         )
 
@@ -683,14 +688,16 @@ def test_labels_ready_red_with_two_sets_one_profile(db):
         _exec(
             factory,
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            "source) VALUES (:a, :b, 'duplicate', '"
+            + labels.DEDUP_EVAL_COHORT + "')",
             {"a": ra, "b": rb},
         )
     for i in range(25):
         _exec(
             factory,
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            "source) VALUES (:a, :b, 'duplicate', '"
+            + labels.DEDUP_EVAL_COHORT + "')",
             {"a": f"{p}-u{i:02d}a", "b": f"{p}-u{i:02d}b"},
         )
     _compute(factory)
@@ -726,14 +733,16 @@ def test_labels_ready_red_when_effective_set_is_small(db):
         _exec(
             factory,
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            "source) VALUES (:a, :b, 'duplicate', '"
+            + labels.DEDUP_EVAL_COHORT + "')",
             {"a": ra, "b": rb},
         )
     for i in range(25):
         _exec(
             factory,
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            "source) VALUES (:a, :b, 'duplicate', '"
+            + labels.DEDUP_EVAL_COHORT + "')",
             {"a": f"{p}-u{i:02d}a", "b": f"{p}-u{i:02d}b"},
         )
     _compute(factory)
@@ -803,14 +812,16 @@ def test_inactive_profile_excluded_from_metrics_and_labels_ready(db):
         _exec(
             factory,
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            "source) VALUES (:a, :b, 'duplicate', '"
+            + labels.DEDUP_EVAL_COHORT + "')",
             {"a": ra, "b": rb},
         )
     for i in range(25):
         _exec(
             factory,
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', 'manual')",
+            "source) VALUES (:a, :b, 'duplicate', '"
+            + labels.DEDUP_EVAL_COHORT + "')",
             {"a": f"{p}-u{i:02d}a", "b": f"{p}-u{i:02d}b"},
         )
     # u1 ACTIVO, u2 INACTIVO (último estado users por pk del staging aplicado).

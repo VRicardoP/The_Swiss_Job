@@ -123,7 +123,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jobhunt_core import matching
 from jobhunt_core.delivery import stats as delivery_stats
 from jobhunt_core.harvest.sink import MAX_URL_LEN, normalize_url
-from jobhunt_core.shadow.labels import _check_legacy_schema, map_job_refs_to_vacancies
+from jobhunt_core.shadow.labels import (
+    DEDUP_EVAL_COHORT,
+    _check_legacy_schema,
+    map_job_refs_to_vacancies,
+)
 from jobhunt_core.shadow.projector import SHADOW_CONSUMER, inactive_user_refs
 
 logger = logging.getLogger(__name__)
@@ -742,11 +746,17 @@ async def _dedup_rows(session: AsyncSession) -> list[tuple]:
     en verde con el oráculo vacío); el gate queda en ROJO y `labels_ready`
     señala la precondición incumplida. details deja los conteos para
     auditarlo."""
+    # Auditoría Nº2 (2026-08-23, BLOQUEANTE 1): el gate puntúa SOLO la
+    # cohorte holdout. Mezclar development (seed + curado — los pares con
+    # los que se AJUSTÓ el detector) diluía cualquier fallo del holdout:
+    # 42 TP de development absorbían 5 FN del holdout y daban 0,904 > 0,90.
     pairs = (
         await session.execute(
             sa.text(
-                "SELECT job_ref_a, job_ref_b, verdict FROM labeled_dedup_pairs"
-            )
+                "SELECT job_ref_a, job_ref_b, verdict FROM labeled_dedup_pairs "
+                "WHERE source = :cohorte"
+            ),
+            {"cohorte": DEDUP_EVAL_COHORT},
         )
     ).all()
     refs = sorted({r for p in pairs for r in (p.job_ref_a, p.job_ref_b)})
@@ -755,7 +765,7 @@ async def _dedup_rows(session: AsyncSession) -> list[tuple]:
         session, sorted(set(mapping.values()), key=str)
     )
     c = _dedup_confusion(pairs, mapping, candidate_pairs)
-    details = c | {"pares": len(pairs)}
+    details = c | {"pares": len(pairs), "cohorte": DEDUP_EVAL_COHORT}
     tp, fp, fn = c["tp"], c["fp"], c["fn"]
     rows: list[tuple] = []
     for metric, denom in (
@@ -835,9 +845,15 @@ async def _labels_ready_row(session: AsyncSession, measured_profiles: list) -> t
     perfiles_ok = sum(
         1 for r in measured_profiles if int(r.n_juicios) >= LABELS_MIN_JUDGMENTS_PER_SET
     )
+    # Misma cohorte que _dedup_rows (auditoría Nº2 BLOQUEANTE 1): la
+    # precondición cuenta los pares que el gate REALMENTE va a puntuar.
     pairs = (
         await session.execute(
-            sa.text("SELECT job_ref_a, job_ref_b FROM labeled_dedup_pairs")
+            sa.text(
+                "SELECT job_ref_a, job_ref_b FROM labeled_dedup_pairs "
+                "WHERE source = :cohorte"
+            ),
+            {"cohorte": DEDUP_EVAL_COHORT},
         )
     ).all()
     refs = sorted({r for p in pairs for r in (p.job_ref_a, p.job_ref_b)})
