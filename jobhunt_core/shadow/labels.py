@@ -185,37 +185,63 @@ async def seed_dedup_pairs(
 
 
 async def freeze_dedup_cohort(
-    session: AsyncSession, source: str, manifest: dict | None = None
+    session: AsyncSession, source: str, manifest: dict
 ) -> datetime:
     """Congela la cohorte de pares dedup `source` (auditoría Nº2, B-1
-    BLOQUEANTE 2): crea la fila en labeled_dedup_cohorts si no existe y
-    sella frozen_at — a partir de ahí el trigger-guard de core0025 hace
-    INMUTABLES los pares de esa cohorte (INSERT/UPDATE/DELETE ⇒ excepción).
-    IDEMPOTENTE como freeze_set: re-congelar devuelve el timestamp EXISTENTE
-    y NO pisa el manifest ya congelado (el pre-registro no se reescribe)."""
-    frozen_at = (
+    BLOQUEANTE 2; endurecido tras la revisión solo-código):
+
+    - `manifest` es OBLIGATORIO y no vacío (revisión B-3: un freeze
+      accidental sin pre-registro activaba el corte de elegibilidad; el
+      CHECK de core0026 lo rechaza también en la BD).
+    - SERIALIZA el sellado con las mutaciones en vuelo (revisión B-1):
+      LOCK TABLE SHARE ROW EXCLUSIVE sobre labeled_dedup_pairs — espera a
+      que los escritores no confirmados terminen (sus pares ENTRAN al
+      snapshot) y los posteriores chocan ya con el trigger-guard. El lock
+      se mantiene hasta el commit del llamador.
+    - IDEMPOTENTE sin UPDATE vacío (revisión B-2: la fila congelada es
+      inmutable — trigger de core0026): re-congelar LEE y devuelve el
+      timestamp existente sin escribir; el lock serializa también a dos
+      congeladores concurrentes.
+    """
+    if not isinstance(manifest, dict) or not manifest:
+        raise ValueError(
+            "freeze_dedup_cohort exige un manifest dict NO vacío (los "
+            "SHA-256 del pre-registro) — sin él, el sello no vale como "
+            "corte de elegibilidad"
+        )
+    await session.execute(
+        sa.text("LOCK TABLE labeled_dedup_pairs IN SHARE ROW EXCLUSIVE MODE")
+    )
+    ya = await dedup_cohort_frozen_at(session, source)
+    if ya is not None:
+        return ya
+    return (
         await session.execute(
             sa.text(
                 "INSERT INTO labeled_dedup_cohorts (source, frozen_at, manifest) "
                 "VALUES (:src, now(), CAST(:m AS jsonb)) "
                 "ON CONFLICT (source) DO UPDATE SET "
-                "  frozen_at = COALESCE(labeled_dedup_cohorts.frozen_at, now()) "
+                "  frozen_at = now(), manifest = CAST(:m AS jsonb) "
+                "WHERE labeled_dedup_cohorts.frozen_at IS NULL "
                 "RETURNING frozen_at"
             ),
-            {"src": source, "m": json.dumps(manifest or {})},
+            {"src": source, "m": json.dumps(manifest)},
         )
     ).scalar_one()
-    return frozen_at
 
 
 async def dedup_cohort_frozen_at(
     session: AsyncSession, source: str
 ) -> datetime | None:
-    """frozen_at de la cohorte, o None si no existe o no está congelada."""
+    """frozen_at de la cohorte, o None si no existe o no está congelada.
+    FAIL-CLOSED (revisión B-3): un sello sin manifest de pre-registro
+    (jsonb vacío — solo posible en filas anteriores a core0026) NO cuenta
+    como congelado: la elegibilidad no se activa con un freeze sin acta."""
     return (
         await session.execute(
             sa.text(
-                "SELECT frozen_at FROM labeled_dedup_cohorts WHERE source = :src"
+                "SELECT frozen_at FROM labeled_dedup_cohorts "
+                "WHERE source = :src AND manifest <> '{}'::jsonb"
             ),
             {"src": source},
         )

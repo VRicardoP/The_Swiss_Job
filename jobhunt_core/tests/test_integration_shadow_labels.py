@@ -602,7 +602,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                     )
                 ).scalar_one()
 
-        assert asyncio.run(seed_and_version()) == "core0025"
+        assert asyncio.run(seed_and_version()) == "core0026"
 
         run_alembic(temp_url, "downgrade", "core0007")
 
@@ -636,7 +636,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                         sa.text("SELECT version_num FROM alembic_version")
                     )
                 ).scalar_one()
-                assert version == "core0025"
+                assert version == "core0026"
                 # El esquema re-creado FUNCIONA y con sus guardas: smoke real.
                 cid = await profiles.ensure_consumer(s, "b03-post")
                 pid = await profiles.upsert_profile(s, cid, "user-post")
@@ -746,15 +746,216 @@ def test_core0025_cohorte_congelada_hace_inmutables_sus_pares(db):
     try:
         _run(go())
     finally:
-        # descongelar para que el purge del fixture pueda borrar los pares
-        async def unfreeze():
-            async with factory() as s:
-                await s.execute(
+        _run(_desmonta_cohorte(factory, src))
+
+
+async def _desmonta_cohorte(factory, src):
+    """Limpieza de cohortes SELLADAS en tests: el DELETE está bloqueado por
+    el guard de core0026, así que se usa el límite declarado — DDL de OWNER
+    (DISABLE TRIGGER). Al borrar la fila del sello, los pares vuelven a ser
+    mutables y el purge del fixture puede recogerlos."""
+    async with factory() as s:
+        await s.execute(
+            sa.text(
+                "ALTER TABLE labeled_dedup_cohorts "
+                "DISABLE TRIGGER labeled_dedup_cohorts_frozen_guard"
+            )
+        )
+        await s.execute(
+            sa.text("DELETE FROM labeled_dedup_cohorts WHERE source = :src"),
+            {"src": src},
+        )
+        await s.execute(
+            sa.text(
+                "ALTER TABLE labeled_dedup_cohorts "
+                "ENABLE TRIGGER labeled_dedup_cohorts_frozen_guard"
+            )
+        )
+        await s.commit()
+
+
+def test_core0026_el_sello_es_inmutable(db):
+    """Regresión revisión solo-código Nº2 (BLOQUEANTE 2): la fila del sello
+    no estaba protegida — descongelar (frozen_at=NULL), reescribir el
+    verdict y RESTAURAR el mismo frozen_at con otro manifest dejaba una
+    cohorte adulterada sin rastro (reproducido por el revisor). Con
+    core0026: UPDATE y DELETE sobre una cohorte sellada ⇒ excepción; la
+    única transición válida es NULL → sellado, una vez."""
+    factory, created = db
+    p = f"c26-{uuid.uuid4().hex[:8]}"
+    ja, jb = f"{p}-a", f"{p}-b"
+    created["dedup_refs"] += [ja, jb]
+    src = f"cohorte-sello-{p}"
+
+    async def go():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "INSERT INTO labeled_dedup_pairs "
+                    "(job_ref_a, job_ref_b, verdict, source) "
+                    "VALUES (:a, :b, 'duplicate', :src)"
+                ),
+                {"a": ja, "b": jb, "src": src},
+            )
+            await s.commit()
+            f1 = await labels.freeze_dedup_cohort(s, src, {"sha": "acta"})
+            await s.commit()
+            return f1
+
+    f1 = _run(go())
+    try:
+        for sql, params in (
+            # el descongelado del ataque reproducido
+            ("UPDATE labeled_dedup_cohorts SET frozen_at = NULL "
+             "WHERE source = :src", {"src": src}),
+            # reescritura del manifest con el sello puesto
+            ("UPDATE labeled_dedup_cohorts SET manifest = '{\"sha\": \"forged\"}' "
+             "WHERE source = :src", {"src": src}),
+            # restauración de un frozen_at arbitrario
+            ("UPDATE labeled_dedup_cohorts SET frozen_at = :ts "
+             "WHERE source = :src", {"src": src, "ts": f1}),
+            ("DELETE FROM labeled_dedup_cohorts WHERE source = :src",
+             {"src": src}),
+        ):
+            with pytest.raises(DBAPIError, match="SELLADA"):
+                async def intenta(sql=sql, params=params):
+                    async with factory() as s2:
+                        await s2.execute(sa.text(sql), params)
+                        await s2.commit()
+
+                _run(intenta())
+    finally:
+        _run(_desmonta_cohorte(factory, src))
+
+
+def test_freeze_exige_manifest_no_vacio(db):
+    """Regresión revisión solo-código Nº2 (BLOQUEANTE 3): un freeze sin
+    manifest creaba un corte de elegibilidad válido sin pre-registro. El
+    helper rechaza None/{} (ValueError), el CHECK de core0026 lo rechaza en
+    la BD, y el getter fail-closed ignora sellos con manifest vacío
+    (filas anteriores a core0026)."""
+    factory, created = db
+    src = f"cohorte-manifest-{uuid.uuid4().hex[:8]}"
+
+    async def sin_manifest(m):
+        async with factory() as s:
+            await labels.freeze_dedup_cohort(s, src, m)
+
+    with pytest.raises(ValueError, match="manifest"):
+        _run(sin_manifest({}))
+    with pytest.raises(ValueError, match="manifest"):
+        _run(sin_manifest(None))
+
+    # CHECK en la BD: sellar a mano con manifest vacío no pasa.
+    async def sello_vacio():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "INSERT INTO labeled_dedup_cohorts (source, frozen_at) "
+                    "VALUES (:src, now())"
+                ),
+                {"src": src},
+            )
+            await s.commit()
+
+    with pytest.raises(IntegrityError, match="ck_cohort_frozen_requires_manifest"):
+        _run(sello_vacio())
+
+    # Fila legada (pre-core0026) simulada SIN CHECK: el getter la ignora.
+    async def legada_y_lee():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "ALTER TABLE labeled_dedup_cohorts "
+                    "DROP CONSTRAINT ck_cohort_frozen_requires_manifest"
+                )
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO labeled_dedup_cohorts (source, frozen_at) "
+                    "VALUES (:src, now())"
+                ),
+                {"src": src},
+            )
+            await s.execute(
+                sa.text(
+                    "ALTER TABLE labeled_dedup_cohorts "
+                    "ADD CONSTRAINT ck_cohort_frozen_requires_manifest "
+                    "CHECK (frozen_at IS NULL OR manifest <> '{}'::jsonb) "
+                    "NOT VALID"
+                )
+            )
+            await s.commit()
+            return await labels.dedup_cohort_frozen_at(s, src)
+
+    try:
+        assert _run(legada_y_lee()) is None  # fail-closed
+    finally:
+        _run(_desmonta_cohorte(factory, src))
+
+
+def test_freeze_serializa_con_escritores_en_vuelo(db):
+    """Regresión revisión solo-código Nº2 (BLOQUEANTE 1): el trigger se
+    evalúa al ejecutar la sentencia — un INSERT sin confirmar pasaba el
+    guard, el freeze sellaba en otra sesión y el INSERT confirmaba DESPUÉS:
+    un par fuera del snapshot sellado (reproducido por el revisor). Con el
+    LOCK TABLE del helper, el freeze ESPERA a los escritores en vuelo (sus
+    pares entran al snapshot) y los posteriores chocan con el guard."""
+    factory, created = db
+    p = f"race-{uuid.uuid4().hex[:8]}"
+    ja, jb, jc = f"{p}-a", f"{p}-b", f"{p}-c"
+    created["dedup_refs"] += [ja, jb, jc]
+    src = f"cohorte-race-{p}"
+
+    async def go():
+        async with factory() as sa_ses:  # escritor A: INSERT sin confirmar
+            await sa_ses.execute(
+                sa.text(
+                    "INSERT INTO labeled_dedup_pairs "
+                    "(job_ref_a, job_ref_b, verdict, source) "
+                    "VALUES (:a, :b, 'duplicate', :src)"
+                ),
+                {"a": ja, "b": jb, "src": src},
+            )
+            # B intenta congelar con lock_timeout: debe CHOCAR con el lock
+            # del escritor en vuelo, no colarse.
+            async with factory() as sb:
+                await sb.execute(sa.text("SET LOCAL lock_timeout = '500ms'"))
+                with pytest.raises(DBAPIError):
+                    await labels.freeze_dedup_cohort(sb, src, {"sha": "x"})
+                await sb.rollback()
+            await sa_ses.commit()  # A confirma: su par ENTRA al snapshot
+
+        async with factory() as sb2:  # ahora el freeze pasa
+            frozen = await labels.freeze_dedup_cohort(sb2, src, {"sha": "x"})
+            await sb2.commit()
+            assert frozen is not None
+
+        # el par de A quedó DENTRO y sellado; un escritor posterior choca
+        async with factory() as s3:
+            n = (
+                await s3.execute(
                     sa.text(
-                        "DELETE FROM labeled_dedup_cohorts WHERE source = :src"
+                        "SELECT count(*) FROM labeled_dedup_pairs "
+                        "WHERE source = :src"
                     ),
                     {"src": src},
                 )
-                await s.commit()
+            ).scalar_one()
+            assert n == 1
+        with pytest.raises(DBAPIError, match="CONGELADA"):
+            async with factory() as s4:
+                await s4.execute(
+                    sa.text(
+                        "INSERT INTO labeled_dedup_pairs "
+                        "(job_ref_a, job_ref_b, verdict, source) "
+                        "VALUES (:a, :b, 'duplicate', :src)"
+                    ),
+                    {"a": ja, "b": jc, "src": src},
+                )
+                await s4.commit()
 
-        _run(unfreeze())
+    try:
+        _run(go())
+    finally:
+        _run(_desmonta_cohorte(factory, src))
