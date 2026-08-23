@@ -392,12 +392,18 @@ def test_gate_puntua_solo_la_cohorte_holdout(db):
 
 
 def test_hnsw_underfill_cae_al_scan_exacto(db):
-    """Regresión auditoría Nº2 (2026-08-23, IMPORTANTE 1): pgvector aplica
-    el WHERE tras sacar candidatos del HNSW — con el presupuesto del scan
-    estrangulado (max_scan_tuples=1) y el seq scan desactivado, el índice
-    devuelve MENOS vecinos cross-source de los que existen. El fallback
-    exacto debe recuperarlos: misma geometría que B-2 (6 intra + 1 cross a
-    0.96), resultado completo de 6 pares igualmente."""
+    """Regresión auditoría Nº2 IMPORTANTE 1, endurecida por la revisión
+    solo-código. La inanición REAL del HNSW la demostró el auditor en
+    producción (24k filas, 2 de 5 vecinos); en un corpus de test es
+    IRREPRODUCIBLE de forma determinista — el grafo entero cabe en
+    ef_search y el resume de strict_order lo drena aunque max_scan_tuples=1
+    (verificado empíricamente con 46 y con 301 nodos). Por eso el espía de
+    sesión TRUNCA a 0 filas la primera respuesta de cada kNN — el
+    equivalente observable de la inanición — y se afirma que la rama exacta
+    (enable_indexscan = off) se ejecuta DE VERDAD contra la BD y recupera
+    los 6 pares de la geometría B-2. Lo simulado es el underfill de
+    pgvector (ya demostrado en producción); la detección, el toggle de GUCs
+    y la consulta exacta son los reales."""
     import jobhunt_core.dedup as dedup_mod
 
     factory, created = db
@@ -407,22 +413,43 @@ def test_hnsw_underfill_cae_al_scan_exacto(db):
         backend_cls=CasiBackend,
     )
 
-    original = dedup_mod.MAX_SCAN_TUPLES
-    dedup_mod.MAX_SCAN_TUPLES = 1  # estrangula el scan iterativo
-    try:
-        async def go():
-            async with factory() as s:
-                # forzar el uso del índice (corpus diminuto ⇒ seq scan)
-                await s.execute(sa.text("SET LOCAL enable_seqscan = off"))
-                r = await scan_semantic_candidates(s, window_hours=0)
-                await s.commit()
-                return r
+    ejecutadas: list[str] = []
 
-        r = asyncio.run(go())
-    finally:
-        dedup_mod.MAX_SCAN_TUPLES = original
+    class _Truncada:
+        """Resultado kNN vaciado: simula el scan aproximado que se queda
+        corto. Solo se usa mientras la rama exacta no está activa."""
 
+        def all(self):
+            return []
+
+    async def go():
+        async with factory() as s:
+            real = s.execute
+            en_fallback = {"on": False}
+
+            async def espia(stmt, *args, **kwargs):
+                q = str(stmt)
+                ejecutadas.append(q)
+                if "enable_indexscan = off" in q:
+                    en_fallback["on"] = True
+                elif "enable_indexscan = on" in q:
+                    en_fallback["on"] = False
+                res = await real(stmt, *args, **kwargs)
+                es_knn = "ORDER BY oe.vector" in q and "LIMIT :k" in q
+                if es_knn and not en_fallback["on"]:
+                    return _Truncada()  # primera pasada: inanición simulada
+                return res
+
+            s.execute = espia
+            r = await scan_semantic_candidates(s, window_hours=0)
+            await s.commit()
+            return r
+
+    r = asyncio.run(go())
     assert r["status"] == "ok"
+    # la rama exacta SE EJECUTÓ (no basta con que el resultado esté bien)
+    assert any("enable_indexscan = off" in q for q in ejecutadas)
+    # y fue la que aportó los datos: los 6 pares cross a 0.96 están
     pares = _pairs(factory, created)
     assert len(pares) == 6
     assert all(abs(float(p.similarity) - 0.96) < 0.005 for p in pares)
