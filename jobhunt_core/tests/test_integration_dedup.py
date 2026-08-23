@@ -52,6 +52,22 @@ class CasiBackend(KeywordBackend):
         return out
 
 
+class VecinoBackend(KeywordBackend):
+    """[0.99, 0.1] para 'cerca': cos con el eje X = 0.99/√0.9901 ≈ 0.99497 —
+    por encima del umbral 0.95 y MÁS LEJOS que los 350 intra idénticos
+    (dist 0): la geometría del revisor de la ronda 2 que reproduce el
+    underfill REAL del HNSW (350+5 ⇒ 0/5 vecinos, estable)."""
+
+    def encode_batch(self, texts):
+        out = []
+        for t in texts:
+            if "cerca" in t.lower():
+                out.append([0.99, 0.1] + [0.0] * (embeddings.EMBED_DIM - 2))
+            else:
+                out.extend(super().encode_batch([t]))
+        return out
+
+
 pytestmark = pytest.mark.skipif(
     not os.getenv("CORE_ADMIN_DATABASE_URL"),
     reason="requiere BD (ejecutar vía core-migrate)",
@@ -157,7 +173,7 @@ def _setup(factory, created, por_fuente, backend_cls=KeywordBackend,
     mid = asyncio.run(go())
     embeddings.set_backend_factory(lambda name, version: backend_cls())
     try:
-        r = run_pending_task.apply(kwargs={"limit": 100})
+        r = run_pending_task.apply(kwargs={"limit": 400})
         assert r.successful()
     finally:
         embeddings.set_backend_factory(None)
@@ -392,64 +408,89 @@ def test_gate_puntua_solo_la_cohorte_holdout(db):
 
 
 def test_hnsw_underfill_cae_al_scan_exacto(db):
-    """Regresión auditoría Nº2 IMPORTANTE 1, endurecida por la revisión
-    solo-código. La inanición REAL del HNSW la demostró el auditor en
-    producción (24k filas, 2 de 5 vecinos); en un corpus de test es
-    IRREPRODUCIBLE de forma determinista — el grafo entero cabe en
-    ef_search y el resume de strict_order lo drena aunque max_scan_tuples=1
-    (verificado empíricamente con 46 y con 301 nodos). Por eso el espía de
-    sesión TRUNCA a 0 filas la primera respuesta de cada kNN — el
-    equivalente observable de la inanición — y se afirma que la rama exacta
-    (enable_indexscan = off) se ejecuta DE VERDAD contra la BD y recupera
-    los 6 pares de la geometría B-2. Lo simulado es el underfill de
-    pgvector (ya demostrado en producción); la detección, el toggle de GUCs
-    y la consulta exacta son los reales."""
+    """Regresión auditoría Nº2 IMPORTANTE 1, versión de la RONDA 2 de la
+    revisión: mi afirmación de que el underfill real era irreproducible en
+    tests quedó REFUTADA — el revisor lo reprodujo estable con 350 vectores
+    intra [1,0,…] + 5 cross [0.99,0.1,…] (ef_search=40, strict_order,
+    max_scan_tuples=1, seq scan vetado ⇒ 0/5 vecinos). Esta es esa
+    geometría, de verdad: el aproximado se queda a cero, el fallback exacto
+    (espía SOLO-observador: enable_indexscan = off ejecutado) recupera los
+    5 pares a ~0.995. Barato: solo UNA revisión queda "nueva" en la ventana
+    (las 354 distracciones se envejecen), así que el scan procesa una única
+    consulta kNN sobre un HNSW que contiene toda la geometría."""
     import jobhunt_core.dedup as dedup_mod
 
     factory, created = db
     _setup(
         factory, created,
-        [[f"python dev {j}" for j in range(6)], ["casi python dev"]],
-        backend_cls=CasiBackend,
+        [[f"python dev {j}" for j in range(350)],
+         [f"cerca {j}" for j in range(5)]],
+        backend_cls=VecinoBackend,
     )
 
-    ejecutadas: list[str] = []
-
-    class _Truncada:
-        """Resultado kNN vaciado: simula el scan aproximado que se queda
-        corto. Solo se usa mientras la rama exacta no está activa."""
-
-        def all(self):
-            return []
-
-    async def go():
+    # Envejecer todo menos s0-j0: la ventana de 1 h deja UNA consulta.
+    async def envejece():
         async with factory() as s:
-            real = s.execute
-            en_fallback = {"on": False}
-
-            async def espia(stmt, *args, **kwargs):
-                q = str(stmt)
-                ejecutadas.append(q)
-                if "enable_indexscan = off" in q:
-                    en_fallback["on"] = True
-                elif "enable_indexscan = on" in q:
-                    en_fallback["on"] = False
-                res = await real(stmt, *args, **kwargs)
-                es_knn = "ORDER BY oe.vector" in q and "LIMIT :k" in q
-                if es_knn and not en_fallback["on"]:
-                    return _Truncada()  # primera pasada: inanición simulada
-                return res
-
-            s.execute = espia
-            r = await scan_semantic_candidates(s, window_hours=0)
+            await s.execute(
+                sa.text(
+                    "UPDATE offer_revisions SET created_at = "
+                    "  created_at - interval '2 hours' "
+                    "WHERE vacancy_id IN ("
+                    "  SELECT i.vacancy_id FROM source_listing_incarnations i "
+                    "  JOIN source_listings l ON l.id = i.source_listing_id "
+                    "  WHERE l.source_id = ANY(:srcs) "
+                    "    AND l.external_id <> 's0-j0')"
+                ),
+                {"srcs": created["sources"]},
+            )
             await s.commit()
-            return r
 
-    r = asyncio.run(go())
-    assert r["status"] == "ok"
-    # la rama exacta SE EJECUTÓ (no basta con que el resultado esté bien)
+    asyncio.run(envejece())
+
+    ejecutadas: list[str] = []
+    original = dedup_mod.MAX_SCAN_TUPLES
+    dedup_mod.MAX_SCAN_TUPLES = 1  # el presupuesto del repro del revisor
+    try:
+        async def go():
+            async with factory() as s:
+                real = s.execute
+
+                async def espia(stmt, *args, **kwargs):
+                    q = str(stmt)
+                    ejecutadas.append(q)
+                    res = await real(stmt, *args, **kwargs)
+                    # Los vetos seqscan/sort son ARTIFICIO DEL TEST para
+                    # forzar el plan HNSW en la primera pasada; dejarlos
+                    # puestos durante el fallback penalizaría también a la
+                    # consulta exacta (el planner re-elige el índice
+                    # estrangulado y devuelve 0 otra vez). El espía los
+                    # levanta mientras la rama exacta está activa y los
+                    # repone después — simétrico a los toggles del scan.
+                    if "enable_indexscan = off" in q:
+                        await real(sa.text("SET LOCAL enable_seqscan = on"))
+                        await real(sa.text("SET LOCAL enable_sort = on"))
+                    elif "enable_indexscan = on" in q:
+                        await real(sa.text("SET LOCAL enable_seqscan = off"))
+                        await real(sa.text("SET LOCAL enable_sort = off"))
+                    return res
+
+                s.execute = espia  # SOLO observa y gestiona los vetos
+                # sin seq scan ni sort el ORDER BY vectorial solo puede
+                # resolverse por el índice HNSW (a esta escala el planner
+                # preferiría nested loops + Sort y jamás habría underfill)
+                await s.execute(sa.text("SET LOCAL enable_seqscan = off"))
+                await s.execute(sa.text("SET LOCAL enable_sort = off"))
+                r = await scan_semantic_candidates(s, window_hours=1)
+                await s.commit()
+                return r
+
+        r = asyncio.run(go())
+    finally:
+        dedup_mod.MAX_SCAN_TUPLES = original
+
+    assert r["status"] == "ok" and r["escaneadas"] == 1
+    # la rama exacta SE EJECUTÓ (el aproximado devolvió 0/5 reales)
     assert any("enable_indexscan = off" in q for q in ejecutadas)
-    # y fue la que aportó los datos: los 6 pares cross a 0.96 están
     pares = _pairs(factory, created)
-    assert len(pares) == 6
-    assert all(abs(float(p.similarity) - 0.96) < 0.005 for p in pares)
+    assert len(pares) == 5
+    assert all(float(p.similarity) >= 0.99 for p in pares)
