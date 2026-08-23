@@ -8,6 +8,10 @@ Revisión solo-código del cierre Nº2 (2026-08-23), BLOQUEANTES 2 y 3:
   otro manifest — sin rastro. Reproducido por el revisor. Ahora un trigger
   sobre labeled_dedup_cohorts prohíbe UPDATE/DELETE cuando OLD.frozen_at
   IS NOT NULL: la única transición permitida es NULL → sellado, una vez.
+  Y el sello NO es retrodatable (agujero encontrado al preparar la
+  re-confirmación): un INSERT/UPDATE que ponga frozen_at exige
+  frozen_at = now() — un frozen_at en el pasado movería el corte de
+  elegibilidad del gate y haría elegibles ciclos anteriores al freeze.
 - B-3: `manifest={}` activaba igualmente el corte de elegibilidad. CHECK:
   una fila congelada exige manifest NO vacío (el pre-registro SHA-256).
 
@@ -39,13 +43,21 @@ def upgrade() -> None:
         f"""
         CREATE FUNCTION {S}.trg_dedup_cohorts_seal_guard() RETURNS trigger AS $$
         BEGIN
-            IF OLD.frozen_at IS NOT NULL THEN
+            IF TG_OP <> 'INSERT' AND OLD.frozen_at IS NOT NULL THEN
                 RAISE EXCEPTION
                     'cohorte dedup SELLADA: % — el sello es inmutable (core0026): ni descongelar, ni reescribir manifest, ni borrar',
                     OLD.source;
             END IF;
             IF TG_OP = 'DELETE' THEN
                 RETURN OLD;
+            END IF;
+            -- Sellar (INSERT o transición NULL→valor) exige frozen_at =
+            -- now(): un sello RETRODATADO movería el corte de elegibilidad
+            -- al pasado y haría elegibles ciclos anteriores al freeze.
+            IF NEW.frozen_at IS NOT NULL AND NEW.frozen_at <> now() THEN
+                RAISE EXCEPTION
+                    'sello RETRODATADO en cohorte %: frozen_at debe ser now() (core0026)',
+                    NEW.source;
             END IF;
             RETURN NEW;
         END;
@@ -55,7 +67,7 @@ def upgrade() -> None:
     op.execute(
         f"""
         CREATE TRIGGER labeled_dedup_cohorts_frozen_guard
-        BEFORE UPDATE OR DELETE ON {S}.labeled_dedup_cohorts
+        BEFORE INSERT OR UPDATE OR DELETE ON {S}.labeled_dedup_cohorts
         FOR EACH ROW EXECUTE FUNCTION {S}.trg_dedup_cohorts_seal_guard()
         """
     )

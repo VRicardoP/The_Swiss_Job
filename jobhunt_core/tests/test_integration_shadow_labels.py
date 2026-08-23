@@ -824,6 +824,25 @@ def test_core0026_el_sello_es_inmutable(db):
                         await s2.commit()
 
                 _run(intenta())
+
+        # Sello RETRODATADO (agujero cerrado al preparar la re-confirmación):
+        # un INSERT directo con frozen_at en el pasado movería el corte de
+        # elegibilidad y haría elegibles ciclos ANTERIORES al freeze real.
+        async def retrodata():
+            async with factory() as s5:
+                await s5.execute(
+                    sa.text(
+                        "INSERT INTO labeled_dedup_cohorts "
+                        "(source, frozen_at, manifest) "
+                        "VALUES (:s2, now() - interval '30 days', "
+                        "'{\"sha\": \"x\"}'::jsonb)"
+                    ),
+                    {"s2": f"{src}-retro"},
+                )
+                await s5.commit()
+
+        with pytest.raises(DBAPIError, match="RETRODATADO"):
+            _run(retrodata())
     finally:
         _run(_desmonta_cohorte(factory, src))
 
