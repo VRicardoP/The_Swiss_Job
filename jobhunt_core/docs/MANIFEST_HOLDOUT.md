@@ -30,3 +30,15 @@ del margen de `unsure` (máx. 8 de 58 — señalado por la revisión solo-códig
 como aviso al operador). Nuevo hash del protocolo; el resto no cambia:
 
 - `c8f6f2ea0470d6c0250f56a1bbc1bdffe903a6f03d26617381a29e83abce606e`  PROTOCOLO_HOLDOUT_DEDUP.md
+
+## v2 — 2026-08-23 (hoja ENRIQUECIDA, pre-etiquetado)
+
+La hoja incorpora URL y descripción completa de ambos lados (IMPORTANTE 3
+de la auditoría Nº2) SIN re-muestrear: mismos UUID que la v1
+(`holdout_map.csv`, hash intacto). Extraída del NAS tras el deploy de
+`7a5cf6f` (core0025+core0026 aplicadas). ESTOS son los hashes que llevará
+el manifest del freeze en BD (`labeled_dedup_cohorts.manifest`):
+
+- `01977dc77ffb41cff76bd0b754d1ff64311cafc3da250e72b9acadcd3093c0a4`  HOJA_HOLDOUT_DEDUP.md (v2 enriquecida)
+- `ca5ed2de1a360fb1d2c2bcf9bf72cc829da71fbc94da254e33d9b89f897c205c`  holdout_artefactos_2026-08-23/holdout_enriquecer.sql
+- `a70f7a1866008a909a1550c9425aed3704aceb48c6ba2c9182ecd165dede9175`  holdout_artefactos_2026-08-23/hoja_enriquecida_raw.txt
