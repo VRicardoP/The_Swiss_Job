@@ -42,3 +42,11 @@ el manifest del freeze en BD (`labeled_dedup_cohorts.manifest`):
 - `01977dc77ffb41cff76bd0b754d1ff64311cafc3da250e72b9acadcd3093c0a4`  HOJA_HOLDOUT_DEDUP.md (v2 enriquecida)
 - `ca5ed2de1a360fb1d2c2bcf9bf72cc829da71fbc94da254e33d9b89f897c205c`  holdout_artefactos_2026-08-23/holdout_enriquecer.sql
 - `a70f7a1866008a909a1550c9425aed3704aceb48c6ba2c9182ecd165dede9175`  holdout_artefactos_2026-08-23/hoja_enriquecida_raw.txt
+
+## v2.1 — 2026-08-24 (ayuda de idioma, pre-etiquetado)
+
+El propietario no lee alemán: hoja de APOYO en español (traducción de títulos
+y ubicaciones, autoría del agente conflictuado — registrado; los originales de
+la hoja v2 mandan y ningún par lleva recomendación de juicio):
+
+- `2af61a5e84771c19175cf1dc747d2514c6011d3d13668b494377919d3eb29bb1`  HOJA_HOLDOUT_DEDUP_ES.md
