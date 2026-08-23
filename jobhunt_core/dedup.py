@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jobhunt_core import embeddings
 from jobhunt_core.config import settings
+from jobhunt_core.matching import MAX_SCAN_TUPLES
 
 logger = logging.getLogger(__name__)
 
@@ -129,15 +130,52 @@ async def scan_semantic_candidates(
         params["ventana"] = window_hours
     nuevos = (await session.execute(sa.text(sql), params)).all()
 
-    inserted = 0
-    for row in nuevos:
-        vecinos = (
+    # UNDERFILL del HNSW (auditoría Nº2, IMPORTANTE 1): pgvector aplica el
+    # WHERE DESPUÉS de sacar candidatos del índice aproximado — sin scan
+    # iterativo, "LIMIT :k" puede devolver < k vecinos cross-source aunque
+    # existan (reproducido: 2 de 5 con el GUC por defecto). MISMO patrón ya
+    # probado en matching: ef_search acotado + iterative_scan strict_order
+    # (sigue escaneando hasta llenar el LIMIT tras el filtro, con tope
+    # MAX_SCAN_TUPLES) + FALLBACK EXACTO si aun así llegan menos filas que
+    # el objetivo REAL (nº de vacantes elegibles de OTRAS fuentes, acotado
+    # por k — un corpus pequeño no dispara el exacto en cada fila).
+    ef_search = min(max(k, 40), 1000)
+    await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(ef_search)}"))
+    await session.execute(sa.text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
+    await session.execute(
+        sa.text(f"SET LOCAL hnsw.max_scan_tuples = {int(MAX_SCAN_TUPLES)}")
+    )
+    por_fuente = {
+        r.source_id: r.n
+        for r in (
             await session.execute(
-                sa.text(_KNN_SQL),
-                {"vec": row.vector, "mid": model_id, "k": k,
-                 "vid": row.id, "src": row.source_id},
+                sa.text(
+                    "SELECT c.source_id AS source_id, count(*) AS n "
+                    "FROM (" + _CORPUS_SQL + ") c GROUP BY c.source_id"
+                ),
+                {"mid": model_id},
             )
         ).all()
+    }
+    total_corpus = sum(por_fuente.values())
+
+    inserted = 0
+    for row in nuevos:
+        knn_params = {"vec": row.vector, "mid": model_id, "k": k,
+                      "vid": row.id, "src": row.source_id}
+        vecinos = (
+            await session.execute(sa.text(_KNN_SQL), knn_params)
+        ).all()
+        objetivo = min(k, total_corpus - por_fuente.get(row.source_id, 0))
+        if len(vecinos) < objetivo:
+            # Inanición REAL del scan acotado: el exacto responde siempre.
+            await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
+            await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
+            vecinos = (
+                await session.execute(sa.text(_KNN_SQL), knn_params)
+            ).all()
+            await session.execute(sa.text("SET LOCAL enable_indexscan = on"))
+            await session.execute(sa.text("SET LOCAL enable_bitmapscan = on"))
         for n in vecinos:
             if float(n.sim) < sim_min:
                 break  # ordenados por distancia: los siguientes son peores
