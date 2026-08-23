@@ -789,6 +789,30 @@ def test_health_check_staging_sin_drenar_es_unhealthy(
     assert health_check() == 0
 
 
+def test_health_check_slot_sin_progreso_es_unhealthy(
+    capture, capture_db, monkeypatch, capsys
+):
+    """I-1 (auditoría externa 2026-08-23): un capture con latido fresco pero
+    que NO confirma flush (bug del feedback, stream atascado) dejaba el
+    healthcheck verde mientras el slot retenía WAL sin límite en la BD
+    COMPARTIDA. Ahora el lag del slot (pg_wal_lsn_diff frente a
+    confirmed_flush_lsn) se puntúa contra el umbral ratificado en §8 (2 GiB).
+    Umbral forzado a -1: cualquier lag (incluido 0) dispara — determinista,
+    sin fabricar 2 GiB de WAL reales."""
+    make, slot, engine = capture
+    monkeypatch.setenv("CORE_DATABASE_URL", capture_db["core_dsn"])
+    monkeypatch.setenv("CORE_CAPTURE_SLOT", slot)
+
+    cap = make()
+    cap.start()
+    _wait_slot_active(engine, slot)
+    assert health_check() == 0  # umbral por defecto (2 GiB): sano
+
+    monkeypatch.setenv("CORE_CAPTURE_SLOT_LAG_MAX_BYTES", "-1")
+    assert health_check() == 1
+    assert "SIN PROGRESO" in capsys.readouterr().err
+
+
 def test_heartbeat_advances_on_keepalive_without_traffic(capture):
     """P2-7: el latido avanza con los KEEPALIVES del stream aunque no llegue
     ninguna transacción — updated_at (progreso de datos) queda quieto."""

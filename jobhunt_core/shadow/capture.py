@@ -736,8 +736,8 @@ def _core_dsn() -> str:
 
 def health_check() -> int:
     """Healthcheck ligero para compose (`--health`): conexión core OK + slot
-    presente y ACTIVO (walsender conectado) + LATIDO reciente. Exit 0 sano
-    / 1 no.
+    presente y ACTIVO (walsender conectado) + slot con PROGRESO (WAL retenido
+    < 2 GiB, I-1) + LATIDO reciente + staging DRENADO. Exit 0 sano / 1 no.
 
     Slot presente pero `active=false` = consumidor caído mientras el slot
     retiene WAL de la BD compartida (§8): unhealthy con motivo. El único
@@ -766,7 +766,9 @@ def health_check() -> int:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT active FROM pg_replication_slots WHERE slot_name = %s",
+                    "SELECT active, pg_wal_lsn_diff(pg_current_wal_lsn(), "
+                    "COALESCE(confirmed_flush_lsn, restart_lsn)) "
+                    "FROM pg_replication_slots WHERE slot_name = %s",
                     (slot,),
                 )
                 slot_row = cur.fetchone()
@@ -777,6 +779,27 @@ def health_check() -> int:
                     print(
                         f"unhealthy: slot {slot} presente pero INACTIVO "
                         "(consumidor no conectado; el slot retiene WAL)",
+                        file=sys.stderr,
+                    )
+                    return 1
+                # I-1 (auditoría externa 2026-08-23): PROGRESO del slot, no
+                # solo presencia. Un capture vivo (latido OK) pero que no
+                # confirma flush — bug del feedback, stream atascado — deja
+                # el healthcheck verde mientras el WAL retenido crece hasta
+                # llenar el disco de la BD COMPARTIDA. Señal directa: bytes
+                # de WAL que el slot retiene por detrás del extremo actual,
+                # contra el umbral ya ratificado en §8 (2 GiB).
+                lag_max = float(
+                    os.getenv(
+                        "CORE_CAPTURE_SLOT_LAG_MAX_BYTES", str(2 * 1024**3)
+                    )
+                )
+                slot_lag = slot_row[1]
+                if slot_lag is not None and float(slot_lag) > lag_max:
+                    print(
+                        f"unhealthy: slot {slot} SIN PROGRESO — retiene "
+                        f"{float(slot_lag):.0f} bytes de WAL (> "
+                        f"{lag_max:.0f}; el consumidor no confirma flush)",
                         file=sys.stderr,
                     )
                     return 1
