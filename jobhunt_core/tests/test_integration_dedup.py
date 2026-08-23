@@ -36,6 +36,22 @@ class KeywordBackend:
             out.append(v + [0.0] * (embeddings.EMBED_DIM - 2))
         return out
 
+class CasiBackend(KeywordBackend):
+    """KeywordBackend + un vector a EXACTAMENTE 0.96 del eje X para textos
+    con 'casi': cos([1,0],[0.96,0.28]) = 0.96 y ‖(0.96,0.28)‖ = 1.0 — por
+    encima del umbral 0.95 pero ESTRICTAMENTE más lejos que los intra (1.0),
+    que es la geometría que reprodujo B-2."""
+
+    def encode_batch(self, texts):
+        out = []
+        for t in texts:
+            if "casi" in t.lower():
+                out.append([0.96, 0.28] + [0.0] * (embeddings.EMBED_DIM - 2))
+            else:
+                out.extend(super().encode_batch([t]))
+        return out
+
+
 pytestmark = pytest.mark.skipif(
     not os.getenv("CORE_ADMIN_DATABASE_URL"),
     reason="requiere BD (ejecutar vía core-migrate)",
@@ -84,7 +100,7 @@ def _listing(ext, title):
     )
 
 
-def _setup(factory, created, por_fuente):
+def _setup(factory, created, por_fuente, backend_cls=KeywordBackend):
     """Siembra N fuentes con sus títulos, registra modelo y embebe con el
     backend determinista (mismo título ⇒ mismo vector ⇒ sim 1.0)."""
     from jobhunt_core.tasks.embedding import run_pending_task
@@ -138,7 +154,7 @@ def _setup(factory, created, por_fuente):
             return mid
 
     mid = asyncio.run(go())
-    embeddings.set_backend_factory(lambda name, version: KeywordBackend())
+    embeddings.set_backend_factory(lambda name, version: backend_cls())
     try:
         r = run_pending_task.apply(kwargs={"limit": 100})
         assert r.successful()
@@ -203,6 +219,31 @@ def test_titulos_distintos_bajo_umbral_no_generan(db):
     r = _scan(factory)
     assert r["candidatos_nuevos"] == 0
     assert _pairs(factory, created) == []
+
+
+def test_b2_concentracion_intra_no_oculta_al_vecino_cross(db):
+    """Regresión B-2 (auditoría externa 2026-08-23): 6 vacantes de la MISMA
+    fuente a sim 1.0 entre sí + 1 cross-source a 0.96, con k=5. Con la
+    exclusión de la propia fuente en Python DESPUÉS del LIMIT, los vecinos
+    intra consumían el presupuesto k y el par cross era invisible desde el
+    lado concentrado (solo el lado contrario aportaba 5 de los 6 pares).
+    Con la exclusión en SQL antes del LIMIT deben salir los 6 pares cross."""
+    factory, created = db
+    _setup(
+        factory, created,
+        # títulos DISTINTOS (text_hash distinto ⇒ el exacto-intra no dispara)
+        # pero todos con 'python' ⇒ mismo vector ⇒ sim 1.0 entre los 6
+        [[f"python dev {j}" for j in range(6)], ["casi python dev"]],
+        backend_cls=CasiBackend,
+    )
+    r = _scan(factory)
+    assert r["status"] == "ok" and r["candidatos_exactos_intra"] == 0
+    pares = _pairs(factory, created)
+    assert len(pares) == 6
+    assert all(
+        p.state == "pending" and abs(float(p.similarity) - 0.96) < 0.005
+        for p in pares
+    )
 
 
 def test_la_metrica_cuenta_el_candidato_como_deteccion(db):

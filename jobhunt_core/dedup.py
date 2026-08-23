@@ -52,6 +52,12 @@ _CORPUS_SQL = (
 )
 
 # kNN sobre el índice HNSW (misma forma que matching.CANDIDATES_SQL).
+# B-2 auditoría externa (2026-08-23): la exclusión de la PROPIA vacante y de la
+# MISMA fuente va ANTES del ORDER BY/LIMIT. Filtrarlas después, en Python,
+# hacía que una concentración de anuncios muy próximos de una fuente consumiera
+# el presupuesto k y OCULTARA vecinos cross-source válidos (reproducido: 6
+# vacantes intra a sim 1.0 + 1 cross a 0.96 con k=5 → el par cross ni llegaba
+# al filtro). Con el filtro en SQL, LIMIT :k significa "k vecinos cross-source".
 _KNN_SQL = (
     "SELECT v.id AS vacancy_id, sl.source_id, "
     "       1 - (oe.vector <=> CAST(:vec AS vector)) AS sim "
@@ -62,6 +68,7 @@ _KNN_SQL = (
     "JOIN source_listing_incarnations pi ON pi.id = v.primary_incarnation_id "
     "JOIN source_listings sl ON sl.id = pi.source_listing_id "
     "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
+    "  AND v.id <> :vid AND sl.source_id <> :src "
     "ORDER BY oe.vector <=> CAST(:vec AS vector) "
     "LIMIT :k"
 )
@@ -127,14 +134,11 @@ async def scan_semantic_candidates(
         vecinos = (
             await session.execute(
                 sa.text(_KNN_SQL),
-                {"vec": row.vector, "mid": model_id, "k": k + 1},
+                {"vec": row.vector, "mid": model_id, "k": k,
+                 "vid": row.id, "src": row.source_id},
             )
         ).all()
         for n in vecinos:
-            if n.vacancy_id == row.id:
-                continue  # la propia vacante (sim 1.0)
-            if n.source_id == row.source_id:
-                continue  # intra-fuente: fuera por diseño (ver docstring)
             if float(n.sim) < sim_min:
                 break  # ordenados por distancia: los siguientes son peores
             r = await session.execute(
