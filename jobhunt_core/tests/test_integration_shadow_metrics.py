@@ -119,7 +119,8 @@ def db(met_db, monkeypatch):
             await c.execute(
                 sa.text(
                     "TRUNCATE shadow_change_log, shadow_projection_batches, "
-                    "shadow_cycle_metrics, labeled_dedup_pairs"
+                    "shadow_cycle_metrics, labeled_dedup_pairs, "
+                    "labeled_dedup_cohorts"
                 )
             )
             await c.execute(sa.text("TRUNCATE integration_outbox CASCADE"))
@@ -1691,6 +1692,67 @@ def test_render_report_is_readable_text(db):
     # Legible: tabla con cabecera y una línea por métrica evaluada.
     assert "métrica" in text and "estado" in text
     assert text.count("\n") > 15
+
+
+def test_render_report_ciclo_mixto_dice_inelegible_no_apto(db):
+    """Regresión ronda 2 de la revisión solo-código (IMPORTANTE 2):
+    metrics.render_report se documenta como el veredicto del ciclo para el
+    contador de §6, pero solo miraba los gates — con los 9 en verde y el
+    freeze a MITAD de la ventana imprimía literalmente «CICLO APTO: 9/9»,
+    contradiciendo a gate_status/run_cycle. Ahora consulta el mismo
+    congelado persistido: ventana mixta ⇒ CICLO INELEGIBLE, jamás APTO."""
+    factory = db
+    cyc = date(2026, 7, 1)
+    p1 = "profile:aaaa"
+    # los 9 gates en verde (misma forma que el seeder del gate)
+    _seed_metric(factory, cyc, "ndcg@10", p1, 0.90, {})
+    _seed_metric(factory, cyc, "ndcg@10_legacy", p1, 0.70, {})
+    _seed_metric(factory, cyc, "falsos_negativos", p1, 0.0, {"modo": "estricto_0"})
+    _seed_metric(factory, cyc, "labels_ready", "global", 1, {})
+    _seed_metric(factory, cyc, "dedup_precision", "global", 1.0, {})
+    _seed_metric(factory, cyc, "dedup_recall", "global", 1.0, {})
+    _seed_metric(factory, cyc, "perdida", "global", 0, {})
+    _seed_metric(factory, cyc, "outbox_lag_p99", "global", 10.0, {})
+    _seed_metric(factory, cyc, "outbox_dead", "global", 0, {"dead_actual": 0})
+    _seed_metric(factory, cyc, "latencia_p95", "global", 20.0, {})
+
+    def freeze(ts):
+        _exec(
+            factory,
+            "ALTER TABLE labeled_dedup_cohorts "
+            "DISABLE TRIGGER labeled_dedup_cohorts_frozen_guard",
+        )
+        _exec(
+            factory,
+            "INSERT INTO labeled_dedup_cohorts (source, frozen_at, manifest) "
+            "VALUES (:src, :ts, '{\"test\": true}'::jsonb) "
+            "ON CONFLICT (source) DO UPDATE SET frozen_at = :ts",
+            {"src": labels.DEDUP_EVAL_COHORT, "ts": ts},
+        )
+        _exec(
+            factory,
+            "ALTER TABLE labeled_dedup_cohorts "
+            "ENABLE TRIGGER labeled_dedup_cohorts_frozen_guard",
+        )
+
+    async def report():
+        async with factory() as s:
+            return await metrics.render_report(s, cyc)
+
+    # Sin cohorte congelada: inelegible (fail-closed, jamás APTO).
+    text = _run(report())
+    assert "CICLO INELEGIBLE" in text and "CICLO APTO" not in text
+
+    # Freeze a MITAD de la ventana: sigue inelegible con los 9 en verde.
+    freeze(metrics.cycle_bounds(cyc)[0] + timedelta(hours=6))
+    text = _run(report())
+    assert "CICLO INELEGIBLE" in text and "gates en verde" in text
+    assert "CICLO APTO" not in text
+
+    # Freeze ANTERIOR a la ventana: ahora sí APTO.
+    freeze(metrics.cycle_bounds(cyc)[0] - timedelta(days=1))
+    text = _run(report())
+    assert "CICLO APTO: " in text and "INELEGIBLE" not in text
 
 
 # ------------------------------------------------ tareas Celery registradas

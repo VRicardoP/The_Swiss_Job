@@ -126,6 +126,7 @@ from jobhunt_core.harvest.sink import MAX_URL_LEN, normalize_url
 from jobhunt_core.shadow.labels import (
     DEDUP_EVAL_COHORT,
     _check_legacy_schema,
+    dedup_cohort_frozen_at,
     map_job_refs_to_vacancies,
 )
 from jobhunt_core.shadow.projector import SHADOW_CONSUMER, inactive_user_refs
@@ -1384,7 +1385,13 @@ async def render_report(session: AsyncSession, cycle_id: date) -> str:
     ]
     for key, g in gates.items():
         lines.append(_report_line(key, g))
-    lines += ["", _report_verdict(gates)]
+    # Elegibilidad (ronda 2 de la revisión, IMPORTANTE 2): este informe se
+    # documenta como "veredicto del ciclo para el contador de §6" — decir
+    # APTO con la ventana anterior al congelado del holdout contradecía a
+    # gate_status/run_cycle. Mismo criterio, misma fuente persistida.
+    frozen_at = await dedup_cohort_frozen_at(session, DEDUP_EVAL_COHORT)
+    eligible = frozen_at is not None and start >= frozen_at
+    lines += ["", _report_verdict(gates, eligible)]
     lines += _report_details(details_by)
     return "\n".join(lines) + "\n"
 
@@ -1407,7 +1414,7 @@ def _report_line(key: str, g: dict) -> str:
     return f"{key:<58} {value:>12} {umbral:>18} [{g['kind']}] {estado}{nota}"
 
 
-def _report_verdict(gates: dict) -> str:
+def _report_verdict(gates: dict, eligible: bool = True) -> str:
     gate_items = [g for g in gates.values() if g["kind"] == KIND_GATE]
     failed = sum(1 for g in gate_items if not g["ok"])
     alerts = sum(
@@ -1417,6 +1424,14 @@ def _report_verdict(gates: dict) -> str:
         verdict = (
             f"CICLO NO APTO: {failed}/{len(gate_items)} gates fuera de umbral "
             "(el contador de N ciclos consecutivos vuelve a 0)"
+        )
+    elif not eligible:
+        # Ronda 2 IMPORTANTE 2: gates verdes con ventana anterior al
+        # congelado del holdout — jamás APTO (no computa para la racha).
+        verdict = (
+            f"CICLO INELEGIBLE: {len(gate_items)}/{len(gate_items)} gates en "
+            "verde pero la ventana empieza antes del congelado del holdout "
+            "(no computa para la racha)"
         )
     else:
         verdict = f"CICLO APTO: {len(gate_items)}/{len(gate_items)} gates en verde"
