@@ -106,6 +106,9 @@ def _setup(factory, created, por_fuente):
                         "company": raw.get("company_name"),
                         "description": raw.get("description"),
                         "tags": raw.get("tags") or [],
+                        # location NO entra en text_hash pero SÍ en la regla
+                        # del exacto-intra (multi-ciudad) — debe viajar.
+                        "location": raw.get("location"),
                     },
                 )
                 await s.execute(
@@ -180,13 +183,16 @@ def test_cross_source_igual_titulo_genera_candidato_e_intra_no(db):
     r = _scan(factory)
     assert r["status"] == "ok" and r["candidatos_nuevos"] >= 1
     pares = _pairs(factory, created)
-    # exactamente los pares cross-source; el intra (s0-j0 vs s0-j1) NO está
-    assert len(pares) == 2  # (s0-j0, s1-j0) y (s0-j1, s1-j0)
+    # 2 pares cross-source por ANN + 1 INTRA por contenido EXACTO (regla
+    # ratificada 2026-08-23: mismo text_hash + misma location ⇒ duplicado;
+    # aquí ambos listings de s0 comparten título y location por fixture).
+    assert len(pares) == 3
+    assert r["candidatos_exactos_intra"] >= 1
     assert all(p.state == "pending" and float(p.similarity) >= 0.99 for p in pares)
     # idempotencia: segunda pasada no duplica (uq_dedup_pair)
     r2 = _scan(factory)
-    assert r2["candidatos_nuevos"] == 0
-    assert len(_pairs(factory, created)) == 2
+    assert r2["candidatos_nuevos"] == 0 and r2["candidatos_exactos_intra"] == 0
+    assert len(_pairs(factory, created)) == 3
 
 
 def test_titulos_distintos_bajo_umbral_no_generan(db):
@@ -226,3 +232,37 @@ def test_la_metrica_cuenta_el_candidato_como_deteccion(db):
 
     detected = asyncio.run(go())
     assert len(detected) == 1  # el par cross-source, canónico
+
+
+def test_exacto_intra_respeta_multi_ciudad(db):
+    """Regla ratificada (2026-08-23, curación D-34/D-40): contenido idéntico
+    pero LOCATION distinta = publicación multi-ciudad legítima — NO candidato.
+    Misma location ⇒ sí."""
+    factory, created = db
+    mid = _setup(factory, created, [[]])  # fuente sin ofertas: solo el modelo
+
+    async def go():
+        async with factory() as s:
+            src = created["sources"][0]
+            scope = created["scopes"][0]
+            # dos pares intra: uno misma location, otro ciudad distinta
+            from jobhunt_core.harvest.sink import RawListing, RawListingSink
+            def _l(ext, loc):
+                return RawListing(
+                    external_id=ext, url=f"https://x/{ext}",
+                    payload={"title": "python dev", "company_name": "ACME AG",
+                             "description": "d", "tags": [], "location": loc},
+                )
+            await RawListingSink().handle(
+                s, str(scope),
+                (_l("l-a", "Zurich"), _l("l-b", "Zurich"),
+                 _l("l-c", "Berna")),
+            )
+            await s.commit()
+
+    asyncio.run(go())
+    r = _scan(factory)
+    # (l-a,l-b) misma location ⇒ candidato exacto; (·,l-c) Berna ⇒ NO por
+    # exacto... aunque el ANN puede añadirlos si comparten vector — por eso
+    # se comprueba el DESGLOSE del exacto, no el total.
+    assert r["candidatos_exactos_intra"] == 1

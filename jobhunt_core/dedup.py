@@ -74,6 +74,33 @@ _INSERT_SQL = (
 )
 
 
+# Duplicados EXACTOS intra-fuente (regla ratificada por el propietario el
+# 2026-08-23 al curar el oráculo): mismo texto canónico (text_hash) Y misma
+# location ⇒ duplicado; contenido idéntico con ciudad DISTINTA = publicación
+# multi-ciudad legítima (Flix Berlín vs Múnich) y NO se marca. Determinista —
+# sin umbral ni embedding — y por eso NO comparte la ambigüedad de los stubs
+# que dejó lo intra-fuente fuera del ANN. Motivado además por el hallazgo del
+# canario (§12.9: grupos de hasta 9 repetidas en el feed). Set-based: un pase.
+_EXACT_INTRA_SQL = (
+    "WITH corpus AS ("
+    "  SELECT v.id, orv.text_hash, sl.source_id, "
+    "         coalesce(orv.content->>'location', '') AS loc "
+    "  FROM vacancies v "
+    "  JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
+    "  JOIN source_listing_incarnations pi ON pi.id = v.primary_incarnation_id "
+    "  JOIN source_listings sl ON sl.id = pi.source_listing_id "
+    "  WHERE v.archived_at IS NULL AND v.merged_into IS NULL"
+    ") "
+    "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
+    "SELECT gen_random_uuid(), a.id, b.id, 1.000 "
+    "FROM corpus a JOIN corpus b "
+    "  ON a.text_hash = b.text_hash AND a.source_id = b.source_id "
+    "  AND a.loc = b.loc AND a.id < b.id "
+    "ON CONFLICT (LEAST(vacancy_a, vacancy_b), GREATEST(vacancy_a, vacancy_b)) "
+    "DO NOTHING"
+)
+
+
 async def scan_semantic_candidates(
     session: AsyncSession, window_hours: int | None = None
 ) -> dict:
@@ -122,11 +149,16 @@ async def scan_semantic_candidates(
             )
             inserted += r.rowcount
 
+    # Exactos intra-fuente: pase completo siempre (barato: un join indexado;
+    # la idempotencia la da uq_dedup_pair).
+    exactos = (await session.execute(sa.text(_EXACT_INTRA_SQL))).rowcount
+
     result = {
         "status": "ok",
         "escaneadas": len(nuevos),
         "candidatos_nuevos": inserted,
+        "candidatos_exactos_intra": int(exactos),
     }
-    if inserted:
+    if inserted or exactos:
         logger.info("dedup_scan: %s", result)
     return result
