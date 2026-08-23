@@ -254,6 +254,40 @@ class RawListingSink:
         # cualquier escritor de vacancies (archive/merge/attach/reciclado/
         # canónica) debe usar este mismo protocolo.
         await self._lock_vacancies(session, batch_vacs | set(recycled_vacs) | pre_vacs)
+
+        # B-3 auditoría externa (2026-08-23): REVALIDAR el snapshot de
+        # encarnaciones TAMBIÉN — no solo el attach. `inc_by_slot` se leyó
+        # ANTES del lock; entre esa lectura y el lock, archive_sweep puede
+        # haber CERRADO la encarnación y ARCHIVADO la vacante (rancia ADR-07).
+        # Refrescar sobre el objeto obsoleto dejaba la cosecha fresca ENTERRADA
+        # en una vacante archivada sin encarnación activa (reproducido con el
+        # interleaving pausa-antes-del-lock). El escritor que esperó el lock
+        # descarta su snapshot: los slots cuya encarnación ya no está activa se
+        # tratan como HUÉRFANOS (reaparición ⇒ vacante/encarnación nuevas,
+        # misma vía que un slot cerrado que revive — ADR-01/ADR-07).
+        # (Basta con quitarlos de inc_by_slot: _resolve_new_incarnations
+        # recomputa los huérfanos como slot_by_ext − inc_by_slot y les crea
+        # vacante nueva; al no estar en attach_urls tampoco se attachean.)
+        if inc_by_slot:
+            vivos = {
+                r.source_listing_id
+                for r in (
+                    await session.execute(
+                        sa.text(
+                            "SELECT i.source_listing_id "
+                            "FROM source_listing_incarnations i "
+                            "JOIN vacancies v ON v.id = i.vacancy_id "
+                            "WHERE i.source_listing_id = ANY(:ids) "
+                            "  AND i.ended_at IS NULL "
+                            "  AND v.archived_at IS NULL AND v.merged_into IS NULL"
+                        ),
+                        {"ids": list(inc_by_slot.keys())},
+                    )
+                ).all()
+            }
+            for s in [s for s in inc_by_slot if s not in vivos]:
+                del inc_by_slot[s]
+
         await self._close_incarnations(session, recycled_incs)
 
         # REVALIDACIÓN bajo el lock (rev. 2ª #1): se repite el JOIN COMPLETO

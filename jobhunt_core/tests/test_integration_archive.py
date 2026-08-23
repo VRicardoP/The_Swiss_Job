@@ -218,3 +218,72 @@ def test_rancia_con_candidatura_se_conserva_pf3(db):
     _sweep(factory)
     st = _estado(factory, "adjunta")
     assert st.archivada is False and st.con_activa is True  # PF.3: se conserva
+
+
+def test_b3_sink_no_refresca_snapshot_archivado_por_el_barrido(db):
+    """Regresión B-3 (auditoría externa 2026-08-23): el sink leía las
+    encarnaciones activas ANTES de _lock_vacancies; si archive_sweep ganaba
+    la carrera (cerraba la encarnación rancia y archivaba la vacante), el
+    sink refrescaba el snapshot OBSOLETO y la cosecha fresca quedaba
+    enterrada en una vacante archivada sin encarnación activa. Tras el fix,
+    la revalidación bajo el lock trata el slot como huérfano/reaparición:
+    vacante NUEVA vigente con encarnación activa; la archivada no revive."""
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _ingest(factory, scope, "carrera")
+    _sql(
+        factory,
+        "UPDATE source_listing_incarnations SET last_seen_at = now() - interval '121 days' "
+        "WHERE id IN (SELECT i.id FROM source_listing_incarnations i "
+        " JOIN source_listings l ON l.id=i.source_listing_id WHERE l.external_id='carrera')",
+    )
+
+    class SinkConCarrera(RawListingSink):
+        """Reproduce el interleaving del auditor: el barrido corre y COMMITEA
+        en otra conexión en la ventana entre la lectura del snapshot y la
+        adquisición de los locks."""
+
+        async def _lock_vacancies(self, session, vacancy_ids) -> None:
+            async with factory() as s2:
+                await archive_sweep(s2)
+                await s2.commit()
+            await super()._lock_vacancies(session, vacancy_ids)
+
+    async def go():
+        async with factory() as s:
+            await SinkConCarrera().handle(
+                s,
+                scope,
+                (
+                    RawListing(
+                        external_id="carrera",
+                        url="https://x/carrera",
+                        payload={"title": "carrera", "v": 1},
+                    ),
+                ),
+            )
+            await s.commit()
+
+    asyncio.run(go())
+
+    async def check():
+        async with factory() as s:
+            return (
+                await s.execute(
+                    sa.text(
+                        "SELECT count(*) FILTER (WHERE i.ended_at IS NULL "
+                        "         AND v.archived_at IS NULL) AS vivas, "
+                        "       count(*) FILTER (WHERE v.archived_at IS NOT NULL) "
+                        "         AS archivadas, "
+                        "       count(DISTINCT v.id) AS vacantes "
+                        "FROM source_listing_incarnations i "
+                        "JOIN vacancies v ON v.id = i.vacancy_id "
+                        "JOIN source_listings l ON l.id = i.source_listing_id "
+                        "WHERE l.external_id = 'carrera'"
+                    )
+                )
+            ).one()
+
+    st = asyncio.run(check())
+    # pre-fix: vivas=0, vacantes=1 (la cosecha enterrada en la archivada)
+    assert st.vivas == 1 and st.archivadas == 1 and st.vacantes == 2
