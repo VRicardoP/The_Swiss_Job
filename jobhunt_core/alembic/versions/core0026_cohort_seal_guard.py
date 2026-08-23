@@ -12,11 +12,11 @@ Revisión solo-código del cierre Nº2 (2026-08-23), BLOQUEANTES 2 y 3:
   ronda 2): sellar exige frozen_at = statement_timestamp() — now() era
   burlable con una transacción abierta ANTES del instante real (now() es
   el timestamp de TRANSACCIÓN; reproducido por el revisor con 150 ms).
-- B3 ronda 2: el lock que serializa el sello con los escritores de pares
-  vive AQUÍ, en el trigger (frontera común de la BD) — el sellado por DML
-  directo es una vía admitida y sin esto no tomaba el lock del helper y
-  reabría la carrera B1. El del helper se conserva para la idempotencia
-  (dos congeladores: el segundo espera y LEE, sin chocar con el guard).
+- B3 ronda 2 (+P-2 ronda 3): el lock que serializa el sello con los
+  escritores de pares vive AQUÍ, en el trigger — ÚNICO dueño de la
+  serialización. El helper NO toma locks propios (su antiguo LOCK TABLE
+  invertía el orden frente al UPDATE directo y producía deadlock) y sella
+  UPDATE-primero/INSERT-después para adquirir fila→pares como el DML.
 - B2 ronda 2: 'null'::jsonb, arrays y escalares pasaban el CHECK
   (JSON null NO es NULL SQL) — el manifest exige jsonb_typeof = object.
 - B-3: `manifest={}` activaba igualmente el corte de elegibilidad. CHECK:

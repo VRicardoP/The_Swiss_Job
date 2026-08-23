@@ -1046,13 +1046,14 @@ def test_sello_por_dml_directo_tambien_espera_al_escritor(db):
 
 
 def test_p1_el_sello_no_precede_al_drenaje_del_escritor(db):
-    """Regresión ronda 3 (P-1): statement_timestamp() se fijaba al INICIO
-    del intento y el trigger podía esperar el lock arbitrariamente — el
-    sello persistido precedía al instante en que el freeze fue EFECTIVO, y
-    un ciclo iniciado durante esa espera habría sido elegible en falso
-    (reproducido por el revisor con boundary a 250 ms). Ahora el trigger
-    canonicaliza frozen_at = clock_timestamp() DESPUÉS del lock:
-    frozen_at >= boundary siempre."""
+    """Regresión ronda 3 P-1, cuerpo FIEL de la ronda 4: el sello debe
+    fecharse DESPUÉS de drenar al escritor. Clave de la mordida: la
+    sentencia de sellado (DML directo con statement_timestamp()) tiene que
+    haber EMPEZADO y quedar bloqueada dentro del trigger — la versión
+    anterior usaba el helper, cuyo lock previo en el código viejo retrasaba
+    el inicio de la sentencia y el test pasaba también sin el fix. Contra
+    622e9e4^ este cuerpo falla con frozen_at ~230 ms anterior al boundary;
+    en HEAD la canonicalización post-lock da frozen_at >= boundary."""
     factory, created = db
     p = f"p1-{uuid.uuid4().hex[:8]}"
     ja, jb = f"{p}-a", f"{p}-b"
@@ -1070,14 +1071,27 @@ def test_p1_el_sello_no_precede_al_drenaje_del_escritor(db):
                 {"a": ja, "b": jb, "src": src},
             )
 
-            async def sella():
+            async def sella_dml():
+                # la sentencia arranca YA (statement_timestamp fijado) y se
+                # bloquea dentro del trigger esperando al escritor
                 async with factory() as sb:
-                    f = await labels.freeze_dedup_cohort(sb, src, {"sha": "x"})
+                    f = (
+                        await sb.execute(
+                            sa.text(
+                                "INSERT INTO labeled_dedup_cohorts "
+                                "(source, frozen_at, manifest) "
+                                "VALUES (:src, statement_timestamp(), "
+                                "'{\"sha\": \"x\"}'::jsonb) "
+                                "RETURNING frozen_at"
+                            ),
+                            {"src": src},
+                        )
+                    ).scalar_one()
                     await sb.commit()
                     return f
 
-            tarea = asyncio.create_task(sella())
-            await asyncio.sleep(0.25)  # B bloqueado en el lock del trigger
+            tarea = asyncio.create_task(sella_dml())
+            await asyncio.sleep(0.25)  # bloqueada en el lock del trigger
             assert not tarea.done()
             async with factory() as sc:
                 boundary = (
@@ -1085,7 +1099,6 @@ def test_p1_el_sello_no_precede_al_drenaje_del_escritor(db):
                 ).scalar_one()
             await sa_ses.commit()  # drena al escritor: el freeze se hace efectivo
             frozen = await tarea
-            # el instante persistido es POSTERIOR al drenaje, no al intento
             assert frozen >= boundary
 
     try:
@@ -1095,11 +1108,13 @@ def test_p1_el_sello_no_precede_al_drenaje_del_escritor(db):
 
 
 def test_p2_helper_y_dml_directo_no_se_interbloquean(db):
-    """Regresión ronda 3 (P-2): el lock explícito del helper invertía el
-    orden respecto al UPDATE directo (helper: pares→fila; DML: fila→pares)
-    y PostgreSQL abortaba con deadlock detected. El helper ya no toma locks
-    propios y sella UPDATE-primero: ambas vías adquieren fila→pares y el
-    concurrente ESPERA (lock timeout si se le acota), jamás deadlock."""
+    """Regresión ronda 3 P-2, interleaving FIEL de la ronda 4: el ciclo del
+    deadlock exigía pausar al helper VIEJO justo tras adquirir su LOCK
+    TABLE propio (pares), lanzar entonces el UPDATE directo (fila → espera
+    pares) y reanudar (helper → espera fila): deadlock detected. El espía
+    pausa SOLO si ve ese `LOCK TABLE` — en HEAD el helper ya no lo emite,
+    la pausa nunca ocurre y ambas vías se serializan fila→pares sin ciclo.
+    Contra 622e9e4^ este cuerpo reproduce el deadlock y falla."""
     factory, created = db
     src = f"cohorte-p2-{uuid.uuid4().hex[:8]}"
 
@@ -1111,39 +1126,63 @@ def test_p2_helper_y_dml_directo_no_se_interbloquean(db):
             )
             await s0.commit()
 
-        async with factory() as sa_ses:
-            # helper en vuelo (sin commit): fila → pares
-            fa = await labels.freeze_dedup_cohort(sa_ses, src, {"sha": "a"})
-            assert fa is not None
-            # DML directo concurrente: espera EN LA FILA — no deadlock
-            async with factory() as sb:
-                await sb.execute(sa.text("SET LOCAL lock_timeout = '500ms'"))
-                with pytest.raises(DBAPIError) as exc:
-                    await sb.execute(
+        pausa, reanuda = asyncio.Event(), asyncio.Event()
+        errores: list[Exception] = []
+
+        async def helper_task():
+            async with factory() as sh:
+                real = sh.execute
+
+                async def espia(stmt, *args, **kwargs):
+                    res = await real(stmt, *args, **kwargs)
+                    # SOLO el helper viejo emitía este LOCK: pausar con el
+                    # lock de pares YA adquirido, como en el repro fiel
+                    if "LOCK TABLE labeled_dedup_pairs" in str(stmt):
+                        pausa.set()
+                        await reanuda.wait()
+                    return res
+
+                sh.execute = espia
+                try:
+                    await labels.freeze_dedup_cohort(sh, src, {"sha": "h"})
+                    await sh.commit()
+                except Exception as e:  # noqa: BLE001 — se inspecciona abajo
+                    errores.append(e)
+                    await sh.rollback()
+
+        th = asyncio.create_task(helper_task())
+        try:
+            await asyncio.wait_for(pausa.wait(), timeout=0.4)
+        except TimeoutError:
+            pass  # HEAD: el helper no emite LOCK TABLE — sin pausa
+
+        async def dml_task():
+            async with factory() as sd:
+                try:
+                    await sd.execute(
                         sa.text(
                             "UPDATE labeled_dedup_cohorts SET "
                             "frozen_at = statement_timestamp(), "
-                            "manifest = '{\"sha\": \"b\"}'::jsonb "
+                            "manifest = '{\"sha\": \"d\"}'::jsonb "
                             "WHERE source = :src"
                         ),
                         {"src": src},
                     )
-                assert "deadlock" not in str(exc.value).lower()
-                await sb.rollback()
-            await sa_ses.commit()
+                    await sd.commit()
+                except Exception as e:  # noqa: BLE001 — se inspecciona abajo
+                    errores.append(e)
+                    await sd.rollback()
 
-        # tras el commit, el DML directo choca con el sello, no con un lock
-        with pytest.raises(DBAPIError, match="SELLADA"):
-            async with factory() as sc:
-                await sc.execute(
-                    sa.text(
-                        "UPDATE labeled_dedup_cohorts SET "
-                        "manifest = '{\"sha\": \"c\"}'::jsonb "
-                        "WHERE source = :src"
-                    ),
-                    {"src": src},
-                )
-                await sc.commit()
+        td = asyncio.create_task(dml_task())
+        await asyncio.sleep(0.2)
+        reanuda.set()  # en el viejo: cierra el ciclo helper→fila / DML→pares
+        await th
+        await td
+        assert all("deadlock" not in str(e).lower() for e in errores), errores
+        # la cohorte queda sellada (por una vía o la otra), nunca a medias
+        async with factory() as sc:
+            frozen = await labels.dedup_cohort_frozen_at(sc, src)
+        assert frozen is not None
 
     try:
         _run(go())
@@ -1198,8 +1237,9 @@ def test_freeze_serializa_con_escritores_en_vuelo(db):
     evalúa al ejecutar la sentencia — un INSERT sin confirmar pasaba el
     guard, el freeze sellaba en otra sesión y el INSERT confirmaba DESPUÉS:
     un par fuera del snapshot sellado (reproducido por el revisor). Con el
-    LOCK TABLE del helper, el freeze ESPERA a los escritores en vuelo (sus
-    pares entran al snapshot) y los posteriores chocan con el guard."""
+    LOCK TABLE del TRIGGER (core0026 — el helper no toma locks propios
+    desde 622e9e4), el freeze ESPERA a los escritores en vuelo (sus pares
+    entran al snapshot) y los posteriores chocan con el guard."""
     factory, created = db
     p = f"race-{uuid.uuid4().hex[:8]}"
     ja, jb, jc = f"{p}-a", f"{p}-b", f"{p}-c"
