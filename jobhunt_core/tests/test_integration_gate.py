@@ -157,7 +157,7 @@ def db(gate_db, monkeypatch):
                 sa.text(
                     "TRUNCATE shadow_change_log, shadow_projection_batches, "
                     "shadow_cycle_metrics, labeled_dedup_pairs, "
-                    "shadow_capture_state"
+                    "labeled_dedup_cohorts, shadow_capture_state"
                 )
             )
             await c.execute(sa.text("TRUNCATE integration_outbox CASCADE"))
@@ -418,6 +418,19 @@ def _seed_metric(factory, cycle, metric, scope, value, details=None, sealed=True
     )
 
 
+def _freeze_holdout(factory, when):
+    """Congela la cohorte del gate con frozen_at=`when` (elegibilidad,
+    auditoría Nº2 B-3): los ciclos cuya ventana empieza >= when pueden
+    sumar; los anteriores no. Idempotente (pisa frozen_at para el test)."""
+    _exec(
+        factory,
+        "INSERT INTO labeled_dedup_cohorts (source, frozen_at) "
+        "VALUES (:src, :ts) "
+        "ON CONFLICT (source) DO UPDATE SET frozen_at = :ts",
+        {"src": labels.DEDUP_EVAL_COHORT, "ts": when},
+    )
+
+
 def _seed_green_cycle(factory, cycle, scope="profile:aaaa"):
     """Ciclo TODO en verde con los umbrales RATIFICADOS de §6: ndcg 0.90 >=
     max(0.60, 0.70−0.05); fn 0 en modo estricto; dedup 1.0; perdida 0;
@@ -445,12 +458,16 @@ def _seed_green_cycle(factory, cycle, scope="profile:aaaa"):
 
 def test_gate_counter_sequences_green_red_and_reset(db):
     factory = db
-    # BD virgen: contador a 0, sin ciclos que listar.
+    # BD virgen: contador a 0, sin ciclos que listar (y sin cohorte
+    # congelada: holdout_frozen_at None).
     empty = _status(factory, now=GNOW)
     assert empty == {
         "consecutive_ok": 0, "required": 7, "gate_passed": False,
-        "last_cycle": G0.isoformat(), "per_cycle": [],
+        "last_cycle": G0.isoformat(), "holdout_frozen_at": None,
+        "per_cycle": [],
     }
+    # Cohorte congelada ANTES de la ventana más vieja: todos elegibles.
+    _freeze_holdout(factory, datetime(2026, 7, 1, tzinfo=metrics.CYCLE_TZ))
 
     # 7 ciclos CONSECUTIVOS en verde (G0-6 .. G0) ⇒ GATE superado.
     for i in range(7):
@@ -473,6 +490,7 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     assert st["per_cycle"][3] == {
         "cycle": "2026-07-16", "computado": True, "recomputado": False,
         "ok": False, "gates_rojos": ["perdida"], "alertas": [],
+        "elegible": True,
     }
 
     # Las [alerta] NO resetean (§6): no_ingeribles > 0 y reenlace > 5% en G0
@@ -495,6 +513,7 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     assert st["per_cycle"][1] == {
         "cycle": "2026-07-18", "computado": False, "recomputado": False,
         "ok": False, "gates_rojos": [], "alertas": [],
+        "elegible": True,
     }
 
     # Una fila SOLO del muestreador (finished_at NULL, placeholder) NO es un
@@ -521,6 +540,7 @@ def test_gate_counter_ignores_recomputed_cycle(db):
     estado posterior) NO cuenta para la racha aunque TODOS sus gates estén
     en verde: resetea igual que un rojo, y el informe lo señala."""
     factory = db
+    _freeze_holdout(factory, datetime(2026, 7, 1, tzinfo=metrics.CYCLE_TZ))
     for i in range(3):
         _seed_green_cycle(factory, G0 - timedelta(days=i))
     assert _status(factory, now=GNOW)["consecutive_ok"] == 3
@@ -543,6 +563,39 @@ def test_gate_counter_ignores_recomputed_cycle(db):
     assert entry["gates_rojos"] == []  # en verde… y aun así no computable
     text = _report(factory, now=GNOW)
     assert "RECOMPUTADO" in text and "no computable para la racha" in text
+
+
+def test_gate_counter_ciclo_anterior_al_congelado_es_inelegible(db):
+    """Regresión auditoría Nº2 (2026-08-23, BLOQUEANTE 3): un ciclo VERDE y
+    sellado cuya ventana empezó ANTES del congelado del holdout no puede
+    sumar — el corte es un dato PERSISTIDO (labeled_dedup_cohorts.frozen_at)
+    aplicado por gate_status, no una nota de documentación. Sin cohorte
+    congelada, NINGÚN ciclo es elegible (exactamente el estado que anuló el
+    ciclo mixto del 2026-08-23)."""
+    factory = db
+    for i in range(3):
+        _seed_green_cycle(factory, G0 - timedelta(days=i))
+
+    # Sin congelado: 3 verdes sellados y aun así 0/7.
+    st = _status(factory, now=GNOW)
+    assert st["holdout_frozen_at"] is None
+    assert st["consecutive_ok"] == 0
+    assert all(e["elegible"] is False for e in st["per_cycle"])
+
+    # Congelado DENTRO de la ventana de G0-1 (después de su inicio 06:00):
+    # solo G0 (empieza el 19 a las 06:00) es posterior ⇒ cuenta 1.
+    _freeze_holdout(
+        factory, datetime(2026, 7, 18, 12, 0, tzinfo=metrics.CYCLE_TZ)
+    )
+    st = _status(factory, now=GNOW)
+    assert st["consecutive_ok"] == 1
+    assert st["per_cycle"][0]["elegible"] is True   # G0
+    assert st["per_cycle"][1]["elegible"] is False  # G0-1: ventana mixta
+    assert st["per_cycle"][1]["ok"] is True         # verde… pero no computa
+
+    # Congelado anterior a todas las ventanas: las 3 cuentan.
+    _freeze_holdout(factory, datetime(2026, 7, 1, tzinfo=metrics.CYCLE_TZ))
+    assert _status(factory, now=GNOW)["consecutive_ok"] == 3
 
 
 # ------------------------------------------------------ alertas de slot (§6)

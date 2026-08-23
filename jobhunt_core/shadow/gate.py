@@ -97,6 +97,7 @@ from jobhunt_core.shadow.metrics import (
     latest_closed_cycle_id,
     purge_staging,
 )
+from jobhunt_core.shadow.labels import DEDUP_EVAL_COHORT, dedup_cohort_frozen_at
 from jobhunt_core.shadow.projector import DEFAULT_BATCH_SIZE, project_pending
 
 logger = logging.getLogger(__name__)
@@ -277,9 +278,10 @@ async def gate_status(
 ) -> dict:
     """Contador de ciclos CONSECUTIVOS en verde leyendo shadow_cycle_metrics
     vía evaluate_gates, hacia atrás desde el último ciclo CERRADO. Un ciclo
-    en rojo, SIN COMPUTAR o RECOMPUTADO tras sellado (details.recomputed_at,
-    P1-4: sus valores ya no son el veredicto histórico) corta la cuenta
-    (las [alerta] no, §6).
+    en rojo, SIN COMPUTAR, RECOMPUTADO tras sellado (details.recomputed_at,
+    P1-4: sus valores ya no son el veredicto histórico) o INELEGIBLE (ventana
+    iniciada antes del congelado del holdout — auditoría Nº2 B-3) corta la
+    cuenta (las [alerta] no, §6).
 
     → {consecutive_ok, required, gate_passed, last_cycle,
        per_cycle: [{cycle, computado, recomputado, ok, gates_rojos,
@@ -292,16 +294,28 @@ async def gate_status(
             sa.text("SELECT min(cycle_id) FROM shadow_cycle_metrics")
         )
     ).scalar_one_or_none()
+    # ELEGIBILIDAD (auditoría Nº2 2026-08-23, BLOQUEANTE 3): un ciclo solo
+    # puede sumar si su ventana EMPEZÓ después del congelado del holdout
+    # (labeled_dedup_cohorts.frozen_at de la cohorte del gate). Sin cohorte
+    # congelada NINGÚN ciclo es elegible. Esto es un corte PERSISTIDO en la
+    # BD y aplicado aquí — no una nota de documentación: el ciclo mixto del
+    # 2026-08-23 (media jornada con la imagen sin fixes, oráculo tocado en
+    # ventana) queda inelegible por construcción, igual que todo lo anterior.
+    frozen_at = await dedup_cohort_frozen_at(session, DEDUP_EVAL_COHORT)
     per_cycle: list[dict] = []
     consecutive = 0
     counting = True
     cid = last
     while first is not None and cid >= first:
         entry = await _cycle_entry(session, cid)
+        eligible = frozen_at is not None and cycle_bounds(cid)[0] >= frozen_at
+        entry["elegible"] = eligible
         if len(per_cycle) < required:
             per_cycle.append(entry)
         if counting:
-            if entry["ok"]:
+            if not eligible:
+                counting = False
+            elif entry["ok"]:
                 consecutive += 1
             else:
                 counting = False
@@ -318,6 +332,7 @@ async def gate_status(
         "required": required,
         "gate_passed": consecutive >= required,
         "last_cycle": last.isoformat(),
+        "holdout_frozen_at": frozen_at.isoformat() if frozen_at else None,
         "per_cycle": per_cycle,
     }
 
@@ -407,6 +422,11 @@ async def render_gate_report(
         if e.get("recomputado"):
             detalle.append(
                 "RECOMPUTADO tras sellado (P1-4: no computable para la racha)"
+            )
+        if not e.get("elegible", True):
+            detalle.append(
+                "INELEGIBLE (ventana anterior al congelado del holdout — "
+                "auditoría Nº2 B-3)"
             )
         lines.append(
             f"{e['cycle']:<12} {'sí' if e['computado'] else 'no':<10} "
