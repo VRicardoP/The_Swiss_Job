@@ -10,7 +10,9 @@ MÍNIMO que el gate necesita y el MÁXIMO que es seguro hoy:
   fusionar, y el AUTO-merge es exactamente donde el legacy se hizo daño
   (B-2: 664 ofertas desactivadas en falso). La fusión (ADR-04, con
   transferencia de estado) queda como paso posterior y CONTROLADO.
-- SOLO CROSS-SOURCE: el propósito declarado del dedup semántico es la misma
+- ANN SOLO CROSS-SOURCE (el léxico añade además un brazo INTRA con umbral
+  propio y regla de ubicación — Track R fase 2): el propósito del dedup
+  semántico es la misma
   oferta publicada en portales distintos. Los pares intra-fuente fueron el
   94 % de los falsos positivos del legacy (stubs sin descripción de la misma
   empresa superando 0,95); dentro de una fuente la identidad ya la dan URL y
@@ -27,6 +29,7 @@ cubre. `window_hours=None` = pasada COMPLETA (backfill inicial, una vez).
 Idempotente: `uq_dedup_pair` (LEAST/GREATEST) + ON CONFLICT DO NOTHING.
 """
 
+import hashlib
 import logging
 import uuid
 
@@ -67,14 +70,23 @@ _REMOTO_TOKENS = "('remote','global','worldwide','international','anywhere')"
 
 
 def _title_norm_sql(x: str) -> str:
-    """Título normalizado para el trigram (Track R fase 2): fuera el ruido
-    MECÁNICO que hundía la similitud de variantes reales — paréntesis
-    ((m/w/d), (EU Remote), (open rank)), dígitos (80-100%, códigos 174_),
-    puntuación. Lo semántico se queda (Senior/Junior distinguen roles)."""
+    """Título normalizado para el trigram — revisión FASE 2 P1-1: lo
+    desconocido se CONSERVA; solo se elimina ruido de una ALLOWLIST
+    estrecha: marcadores de género entre paréntesis ((m/w/d) y variantes)
+    y porcentajes de jornada (80%, 80-100%). Los demás paréntesis, los
+    dígitos y los símbolos de lenguaje (#, +) permanecen: Frontend/Backend,
+    C/C++/C#, L1/L2, Python 2/3 y ciudades entre paréntesis siguen siendo
+    distinguibles. La puntuación restante pasa a espacio."""
+    genero = (
+        "\\((m/w/d|w/m/d|m/f/d|f/m/d|m/w/x|m/f/x|m/w|w/m|m/f|f/m"
+        "|all genders?|alle)\\)"
+    )
+    pct = "[0-9]+( *[-–] *[0-9]+)? *%"
     return (
-        "btrim(regexp_replace(regexp_replace(regexp_replace("
-        f"lower({x}), '\\([^)]*\\)', ' ', 'g'), "
-        "'[^a-zäöüéèß]+', ' ', 'g'), ' +', ' ', 'g'))"
+        "btrim(regexp_replace(regexp_replace(regexp_replace(regexp_replace("
+        f"lower({x}), '{genero}', ' ', 'g'), "
+        f"'{pct}', ' ', 'g'), "
+        "'[^a-z0-9äöüéèß#+]+', ' ', 'g'), ' +', ' ', 'g'))"
     )
 
 
@@ -87,11 +99,11 @@ def _es_remoto_sql(x: str) -> str:
 
 def _loc_compat_sql(a: str, b: str) -> str:
     rem_a, rem_b = _es_remoto_sql(a), _es_remoto_sql(b)
-    # Componentes NORMALIZADOS sin dígitos (Track R fase 2: «Landstrasse
-    # 83, 9495 Triesen» fallaba porque el componente era «9495 triesen» —
-    # códigos postales y números de portal fuera antes de comparar).
-    norm = "btrim(regexp_replace(regexp_replace(%s, '[0-9]+', ' ', 'g'), ' +', ' ', 'g'))"
-    ca_n, cb_n = norm % "btrim(ca.c)", norm % "btrim(cb.c)"
+    # Revisión FASE 2 P1-2: SOLO se retira un prefijo POSTAL reconocido
+    # (^[0-9]{4,5} espacio) — «9495 Triesen» ⇒ «triesen» sin fusionar
+    # «District 1» con «District 2» (los dígitos de zona son semánticos).
+    norm = "btrim(regexp_replace(btrim(%s), '^[0-9]{4,5} +', ''))"
+    ca_n, cb_n = norm % "ca.c", norm % "cb.c"
     comp = (
         "EXISTS (SELECT 1 "
         f"FROM unnest(string_to_array(translate(lower({a}), ';/', ',,'), ',')) "
@@ -106,14 +118,15 @@ def _loc_compat_sql(a: str, b: str) -> str:
         f"  OR {ca_n} LIKE {cb_n} || '-%' "
         f"  OR {ca_n} LIKE {cb_n} || ' %'))"
     )
-    # Remoto = COMODÍN unilateral (Track R fase 2): el gemelo legítimo
-    # («Anywhere» en un portal, país concreto en el otro) quedaba vetado;
-    # en dev-2 los FP que ese veto salvaba ya los mataba el umbral de trgm.
+    # Revisión FASE 2 P1-3: remoto BILATERAL restaurado — el comodín
+    # unilateral se retiró (su evidencia era vacua: 0/12 pares elegibles).
+    # Una excepción remoto↔concreto exigiría positivos independientes y una
+    # rama explícita más fuerte; no existe hoy.
     return (
         f"(btrim({a}) = '' OR btrim({b}) = '' "
         f" OR length(btrim({a})) <= 3 OR length(btrim({b})) <= 3 "
-        f" OR {rem_a} OR {rem_b} "
-        f" OR {comp})"
+        f" OR ({rem_a} AND {rem_b}) "
+        f" OR (NOT {rem_a} AND NOT {rem_b} AND {comp}))"
     )
 
 
@@ -311,32 +324,66 @@ def _lex_sql(window: bool) -> str:
     )
 
 
-async def revalidate_pending_candidates(session: AsyncSession) -> int:
-    """One-shot (Track R fase 2): aplica la regla de UBICACIÓN ratificada
-    UNIFORMEMENTE a todos los candidatos pendientes — los de la era pre-fix
-    la violan (multi-ciudad a texto idéntico) y los generadores actuales
-    jamás los crearían. NO es una resolución dirigida por el holdout: la
-    regla decide sola sobre TODA la tabla; los pares del examen caen o no
-    incidentalmente, como cualquier otro. Los resueltos no se tocan."""
+_REVALIDATE_RULE = "rule:track-r-location-v1"
+
+
+async def revalidate_pending_candidates(
+    session: AsyncSession, apply: bool = False
+) -> dict:
+    """Barrido one-shot por REGLA uniforme (revisión FASE 2 P2-1, auditable):
+    los candidatos PENDIENTES cuya ubicación viola la regla ratificada.
+    `apply=False` (preview): cuenta + hash md5 de los ids ordenados, SIN
+    escribir. `apply=True`: UPDATE atómico con procedencia
+    (resolved_by='rule:track-r-location-v1', resolved_at) y RETURNING id —
+    mismo resumen, comparable con el preview. Decide LA REGLA sobre toda la
+    tabla; jamás la pertenencia al holdout. Los resueltos no se tocan.
+    Idempotente: segunda pasada ⇒ 0."""
     loc_ok = _loc_compat_sql(
         "coalesce(oa.content->>'location','')",
         "coalesce(ob.content->>'location','')",
     )
-    return (
-        await session.execute(
-            sa.text(
-                "UPDATE dedup_candidates dc SET state = 'rejected' "
-                "FROM vacancies va, offer_revisions oa, vacancies vb, "
-                "     offer_revisions ob "
-                "WHERE dc.state = 'pending' "
-                "  AND va.id = dc.vacancy_a "
-                "  AND oa.id = va.current_offer_revision_id "
-                "  AND vb.id = dc.vacancy_b "
-                "  AND ob.id = vb.current_offer_revision_id "
-                f"  AND NOT {loc_ok}"
-            )
-        )
-    ).rowcount
+    base = (
+        "FROM vacancies va, offer_revisions oa, vacancies vb, "
+        "     offer_revisions ob "
+        "WHERE dc.state = 'pending' "
+        "  AND va.id = dc.vacancy_a "
+        "  AND oa.id = va.current_offer_revision_id "
+        "  AND vb.id = dc.vacancy_b "
+        "  AND ob.id = vb.current_offer_revision_id "
+        f"  AND NOT {loc_ok}"
+    )
+    if apply:
+        ids = [
+            str(r.id)
+            for r in (
+                await session.execute(
+                    sa.text(
+                        "UPDATE dedup_candidates dc SET state = 'rejected', "
+                        f"  resolved_by = '{_REVALIDATE_RULE}', "
+                        "  resolved_at = statement_timestamp() "
+                        + base + " RETURNING dc.id"
+                    )
+                )
+            ).all()
+        ]
+    else:
+        ids = [
+            str(r.id)
+            for r in (
+                await session.execute(
+                    sa.text("SELECT dc.id FROM dedup_candidates dc, "
+                            + base.replace("FROM ", "", 1) + " ORDER BY dc.id")
+                )
+            ).all()
+        ]
+    ids.sort()
+    resumen = {
+        "modo": "apply" if apply else "preview",
+        "n": len(ids),
+        "hash_ids": hashlib.md5(",".join(ids).encode()).hexdigest(),
+    }
+    logger.info("revalidate_pending_candidates: %s", resumen)
+    return resumen
 
 
 async def lexical_backfill(session: AsyncSession) -> int:

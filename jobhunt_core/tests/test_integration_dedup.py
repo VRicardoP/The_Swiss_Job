@@ -625,11 +625,9 @@ def test_compatibilidad_de_ubicacion_semantica(db):
         ("York", "New York", False),
         ("Bern", "Bernau", False),
         ("remote", "Remote - Europe", True),
-        # FASE 2 Track R: remoto = COMODÍN unilateral — el gemelo legítimo
-        # («Anywhere» en un portal, país en el otro) quedaba vetado. CAMBIA
-        # el caso fijado por el revisor en su ronda 1 (era False): queda
-        # expuesto EXPLÍCITAMENTE a su ratificación con los datos de dev-3.
-        ("remote", "Berlin", True),
+        # Revisión FASE 2 P1-3: el comodín unilateral queda RETIRADO (la
+        # evidencia era vacua: 0/12 pares elegibles). Bilateral restaurado.
+        ("remote", "Berlin", False),
         ("Bulgaria, Romania", "Greece, Bulgaria", True),
         ("", "Berlin", True),
         ("LU", "Emmen", True),
@@ -638,9 +636,11 @@ def test_compatibilidad_de_ubicacion_semantica(db):
         ("Berlin, Germany", "Munich, Germany", False),
         ("Schänis, St. Gallen", "Flums, St. Gallen", False),
         ("Dublin", "Dublin, County Dublin", True),
-        # FASE 2: dirección postal — los tokens numéricos fuera antes de
-        # comparar («9495 triesen» ⇒ «triesen»)
+        # FASE 2 (P1-2): SOLO el prefijo postal se retira — los dígitos
+        # semánticos de zona se conservan
         ("Triesen, Liechtenstein", "Landstrasse 83, 9495 Triesen", True),
+        ("District 1", "District 2", False),
+        ("Sector 4", "Sector 5", False),
     ]
 
     async def go():
@@ -741,14 +741,86 @@ def test_fase2_intra_normalizado_y_revalidacion_por_regla(db):
                 "CAST('rejected' AS dedup_candidate_state))"),
                 {"a": v["s0-j2"], "b": v["s0-j3"]})
             await s.commit()
-            n = await revalidate_pending_candidates(s)
+            prev = await revalidate_pending_candidates(s)  # preview: no escribe
+            ap = await revalidate_pending_candidates(s, apply=True)
             await s.commit()
-            return n
+            seg = await revalidate_pending_candidates(s, apply=True)
+            await s.commit()
+            meta = (await s.execute(sa.text(
+                "SELECT resolved_by, resolved_at FROM dedup_candidates "
+                "WHERE state = 'rejected' AND resolved_by IS NOT NULL"))).all()
+            return prev, ap, seg, meta
 
-    n = asyncio.run(prepara_y_revalida())
-    assert n == 1  # SOLO el multi-ciudad pendiente cae
+    prev, ap, seg, meta = asyncio.run(prepara_y_revalida())
+    # preview y aplicación COINCIDEN (P2-1); idempotencia: segunda ⇒ 0
+    assert prev["n"] == 1 and ap["n"] == 1
+    assert prev["hash_ids"] == ap["hash_ids"]
+    assert seg["n"] == 0
+    # procedencia registrada en la misma sentencia
+    assert meta and all(
+        m.resolved_by == "rule:track-r-location-v1" and m.resolved_at
+        for m in meta
+    )
     pares = sorted(_pairs(factory, created), key=lambda p: float(p.similarity))
     estados = [(float(p.similarity), p.state) for p in pares]
     assert (0.910, "rejected") in estados   # violaba la regla ⇒ rechazado
     assert (0.920, "rejected") in estados   # ya resuelto: intacto
     assert any(s == "pending" and sim >= 0.99 for sim, s in estados)
+
+
+def test_normalizacion_de_titulo_allowlist(db):
+    """Revisión FASE 2 P1-1: la normalización solo elimina ruido de una
+    ALLOWLIST estrecha ((m/w/d) y variantes, porcentajes) — lo desconocido
+    se CONSERVA: Frontend/Backend, C/C++/C#, L1/L2, Python 2/3 y ciudades
+    entre paréntesis siguen siendo distinguibles."""
+    from jobhunt_core.dedup import _title_norm_sql
+
+    casos_iguales = [  # ruido mecánico: deben normalizar IGUAL
+        ("Fachperson Betreuung 80-100% (m/w/d)", "Fachperson Betreuung"),
+        ("Developer (m/f/d) 80%", "Developer"),
+        ("Ingeniera (w/m/d)", "Ingeniera"),
+    ]
+    casos_distintos = [  # semántica: deben normalizar DISTINTO
+        ("Software Engineer (Frontend)", "Software Engineer (Backend)"),
+        ("C developer", "C++ developer"),
+        ("C++ developer", "C# developer"),
+        ("L1 Support", "L2 Support"),
+        ("Python 2 maintainer", "Python 3 maintainer"),
+        ("Staff Engineer (Campinas)", "Staff Engineer (Mexico City)"),
+    ]
+    factory, _ = db
+
+    async def norm(x):
+        async with factory() as s:
+            return (await s.execute(
+                sa.text("SELECT " + _title_norm_sql("CAST(:x AS text)")),
+                {"x": x})).scalar_one()
+
+    for a, b in casos_iguales:
+        na, nb = asyncio.run(norm(a)), asyncio.run(norm(b))
+        assert na == nb.lower().strip() or na == nb, (a, b, na, nb)
+    for a, b in casos_distintos:
+        na, nb = asyncio.run(norm(a)), asyncio.run(norm(b))
+        assert na != nb, (a, b, na)
+
+
+def test_reproducciones_adversariales_fase2_del_revisor(db):
+    """Las 3 reproducciones de la revisión FASE 2 que generaban FP: (1)
+    Frontend/Backend intra (norm agresiva); (2) District 1/2 cross (dígitos
+    de zona borrados); (3) Remote/Berlin cross (comodín unilateral). Con
+    las fronteras conservadoras: CERO candidatos."""
+    factory, created = db
+    _setup(
+        factory, created,
+        [[("Software Engineer (Frontend)", "Berlin", "ACME AG"),
+          ("Software Engineer (Backend)", "Berlin", "ACME AG"),
+          ("python warehouse operator", "District 1", "ACME AG"),
+          ("python platform engineer", "Remote", "ACME AG")],
+         [("python warehouse operator", "District 2", "ACME AG"),
+          ("python platform engineer", "Berlin", "ACME AG")]],
+    )
+    r = _scan(factory)
+    assert r["status"] == "ok"
+    # ANN: 'python…' cruzados comparten eje (sim 1.0) pero District 1/2 y
+    # Remote/Berlin deben quedar vetados; léxico intra: Frontend≠Backend.
+    assert _pairs(factory, created) == []

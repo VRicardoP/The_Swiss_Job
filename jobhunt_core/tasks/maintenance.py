@@ -26,6 +26,19 @@ def dedup_lex_backfill_task() -> dict:
     return {"candidatos": asyncio.run(_run(lexical_backfill))}
 
 
+@celery_app.task(name="jobhunt.maintenance.dedup_revalidate_by_rule")
+def dedup_revalidate_by_rule_task(apply: bool = False) -> dict:
+    """One-shot AUDITABLE (revisión FASE 2 P2-1): revalida los candidatos
+    pendientes contra la regla de ubicación ratificada. Por defecto PREVIEW
+    (cuenta + hash de ids, sin escribir); con apply=True aplica con
+    procedencia y devuelve el mismo resumen para comparar."""
+    from functools import partial
+
+    from jobhunt_core.dedup import revalidate_pending_candidates
+
+    return asyncio.run(_run(partial(revalidate_pending_candidates, apply=apply)))
+
+
 @celery_app.task(name="jobhunt.maintenance.dedup_scan")
 def dedup_scan_task() -> dict:
     """Generador de candidatos de dedup semántico (F-5, jobhunt_core/dedup.py)."""

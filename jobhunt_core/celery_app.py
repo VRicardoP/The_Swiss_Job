@@ -43,6 +43,7 @@ celery_app.conf.update(
         "jobhunt.maintenance.archive_sweep": {"queue": "core.default"},
         "jobhunt.maintenance.dedup_scan": {"queue": "core.default"},
         "jobhunt.maintenance.dedup_lex_backfill": {"queue": "core.default"},
+        "jobhunt.maintenance.dedup_revalidate_by_rule": {"queue": "core.default"},
         # Proyector de la sombra (B-02, contrato §3): comparte la cola de
         # cosecha — es ingesta, y serializa con los locks del sink.
         "jobhunt.shadow.project": {"queue": "core.harvest"},
