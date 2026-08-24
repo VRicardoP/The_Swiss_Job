@@ -107,6 +107,7 @@ class SwissTechJobsProvider(BaseJobProvider):
             "remote": is_remote,
             "tags": tags,
             "logo": None,
+            "apply_url": application_url or None,  # R.6
             "salary_min_chf": None,
             "salary_max_chf": None,
             "salary_original": salary_raw if salary_raw else None,

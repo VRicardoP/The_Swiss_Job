@@ -104,6 +104,7 @@ class JSearchProvider(BaseJobProvider):
             "remote": is_remote,
             "tags": tags,
             "logo": logo,
+            "apply_url": url or None,  # R.6: job_apply_link
             "salary_min_chf": None,
             "salary_max_chf": None,
             "salary_original": salary_original,

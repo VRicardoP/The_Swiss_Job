@@ -191,6 +191,20 @@ class JobRepository:
         # False, 0 y algunos None sí son datos legítimos en otras columnas
         # (canton entrante None con location real, p. ej.) — nada de coalesce
         # genérico.
+        # apply_url (R.6): misma disciplina que logo — decorativa para el
+        # legacy (la consume el CORE como señal de dedup); NUL o desborde
+        # degradan SOLO el campo, jamás la oferta. pop y no None: un None
+        # entraría al ON CONFLICT y pisaría el valor bueno almacenado.
+        if "apply_url" in values:
+            aurl = values["apply_url"]
+            if not isinstance(aurl, str) or not aurl.strip():
+                values.pop("apply_url")
+            elif "\x00" in aurl or len(aurl) > _LOGO_MAX_LEN:
+                logger.info(
+                    "apply_url invalido (NUL o >%d): campo descartado (url=%s)",
+                    _LOGO_MAX_LEN, values.get("url"),
+                )
+                values.pop("apply_url")
         if "logo" in values:
             logo = values["logo"]
             if isinstance(logo, str) and "\x00" in logo:

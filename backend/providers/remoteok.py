@@ -53,6 +53,8 @@ class RemoteOKProvider(BaseJobProvider):
         logo = raw.get("logo", None)
 
         # Prefer apply_url; fall back to url; construct from slug as last resort
+        # R.6: el enlace de solicitud viaja aparte como señal de dedup del core
+        apply_url = raw.get("apply_url", "").strip() or None
         url = raw.get("apply_url", "").strip()
         if not url:
             url = raw.get("url", "").strip()
@@ -114,6 +116,7 @@ class RemoteOKProvider(BaseJobProvider):
             "remote": True,
             "tags": merged_tags[: self.MAX_TAGS],
             "logo": logo,
+            "apply_url": apply_url,  # R.6
             "salary_min_chf": None,
             "salary_max_chf": None,
             "salary_original": salary_original,

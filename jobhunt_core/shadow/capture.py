@@ -86,6 +86,7 @@ TABLE_WHITELIST: dict[str, dict] = {
             "salary_min_chf", "salary_max_chf", "salary_original",
             "salary_currency", "salary_period", "url", "source",
             "is_active", "duplicate_of", "content_hash",
+            "apply_url",  # R.6: señal de dedup cross-portal (nullable, NO crítica)
         }),
         # Columnas CRÍTICAS para la corrección (si faltan, el snapshot se confirmaría SIN ellas y
         # añadirlas después no genera UPDATE WAL para las filas viejas → histórico irrecuperable —

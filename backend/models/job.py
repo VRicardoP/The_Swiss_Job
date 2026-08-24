@@ -58,6 +58,9 @@ class Job(Base):
 
     # Extra metadata
     logo: Mapped[str | None] = mapped_column(String(2048))
+    # R.6: enlace de solicitud (ATS de la empresa) — señal futura de dedup
+    # cross-portal del core; decorativa (no entra en content_hash)
+    apply_url: Mapped[str | None] = mapped_column(String(2048))
     employment_type: Mapped[str | None] = mapped_column(String(100))
 
     # Timestamps

@@ -716,8 +716,9 @@ async def _build_source_batch(
     listings: list[RawListing] = []
     touches: list[str] = []
     url_pending: list[tuple[str, dict]] = []
+    aurl_by_pk: dict[str, str | None] = {}  # R.6
     for pk, fold in entries:
-        payload, url = _merge_job_payload(
+        payload, url, apply_url = _merge_job_payload(
             fold, prev_raws.get(pk), prev_changes.get(pk)
         )
         if payload is None:
@@ -730,8 +731,13 @@ async def _build_source_batch(
             touches.append(pk)
         elif url is None:
             url_pending.append((pk, payload))
+            aurl_by_pk[pk] = apply_url
         else:
-            listings.append(RawListing(external_id=pk, url=url, payload=payload))
+            listings.append(RawListing(
+                external_id=pk, url=url, payload=payload,
+                apply_url=apply_url,  # R.6
+            ))
+            aurl_by_pk[pk] = apply_url
     for pk, payload, url in await _resolve_pending_urls(
         session, source_id, url_pending
     ):
@@ -742,7 +748,10 @@ async def _build_source_batch(
             )
             touches.append(pk)
         else:
-            listings.append(RawListing(external_id=pk, url=url, payload=payload))
+            listings.append(RawListing(
+                external_id=pk, url=url, payload=payload,
+                apply_url=aurl_by_pk.get(pk),  # R.6
+            ))
     return listings, touches
 
 
@@ -758,21 +767,27 @@ def _missing_cols(fold: _JobFold) -> tuple:
 
 def _merge_job_payload(
     fold: _JobFold, prev_raw: dict | None, prev_change: dict | None
-) -> tuple[dict | None, str | None]:
+) -> tuple[dict | None, str | None, str | None]:
     """Payload contractual (§3) con las columnas omitidas completadas desde
-    el último valor conocido (regla 2). (None, None) = degradación (regla 3)."""
+    el último valor conocido (regla 2). (None, None, None) = degradación
+    (regla 3). Tercer elemento: apply_url (R.6) — como url, NO es contenido
+    (fuera de JOB_PAYLOAD_MAP: no toca content/text_hash) y viaja aparte
+    hacia incarnations.apply_url."""
     payload = {
         JOB_PAYLOAD_MAP[c]: fold.cols[c] for c in JOB_PAYLOAD_MAP if c in fold.cols
     }
     missing = _missing_cols(fold)
     if missing and prev_raw is None and prev_change is None:
-        return None, None
+        return None, None, None
     for col in missing:
         _fill_from_previous(payload, col, prev_raw, prev_change)
     url = fold.cols.get("url")
     if url is None and prev_change is not None:
         url = prev_change.get("url")
-    return payload, url
+    apply_url = fold.cols.get("apply_url")
+    if apply_url is None and prev_change is not None:
+        apply_url = prev_change.get("apply_url")
+    return payload, url, apply_url
 
 
 def _fill_from_previous(payload, col, prev_raw, prev_change) -> None:

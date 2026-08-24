@@ -1993,3 +1993,31 @@ def test_task_registered_routed_and_runs(db):
     result = project_task.apply()  # staging vacío en la BD desechable
     assert result.successful()
     assert result.result["batches"] == 0 and result.result["changes"] == 0
+
+
+def test_r6_apply_url_viaja_del_staging_a_la_encarnacion(db):
+    """R.6: la columna whitelisted `apply_url` NO es contenido (fuera de
+    JOB_PAYLOAD_MAP: no toca content ni text_hash) y viaja del fold a
+    incarnations.apply_url — la señal futura de dedup cross-portal."""
+    factory = db
+    src = f"r6-{uuid.uuid4().hex[:6]}"
+    _seed(factory, [
+        ("jobs", "I", "r6a", _job("r6a", src,
+                                  apply_url="https://ats.acme.com/jobs/42")),
+        ("jobs", "I", "r6b", _job("r6b", src)),  # sin apply_url
+    ])
+    _project()
+    filas = _rows(
+        factory,
+        "SELECT l.external_id, i.apply_url, orv.content ? 'apply_url' AS en_contenido "
+        "FROM source_listing_incarnations i "
+        "JOIN source_listings l ON l.id = i.source_listing_id "
+        "JOIN sources s ON s.id = l.source_id "
+        "JOIN vacancies v ON v.id = i.vacancy_id "
+        "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
+        "WHERE s.name = :n ORDER BY l.external_id", n=f"legacy:{src}",
+    )
+    assert [(f.external_id, f.apply_url, f.en_contenido) for f in filas] == [
+        ("r6a", "https://ats.acme.com/jobs/42", False),
+        ("r6b", None, False),
+    ]
