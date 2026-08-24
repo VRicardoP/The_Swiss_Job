@@ -62,3 +62,9 @@ empresa + trgm >= 0.65 + ubicación v2 (9/9, 0 FP); el ANN>=0.95 daba 0/9.
 - `e282afa2c02619c750a03bdcab491a504b627173c69492e7045d3580a92ebe8b`  holdout_artefactos_2026-08-23/dev2_etiquetado.csv
 - `c36106a89e188e2a9703a6f01e86215c7b222b66788c31ad916a91bfa8c76577`  holdout_artefactos_2026-08-23/dev2_sample.sql
 - `780f6bdfcadd99586dd66cecb02b56a48eed23aa85d4a2809abd93cbd4422c91`  PROTOCOLO_DEV2_DEDUP.md
+
+## v3.1 — 2026-08-24 (dev-2 REPRODUCIBLE, revisión Track R P1-4)
+
+- `ad77fa2fcabfee3fc59f0d11812544be0ec3a65157fc56a49cc9660d9335d04e`  holdout_artefactos_2026-08-23/dev2_sample_v2.sql
+- `7ebc2c8d168f5e39322584edd0e69d47f6286a751a8345f98602aef2768a4d59`  holdout_artefactos_2026-08-23/dev2_etiquetado_v2.csv
+- `d7c99fc10fdbd0865b7c3487d2975d3dcdf901cf13808d29be1e60472ebd5a88`  PROTOCOLO_DEV2_DEDUP.md (enmienda v2)
