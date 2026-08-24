@@ -708,8 +708,16 @@ async def _build_source_batch(
 ) -> tuple[list[RawListing], list[str]]:
     """Pliegues → RawListings con el MERGE TOAST de cabecera aplicado.
     Devuelve además las pks DEGRADADAS a refresco de last_seen (regla 3)."""
+    # apply_url en need_prev (auditoría C1 P2-2): un U con apply_url
+    # TOAST-omitido borraba (NULL) el valor ya almacenado — el fallback a
+    # prev_change necesita que la pk esté aquí. Limitación documentada: el
+    # fallback no distingue «omitido» de «NULL explícito» (si el legacy
+    # borra el apply_url a propósito en un U que además omite contenido,
+    # el proyector lo resucita — mismo compromiso que url).
     need_prev = sorted(
-        {pk for pk, f in entries if _missing_content(f) or "url" not in f.cols}
+        {pk for pk, f in entries
+         if _missing_content(f) or "url" not in f.cols
+         or "apply_url" not in f.cols}
     )
     prev_raws = await _latest_slot_raws(session, source_id, need_prev)
     prev_changes = await _last_applied_changes(session, "jobs", need_prev)
@@ -787,6 +795,14 @@ def _merge_job_payload(
     apply_url = fold.cols.get("apply_url")
     if apply_url is None and prev_change is not None:
         apply_url = prev_change.get("apply_url")
+    # Auditoría C1 P2-1: un apply_url LEGAL en legacy (hasta 2048) pero
+    # fuera del contrato del sink (MAX_URL_LEN=1000) ponía en CUARENTENA la
+    # oferta ENTERA. Es decorativo: se degrada SOLO el campo, aquí, en la
+    # frontera — patrón del guard legacy (NUL incluido).
+    if isinstance(apply_url, str) and (
+        len(apply_url) > 1000 or "\x00" in apply_url or not apply_url.strip()
+    ):
+        apply_url = None
     return payload, url, apply_url
 
 

@@ -66,12 +66,14 @@ _CORPUS_SQL = (
 # (split por , ; /): iguales, o prefijo en frontera de palabra
 # («basel»→«basel-stadt» sí; «bern»→«bernau» NO; «york» vs «new york» NO;
 # «bulgaria, romania» ~ «greece, bulgaria» sí por componente común).
-# 'cet'/'cest'/'utc'/'gmt': descriptores de HUSO HORARIO = restricción de
-# remoto, no ubicación (evidencia: proxify «CET (+/- 3 hours)» vs «Anywhere»,
-# único par remoto-vs-"concreto" minable en el corpus NAS — fase 3). NO se
-# añade 'est' (colisiona con «Grand Est»).
-_REMOTO_TOKENS = ("('remote','global','worldwide','international','anywhere',"
-                  "'cet','cest','utc','gmt','timezone','timezones')")
+# Tokens NÚCLEO de remoto: cualquier aparición ⇒ remoto («Remote - Europe»).
+_REMOTO_TOKENS = "('remote','global','worldwide','international','anywhere')"
+# Husos horarios (fase 3; auditoría C1 P3-1): un huso solo declara remoto si
+# al retirar husos/dígitos/«hours» NO queda residuo concreto — «CET (+/- 3
+# hours)» ⇒ remoto, pero «Zürich (CET)» sigue siendo Zürich (antes dejaba de
+# casar consigo misma). 'est' fuera (colisiona con «Grand Est»).
+_TZ_TOKENS = "('cet','cest','utc','gmt','timezone','timezones')"
+_TZ_STRIP = "(cet|cest|utc|gmt|timezone|timezones|hours?)"
 
 
 def _title_norm_sql(x: str) -> str:
@@ -102,10 +104,20 @@ def _title_norm_sql(x: str) -> str:
 
 
 def _es_remoto_sql(x: str) -> str:
-    return (
+    nucleo = (
         "EXISTS (SELECT 1 FROM unnest(regexp_split_to_array("
         f"lower({x}), '[^a-z]+')) AS rt(tok) WHERE rt.tok IN {_REMOTO_TOKENS})"
     )
+    tiene_tz = (
+        "EXISTS (SELECT 1 FROM unnest(regexp_split_to_array("
+        f"lower({x}), '[^a-z]+')) AS rt(tok) WHERE rt.tok IN {_TZ_TOKENS})"
+    )
+    residuo_vacio = (
+        "btrim(regexp_replace(regexp_replace("
+        f"lower({x}), '\\m{_TZ_STRIP}\\M', ' ', 'g'), "
+        "'[^a-zäöüéèß]+', ' ', 'g')) = ''"
+    )
+    return f"({nucleo} OR ({tiene_tz} AND {residuo_vacio}))"
 
 
 def _loc_compat_sql(a: str, b: str) -> str:
@@ -335,7 +347,10 @@ def _lex_sql(window: bool) -> str:
     )
 
 
-_REVALIDATE_RULE = "rule:track-r-location-v1"
+# ⚠ BUMP OBLIGATORIO en el MISMO commit que cambie _loc_compat_sql o los
+# tokens de remoto (auditoría C1 P3-2): la procedencia debe identificar QUÉ
+# versión de la regla resolvió cada candidato.
+_REVALIDATE_RULE = "rule:track-r-location-v2"
 
 
 async def revalidate_pending_candidates(

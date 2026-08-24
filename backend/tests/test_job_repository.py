@@ -1091,3 +1091,38 @@ class TestLogoNulByte:
         await db_session.commit()
 
         assert await self._stored_logo(db_session) == self.GOOD_LOGO
+
+
+class TestApplyUrlGuard:
+    """Auditoría C1 P3-3: el guard de frontera de apply_url (R.6) con tests
+    legacy propios — degrada SOLO el campo, jamás la oferta."""
+
+    @pytest.mark.asyncio
+    async def test_apply_url_invalido_degrada_solo_el_campo(self, db_session):
+        repo = JobRepository(db_session)
+        base = _job_dict(hash="aurl0001" + "0" * 24,
+                         url="https://x.test/aurl-1")
+        # no-string, NUL, desborde (>1000, contrato core) y vacío: campo fuera
+        for i, malo in enumerate([123, "con\x00nul", "https://a/" + "b" * 1200,
+                                  "   "]):
+            job = dict(base)
+            job["hash"] = f"aurl{i:04d}" + "0" * 24
+            job["url"] = f"https://x.test/aurl-{i}"
+            job["apply_url"] = malo
+            assert await repo.upsert_job(job) is True  # la oferta SÍ persiste
+            row = await db_session.get(Job, job["hash"])
+            assert row is not None and row.apply_url is None
+
+    @pytest.mark.asyncio
+    async def test_apply_url_valido_persiste_y_refresca(self, db_session):
+        repo = JobRepository(db_session)
+        job = _job_dict(hash="aurlok01" + "0" * 24,
+                        url="https://x.test/aurl-ok")
+        job["apply_url"] = "https://ats.acme.com/jobs/1"
+        await repo.upsert_job(job)
+        row = await db_session.get(Job, job["hash"])
+        assert row.apply_url == "https://ats.acme.com/jobs/1"
+        job["apply_url"] = "https://ats.acme.com/jobs/2"
+        assert await repo.upsert_job(job) is False  # re-vista
+        await db_session.refresh(row)
+        assert row.apply_url == "https://ats.acme.com/jobs/2"  # refresca

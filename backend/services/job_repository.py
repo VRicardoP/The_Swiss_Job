@@ -46,6 +46,10 @@ def _column_max_len(column) -> int:
 # si algún portal empieza a desbordarlas.
 _URL_MAX_LEN: int = _column_max_len(Job.__table__.c.url)
 _LOGO_MAX_LEN: int = _column_max_len(Job.__table__.c.logo)
+# apply_url: tope del CONTRATO DEL CORE (sink MAX_URL_LEN=1000), no el de la
+# columna (2048) — auditoría C1 P2-1: el dato nace ya conforme y el proyector
+# nunca tiene que degradarlo.
+_APPLY_URL_MAX_LEN: int = 1000
 
 # Strings de contenido con protección NULLIF(valor, '') en el ON CONFLICT:
 # se normalizan en la frontera para que "solo espacios" cuente como vacío
@@ -199,10 +203,10 @@ class JobRepository:
             aurl = values["apply_url"]
             if not isinstance(aurl, str) or not aurl.strip():
                 values.pop("apply_url")
-            elif "\x00" in aurl or len(aurl) > _LOGO_MAX_LEN:
+            elif "\x00" in aurl or len(aurl) > _APPLY_URL_MAX_LEN:
                 logger.info(
                     "apply_url invalido (NUL o >%d): campo descartado (url=%s)",
-                    _LOGO_MAX_LEN, values.get("url"),
+                    _APPLY_URL_MAX_LEN, values.get("url"),
                 )
                 values.pop("apply_url")
         if "logo" in values:

@@ -643,6 +643,10 @@ def test_compatibilidad_de_ubicacion_semantica(db):
         # fase 3: husos horarios = remoto (evidencia proxify CET/Anywhere)
         ("CET (+/- 3 hours)", "Anywhere in the World", True),
         ("Grand Est", "remote", False),
+        # auditoría C1 P3-1: ciudad + huso NO es remoto — sigue casando
+        # consigo misma y NO casa con remoto puro
+        ("Zürich (CET)", "Zürich", True),
+        ("Zürich (CET)", "remote", False),
         ("Sector 4", "Sector 5", False),
     ]
 
@@ -764,7 +768,7 @@ def test_fase2_intra_normalizado_y_revalidacion_por_regla(db):
     assert seg["n"] == 0
     # procedencia registrada en la misma sentencia
     assert meta and all(
-        m.resolved_by == "rule:track-r-location-v1" and m.resolved_at
+        m.resolved_by == "rule:track-r-location-v2" and m.resolved_at
         for m in meta
     )
     pares = sorted(_pairs(factory, created), key=lambda p: float(p.similarity))

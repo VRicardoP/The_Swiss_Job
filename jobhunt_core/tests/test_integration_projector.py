@@ -2021,3 +2021,52 @@ def test_r6_apply_url_viaja_del_staging_a_la_encarnacion(db):
         ("r6a", "https://ats.acme.com/jobs/42", False),
         ("r6b", None, False),
     ]
+
+
+def test_c1_apply_url_desbordado_degrada_solo_el_campo(db):
+    """Auditoría C1 P2-1: un apply_url legal en legacy (1001-2048) ponía en
+    cuarentena la OFERTA entera en el sink (MAX_URL_LEN=1000). La frontera
+    del proyector degrada SOLO el campo."""
+    factory = db
+    src = f"c1a-{uuid.uuid4().hex[:6]}"
+    _seed(factory, [
+        ("jobs", "I", "c1a", _job("c1a", src,
+                                  apply_url="https://ats.x/" + "a" * 1500)),
+    ])
+    _project()
+    filas = _rows(
+        factory,
+        "SELECT i.apply_url FROM source_listing_incarnations i "
+        "JOIN source_listings l ON l.id = i.source_listing_id "
+        "JOIN sources s ON s.id = l.source_id WHERE s.name = :n",
+        n=f"legacy:{src}",
+    )
+    assert len(filas) == 1 and filas[0].apply_url is None  # oferta VIVA
+
+
+def test_c1_apply_url_omitido_no_borra_el_almacenado(db):
+    """Auditoría C1 P2-2: un U con apply_url TOAST-omitido borraba (NULL)
+    el valor ya persistido — need_prev debe incluir la omisión para que el
+    fallback a prev_change lo conserve."""
+    factory = db
+    src = f"c1b-{uuid.uuid4().hex[:6]}"
+    _seed(factory, [
+        ("jobs", "I", "c1b", _job("c1b", src,
+                                  apply_url="https://ats.acme.com/7")),
+    ])
+    _project()
+    # U que OMITE apply_url (TOAST): payload sin la clave + _omitted
+    pay = _job("c1b", src, title="Backend Dev v2", chash="ch-c1b-2")
+    pay.pop("apply_url", None)
+    pay["_omitted"] = ["apply_url"]
+    _seed(factory, [("jobs", "U", "c1b", pay)])
+    _project()
+    filas = _rows(
+        factory,
+        "SELECT i.apply_url FROM source_listing_incarnations i "
+        "JOIN source_listings l ON l.id = i.source_listing_id "
+        "JOIN sources s ON s.id = l.source_id "
+        "WHERE s.name = :n AND i.ended_at IS NULL",
+        n=f"legacy:{src}",
+    )
+    assert [f.apply_url for f in filas] == ["https://ats.acme.com/7"]
