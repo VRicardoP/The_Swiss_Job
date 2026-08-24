@@ -640,6 +640,9 @@ def test_compatibilidad_de_ubicacion_semantica(db):
         # semánticos de zona se conservan
         ("Triesen, Liechtenstein", "Landstrasse 83, 9495 Triesen", True),
         ("District 1", "District 2", False),
+        # fase 3: husos horarios = remoto (evidencia proxify CET/Anywhere)
+        ("CET (+/- 3 hours)", "Anywhere in the World", True),
+        ("Grand Est", "remote", False),
         ("Sector 4", "Sector 5", False),
     ]
 

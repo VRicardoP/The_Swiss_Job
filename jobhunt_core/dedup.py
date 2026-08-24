@@ -66,7 +66,12 @@ _CORPUS_SQL = (
 # (split por , ; /): iguales, o prefijo en frontera de palabra
 # («basel»→«basel-stadt» sí; «bern»→«bernau» NO; «york» vs «new york» NO;
 # «bulgaria, romania» ~ «greece, bulgaria» sí por componente común).
-_REMOTO_TOKENS = "('remote','global','worldwide','international','anywhere')"
+# 'cet'/'cest'/'utc'/'gmt': descriptores de HUSO HORARIO = restricción de
+# remoto, no ubicación (evidencia: proxify «CET (+/- 3 hours)» vs «Anywhere»,
+# único par remoto-vs-"concreto" minable en el corpus NAS — fase 3). NO se
+# añade 'est' (colisiona con «Grand Est»).
+_REMOTO_TOKENS = ("('remote','global','worldwide','international','anywhere',"
+                  "'cet','cest','utc','gmt','timezone','timezones')")
 
 
 def _title_norm_sql(x: str) -> str:
