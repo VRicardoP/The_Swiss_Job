@@ -773,7 +773,8 @@ def test_fase2_intra_normalizado_y_revalidacion_por_regla(db):
 
 def test_normalizacion_de_titulo_allowlist(db):
     """Revisión FASE 2 P1-1: la normalización solo elimina ruido de una
-    ALLOWLIST estrecha ((m/w/d) y variantes, porcentajes) — lo desconocido
+    ALLOWLIST estrecha ((m/w/d) y variantes, prefijo ^eks:) — los
+    porcentajes se CONSERVAN (ronda 2 P1-2) y lo desconocido
     se CONSERVA: Frontend/Backend, C/C++/C#, L1/L2, Python 2/3 y ciudades
     entre paréntesis siguen siendo distinguibles."""
     from jobhunt_core.dedup import _title_norm_sql
