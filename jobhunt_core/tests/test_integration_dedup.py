@@ -601,6 +601,13 @@ def test_backfill_lexico_cubre_corpus_viejo_y_firma_de_gran_empleador(db):
     assert b2 == 0                            # idempotente
     pares = _pairs(factory, created)
     assert len(pares) == 1
+    # Re-confirmación P1-A: la TAREA Celery ejecuta de verdad la corrutina
+    # (devolvía el objeto coroutine sin correr el backfill)
+    from jobhunt_core.tasks.maintenance import dedup_lex_backfill_task
+
+    r_task = dedup_lex_backfill_task.apply()
+    assert r_task.successful()
+    assert r_task.result["candidatos"] == 0  # tercera pasada: idempotente
 
 
 def test_compatibilidad_de_ubicacion_semantica(db):
@@ -619,6 +626,11 @@ def test_compatibilidad_de_ubicacion_semantica(db):
         ("Bulgaria, Romania", "Greece, Bulgaria", True),
         ("", "Berlin", True),
         ("LU", "Emmen", True),
+        # Re-confirmación P1-B: país/cantón compartido en COLA de lista no
+        # es la misma ciudad
+        ("Berlin, Germany", "Munich, Germany", False),
+        ("Schänis, St. Gallen", "Flums, St. Gallen", False),
+        ("Dublin", "Dublin, County Dublin", True),
     ]
 
     async def go():

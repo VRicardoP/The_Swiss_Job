@@ -75,11 +75,19 @@ def _es_remoto_sql(x: str) -> str:
 
 def _loc_compat_sql(a: str, b: str) -> str:
     rem_a, rem_b = _es_remoto_sql(a), _es_remoto_sql(b)
+    # Re-confirmación Track R (P1-B): el componente coincidente debe ser el
+    # PRIMERO (la ciudad) en al menos un lado — sin esto, «Berlin, Germany»
+    # ~ «Munich, Germany» y «Schänis, St. Gallen» ~ «Flums, St. Gallen»
+    # casaban por el país/cantón compartido en cola de lista. «Bulgaria,
+    # Romania» ~ «Greece, Bulgaria» sigue casando (bulgaria es 1º de A).
     comp = (
         "EXISTS (SELECT 1 "
-        f"FROM unnest(string_to_array(translate(lower({a}), ';/', ',,'), ',')) AS ca(c), "
-        f"     unnest(string_to_array(translate(lower({b}), ';/', ',,'), ',')) AS cb(c) "
-        "WHERE btrim(ca.c) <> '' AND btrim(cb.c) <> '' AND ("
+        f"FROM unnest(string_to_array(translate(lower({a}), ';/', ',,'), ',')) "
+        "     WITH ORDINALITY AS ca(c, ord), "
+        f"     unnest(string_to_array(translate(lower({b}), ';/', ',,'), ',')) "
+        "     WITH ORDINALITY AS cb(c, ord) "
+        "WHERE btrim(ca.c) <> '' AND btrim(cb.c) <> '' "
+        "  AND (ca.ord = 1 OR cb.ord = 1) AND ("
         "  btrim(ca.c) = btrim(cb.c) "
         "  OR btrim(cb.c) LIKE btrim(ca.c) || '-%' "
         "  OR btrim(cb.c) LIKE btrim(ca.c) || ' %' "

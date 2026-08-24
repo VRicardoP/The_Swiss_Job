@@ -21,7 +21,9 @@ def dedup_lex_backfill_task() -> dict:
     jamás recibiría candidatos léxicos. Lanzar UNA vez tras desplegar."""
     from jobhunt_core.dedup import lexical_backfill
 
-    return {"candidatos": _run(lexical_backfill)}
+    # asyncio.run OBLIGATORIO (re-confirmación Track R, P1-A: sin él la
+    # tarea devolvía la CORRUTINA sin ejecutar y el backfill nunca corría).
+    return {"candidatos": asyncio.run(_run(lexical_backfill))}
 
 
 @celery_app.task(name="jobhunt.maintenance.dedup_scan")
