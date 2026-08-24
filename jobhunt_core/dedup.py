@@ -74,7 +74,11 @@ _REMOTO_TOKENS = "('remote','global','worldwide','international','anywhere')"
 # casar consigo misma). 'est' fuera (colisiona con «Grand Est»).
 _TZ_TOKENS = "('cet','cest','utc','gmt','timezone','timezones')"
 # C2-P3: strip también en DE/FR (stunden/heures) — «CET (+/- 3 Stunden)»
-_TZ_STRIP = "(cet|cest|utc|gmt|timezone|timezones|hours?|stunden|heures)"
+# C3-P3: singular DE/FR (stunde/heure) y «zeit» («CET-Zeit»). DEPENDENCIA
+# DOCUMENTADA: [[:alpha:]] exige un lctype Unicode en la BD (en_US.utf8 en
+# los despliegues actuales); con ctype=C el cirílico dejaría de contar como
+# letra y este guard se degradaría en silencio.
+_TZ_STRIP = "(cet|cest|utc|gmt|timezone|timezones|hours?|stunden?|heures?|zeit)"
 
 
 def _title_norm_sql(x: str) -> str:

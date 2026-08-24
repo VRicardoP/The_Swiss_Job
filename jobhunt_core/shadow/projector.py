@@ -794,15 +794,20 @@ async def _stored_apply_urls(
     session, source_id, pks: list[str]
 ) -> dict[str, str]:
     """apply_url vigente en incarnations para pks legacy (C2-P2-1)."""
+    # C3-P2-1: la ÚLTIMA encarnación por seq, activa O CERRADA — el ciclo
+    # cierre→reactivación perdía el valor si solo se miraban activas
+    # (gemela de _latest_slot_raws). Se toma su valor AUNQUE sea NULL: no
+    # se resucitan fantasmas de encarnaciones anteriores.
     rows = (
         await session.execute(
             sa.text(
-                "SELECT sl.external_id, i.apply_url "
+                "SELECT DISTINCT ON (sl.external_id) "
+                "       sl.external_id, i.apply_url "
                 "FROM source_listings sl "
                 "JOIN source_listing_incarnations i "
-                "  ON i.source_listing_id = sl.id AND i.ended_at IS NULL "
+                "  ON i.source_listing_id = sl.id "
                 "WHERE sl.source_id = :src AND sl.external_id = ANY(:pks) "
-                "  AND i.apply_url IS NOT NULL"
+                "ORDER BY sl.external_id, i.seq DESC"
             ),
             {"src": source_id, "pks": pks},
         )
@@ -859,10 +864,10 @@ def _merge_job_payload(
     # fuera del contrato del sink (MAX_URL_LEN=1000) ponía en CUARENTENA la
     # oferta ENTERA. Es decorativo: se degrada SOLO el campo, aquí, en la
     # frontera — patrón del guard legacy (NUL incluido).
-    if isinstance(apply_url, str) and (
-        len(apply_url) > 1000 or "\x00" in apply_url or not apply_url.strip()
-    ):
-        apply_url = None
+    if isinstance(apply_url, str):
+        apply_url = apply_url.strip()  # C3: sin padding almacenado
+        if len(apply_url) > 1000 or "\x00" in apply_url or not apply_url:
+            apply_url = None
     return payload, url, apply_url
 
 

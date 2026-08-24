@@ -650,6 +650,8 @@ def test_compatibilidad_de_ubicacion_semantica(db):
         # C2-P3: alfabetos no latinos son CONCRETOS; husos en DE también
         ("Женева (CET)", "remote", False),
         ("CET (+/- 3 Stunden)", "Anywhere in the World", True),
+        ("CET (+/- 1 Stunde)", "remote", True),   # C3: singular DE
+        ("CET-Zeit", "Anywhere in the World", True),  # C3: sufijo Zeit
         ("Sector 4", "Sector 5", False),
     ]
 

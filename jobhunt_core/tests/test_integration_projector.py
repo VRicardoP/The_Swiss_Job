@@ -2108,3 +2108,31 @@ def test_c2_doble_omision_y_null_explicito_de_apply_url(db):
     _project()
     filas = _rows(factory, q, n=f"legacy:{src}")
     assert [f.apply_url for f in filas] == [None]
+
+
+def test_c3_reactivacion_conserva_apply_url_sin_fantasmas(db):
+    """Auditoría C3 P2-1: ciclo cierre→reactivación con apply_url
+    TOAST-omitido — la tercera vía debe leer la ÚLTIMA encarnación (activa
+    o cerrada), sin resucitar valores de encarnaciones anteriores."""
+    factory = db
+    src = f"c3a-{uuid.uuid4().hex[:6]}"
+    _seed(factory, [("jobs", "I", "c3a",
+                     _job("c3a", src, apply_url="https://ats.x/11"))])
+    _project()
+    # cierre (job inactivo) y reactivación con apply_url omitido
+    pay_off = _job("c3a", src, active=False, chash="ch-c3a-2")
+    _seed(factory, [("jobs", "U", "c3a", pay_off)])
+    _project()
+    pay_on = _job("c3a", src, chash="ch-c3a-3")
+    pay_on.pop("apply_url", None)
+    pay_on["_omitted"] = ["apply_url"]
+    _seed(factory, [("jobs", "U", "c3a", pay_on)])
+    _project()
+    filas = _rows(
+        factory,
+        "SELECT i.apply_url FROM source_listing_incarnations i "
+        "JOIN source_listings l ON l.id = i.source_listing_id "
+        "JOIN sources s ON s.id = l.source_id "
+        "WHERE s.name = :n AND i.ended_at IS NULL", n=f"legacy:{src}",
+    )
+    assert [f.apply_url for f in filas] == ["https://ats.x/11"]
