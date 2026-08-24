@@ -251,7 +251,8 @@ def test_b2_concentracion_intra_no_oculta_al_vecino_cross(db):
         factory, created,
         # títulos DISTINTOS (text_hash distinto ⇒ el exacto-intra no dispara)
         # pero todos con 'python' ⇒ mismo vector ⇒ sim 1.0 entre los 6
-        [[f"python dev {j}" for j in range(6)], ["casi python dev"]],
+        [[(f"python dev {j}", None, f"Emp{'abcdef'[j]}rossa AG")
+          for j in range(6)], ["casi python dev"]],
         backend_cls=CasiBackend,
     )
     r = _scan(factory)
@@ -424,8 +425,9 @@ def test_hnsw_underfill_cae_al_scan_exacto(db):
     factory, created = db
     _setup(
         factory, created,
-        [[f"python dev {j}" for j in range(350)],
-         [f"cerca {j}" for j in range(5)]],
+        [[(f"python dev {j}", None,
+           f"emp{chr(97 + j // 26)}{chr(97 + j % 26)} AG") for j in range(350)],
+         [(f"cerca {j}", None, f"otr{chr(97 + j)} AG") for j in range(5)]],
         backend_cls=VecinoBackend,
     )
 
@@ -508,10 +510,10 @@ def test_ann_respeta_la_regla_multi_ciudad(db):
     _setup(
         factory, created,
         [
-            [("python dev", "Zürich")],
-            [("python dev", "Bern"),              # multi-ciudad: NO
-             ("python dev b2", "Zürich, Zürich"), # contenida: SÍ
-             ("python dev b3", "")],              # sin dato: SÍ (no veta)
+            [("python dev", "Zürich", "Uno AG")],
+            [("python dev", "Bern", "DosBe AG"),               # multi-ciudad: NO
+             ("python dev b2", "Zürich, Zürich", "TresCe AG"), # contenida: SÍ
+             ("python dev b3", "", "CuatroDe AG")],            # sin dato: SÍ
         ],
     )
     r = _scan(factory)
@@ -574,7 +576,8 @@ def test_backfill_lexico_cubre_corpus_viejo_y_firma_de_gran_empleador(db):
     factory, created = db
     _setup(
         factory, created,
-        [[(f"relleno python {j}", "Berlin", "Megacorp AG") for j in range(50)]
+        [[(f"puesto {chr(97 + j // 5)}{chr(97 + j % 5)}" * 3, "Berlin",
+           "Megacorp AG") for j in range(50)]
          + [("python data engineer", "Berlin", "Megacorp AG")],
          [("pyton data engineer", "Berlin", "Megacorp GmbH")]],
     )
@@ -622,7 +625,11 @@ def test_compatibilidad_de_ubicacion_semantica(db):
         ("York", "New York", False),
         ("Bern", "Bernau", False),
         ("remote", "Remote - Europe", True),
-        ("remote", "Berlin", False),
+        # FASE 2 Track R: remoto = COMODÍN unilateral — el gemelo legítimo
+        # («Anywhere» en un portal, país en el otro) quedaba vetado. CAMBIA
+        # el caso fijado por el revisor en su ronda 1 (era False): queda
+        # expuesto EXPLÍCITAMENTE a su ratificación con los datos de dev-3.
+        ("remote", "Berlin", True),
         ("Bulgaria, Romania", "Greece, Bulgaria", True),
         ("", "Berlin", True),
         ("LU", "Emmen", True),
@@ -631,6 +638,9 @@ def test_compatibilidad_de_ubicacion_semantica(db):
         ("Berlin, Germany", "Munich, Germany", False),
         ("Schänis, St. Gallen", "Flums, St. Gallen", False),
         ("Dublin", "Dublin, County Dublin", True),
+        # FASE 2: dirección postal — los tokens numéricos fuera antes de
+        # comparar («9495 triesen» ⇒ «triesen»)
+        ("Triesen, Liechtenstein", "Landstrasse 83, 9495 Triesen", True),
     ]
 
     async def go():
@@ -685,3 +695,60 @@ def test_similarity_es_el_maximo_mientras_pending(db):
     pares = _pairs(factory, created)
     assert pares[0].state == "rejected"          # no se reabre
     assert float(pares[0].similarity) == 0.400   # ni se actualiza
+
+
+def test_fase2_intra_normalizado_y_revalidacion_por_regla(db):
+    """FASE 2 Track R: (a) el brazo INTRA-fuente detecta el duplicado con
+    texto distinto cuyo título NORMALIZADO coincide (fuera (m/w/d), %,
+    dígitos), con umbral propio 0.90 que deja fuera al rol parecido; la
+    multi-ciudad intra queda vetada por ubicación. (b) El barrido
+    revalidate_pending_candidates aplica la regla de ubicación UNIFORME a
+    los pendientes: rechaza el que la viola, no toca al compatible ni al
+    ya resuelto."""
+    from jobhunt_core.dedup import revalidate_pending_candidates
+
+    factory, created = db
+    _setup(
+        factory, created,
+        [[("Fachperson Betreuung 80-100% (m/w/d)", "Luzern", "Stift Uno AG"),
+          ("Fachperson Betreuung 80%", "Luzern", "Stift Uno AG"),
+          ("Fachperson Beteiligung 80%", "Luzern", "Stift Uno AG"),
+          ("Fachperson Betreuung 60%", "Bern", "Stift Uno AG")]],
+    )
+    r = _scan(factory)
+    assert r["status"] == "ok"
+    assert r["candidatos_lexicos"] == 1  # SOLO el par normalizado idéntico
+    pares = _pairs(factory, created)
+    assert len(pares) == 1 and float(pares[0].similarity) >= 0.99
+
+    async def prepara_y_revalida():
+        async with factory() as s:
+            vacs = (await s.execute(sa.text(
+                "SELECT i.vacancy_id, l.external_id "
+                "FROM source_listing_incarnations i "
+                "JOIN source_listings l ON l.id = i.source_listing_id "
+                "WHERE l.source_id = ANY(:s) ORDER BY l.external_id"),
+                {"s": created["sources"]})).all()
+            v = {r2.external_id: r2.vacancy_id for r2 in vacs}
+            # pendiente que VIOLA la regla (Luzern vs Bern) + uno resuelto
+            await s.execute(sa.text(
+                "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
+                "VALUES (gen_random_uuid(), :a, :b, 0.910)"),
+                {"a": v["s0-j0"], "b": v["s0-j3"]})
+            await s.execute(sa.text(
+                "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, "
+                "similarity, state) VALUES (gen_random_uuid(), :a, :b, 0.920, "
+                "CAST('rejected' AS dedup_candidate_state))"),
+                {"a": v["s0-j2"], "b": v["s0-j3"]})
+            await s.commit()
+            n = await revalidate_pending_candidates(s)
+            await s.commit()
+            return n
+
+    n = asyncio.run(prepara_y_revalida())
+    assert n == 1  # SOLO el multi-ciudad pendiente cae
+    pares = sorted(_pairs(factory, created), key=lambda p: float(p.similarity))
+    estados = [(float(p.similarity), p.state) for p in pares]
+    assert (0.910, "rejected") in estados   # violaba la regla ⇒ rechazado
+    assert (0.920, "rejected") in estados   # ya resuelto: intacto
+    assert any(s == "pending" and sim >= 0.99 for sim, s in estados)

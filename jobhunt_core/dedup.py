@@ -66,6 +66,18 @@ _CORPUS_SQL = (
 _REMOTO_TOKENS = "('remote','global','worldwide','international','anywhere')"
 
 
+def _title_norm_sql(x: str) -> str:
+    """Título normalizado para el trigram (Track R fase 2): fuera el ruido
+    MECÁNICO que hundía la similitud de variantes reales — paréntesis
+    ((m/w/d), (EU Remote), (open rank)), dígitos (80-100%, códigos 174_),
+    puntuación. Lo semántico se queda (Senior/Junior distinguen roles)."""
+    return (
+        "btrim(regexp_replace(regexp_replace(regexp_replace("
+        f"lower({x}), '\\([^)]*\\)', ' ', 'g'), "
+        "'[^a-zäöüéèß]+', ' ', 'g'), ' +', ' ', 'g'))"
+    )
+
+
 def _es_remoto_sql(x: str) -> str:
     return (
         "EXISTS (SELECT 1 FROM unnest(regexp_split_to_array("
@@ -75,30 +87,33 @@ def _es_remoto_sql(x: str) -> str:
 
 def _loc_compat_sql(a: str, b: str) -> str:
     rem_a, rem_b = _es_remoto_sql(a), _es_remoto_sql(b)
-    # Re-confirmación Track R (P1-B): el componente coincidente debe ser el
-    # PRIMERO (la ciudad) en al menos un lado — sin esto, «Berlin, Germany»
-    # ~ «Munich, Germany» y «Schänis, St. Gallen» ~ «Flums, St. Gallen»
-    # casaban por el país/cantón compartido en cola de lista. «Bulgaria,
-    # Romania» ~ «Greece, Bulgaria» sigue casando (bulgaria es 1º de A).
+    # Componentes NORMALIZADOS sin dígitos (Track R fase 2: «Landstrasse
+    # 83, 9495 Triesen» fallaba porque el componente era «9495 triesen» —
+    # códigos postales y números de portal fuera antes de comparar).
+    norm = "btrim(regexp_replace(regexp_replace(%s, '[0-9]+', ' ', 'g'), ' +', ' ', 'g'))"
+    ca_n, cb_n = norm % "btrim(ca.c)", norm % "btrim(cb.c)"
     comp = (
         "EXISTS (SELECT 1 "
         f"FROM unnest(string_to_array(translate(lower({a}), ';/', ',,'), ',')) "
         "     WITH ORDINALITY AS ca(c, ord), "
         f"     unnest(string_to_array(translate(lower({b}), ';/', ',,'), ',')) "
         "     WITH ORDINALITY AS cb(c, ord) "
-        "WHERE btrim(ca.c) <> '' AND btrim(cb.c) <> '' "
+        f"WHERE {ca_n} <> '' AND {cb_n} <> '' "
         "  AND (ca.ord = 1 OR cb.ord = 1) AND ("
-        "  btrim(ca.c) = btrim(cb.c) "
-        "  OR btrim(cb.c) LIKE btrim(ca.c) || '-%' "
-        "  OR btrim(cb.c) LIKE btrim(ca.c) || ' %' "
-        "  OR btrim(ca.c) LIKE btrim(cb.c) || '-%' "
-        "  OR btrim(ca.c) LIKE btrim(cb.c) || ' %'))"
+        f"  {ca_n} = {cb_n} "
+        f"  OR {cb_n} LIKE {ca_n} || '-%' "
+        f"  OR {cb_n} LIKE {ca_n} || ' %' "
+        f"  OR {ca_n} LIKE {cb_n} || '-%' "
+        f"  OR {ca_n} LIKE {cb_n} || ' %'))"
     )
+    # Remoto = COMODÍN unilateral (Track R fase 2): el gemelo legítimo
+    # («Anywhere» en un portal, país concreto en el otro) quedaba vetado;
+    # en dev-2 los FP que ese veto salvaba ya los mataba el umbral de trgm.
     return (
         f"(btrim({a}) = '' OR btrim({b}) = '' "
         f" OR length(btrim({a})) <= 3 OR length(btrim({b})) <= 3 "
-        f" OR ({rem_a} AND {rem_b}) "
-        f" OR (NOT {rem_a} AND NOT {rem_b} AND {comp}))"
+        f" OR {rem_a} OR {rem_b} "
+        f" OR {comp})"
     )
 
 
@@ -225,9 +240,12 @@ def _lex_sql(window: bool) -> str:
         if window else ""
     )
     loc_ok = _loc_compat_sql("p.loc_n", "p.loc_c")
+    tn_n, tn_c = "p.tn_n", "p.tn_c"
     return (
         "WITH corpus AS ("
-        "  SELECT v.id, sl.source_id, orv.content->>'title' AS title, "
+        "  SELECT v.id, sl.source_id, orv.text_hash AS th, "
+        "         orv.content->>'title' AS title, "
+        + "         " + _title_norm_sql("orv.content->>'title'") + " AS title_n, "
         "         lower(coalesce(orv.content->>'company','')) AS comp, "
         "         coalesce(orv.content->>'location','') AS loc, "
         "         orv.created_at "
@@ -237,21 +255,17 @@ def _lex_sql(window: bool) -> str:
         "  JOIN source_listings sl ON sl.id = pi.source_listing_id "
         "  WHERE v.archived_at IS NULL AND v.merged_into IS NULL"
         "), tok AS ("
-        "  SELECT c.id, c.source_id, c.title, c.loc, c.comp, c.created_at, t.tok "
+        "  SELECT c.id, c.source_id, c.title_n, c.loc, c.comp, c.created_at, t.tok "
         "  FROM corpus c, LATERAL unnest(regexp_split_to_array("
         "       c.comp, '[^a-zäöüéèß]+')) AS t(tok) "
         f"  WHERE length(t.tok) >= 3 AND t.tok NOT IN ({_LEX_STOP})"
         "), firma AS ("
-        # P1-2 revisión Track R: firma completa de empresa (tokens
-        # significativos ordenados) — recupera a los GRANDES empleadores
-        # cuyo único token supera el tope de frecuencia (Megacorp con 52
-        # vacantes quedaba en silencio absoluto): igualdad de firma no
-        # necesita tope, el fan-out queda acotado por la propia empresa.
-        "  SELECT id, source_id, title, loc, created_at, "
+        "  SELECT c.id, c.source_id, c.title_n, c.loc, c.th, c.created_at, "
         "         (SELECT string_agg(x.tok, ' ' ORDER BY x.tok) "
-        "          FROM (SELECT DISTINCT tok FROM tok t2 "
-        "                WHERE t2.id = tok.id) x) AS f "
-        "  FROM tok GROUP BY id, source_id, title, loc, created_at"
+        "          FROM (SELECT DISTINCT t2.tok FROM tok t2 "
+        "                WHERE t2.id = c.id) x) AS f "
+        "  FROM corpus c "
+        "  WHERE EXISTS (SELECT 1 FROM tok WHERE tok.id = c.id)"
         "), frec AS ("
         "  SELECT tok FROM tok GROUP BY tok "
         "  HAVING count(DISTINCT comp) <= :maxfreq"
@@ -259,29 +273,70 @@ def _lex_sql(window: bool) -> str:
         f"), nuevos_f AS (SELECT * FROM firma {filtro_ventana}"
         "), pares AS ("
         "  SELECT DISTINCT ON (a, b) * FROM ("
+        # cross-portal por token raro compartido
         "    SELECT LEAST(n.id, c.id) AS a, GREATEST(n.id, c.id) AS b, "
-        "           n.title AS t_n, c.title AS t_c, "
-        "           n.loc AS loc_n, c.loc AS loc_c "
+        "           n.title_n AS tn_n, c.title_n AS tn_c, "
+        "           n.loc AS loc_n, c.loc AS loc_c, 'x' AS via "
         "    FROM nuevos n "
         "    JOIN frec f ON f.tok = n.tok "
         "    JOIN tok c ON c.tok = n.tok AND c.source_id <> n.source_id "
         "         AND c.id <> n.id "
         "    UNION "
+        # cross-portal por firma completa (grandes empleadores)
         "    SELECT LEAST(n.id, c.id), GREATEST(n.id, c.id), "
-        "           n.title, c.title, n.loc, c.loc "
+        "           n.title_n, c.title_n, n.loc, c.loc, 'x' "
         "    FROM nuevos_f n "
         "    JOIN firma c ON c.f = n.f AND c.f IS NOT NULL AND c.f <> '' "
-        "         AND c.source_id <> n.source_id AND c.id <> n.id"
+        "         AND c.source_id <> n.source_id AND c.id <> n.id "
+        "    UNION "
+        # INTRA-fuente (Track R fase 2): mismo portal, misma firma, texto
+        # DISTINTO (el hash idéntico es del exacto), umbral PROPIO más duro
+        "    SELECT LEAST(n.id, c.id), GREATEST(n.id, c.id), "
+        "           n.title_n, c.title_n, n.loc, c.loc, 'i' "
+        "    FROM nuevos_f n "
+        "    JOIN firma c ON c.f = n.f AND c.f IS NOT NULL AND c.f <> '' "
+        "         AND c.source_id = n.source_id AND c.id <> n.id "
+        "         AND c.th <> n.th"
         "  ) u"
         ") "
         "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
-        "SELECT gen_random_uuid(), p.a, p.b, "
-        "       round(similarity(p.t_n, p.t_c)::numeric, 3) "
+        f"SELECT gen_random_uuid(), p.a, p.b, "
+        f"       round(similarity({tn_n}, {tn_c})::numeric, 3) "
         "FROM pares p "
-        "WHERE similarity(p.t_n, p.t_c) >= :trgm "
+        f"WHERE similarity({tn_n}, {tn_c}) >= "
+        "      CASE WHEN p.via = 'i' THEN CAST(:trgm_intra AS float4) "
+        "           ELSE CAST(:trgm AS float4) END "
         f"  AND {loc_ok} "
         + _ON_CONFLICT
     )
+
+
+async def revalidate_pending_candidates(session: AsyncSession) -> int:
+    """One-shot (Track R fase 2): aplica la regla de UBICACIÓN ratificada
+    UNIFORMEMENTE a todos los candidatos pendientes — los de la era pre-fix
+    la violan (multi-ciudad a texto idéntico) y los generadores actuales
+    jamás los crearían. NO es una resolución dirigida por el holdout: la
+    regla decide sola sobre TODA la tabla; los pares del examen caen o no
+    incidentalmente, como cualquier otro. Los resueltos no se tocan."""
+    loc_ok = _loc_compat_sql(
+        "coalesce(oa.content->>'location','')",
+        "coalesce(ob.content->>'location','')",
+    )
+    return (
+        await session.execute(
+            sa.text(
+                "UPDATE dedup_candidates dc SET state = 'rejected' "
+                "FROM vacancies va, offer_revisions oa, vacancies vb, "
+                "     offer_revisions ob "
+                "WHERE dc.state = 'pending' "
+                "  AND va.id = dc.vacancy_a "
+                "  AND oa.id = va.current_offer_revision_id "
+                "  AND vb.id = dc.vacancy_b "
+                "  AND ob.id = vb.current_offer_revision_id "
+                f"  AND NOT {loc_ok}"
+            )
+        )
+    ).rowcount
 
 
 async def lexical_backfill(session: AsyncSession) -> int:
@@ -296,6 +351,7 @@ async def lexical_backfill(session: AsyncSession) -> int:
             sa.text(_lex_sql(window=False)),
             {
                 "trgm": float(settings.CORE_DEDUP_LEX_TRGM_MIN),
+                "trgm_intra": float(settings.CORE_DEDUP_LEX_TRGM_INTRA_MIN),
                 "maxfreq": int(settings.CORE_DEDUP_LEX_TOKEN_MAX_FREQ),
             },
         )
@@ -386,6 +442,7 @@ async def scan_semantic_candidates(
     # Léxico cross-portal (R.2b): misma ventana incremental que el ANN.
     lex_params = {
         "trgm": float(settings.CORE_DEDUP_LEX_TRGM_MIN),
+        "trgm_intra": float(settings.CORE_DEDUP_LEX_TRGM_INTRA_MIN),
         "maxfreq": int(settings.CORE_DEDUP_LEX_TOKEN_MAX_FREQ),
     }
     if window_hours > 0:
