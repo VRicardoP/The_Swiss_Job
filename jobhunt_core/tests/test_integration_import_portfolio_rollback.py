@@ -197,6 +197,7 @@ def test_core0015_upgrade_from_core0014_adds_seq():
         async def _bootstrap():
             async with temp_engine.begin() as c:
                 await c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+                await c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
                 await c.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS "{settings.CORE_DB_SCHEMA}"'))
 
         async def _has_seq() -> int:

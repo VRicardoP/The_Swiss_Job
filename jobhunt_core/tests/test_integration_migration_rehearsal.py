@@ -63,6 +63,7 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
         async def bootstrap():
             async with temp_engine.begin() as c:
                 await c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+                await c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
                 await c.execute(
                     sa.text(f'CREATE SCHEMA IF NOT EXISTS "{settings.CORE_DB_SCHEMA}"')
                 )
@@ -243,7 +244,7 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                 version = (
                     await s.execute(sa.text("SELECT version_num FROM alembic_version"))
                 ).scalar_one()
-                assert version == "core0026"
+                assert version == "core0027"
                 # El esquema re-creado FUNCIONA: smoke de escritura real.
                 await s.execute(
                     sa.text("INSERT INTO consumers (id, name) VALUES (:i, 'post-cycle')"),

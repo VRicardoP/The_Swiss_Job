@@ -170,6 +170,7 @@ async def _on_disposable_db(async_fn):
         try:
             async with temp_engine.begin() as c:
                 await c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+                await c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
                 await c.execute(
                     sa.text(f'CREATE SCHEMA IF NOT EXISTS "{settings.CORE_DB_SCHEMA}"')
                 )

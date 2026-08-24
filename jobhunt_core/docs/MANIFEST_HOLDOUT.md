@@ -50,3 +50,15 @@ y ubicaciones, autoría del agente conflictuado — registrado; los originales d
 la hoja v2 mandan y ningún par lleva recomendación de juicio):
 
 - `2af61a5e84771c19175cf1dc747d2514c6011d3d13668b494377919d3eb29bb1`  HOJA_HOLDOUT_DEDUP_ES.md
+
+## v3 — 2026-08-24 (development-2: tuning del TRACK R, post-freeze)
+
+Set de TUNING (jamás gate): muestreo mecánico local (PROTOCOLO_DEV2_DEDUP.md,
+setseed 0.240824) + etiquetas del AGENTE por criterio ratificado del
+propietario (ESTADO §16.1) con razón por par. 60 pares: 9 dup / 51 distinct.
+Punto de operación elegido SOLO con estas mediciones: léxico = token de
+empresa + trgm >= 0.65 + ubicación v2 (9/9, 0 FP); el ANN>=0.95 daba 0/9.
+
+- `e282afa2c02619c750a03bdcab491a504b627173c69492e7045d3580a92ebe8b`  holdout_artefactos_2026-08-23/dev2_etiquetado.csv
+- `c36106a89e188e2a9703a6f01e86215c7b222b66788c31ad916a91bfa8c76577`  holdout_artefactos_2026-08-23/dev2_sample.sql
+- `780f6bdfcadd99586dd66cecb02b56a48eed23aa85d4a2809abd93cbd4422c91`  PROTOCOLO_DEV2_DEDUP.md

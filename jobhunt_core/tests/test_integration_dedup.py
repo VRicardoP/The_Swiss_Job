@@ -106,9 +106,9 @@ def db():
     asyncio.run(cleanup())
 
 
-def _listing(ext, title, loc=None):
+def _listing(ext, title, loc=None, company="ACME AG"):
     payload = {
-        "title": title, "company_name": "ACME AG",
+        "title": title, "company_name": company,
         "description": f"puesto {title}", "tags": ["t"],
     }
     if loc is not None:
@@ -521,3 +521,42 @@ def test_ann_respeta_la_regla_multi_ciudad(db):
     assert len(pares) == 2
     assert all(float(p.similarity) >= 0.99 for p in pares)
     assert r["candidatos_exactos_intra"] == 0
+
+
+def test_generador_lexico_cross_portal(db):
+    """Regresión TRACK R.2b (2026-08-24): el examen del holdout midió
+    recall 0.259 — el ANN a 0.95 detecta 0/9 duplicados cross-portal
+    reales (dev-2): descripciones dispares y EMPRESA escrita distinta por
+    portal. El generador léxico los captura por token significativo de
+    empresa + trgm de título >= 0.65 + ubicación compatible v2, y respeta:
+    roles distintos (trgm bajo), multi-ciudad (loc incompatible), remoto
+    solo con remoto, y mismo portal excluido."""
+    factory, created = db
+    # títulos casi idénticos LÉXICAMENTE pero en ejes distintos del
+    # KeywordBackend («python» solo en la fuente 0): embedding sim = 0 ⇒ el
+    # ANN queda fuera y el camino léxico se mide AISLADO (sin él, el ANN a
+    # sim 1.0 insertaba el par primero y el léxico moría en el ON CONFLICT)
+    _setup(
+        factory, created,
+        [
+            [("python klassische archäologie (open rank)", "Basel",
+              "Universität Basel")],
+            [("pyton klassische archäologie (open rank)", "Basel-Stadt",
+              "University of Basel"),           # dup: token basel + trgm alto
+             ("pyton klassische archäologie (open rank)", "Genf",
+              "Universität Basel"),             # multi-ciudad: loc incompatible
+             ("bibliothek klassische sammlung", "Basel",
+              "Universität Basel"),             # rol distinto: trgm bajo
+             ("pyton klassische archäologie (open rank)", "remote",
+              "Otra Uni AG")],                  # sin token común de empresa
+        ],
+    )
+    r = _scan(factory)
+    assert r["status"] == "ok"
+    assert r["candidatos_lexicos"] == 1  # SOLO el par Basel–Basel-Stadt
+    pares = _pairs(factory, created)
+    # el léxico añade el par aunque el embedding no llegue a 0.95 (los
+    # títulos difieren => vectores KeywordBackend ortogonales o no: da
+    # igual — la similitud registrada es el trgm del título)
+    assert len(pares) == 1  # y NINGÚN candidato del ANN (ejes ortogonales)
+    assert 0.65 <= float(pares[0].similarity) <= 1.0  # trgm del título

@@ -568,6 +568,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
         async def bootstrap():
             async with temp_engine.begin() as c:
                 await c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+                await c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
                 await c.execute(
                     sa.text(f'CREATE SCHEMA IF NOT EXISTS "{settings.CORE_DB_SCHEMA}"')
                 )
@@ -602,7 +603,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                     )
                 ).scalar_one()
 
-        assert asyncio.run(seed_and_version()) == "core0026"
+        assert asyncio.run(seed_and_version()) == "core0027"
 
         run_alembic(temp_url, "downgrade", "core0007")
 
@@ -636,7 +637,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                         sa.text("SELECT version_num FROM alembic_version")
                     )
                 ).scalar_one()
-                assert version == "core0026"
+                assert version == "core0027"
                 # El esquema re-creado FUNCIONA y con sus guardas: smoke real.
                 cid = await profiles.ensure_consumer(s, "b03-post")
                 pid = await profiles.upsert_profile(s, cid, "user-post")

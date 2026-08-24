@@ -81,7 +81,7 @@ def proj_db():
     engine = sa.create_engine(db_url, poolclass=sa.pool.NullPool)
     try:
         with engine.begin() as c:
-            c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+            c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             c.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS "{S}"'))
         run_alembic(async_url, "upgrade", "head")
         yield async_url

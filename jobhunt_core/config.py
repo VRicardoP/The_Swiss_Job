@@ -82,6 +82,10 @@ class CoreSettings(BaseSettings):
     CORE_DEDUP_SIM_MIN: float = 0.95
     CORE_DEDUP_KNN: int = 5
     CORE_DEDUP_SCAN_WINDOW_H: int = 48
+    # Generador LÉXICO cross-portal (TRACK R.2b, medido en development-2:
+    # 9/9 dup, 0 FP con trgm>=0.65; el ANN a 0.95 daba 0/9 en ese caso)
+    CORE_DEDUP_LEX_TRGM_MIN: float = 0.65
+    CORE_DEDUP_LEX_TOKEN_MAX_FREQ: int = 50
     # P1 rev. externa C-API-W: cota de ESPERA del INSERT-reserva de idempotencia
     # sobre el índice único. Sin ella, si el handler del dueño se cuelga, un
     # reintento de la MISMA key bloquea indefinidamente (no es deadlock que

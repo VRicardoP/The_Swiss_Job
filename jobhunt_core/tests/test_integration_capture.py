@@ -145,7 +145,7 @@ def capture_db():
     engine = sa.create_engine(db_url, poolclass=sa.pool.NullPool)
     try:
         with engine.begin() as c:
-            c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+            c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             c.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS "{S}"'))
             # Mini-tablas fixture CON las columnas prohibidas/pesadas
             # presentes: el test (c) demuestra que jamás llegan al staging.
@@ -932,7 +932,7 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
     try:
         engine = sa.create_engine(db_url, poolclass=sa.pool.NullPool)
         with engine.begin() as c:
-            c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+            c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             c.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS "{S}"'))
         run_alembic(_alembic_url(db_url), "upgrade", "head")
 
@@ -941,7 +941,7 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
                 c.execute(
                     sa.text(f"SELECT version_num FROM {S}.alembic_version")
                 ).scalar()
-                == "core0026"
+                == "core0027"
             )
             c.execute(
                 sa.text(
@@ -1055,7 +1055,7 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
                 c.execute(
                     sa.text(f"SELECT version_num FROM {S}.alembic_version")
                 ).scalar()
-                == "core0026"
+                == "core0027"
             )
             idx = c.execute(
                 sa.text(

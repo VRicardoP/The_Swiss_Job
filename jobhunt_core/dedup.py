@@ -126,6 +126,76 @@ _EXACT_INTRA_SQL = (
 )
 
 
+# Generador LÉXICO cross-portal (TRACK R.2b, 2026-08-24). El examen del
+# holdout midió recall 0.259 y el ANN a SIM_MIN=0.95 detecta 0/9 duplicados
+# cross-portal reales también en development-2: entre portales el MISMO
+# puesto llega con descripciones distintas o vacías (sim 0.65–0.94) y la
+# EMPRESA escrita diferente («Kanton Zug» vs «Kantonale Verwaltung Zug»).
+# Señal que sí funciona (dev-2: 9/9 dup, 0 FP): token SIGNIFICATIVO de
+# empresa compartido (>=3 letras, sin sufijos legales/stopwords, con tope
+# de frecuencia en corpus para no explotar en «stiftung») + trigram de
+# título >= CORE_DEDUP_LEX_TRGM_MIN + ubicación compatible v2 (vacío o
+# código corto no vetan; remoto solo con remoto; si no, contención).
+# Set-based e incremental como el ANN: un miembro del par en la ventana.
+_LEX_STOP = ("'ag','gmbh','mbh','est','ltd','inc','sa','kg','co','llc',"
+             "'bv','as','the','and','und','de','of','für','fur','im'")
+_LEX_REMOTO = ("(lower(btrim(%s)) IN ('global','remote','worldwide',"
+               "'international') OR position('anywhere' IN lower(%s)) > 0)")
+
+
+def _lex_sql(window: bool) -> str:
+    rem_a, rem_b = _LEX_REMOTO % ("p.loc_n", "p.loc_n"), _LEX_REMOTO % ("p.loc_c", "p.loc_c")
+    filtro_ventana = (
+        "WHERE created_at >= now() - make_interval(hours => :ventana) "
+        if window else ""
+    )
+    return (
+        "WITH corpus AS ("
+        "  SELECT v.id, sl.source_id, orv.content->>'title' AS title, "
+        "         lower(coalesce(orv.content->>'company','')) AS comp, "
+        "         coalesce(orv.content->>'location','') AS loc, "
+        "         orv.created_at "
+        "  FROM vacancies v "
+        "  JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
+        "  JOIN source_listing_incarnations pi ON pi.id = v.primary_incarnation_id "
+        "  JOIN source_listings sl ON sl.id = pi.source_listing_id "
+        "  WHERE v.archived_at IS NULL AND v.merged_into IS NULL"
+        "), tok AS ("
+        "  SELECT c.id, c.source_id, c.title, c.loc, c.created_at, t.tok "
+        "  FROM corpus c, LATERAL unnest(regexp_split_to_array("
+        "       c.comp, '[^a-zäöüéèß]+')) AS t(tok) "
+        f"  WHERE length(t.tok) >= 3 AND t.tok NOT IN ({_LEX_STOP})"
+        "), frec AS ("
+        "  SELECT tok FROM tok GROUP BY tok "
+        "  HAVING count(DISTINCT id) <= :maxfreq"
+        "), nuevos AS ("
+        f"  SELECT * FROM tok {filtro_ventana}"
+        "), pares AS ("
+        "  SELECT DISTINCT ON (LEAST(n.id, c.id), GREATEST(n.id, c.id)) "
+        "         LEAST(n.id, c.id) AS a, GREATEST(n.id, c.id) AS b, "
+        "         n.title AS t_n, c.title AS t_c, "
+        "         n.loc AS loc_n, c.loc AS loc_c "
+        "  FROM nuevos n "
+        "  JOIN frec f ON f.tok = n.tok "
+        "  JOIN tok c ON c.tok = n.tok AND c.source_id <> n.source_id "
+        "       AND c.id <> n.id"
+        ") "
+        "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
+        "SELECT gen_random_uuid(), p.a, p.b, "
+        "       round(similarity(p.t_n, p.t_c)::numeric, 3) "
+        "FROM pares p "
+        "WHERE similarity(p.t_n, p.t_c) >= :trgm "
+        "  AND (btrim(p.loc_n) = '' OR btrim(p.loc_c) = '' "
+        "       OR length(btrim(p.loc_n)) <= 3 OR length(btrim(p.loc_c)) <= 3 "
+        f"      OR ({rem_a} AND {rem_b}) "
+        f"      OR (NOT {rem_a} AND NOT {rem_b} "
+        "           AND (position(btrim(lower(p.loc_n)) IN btrim(lower(p.loc_c))) > 0 "
+        "                OR position(btrim(lower(p.loc_c)) IN btrim(lower(p.loc_n))) > 0))) "
+        "ON CONFLICT (LEAST(vacancy_a, vacancy_b), GREATEST(vacancy_a, vacancy_b)) "
+        "DO NOTHING"
+    )
+
+
 async def scan_semantic_candidates(
     session: AsyncSession, window_hours: int | None = None
 ) -> dict:
@@ -212,11 +282,25 @@ async def scan_semantic_candidates(
     # la idempotencia la da uq_dedup_pair).
     exactos = (await session.execute(sa.text(_EXACT_INTRA_SQL))).rowcount
 
+    # Léxico cross-portal (R.2b): misma ventana incremental que el ANN.
+    lex_params = {
+        "trgm": float(settings.CORE_DEDUP_LEX_TRGM_MIN),
+        "maxfreq": int(settings.CORE_DEDUP_LEX_TOKEN_MAX_FREQ),
+    }
+    if window_hours > 0:
+        lex_params["ventana"] = window_hours
+    lexicos = (
+        await session.execute(
+            sa.text(_lex_sql(window=window_hours > 0)), lex_params
+        )
+    ).rowcount
+
     result = {
         "status": "ok",
         "escaneadas": len(nuevos),
         "candidatos_nuevos": inserted,
         "candidatos_exactos_intra": int(exactos),
+        "candidatos_lexicos": int(lexicos),
     }
     if inserted or exactos:
         logger.info("dedup_scan: %s", result)
