@@ -42,7 +42,8 @@ logger = logging.getLogger(__name__)
 # Corpus elegible CON vector y fuente (la fuente sale del primary — una
 # vacante sin primary no puede afirmar su procedencia: se salta).
 _CORPUS_SQL = (
-    "SELECT v.id, oe.vector, sl.source_id "
+    "SELECT v.id, oe.vector, sl.source_id, "
+    "       coalesce(orv.content->>'location', '') AS loc "
     "FROM vacancies v "
     "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
     "JOIN offer_embeddings oe "
@@ -59,6 +60,16 @@ _CORPUS_SQL = (
 # el presupuesto k y OCULTARA vecinos cross-source válidos (reproducido: 6
 # vacantes intra a sim 1.0 + 1 cross a 0.96 con k=5 → el par cross ni llegaba
 # al filtro). Con el filtro en SQL, LIMIT :k significa "k vecinos cross-source".
+#
+# TRACK R.2a (2026-08-24): guard de UBICACIÓN compatible, también en SQL y
+# antes del LIMIT (misma lección). El examen del holdout midió precision
+# 0.636: el ANN no tenía la regla multi-ciudad que sí tiene el exacto-intra
+# y proponía como duplicado el mismo texto publicado en ciudades distintas.
+# Medido en DEVELOPMENT (81 pares re-adjudicados): sim>=0.95 a secas ⇒
+# 17/53 distinct como FP (precision ~0.61); con este guard ⇒ 1/53 y 24/28
+# dup (~0.96). Regla: compatible si alguna ubicación está VACÍA (sin dato
+# no se veta) o si una contiene a la otra (case-insensitive, con btrim) —
+# «Zürich» ~ «Zürich, Zürich». Ver ANALISIS_TRACK_R_2026-08-24.md.
 _KNN_SQL = (
     "SELECT v.id AS vacancy_id, sl.source_id, "
     "       1 - (oe.vector <=> CAST(:vec AS vector)) AS sim "
@@ -70,6 +81,12 @@ _KNN_SQL = (
     "JOIN source_listings sl ON sl.id = pi.source_listing_id "
     "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
     "  AND v.id <> :vid AND sl.source_id <> :src "
+    "  AND (btrim(:loc) = '' "
+    "       OR btrim(coalesce(orv.content->>'location', '')) = '' "
+    "       OR position(btrim(lower(:loc)) IN "
+    "                   btrim(lower(coalesce(orv.content->>'location', '')))) > 0 "
+    "       OR position(btrim(lower(coalesce(orv.content->>'location', ''))) IN "
+    "                   btrim(lower(:loc))) > 0) "
     "ORDER BY oe.vector <=> CAST(:vec AS vector) "
     "LIMIT :k"
 )
@@ -162,7 +179,7 @@ async def scan_semantic_candidates(
     inserted = 0
     for row in nuevos:
         knn_params = {"vec": row.vector, "mid": model_id, "k": k,
-                      "vid": row.id, "src": row.source_id}
+                      "vid": row.id, "src": row.source_id, "loc": row.loc}
         vecinos = (
             await session.execute(sa.text(_KNN_SQL), knn_params)
         ).all()

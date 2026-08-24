@@ -106,14 +106,14 @@ def db():
     asyncio.run(cleanup())
 
 
-def _listing(ext, title):
-    return RawListing(
-        external_id=ext, url=f"https://x/{ext}",
-        payload={
-            "title": title, "company_name": "ACME AG",
-            "description": f"puesto {title}", "tags": ["t"],
-        },
-    )
+def _listing(ext, title, loc=None):
+    payload = {
+        "title": title, "company_name": "ACME AG",
+        "description": f"puesto {title}", "tags": ["t"],
+    }
+    if loc is not None:
+        payload["location"] = loc
+    return RawListing(external_id=ext, url=f"https://x/{ext}", payload=payload)
 
 
 def _setup(factory, created, por_fuente, backend_cls=KeywordBackend,
@@ -161,7 +161,8 @@ def _setup(factory, created, por_fuente, backend_cls=KeywordBackend,
                 await RawListingSink().handle(
                     s, str(scope_id),
                     tuple(
-                        _listing(f"s{i}-j{j}", t) for j, t in enumerate(titles)
+                        _listing(f"s{i}-j{j}", *(t if isinstance(t, tuple) else (t,)))
+                        for j, t in enumerate(titles)
                     ),
                 )
                 await s.commit()
@@ -494,3 +495,29 @@ def test_hnsw_underfill_cae_al_scan_exacto(db):
     pares = _pairs(factory, created)
     assert len(pares) == 5
     assert all(float(p.similarity) >= 0.99 for p in pares)
+
+
+def test_ann_respeta_la_regla_multi_ciudad(db):
+    """Regresión TRACK R.2a (2026-08-24): el examen del holdout midió
+    precision 0.636 — el ANN proponía como duplicado el mismo texto
+    publicado en ciudades DISTINTAS (la regla multi-ciudad existía solo en
+    el exacto-intra). Con el guard de ubicación en SQL (antes del LIMIT,
+    lección B-2): ciudad incompatible ⇒ sin candidato; contención
+    («Zürich» ⊂ «Zürich, Zürich») o ubicación vacía ⇒ candidato."""
+    factory, created = db
+    _setup(
+        factory, created,
+        [
+            [("python dev", "Zürich")],
+            [("python dev", "Bern"),              # multi-ciudad: NO
+             ("python dev b2", "Zürich, Zürich"), # contenida: SÍ
+             ("python dev b3", "")],              # sin dato: SÍ (no veta)
+        ],
+    )
+    r = _scan(factory)
+    assert r["status"] == "ok"
+    pares = _pairs(factory, created)
+    # a–b2 y a–b3; a–b1 (Bern) queda vetado pese a sim 1.0
+    assert len(pares) == 2
+    assert all(float(p.similarity) >= 0.99 for p in pares)
+    assert r["candidatos_exactos_intra"] == 0
