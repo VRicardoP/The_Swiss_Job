@@ -14,6 +14,16 @@ def archive_sweep_task() -> dict:
     return asyncio.run(_run(archive_sweep))
 
 
+@celery_app.task(name="jobhunt.maintenance.dedup_lex_backfill")
+def dedup_lex_backfill_task() -> dict:
+    """One-shot post-deploy del Track R (P1-1 revisión): backfill LÉXICO
+    completo — el beat solo cubre 48 h y el corpus antiguo (holdout incl.)
+    jamás recibiría candidatos léxicos. Lanzar UNA vez tras desplegar."""
+    from jobhunt_core.dedup import lexical_backfill
+
+    return {"candidatos": _run(lexical_backfill)}
+
+
 @celery_app.task(name="jobhunt.maintenance.dedup_scan")
 def dedup_scan_task() -> dict:
     """Generador de candidatos de dedup semántico (F-5, jobhunt_core/dedup.py)."""

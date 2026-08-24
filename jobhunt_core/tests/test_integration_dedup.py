@@ -560,3 +560,116 @@ def test_generador_lexico_cross_portal(db):
     # igual — la similitud registrada es el trgm del título)
     assert len(pares) == 1  # y NINGÚN candidato del ANN (ejes ortogonales)
     assert 0.65 <= float(pares[0].similarity) <= 1.0  # trgm del título
+
+
+def test_backfill_lexico_cubre_corpus_viejo_y_firma_de_gran_empleador(db):
+    """Regresión revisión Track R, P1-1 + P1-2: (a) el beat (ventana 48 h)
+    NO ve pares con ambas revisiones viejas — reproducción del revisor:
+    scan sin argumentos ⇒ 0; lexical_backfill ⇒ 1; segundo backfill
+    idempotente ⇒ 0. (b) El par pertenece a un GRAN empleador (51 vacantes
+    Megacorp): el tope de frecuencia por token lo silenciaba; la rama de
+    FIRMA completa de empresa lo recupera."""
+    from jobhunt_core.dedup import lexical_backfill, scan_semantic_candidates as scan
+
+    factory, created = db
+    _setup(
+        factory, created,
+        [[(f"relleno python {j}", "Berlin", "Megacorp AG") for j in range(50)]
+         + [("python data engineer", "Berlin", "Megacorp AG")],
+         [("pyton data engineer", "Berlin", "Megacorp GmbH")]],
+    )
+
+    async def go():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
+                "WHERE vacancy_id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
+                " JOIN source_listings l ON l.id = i.source_listing_id "
+                " WHERE l.source_id = ANY(:s))"), {"s": created["sources"]})
+            await s.commit()
+            r_beat = await scan(s)  # camino real del beat: ventana 48 h
+            await s.commit()
+            b1 = await lexical_backfill(s)
+            await s.commit()
+            b2 = await lexical_backfill(s)
+            await s.commit()
+            return r_beat, b1, b2
+
+    r_beat, b1, b2 = asyncio.run(go())
+    assert r_beat["candidatos_lexicos"] == 0  # invisible para el beat
+    assert b1 >= 1                            # el backfill lo encuentra
+    assert b2 == 0                            # idempotente
+    pares = _pairs(factory, created)
+    assert len(pares) == 1
+
+
+def test_compatibilidad_de_ubicacion_semantica(db):
+    """Regresión revisión Track R, P1-3: los casos fijados por el revisor
+    sobre la expresión ÚNICA compartida por ANN y léxico."""
+    from jobhunt_core.dedup import _loc_compat_sql
+
+    factory, _ = db
+    casos = [
+        ("Zürich", "Zürich, Zürich", True),
+        ("Basel", "Basel-Stadt", True),
+        ("York", "New York", False),
+        ("Bern", "Bernau", False),
+        ("remote", "Remote - Europe", True),
+        ("remote", "Berlin", False),
+        ("Bulgaria, Romania", "Greece, Bulgaria", True),
+        ("", "Berlin", True),
+        ("LU", "Emmen", True),
+    ]
+
+    async def go():
+        async with factory() as s:
+            out = []
+            for a, b, _e in casos:
+                v = (await s.execute(
+                    sa.text("SELECT " + _loc_compat_sql("CAST(:a AS text)", "CAST(:b AS text)")),
+                    {"a": a, "b": b})).scalar_one()
+                out.append(v)
+            return out
+
+    got = asyncio.run(go())
+    for (a, b, esperado), v in zip(casos, got):
+        assert v is esperado, f"{a!r} vs {b!r}: {v} != {esperado}"
+
+
+def test_similarity_es_el_maximo_mientras_pending(db):
+    """Regresión revisión Track R, P2-2: el par conserva la MÁXIMA evidencia
+    entre generadores mientras esté pending (semántica del sink); los
+    resueltos no se reabren ni actualizan."""
+    factory, created = db
+    _setup(factory, created, [["python dev"], ["python dev"]])
+
+    async def go():
+        async with factory() as s:
+            vacs = (await s.execute(sa.text(
+                "SELECT DISTINCT i.vacancy_id FROM source_listing_incarnations i "
+                "JOIN source_listings l ON l.id = i.source_listing_id "
+                "WHERE l.source_id = ANY(:s) ORDER BY 1"), {"s": created["sources"]})).all()
+            a, b = vacs[0].vacancy_id, vacs[1].vacancy_id
+            await s.execute(sa.text(
+                "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
+                "VALUES (gen_random_uuid(), :a, :b, 0.500)"), {"a": a, "b": b})
+            await s.commit()
+            return a, b
+
+    a, b = asyncio.run(go())
+    _scan(factory)  # el ANN ve sim 1.0 ⇒ actualiza el pending 0.500
+    pares = _pairs(factory, created)
+    assert len(pares) == 1 and float(pares[0].similarity) >= 0.99
+
+    async def resuelve_y_reescanea():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "UPDATE dedup_candidates SET state = 'rejected', similarity = 0.400 "
+                "WHERE vacancy_a IN (:a, :b)"), {"a": a, "b": b})
+            await s.commit()
+
+    asyncio.run(resuelve_y_reescanea())
+    _scan(factory)
+    pares = _pairs(factory, created)
+    assert pares[0].state == "rejected"          # no se reabre
+    assert float(pares[0].similarity) == 0.400   # ni se actualiza

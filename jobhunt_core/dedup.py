@@ -53,6 +53,47 @@ _CORPUS_SQL = (
     "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
 )
 
+
+# Compatibilidad de UBICACIÓN — expresión ÚNICA compartida por ANN y léxico
+# (revisión Track R, P1-3: position(short IN long) daba York~New York, y el
+# remoto solo-exacto vetaba «Remote - Europe» contra «remote»).
+# Semántica: vacío o código corto (<=3) no vetan; un lado es REMOTO si algún
+# token es remote/global/worldwide/international/anywhere (remoto solo
+# compatible con remoto); si ambos son concretos, se comparan COMPONENTES
+# (split por , ; /): iguales, o prefijo en frontera de palabra
+# («basel»→«basel-stadt» sí; «bern»→«bernau» NO; «york» vs «new york» NO;
+# «bulgaria, romania» ~ «greece, bulgaria» sí por componente común).
+_REMOTO_TOKENS = "('remote','global','worldwide','international','anywhere')"
+
+
+def _es_remoto_sql(x: str) -> str:
+    return (
+        "EXISTS (SELECT 1 FROM unnest(regexp_split_to_array("
+        f"lower({x}), '[^a-z]+')) AS rt(tok) WHERE rt.tok IN {_REMOTO_TOKENS})"
+    )
+
+
+def _loc_compat_sql(a: str, b: str) -> str:
+    rem_a, rem_b = _es_remoto_sql(a), _es_remoto_sql(b)
+    comp = (
+        "EXISTS (SELECT 1 "
+        f"FROM unnest(string_to_array(translate(lower({a}), ';/', ',,'), ',')) AS ca(c), "
+        f"     unnest(string_to_array(translate(lower({b}), ';/', ',,'), ',')) AS cb(c) "
+        "WHERE btrim(ca.c) <> '' AND btrim(cb.c) <> '' AND ("
+        "  btrim(ca.c) = btrim(cb.c) "
+        "  OR btrim(cb.c) LIKE btrim(ca.c) || '-%' "
+        "  OR btrim(cb.c) LIKE btrim(ca.c) || ' %' "
+        "  OR btrim(ca.c) LIKE btrim(cb.c) || '-%' "
+        "  OR btrim(ca.c) LIKE btrim(cb.c) || ' %'))"
+    )
+    return (
+        f"(btrim({a}) = '' OR btrim({b}) = '' "
+        f" OR length(btrim({a})) <= 3 OR length(btrim({b})) <= 3 "
+        f" OR ({rem_a} AND {rem_b}) "
+        f" OR (NOT {rem_a} AND NOT {rem_b} AND {comp}))"
+    )
+
+
 # kNN sobre el índice HNSW (misma forma que matching.CANDIDATES_SQL).
 # B-2 auditoría externa (2026-08-23): la exclusión de la PROPIA vacante y de la
 # MISMA fuente va ANTES del ORDER BY/LIMIT. Filtrarlas después, en Python,
@@ -81,21 +122,47 @@ _KNN_SQL = (
     "JOIN source_listings sl ON sl.id = pi.source_listing_id "
     "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
     "  AND v.id <> :vid AND sl.source_id <> :src "
-    "  AND (btrim(:loc) = '' "
-    "       OR btrim(coalesce(orv.content->>'location', '')) = '' "
-    "       OR position(btrim(lower(:loc)) IN "
-    "                   btrim(lower(coalesce(orv.content->>'location', '')))) > 0 "
-    "       OR position(btrim(lower(coalesce(orv.content->>'location', ''))) IN "
-    "                   btrim(lower(:loc))) > 0) "
+    "  AND " + _loc_compat_sql(
+        "CAST(:loc AS text)", "coalesce(orv.content->>'location', '')"
+    ) + " "
     "ORDER BY oe.vector <=> CAST(:vec AS vector) "
     "LIMIT :k"
 )
 
+# Conteo EXACTO de elegibles por fila (revisión Track R, P2-3: el objetivo
+# se calculaba SIN el guard de ubicación y disparaba el fallback exacto
+# cuando el 0 era el resultado correcto). Mismo predicado que _KNN_SQL,
+# acotado por :k — patrón de matching.
+_KNN_COUNT_SQL = (
+    "SELECT count(*) FROM ("
+    "SELECT 1 FROM vacancies v "
+    "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
+    "JOIN offer_embeddings oe "
+    "  ON oe.text_hash = orv.text_hash AND oe.model_id = :mid "
+    "JOIN source_listing_incarnations pi ON pi.id = v.primary_incarnation_id "
+    "JOIN source_listings sl ON sl.id = pi.source_listing_id "
+    "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
+    "  AND v.id <> :vid AND sl.source_id <> :src "
+    "  AND " + _loc_compat_sql(
+        "CAST(:loc AS text)", "coalesce(orv.content->>'location', '')"
+    ) + " LIMIT :k) t"
+)
+
+# ON CONFLICT (revisión Track R, P2-2): similarity = MÁXIMA fuerza de
+# evidencia entre generadores (coseno del ANN, trgm del léxico, 1.000 del
+# exacto — escalas distintas, no probabilidades comparables), actualizada
+# SOLO mientras el par siga pending y solo si crece (así el segundo pase
+# idéntico no cuenta como fila afectada). Los resueltos no se reabren.
+_ON_CONFLICT = (
+    "ON CONFLICT (LEAST(vacancy_a, vacancy_b), GREATEST(vacancy_a, vacancy_b)) "
+    "DO UPDATE SET similarity = EXCLUDED.similarity "
+    "WHERE dedup_candidates.state = 'pending' "
+    "  AND dedup_candidates.similarity < EXCLUDED.similarity"
+)
+
 _INSERT_SQL = (
     "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
-    "VALUES (:id, :a, :b, :sim) "
-    "ON CONFLICT (LEAST(vacancy_a, vacancy_b), GREATEST(vacancy_a, vacancy_b)) "
-    "DO NOTHING"
+    "VALUES (:id, :a, :b, :sim) " + _ON_CONFLICT
 )
 
 
@@ -121,8 +188,7 @@ _EXACT_INTRA_SQL = (
     "FROM corpus a JOIN corpus b "
     "  ON a.text_hash = b.text_hash AND a.source_id = b.source_id "
     "  AND a.loc = b.loc AND a.id < b.id "
-    "ON CONFLICT (LEAST(vacancy_a, vacancy_b), GREATEST(vacancy_a, vacancy_b)) "
-    "DO NOTHING"
+    + _ON_CONFLICT
 )
 
 
@@ -133,7 +199,9 @@ _EXACT_INTRA_SQL = (
 # EMPRESA escrita diferente («Kanton Zug» vs «Kantonale Verwaltung Zug»).
 # Señal que sí funciona (dev-2: 9/9 dup, 0 FP): token SIGNIFICATIVO de
 # empresa compartido (>=3 letras, sin sufijos legales/stopwords, con tope
-# de frecuencia en corpus para no explotar en «stiftung») + trigram de
+# de frecuencia por EMPRESAS DISTINTAS — P1-2: contar vacantes silenciaba
+# a los grandes empleadores; la rama de FIRMA completa cubre incluso a
+# los que superan el tope) + trigram de
 # título >= CORE_DEDUP_LEX_TRGM_MIN + ubicación compatible v2 (vacío o
 # código corto no vetan; remoto solo con remoto; si no, contención).
 # Set-based e incremental como el ANN: un miembro del par en la ventana.
@@ -144,11 +212,11 @@ _LEX_REMOTO = ("(lower(btrim(%s)) IN ('global','remote','worldwide',"
 
 
 def _lex_sql(window: bool) -> str:
-    rem_a, rem_b = _LEX_REMOTO % ("p.loc_n", "p.loc_n"), _LEX_REMOTO % ("p.loc_c", "p.loc_c")
     filtro_ventana = (
         "WHERE created_at >= now() - make_interval(hours => :ventana) "
         if window else ""
     )
+    loc_ok = _loc_compat_sql("p.loc_n", "p.loc_c")
     return (
         "WITH corpus AS ("
         "  SELECT v.id, sl.source_id, orv.content->>'title' AS title, "
@@ -161,45 +229,78 @@ def _lex_sql(window: bool) -> str:
         "  JOIN source_listings sl ON sl.id = pi.source_listing_id "
         "  WHERE v.archived_at IS NULL AND v.merged_into IS NULL"
         "), tok AS ("
-        "  SELECT c.id, c.source_id, c.title, c.loc, c.created_at, t.tok "
+        "  SELECT c.id, c.source_id, c.title, c.loc, c.comp, c.created_at, t.tok "
         "  FROM corpus c, LATERAL unnest(regexp_split_to_array("
         "       c.comp, '[^a-zäöüéèß]+')) AS t(tok) "
         f"  WHERE length(t.tok) >= 3 AND t.tok NOT IN ({_LEX_STOP})"
+        "), firma AS ("
+        # P1-2 revisión Track R: firma completa de empresa (tokens
+        # significativos ordenados) — recupera a los GRANDES empleadores
+        # cuyo único token supera el tope de frecuencia (Megacorp con 52
+        # vacantes quedaba en silencio absoluto): igualdad de firma no
+        # necesita tope, el fan-out queda acotado por la propia empresa.
+        "  SELECT id, source_id, title, loc, created_at, "
+        "         (SELECT string_agg(x.tok, ' ' ORDER BY x.tok) "
+        "          FROM (SELECT DISTINCT tok FROM tok t2 "
+        "                WHERE t2.id = tok.id) x) AS f "
+        "  FROM tok GROUP BY id, source_id, title, loc, created_at"
         "), frec AS ("
         "  SELECT tok FROM tok GROUP BY tok "
-        "  HAVING count(DISTINCT id) <= :maxfreq"
-        "), nuevos AS ("
-        f"  SELECT * FROM tok {filtro_ventana}"
+        "  HAVING count(DISTINCT comp) <= :maxfreq"
+        f"), nuevos AS (SELECT * FROM tok {filtro_ventana}"
+        f"), nuevos_f AS (SELECT * FROM firma {filtro_ventana}"
         "), pares AS ("
-        "  SELECT DISTINCT ON (LEAST(n.id, c.id), GREATEST(n.id, c.id)) "
-        "         LEAST(n.id, c.id) AS a, GREATEST(n.id, c.id) AS b, "
-        "         n.title AS t_n, c.title AS t_c, "
-        "         n.loc AS loc_n, c.loc AS loc_c "
-        "  FROM nuevos n "
-        "  JOIN frec f ON f.tok = n.tok "
-        "  JOIN tok c ON c.tok = n.tok AND c.source_id <> n.source_id "
-        "       AND c.id <> n.id"
+        "  SELECT DISTINCT ON (a, b) * FROM ("
+        "    SELECT LEAST(n.id, c.id) AS a, GREATEST(n.id, c.id) AS b, "
+        "           n.title AS t_n, c.title AS t_c, "
+        "           n.loc AS loc_n, c.loc AS loc_c "
+        "    FROM nuevos n "
+        "    JOIN frec f ON f.tok = n.tok "
+        "    JOIN tok c ON c.tok = n.tok AND c.source_id <> n.source_id "
+        "         AND c.id <> n.id "
+        "    UNION "
+        "    SELECT LEAST(n.id, c.id), GREATEST(n.id, c.id), "
+        "           n.title, c.title, n.loc, c.loc "
+        "    FROM nuevos_f n "
+        "    JOIN firma c ON c.f = n.f AND c.f IS NOT NULL AND c.f <> '' "
+        "         AND c.source_id <> n.source_id AND c.id <> n.id"
+        "  ) u"
         ") "
         "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
         "SELECT gen_random_uuid(), p.a, p.b, "
         "       round(similarity(p.t_n, p.t_c)::numeric, 3) "
         "FROM pares p "
         "WHERE similarity(p.t_n, p.t_c) >= :trgm "
-        "  AND (btrim(p.loc_n) = '' OR btrim(p.loc_c) = '' "
-        "       OR length(btrim(p.loc_n)) <= 3 OR length(btrim(p.loc_c)) <= 3 "
-        f"      OR ({rem_a} AND {rem_b}) "
-        f"      OR (NOT {rem_a} AND NOT {rem_b} "
-        "           AND (position(btrim(lower(p.loc_n)) IN btrim(lower(p.loc_c))) > 0 "
-        "                OR position(btrim(lower(p.loc_c)) IN btrim(lower(p.loc_n))) > 0))) "
-        "ON CONFLICT (LEAST(vacancy_a, vacancy_b), GREATEST(vacancy_a, vacancy_b)) "
-        "DO NOTHING"
+        f"  AND {loc_ok} "
+        + _ON_CONFLICT
     )
+
+
+async def lexical_backfill(session: AsyncSession) -> int:
+    """One-shot POST-DEPLOY del Track R (P1-1 de la revisión): pasada
+    COMPLETA del generador LÉXICO sobre todo el corpus. El beat solo mira
+    la ventana de 48 h — sin esto, los pares antiguos (el holdout entero)
+    jamás recibirían candidatos léxicos y el gate seguiría midiendo al
+    detector viejo. No re-ejecuta el ANN (miles de kNN innecesarios).
+    Idempotente (upsert). Devuelve filas insertadas/actualizadas."""
+    return (
+        await session.execute(
+            sa.text(_lex_sql(window=False)),
+            {
+                "trgm": float(settings.CORE_DEDUP_LEX_TRGM_MIN),
+                "maxfreq": int(settings.CORE_DEDUP_LEX_TOKEN_MAX_FREQ),
+            },
+        )
+    ).rowcount
 
 
 async def scan_semantic_candidates(
     session: AsyncSession, window_hours: int | None = None
 ) -> dict:
-    """Una pasada del generador. Devuelve conteos JSON-serializables."""
+    """Una pasada del generador. Devuelve conteos JSON-serializables.
+    `window_hours=None` ⇒ ventana CONFIGURADA (CORE_DEDUP_SCAN_WINDOW_H,
+    el camino del beat); `window_hours=0` ⇒ pasada COMPLETA (P1-1: el
+    docstring anterior decía lo contrario que el código)."""
     if window_hours is None:
         window_hours = int(settings.CORE_DEDUP_SCAN_WINDOW_H)
     sim_min = float(settings.CORE_DEDUP_SIM_MIN)
@@ -232,19 +333,6 @@ async def scan_semantic_candidates(
     await session.execute(
         sa.text(f"SET LOCAL hnsw.max_scan_tuples = {int(MAX_SCAN_TUPLES)}")
     )
-    por_fuente = {
-        r.source_id: r.n
-        for r in (
-            await session.execute(
-                sa.text(
-                    "SELECT c.source_id AS source_id, count(*) AS n "
-                    "FROM (" + _CORPUS_SQL + ") c GROUP BY c.source_id"
-                ),
-                {"mid": model_id},
-            )
-        ).all()
-    }
-    total_corpus = sum(por_fuente.values())
 
     inserted = 0
     for row in nuevos:
@@ -253,7 +341,12 @@ async def scan_semantic_candidates(
         vecinos = (
             await session.execute(sa.text(_KNN_SQL), knn_params)
         ).all()
-        objetivo = min(k, total_corpus - por_fuente.get(row.source_id, 0))
+        # Objetivo = elegibles REALES bajo el MISMO predicado (incl.
+        # ubicación — P2-3 de la revisión: contar sin el guard disparaba el
+        # fallback exacto cuando 0 era el resultado completo correcto).
+        objetivo = (
+            await session.execute(sa.text(_KNN_COUNT_SQL), knn_params)
+        ).scalar_one()
         if len(vecinos) < objetivo:
             # Inanición REAL del scan acotado: el exacto responde siempre.
             await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
@@ -302,6 +395,6 @@ async def scan_semantic_candidates(
         "candidatos_exactos_intra": int(exactos),
         "candidatos_lexicos": int(lexicos),
     }
-    if inserted or exactos:
+    if inserted or exactos or lexicos:  # P3: el éxito SOLO-léxico también
         logger.info("dedup_scan: %s", result)
     return result
