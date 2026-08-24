@@ -62,7 +62,7 @@ docker compose up -d
 # Tests backend
 docker compose exec -T backend python -m pytest tests/ -v --timeout=30
 
-# Tests core (Fase A/B/C, 504 tests — reconfirmar con pytest tras cada crecida)
+# Tests core (Fase A/B/C, 505 tests — reconfirmar con pytest tras cada crecida)
 docker compose run --rm core-migrate python -m pytest jobhunt_core/tests
 
 # Linting
@@ -120,7 +120,7 @@ api/                # FastAPI routers
 models/             # SQLAlchemy + Pydantic (incl. source_cursor.py para el crawler incremental)
 jobhunt_core/       # Core Fase A COMPLETA 2026-07-24 (ensayo GATE A superado): API /v1 FastAPI (core-api :8003),
                     #   worker Celery jobhunt.* (broker redis-core, colas core.*), harvest/ + matching/embeddings/
-                    #   delivery/runs/profiles, Alembic propio core0001..core0023, tests 504/504 (vía core-migrate)
+                    #   delivery/runs/profiles, Alembic propio core0001..core0023, tests 505/505 (vía core-migrate)
 ```
 
 Modelos LLM: `GROQ_MODEL=openai/gpt-oss-120b` (fallback docs), `GROQ_RERANK_MODEL=qwen/qwen3.6-27b`

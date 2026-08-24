@@ -73,7 +73,8 @@ _REMOTO_TOKENS = "('remote','global','worldwide','international','anywhere')"
 # hours)» ⇒ remoto, pero «Zürich (CET)» sigue siendo Zürich (antes dejaba de
 # casar consigo misma). 'est' fuera (colisiona con «Grand Est»).
 _TZ_TOKENS = "('cet','cest','utc','gmt','timezone','timezones')"
-_TZ_STRIP = "(cet|cest|utc|gmt|timezone|timezones|hours?)"
+# C2-P3: strip también en DE/FR (stunden/heures) — «CET (+/- 3 Stunden)»
+_TZ_STRIP = "(cet|cest|utc|gmt|timezone|timezones|hours?|stunden|heures)"
 
 
 def _title_norm_sql(x: str) -> str:
@@ -112,10 +113,13 @@ def _es_remoto_sql(x: str) -> str:
         "EXISTS (SELECT 1 FROM unnest(regexp_split_to_array("
         f"lower({x}), '[^a-z]+')) AS rt(tok) WHERE rt.tok IN {_TZ_TOKENS})"
     )
+    # C2-P3: el residuo conserva letras de CUALQUIER alfabeto ([[:alpha:]])
+    # — la clase latina borraba idiomas enteros y «Женева (CET)» quedaba
+    # "vacía" ⇒ remota. Cirílico/griego/etc. ahora cuentan como concreto.
     residuo_vacio = (
         "btrim(regexp_replace(regexp_replace("
         f"lower({x}), '\\m{_TZ_STRIP}\\M', ' ', 'g'), "
-        "'[^a-zäöüéèß]+', ' ', 'g')) = ''"
+        "'[^[:alpha:]]+', ' ', 'g')) = ''"
     )
     return f"({nucleo} OR ({tiene_tz} AND {residuo_vacio}))"
 
@@ -360,7 +364,7 @@ async def revalidate_pending_candidates(
     los candidatos PENDIENTES cuya ubicación viola la regla ratificada.
     `apply=False` (preview): cuenta + hash md5 de los ids ordenados, SIN
     escribir. `apply=True`: UPDATE atómico con procedencia
-    (resolved_by='rule:track-r-location-v1', resolved_at) y RETURNING id —
+    (resolved_by=_REVALIDATE_RULE, resolved_at) y RETURNING id —
     mismo resumen, comparable con el preview. Decide LA REGLA sobre toda la
     tabla; jamás la pertenencia al holdout. Los resueltos no se tocan.
     Idempotente: segunda pasada ⇒ 0."""

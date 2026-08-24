@@ -101,6 +101,7 @@ embeddings._lock_profiles_and_current); el erase bloquea el perfil ANTES
 de borrar su grafo hijo (orden perfil→estado de evaluate_profile).
 """
 
+import dataclasses
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -124,6 +125,10 @@ from jobhunt_core.tasks.embedding import _run_pending_impl
 from jobhunt_core.tasks.matching import _run_profile_impl
 
 logger = logging.getLogger(__name__)
+
+# Centinela C2-P2-1: «apply_url OMITIDO sin valor previo — resolver del
+# almacenado». Objeto único: jamás colisiona con un valor real.
+_APPLY_STORED = object()
 
 SHADOW_CONSUMER = "swissjob-shadow"
 LEGACY_PREFIX = legacy_shadow.LEGACY_PREFIX
@@ -725,6 +730,7 @@ async def _build_source_batch(
     touches: list[str] = []
     url_pending: list[tuple[str, dict]] = []
     aurl_by_pk: dict[str, str | None] = {}  # R.6
+    stored_pending: list[str] = []  # C2-P2-1: pks a resolver del almacenado
     for pk, fold in entries:
         payload, url, apply_url = _merge_job_payload(
             fold, prev_raws.get(pk), prev_changes.get(pk)
@@ -739,8 +745,14 @@ async def _build_source_batch(
             touches.append(pk)
         elif url is None:
             url_pending.append((pk, payload))
+            if apply_url is _APPLY_STORED:
+                stored_pending.append(pk)
+                apply_url = None
             aurl_by_pk[pk] = apply_url
         else:
+            if apply_url is _APPLY_STORED:
+                stored_pending.append(pk)
+                apply_url = None
             listings.append(RawListing(
                 external_id=pk, url=url, payload=payload,
                 apply_url=apply_url,  # R.6
@@ -760,7 +772,42 @@ async def _build_source_batch(
                 external_id=pk, url=url, payload=payload,
                 apply_url=aurl_by_pk.get(pk),  # R.6
             ))
+    # C2-P2-1: tercera vía en LOTE — el apply_url ya almacenado para los
+    # omitidos sin valor previo. Se corrige la RawListing ya construida
+    # (dataclass frozen ⇒ replace) y el mapa para el camino url_pending.
+    if stored_pending:
+        almacenados = await _stored_apply_urls(session, source_id, stored_pending)
+        pendientes = set(stored_pending)
+        listings = [
+            dataclasses.replace(li, apply_url=almacenados.get(li.external_id))
+            if li.external_id in pendientes and almacenados.get(li.external_id)
+            else li
+            for li in listings
+        ]
+        for pk in stored_pending:
+            if almacenados.get(pk):
+                aurl_by_pk[pk] = almacenados[pk]
     return listings, touches
+
+
+async def _stored_apply_urls(
+    session, source_id, pks: list[str]
+) -> dict[str, str]:
+    """apply_url vigente en incarnations para pks legacy (C2-P2-1)."""
+    rows = (
+        await session.execute(
+            sa.text(
+                "SELECT sl.external_id, i.apply_url "
+                "FROM source_listings sl "
+                "JOIN source_listing_incarnations i "
+                "  ON i.source_listing_id = sl.id AND i.ended_at IS NULL "
+                "WHERE sl.source_id = :src AND sl.external_id = ANY(:pks) "
+                "  AND i.apply_url IS NOT NULL"
+            ),
+            {"src": source_id, "pks": pks},
+        )
+    ).all()
+    return {r.external_id: r.apply_url for r in rows}
 
 
 def _missing_content(fold: _JobFold) -> bool:
@@ -792,9 +839,22 @@ def _merge_job_payload(
     url = fold.cols.get("url")
     if url is None and prev_change is not None:
         url = prev_change.get("url")
-    apply_url = fold.cols.get("apply_url")
-    if apply_url is None and prev_change is not None:
-        apply_url = prev_change.get("apply_url")
+    # C2-P2-1: distinción OMITIDO (clave ausente: TOAST) vs NULL explícito
+    # (borrado legítimo del legacy). Omitido ⇒ cadena de fallbacks:
+    # prev_change (que puede traer OTRA omisión) y, en última instancia, el
+    # valor ya ALMACENADO en incarnations (tercera vía, patrón
+    # _resolve_pending_urls) — sin ella, DOS U consecutivos con el campo
+    # TOAST-omitido perdían el valor (el prev_change del segundo traía la
+    # omisión del primero). El centinela _APPLY_STORED lo resuelve el
+    # llamador en lote.
+    if "apply_url" in fold.cols:
+        apply_url = fold.cols["apply_url"]  # valor real o NULL explícito
+    else:
+        apply_url = None
+        if prev_change is not None and "apply_url" in prev_change:
+            apply_url = prev_change["apply_url"]
+        if apply_url is None:
+            apply_url = _APPLY_STORED  # omitido sin valor previo conocido
     # Auditoría C1 P2-1: un apply_url LEGAL en legacy (hasta 2048) pero
     # fuera del contrato del sink (MAX_URL_LEN=1000) ponía en CUARENTENA la
     # oferta ENTERA. Es decorativo: se degrada SOLO el campo, aquí, en la

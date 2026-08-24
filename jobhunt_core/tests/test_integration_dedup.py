@@ -647,6 +647,9 @@ def test_compatibilidad_de_ubicacion_semantica(db):
         # consigo misma y NO casa con remoto puro
         ("Zürich (CET)", "Zürich", True),
         ("Zürich (CET)", "remote", False),
+        # C2-P3: alfabetos no latinos son CONCRETOS; husos en DE también
+        ("Женева (CET)", "remote", False),
+        ("CET (+/- 3 Stunden)", "Anywhere in the World", True),
         ("Sector 4", "Sector 5", False),
     ]
 

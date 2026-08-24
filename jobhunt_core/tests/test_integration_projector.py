@@ -2070,3 +2070,41 @@ def test_c1_apply_url_omitido_no_borra_el_almacenado(db):
         n=f"legacy:{src}",
     )
     assert [f.apply_url for f in filas] == ["https://ats.acme.com/7"]
+
+
+def test_c2_doble_omision_y_null_explicito_de_apply_url(db):
+    """Auditoría C2 P2-1: DOS U consecutivos con apply_url TOAST-omitido
+    perdían el valor (el prev_change del segundo traía la omisión del
+    primero) — la tercera vía lo lee del incarnations almacenado. Y el
+    NULL EXPLÍCITO del legacy sí borra (clave presente con None):
+    omitido != borrado."""
+    factory = db
+    src = f"c2a-{uuid.uuid4().hex[:6]}"
+    _seed(factory, [("jobs", "I", "c2a",
+                     _job("c2a", src, apply_url="https://ats.acme.com/9"))])
+    _project()
+
+    def u_omitido(n):
+        pay = _job("c2a", src, title=f"Backend Dev v{n}", chash=f"ch-c2a-{n}")
+        pay.pop("apply_url", None)
+        pay["_omitted"] = ["apply_url"]
+        return ("jobs", "U", "c2a", pay)
+
+    _seed(factory, [u_omitido(2)])
+    _project()
+    _seed(factory, [u_omitido(3)])  # segunda omisión consecutiva
+    _project()
+    q = ("SELECT i.apply_url FROM source_listing_incarnations i "
+         "JOIN source_listings l ON l.id = i.source_listing_id "
+         "JOIN sources s ON s.id = l.source_id "
+         "WHERE s.name = :n AND i.ended_at IS NULL")
+    filas = _rows(factory, q, n=f"legacy:{src}")
+    assert [f.apply_url for f in filas] == ["https://ats.acme.com/9"]
+
+    # NULL EXPLÍCITO: el legacy borra a propósito ⇒ se respeta
+    pay = _job("c2a", src, title="Backend Dev v4", chash="ch-c2a-4")
+    pay["apply_url"] = None
+    _seed(factory, [("jobs", "U", "c2a", pay)])
+    _project()
+    filas = _rows(factory, q, n=f"legacy:{src}")
+    assert [f.apply_url for f in filas] == [None]
