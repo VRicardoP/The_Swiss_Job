@@ -710,8 +710,11 @@ def test_fase2_intra_normalizado_y_revalidacion_por_regla(db):
     factory, created = db
     _setup(
         factory, created,
-        [[("Fachperson Betreuung 80-100% (m/w/d)", "Luzern", "Stift Uno AG"),
-          ("Fachperson Betreuung 80%", "Luzern", "Stift Uno AG"),
+        # ronda 2 P1-2: % se CONSERVA — la variante 80-100% vs 80% pasa a
+        # ser FN intra conocido (pronunciamiento del revisor: dos pensums
+        # pueden ser dos plazas). El dup del test es la variante de género.
+        [[("Fachperson Betreuung (m/w/d)", "Luzern", "Stift Uno AG"),
+          ("Fachperson Betreuung", "Luzern", "Stift Uno AG"),
           ("Fachperson Beteiligung 80%", "Luzern", "Stift Uno AG"),
           ("Fachperson Betreuung 60%", "Bern", "Stift Uno AG")]],
     )
@@ -776,17 +779,21 @@ def test_normalizacion_de_titulo_allowlist(db):
     from jobhunt_core.dedup import _title_norm_sql
 
     casos_iguales = [  # ruido mecánico: deben normalizar IGUAL
-        ("Fachperson Betreuung 80-100% (m/w/d)", "Fachperson Betreuung"),
-        ("Developer (m/f/d) 80%", "Developer"),
         ("Ingeniera (w/m/d)", "Ingeniera"),
+        ("Developer (m/f/d)", "Developer"),
+        # ronda 2 P2-1: SOLO el prefijo anclado ^eks: (literal probado)
+        ("Eks: Vil du være med", "Vil du være med"),
     ]
     casos_distintos = [  # semántica: deben normalizar DISTINTO
         ("Software Engineer (Frontend)", "Software Engineer (Backend)"),
-        ("C developer", "C++ developer"),
-        ("C++ developer", "C# developer"),
         ("L1 Support", "L2 Support"),
         ("Python 2 maintainer", "Python 3 maintainer"),
         ("Staff Engineer (Campinas)", "Staff Engineer (Mexico City)"),
+        # ronda 2 P1-2: % FUERA de la allowlist — pensums distintos son
+        # DOS plazas (IPOS-03)
+        ("Fachperson Betreuung Kinder 55%", "Fachperson Betreuung Kinder 27%"),
+        # 'eks' fuera del prefijo inicial permanece
+        ("Eks: algo", "algo eks algo"),
     ]
     factory, _ = db
 
@@ -824,3 +831,51 @@ def test_reproducciones_adversariales_fase2_del_revisor(db):
     # ANN: 'python…' cruzados comparten eje (sim 1.0) pero District 1/2 y
     # Remote/Berlin deben quedar vetados; léxico intra: Frontend≠Backend.
     assert _pairs(factory, created) == []
+
+
+def test_lenguajes_c_no_colapsan_en_el_trigram(db):
+    """Ronda 2 FASE 2, P1-1: pg_trgm ignora +/# al construir palabras —
+    conservarlos en la cadena no bastaba (similarity('c developer',
+    'c++ developer') = 1). Los tokens de lenguaje se CODIFICAN con límites
+    (C++⇒cplusplus, C#⇒csharp) antes de la limpieza. Se verifica la
+    similitud REAL del filtro y el scan end-to-end: 0 candidatos."""
+    from jobhunt_core.dedup import _title_norm_sql
+
+    factory, created = db
+
+    async def sim(a, b):
+        async with factory() as s:
+            return float((await s.execute(sa.text(
+                "SELECT similarity(" + _title_norm_sql("CAST(:a AS text)")
+                + ", " + _title_norm_sql("CAST(:b AS text)") + ")"),
+                {"a": a, "b": b})).scalar_one())
+
+    assert asyncio.run(sim("C developer", "C++ developer")) < 0.9
+    assert asyncio.run(sim("C++ developer", "C# developer")) < 0.9
+    assert asyncio.run(sim("C developer", "C# developer")) < 0.9
+
+    _setup(
+        factory, created,
+        [[("C developer", "Berlin", "ACME AG"),
+          ("C++ developer", "Berlin", "ACME AG"),
+          ("C# developer", "Berlin", "ACME AG")]],
+    )
+    r = _scan(factory)
+    assert r["status"] == "ok"
+    assert _pairs(factory, created) == []
+
+
+def test_prefijo_eks_recupera_el_dup_sin_bajar_umbral(db):
+    """Ronda 2 FASE 2, P2-1: el dup real con prefijo «Eks:» a 0.895 se
+    recupera SOLO con la allowlist anclada ^eks: — el umbral intra 0.90 no
+    se toca (7 de 8 IHARD eran distinct en esa banda)."""
+    factory, created = db
+    _setup(
+        factory, created,
+        [[("Eks: Vil du være med å skape hverdagsmagi?", "Tromsø", "Barnehage Uno AS"),
+          ("Vil du være med å skape hverdagsmagi?", "Tromsø", "Barnehage Uno AS")]],
+    )
+    r = _scan(factory)
+    assert r["candidatos_lexicos"] == 1
+    pares = _pairs(factory, created)
+    assert len(pares) == 1 and float(pares[0].similarity) >= 0.99

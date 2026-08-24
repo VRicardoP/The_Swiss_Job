@@ -70,23 +70,29 @@ _REMOTO_TOKENS = "('remote','global','worldwide','international','anywhere')"
 
 
 def _title_norm_sql(x: str) -> str:
-    """Título normalizado para el trigram — revisión FASE 2 P1-1: lo
-    desconocido se CONSERVA; solo se elimina ruido de una ALLOWLIST
-    estrecha: marcadores de género entre paréntesis ((m/w/d) y variantes)
-    y porcentajes de jornada (80%, 80-100%). Los demás paréntesis, los
-    dígitos y los símbolos de lenguaje (#, +) permanecen: Frontend/Backend,
-    C/C++/C#, L1/L2, Python 2/3 y ciudades entre paréntesis siguen siendo
-    distinguibles. La puntuación restante pasa a espacio."""
+    """Título normalizado para el trigram — allowlist ESTRECHA (revisión
+    FASE 2 rondas 1-2): lo desconocido se conserva. Se elimina SOLO:
+    - el prefijo anclado «eks:» (literal probado, ronda 2 P2-1 — el umbral
+      intra NO se baja);
+    - marcadores de género entre paréntesis ((m/w/d) y variantes).
+    Los PORCENTAJES se conservan (ronda 2 P1-2: pensums distintos son dos
+    plazas — IPOS-03). Los tokens de lenguaje se CODIFICAN con límites
+    ANTES de la limpieza (C++ ⇒ cplusplus, C# ⇒ csharp): pg_trgm ignora
+    +/# al construir palabras y conservarlos en la cadena no distinguía
+    nada (ronda 2 P1-1). El resto de puntuación pasa a espacio."""
     genero = (
         "\\((m/w/d|w/m/d|m/f/d|f/m/d|m/w/x|m/f/x|m/w|w/m|m/f|f/m"
         "|all genders?|alle)\\)"
     )
-    pct = "[0-9]+( *[-–] *[0-9]+)? *%"
     return (
         "btrim(regexp_replace(regexp_replace(regexp_replace(regexp_replace("
-        f"lower({x}), '{genero}', ' ', 'g'), "
-        f"'{pct}', ' ', 'g'), "
-        "'[^a-z0-9äöüéèß#+]+', ' ', 'g'), ' +', ' ', 'g'))"
+        "regexp_replace(regexp_replace("
+        f"lower({x}), "
+        "'^eks: *', ' '), "
+        "'\\mc\\+\\+', 'cplusplus', 'g'), "
+        "'\\mc#', 'csharp', 'g'), "
+        f"'{genero}', ' ', 'g'), "
+        "'[^a-z0-9äöüéèß]+', ' ', 'g'), ' +', ' ', 'g'))"
     )
 
 

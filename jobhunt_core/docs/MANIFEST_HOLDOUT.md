@@ -80,3 +80,10 @@ empresa + trgm >= 0.65 + ubicación v2 (9/9, 0 FP); el ANN>=0.95 daba 0/9.
 - `8ace5040de0973b746c9715581ce89fcb56df7cc6e77069b9695458a3e0e5af7`  holdout_artefactos_2026-08-23/dev3_sample_v2.sql
 - `cd7023c4f2902b6e78b545bcb528d1fbc421fb906671d5ecf8af4538fa3a2c41`  holdout_artefactos_2026-08-23/dev3_v2_etiquetado.csv
 - `6df295411da0baa23b162de0556425f9dd88863c65233a10e6ea358a80ac841a`  PROTOCOLO_DEV2_DEDUP.md
+
+## v6 — 2026-08-24 (ronda 2: allowlist sin %, ^eks:, cplusplus/csharp, dev-3 v3)
+
+- `f35d2f1aa0b6eacb07db683302e0078770413fd966eece431faef0f69e87f259`  holdout_artefactos_2026-08-23/dev3_sample_v3.sql
+- `52a5dc5e137d163add44fcde65a6bf9d910074400f957608c8c2745aa50b7d43`  holdout_artefactos_2026-08-23/dev3_v3_salida.csv
+- `f8b739dcba44cf6b1e3cc51f1c67aef9be9c08a4bf97ae16ef25683c79bb8814`  holdout_artefactos_2026-08-23/dev3_v3_etiquetado.csv
+- `63f07060592432d8e4dc1255c72acc5cb704add7100004c846665b2aacd03e02`  PROTOCOLO_DEV2_DEDUP.md
