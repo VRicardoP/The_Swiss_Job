@@ -6,6 +6,7 @@ import re
 
 import httpx
 
+from services.circuit_breaker import CircuitBreakerOpen
 from services.job_service import BaseJobProvider
 from utils import fetch_diagnostics as diag
 from utils.dates import parse_published_at
@@ -197,11 +198,19 @@ class TheHubProvider(BaseJobProvider):
             job_id = _valid_job_id(doc.get("id"))
             detail = None
             if job_id:
-                detail = await self._circuit.call(
-                    lambda j=job_id: fetch_with_retry(
-                        client, self.DETAIL_URL.format(job_id=j)
+                try:
+                    detail = await self._circuit.call(
+                        lambda j=job_id: fetch_with_retry(
+                            client, self.DETAIL_URL.format(job_id=j)
+                        )
                     )
-                )
+                except CircuitBreakerOpen:
+                    # El breaker ahora cuenta el None de fetch_with_retry como
+                    # fallo (G1/P2-1) y puede abrir a mitad del bucle de
+                    # detalles: se conserva la tolerancia documentada («si el
+                    # detalle de UNA oferta falla, NO se tira el run») —
+                    # la oferta se emite degradada con lo del listado.
+                    detail = None
             if isinstance(detail, dict):
                 # El detalle manda; el doc del listado aporta lo que falte.
                 enriched.append({**doc, **detail})

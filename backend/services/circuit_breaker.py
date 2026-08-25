@@ -55,7 +55,19 @@ class CircuitBreaker:
         return self._state
 
     async def call(self, coro: Callable[[], Awaitable[T]]) -> T:
-        """Execute an async callable through the circuit breaker."""
+        """Execute an async callable through the circuit breaker.
+
+        CONTRATO DEL RESULTADO (G1/P2-1): un resultado `None` cuenta como
+        FALLO. En este codebase todo lo que pasa por el breaker devuelve
+        None solo como fallo definitivo — `fetch_with_retry`/`fetch_rss`
+        agotan sus reintentos y devuelven None SIN lanzar jamás, así que el
+        breaker (que solo contaba fallos en el `except`) nunca abría y
+        contaba cada fallo como éxito: era decorativo para todo el
+        subsistema de providers de API. El None se DEVUELVE igualmente para
+        conservar el contrato de los llamantes; solo cambia la contabilidad
+        (y que, agotado el umbral, la siguiente llamada rebote con
+        CircuitBreakerOpen, que los llamantes ya manejan).
+        """
         current_state = self.state
 
         if current_state == CircuitState.OPEN:
@@ -72,11 +84,22 @@ class CircuitBreaker:
 
         try:
             result = await coro()
-            self._on_success()
-            return result
         except Exception:
             self._on_failure()
             raise
+        except BaseException:
+            # G1/P3-2: un CancelledError (BaseException) en el probe HALF_OPEN
+            # no es un fallo del servicio, pero sin liberar el probe el
+            # circuito quedaba CLAVADO: toda llamada posterior rebotaba con
+            # CircuitBreakerOpen(retry_after=0) para siempre.
+            self._half_open_pending = False
+            raise
+
+        if result is None:
+            self._on_failure()
+            return result
+        self._on_success()
+        return result
 
     def _on_success(self) -> None:
         """Record a successful call."""
