@@ -1001,7 +1001,10 @@ def test_perdida_zero_on_healthy_mirror_and_gap_when_injected(db):
     _legacy_job(factory, f"{p}-inact", active=False)   # jamás en el minuendo
     _legacy_job(factory, f"{p}-dup", dup=l1)           # jamás en el minuendo
     # Cuarentenables del sink: url > MAX_URL_LEN y url NULL → no_ingeribles.
-    _legacy_job(factory, f"{p}-longurl", url="https://leg/" + "x" * 1010)
+    # 2048 chars EXACTOS sin path: cabe en la columna (2048) pero la
+    # NORMALIZADA crece a 2049 ⇒ cuarentenable (frontera core0028)
+    _legacy_job(factory, f"{p}-longurl",
+                url="https://leg?" + "x" * (2048 - len("https://leg?")))
     _legacy_job(factory, f"{p}-nourl", url=None)
     # Ruido que NO debe contar en el sustraendo: slot cerrado y fuente ajena.
     _legacy_job(factory, f"{p}-closed", active=False)
@@ -1045,8 +1048,8 @@ def test_perdida_zero_on_healthy_mirror_and_gap_when_injected(db):
 
 def test_perdida_quarantine_frontier_matches_sink(db):
     """La partición vivos/no_ingeribles usa la MISMA ruta de cuarentena del
-    sink: una url de exactamente 1000 con path VACÍO (normalize_url añade
-    '/' → 1001) y una con corchete IPv6 desbalanceado (ValueError) van a
+    sink: una url de exactamente 2048 con path VACÍO (normalize_url añade
+    '/' → 2049) y una con corchete IPv6 desbalanceado (ValueError) van a
     no_ingeribles y JAMÁS al minuendo — perdida=0, sin falso positivo
     permanente del gate estricto."""
     factory = db
@@ -1055,17 +1058,17 @@ def test_perdida_quarantine_frontier_matches_sink(db):
     ok = f"{p}-ok"
     _legacy_job(factory, ok)
     _mk_slot(factory, src, ok)
-    # Borde INGERIBLE: exactamente 1000 CON path — la normalizada no crece.
+    # Borde INGERIBLE: exactamente 2048 CON path — la normalizada no crece.
     edge = f"{p}-edge"
-    edge_url = "https://leg/" + "x" * (1000 - len("https://leg/"))
-    assert len(edge_url) == len(metrics.normalize_url(edge_url)) == 1000
+    edge_url = "https://leg/" + "x" * (2048 - len("https://leg/"))
+    assert len(edge_url) == len(metrics.normalize_url(edge_url)) == 2048
     _legacy_job(factory, edge, url=edge_url)
     _mk_slot(factory, src, edge)
-    # Cuarentenable 1: exactamente 1000 con path VACÍO → normalizada 1001
+    # Cuarentenable 1: exactamente 2048 con path VACÍO → normalizada 2049
     # (el sink la rechaza por len(url_norm) > MAX_URL_LEN; la cruda pasa).
-    grow_url = "https://x?" + "a" * 990
-    assert len(grow_url) == 1000
-    assert len(metrics.normalize_url(grow_url)) == 1001
+    grow_url = "https://x?" + "a" * 2038
+    assert len(grow_url) == 2048
+    assert len(metrics.normalize_url(grow_url)) == 2049
     _legacy_job(factory, f"{p}-grow", url=grow_url)
     # Cuarentenable 2: corchete desbalanceado → ValueError('Invalid IPv6
     # URL') de normalize_url — la ruta try/except del sink.
@@ -1078,7 +1081,7 @@ def test_perdida_quarantine_frontier_matches_sink(db):
     assert row.details["legacy_activos_ingeribles"] == 2
     assert row.details["slots_legacy_activos"] == 2
     ni = _metric_row(factory, "no_ingeribles")
-    assert float(ni.value) == 2  # grow (1001 normalizada) + ipv6 (ValueError)
+    assert float(ni.value) == 2  # grow (2049 normalizada) + ipv6 (ValueError)
     assert sorted(ni.details["cuarentenados_muestra"]) == sorted(
         [f"{p}-grow", f"{p}-ipv6"]
     )

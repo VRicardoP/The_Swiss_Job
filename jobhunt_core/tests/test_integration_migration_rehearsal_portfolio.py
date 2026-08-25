@@ -799,7 +799,7 @@ def test_manifest_models_sink_quarantine():
     cuarentena → unresolved) NO debe dar falso divergent — el clasificador lo modela."""
     from jobhunt_core import import_portfolio_manifest as man
 
-    long_url = "https://x.ch/" + "a" * 1100  # > 1000
+    long_url = "https://x.ch/" + "a" * 2100  # > 2048 (core0028)
     users = [{"external_ref": 1, "applications": [
         {"url": long_url, "status": "applied", "title": "T",
          "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},

@@ -90,10 +90,14 @@ def _limit_violations(listing: RawListing, url_norm: str) -> list[str]:
     reasons = []
     if len(listing.external_id) > MAX_EXTERNAL_ID_LEN:
         reasons.append(f"external_id > {MAX_EXTERNAL_ID_LEN}")
-    if len(listing.url) > MAX_URL_LEN or len(url_norm) > MAX_URL_LEN:
-        reasons.append(f"url > {MAX_URL_LEN}")
-    if listing.apply_url and len(listing.apply_url) > MAX_URL_LEN:
-        reasons.append(f"apply_url > {MAX_URL_LEN}")
+    # C6-P2-2: BYTES, no caracteres — el btree mide bytes; una url multibyte
+    # "legal" en chars reventaba uq_listing_source_url y mataba el LOTE
+    # entero (poison pill reaparecido en cada cosecha).
+    if (len(listing.url.encode()) > MAX_URL_LEN
+            or len(url_norm.encode()) > MAX_URL_LEN):
+        reasons.append(f"url > {MAX_URL_LEN} bytes")
+    if listing.apply_url and len(listing.apply_url.encode()) > MAX_URL_LEN:
+        reasons.append(f"apply_url > {MAX_URL_LEN} bytes")
     if (
         "\x00" in listing.external_id
         or "\x00" in listing.url

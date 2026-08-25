@@ -129,8 +129,8 @@ def test_preprocess_boundary_limits():
     assert _preprocess(ok) is not None
     for bad in (
         RawListing(external_id="x" * 201, url="https://x/a", payload={}),
-        RawListing(external_id="a", url="https://x/" + "u" * 1000, payload={}),
-        RawListing(external_id="a", url="https://x/a", payload={}, apply_url="https://x/" + "u" * 1000),
+        RawListing(external_id="a", url="https://x/" + "u" * 2100, payload={}),
+        RawListing(external_id="a", url="https://x/a", payload={}, apply_url="https://x/" + "u" * 2100),
         RawListing(external_id="a", url="https://x/a", payload={"t": "a\x00b"}),
         RawListing(external_id="a\x00b", url="https://x/a", payload={}),
         RawListing(external_id="a", url="https://x/a", payload={"n": float("nan")}),  # 2ª: jsonb sin NaN

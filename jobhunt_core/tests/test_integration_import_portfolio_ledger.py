@@ -277,7 +277,7 @@ def test_ledger_no_title_and_over_limit_quarantined():
         async with factory() as s:
             scope_id = await ip.ensure_import_scope(s)
             await s.commit()
-            long_url = "https://x.example.ch/" + "a" * 1100  # > 1000
+            long_url = "https://x.example.ch/" + "a" * 2100  # > 2048 (core0028)
             items = [
                 {"url": "https://ok.example.ch/1", "title": "Ok", "company": "A"},
                 {"url": "https://nt.example.ch/2", "title": "   ", "company": "B"},  # solo espacios

@@ -38,7 +38,7 @@ DECISIONES documentadas (no obvias):
   candidata por la MISMA ruta de cuarentena del sink en Python
   (`_sink_quarantines_url` ≡ _preprocess + _limit_violations). Causas
   reales detectadas: url NULL (no construye RawListing), url CRUDA >
-  MAX_URL_LEN=1000, url NORMALIZADA > 1000 (normalize_url puede AÑADIR un
+  MAX_URL_LEN=2048 BYTES, url NORMALIZADA > 2048 (normalize_url puede AÑADIR un
   '/': una url de exactamente 1000 con path vacío queda en 1001) y
   ValueError de normalize_url (p.ej. 'Invalid IPv6 URL' con corchete
   desbalanceado). NUL/no-UTF8 no pueden existir en columnas text de
@@ -939,7 +939,9 @@ def _sink_quarantines_url(url: str | None) -> bool:
         url_norm = normalize_url(url)
     except ValueError:  # el mismo caso que captura _preprocess
         return True
-    return len(url) > MAX_URL_LEN or len(url_norm) > MAX_URL_LEN
+    # C6-P2-2: BYTES, espejo exacto del sink (btree mide bytes)
+    return (len(url.encode()) > MAX_URL_LEN
+            or len(url_norm.encode()) > MAX_URL_LEN)
 
 
 async def _perdida_rows(

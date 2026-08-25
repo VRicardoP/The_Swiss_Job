@@ -988,7 +988,16 @@ async def _refresh_links_on_close(session, source_id, close_pks, jobs_by_pk):
         rows = jobs_by_pk.get(pk) or []
         if not rows:
             continue
-        pay = rows[-1].payload or {}
+        # C6-P2-1: fold de TODAS las filas del lote (último valor PRESENTE
+        # por columna) — rows[-1] perdía la emisión cuando el cierre y la
+        # edición en cerrado compartían lote.
+        pay: dict = {}
+        for r in rows:
+            rp = r.payload or {}
+            omit = set(rp.get("_omitted") or ())
+            for k in ("url", "apply_url"):
+                if k in rp and k not in omit:
+                    pay[k] = rp[k]
         url = pay.get("url")
         set_url = isinstance(url, str) and url.strip() != ""
         set_aurl = "apply_url" in pay
@@ -1013,7 +1022,13 @@ async def _refresh_links_on_close(session, source_id, close_pks, jobs_by_pk):
             "              ELSE i.apply_url END "
             "FROM source_listings sl "
             "WHERE sl.id = i.source_listing_id AND sl.source_id = :src "
-            "  AND sl.external_id = :ext AND i.ended_at IS NULL"
+            "  AND sl.external_id = :ext "
+            # C6-P2-1: la ÚLTIMA encarnación aunque esté CERRADA — la
+            # emisión que llega con el slot ya cerrado también debe
+            # persistir (es lo que leerán las vías 3/4 en la reactivación).
+            "  AND i.seq = (SELECT max(i2.seq) "
+            "               FROM source_listing_incarnations i2 "
+            "               WHERE i2.source_listing_id = sl.id)"
         ),
         params,
     )

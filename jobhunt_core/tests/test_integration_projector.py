@@ -2183,6 +2183,12 @@ def test_c5_cambio_en_cerrado_no_revive_enlaces_rancios(db):
                      _job("c5a", src, active=False, url="https://legacy/B",
                           apply_url="https://ats.x/Y", chash="ch-c5a-2"))])
     _project()
+    # C6-P2-1: edición EN CERRADO que emite (C, Z) — con el slot ya
+    # cerrado, en OTRO lote (antes se descartaba: enlaces rancios)
+    _seed(factory, [("jobs", "U", "c5a",
+                     _job("c5a", src, active=False, url="https://legacy/C",
+                          apply_url="https://ats.x/Z", chash="ch-c5a-2b"))])
+    _project()
     # reactivación con AMBOS omitidos
     pay = _job("c5a", src, chash="ch-c5a-3")
     pay.pop("url", None)
@@ -2198,5 +2204,31 @@ def test_c5_cambio_en_cerrado_no_revive_enlaces_rancios(db):
         "WHERE s.name = :n AND i.ended_at IS NULL", n=f"legacy:{src}",
     )
     assert [(f.url, f.apply_url) for f in filas] == [
-        ("https://legacy/B", "https://ats.x/Y")
+        ("https://legacy/C", "https://ats.x/Z")
     ]
+
+
+def test_c6_contrato_2048_y_cuarentena_por_bytes(db):
+    """Auditoría C6: (P2-2 de C5) una url legal de 1500 chars YA NO
+    cuarentena (contrato 2048, core0028) — regresión que faltaba; y
+    (C6-P2-2) los límites son por BYTES: una url multibyte legal en chars
+    pero >2048 bytes se cuarentena ANTES de reventar el btree y matar el
+    lote entero."""
+    factory = db
+    src = f"c6a-{uuid.uuid4().hex[:6]}"
+    url_larga = "https://legacy/" + "a" * 1400          # 1500ish chars, legal
+    url_cjk = "https://x/" + "\u4e2d" * 800             # 810 chars, ~2400 bytes
+    _seed(factory, [
+        ("jobs", "I", "c6ok", _job("c6ok", src, url=url_larga)),
+        ("jobs", "I", "c6ko", _job("c6ko", src, url=url_cjk)),
+    ])
+    _project()
+    filas = _rows(
+        factory,
+        "SELECT l.external_id FROM source_listings l "
+        "JOIN sources s ON s.id = l.source_id WHERE s.name = :n "
+        "ORDER BY 1", n=f"legacy:{src}",
+    )
+    # la larga legal ENTRA; la multibyte tóxica queda en cuarentena sin
+    # arrastrar al resto del lote
+    assert [f.external_id for f in filas] == ["c6ok"]
