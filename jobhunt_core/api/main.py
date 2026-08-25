@@ -19,6 +19,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from jobhunt_core import __version__
 from jobhunt_core.api.deps import ApiError
 from jobhunt_core.api.v1 import router as v1_router
+from jobhunt_core.api.v1_applications import router as applications_router
+from jobhunt_core.api.v1_saved_searches import router as saved_searches_router
 from jobhunt_core.database import engine
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,9 @@ app = FastAPI(
     openapi_url="/v1/openapi.json",
 )
 app.include_router(v1_router)
+# C-4: escrituras de candidaturas/bookmarks y búsquedas guardadas.
+app.include_router(applications_router)
+app.include_router(saved_searches_router)
 
 
 @app.exception_handler(ApiError)

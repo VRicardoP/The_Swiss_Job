@@ -2,7 +2,8 @@
 aquí queda el esquema FORMAL (tipos/nullabilidad) que expone OpenAPI."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -127,3 +128,140 @@ class ProfileWriteDTO(BaseModel):
     title: str | None = Field(None, max_length=500)
     cv_text: str | None = Field(None, max_length=100_000)
     skills: list[str] = Field(default=[], max_length=200)
+
+
+# ---------------------------------------------------------------- C-4 (v2.1)
+
+# Enum del core (8 estados, core0011); el del portfolio (6) es subconjunto.
+ApplicationStatus = Literal[
+    "saved", "applied", "phone_screen", "technical", "interview",
+    "offer", "rejected", "withdrawn",
+]
+NotifyFrequency = Literal["realtime", "daily", "weekly"]
+
+
+class ApplicationDTO(BaseModel):
+    """Item del GET compuesto (Decisión 5): kind=application|bookmark. Los
+    campos presentables llevan precedencia snapshot-primero (una clave
+    presente en snapshot prima aunque valga null). Bookmark puro:
+    id=vacancy_id, kind=bookmark, status=saved, notes de
+    profile_vacancy_state, corpus de la vacante."""
+
+    id: uuid.UUID
+    profile_id: uuid.UUID
+    vacancy_id: uuid.UUID
+    kind: Literal["application", "bookmark"]
+    status: ApplicationStatus
+    notes: str | None = None
+    follow_up_date: date | None = None
+    created_at: datetime
+    updated_at: datetime
+    title: str | None = None
+    company: str | None = None
+    url: str | None = None
+    source: str | None = None
+    description: str | None = None
+
+
+class ApplicationsPageDTO(BaseModel):
+    items: list[ApplicationDTO]
+    next_cursor: str | None = None
+
+
+class ApplicationCreateDTO(BaseModel):
+    """POST /v1/applications (Decisión 3): vacancy_id directo O url (nullable
+    — entrada manual, R2-4). `status` ausente → saved (paridad con el puerto
+    real del BFF, Decisión 4)."""
+
+    profile_id: uuid.UUID
+    vacancy_id: uuid.UUID | None = None
+    url: str | None = Field(None, max_length=2048)
+    title: str = Field(..., min_length=1, max_length=500)
+    company: str | None = Field(None, max_length=500)
+    description: str | None = Field(None, max_length=100_000)
+    source: str | None = Field(None, max_length=200)
+    status: ApplicationStatus | None = None
+    notes: str | None = Field(None, max_length=20_000)
+    follow_up_date: date | None = None
+
+
+class ApplicationPatchDTO(BaseModel):
+    """PATCH parcial: solo los campos PRESENTES mutan (model_fields_set)."""
+
+    status: ApplicationStatus | None = None
+    notes: str | None = Field(None, max_length=20_000)
+    follow_up_date: date | None = None
+
+
+class BookmarkItemDTO(BaseModel):
+    """Item de PUT /v1/profiles/{pid}/bookmarks: mismo vínculo que el POST
+    (Decisión 3, incl. camino sin url) sin `status` (siempre saved)."""
+
+    vacancy_id: uuid.UUID | None = None
+    url: str | None = Field(None, max_length=2048)
+    title: str = Field(..., min_length=1, max_length=500)
+    company: str | None = Field(None, max_length=500)
+    description: str | None = Field(None, max_length=100_000)
+    source: str | None = Field(None, max_length=200)
+    notes: str | None = Field(None, max_length=20_000)
+    follow_up_date: date | None = None
+
+
+class BookmarksPutDTO(BaseModel):
+    bookmarks: list[BookmarkItemDTO] = Field(..., max_length=500)
+
+
+class BookmarksSyncResultDTO(BaseModel):
+    """Respuesta del sync ADITIVO: SOLO las applications creadas en este PUT
+    (paridad con sync_bookmarks real: crea, no borra ausentes)."""
+
+    created: list[ApplicationDTO]
+
+
+class SavedSearchDTO(BaseModel):
+    """Decisión 5: client-writable (name..is_active) + engine-owned de solo
+    lectura (id, last_run_at, total_matches, created_at, updated_at)."""
+
+    id: uuid.UUID
+    profile_id: uuid.UUID
+    name: str
+    filters: dict
+    min_score: int
+    notify_frequency: NotifyFrequency
+    notify_push: bool
+    is_active: bool
+    last_run_at: datetime | None = None
+    total_matches: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class SavedSearchesPageDTO(BaseModel):
+    items: list[SavedSearchDTO]
+    next_cursor: str | None = None
+
+
+class SavedSearchCreateDTO(BaseModel):
+    """POST /v1/saved-searches. `filters` se valida a OBJETO en el endpoint
+    (400 invalid_filters — R2-6); ausentes → defaults del core (daily/true)."""
+
+    profile_id: uuid.UUID
+    name: str = Field(..., min_length=1, max_length=200)
+    filters: Any = None
+    min_score: int | None = Field(None, ge=0, le=100)
+    notify_frequency: NotifyFrequency | None = None
+    notify_push: bool | None = None
+    is_active: bool | None = None
+
+
+class SavedSearchPutDTO(BaseModel):
+    """PUT completo SOLO de client-writable (Decisión 5): los AUSENTES
+    conservan el valor vigente; engine-owned se IGNORAN si llegan (extra
+    keys las descarta Pydantic)."""
+
+    name: str | None = Field(None, min_length=1, max_length=200)
+    filters: Any = None
+    min_score: int | None = Field(None, ge=0, le=100)
+    notify_frequency: NotifyFrequency | None = None
+    notify_push: bool | None = None
+    is_active: bool | None = None

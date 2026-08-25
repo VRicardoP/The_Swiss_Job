@@ -11,7 +11,7 @@
 - **Backend**: FastAPI + Celery + PostgreSQL (pgvector) + Redis
 - **Frontend**: React + TailwindCSS v4 + Vite
 - **Workers**: Celery — cosecha diaria autónoma (fetch→scrape→embed→dedup→match a hora variable con jitter, `SCHEDULER_DAILY_HARVEST_ENABLED`) o, en modo intervalos, providers/scraping cada 6h; + alerta profesor cada 6h
-- **Core (Fase A)**: paquete `jobhunt_core/` — API v1 FastAPI (`core-api`, puerto 8003), `core-worker` Celery (tareas `jobhunt.*`, broker `redis-core`, colas `core.*`, **beat embebido** `-B`: sampler/salud del slot/proyector sombra/purga de idempotencia/despacho outbox cada 5 min + ciclo sombra 06:05; al arrancar registra el transporte sombra → `jobhunt.shadow_inbox`), migraciones propias vía `core-migrate` (cadena `core0001..core0023`)
+- **Core (Fase A)**: paquete `jobhunt_core/` — API v1 FastAPI (`core-api`, puerto 8003), `core-worker` Celery (tareas `jobhunt.*`, broker `redis-core`, colas `core.*`, **beat embebido** `-B`: sampler/salud del slot/proyector sombra/purga de idempotencia/despacho outbox cada 5 min + ciclo sombra 06:05; al arrancar registra el transporte sombra → `jobhunt.shadow_inbox`), migraciones propias vía `core-migrate` (cadena `core0001..core0029`)
 - **Sombra (Fase B, SOLO LOCAL)**: CDC legacy→core por slot lógico `jobhunt_shadow` (postgres custom `docker/postgres-core/` con wal2json, `wal_level=logical`) → servicio `core-capture` (staging con ack tras commit) → proyector → métricas y GATE-SOMBRA (7 ciclos). Módulos `jobhunt_core/shadow/`; operación: `jobhunt_core/shadow/RUNBOOK.md`
 - **Documentación de referencia**: core → `PLAN_UNIFICACION_JOBHUNTING.md` (§23–§24) y `CONTRATOS_FASE_A.md` en `/home/lothar/Public/`; legacy → `docs/`
 
@@ -62,7 +62,7 @@ docker compose up -d
 # Tests backend
 docker compose exec -T backend python -m pytest tests/ -v --timeout=30
 
-# Tests core (Fase A/B/C, 517 tests — reconfirmar con pytest tras cada crecida)
+# Tests core (Fase A/B/C, 541 tests — reconfirmar con pytest tras cada crecida)
 docker compose run --rm core-migrate python -m pytest jobhunt_core/tests
 
 # Linting
@@ -73,7 +73,7 @@ docker compose exec -T backend ruff format --check --no-cache .
 docker compose exec backend alembic upgrade head
 docker compose exec backend alembic revision --autogenerate -m "descripcion"
 
-# Migraciones core (cadena core0001..core0023 — las aplica core-migrate en el arranque)
+# Migraciones core (cadena core0001..core0029 — las aplica core-migrate en el arranque)
 docker compose run --rm core-migrate python -m jobhunt_core.migrate
 
 # Logs en tiempo real
@@ -120,7 +120,7 @@ api/                # FastAPI routers
 models/             # SQLAlchemy + Pydantic (incl. source_cursor.py para el crawler incremental)
 jobhunt_core/       # Core Fase A COMPLETA 2026-07-24 (ensayo GATE A superado): API /v1 FastAPI (core-api :8003),
                     #   worker Celery jobhunt.* (broker redis-core, colas core.*), harvest/ + matching/embeddings/
-                    #   delivery/runs/profiles, Alembic propio core0001..core0023, tests 517/517 (vía core-migrate)
+                    #   delivery/runs/profiles, Alembic propio core0001..core0029, tests 541/541 (vía core-migrate)
 ```
 
 Modelos LLM: `GROQ_MODEL=openai/gpt-oss-120b` (fallback docs), `GROQ_RERANK_MODEL=qwen/qwen3.6-27b`
