@@ -589,7 +589,10 @@ def test_dedup_precision_recall_with_built_confusion_matrix(db):
         ) == (2, 1, 1, 1, 1)
     gates = _gates(factory)
     assert gates["dedup_precision"]["ok"] is False  # 0.667 < 0.95
-    assert gates["dedup_recall"]["ok"] is False     # 0.667 < 0.90
+    # Re-ratificación D2 (2026-08-26): el umbral vinculante de recall es 0.40
+    # (techo demostrado del examen congelado) ⇒ 0.667 ahora es VERDE. La
+    # mordida del umbral nuevo está en test_d2_recall_umbral_reratificado.
+    assert gates["dedup_recall"]["ok"] is True      # 0.667 >= 0.40
 
 
 def test_dedup_empty_oracle_is_no_data_not_green(db):
@@ -1669,7 +1672,7 @@ def test_evaluate_gates_ok_and_failed_with_forced_values(db):
         ("falsos_negativos", p2, 0.015, {"modo": "ratio_2pct"}),  # OK (<=0.02)
         ("labels_ready", "global", 1, {}),                        # OK (P1-2)
         ("dedup_precision", "global", 0.96, {}),                  # OK
-        ("dedup_recall", "global", 0.89, {}),                     # FALLO (<0.90)
+        ("dedup_recall", "global", 0.39, {}),                    # FALLO (<0.40, D2)
         ("perdida", "global", 1, {}),                             # FALLO (==0)
         ("no_ingeribles", "global", 2, {}),                       # ALERTA (>0)
         ("outbox_lag_p99", "global", 299.0, {"samples_count": 9}),  # OK
@@ -1885,3 +1888,40 @@ def test_dcg_formula_matches_contract():
     assert metrics._dcg([3, 2, 1, 0]) == pytest.approx(
         7 + 3 / math.log2(3) + 1 / math.log2(4), abs=1e-9
     )
+
+
+def test_d2_recall_umbral_reratificado(db):
+    """Mordida de la re-ratificación D2 (ACTA_DECISIONES_2026-08-26): el
+    umbral vinculante de dedup_recall es 0.40 — el techo demostrado del
+    examen congelado. recall 0.333 (< 0.40) DEBE seguir siendo rojo: la
+    re-ratificación acepta el techo, no apaga el gate. (El caso verde por
+    encima de 0.40 lo cubre la matriz 0.667 del test de confusión.)"""
+    factory = db
+    src = _mk_source(factory, "legacy:d2fx")
+    p = uuid.uuid4().hex[:6]
+
+    def ref(n):
+        return f"{p}-{n}"
+
+    # TP=1 (misma vacante) + FN=2 (duplicates sin candidato) → recall 1/3.
+    va, _, _ = _mk_slot(factory, src, ref("a1"))
+    _mk_slot(factory, src, ref("a2"), active=False, vacancy_id=va)
+    for n in ("b1", "b2", "c1", "c2"):
+        _mk_slot(factory, src, ref(n))
+    pairs = [
+        (ref("a1"), ref("a2"), "duplicate"),  # TP
+        (ref("b1"), ref("b2"), "duplicate"),  # FN
+        (ref("c1"), ref("c2"), "duplicate"),  # FN
+    ]
+    for a, b, v in pairs:
+        _exec(
+            factory,
+            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, source) "
+            "VALUES (:a, :b, :v, :src)",
+            {"a": a, "b": b, "v": v, "src": labels.DEDUP_EVAL_COHORT},
+        )
+    _compute(factory)
+    rec = _metric_row(factory, "dedup_recall")
+    assert float(rec.value) == pytest.approx(1 / 3, abs=1e-6)
+    gates = _gates(factory)
+    assert gates["dedup_recall"]["ok"] is False  # 0.333 < 0.40: sigue mordiendo

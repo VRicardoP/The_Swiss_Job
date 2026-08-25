@@ -167,7 +167,12 @@ NDCG_K = 10  # top-K de ndcg@10 / overlap@10 (denominador FIJO del overlap)
 NDCG_MIN = 0.60                # [gate] ndcg@10 >= 0.60 por perfil
 NDCG_LEGACY_MARGIN = 0.05      # [gate] y >= ndcg legacy (mismo set) - 0.05
 DEDUP_PRECISION_MIN = 0.95     # [gate]
-DEDUP_RECALL_MIN = 0.90        # [gate]
+# Re-ratificado 2026-08-26 (ACTA_DECISIONES D2): 0.40 = techo DEMOSTRADO del
+# examen congelado (ANALISIS_TRACK_R_FASE3: las señales restantes no existen
+# en los pares históricos; apply_url no puede reverdecerlo). La vía ÚNICA de
+# re-subir el listón: promoción del estrato positivo con re-etiquetado CIEGO
+# independiente + acta. precision 1.000 sigue vinculante sin cambios.
+DEDUP_RECALL_MIN = 0.40        # [gate]
 FN_MIN_RELEVANCE = 2           # juicios "relevantes" del numerador/denominador
 FN_STRICT_BELOW = 50           # < 50 juicios rel>=2 => 0 permitidos (§6)
 FN_MAX_RATIO = 0.02            # >= 50 juicios rel>=2 => <= 2%
