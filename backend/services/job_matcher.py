@@ -116,8 +116,11 @@ class JobMatcher:
         if job_min is None and job_max is None:
             return 0.5  # No data
 
-        user_mid = ((user_min or 0) + (user_max or user_min or 0)) / 2
-        job_mid = ((job_min or 0) + (job_max or job_min or 0)) / 2
+        # G1/P3-14: con una sola cota («hasta X»: min=None, max=X) el mid
+        # salía X/2 y penalizaba la oferta (ratio 0.5). La cota presente
+        # representa a ambas.
+        user_mid = ((user_min or user_max or 0) + (user_max or user_min or 0)) / 2
+        job_mid = ((job_min or job_max or 0) + (job_max or job_min or 0)) / 2
 
         if user_mid == 0 or job_mid == 0:
             return 0.5
@@ -187,14 +190,21 @@ class JobMatcher:
         language_score: float = 0.5,
         weights: dict | None = None,
     ) -> float:
-        """Compute weighted final score [0, 100]."""
+        """Compute weighted final score [0, 100].
+
+        G1/P2-11: con pesos por usuario PARCIALES (el validador acepta un
+        subconjunto que sume 1.0), las claves ausentes se rellenaban con su
+        DEFAULT, no con 0 — {"embedding":0.5,"llm":0.5} sumaba 1.5 de peso
+        efectivo y el score llegaba a 150, rompiendo MATCH_SCORE_THRESHOLD,
+        WATCHLIST_PUSH_THRESHOLD y el orden entre usuarios. Ausente = 0.
+        """
         w = weights or DEFAULT_WEIGHTS
         raw = (
-            w.get("embedding", 0.35) * embedding_score
-            + w.get("salary", 0.15) * salary_score
-            + w.get("location", 0.10) * location_score
-            + w.get("recency", 0.15) * recency_score
-            + w.get("llm", 0.15) * (llm_score / 100.0 if llm_score > 1 else llm_score)
-            + w.get("language", 0.10) * language_score
+            w.get("embedding", 0.0) * embedding_score
+            + w.get("salary", 0.0) * salary_score
+            + w.get("location", 0.0) * location_score
+            + w.get("recency", 0.0) * recency_score
+            + w.get("llm", 0.0) * (llm_score / 100.0 if llm_score > 1 else llm_score)
+            + w.get("language", 0.0) * language_score
         )
         return round(raw * 100, 1)

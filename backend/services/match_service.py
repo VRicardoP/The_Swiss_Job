@@ -96,8 +96,22 @@ class MatchService:
             weights=weights,
         )
 
-        # Filter by minimum score threshold
-        qualified = [r for r in scored if r["score_final"] >= min_score]
+        # G1/P3-15: el umbral se aplicaba ANTES del rerank con llm_score=0 —
+        # un job a 34.9 pre-LLM que el LLM subiría por encima del umbral se
+        # descartaba sin verlo, y el hándicap crecía con el peso llm del
+        # usuario. Prefiltro con el margen máximo que el LLM puede aportar
+        # (w_llm × 100); el umbral REAL se aplica después del rerank. El LLM
+        # solo suma (llm_score ≥ 0): nada que hoy pasara el umbral se pierde.
+        w_llm = weights.get("llm", 0.0)
+        prefilter_score = max(min_score - w_llm * 100.0, 0.0)
+        qualified = [r for r in scored if r["score_final"] >= prefilter_score]
+
+        # Stage 3: LLM re-ranking adaptativo (solo si hay proveedor LLM).
+        if qualified:
+            qualified = await self._maybe_rerank(qualified, profile, weights)
+
+        # Umbral definitivo, ya con el factor LLM incorporado.
+        qualified = [r for r in qualified if r["score_final"] >= min_score]
 
         if not qualified:
             # Still persist an empty set (clears old results)
@@ -107,9 +121,6 @@ class MatchService:
                 "total_candidates": total_candidates,
                 "results_count": 0,
             }
-
-        # Stage 3: LLM re-ranking adaptativo (solo si hay proveedor LLM).
-        qualified = await self._maybe_rerank(qualified, profile, weights)
 
         # Persist ALL results above threshold (replace previous)
         await self._save_results(user_id, qualified)
@@ -301,8 +312,10 @@ class MatchService:
             final = round(final * self._category_multiplier_for(job, profile), 2)
 
             # Urgency boost (solo aplica si el job es de la watchlist).
+            # G1/P3-19: los deadlines suelen ir al FINAL del anuncio — con
+            # solo el snippet (200 chars) el boost se perdía casi siempre.
             urgency = compute_urgency_score(
-                job, description=job.description_snippet or ""
+                job, description=job.description or job.description_snippet or ""
             )
 
             matching, missing = self._compute_skill_overlap(
