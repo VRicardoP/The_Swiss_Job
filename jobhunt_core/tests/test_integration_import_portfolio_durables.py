@@ -443,3 +443,97 @@ async def _count(session, table: str) -> int:
     return (
         await session.execute(sa.text(f"SELECT count(*) FROM {table}"))
     ).scalar_one()
+
+
+# ----------------------------------------- fronteras de fecha/hora (G1-P2-2/P3-7)
+
+
+def test_recency_key_mixed_naive_aware_no_typeerror():
+    """Regresión G1-P2-2: un grupo (misma vacante) con una candidatura de fecha
+    ISO SIN offset (naive) y otra SIN fechas (fallback AWARE datetime.min utc)
+    hacía que max()/sorted() con _recency_key lanzara `TypeError: can't compare
+    offset-naive and offset-aware datetimes` → transacción del cutover abortada
+    (y el mismo crash en _classify_expected, antes de veredicto). _as_datetime
+    ancla ahora los naive a UTC (coherente con _ts_key)."""
+    from jobhunt_core.import_portfolio_durables import _as_datetime, _recency_key
+
+    rows = [
+        {"created_at": datetime(2026, 6, 1, 12, 0), "status": "applied"},  # naive
+        {"status": "saved"},  # sin fechas → fallback aware
+        {"created_at": "2026-05-01T10:00:00", "status": "applied"},  # ISO sin offset
+    ]
+    winner = max(rows, key=_recency_key)  # antes: TypeError
+    assert winner is rows[0]
+    assert sorted(rows, key=_recency_key, reverse=True)[0] is rows[0]
+    # El ancla es UTC, la MISMA semántica que _ts_key para naive.
+    anchored = _as_datetime(datetime(2026, 6, 1, 12, 0))
+    assert anchored is not None and anchored.tzinfo is not None
+    assert anchored == datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+
+
+def test_follow_up_aware_takes_product_tz_date_not_utc():
+    """Regresión G1-P3-7: follow_up_date llega como timestamptz normalizado a
+    UTC (asyncpg); `.date()` sobre el wall-clock UTC desplazaba un día los
+    seguimientos de madrugada — 2026-01-02 00:30 hora suiza (=2026-01-01T23:30Z)
+    migraba como 2026-01-01, y reconcile no lo veía (mismo _as_date en ambos
+    lados). Ahora los datetimes AWARE se convierten a Europe/Zurich antes de
+    tomar la fecha."""
+    from jobhunt_core.import_portfolio_durables import _as_date
+
+    madrugada = datetime(2026, 1, 1, 23, 30, tzinfo=timezone.utc)  # 00:30 CH
+    assert _as_date(madrugada) == date(2026, 1, 2)  # lo que el usuario ve
+    mediodia = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    assert _as_date(mediodia) == date(2026, 1, 1)
+    # date/naive/ISO-date: sin cambio de semántica.
+    assert _as_date(date(2026, 1, 1)) == date(2026, 1, 1)
+    assert _as_date(datetime(2026, 1, 1, 23, 30)) == date(2026, 1, 1)
+    assert _as_date("2026-01-01") == date(2026, 1, 1)
+
+
+def test_saved_search_filters_dict_y_last_run_at_del_extractor():
+    """Regresión G1 H-3 (contrato del extractor): la columna origen `filters` es
+    JSONB real — el driver entrega un DICT, y json.loads(dict) → TypeError hacía
+    que TODAS las búsquedas migraran vacías y DESACTIVADAS; y la columna real se
+    llama `last_run_at` (no `last_notified_at`) → NULL para todas. El
+    reconciliador no lo cazaba: cometía el mismo error en el lado esperado.
+    Ahora se aceptan ambas formas y ambas claves."""
+    import asyncio as _asyncio
+
+    from jobhunt_core.import_portfolio_durables import migrate_saved_searches
+    from jobhunt_core.profiles import ensure_consumer, upsert_profile
+    from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import (
+        _on_disposable_db,
+    )
+
+    async def _run(factory):
+        async with factory() as s:
+            cid = await ensure_consumer(s, "portfolio")
+            pid = await upsert_profile(s, cid, "h3-user")
+            staging: list = []
+            counts = await migrate_saved_searches(
+                s, pid,
+                [{
+                    "name": "b1", "filters": {"q": "python"}, "min_score": 60,
+                    "is_active": True,
+                    "last_run_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                }],
+                staging=staging,
+            )
+            await s.commit()
+            assert counts["migrated"] == 1
+            assert counts["invalid_filters"] == 0  # antes: 1 (dict → TypeError)
+            assert staging == []
+            row = (
+                await s.execute(
+                    sa.text(
+                        "SELECT filters, is_active, last_run_at FROM saved_searches "
+                        "WHERE profile_id = :p"
+                    ),
+                    {"p": pid},
+                )
+            ).one()
+            assert row.filters == {"q": "python"}  # los filtros REALES
+            assert row.is_active is True
+            assert row.last_run_at == datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+    _asyncio.run(_on_disposable_db(_run))

@@ -86,6 +86,22 @@ async def ensure_import_scope(session: AsyncSession) -> uuid.UUID:
         ),
         {"i": PORTFOLIO_IMPORT_SCOPE_ID, "s": source_id, "t": PORTFOLIO_IMPORT_TIER},
     )
+    # G1 H-12: el ON CONFLICT DO NOTHING no garantiza la PROPIEDAD del scope —
+    # si el id determinista ya existía apuntando a OTRA fuente (estado
+    # inconsistente previo), el sink escribiría todo el corpus sintetizado bajo
+    # esa fuente ajena sin error. Fail-closed: verificar y abortar.
+    owner = (
+        await session.execute(
+            sa.text("SELECT source_id FROM harvest_scopes WHERE id = :i"),
+            {"i": PORTFOLIO_IMPORT_SCOPE_ID},
+        )
+    ).scalar_one()
+    if owner != source_id:
+        raise RuntimeError(
+            f"harvest_scopes {PORTFOLIO_IMPORT_SCOPE_ID} apunta a la fuente "
+            f"{owner}, no a {PORTFOLIO_IMPORT_SOURCE} ({source_id}) — estado "
+            "inconsistente: el cutover NO debe escribir bajo una fuente ajena"
+        )
     return PORTFOLIO_IMPORT_SCOPE_ID
 
 
@@ -128,7 +144,13 @@ def _synthesizable(item: dict, listing: RawListing, url_normalized: str) -> tupl
     sintetiza si ≥1 de sus durables es sintetizable; la razón solo aplica si NINGUNO lo es."""
     if not title_normalizable(item.get("title")):
         return False, pil.Q_NO_TITLE
-    if len(listing.url) > MAX_URL_LEN or len(url_normalized) > MAX_URL_LEN:
+    # G1-P3-5: BYTES, no caracteres — el sink mide bytes (_limit_violations,
+    # C6-P2-2); medir chars aquí mandaba una url multibyte ≤2048 chars pero
+    # >2048 bytes a _preprocess y el ledger registraba 'malformed' en vez de
+    # 'limit'. surrogatepass: un surrogate suelto no revienta la MEDIDA (esa
+    # url cae después en _preprocess → malformed, como en el sink).
+    if (len(listing.url.encode("utf-8", "surrogatepass")) > MAX_URL_LEN
+            or len(url_normalized.encode("utf-8", "surrogatepass")) > MAX_URL_LEN):
         return False, pil.Q_LIMIT
     if _preprocess(listing) is None:  # no codificable (surrogate) / NUL — el sink la cuarentena
         return False, pil.Q_MALFORMED
@@ -348,12 +370,26 @@ async def synthesize_vacancies(
             )
         )
     logger.info(
+        # len - cross_source (G1 H-14a): las cadenas REVERTIDAS por colisión
+        # cross-source no cuentan como sintetizadas — antes el log las sumaba.
         "import_portfolio: %d items → %d sintetizadas (omitidos: %d sin url, %d malformadas, "
         "%d sin título, %d sobre-límite, %d colisiones, %d duplicados).",
-        len(items), len(listings), skipped["no_url"], skipped["malformed"],
-        skipped["no_title"], skipped["limit"], skipped["collision"], skipped["dup"],
+        len(items), len(listings) - len(cross_source), skipped["no_url"],
+        skipped["malformed"], skipped["no_title"], skipped["limit"],
+        skipped["collision"], skipped["dup"],
     )
     return collided
+
+
+def _normalized_or_none(url: str) -> str | None:
+    """normalize_url tolerante para la REVALIDACIÓN post-attach (G1-P3-6): una url
+    persistida no normalizable (ValueError, p.ej. IPv6 con corchete) devuelve None —
+    que difiere de cualquier clave y se trata como COLISIÓN (conservador: revertir
+    antes que dejar un vínculo dudoso)."""
+    try:
+        return normalize_url(url)
+    except ValueError:
+        return None
 
 
 async def _synthesize_pruning_collisions(
@@ -378,9 +414,17 @@ async def _synthesize_pruning_collisions(
         incarnation_urls = await _vacancy_incarnation_urls(
             session, list(urln_of.values())
         )
+        # G1-P3-6: colisión = la vacante tiene una incarnación activa cuya url
+        # NORMALIZADA difiere de la clave (ids en fragmento colapsados u otra
+        # oferta real fusionada). Comparar urls CRUDAS revertía attaches
+        # LEGÍTIMOS cross-source (misma clave, grafía distinta: host en
+        # mayúsculas, barra final) que el sink adjuntó bien por url_normalized.
         new_collided = {
             lst.url for lst in to_try
-            if len(incarnation_urls.get(urln_of[lst.url], {lst.url}) - {lst.url}) > 0
+            if any(
+                _normalized_or_none(u) != urln_of[lst.url]
+                for u in incarnation_urls.get(urln_of[lst.url], set()) - {lst.url}
+            )
         }
         if not new_collided:
             await nested.commit()

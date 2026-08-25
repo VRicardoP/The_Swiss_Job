@@ -40,6 +40,7 @@ import json
 import logging
 import uuid
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -361,13 +362,23 @@ async def migrate_saved_searches(
             )
             name = name[:SAVED_SEARCH_NAME_MAX]
         raw_filters = row.get("filters")
-        try:
-            filters = json.loads(raw_filters) if raw_filters else {}
-        except (TypeError, ValueError):
-            filters = None
+        # G1 H-3 (contrato del extractor): la columna origen es JSONB real — el
+        # driver entrega un dict, no un str. json.loads(dict) → TypeError y TODAS
+        # las búsquedas migraban vacías y desactivadas. Se aceptan AMBAS formas.
+        if isinstance(raw_filters, dict):
+            filters = raw_filters
+        else:
+            try:
+                filters = json.loads(raw_filters) if raw_filters else {}
+            except (TypeError, ValueError):
+                filters = None
         min_score = int(row.get("min_score") or 0)
         is_active = bool(row.get("is_active", True))
-        last_run = _as_datetime(row.get("last_notified_at"))
+        # G1 H-3: la columna real del origen se llama `last_run_at`; se leen ambas
+        # claves (el alias histórico primero) — antes quedaba NULL para todas.
+        last_run = _as_datetime(
+            row.get("last_notified_at") or row.get("last_run_at")
+        )
         if not isinstance(filters, dict):
             # Filtro INVÁLIDO (no parsea o no es objeto): un {} ACTIVO alertaría de
             # TODAS las ofertas → NO se activa. Se importa DESACTIVADA con {} (para
@@ -444,9 +455,22 @@ def _record_skipped(
         staging.append({"kind": kind, "reason": reason, "durable": row})
 
 
+# Zona del PRODUCTO (G1-P3-7): follow_up_date es una FECHA que el usuario ve en
+# hora suiza; el origen la guarda como timestamptz y asyncpg la entrega en UTC.
+_PRODUCT_TZ = ZoneInfo("Europe/Zurich")
+
+
 def _as_date(value) -> date | None:
-    """Coerción defensiva de frontera: date, datetime o ISO-string → date."""
+    """Coerción defensiva de frontera: date, datetime o ISO-string → date.
+
+    G1-P3-7: un datetime AWARE se convierte a la zona del producto
+    (Europe/Zurich) antes de .date() — el wall-clock UTC desplazaba un día los
+    seguimientos de madrugada (2026-01-02 00:30 CH = 2026-01-01T23:30Z migraba
+    como 2026-01-01), y reconcile no lo veía (mismo _as_date en ambos lados).
+    Un datetime NAIVE se toma como wall-clock local ya resuelto."""
     if isinstance(value, datetime):  # antes que date: datetime ES date
+        if value.tzinfo is not None:
+            return value.astimezone(_PRODUCT_TZ).date()
         return value.date()
     if isinstance(value, date):
         return value
@@ -459,15 +483,24 @@ def _as_date(value) -> date | None:
 
 
 def _as_datetime(value) -> datetime | None:
-    """Coerción defensiva de frontera: datetime o ISO-string → datetime."""
+    """Coerción defensiva de frontera: datetime o ISO-string → datetime.
+
+    G1-P2-2: los NAIVE se ANCLAN a UTC (coherente con _ts_key, que ya asume
+    UTC para los naive) — sin el ancla, max()/sorted() con _recency_key sobre
+    un grupo que mezcla fila con fecha naive y fila sin fechas (fallback
+    AWARE datetime.min utc) lanzaba TypeError y mataba la transacción del
+    cutover, incluso antes de veredicto en _classify_expected."""
+    dt = None
     if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
+        dt = value
+    elif isinstance(value, str):
         try:
-            return datetime.fromisoformat(value)
+            dt = datetime.fromisoformat(value)
         except ValueError:
             return None
-    return None
+    if dt is not None and dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _recency_key(row: dict) -> tuple:

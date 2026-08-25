@@ -224,3 +224,34 @@ async def _count(session, table: str) -> int:
     return (
         await session.execute(sa.text(f"SELECT count(*) FROM {table}"))
     ).scalar_one()
+
+
+def test_scope_apuntando_a_otra_fuente_falla_fuerte():
+    """Regresión G1 H-12: si el scope determinista PORTFOLIO_IMPORT_SCOPE_ID ya
+    existía apuntando a OTRA fuente (estado inconsistente previo), el ON
+    CONFLICT DO NOTHING lo dejaba pasar y el sink habría escrito TODO el corpus
+    sintetizado bajo esa fuente ajena sin error. Ahora: RuntimeError fail-closed."""
+    from jobhunt_core import import_portfolio as ip
+    from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import (
+        _on_disposable_db,
+    )
+
+    async def _run(factory):
+        async with factory() as s:
+            other = uuid.uuid4()
+            await s.execute(
+                sa.text("INSERT INTO sources (id, name, tier) VALUES (:i, 'ajena', 0)"),
+                {"i": other},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO harvest_scopes (id, source_id, params, tier, enabled) "
+                    "VALUES (:i, :s, '{}'::jsonb, 0, false)"
+                ),
+                {"i": ip.PORTFOLIO_IMPORT_SCOPE_ID, "s": other},
+            )
+            await s.commit()
+            with pytest.raises(RuntimeError, match="fuente ajena"):
+                await ip.ensure_import_scope(s)
+
+    asyncio.run(_on_disposable_db(_run))

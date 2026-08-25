@@ -170,3 +170,56 @@ def test_snapshot_diff_is_pure_insert_delta():
     pv = prov.exact_provenance(before, after)
     assert pv["vacancies"] == ["c"]
     assert pv["applications"] == ["x"]
+
+
+def test_scope_dedup_provenance_excluye_dc_ajenos_conserva_propios():
+    """Regresión G1 H-2: un dedup_candidate CONCURRENTE entre `antes` y `después`
+    que toca SOLO vacantes ajenas entraba en la procedencia — el rollback lo
+    borraría en silencio (sin FK ni cross-check que lo pare; vacancies/offer_
+    revisions sí tienen el cross-check del verificador). Ahora se EXCLUYE del
+    diff; uno que toca una vacante del run se CONSERVA (el rollback lo necesita
+    antes de borrar esa vacante — FK)."""
+    import uuid as _uuid
+
+    async def _run(factory):
+        async with factory() as s:
+            # Cutover real: crea una vacante propia (del run).
+            manifest = await man.migrate_and_reconcile(s, [_user("https://h2.example.ch/1")])
+            assert manifest["verdict"] == "ok"
+            own_vac = manifest["provenance"]["vacancies"][0]
+
+            before = await prov.snapshot_row_ids(
+                s, PORTFOLIO_IMPORT_SOURCE, PORTFOLIO_CONSUMER
+            )
+            # Escritor CONCURRENTE: dos vacantes ajenas + dc ajeno-ajeno y
+            # dc que toca la vacante DEL RUN.
+            va, vb = _uuid.uuid4(), _uuid.uuid4()
+            for v in (va, vb):
+                await s.execute(
+                    sa.text("INSERT INTO vacancies (id) VALUES (:i)"), {"i": v}
+                )
+            dc_ajeno, dc_propio = _uuid.uuid4(), _uuid.uuid4()
+            await s.execute(
+                sa.text(
+                    "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, state) "
+                    "VALUES (:i, :a, :b, 'pending')"
+                ),
+                {"i": dc_ajeno, "a": va, "b": vb},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, state) "
+                    "VALUES (:i, :a, :b, 'pending')"
+                ),
+                {"i": dc_propio, "a": va, "b": _uuid.UUID(own_vac)},
+            )
+            after = await prov.snapshot_row_ids(
+                s, PORTFOLIO_IMPORT_SOURCE, PORTFOLIO_CONSUMER
+            )
+            diff = prov.exact_provenance(before, after)
+            diff["vacancies"] = [own_vac]  # la procedencia real del run
+            scoped = await prov.scope_dedup_provenance(s, diff)
+            assert str(dc_ajeno) not in scoped["dedup_candidates"]  # excluido
+            assert str(dc_propio) in scoped["dedup_candidates"]     # conservado
+
+    asyncio.run(_on_disposable_db(_run))

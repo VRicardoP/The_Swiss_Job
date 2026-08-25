@@ -163,7 +163,8 @@ async def _mark_manifest_status(
 async def _validate_manifest(
     session: AsyncSession, manifest_id: str
 ) -> tuple[str | None, dict | None]:
-    """Valida (con FOR UPDATE, ANTES de borrar) que `manifest_id` sea una fila 'applied' y la MÁS
+    """Valida (con FOR UPDATE, ANTES de borrar) que `manifest_id` sea una fila 'applied' (o
+    'rollback_aborted': un abort no borró nada y es reintentable tras reparar — G1 H-1) y la MÁS
     RECIENTE (por `seq`, orden total). Devuelve (motivo_abort|None, procedencia_ALMACENADA). La
     procedencia se lee del PROPIO manifiesto (manifest->'provenance'), NO de la que pase el
     llamador — así el borrado queda VINCULADO al manifest_id y no se puede borrar la procedencia
@@ -180,9 +181,16 @@ async def _validate_manifest(
     ).first()
     if row is None:
         return f"manifest_id {manifest_id} no existe — fallo cerrado, no se borra nada", None
-    if row.status != "applied":
+    # G1 H-1: 'rollback_aborted' es REINTENTABLE — las condiciones que abortan
+    # (vacantes reutilizadas apuntando a la procedencia) son transitorias por
+    # diseño; sin esto la marca era TERMINAL: tras reparar, el manifiesto ya no
+    # validaba y el guard LIFO bloqueaba además el rollback de todos los
+    # anteriores para siempre. Los datos del manifiesto siguen presentes en
+    # ambos estados (un abort jamás borra), así que el retry es seguro.
+    if row.status not in ("applied", "rollback_aborted"):
         return (
-            f"manifest {manifest_id} no está 'applied' (status={row.status}) — no se borra nada",
+            f"manifest {manifest_id} no está 'applied' ni 'rollback_aborted' "
+            f"(status={row.status}) — no se borra nada",
             None,
         )
     # LIFO: bloquear si hay un manifiesto POSTERIOR cuyos datos PUEDEN seguir presentes —

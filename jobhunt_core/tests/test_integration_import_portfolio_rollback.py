@@ -8,7 +8,9 @@ desechable; ejecutar vía core-migrate.
 """
 
 import asyncio
+import json
 import os
+import uuid
 from datetime import datetime, timezone
 
 import pytest
@@ -625,5 +627,53 @@ def test_cutover_aborts_on_preexisting_pvs():
             with pytest.raises(PreexistingStateError):
                 await man.migrate_and_reconcile(s, users)
             await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_rollback_aborted_es_reintentable_tras_reparar():
+    """Regresión G1 H-1: 'rollback_aborted' NO es terminal — las condiciones que
+    abortan (reused apuntando a la procedencia) son transitorias por diseño. Antes,
+    tras reparar, el manifiesto ya no validaba («no está 'applied'») y el guard
+    LIFO bloqueaba además el rollback de todos los anteriores para siempre."""
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, [_user("https://h1r.example.ch/1")])
+            mid = manifest["id"]
+            await s.commit()
+            original = (
+                await s.execute(
+                    sa.text("SELECT manifest FROM portfolio_migration_manifest WHERE id = :i"),
+                    {"i": uuid.UUID(mid)},
+                )
+            ).scalar_one()
+            # Abort unsafe (tamper de la procedencia almacenada) → rollback_aborted.
+            await s.execute(
+                sa.text(
+                    "UPDATE portfolio_migration_manifest "
+                    "SET manifest = jsonb_set(manifest, '{provenance,vacancies}', '[]') "
+                    "WHERE id = :i"
+                ),
+                {"i": uuid.UUID(mid)},
+            )
+            await s.commit()
+            r1 = await rollback_migration(s, mid)
+            await s.commit()
+            assert r1["status"] == "aborted"
+            assert await _manifest_status(s, mid) == "rollback_aborted"
+            # REPARACIÓN: restaurar la procedencia íntegra y REINTENTAR.
+            await s.execute(
+                sa.text(
+                    "UPDATE portfolio_migration_manifest SET manifest = CAST(:m AS jsonb) "
+                    "WHERE id = :i"
+                ),
+                {"m": json.dumps(original, default=str), "i": uuid.UUID(mid)},
+            )
+            await s.commit()
+            r2 = await rollback_migration(s, mid)  # antes: aborted («no está 'applied'»)
+            await s.commit()
+            assert r2["status"] == "rolled_back", r2
+            assert await _manifest_status(s, mid) == "rolled_back"
 
     asyncio.run(_on_disposable_db(_run))

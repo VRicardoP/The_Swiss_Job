@@ -156,3 +156,39 @@ def exact_provenance(
     """{tabla: [ids insertados por ESTE run]} = después − antes, por tabla (ordenado para un
     manifiesto determinista). Las claves son las de `after` (superset del esquema)."""
     return {table: sorted(after.get(table, set()) - before.get(table, set())) for table in after}
+
+
+async def scope_dedup_provenance(
+    session: AsyncSession, provenance: dict[str, list[str]]
+) -> dict[str, list[str]]:
+    """G1 H-2: acota `dedup_candidates` del diff a los pares que TOCAN vacantes de la
+    PROPIA procedencia. La síntesis jamás crea dedup_candidates (eso es el pipeline
+    async): todo dc del diff es de un ESCRITOR CONCURRENTE del core. Los que tocan
+    vacantes creadas por este run DEBEN quedarse (el rollback los necesita antes de
+    borrar esas vacantes — FK); los que tocan solo vacantes AJENAS se EXCLUYEN — el
+    rollback los borraría en silencio sin FK ni cross-check que lo parara (vacancies/
+    offer_revisions sí tienen el cross-check del verificador, parte 3). Devuelve una
+    COPIA con la lista filtrada; sin dc en el diff, no consulta nada."""
+    dc_ids = provenance.get("dedup_candidates", [])
+    if not dc_ids:
+        return provenance
+    own_vacancies = set(provenance.get("vacancies", []))
+    rows = await session.execute(
+        sa.text(
+            "SELECT id::text AS k, vacancy_a::text AS a, vacancy_b::text AS b "
+            "FROM dedup_candidates WHERE id IN :ids"
+        ).bindparams(sa.bindparam("ids", expanding=True)),
+        {"ids": dc_ids},
+    )
+    kept, foreign = [], []
+    for r in rows:
+        (kept if (r.a in own_vacancies or r.b in own_vacancies) else foreign).append(r.k)
+    if foreign:
+        logger.warning(
+            "provenance: %d dedup_candidate(s) CONCURRENTES ajenos excluidos de la "
+            "procedencia (no tocan vacantes de este run — G1 H-2): %s",
+            len(foreign), foreign[:5],
+        )
+    out = dict(provenance)
+    out["dedup_candidates"] = sorted(kept)
+    return out

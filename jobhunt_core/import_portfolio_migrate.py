@@ -75,11 +75,14 @@ def _vac_key(col: str) -> str:
     subconsulta correlacionada — NUNCA el PK uuid4 (aleatorio por-BD). Fallback
     marcado 'vid:<uuid>' si la vacante no fuese portfolio-import: anomalía VISIBLE
     sin descartar la fila ni enmascarar divergencia."""
+    # ORDER BY (G1 H-11): con dos incarnaciones activas de la fuente sobre la
+    # misma vacante, LIMIT 1 sin orden haría el checksum no determinista.
     return (
         "coalesce((SELECT sl.url_normalized FROM source_listing_incarnations i "
         "JOIN source_listings sl ON sl.id = i.source_listing_id "
         f"JOIN sources src ON src.id = sl.source_id AND src.name = '{PORTFOLIO_IMPORT_SOURCE}' "
-        f"WHERE i.vacancy_id = {col} AND i.ended_at IS NULL LIMIT 1), 'vid:' || {col}::text)"
+        f"WHERE i.vacancy_id = {col} AND i.ended_at IS NULL "
+        f"ORDER BY sl.url_normalized LIMIT 1), 'vid:' || {col}::text)"
     )
 
 

@@ -677,24 +677,28 @@ def test_manifest_catches_missing_tracking():
 
 
 def test_cross_source_collision_staged():
-    """P1 rev. externa 1: una URL de OTRA fuente comparte url_normalized con una del
-    portfolio (distinto fragmento) → el sink las fundiría (attach cross-source). Debe
+    """P1 rev. externa 1 (redefinida en G1-P3-6): la colisión cross-source REAL es
+    una vacante de OTRA fuente que abarca DOS claves normalizadas distintas — el
+    attach del sink dejaría el durable colgado de una vacante ambigua. Debe
     detectarse como colisión: NO se sintetiza, el durable va a staging, sin vínculo
-    a la vacante de la otra fuente."""
+    a la vacante de la otra fuente. (La grafía trivialmente distinta con la MISMA
+    clave ya NO colisiona: es un attach legítimo — ver
+    test_ledger_cross_source_trivial_spelling_attach_kept.)"""
     import jobhunt_core.harvest.providers  # noqa: F401 — registra arbeitnow
-    from jobhunt_core.harvest.sink import RawListingSink
+    from jobhunt_core.harvest.sink import RawListingSink, normalize_url
     from jobhunt_core.harvest.types import RawListing
     from jobhunt_core import import_portfolio as ip
     from jobhunt_core import import_portfolio_migrate as ipm
 
+    url_a = "https://spa-other.ch/jobs/a"
     users = [{"external_ref": 1, "applications": [
-        {"url": "https://spa-other.ch/jobs#B", "status": "applied", "title": "B",
+        {"url": url_a, "status": "applied", "title": "B",
          "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
     ], "saved_searches": []}]
 
     async def _run(factory):
         async with factory() as s:
-            # Otra fuente importa #/A (misma clave normalizada que #/B).
+            # Otra fuente importa /jobs/a…
             src, scope = uuid.uuid4(), uuid.uuid4()
             await s.execute(sa.text(
                 "INSERT INTO sources (id, name, tier) VALUES (:i, 'arbeitnow', 0)"),
@@ -704,16 +708,35 @@ def test_cross_source_collision_staged():
                 "VALUES (:i, :s, '{}'::jsonb, 0)"), {"i": scope, "s": src})
             await s.commit()
             await RawListingSink().handle(s, str(scope), (RawListing(
-                external_id="other-A", url="https://spa-other.ch/jobs#A",
+                external_id="other-A", url=url_a,
                 payload={"title": "Other", "company_name": "X",
                          "description": "d", "tags": []}),))
+            await s.commit()
+            # …y la MISMA vacante tiene además otra url con clave DISTINTA
+            # (attach por identidad título+empresa): vacante multi-clave.
+            vac = (await s.execute(sa.text(
+                "SELECT i.vacancy_id FROM source_listing_incarnations i "
+                "JOIN source_listings sl ON sl.id = i.source_listing_id "
+                "WHERE sl.source_id = :s AND i.ended_at IS NULL"),
+                {"s": src})).scalar_one()
+            url_b = "https://spa-other.ch/jobs/b"
+            lid = uuid.uuid4()
+            await s.execute(sa.text(
+                "INSERT INTO source_listings (id, source_id, external_id, url_normalized) "
+                "VALUES (:i, :s, 'other-B', :u)"),
+                {"i": lid, "s": src, "u": normalize_url(url_b)})
+            await s.execute(sa.text(
+                "INSERT INTO source_listing_incarnations "
+                "(id, source_listing_id, vacancy_id, seq, url) "
+                "VALUES (:i, :l, :v, 1, :u)"),
+                {"i": uuid.uuid4(), "l": lid, "v": vac, "u": url_b})
             await s.commit()
             other_vac = await _count(s, "vacancies")
 
             report = await ipm.migrate_portfolio(s, users)
             await s.commit()
-            # Detectada en la REVALIDACIÓN post-attach (la vacante resultó tener la url
-            # de la otra fuente además de la del portfolio): la cadena se REVIRTIÓ.
+            # Detectada en la REVALIDACIÓN post-attach (la vacante resultó tener otra
+            # clave normalizada además de la del portfolio): la cadena se REVIRTIÓ.
             assert report["applications"]["collision"] == 1
             assert report["applications"]["applications"] == 0
             assert await _count(s, "vacancies") == other_vac  # ninguna nueva
@@ -721,14 +744,14 @@ def test_cross_source_collision_staged():
             # NINGÚN dato de usuario (application/bookmark) vincula el durable.
             assert await _count(s, "applications") == 0
             assert await _count(s, "profile_vacancy_state") == 0
-            # Y NINGÚN artefacto de corpus portfolio-import para #/B (cadena revertida):
+            # Y NINGÚN artefacto de corpus portfolio-import (cadena revertida):
             # resolve→None y cero source_listings portfolio-import con esa clave.
-            assert await ip.resolve_vacancy_by_url(s, "https://spa-other.ch/jobs#B") is None
+            assert await ip.resolve_vacancy_by_url(s, url_a) is None
             n_pi = (await s.execute(sa.text(
                 "SELECT count(*) FROM source_listings sl JOIN sources s "
                 "ON s.id = sl.source_id AND s.name = 'portfolio-import' "
                 "WHERE sl.url_normalized = :u"),
-                {"u": "https://spa-other.ch/"})).scalar_one()
+                {"u": normalize_url(url_a)})).scalar_one()
             assert n_pi == 0
 
     asyncio.run(_on_disposable_db(_run))

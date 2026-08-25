@@ -44,7 +44,11 @@ from jobhunt_core.import_portfolio_durables import (
     _recency_key,
 )
 from jobhunt_core.import_portfolio_migrate import migrate_portfolio, table_checksums
-from jobhunt_core.import_portfolio_provenance import exact_provenance, snapshot_row_ids
+from jobhunt_core.import_portfolio_provenance import (
+    exact_provenance,
+    scope_dedup_provenance,
+    snapshot_row_ids,
+)
 from jobhunt_core.import_portfolio_verify import verify_migration
 
 logger = logging.getLogger(__name__)
@@ -74,6 +78,19 @@ def _norm_text(value) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+def _pg_text(value) -> str:
+    """Espejo de `->>` (jsonb→text) para el lado ESPERADO (G1 H-9): None→'' (como
+    NULL→'' en el lado real), str tal cual, y escalares no-str (int/float/bool del
+    feed) como los serializa jsonb — sin esto, company=123 daba esperado 123 (int)
+    vs real '123' (text) → falso 'divergent' y cutover abortado. dict/list quedan
+    fuera del alcance (jsonb no preserva el orden de claves)."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
 
 
 def _ident(value) -> str:
@@ -261,11 +278,13 @@ async def _classify_expected(
             notes = next((r.get("notes") for r in ordered if r.get("notes")), None)
 
             if winner is not None:
+                # _pg_text (G1 H-9): los campos del snapshot se comparan contra
+                # `->>` del lado real — coerción textual jsonb-equivalente.
                 apps.add((
                     ref, key, winner["status"], notes or "",
-                    str(follow_up or ""), winner.get("title") or "",
-                    winner.get("company") or "", winner.get("url") or "",
-                    winner.get("description") or "",
+                    str(follow_up or ""), _pg_text(winner.get("title")),
+                    _pg_text(winner.get("company")), _pg_text(winner.get("url")),
+                    _pg_text(winner.get("description")),
                 ))
                 events[(ref, key, winner["status"])] += 1
                 for r in real:
@@ -291,10 +310,16 @@ async def _classify_expected(
                 staged[("no_name", ref, _ident(row.get("name")))] += 1
                 continue
             raw = row.get("filters")
-            try:
-                filters = json.loads(raw) if raw else {}
-            except (TypeError, ValueError):
-                filters = None
+            # G1 H-3: espejo EXACTO de migrate_saved_searches — dict (columna
+            # JSONB real) se acepta tal cual; str se parsea. Sin el espejo, el
+            # reconciliador cometería el mismo error en el lado «esperado».
+            if isinstance(raw, dict):
+                filters = raw
+            else:
+                try:
+                    filters = json.loads(raw) if raw else {}
+                except (TypeError, ValueError):
+                    filters = None
             invalid = not isinstance(filters, dict)
             if invalid:
                 staged[("invalid_filters", ref, _ident(name))] += 1
@@ -302,7 +327,10 @@ async def _classify_expected(
             name = name[:SAVED_SEARCH_NAME_MAX]
             min_score = int(row.get("min_score") or 0)
             is_active = False if invalid else bool(row.get("is_active", True))
-            last_run = _ts_key(_as_datetime(row.get("last_notified_at")))
+            # G1 H-3: la columna real es last_run_at (alias histórico primero).
+            last_run = _ts_key(
+                _as_datetime(row.get("last_notified_at") or row.get("last_run_at"))
+            )
             searches.add((ref, name, _canon(filters), min_score, is_active, last_run))
 
     return {"applications": apps, "events": events, "bookmarks": bookmarks,
@@ -310,11 +338,15 @@ async def _classify_expected(
 
 
 # Subconsulta: url_normalized portfolio-import de la incarnación activa de vacancy.
+# ORDER BY (G1 H-11): con DOS incarnaciones activas de la fuente sobre la misma
+# vacante (fusión del pipeline dedup) el LIMIT 1 sin orden dejaba la clave — y el
+# checksum — a merced del plan de ejecución.
 _VAC_URLN = (
     "(SELECT sl.url_normalized FROM source_listing_incarnations i "
     "JOIN source_listings sl ON sl.id = i.source_listing_id "
     f"JOIN sources s ON s.id = sl.source_id AND s.name = '{PORTFOLIO_IMPORT_SOURCE}' "
-    "WHERE i.vacancy_id = {col} AND i.ended_at IS NULL LIMIT 1)"
+    "WHERE i.vacancy_id = {col} AND i.ended_at IS NULL "
+    "ORDER BY sl.url_normalized LIMIT 1)"
 )
 _SCOPE = (
     "JOIN profiles p ON p.id = {alias}.profile_id "
@@ -588,7 +620,11 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
     # Procedencia EXACTA (§4 parte 2): filas insertadas por ESTE run (después−antes). El
     # inventario scopeado (`identities`) se conserva como CROSS-CHECK.
     after = await snapshot_row_ids(session, PORTFOLIO_IMPORT_SOURCE, PORTFOLIO_CONSUMER)
-    manifest["provenance"] = exact_provenance(before, after)
+    # G1 H-2: los dedup_candidates CONCURRENTES ajenos (pipeline async del core
+    # durante el cutover) se excluyen — el rollback los borraría en silencio.
+    manifest["provenance"] = await scope_dedup_provenance(
+        session, exact_provenance(before, after)
+    )
     # Verificación estructural INDEPENDIENTE (§4 parte 3): usa el ledger como contrato y lee el
     # estado final con queries PROPIAS — distingue un listing PERDIDO de una cuarentena legítima
     # y cruza los oráculos (created del ledger == procedencia de vacancies). Solo lectura.
@@ -617,6 +653,22 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
     return manifest
 
 
+def _strip_nul(value):
+    """Saneo RECURSIVO de NUL en el manifiesto (G1-P2-1): '\\x00' → U+FFFD en
+    cada str (claves de dict incluidas — las urls tóxicas viajan como clave en
+    ledger/staging). Postgres rechaza \\u0000 en jsonb aunque el str Python sea
+    codificable, así que el encode/replace de surrogates no lo cubre; sin esto,
+    el durable tóxico que el staging AISLÓ abortaría igualmente la transacción
+    del cutover al registrar su propia cuarentena."""
+    if isinstance(value, str):
+        return value.replace("\x00", "�")
+    if isinstance(value, dict):
+        return {_strip_nul(k): _strip_nul(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_strip_nul(v) for v in value]
+    return value
+
+
 async def persist_manifest(session: AsyncSession, manifest: dict) -> uuid.UUID:
     """Persiste el manifiesto en portfolio_migration_manifest (core0013) DENTRO de la
     transacción del llamador → atómico con la migración (se revierte con ella en un
@@ -625,7 +677,10 @@ async def persist_manifest(session: AsyncSession, manifest: dict) -> uuid.UUID:
     # Los durables staged pueden traer contenido TÓXICO (surrogates UTF-8 no
     # codificables, del mismo mojibake que el sink cuarentena). Se SANEA el JSON del
     # manifiesto (→ carácter de reemplazo) para que el propio informe sea persistible.
-    payload = json.dumps(manifest, ensure_ascii=False, default=str)
+    # G1-P2-1: el NUL se sanea en los VALORES antes de json.dumps — serializado viaja
+    # como la secuencia escapada \u0000 (6 chars ASCII que encode/replace no toca) y
+    # el CAST a jsonb la rechaza, abortando la transacción entera del cutover.
+    payload = json.dumps(_strip_nul(manifest), ensure_ascii=False, default=str)
     payload = payload.encode("utf-8", "replace").decode("utf-8")
     await session.execute(
         sa.text(

@@ -9,6 +9,7 @@ BD DESECHABLE Postgres (reutiliza `_on_disposable_db` del rehearsal). Ejecutar v
 """
 
 import asyncio
+import json
 import os
 import uuid
 from datetime import datetime, timezone
@@ -216,29 +217,143 @@ def test_ledger_quarantine_collision_cross_run():
     asyncio.run(_on_disposable_db(_run))
 
 
-def test_ledger_quarantine_collision_cross_source():
-    """OTRA fuente tiene #/A; el portfolio sintetiza #/B (misma clave): la revalidación
-    post-attach revierte la cadena → quarantine:collision_cross_source, sin vacante."""
+async def _attach_extra_incarnation(s, vacancy_id, url, external_id):
+    """Incarnación EXTRA (otra url_normalized, MISMA vacante) bajo arbeitnow —
+    reproduce una vacante que abarca DOS claves normalizadas distintas (p.ej.
+    attach por identidad título+empresa): la colisión cross-source REAL que la
+    revalidación debe seguir cazando (G1-P3-6)."""
+    from jobhunt_core.harvest.sink import normalize_url
+
+    src = (
+        await s.execute(sa.text("SELECT id FROM sources WHERE name = 'arbeitnow'"))
+    ).scalar_one()
+    lid = uuid.uuid4()
+    await s.execute(
+        sa.text(
+            "INSERT INTO source_listings (id, source_id, external_id, url_normalized) "
+            "VALUES (:i, :s, :e, :u)"
+        ),
+        {"i": lid, "s": src, "e": external_id, "u": normalize_url(url)},
+    )
+    await s.execute(
+        sa.text(
+            "INSERT INTO source_listing_incarnations "
+            "(id, source_listing_id, vacancy_id, seq, url) "
+            "VALUES (:i, :l, :v, 1, :u)"
+        ),
+        {"i": uuid.uuid4(), "l": lid, "v": vacancy_id, "u": url},
+    )
+    await s.commit()
+
+
+async def _other_source_vacancy(s, url_normalized):
+    return (
+        await s.execute(
+            sa.text(
+                "SELECT i.vacancy_id FROM source_listing_incarnations i "
+                "JOIN source_listings sl ON sl.id = i.source_listing_id "
+                "JOIN sources src ON src.id = sl.source_id AND src.name = 'arbeitnow' "
+                "WHERE sl.url_normalized = :u AND i.ended_at IS NULL"
+            ),
+            {"u": url_normalized},
+        )
+    ).scalar_one()
+
+
+def test_ledger_quarantine_collision_cross_source(caplog):
+    """La vacante de OTRA fuente abarca DOS claves normalizadas distintas (la
+    colisión cross-source REAL, G1-P3-6): la revalidación post-attach revierte
+    la cadena → quarantine:collision_cross_source, sin vacante. El log de
+    resumen NO cuenta la cadena revertida como sintetizada (G1 H-14a)."""
+    import logging as _logging
+
+    caplog.set_level(_logging.INFO, logger="jobhunt_core.import_portfolio")
 
     async def _run(factory):
         async with factory() as s:
-            await _seed_other_source(s, "https://spa-other.ch/jobs#A", "other-A")
+            url_a = "https://multi.example.ch/jobs/a"
+            await _seed_other_source(s, url_a, "multi-a")
+            vid = await _other_source_vacancy(s, url_a)
+            # La MISMA vacante tiene además otra url con clave DISTINTA.
+            await _attach_extra_incarnation(
+                s, vid, "https://multi.example.ch/jobs/b", "multi-b"
+            )
             scope_id = await ip.ensure_import_scope(s)
             await s.commit()
-            b_url = "https://spa-other.ch/jobs#B"
 
             led: list = []
             collided = await ip.synthesize_vacancies(
-                s, scope_id, [{"url": b_url, "title": "B", "company": "B"}], ledger=led
+                s, scope_id, [{"url": url_a, "title": "A", "company": "A"}], ledger=led
             )
             await s.commit()
-            assert collided == {b_url}
-            e = _by_url(led)[b_url]
+            assert collided == {url_a}
+            e = _by_url(led)[url_a]
             assert e.disposition == pil.QUARANTINE
             assert e.reason == pil.Q_COLLISION_CROSS_SOURCE
             assert e.vacancy_id is None
             # No quedó vínculo portfolio-import (cadena revertida).
-            assert await ip.resolve_vacancy_by_url(s, b_url) is None
+            assert await ip.resolve_vacancy_by_url(s, url_a) is None
+
+    asyncio.run(_on_disposable_db(_run))
+    # G1 H-14a: 1 item, cadena revertida ⇒ "0 sintetizadas" (antes contaba 1).
+    assert any(
+        "1 items → 0 sintetizadas" in r.getMessage() for r in caplog.records
+    ), [r.getMessage() for r in caplog.records if "sintetizadas" in r.getMessage()]
+
+
+def test_ledger_cross_source_trivial_spelling_attach_kept():
+    """Regresión G1-P3-6: la MISMA oferta ya cosechada por otra fuente con
+    grafía trivialmente distinta (host en mayúsculas + barra final) — el sink
+    adjunta por url_normalized y la revalidación comparaba urls CRUDAS byte a
+    byte: el attach LEGÍTIMO se revertía como collision_cross_source y el caso
+    NORMAL entre portales acababa en reconciliación manual. Ahora compara
+    normalizadas: disposition=reused sobre la vacante preexistente."""
+
+    async def _run(factory):
+        async with factory() as s:
+            raw_other = "https://Example.com/job/1/"  # grafía del otro portal
+            await _seed_other_source(s, raw_other, "other-graf-1")
+            other_vid = await _other_source_vacancy(s, "https://example.com/job/1")
+            scope_id = await ip.ensure_import_scope(s)
+            await s.commit()
+
+            url = "https://example.com/job/1"  # la MISMA oferta, grafía limpia
+            led: list = []
+            collided = await ip.synthesize_vacancies(
+                s, scope_id, [{"url": url, "title": "Dev", "company": "A"}], ledger=led
+            )
+            await s.commit()
+            assert collided == set()  # NADA revertido
+            e = _by_url(led)[url]
+            assert e.disposition == pil.REUSED
+            assert e.vacancy_id == other_vid  # C-4 solo añadió el enlace
+            assert await ip.resolve_vacancy_by_url(s, url) == other_vid
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_ledger_multibyte_url_over_limit_reason_is_limit():
+    """Regresión G1-P3-5: una url con ≤2048 CHARS pero >2048 BYTES (multibyte)
+    pasaba la comprobación en caracteres de _synthesizable y caía en
+    _preprocess ⇒ el ledger registraba 'malformed'. El sink mide BYTES
+    (C6-P2-2): la razón PRECISA es 'limit'. La partición sintetizable/no ya
+    coincidía (nada se pierde) — lo que mentía era la razón auditable."""
+
+    async def _run(factory):
+        async with factory() as s:
+            scope_id = await ip.ensure_import_scope(s)
+            await s.commit()
+            url = "https://x.example.ch/" + "ü" * 1200  # 1221 chars, 2421 bytes
+            assert len(url) <= 2048 < len(url.encode())
+            led: list = []
+            await ip.synthesize_vacancies(
+                s, scope_id, [{"url": url, "title": "U", "company": "A"}], ledger=led
+            )
+            await s.commit()
+            e = _by_url(led)[url]
+            assert e.disposition == pil.QUARANTINE
+            assert e.reason == pil.Q_LIMIT  # antes: malformed (razón falseada)
+            assert await ip.resolve_vacancy_by_url(s, url) is None
 
     asyncio.run(_on_disposable_db(_run))
 
@@ -367,6 +482,87 @@ def test_ledger_surrogate_url_does_not_abort_migration():
     asyncio.run(_on_disposable_db(_run))
 
 
+def test_ledger_nul_field_does_not_abort_migration():
+    """Regresión G1-P2-1 (gemelo del test de surrogates): un durable con NUL en un
+    campo de texto viaja en el JSON del manifiesto como la secuencia escapada
+    \\u0000 (6 chars ASCII que el encode/replace de surrogates NO toca) y el
+    CAST(:m AS jsonb) la rechaza → antes moría la transacción ENTERA del cutover
+    al registrar la cuarentena que el staging ya había aislado. persist_manifest
+    sanea ahora los VALORES recursivamente (NUL → U+FFFD) y la migración TERMINA
+    con el manifiesto persistido."""
+    from jobhunt_core import import_portfolio_manifest as man
+
+    bad_title = "Job\x00Tóxico"  # NUL: el sink lo cuarentena (Q_MALFORMED)
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {"url": "https://good.example.ch/n1", "status": "applied", "title": "A",
+                 "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+                {"url": "https://nul.example.ch/n2", "status": "saved", "title": bad_title,
+                 "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
+            ],
+            "saved_searches": [],
+        }
+    ]
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, users)  # NO debe lanzar
+            assert manifest["verdict"] == "ok", manifest["divergences"]
+            e = next(
+                x for x in manifest["ledger"]
+                if x["url"] == "https://nul.example.ch/n2"
+            )
+            assert e["disposition"] == pil.QUARANTINE
+            assert e["reason"] == pil.Q_MALFORMED
+            await s.commit()  # el manifiesto PERSISTE pese al NUL (saneo G1-P2-1)
+            stored = (
+                await s.execute(
+                    sa.text(
+                        "SELECT manifest FROM portfolio_migration_manifest "
+                        "WHERE id = :i"
+                    ),
+                    {"i": uuid.UUID(manifest["id"])},
+                )
+            ).scalar_one()
+            blob = json.dumps(stored, ensure_ascii=False)
+            assert "\\u0000" not in blob and "\x00" not in blob
+            assert "Job�Tóxico" in blob  # el valor saneado, no perdido
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_persist_manifest_nul_in_staged_value_persists():
+    """Regresión G1-P2-1 (repro DIRECTA del informe): un manifiesto con un durable
+    staged conteniendo '\\x00' debe poder persistirse tal cual — es exactamente la
+    ruta de defensa (staging) diseñada para que el dato tóxico NO abortara el lote."""
+    from jobhunt_core import import_portfolio_manifest as man
+
+    manifest = {
+        "verdict": "ok",
+        "staging": [{"kind": "application", "reason": "malformed",
+                     "durable": {"url": "https://x.ch/a", "notes": "a\x00b"}}],
+    }
+
+    async def _run(factory):
+        async with factory() as s:
+            mid = await man.persist_manifest(s, manifest)  # antes: DBAPIError (jsonb)
+            await s.commit()
+            stored = (
+                await s.execute(
+                    sa.text(
+                        "SELECT manifest FROM portfolio_migration_manifest "
+                        "WHERE id = :i"
+                    ),
+                    {"i": mid},
+                )
+            ).scalar_one()
+            assert stored["staging"][0]["durable"]["notes"] == "a�b"
+
+    asyncio.run(_on_disposable_db(_run))
+
+
 def test_ledger_persisted_in_manifest():
     """migrate_and_reconcile PERSISTE el ledger en el manifiesto: una entrada por url que
     ENTRÓ en síntesis, created con vacancy_id y la url malformada como quarantine. Los
@@ -433,3 +629,64 @@ def test_ledger_group_reason_is_order_independent():
     assert forward.disposition == pil.QUARANTINE and forward.reason == pil.Q_MALFORMED, forward
     assert reverse.disposition == pil.QUARANTINE and reverse.reason == pil.Q_MALFORMED, reverse
     assert forward.reason == reverse.reason
+
+
+def test_vac_key_determinista_con_dos_incarnaciones_activas():
+    """Regresión G1 H-11: con DOS incarnaciones activas de portfolio-import
+    sobre la MISMA vacante (fusión del pipeline dedup — ninguna UNIQUE lo
+    impide), la clave portable de vacante usaba LIMIT 1 SIN ORDER BY: el
+    checksum quedaba a merced del plan de ejecución. Ahora ORDER BY
+    url_normalizada: SIEMPRE la menor."""
+    from jobhunt_core import import_portfolio_manifest as man
+    from jobhunt_core import import_portfolio_migrate as ipm
+
+    async def _run(factory):
+        async with factory() as s:
+            scope_id = await ip.ensure_import_scope(s)
+            await s.commit()
+            led: list = []
+            await ip.synthesize_vacancies(
+                s, scope_id,
+                # La 'b' primero: sin ORDER BY, un scan por orden de inserción
+                # devolvería 'b' — la aserción exige la MENOR ('a').
+                [{"url": "https://h11.example.ch/b", "title": "B", "company": "B"}],
+                ledger=led,
+            )
+            await s.commit()
+            vid = led[0].vacancy_id
+            src = (
+                await s.execute(
+                    sa.text("SELECT id FROM sources WHERE name = :n"),
+                    {"n": ip.PORTFOLIO_IMPORT_SOURCE},
+                )
+            ).scalar_one()
+            lid = uuid.uuid4()
+            await s.execute(
+                sa.text(
+                    "INSERT INTO source_listings (id, source_id, external_id, url_normalized) "
+                    "VALUES (:i, :s, 'h11-a', 'https://h11.example.ch/a')"
+                ),
+                {"i": lid, "s": src},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO source_listing_incarnations "
+                    "(id, source_listing_id, vacancy_id, seq, url) "
+                    "VALUES (:i, :l, :v, 1, 'https://h11.example.ch/a')"
+                ),
+                {"i": uuid.uuid4(), "l": lid, "v": vid},
+            )
+            await s.commit()
+            # Literal inline (sin binds: los ':' del propio SQL — 'vid:',
+            # ::text — confunden a sa.text con parámetros).
+            col = f"'{vid}'::uuid"
+            for expr in (
+                man._VAC_URLN.format(col=col),
+                ipm._vac_key(col),  # el coalesce entero: aquí resuelve la subquery
+            ):
+                key = (
+                    await s.execute(sa.text(f"SELECT {expr}"))
+                ).scalar_one()
+                assert key == "https://h11.example.ch/a", expr  # la MENOR, siempre
+
+    asyncio.run(_on_disposable_db(_run))

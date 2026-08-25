@@ -16,7 +16,11 @@ import sqlalchemy as sa
 from jobhunt_core import import_portfolio_manifest as man
 from jobhunt_core.import_portfolio import PORTFOLIO_IMPORT_SOURCE
 from jobhunt_core.import_portfolio_verify import verify_migration
-from jobhunt_core.tests.test_integration_import_portfolio_ledger import _seed_other_source
+from jobhunt_core.tests.test_integration_import_portfolio_ledger import (
+    _attach_extra_incarnation,
+    _other_source_vacancy,
+    _seed_other_source,
+)
 from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import _on_disposable_db
 
 pytestmark = pytest.mark.skipif(
@@ -321,14 +325,19 @@ def test_verify_reused_and_collision_are_legitimate():
 
     async def _run(factory):
         async with factory() as s:
-            # Otra fuente tiene #/A; el portfolio pedirá #/B (colisión cross-source) y una url
-            # exacta reutilizada.
-            await _seed_other_source(s, "https://coll.example.ch/jobs#A", "coll-A")
+            # Otra fuente tiene una vacante que abarca DOS claves normalizadas
+            # (colisión cross-source REAL, G1-P3-6) y una url exacta reutilizada.
+            coll_url = "https://coll.example.ch/jobs/a"
+            await _seed_other_source(s, coll_url, "coll-A")
+            vid = await _other_source_vacancy(s, coll_url)
+            await _attach_extra_incarnation(
+                s, vid, "https://coll.example.ch/jobs/b", "coll-B"
+            )
             await _seed_other_source(s, "https://reuse.example.ch/r", "reuse-r")
             users = [
                 _user([
                     _app("https://reuse.example.ch/r"),        # reused (otra fuente exacta)
-                    _app("https://coll.example.ch/jobs#B"),        # collision_cross_source
+                    _app(coll_url),                             # collision_cross_source
                     _app("https://fresh.example.ch/n"),         # created
                 ])
             ]
@@ -337,7 +346,7 @@ def test_verify_reused_and_collision_are_legitimate():
             assert v["verdict"] == "verified", v["discrepancies"]
             dispositions = {e["url"]: e["disposition"] for e in manifest["ledger"]}
             assert dispositions["https://reuse.example.ch/r"] == "reused"
-            assert dispositions["https://coll.example.ch/jobs#B"] == "quarantine"
+            assert dispositions[coll_url] == "quarantine"
             assert dispositions["https://fresh.example.ch/n"] == "created"
             await s.commit()
 
@@ -424,5 +433,38 @@ def test_verify_detects_extra_url_not_in_origin(monkeypatch):
             ), manifest["verification"]["discrepancies"]
             assert manifest["verdict"] == "divergent", manifest["verdict"]
             await s.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_company_no_str_no_es_falso_divergent():
+    """Regresión G1 H-9: company/description/url no-str en un durable (int del
+    feed) hacían divergir esperado (tipo Python) vs real (`->>` siempre text) →
+    falso 'divergent' y cutover abortado (el título ya estaba protegido). El
+    lado esperado aplica ahora la coerción textual jsonb-equivalente."""
+
+    async def _run(factory):
+        async with factory() as s:
+            users = [{
+                "external_ref": 1,
+                "applications": [{
+                    "url": "https://h9fix.example.ch/1", "status": "applied",
+                    "title": "T", "company": 123, "description": 4.5,
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                }],
+                "saved_searches": [],
+            }]
+            manifest = await man.migrate_and_reconcile(s, users)
+            assert manifest["verdict"] == "ok", manifest["divergences"]
+            snap = (
+                await s.execute(
+                    sa.text(
+                        "SELECT snapshot->>'company' AS c, "
+                        "snapshot->>'description' AS d FROM applications"
+                    )
+                )
+            ).one()
+            assert (snap.c, snap.d) == ("123", "4.5")
+            await s.commit()
 
     asyncio.run(_on_disposable_db(_run))
