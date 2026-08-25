@@ -16,7 +16,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -81,9 +81,7 @@ async def _make_user(db):
 
 @pytest.mark.asyncio
 class TestP210DuplicadoBajoCanonicaArchivada:
-    async def test_duplicado_vivo_se_promueve_al_archivar_la_canonica(
-        self, db_session
-    ):
+    async def test_duplicado_vivo_se_promueve_al_archivar_la_canonica(self, db_session):
         marker = uuid.uuid4().hex[:8]
         canonical_hash = f"g1p210-canon-{marker}".ljust(32, "0")[:32]
         dup_hash = f"g1p210-dup-{marker}".ljust(32, "0")[:32]
@@ -119,9 +117,7 @@ class TestP210DuplicadoBajoCanonicaArchivada:
             active=False,
         )
 
-        with patch(
-            "database.task_session", new=_mock_session_factory(db_session)
-        ):
+        with patch("database.task_session", new=_mock_session_factory(db_session)):
             result = await _cleanup_stale_jobs_async(60)
 
         assert result["archived"] >= 1
@@ -141,8 +137,9 @@ class TestP213LinkErrorEnLaCadena:
     def test_la_cadena_se_despacha_con_link_error(self):
         from tasks.pipeline_tasks import daily_harvest
 
-        with patch("tasks.pipeline_tasks.chain") as mock_chain, patch(
-            "tasks.pipeline_tasks._matching_stage_enabled", return_value=True
+        with (
+            patch("tasks.pipeline_tasks.chain") as mock_chain,
+            patch("tasks.pipeline_tasks._matching_stage_enabled", return_value=True),
         ):
             mock_chain.return_value.apply_async.return_value = SimpleNamespace(
                 id="chain-1"
@@ -200,9 +197,7 @@ class TestP214BarridoPorLotes:
 
         monkeypatch.setattr(httpx.AsyncClient, "head", _fake_head)
 
-        with patch(
-            "database.task_session", new=_mock_session_factory(db_session)
-        ):
+        with patch("database.task_session", new=_mock_session_factory(db_session)):
             result = await _check_job_urls_async(limit=2)
 
         assert result["status"] == "partial"
@@ -241,9 +236,10 @@ class TestP215AlertaProfesor:
             settings, "TEACHER_ALERT_EMAIL", "user@example.com", raising=False
         )
         monkeypatch.setattr("redis.from_url", lambda *_a, **_k: fake_redis)
-        with patch(
-            "services.email_service.EmailService", return_value=email_mock
-        ), patch("database.task_session", new=_mock_session_factory(db_session)):
+        with (
+            patch("services.email_service.EmailService", return_value=email_mock),
+            patch("database.task_session", new=_mock_session_factory(db_session)),
+        ):
             return await _detect_and_notify()
 
     async def _seed_primary_job(self, db_session, marker, first_seen=None):
@@ -296,9 +292,7 @@ class TestP215AlertaProfesor:
         assert result["matched"] == 0
         assert len(sends) == 1, "el retry no debe duplicar el email"
 
-    async def test_cota_superior_excluye_altas_futuras(
-        self, db_session, monkeypatch
-    ):
+    async def test_cota_superior_excluye_altas_futuras(self, db_session, monkeypatch):
         """G1/P2-15: una oferta con first_seen_at > now no entra en esta
         corrida (entrará en la siguiente) — sin doble email."""
         marker = uuid.uuid4().hex[:8]

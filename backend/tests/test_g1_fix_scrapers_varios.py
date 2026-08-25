@@ -24,9 +24,9 @@ class TestP37IdentidadIrishjobs:
         """El mismo anuncio en ambos hosts comparte identidad de cursor."""
         stub_irishjobs = {"id": 123456, "url": "https://www.irishjobs.ie/job/x-123456"}
         stub_jobsie = {"id": 123456, "url": "https://www.jobs.ie/job/x-123456"}
-        assert IrishJobsScraper.job_identity(stub_irishjobs) == IrishJobsScraper.job_identity(
-            stub_jobsie
-        )
+        assert IrishJobsScraper.job_identity(
+            stub_irishjobs
+        ) == IrishJobsScraper.job_identity(stub_jobsie)
 
     def test_normalizado_conserva_la_misma_identidad(self):
         """El job persistido (normalize_job) produce la MISMA identidad que el
@@ -41,9 +41,9 @@ class TestP37IdentidadIrishjobs:
             "location": "Dublin",
         }
         normalized = scraper.normalize_job(raw)
-        assert IrishJobsScraper.job_identity(normalized) == IrishJobsScraper.job_identity(
-            raw
-        )
+        assert IrishJobsScraper.job_identity(
+            normalized
+        ) == IrishJobsScraper.job_identity(raw)
         assert IrishJobsScraper.job_identity(raw) == "irishjobs:987"
 
     def test_sin_id_cae_a_url(self):

@@ -174,9 +174,6 @@ class TestP326UploadCvSinPerfil:
 
 class TestP328RateLimitProxy:
     def _request(self, headers: dict, client_host="10.0.0.1"):
-        scope_headers = [
-            (k.lower().encode(), v.encode()) for k, v in headers.items()
-        ]
         return SimpleNamespace(
             headers={k.lower(): v for k, v in headers.items()},
             client=SimpleNamespace(host=client_host),

@@ -10,8 +10,6 @@
 
 import xml.etree.ElementTree as ET
 
-import pytest
-
 import providers.dailyremote as dailyremote_mod
 import providers.workingnomads as workingnomads_mod
 from providers.careerjet import CareerjetProvider

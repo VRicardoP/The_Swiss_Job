@@ -42,7 +42,10 @@ class _EngineScraper(BaseScraper):
 
     def parse_listing_page(self, soup: BeautifulSoup) -> list[dict]:
         return [
-            {"title": el.get_text(strip=True), "url": f"https://example.com/{el.get_text(strip=True)}"}
+            {
+                "title": el.get_text(strip=True),
+                "url": f"https://example.com/{el.get_text(strip=True)}",
+            }
             for el in soup.select(".job")
         ]
 
@@ -54,9 +57,11 @@ class _EngineScraper(BaseScraper):
 
 
 def _page(n_jobs: int) -> MagicMock:
-    html = "<html><body>" + "".join(
-        f'<div class="job">J{i}</div>' for i in range(n_jobs)
-    ) + "</body></html>"
+    html = (
+        "<html><body>"
+        + "".join(f'<div class="job">J{i}</div>' for i in range(n_jobs))
+        + "</body></html>"
+    )
     resp = MagicMock()
     resp.status_code = 200
     resp.text = html
@@ -93,8 +98,9 @@ class TestP24StopReasonError:
         async def _side_effect(coro):
             return next(calls)
 
-        with patch.object(scraper._circuit, "call", side_effect=_side_effect), patch.object(
-            scraper, "_report_block", new=AsyncMock()
+        with (
+            patch.object(scraper._circuit, "call", side_effect=_side_effect),
+            patch.object(scraper, "_report_block", new=AsyncMock()),
         ):
             jobs = await scraper._scrape_with_httpx("")
 
@@ -294,9 +300,7 @@ class TestP317DupesSonActividad:
         await db_session.commit()
 
         source = "g1_dupes_src"
-        incoming = _sample_job(
-            "Syndicated Role", "SameCo", "http://g1d.test/1", source
-        )
+        incoming = _sample_job("Syndicated Role", "SameCo", "http://g1d.test/1", source)
         incoming["hash"] = "g1dupes-incoming".ljust(32, "0")
         jobs = [incoming]
         mock_scrapers.return_value = [_make_mock_scraper(source, jobs)]

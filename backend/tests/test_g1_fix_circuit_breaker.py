@@ -27,7 +27,9 @@ class TestP21BreakerAprendeDelNone:
 
         for _ in range(3):
             result = await cb.call(_failed_fetch)
-            assert result is None, "el None se devuelve: el contrato del llamante no cambia"
+            assert result is None, (
+                "el None se devuelve: el contrato del llamante no cambia"
+            )
 
         status = cb.get_status()
         assert status["state"] == "open"

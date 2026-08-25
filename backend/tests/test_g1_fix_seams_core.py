@@ -42,9 +42,7 @@ def _core_catalog_with_db(db) -> CoreCatalog:
 
 @pytest.mark.asyncio
 class TestP217IdentidadAccionable:
-    async def test_search_presenta_md5_para_items_con_respaldo_local(
-        self, db_session
-    ):
+    async def test_search_presenta_md5_para_items_con_respaldo_local(self, db_session):
         await seed_local_cases(db_session)
         await db_session.commit()
         catalog = _core_catalog_with_db(db_session)

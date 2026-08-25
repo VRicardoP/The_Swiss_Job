@@ -67,9 +67,7 @@ async def test_p1_3_update_ajeno_es_404_y_no_muta(dos_usuarios):
     user_a, user_b, fake, core, app_de_a = dos_usuarios
     app_id = uuid.UUID(app_de_a["id"])
 
-    result = await core.update(
-        user_b, app_id, ApplicationUpdate(notes="pwned by B")
-    )
+    result = await core.update(user_b, app_id, ApplicationUpdate(notes="pwned by B"))
 
     assert result is None, "la candidatura de A no existe PARA el usuario B"
     assert fake.items[app_de_a["id"]]["notes"] == "privada", (

@@ -61,9 +61,7 @@ class TestP11PublicjobsMudo:
         assert diag.classify(len(jobs), issues) == "error"
 
     @pytest.mark.asyncio
-    async def test_estructura_sveltekit_desconocida_sale_como_error(
-        self, monkeypatch
-    ):
+    async def test_estructura_sveltekit_desconocida_sale_como_error(self, monkeypatch):
         """Un 200 con JSON válido pero sin 'nodes' es estructura rota, no sequía."""
 
         async def _fake_get(self, url, **kwargs):
@@ -143,7 +141,9 @@ class TestP25TesMudo:
         payload = {
             "props": {
                 "pageProps": {
-                    "trpcState": {"json": {"queries": [{"state": {"data": {"jobs": []}}}]}}
+                    "trpcState": {
+                        "json": {"queries": [{"state": {"data": {"jobs": []}}}]}
+                    }
                 }
             }
         }

@@ -88,9 +88,7 @@ class TestP316IndiceSinValidar:
         assert cached_writes == []
 
     def test_indice_duplicado_lanza(self):
-        dup = json.dumps(
-            [{"index": 0, "score": 90}, {"index": 0, "score": 10}]
-        )
+        dup = json.dumps([{"index": 0, "score": 90}, {"index": 0, "score": 10}])
         with pytest.raises(ValueError):
             GroqService._parse_llm_response(dup, 2)
 

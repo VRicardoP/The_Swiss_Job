@@ -75,7 +75,9 @@ async def test_p1_4_solo_altas_reales_y_notifica_sin_umbral_de_score(db_session)
     canton = "GL"  # cantón poco usado para no chocar con datos de otros tests
 
     # Una oferta re-vista (alta hace 30 días) y una genuinamente nueva.
-    await _make_job(db_session, f"g1p14-old-{marker}", canton=canton, first_seen_days_ago=30)
+    await _make_job(
+        db_session, f"g1p14-old-{marker}", canton=canton, first_seen_days_ago=30
+    )
     await _make_job(db_session, f"g1p14-new-{marker}", canton=canton)
 
     search = SavedSearch(
@@ -118,7 +120,9 @@ async def test_p1_4_sin_altas_no_notifica(db_session):
     marker = uuid.uuid4().hex[:8]
     canton = "UR"
 
-    await _make_job(db_session, f"g1p14b-{marker}", canton=canton, first_seen_days_ago=30)
+    await _make_job(
+        db_session, f"g1p14b-{marker}", canton=canton, first_seen_days_ago=30
+    )
 
     search = SavedSearch(
         user_id=uid,

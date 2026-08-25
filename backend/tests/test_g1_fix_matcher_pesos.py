@@ -151,9 +151,7 @@ class TestP315UmbralAntesDelRerank:
         svc._get_excluded_hashes = AsyncMock(return_value=set())
         svc._get_active_filters = AsyncMock(return_value=[])
         svc._stage1_vector_search = AsyncMock(return_value=[object()])
-        svc._stage2_multifactor_score = Mock(
-            return_value=[_scored(_fake_job(), 30.0)]
-        )
+        svc._stage2_multifactor_score = Mock(return_value=[_scored(_fake_job(), 30.0)])
         saved = {}
 
         async def fake_save(uid, results):
