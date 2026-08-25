@@ -10,17 +10,23 @@ from celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(name="tasks.dedup_semantic_batch")
-def dedup_semantic_batch(batch_size: int = 200) -> dict[str, Any]:
+@celery_app.task(name="tasks.dedup_semantic_batch", bind=True, max_retries=1)
+def dedup_semantic_batch(self, batch_size: int = 200) -> dict[str, Any]:
     """Semantic deduplication via embedding cosine similarity.
 
     Processes active jobs with embeddings, finds duplicates with cosine > 0.95.
+
+    G1/P3-22: era el único eslabón de la cadena diaria que convertía el fallo
+    en un retorno normal ({"status":"error"}) — el matching corría sobre un
+    corpus sin dedupear y el run contaba OK. Ahora reintenta y, si persiste,
+    LANZA (mismo criterio que embed_all_pending): la cadena se detiene y el
+    link_error de daily_harvest deja rastro.
     """
     try:
         return asyncio.run(_dedup_semantic_batch_async(batch_size))
     except Exception as exc:
         logger.error("dedup_semantic_batch failed: %s", exc)
-        return {"status": "error", "error": str(exc)}
+        raise self.retry(exc=exc, countdown=120)
 
 
 async def _dedup_semantic_batch_async(batch_size: int) -> dict[str, Any]:
@@ -94,7 +100,23 @@ _URL_CHECK_TIMEOUT_SECONDS = 10.0
 _URL_DEAD_STATUSES = frozenset({404, 410})
 
 
-@celery_app.task(name="tasks.check_job_urls")
+# G1/P2-14 — tamaño de lote del barrido: se sondea y COMMITEA por lotes para
+# que `url_last_check` avance aunque la tarea se aborte a mitad (con el commit
+# único al final, un timeout re-seleccionaba las MISMAS URLs cada noche y la
+# rotación quedaba estancada para siempre — justo lo que V.4 quería arreglar).
+_URL_CHECK_BATCH_SIZE = 250
+
+
+@celery_app.task(
+    name="tasks.check_job_urls",
+    # G1/P2-14 — límites PROPIOS acordes al presupuesto: con
+    # MAINTENANCE_URL_CHECK_LIMIT=3000, concurrencia por host 2 y un host
+    # dominante, el default global de 300s mataba el run entero cada noche
+    # (SoftTimeLimitExceeded caía en el except genérico y Celery lo veía
+    # success). Peor caso ~3000 sondas × 10s / 10 en vuelo ≈ 50 min.
+    soft_time_limit=3600,
+    time_limit=3660,
+)
 def check_job_urls(limit: int | None = None) -> dict[str, Any]:
     """Comprueba con HEAD que las URLs de las ofertas activas siguen vivas.
 
@@ -146,50 +168,84 @@ async def _check_job_urls_async(limit: int) -> dict[str, Any]:
                 host_sems[host] = asyncio.Semaphore(_URL_CHECK_HOST_CONCURRENCY)
             return host_sems[host]
 
+        from celery.exceptions import SoftTimeLimitExceeded
+
         async def _probe(client: httpx.AsyncClient, job_hash: str, url: str):
             async with sem, _host_sem(url):
                 try:
                     resp = await client.head(url, follow_redirects=True)
                     return job_hash, resp.status_code
+                except SoftTimeLimitExceeded:
+                    # G1/P2-14: el aviso de time limit NO es un error de sonda —
+                    # debe subir al bucle de lotes para cortar el barrido
+                    # conservando lo ya commiteado.
+                    raise
                 except Exception:
                     # Error de red/timeout: desconocido, no lo damos por muerto.
                     return job_hash, None
 
+        # G1/P2-14 — sondeo y commit POR LOTES: url_last_check avanza para lo
+        # ya sondeado aunque un soft-time-limit aborte el resto; el próximo
+        # run continúa la rotación en vez de re-empezar por la misma cabecera.
+        total_probed = 0
+        total_dead = 0
+        aborted = False
+
         async with httpx.AsyncClient(
             headers={"User-Agent": _URL_CHECK_UA}, timeout=timeout
         ) as client:
-            results = await asyncio.gather(*(_probe(client, h, u) for h, u in rows))
+            for start in range(0, len(rows), _URL_CHECK_BATCH_SIZE):
+                batch = rows[start : start + _URL_CHECK_BATCH_SIZE]
+                try:
+                    results = await asyncio.gather(
+                        *(_probe(client, h, u) for h, u in batch)
+                    )
+                except SoftTimeLimitExceeded:
+                    logger.warning(
+                        "check_job_urls: soft time limit — se corta el barrido "
+                        "con %d sondeadas (el progreso previo ya está commiteado)",
+                        total_probed,
+                    )
+                    aborted = True
+                    break
 
-        now = datetime.now(timezone.utc)
-        dead = [h for h, status in results if status in _URL_DEAD_STATUSES]
-        probed = [
-            h for h, _status in results
-        ]  # todas las sondeadas (incluidos errores)
+                now = datetime.now(timezone.utc)
+                dead = [h for h, status in results if status in _URL_DEAD_STATUSES]
+                probed = [h for h, _status in results]
 
-        if dead:
-            await db.execute(
-                update(Job)
-                .where(Job.hash.in_(dead))
-                .values(is_active=False, url_last_check=now)
-            )
-        # Avanza url_last_check en TODAS las sondeadas, también las de error de
-        # red/timeout: si no, quedan con url_last_check NULL y el order_by
-        # nulls_first las re-selecciona cada semana → inanición de la rotación,
-        # el resto del catálogo nunca se comprueba.
-        dead_set = set(dead)
-        rest = [h for h in probed if h not in dead_set]
-        if rest:
-            await db.execute(
-                update(Job).where(Job.hash.in_(rest)).values(url_last_check=now)
-            )
-        await db.commit()
+                if dead:
+                    await db.execute(
+                        update(Job)
+                        .where(Job.hash.in_(dead))
+                        .values(is_active=False, url_last_check=now)
+                    )
+                # Avanza url_last_check en TODAS las sondeadas, también las de
+                # error de red/timeout: si no, quedan con url_last_check NULL y
+                # el order_by nulls_first las re-selecciona cada semana →
+                # inanición de la rotación.
+                dead_set = set(dead)
+                rest = [h for h in probed if h not in dead_set]
+                if rest:
+                    await db.execute(
+                        update(Job)
+                        .where(Job.hash.in_(rest))
+                        .values(url_last_check=now)
+                    )
+                await db.commit()
+                total_probed += len(probed)
+                total_dead += len(dead)
 
     logger.info(
-        "check_job_urls: %d sondeadas, %d desactivadas (404/410)",
-        len(probed),
-        len(dead),
+        "check_job_urls: %d sondeadas, %d desactivadas (404/410)%s",
+        total_probed,
+        total_dead,
+        " [ABORTADO por time limit]" if aborted else "",
     )
-    return {"status": "success", "checked": len(probed), "deactivated": len(dead)}
+    return {
+        "status": "partial" if aborted else "success",
+        "checked": total_probed,
+        "deactivated": total_dead,
+    }
 
 
 @celery_app.task(name="tasks.cleanup_stale_jobs")
@@ -256,6 +312,23 @@ async def _cleanup_stale_jobs_async(max_age_days: int) -> dict[str, Any]:
             ),
             {"days": max_age_days},
         )
+        # G1/P2-10 — el flanco gemelo de A1-1: cuando la canónica se ARCHIVA
+        # (caducada CON adjuntos), sus duplicados que SIGUEN publicados
+        # (last_seen_at fresco, el upsert los re-ve a diario) quedaban
+        # is_active=False indefinidamente — vacante viva invisible para
+        # siempre (la promoción solo ocurría al BORRAR y check_job_urls solo
+        # sonda canónicas). Se promueven los duplicados NO caducados de toda
+        # canónica que va a archivarse; el siguiente ciclo de dedup los
+        # re-agrupa si procede. ANTES del archivado, misma transacción.
+        r_promoted_arch = await db.execute(
+            text(  # noqa: S608 — idem
+                f"UPDATE jobs SET duplicate_of = NULL, is_active = TRUE "
+                f"WHERE NOT ({stale}) AND duplicate_of IN ("
+                f"SELECT hash FROM jobs WHERE {stale} AND ({attached})"
+                f")"
+            ),
+            {"days": max_age_days},
+        )
         # Archivar (no borrar) las caducadas CON adjuntos que sigan activas.
         r_archived = await db.execute(
             text(  # noqa: S608 — `stale`/`attached` son SQL estático de confianza
@@ -274,7 +347,7 @@ async def _cleanup_stale_jobs_async(max_age_days: int) -> dict[str, Any]:
         await db.commit()
 
     archived = r_archived.rowcount or 0
-    promoted = r_promoted.rowcount or 0
+    promoted = (r_promoted.rowcount or 0) + (r_promoted_arch.rowcount or 0)
     deleted = r_deleted.rowcount or 0
     logger.info(
         "cleanup_stale_jobs: %d archivadas (con adjuntos), %d duplicados "

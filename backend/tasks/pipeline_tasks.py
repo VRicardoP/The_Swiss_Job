@@ -27,6 +27,42 @@ from celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
+@celery_app.task(name="tasks.pipeline.harvest_chain_failed")
+def harvest_chain_failed(request, exc, traceback) -> None:
+    """link_error de la cadena de cosecha (G1/P2-13).
+
+    Sin esto, la orquestadora terminaba en success al DESPACHAR y un eslabón
+    caído (BD 15 min fuera, embed parcial persistente…) mataba el resto de la
+    cadena —matching incluido— sin dejar rastro alguno. Señal: log ERROR
+    SIEMPRE + email de salud best-effort si hay SMTP configurado (el mismo
+    canal opt-in de la alerta de profesor). Daño acotado a 24h, pero ahora
+    VISIBLE si es sistémico.
+    """
+    task_name = getattr(request, "task", "?")
+    logger.error(
+        "Cosecha diaria: el eslabón %s FALLÓ (%r) — los eslabones restantes "
+        "de la cadena NO corren hoy",
+        task_name,
+        exc,
+    )
+    try:
+        from config import settings
+        from services.email_service import EmailService
+
+        recipient = settings.TEACHER_ALERT_EMAIL
+        email = EmailService()
+        if recipient and email.is_available:
+            email.send(
+                recipient,
+                "[SwissJobHunter] Cosecha diaria INTERRUMPIDA",
+                f"El eslabón {task_name} falló: {exc!r}\n"
+                "Los eslabones restantes (matching incluido) no corren hoy. "
+                "Revisa los logs del worker.",
+            )
+    except Exception:  # el aviso jamás debe tapar el error original
+        logger.exception("Cosecha diaria: fallo enviando el email de salud")
+
+
 @celery_app.task(name="tasks.pipeline.daily_harvest", bind=True, max_retries=0)
 def daily_harvest(self) -> dict[str, Any]:
     """Lanza la cadena secuencial de extracción + matching diario."""
@@ -56,7 +92,10 @@ def daily_harvest(self) -> dict[str, Any]:
         )
 
     workflow = chain(*stages)
-    result = workflow.apply_async()
+    # G1/P2-13: link_error en la cadena — un eslabón caído deja rastro (log
+    # ERROR + email de salud) en vez de morir en silencio con la orquestadora
+    # reportada como éxito.
+    result = workflow.apply_async(link_error=harvest_chain_failed.s())
     logger.info("Cosecha diaria: cadena despachada (id=%s)", result.id)
     return {"status": "dispatched", "chain_id": result.id}
 

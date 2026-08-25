@@ -67,7 +67,11 @@ async def _detect_and_notify() -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     watermark = _load_watermark(r, now, settings.TEACHER_ALERT_INITIAL_LOOKBACK_DAYS)
 
-    # Prefiltro barato en BD: docencia (categoría H) activa y nueva desde la marca.
+    # Prefiltro barato en BD: docencia (categoría H) activa y nueva desde la
+    # marca. G1/P2-15: con cota SUPERIOR `<= now` — sin ella, una oferta
+    # insertada entre la captura de `now` y la query entraba en ESTA corrida
+    # (> watermark viejo) y en la SIGUIENTE (> now) → doble email. Es el mismo
+    # cierre que ya aplica digest_tasks (`created_at <= now`).
     async with task_session() as db:
         stmt = (
             select(Job)
@@ -76,6 +80,7 @@ async def _detect_and_notify() -> dict[str, Any]:
                 Job.is_active.is_(True),
                 Job.duplicate_of.is_(None),
                 Job.first_seen_at > watermark,
+                Job.first_seen_at <= now,
             )
             .order_by(Job.first_seen_at)
         )
@@ -86,6 +91,14 @@ async def _detect_and_notify() -> dict[str, Any]:
         j for j in candidates if is_primary_teacher_job(j.category, j.title, j.tags)
     ]
 
+    # G1/P2-15: la marca se guarda ANTES de enviar. Con la marca al final, un
+    # fallo POSTERIOR al SMTP OK (p.ej. Redis caído en _save_watermark) hacía
+    # que el retry (max_retries=1, except genérico) re-enviara el email
+    # completo. Trade-off elegido y documentado: si el envío falla tras
+    # avanzar la marca se pierde ESE aviso (las ofertas siguen en el board);
+    # el duplicado molesto queda descartado por construcción.
+    _save_watermark(r, now)
+
     if matches:
         subject, text, html = build_alert_email(matches)
         email.send(settings.TEACHER_ALERT_EMAIL, subject, text, html)
@@ -95,8 +108,6 @@ async def _detect_and_notify() -> dict[str, Any]:
             settings.TEACHER_ALERT_EMAIL,
         )
 
-    # Avanzar la marca aunque no haya matches (evita re-escanear lo ya visto).
-    _save_watermark(r, now)
     r.close()
 
     return {
