@@ -156,6 +156,11 @@ M_REENLACE = "reenlace_pct"
 M_LABELS_READY = "labels_ready"  # precondición del oráculo (P1-2, DoD B-03)
 
 SCOPE_GLOBAL = "global"
+# Scope de las filas INFORMATIVAS por cohorte adicional de dedup (propuesta
+# §4.2 del estrato positivo, 2026-08-25): `cohort:<source>`. Estas filas se
+# PUBLICAN pero no APRUEBAN — el veredicto vinculante sigue siendo SOLO el
+# del holdout congelado (DEDUP_EVAL_COHORT, scope global).
+SCOPE_COHORT_PREFIX = "cohort:"
 NDCG_K = 10  # top-K de ndcg@10 / overlap@10 (denominador FIJO del overlap)
 
 # Umbrales RATIFICADOS 2026-07-24 (§6) — constantes con nombre.
@@ -413,6 +418,7 @@ async def compute_cycle(
             merge_details=merge,
         )
         computed[metric] = value
+    computed |= await _persist_cohort_info_rows(session, cid)
     summary = {
         "cycle_id": cid.isoformat(),
         "window": [start.isoformat(), end.isoformat()],
@@ -751,22 +757,8 @@ async def _dedup_rows(session: AsyncSession) -> list[tuple]:
     # cohorte holdout. Mezclar development (seed + curado — los pares con
     # los que se AJUSTÓ el detector) diluía cualquier fallo del holdout:
     # 42 TP de development absorbían 5 FN del holdout y daban 0,904 > 0,90.
-    pairs = (
-        await session.execute(
-            sa.text(
-                "SELECT job_ref_a, job_ref_b, verdict FROM labeled_dedup_pairs "
-                "WHERE source = :cohorte"
-            ),
-            {"cohorte": DEDUP_EVAL_COHORT},
-        )
-    ).all()
-    refs = sorted({r for p in pairs for r in (p.job_ref_a, p.job_ref_b)})
-    mapping = await map_job_refs_to_vacancies(session, refs)
-    candidate_pairs = await _dedup_candidate_pairs(
-        session, sorted(set(mapping.values()), key=str)
-    )
-    c = _dedup_confusion(pairs, mapping, candidate_pairs)
-    details = c | {"pares": len(pairs), "cohorte": DEDUP_EVAL_COHORT}
+    c, n_pairs = await _dedup_cohort_confusion(session, DEDUP_EVAL_COHORT)
+    details = c | {"pares": n_pairs, "cohorte": DEDUP_EVAL_COHORT}
     tp, fp, fn = c["tp"], c["fp"], c["fn"]
     rows: list[tuple] = []
     for metric, denom in (
@@ -787,6 +779,94 @@ async def _dedup_rows(session: AsyncSession) -> list[tuple]:
                 False,
             ))
     return rows
+
+
+async def _dedup_cohort_confusion(
+    session: AsyncSession, cohorte: str
+) -> tuple[dict, int]:
+    """Matriz de confusión de UNA cohorte de labeled_dedup_pairs contra el
+    veredicto del core (misma consulta para todas: la del gate y las
+    informativas — propuesta §4.2 del estrato: "misma consulta, filtrada
+    por source"). Devuelve (confusión, nº de pares de la cohorte)."""
+    pairs = (
+        await session.execute(
+            sa.text(
+                "SELECT job_ref_a, job_ref_b, verdict FROM labeled_dedup_pairs "
+                "WHERE source = :cohorte"
+            ),
+            {"cohorte": cohorte},
+        )
+    ).all()
+    refs = sorted({r for p in pairs for r in (p.job_ref_a, p.job_ref_b)})
+    mapping = await map_job_refs_to_vacancies(session, refs)
+    candidate_pairs = await _dedup_candidate_pairs(
+        session, sorted(set(mapping.values()), key=str)
+    )
+    return _dedup_confusion(pairs, mapping, candidate_pairs), len(pairs)
+
+
+async def _dedup_cohort_info_rows(session: AsyncSession) -> list[tuple]:
+    """[(metric, scope, value, details)] INFORMATIVOS: dedup_recall por cada
+    cohorte adicional REGISTRADA en labeled_dedup_cohorts (estrato positivo
+    §4.2). El holdout (DEDUP_EVAL_COHORT) queda fuera: su fila es la del
+    gate (scope global) y no se duplica. Estas filas se PUBLICAN pero no
+    APRUEBAN: evaluate_gates las marca [alerta] con ok=True siempre — jamás
+    entran en el veredicto ni resetean la racha. Sin pares evaluables en el
+    denominador: centinela + no_data (mismo criterio P1-2 que el gate)."""
+    cohortes = (
+        (
+            await session.execute(
+                sa.text(
+                    "SELECT source FROM labeled_dedup_cohorts "
+                    "WHERE source <> :holdout ORDER BY source"
+                ),
+                {"holdout": DEDUP_EVAL_COHORT},
+            )
+        ).scalars().all()
+    )
+    rows: list[tuple] = []
+    for cohorte in cohortes:
+        c, n_pairs = await _dedup_cohort_confusion(session, cohorte)
+        details = c | {
+            "pares": n_pairs,
+            "cohorte": cohorte,
+            "vinculante": False,
+            "nota": "recall informativo por cohorte — NO vinculante: "
+                    "el gate puntúa SOLO el holdout (§4.2 estrato positivo)",
+        }
+        denom = c["tp"] + c["fn"]
+        scope = f"{SCOPE_COHORT_PREFIX}{cohorte}"
+        if denom:
+            value = round(c["tp"] / denom, 6)
+        else:
+            value = NO_DATA_VALUE
+            details = details | {"no_data": True}
+        rows.append((M_DEDUP_RECALL, scope, value, details))
+    return rows
+
+
+async def _persist_cohort_info_rows(session: AsyncSession, cid: date) -> dict:
+    """Upsert de las filas INFORMATIVAS por cohorte adicional (estrato
+    positivo §4.2) + saneo de scopes cohort:% idos — mismo criterio que los
+    scopes profile:%: un recompute con una cohorte des-registrada no deja
+    filas huérfanas del cálculo anterior. Devuelve {clave: value} para el
+    resumen de compute_cycle."""
+    computed: dict = {}
+    cohort_rows = await _dedup_cohort_info_rows(session)
+    for metric, scope, value, details in cohort_rows:
+        await _upsert_metric(session, cid, metric, scope, value, details)
+        computed[f"{metric}::{scope}"] = value
+    await session.execute(
+        sa.text(
+            "DELETE FROM shadow_cycle_metrics "
+            "WHERE cycle_id = :c AND scope LIKE :pfx AND scope <> ALL(:scopes)"
+        ),
+        {
+            "c": cid, "pfx": f"{SCOPE_COHORT_PREFIX}%",
+            "scopes": [scope for _m, scope, _v, _d in cohort_rows],
+        },
+    )
+    return computed
 
 
 async def _labels_ready_row(session: AsyncSession, measured_profiles: list) -> tuple:
@@ -1293,6 +1373,7 @@ async def evaluate_gates(session: AsyncSession, cycle_id: date) -> dict:
             nota="sin perfiles medidos (ningún set congelado): no demostrable",
         )
     _global_gates(out, by)
+    _cohort_info_gates(out, by)
     return out
 
 
@@ -1360,6 +1441,29 @@ def _global_gates(out: dict, by: dict) -> None:
             continue
         value = float(row.value)
         out[metric] = _entry(value, umbral, kind, bool(check(value, umbral)))
+
+
+def _cohort_info_gates(out: dict, by: dict) -> None:
+    """Filas dedup_recall[cohorte] (scope cohort:<source>) en el informe:
+    SIEMPRE [alerta] con ok=True — se publican, no aprueban ni resetean
+    (estrato positivo §4.2: el veredicto vinculante es SOLO el holdout).
+    El centinela/no_data se muestra como "sin datos", también en verde:
+    una cohorte informativa sin pares evaluables no puede poner nada en
+    rojo."""
+    for metric, scope in sorted(by):
+        if metric != M_DEDUP_RECALL or not scope.startswith(SCOPE_COHORT_PREFIX):
+            continue
+        row = by[(metric, scope)]
+        if _no_data(row) or float(row.value) == NO_DATA_VALUE:
+            out[f"{metric}::{scope}"] = _entry(
+                None, None, KIND_ALERTA, True,
+                nota="informativa por cohorte, NO vinculante — sin datos",
+            )
+            continue
+        out[f"{metric}::{scope}"] = _entry(
+            float(row.value), None, KIND_ALERTA, True,
+            nota="informativa por cohorte, NO vinculante",
+        )
 
 
 async def render_report(session: AsyncSession, cycle_id: date) -> str:

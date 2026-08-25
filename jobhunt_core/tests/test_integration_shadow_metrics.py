@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from jobhunt_core import embeddings, matching
 from jobhunt_core import profiles as core_profiles
 from jobhunt_core.config import settings
-from jobhunt_core.shadow import gate, labels, metrics, projector
+from jobhunt_core.shadow import gate, labels, metrics, projector, stratum
 from jobhunt_core.tests.alembic_runner import run_alembic
 
 _ADMIN = os.getenv("CORE_ADMIN_DATABASE_URL")
@@ -615,6 +615,83 @@ def test_dedup_empty_oracle_is_no_data_not_green(db):
         assert gates[key]["value"] is None and gates[key]["nota"] == "sin datos"
     assert gates["labels_ready"]["ok"] is False
     assert gates["labels_ready"]["kind"] == "gate"
+
+
+def test_dedup_recall_informativo_por_cohorte_no_altera_el_veredicto(db):
+    """Estrato positivo §4.2 (2026-08-25): el ciclo publica dedup_recall POR
+    COHORTE adicional registrada en labeled_dedup_cohorts (scope
+    cohort:<source>) como fila INFORMATIVA — se publica, no aprueba. El
+    veredicto vinculante sigue siendo SOLO el del holdout: un estrato en 0.5
+    (muy por debajo de DEDUP_RECALL_MIN=0.90) queda [alerta] con ok=True y
+    no pone nada en rojo ni resetea la racha; una cohorte registrada VACÍA
+    tampoco (sin datos, también en verde)."""
+    factory = db
+    src = _mk_source(factory, "legacy:stratmx")
+    p = uuid.uuid4().hex[:6]
+
+    def ref(n):
+        return f"{p}-{n}"
+
+    # Holdout (vinculante): 2 TP por attach ⇒ precision = recall = 1.0.
+    va, _, _ = _mk_slot(factory, src, ref("ha"))
+    _mk_slot(factory, src, ref("hb"), active=False, vacancy_id=va)
+    vc, _, _ = _mk_slot(factory, src, ref("hc"))
+    _mk_slot(factory, src, ref("hd"), active=False, vacancy_id=vc)
+    holdout_pairs = ((ref("ha"), ref("hb")), (ref("hc"), ref("hd")))
+    # Estrato (informativo): 1 TP + 1 FN ⇒ recall 0.5, bajo el umbral del gate.
+    ve, _, _ = _mk_slot(factory, src, ref("sa"))
+    _mk_slot(factory, src, ref("sb"), active=False, vacancy_id=ve)
+    _mk_slot(factory, src, ref("sc"))
+    _mk_slot(factory, src, ref("sd"))
+    stratum_pairs = ((ref("sa"), ref("sb")), (ref("sc"), ref("sd")))
+    for pairs, cohorte in (
+        (holdout_pairs, labels.DEDUP_EVAL_COHORT),
+        (stratum_pairs, stratum.POSITIVE_STRATUM_COHORT),
+    ):
+        for a, b in pairs:
+            _exec(
+                factory,
+                "INSERT INTO labeled_dedup_pairs "
+                "(job_ref_a, job_ref_b, verdict, source) "
+                "VALUES (:a, :b, 'duplicate', :src)",
+                {"a": a, "b": b, "src": cohorte},
+            )
+    # Cohortes REGISTRADAS (frozen_at NULL): el estrato y una vacía. Solo lo
+    # registrado en labeled_dedup_cohorts produce fila informativa.
+    for cohorte in (stratum.POSITIVE_STRATUM_COHORT, "positive-stratum-vacia"):
+        _exec(
+            factory,
+            "INSERT INTO labeled_dedup_cohorts (source) VALUES (:s)",
+            {"s": cohorte},
+        )
+
+    _compute(factory)
+    scope = f"cohort:{stratum.POSITIVE_STRATUM_COHORT}"
+    info = _metric_row(factory, "dedup_recall", scope=scope)
+    assert float(info.value) == 0.5
+    assert info.details["vinculante"] is False
+    assert (info.details["tp"], info.details["fn"], info.details["pares"]) == (1, 1, 2)
+    assert info.details["cohorte"] == stratum.POSITIVE_STRATUM_COHORT
+    # la fila VINCULANTE (scope global) sigue siendo la del holdout, intacta
+    hold = _metric_row(factory, "dedup_recall")
+    assert float(hold.value) == 1.0
+    assert hold.details["cohorte"] == labels.DEDUP_EVAL_COHORT
+    assert "vinculante" not in hold.details
+    vacia = _metric_row(factory, "dedup_recall", scope="cohort:positive-stratum-vacia")
+    assert float(vacia.value) == metrics.NO_DATA_VALUE
+    assert vacia.details["no_data"] is True
+
+    gates = _gates(factory)
+    assert gates["dedup_recall"]["ok"] is True  # el veredicto: SOLO holdout
+    g_info = gates[f"dedup_recall::{scope}"]
+    assert g_info["kind"] == "alerta" and g_info["ok"] is True
+    assert g_info["value"] == 0.5 and g_info["umbral"] is None
+    g_vacia = gates["dedup_recall::cohort:positive-stratum-vacia"]
+    assert g_vacia["ok"] is True and g_vacia["value"] is None
+    # NINGUNA fila de cohorte entra como [gate]: no puede alterar el veredicto
+    assert all(
+        gates[k]["kind"] == "alerta" for k in gates if "::cohort:" in k
+    )
 
 
 def test_labels_ready_green_with_dod_oracle(db):
