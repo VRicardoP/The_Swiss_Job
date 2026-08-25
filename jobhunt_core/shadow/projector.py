@@ -115,7 +115,7 @@ from jobhunt_core.database import create_core_engine, task_session_factory
 from jobhunt_core.embeddings import EMBED_DIM
 from jobhunt_core.harvest import normalize
 from jobhunt_core.harvest.providers import legacy_shadow
-from jobhunt_core.harvest.sink import RawListingSink
+from jobhunt_core.harvest.sink import MAX_URL_LEN, RawListingSink
 from jobhunt_core.harvest.types import RawListing
 
 # Impls ASYNC de las tareas normales del core (embeddings/matching): se
@@ -599,6 +599,12 @@ async def _source_closes_tx(
         ).scalar_one_or_none()
         closes = 0
         if sid is not None:
+            # C5-P2-1: persistir en el cierre lo que el CIERRE emite — sin
+            # esto, un cambio de url/apply_url llegado en estado cerrado se
+            # perdía y la reactivación TOAST-omitida revivía con enlaces
+            # RANCIOS (la «última encarnación por seq» que leen las vías
+            # 3/4 debe contener el último estado legacy conocido).
+            await _refresh_links_on_close(session, sid, close_pks, jobs_by_pk)
             closes = await _close_slots(session, sink, sid, close_pks)
         await _seal_rows(
             session,
@@ -866,7 +872,7 @@ def _merge_job_payload(
     # frontera — patrón del guard legacy (NUL incluido).
     if isinstance(apply_url, str):
         apply_url = apply_url.strip()  # C3: sin padding almacenado
-        if len(apply_url) > 1000 or "\x00" in apply_url or not apply_url:
+        if len(apply_url) > MAX_URL_LEN or "\x00" in apply_url or not apply_url:
             apply_url = None
     return payload, url, apply_url
 
@@ -967,6 +973,50 @@ async def _ensure_legacy_source(session, source_name: str) -> tuple:
             {"i": scope_id, "s": source_id, "p": '{"shadow": true}'},
         )
     return source_id, scope_id
+
+
+async def _refresh_links_on_close(session, source_id, close_pks, jobs_by_pk):
+    """C5-P2-1: url/apply_url que el U de cierre trae consigo, escritos en
+    la ÚLTIMA encarnación del slot antes de cerrarla. url solo si string no
+    vacía (NOT NULL); apply_url con la misma validación de la frontera
+    (strip, tope, NUL), respetando el NULL explícito. El RESIDUAL de
+    CONTENIDO en estado cerrado queda DIFERIDO por diseño (escribir una
+    revisión en el cierre reabriría el pipeline completo de canónicas):
+    documentado en ESTADO."""
+    params = []
+    for pk in close_pks:
+        rows = jobs_by_pk.get(pk) or []
+        if not rows:
+            continue
+        pay = rows[-1].payload or {}
+        url = pay.get("url")
+        set_url = isinstance(url, str) and url.strip() != ""
+        set_aurl = "apply_url" in pay
+        aurl = pay.get("apply_url")
+        if isinstance(aurl, str):
+            aurl = aurl.strip()
+            if not aurl or len(aurl) > MAX_URL_LEN or "\x00" in aurl:
+                aurl = None
+        if set_url or set_aurl:
+            params.append({
+                "src": source_id, "ext": pk,
+                "u": url.strip() if set_url else None, "su": set_url,
+                "a": aurl, "sa": set_aurl,
+            })
+    if not params:
+        return
+    await session.execute(
+        sa.text(
+            "UPDATE source_listing_incarnations i SET "
+            "  url = CASE WHEN :su THEN :u ELSE i.url END, "
+            "  apply_url = CASE WHEN :sa THEN CAST(:a AS varchar) "
+            "              ELSE i.apply_url END "
+            "FROM source_listings sl "
+            "WHERE sl.id = i.source_listing_id AND sl.source_id = :src "
+            "  AND sl.external_id = :ext AND i.ended_at IS NULL"
+        ),
+        params,
+    )
 
 
 async def _close_slots(session, sink, source_id, external_ids) -> int:

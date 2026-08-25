@@ -346,7 +346,7 @@ def test_concurrent_cross_key_lock_order_no_deadlock(db):
 
 
 def test_mixed_batch_isolates_invalid_listings(db, caplog):
-    """Rev. A-04 #2 (repro): un external_id de 201 chars (o url > 1000, o NUL)
+    """Rev. A-04 #2 (repro): un external_id de 201 chars (o url > 2048 — contrato core0028 —, o NUL)
     NO revienta el lote con StringDataRightTruncationError — se cuarentena con
     log y los válidos persisten. Con la emisión total de A-03, sin esto el dato
     tóxico reaparecería en cada cosecha y bloquearía el scope para siempre."""
@@ -354,7 +354,7 @@ def test_mixed_batch_isolates_invalid_listings(db, caplog):
     scope = _seed_scope(factory, created)
     poison = [
         _listing("x" * 201),  # external_id > 200
-        _listing("url-larga", url="https://x/" + "u" * 1000),  # url > 1000
+        _listing("url-larga", url="https://x/" + "u" * 2100),  # url > 2048
         _listing("nul", payload={"title": "a\x00b"}),  # NUL (jsonb lo rechaza)
         _listing("surrogate", payload={"t": "\ud800"}),  # no codificable UTF-8
         _listing("nan", payload={"n": float("nan")}),  # 2ª: jsonb rechaza NaN

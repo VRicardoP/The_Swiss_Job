@@ -1103,7 +1103,7 @@ class TestApplyUrlGuard:
         base = _job_dict(hash="aurl0001" + "0" * 24,
                          url="https://x.test/aurl-1")
         # no-string, NUL, desborde (>1000, contrato core) y vacío: campo fuera
-        for i, malo in enumerate([123, "con\x00nul", "https://a/" + "b" * 1200,
+        for i, malo in enumerate([123, "con\x00nul", "https://a/" + "b" * 2100,
                                   "   "]):
             job = dict(base)
             job["hash"] = f"aurl{i:04d}" + "0" * 24

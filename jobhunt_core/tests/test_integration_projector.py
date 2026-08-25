@@ -2025,13 +2025,13 @@ def test_r6_apply_url_viaja_del_staging_a_la_encarnacion(db):
 
 def test_c1_apply_url_desbordado_degrada_solo_el_campo(db):
     """Auditoría C1 P2-1: un apply_url legal en legacy (1001-2048) ponía en
-    cuarentena la OFERTA entera en el sink (MAX_URL_LEN=1000). La frontera
-    del proyector degrada SOLO el campo."""
+    cuarentena la OFERTA entera en el sink. La frontera del proyector
+    degrada SOLO el campo (contrato 2048 desde core0028 — C5-P2-2)."""
     factory = db
     src = f"c1a-{uuid.uuid4().hex[:6]}"
     _seed(factory, [
         ("jobs", "I", "c1a", _job("c1a", src,
-                                  apply_url="https://ats.x/" + "a" * 1500)),
+                                  apply_url="https://ats.x/" + "a" * 2500)),
     ])
     _project()
     filas = _rows(
@@ -2147,8 +2147,10 @@ def test_c4_reactivacion_con_url_omitida_no_pierde_la_oferta(db):
     src = f"c4a-{uuid.uuid4().hex[:6]}"
     _seed(factory, [("jobs", "I", "c4a", _job("c4a", src))])
     _project()
-    _seed(factory, [("jobs", "U", "c4a",
-                     _job("c4a", src, active=False, chash="ch-c4a-2"))])
+    pay_close = _job("c4a", src, active=False, chash="ch-c4a-2")
+    pay_close.pop("url", None)
+    pay_close["_omitted"] = ["url"]  # C5-P3-1: sin esto la 2ª vía resolvía
+    _seed(factory, [("jobs", "U", "c4a", pay_close)])
     _project()
     pay = _job("c4a", src, chash="ch-c4a-3")
     pay.pop("url", None)
@@ -2163,3 +2165,38 @@ def test_c4_reactivacion_con_url_omitida_no_pierde_la_oferta(db):
         "WHERE s.name = :n AND i.ended_at IS NULL", n=f"legacy:{src}",
     )
     assert filas[0].n == 1  # la reactivación EXISTE
+
+
+def test_c5_cambio_en_cerrado_no_revive_enlaces_rancios(db):
+    """Auditoría C5 P2-1: el U de CIERRE traía url/apply_url nuevas y se
+    descartaban — la reactivación TOAST-omitida revivía con enlaces
+    RANCIOS. El cierre persiste ahora lo que emite en la última
+    encarnación."""
+    factory = db
+    src = f"c5a-{uuid.uuid4().hex[:6]}"
+    _seed(factory, [("jobs", "I", "c5a",
+                     _job("c5a", src, url="https://legacy/A",
+                          apply_url="https://ats.x/X"))])
+    _project()
+    # cierre que EMITE enlaces nuevos (B, Y)
+    _seed(factory, [("jobs", "U", "c5a",
+                     _job("c5a", src, active=False, url="https://legacy/B",
+                          apply_url="https://ats.x/Y", chash="ch-c5a-2"))])
+    _project()
+    # reactivación con AMBOS omitidos
+    pay = _job("c5a", src, chash="ch-c5a-3")
+    pay.pop("url", None)
+    pay.pop("apply_url", None)
+    pay["_omitted"] = ["url", "apply_url"]
+    _seed(factory, [("jobs", "U", "c5a", pay)])
+    _project()
+    filas = _rows(
+        factory,
+        "SELECT i.url, i.apply_url FROM source_listing_incarnations i "
+        "JOIN source_listings l ON l.id = i.source_listing_id "
+        "JOIN sources s ON s.id = l.source_id "
+        "WHERE s.name = :n AND i.ended_at IS NULL", n=f"legacy:{src}",
+    )
+    assert [(f.url, f.apply_url) for f in filas] == [
+        ("https://legacy/B", "https://ats.x/Y")
+    ]

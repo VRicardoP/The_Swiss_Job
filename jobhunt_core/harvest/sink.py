@@ -46,7 +46,9 @@ logger = logging.getLogger(__name__)
 # con la emisión total de A-03 el dato tóxico reaparecería en cada cosecha y
 # bloquearía el scope indefinidamente).
 MAX_EXTERNAL_ID_LEN = 200
-MAX_URL_LEN = 1000
+# C5-P2-2: alineado con el legacy String(2048) — core0028 ensancha las
+# columnas; 1001-2048 dejaba la oferta en cuarentena en cada proyección.
+MAX_URL_LEN = 2048
 
 
 def _preprocess(listing: RawListing) -> tuple[str, str, str] | None:

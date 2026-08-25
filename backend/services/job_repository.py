@@ -46,10 +46,9 @@ def _column_max_len(column) -> int:
 # si algún portal empieza a desbordarlas.
 _URL_MAX_LEN: int = _column_max_len(Job.__table__.c.url)
 _LOGO_MAX_LEN: int = _column_max_len(Job.__table__.c.logo)
-# apply_url: tope del CONTRATO DEL CORE (sink MAX_URL_LEN=1000), no el de la
-# columna (2048) — auditoría C1 P2-1: el dato nace ya conforme y el proyector
-# nunca tiene que degradarlo.
-_APPLY_URL_MAX_LEN: int = 1000
+# apply_url: contrato ALINEADO a 2048 (auditoría C5-P2-2, core0028) — el
+# tope es el de la columna, idéntico en legacy y core.
+_APPLY_URL_MAX_LEN: int = 2048
 
 # Strings de contenido con protección NULLIF(valor, '') en el ON CONFLICT:
 # se normalizan en la frontera para que "solo espacios" cuente como vacío
