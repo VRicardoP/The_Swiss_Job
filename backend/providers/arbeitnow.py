@@ -51,9 +51,9 @@ class ArbeitnowProvider(BaseJobProvider):
 
     def normalize_job(self, raw: dict) -> dict:
         """Transform a raw Arbeitnow API response into the unified job schema."""
-        title = raw.get("title", "").strip()
-        company = raw.get("company_name", "").strip()
-        url = raw.get("url", "").strip()
+        title = (raw.get("title") or "").strip()
+        company = (raw.get("company_name") or "").strip()
+        url = (raw.get("url") or "").strip()
         description = strip_html_tags(raw.get("description", ""))
         location_raw = raw.get("location", "")
         is_remote = bool(raw.get("remote", False))

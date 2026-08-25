@@ -99,8 +99,8 @@ class ReliefWebProvider(BaseJobProvider):
         """Transform a ReliefWeb API job entry into the unified schema."""
         fields = raw.get("fields", {})
 
-        title = fields.get("title", "").strip()
-        company = (fields.get("organization", {}) or {}).get("name", "").strip()
+        title = (fields.get("title") or "").strip()
+        company = ((fields.get("organization", {}) or {}).get("name") or "").strip()
 
         # URL: preferir el enlace de ReliefWeb, luego el original
         url = fields.get("url", "") or f"https://reliefweb.int/job/{raw.get('id', '')}"

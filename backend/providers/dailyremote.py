@@ -20,27 +20,9 @@ logger = logging.getLogger(__name__)
 
 RSS_URL = "https://dailyremote.com/rss"
 
-# Categorías relevantes para el perfil (se filtra el resto)
-_RELEVANT_CATEGORIES = {
-    "writing",
-    "content",
-    "customer support",
-    "human resources",
-    "hr",
-    "education",
-    "data",
-    "admin",
-    "operations",
-    "marketing",
-    "translation",
-    "localization",
-    "qa",
-    "proofreading",
-    "social media",
-    "project management",
-    "non-tech",
-    "all other remote",
-}
+# G1/P3-4 (misma clase que workingnomads): no hay filtrado por categoría —
+# la categoría del feed solo se añade como tag. El antiguo set
+# _RELEVANT_CATEGORIES nunca se usó y daba falsa sensación de filtro.
 
 
 class DailyRemoteProvider(BaseJobProvider):

@@ -46,18 +46,18 @@ class RemoteOKProvider(BaseJobProvider):
 
     def normalize_job(self, raw: dict) -> dict:
         """Transform a raw RemoteOK API response into the unified job schema."""
-        title = raw.get("position", "").strip()
-        company = raw.get("company", "").strip()
+        title = (raw.get("position") or "").strip()
+        company = (raw.get("company") or "").strip()
         location_raw = raw.get("location", "")
         description = strip_html_tags(raw.get("description", ""))
         logo = raw.get("logo", None)
 
         # Prefer apply_url; fall back to url; construct from slug as last resort
         # R.6: el enlace de solicitud viaja aparte como señal de dedup del core
-        apply_url = raw.get("apply_url", "").strip() or None
-        url = raw.get("apply_url", "").strip()
+        apply_url = (raw.get("apply_url") or "").strip() or None
+        url = (raw.get("apply_url") or "").strip()
         if not url:
-            url = raw.get("url", "").strip()
+            url = (raw.get("url") or "").strip()
         if not url:
             slug = raw.get("slug", "")
             if slug:

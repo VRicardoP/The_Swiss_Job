@@ -21,10 +21,10 @@ def build_chmedia_url(domain: str, job: dict) -> str:
 
 def normalize_chmedia_job(raw: dict, source: str, domain: str) -> dict:
     """Normalize a CH Media API job dict to unified schema."""
-    title = raw.get("title", "").strip()
+    title = (raw.get("title") or "").strip()
     company_data = raw.get("company", {})
     company = (
-        company_data.get("name", "").strip() if isinstance(company_data, dict) else ""
+        (company_data.get("name") or "").strip() if isinstance(company_data, dict) else ""
     )
     url = build_chmedia_url(domain, raw)
 

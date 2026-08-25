@@ -81,8 +81,11 @@ class TranslatorsCafeProvider(BaseJobProvider):
         description = strip_html_tags(description_html)
         category = (item.findtext("category") or "").strip()
 
-        # TranslatorsCafe suele identificar empresa en la descripción
-        company = _extract_company(title, description)
+        # G1/P3-5: el título del feed llega como "Puesto — Empresa"; antes la
+        # empresa se extraía pero el título seguía arrastrándola (y viceversa:
+        # _extract_company devolvía la mitad DERECHA sin limpiar el título).
+        # Ahora el separador parte título y empresa de una vez.
+        title, company = _split_title_company(title)
 
         # Detectar par de idiomas para el campo language
         lang_code = _detect_primary_language(title + " " + description)
@@ -116,14 +119,19 @@ class TranslatorsCafeProvider(BaseJobProvider):
         }
 
 
-def _extract_company(title: str, description: str) -> str:
-    """Extrae empresa del título si el formato lo permite."""
-    for sep in [" — ", " | ", " - "]:
+def _split_title_company(title: str) -> tuple[str, str]:
+    """Parte "Puesto — Empresa" en (título limpio, empresa).
+
+    G1/P3-5: la versión anterior (_extract_company) devolvía la empresa pero
+    dejaba el título entero con la empresa arrastrada. Sin separador
+    reconocible: título tal cual y empresa vacía (mismo fallback previo).
+    """
+    for sep in (" — ", " | ", " - "):
         if sep in title:
-            parts = title.split(sep, 1)
-            if len(parts[0]) < 60:
-                return parts[1].strip()
-    return ""
+            first, rest = title.split(sep, 1)
+            if len(first) < 60:
+                return first.strip(), rest.strip()
+    return title, ""
 
 
 def _detect_primary_language(text: str) -> str | None:

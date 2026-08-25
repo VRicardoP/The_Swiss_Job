@@ -19,39 +19,9 @@ logger = logging.getLogger(__name__)
 
 API_URL = "https://www.workingnomads.com/api/exposed_jobs/"
 
-# Categorías relevantes para el perfil — descartar las puramente tech
-_RELEVANT_CATEGORIES = {
-    "writing",
-    "content",
-    "copywriting",
-    "editing",
-    "translation",
-    "localization",
-    "customer support",
-    "customer service",
-    "human resources",
-    "hr",
-    "recruiting",
-    "operations",
-    "admin",
-    "project management",
-    "product",
-    "marketing",
-    "social media",
-    "education",
-    "elearning",
-    "teaching",
-    "research",
-    "data",
-    "qa",
-    "quality assurance",
-    "all other remote",
-    "non-tech",
-    "business",
-    "finance",
-    "accounting",
-}
-
+# G1/P3-4: el filtrado real es SOLO por título (_TECH_EXCLUDE_TITLES via
+# _filter_relevant); el antiguo set _RELEVANT_CATEGORIES nunca se usó y
+# daba falsa sensación de filtro por categoría — eliminado.
 _TECH_EXCLUDE_TITLES = {
     "software engineer",
     "backend engineer",

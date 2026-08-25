@@ -56,9 +56,9 @@ class HimalayasProvider(BaseJobProvider):
 
     def normalize_job(self, raw: dict) -> dict:
         """Transform a raw Himalayas API response into the unified job schema."""
-        title = raw.get("title", "").strip()
-        company = raw.get("companyName", "").strip()
-        url = raw.get("applicationLink", "").strip()
+        title = (raw.get("title") or "").strip()
+        company = (raw.get("companyName") or "").strip()
+        url = (raw.get("applicationLink") or "").strip()
         description = strip_html_tags(raw.get("excerpt", ""))
         logo = raw.get("companyLogo", None)
         employment_type = raw.get("employmentType", None)

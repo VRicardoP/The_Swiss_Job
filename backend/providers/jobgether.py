@@ -66,8 +66,11 @@ class JobgetherProvider(BaseJobProvider):
                 results.extend(self._process_raw_jobs(raw_jobs))
 
                 # Terminación: no pedir más allá de la última página real.
-                max_pages = data.get("maxPages", 1)
-                if page >= max_pages:
+                # G1/P3-3: casteo seguro — un maxPages string daba TypeError y
+                # un campo renombrado cortaba en la página 1 en silencio (el 0
+                # falsy sigue paginando hasta el tope/página vacía).
+                max_pages = self._safe_int(data.get("maxPages"))
+                if max_pages and page >= max_pages:
                     break
 
                 # Retardo cortés entre páginas para no martillear la API.

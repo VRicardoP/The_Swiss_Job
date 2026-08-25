@@ -55,9 +55,9 @@ class JSearchProvider(BaseJobProvider):
 
     def normalize_job(self, raw: dict) -> dict:
         """Transform a raw JSearch API response into the unified job schema."""
-        title = raw.get("job_title", "").strip()
-        company = raw.get("employer_name", "").strip()
-        url = raw.get("job_apply_link", "").strip()
+        title = (raw.get("job_title") or "").strip()
+        company = (raw.get("employer_name") or "").strip()
+        url = (raw.get("job_apply_link") or "").strip()
         description = strip_html_tags(raw.get("job_description", ""))
         logo = raw.get("employer_logo", None)
         is_remote = bool(raw.get("job_is_remote", False))

@@ -68,6 +68,20 @@ class BaseJobProvider(ABC):
         return hashlib.md5(raw.encode()).hexdigest()
 
     @staticmethod
+    def _safe_int(value: object) -> int:
+        """Castea un campo numérico de API (a veces string, p.ej. "4") a int.
+
+        0 si no procede — G1/P3-3: un `maxPages`/`pages` string provocaba
+        `page >= "5"` (TypeError) y un campo renombrado cortaba la paginación
+        en silencio con el default 1. El 0 es falsy: el llamante sigue
+        paginando hasta su tope/página vacía (patrón thehub).
+        """
+        try:
+            return int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
     def job_identity(job: dict) -> str:
         """Identidad estable de una oferta para cursor/early-stop.
 

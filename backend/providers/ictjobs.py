@@ -90,7 +90,7 @@ class ICTJobsProvider(BaseJobProvider):
                 if not isinstance(term, dict):
                     continue
                 taxonomy = term.get("taxonomy", "")
-                name = term.get("name", "").strip()
+                name = (term.get("name") or "").strip()
                 if not name:
                     continue
 
@@ -129,9 +129,14 @@ class ICTJobsProvider(BaseJobProvider):
         direct_link = acf.get("direct_link", "")
         url = direct_link if use_direct and direct_link else raw.get("link", "")
 
-        # Salary from ACF
+        # Salary from ACF — G1/P3-5: regla general de salarios: dejar
+        # `salary_*_chf` en None y pasar `salary_original`/`salary_currency`;
+        # el int() directo reventaba con formatos suizos ("80'000") y
+        # prellenar _chf esquiva al DataNormalizer (early-return).
         salary_min = acf.get("salary_min")
         salary_max = acf.get("salary_max")
+        salary_parts = [str(s).strip() for s in (salary_min, salary_max) if s]
+        salary_original = " - ".join(salary_parts) if salary_parts else None
 
         # Embedded taxonomy terms
         terms = self._extract_embedded_terms(raw)
@@ -163,10 +168,10 @@ class ICTJobsProvider(BaseJobProvider):
             "remote": is_remote,
             "tags": all_tags,
             "logo": None,
-            "salary_min_chf": int(salary_min) if salary_min else None,
-            "salary_max_chf": int(salary_max) if salary_max else None,
-            "salary_original": None,
-            "salary_currency": "CHF" if salary_min or salary_max else None,
+            "salary_min_chf": None,
+            "salary_max_chf": None,
+            "salary_original": salary_original,
+            "salary_currency": "CHF" if salary_original else None,
             "salary_period": None,
             "language": None,
             "seniority": None,

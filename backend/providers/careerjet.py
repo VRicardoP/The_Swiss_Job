@@ -74,8 +74,10 @@ class CareerjetProvider(BaseJobProvider):
                 results.extend(self._process_raw_jobs(raw_jobs))
 
                 # Check if we've reached the last page
-                total_pages = data.get("pages", 1)
-                if page >= total_pages:
+                # G1/P3-3: casteo seguro (ver jobgether) — sin TypeError con un
+                # `pages` string ni corte silencioso si el campo desaparece.
+                total_pages = self._safe_int(data.get("pages"))
+                if total_pages and page >= total_pages:
                     break
 
                 # Delay between pages to avoid rate limiting

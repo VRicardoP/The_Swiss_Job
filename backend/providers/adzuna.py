@@ -81,12 +81,12 @@ class AdzunaProvider(BaseJobProvider):
     def normalize_job(self, raw: dict) -> dict:
         """Transform a raw Adzuna API response into the unified job schema."""
         title = strip_html_tags(raw.get("title", "")).strip()
-        url = raw.get("redirect_url", "").strip()
+        url = (raw.get("redirect_url") or "").strip()
         description = strip_html_tags(raw.get("description", ""))
 
         # Company is an object with display_name
         company_obj = raw.get("company", {}) or {}
-        company = company_obj.get("display_name", "").strip()
+        company = (company_obj.get("display_name") or "").strip()
 
         # Location: `area` es jerárquico de MAYOR a menor (["UK","London",…]) —
         # el último elemento es la localidad; area[0] era el país (G1/P2-2).

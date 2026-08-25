@@ -175,9 +175,9 @@ class PublicJobsProvider(BaseJobProvider):
         return self._finalize_fetch(results)
 
     def normalize_job(self, raw: dict) -> dict:
-        title = raw.get("title", "").strip()
+        title = (raw.get("title") or "").strip()
         company = raw.get("company", "Unknown").strip() or "Unknown"
-        url = raw.get("url", "").strip()
+        url = (raw.get("url") or "").strip()
         description = raw.get("description", "")
         location = raw.get("location", "Switzerland").strip()
         canton = raw.get("canton")

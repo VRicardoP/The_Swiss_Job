@@ -42,9 +42,9 @@ class JobicyProvider(BaseJobProvider):
 
     def normalize_job(self, raw: dict) -> dict:
         """Transform a raw Jobicy API response into the unified job schema."""
-        title = raw.get("jobTitle", "").strip()
-        company = raw.get("companyName", "").strip()
-        url = raw.get("url", "").strip()
+        title = (raw.get("jobTitle") or "").strip()
+        company = (raw.get("companyName") or "").strip()
+        url = (raw.get("url") or "").strip()
         description = strip_html_tags(raw.get("jobDescription", ""))
         location_raw = raw.get("jobGeo", "") or raw.get("country", "")
         tags = extract_job_skills(title, description)
