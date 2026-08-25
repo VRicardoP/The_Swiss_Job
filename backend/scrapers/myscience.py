@@ -51,6 +51,11 @@ class MyScienceScraper(BaseScraper):
 
             link_el = record.select_one("a[href]")
             href = link_el.get("href", "") if link_el else ""
+            if not href:
+                # G1/P3-9: sin href la URL degeneraba en la portada (BASE_URL)
+                # y colisionaba con el UNIQUE de jobs.url (clase VD.1) — una
+                # tarjeta sin enlace no es una oferta utilizable.
+                continue
             detail_url = href if href.startswith("http") else f"{BASE_URL}{href}"
 
             org_el = record.select_one(".results_organization")

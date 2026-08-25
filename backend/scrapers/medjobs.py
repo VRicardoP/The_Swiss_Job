@@ -105,6 +105,11 @@ class MedJobsScraper(BaseScraper):
                 link_el = record.find("a", href=True)
                 href = link_el["href"] if link_el else ""
 
+            if not href:
+                # G1/P3-9: sin href la URL degeneraba en la portada y
+                # colisionaba con el UNIQUE de jobs.url (clase VD.1).
+                continue
+
             detail_url = href if href.startswith("http") else f"{BASE_URL}{href}"
 
             company_el = record.select_one(".company, .employer, .arbeitgeber, .firma")

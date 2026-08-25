@@ -65,13 +65,19 @@ class SwissSchoolsHautLacScraper(SwissSchoolBaseScraper):
             # Filtrar h3 que son subapartados ("Profile", "Mission", etc.)
             if title.lower() in {"profile", "profil", "mission", "responsibilities"}:
                 continue
+            source_id = title.lower().replace(" ", "-")[:80]
             return {
                 "source": self.SOURCE_NAME,
-                "source_id": title.lower().replace(" ", "-")[:80],
+                "source_id": source_id,
                 "title": title,
                 "company": self._school.name,
                 "location": f"{self._school.city}, CH",
-                "url": HAUTLAC_URL,
+                # G1/P1-2: URL sintética ESTABLE por vacante. `jobs.url` es
+                # UNIQUE y el upsert resuelve conflicto solo por hash: con la
+                # URL del listado compartida, la segunda vacante simultánea
+                # abortaba el savepoint y una vacante nueva quedaba invisible
+                # hasta la purga (60 días) de la que sustituía (clase VD.1).
+                "url": f"{HAUTLAC_URL}#{source_id}",
                 "tags": ["education", "international school", self._school.id],
                 "language": "en",  # mezcla EN/FR; el clasificador lo refina
             }

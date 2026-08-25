@@ -80,13 +80,17 @@ class SwissSchoolsISCSScraper(SwissSchoolBaseScraper):
         if len(title) < 5:
             return None
 
+        source_id = title.lower().replace(" ", "-")[:80]
         return {
             "source": self.SOURCE_NAME,
-            "source_id": title.lower().replace(" ", "-")[:80],
+            "source_id": source_id,
             "title": title.title(),  # Normalizar mayúsculas a Title Case
             "company": self._school.name,
             "location": f"{self._school.city}, CH",
-            "url": ISCS_URL,
+            # G1/P1-2: URL sintética estable por vacante — jobs.url es UNIQUE
+            # y compartir la URL del listado dejaba viva solo UNA vacante por
+            # colegio (clase VD.1, ver swiss_schools_hautlac).
+            "url": f"{ISCS_URL}#{source_id}",
             "tags": ["education", "international school", self._school.id],
             "language": "en",
         }
