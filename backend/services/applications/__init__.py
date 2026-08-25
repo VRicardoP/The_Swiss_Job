@@ -14,7 +14,7 @@ from .port import (
     CoreUnavailableError,
     DuplicateApplicationError,
 )
-from .seam import FallbackApplications, resolve_applications
+from .seam import CoreWriterApplications, resolve_applications
 
 __all__ = [
     "ApplicationJobNotFoundError",
@@ -23,8 +23,8 @@ __all__ = [
     "ApplicationsUnsupportedError",
     "CoreApplications",
     "CoreUnavailableError",
+    "CoreWriterApplications",
     "DuplicateApplicationError",
-    "FallbackApplications",
     "LocalApplications",
     "resolve_applications",
 ]

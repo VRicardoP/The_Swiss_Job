@@ -2,8 +2,9 @@
 
 Lee/escribe `jobhunt_profile_map` (tabla LOCAL al BFF; racional en
 models/jobhunt_profile_map.py). El vinculo es POR USUARIO, no por capacidad:
-la misma fila la consumen matching (services/matching) y perfiles
-(services/profiles). Sin cache: se consulta una vez por peticion enrutada al
+la misma fila la consumen matching (services/matching), perfiles
+(services/profiles) y candidaturas (services/applications, escrituras C-4).
+Sin cache: se consulta una vez por peticion enrutada al
 core, y el enrolamiento es una operacion de operador.
 """
 

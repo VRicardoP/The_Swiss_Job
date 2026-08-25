@@ -1,13 +1,15 @@
 """Job application tracking endpoints — CRUD + stats.
 
-A.SEAM (plan §15bis): estos endpoints consumen la capacidad CANDIDATURAS a
-traves de la costura (services/applications) — la implementacion la decide
-`jobhunt_routing` por perfil+capacidad, con default 'local'. Con routing
-'local' el comportamiento es byte-identico al previo (la logica vive movida
-verbatim en services/applications/local.py). El /v1 del core NO expone esta
-capacidad (cota fijada por contract test) y su UNICO escritor es LOCAL: por
-el criterio unificador se sirve de local en TODOS los modos, incluida
-core_primary — aqui no hay 501/503 por routing. La validacion HTTP sigue aqui.
+A.SEAM (plan §15bis) + escrituras C-4: estos endpoints consumen la capacidad
+CANDIDATURAS a traves de la costura (services/applications) — la
+implementacion la decide `jobhunt_routing` por perfil+capacidad, con default
+'local'. Con routing 'local' el comportamiento es byte-identico al previo (la
+logica vive movida verbatim en services/applications/local.py). Con routing
+core_primary/rollback_pending el CRUD lo sirve el cliente C-4 del core SIN
+fallback silencioso: CoreUnavailableError → 503 y
+ApplicationsUnsupportedError (cotas del contrato, p.ej. applied_url) → 501
+honestos, nunca una escritura local que bifurque el estado. La validacion
+HTTP sigue aqui.
 """
 
 import logging
@@ -29,6 +31,9 @@ from schemas.applications import (
 )
 from services.applications import (
     ApplicationJobNotFoundError,
+    ApplicationsError,
+    ApplicationsUnsupportedError,
+    CoreUnavailableError,
     DuplicateApplicationError,
     resolve_applications,
 )
@@ -36,6 +41,22 @@ from services.applications import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/applications", tags=["applications"])
+
+
+def _core_http_error(exc: ApplicationsError) -> HTTPException:
+    """Traduce errores del backend core a HTTP (solo alcanzable con routing
+    core_primary/rollback_pending — mismo patron que routers/jobs.py)."""
+    if isinstance(exc, CoreUnavailableError):
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Applications backend temporarily unavailable",
+        )
+    if isinstance(exc, ApplicationsUnsupportedError):
+        return HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Operation not available on the active applications backend",
+        )
+    raise exc  # error de programacion: no enmascarar como HTTP
 
 
 @router.get("", response_model=ApplicationsListResponse)
@@ -58,9 +79,12 @@ async def list_applications(
             )
 
     applications = await resolve_applications(db, current_user.id)
-    return await applications.list(
-        current_user.id, status=parsed, limit=limit, offset=offset
-    )
+    try:
+        return await applications.list(
+            current_user.id, status=parsed, limit=limit, offset=offset
+        )
+    except (CoreUnavailableError, ApplicationsUnsupportedError) as exc:
+        raise _core_http_error(exc)
 
 
 @router.post(
@@ -87,6 +111,8 @@ async def create_application(
             status_code=status.HTTP_409_CONFLICT,
             detail="Application already exists for this job",
         )
+    except (CoreUnavailableError, ApplicationsUnsupportedError) as exc:
+        raise _core_http_error(exc)
 
 
 @router.get("/stats", response_model=ApplicationStatsResponse)
@@ -96,7 +122,10 @@ async def get_application_stats(
 ):
     """Application pipeline statistics and conversion rates."""
     applications = await resolve_applications(db, current_user.id)
-    return await applications.stats(current_user.id)
+    try:
+        return await applications.stats(current_user.id)
+    except (CoreUnavailableError, ApplicationsUnsupportedError) as exc:
+        raise _core_http_error(exc)
 
 
 @router.patch("/{application_id}", response_model=ApplicationResponse)
@@ -108,7 +137,10 @@ async def update_application(
 ):
     """Update application status, notes, or follow-up date."""
     applications = await resolve_applications(db, current_user.id)
-    updated = await applications.update(current_user.id, application_id, body)
+    try:
+        updated = await applications.update(current_user.id, application_id, body)
+    except (CoreUnavailableError, ApplicationsUnsupportedError) as exc:
+        raise _core_http_error(exc)
     if updated is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -125,7 +157,10 @@ async def delete_application(
 ):
     """Delete an application."""
     applications = await resolve_applications(db, current_user.id)
-    deleted = await applications.delete(current_user.id, application_id)
+    try:
+        deleted = await applications.delete(current_user.id, application_id)
+    except (CoreUnavailableError, ApplicationsUnsupportedError) as exc:
+        raise _core_http_error(exc)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

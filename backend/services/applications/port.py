@@ -6,18 +6,20 @@ son exactamente las que hoy consumen los routers de candidatura:
 `routers/watchlist.py` (state machine de candidatura sobre `match_results`:
 status, borrador de carta y su lectura para calendario).
 
-VARIANTE LIGERA de la costura: el /v1 del core NO expone candidaturas
-(jobhunt_core/api/v1.py solo sirve vacancies/profiles/matches en Fase A) —
-`CoreApplications` levanta ApplicationsUnsupportedError en TODAS las
-operaciones. Es la cota del contrato vigente, fijada por los contract tests
-(patron search/stats de catalogo); cuando el core publique endpoints de
-candidatura, se implementan en core_client.py sin tocar los routers.
+CONTRATO /v1 (C-4, DISENO_C4_ESCRITURAS_V2_1): el core SI expone el CRUD de
+candidaturas — GET/POST /v1/applications, PATCH/DELETE /v1/applications/{id}
+(jobhunt_core/api/v1_applications.py) — y `CoreApplications` (core_client.py)
+es su cliente HTTP real (identidad de perfil POR USUARIO via
+jobhunt_profile_map). El state machine sobre match_results (4 ultimas
+operaciones del puerto) NO tiene superficie C-4: en el cliente core es
+ApplicationsUnsupportedError y la costura lo sirve SIEMPRE de local.
 
-CRITERIO UNIFICADOR (heredado de A.SEAM matching): mientras el escritor sea
-LOCAL (hasta Fase C), ningun estado local puede ser inaccesible por el
-routing. Todos los escritores REALES del estado de esta capacidad son
-locales => escrituras Y lecturas se sirven de local en TODOS los modos,
-incluida core_primary — nunca 501/503 por routing (seam.py).
+CRITERIO UNIFICADOR (heredado de A.SEAM matching): ningun estado local puede
+ser inaccesible por el routing. Con C-4, el modo decide el ESCRITOR del CRUD
+de `job_applications` (core_primary/rollback_pending => core sin fallback
+silencioso; resto => local, con core_read declarado equivalente a local —
+seam.py); el estado de `match_results` conserva escritor LOCAL unico y se
+sirve de local en TODOS los modos.
 
 INVENTARIO DE ESCRITORES (1ª rev. A.SEAM final — exacto, para el flip de
 Fase C): (a) los routers via esta costura (status/draft/CRUD); (b) la fila
@@ -34,8 +36,10 @@ con engagement real en el core pareceria 'limpia' en local y se BORRARIA
 Dos implementaciones detras del mismo puerto:
 - `LocalApplications` (services/applications/local.py): logica actual de los
   routers, movida verbatim.
-- `CoreApplications` (services/applications/core_client.py): cota /v1.
-La eleccion la decide `jobhunt_routing` (services/applications/seam.py).
+- `CoreApplications` (services/applications/core_client.py): cliente HTTP
+  real de los endpoints C-4 (con las cotas documentadas en su docstring).
+La eleccion la decide `jobhunt_routing` (services/applications/seam.py), que
+en modo escritor-core compone ambas (CoreWriterApplications).
 """
 
 import uuid
@@ -55,15 +59,17 @@ class ApplicationsError(Exception):
 
 
 class CoreUnavailableError(ApplicationsError):
-    """El core no responde, fallo o no hay credencial de consumer.
-
-    Hoy SIN emisor (CoreApplications no emite red: cota Unsupported total).
-    Se conserva por simetria con catalogo/matching/profiles y para la
-    separacion de severidades del canary (seam.FallbackApplications)."""
+    """El core no responde, fallo, devolvio un payload fuera de contrato o
+    falta la credencial/vinculo de identidad (CORE_CONSUMER_KEY /
+    jobhunt_profile_map). El router lo traduce a 503 — solo alcanzable con
+    routing core_primary/rollback_pending (sin fallback silencioso)."""
 
 
 class ApplicationsUnsupportedError(ApplicationsError):
-    """La operacion no existe (aun) en el contrato /v1 del core."""
+    """La operacion (o alguno de sus campos) no existe en el contrato /v1 del
+    core: el state machine de match_results y `applied_url` (el snapshot C-4
+    es inmutable; el PATCH solo muta status/notes/follow_up_date). El router
+    lo traduce a 501 (cota honesta)."""
 
 
 class ApplicationJobNotFoundError(ApplicationsError):
