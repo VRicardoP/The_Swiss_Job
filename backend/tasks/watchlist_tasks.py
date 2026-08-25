@@ -40,6 +40,16 @@ def _get_watchlist_sources() -> tuple[str, ...]:
 # Umbral de "scraper silencioso": si lleva más de N horas sin éxito
 _SILENT_HOURS = 24
 
+# G1/P3-21 — cooldown de re-notificación de salud: sin él, una fuente
+# disabled generaba la MISMA notificación cada 6h (4/día) indefinidamente.
+_HEALTH_NOTIFIED_KEY = "watchlist_health_notified:{source}:{kind}"
+_HEALTH_NOTIFY_COOLDOWN_SECONDS = 24 * 3600
+
+# G1/P3-20 — marca de agua del digest: la ventana fija now-24h con un
+# schedule que deriva producía solapes (matches notificados dos veces) o
+# huecos (matches nunca notificados).
+_DIGEST_WATERMARK_KEY = "watchlist_digest:watermark"
+
 
 @celery_app.task(name="tasks.watchlist.check_health")
 def check_watchlist_health() -> dict[str, Any]:
@@ -135,22 +145,49 @@ async def _check_health_async() -> dict[str, Any]:
         if not issues:
             return {"status": "ok", "checked": len(sources), "issues": 0}
 
-        # 2) Notificar a los usuarios con la watchlist activa
-        users_stmt = (
-            select(User)
-            .join(UserProfile, UserProfile.user_id == User.id)
-            .where(
-                User.is_active.is_(True),
-                UserProfile.watchlist_schools_enabled.is_(True),
+        # G1/P3-21 — cooldown: solo se notifican los problemas NUEVOS (no
+        # avisados en las últimas 24h). El estado (details) se reporta entero.
+        import redis
+
+        from config import settings
+
+        r = redis.from_url(settings.REDIS_URL)
+        fresh_issues = [
+            i
+            for i in issues
+            if not r.get(
+                _HEALTH_NOTIFIED_KEY.format(source=i["source"], kind=i["kind"])
             )
-        )
-        users = (await db.execute(users_stmt)).scalars().all()
-        notified = await _notify_users(db, users, issues)
+        ]
+
+        notified = 0
+        if fresh_issues:
+            # 2) Notificar a los usuarios con la watchlist activa
+            users_stmt = (
+                select(User)
+                .join(UserProfile, UserProfile.user_id == User.id)
+                .where(
+                    User.is_active.is_(True),
+                    UserProfile.watchlist_schools_enabled.is_(True),
+                )
+            )
+            users = (await db.execute(users_stmt)).scalars().all()
+            notified = await _notify_users(db, users, fresh_issues)
+            for issue in fresh_issues:
+                r.set(
+                    _HEALTH_NOTIFIED_KEY.format(
+                        source=issue["source"], kind=issue["kind"]
+                    ),
+                    "1",
+                    ex=_HEALTH_NOTIFY_COOLDOWN_SECONDS,
+                )
+        r.close()
 
         return {
             "status": "issues",
             "checked": len(sources),
             "issues": len(issues),
+            "fresh_issues": len(fresh_issues),
             "users_notified": notified,
             "details": issues,
         }
@@ -207,8 +244,26 @@ async def _send_digest_async() -> dict[str, Any]:
     from models.user_profile import UserProfile
     from services.routing import CAPABILITY_MATCHING, legacy_owned_sql
 
-    # Ventana digest: matches creados en las últimas 24h
-    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    # G1/P3-20 — ventana por MARCA DE AGUA (antes: now-24h fija, que con la
+    # deriva del schedule producía solapes o huecos). Primera corrida:
+    # lookback de 24h. La marca avanza ANTES de notificar (mismo trade-off
+    # documentado que la alerta de profesor, P2-15: nunca duplicar).
+    import redis
+
+    now = datetime.now(timezone.utc)
+    r = redis.from_url(settings.REDIS_URL)
+    since = None
+    raw = r.get(_DIGEST_WATERMARK_KEY)
+    if raw:
+        try:
+            value = raw.decode() if isinstance(raw, bytes) else raw
+            since = datetime.fromisoformat(value)
+        except (ValueError, AttributeError):
+            logger.warning("Marca de agua del digest inválida; ventana de 24h")
+    if since is None:
+        since = now - timedelta(hours=24)
+    r.set(_DIGEST_WATERMARK_KEY, now.isoformat())
+    r.close()
     watchlist_sources = _get_watchlist_sources()
 
     async with task_session() as db:
@@ -236,6 +291,10 @@ async def _send_digest_async() -> dict[str, Any]:
                 .where(
                     MatchResult.user_id == user.id,
                     MatchResult.created_at >= since,
+                    # Cota superior = la marca guardada: sin ella, un match
+                    # creado entre la query y la marca se notificaría dos
+                    # veces (el cierre de digest_tasks/P2-15).
+                    MatchResult.created_at <= now,
                     Job.source.in_(watchlist_sources),
                     and_(
                         MatchResult.score_final >= settings.WATCHLIST_DIGEST_MIN_SCORE,

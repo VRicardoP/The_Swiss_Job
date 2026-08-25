@@ -167,6 +167,13 @@ async def upload_cv(
     # Update profile
     await db.refresh(current_user, ["profile"])
     profile = current_user.profile
+    if profile is None:
+        # G1/P3-26: sin fila de perfil esto era un AttributeError → 500.
+        # Mismo contrato que delete_cv/update_profile.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Profile not found",
+        )
     profile.cv_text = cleaned_text
     # Merge extracted skills with existing ones
     existing_skills = set(profile.skills or [])

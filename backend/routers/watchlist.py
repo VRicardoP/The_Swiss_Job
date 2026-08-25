@@ -180,10 +180,13 @@ async def export_calendar(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Genera un fichero .ics con los 3 eventos de la candidatura:
-    1. Enviar candidatura (+2 días hábiles desde detección)
+    """Genera un fichero .ics con los 2 eventos de la candidatura:
+    1. Enviar candidatura (+2 días desde detección)
     2. Follow-up (+14 días)
-    3. Recordatorio deadline si está en draft_letter o description (best-effort)
+
+    (G1/P3-28 nota: el docstring prometía un 3er evento de deadline que
+    nunca se implementó — la promesa se ajusta a la realidad; extraer el
+    deadline del texto libre queda fuera de alcance.)
     """
     applications = await resolve_applications(db, current_user.id)
     row = await applications.get_match(current_user.id, job_hash)

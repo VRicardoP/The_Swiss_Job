@@ -30,14 +30,30 @@ async def notification_stream(
     token: str = Query(
         ..., description="JWT access token (EventSource can't send headers)"
     ),
+    db: AsyncSession = Depends(get_db),
 ):
     """SSE stream for real-time notifications.
 
-    Uses query parameter token since browser EventSource doesn't support headers.
+    Uses query parameter token since browser EventSource doesn't support
+    headers (limitación conocida: el token viaja en la query string y puede
+    acabar en logs de acceso — mitigable solo cambiando EventSource por
+    fetch+ReadableStream en el frontend).
     """
     from core.security import decode_token
 
     user_id = decode_token(token, expected_type="access")
+
+    # G1/P3-24: el resto de endpoints pasa por get_current_user (existencia +
+    # is_active); aquí solo se decodificaba el token — un usuario desactivado
+    # mantenía el stream abierto hasta caducar el JWT.
+    user = (
+        await db.execute(select(User).where(User.id == user_id))
+    ).scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or inactive user",
+        )
 
     sse: SSEManager = request.app.state.sse_manager
 

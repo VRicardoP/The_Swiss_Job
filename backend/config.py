@@ -114,6 +114,10 @@ class Settings(BaseSettings):
     SCHEDULER_SCRAPER_INTERVAL_HOURS: int = 6
 
     # Alerts & Saved Searches
+    # G1/P3-28 — rate limiting tras reverse proxy: confiar en X-Forwarded-For
+    # SOLO si el proxy la sobreescribe (activar en el despliegue del NAS).
+    RATE_LIMIT_TRUST_PROXY: bool = False
+
     ALERTS_MAX_PUSH_PER_DAY: int = 10
     ALERTS_MIN_SCORE_THRESHOLD: int = 50
     SCHEDULER_SEARCH_INTERVAL_MINUTES: int = 60

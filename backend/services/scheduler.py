@@ -46,9 +46,26 @@ async def _leader_step(r, is_leader: bool) -> bool:
         return False
 
     # Ya somos líderes: renovar mientras el lock siga siendo nuestro.
-    current = await r.get(_LEADER_KEY)
-    if current == _WORKER_ID:
-        await r.expire(_LEADER_KEY, _LEADER_TTL)
+    try:
+        current = await r.get(_LEADER_KEY)
+        renewed = current == _WORKER_ID and bool(
+            await r.expire(_LEADER_KEY, _LEADER_TTL)
+        )
+    except Exception as exc:
+        # G1/P3-18: una renovación que LANZA (hipo de Redis) dejaba
+        # is_leader=True en el bucle mientras el lock expiraba por TTL →
+        # ~40s con DOS schedulers y doble daily_harvest. Conservador: ante
+        # la duda se CEDE el liderazgo (nadie puede adquirir el lock hasta
+        # que expire, así que no hay doble líder; como mucho un hueco ≤ TTL
+        # hasta la re-elección).
+        logger.warning(
+            "Renovación del leader-lock falló (%s); se cede el liderazgo", exc
+        )
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
+        return False
+
+    if renewed:
         return True
 
     # Perdimos el liderazgo (caso raro): parar y dejar que otro releve.

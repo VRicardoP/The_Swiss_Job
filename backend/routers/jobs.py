@@ -5,6 +5,13 @@ de la costura (services/catalog) — la implementacion (local|core) la decide
 `jobhunt_routing` por perfil+capacidad, con default 'local'. Con routing
 'local' el comportamiento es byte-identico al previo (la logica vive movida
 verbatim en services/catalog/local.py). La validacion HTTP (Query) sigue aqui.
+
+DECISION registrada (G1/P3-25): este es el UNICO router de datos SIN
+autenticacion, DELIBERADAMENTE — el catalogo es anonimo por diseño (routing
+«catalogo anonimo»: browse de ofertas sin login, sin datos de usuario en las
+respuestas). Expone corpus y agregados publicos del propio portal; todo lo
+que toca datos del usuario (matches, candidaturas, documentos, perfil) exige
+get_current_user. Si esta politica cambia, cambiar aqui y en el frontend.
 """
 
 import logging
