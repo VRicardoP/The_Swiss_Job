@@ -244,7 +244,19 @@ class GroqService:
 
     @staticmethod
     def _parse_llm_response(response: str, batch_len: int) -> list[dict]:
-        """Parse LLM JSON response, stripping markdown fences if present."""
+        """Parse LLM JSON response, stripping markdown fences if present.
+
+        G1/P2-12: ante JSON inválido/no-lista LANZA en vez de devolver el
+        fallback de ceros — devolverlo aquí hacía que esos ceros se CACHEARAN
+        7 días (indistinguibles de un «poor fit» legítimo) y que el except
+        del llamante (que degrada SIN cachear) nunca se ejecutara. El caso
+        real documentado es qwen truncado por max_tokens.
+
+        G1/P3-16: el índice del LLM se validaba a ciegas — un LLM 1-based
+        desplazaba todos los scores un puesto (score/explicación al job
+        vecino). Se exige 0 <= index < batch_len y unicidad; la violación
+        lanza y degrada por el mismo camino seguro.
+        """
         text = response.strip()
         if text.startswith("```"):
             lines = text.split("\n")
@@ -254,20 +266,30 @@ class GroqService:
 
         try:
             results = json.loads(text)
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse Groq response as JSON")
-            return GroqService._fallback_results(batch_len)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"respuesta del LLM no es JSON: {exc}") from exc
 
         if not isinstance(results, list):
-            logger.warning("Groq response is not a list")
-            return GroqService._fallback_results(batch_len)
+            raise ValueError("respuesta del LLM no es una lista JSON")
 
         # Normalize each result
         normalized: list[dict[str, Any]] = []
+        seen_indexes: set[int] = set()
         for r in results:
+            if not isinstance(r, dict):
+                raise ValueError("elemento no-objeto en la respuesta del LLM")
+            index = r.get("index")
+            if not isinstance(index, int) or not (0 <= index < batch_len):
+                raise ValueError(
+                    f"índice fuera de rango en la respuesta del LLM: {index!r} "
+                    f"(batch de {batch_len})"
+                )
+            if index in seen_indexes:
+                raise ValueError(f"índice duplicado en la respuesta del LLM: {index}")
+            seen_indexes.add(index)
             normalized.append(
                 {
-                    "index": r.get("index", 0),
+                    "index": index,
                     "score": max(0, min(100, r.get("score", 0))),
                     "matching_skills": r.get("matching_skills", []),
                     "missing_skills": r.get("missing_skills", []),

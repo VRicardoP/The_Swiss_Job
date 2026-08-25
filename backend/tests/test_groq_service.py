@@ -63,10 +63,12 @@ class TestGroqServiceParsing:
         assert len(results) == 1
         assert results[0]["score"] == 70
 
-    def test_parse_invalid_json_returns_fallback(self):
-        results = GroqService._parse_llm_response("not valid json at all", 3)
-        assert len(results) == 3
-        assert all(r["score"] == 0 for r in results)
+    def test_parse_invalid_json_raises(self):
+        # G1/P2-12: devolver el fallback aquí hacía que los ceros se cachearan
+        # 7 días; el JSON inválido debe LANZAR y degradar en el except del
+        # llamante (que no cachea).
+        with pytest.raises(ValueError):
+            GroqService._parse_llm_response("not valid json at all", 3)
 
     def test_parse_clamps_score_range(self):
         response = json.dumps([{"index": 0, "score": 150}, {"index": 1, "score": -20}])
@@ -74,11 +76,11 @@ class TestGroqServiceParsing:
         assert results[0]["score"] == 100
         assert results[1]["score"] == 0
 
-    def test_parse_non_list_returns_fallback(self):
+    def test_parse_non_list_raises(self):
+        # G1/P2-12: mismo criterio que el JSON inválido — lanzar, no cachear ceros.
         response = json.dumps({"index": 0, "score": 80})
-        results = GroqService._parse_llm_response(response, 1)
-        assert len(results) == 1
-        assert results[0]["score"] == 0
+        with pytest.raises(ValueError):
+            GroqService._parse_llm_response(response, 1)
 
 
 @pytest.mark.anyio
