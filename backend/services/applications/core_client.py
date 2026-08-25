@@ -335,6 +335,26 @@ class CoreApplications:
         rows = (await self._db.execute(select(Job).where(Job.url.in_(urls)))).scalars()
         return {job.url: job for job in rows}
 
+    async def _owned_by_profile(
+        self, core_profile_id: uuid.UUID, application_id: uuid.UUID
+    ) -> bool:
+        """Scoping de ownership POR PERFIL para las escrituras (G1/P1-3).
+
+        El PATCH/DELETE del /v1 solo acota por CONSUMER (`p.consumer_id` en el
+        WHERE de `_lock_target`), y la credencial CORE_CONSUMER_KEY es UNA y
+        compartida por todos los usuarios de este BFF: sin este check, el
+        usuario B podia mutar/borrar la candidatura de A conociendo su UUID
+        (IDOR), incumpliendo el contrato del puerto («None si no existe PARA
+        ESE USUARIO»). El perfil no viaja en la escritura porque el contrato
+        /v1 no lo modela — el scoping se aplica AQUI, verificando que el id
+        aparece en el feed DEL PERFIL del usuario antes de emitir la
+        escritura. TOCTOU aceptado: cada usuario es el unico escritor de su
+        perfil (docstring del modulo), y el candado real seguiria siendo el
+        consumer del core.
+        """
+        dtos = await self._drain_applications(core_profile_id)
+        return any(dto.id == application_id for dto in dtos)
+
     @staticmethod
     def _job_hash_for(dto: _ApplicationDTO, by_url: dict[str, Job]) -> str:
         """(1) hash del Job local por url; (2) compute_hash del snapshot —
@@ -480,7 +500,12 @@ class CoreApplications:
                 "update de applied_url: sin equivalente en el contrato C-4 "
                 "(el /v1 solo muta status/notes/follow_up_date)"
             )
-        await self._require_profile(user_id)  # identidad+credencial antes de red
+        # identidad+credencial antes de red; y ownership por PERFIL antes de
+        # la escritura (G1/P1-3): un id ajeno se responde como inexistente
+        # (404 del router), indistinguible — mismo contrato que el motor local.
+        core_profile_id = await self._require_profile(user_id)
+        if not await self._owned_by_profile(core_profile_id, application_id):
+            return None
         body: dict = {}
         if "status" in provided and changes.status is not None:
             body["status"] = changes.status.value
@@ -506,7 +531,11 @@ class CoreApplications:
         return _to_response(dto, user_id, self._job_hash_for(dto, by_url), job)
 
     async def delete(self, user_id: uuid.UUID, application_id: uuid.UUID) -> bool:
-        await self._require_profile(user_id)
+        core_profile_id = await self._require_profile(user_id)
+        # Ownership por PERFIL antes de emitir el DELETE (G1/P1-3, ver
+        # _owned_by_profile): un id ajeno = inexistente para este usuario.
+        if not await self._owned_by_profile(core_profile_id, application_id):
+            return False
         resp = await self._request(
             "DELETE", f"/applications/{application_id}", write=True
         )
