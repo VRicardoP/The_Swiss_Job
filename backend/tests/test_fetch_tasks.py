@@ -219,6 +219,65 @@ class TestFetchPipeline:
         assert fila.consecutive_unstored == 0
 
     @patch("tasks.fetch_tasks.get_all_providers")
+    async def test_vd8_revista_tech_guardada_refresca_y_alta_tech_sigue_fuera(
+        self, mock_providers, db_session
+    ):
+        """VD.8 — el filtro tech, como la ventana (J1), solo puede rechazar
+        ALTAS, nunca re-vistas: una oferta YA guardada cuyo título casa con
+        una keyword tech sigue pasando por el upsert y su last_seen_at
+        avanza — si el filtro la saltara, dejaría de refrescarse y
+        cleanup_stale_jobs la archivaría a los 60 días aunque siga viva en
+        el portal. Y una tech NO guardada sigue sin entrar: qué altas
+        ingresan lo decide el filtro, exactamente como antes."""
+        from sqlalchemy import select
+
+        from models.job import Job
+        from services.job_repository import JobRepository
+
+        # Oferta ya en corpus cuyo título casa con una keyword tech (p. ej.
+        # entró antes de añadirse la keyword, o su título cambió).
+        guardada = _sample_job("DevOps Engineer", "Acme", "http://t.com/kept")
+        guardada["source"] = "niche_src"
+        repo = JobRepository(db_session)
+        await repo.upsert_job(dict(guardada))
+        await db_session.commit()
+        before = (
+            await db_session.execute(
+                select(Job.last_seen_at).where(Job.hash == guardada["hash"])
+            )
+        ).scalar_one()
+
+        # El portal re-muestra la guardada y trae además un ALTA tech nueva.
+        alta_tech = _sample_job("Backend Developer", "Acme", "http://t.com/new")
+        alta_tech["source"] = "niche_src"
+        mock_providers.return_value = [
+            _make_mock_provider("niche_src", [dict(guardada), alta_tech])
+        ]
+        with patch(
+            "tasks.fetch_tasks.task_session",
+            new=_mock_session_factory(db_session),
+        ):
+            summary = await _fetch_providers_async()
+
+        # La re-vista pasó por el upsert y se refrescó...
+        assert summary["updated"] == 1
+        db_session.expire_all()
+        after = (
+            await db_session.execute(
+                select(Job.last_seen_at).where(Job.hash == guardada["hash"])
+            )
+        ).scalar_one()
+        assert after > before, "la re-vista tech guardada no refrescó last_seen_at"
+        # ...y el alta tech sigue descartada por el filtro: no entró en BD.
+        assert summary["new"] == 0
+        urls = (
+            (await db_session.execute(select(Job.url).where(Job.source == "niche_src")))
+            .scalars()
+            .all()
+        )
+        assert urls == [guardada["url"]]
+
+    @patch("tasks.fetch_tasks.get_all_providers")
     async def test_fallo_del_lote_cuenta_para_la_racha(
         self, mock_providers, monkeypatch, db_session
     ):

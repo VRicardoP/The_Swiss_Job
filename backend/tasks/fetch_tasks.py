@@ -273,14 +273,25 @@ async def _fetch_providers_async() -> dict[str, Any]:
                 # Descartar empleos tech antes de normalizar o guardar en DB.
                 # Las filtradas tampoco entran en la pre-pasada de la ventana:
                 # no aportan fecha ni contadores (comportamiento previo).
-                # ⚠ DEFECTO PREEXISTENTE, registrado a propósito y SIN
-                # cambiar (decisión de producto pendiente, aparte): este
-                # filtro salta re-vistas sin comprobar si ya están en el
-                # corpus — el mismo defecto que J1 corrigió para la ventana.
-                # Una oferta ya guardada cuyo título pase a casar con una
-                # keyword tech deja de refrescar last_seen_at y acaba borrada
-                # por cleanup_stale_jobs a los 60 días.
-                batch = [job for job in jobs if not _is_tech_job(job.get("title", ""))]
+                # VD.8 — el filtro tech, como la ventana (J1), solo puede
+                # rechazar ALTAS, nunca re-vistas: una oferta YA en `jobs`
+                # cuyo título case (o haya pasado a casar) con una keyword
+                # tech sigue pasando por el upsert, que es lo que refresca
+                # last_seen_at — si se saltara, cleanup_stale_jobs la
+                # archivaría a los 60 días aunque siga viva en el portal.
+                # UNA consulta por fuente (known_hashes, PK) y solo con los
+                # hashes que el filtro descartaría; qué ALTAS entran lo
+                # sigue decidiendo el filtro, exactamente como antes.
+                tech_titled = [_is_tech_job(job.get("title", "")) for job in jobs]
+                tech_hashes = {j["hash"] for j, t in zip(jobs, tech_titled) if t}
+                known_tech = (
+                    await repo.known_hashes(tech_hashes) if tech_hashes else set()
+                )
+                batch = [
+                    job
+                    for job, is_tech in zip(jobs, tech_titled)
+                    if not is_tech or job["hash"] in known_tech
+                ]
 
                 # V.2/ADR-10 rev. J1 + K5 — ventana de cosecha en pre-pasada:
                 # aplica SIEMPRE y solo puede rechazar ALTAS, nunca re-vistas
