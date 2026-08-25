@@ -60,6 +60,12 @@ class SwissSchoolsInspiredScraper(SwissSchoolBaseScraper):
         for school in self._schools:
             self._current_school = school
             all_jobs.extend(await super()._scrape_with_httpx(query))
+            # G1/P3-10: los N colegios comparten HOST — si uno reporta
+            # bloqueo, seguir con el resto sumaría N reportes en un solo run
+            # y alcanzaria el kill-switch (threshold 3) por un episodio
+            # transitorio (hasta 24h de silencio). Un bloqueo corta el run.
+            if self._run_block_reported:
+                break
         return all_jobs
 
     def build_listing_url(self, page: int, query: str) -> str:

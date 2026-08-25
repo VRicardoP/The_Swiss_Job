@@ -156,7 +156,11 @@ class SchulJobsScraper(BaseScraper):
             # Phase 2: AJAX scroll pages
             elif searchhash:
                 btn = soup.select_one("[data-nextpage]")
-                next_page = int(btn.get("data-nextpage")) if btn else None
+                # G1/P3-8: int("")/int("abc") reventaba _scrape_with_httpx
+                # entero y perdía los detalles ya descargados — casteo seguro
+                # (0 falsy → sin scroll, se conserva la página inicial).
+                next_page = self._safe_int(btn.get("data-nextpage")) if btn else None
+                next_page = next_page or None
 
                 # Presupuesto del run menos la página inicial ya pedida.
                 for _ in range(self._pages_budget() - 1):
@@ -192,6 +196,11 @@ class SchulJobsScraper(BaseScraper):
                     except Exception:
                         break
 
+                    # G1/P3-8: un 200 cuyo JSON sea una lista (u otro no-dict)
+                    # hacía AttributeError en .get y tiraba el run entero.
+                    if not isinstance(data, dict):
+                        break
+
                     html_fragment = data.get("html", "")
                     if not html_fragment:
                         break
@@ -210,8 +219,8 @@ class SchulJobsScraper(BaseScraper):
                         )
                         break
 
-                    np = data.get("nextpage")
-                    next_page = int(np) if np else None
+                    # G1/P3-8: mismo casteo seguro que data-nextpage.
+                    next_page = self._safe_int(data.get("nextpage")) or None
 
                     if len(page_stubs) < SCROLL_PAGE_SIZE:
                         break

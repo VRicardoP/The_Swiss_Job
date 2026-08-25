@@ -400,6 +400,9 @@ class TestIrishJobsScraper:
         result = IrishJobsScraper().normalize_job(raw)
         expected = {
             "hash",
+            # G1/P3-7: identidad de plataforma para el cursor (job_identity);
+            # upsert_job la filtra — no viaja a la BD.
+            "source_id",
             "source",
             "title",
             "company",

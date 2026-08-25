@@ -543,6 +543,22 @@ class IrishJobsScraper(BaseScraper):
     # Normalización al esquema unificado (22 claves)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def job_identity(job: dict) -> str:
+        """Identidad para cursor/early-stop = id de PLATAFORMA (G1/P3-7).
+
+        StepStone sirve la MISMA oferta en dos hosts con URLs distintas: con
+        la URL como identidad, las compartidas que `_dedupe_new` descarta
+        antes de persistir nunca entraban en el cursor y el segundo host se
+        re-crawleaba a presupuesto completo cada run. El id de plataforma es
+        idéntico en ambos hosts — la misma identidad que ya usa el dedupe.
+        Sin id (borde) cae a la identidad base (url).
+        """
+        source_id = job.get("source_id") or job.get("id")
+        if source_id is not None and str(source_id).strip():
+            return f"irishjobs:{source_id}"
+        return BaseScraper.job_identity(job)
+
     def normalize_job(self, raw: dict) -> dict:
         title = raw.get("title", "").strip()
         company = raw.get("company", "Unknown").strip() or "Unknown"
@@ -554,6 +570,10 @@ class IrishJobsScraper(BaseScraper):
 
         return {
             "hash": self.compute_hash(title, company, url),
+            # Identidad de plataforma para el cursor (job_identity, P3-7).
+            # upsert_job filtra a columnas del modelo: la clave extra no viaja
+            # a la BD.
+            "source_id": raw.get("id"),
             "source": self.SOURCE_NAME,
             "title": title,
             "company": company,
