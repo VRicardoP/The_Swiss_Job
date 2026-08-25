@@ -313,11 +313,16 @@ class PatternAnalysisService:
             if rejection_rate < _MIN_REJECTION_RATE:
                 continue
 
-            # Evitar sugerir patrones que ya están cubiertos por uno más corto
-            words = ngram.split()
+            # Evitar sugerir patrones que ya están cubiertos por uno más corto:
+            # si TODAS las palabras de un patrón ya aceptado aparecen en este
+            # n-grama, cualquier título que case el n-grama ya casa el patrón
+            # corto — sugerirlo sería redundante. G1/P3-23: el test estaba
+            # INVERTIDO («el nuevo es subconjunto del existente») y además
+            # llevaba la tautología `p in seen_patterns` dentro del bucle
+            # sobre seen_patterns.
+            words = set(ngram.split())
             covered = any(
-                p in seen_patterns and all(w in p.split() for w in words)
-                for p in seen_patterns
+                set(p.split()) <= words for p in seen_patterns
             )
             if covered:
                 continue

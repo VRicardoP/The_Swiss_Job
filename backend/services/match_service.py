@@ -12,10 +12,9 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import cast, delete, func, literal, or_, select
+from sqlalchemy import delete, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from config import settings
@@ -207,8 +206,6 @@ class MatchService:
 
         Excluye jobs con feedback negativo y aplica filtros aprobados por el usuario.
         """
-        import json
-
         conditions = [
             Job.is_active.is_(True),
             Job.duplicate_of.is_(None),
@@ -230,10 +227,23 @@ class MatchService:
                 )
                 conditions.append(~Job.title.ilike(f"%{safe}%", escape="\\"))
             elif f["type"] == "tag_contains":
-                # tag IS NULL (sin tags) → incluir; tags no contiene el patrón → incluir
-                # NOT (NULL @> ...) = NULL que en WHERE equivale a FALSE → excluiría incorrectamente
-                tag_json = cast(literal(json.dumps([f["pattern"]])), JSONB)
-                conditions.append(or_(Job.tags.is_(None), ~Job.tags.op("@>")(tag_json)))
+                # tag IS NULL (sin tags) → incluir; tags no contiene el patrón → incluir.
+                # G1/P2-16: los patrones se guardan en minúsculas pero los tags
+                # se ingieren con su capitalización original («Informatik»), y
+                # el operador JSONB @> es exact-match case-sensitive: el filtro
+                # aprobado no excluía NUNCA. Comparación con lower() sobre los
+                # elementos del array (EXISTS correlacionado), case-insensitive
+                # en ambos lados.
+                elem = func.jsonb_array_elements_text(Job.tags).table_valued(
+                    "value"
+                )
+                tag_hit = (
+                    select(literal(1))
+                    .select_from(elem)
+                    .where(func.lower(elem.c.value) == f["pattern"].lower())
+                    .exists()
+                )
+                conditions.append(or_(Job.tags.is_(None), ~tag_hit))
 
         stmt = (
             select(Job)
