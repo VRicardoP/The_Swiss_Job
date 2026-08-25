@@ -661,10 +661,23 @@ _OPEN_SUFFIX: frozenset[str] = frozenset({"secretar"})
 # "l d") y el patrón exigiría el literal con puntuación.
 _PUNCT_RE = _re.compile(r"[^\w\s]")
 
+# Acrónimos de organismos internacionales cuya forma minúscula es una PALABRA
+# romance corriente: el .strip() de la compilación borraba el espacio
+# protector de "un " y el patrón \bun\b con IGNORECASE casaba el artículo
+# francés («Un-e enseignant-e primaire» → F en vez de H, anulando la
+# penalización de docencia y la teacher_alert; ídem "uno" italiano — G1/P2-9).
+# Solo casan como token AISLADO EN MAYÚSCULAS (UN/UNO/WHO/ILO), que es como
+# aparecen cuando de verdad nombran al organismo. OJO: los keywords llegan
+# aquí ya .strip()-eados por la comprensión de _COMPILED — las claves van
+# sin el espacio protector original.
+_ACRONYM_CASE_SENSITIVE: frozenset[str] = frozenset({"un", "uno", "who", "ilo"})
+
 
 def _compile_keyword(kw: str) -> _re.Pattern:
     """Compila el patrón de un keyword con el borde de palabra que le toca."""
     escaped = _re.escape(_PUNCT_RE.sub(" ", kw).strip())
+    if kw in _ACRONYM_CASE_SENSITIVE:
+        return _re.compile(r"\b" + escaped.upper() + r"\b")  # SIN IGNORECASE
     if kw in _OPEN_BOTH:
         return _re.compile(r"\b\w*" + escaped + r"\w*\b", _re.IGNORECASE)
     if kw in _OPEN_SUFFIX:
