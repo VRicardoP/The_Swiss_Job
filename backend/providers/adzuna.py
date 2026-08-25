@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 # Adzuna does not support "ch" — fetch from neighbouring countries instead
 ADZUNA_COUNTRIES = ["de", "at", "gb"]
+# La API no incluye la moneda en cada oferta: se deriva del país consultado
+# (G1/P2-3 — sin moneda, DataNormalizer aplicaba rate 1.0 y guardaba
+# EUR/GBP como si fueran CHF).
+COUNTRY_CURRENCY = {"de": "EUR", "at": "EUR", "gb": "GBP"}
 PAGES_PER_COUNTRY = 2
 PAGE_DELAY_SECONDS = 0.5
 RESULTS_PER_PAGE = 50
@@ -62,6 +66,11 @@ class AdzunaProvider(BaseJobProvider):
                     if not raw_jobs:
                         break
 
+                    # normalize_job no recibe contexto: el país del bucle viaja
+                    # en el raw para poder derivar la moneda del salario.
+                    for raw_job in raw_jobs:
+                        if isinstance(raw_job, dict):
+                            raw_job["_country"] = country
                     results.extend(self._process_raw_jobs(raw_jobs))
 
                     # Polite delay between requests
@@ -79,10 +88,11 @@ class AdzunaProvider(BaseJobProvider):
         company_obj = raw.get("company", {}) or {}
         company = company_obj.get("display_name", "").strip()
 
-        # Location: prefer area[0] if exists, else location.display_name
+        # Location: `area` es jerárquico de MAYOR a menor (["UK","London",…]) —
+        # el último elemento es la localidad; area[0] era el país (G1/P2-2).
         location_obj = raw.get("location", {}) or {}
         area = location_obj.get("area", []) or []
-        location_raw = area[0] if area else location_obj.get("display_name", "")
+        location_raw = area[-1] if area else location_obj.get("display_name", "")
 
         # Category label -> employment_type
         category_obj = raw.get("category", {}) or {}
@@ -123,7 +133,7 @@ class AdzunaProvider(BaseJobProvider):
             "salary_min_chf": None,
             "salary_max_chf": None,
             "salary_original": salary_original,
-            "salary_currency": None,
+            "salary_currency": COUNTRY_CURRENCY.get(raw.get("_country")),
             "salary_period": None,
             "language": None,
             "seniority": None,

@@ -22,7 +22,17 @@ PERIOD_MULTIPLIER: dict[str, int] = {
     "yearly": 1,
     "monthly": 12,
     "hourly": 2080,  # Standard Swiss working hours/year
+    # week/day existen en productores reales (JSearch emite WEEK/DAY): sin
+    # multiplicador, un "1500 EUR/week" se guardaba como 1500 anuales (G1/P2-8).
+    "weekly": 52,
+    "daily": 260,
 }
+
+# Periodos anualizables que el enum de BD (SalaryPeriod) NO modela: se usan
+# para el multiplicador y después salary_period se guarda como None (añadirlos
+# al enum exigiría migración; el importe anual CHF queda correcto, que es lo
+# que consume el matching).
+PERIODS_NOT_IN_DB_ENUM = {"weekly", "daily"}
 
 # Map raw provider values to valid enum values
 PERIOD_ALIASES: dict[str, str] = {
@@ -37,6 +47,12 @@ PERIOD_ALIASES: dict[str, str] = {
     "yearly": "yearly",
     "monthly": "monthly",
     "hourly": "hourly",
+    "week": "weekly",
+    "per_week": "weekly",
+    "weekly": "weekly",
+    "day": "daily",
+    "per_day": "daily",
+    "daily": "daily",
 }
 
 SENIORITY_VALID = {"intern", "junior", "mid", "senior", "lead", "head", "director"}
@@ -150,10 +166,24 @@ CONTRACT_PATTERNS: list[tuple[str, list[str]]] = [
     ),
 ]
 
-# Salary string parsing pattern: captures ranges like "80000-100000", "80k-100k"
-_SALARY_RANGE_RE = re.compile(r"(\d[\d.,]*)\s*[kK]?\s*[-–—to]+\s*(\d[\d.,]*)\s*[kK]?")
-_SALARY_SINGLE_RE = re.compile(r"(\d[\d.,]+)\s*[kK]?")
-_CURRENCY_RE = re.compile(r"\b(CHF|EUR|USD|GBP|€|\$|£)\b", re.IGNORECASE)
+# Salary string parsing pattern: captures ranges like "80000-100000", "80k-100k".
+# Los números aceptan `'`/`’` (separador de miles suizo: "80'000") además de
+# `.`/`,`. La "k" se captura ADYACENTE al número y se exige que no siga una
+# letra (G1/P2-7: "80 CHF ... Kanton" no debe multiplicar ×1000). El separador
+# de rango es un guion o la palabra "to" — NO una clase de caracteres, que
+# casaba letras sueltas (G1/P3-13).
+_NUM = r"(\d(?:[\d.,'’]*\d)?)"
+_K = r"\s*([kK])?(?![A-Za-zÀ-ÿ])"
+_SALARY_RANGE_RE = re.compile(rf"{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_NUM}{_K}")
+# El single exige ≥2 dígitos (como el `[\d.,]+` original): un dígito suelto
+# ("Level 5") no es un salario.
+_SALARY_SINGLE_RE = re.compile(rf"(\d[\d.,'’]*\d){_K}")
+# Pensums/porcentajes ("60-80%", "50 %"): se eliminan ANTES de parsear para
+# que un workload no se confunda con un salario (G1/P3-13).
+_PCT_TOKEN_RE = re.compile(r"\d[\d.,'’]*(?:\s*[-–—]\s*\d[\d.,'’]*)?\s*%")
+# Los símbolos €/$/£ no tienen word-boundary a su lado ("\b€\b" no casa nunca,
+# G1/P3-12): se buscan sin \b, en alternancia con los códigos ISO.
+_CURRENCY_RE = re.compile(r"\b(CHF|EUR|USD|GBP)\b|([€$£])", re.IGNORECASE)
 
 _CURRENCY_SYMBOL_MAP: dict[str, str] = {
     "€": "EUR",
@@ -216,13 +246,23 @@ class DataNormalizer:
     @staticmethod
     def normalize_salary(job: dict) -> dict:
         """Convert salary to CHF annual. Parses salary_original if needed."""
-        # Already normalized
-        if job.get("salary_min_chf") and job.get("salary_max_chf"):
+        # Periodo anualizable fuera del enum de BD (weekly/daily): se usa para
+        # el multiplicador pero NO puede persistirse — se anula ANTES de
+        # cualquier early-return para que nunca llegue al INSERT (G1/P2-8).
+        period = job.get("salary_period")
+        if period:
+            period = PERIOD_ALIASES.get(period.lower(), period)
+        if period in PERIODS_NOT_IN_DB_ENUM:
+            job["salary_period"] = None
+
+        # Already normalized. Basta UNA cota: si el productor prellenó
+        # cualquier `_chf`, re-multiplicarla aquí sería doble conversión
+        # (G1/P3-11 — trampa asimétrica de la familia ~2000x).
+        if job.get("salary_min_chf") or job.get("salary_max_chf"):
             return job
 
         salary_orig = job.get("salary_original") or ""
         currency = job.get("salary_currency")
-        period = job.get("salary_period")
         sal_min = job.get("salary_min_chf")
         sal_max = job.get("salary_max_chf")
 
@@ -258,36 +298,64 @@ class DataNormalizer:
         currency = None
         cur_match = _CURRENCY_RE.search(text)
         if cur_match:
-            raw_cur = cur_match.group(1)
+            # group(1) = código ISO con \b; group(2) = símbolo €/$/£ sin \b.
+            raw_cur = cur_match.group(1) or cur_match.group(2)
             currency = _CURRENCY_SYMBOL_MAP.get(raw_cur.lower(), raw_cur.upper())
+
+        # Pensums/porcentajes fuera: "60-80%" es workload, no salario.
+        text = _PCT_TOKEN_RE.sub(" ", text)
 
         # Try range first: "80000-100000" or "80k-100k"
         range_match = _SALARY_RANGE_RE.search(text)
         if range_match:
-            lo = DataNormalizer._parse_number(range_match.group(1), text)
-            hi = DataNormalizer._parse_number(range_match.group(2), text)
+            lo = DataNormalizer._parse_number(
+                range_match.group(1), has_k=bool(range_match.group(2))
+            )
+            hi = DataNormalizer._parse_number(
+                range_match.group(3), has_k=bool(range_match.group(4))
+            )
             return lo, hi, currency
 
         # Single value: treat as both min and max
         single_match = _SALARY_SINGLE_RE.search(text)
         if single_match:
-            val = DataNormalizer._parse_number(single_match.group(1), text)
+            val = DataNormalizer._parse_number(
+                single_match.group(1), has_k=bool(single_match.group(2))
+            )
             return val, val, currency
 
         return None, None, currency
 
     @staticmethod
-    def _parse_number(raw: str, context: str = "") -> float | None:
-        """Parse a number string, handling 'k' suffix and European formatting."""
+    def _parse_number(raw: str, has_k: bool = False) -> float | None:
+        """Parse a number string, handling thousands/decimal separators.
+
+        `.`/`,` se interpretan por POSICIÓN (G1/P2-6): un grupo final de
+        exactamente 3 dígitos es separador de miles ("80.000", "1,234");
+        1-2 dígitos finales son decimales ("25.5", "45,50"). `'`/`’` son
+        SIEMPRE separador de miles (formato suizo "80'000").
+
+        `has_k`: la "k" la detecta el REGEX adyacente al número — nunca una
+        palabra del texto circundante como "Kanton" (G1/P2-7).
+        """
         if not raw:
             return None
-        cleaned = raw.replace(",", "").replace(".", "").strip()
+        cleaned = raw.strip().replace("'", "").replace("’", "")
+        last_sep = max(cleaned.rfind("."), cleaned.rfind(","))
+        if last_sep != -1:
+            frac = cleaned[last_sep + 1 :]
+            if len(frac) == 3 and frac.isdigit():
+                # Grupo de miles: se eliminan TODOS los separadores.
+                int_part, frac = cleaned, ""
+            else:
+                int_part = cleaned[:last_sep]
+            int_part = int_part.replace(".", "").replace(",", "")
+            cleaned = f"{int_part}.{frac}" if frac else int_part
         try:
             value = float(cleaned)
         except ValueError:
             return None
-        # Detect "k" suffix in context near the number
-        if "k" in context.lower() and value < 1000:
+        if has_k and value < 1000:
             value *= 1000
         return value
 
