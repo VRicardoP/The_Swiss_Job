@@ -957,11 +957,11 @@ def test_opt1_firma_group_by_equivale_a_la_correlada(db):
         "maxfreq": int(settings.CORE_DEDUP_LEX_TOKEN_MAX_FREQ),
     }
 
-    async def run(sql):
+    async def run(sql, p=params):
         # Inserta, lee el conjunto y ROLLBACK: ambas formas parten de la
         # misma tabla vacía y son comparables byte a byte.
         async with factory() as s:
-            await s.execute(sa.text(sql), params)
+            await s.execute(sa.text(sql), p)
             rows = (
                 await s.execute(
                     sa.text(
@@ -985,6 +985,30 @@ def test_opt1_firma_group_by_equivale_a_la_correlada(db):
     assert set_nueva == set_vieja
     assert len(set_nueva) == 1
 
+    # C9 P3-1: el camino del BEAT (window=True) también contra el oráculo —
+    # nuevos_f se deriva de firma y un cambio futuro en filtro_ventana
+    # podría divergir SOLO en la pasada incremental. Se envejece la fuente 0
+    # (el par sobrevive: basta un miembro en la ventana).
+    async def envejecer():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
+                "WHERE vacancy_id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
+                " JOIN source_listings l ON l.id = i.source_listing_id "
+                " WHERE l.source_id = :src)"), {"src": created["sources"][0]})
+            await s.commit()
+
+    asyncio.run(envejecer())
+    sql_nueva_w = _lex_sql(window=True)
+    assert _FIRMA_GROUP_BY in sql_nueva_w
+    sql_vieja_w = sql_nueva_w.replace(_FIRMA_GROUP_BY, _FIRMA_CORRELADA)
+    assert sql_vieja_w != sql_nueva_w
+    params_w = dict(params, ventana=48)
+    set_nueva_w = asyncio.run(run(sql_nueva_w, params_w))
+    set_vieja_w = asyncio.run(run(sql_vieja_w, params_w))
+    assert set_nueva_w == set_vieja_w
+    assert len(set_nueva_w) == 1  # mismo par: la fuente 1 sigue en ventana
+
 
 def test_opt2_conteo_omitido_con_k_vecinos_llenos(db):
     """Mordida OPT-ALTA-2 (a): si el kNN llenó su k, _KNN_COUNT_SQL NO debe
@@ -995,18 +1019,21 @@ def test_opt2_conteo_omitido_con_k_vecinos_llenos(db):
     import jobhunt_core.dedup as dedup_mod
 
     factory, created = db
+    # C9 P3-2: k desde settings, no hardcodeado — si k cambia por env, el
+    # fixture sigue llenando el kNN exacto.
+    k = int(settings.CORE_DEDUP_KNN)
     _setup(
         factory, created,
         [
             [("python lead", "Basel", "Empresa Uno AG")],
-            [(f"python dev {i}", "Basel", "Empresa Dos AG") for i in range(5)],
+            [(f"python dev {i}", "Basel", "Empresa Dos AG") for i in range(k)],
         ],
     )
 
     async def go():
         async with factory() as s:
             # La fuente 1 sale de la ventana: solo 'python lead' se escanea,
-            # y sus 5 vecinos cross-source llenan k=5 exacto.
+            # y sus k vecinos cross-source llenan el kNN exacto.
             await s.execute(sa.text(
                 "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
                 "WHERE vacancy_id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
@@ -1025,7 +1052,7 @@ def test_opt2_conteo_omitido_con_k_vecinos_llenos(db):
         dedup_mod._KNN_COUNT_SQL = original
     assert r["status"] == "ok"
     assert r["escaneadas"] == 1
-    assert r["candidatos_nuevos"] == 5  # los 5 vecinos a sim 1.0
+    assert r["candidatos_nuevos"] == k  # los k vecinos a sim 1.0
 
 
 def test_opt2_conteo_se_ejecuta_con_underfill(db):
