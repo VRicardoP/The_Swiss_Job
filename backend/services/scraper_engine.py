@@ -289,14 +289,19 @@ class BaseScraper(BaseJobProvider):
                     logger.error(
                         "%s listing page %d error: %s", self.SOURCE_NAME, page, e
                     )
+                    # G1/P2-4: corte por FALLO, no fin de listado — el run
+                    # queda «con hambre» y el cursor no debe aprender de él.
+                    self._stop_reason = "error"
                     break
 
                 if await self._listing_status_stops(response.status_code, page):
+                    self._stop_reason = "error"
                     break
 
                 stubs = self.parse_listing_page(BeautifulSoup(response.text, "lxml"))
                 if not stubs:
-                    await self._maybe_report_soft_block(response.text, page)
+                    if await self._maybe_report_soft_block(response.text, page):
+                        self._stop_reason = "error"
                     break
 
                 all_jobs.extend(await self._collect_page_jobs(client, stubs))
@@ -312,13 +317,28 @@ class BaseScraper(BaseJobProvider):
                     )
                     break
 
-                if len(stubs) < self.PAGE_SIZE:
+                if self._short_page_ends_listing(len(stubs)):
                     break
 
                 await self._rate_limit_delay()
 
         logger.info("%s scraped %d raw jobs", self.SOURCE_NAME, len(all_jobs))
         return all_jobs
+
+    def _short_page_ends_listing(self, parsed_count: int) -> bool:
+        """Heurística de fin de paginación por página corta, con tolerancia.
+
+        G1/P3-6: el conteo es de stubs PARSEADOS — una página llena donde un
+        solo anuncio no parsea daba PAGE_SIZE-1 y se tomaba por «última
+        página», descartando el resto del listado sin issue. Se tolera un
+        déficit pequeño (~10% de PAGE_SIZE, mínimo 1): dentro de la
+        tolerancia se sigue paginando y es la página siguiente (vacía o ya
+        conocida) la que corta limpio; un fin de listado real suele venir
+        mucho más corto. Con PAGE_SIZE pequeños (≤10) el comportamiento es
+        idéntico al histórico.
+        """
+        tolerance = max(1, self.PAGE_SIZE // 10)
+        return parsed_count + tolerance <= self.PAGE_SIZE
 
     async def _listing_status_stops(self, status_code: int, page: int) -> bool:
         """Indica si el estado HTTP obliga a detener el listado (bloqueo o error).
@@ -506,6 +526,8 @@ class BaseScraper(BaseJobProvider):
                         diag.record(
                             diag.KIND_NETWORK, url, detail=f"{type(e).__name__}: {e}"
                         )
+                        # G1/P2-4: corte por fallo — run «con hambre».
+                        self._stop_reason = "error"
                         break
 
                     # goto puede devolver None (p.ej. navegación same-document):
@@ -518,6 +540,7 @@ class BaseScraper(BaseJobProvider):
                             pg_num,
                         )
                         diag.record(diag.KIND_NETWORK, url, detail="goto sin respuesta")
+                        self._stop_reason = "error"  # G1/P2-4
                         break
 
                     # VD.10 — este path no pasa por _request_with_retry, así que
@@ -531,6 +554,7 @@ class BaseScraper(BaseJobProvider):
                     # HTML de una página de error (404/500) no puede contar como
                     # "vacío verificado" y rehabilitar la fuente.
                     if await self._listing_status_stops(response.status, pg_num):
+                        self._stop_reason = "error"  # G1/P2-4
                         break
 
                     html = await page.content()
@@ -538,7 +562,8 @@ class BaseScraper(BaseJobProvider):
                     stubs = self.parse_listing_page(soup)
 
                     if not stubs:
-                        await self._maybe_report_soft_block(html, pg_num)
+                        if await self._maybe_report_soft_block(html, pg_num):
+                            self._stop_reason = "error"  # G1/P2-4
                         break
 
                     all_jobs.extend(stubs)
@@ -553,7 +578,7 @@ class BaseScraper(BaseJobProvider):
                         )
                         break
 
-                    if len(stubs) < self.PAGE_SIZE:
+                    if self._short_page_ends_listing(len(stubs)):
                         break
 
                     await self._rate_limit_delay()

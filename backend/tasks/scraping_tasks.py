@@ -338,10 +338,21 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 # source_health y compliance, no el cursor (doctrina, capas
                 # 3/4). VD.2 intacto: en un run con error `stored_identities`
                 # está vacío, así que aquí no se pierde aprendizaje.
+                # G1/P2-4: un run PARCIALMENTE fallido (error en la página N
+                # con cosecha de las previas) sale `ok` en classify
+                # (degradación parcial por diseño), pero el motor lo marca
+                # `_stop_reason == "error"`: terminó «con hambre». Si el
+                # cursor aprendiera las identidades de la página 1, el
+                # siguiente run haría early-stop en ella (`known_page`) y las
+                # ofertas hundidas en la página 2+ (newest-first) no se
+                # descargarían JAMÁS — la variante restante de ebb2c51. Mismo
+                # trato que OUTCOME_ERROR: de los fallos se ocupan
+                # source_health/compliance, no el cursor.
                 if (
                     store is not None
                     and cursor is not None
                     and outcome != OUTCOME_ERROR
+                    and scraper._stop_reason != "error"
                 ):
                     # `pages_read` mide esfuerzo de CRAWL (lo descargado), no
                     # persistencia: sigue calculándose sobre `jobs`.
@@ -353,7 +364,13 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                         # K3: lo persistido + lo descartado por fecha (destino
                         # resuelto): ninguna de las dos hace falta re-bajarla.
                         [*stored_identities, *window_stale_identities],
-                        new_count=summary["new"] - new_before,
+                        # G1/P3-17: los duplicados fuzzy SON actividad de la
+                        # fuente (se ingirieron; solo se marcaron cross-source):
+                        # excluirlos hacía que un agregador sindicado acumulara
+                        # consecutive_empty_runs y entrara en backoff siendo
+                        # productivo. Mismo criterio que log_window_summary.
+                        new_count=(summary["new"] - new_before)
+                        + (summary["dupes"] - dupes_before),
                         pages_read=pages_read,
                     )
                     # B-4 — lazo de autolimitación del presupuesto: `avg_new`
