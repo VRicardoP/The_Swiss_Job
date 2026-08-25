@@ -39,7 +39,7 @@ DECISIONES documentadas (no obvias):
   (`_sink_quarantines_url` ≡ _preprocess + _limit_violations). Causas
   reales detectadas: url NULL (no construye RawListing), url CRUDA >
   MAX_URL_LEN=2048 BYTES, url NORMALIZADA > 2048 (normalize_url puede AÑADIR un
-  '/': una url de exactamente 1000 con path vacío queda en 1001) y
+  '/': una url de exactamente 2048 con path vacío queda en 2049) y
   ValueError de normalize_url (p.ej. 'Invalid IPv6 URL' con corchete
   desbalanceado). NUL/no-UTF8 no pueden existir en columnas text de
   Postgres y quedan fuera del conteo. Cuarentenado ⇒ no_ingeribles y JAMÁS

@@ -48,7 +48,7 @@ _URL_MAX_LEN: int = _column_max_len(Job.__table__.c.url)
 _LOGO_MAX_LEN: int = _column_max_len(Job.__table__.c.logo)
 # apply_url: contrato ALINEADO a 2048 (auditoría C5-P2-2, core0028) — el
 # tope es el de la columna, idéntico en legacy y core.
-_APPLY_URL_MAX_LEN: int = 2048
+_APPLY_URL_MAX_LEN: int = _column_max_len(Job.__table__.c.apply_url)
 
 # Strings de contenido con protección NULLIF(valor, '') en el ON CONFLICT:
 # se normalizan en la frontera para que "solo espacios" cuente como vacío

@@ -2253,3 +2253,55 @@ def test_c7_apply_url_multibyte_legal_persiste(db):
         "WHERE s.name = :n AND i.ended_at IS NULL", n=f"legacy:{src}",
     )
     assert len(filas) == 1 and filas[0].apply_url == aurl_cjk
+
+
+def test_c8_mordidas_b4_b6_del_fold_y_la_encarnacion_cerrada(db):
+    """Blindaje C8-B.1: las dos palancas de C6-P2-1 con mordida REAL.
+    B4: cierre(B,Y) + edición con url=C y aurl OMITIDO en el MISMO lote ⇒
+    fold POR COLUMNA ⇒ revive (C,Y). B6: emisión con el slot YA cerrado ⇒
+    la escritura alcanza la encarnación CERRADA ⇒ revive (B,Y)."""
+    factory = db
+    # --- B4 ---
+    src = f"c8b4-{uuid.uuid4().hex[:6]}"
+    _seed(factory, [("jobs", "I", "b4",
+                     _job("b4", src, url="https://l/A", apply_url="https://a/X"))])
+    _project()
+    ed = _job("b4", src, active=False, url="https://l/C", chash="ch-b4-3")
+    ed.pop("apply_url", None)
+    ed["_omitted"] = ["apply_url"]
+    _seed(factory, [
+        ("jobs", "U", "b4", _job("b4", src, active=False, url="https://l/B",
+                                 apply_url="https://a/Y", chash="ch-b4-2")),
+        ("jobs", "U", "b4", ed),
+    ])
+    _project()
+    re4 = _job("b4", src, chash="ch-b4-4")
+    re4.pop("url", None); re4.pop("apply_url", None)
+    re4["_omitted"] = ["url", "apply_url"]
+    _seed(factory, [("jobs", "U", "b4", re4)])
+    _project()
+    q = ("SELECT i.url, i.apply_url FROM source_listing_incarnations i "
+         "JOIN source_listings l ON l.id = i.source_listing_id "
+         "JOIN sources s ON s.id = l.source_id "
+         "WHERE s.name = :n AND i.ended_at IS NULL")
+    filas = _rows(factory, q, n=f"legacy:{src}")
+    assert [(f.url, f.apply_url) for f in filas] == [("https://l/C", "https://a/Y")]
+    # --- B6 ---
+    src = f"c8b6-{uuid.uuid4().hex[:6]}"
+    _seed(factory, [("jobs", "I", "b6",
+                     _job("b6", src, url="https://l/A", apply_url="https://a/X"))])
+    _project()
+    _seed(factory, [("jobs", "U", "b6",
+                     _job("b6", src, active=False, chash="ch-b6-2"))])
+    _project()  # cerrado SIN emisión
+    _seed(factory, [("jobs", "U", "b6",
+                     _job("b6", src, active=False, url="https://l/B",
+                          apply_url="https://a/Y", chash="ch-b6-3"))])
+    _project()  # emisión con el slot YA cerrado
+    re6 = _job("b6", src, chash="ch-b6-4")
+    re6.pop("url", None); re6.pop("apply_url", None)
+    re6["_omitted"] = ["url", "apply_url"]
+    _seed(factory, [("jobs", "U", "b6", re6)])
+    _project()
+    filas = _rows(factory, q, n=f"legacy:{src}")
+    assert [(f.url, f.apply_url) for f in filas] == [("https://l/B", "https://a/Y")]

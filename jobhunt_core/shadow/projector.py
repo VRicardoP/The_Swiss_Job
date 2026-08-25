@@ -790,9 +790,6 @@ async def _build_source_batch(
             else li
             for li in listings
         ]
-        for pk in stored_pending:
-            if almacenados.get(pk):
-                aurl_by_pk[pk] = almacenados[pk]
     return listings, touches
 
 

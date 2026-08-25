@@ -1067,6 +1067,10 @@ def test_perdida_quarantine_frontier_matches_sink(db):
     # Cuarentenable 1: exactamente 2048 con path VACÍO → normalizada 2049
     # (el sink la rechaza por len(url_norm) > MAX_URL_LEN; la cruda pasa).
     grow_url = "https://x?" + "a" * 2038
+    # C8-B.1: espejo en BYTES con mordida — CJK legal en chars, >2048 bytes
+    cjk_url = "https://x/" + "\u4e2d" * 800
+    assert len(cjk_url) < 2048 and len(cjk_url.encode()) > 2048
+    assert metrics._sink_quarantines_url(cjk_url) is True
     assert len(grow_url) == 2048
     assert len(metrics.normalize_url(grow_url)) == 2049
     _legacy_job(factory, f"{p}-grow", url=grow_url)
