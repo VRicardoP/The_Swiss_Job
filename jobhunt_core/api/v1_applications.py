@@ -425,7 +425,7 @@ async def sync_bookmarks(
     Decisión 4): por cada bookmark resuelve/sintetiza vacante (Decisión 3,
     incl. camino sin url), crea application status=saved si el perfil no la
     tiene + upsert de saved_at SIEMPRE; dedupe por vacante resuelta. Devuelve
-    SOLO las creadas."""
+    SOLO las creadas + los items salteados por irresolubles (G1-P3-2)."""
     idem_key = request.headers.get("idempotency-key")
     route = f"PUT {request.url.path}"
     req_hash = request_hash(body.model_dump(mode="json"))
@@ -437,9 +437,28 @@ async def sync_bookmarks(
         if consumer_name is None:
             raise error_404("perfil")
         created = []
+        skipped = []
         seen: set[uuid.UUID] = set()
         for item in body.bookmarks:
-            vid = await _link(session, profile_id, item)
+            try:
+                vid = await _link(session, profile_id, item)
+            except ApiError as exc:
+                # G1-P3-2: en el SYNC (solo aquí — POST/PATCH conservan el 404
+                # por-item), un item irresoluble (camino 3a: vacante archivada
+                # tras el snapshot del BFF) NO aborta el PUT entero: sin esto,
+                # la tx única hacía 404 global, los items válidos tampoco se
+                # creaban y el retry del BFF repetía el 404 para siempre (un
+                # sync «aditivo» estructuralmente sin progreso). Se saltea y
+                # se REPORTA; los errores de forma (400) siguen abortando.
+                if exc.status_code != 404:
+                    raise
+                skipped.append(
+                    schemas.BookmarkSkippedDTO(
+                        vacancy_id=item.vacancy_id, url=item.url,
+                        title=item.title, reason="vacante irresoluble (3a)",
+                    )
+                )
+                continue
             if vid in seen:
                 continue  # dedupe por vacante resuelta (Decisión 4)
             seen.add(vid)
@@ -457,7 +476,8 @@ async def sync_bookmarks(
             else:
                 created.append(await apps.application_item(session, aid))
         result = schemas.BookmarksSyncResultDTO(
-            created=[schemas.ApplicationDTO(**c) for c in created]
+            created=[schemas.ApplicationDTO(**c) for c in created],
+            skipped=skipped,
         )
         return 200, result.model_dump(mode="json")
 

@@ -469,9 +469,16 @@ async def _feed_rows(session, profile_id, page_rows) -> tuple[dict, dict]:
             for r in (
                 await session.execute(
                     sa.text(
+                        # saved_at IS NOT NULL (G1-P3-1): entre _feed_keys y
+                        # este SELECT otra tx pudo des-marcar el bookmark
+                        # (READ COMMITTED); sin re-filtrar, compose_bookmark
+                        # produce created_at=None y el DTO revienta (500). El
+                        # item se OMITE de la página, como el resto de
+                        # carreras toleradas del feed.
                         "SELECT profile_id, vacancy_id, saved_at, notes, "
                         "updated_at FROM profile_vacancy_state "
-                        "WHERE profile_id = :pid AND vacancy_id = ANY(:vids)"
+                        "WHERE profile_id = :pid AND vacancy_id = ANY(:vids) "
+                        "AND saved_at IS NOT NULL"
                     ),
                     {"pid": profile_id, "vids": bm_vids},
                 )

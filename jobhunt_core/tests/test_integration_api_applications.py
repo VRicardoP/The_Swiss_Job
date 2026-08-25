@@ -674,6 +674,88 @@ def test_put_bookmarks_additive_dedupe_and_events(db):
     assert again.status_code == 200 and again.json()["created"] == []
 
 
+def test_put_bookmarks_archived_item_skipped_not_global_404(db):
+    """Regresión G1-P3-2: un bookmark cuya vacante fue ARCHIVADA tras el
+    snapshot del BFF (3a irresoluble) hacía 404 de TODO el PUT (tx única,
+    rollback conjunto): los válidos tampoco se creaban y el retry del BFF
+    repetía el 404 hasta sacar el item del lote — un sync «aditivo» sin
+    progreso estructural. Ahora el item se SALTEA y se reporta en skipped[];
+    el POST conserva su 404 por-item (test_post_direct_archived_or_missing_404)."""
+    factory, created = db
+    token, _tenant, pid, vacs = _seed(factory, created, n=2)
+    (v0, _u0), (v1, _u1) = vacs
+    _exec(factory, "UPDATE vacancies SET archived_at = now() WHERE id = :v", v=v0)
+
+    r = tia._api(
+        factory, f"/v1/profiles/{pid}/bookmarks", token=token, method="PUT",
+        json_body={"bookmarks": [
+            {"vacancy_id": str(v0), "title": "rancia"},
+            {"vacancy_id": str(v1), "title": "valida"},
+        ]},
+    )
+    assert r.status_code == 200, r.text  # antes: 404 global
+    body = r.json()
+    assert [c["vacancy_id"] for c in body["created"]] == [str(v1)]
+    assert len(body["skipped"]) == 1
+    sk = body["skipped"][0]
+    assert sk["vacancy_id"] == str(v0) and sk["title"] == "rancia" and sk["reason"]
+    # El item válido SÍ progresó (la application existe).
+    assert _rows(
+        factory,
+        "SELECT vacancy_id FROM applications WHERE profile_id = :p",
+        p=pid,
+    )[0].vacancy_id == v1
+    # El irresoluble no dejó rastro (ni application ni bookmark re-marcado).
+    assert _rows(
+        factory,
+        "SELECT 1 FROM profile_vacancy_state "
+        "WHERE profile_id = :p AND vacancy_id = :v AND saved_at IS NOT NULL",
+        p=pid, v=v0,
+    ) == []
+
+
+def test_feed_race_unsaved_bookmark_omitted_not_500(db):
+    """Regresión G1-P3-1: entre las dos queries del GET compuesto (claves →
+    detalle, misma tx READ COMMITTED) otra tx des-marca el bookmark
+    (saved_at=NULL) y commitea. La query de detalle re-filtra ahora
+    saved_at IS NOT NULL: el item DESAPARECE de la página (como el resto de
+    carreras toleradas) en vez de componer created_at=None y reventar
+    ApplicationDTO → 500 al cliente."""
+    from jobhunt_core import applications as appsvc
+    from jobhunt_core.api import schemas
+
+    factory, created = db
+    _token, _tenant, pid, vacs = _seed(factory, created, n=1)
+    v0, _u0 = vacs[0]
+
+    async def go():
+        async with factory() as s2:  # bookmark PURO (sin application)
+            await matching.set_saved(s2, pid, v0, True)
+            await s2.commit()
+        async with factory() as s1:
+            keys, _more = await appsvc._feed_keys(s1, pid, 10, None)
+            assert [r.kind for r in keys] == ["bookmark"]
+            # Interleaving determinista: otra tx des-marca y COMMITEA entre
+            # las claves y el detalle.
+            async with factory() as s2:
+                await matching.set_saved(s2, pid, v0, False)
+                await s2.commit()
+            app_rows, bm_rows = await appsvc._feed_rows(s1, pid, keys)
+            assert bm_rows == {}  # el detalle re-filtra: item despresentado
+            # La composición de la página (el camino del endpoint) omite el
+            # item y todos los DTO restantes son construibles — sin 500.
+            corpus = await appsvc.corpus_fields(s1, [v0])
+            items = [
+                appsvc.compose_bookmark(bm_rows[r.item_id], corpus.get(r.item_id, {}))
+                for r in keys
+                if r.kind == "bookmark" and r.item_id in bm_rows
+            ]
+            dtos = [schemas.ApplicationDTO(**i) for i in items]
+            assert dtos == []
+
+    asyncio.run(go())
+
+
 # ------------------------------------------------- ownership y scopes (Decisión 7)
 
 

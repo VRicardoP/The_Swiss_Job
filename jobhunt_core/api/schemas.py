@@ -211,11 +211,25 @@ class BookmarksPutDTO(BaseModel):
     bookmarks: list[BookmarkItemDTO] = Field(..., max_length=500)
 
 
+class BookmarkSkippedDTO(BaseModel):
+    """Item del PUT de bookmarks SALTEADO por irresoluble (G1-P3-2): vacante
+    archivada tras el snapshot del BFF (Decisión 3a). Identidad mínima para
+    que el BFF lo reconcilie; jamás aborta el lote entero."""
+
+    vacancy_id: uuid.UUID | None = None
+    url: str | None = None
+    title: str
+    reason: str
+
+
 class BookmarksSyncResultDTO(BaseModel):
     """Respuesta del sync ADITIVO: SOLO las applications creadas en este PUT
-    (paridad con sync_bookmarks real: crea, no borra ausentes)."""
+    (paridad con sync_bookmarks real: crea, no borra ausentes) + los items
+    salteados por irresolubles (G1-P3-2: un dato rancio del snapshot no
+    convierte el sync en un 404 estructuralmente sin progreso)."""
 
     created: list[ApplicationDTO]
+    skipped: list[BookmarkSkippedDTO] = Field(default_factory=list)
 
 
 class SavedSearchDTO(BaseModel):
