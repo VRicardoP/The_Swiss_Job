@@ -89,7 +89,6 @@ async def _execute_single_search(db, search, settings) -> int:
 
     now = datetime.now(timezone.utc)
     filters = search.filters or {}
-    min_score = max(search.min_score, settings.ALERTS_MIN_SCORE_THRESHOLD)
 
     # Build query from filters
     conditions = [Job.is_active.is_(True), Job.duplicate_of.is_(None)]
@@ -110,9 +109,13 @@ async def _execute_single_search(db, search, settings) -> int:
     if filters.get("language"):
         conditions.append(Job.language == filters["language"])
 
-    # Only jobs seen since last run
+    # Solo ofertas NUEVAS desde el último run (G1/P1-4): `last_seen_at` lo
+    # refresca el upsert cada día para toda oferta aún listada (mecanismo
+    # anti-archivado), así que con él match_count ≈ todo el corpus activo que
+    # casa, CADA run — «Found 800 new jobs» diarios sin ningún alta real.
+    # `first_seen_at` es la fecha de ALTA: eso sí mide novedad.
     if search.last_run_at:
-        conditions.append(Job.last_seen_at >= search.last_run_at)
+        conditions.append(Job.first_seen_at >= search.last_run_at)
 
     stmt = select(func.count()).select_from(Job).where(*conditions)
     match_count = (await db.execute(stmt)).scalar_one()
@@ -121,7 +124,12 @@ async def _execute_single_search(db, search, settings) -> int:
     search.last_run_at = now
     search.total_matches = (search.total_matches or 0) + match_count
 
-    if match_count > 0 and match_count >= min_score:
+    # G1/P1-4: `min_score` era un umbral de PUNTUACIÓN comparado contra un
+    # CONTEO de ofertas: una búsqueda amplia notificaba todo el corpus cada
+    # día y una estrecha (<50 resultados) no notificaba JAMÁS. Esta query es
+    # un filtro sobre el corpus — aquí no se calcula ningún score, así que el
+    # umbral de score no aplica: se notifica cuando hay novedades reales.
+    if match_count > 0:
         # Create notification
         notification = Notification(
             user_id=search.user_id,
