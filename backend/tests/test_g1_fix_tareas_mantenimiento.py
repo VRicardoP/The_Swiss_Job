@@ -315,9 +315,19 @@ class TestP215AlertaProfesor:
 class TestP322DedupNoTragaLaExcepcion:
     def test_fallo_persistente_lanza(self):
         """G1/P3-22: la cadena debe DETENERSE, no seguir con corpus sin dedup."""
-        with patch(
-            "tasks.maintenance_tasks.asyncio.run",
-            side_effect=RuntimeError("BD caída"),
+        # El impl se sustituye por una función SÍNCRONA: si no, la corrutina
+        # creada como argumento de asyncio.run (parcheado para lanzar) quedaba
+        # sin esperar y emitía un RuntimeWarning en un test AJENO (visto en la
+        # suite completa — acoplamiento entre tests que aquí se corta).
+        with (
+            patch(
+                "tasks.maintenance_tasks._dedup_semantic_batch_async",
+                new=lambda batch_size: None,
+            ),
+            patch(
+                "tasks.maintenance_tasks.asyncio.run",
+                side_effect=RuntimeError("BD caída"),
+            ),
         ):
             with pytest.raises(Exception):
                 # .apply() ejecuta en proceso; con max_retries=1 el segundo
