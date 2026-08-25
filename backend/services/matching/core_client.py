@@ -425,9 +425,17 @@ class CoreMatching:
                     continue
                 job_ref, ref_source = chosen
                 local = local_by_hash.get(job_ref)
-                if local is not None and local.feedback in NEGATIVE_FEEDBACK:
-                    # El escritor local manda: "not for me" desaparece aunque
-                    # el core (sin escritor de feedback) aun lo sirva.
+                # El escritor local manda: "not for me" desaparece aunque el
+                # core (sin escritor de feedback) aun lo sirva. G1/P3-27: el
+                # feedback negativo se busca en TODOS los candidatos del item,
+                # no solo en el elegido — un `dismissed` registrado bajo el
+                # MD5 de OTRO listing de la misma vacante tambien la descarta
+                # (edge multi-listing: antes reaparecia).
+                if any(
+                    ref in local_by_hash
+                    and local_by_hash[ref].feedback in NEGATIVE_FEEDBACK
+                    for ref, _src in candidates
+                ):
                     continue
                 # Presentar la fuente ORIGINAL del listing resuelto, no el
                 # prefijo interno sombra.

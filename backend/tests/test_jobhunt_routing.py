@@ -357,7 +357,11 @@ async def test_core_read_falls_back_to_local_when_core_down(
 async def test_core_read_serves_detail_from_core_when_up(
     client, db_session, monkeypatch
 ):
-    """Con el core arriba, core_read sirve el detalle DESDE el core (UUID)."""
+    """Con el core arriba, core_read sirve el detalle DESDE el core.
+
+    G1/P2-17: la identidad presentada es el MD5 legacy accionable cuando hay
+    Job local de respaldo (antes se presentaba el UUID del core y toda
+    escritura desde el feed moria con 422/404)."""
     _patch_core(monkeypatch, _factory_with(fake_core_transport()))
     await seed_local_cases(db_session)
     await routing.set_routing(db_session, CAP, routing.MODE_CORE_READ)
@@ -365,7 +369,7 @@ async def test_core_read_serves_detail_from_core_when_up(
     detail = await client.get(f"/api/v1/jobs/{core_ref}")
     assert detail.status_code == 200
     body = detail.json()
-    assert body["hash"] == core_ref  # identidad del core
+    assert body["hash"] == CASE_LOCAL_REFS["python_zurich"]  # MD5 accionable
     assert body["title"] == CASES["python_zurich"]["title"]
 
 

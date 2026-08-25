@@ -99,6 +99,8 @@ async def resolve_catalog(db: AsyncSession, profile_id=None) -> CatalogPort:
     if mode in (MODE_LOCAL, MODE_SHADOW):
         return LocalCatalog(db)
     if mode == MODE_CORE_READ:
-        return FallbackCatalog(CoreCatalog(), LocalCatalog(db))
+        # La sesion viaja al cliente core para la identidad accionable
+        # (UUID→MD5 legacy por url, G1/P2-17).
+        return FallbackCatalog(CoreCatalog(db=db), LocalCatalog(db))
     # core_primary / rollback_pending: el core manda (matriz §15bis).
-    return CoreCatalog()
+    return CoreCatalog(db=db)

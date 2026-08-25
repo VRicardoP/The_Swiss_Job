@@ -68,8 +68,11 @@ from typing import Callable
 
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
+from models.job import Job
 from schemas.job import JobBrief, JobResponse, JobSearchResponse
 
 from .port import (
@@ -305,10 +308,47 @@ def _cache_page(cache_key: tuple, resp: httpx.Response, body: dict) -> None:
 class CoreCatalog:
     """Cliente /v1 del core detras del puerto CatalogPort."""
 
-    def __init__(self, client_factory: Callable[[], httpx.AsyncClient] | None = None):
+    def __init__(
+        self,
+        client_factory: Callable[[], httpx.AsyncClient] | None = None,
+        db: AsyncSession | None = None,
+    ):
         # Inyectable para tests (MockTransport); en produccion, el factory
         # por defecto con la credencial de consumer de settings.
         self._client_factory = client_factory or default_client_factory
+        # G1/P2-17 — identidad accionable: la sesion local (opcional, la
+        # inyecta resolve_catalog) permite presentar el hash MD5 legacy en
+        # vez del UUID del core cuando existe Job local de respaldo (por su
+        # `url` UNIQUE, la misma resolucion determinista que matching). Sin
+        # ella, TODA accion sobre el feed (POST /applications, POST
+        # /documents/generate: `job_hash` max_length=32 + `Job.hash ==`)
+        # moria con 422/404.
+        self._db = db
+
+    async def _get_local_backed(self, job_ref: str):
+        """Detalle de una identidad MD5 legacy presentada por este cliente.
+
+        G1/P2-17: en core_primary no hay FallbackCatalog — sin esto, el
+        detalle de un item del feed (que ahora viaja con MD5 accionable)
+        moriria en 404. Sin sesion local se conserva el comportamiento
+        previo (None)."""
+        if self._db is None:
+            return None
+        from .local import LocalCatalog
+
+        return await LocalCatalog(self._db).get(job_ref)
+
+    async def _resolve_legacy_hashes(self, urls: list[str]) -> dict[str, str]:
+        """url → hash MD5 del Job local de respaldo (lote). {} sin sesion."""
+        clean = [u for u in urls if u]
+        if self._db is None or not clean:
+            return {}
+        rows = (
+            await self._db.execute(
+                select(Job.url, Job.hash).where(Job.url.in_(clean))
+            )
+        ).all()
+        return {url: job_hash for url, job_hash in rows}
 
     def _guard_credential(self) -> None:
         """Sin credencial no se hace ni una peticion (mismo trato que caida)."""
@@ -322,13 +362,17 @@ class CoreCatalog:
         try:
             vacancy_id = uuid.UUID(job_ref)
         except ValueError:
-            return None  # ni siquiera parsea como UUID: no existe en el core
+            # Ni siquiera parsea como UUID: no existe en el core. Con sesion
+            # local puede ser un MD5 presentado por este mismo cliente (P2-17).
+            return await self._get_local_backed(job_ref)
         if str(vacancy_id) != job_ref.lower():
             # Un MD5 legacy (32 hex) parsea como UUID sin guiones: solo la
             # forma canonica con guiones es identidad del core. Cortocircuito
             # sin red (evita el GET inutil por vista de detalle y colgarse
             # CORE_HTTP_TIMEOUT_SECONDS con el core caido en core_read).
-            return None
+            # G1/P2-17: el feed de ESTE cliente presenta MD5 para los items
+            # con respaldo local — su detalle se sirve del Job local.
+            return await self._get_local_backed(job_ref)
         self._guard_credential()
         try:
             async with self._client_factory() as client:
@@ -343,7 +387,7 @@ class CoreCatalog:
                 f"core /v1 devolvio {resp.status_code} para {vacancy_id}"
             )
         try:
-            return vacancy_to_job_response(resp.json())
+            job = vacancy_to_job_response(resp.json())
         except _PAYLOAD_ERRORS as exc:
             # 200 con payload invalido/incompatible = tan inutilizable como
             # una caida => fallback real en core_read (P2 rev. externa).
@@ -351,6 +395,13 @@ class CoreCatalog:
                 f"payload invalido del core para {vacancy_id}: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
+        # G1/P2-17: con Job local de respaldo (misma url UNIQUE) se presenta
+        # el hash MD5 legacy — la identidad con la que las ESCRITURAS
+        # (candidaturas/documentos) pueden actuar.
+        by_url = await self._resolve_legacy_hashes([job.url])
+        if job.url in by_url:
+            job.hash = by_url[job.url]
+        return job
 
     async def search(self, params: CatalogSearchParams) -> JobSearchResponse:
         reason = unsupported_search_reason(params)
@@ -367,6 +418,16 @@ class CoreCatalog:
                 f"payload invalido del feed de catalogo del core: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
+        # G1/P2-17: identidad accionable en lote — cada item con Job local de
+        # respaldo (url UNIQUE) se presenta con su MD5 legacy; sin respaldo
+        # conserva el UUID (solo lectura, como los items core-nativos del
+        # matching). Sin esto, POST /applications y /documents/generate
+        # partiendo del buscador morian con 422 (36 chars > max_length=32)
+        # o, aun pasando, con 404 (Job.hash == job_hash).
+        by_url = await self._resolve_legacy_hashes([b.url for b in briefs])
+        for brief in briefs:
+            if brief.url in by_url:
+                brief.hash = by_url[brief.url]
         total = len(briefs)
         return JobSearchResponse(
             data=briefs[params.offset : params.offset + params.limit],
