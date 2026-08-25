@@ -892,3 +892,183 @@ def test_prefijo_eks_recupera_el_dup_sin_bajar_umbral(db):
     assert r["candidatos_lexicos"] == 1
     pares = _pairs(factory, created)
     assert len(pares) == 1 and float(pares[0].similarity) >= 0.99
+
+
+# --- Auditoría de OPTIMIZACIÓN 2026-08-25 (OPT-ALTA-1 y OPT-ALTA-2) -------
+
+# Fragmento EXACTO de la CTE firma reescrita (GROUP BY). Si alguien vuelve a
+# tocar la CTE, el `assert in` de abajo muere y obliga a re-verificar la
+# equivalencia contra la forma correlada de referencia.
+_FIRMA_GROUP_BY = (
+    "), firma AS ("
+    "  SELECT c.id, c.source_id, c.title_n, c.loc, c.th, c.created_at, g.f "
+    "  FROM corpus c "
+    "  JOIN (SELECT id, string_agg(DISTINCT tok, ' ' ORDER BY tok) AS f "
+    "        FROM tok GROUP BY id) g ON g.id = c.id"
+)
+
+# La forma ORIGINAL (subconsulta correlada O(n²), 64 de los 67 s del beat a
+# 24k) conservada aquí como ORÁCULO de equivalencia semántica.
+_FIRMA_CORRELADA = (
+    "), firma AS ("
+    "  SELECT c.id, c.source_id, c.title_n, c.loc, c.th, c.created_at, "
+    "         (SELECT string_agg(x.tok, ' ' ORDER BY x.tok) "
+    "          FROM (SELECT DISTINCT t2.tok FROM tok t2 "
+    "                WHERE t2.id = c.id) x) AS f "
+    "  FROM corpus c "
+    "  WHERE EXISTS (SELECT 1 FROM tok WHERE tok.id = c.id)"
+)
+
+
+def test_opt1_firma_group_by_equivale_a_la_correlada(db):
+    """Mordida OPT-ALTA-1 (auditoría de optimización 2026-08-25): la CTE
+    firma por GROUP BY debe producir EXACTAMENTE el mismo conjunto de
+    candidatos que la subconsulta correlada original (24,6× más lenta).
+    Fixture con las tres aristas: (a) par detectable SOLO por firma (token
+    'stadtverwaltung' repartido en 51 empresas distintas > maxfreq=50 ⇒ la
+    vía token queda capada), (b) empresas de solo stopwords/tokens cortos
+    ('AG & Co' ⇒ 0 tokens ⇒ fuera de firma — la arista JOIN⇔EXISTS), y
+    (c) fillers sin colisión de firma ni de trgm."""
+    from jobhunt_core.dedup import _lex_sql
+
+    factory, created = db
+    sufijos = [f"{a}{b}{c}" for a in "ab" for b in "abcde" for c in "abcde"]
+    assert len(sufijos) == 50
+    _setup(
+        factory, created,
+        [
+            [("sachbearbeiter steuern", "Basel", "Stadtverwaltung")]
+            + [(f"beruf {s}", "Basel", f"Stadtverwaltung {s}") for s in sufijos],
+            [("sachbearbeiter steuern", "Basel", "Stadtverwaltung")],
+            [("reinigungskraft", "Basel", "AG & Co")],
+            [("reinigungskraft", "Basel", "AG & Co")],
+        ],
+    )
+
+    sql_nueva = _lex_sql(window=False)
+    # Muerde: si la reescritura OPT-1 desaparece o muta, esto falla primero.
+    assert _FIRMA_GROUP_BY in sql_nueva
+    sql_vieja = sql_nueva.replace(_FIRMA_GROUP_BY, _FIRMA_CORRELADA)
+    assert sql_vieja != sql_nueva
+
+    params = {
+        "trgm": float(settings.CORE_DEDUP_LEX_TRGM_MIN),
+        "trgm_intra": float(settings.CORE_DEDUP_LEX_TRGM_INTRA_MIN),
+        "maxfreq": int(settings.CORE_DEDUP_LEX_TOKEN_MAX_FREQ),
+    }
+
+    async def run(sql):
+        # Inserta, lee el conjunto y ROLLBACK: ambas formas parten de la
+        # misma tabla vacía y son comparables byte a byte.
+        async with factory() as s:
+            await s.execute(sa.text(sql), params)
+            rows = (
+                await s.execute(
+                    sa.text(
+                        "SELECT d.vacancy_a, d.vacancy_b, d.similarity "
+                        "FROM dedup_candidates d "
+                        "WHERE d.vacancy_a IN ("
+                        " SELECT i.vacancy_id FROM source_listing_incarnations i"
+                        " JOIN source_listings l ON l.id = i.source_listing_id"
+                        " WHERE l.source_id = ANY(:srcs))"
+                    ),
+                    {"srcs": created["sources"]},
+                )
+            ).all()
+            await s.rollback()
+            return sorted((str(r[0]), str(r[1]), str(r[2])) for r in rows)
+
+    set_nueva = asyncio.run(run(sql_nueva))
+    set_vieja = asyncio.run(run(sql_vieja))
+    # Byte-idénticos, y NO vacíos: exactamente el par que SOLO firma ve
+    # (el token está capado y las empresas sin tokens quedan fuera).
+    assert set_nueva == set_vieja
+    assert len(set_nueva) == 1
+
+
+def test_opt2_conteo_omitido_con_k_vecinos_llenos(db):
+    """Mordida OPT-ALTA-2 (a): si el kNN llenó su k, _KNN_COUNT_SQL NO debe
+    ejecutarse (por el LIMIT :k del conteo, objetivo <= k ⇒ el fallback no
+    puede dispararse). Se sabotea el SQL del conteo con una tabla
+    inexistente: si el scan lo ejecutara (comportamiento anterior), el test
+    muere con ProgrammingError."""
+    import jobhunt_core.dedup as dedup_mod
+
+    factory, created = db
+    _setup(
+        factory, created,
+        [
+            [("python lead", "Basel", "Empresa Uno AG")],
+            [(f"python dev {i}", "Basel", "Empresa Dos AG") for i in range(5)],
+        ],
+    )
+
+    async def go():
+        async with factory() as s:
+            # La fuente 1 sale de la ventana: solo 'python lead' se escanea,
+            # y sus 5 vecinos cross-source llenan k=5 exacto.
+            await s.execute(sa.text(
+                "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
+                "WHERE vacancy_id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
+                " JOIN source_listings l ON l.id = i.source_listing_id "
+                " WHERE l.source_id = :src)"), {"src": created["sources"][1]})
+            await s.commit()
+            r = await scan_semantic_candidates(s, window_hours=1)
+            await s.commit()
+            return r
+
+    original = dedup_mod._KNN_COUNT_SQL
+    dedup_mod._KNN_COUNT_SQL = "SELECT no FROM tabla_inexistente_opt2"
+    try:
+        r = asyncio.run(go())
+    finally:
+        dedup_mod._KNN_COUNT_SQL = original
+    assert r["status"] == "ok"
+    assert r["escaneadas"] == 1
+    assert r["candidatos_nuevos"] == 5  # los 5 vecinos a sim 1.0
+
+
+def test_opt2_conteo_se_ejecuta_con_underfill(db):
+    """Mordida OPT-ALTA-2 (b): con MENOS de k vecinos el conteo SÍ se
+    ejecuta (el sabotaje revienta), y con el SQL real el camino completo
+    sigue respondiendo — el fallback P2-3 queda intacto justo en las filas
+    donde hoy puede dispararse."""
+    import jobhunt_core.dedup as dedup_mod
+
+    factory, created = db
+    _setup(
+        factory, created,
+        [
+            [("java lead", "Basel", "Firma Tres AG")],
+            [(f"java dev {i}", "Basel", "Firma Cuatro AG") for i in range(2)],
+        ],
+    )
+
+    async def envejecer():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
+                "WHERE vacancy_id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
+                " JOIN source_listings l ON l.id = i.source_listing_id "
+                " WHERE l.source_id = :src)"), {"src": created["sources"][1]})
+            await s.commit()
+
+    async def scan1h():
+        async with factory() as s:
+            r = await scan_semantic_candidates(s, window_hours=1)
+            await s.commit()
+            return r
+
+    asyncio.run(envejecer())
+    # 2 elegibles < k=5 ⇒ el conteo DEBE ejecutarse: el sabotaje muerde.
+    original = dedup_mod._KNN_COUNT_SQL
+    dedup_mod._KNN_COUNT_SQL = "SELECT no FROM tabla_inexistente_opt2"
+    try:
+        with pytest.raises(sa.exc.DBAPIError):
+            asyncio.run(scan1h())
+    finally:
+        dedup_mod._KNN_COUNT_SQL = original
+    # Y con el SQL real, el camino completo responde: 2 pares a sim 1.0.
+    r = asyncio.run(scan1h())
+    assert r["status"] == "ok"
+    assert r["candidatos_nuevos"] == 2

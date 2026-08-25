@@ -303,13 +303,17 @@ def _lex_sql(window: bool) -> str:
         "  FROM corpus c, LATERAL unnest(regexp_split_to_array("
         "       c.comp, '[^a-zäöüéèß]+')) AS t(tok) "
         f"  WHERE length(t.tok) >= 3 AND t.tok NOT IN ({_LEX_STOP})"
+        # OPT-ALTA-1 (auditoría de optimización 2026-08-25): firma por UNA
+        # agregación GROUP BY, no por subconsulta correlada que escaneaba la
+        # CTE tok ENTERA por fila del corpus (O(n²): 64 de los 67 s del beat
+        # diario a 24k). El JOIN equivale al EXISTS (grupo existe ⇔ ≥1 token)
+        # y string_agg(DISTINCT ... ORDER BY) produce la misma cadena —
+        # equivalencia verificada byte-idéntica (md5 del conjunto insertado).
         "), firma AS ("
-        "  SELECT c.id, c.source_id, c.title_n, c.loc, c.th, c.created_at, "
-        "         (SELECT string_agg(x.tok, ' ' ORDER BY x.tok) "
-        "          FROM (SELECT DISTINCT t2.tok FROM tok t2 "
-        "                WHERE t2.id = c.id) x) AS f "
+        "  SELECT c.id, c.source_id, c.title_n, c.loc, c.th, c.created_at, g.f "
         "  FROM corpus c "
-        "  WHERE EXISTS (SELECT 1 FROM tok WHERE tok.id = c.id)"
+        "  JOIN (SELECT id, string_agg(DISTINCT tok, ' ' ORDER BY tok) AS f "
+        "        FROM tok GROUP BY id) g ON g.id = c.id"
         "), frec AS ("
         "  SELECT tok FROM tok GROUP BY tok "
         "  HAVING count(DISTINCT comp) <= :maxfreq"
@@ -486,21 +490,35 @@ async def scan_semantic_candidates(
         vecinos = (
             await session.execute(sa.text(_KNN_SQL), knn_params)
         ).all()
-        # Objetivo = elegibles REALES bajo el MISMO predicado (incl.
-        # ubicación — P2-3 de la revisión: contar sin el guard disparaba el
-        # fallback exacto cuando 0 era el resultado completo correcto).
-        objetivo = (
-            await session.execute(sa.text(_KNN_COUNT_SQL), knn_params)
-        ).scalar_one()
-        if len(vecinos) < objetivo:
-            # Inanición REAL del scan acotado: el exacto responde siempre.
-            await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
-            await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
-            vecinos = (
-                await session.execute(sa.text(_KNN_SQL), knn_params)
-            ).all()
-            await session.execute(sa.text("SET LOCAL enable_indexscan = on"))
-            await session.execute(sa.text("SET LOCAL enable_bitmapscan = on"))
+        # OPT-ALTA-2 (auditoría de optimización 2026-08-25): si el kNN llenó
+        # su k, el conteo es matemáticamente redundante — por el LIMIT :k del
+        # propio conteo, objetivo <= k, luego len(vecinos) == k implica
+        # len(vecinos) >= objetivo y el fallback no puede dispararse. Solo
+        # con < k vecinos el conteo aporta información (−30% del bucle ANN).
+        if len(vecinos) < k:
+            # Objetivo = elegibles REALES bajo el MISMO predicado (incl.
+            # ubicación — P2-3 de la revisión: contar sin el guard disparaba
+            # el fallback exacto cuando 0 era el resultado completo correcto).
+            objetivo = (
+                await session.execute(sa.text(_KNN_COUNT_SQL), knn_params)
+            ).scalar_one()
+            if len(vecinos) < objetivo:
+                # Inanición REAL del scan acotado: el exacto responde siempre.
+                await session.execute(
+                    sa.text("SET LOCAL enable_indexscan = off")
+                )
+                await session.execute(
+                    sa.text("SET LOCAL enable_bitmapscan = off")
+                )
+                vecinos = (
+                    await session.execute(sa.text(_KNN_SQL), knn_params)
+                ).all()
+                await session.execute(
+                    sa.text("SET LOCAL enable_indexscan = on")
+                )
+                await session.execute(
+                    sa.text("SET LOCAL enable_bitmapscan = on")
+                )
         for n in vecinos:
             if float(n.sim) < sim_min:
                 break  # ordenados por distancia: los siguientes son peores
