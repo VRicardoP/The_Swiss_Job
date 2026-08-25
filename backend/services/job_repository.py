@@ -201,7 +201,10 @@ class JobRepository:
         # entraría al ON CONFLICT y pisaría el valor bueno almacenado.
         if "apply_url" in values:
             aurl = values["apply_url"]
-            if not isinstance(aurl, str) or not aurl.strip():
+            if isinstance(aurl, str):
+                aurl = aurl.strip()  # C4: sin padding almacenado ni medido
+                values["apply_url"] = aurl
+            if not isinstance(aurl, str) or not aurl:
                 values.pop("apply_url")
             elif "\x00" in aurl or len(aurl) > _APPLY_URL_MAX_LEN:
                 logger.info(

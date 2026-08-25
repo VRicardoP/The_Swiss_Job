@@ -792,7 +792,7 @@ async def _build_source_batch(
 
 async def _stored_apply_urls(
     session, source_id, pks: list[str]
-) -> dict[str, str]:
+) -> dict[str, str | None]:
     """apply_url vigente en incarnations para pks legacy (C2-P2-1)."""
     # C3-P2-1: la ÚLTIMA encarnación por seq, activa O CERRADA — el ciclo
     # cierre→reactivación perdía el valor si solo se miraban activas
@@ -885,8 +885,12 @@ def _fill_from_previous(payload, col, prev_raw, prev_change) -> None:
 async def _resolve_pending_urls(
     session, source_id, url_pending: list[tuple[str, dict]]
 ) -> list[tuple[str, dict, str | None]]:
-    """Última vía para una URL omitida y sin previo: la de la encarnación
-    activa del slot. → [(pk, payload, url | None)]."""
+    """Última vía para una URL omitida y sin previo: la de la ÚLTIMA
+    encarnación del slot — activa O CERRADA (auditoría C4-P2-1: mirar solo
+    activas perdía la REACTIVACIÓN entera cuando el U reactivador venía con
+    url TOAST-omitida tras un cierre: oferta activa en legacy, cerrada en
+    core para siempre; mismo invariante que _latest_slot_raws y
+    _stored_apply_urls). → [(pk, payload, url | None)]."""
     if not url_pending:
         return []
     urls = {
@@ -894,10 +898,13 @@ async def _resolve_pending_urls(
         for r in (
             await session.execute(
                 sa.text(
-                    "SELECT l.external_id AS ext, i.url FROM source_listings l "
+                    "SELECT DISTINCT ON (l.external_id) "
+                    "       l.external_id AS ext, i.url "
+                    "FROM source_listings l "
                     "JOIN source_listing_incarnations i "
-                    "  ON i.source_listing_id = l.id AND i.ended_at IS NULL "
-                    "WHERE l.source_id = :src AND l.external_id = ANY(:exts)"
+                    "  ON i.source_listing_id = l.id "
+                    "WHERE l.source_id = :src AND l.external_id = ANY(:exts) "
+                    "ORDER BY l.external_id, i.seq DESC"
                 ),
                 {"src": source_id, "exts": sorted(pk for pk, _p in url_pending)},
             )

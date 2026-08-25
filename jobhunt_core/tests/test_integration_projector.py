@@ -2136,3 +2136,30 @@ def test_c3_reactivacion_conserva_apply_url_sin_fantasmas(db):
         "WHERE s.name = :n AND i.ended_at IS NULL", n=f"legacy:{src}",
     )
     assert [f.apply_url for f in filas] == ["https://ats.x/11"]
+
+
+def test_c4_reactivacion_con_url_omitida_no_pierde_la_oferta(db):
+    """Auditoría C4 P2-1: tras cierre, un U reactivador con url
+    TOAST-omitida perdía la REACTIVACIÓN entera (la cuarta vía solo miraba
+    encarnaciones activas — no había ninguna). Ahora lee la última
+    encarnación (activa o cerrada) y la oferta revive."""
+    factory = db
+    src = f"c4a-{uuid.uuid4().hex[:6]}"
+    _seed(factory, [("jobs", "I", "c4a", _job("c4a", src))])
+    _project()
+    _seed(factory, [("jobs", "U", "c4a",
+                     _job("c4a", src, active=False, chash="ch-c4a-2"))])
+    _project()
+    pay = _job("c4a", src, chash="ch-c4a-3")
+    pay.pop("url", None)
+    pay["_omitted"] = ["url"]
+    _seed(factory, [("jobs", "U", "c4a", pay)])
+    _project()
+    filas = _rows(
+        factory,
+        "SELECT count(*) AS n FROM source_listing_incarnations i "
+        "JOIN source_listings l ON l.id = i.source_listing_id "
+        "JOIN sources s ON s.id = l.source_id "
+        "WHERE s.name = :n AND i.ended_at IS NULL", n=f"legacy:{src}",
+    )
+    assert filas[0].n == 1  # la reactivación EXISTE
