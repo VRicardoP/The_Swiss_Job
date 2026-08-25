@@ -2232,3 +2232,24 @@ def test_c6_contrato_2048_y_cuarentena_por_bytes(db):
     # la larga legal ENTRA; la multibyte tóxica queda en cuarentena sin
     # arrastrar al resto del lote
     assert [f.external_id for f in filas] == ["c6ok"]
+
+
+def test_c7_apply_url_multibyte_legal_persiste(db):
+    """Auditoría C7 P2-1: el byte-check de apply_url (sin btree que
+    proteger) cuarentenaba la oferta ENTERA por un campo decorativo y
+    rompía el espejo de perdida (falso >0 en el gate). apply_url multibyte
+    legal en caracteres PERSISTE con su oferta."""
+    factory = db
+    src = f"c7a-{uuid.uuid4().hex[:6]}"
+    aurl_cjk = "https://ats.x/" + "\u4e2d" * 900  # 914 chars, ~2700 bytes
+    _seed(factory, [("jobs", "I", "c7a",
+                     _job("c7a", src, apply_url=aurl_cjk))])
+    _project()
+    filas = _rows(
+        factory,
+        "SELECT i.apply_url FROM source_listing_incarnations i "
+        "JOIN source_listings l ON l.id = i.source_listing_id "
+        "JOIN sources s ON s.id = l.source_id "
+        "WHERE s.name = :n AND i.ended_at IS NULL", n=f"legacy:{src}",
+    )
+    assert len(filas) == 1 and filas[0].apply_url == aurl_cjk

@@ -92,12 +92,19 @@ def _limit_violations(listing: RawListing, url_norm: str) -> list[str]:
         reasons.append(f"external_id > {MAX_EXTERNAL_ID_LEN}")
     # C6-P2-2: BYTES, no caracteres — el btree mide bytes; una url multibyte
     # "legal" en chars reventaba uq_listing_source_url y mataba el LOTE
-    # entero (poison pill reaparecido en cada cosecha).
+    # entero (poison pill reaparecido en cada cosecha). RESIDUAL ACEPTADO
+    # (C7-P3-2): la banda ~2049-2600 bytes se sobre-cuarentena aunque el
+    # btree la albergaría — visible en no_ingeribles, acotada y segura.
     if (len(listing.url.encode()) > MAX_URL_LEN
             or len(url_norm.encode()) > MAX_URL_LEN):
         reasons.append(f"url > {MAX_URL_LEN} bytes")
-    if listing.apply_url and len(listing.apply_url.encode()) > MAX_URL_LEN:
-        reasons.append(f"apply_url > {MAX_URL_LEN} bytes")
+    # apply_url en CARACTERES (C7-P2-1): NO tiene btree que proteger — el
+    # byte-check rompía los espejos del proyector (que degradan a 2048
+    # chars) y cuarentenaba la oferta entera por un campo decorativo,
+    # además de inducir un falso perdida>0 permanente en el gate (la
+    # métrica solo mira url). VARCHAR(2048) mide caracteres: cabe siempre.
+    if listing.apply_url and len(listing.apply_url) > MAX_URL_LEN:
+        reasons.append(f"apply_url > {MAX_URL_LEN}")
     if (
         "\x00" in listing.external_id
         or "\x00" in listing.url
