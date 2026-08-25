@@ -37,9 +37,10 @@ logger = logging.getLogger(__name__)
 class FallbackCatalog:
     """Canary de lecturas (core_read): intenta el core y cae al local.
 
-    Tambien cae al local cuando el core no soporta la operacion (busqueda,
-    stats...) o no conoce la referencia (identidades MD5 legacy conviven con
-    UUIDs del core durante el canary).
+    Tambien cae al local cuando el core no soporta la operacion (stats,
+    fuentes, o una busqueda con filtros fuera del contrato /v1) o no conoce
+    la referencia (identidades MD5 legacy conviven con UUIDs del core
+    durante el canary).
     """
 
     def __init__(self, primary: CatalogPort, fallback: CatalogPort):
@@ -82,7 +83,8 @@ class FallbackCatalog:
     @staticmethod
     def _warn(op: str, exc: Exception) -> None:
         # 2ª rev. A.SEAM: el fallback por Unsupported es ESPERADO por contrato
-        # (el /v1 aún no expone search/stats/sources) y ocurre a ritmo de
+        # (el /v1 no expone stats/sources ni los filtros no expresables
+        # de la busqueda) y ocurre a ritmo de
         # tráfico — a WARNING ahogaba la ÚNICA señal accionable del canary
         # (CoreUnavailableError = core caído). Severidades separadas.
         if isinstance(exc, CatalogUnsupportedError):

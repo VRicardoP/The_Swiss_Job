@@ -376,6 +376,10 @@ async def test_core_primary_with_core_down_returns_503(client, db_session, monke
     await routing.set_routing(db_session, CAP, routing.MODE_CORE_PRIMARY)
     detail = await client.get(f"/api/v1/jobs/{CASE_CORE_REFS['python_zurich']}")
     assert detail.status_code == 503
-    # La busqueda no existe en el /v1 del core: cota del contrato => 501.
+    # La busqueda EXPRESABLE viaja al core: caido => 503 (sin fallback).
     resp = await client.get("/api/v1/jobs/search")
+    assert resp.status_code == 503
+    # Filtros/orden fuera del contrato /v1: cota => 501 SIN peticion de red
+    # (el factory caido no llega a usarse: la cota corta antes).
+    resp = await client.get("/api/v1/jobs/search", params={"sort": "salary"})
     assert resp.status_code == 501
