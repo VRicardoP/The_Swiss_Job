@@ -97,6 +97,73 @@ def decode_vacancy_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
         ) from exc
 
 
+def _catalog_filter_sql(
+    q: str | None,
+    source: str | None,
+    remote: bool | None,
+    country: str | None,
+    city: str | None,
+) -> tuple[str, list[str], dict]:
+    """(join_sql, condiciones WHERE, params) de los filtros del feed de
+    catálogo (cierre de cota C-API-R: el BFF dejaba de servir — 501 en
+    core_primary — cualquier búsqueda con filtro estructurado).
+
+    Semántica HONESTA — solo lo que el content canónico y las columnas
+    existentes modelan de verdad (nunca una respuesta silenciosamente mal):
+    - `q`: substring ci sobre title/company (sin cambios).
+    - `source`: CSV de nombres de fuente, igualdad ci contra la fuente del
+      PRIMARY listing (la misma que expone el DTO como `source`); una vacante
+      sin primary no casa ningún filtro de fuente.
+    - `remote`: igualdad contra el booleano canónico; remote NULL (desconocido)
+      no casa ni true ni false — un filtro estructurado no adivina.
+    - `country`/`city`: substring ci sobre `location` (texto libre). El content
+      NO modela country estructurado; el motor local del BFF ya cae a esta
+      misma semántica de substring sobre location, así que es equivalente.
+    COTA que PERMANECE (documentada): salary_min/max y employment_type — el
+    content solo tiene `salary` texto libre y no modela employment_type;
+    filtrar números contra texto libre sería inventarse el resultado.
+
+    Misma disciplina de coste que `q`: sin índice propio — filtro por fila
+    sobre el index scan ordenado del keyset (O(activas), corpus pequeño)."""
+    join = ""
+    where: list[str] = []
+    params: dict = {}
+    if q is not None and q.strip():
+        where.append(
+            "(position(lower(:q) in lower(coalesce(o.content->>'title', ''))) > 0 "
+            "OR position(lower(:q) in lower(coalesce(o.content->>'company', ''))) > 0)"
+        )
+        params["q"] = q.strip()
+    names = [s.strip().lower() for s in (source or "").split(",") if s.strip()]
+    if names:
+        join = (
+            "JOIN source_listing_incarnations pi ON pi.id = v.primary_incarnation_id "
+            "JOIN source_listings psl ON psl.id = pi.source_listing_id "
+            "JOIN sources ps ON ps.id = psl.source_id "
+        )
+        where.append("lower(ps.name) = ANY(:sources)")
+        params["sources"] = names
+    if remote is not None:
+        # ->> da 'true'/'false' o NULL; el cast a boolean respeta la igualdad
+        # estricta (NULL jamás casa — tres estados honestos, no dos).
+        where.append("(o.content->>'remote')::boolean = :remote")
+        params["remote"] = remote
+    _location_conditions(where, params, country=country, city=city)
+    return join, where, params
+
+
+def _location_conditions(where: list[str], params: dict, **values: str | None) -> None:
+    """Condiciones substring ci sobre `location` (country y city comparten
+    campo: el content no modela country estructurado). Muta where/params."""
+    for pname, value in values.items():
+        if value is not None and value.strip():
+            where.append(
+                f"position(lower(:{pname}) "
+                "in lower(coalesce(o.content->>'location', ''))) > 0"
+            )
+            params[pname] = value.strip()
+
+
 def _etag_of(payload: dict) -> str:
     canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
     return '"' + hashlib.sha256(canonical.encode()).hexdigest()[:32] + '"'
@@ -242,6 +309,10 @@ async def list_vacancies(
     limit: int = Query(20, ge=1, le=MAX_PAGE_LIMIT),
     cursor: str | None = Query(None),
     q: str | None = Query(None, max_length=200),
+    source: str | None = Query(None, max_length=200),
+    remote: bool | None = Query(None),
+    country: str | None = Query(None, max_length=200),
+    city: str | None = Query(None, max_length=200),
 ):
     """Feed/búsqueda de catálogo (C-API-R): corpus GLOBAL (cualquier credencial
     con vacancies:read; sin ownership) — solo vacantes ACTIVAS y presentables
@@ -261,31 +332,34 @@ async def list_vacancies(
     que una `q` poco selectiva recorre el índice PARCIAL de activas completo
     hasta llenar la página (O(activas), NO seq scan del corpus; sigue siendo
     index scan ordenado). Un GIN trigram es trabajo futuro solo si el volumen
-    lo exige — hoy el corpus es pequeño y `q` es el filtro mínimo, no ranking."""
+    lo exige — hoy el corpus es pequeño y `q` es el filtro mínimo, no ranking.
+
+    FILTROS ESTRUCTURADOS (cierre de cota C-API-R — semántica y cotas
+    restantes en `_catalog_filter_sql`): `source` (CSV ci, primary listing),
+    `remote` (igualdad, NULL no casa), `country`/`city` (substring ci sobre
+    location). El keyset (created_at, id) es independiente de los filtros: el
+    WHERE solo estrecha filas y el orden no cambia, así que el cursor sigue
+    siendo estable bajo el MISMO juego de filtros página a página."""
     cur = decode_vacancy_cursor(cursor) if cursor else None
-    where = ["v.archived_at IS NULL", "v.merged_into IS NULL"]
+    join_sql, where, params = _catalog_filter_sql(q, source, remote, country, city)
+    where = ["v.archived_at IS NULL", "v.merged_into IS NULL"] + where
     # Se pide UNA fila de más (limit+1) SOLO para saber si hay página siguiente
     # (P2 rev. externa C-API-R): emitir cursor cuando len(rows)==limit mentía en
     # el múltiplo exacto (justo `limit` filas ⇒ cursor pero la página siguiente
     # está vacía). La fila extra se descarta de `items`; solo decide has_more.
-    params: dict = {"lim": limit + 1}
+    params["lim"] = limit + 1
     if cur is not None:
         where.append(
             "(v.created_at < :cts OR (v.created_at = :cts AND v.id < :cid))"
         )
         params["cts"], params["cid"] = cur
-    if q is not None and q.strip():
-        where.append(
-            "(position(lower(:q) in lower(coalesce(o.content->>'title', ''))) > 0 "
-            "OR position(lower(:q) in lower(coalesce(o.content->>'company', ''))) > 0)"
-        )
-        params["q"] = q.strip()
     rows = (
         await session.execute(
             sa.text(
                 "SELECT v.id, v.created_at FROM vacancies v "
                 "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
-                "WHERE " + " AND ".join(where) + " "
+                + join_sql
+                + "WHERE " + " AND ".join(where) + " "
                 "ORDER BY v.created_at DESC, v.id DESC LIMIT :lim"
             ),
             params,

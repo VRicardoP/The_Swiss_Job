@@ -8,6 +8,7 @@ Ejecutar vía core-migrate.
 
 import asyncio
 import datetime
+import json
 import os
 import uuid
 
@@ -15,7 +16,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from jobhunt_core import credentials, embeddings, matching, profiles
+from jobhunt_core import credentials, matching, profiles
 from jobhunt_core.config import settings
 from jobhunt_core.tests import dbcleanup
 from jobhunt_core.tests import test_integration_matching as tim
@@ -677,6 +678,102 @@ def test_catalog_q_substring_case_insensitive(db):
     assert len(got) == 1 and got[0]["title"] == only
     # Token inexistente ⇒ 0 filas.
     assert _api(factory, base + f"?q={token}zzz", token=auth).json()["items"] == []
+
+
+def _enrich_content(factory, vid, patch: dict):
+    """Parchea el content canónico VIGENTE de una vacante (location/remote)
+    directamente en SQL: los tests de filtros leen el feed, no re-normalizan
+    (content_hash/text_hash quedan intactos a propósito — ADR-02: location y
+    remote no participan del texto embebible)."""
+
+    async def go():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "UPDATE offer_revisions o SET content = o.content || (:patch)::jsonb "
+                    "FROM vacancies v "
+                    "WHERE v.current_offer_revision_id = o.id AND v.id = :vid"
+                ),
+                {"patch": json.dumps(patch), "vid": vid},
+            )
+            await s.commit()
+
+    asyncio.run(go())
+
+
+def test_catalog_filter_source_primary_ci(db):
+    """Filtro `source` (cierre de cota C-API-R): CSV case-insensitive contra la
+    fuente del PRIMARY listing; nombre desconocido ⇒ 0 filas (no error); CSV
+    con blancos ⇒ como no filtrar (mismo trato que `q` en blanco)."""
+    factory, created = db
+    token, _vacs, auth = _seed_catalog(factory, created, n=3)
+    base = f"/v1/vacancies?q={token}"
+
+    assert len(_api(factory, base + "&source=arbeitnow", token=auth).json()["items"]) == 3
+    # Case-insensitive.
+    assert len(_api(factory, base + "&source=ARBEITNOW", token=auth).json()["items"]) == 3
+    # Fuente desconocida ⇒ página vacía honesta.
+    assert _api(factory, base + "&source=jobsch", token=auth).json()["items"] == []
+    # CSV: basta con que UNA fuente del listado case (OR entre nombres).
+    got = _api(factory, base + "&source=jobsch,%20arbeitnow", token=auth).json()["items"]
+    assert len(got) == 3
+    # Solo comas/espacios ⇒ se ignora el filtro.
+    assert len(_api(factory, base + "&source=,%20,", token=auth).json()["items"]) == 3
+
+
+def test_catalog_filter_remote_and_location(db):
+    """`remote` = igualdad del booleano canónico (NULL —desconocido— no casa ni
+    true ni false); `country`/`city` = substring ci sobre `location` (el content
+    no modela country estructurado). Los filtros se componen en AND."""
+    factory, created = db
+    token, vacs, auth = _seed_catalog(factory, created, n=3)
+    v0, v1, v2 = (str(vacs[f"{token}v{i}"]) for i in range(3))
+    _enrich_content(factory, v0, {"location": "Zurich, Switzerland", "remote": True})
+    _enrich_content(factory, v1, {"location": "Geneva, Switzerland", "remote": False})
+    # v2 queda sin location y con remote NULL.
+    base = f"/v1/vacancies?q={token}"
+
+    one = _api(factory, base + "&remote=true", token=auth).json()["items"]
+    assert [i["id"] for i in one] == [v0]
+    one = _api(factory, base + "&remote=false", token=auth).json()["items"]
+    assert [i["id"] for i in one] == [v1]  # v2 (NULL) no casa false
+    got = {i["id"] for i in _api(factory, base + "&country=SWITZERLAND", token=auth).json()["items"]}
+    assert got == {v0, v1}  # substring ci; v2 sin location fuera
+    one = _api(factory, base + "&city=geneva", token=auth).json()["items"]
+    assert [i["id"] for i in one] == [v1]
+    # Composición AND entre filtros.
+    one = _api(factory, base + "&country=switzerland&remote=true", token=auth).json()["items"]
+    assert [i["id"] for i in one] == [v0]
+    # Tipo inválido en remote ⇒ 400 del contrato, no 500.
+    r = _api(factory, base + "&remote=banana", token=auth)
+    assert (r.status_code, r.json()["code"]) == (400, "invalid_request")
+
+
+def test_catalog_filter_keyset_stable(db):
+    """El cursor keyset sigue siendo ESTABLE bajo filtros: paginar filtrado en
+    trozos == la página filtrada completa, sin huecos ni solapes aunque filas
+    NO casantes queden intercaladas en el orden (created_at, id) del keyset."""
+    factory, created = db
+    token, vacs, auth = _seed_catalog(factory, created, n=5)
+    ids = [str(vacs[f"{token}v{i}"]) for i in range(5)]
+    for vid in (ids[0], ids[1], ids[3], ids[4]):  # v2 queda FUERA del filtro
+        _enrich_content(factory, vid, {"location": "Basel, Switzerland"})
+    base = f"/v1/vacancies?q={token}&country=switzerland"
+
+    full = _api(factory, base, token=auth).json()
+    order = [it["id"] for it in full["items"]]
+    assert len(order) == 4 and full["next_cursor"] is None
+
+    collected, cursor = [], None
+    for _ in range(10):  # cota de seguridad contra bucle infinito
+        url = base + "&limit=2" + (f"&cursor={cursor}" if cursor else "")
+        page = _api(factory, url, token=auth).json()
+        collected += [it["id"] for it in page["items"]]
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert collected == order  # mismo orden filtrado, sin solapes
+    assert len(collected) == len(set(collected)) == 4  # sin huecos ni duplicados
 
 
 def test_catalog_cursor_and_limit_errors(db):
