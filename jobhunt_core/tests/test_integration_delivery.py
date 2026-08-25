@@ -465,6 +465,14 @@ def _stats(factory):
     return asyncio.run(go())
 
 
+def _scalar_deliv(factory, sql, **params):
+    async def go():
+        async with factory() as s:
+            return (await s.execute(sa.text(sql), params)).scalar()
+
+    return asyncio.run(go())
+
+
 def test_stats_lag_is_event_age_never_next_retry(db, monkeypatch):
     """Regresión P2-6 (rev. externa parte 2): una entrega FALLIDA con
     `next_attempt_at` en el FUTURO (backoff) debe dar un lag POSITIVO y
@@ -538,6 +546,13 @@ def test_stats_dead_total_counts_dead_letters(db, monkeypatch):
     assert st["dead_total"] == 1
     assert st["by_state"].get("dead") == 1
     assert st["oldest_pending_s"] == 0.0  # dead no es pending/inflight
+    # G1-P2-3 (core0030): la transición real estampa dead_at — sin él, el
+    # gate outbox_dead no puede acotar el conteo a la ventana del ciclo.
+    dead_at = _scalar_deliv(
+        factory,
+        "SELECT dead_at FROM integration_outbox_deliveries WHERE state = 'dead'",
+    )
+    assert dead_at is not None
 
 
 # --------------------------------- transporte sombra REAL (P1-1b, §8 Fase B)

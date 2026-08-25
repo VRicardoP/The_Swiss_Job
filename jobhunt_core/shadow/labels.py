@@ -178,7 +178,7 @@ async def seed_dedup_pairs(
             f"        AND j.duplicate_of <> j.hash "
             f"      ORDER BY a, b LIMIT :lim) pair "
             f"ON CONFLICT (LEAST(job_ref_a, job_ref_b), "
-            f"GREATEST(job_ref_a, job_ref_b)) DO NOTHING"
+            f"GREATEST(job_ref_a, job_ref_b), source) DO NOTHING"
         ),
         {"lim": limit},  # LIMIT NULL = sin límite (semántica Postgres)
     )

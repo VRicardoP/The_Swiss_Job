@@ -85,6 +85,7 @@ from jobhunt_core.database import create_core_engine, task_session_factory
 from jobhunt_core.shadow.capture import (
     DEFAULT_SLOT,
     DEFAULT_TABLES,
+    SLOT_RETAINED_BYTES_SQL,
     ShadowCapture,
     _IDENT_RE,
 )
@@ -276,9 +277,12 @@ async def _run_cycle_locked(
             "" if frozen_at else "; cohorte SIN congelar",
         )
     else:
+        # G1 H-14d: la racha pertenece a la ventana ACTUAL (hasta last_cycle)
+        # — en un replay/backfill `cid` es otro ciclo y el log mezclaba ambos.
         logger.info(
-            "gate: ciclo %s APTO — %d/%d consecutivos",
+            "gate: ciclo %s APTO — racha actual %d/%d (ventana hasta %s)",
             cid, status["consecutive_ok"], status["required"],
+            status["last_cycle"],
         )
 
 
@@ -479,8 +483,10 @@ async def check_slot_health(
     slot_row = (
         await session.execute(
             sa.text(
-                "SELECT active, "
-                "pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)::bigint "
+                # SLOT_RETAINED_BYTES_SQL: la MISMA definición que el
+                # healthcheck de capture (G1-P3-8) — un solo «WAL retenido»
+                # contra el único umbral de 2 GiB.
+                f"SELECT active, {SLOT_RETAINED_BYTES_SQL}::bigint "
                 "  AS retained "
                 "FROM pg_replication_slots WHERE slot_name = :s"
             ),
@@ -572,6 +578,11 @@ def rollback_replay(
     schema: str | None = None,
     confirm: bool = False,
     slot_release_timeout_s: float = 30.0,
+    # G1 H-13: cota de espera del readiness del legacy en el paso 5 — sin
+    # ella, con la sombra YA destruida (fuentes off, staging truncado), un
+    # legacy que no responde colgaba la herramienta indefinidamente. ~2 min
+    # de backoff; el RuntimeError deja el estado descrito en el resumen.
+    ready_max_retries: int = 60,
 ) -> dict:
     """La secuencia del runbook (§6, ensaya el rollback de Fase C) como
     función ejecutable: parar consumidor → DROP del slot → desactivar
@@ -666,7 +677,8 @@ def rollback_replay(
         # bootstrap = CREATE_REPLICATION_SLOT ... EXPORT_SNAPSHOT + backfill
         # consistente + frontera en shadow_capture_state, atómico).
         cap = ShadowCapture(
-            capture_dsn, core_dsn, slot=slot, tables=tables, schema=schema
+            capture_dsn, core_dsn, slot=slot, tables=tables, schema=schema,
+            ready_max_retries=ready_max_retries,  # G1 H-13: jamás sin cota
         )
         try:
             cap.start()

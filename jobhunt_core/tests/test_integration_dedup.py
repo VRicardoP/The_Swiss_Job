@@ -368,7 +368,7 @@ def test_gate_puntua_solo_la_cohorte_holdout(db):
                 "(job_ref_a, job_ref_b, verdict, source) "
                 "VALUES (:a, :b, 'duplicate', :src) "
                 "ON CONFLICT (LEAST(job_ref_a, job_ref_b), "
-                "GREATEST(job_ref_a, job_ref_b)) DO NOTHING"
+                "GREATEST(job_ref_a, job_ref_b), source) DO NOTHING"
             )
             # development: el par DETECTADO (TP si contara)
             await s.execute(ins, {"a": refs[0], "b": refs[1], "src": "curado-test"})

@@ -192,3 +192,16 @@ async def main():
         async with f() as s: print(await render_gate_report(s))
 asyncio.run(main())"
 ```
+
+## 6. Qué acreditan (y qué no) los 7 ciclos — nota de lectura (G1 H-14f)
+
+`dedup_precision`/`dedup_recall` y el término de huecos de `perdida` son
+**fotos del estado actual** al cómputo (06:05), no mediciones acotadas a la
+ventana del ciclo: sobre un corpus **estable**, 7 ciclos verdes consecutivos
+acreditan 7 repeticiones de la MISMA medición, no 7 jornadas independientes.
+La racha demuestra estabilidad del veredicto en el tiempo; la independencia
+entre jornadas la aporta el flujo real de datos (cosecha diaria + CDC), no la
+métrica. Las métricas con ventana real del ciclo son `outbox_dead` (por
+`dead_at`, core0030), `latencia_p95`, `coste` y `reenlace_pct`. Los umbrales
+aplicados a cada ciclo quedan persistidos en su fila `gate_umbrales` (G1 H-8):
+cambiar una constante NO recolorea ciclos ya sellados.

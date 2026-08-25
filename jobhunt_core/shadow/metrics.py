@@ -154,6 +154,11 @@ M_LATENCIA = "latencia_p95"
 M_COSTE = "coste"
 M_REENLACE = "reenlace_pct"
 M_LABELS_READY = "labels_ready"  # precondición del oráculo (P1-2, DoD B-03)
+# Fila-registro de los umbrales VIGENTES al computar el ciclo (G1 H-8): sin
+# ella, evaluate_gates re-evaluaba ciclos SELLADOS con las constantes del
+# momento y un cambio de umbral recoloreaba la historia sin rastro. No es un
+# gate: evaluate_gates la extrae y jamás aparece en el informe.
+M_UMBRALES = "gate_umbrales"
 
 SCOPE_GLOBAL = "global"
 # Scope de las filas INFORMATIVAS por cohorte adicional de dedup (propuesta
@@ -423,6 +428,12 @@ async def compute_cycle(
             merge_details=merge,
         )
         computed[metric] = value
+    # G1 H-8: los umbrales VIGENTES quedan registrados CON el ciclo — un
+    # cambio posterior de las constantes no recolorea este veredicto (la
+    # fila no es un gate: evaluate_gates la extrae, el informe no la lista).
+    await _upsert_metric(
+        session, cid, M_UMBRALES, SCOPE_GLOBAL, 0, _current_thresholds()
+    )
     computed |= await _persist_cohort_info_rows(session, cid)
     summary = {
         "cycle_id": cid.isoformat(),
@@ -627,7 +638,6 @@ async def _falsos_negativos_row(
     present = await _present_in_corpus(session, rel2, mapping)
     feed_vacs = await _feed_vacancies_all(session, prof.id)
     absent = sorted(ref for ref, vid in present.items() if vid not in feed_vacs)
-    value = round(len(absent) / len(present), 6) if present else 0.0
     mode = "estricto_0" if len(rel2) < FN_STRICT_BELOW else "ratio_2pct"
     details = base | {
         "modo": mode,
@@ -636,6 +646,17 @@ async def _falsos_negativos_row(
         "n_ausentes": len(absent),
         "ausentes": absent[:50],  # muestra acotada, no crece sin límite
     }
+    # Denominador 0 (G1-P3-4): 0 juicios rel>=2 PRESENTES en el corpus no
+    # demuestra nada — centinela + no_data (mismo criterio P1-2 que
+    # dedup_precision/recall), jamás un 0.0 que aprueba el gate en vacío.
+    if not present:
+        details |= {
+            "no_data": True,
+            "nota": "sin juicios rel>=2 presentes en corpus: no demostrable "
+                    "(P1-2)",
+        }
+        return M_FALSOS_NEG, scope, NO_DATA_VALUE, details
+    value = round(len(absent) / len(present), 6)
     return M_FALSOS_NEG, scope, value, details
 
 
@@ -739,7 +760,7 @@ async def _global_metric_rows(
     lag_row = await _outbox_lag_row(session, cid)
     if lag_row is not None:
         rows.append(lag_row)
-    rows.append(await _outbox_dead_row(session, cid))
+    rows.append(await _outbox_dead_row(session, cid, start, end))
     rows.append(await _latencia_row(session, start, end))
     rows.append(await _coste_row(session, start, end))
     rows.append(await _reenlace_row(session, start, end))
@@ -1032,50 +1053,72 @@ def _sink_quarantines_url(url: str | None) -> bool:
 async def _perdida_rows(
     session: AsyncSession, legacy_schema: str, moment: datetime
 ) -> list[tuple]:
-    """perdida (§5, [gate] = 0) = #{public.jobs is_active AND duplicate_of
-    IS NULL AND no-cuarentenado} − #{slots legacy:* con encarnación ACTIVA}
-    + #{change_log sin applied_at desde hace > 1h}. La partición vivos /
-    no_ingeribles pasa cada url por la MISMA ruta de cuarentena del sink
-    (_sink_quarantines_url): cuarentenado ⇒ no_ingeribles, JAMÁS el
-    minuendo (nunca pérdida silenciosa ni falso perdida>0). COSTE: una
-    única pasada sobre (hash, url) de los jobs activos no duplicados —
-    dos columnas cortas, ~5k filas en producción, una vez por ciclo."""
+    """perdida (§5, [gate] = 0) = #{HUECOS: public.jobs is_active AND
+    duplicate_of IS NULL AND no-cuarentenado AND con >1h de vida, SIN slot
+    legacy:* con encarnación activa} + #{change_log sin applied_at desde
+    hace > 1h}. La partición vivos / no_ingeribles pasa cada url por la
+    MISMA ruta de cuarentena del sink (_sink_quarantines_url):
+    cuarentenado ⇒ no_ingeribles, JAMÁS el minuendo (nunca pérdida
+    silenciosa ni falso perdida>0).
+
+    G1 H-7: la resta de FOTOS (vivos − slots) producía ±1 transitorios con
+    el pipeline SANO — un INSERT legacy con su CDC en vuelo al cómputo
+    (06:05) daba +1, y un is_active=false aún sin proyectar daba −1: falso
+    ROJO (gate estricto == 0) y racha a cero. Ahora: (a) los jobs entran al
+    minuendo con la MISMA gracia de 1h que el backlog (first_seen_at —
+    CDC+proyector proyectan en minutos: >1h sin slot ES un hueco real);
+    (b) se cuentan HUECOS por anti-join (job vivo sin SU slot), no la
+    resta agregada — un cierre en vuelo ya no produce un −1 que tape o
+    invente pérdidas. El cierre ATASCADO no se pierde: su fila de staging
+    >1h cae en el término de backlog, y un capture caído lo cazan
+    heartbeat/healthcheck. COSTE: una pasada sobre (hash, url) de los jobs
+    activos no duplicados + el set de external_id de slots activos."""
+    cutoff = moment - timedelta(seconds=STAGING_BACKLOG_GRACE_S)
     jobs = (
         await session.execute(
             sa.text(
                 f"SELECT hash, url FROM {legacy_schema}.jobs "
-                f"WHERE is_active AND duplicate_of IS NULL"
-            )
+                f"WHERE is_active AND duplicate_of IS NULL "
+                f"AND first_seen_at < :cutoff"
+            ),
+            {"cutoff": cutoff},
         )
     ).all()
     quarantined = [j.hash for j in jobs if _sink_quarantines_url(j.url)]
-    vivos = len(jobs) - len(quarantined)
-    active_slots = (
-        await session.execute(
+    q_set = set(quarantined)
+    vivos_hashes = [j.hash for j in jobs if j.hash not in q_set]
+    vivos = len(vivos_hashes)
+    active_slots = {
+        r.external_id
+        for r in await session.execute(
             sa.text(
-                "SELECT count(DISTINCT l.external_id) FROM source_listings l "
+                "SELECT DISTINCT l.external_id FROM source_listings l "
                 "JOIN sources s ON s.id = l.source_id "
                 "  AND s.name LIKE 'legacy:%' "
                 "JOIN source_listing_incarnations i "
                 "  ON i.source_listing_id = l.id AND i.ended_at IS NULL"
             )
         )
-    ).scalar_one()
+    }
+    huecos = [h for h in vivos_hashes if h not in active_slots]
     backlog = (
         await session.execute(
             sa.text(
                 "SELECT count(*) FROM shadow_change_log "
                 "WHERE applied_at IS NULL AND received_at < :cutoff"
             ),
-            {"cutoff": moment - timedelta(seconds=STAGING_BACKLOG_GRACE_S)},
+            {"cutoff": cutoff},
         )
     ).scalar_one()
-    perdida = vivos - int(active_slots) + int(backlog)
+    perdida = len(huecos) + int(backlog)
     details = {
         "legacy_activos_ingeribles": vivos,
-        "slots_legacy_activos": int(active_slots),
+        "slots_legacy_activos": len(active_slots),
+        "huecos_sin_slot": len(huecos),
+        "huecos_muestra": sorted(huecos)[:50],  # acotada, no crece
         "staging_sin_aplicar_1h": int(backlog),
         "gracia_backlog_s": STAGING_BACKLOG_GRACE_S,
+        "gracia_alta_s": STAGING_BACKLOG_GRACE_S,  # misma gracia (H-7)
     }
     ni_details = {
         "fuente": (
@@ -1153,14 +1196,20 @@ async def _outbox_lag_row(session: AsyncSession, cid: date) -> tuple | None:
     return M_OUTBOX_LAG, value, details, True
 
 
-async def _outbox_dead_row(session: AsyncSession, cid: date) -> tuple:
-    """Gate `outbox_dead` (P2-6): rojo si hubo DEAD-LETTER en el ciclo.
+async def _outbox_dead_row(
+    session: AsyncSession, cid: date, start: datetime, end: datetime
+) -> tuple:
+    """Gate `outbox_dead` (P2-6): rojo si hubo DEAD-LETTER **en el ciclo**.
 
-    value = max(dead_total muestreado en el ciclo, conteo dead ACTUAL):
-    dead es un estado TERMINAL sin purga automática — lo que murió durante
-    el ciclo sigue muerto al cómputo (06:05), y el conteo actual cubre
-    también un ciclo sin samples (beat caído). Los samples dejan la traza
-    intra-ciclo. Siempre computable — jamás centinela."""
+    value = conteo de transiciones a dead cuya `dead_at` (core0030) cae en
+    [start, end) — ACOTADO a la ventana (G1-P2-3): dead es terminal y sin
+    purga, y el conteo histórico convertía el gate en un pestillo (un solo
+    muerto de cualquier fecha bloqueaba la racha de 7 ciclos para siempre,
+    y un dead posterior al cierre pintaba rojo el ciclo de AYER). `dead_at`
+    es inmutable ⇒ el valor es determinista también en replay/recompute y
+    cubre un ciclo sin samples (beat caído). El total histórico y el máximo
+    muestreado quedan en details como traza, sin puntuar. Siempre
+    computable — jamás centinela."""
     sampled = (
         await session.execute(
             sa.text(
@@ -1174,23 +1223,32 @@ async def _outbox_dead_row(session: AsyncSession, cid: date) -> tuple:
             {"c": cid, "m": M_OUTBOX_LAG, "s": SCOPE_GLOBAL},
         )
     ).one_or_none()
-    current = (
+    counts = (
         await session.execute(
             sa.text(
-                "SELECT count(*) FROM integration_outbox_deliveries "
-                "WHERE state = 'dead'"
-            )
+                "SELECT count(*) AS total, "
+                "count(*) FILTER (WHERE dead_at >= :s AND dead_at < :e) "
+                "  AS en_ciclo, "
+                "count(*) FILTER (WHERE dead_at IS NULL) AS sin_fecha "
+                "FROM integration_outbox_deliveries WHERE state = 'dead'"
+            ),
+            {"s": start, "e": end},
         )
-    ).scalar_one()
+    ).one()
     dead_max = int(sampled.dead_max) if sampled and sampled.dead_max is not None else 0
-    value = max(dead_max, int(current))
+    value = int(counts.en_ciclo)
     details = {
-        "dead_actual": int(current),
+        "dead_en_ciclo": value,
+        "dead_actual": int(counts.total),
+        # dead sin dead_at: solo un escritor ajeno a delivery/core0030 los
+        # produce — trazados aquí para que no desaparezcan en silencio.
+        "dead_sin_fecha": int(counts.sin_fecha),
         "dead_max_muestras": dead_max,
         "samples_con_dato": int(sampled.with_data) if sampled else 0,
         "nota": (
-            "max(dead_total muestreado en el ciclo, conteo dead actual) — "
-            "dead es terminal: > 0 exige intervención del operador"
+            "transiciones a dead con dead_at en [start, end) — dead es "
+            "terminal: > 0 exige intervención del operador; el histórico "
+            "(dead_actual) no puntúa ciclos posteriores (G1-P2-3)"
         ),
     }
     return M_OUTBOX_DEAD, value, details, False
@@ -1290,7 +1348,11 @@ async def _reenlace_row(
     attaches = (
         await session.execute(
             sa.text(
-                "SELECT count(*) FROM link_evidence le "
+                # DISTINCT (G1 H-14c): varias evidencias de attach sobre el
+                # MISMO listing contaban N veces contra un denominador por
+                # ENCARNACIÓN — el «pct» podía superar 1.0. Unidad homogénea:
+                # listings adjuntados, no eventos de evidencia.
+                "SELECT count(DISTINCT le.source_listing_id) FROM link_evidence le "
                 "JOIN source_listings l ON l.id = le.source_listing_id "
                 "JOIN sources s ON s.id = l.source_id "
                 "  AND s.name LIKE 'legacy:%' "
@@ -1348,6 +1410,40 @@ def _no_data(row) -> bool:
     return row is None or bool(row.details.get("no_data"))
 
 
+def _current_thresholds() -> dict:
+    """Umbrales VIGENTES (constantes de módulo, leídas en el momento de la
+    llamada — monkeypatch-able en tests). Es el diccionario que compute_cycle
+    PERSISTE con el ciclo (G1 H-8) y el fallback de evaluate_gates para ciclos
+    históricos sin fila de umbrales (pre-fix): esos siguen evaluándose con las
+    constantes vigentes — el comportamiento documentado hasta ahora (p.ej. la
+    re-ratificación D2 de dedup_recall, deliberada y con acta)."""
+    return {
+        "ndcg_min": NDCG_MIN,
+        "ndcg_legacy_margin": NDCG_LEGACY_MARGIN,
+        "fn_max_ratio": FN_MAX_RATIO,
+        "labels_ready_min": 1,
+        "dedup_precision_min": DEDUP_PRECISION_MIN,
+        "dedup_recall_min": DEDUP_RECALL_MIN,
+        "perdida_max": PERDIDA_MAX,
+        "no_ingeribles_max": 0,
+        "outbox_lag_p99_max_s": OUTBOX_LAG_P99_MAX_S,
+        "outbox_dead_max": 0,
+        "latencia_p95_max_s": LATENCIA_P95_MAX_S,
+        "reenlace_pct_max": REENLACE_PCT_MAX,
+    }
+
+
+def _thresholds_from(row) -> dict:
+    """Umbrales APLICABLES a un ciclo: los persistidos en su fila M_UMBRALES
+    (G1 H-8 — inmunes a cambios posteriores de las constantes) con las
+    constantes vigentes como fallback clave a clave (fila ausente o clave
+    nueva añadida después del sellado)."""
+    base = _current_thresholds()
+    if row is None:
+        return base
+    return {k: row.details.get(k, v) for k, v in base.items()}
+
+
 async def evaluate_gates(session: AsyncSession, cycle_id: date) -> dict:
     """{clave: {value, umbral, kind, ok}} con los umbrales RATIFICADOS de §6.
     Clave = metric para scope global; f"{metric}::{scope}" por perfil. Un
@@ -1368,29 +1464,35 @@ async def evaluate_gates(session: AsyncSession, cycle_id: date) -> dict:
         )
     ).all()
     by = {(r.metric, r.scope): r for r in rows}
+    # G1 H-8: los umbrales aplicables son los PERSISTIDOS con el ciclo (la
+    # fila M_UMBRALES se extrae — no es un gate ni sale en el informe).
+    thr = _thresholds_from(by.pop((M_UMBRALES, SCOPE_GLOBAL), None))
     out: dict[str, dict] = {}
     scopes = sorted({s for (_m, s) in by if s.startswith("profile:")})
     for scope in scopes:
-        _profile_gates(out, by, scope)
+        _profile_gates(out, by, scope, thr)
     if not scopes:
         out[M_NDCG] = _entry(
-            None, NDCG_MIN, KIND_GATE, False,
+            None, thr["ndcg_min"], KIND_GATE, False,
             nota="sin perfiles medidos (ningún set congelado): no demostrable",
         )
-    _global_gates(out, by)
+    _global_gates(out, by, thr)
     _cohort_info_gates(out, by)
     return out
 
 
-def _profile_gates(out: dict, by: dict, scope: str) -> None:
+def _profile_gates(out: dict, by: dict, scope: str, thr: dict) -> None:
     ndcg = by.get((M_NDCG, scope))
     legacy = by.get((M_NDCG_LEGACY, scope))
     if ndcg is not None:
-        umbral = NDCG_MIN
+        umbral = thr["ndcg_min"]
         extra: dict = {}
         if legacy is not None and not _no_data(legacy):
             extra["ndcg_legacy"] = float(legacy.value)
-            umbral = max(NDCG_MIN, float(legacy.value) - NDCG_LEGACY_MARGIN)
+            umbral = max(
+                thr["ndcg_min"],
+                float(legacy.value) - thr["ndcg_legacy_margin"],
+            )
         value = float(ndcg.value)
         ok = value >= umbral and not ndcg.details.get("no_medible")
         if ndcg.details.get("no_medible"):
@@ -1406,25 +1508,34 @@ def _profile_gates(out: dict, by: dict, scope: str) -> None:
     fn = by.get((M_FALSOS_NEG, scope))
     if fn is not None:
         strict = fn.details.get("modo") == "estricto_0"
-        umbral = 0.0 if strict else FN_MAX_RATIO
-        out[f"{M_FALSOS_NEG}::{scope}"] = _entry(
-            float(fn.value), umbral, KIND_GATE, float(fn.value) <= umbral,
-            modo=fn.details.get("modo"),
-        )
+        umbral = 0.0 if strict else thr["fn_max_ratio"]
+        if _no_data(fn) or float(fn.value) == NO_DATA_VALUE:
+            # G1-P3-4: gate sin datos = no demostrable (ok False) — el 0/0
+            # ya no aprueba en vacío (política NO_DATA, P1-2).
+            out[f"{M_FALSOS_NEG}::{scope}"] = _entry(
+                None, umbral, KIND_GATE, False, nota="sin datos",
+                modo=fn.details.get("modo"),
+            )
+        else:
+            out[f"{M_FALSOS_NEG}::{scope}"] = _entry(
+                float(fn.value), umbral, KIND_GATE, float(fn.value) <= umbral,
+                modo=fn.details.get("modo"),
+            )
 
 
-def _global_gates(out: dict, by: dict) -> None:
+def _global_gates(out: dict, by: dict, thr: dict) -> None:
     checks = {
-        M_LABELS_READY: (1, lambda v, u: v >= u),
-        M_DEDUP_PRECISION: (DEDUP_PRECISION_MIN, lambda v, u: v >= u),
-        M_DEDUP_RECALL: (DEDUP_RECALL_MIN, lambda v, u: v >= u),
-        M_PERDIDA: (PERDIDA_MAX, lambda v, u: v == u),
-        M_NO_INGERIBLES: (0, lambda v, u: v <= u),
-        M_OUTBOX_LAG: (OUTBOX_LAG_P99_MAX_S, lambda v, u: v <= u),
-        M_OUTBOX_DEAD: (0, lambda v, u: v <= u),  # dead-letter ⇒ rojo (P2-6)
-        M_LATENCIA: (LATENCIA_P95_MAX_S, lambda v, u: v <= u),
+        M_LABELS_READY: (thr["labels_ready_min"], lambda v, u: v >= u),
+        M_DEDUP_PRECISION: (thr["dedup_precision_min"], lambda v, u: v >= u),
+        M_DEDUP_RECALL: (thr["dedup_recall_min"], lambda v, u: v >= u),
+        M_PERDIDA: (thr["perdida_max"], lambda v, u: v == u),
+        M_NO_INGERIBLES: (thr["no_ingeribles_max"], lambda v, u: v <= u),
+        M_OUTBOX_LAG: (thr["outbox_lag_p99_max_s"], lambda v, u: v <= u),
+        # dead-letter ⇒ rojo (P2-6)
+        M_OUTBOX_DEAD: (thr["outbox_dead_max"], lambda v, u: v <= u),
+        M_LATENCIA: (thr["latencia_p95_max_s"], lambda v, u: v <= u),
         M_COSTE: (None, lambda v, u: True),
-        M_REENLACE: (REENLACE_PCT_MAX, lambda v, u: v <= u),
+        M_REENLACE: (thr["reenlace_pct_max"], lambda v, u: v <= u),
     }
     # Métricas que usan el centinela NO_DATA_VALUE (fila con placeholder del
     # muestreador ANTES de compute_cycle, o dedup sin pares evaluables —
@@ -1553,10 +1664,14 @@ def _report_details(details_by: dict) -> list[str]:
     lines = ["", "Desglose:"]
     perdida = details_by.get((M_PERDIDA, SCOPE_GLOBAL))
     if perdida:
+        # G1 H-7: la fórmula es huecos + backlog (anti-join con gracia de 1h),
+        # ya no la resta agregada de fotos vivos − slots.
         lines.append(
-            f"  perdida = {perdida['legacy_activos_ingeribles']} legacy vivos"
-            f" - {perdida['slots_legacy_activos']} slots activos"
+            f"  perdida = {perdida.get('huecos_sin_slot', 0)} legacy vivos"
+            f" >1h sin slot"
             f" + {perdida['staging_sin_aplicar_1h']} staging sin aplicar >1h"
+            f" (vivos ingeribles: {perdida['legacy_activos_ingeribles']}, "
+            f"slots activos: {perdida['slots_legacy_activos']})"
         )
     coste = details_by.get((M_COSTE, SCOPE_GLOBAL))
     if coste:

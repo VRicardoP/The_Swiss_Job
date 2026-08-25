@@ -422,7 +422,10 @@ def test_seed_dedup_pairs_canonical_unique_and_checks(db, legacy_fx):
                 sa.text(
                     "INSERT INTO labeled_dedup_pairs "
                     "(job_ref_a, job_ref_b, verdict, source) "
-                    "VALUES (:a, :b, 'duplicate', 'manual')"
+                    # MISMA cohorte que el seed (core0031, G1-P3-3): la
+                    # unicidad del par canónico es POR cohorte — en otra
+                    # cohorte el par SÍ entra (test_par_de_otra_cohorte...).
+                    "VALUES (:a, :b, 'duplicate', 'seed_duplicate_of')"
                 ),
                 {"a": jd, "b": ja},  # (b,a) del par ya sembrado
             )
@@ -603,7 +606,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                     )
                 ).scalar_one()
 
-        assert asyncio.run(seed_and_version()) == "core0029"
+        assert asyncio.run(seed_and_version()) == "core0031"
 
         run_alembic(temp_url, "downgrade", "core0007")
 
@@ -637,7 +640,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                         sa.text("SELECT version_num FROM alembic_version")
                     )
                 ).scalar_one()
-                assert version == "core0029"
+                assert version == "core0031"
                 # El esquema re-creado FUNCIONA y con sus guardas: smoke real.
                 cid = await profiles.ensure_consumer(s, "b03-post")
                 pid = await profiles.upsert_profile(s, cid, "user-post")

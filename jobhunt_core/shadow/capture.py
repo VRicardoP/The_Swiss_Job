@@ -70,6 +70,14 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SLOT = "jobhunt_shadow"
 DEFAULT_TABLES = "public.jobs,public.user_profiles,public.users"
+# Definición ÚNICA de «WAL retenido por el slot» (G1-P3-8): los bytes que el
+# slot impide reciclar son los de restart_lsn — el healthcheck medía sobre
+# COALESCE(confirmed_flush_lsn, …) e infravaloraba la retención real,
+# contradiciendo la alerta del gate contra el MISMO umbral de 2 GiB.
+SLOT_RETAINED_BYTES_SQL = "pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)"
+# G1 H-14e: el backoff de run() solo se resetea si el intento (start+stream)
+# sobrevivió al menos este tramo — un fallo inmediato repetido ESCALA.
+_BACKOFF_RESET_AFTER_S = 60.0
 
 # Whitelist de columnas POR TABLA (§2) — whitelist, no blacklist: una columna
 # nueva del legacy NO entra sola al staging. `salary_*` expandido a las 5
@@ -513,8 +521,17 @@ class ShadowCapture:
         identity = self._column_map(data.get("identity"))
         pk_value = columns.get(spec["pk"], identity.get(spec["pk"]))
         if pk_value is None:
-            logger.error("Cambio %s en %s sin PK %s: descartado", op, table, spec["pk"])
-            return None
+            # G1 H-6: un cambio de tabla CONTRACTUAL sin PK en el mensaje
+            # (REPLICA IDENTITY inadecuada en el origen) se descartaba con un
+            # log y la tx se confirmaba igual al slot — PÉRDIDA confirmada al
+            # origen. Error de CONFIGURACIÓN → RuntimeError: run() no lo
+            # reintenta, el contenedor cae visible y el slot retiene el WAL
+            # (recuperable); jamás un ack de datos no aplicados.
+            raise RuntimeError(
+                f"cambio {op} en {table} SIN PK {spec['pk']} en el mensaje "
+                "(¿REPLICA IDENTITY inadecuada?) — no se confirma la tx: "
+                "pérdida de datos no negociable"
+            )
         payload = {k: v for k, v in columns.items() if k in spec["columns"]}
         if op in ("I", "U"):
             # TOAST (§2/§8): wal2json OMITE del mensaje las columnas
@@ -704,15 +721,21 @@ class ShadowCapture:
         suben y el restart del contenedor los hace visibles."""
         backoff = 1.0
         while not self._stop:
+            attempt_t0 = time.monotonic()
             try:
                 self.start()
-                backoff = 1.0
                 self.stream()
             # InterfaceError también es fallo de CONEXIÓN reintentable:
             # psycopg2 lo lanza p.ej. al operar sobre una conexión que murió
             # bajo los pies del stream ("connection already closed") — sin él
             # el contenedor caería en vez de reconectar con backoff.
             except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+                # G1 H-14e: el backoff se reseteaba tras start() y ANTES de
+                # stream() — un stream que fallara nada más entrar reintentaba
+                # cada 1 s sin escalar jamás. Ahora solo se resetea si el
+                # intento SOBREVIVIÓ un tramo razonable (progreso real).
+                if time.monotonic() - attempt_t0 >= _BACKOFF_RESET_AFTER_S:
+                    backoff = 1.0
                 logger.warning(
                     "Conexión perdida (%s); reintento en %.0f s", exc, backoff
                 )
@@ -767,8 +790,7 @@ def health_check() -> int:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT active, pg_wal_lsn_diff(pg_current_wal_lsn(), "
-                    "COALESCE(confirmed_flush_lsn, restart_lsn)) "
+                    f"SELECT active, {SLOT_RETAINED_BYTES_SQL} "
                     "FROM pg_replication_slots WHERE slot_name = %s",
                     (slot,),
                 )

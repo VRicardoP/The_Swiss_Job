@@ -2305,3 +2305,56 @@ def test_c8_mordidas_b4_b6_del_fold_y_la_encarnacion_cerrada(db):
     _project()
     filas = _rows(factory, q, n=f"legacy:{src}")
     assert [(f.url, f.apply_url) for f in filas] == [("https://l/B", "https://a/Y")]
+
+
+# ------------------------------------- src_table no contractual + single-flight (G1)
+
+
+def test_unknown_src_table_sealed_never_loops(db):
+    """Regresión G1 H-4: una fila de staging con src_table fuera del contrato
+    (jobs/user_profiles/users) no la sellaba nadie — cada lote la releía y
+    _project_all giraba en BUCLE INFINITO bajo el advisory lock (alcanzable si
+    CORE_CAPTURE_TABLES se ampliara sin ampliar el proyector). Ahora se sella
+    sin proyectar, con warning: un solo lote y staging drenado."""
+    factory = db
+    pk = f"raro-{uuid.uuid4().hex[:6]}"
+    _seed(factory, [("tabla_rara", "I", pk, {})])
+    t = _project(max_batches=5)
+    assert t["batches"] == 1  # antes: 5 (la MISMA fila, un lote por vuelta)
+    assert _scalar(
+        factory, "SELECT applied_at FROM shadow_change_log WHERE pk = :p", p=pk
+    ) is not None  # sellada
+    t2 = _project(max_batches=5)
+    assert t2["batches"] == 0  # nada pendiente: sin bucle
+
+
+def test_project_all_stops_when_leadership_lost(db):
+    """Regresión G1 H-5: el single-flight es un advisory lock de SESIÓN — si
+    la conexión dedicada muere a mitad del drenado, el servidor libera el lock
+    y un segundo proyector puede entrar en paralelo. _project_all valida ahora
+    el liderazgo POR LOTE (ping a la conexión del lock) y se detiene en el
+    acto al perderlo, sin tocar el staging pendiente."""
+    factory = db
+    src = f"fxlead{uuid.uuid4().hex[:4]}"
+    pk = f"lead-{uuid.uuid4().hex[:6]}"
+    _seed(factory, [("jobs", "I", pk, _job(pk, src))])
+
+    totals = {
+        "status": "ok", "batches": 0, "changes": 0, "upserts": 0, "closes": 0,
+        "erased": 0, "revisions_new": 0, "profiles_evaluated": 0,
+        "recovery_evaluated": 0, "batches_recovered": 0,
+    }
+
+    async def dead_leader() -> bool:
+        return False  # liderazgo perdido ANTES del primer lote
+
+    _run(
+        projector._project_all(
+            totals, projector.DEFAULT_BATCH_SIZE, None, still_leader=dead_leader
+        )
+    )
+    assert totals["status"] == "lock_lost"
+    assert totals["batches"] == 0  # ni un lote drenado sin liderazgo
+    assert _scalar(
+        factory, "SELECT applied_at FROM shadow_change_log WHERE pk = :p", p=pk
+    ) is None  # el pendiente queda intacto para el proyector legítimo

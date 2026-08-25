@@ -69,6 +69,14 @@ def pair_ids_from_candidates(candidates: dict) -> dict[str, tuple[str, str]]:
     """pair_id ('B-01', ...) → (id_a, id_b) reproduciendo la numeración de la
     hoja: por modo, orden del render del miner (sorted por -confianza, sort
     estable ⇒ empates en el orden del JSON) y numeración 1..n con zero-pad."""
+    # G1 H-14b: un modo del miner fuera de _MODE_ORDER desaparecía en SILENCIO
+    # (sus pares jamás se numeraban) — error fuerte, nunca una hoja incompleta.
+    unknown = sorted(set(candidates) - set(_MODE_ORDER))
+    if unknown:
+        raise ValueError(
+            f"modos de candidatos fuera de '{_MODE_ORDER}': {unknown} — "
+            "la numeración de la hoja no los cubre"
+        )
     out: dict[str, tuple[str, str]] = {}
     for mode in _MODE_ORDER:
         cands = sorted(candidates.get(mode, []), key=lambda c: -c["confianza"])
@@ -109,11 +117,14 @@ async def load_positive_stratum(
         ref_a, ref_b = vacancy_refs[pair_id]
         result = await session.execute(
             sa.text(
+                # Unicidad POR COHORTE (core0031, G1-P3-3): un par presente en
+                # otra cohorte (holdout/seed/curado) SÍ entra en esta;
+                # `ya_presentes` cuenta solo los que ya estaban en ESTA.
                 "INSERT INTO labeled_dedup_pairs "
                 "(job_ref_a, job_ref_b, verdict, source) "
                 "VALUES (:a, :b, :v, :src) "
                 "ON CONFLICT (LEAST(job_ref_a, job_ref_b), "
-                "GREATEST(job_ref_a, job_ref_b)) DO NOTHING"
+                "GREATEST(job_ref_a, job_ref_b), source) DO NOTHING"
             ),
             {"a": ref_a, "b": ref_b, "v": verdict, "src": cohort},
         )

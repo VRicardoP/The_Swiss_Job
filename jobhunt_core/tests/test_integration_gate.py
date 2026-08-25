@@ -99,7 +99,8 @@ def gate_db():
                     "url varchar(2048), source varchar(50), "
                     "tags jsonb NOT NULL DEFAULT '[]'::jsonb, "
                     "is_active boolean NOT NULL DEFAULT true, "
-                    "duplicate_of varchar(32), content_hash varchar(32))"
+                    "duplicate_of varchar(32), content_hash varchar(32), "
+                    "first_seen_at timestamptz NOT NULL DEFAULT now())"
                 )
             )
             c.execute(
@@ -283,12 +284,14 @@ def _wait_slot_active(factory, slot, timeout: float = 10.0):
 
 
 def _seed_legacy_job(factory, h, source="legacyfx", active=True):
+    # first_seen_at 2h atrás (G1 H-7): supera la gracia de alta de 1h del
+    # minuendo de perdida — el job cuenta como vivo ingerible, como siempre.
     _exec(
         factory,
         "INSERT INTO public.jobs (hash, title, company, description, url, "
-        "source, tags, is_active, content_hash) VALUES "
+        "source, tags, is_active, content_hash, first_seen_at) VALUES "
         "(:h, 'Backend Dev', 'ACME AG', 'python backend', :u, :s, "
-        "CAST('[\"py\"]' AS jsonb), :a, :ch)",
+        "CAST('[\"py\"]' AS jsonb), :a, :ch, now() - interval '2 hours')",
         {"h": h, "u": f"https://fx/{h}", "s": source, "a": active, "ch": f"c-{h}"},
     )
 

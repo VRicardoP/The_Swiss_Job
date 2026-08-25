@@ -941,7 +941,7 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
                 c.execute(
                     sa.text(f"SELECT version_num FROM {S}.alembic_version")
                 ).scalar()
-                == "core0029"
+                == "core0031"
             )
             c.execute(
                 sa.text(
@@ -1055,7 +1055,7 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
                 c.execute(
                     sa.text(f"SELECT version_num FROM {S}.alembic_version")
                 ).scalar()
-                == "core0029"
+                == "core0031"
             )
             idx = c.execute(
                 sa.text(
@@ -1078,3 +1078,54 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
         with admin_engine.connect() as c:
             c.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
         admin_engine.dispose()
+
+
+# ------------------------------------------------- G1: H-6 y H-14e (unitarios)
+
+
+def test_cambio_contractual_sin_pk_falla_fuerte_no_confirma():
+    """Regresión G1 H-6: un cambio de tabla WHITELISTED cuyo mensaje no trae la
+    PK (REPLICA IDENTITY inadecuada en el origen) se descartaba con un log y la
+    tx se CONFIRMABA igual al slot — pérdida confirmada al origen. Error de
+    configuración → RuntimeError: run() no lo reintenta, el contenedor cae
+    visible y el slot retiene el WAL (recuperable), jamás un ack de datos no
+    aplicados."""
+    cap = ShadowCapture.__new__(ShadowCapture)  # sin __init__: solo _change_row
+    cap._tx, cap._seq = [], 0
+    with pytest.raises(RuntimeError, match="SIN PK"):
+        cap._change_row(
+            123,
+            {"table": "jobs", "action": "D", "identity": None, "columns": None},
+        )
+    # Tabla NO contractual: sigue descartándose en silencio (defensa en
+    # profundidad — add-tables ya filtra en el servidor).
+    assert cap._change_row(
+        124, {"table": "otra", "action": "I", "columns": None}
+    ) is None
+
+
+def test_backoff_escala_cuando_stream_falla_de_inmediato():
+    """Regresión G1 H-14e: el backoff se reseteaba tras start() y ANTES de
+    stream() — un stream que fallara nada más entrar reintentaba cada 1 s sin
+    escalar jamás. Ahora solo se resetea si el intento sobrevivió
+    _BACKOFF_RESET_AFTER_S: el fallo inmediato repetido escala 1→2→4→8."""
+    import psycopg2 as _psycopg2
+
+    cap = ShadowCapture.__new__(ShadowCapture)
+    cap._stop = False
+    sleeps: list[float] = []
+
+    def fake_stream():
+        raise _psycopg2.OperationalError("boom inmediato")
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= 4:
+            cap._stop = True
+
+    cap.start = lambda: None
+    cap.stream = fake_stream
+    cap.close = lambda: None
+    cap._sleep = fake_sleep
+    cap.run()
+    assert sleeps == [1.0, 2.0, 4.0, 8.0]  # antes: [1.0, 1.0, 1.0, 1.0]

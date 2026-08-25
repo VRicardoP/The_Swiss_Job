@@ -145,7 +145,10 @@ async def mark_failed(session, fails: list, lease_token) -> dict:
             await session.execute(
                 sa.text(
                     "UPDATE integration_outbox_deliveries d "
-                    "SET state = 'dead', last_error = t.error, lease = NULL "
+                    "SET state = 'dead', last_error = t.error, lease = NULL, "
+                    # dead_at (core0030): instante de la TRANSICIÓN — el gate
+                    # outbox_dead cuenta por ventana de ciclo, no el histórico.
+                    "dead_at = clock_timestamp() "
                     "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[]), "
                     "            CAST(:errors AS text[])) AS t(eid, dest, error) "
                     "WHERE d.event_id = t.eid AND d.destination = t.dest "

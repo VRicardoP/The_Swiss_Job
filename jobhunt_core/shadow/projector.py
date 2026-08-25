@@ -253,8 +253,23 @@ async def project_pending(
                 logger.info("projector: proyección ya en curso — salida limpia")
                 totals["status"] = "already_running"
                 return totals
+
+            async def _still_leader() -> bool:
+                # G1 H-5: el advisory lock es de SESIÓN — si la conexión
+                # dedicada muere a mitad del drenado, el servidor lo libera y
+                # un segundo proyector puede entrar en paralelo. Ping por
+                # lote: seguir drenando SOLO mientras el lock siga siendo
+                # nuestro (la conexión dedicada viva).
+                try:
+                    await lock_conn.execute(sa.text("SELECT 1"))
+                    return True
+                except Exception:  # conexión rota = liderazgo perdido
+                    return False
+
             try:
-                await _project_all(totals, batch_size, max_batches)
+                await _project_all(
+                    totals, batch_size, max_batches, still_leader=_still_leader
+                )
             finally:
                 try:
                     await lock_conn.execute(
@@ -276,7 +291,7 @@ async def project_pending(
     return totals
 
 
-async def _project_all(totals, batch_size, max_batches) -> None:
+async def _project_all(totals, batch_size, max_batches, still_leader=None) -> None:
     """Cuerpo de la proyección (YA bajo el single-flight): drenado del
     staging por lotes + recuperación del flujo post-lote a la SALIDA (tras
     las marcas de lote — ver _replay_after_batch).
@@ -294,6 +309,15 @@ async def _project_all(totals, batch_size, max_batches) -> None:
         agg_affected: set = set()
         agg_revisions_new = 0
         while max_batches is None or totals["batches"] < max_batches:
+            if still_leader is not None and not await still_leader():
+                # G1 H-5: liderazgo perdido (conexión del lock muerta) — parar
+                # YA: otro proyector puede estar drenando en paralelo.
+                totals["status"] = "lock_lost"
+                logger.error(
+                    "projector: conexión del single-flight PERDIDA a mitad "
+                    "del drenado — se interrumpe (G1 H-5)"
+                )
+                break
             result = await _project_batch(session_factory, sink, batch_size)
             if result is None:
                 break
@@ -452,8 +476,22 @@ async def _finish_batch(
         if pk not in covered
         for r in pk_rows
     ]
+    # G1 H-4: una fila con src_table fuera del contrato (jobs/user_profiles/
+    # users) no la sellaba NADIE → cada lote la releía y _project_all giraba
+    # en bucle infinito bajo el advisory lock (hoy inalcanzable: capture
+    # filtra por whitelist; guarda si CORE_CAPTURE_TABLES se ampliara).
+    unknown = [
+        r for r in rows
+        if r.src_table not in ("jobs", "user_profiles", "users")
+    ]
+    if unknown:
+        logger.warning(
+            "projector: %d fila(s) de staging con src_table NO contractual "
+            "(%s) — selladas sin proyectar (G1 H-4: jamás un bucle)",
+            len(unknown), sorted({r.src_table for r in unknown}),
+        )
     async with session_factory() as session:
-        await _seal_rows(session, leftover)
+        await _seal_rows(session, leftover + unknown)
         await _finalize_batch(session, batch_id, revisions_new)
         await session.commit()
 

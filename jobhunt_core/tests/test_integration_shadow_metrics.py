@@ -81,7 +81,9 @@ def met_db():
                     f"CREATE TABLE {LEG}.jobs ("
                     f"hash varchar(32) PRIMARY KEY, source varchar(50), "
                     f"url varchar(2048), is_active boolean NOT NULL DEFAULT true, "
-                    f"duplicate_of varchar(32))"
+                    f"duplicate_of varchar(32), "
+                    # first_seen_at (G1 H-7): la gracia de alta del minuendo
+                    f"first_seen_at timestamptz NOT NULL DEFAULT now())"
                 )
             )
             c.execute(
@@ -334,13 +336,17 @@ def _mk_eval(factory, mp, pid, vid, score, created_at=None):
 _URL_DEFAULT = object()  # centinela: url=None debe poder INSERTAR NULL
 
 
-def _legacy_job(factory, h, active=True, dup=None, url=_URL_DEFAULT):
+def _legacy_job(factory, h, active=True, dup=None, url=_URL_DEFAULT,
+                first_seen=None):
+    # first_seen anterior al inicio del ciclo FIJO (G1 H-7): el job supera la
+    # gracia de alta de 1h y cuenta en el minuendo, como antes del fix.
     _exec(
         factory,
-        f"INSERT INTO {LEG}.jobs (hash, source, url, is_active, duplicate_of) "
-        f"VALUES (:h, 'metfx', :u, :a, :d)",
+        f"INSERT INTO {LEG}.jobs (hash, source, url, is_active, duplicate_of, "
+        f"first_seen_at) VALUES (:h, 'metfx', :u, :a, :d, :f)",
         {"h": h, "u": f"https://leg/{h}" if url is _URL_DEFAULT else url,
-         "a": active, "d": dup},
+         "a": active, "d": dup,
+         "f": first_seen or (CSTART - timedelta(days=1))},
     )
 
 
@@ -1044,6 +1050,31 @@ def test_falsos_negativos_strict_mode_zero_allowed(db):
     assert (g["kind"], g["umbral"], g["ok"]) == ("gate", 0.0, False)
 
 
+def test_falsos_negativos_zero_present_is_no_data_not_green(db):
+    """Regresión G1-P3-4: con 0 juicios rel>=2 PRESENTES en el corpus (todos
+    archivados o sin slot core), la métrica valía 0.0 y el gate estricto
+    (<=0.0) aprobaba — el «0/0 vacuamente verde» que la política NO_DATA
+    (P1-2) prohíbe para dedup. Ahora: centinela + details.no_data y gate
+    «sin datos» (ok False)."""
+    factory = db
+    pid = _mk_profile(factory, str(uuid.uuid4()))
+    src = _mk_source(factory, "legacy:fnnd")
+    p = uuid.uuid4().hex[:6]
+    f1, f2 = f"{p}-a", f"{p}-b"
+    _mk_slot(factory, src, f1, archived=True)  # mapea a vacante ARCHIVADA
+    # f2 sin slot core → tampoco presente
+    _mk_frozen_set(factory, pid, {f1: 2, f2: 3})
+
+    _compute(factory)
+    row = _metric_row(factory, "falsos_negativos", f"profile:{pid}")
+    assert float(row.value) == metrics.NO_DATA_VALUE  # jamás 0.0 vacuo
+    assert row.details["no_data"] is True
+    assert row.details["presentes_en_corpus"] == 0
+    g = _gates(factory)[f"falsos_negativos::profile:{pid}"]
+    assert g["kind"] == "gate"
+    assert g["value"] is None and g["ok"] is False and g["nota"] == "sin datos"
+
+
 def test_falsos_negativos_ratio_mode_two_percent(db):
     factory = db
     mp = _seed_model_policy(factory)
@@ -1259,25 +1290,33 @@ def test_outbox_lag_without_samples_is_no_data_and_gate_fails(db):
 # ------------------------------------------------------- outbox_dead (P2-6)
 
 
-def test_outbox_dead_gate_red_on_dead_letter(db):
-    """Regresión P2-6 (rev. externa parte 2): un evento en DEAD-LETTER
-    durante el ciclo pone `outbox_dead` en ROJO — vía muestreador (sample
-    con dead_total) Y vía conteo actual al cómputo (dead es terminal)."""
-    factory = db
-    eid = uuid.uuid4()
+def _insert_dead(factory, eid, dead_at, dest="bff"):
+    """Un evento + delivery en dead con `dead_at` inyectado (lo que delivery
+    estampa en la transición real desde core0030)."""
     _exec(
         factory,
         "INSERT INTO integration_outbox (event_id, aggregate, aggregate_id, "
-        "version, type, payload) VALUES (:e, 'match_evaluation', 'k', 1, "
+        "version, type, payload) VALUES (:e, 'match_evaluation', :k, 1, "
         "'match.evaluated', CAST('{}' AS jsonb))",
-        {"e": eid},
+        {"e": eid, "k": f"k-{eid}"},
     )
     _exec(
         factory,
         "INSERT INTO integration_outbox_deliveries (event_id, destination, "
-        "state, attempts, last_error) VALUES (:e, 'bff', 'dead', 8, 'boom')",
-        {"e": eid},
+        "state, attempts, last_error, dead_at) "
+        "VALUES (:e, :d, 'dead', 8, 'boom', :t)",
+        {"e": eid, "d": dest, "t": dead_at},
     )
+
+
+def test_outbox_dead_gate_red_on_dead_letter(db):
+    """Regresión P2-6 (rev. externa parte 2): un evento en DEAD-LETTER
+    durante el ciclo (dead_at dentro de la ventana) pone `outbox_dead` en
+    ROJO — el muestreador deja la traza (dead_total) y el conteo por
+    ventana puntúa."""
+    factory = db
+    eid = uuid.uuid4()
+    _insert_dead(factory, eid, CSTART + timedelta(hours=2))
 
     async def sample(now):
         async with factory() as s:
@@ -1291,6 +1330,7 @@ def test_outbox_dead_gate_red_on_dead_letter(db):
     _compute(factory)
     row = _metric_row(factory, "outbox_dead")
     assert float(row.value) == 1
+    assert row.details["dead_en_ciclo"] == 1
     assert row.details["dead_actual"] == 1
     assert row.details["dead_max_muestras"] == 1
     g = _gates(factory)["outbox_dead"]
@@ -1298,6 +1338,27 @@ def test_outbox_dead_gate_red_on_dead_letter(db):
     # dead NO cuenta en el lag (no es pending/inflight): métricas separadas.
     lag = _metric_row(factory, "outbox_lag_p99")
     assert lag.details["samples"][0]["oldest_pending_s"] == 0.0
+
+
+def test_outbox_dead_historic_does_not_latch_cycle(db):
+    """Regresión G1-P2-3: `outbox_dead` NO es un pestillo histórico. Un dead
+    de hace 30 días (anterior a la ventana) y otro creado DESPUÉS del cierre
+    (la fuga que pintaba rojo el ciclo de AYER al computar a las 06:05) no
+    puntúan el ciclo: value=0 y gate VERDE — la racha de 7 ciclos vuelve a
+    ser alcanzable sin cirugía en BD. El histórico queda trazado en details
+    (dead_actual), jamás oculto."""
+    factory = db
+    _insert_dead(factory, uuid.uuid4(), CSTART - timedelta(days=30))
+    _insert_dead(factory, uuid.uuid4(), CEND + timedelta(hours=1), dest="bff2")
+
+    _compute(factory)
+    row = _metric_row(factory, "outbox_dead")
+    assert float(row.value) == 0  # la ventana [start, end) no los ve
+    assert row.details["dead_en_ciclo"] == 0
+    assert row.details["dead_actual"] == 2  # la traza NO desaparece
+    assert row.details["dead_sin_fecha"] == 0
+    g = _gates(factory)["outbox_dead"]
+    assert g["kind"] == "gate" and g["ok"] is True  # verde: no bloquea la racha
 
 
 def test_recompute_after_purge_preserves_sealed_p99(db):
@@ -1477,6 +1538,104 @@ def test_reenlace_pct_attaches_recycles_over_touched(db):
     }
     g = _gates(factory)["reenlace_pct"]
     assert g["kind"] == "alerta" and g["ok"] is False  # 0.5 > 0.05
+
+
+def test_reenlace_pct_multiple_evidencias_no_supera_1(db):
+    """Regresión G1 H-14c: varias evidencias de attach sobre el MISMO listing
+    contaban N veces contra un denominador por ENCARNACIÓN — el «pct» podía
+    superar 1.0. El numerador cuenta ahora listings DISTINTOS: 2 evidencias
+    sobre 1 encarnación tocada = 1/1 = 1.0, jamás 2.0."""
+    factory = db
+    src = _mk_source(factory, "legacy:reenh14c")
+    t0 = CSTART + timedelta(hours=4)
+    _v, l1, _i = _mk_slot(factory, src, "rh-1", first_seen=t0, last_seen=t0)
+    vac = _scalar(
+        factory,
+        "SELECT vacancy_id FROM source_listing_incarnations "
+        "WHERE source_listing_id = :l", l=l1,
+    )
+    for _ in range(2):  # DOS evidencias del mismo attach (re-cosecha)
+        _exec(
+            factory,
+            "INSERT INTO link_evidence (id, source_listing_id, vacancy_id, "
+            "method, created_at) VALUES (:i, :l, :v, 'url_normalized', :ca)",
+            {"i": uuid.uuid4(), "l": l1, "v": vac, "ca": t0},
+        )
+    _compute(factory)
+    row = _metric_row(factory, "reenlace_pct")
+    assert float(row.value) == pytest.approx(1.0)  # antes: 2.0
+    assert row.details["attaches"] == 1  # listings distintos, no eventos
+
+
+def test_perdida_verde_con_alta_reciente_y_cdc_en_vuelo(db):
+    """Regresión G1 H-7: un INSERT legacy con su CDC en vuelo al cómputo
+    (job nuevo, staging <1h sin aplicar) daba perdida=1 → falso ROJO con el
+    pipeline SANO, y la racha a cero. Ahora el minuendo aplica la MISMA
+    gracia de 1h que el backlog (first_seen_at) y los huecos se cuentan por
+    anti-join: el transitorio no puntúa; el hueco REAL (>1h sin slot) sigue
+    en rojo (test_perdida_zero_on_healthy_mirror_and_gap_when_injected)."""
+    factory = db
+    p = uuid.uuid4().hex[:6]
+    # Job RECIÉN visto (dentro de la gracia respecto al cómputo en AFTER)…
+    _legacy_job(factory, f"{p}-fresh", first_seen=AFTER - timedelta(minutes=10))
+    # …con su fila CDC capturada y aún sin aplicar (received_at reciente).
+    _exec(
+        factory,
+        "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
+        "payload, received_at) VALUES (9101, 0, 'jobs', 'I', :p, "
+        "CAST('{}' AS jsonb), :r)",
+        {"p": f"{p}-fresh", "r": AFTER - timedelta(minutes=10)},
+    )
+    _compute(factory)
+    row = _metric_row(factory, "perdida")
+    assert float(row.value) == 0  # antes: 1 (falso rojo transitorio)
+    assert row.details["huecos_sin_slot"] == 0
+    assert row.details["legacy_activos_ingeribles"] == 0  # gracia de alta
+    assert _gates(factory)["perdida"]["ok"] is True
+
+
+def test_umbral_del_ciclo_queda_persistido_y_no_se_recolorea(db):
+    """Regresión G1 H-8: evaluate_gates re-evaluaba ciclos SELLADOS con las
+    constantes VIGENTES — un cambio de umbral recoloreaba la historia sin
+    rastro. compute_cycle persiste ahora los umbrales del ciclo
+    (M_UMBRALES) y evaluate_gates los usa; los ciclos históricos SIN fila
+    conservan el fallback documentado (constantes vigentes)."""
+    import unittest.mock as um
+
+    factory = db
+    _compute(factory)  # persiste M_UMBRALES con las constantes vigentes
+    thr_row = _metric_row(factory, metrics.M_UMBRALES)
+    assert thr_row is not None
+    assert thr_row.details["dedup_recall_min"] == metrics.DEDUP_RECALL_MIN
+
+    # dedup_recall sellado en 0.5 — con el umbral persistido (0.40) es verde.
+    _exec(
+        factory,
+        "UPDATE shadow_cycle_metrics SET value = 0.5, details = '{}'::jsonb "
+        "WHERE cycle_id = :c AND metric = 'dedup_recall' AND scope = 'global'",
+        {"c": CYCLE},
+    )
+    with um.patch.object(metrics, "DEDUP_RECALL_MIN", 0.9):
+        g = _gates(factory)["dedup_recall"]
+        # ANTES: la constante vigente (0.9) recoloreaba el ciclo a rojo.
+        assert g["umbral"] == thr_row.details["dedup_recall_min"]
+        assert g["ok"] is True
+    # La fila de umbrales NO aparece como gate ni en el informe.
+    assert metrics.M_UMBRALES not in _gates(factory)
+
+    async def report():
+        async with factory() as s:
+            return await metrics.render_report(s, CYCLE)
+
+    assert metrics.M_UMBRALES not in _run(report())
+
+    # Ciclo histórico SIN fila de umbrales: fallback a la constante vigente.
+    cyc_old = CYCLE - timedelta(days=7)
+    _seed_metric(factory, cyc_old, "dedup_recall", "global", 0.5, {})
+    with um.patch.object(metrics, "DEDUP_RECALL_MIN", 0.9):
+        assert _gates(factory, cycle=cyc_old)["dedup_recall"]["ok"] is False
+    with um.patch.object(metrics, "DEDUP_RECALL_MIN", 0.4):
+        assert _gates(factory, cycle=cyc_old)["dedup_recall"]["ok"] is True
 
 
 # ------------------------------------------------------ purga del staging (§7)
@@ -1774,7 +1933,10 @@ def test_render_report_is_readable_text(db):
     # labels_ready — P1-2 — y outbox_dead — P2-6 — incluidos).
     assert "CICLO NO APTO: 1/9" in text
     assert "alertas activas: 0" in text
-    assert "perdida = 5 legacy vivos - 5 slots activos + 0 staging" in text
+    assert (
+        "perdida = 0 legacy vivos >1h sin slot + 0 staging sin aplicar >1h "
+        "(vivos ingeribles: 5, slots activos: 5)" in text
+    )
     assert "coste = 2 embeddings + 3 evaluaciones + 7.5s de worker" in text
     # Legible: tabla con cabecera y una línea por métrica evaluada.
     assert "métrica" in text and "estado" in text

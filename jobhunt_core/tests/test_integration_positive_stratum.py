@@ -262,6 +262,51 @@ def test_loader_excluye_ambiguos_y_sinteticos_y_es_idempotente(db):
     assert len(_pairs_in_cohort(factory, cohort)) == 2
 
 
+def test_par_de_otra_cohorte_si_entra_en_esta(db):
+    """Regresión G1-P3-3 (core0031): la unicidad del par canónico es POR
+    cohorte — un par ya presente en OTRA cohorte (holdout/seed/curado) entra
+    igualmente en la del estrato. Antes, el ON CONFLICT del índice GLOBAL lo
+    descartaba y el loader lo contaba como `ya_presentes` (que sugiere «ya
+    estaba en ESTA cohorte»): la cohorte se cargaba incompleta en silencio y
+    su recall informativo se calculaba sobre un subconjunto arbitrario."""
+    factory, created = db
+    p = uuid.uuid4().hex[:8]
+    cohort = f"stratum-two-{p}"
+    other = f"holdout-fx-{p}"
+    created["cohorts"] += [cohort, other]
+    src = _mk_source(factory, f"legacy:strtwo{p}")
+    created["sources"].append(src)
+    vacs = _mk_legacy_pair(factory, src, p, 2)
+    created["dedup_refs"] += [ext for _v, ext in vacs]
+    (va, ra), (vb, rb) = vacs
+
+    # El MISMO par canónico ya vive en OTRA cohorte.
+    async def seed_other():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "INSERT INTO labeled_dedup_pairs "
+                    "(job_ref_a, job_ref_b, verdict, source) "
+                    "VALUES (:a, :b, 'duplicate', :src)"
+                ),
+                {"a": min(ra, rb), "b": max(ra, rb), "src": other},
+            )
+            await s.commit()
+
+    _run(seed_other())
+
+    candidates = {"B": [_cand(va, vb, 0.9)]}
+    summary = _load(factory, candidates, {"B-01": "duplicate"}, cohort=cohort)
+    assert summary["insertados"] == 1  # antes: 0 (descartado por el índice global)
+    assert summary["ya_presentes"] == 0  # el contador ya no miente
+    assert len(_pairs_in_cohort(factory, cohort)) == 1
+    assert len(_pairs_in_cohort(factory, other)) == 1  # la otra cohorte, intacta
+
+    # Idempotencia DENTRO de la cohorte: re-cargar sí es ya_presentes.
+    again = _load(factory, candidates, {"B-01": "duplicate"}, cohort=cohort)
+    assert again["insertados"] == 0 and again["ya_presentes"] == 1
+
+
 def test_loader_falla_fuerte_con_actas_desparejadas(db):
     factory, created = db
     p = uuid.uuid4().hex[:8]
@@ -337,3 +382,13 @@ def test_cohorte_estrato_congelada_rechaza_loader_y_mutaciones(db):
     assert [(r.job_ref_a, r.job_ref_b, r.verdict) for r in rows] == [
         (ra, rb, "duplicate")
     ]
+
+
+def test_modo_desconocido_del_miner_falla_fuerte():
+    """Regresión G1 H-14b: un modo del miner fuera de 'ABCDEFM' desaparecía en
+    SILENCIO de la numeración (sus pares jamás se numeraban y la hoja quedaba
+    incompleta sin error). Ahora: ValueError."""
+    with pytest.raises(ValueError, match="fuera de 'ABCDEFM'"):
+        stratum.pair_ids_from_candidates(
+            {"Z": [_cand("a", "b", 0.9)], "B": [_cand("c", "d", 0.8)]}
+        )
