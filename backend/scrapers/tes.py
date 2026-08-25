@@ -10,6 +10,7 @@ import logging
 from bs4 import BeautifulSoup
 
 from services.scraper_engine import BaseScraper
+from utils import fetch_diagnostics as diag
 from utils.dates import parse_published_at
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -30,20 +31,32 @@ class TESScraper(BaseScraper):
     def build_listing_url(self, page: int, query: str) -> str:
         return f"{self.LISTING_URL}?page={page}"
 
+    def _record_structure_failure(self, detail: str) -> None:
+        """Registra un fallo de estructura como error de fetch VISIBLE.
+
+        G1/P2-5: tes ni importaba fetch_diagnostics — sin __NEXT_DATA__, JSON
+        ilegible o ruta tRPC cambiada devolvía [] en silencio y la fuente
+        ROTA salía `empty` (clase VD.7). Mismo patrón que financejobs.
+        """
+        logger.error("tes: %s", detail)
+        diag.record(diag.KIND_NETWORK, self.LISTING_URL, detail=detail)
+
     def parse_listing_page(self, soup: BeautifulSoup) -> list[dict]:
         """Extract jobs from __NEXT_DATA__ tRPC state."""
         script_el = soup.select_one("script#__NEXT_DATA__")
         if not script_el or not script_el.string:
-            logger.warning("tes: no __NEXT_DATA__ found")
+            self._record_structure_failure("no __NEXT_DATA__ found")
             return []
 
         try:
             data = json.loads(script_el.string)
-        except json.JSONDecodeError as e:
-            logger.error("tes: failed to parse __NEXT_DATA__: %s", e)
+        except (ValueError, RecursionError) as e:
+            # ValueError (no JSONDecodeError): un número gigante o un cuerpo
+            # no-UTF8 lanzan ValueError PLANO que antes escapaba (G1/P2-5).
+            self._record_structure_failure(f"failed to parse __NEXT_DATA__: {e}")
             return []
 
-        # Navigate: props.pageProps.trpcState.json.queries[0].state.data.jobs
+        # Navigate: props.pageProps.trpcState.json.queries[n].state.data.jobs
         try:
             queries = (
                 data.get("props", {})
@@ -52,11 +65,28 @@ class TESScraper(BaseScraper):
                 .get("json", {})
                 .get("queries", [])
             )
-            if not queries:
+            if not queries or not isinstance(queries, list):
+                self._record_structure_failure(
+                    "__NEXT_DATA__ sin trpcState.queries: estructura desconocida"
+                )
                 return []
-            jobs_data = queries[0].get("state", {}).get("data", {}).get("jobs", [])
-        except (IndexError, AttributeError):
-            logger.warning("tes: unexpected __NEXT_DATA__ structure")
+            # G1/P2-5: `queries[0]` era un índice mágico — se busca la query
+            # que realmente trae `state.data.jobs`, esté donde esté.
+            jobs_data = None
+            for query_entry in queries:
+                if not isinstance(query_entry, dict):
+                    continue
+                candidate = query_entry.get("state", {}).get("data", {})
+                if isinstance(candidate, dict) and "jobs" in candidate:
+                    jobs_data = candidate["jobs"]
+                    break
+            if not isinstance(jobs_data, list):
+                self._record_structure_failure(
+                    "ninguna query tRPC trae state.data.jobs: estructura desconocida"
+                )
+                return []
+        except (IndexError, AttributeError, TypeError):
+            self._record_structure_failure("unexpected __NEXT_DATA__ structure")
             return []
 
         stubs: list[dict] = []

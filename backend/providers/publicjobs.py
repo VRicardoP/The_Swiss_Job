@@ -9,7 +9,9 @@ import logging
 import httpx
 
 from services.job_service import BaseJobProvider
+from utils import fetch_diagnostics as diag
 from utils.dates import parse_published_at
+from utils.http import fetch_with_retry
 from utils.text import extract_job_skills
 
 logger = logging.getLogger(__name__)
@@ -76,31 +78,48 @@ class PublicJobsProvider(BaseJobProvider):
     SOURCE_NAME = "publicjobs"
 
     async def fetch_jobs(self, query: str, location: str = "Switzerland") -> list[dict]:
-        """Fetch all jobs from publicjobs.ch __data.json endpoint."""
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            try:
-                response = await self._circuit.call(
-                    lambda: client.get(
-                        DATA_URL,
-                        headers=self.DEFAULT_HEADERS,
-                        timeout=20.0,
-                    )
-                )
-            except Exception as e:
-                logger.error("publicjobs.ch request failed: %s", e)
-                return []
+        """Fetch all jobs from publicjobs.ch __data.json endpoint.
 
-        if response.status_code != 200:
-            logger.warning("publicjobs.ch returned HTTP %d", response.status_code)
+        G1/P1-1: era el ÚNICO provider que no pasaba por `fetch_with_retry`
+        — todos sus modos de fallo (4xx/5xx/parseo/red) devolvían `[]` sin
+        registrar issue y el run salía `empty` (sequía legítima) en vez de
+        `error`. Ahora la descarga usa el helper común: reintentos con
+        backoff y fallo VISIBLE en fetch_diagnostics (contrato V.0: el None
+        de fetch_with_retry es un fetch fallido cuyo issue ya está anotado).
+        """
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            raw_json = await self._circuit.call(
+                lambda: fetch_with_retry(
+                    client,
+                    DATA_URL,
+                    headers=self.DEFAULT_HEADERS,
+                    timeout=20.0,
+                )
+            )
+
+        if raw_json is None:
             return []
 
-        try:
-            raw_json = response.json()
-        except Exception as e:
-            logger.error("publicjobs.ch JSON parse failed: %s", e)
+        if not isinstance(raw_json, dict):
+            # 200 con JSON válido pero no-objeto: estructura desconocida, no
+            # "no hay ofertas" — mismo criterio que thehub/financejobs.
+            diag.record(
+                diag.KIND_NETWORK,
+                DATA_URL,
+                detail="__data.json no es un objeto JSON: estructura desconocida",
+            )
             return []
 
         decoded_jobs = _dehydrate_sveltekit(raw_json)
+        if not decoded_jobs and "nodes" not in raw_json:
+            # SvelteKit renombró la raíz: 0 ofertas por estructura ilegible,
+            # no una sequía legítima.
+            diag.record(
+                diag.KIND_NETWORK,
+                DATA_URL,
+                detail="__data.json sin la clave 'nodes': estructura desconocida",
+            )
+            return []
         logger.info("publicjobs.ch decoded %d jobs", len(decoded_jobs))
 
         # Convert to raw dicts for normalize_job
