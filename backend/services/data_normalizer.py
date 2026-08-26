@@ -235,8 +235,21 @@ _K = r"\s*([kK])?(?=$|[^0-9A-Za-zÀ-ÿ]|(?i:CHF|EUR|USD|GBP)\b)"
 #   2) el patrón clásico anterior a `c20c0b8`, sin divisa entre medias.
 # Ninguno captura la divisa: los grupos siguen siendo 1..4 en los dos.
 _CUR_TOK = r"(?:(?i:CHF|EUR|USD|GBP)\s*|[€$£]\s*)"
+# G8/P3-6 — el separador de rango. Hasta G7 era `(?:[-–—]+|to)` y nada más: las
+# formas CANÓNICAS del mercado suizo —«CHF 88'000 bis CHF 104'000», «zwischen
+# CHF 95'000 und CHF 115'000», «entre CHF 90'000 et CHF 110'000»— no casaban
+# ningún patrón de rango y caían al camino `single`, que es leftmost. Con las
+# dos primeras se perdía la cota alta; con «Besoldungsklasse 12, Jahresgehalt
+# CHF 88'000 bis CHF 104'000» el `single` se quedaba con el número de la clase
+# salarial: 12 CHF anuales, corrupción silenciosa ×7.000. Productores vivos:
+# `financejobs` (suizo, reactivado), `stelle_admin`, `schuljobs`, `gastrojob`.
+#
+# Las palabras EXIGEN espacio a los dos lados (`\s+…\s+`): sin él, `a` casaría
+# dentro de cualquier token alfanumérico. Los guiones y `to` conservan el
+# `\s*` de siempre para no cambiar nada de lo ya medido.
+_SEP_RANGO = r"(?:\s*(?:[-–—]+|to)\s*|\s+(?:bis|und|et|à|a)\s+)"
 _SALARY_RANGE_CUR_RE = re.compile(
-    rf"{_CUR_TOK}{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_CUR_TOK}{_NUM}{_K}"
+    rf"{_CUR_TOK}{_NUM}{_K}{_SEP_RANGO}{_CUR_TOK}{_NUM}{_K}"
 )
 # G5/P3-5: la forma «divisa solo en el extremo DERECHO» ("30,000 - £40,000")
 # no casaba ninguno de los dos anteriores —el `£` corta el segundo `_NUM` del
@@ -245,10 +258,37 @@ _SALARY_RANGE_CUR_RE = re.compile(
 # `_LOW_LOOKS_LIKE_SALARY`: sin esa comprobación este patrón reabriría
 # exactamente la regresión que cerró G4/P2-1, porque «Grade 6 - £30,000» tiene
 # LA MISMA forma que «30,000 - £40,000» y el ruido secuestraría el mínimo.
-_SALARY_RANGE_CUR_RIGHT_RE = re.compile(
-    rf"{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_CUR_TOK}{_NUM}{_K}"
+_SALARY_RANGE_CUR_RIGHT_RE = re.compile(rf"{_NUM}{_K}{_SEP_RANGO}{_CUR_TOK}{_NUM}{_K}")
+_SALARY_RANGE_RE = re.compile(rf"{_NUM}{_K}{_SEP_RANGO}{_NUM}{_K}")
+# G8/P2-1 — el ANCLA LÉXICA que decide si un rango SIN divisa que va primero en
+# el texto puede ganarle a un rango anclado por divisa.
+#
+# La guarda de magnitud (`_low_looks_like_salary`, ≥ 1000) no distingue un
+# sueldo de un AÑO, de un número de referencia ni de un recuento: «Fixed term
+# 2026 - 2027», «Job ID 4521-9987», «Réf. 2025-0043», «Roll 1,100 - 1,300
+# pupils» y «Vacancy 1000 - 1200 hours» la pasan todos, y como el rango sin
+# divisa suele ir a la izquierda, secuestraba el parseo por posición. La
+# información que falta no es numérica sino LÉXICA: qué palabra precede al
+# rango. Se le exige al candidato `plain` que, además de parecer un importe,
+# vaya al PRINCIPIO del texto o detrás de una palabra de sueldo.
+#
+# Sin `\b` inicial a propósito: el ancla se busca como SUFIJO de lo que
+# precede al rango, así que solo puede casar al final del fragmento. El tramo
+# `[^0-9A-Za-zÀ-ÿ]{0,12}` permite los separadores habituales entre la palabra y
+# la cifra (« : », « de », « », «(») sin dejar pasar otra palabra en medio.
+_ANCLA_SUELDO_RE = re.compile(
+    r"(?:salaire|salary|lohn|gehalt|besoldung|wage|pay|compensation|annual"
+    r"|annuel|jahres|brut|gross|band|scale|range|from|ab|entre|between|bis"
+    r"|von|de|di)[^0-9A-Za-zÀ-ÿ]{0,12}$",
+    re.IGNORECASE,
 )
-_SALARY_RANGE_RE = re.compile(rf"{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_NUM}{_K}")
+# Lo que se descarta al mirar hacia atrás para decidir si el rango abre el
+# texto: espacios y la puntuación que un anuncio pone delante de una cifra.
+_PREFIJO_INOCUO = " \t([:.,-"
+# Ventana hacia atrás en la que se busca el ancla: suficiente para
+# «Salaire annuel brut: » y corta para que no alcance una frase anterior.
+_ANCLA_VENTANA = 28
+
 # El single exige ≥2 dígitos (como el `[\d.,]+` original): un dígito suelto
 # ("Level 5") no es un salario.
 # G7/P3-9: el texto que entra al parser se acota a lo que cabe en la columna
@@ -484,11 +524,38 @@ class DataNormalizer:
         #
         # Ahora compiten los TRES y gana el primero del texto. `plain` es el
         # único que puede casar ruido puro (no lleva divisa que lo ancle), así
-        # que se descarta cuando va primero, su cota baja no parece salario y
-        # hay OTRO candidato que ocupar su lugar. La condición «y hay otro
-        # candidato» no es cosmética: exigirle la guarda a `plain` siempre rompe
-        # tres filas reales del corpus ("12-42508 EUR", "21-42508 EUR",
-        # "720-2400 EUR"), donde la cota baja es pequeña pero es el salario.
+        # que se descarta cuando va primero y no supera las DOS pruebas —
+        # magnitud Y ancla léxica—, siempre que haya OTRO candidato que ocupe su
+        # lugar. La condición «y hay otro candidato» no es cosmética: exigirle
+        # las pruebas a `plain` siempre rompe tres filas reales del corpus
+        # ("12-42508 EUR", "21-42508 EUR", "720-2400 EUR"), donde la cota baja
+        # es pequeña pero es el salario.
+        #
+        # G8/P2-1 — la MAGNITUD SOLA NO BASTA, y G7 la dejó sola justo cuando
+        # además le quitó a `_SALARY_RANGE_CUR_RE` su prioridad global. Las dos
+        # mitades juntas dejaban que un año, una referencia o un recuento de
+        # CUATRO cifras le ganaran a un rango con divisa en los DOS extremos:
+        # «Fixed term 2026 - 2027. Salary £34,000 - £41,000» -> (2026, 2027);
+        # «Réf. 2025-0043 — Salaire CHF 92'000 - CHF 108'000» -> (2025, 43), que
+        # tras el swap de `normalize_salary` se persiste como salary_min = 43.
+        # Se le exige ahora a `plain` un ANCLA POSITIVA para ganarle a un
+        # candidato con divisa: abrir el texto, o ir detrás de una palabra de
+        # sueldo (`_ANCLA_SUELDO_RE`).
+        #
+        # COTA declarada del ancla: un `plain` en MEDIO de la prosa y sin
+        # palabra de sueldo delante pierde ante un candidato con divisa aunque
+        # ese candidato sea una glosa entre paréntesis. Es la dirección
+        # conservadora (la divisa es evidencia más fuerte que la posición) y no
+        # afecta a ninguno de los 637 valores vivos ni al corpus de prosa; queda
+        # fijada como `xfail` estricto en `tests/test_g8_corpus_prosa_salarios.py`
+        # para que el ciclo que la cierre se entere.
+        #
+        # VÍA MUERTA, medida antes de descartarla (G8): «un candidato con divisa
+        # y FUERA de paréntesis gana a `plain`» recupera también las nueve
+        # formas y es neutra sobre el corpus vivo, pero rompe un caso ya fijado
+        # en la suite —«Salaire annuel 90 000 - 110 000, soit 7 500 - CHF 9 200
+        # par mois» pasa de (90000, 110000) a (7500, 9200)— porque la glosa no
+        # siempre va entre paréntesis. No repetirla.
         parece_salario = DataNormalizer._low_looks_like_salary
         plain = _SALARY_RANGE_RE.search(text)
         right = _SALARY_RANGE_CUR_RIGHT_RE.search(text)
@@ -502,8 +569,18 @@ class DataNormalizer:
         # Estable: a igualdad de posición gana el patrón más específico, que es
         # el orden en que se han construido.
         candidatos.sort(key=lambda m: m.start())
-        if len(candidatos) > 1 and candidatos[0] is plain and not parece_salario(plain):
-            candidatos.pop(0)
+        if len(candidatos) > 1 and candidatos[0] is plain:
+            # G8/P2-1: para ganarle a un candidato anclado por divisa, `plain`
+            # necesita las DOS cosas — parecer un importe Y estar anclado
+            # léxicamente. Solo la magnitud dejaba pasar años, referencias y
+            # recuentos (ver `_ANCLA_SUELDO_RE`).
+            previo = text[: plain.start()]
+            anclado = (
+                not previo.strip(_PREFIJO_INOCUO)
+                or _ANCLA_SUELDO_RE.search(previo[-_ANCLA_VENTANA:]) is not None
+            )
+            if not (parece_salario(plain) and anclado):
+                candidatos.pop(0)
         range_match = candidatos[0] if candidatos else None
         if range_match:
             lo = DataNormalizer._parse_number(
@@ -561,6 +638,14 @@ class DataNormalizer:
         Band N, NJC Scale N, MPS/UPS N, Point N— se escriben exactamente así.
         Se exige que la cota baja llegue a 1.000 o traiga su propia «k».
 
+        LO QUE ESTA GUARDA NO PUEDE DECIDIR (G8/P2-1). Solo mira la MAGNITUD, y
+        la magnitud no distingue un sueldo de un año, de un número de
+        referencia ni de un recuento: «2026 - 2027», «4521-9987»,
+        «1,100 - 1,300 pupils» tienen todos la cota baja ≥ 1.000 y la pasan.
+        Esa mitad la resuelve el ANCLA LÉXICA de `_parse_salary_string`
+        (`_ANCLA_SUELDO_RE`), no esta función: aquí solo se descarta el ruido
+        de magnitud PEQUEÑA, que es para lo que se escribió.
+
         COTA PREEXISTENTE que este fix NO cierra (medida, no razonada): cuando
         el número de escala tiene DOS dígitos y no hay rango que casar
         —«Point 12 - €35,000», «Stufe 12 - CHF 90'000»—, el camino `single`
@@ -569,6 +654,13 @@ class DataNormalizer:
         comportamiento de antes de G5 y no produce ninguna diferencia sobre los
         637 valores reales del corpus; se deja escrito para que no se confunda
         con lo que aquí sí se arregla.
+
+        ⚠ G8/P3-6 — el ALCANCE de esa cota era MÁS ANCHO de lo que esta
+        docstring declaraba: «y no hay rango que casar» incluía, hasta G8, TODO
+        anuncio suizo escrito con `bis`/`und`/`et`, porque el separador de
+        rango solo conocía el guion y `to`. «Besoldungsklasse 12, Jahresgehalt
+        CHF 88'000 bis CHF 104'000» daba 12 CHF anuales. `_SEP_RANGO` lo cierra;
+        la cota queda reducida a su forma literal (escala + guion + importe).
         """
         if match.group(2):  # shorthand con «k»: "30k - £40,000"
             return True
