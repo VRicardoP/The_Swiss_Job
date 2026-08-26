@@ -742,6 +742,126 @@ def test_contenido_que_revierte_refresca_la_marca_del_raw_vigente(db):
     assert _vigente().raw["salary_original"] == "80k"
 
 
+_VIGENTE_SQL = (  # la consulta EXACTA de los tres call-sites del raw vigente
+    "SELECT DISTINCT ON (r.incarnation_id) r.raw, r.incarnation_id "
+    "FROM source_listing_revisions r "
+    "JOIN source_listing_incarnations i ON i.id = r.incarnation_id "
+    "JOIN source_listings l ON l.id = i.source_listing_id "
+    "WHERE l.external_id = :e ORDER BY r.incarnation_id, r.fetched_at DESC, r.id"
+)
+
+
+def _lst_titulo(ext, titulo):
+    return RawListing(
+        external_id=ext, url=f"https://x/{ext}",
+        payload={"title": titulo, "company_name": "ACME AG"},
+    )
+
+
+def _canonica(factory, ext):
+    async def go():
+        async with factory() as s:
+            return (
+                await s.execute(
+                    sa.text(
+                        "SELECT orv.content->>'title' FROM vacancies v "
+                        "JOIN offer_revisions orv "
+                        "  ON orv.id = v.current_offer_revision_id "
+                        "JOIN source_listing_incarnations i ON i.vacancy_id = v.id "
+                        "JOIN source_listings l ON l.id = i.source_listing_id "
+                        "WHERE l.external_id = :e"
+                    ),
+                    {"e": ext},
+                )
+            ).scalar_one()
+
+    return asyncio.run(go())
+
+
+def _dos_tx_entrelazadas(factory, scope, ext):
+    """Dos escritores sobre la MISMA fuente, entrelazados: A sella el reloj de
+    su transacción PRIMERO (preprocesado del lote + espera del advisory lock)
+    pero escribe la ÚLTIMA. Es el caso para el que existe el lock por fuente."""
+
+    async def go():
+        async with factory() as sa_, factory() as sb:
+            # A arranca: su transaction_timestamp() queda sellado aquí.
+            await sa_.execute(sa.text("SELECT transaction_timestamp()"))
+            # B arranca DESPUÉS y termina ANTES.
+            await RawListingSink().handle(sb, scope, (_lst_titulo(ext, "SRE 90k"),))
+            await sb.commit()
+            # A por fin toma el lock y escribe contenido NUEVO.
+            await RawListingSink().handle(sa_, scope, (_lst_titulo(ext, "SRE 100k"),))
+            await sa_.commit()
+
+    asyncio.run(go())
+
+
+def test_g5_la_revision_de_una_tx_lenta_no_se_inserta_con_marca_anterior(db):
+    """Regresión G5-P2-4: el `GREATEST(fetched_at, now())` daba monotonía POR
+    FILA pero NO cubría el INSERT de una revisión NUEVA, que tomaba el
+    server_default de la columna (`now()` = transaction_timestamp()). El sink
+    sella el reloj de su tx ANTES del preprocesado del lote y ANTES del
+    advisory lock por fuente, así que una tx que arranca primero y escribe
+    después insertaba su revisión con un `fetched_at` MENOR que el de la
+    revisión ya superada: bajo `ORDER BY fetched_at DESC` los tres call-sites
+    del raw vigente devolvían la SUPERADA mientras `_canonicalize` (último
+    escritor) dejaba la canónica con el contenido NUEVO. La clase G3-A-P3-3
+    seguía abierta pese al commit que decía cerrarla."""
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    ext = f"g5mono-{uuid.uuid4().hex[:8]}"
+    _sink_batch(factory, scope, [_lst_titulo(ext, "SRE 80k")])
+    _dos_tx_entrelazadas(factory, scope, ext)
+
+    def _vigente():
+        async def go():
+            async with factory() as s:
+                return (await s.execute(sa.text(_VIGENTE_SQL), {"e": ext})).one()
+
+        return asyncio.run(go())
+
+    # El raw vigente y la canónica describen el MISMO contenido: el último
+    # escrito. Antes del fix: 'SRE 90k' (la superada) vs 'SRE 100k'.
+    assert _vigente().raw["title"] == "SRE 100k"
+    assert _canonica(factory, ext) == "SRE 100k"
+
+
+def test_g5_la_reparacion_no_repunta_la_canonica_al_contenido_superado(db):
+    """El daño extremo a extremo de la inversión (G5-P2-4): con el orden
+    invertido, `_rebuild_canonical_after_repair` reconstruye la canónica desde
+    el raw «vigente» equivocado y RETIRA el contenido que /v1 estaba
+    sirviendo — exactamente el síntoma que G3-A-P3-3 documenta."""
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    ext = f"g5rep-{uuid.uuid4().hex[:8]}"
+    _sink_batch(factory, scope, [_lst_titulo(ext, "SRE 80k")])
+    _dos_tx_entrelazadas(factory, scope, ext)
+    antes = _canonica(factory, ext)
+    assert antes == "SRE 100k"
+
+    async def reparar():
+        async with factory() as s:
+            tgt = (
+                await s.execute(
+                    sa.text(
+                        "SELECT v.id AS vid, i.id AS iid FROM vacancies v "
+                        "JOIN source_listing_incarnations i ON i.vacancy_id = v.id "
+                        "JOIN source_listings l ON l.id = i.source_listing_id "
+                        "WHERE l.external_id = :e"
+                    ),
+                    {"e": ext},
+                )
+            ).one()
+            await RawListingSink()._rebuild_canonical_after_repair(
+                s, [(tgt.vid, tgt.iid)]
+            )
+            await s.commit()
+
+    asyncio.run(reparar())
+    assert _canonica(factory, ext) == antes  # antes del fix: 'SRE 90k'
+
+
 def test_e2e_run_scope_with_real_sink(db):
     """E2E A-03+A-04: runner + sink real — grafo y estado commiteados juntos."""
     factory, created = db

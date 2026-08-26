@@ -1349,19 +1349,32 @@ class RawListingSink:
             # (el pre-filtro es optimización, no la corrección) y REFRESCA la
             # marca temporal del contenido re-visto (G3-A-P3-3) — `raw` no se
             # toca: mismo content_hash ⇒ mismo canon.
-            # G4-N-2: la marca es MONÓTONA. `now()` es transaction_timestamp():
-            # una tx que selló su reloj antes pero escribe después (espera del
-            # advisory lock por fuente + preprocesado del lote) haría RETROCEDER
-            # el fetched_at y reabriría G3-A-P3-3 —«última revisión» se lee por
-            # fetched_at DESC— con >=2 revisiones vivas en la encarnación.
+            # G4-N-2 / G5-P2-4: la marca es la hora de EJECUCIÓN
+            # (`clock_timestamp()`), NO la de la transacción. El sink sella el
+            # reloj de su tx ANTES del preprocesado del lote y ANTES del
+            # `pg_advisory_xact_lock` por fuente, así que con `now()`
+            # (= transaction_timestamp) una tx A que arranca primero y se
+            # demora escribe DESPUÉS de una tx B que arrancó después, y su
+            # revisión NUEVA entra con `fetched_at` MENOR: bajo
+            # `ORDER BY fetched_at DESC` sale primero la revisión ya SUPERADA
+            # de B mientras `_canonicalize` (último escritor: A) dejó la
+            # canónica con el contenido de A. El `GREATEST` daba monotonía POR
+            # FILA (contenido re-visto) pero NO cubría el INSERT de una
+            # revisión nueva, que tomaba el server_default de la columna, y es
+            # el orden ENTRE FILAS lo que leen los tres call-sites
+            # (`_recycle_guard`, `_rebuild_canonical_after_repair` y
+            # `projector._latest_slot_raws`). Bajo el advisory lock por fuente
+            # solo escribe una tx a la vez, así que `clock_timestamp()` ordena
+            # las revisiones en su orden REAL de escritura.
             await session.execute(
                 sa.text(
                     "INSERT INTO source_listing_revisions "
-                    "(id, incarnation_id, content_hash, raw) "
-                    "VALUES (:id, :iid, :chash, CAST(:raw AS jsonb)) "
+                    "(id, incarnation_id, content_hash, raw, fetched_at) "
+                    "VALUES (:id, :iid, :chash, CAST(:raw AS jsonb), "
+                    "        clock_timestamp()) "
                     "ON CONFLICT (incarnation_id, content_hash) "
-                    "DO UPDATE SET fetched_at = "
-                    "  GREATEST(source_listing_revisions.fetched_at, now())"
+                    "DO UPDATE SET fetched_at = GREATEST("
+                    "  source_listing_revisions.fetched_at, clock_timestamp())"
                 ),
                 candidates,
             )
