@@ -394,6 +394,15 @@ async def delete_application(
         kind, row = target
         check_if_match(request, await _current_payload(session, kind, row))
         if kind == "application":
+            # G3-A-P2-2: el alta SIN `status` vale 'saved' y escribe DOS filas
+            # (application + profile_vacancy_state.saved_at); borrar solo la
+            # primera hacía que el NOT EXISTS del feed dejara de excluir la
+            # vacante y el item RESUCITARA como bookmark, con id = vacancy_id
+            # (otra identidad) y un segundo DELETE en 404. El item del feed es
+            # UNO: se retira entero, igual que ya hacía la rama bookmark.
+            await matching.set_saved(
+                session, row.profile_id, row.vacancy_id, False
+            )
             await session.execute(
                 sa.text("DELETE FROM applications WHERE id = :id"), {"id": row.id}
             )

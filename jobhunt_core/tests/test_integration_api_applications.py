@@ -618,6 +618,46 @@ def test_delete_dual_application_and_pure_bookmark(db):
     assert gone.status_code == 404
 
 
+def test_delete_application_creada_por_defecto_no_resucita_como_bookmark(db):
+    """Regresión G3-A-P2-2: el alta SIN `status` vale 'saved' (Decisión 4) y
+    escribe DOS filas — la application y `profile_vacancy_state.saved_at`—,
+    pero el DELETE retiraba solo la primera: al desaparecer la fila de
+    applications, el NOT EXISTS del feed dejaba de excluir la vacante y el item
+    REAPARECÍA como bookmark, con id = vacancy_id (otra identidad) y un segundo
+    DELETE sobre el id original en 404. La asimetría estaba dentro del propio
+    handler: la rama bookmark SÍ llamaba a set_saved(False). La suite no lo veía
+    porque su DELETE se hacía sobre una application creada con status
+    'applied'."""
+    factory, created = db
+    token, _tenant, pid, vacs = _seed(factory, created)
+    (v_app, _), _ = vacs
+    # Alta POR DEFECTO (sin status): el camino del cliente normal.
+    created_app = _post_app(factory, token, {
+        "profile_id": str(pid), "vacancy_id": str(v_app), "title": "T",
+    }).json()
+    assert created_app["status"] == "saved"
+    aid = created_app["id"]
+
+    r = tia._api(factory, f"/v1/applications/{aid}", token=token, method="DELETE")
+    assert r.status_code == 204
+
+    feed = tia._api(
+        factory, f"/v1/applications?profile={pid}", token=token
+    ).json()["items"]
+    assert feed == []  # antes: [(vacancy_id, 'bookmark', 'saved')]
+    pvs = _rows(
+        factory,
+        "SELECT saved_at FROM profile_vacancy_state "
+        "WHERE profile_id = :p AND vacancy_id = :v",
+        p=pid, v=v_app,
+    )
+    assert pvs == [] or pvs[0].saved_at is None
+    # Y el borrado es idempotente en su propia identidad: 404, no un item
+    # resucitado con otra.
+    again = tia._api(factory, f"/v1/applications/{aid}", token=token, method="DELETE")
+    assert again.status_code == 404
+
+
 # --------------------------------------------- PUT bookmarks ADITIVO (Decisión 4)
 
 
