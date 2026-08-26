@@ -57,7 +57,7 @@ from services.crawler_budget import CrawlerBudgetService
 from services.cursor_store import CursorStore
 from services.data_normalizer import DataNormalizer
 from services.deduplicator import Deduplicator
-from services.job_repository import JobRepository
+from services.job_repository import JobIdentityConflictError, JobRepository
 from utils import fetch_diagnostics as diag
 
 logger = logging.getLogger(__name__)
@@ -135,6 +135,12 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
         # es PARCIAL (las fuentes ya commiteadas valen; las restantes no se
         # pidieron). Antes no había forma de distinguirlo de un run completo.
         "soft_time_limit": False,
+        # G4/P1-1 — colisiones de IDENTIDAD (hash nuevo sobre una url que ya
+        # existe): la fuente cambió su fórmula de hash y el corpus histórico no
+        # se ha migrado. Contador PROPIO, separado de `errors`, porque el modo
+        # de fallo es pérdida silenciosa de ofertas re-listadas, no un error
+        # por-oferta cualquiera.
+        "identity_conflicts": 0,
         "unhealthy": [],
     }
 
@@ -263,6 +269,7 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 # significa "todo descartado deliberadamente", no "fallo
                 # pre-bucle".
                 attempted_count = 0
+                identity_conflicts = 0
                 for job, verdict in zip(jobs, precheck.verdicts):
                     if verdict == harvest_window.SKIP_STALE:
                         window_stale_identities.append(scraper.job_identity(job))
@@ -311,6 +318,13 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                         # bucle de fuentes, que cierra el run como «cosecha
                         # parcial» (mismo patrón que maintenance_tasks, G1/P2-14).
                         raise
+                    except JobIdentityConflictError as e:
+                        # G4/P1-1 — ver services/job_repository.py: se cuenta
+                        # aparte de `errors` para que la deriva no se disuelva
+                        # entre los fallos por-oferta.
+                        summary["identity_conflicts"] += 1
+                        identity_conflicts += 1
+                        logger.error("%s", e)
                     except Exception as e:
                         summary["errors"] += 1
                         logger.error(
@@ -413,6 +427,16 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                         cursor.bootstrap_complete = False
 
                 await db.commit()
+
+                # G4/P1-1 — la deriva de identidad sube a INCIDENCIA de run:
+                # sin esto la fuente salía `ok` (las URLs nuevas sí entran) y
+                # nadie se enteraba de que las re-listadas se estaban cayendo.
+                if identity_conflicts:
+                    summary["unhealthy"].append(
+                        f"{source}: DERIVA DE IDENTIDAD — {identity_conflicts} "
+                        "ofertas re-listadas descartadas por choque con "
+                        "ix_jobs_url (corpus histórico sin migrar)"
+                    )
 
                 # VD.3 — señal de persistencia, DESPUÉS del commit a propósito:
                 # `record_storage` usa su propia transacción acotada y no

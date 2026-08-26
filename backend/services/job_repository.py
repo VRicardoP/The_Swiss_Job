@@ -7,12 +7,52 @@ from datetime import datetime, timezone
 
 from sqlalchemy import and_, case, func, null, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.job import Job
 from services.job_matcher import EMBEDDING_TAGS_VISIBLE_MAX_CHARS
 
 logger = logging.getLogger(__name__)
+
+# Nombre del índice UNIQUE sobre `jobs.url` (models/job.py: `index=True,
+# unique=True`). Se declara aquí porque es lo que distingue una colisión de
+# IDENTIDAD de cualquier otro fallo de integridad.
+_URL_UNIQUE_INDEX = "ix_jobs_url"
+
+
+class JobIdentityConflictError(Exception):
+    """Una oferta llegó con `hash` NUEVO y una `url` que YA existe en `jobs`.
+
+    G4/P1-1 — el upsert declara el conflicto SOLO por `hash`, pero `jobs.url`
+    tiene su propio índice UNIQUE. Cuando un provider cambia la fórmula de su
+    identidad (canonización de la URL, cambio de campos del hash...) y las
+    filas históricas no se han migrado, cada oferta que el portal re-lista en
+    la MISMA url intenta un INSERT con hash nuevo y muere por unicidad de
+    `url`. El savepoint por-oferta lo aborta y el `except Exception` genérico
+    del pipeline lo contaba como un `errors` anónimo: la oferta se descartaba,
+    `last_seen_at` no se refrescaba y la fuente seguía saliendo `ok` porque
+    las URLs NUEVAS sí entraban. Pérdida SILENCIOSA.
+
+    Tiparlo aparte no repara la deriva (eso lo hace el script de canonización
+    de datos, `scripts/g3_canonizacion_identidad_*.sql`): la hace VISIBLE, para
+    que el pipeline pueda contarla en su propio contador y elevarla a
+    incidencia de salud en vez de disolverla entre los errores por-oferta.
+    """
+
+
+def _is_url_unique_violation(exc: IntegrityError) -> bool:
+    """True si la IntegrityError viene del índice UNIQUE de `jobs.url`.
+
+    Se mira primero `constraint_name` (asyncpg lo expone tipado) y solo se cae
+    al texto si el driver no lo trae: comparar únicamente el mensaje ataría el
+    guard al idioma/formato del servidor.
+    """
+    orig = getattr(exc, "orig", None)
+    name = getattr(orig, "constraint_name", None)
+    if name:
+        return name == _URL_UNIQUE_INDEX
+    return _URL_UNIQUE_INDEX in str(orig or exc)
 
 
 def _column_max_len(column) -> int:
@@ -417,9 +457,26 @@ class JobRepository:
             else_=Job.embedding,
         )
 
-        await self.db.execute(
-            stmt.on_conflict_do_update(index_elements=["hash"], set_=set_)
-        )
+        try:
+            await self.db.execute(
+                stmt.on_conflict_do_update(index_elements=["hash"], set_=set_)
+            )
+        except IntegrityError as exc:
+            # G4/P1-1 — solo se reclasifica la colisión de IDENTIDAD (url
+            # única). Cualquier otro fallo de integridad sigue subiendo tal
+            # cual: no queremos disfrazar de deriva un NOT NULL o una FK.
+            if not _is_url_unique_violation(exc):
+                raise
+            raise JobIdentityConflictError(
+                f"DERIVA DE IDENTIDAD en la fuente '{values.get('source')}': la "
+                f"oferta llega con hash={values.get('hash')!r} pero su url ya "
+                f"existe en `jobs` con OTRO hash ({values.get('url')!r}). El "
+                "corpus histórico de esa fuente NO se ha migrado a la identidad "
+                "nueva: ejecutar el script de canonización "
+                "(backend/scripts/g3_canonizacion_identidad_*.sql) ANTES de la "
+                "siguiente cosecha. Hasta entonces esta oferta se DESCARTA y su "
+                "last_seen_at no se refresca."
+            ) from exc
         return is_new
 
     async def known_hashes(self, hashes: set[str]) -> set[str]:

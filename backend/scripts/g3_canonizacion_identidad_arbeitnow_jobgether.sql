@@ -16,12 +16,42 @@
 --
 -- POR QUÉ HAY QUE EJECUTARLO **ANTES** DE LA SIGUIENTE COSECHA
 -- -----------------------------------------------------------
--- El fix cambia la identidad que emiten los providers. Si la cosecha corre
--- ANTES que este script, el `ON CONFLICT (hash)` no reconocerá NINGUNA de las
--- ~5.700 filas existentes (4206 arbeitnow + 1536 jobgether): entrarían todas
--- como ofertas NUEVAS, con `first_seen_at` nuevo, disparando notificaciones y
--- digest masivos y duplicando el corpus. Este script hace el puente: deja las
--- filas viejas con la identidad nueva, conservando su `first_seen_at`.
+-- URGENCIA: **ALTA — el fallo es PÉRDIDA SILENCIOSA DE DATOS, no duplicación.**
+--
+-- El fix cambia la identidad que emiten los providers y YA ESTÁ DESPLEGADO en
+-- el código. Si una cosecha corre ANTES que este script, el
+-- `ON CONFLICT (hash)` no reconoce NINGUNA de las 5.825 filas existentes
+-- (4.233 arbeitnow + 1.592 jobgether — medido en producción 2026-08-26: el
+-- 100 % cambia de hash). Lo que ocurre entonces NO es que entren como altas
+-- nuevas y se duplique el corpus: `jobs.url` tiene índice **UNIQUE**
+-- (`ix_jobs_url`) y el upsert solo declara el conflicto por `hash`, así que
+--
+--   * la oferta que el portal RE-LISTA en la misma URL provoca una
+--     `UniqueViolationError` sobre `ix_jobs_url`, el savepoint por-oferta la
+--     aborta y el `except Exception` de `tasks/fetch_tasks.py` la cuenta como
+--     un `errors` más: **la oferta se descarta y `last_seen_at` NO se
+--     refresca**. Exposición medida por corrida: 0 en la mayoría de días,
+--     pero 143/199 (72 %) el 2026-08-16 y 128/304 (42 %) el 08-17;
+--   * las 5.825 filas históricas dejan de refrescar `last_seen_at` **para
+--     siempre** → `cleanup_stale_jobs` las archiva y luego las BORRA al
+--     cumplirse `max_age_days`, mientras hasta entonces se sirven al usuario
+--     sin re-verificar;
+--   * la fuente sigue ingiriendo las URLs NUEVAS, así que `job_count > 0` y
+--     `classify(...)` la da por `ok`: **ni `source_health` ni el panel
+--     avisan**. (Desde G4 el choque con `ix_jobs_url` se reclasifica como
+--     `JobIdentityConflictError` y sale como incidencia visible en
+--     `summary["identity_conflicts"]` + `unhealthy`; eso hace el fallo
+--     DETECTABLE, no lo repara.)
+--
+-- Es decir: el peor caso NO es «duplicados que ya limpiaremos», es
+-- **desaparición silenciosa de ofertas del corpus**. Cada `daily_harvest` que
+-- pase sin ejecutar este script amplía el daño. Este script hace el puente:
+-- deja las filas viejas con la identidad nueva, conservando su
+-- `first_seen_at`.
+--
+-- ORDEN OBLIGATORIO (no es una recomendación): **parar el worker/beat →
+-- `pg_dump` → ejecutar este script → rearrancar el worker**. El worker NO
+-- debe correr una cosecha con el código nuevo sobre datos sin migrar.
 --
 -- ESTADO: **NO EJECUTADO contra ninguna base real**. Pendiente de aplicar.
 --
@@ -33,12 +63,22 @@
 -- COINCIDEN carácter a carácter con los que emiten hoy `ArbeitnowProvider` y
 -- `JobgetherProvider` tras el fix G3/P3-13. La fixture se borró al terminar.
 -- JAMÁS contra producción sin backup previo (`pg_dump`) y sin haberlo
--- ensayado antes sobre una copia. Orden recomendado:
+-- ensayado antes sobre una copia. Orden OBLIGATORIO (ver arriba):
 --   1) parar el worker/beat (que no arranque una cosecha a medias),
 --   2) `pg_dump` de la base,
 --   3) ejecutar este script sobre la COPIA y revisar el informe final,
 --   4) ejecutarlo sobre la base real,
 --   5) rearrancar el worker.
+--
+-- COTA CONOCIDA (G4, medida): el `DELETE` del PASO 5 resuelve el choque
+-- clon/superviviente por el mismo usuario quedándose SIEMPRE con la fila del
+-- superviviente, sin mirar si la del clon lleva `feedback`,
+-- `feedback_implicit`, `draft_letter` o un `application_status` avanzado. La
+-- regla correcta —la de `maintenance_tasks.py:284-294`— es preferir la fila
+-- CON señal del usuario. Hoy son **0 filas** afectadas (simulado sobre los
+-- datos de producción del 2026-08-26: 29 `match_results` de clones a borrar,
+-- 0 de ellos con señal), por eso se deja como cota escrita y no se cambia el
+-- script validado. Re-medirlo antes de aplicarlo si ha pasado tiempo.
 --
 -- USO
 -- ---

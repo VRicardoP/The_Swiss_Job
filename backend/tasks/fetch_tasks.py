@@ -14,7 +14,7 @@ from providers import get_all_providers
 from services import harvest_window, source_health
 from services.data_normalizer import DataNormalizer
 from services.deduplicator import Deduplicator
-from services.job_repository import JobRepository
+from services.job_repository import JobIdentityConflictError, JobRepository
 from utils import fetch_diagnostics as diag
 from utils.fetch_diagnostics import KIND_NETWORK, FetchIssue
 
@@ -188,6 +188,12 @@ async def _fetch_providers_async() -> dict[str, Any]:
         # es PARCIAL. Con soft=540/hard=600 el margen es de 60 s, así que el
         # aviso hay que atenderlo, no contarlo como un error más.
         "soft_time_limit": False,
+        # G4/P1-1 — colisiones de IDENTIDAD (hash nuevo sobre una url que ya
+        # existe): la fuente cambió su fórmula de hash y el corpus histórico no
+        # se ha migrado. Contador PROPIO, separado de `errors`, porque el modo
+        # de fallo es pérdida silenciosa de ofertas re-listadas, no un error
+        # por-oferta cualquiera.
+        "identity_conflicts": 0,
         "unhealthy": [],
     }
 
@@ -346,6 +352,7 @@ async def _fetch_providers_async() -> dict[str, Any]:
                 # L2 — el bucle arranca: a partir de aquí 0 intentos significa
                 # "todo descartado deliberadamente", no "fallo pre-bucle".
                 attempted_count = 0
+                identity_conflicts = 0
                 for job, verdict in zip(batch, precheck.verdicts):
                     if verdict != harvest_window.ACCEPT:
                         continue
@@ -383,6 +390,13 @@ async def _fetch_providers_async() -> dict[str, Any]:
                         # error más de la oferta y el bucle seguía hasta el
                         # SIGKILL del límite duro. Sube al bucle de fuentes.
                         raise
+                    except JobIdentityConflictError as e:
+                        # G4/P1-1 — antes caía en el genérico y se disolvía en
+                        # `errors`. Se cuenta aparte para que la deriva sea
+                        # legible en el summary y en la salud de la fuente.
+                        summary["identity_conflicts"] += 1
+                        identity_conflicts += 1
+                        logger.error("%s", e)
                     except Exception as e:
                         summary["errors"] += 1
                         logger.error("Error processing job from %s: %s", source, e)
@@ -412,6 +426,16 @@ async def _fetch_providers_async() -> dict[str, Any]:
                         summary["unhealthy"].append(f"{source}: {motivo}")
 
                 await db.commit()
+
+                # G4/P1-1 — la deriva de identidad sube a INCIDENCIA de run:
+                # sin esto la fuente salía `ok` (las URLs nuevas sí entran) y
+                # nadie se enteraba de que las re-listadas se estaban cayendo.
+                if identity_conflicts:
+                    summary["unhealthy"].append(
+                        f"{source}: DERIVA DE IDENTIDAD — {identity_conflicts} "
+                        "ofertas re-listadas descartadas por choque con "
+                        "ix_jobs_url (corpus histórico sin migrar)"
+                    )
 
                 # VD.3 — señal de persistencia, DESPUÉS del commit del lote a
                 # propósito: `record_storage` usa su propia transacción acotada
