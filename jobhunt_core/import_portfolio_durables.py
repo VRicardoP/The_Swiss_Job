@@ -375,8 +375,19 @@ async def migrate_saved_searches(
                 filters = json.loads(raw_filters) if raw_filters else {}
             except (TypeError, ValueError):
                 filters = None
-        min_score = _as_int(row.get("min_score"))
+        min_score, bad_score = _as_min_score(row.get("min_score"))
         is_active = bool(row.get("is_active", True))
+        if bad_score:
+            # G3-P3-5: mismo patrón que invalid_filters — un 0 ACTIVO alertaría
+            # de TODAS las ofertas, así que se importa DESACTIVADA y el durable
+            # ORIGINAL se ENUMERA en staging para arreglo manual.
+            is_active = False
+            logger.warning(
+                "import_portfolio_durables: min_score INVÁLIDO (%r) en búsqueda "
+                "%r — se importa DESACTIVADA con 0 y se enumera en staging",
+                row.get("min_score"), name,
+            )
+            _record_skipped(staging, "saved_search", "invalid_min_score", row)
         # G1 H-3: la columna real del origen se llama `last_run_at`; se leen ambas
         # claves (el alias histórico primero) — antes quedaba NULL para todas.
         last_run = _as_datetime(
@@ -499,14 +510,20 @@ def _json_safe(value):
     return value
 
 
-def _as_int(value, default: int = 0) -> int:
+def _as_int(value, default: int | None = 0) -> int | None:
     """Coerción defensiva de frontera: entero del durable → int, o `default`.
 
     G2-P2-1: `int(row.get('min_score') or 0)` reventaba con un NaN del export
     (`nan` es truthy y `int(float('nan'))` lanza ValueError) y mataba la
     transacción del cutover ANTES de veredicto — igual que G1-P2-2. Un valor
     no finito o no numérico se degrada al default, y el MISMO helper lo usa el
-    reconciliador (_classify_expected) para que ambos lados coincidan."""
+    reconciliador (_classify_expected) para que ambos lados coincidan.
+
+    G3-P3-5: la degradación era INCOHERENTE — `40.9` (float) daba 40 pero
+    `'40.0'` o `Decimal('40.0')` (la forma en que un extractor genérico
+    entrega una columna numeric) caían al default. El decimal TEXTUAL se
+    acepta con la misma regla de truncado que el float. Con `default=None` el
+    llamador DISTINGUE la degradación en vez de tragársela."""
     if isinstance(value, bool) or value is None:
         return default
     if isinstance(value, int):
@@ -516,7 +533,28 @@ def _as_int(value, default: int = 0) -> int:
     try:
         return int(str(value).strip())
     except (TypeError, ValueError):
+        pass
+    try:
+        number = float(str(value).strip())
+    except (TypeError, ValueError):
         return default
+    return int(number) if math.isfinite(number) else default
+
+
+def _as_min_score(value) -> tuple[int, bool]:
+    """(min_score, DEGRADADO) — coerción del umbral de una búsqueda guardada.
+
+    G3-P3-5: un min_score que no coerciona caía a 0 —el valor MENOS
+    restrictivo: la búsqueda pasa a alertar de TODAS las ofertas— y encima se
+    migraba ACTIVA y sin rastro en staging, al contrario que su hermano
+    `invalid_filters` del mismo bucle. El caller ENUMERA la degradación y no
+    la activa. Ausente (None) NO es degradación: la columna es nullable y 0 es
+    su valor por contrato. DEFINICIÓN ÚNICA: la usan la migración y el lado
+    ESPERADO del reconciliador, o divergirían."""
+    if value is None:
+        return 0, False
+    coerced = _as_int(value, default=None)
+    return (0, True) if coerced is None else (coerced, False)
 
 
 def _as_date(value) -> date | None:
@@ -540,9 +578,16 @@ def _as_date(value) -> date | None:
             # G2-H-2: un ISO-string de DATETIME ('2026-01-02T00:30:00+01:00')
             # no lo acepta date.fromisoformat y el follow_up se perdía en
             # SILENCIO (y el reconciliador, con el mismo helper, no lo veía).
-            # Se reencamina por _as_datetime → misma regla de zona.
-            dt = _as_datetime(value)
-            return _as_date(dt) if dt is not None else None
+            # G3-P3-1: se parsea y se resuelve por la MISMA rama que el objeto
+            # — reencaminarlo por _as_datetime lo anclaba a UTC (regla de
+            # _recency_key, pensada para comparar instantes, no para derivar
+            # una fecha) y el MISMO wall-clock naive daba un día MÁS a partir
+            # de las 23:00 según llegara como objeto o como cadena, contra el
+            # docstring de aquí arriba.
+            try:
+                return _as_date(datetime.fromisoformat(value))
+            except ValueError:
+                return None
     return None
 
 

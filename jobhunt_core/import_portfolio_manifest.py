@@ -43,7 +43,7 @@ from jobhunt_core.import_portfolio_durables import (
     SAVED_STATUS,
     _as_date,
     _as_datetime,
-    _as_int,
+    _as_min_score,
     _json_safe,
     _recency_key,
 )
@@ -348,9 +348,16 @@ async def _classify_expected(
             if invalid:
                 staged[("invalid_filters", ref, _ident(name))] += 1
                 filters = {}
+            # G3-P3-5: espejo EXACTO de migrate_saved_searches — un min_score
+            # que no coerciona se ENUMERA en staging y desactiva la búsqueda;
+            # sin el espejo, el reconciliador no vería la degradación.
+            min_score, bad_score = _as_min_score(row.get("min_score"))
+            if bad_score:
+                staged[("invalid_min_score", ref, _ident(name))] += 1
             name = name[:SAVED_SEARCH_NAME_MAX]
-            min_score = _as_int(row.get("min_score"))
-            is_active = False if invalid else bool(row.get("is_active", True))
+            is_active = (
+                False if invalid or bad_score else bool(row.get("is_active", True))
+            )
             # G1 H-3: la columna real es last_run_at (alias histórico primero).
             last_run = _ts_key(
                 _as_datetime(row.get("last_notified_at") or row.get("last_run_at"))

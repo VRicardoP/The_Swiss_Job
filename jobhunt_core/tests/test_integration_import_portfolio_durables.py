@@ -501,9 +501,103 @@ def test_follow_up_iso_datetime_string_no_se_pierde():
     # 00:30 hora suiza = 2026-01-01T23:30Z → la fecha que el usuario ve.
     assert _as_date("2026-01-01T23:30:00+00:00") == date(2026, 1, 2)
     assert _as_date("2026-01-01T12:00:00+00:00") == date(2026, 1, 1)
-    # NAIVE: se ancla a UTC como en _as_datetime (00:30 UTC = 01:30 CH).
+    # NAIVE: wall-clock YA RESUELTO, igual que la rama de objeto (G3-P3-1).
     assert _as_date("2026-01-01T00:30:00") == date(2026, 1, 1)
     assert _as_date("ni-fecha-ni-hora") is None
+
+
+def test_follow_up_naive_da_la_misma_fecha_como_objeto_y_como_cadena():
+    """Regresión G3-P3-1: el docstring de `_as_date` fija que un datetime NAIVE
+    es wall-clock local YA RESUELTO, y la rama de objeto lo cumple. La rama de
+    cadena (G2-H-2) lo reencaminaba por `_as_datetime`, que ancla el naive a
+    UTC (regla de _recency_key, para comparar instantes) y luego lo convertía
+    a Europe/Zurich: el MISMO instante daba un día MÁS a partir de las 23:00
+    según llegara como objeto o como ISO-string — en silencio, y con reconcile
+    concordando porque usa el mismo helper en ambos lados."""
+    from jobhunt_core.import_portfolio_durables import _as_date
+
+    obj = datetime(2026, 1, 1, 23, 30)
+    assert _as_date(obj) == date(2026, 1, 1)
+    assert _as_date("2026-01-01T23:30:00") == date(2026, 1, 1)  # antes: 01-02
+    assert _as_date("2026-01-01T23:30:00") == _as_date(obj)
+    # Los AWARE siguen resolviéndose en la zona del PRODUCTO (G1-P3-7).
+    assert _as_date("2026-01-01T23:30:00+00:00") == date(2026, 1, 2)
+
+
+def test_min_score_decimal_textual_no_degrada_al_valor_menos_restrictivo():
+    """Regresión G3-P3-5: la degradación era incoherente (`40.9` → 40 pero
+    `'40.0'`/`Decimal('40.0')` → 0) y 0 es el valor MENOS restrictivo: la
+    búsqueda pasa a alertar de TODAS las ofertas. Además no dejaba rastro
+    alguno, al contrario que su hermano `invalid_filters` del mismo bucle."""
+    from decimal import Decimal
+
+    from jobhunt_core.import_portfolio_durables import _as_min_score
+
+    assert _as_min_score(Decimal("40.0")) == (40, False)  # antes: 0 mudo
+    assert _as_min_score("40.0") == (40, False)  # antes: 0 mudo
+    assert _as_min_score(60) == (60, False)
+    assert _as_min_score("60") == (60, False)
+    assert _as_min_score(40.9) == (40, False)  # truncado, como el float
+    assert _as_min_score(None) == (0, False)  # AUSENTE no es degradación
+    # Lo que de verdad no coerciona sigue degradando, pero ahora SE SABE.
+    assert _as_min_score(Decimal("NaN")) == (0, True)
+    assert _as_min_score(float("nan")) == (0, True)
+    assert _as_min_score("sesenta") == (0, True)
+
+
+def test_min_score_invalido_migra_desactivada_y_enumerada_en_staging():
+    """G3-P3-5 (2ª mitad): un min_score irrecuperable ya no se cuela como 0
+    ACTIVO (alertar de TODO) sin rastro — se importa DESACTIVADA y el durable
+    ORIGINAL se enumera en staging, el mismo patrón que invalid_filters. El
+    lado ESPERADO del reconciliador lo espeja, o el cutover divergiría."""
+    import asyncio as _asyncio
+
+    from jobhunt_core.import_portfolio_durables import migrate_saved_searches
+    from jobhunt_core.import_portfolio_manifest import _classify_expected
+    from jobhunt_core.profiles import ensure_consumer, upsert_profile
+    from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import (
+        _on_disposable_db,
+    )
+
+    durable = {
+        "name": "umbral roto", "filters": {"q": "python"},
+        "min_score": "sesenta", "is_active": True,
+    }
+
+    async def _run(factory):
+        async with factory() as s:
+            cid = await ensure_consumer(s, "portfolio")
+            pid = await upsert_profile(s, cid, "g3-minscore")
+            staging: list = []
+            counts = await migrate_saved_searches(s, pid, [durable], staging=staging)
+            await s.commit()
+            assert counts["migrated"] == 1
+            assert staging == [
+                {"kind": "saved_search", "reason": "invalid_min_score",
+                 "durable": durable}
+            ]  # antes: [] — degradación MUDA
+            row = (
+                await s.execute(
+                    sa.text(
+                        "SELECT min_score, is_active FROM saved_searches "
+                        "WHERE profile_id = :p"
+                    ),
+                    {"p": pid},
+                )
+            ).one()
+            assert row.min_score == 0
+            assert row.is_active is False  # antes: True (alertaba de TODO)
+
+            # El lado ESPERADO del reconciliador coincide, entrada a entrada.
+            expected = await _classify_expected(
+                s, [{"external_ref": "g3-minscore", "saved_searches": [durable]}]
+            )
+            assert expected["staged"][
+                ("invalid_min_score", "g3-minscore", "umbral roto")
+            ] == 1
+            assert [t[3:5] for t in expected["saved_searches"]] == [(0, False)]
+
+    _asyncio.run(_on_disposable_db(_run))
 
 
 def test_saved_search_filters_dict_y_last_run_at_del_extractor():
