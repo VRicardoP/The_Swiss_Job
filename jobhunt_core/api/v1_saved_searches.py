@@ -56,9 +56,15 @@ def _dto_json(values: dict) -> dict:
 
 
 def _client_values(body, provided) -> dict:
-    """SOLO los client-writable PRESENTES en el cuerpo (Decisión 5); valida
+    """SOLO los client-writable PRESENTES en `provided` (Decisión 5); valida
     filters a objeto (400 invalid_filters — R2-6). Un client-writable
-    presente a null (name/min_score... no anulables) se trata como ausente."""
+    presente a null (name/min_score... no anulables) se trata como ausente.
+
+    `filters` es la EXCEPCIÓN DELIBERADA (R2-6) y solo en el ALTA: ahí un null
+    no tiene valor vigente que conservar y el default {} ACTIVO alertaría de
+    todas las ofertas, así que se rechaza con 400. En el PUT sí hay valor
+    vigente: quien llama retira `filters` de `provided` cuando llega a null,
+    y la letra «presente a null = ausente» se cumple (G2-P3-5)."""
     values = {}
     for field in searches.CLIENT_WRITABLE:
         if field in provided and getattr(body, field) is not None:
@@ -157,7 +163,15 @@ async def update_saved_search(
     idem_key = request.headers.get("idempotency-key")
     route = f"PUT {request.url.path}"
     req_hash = request_hash(body.model_dump(mode="json", exclude_unset=True))
-    values = _client_values(body, body.model_fields_set)
+    provided = body.model_fields_set
+    if body.filters is None:
+        # G2-P3-5: en el PUT, un client-writable presente a null se trata como
+        # AUSENTE — la letra del contrato (PUT-conserva) para TODOS los campos.
+        # Antes `filters: null` era la única excepción y devolvía 400: un BFF
+        # que serializa el objeto completo para no tocar los filtros perdía la
+        # mutación ENTERA salvo que eliminara físicamente la clave del JSON.
+        provided = provided - {"filters"}
+    values = _client_values(body, provided)
 
     async def handler():
         row = await searches.fetch_owned(

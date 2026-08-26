@@ -143,6 +143,41 @@ def test_invalid_filters_400(db):
         assert r.json()["code"] == "invalid_filters"
 
 
+def test_put_filters_null_conserva_los_vigentes(db):
+    """Regresión G2-P3-5: `_client_values` promete que un client-writable
+    presente a null se trata como AUSENTE, pero `filters: null` (que pasa
+    Pydantic, es Any) caía en la validación de objeto y devolvía 400
+    invalid_filters — la mutación ENTERA rechazada. Un BFF que serializa el
+    objeto completo para «no tocar filters» no podía conservarlos sin eliminar
+    físicamente la clave del JSON. En el ALTA el null sigue siendo 400 (no hay
+    valor vigente y un {} ACTIVO alertaría de todo — R2-6)."""
+    factory, created = db
+    token, _tenant, pid = _seed_profile(factory, created)
+    r = _post(factory, token, {
+        "profile_id": str(pid), "name": "con filtros", "min_score": 40,
+        "filters": {"q": "sre"},
+    })
+    sid, etag = r.json()["id"], r.headers["etag"]
+
+    put = tia._api(
+        factory, f"/v1/saved-searches/{sid}", token=token, method="PUT",
+        headers={"If-Match": etag},
+        json_body={"name": "renombrada", "min_score": 70, "filters": None},
+    )
+    assert put.status_code == 200, put.text  # antes: 400 invalid_filters
+    after = put.json()
+    assert after["filters"] == {"q": "sre"}  # CONSERVADOS
+    assert (after["name"], after["min_score"]) == ("renombrada", 70)
+
+    # Un filters presente y NO objeto sigue siendo 400 en el PUT.
+    bad = tia._api(
+        factory, f"/v1/saved-searches/{sid}", token=token, method="PUT",
+        headers={"If-Match": put.headers["etag"]},
+        json_body={"filters": "no-un-objeto"},
+    )
+    assert (bad.status_code, bad.json()["code"]) == (400, "invalid_filters")
+
+
 def test_homonyms_are_legitimate(db):
     """H10: dos búsquedas HOMÓNIMAS con keys distintas → ambas 201 (el
     candado anti-duplicado es la key, no el nombre; sin 409 por nombre)."""
