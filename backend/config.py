@@ -88,6 +88,14 @@ class Settings(BaseSettings):
     MATCH_LLM_RERANK_TOP: int = 50  # tope de re-ranking cuando el pool es enorme
     MATCH_LLM_RERANK_MAX: int = 150  # por debajo de esto, se re-rankea todo
     SEMANTIC_DEDUP_THRESHOLD: float = 0.95
+    # G4/P3-6 — segunda condición del dedup semántico: Jaccard mínimo de los
+    # tokens del título normalizado. 0.3 = «al menos un tercio del léxico
+    # combinado es común». Era constante de módulo, y eso dejaba
+    # SEMANTIC_DEDUP_THRESHOLD sin efecto como mando de remediación: bajar el
+    # umbral del coseno no servía de nada porque la puerta léxica seguía
+    # rechazando (medido: 20/20 pares reales de la MISMA vacante en DE↔FR/IT/EN
+    # rechazados, 15 con solape exactamente 0.000).
+    SEMANTIC_DEDUP_TITLE_OVERLAP_MIN: float = 0.3
 
     # Groq LLM
     GROQ_API_KEY: str = ""

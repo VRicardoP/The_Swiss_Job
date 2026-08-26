@@ -6,6 +6,7 @@ import re
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from models.job import Job
 
 # Legal suffixes to strip from company names
@@ -68,9 +69,6 @@ _SPACES_RE = re.compile(r"\s+")
 # subir el umbral no arregla nada (satura). Por eso el veredicto exige ademas
 # que los TITULOS compartan lexico y que canton/salario no se contradigan.
 _SEMANTIC_CANDIDATE_LIMIT = 10
-# Jaccard de tokens del titulo normalizado. 0.3 = "al menos un tercio del lexico
-# combinado es comun": con titulos de 2 tokens basta 1 comun; con 3+3 hacen falta 2.
-_TITLE_OVERLAP_MIN = 0.3
 
 
 class Deduplicator:
@@ -176,17 +174,39 @@ class Deduplicator:
         """True solo si AMBOS cantones existen y son distintos.
 
         La misma vacante sindicada a dos portales no cambia de cantón; un cantón
-        ausente no decide nada (la mayoría de fuentes no lo traen).
+        ausente no decide nada (la mayoría de fuentes no lo traen — medido:
+        9.354 de 10.523 activas con `canton IS NULL`, así que esta puerta
+        decide sobre el 11 % del corpus).
+
+        G4/P3-7: la comparación se hace en MAYÚSCULAS. `extract_canton`
+        normaliza hoy, pero los 8 scrapers que escriben `canton` a mano no
+        pasan por ahí: un `'zh'` frente a un `'ZH'` inventaba un conflicto y
+        vetaba un duplicado real en silencio.
         """
-        return bool(canton_a and canton_b) and canton_a != canton_b
+        if not (canton_a and canton_b):
+            return False
+        return canton_a.strip().upper() != canton_b.strip().upper()
 
     @staticmethod
     def _salaries_conflict(row_a, row_b) -> bool:
-        """True solo si AMBAS declaran horquilla en CHF y NO se solapan.
+        """True solo si AMBAS declaran horquilla COMPARABLE en CHF y no se solapan.
 
         Con una sola cota ("hasta X") esa cota representa a las dos, igual que
         en `JobMatcher.compute_salary_match`. Sin dato en un lado no decide.
+
+        G4/P3-7: el salario es el campo MENOS fiable del corpus (medido: 88
+        filas activas con `salary_min_chf < 20000` y 598 con salario y
+        `salary_period NULL` — importes mensuales guardados como anuales), y
+        esta puerta rechazó 0 pares en el barrido de 6 umbrales: cero señal y
+        riesgo real de vetar un duplicado bueno. Se exige que el PERIODO sea el
+        mismo y no nulo antes de dejar que el salario vete: comparar un
+        "3.500/mes" con un "80.000/año" no es un conflicto, es una unidad
+        distinta.
         """
+        period_a = getattr(row_a, "salary_period", None)
+        period_b = getattr(row_b, "salary_period", None)
+        if period_a is None or period_b is None or period_a != period_b:
+            return False
         a_lo, a_hi = row_a.salary_min_chf, row_a.salary_max_chf
         b_lo, b_hi = row_b.salary_min_chf, row_b.salary_max_chf
         if (a_lo is None and a_hi is None) or (b_lo is None and b_hi is None):
@@ -203,7 +223,7 @@ class Deduplicator:
 
     @staticmethod
     async def find_semantic_duplicates(
-        db: AsyncSession, job: Job, threshold: float = 0.95
+        db: AsyncSession, job: Job, threshold: float | None = None
     ) -> list[str]:
         """Find cross-source jobs that are the SAME vacancy as `job`.
 
@@ -232,13 +252,25 @@ class Deduplicator:
         embebido solo para el dedup sin re-embeber todo el corpus, así que la
         discriminación se añade AQUÍ, donde no cuesta un vector nuevo.
 
-        COTA CONOCIDA: el coseno sigue midiendo boilerplate (el techo de 128
-        tokens del encoder no se toca). Lo que impide el falso positivo es la
-        segunda condición, y esta es LÉXICA: dos vacantes del mismo empleador
-        cuyos títulos comparten un tercio del léxico ("Sachbearbeiter
-        Finanzbuchhaltung" vs "Sachbearbeiter Debitoren") siguen pudiendo
-        casar si además comparten cantón y no declaran salario. A cambio, dos
-        vacantes de roles distintos —el caso reportado— ya no se marcan.
+        COTA CONOCIDA (falso POSITIVO): el coseno sigue midiendo boilerplate
+        (el techo de 128 tokens del encoder no se toca). Lo que impide el falso
+        positivo es la segunda condición, y esta es LÉXICA: dos vacantes del
+        mismo empleador cuyos títulos comparten un tercio del léxico
+        ("Sachbearbeiter Finanzbuchhaltung" vs "Sachbearbeiter Debitoren")
+        siguen pudiendo casar si además comparten cantón y no declaran salario.
+        A cambio, dos vacantes de roles distintos —el caso reportado— ya no se
+        marcan.
+
+        COTA CONOCIDA (falso NEGATIVO, G4/P3-6): la puerta léxica también
+        rechaza duplicados REALES cuando el título cambia de forma sin cambiar
+        de sentido — "Primarlehrperson 60%" vs "Lehrperson Primarstufe 60%"
+        (coseno 0.9487, solape 0.250) — y, entre idiomas, siempre: 20/20 pares
+        reales de la misma vacante en DE↔FR/IT/EN medidos, 15 con solape
+        exactamente 0.000. Por eso la puerta se SALTA cuando los idiomas
+        declarados difieren, y su umbral es ahora un setting
+        (`SEMANTIC_DEDUP_TITLE_OVERLAP_MIN`) y no una constante de módulo:
+        bajar `SEMANTIC_DEDUP_THRESHOLD` como mando de remediación no servía de
+        nada mientras la puerta léxica siguiera fija.
         """
         if job.embedding is None:
             return []
@@ -246,6 +278,11 @@ class Deduplicator:
         if not (job.description or "").strip():
             return []
 
+        # G4/P3-6: el umbral por defecto sale del setting, no de un literal —
+        # si no, `SEMANTIC_DEDUP_THRESHOLD` solo actuaba en los llamantes que
+        # se acordaban de pasarlo.
+        if threshold is None:
+            threshold = settings.SEMANTIC_DEDUP_THRESHOLD
         max_distance = 1.0 - threshold
 
         stmt = (
@@ -253,8 +290,10 @@ class Deduplicator:
                 Job.hash,
                 Job.title,
                 Job.canton,
+                Job.language,
                 Job.salary_min_chf,
                 Job.salary_max_chf,
+                Job.salary_period,
             )
             .where(
                 Job.hash != job.hash,
@@ -279,9 +318,21 @@ class Deduplicator:
         )
         rows = (await db.execute(stmt)).all()
 
+        overlap_min = settings.SEMANTIC_DEDUP_TITLE_OVERLAP_MIN
         for row in rows:
-            if Deduplicator._title_overlap(job.title, row.title) < _TITLE_OVERLAP_MIN:
-                continue
+            # G4/P3-6: la puerta léxica es el único aporte propio del camino
+            # semántico frente al `fuzzy_hash`, pero entre IDIOMAS DECLARADOS
+            # DISTINTOS no mide nada: la misma vacante en DE y en FR comparte
+            # 0.000 de léxico (medido, 15 de 20 pares reales). Si los dos lados
+            # declaran idioma y difieren, el veredicto lo deciden el coseno
+            # cross-lingüe del encoder (que para eso es multilingüe) y las
+            # puertas de cantón y salario.
+            cross_language = bool(job.language and row.language) and (
+                job.language != row.language
+            )
+            if not cross_language:
+                if Deduplicator._title_overlap(job.title, row.title) < overlap_min:
+                    continue
             if Deduplicator._cantons_conflict(job.canton, row.canton):
                 continue
             if Deduplicator._salaries_conflict(job, row):

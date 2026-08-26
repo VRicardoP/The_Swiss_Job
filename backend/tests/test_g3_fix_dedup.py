@@ -146,7 +146,14 @@ class TestSemanticDedupNeedsSecondCondition:
         assert await Deduplicator.find_semantic_duplicates(db_session, candidate) == []
 
     async def test_disjoint_salaries_block_the_verdict(self, db_session):
-        """Horquillas salariales declaradas que no se solapan: vacantes distintas."""
+        """Horquillas salariales declaradas que no se solapan: vacantes distintas.
+
+        G4/P3-7: la puerta exige ahora que el PERIODO sea el mismo y no nulo —
+        comparar "3.500/mes" con "80.000/año" no es un conflicto, es una unidad
+        distinta, y el corpus tiene 598 filas activas con salario y
+        `salary_period NULL`. Las dos ofertas del test declaran el mismo
+        periodo, que es el único caso en el que el veto tiene sentido.
+        """
         canonical = _vacancy(
             "g3p12sal1",
             "publicjobs",
@@ -154,6 +161,7 @@ class TestSemanticDedupNeedsSecondCondition:
             "Ihre Aufgaben: Unterricht in der Primarschule.",
             salary_min_chf=60000,
             salary_max_chf=70000,
+            salary_period="yearly",
         )
         candidate = _vacancy(
             "g3p12sal2",
@@ -162,6 +170,7 @@ class TestSemanticDedupNeedsSecondCondition:
             "Ihre Aufgaben: Unterricht in der Primarschule.",
             salary_min_chf=110000,
             salary_max_chf=130000,
+            salary_period="yearly",
         )
         db_session.add_all([canonical, candidate])
         await db_session.commit()
