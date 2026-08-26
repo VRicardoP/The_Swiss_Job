@@ -18,9 +18,13 @@
   inyectó otro: entrega real y continua sin efectos visibles (§8 del
   contrato de Fase B).
 
-ORDEN DE LOCK (G8-N-2/G8-N-3, medido el 2026-08-26). Toda sentencia MULTIFILA
-del módulo toma los locks por `(event_id, destination)` ASCENDENTE:
-`retire_exhausted`, `renew_lease` y el pre-SELECT de `mark_delivered`. Antes
+ORDEN DE LOCK (G8-N-2/G8-N-3, medido el 2026-08-26). Las tres sentencias que
+HOY pueden tocar varias filas toman los locks por `(event_id, destination)`
+ASCENDENTE: `retire_exhausted`, `renew_lease` y el pre-SELECT de
+`mark_delivered`. `_persist_attempts` y los UPDATE de `mark_failed` NO están
+ordenados porque hoy no son multifila —el llamador pasa un mark por
+iteración—: si Fase C agrupa marks hay que ordenar también sus arrays, y eso
+está escrito en el docstring de `mark_delivered`, que es donde se mira. Antes
 era el orden del SCAN elegido por el planificador —las tres iban por
 `ix_outbox_deliv_inflight` (lease, con el TID desempatando), no por el orden
 del array ni el del claim—, distinto en cada sentencia y no estable. Eso
