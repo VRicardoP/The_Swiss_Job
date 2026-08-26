@@ -54,11 +54,22 @@ def _is_url_unique_violation(exc: IntegrityError) -> bool:
     Se mira primero `constraint_name` (asyncpg lo expone tipado) y solo se cae
     al texto si el driver no lo trae: comparar únicamente el mensaje ataría el
     guard al idioma/formato del servidor.
+
+    G5/P3-2 — esa rama tipada era CÓDIGO MUERTO con este driver y el guard
+    dependía al 100 % del texto, justo lo que el párrafo de arriba dice evitar.
+    Con SQLAlchemy 2 + asyncpg, `exc.orig` es el envoltorio
+    `AsyncAdapt_asyncpg_dbapi.IntegrityError`, que NO propaga el atributo: el
+    `UniqueViolationError` de asyncpg —el que sí lo lleva— cuelga de su
+    `__cause__` (verificado con el driver real: `orig.constraint_name` no
+    existe, `orig.__cause__.constraint_name == "ix_jobs_url"`). Se miran los
+    dos niveles y el texto queda donde debía estar desde el principio: de
+    respaldo.
     """
     orig = getattr(exc, "orig", None)
-    name = getattr(orig, "constraint_name", None)
-    if name:
-        return name == _URL_UNIQUE_INDEX
+    for candidate in (orig, getattr(orig, "__cause__", None)):
+        name = getattr(candidate, "constraint_name", None)
+        if name:
+            return name == _URL_UNIQUE_INDEX
     return _URL_UNIQUE_INDEX in str(orig or exc)
 
 
