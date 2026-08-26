@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from config import settings
 from models.job import Job
@@ -90,12 +90,26 @@ def _make_scraper(source_name: str, jobs: list[dict]):
     return scraper
 
 
-async def _sembrar_historica(db_session, source: str) -> None:
-    """La fila que ya está en el corpus, con el hash PRE-canonización."""
+async def _sembrar_historica(db_session, source: str, *, antigua: bool = True) -> None:
+    """La fila que ya está en el corpus, con el hash PRE-canonización.
+
+    G6/P3-3 — `first_seen_at` se retrasa a propósito: la alarma distingue ahora
+    la fila HISTÓRICA (que dejará de refrescarse: eso es la deriva) de la gemela
+    que entró en la MISMA corrida (dos plazas simultáneas, que no lo es). Estos
+    tests dicen «histórica» en su nombre, así que la siembran como tal.
+    """
     repo = JobRepository(db_session)
     job = _job("a" * 32, source, _URL_VIEJA)
     job["fuzzy_hash"] = Deduplicator.compute_fuzzy_hash(job["title"], job["company"])
     await repo.upsert_job(job)
+    if antigua:
+        await db_session.execute(
+            text(
+                "UPDATE jobs SET first_seen_at = now() - interval '2 days' "
+                "WHERE hash = :h"
+            ),
+            {"h": "a" * 32},
+        )
     await db_session.commit()
 
 
@@ -109,17 +123,33 @@ class TestRamaMudaDeLaDeriva:
         assert (
             await Deduplicator.find_fuzzy_duplicate(db_session, fuzzy, "arbeitnow")
         ) is None
-        # La vía de ALARMA sí lo ve, y no confunde a la fila con ella misma.
+        # La vía de ALARMA sí lo ve, lo marca como HISTÓRICO, y no confunde a la
+        # fila con ella misma.
         assert (
             await Deduplicator.find_same_source_clone(
                 db_session, fuzzy, "arbeitnow", "b" * 32
             )
-        ) == "a" * 32
+        ) == ("a" * 32, True)
         assert (
             await Deduplicator.find_same_source_clone(
                 db_session, fuzzy, "arbeitnow", "a" * 32
             )
         ) is None
+
+    async def test_la_gemela_de_la_MISMA_corrida_no_se_marca_como_historica(
+        self, db_session
+    ):
+        """G6/P3-3 — 32,5 % de los grupos gemelos son plazas simultáneas."""
+        await _sembrar_historica(db_session, "arbeitnow", antigua=False)
+        fuzzy = Deduplicator.compute_fuzzy_hash("Senior Python Engineer", "Acme GmbH")
+
+        # Se DETECTA igual (perder esto costaría 61 de los 406 clones reales)…
+        gemela = await Deduplicator.find_same_source_clone(
+            db_session, fuzzy, "arbeitnow", "b" * 32
+        )
+        assert gemela is not None
+        # …pero NO se llama histórica, que es lo que el diagnóstico afirmaba.
+        assert gemela == ("a" * 32, False)
 
     @patch("tasks.fetch_tasks.get_all_providers")
     async def test_providers_el_clon_con_id_nuevo_deja_de_ser_mudo(

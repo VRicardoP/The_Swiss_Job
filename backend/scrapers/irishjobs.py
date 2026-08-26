@@ -1,8 +1,22 @@
 """Scraper for IrishJobs.ie + Jobs.ie — remote (work-from-home) jobs in Ireland.
 
-Ambos portales corren sobre la MISMA plataforma StepStone: comparten el mismo
-`id` de oferta y el mismo formato SSR. Se cosechan los DOS hosts en una sola
-corrida y se deduplican por ese `id` de plataforma (misma oferta en ambos).
+Ambos portales corren sobre la MISMA plataforma StepStone y sirven el mismo
+formato SSR. Se cosechan los DOS hosts en una sola corrida.
+
+⚠ RECTIFICACIÓN (G6/P2-3). Este docstring afirmaba que los dos hosts «comparten
+el mismo `id` de oferta» y que por eso `_dedupe_new` deduplica «la misma oferta
+en ambos». Los datos lo desmienten: de las 919 filas activas, los `id` de
+plataforma presentes en LOS DOS hosts son **0**, y las 43 descripciones idénticas
+byte a byte que aparecen en ambos hosts tienen, las 43, `id` DISTINTO. Cada host
+acuña su propio id para el mismo anuncio (difieren en unas pocas unidades: la
+plataforma los reparte de una secuencia común). `_dedupe_new` **nunca** ha
+cruzado de host; lo que sí hace, y para lo que se queda, es descartar el
+solapamiento de páginas dentro de un mismo host.
+
+La duplicación cross-host que queda (35 grupos con descripción idéntica) NO es
+resoluble por identidad de URL —los ids son distintos de verdad— y fusionarla
+por título+empresa destruiría vacantes reales, así que se deja como está y la
+vigila la alarma `find_same_source_clone`.
 
 La lista NO se renderiza en el DOM: viene en un objeto JS embebido
 `window.__PRELOADED_STATE__["app-unifiedResultlist"] = {...}`. Se extrae con un
@@ -42,10 +56,45 @@ _REDEPLOY_MSG = (
     "IrishJobs: possible StepStone redeploy — check __PRELOADED_STATE__ format"
 )
 
-# Dos hosts StepStone cosechados en la misma corrida (dedupe por id de
-# plataforma). A nivel de módulo y no solo en la clase: `_resolve_job_url`
-# deriva de aquí su lista blanca de hostnames sin duplicar los literales.
+# Dos hosts StepStone cosechados en la misma corrida. A nivel de módulo y no
+# solo en la clase: `_resolve_job_url` deriva de aquí su lista blanca de
+# hostnames sin duplicar los literales, y `canonical_identity_url` toma el
+# primero como host canónico de la identidad.
 _HOSTS: tuple[str, ...] = ("https://www.irishjobs.ie", "https://www.jobs.ie")
+
+# G6/P2-3 — el SLUG de la URL cambia cuando el portal reedita el título del
+# anuncio («…/job/lead-ms-fabric-architect/ntt-data-services-inc-job107803777»
+# pasó a «…/job/lead-architect/ntt-data-services-inc-job107803777» al día
+# siguiente), mientras el `-job<id>` final se mantiene. Con la URL completa como
+# identidad, cada reedición creaba una fila CLON y la histórica dejaba de
+# refrescar `last_seen_at` para siempre — la misma pérdida silenciosa de
+# G3/P3-13 en arbeitnow. Medido en producción 2026-08-26: 40 filas clon en 919,
+# apareciendo a 8 → 10 → 22 por semana.
+_PLATFORM_ID_RE = re.compile(r"-job(\d+)/?$")
+
+
+def canonical_identity_url(url: str) -> str:
+    """URL reducida al id de plataforma, para computar una identidad ESTABLE.
+
+    Solo se usa para el `hash`: la `url` publicada sigue siendo la real y
+    `ON CONFLICT (hash)` la refresca, de modo que la reedición del slug pasa a
+    ser una re-vista de la oferta existente en vez de un clon.
+
+    El host se normaliza a `_HOSTS[0]` porque el id de plataforma es GLOBAL de
+    StepStone, no por host: dos anuncios distintos no pueden compartirlo
+    (verificado: 0 ids repetidos entre los dos hosts sobre las 919 filas
+    activas). Hoy no fusiona ningún par cross-host —cada host acuña un id
+    propio para el mismo anuncio— pero deja la identidad indiferente al host
+    por el que se cosechó.
+
+    Sin `-job<id>` reconocible se devuelve la URL tal cual: es preferible una
+    identidad volátil a una identidad ambigua.
+    """
+    match = _PLATFORM_ID_RE.search(url.strip())
+    if match is None:
+        return url.strip()
+    return f"{_HOSTS[0]}/job/job{match.group(1)}"
+
 
 # Hostnames PROPIOS admitidos en una URL absoluta del blob (r6/H1, G3):
 # cualquier otro host es ajeno al portal y no puede acabar clicable en el
@@ -550,7 +599,12 @@ class IrishJobsScraper(BaseScraper):
 
     @staticmethod
     def _dedupe_new(page_stubs: list[dict], seen_ids: set) -> list[dict]:
-        """Filtra stubs cuyo id de plataforma ya se vio (misma oferta en otro host)."""
+        """Filtra stubs cuyo id de plataforma ya se vio en esta misma corrida.
+
+        G6/P2-3 — lo que filtra de verdad es el SOLAPAMIENTO DE PÁGINAS dentro
+        de un host, no la oferta compartida entre hosts: los dos hosts acuñan
+        ids distintos para el mismo anuncio y este filtro nunca los ha cruzado.
+        """
         fresh: list[dict] = []
         for stub in page_stubs:
             job_id = stub.get("id")
@@ -569,12 +623,12 @@ class IrishJobsScraper(BaseScraper):
     def job_identity(job: dict) -> str:
         """Identidad para cursor/early-stop = id de PLATAFORMA (G1/P3-7).
 
-        StepStone sirve la MISMA oferta en dos hosts con URLs distintas: con
-        la URL como identidad, las compartidas que `_dedupe_new` descarta
-        antes de persistir nunca entraban en el cursor y el segundo host se
-        re-crawleaba a presupuesto completo cada run. El id de plataforma es
-        idéntico en ambos hosts — la misma identidad que ya usa el dedupe.
-        Sin id (borde) cae a la identidad base (url).
+        El id de plataforma es estable frente a la reedición del slug, que sí
+        cambia (G6/P2-3), así que la oferta reeditada no vuelve a entrar en el
+        cursor como si fuera nueva. NO es común a los dos hosts —cada uno acuña
+        el suyo, medido: 0 ids compartidos— de modo que el segundo host se
+        recorre por su cuenta; el early-stop sigue funcionando dentro de cada
+        host, que es donde pagina. Sin id (borde) cae a la identidad base (url).
         """
         source_id = job.get("source_id") or job.get("id")
         if source_id is not None and str(source_id).strip():
@@ -591,7 +645,8 @@ class IrishJobsScraper(BaseScraper):
         tags = extract_job_skills(title, description)
 
         return {
-            "hash": self.compute_hash(title, company, url),
+            # G6/P2-3: identidad sobre el id de plataforma, no sobre el slug.
+            "hash": self.compute_hash(title, company, canonical_identity_url(url)),
             # Identidad de plataforma para el cursor (job_identity, P3-7).
             # upsert_job filtra a columnas del modelo: la clave extra no viaja
             # a la BD.

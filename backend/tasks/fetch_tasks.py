@@ -420,19 +420,41 @@ async def _fetch_providers_async() -> dict[str, Any]:
                                         job["hash"],
                                     )
                                     if twin:
-                                        summary["identity_clones"] += 1
-                                        identity_clones += 1
-                                        logger.error(
-                                            "DERIVA DE IDENTIDAD (clon) en %s: "
-                                            "%s entra como ALTA nueva pero %s ya "
-                                            "cubre la misma vacante (%s) — la "
-                                            "histórica dejará de refrescar "
-                                            "last_seen_at",
-                                            source,
-                                            job["hash"],
-                                            twin,
-                                            job["url"],
-                                        )
+                                        # G6/P3-3 — la gemela de la MISMA
+                                        # corrida NO es deriva: son dos plazas
+                                        # que el portal listó a la vez (32,5 %
+                                        # de los grupos gemelos). Se registra,
+                                        # pero con el texto que corresponde y
+                                        # sin contarla como incidencia del run.
+                                        twin_hash, twin_historica = twin
+                                        if twin_historica:
+                                            summary["identity_clones"] += 1
+                                            identity_clones += 1
+                                            logger.error(
+                                                "DERIVA DE IDENTIDAD (clon) en "
+                                                "%s: %s entra como ALTA nueva "
+                                                "pero %s ya cubre la misma "
+                                                "vacante (%s) — la histórica "
+                                                "dejará de refrescar "
+                                                "last_seen_at",
+                                                source,
+                                                job["hash"],
+                                                twin_hash,
+                                                job["url"],
+                                            )
+                                        else:
+                                            logger.warning(
+                                                "GEMELA EN LA MISMA CORRIDA en "
+                                                "%s: %s y %s comparten título y "
+                                                "empresa (%s). Pueden ser dos "
+                                                "plazas distintas publicadas a "
+                                                "la vez; no se cuenta como "
+                                                "deriva de identidad",
+                                                source,
+                                                job["hash"],
+                                                twin_hash,
+                                                job["url"],
+                                            )
                             else:
                                 summary["updated"] += 1
 

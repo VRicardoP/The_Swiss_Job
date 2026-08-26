@@ -2,12 +2,23 @@
 
 import hashlib
 import re
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from models.job import Job
+
+# G6/P3-3 — antigüedad MÍNIMA de la gemela para llamarla «fila histórica». Por
+# debajo de este margen las dos filas entraron en la MISMA corrida y el texto
+# que la alarma escribía —«la fila histórica ya no refresca `last_seen_at`»— era
+# factualmente FALSO: ninguna es histórica y las dos se refrescan en el run
+# siguiente. Medido: de los 634 grupos gemelos de hoy, 206 (32,5 %) están dentro
+# de la misma hora. NO se usa para FILTRAR (eso perdería 61 de los 406 clones
+# reales, que el portal re-listó dentro de la misma corrida) sino para CALIFICAR
+# el hallazgo, que es lo que estaba mal: el dato, no la detección.
+_CLONE_TWIN_MIN_AGE = timedelta(hours=1)
 
 # Legal suffixes to strip from company names
 COMPANY_SUFFIXES: set[str] = {
@@ -157,8 +168,13 @@ class Deduplicator:
     @staticmethod
     async def find_same_source_clone(
         db: AsyncSession, fuzzy_hash: str, source: str, job_hash: str
-    ) -> str | None:
+    ) -> tuple[str, bool] | None:
         """ALARMA de deriva de identidad: gemela intra-fuente ya persistida.
+
+        Devuelve `(hash de la gemela, es_histórica)` o `None`. `es_histórica`
+        es lo que separa un CLON de una vacante que el portal publicó por
+        duplicado en la misma corrida (ver la cota medida más abajo); el
+        llamante escribe un diagnóstico distinto para cada caso.
 
         G5/P1-1 — `find_fuzzy_duplicate` excluye a propósito los pares de la
         MISMA fuente (los reposts intra-fuente los cubría la identidad exacta).
@@ -175,15 +191,36 @@ class Deduplicator:
         misma fuente es deliberada para el marcado (G3), pero no tiene por qué
         serlo para la observabilidad.
 
-        Cota declarada (medida, no razonada): dos vacantes REALMENTE distintas
-        de la misma fuente con idéntico `title`+`company` normalizados producen
-        una alarma que no corresponde a ninguna deriva. Por eso solo cuenta y
-        registra — nunca desactiva.
+        Cota MEDIDA (G6/P3-3, producción 2026-08-26). La declaración anterior
+        decía «medida, no razonada» y **no traía ninguna cifra**; medida, es
+        material: dos vacantes REALMENTE distintas de la misma fuente con
+        idéntico `title`+`company` normalizados producen una alarma que no
+        corresponde a ninguna deriva. De los **634 grupos gemelos** de hoy,
+        **206 (32,5 %)** tienen todas sus filas creadas dentro de la MISMA hora
+        — el portal listó N plazas de golpe (`financejobs` publicó tres
+        «Mandatsleiter Treuhand» con ids 14701386/87/89 el mismo día). Por
+        fuente: arbeitnow 118/387 (30,5 %), irishjobs 46/125 (36,8 %),
+        nav_arbeidsplassen 14/30, jobgether 13/22.
+
+        Se calificó en vez de filtrarse. Exigir que la gemela sea más antigua
+        que `_CLONE_TWIN_MIN_AGE` habría dejado la alarma muda para **61 de los
+        406 clones REALES** (medido: el portal re-lista dentro de la misma
+        corrida y el gap es de segundos, indistinguible por tiempo de dos
+        plazas simultáneas). Lo que estaba mal no era detectarlos: era el texto
+        que se escribía después. Por eso se devuelve `es_histórica` y el
+        llamante dice la verdad en cada caso, contando como deriva solo el que
+        de verdad deja una fila sin refrescar.
+
+        Cobertura sobre los clones reales, medida: 406/406 comparten
+        `fuzzy_hash`, 397 con la fila histórica aún activa y sin
+        `duplicate_of` (los 9 restantes ya están en el estado terminal). Coste
+        del SELECT: Index Scan por `ix_jobs_fuzzy_hash`, 5 buffers y ~0,05 ms
+        por alta (`EXPLAIN ANALYZE` contra producción).
         """
         if not fuzzy_hash:
             return None
         stmt = (
-            select(Job.hash)
+            select(Job.hash, Job.first_seen_at)
             .where(
                 Job.fuzzy_hash == fuzzy_hash,
                 Job.source == source,
@@ -194,7 +231,24 @@ class Deduplicator:
             .order_by(Job.first_seen_at.asc())  # la más antigua = la que se pudre
             .limit(1)
         )
-        return (await db.execute(stmt)).scalar_one_or_none()
+        row = (await db.execute(stmt)).first()
+        if row is None:
+            return None
+        twin_hash, twin_first_seen = row
+        return twin_hash, Deduplicator._is_historical_twin(twin_first_seen)
+
+    @staticmethod
+    def _is_historical_twin(first_seen_at) -> bool:
+        """La gemela es HISTÓRICA si no entró en esta misma corrida.
+
+        `first_seen_at` puede llegar sin tz según el dialecto; se asume UTC en
+        ese caso, que es lo que la columna almacena.
+        """
+        if first_seen_at is None:
+            return False
+        if first_seen_at.tzinfo is None:
+            first_seen_at = first_seen_at.replace(tzinfo=UTC)
+        return first_seen_at < datetime.now(UTC) - _CLONE_TWIN_MIN_AGE
 
     @staticmethod
     def _title_overlap(title_a: str, title_b: str) -> float:
