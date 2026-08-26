@@ -62,11 +62,17 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
 
     async with task_session_factory() as session_factory:
         async with session_factory() as session:
+            # G3-P2-2: antes de reclamar, retirar a DEAD-LETTER lo que ya
+            # agotó intentos REALES y nadie posee (lease caducado) — con un
+            # transporte que sistemáticamente supera el lease, el mark del
+            # dueño superado siempre cae por el fence y la transición a 'dead'
+            # no llegaba a escribirse nunca.
+            retired = await delivery.retire_exhausted(session)
             claimed, lease_token = await delivery.claim_deliveries(session, limit=limit)
             await session.commit()
         if not claimed:
             return {
-                "claimed": 0, "delivered": 0, "failed": 0, "dead": 0,
+                "claimed": 0, "delivered": 0, "failed": 0, "dead": retired,
                 "fenced_out": 0, "no_transport": False,
             }
 
@@ -96,7 +102,7 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
         "claimed": len(claimed),
         "delivered": delivered_real,
         "failed": fail_result["retried"],
-        "dead": fail_result["dead"],
+        "dead": fail_result["dead"] + retired,
         # Marks que el fence descartó (claim superado): observabilidad.
         "fenced_out": len(claimed) - real,
         "no_transport": False,

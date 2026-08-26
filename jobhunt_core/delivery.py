@@ -116,6 +116,76 @@ async def claim_deliveries(session, limit: int = 100) -> tuple[list, object]:
 _FENCE = "AND d.state = 'inflight' AND d.lease = :lease"
 
 
+async def _persist_attempts(session, fails: list) -> None:
+    """Persiste el intento EJECUTADO y su error FUERA del fence del lease.
+
+    G3-P2-2: al mover el consumo de `attempts` del claim al RESULTADO
+    (G2-P3-4), los dos escritores quedaron DETRÁS del fence. Un lote cuyo
+    transporte supera el lease (G2-H-7) es re-reclamado por el siguiente beat
+    y TODOS sus marks se descartan: no se persistía el intento NI el
+    `last_error`, así que con fallos reales y repetidos el contador nunca
+    avanzaba y el DEAD-LETTER (DoD A-10) era inalcanzable — reintento infinito
+    y mudo contra un endpoint colgado, justo el caso para el que existe.
+
+    El fence protege la TRANSICIÓN DE ESTADO (no resucitar un terminal, no
+    pisar al nuevo dueño); el contador es MONÓTONO y cuenta transportes
+    REALMENTE ejecutados, así que se escribe sin lease — pero solo sobre filas
+    aún 'inflight': una delivered/dead ajena jamás se toca."""
+    if not fails:
+        return
+    await session.execute(
+        sa.text(
+            "UPDATE integration_outbox_deliveries d "
+            "SET attempts = GREATEST(d.attempts, t.attempts), "
+            "    last_error = t.error "
+            "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[]), "
+            "            CAST(:errors AS text[]), CAST(:tries AS int[])) "
+            "  AS t(eid, dest, error, attempts) "
+            "WHERE d.event_id = t.eid AND d.destination = t.dest "
+            "AND d.state = 'inflight'"
+        ),
+        {
+            "eids": [str(f["eid"]) for f in fails],
+            "dests": [f["dest"] for f in fails],
+            "errors": [f["error"] for f in fails],
+            "tries": [int(f["attempts"]) for f in fails],
+        },
+    )
+
+
+async def retire_exhausted(session) -> int:
+    """DEAD-LETTER de rescate: entregas 'inflight' con el lease CADUCADO
+    (nadie las posee) cuyos intentos REALES ya se agotaron.
+
+    G3-P2-2 (2ª mitad): con el transporte superando el lease en cada ciclo,
+    el mark del dueño superado SIEMPRE cae por el fence, así que la transición
+    a 'dead' no llegaba a escribirse ni con `attempts` ya en MAX_ATTEMPTS.
+    Los intentos que se cuentan aquí son transportes EJECUTADOS
+    (_persist_attempts, monótono), nunca claims fantasma: la garantía de
+    G2-P3-4 —no gastar intentos sin transporte— se conserva intacta.
+    Emite la MISMA alerta persistente del contrato que mark_failed."""
+    rows = (
+        await session.execute(
+            sa.text(
+                "UPDATE integration_outbox_deliveries d "
+                "SET state = 'dead', lease = NULL, dead_at = clock_timestamp() "
+                "WHERE d.state = 'inflight' AND d.lease < clock_timestamp() "
+                "AND d.attempts >= :max "
+                "RETURNING d.event_id, d.destination, d.attempts, d.last_error"
+            ),
+            {"max": MAX_ATTEMPTS},
+        )
+    ).all()
+    for row in rows:
+        logger.error(
+            "delivery: evento %s → %s en DEAD-LETTER tras %d intentos (%s) "
+            "— lease caducado sin mark: retirado al re-reclamar",
+            row.event_id, row.destination, row.attempts,
+            (row.last_error or "")[:200],
+        )
+    return len(rows)
+
+
 async def mark_delivered(session, marks: list, lease_token) -> int:
     """marks = [{'eid', 'dest'}]. Solo si el claim sigue siendo NUESTRO.
     Devuelve las filas REALMENTE transicionadas (2ª rev. A-10: los contadores
@@ -155,6 +225,11 @@ async def mark_failed(session, fails: list, lease_token) -> dict:
     con transiciones REALES."""
     if not fails:
         return {"dead": 0, "retried": 0}
+    # G3-P2-2: el intento y el error se persisten ANTES y FUERA del fence —
+    # un mark descartado por el fence perdía ambos y el dead-letter no se
+    # alcanzaba jamás. Los UPDATE fenceados de abajo reescriben el MISMO
+    # valor cuando el claim sigue siendo nuestro.
+    await _persist_attempts(session, fails)
     dead = [f for f in fails if f["attempts"] >= MAX_ATTEMPTS]
     retry = [f for f in fails if f["attempts"] < MAX_ATTEMPTS]
     dead_done = []
@@ -165,8 +240,9 @@ async def mark_failed(session, fails: list, lease_token) -> dict:
                     "UPDATE integration_outbox_deliveries d "
                     "SET state = 'dead', last_error = t.error, lease = NULL, "
                     # G2-P3-4: `attempts` lo fija el RESULTADO (el nº de intento
-                    # que el dispatcher acaba de ejecutar), no el claim.
-                    "attempts = t.attempts, "
+                    # que el dispatcher acaba de ejecutar), no el claim; G3-P2-2:
+                    # MONÓTONO (nunca por debajo de lo ya persistido).
+                    "attempts = GREATEST(d.attempts, t.attempts), "
                     # dead_at (core0030): instante de la TRANSICIÓN — el gate
                     # outbox_dead cuenta por ventana de ciclo, no el histórico.
                     "dead_at = clock_timestamp() "
@@ -201,7 +277,7 @@ async def mark_failed(session, fails: list, lease_token) -> dict:
                 sa.text(
                     "UPDATE integration_outbox_deliveries d "
                     "SET state = 'pending', last_error = t.error, lease = NULL, "
-                    "ack_at = NULL, attempts = t.attempts, "
+                    "ack_at = NULL, attempts = GREATEST(d.attempts, t.attempts), "
                     "next_attempt_at = clock_timestamp() + "
                     "make_interval(secs => t.backoff) "
                     "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[]), "

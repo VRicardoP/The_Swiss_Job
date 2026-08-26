@@ -607,6 +607,117 @@ def test_stats_dead_total_counts_dead_letters(db, monkeypatch):
     assert dead_at is not None
 
 
+def test_g3_lease_vencido_no_pierde_el_intento_ni_el_dead_letter(db, monkeypatch):
+    """Regresión G3-P2-2: con `attempts` consumido por el RESULTADO (G2-P3-4)
+    los dos escritores quedaron DETRÁS del fence, así que un lote cuyo
+    transporte supera el lease (G2-H-7) —re-reclamado por el siguiente beat—
+    perdía el intento Y el `last_error` en TODOS sus marks: con fallos REALES
+    y repetidos el contador nunca avanzaba, el DEAD-LETTER (DoD A-10) era
+    INALCANZABLE y el evento reintentaba para siempre, mudo. Ahora el intento
+    y el error se persisten FUERA del fence (monótonos, solo sobre 'inflight')
+    y la entrega con los intentos agotados que NADIE posee se retira a
+    dead-letter con alerta al re-reclamar."""
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created, titles=("backend python",))
+    monkeypatch.setattr(delivery, "MAX_ATTEMPTS", 3)
+
+    def _deliv():
+        return _rows(
+            factory,
+            "SELECT d.state, d.attempts, d.last_error, d.dead_at "
+            "FROM integration_outbox_deliveries d "
+            "JOIN integration_outbox o ON o.event_id = d.event_id "
+            "WHERE o.subject_profile_id = :p", p=pid,
+        )[0]
+
+    async def ciclo():
+        async with factory() as s:
+            rows, lease = await delivery.claim_deliveries(s, limit=10)
+            await s.commit()
+        assert len(rows) == 1
+        # El transporte se pasa del lease: el siguiente beat re-reclama y
+        # nuestro token deja de ser el vigente (el fence nos descartará).
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "UPDATE integration_outbox_deliveries d "
+                    "SET lease = clock_timestamp() - interval '1 second' "
+                    "FROM integration_outbox o WHERE o.event_id = d.event_id "
+                    "AND o.subject_profile_id = :p"
+                ),
+                {"p": pid},
+            )
+            await s.commit()
+        async with factory() as s:
+            res = await delivery.mark_failed(
+                s,
+                [{"eid": rows[0].event_id, "dest": rows[0].destination,
+                  "attempts": rows[0].attempts + 1,
+                  "error": "timeout real del transporte"}],
+                lease,
+            )
+            await s.commit()
+        return res
+
+    for n in range(1, delivery.MAX_ATTEMPTS + 1):
+        # El fence sigue descartando la TRANSICIÓN DE ESTADO (correcto: la
+        # entrega ya no es nuestra)…
+        assert asyncio.run(ciclo()) == {"dead": 0, "retried": 0}
+        r = _deliv()
+        # …pero el intento EJECUTADO y su error ya no se pierden.
+        assert (r.state, r.attempts) == ("inflight", n)  # antes: attempts 0 SIEMPRE
+        assert r.last_error == "timeout real del transporte"  # antes: None
+
+    async def retirar():
+        async with factory() as s:
+            n = await delivery.retire_exhausted(s)
+            await s.commit()
+            return n
+
+    with caplog_at_error() as records:
+        assert asyncio.run(retirar()) == 1  # antes: reintento infinito
+    assert any("DEAD-LETTER" in rec.getMessage() for rec in records)
+    r = _deliv()
+    assert (r.state, r.attempts) == ("dead", delivery.MAX_ATTEMPTS)
+    assert r.dead_at is not None
+    assert r.last_error == "timeout real del transporte"
+
+
+def test_g3_retire_exhausted_respeta_al_dueno_vigente_y_los_terminales(db, monkeypatch):
+    """El rescate de G3-P2-2 solo toca lo que NADIE posee: una entrega
+    inflight con lease VIGENTE (otro dispatcher está entregando ahora mismo)
+    no se retira aunque tenga los intentos agotados — nada de páginas falsas
+    ni de robarle la transición al dueño."""
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created, titles=("backend python",))
+    monkeypatch.setattr(delivery, "MAX_ATTEMPTS", 1)
+
+    async def inflight_vigente():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "UPDATE integration_outbox_deliveries d "
+                    "SET state = 'inflight', attempts = 5, "
+                    "lease = clock_timestamp() + make_interval(secs => 120) "
+                    "FROM integration_outbox o WHERE o.event_id = d.event_id "
+                    "AND o.subject_profile_id = :p"
+                ),
+                {"p": pid},
+            )
+            n = await delivery.retire_exhausted(s)
+            await s.commit()
+            return n
+
+    assert asyncio.run(inflight_vigente()) == 0
+    row = _rows(
+        factory,
+        "SELECT d.state FROM integration_outbox_deliveries d "
+        "JOIN integration_outbox o ON o.event_id = d.event_id "
+        "WHERE o.subject_profile_id = :p", p=pid,
+    )[0]
+    assert row.state == "inflight"  # intacta
+
+
 # --------------------------------- transporte sombra REAL (P1-1b, §8 Fase B)
 
 
