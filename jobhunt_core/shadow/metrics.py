@@ -1880,8 +1880,29 @@ def _report_details(details_by: dict) -> list[str]:
     for (metric, scope), det in sorted(details_by.items()):
         if metric != M_NDCG or not det:
             continue
-        colapso = det.get("refs_colapsados_por_attach", 0)
-        sin_vacante = det.get("refs_sin_vacante", 0)
+        colapso = det.get("refs_colapsados_por_attach")
+        sin_vacante = det.get("refs_sin_vacante")
+        if colapso is None and sin_vacante is None:
+            # G5-P3-2: `render_report` lee los `details` PERSISTIDOS, y las dos
+            # claves solo existen en ciclos computados a partir de la
+            # separación. En un ciclo SELLADO antes (que sin `force` no se
+            # recomputa) ambas faltaban, la condición era falsa y la línea
+            # DESAPARECÍA — el commit que existe para preservar el único
+            # rastro legible del operador lo borraba de todo el histórico. Se
+            # reconstruye el AGREGADO con la fórmula anterior y se dice
+            # expresamente que el reparto no está disponible: nunca se afirma
+            # «attach» sobre una población que puede ser ausencia de corpus.
+            agregado = det.get("refs_juzgados", 0) - det.get("vacantes_juzgadas", 0)
+            if agregado:
+                lines.append(
+                    f"  ndcg@10 {scope}: {agregado} ref(s) juzgados FUERA del"
+                    f" ideal del core (reparto attach / sin vacante NO"
+                    f" disponible: ciclo sellado antes de la separación) —"
+                    f" IDCG en espacio vacante {det.get('idcg')} vs"
+                    f" {det.get('idcg_ref')} en espacio ref"
+                )
+            continue
+        colapso, sin_vacante = colapso or 0, sin_vacante or 0
         if colapso or sin_vacante:
             lines.append(
                 f"  ndcg@10 {scope}: {colapso} ref(s) juzgados COLAPSAN por"

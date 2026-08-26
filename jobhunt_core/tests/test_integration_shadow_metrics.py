@@ -2037,6 +2037,54 @@ def test_informe_de_la_gracia_no_afirma_un_slot_que_nunca_existio(db):
     assert boot in linea
 
 
+def test_informe_conserva_la_linea_del_colapso_en_ciclos_sellados_pre_fix(db):
+    """Regresión G5-P3-2: la separación de poblaciones (refs que COLAPSAN por
+    attach vs refs SIN vacante) sustituyó la resta `refs_juzgados −
+    vacantes_juzgadas` por dos claves nuevas de `details`. Pero `render_report`
+    lee los `details` PERSISTIDOS: en un ciclo SELLADO antes del cambio —que
+    sin `force` no se recomputa— ambas claves faltan, los `.get(..., 0)` valían
+    0 y la línea DESAPARECÍA del informe. El commit que existe para preservar
+    el único rastro legible del operador lo borraba de todo el histórico."""
+    factory = db
+
+    def _fila_ndcg(scope, det):
+        _exec(
+            factory,
+            "INSERT INTO shadow_cycle_metrics (cycle_id, metric, scope, value, "
+            "details, started_at, finished_at) VALUES (:c, :m, :s, 0.5, "
+            "CAST(:d AS jsonb), now(), now())",
+            {"c": CYCLE, "m": metrics.M_NDCG, "s": scope, "d": json.dumps(det)},
+        )
+
+    base = {"set_id": str(uuid.uuid4()), "espacio_idcg": "vacante",
+            "idcg_ref": 11.416508, "dcg": 3.5, "idcg": 7.0,
+            "refs_juzgados": 3, "vacantes_juzgadas": 1}
+    # Forma EXACTA de `details` anterior a la separación (sin las dos claves).
+    _fila_ndcg("profile:viejo", dict(base, set_name="holdout-viejo"))
+    # Y un ciclo POSTERIOR al cambio, que sí las trae.
+    _fila_ndcg("profile:nuevo", dict(base, set_name="holdout-nuevo",
+                                     refs_colapsados_por_attach=2,
+                                     refs_sin_vacante=0))
+
+    async def go():
+        async with factory() as s:
+            return await metrics.render_report(s, CYCLE)
+
+    informe = _run(go())
+    viejo = next(x for x in informe.splitlines()
+                 if "ndcg@10 profile:viejo:" in x)
+    nuevo = next(x for x in informe.splitlines()
+                 if "ndcg@10 profile:nuevo:" in x)
+    # El histórico recupera el AGREGADO (3 − 1) y dice que el reparto no está
+    # disponible: jamás afirma «attach» sobre lo que puede ser falta de corpus.
+    assert "2 ref(s) juzgados FUERA del ideal" in viejo
+    assert "NO disponible" in viejo
+    assert "COLAPSAN" not in viejo
+    # El ciclo nuevo conserva el desglose exacto.
+    assert "2 ref(s) juzgados COLAPSAN por attach" in nuevo
+    assert "0 NO tienen vacante" in nuevo
+
+
 def test_umbral_del_ciclo_queda_persistido_y_no_se_recolorea(db):
     """Regresión G1 H-8: evaluate_gates re-evaluaba ciclos SELLADOS con las
     constantes VIGENTES — un cambio de umbral recoloreaba la historia sin
