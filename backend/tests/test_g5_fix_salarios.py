@@ -31,8 +31,33 @@ def _parse(text: str):
 
 class TestLaDivisaSaleDelRangoQueCaso:
     def test_dos_rangos_con_divisas_distintas_no_se_mezclan(self):
-        """El caso estructural: `_CUR_RE` elegía CHF y el rango era el de £."""
+        """El caso estructural: `_CUR_RE` elegía CHF y el rango era el de £.
+
+        G7/P3-1 corrigió la RESPUESTA sin reabrir el defecto. Este test fijaba
+        `(75000, 90000, "GBP")`: el importe del PARÉNTESIS, porque el patrón con
+        divisa en ambos extremos ganaba por prioridad global aunque estuviera a
+        la derecha. Pero en «90'000 - 110'000 CHF (env. £75,000 - £90,000)» el
+        sueldo es el de la izquierda y el paréntesis es una conversión
+        aproximada — el propio «env.» lo dice. Gana el más a la izquierda.
+
+        Lo que G5 vino a cerrar sigue cerrado, y es lo que este test comprueba
+        ahora: el importe y la divisa salen del MISMO sitio. Antes se mezclaba
+        el importe del paréntesis (£) con la divisa del texto entero (CHF).
+        """
         assert _parse("90'000 - 110'000 CHF (env. £75,000 - £90,000)") == (
+            90000,
+            110000,
+            "CHF",
+        )
+
+    def test_la_divisa_es_la_del_rango_que_gano_no_la_primera_del_texto(self):
+        """El invariante de G5, con el paréntesis PRIMERO para aislarlo.
+
+        Aquí gana el rango en libras (es el más a la izquierda) y el texto trae
+        `CHF` después: si la divisa se buscara en todo el texto saldría la
+        mezcla que G5 cerró.
+        """
+        assert _parse("(env. £75,000 - £90,000) 90'000 - 110'000 CHF") == (
             75000,
             90000,
             "GBP",

@@ -89,8 +89,11 @@ class TestStage3Rerank:
         # r0: score LLM 90 → mergeado y score_final recalculado.
         assert r0["score_llm"] == 0.9
         assert r0["explanation"] == "great fit"
-        assert r0["matching_skills"] == ["llm_match"]
-        assert r0["missing_skills"] == ["llm_miss"]
+        # G7/P2-3: el análisis del LLM se SUMA al de regla, no lo sustituye.
+        # Sustituirlo era lo que obligaba a no escribir nunca `[]` en estas dos
+        # columnas, y eso congelaba la tarjeta de forma irrecuperable.
+        assert r0["matching_skills"] == ["rule", "llm_match"]
+        assert r0["missing_skills"] == ["rule_miss", "llm_miss"]
         assert r0["score_final"] != 10.0
 
         # r1: score LLM 0 → G4/P2-6, SÍ es un veredicto («0-39 = poor fit» es
