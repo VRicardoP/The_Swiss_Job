@@ -690,3 +690,95 @@ def test_vac_key_determinista_con_dos_incarnaciones_activas():
                 assert key == "https://h11.example.ch/a", expr  # la MENOR, siempre
 
     asyncio.run(_on_disposable_db(_run))
+
+
+def test_persist_manifest_nan_in_staged_value_persists():
+    """Regresión G2-P2-1 (repro DIRECTA del informe): el saneo de G1-P2-1 cubría
+    el NUL pero NO los floats no finitos — `json.dumps` (allow_nan por defecto)
+    emite los tokens `NaN`/`Infinity`, que no son JSON y el CAST a jsonb rechaza:
+    la transacción ENTERA del cutover moría justo al registrar la cuarentena que
+    el staging ya había aislado. Ahora el no finito se persiste como texto."""
+    from jobhunt_core import import_portfolio_manifest as man
+
+    manifest = {
+        "verdict": "ok",
+        "staging": [{
+            "kind": "application", "reason": "malformed",
+            "durable": {"url": "https://x.ch/a", "salary_min": float("nan"),
+                        "salary_max": float("inf")},
+        }],
+    }
+
+    async def _run(factory):
+        async with factory() as s:
+            mid = await man.persist_manifest(s, manifest)  # antes: DBAPIError (jsonb)
+            await s.commit()
+            stored = (
+                await s.execute(
+                    sa.text(
+                        "SELECT manifest FROM portfolio_migration_manifest "
+                        "WHERE id = :i"
+                    ),
+                    {"i": mid},
+                )
+            ).scalar_one()
+            durable = stored["staging"][0]["durable"]
+            assert durable["salary_min"] == "nan"  # visible en la auditoría
+            assert durable["salary_max"] == "inf"
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_migration_survives_nan_durable_and_nan_min_score():
+    """Regresión G2-P2-1 (extremo a extremo): un export con un NaN en un campo
+    del durable (Postgres numeric ADMITE NaN; json.loads materializa el token)
+    y otro en `min_score` mataba el cutover por dos vías — el CAST del manifiesto
+    y `int(float('nan'))` → ValueError, este último ANTES de veredicto. La
+    migración termina ahora con veredicto y el manifiesto persistido; min_score
+    degrada al default con el MISMO helper en ambos lados (sin falso divergent)."""
+    from jobhunt_core import import_portfolio_manifest as man
+
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {"url": "https://good.example.ch/nan1", "status": "applied",
+                 "title": "A", "company": "Acme",
+                 "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+                # company NaN: el sink lo cuarentena (canonical_payload usa
+                # allow_nan=False) ⇒ el durable ÍNTEGRO —con el NaN— va a staging
+                # y de ahí al manifiesto.
+                {"url": "https://nan.example.ch/nan2", "status": "saved",
+                 "title": "B", "company": float("nan"),
+                 "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
+            ],
+            "saved_searches": [
+                {"name": "búsqueda con min_score tóxico", "filters": {"q": "dev"},
+                 "min_score": float("nan"), "is_active": True},
+            ],
+        }
+    ]
+
+    async def _run(factory):
+        async with factory() as s:
+            manifest = await man.migrate_and_reconcile(s, users)  # NO debe lanzar
+            assert manifest["verdict"] == "ok", manifest["divergences"]
+            await s.commit()
+            stored = (
+                await s.execute(
+                    sa.text(
+                        "SELECT manifest FROM portfolio_migration_manifest "
+                        "WHERE id = :i"
+                    ),
+                    {"i": uuid.UUID(manifest["id"])},
+                )
+            ).scalar_one()
+            assert "NaN" not in json.dumps(stored, ensure_ascii=False)
+            min_score = (
+                await s.execute(
+                    sa.text("SELECT min_score FROM saved_searches")
+                )
+            ).scalar_one()
+            assert min_score == 0  # degradado al default, no un crash
+
+    asyncio.run(_on_disposable_db(_run))

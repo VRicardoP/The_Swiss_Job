@@ -38,6 +38,7 @@ Reglas C-4:
 
 import json
 import logging
+import math
 import uuid
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
@@ -291,7 +292,9 @@ async def migrate_applications(
                 ),
                 {
                     "id": uuid.uuid4(), "pid": profile_id, "vid": vacancy_id,
-                    "snap": json.dumps(snapshot, ensure_ascii=False),
+                    "snap": json.dumps(
+                        _json_safe(snapshot), ensure_ascii=False, allow_nan=False
+                    ),
                     "st": winner["status"], "n": notes, "fud": follow_up,
                 },
             )
@@ -372,7 +375,7 @@ async def migrate_saved_searches(
                 filters = json.loads(raw_filters) if raw_filters else {}
             except (TypeError, ValueError):
                 filters = None
-        min_score = int(row.get("min_score") or 0)
+        min_score = _as_int(row.get("min_score"))
         is_active = bool(row.get("is_active", True))
         # G1 H-3: la columna real del origen se llama `last_run_at`; se leen ambas
         # claves (el alias histórico primero) — antes quedaba NULL para todas.
@@ -394,7 +397,9 @@ async def migrate_saved_searches(
             )
             _record_skipped(staging, "saved_search", "invalid_filters", row)
             filters = {}
-        filters_json = json.dumps(filters, ensure_ascii=False)
+        filters_json = json.dumps(
+            _json_safe(filters), ensure_ascii=False, allow_nan=False
+        )
         # Dedup por la TUPLA MATERIAL COMPLETA (name, filters, min_score, is_active,
         # last_run_at): dos búsquedas con igual name+filters pero distinto min_score/
         # is_active/last_run son DISTINTAS (el origen no impone UNIQUE) → ambas migran,
@@ -458,6 +463,49 @@ def _record_skipped(
 # Zona del PRODUCTO (G1-P3-7): follow_up_date es una FECHA que el usuario ve en
 # hora suiza; el origen la guarda como timestamptz y asyncpg la entrega en UTC.
 _PRODUCT_TZ = ZoneInfo("Europe/Zurich")
+
+
+def _json_safe(value):
+    """Saneo RECURSIVO de un valor para que sobreviva al CAST a jsonb.
+
+    - NUL ('\\x00') → U+FFFD en cada str, CLAVES de dict incluidas (G1-P2-1):
+      Postgres rechaza \\u0000 en jsonb aunque el str de Python sea codificable.
+    - float NO FINITO (NaN/±Infinity) → su `str()` (G2-P2-1): `json.dumps` los
+      emite como los tokens `NaN`/`Infinity`, que NO son JSON válido y el CAST
+      a jsonb RECHAZA — un durable staged con un NaN del export (Postgres
+      numeric admite NaN; json.loads materializa el token) abortaba la
+      transacción ENTERA del cutover justo al registrar su propia cuarentena.
+      Se conserva como texto ('nan'/'inf') para que la auditoría lo VEA.
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", "\ufffd")
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {_json_safe(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+def _as_int(value, default: int = 0) -> int:
+    """Coerción defensiva de frontera: entero del durable → int, o `default`.
+
+    G2-P2-1: `int(row.get('min_score') or 0)` reventaba con un NaN del export
+    (`nan` es truthy y `int(float('nan'))` lanza ValueError) y mataba la
+    transacción del cutover ANTES de veredicto — igual que G1-P2-2. Un valor
+    no finito o no numérico se degrada al default, y el MISMO helper lo usa el
+    reconciliador (_classify_expected) para que ambos lados coincidan."""
+    if isinstance(value, bool) or value is None:
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if math.isfinite(value) else default
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
 
 
 def _as_date(value) -> date | None:

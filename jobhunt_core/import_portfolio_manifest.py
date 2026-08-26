@@ -21,6 +21,7 @@ ALCANCE — DIVISIÓN C-4 / ENSAYO §4 (gated NAS), decidida con el propietario:
 
 import json
 import logging
+import math
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
@@ -41,6 +42,8 @@ from jobhunt_core.import_portfolio_durables import (
     SAVED_STATUS,
     _as_date,
     _as_datetime,
+    _as_int,
+    _json_safe,
     _recency_key,
 )
 from jobhunt_core.import_portfolio_migrate import migrate_portfolio, table_checksums
@@ -55,8 +58,14 @@ logger = logging.getLogger(__name__)
 
 
 def _canon(value) -> str:
-    """JSON canónico (claves ordenadas) para comparar filters origen↔destino."""
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    """JSON canónico (claves ordenadas) para comparar filters origen↔destino.
+
+    G2-P2-1: pasa por el MISMO saneo que la escritura (_json_safe) — el destino
+    guarda los floats no finitos como texto, así que sin sanear también el lado
+    ESPERADO un NaN daría 'NaN' contra '"nan"' y un falso divergent."""
+    return json.dumps(
+        _json_safe(value), ensure_ascii=False, sort_keys=True, allow_nan=False
+    )
 
 
 def _ts_key(dt: datetime | None) -> str | None:
@@ -90,6 +99,11 @@ def _pg_text(value) -> str:
         return ""
     if isinstance(value, str):
         return value
+    # G2-P2-1: el snapshot guarda los floats NO FINITOS como texto (_json_safe),
+    # así que el lado esperado debe leerlos igual — json.dumps daría el token
+    # 'NaN' contra el 'nan' real y un falso divergent.
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
     return json.dumps(value, ensure_ascii=False)
 
 
@@ -325,7 +339,7 @@ async def _classify_expected(
                 staged[("invalid_filters", ref, _ident(name))] += 1
                 filters = {}
             name = name[:SAVED_SEARCH_NAME_MAX]
-            min_score = int(row.get("min_score") or 0)
+            min_score = _as_int(row.get("min_score"))
             is_active = False if invalid else bool(row.get("is_active", True))
             # G1 H-3: la columna real es last_run_at (alias histórico primero).
             last_run = _ts_key(
@@ -505,7 +519,6 @@ async def _captured_identities(session: AsyncSession) -> dict:
     partida y de cross-check."""
     src = {"src": PORTFOLIO_IMPORT_SOURCE}
     cons = {"cons": PORTFOLIO_CONSUMER}
-    both = {**src, **cons}
     # Corpus: alcanzable desde la fuente portfolio-import (source_listings → incarnations
     # → revisions → offer_revision_sources → offer_revisions). dedup_candidates/
     # link_evidence: los que el import escribió (referencian una vacante/listing
@@ -653,22 +666,6 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
     return manifest
 
 
-def _strip_nul(value):
-    """Saneo RECURSIVO de NUL en el manifiesto (G1-P2-1): '\\x00' → U+FFFD en
-    cada str (claves de dict incluidas — las urls tóxicas viajan como clave en
-    ledger/staging). Postgres rechaza \\u0000 en jsonb aunque el str Python sea
-    codificable, así que el encode/replace de surrogates no lo cubre; sin esto,
-    el durable tóxico que el staging AISLÓ abortaría igualmente la transacción
-    del cutover al registrar su propia cuarentena."""
-    if isinstance(value, str):
-        return value.replace("\x00", "�")
-    if isinstance(value, dict):
-        return {_strip_nul(k): _strip_nul(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_strip_nul(v) for v in value]
-    return value
-
-
 async def persist_manifest(session: AsyncSession, manifest: dict) -> uuid.UUID:
     """Persiste el manifiesto en portfolio_migration_manifest (core0013) DENTRO de la
     transacción del llamador → atómico con la migración (se revierte con ella en un
@@ -680,7 +677,13 @@ async def persist_manifest(session: AsyncSession, manifest: dict) -> uuid.UUID:
     # G1-P2-1: el NUL se sanea en los VALORES antes de json.dumps — serializado viaja
     # como la secuencia escapada \u0000 (6 chars ASCII que encode/replace no toca) y
     # el CAST a jsonb la rechaza, abortando la transacción entera del cutover.
-    payload = json.dumps(_strip_nul(manifest), ensure_ascii=False, default=str)
+    # G2-P2-1: el MISMO saneo (_json_safe, compartido con la migración) mapea además
+    # los floats NO FINITOS a texto — json.dumps los emitiría como los tokens NaN/
+    # Infinity, que no son JSON y el CAST rechaza igual que el NUL. `allow_nan=False`
+    # es el CINTURÓN: si alguno se colara, revienta en Python con mensaje claro.
+    payload = json.dumps(
+        _json_safe(manifest), ensure_ascii=False, default=str, allow_nan=False
+    )
     payload = payload.encode("utf-8", "replace").decode("utf-8")
     await session.execute(
         sa.text(
