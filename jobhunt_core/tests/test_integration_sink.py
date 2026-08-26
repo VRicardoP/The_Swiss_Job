@@ -523,6 +523,78 @@ def test_reparacion_sin_normalizador_en_este_proceso_conserva_la_canonica(db):
         normalize._NORMALIZERS.pop(sin_norm, None)
 
 
+def test_contenido_que_revierte_refresca_la_marca_del_raw_vigente(db):
+    """Regresión G3-A-P3-3: «última revisión» se lee por `fetched_at DESC` en
+    los dos sitios que necesitan el raw VIGENTE (el guard de reciclado y
+    `_rebuild_canonical_after_repair`), pero un contenido que REVIERTE a un
+    hash ya visto no insertaba fila ni tocaba la existente: la revisión vigente
+    conservaba su fetched_at ORIGINAL y la intermedia —superada— uno posterior,
+    así que ambas lecturas devolvían la SUPERADA (y tras una reparación de
+    primary el /v1 servía un salario ya retirado). `_canonicalize` sí trataba
+    bien el revert, de modo que el puntero canónico y estas lecturas
+    discrepaban."""
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    ext = f"g3rev-{uuid.uuid4().hex[:8]}"
+
+    def _cosecha(salario):
+        _sink_batch(factory, scope, [
+            RawListing(external_id=ext, url=f"https://x/{ext}",
+                       payload={"title": "SRE", "company_name": "ACME AG",
+                                "salary_original": salario}),
+        ])
+
+    _cosecha("80k")
+    _cosecha("90k")
+    _cosecha("80k")  # el portal REVIERTE al contenido anterior
+
+    def _revisiones():
+        async def go():
+            async with factory() as s:
+                return (
+                    await s.execute(
+                        sa.text(
+                            "SELECT count(*) AS n FROM source_listing_revisions r "
+                            "JOIN source_listing_incarnations i "
+                            "  ON i.id = r.incarnation_id "
+                            "JOIN source_listings l ON l.id = i.source_listing_id "
+                            "WHERE l.external_id = :e"
+                        ),
+                        {"e": ext},
+                    )
+                ).one()
+
+        return asyncio.run(go())
+
+    # El revert NO crea fila (el par (incarnación, content_hash) ya existía).
+    assert _revisiones().n == 2
+
+    def _vigente():
+        """La consulta EXACTA de los dos call-sites del raw vigente."""
+
+        async def go():
+            async with factory() as s:
+                return (
+                    await s.execute(
+                        sa.text(
+                            "SELECT DISTINCT ON (r.incarnation_id) r.raw "
+                            "FROM source_listing_revisions r "
+                            "JOIN source_listing_incarnations i "
+                            "  ON i.id = r.incarnation_id "
+                            "JOIN source_listings l ON l.id = i.source_listing_id "
+                            "WHERE l.external_id = :e "
+                            "ORDER BY r.incarnation_id, r.fetched_at DESC, r.id"
+                        ),
+                        {"e": ext},
+                    )
+                ).one()
+
+        return asyncio.run(go())
+
+    # antes: '90k' (la revisión SUPERADA)
+    assert _vigente().raw["salary_original"] == "80k"
+
+
 def test_e2e_run_scope_with_real_sink(db):
     """E2E A-03+A-04: runner + sink real — grafo y estado commiteados juntos."""
     factory, created = db

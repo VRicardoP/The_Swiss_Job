@@ -345,8 +345,7 @@ class RawListingSink:
         await self._write_dedup_candidates(session, pairs)
 
         await self._refresh_and_revise(
-            session, slot_by_ext, inc_by_slot, by_ext, prep_by_ext,
-            fresh_exts, created_incs,
+            session, slot_by_ext, inc_by_slot, by_ext, prep_by_ext
         )
 
         # A-06 · revisión CANÓNICA + puntero vigente (ADR-01/02).
@@ -1272,15 +1271,24 @@ class RawListingSink:
 
     async def _refresh_and_revise(
         self, session, slot_by_ext, inc_by_slot, by_ext, prep_by_ext,
-        fresh_exts, new_incs,
     ) -> None:
-        """`last_seen_at` (y url/apply) en CADA cosecha + revisión si procede.
+        """`last_seen_at` (y url/apply) en CADA cosecha + revisión por
+        contenido, deduplicada por el ON CONFLICT.
 
-        El PRE-FILTRO de contenido ya corrió en el guard (A-04 #3): aquí una
-        revisión procede si (a) el contenido es nuevo en incarnación CONSERVADA
-        (`fresh_exts`) o (b) la incarnación es NUEVA de este run (`new_incs` —
-        incluye las de runs concurrentes ganadores: su contenido puede diferir
-        del nuestro y el ON CONFLICT deduplica)."""
+        G3-A-P3-3: antes se emitía candidato SOLO para el contenido nuevo en
+        incarnación conservada o para las incarnaciones nuevas del run. Cuando
+        el contenido REVIERTE a un hash ya visto en esa incarnación, el par ya
+        existía: ni se insertaba fila ni se tocaba la existente, así que la
+        revisión VIGENTE conservaba su `fetched_at` ORIGINAL y la intermedia
+        —SUPERADA— uno posterior; las dos lecturas de «raw vigente» (el guard
+        de reciclado y `_rebuild_canonical_after_repair`, ambas
+        `ORDER BY fetched_at DESC`) devolvían la superada, y tras una
+        reparación de primary el /v1 servía un contenido ya retirado.
+        Ahora el candidato se emite SIEMPRE y el ON CONFLICT refresca la marca:
+        `fetched_at` es «la última vez que ESTE contenido se vio en esta
+        incarnación», que es justo lo que esas lecturas necesitan. El
+        pre-filtro del guard (A-04 #3) sigue siendo la optimización de la
+        CREACIÓN y el detector del reciclado."""
         refresh, candidates = [], []
         for ext, slot_id in slot_by_ext.items():
             info = inc_by_slot.get(slot_id)
@@ -1294,10 +1302,9 @@ class RawListingSink:
             # UNA sola serialización Y un solo hash: calculados en la
             # cuarentena de frontera y reutilizados aquí (#3/#5).
             canon, chash, _ = prep_by_ext[ext]
-            if ext in fresh_exts or inc_id in new_incs:
-                candidates.append(
-                    {"id": uuid.uuid4(), "iid": str(inc_id), "chash": chash, "raw": canon}
-                )
+            candidates.append(
+                {"id": uuid.uuid4(), "iid": str(inc_id), "chash": chash, "raw": canon}
+            )
         if refresh:
             # Orden determinista → mismos locks en el mismo orden entre runs (#2).
             refresh.sort(key=lambda r: r["iid"])
@@ -1311,14 +1318,17 @@ class RawListingSink:
             )
         if candidates:
             candidates.sort(key=lambda r: r["iid"])  # orden determinista (#2)
-            # ON CONFLICT se mantiene: cierra la carrera entre el pre-filtro y
-            # el INSERT (el pre-filtro es optimización, no la corrección).
+            # ON CONFLICT: cierra la carrera entre el pre-filtro y el INSERT
+            # (el pre-filtro es optimización, no la corrección) y REFRESCA la
+            # marca temporal del contenido re-visto (G3-A-P3-3) — `raw` no se
+            # toca: mismo content_hash ⇒ mismo canon.
             await session.execute(
                 sa.text(
                     "INSERT INTO source_listing_revisions "
                     "(id, incarnation_id, content_hash, raw) "
                     "VALUES (:id, :iid, :chash, CAST(:raw AS jsonb)) "
-                    "ON CONFLICT (incarnation_id, content_hash) DO NOTHING"
+                    "ON CONFLICT (incarnation_id, content_hash) "
+                    "DO UPDATE SET fetched_at = now()"
                 ),
                 candidates,
             )
