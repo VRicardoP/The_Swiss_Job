@@ -41,6 +41,13 @@ class SavedSearchCreate(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=200)
     filters: SavedSearchFilters = Field(default_factory=SavedSearchFilters)
+    # G3/P3-4 — CAMPO INERTE, aceptado solo por compatibilidad con la UI, que
+    # lo sigue enviando y mostrando. La tarea no calcula ningún score: esta
+    # búsqueda es un FILTRO sobre el corpus y se notifica cuando hay altas
+    # nuevas (decisión de G1/P1-4, documentada en tasks/search_tasks.py). No
+    # se aplica como umbral de resultados porque eso silenciaría a quien hoy
+    # tiene guardado un 50 pensando que era un score. Retirarlo del contrato
+    # exige tocar el frontend, fuera del alcance de esta auditoría.
     min_score: int = Field(0, ge=0, le=100)
     notify_frequency: NotifyFrequency = NotifyFrequency.daily
     notify_push: bool = True
@@ -51,6 +58,7 @@ class SavedSearchUpdate(BaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=200)
     filters: SavedSearchFilters | None = None
+    # G3/P3-4 — inerte, ver SavedSearchCreate.min_score.
     min_score: int | None = Field(None, ge=0, le=100)
     notify_frequency: NotifyFrequency | None = None
     notify_push: bool | None = None

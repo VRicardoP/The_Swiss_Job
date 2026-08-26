@@ -25,6 +25,9 @@ class SavedSearch(Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     filters: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    # G3/P3-4: campo INERTE — nada lo lee. El barrido notifica por novedades,
+    # no por puntuación (no hay score que comparar en una búsqueda por filtros).
+    # Se conserva porque la UI lo envía y lo muestra.
     min_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # Notification preferences
