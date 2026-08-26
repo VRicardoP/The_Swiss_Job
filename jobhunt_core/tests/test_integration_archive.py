@@ -220,6 +220,52 @@ def test_rancia_con_candidatura_se_conserva_pf3(db):
     assert st.archivada is False and st.con_activa is True  # PF.3: se conserva
 
 
+def test_muerta_con_candidatura_se_conserva_pf3(db):
+    """Regresión G3-A-P2-3: el guard PF.3 («con candidatura se conserva»)
+    estaba SOLO en la rama de RANCIAS, y la rama de MUERTAS es justo donde el
+    adjunto es más probable — el portal retira la oferta a la que el usuario se
+    apuntó. Como el archivado es IRREVERSIBLE (nada en el core limpia
+    archived_at), `resolve_direct` devolvía 404 para siempre: el re-POST fallaba
+    y el PUT de bookmarks dejaba la vacante en `skipped` en CADA sync. El mismo
+    dato por la rama 2 SÍ se conservaba: la asimetría estaba entre ramas."""
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _ingest(factory, scope, "muerta-adjunta")
+    _ingest(factory, scope, "muerta-sola")
+    _sql(
+        factory,
+        "UPDATE source_listing_incarnations SET ended_at = now() - interval '30 days' "
+        "WHERE id IN (SELECT i.id FROM source_listing_incarnations i "
+        " JOIN source_listings l ON l.id=i.source_listing_id "
+        " WHERE l.external_id IN ('muerta-adjunta', 'muerta-sola'))",
+    )
+    cid, pid, aid = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    _sql(factory, f"INSERT INTO consumers (id, name) VALUES ('{cid}', 'test-arch-m')")
+    _sql(
+        factory,
+        f"INSERT INTO profiles (id, consumer_id, external_ref) "
+        f"VALUES ('{pid}', '{cid}', 'arch-m')",
+    )
+    _sql(
+        factory,
+        f"INSERT INTO applications (id, profile_id, vacancy_id) "
+        f"SELECT '{aid}', '{pid}', i.vacancy_id FROM source_listing_incarnations i "
+        "JOIN source_listings l ON l.id=i.source_listing_id "
+        "WHERE l.external_id='muerta-adjunta'",
+    )
+    created["extra_sql"] += [
+        f"DELETE FROM consumers WHERE id = '{cid}'",
+        f"DELETE FROM profiles WHERE id = '{pid}'",
+        f"DELETE FROM applications WHERE id = '{aid}'",
+    ]
+
+    _sweep(factory)
+    # La vacante CON candidatura se conserva (antes: archivada, irreversible)…
+    assert _estado(factory, "muerta-adjunta").archivada is False
+    # …y la salida del corpus sigue funcionando para el resto.
+    assert _estado(factory, "muerta-sola").archivada is True
+
+
 def test_b3_sink_no_refresca_snapshot_archivado_por_el_barrido(db):
     """Regresión B-3 (auditoría externa 2026-08-23): el sink leía las
     encarnaciones activas ANTES de _lock_vacancies; si archive_sweep ganaba
