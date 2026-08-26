@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.job import Job
+from services.job_matcher import EMBEDDING_TAGS_VISIBLE_MAX_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +209,8 @@ class JobRepository:
             elif "\x00" in aurl or len(aurl) > _APPLY_URL_MAX_LEN:
                 logger.info(
                     "apply_url invalido (NUL o >%d): campo descartado (url=%s)",
-                    _APPLY_URL_MAX_LEN, values.get("url"),
+                    _APPLY_URL_MAX_LEN,
+                    values.get("url"),
                 )
                 values.pop("apply_url")
         if "logo" in values:
@@ -353,7 +355,19 @@ class JobRepository:
             )
         # Reactivar SOLO si NO es duplicado: una oferta archivada que reaparece se
         # reactiva; un duplicado re-visto sigue inactivo (no vuelve a los feeds).
+        reactivating = and_(Job.is_active.is_(False), Job.duplicate_of.is_(None))
         set_["is_active"] = case((Job.duplicate_of.isnot(None), False), else_=True)
+        # G3/P3-10: la reactivación de arriba no distingue "archivada por
+        # caducidad" de "desactivada por URL muerta (404/410)" — el portal sigue
+        # listando la URL muerta, el upsert la revive y, como `url_last_check`
+        # quedaba intacto (fechado en la sonda que la mató), el
+        # `order_by(nulls_first(...))` de check_job_urls no la volvía a sondear
+        # hasta completar TODA la rotación: oscilaba indefinidamente sirviendo un
+        # 404 a los usuarios. Al reactivar se borra la marca de sondeo, de modo
+        # que la oferta resucitada entra a la CABECERA de la rotación y se
+        # re-verifica en el siguiente barrido. Solo en la transición
+        # inactiva→activa: una oferta ya activa conserva su rotación normal.
+        set_["url_last_check"] = case((reactivating, null()), else_=Job.url_last_check)
         # OJO (V2-2, VD.9): content_hash versiona el payload ENTRANTE, no la
         # fila efectiva — tras una re-vista degradada (campos conservados por
         # los COALESCE/CASE de arriba) el hash guardado NO coincide con el
@@ -376,11 +390,27 @@ class JobRepository:
         # entrante degradado que se conserva NO debe invalidar el embedding
         # (texto final idéntico) — comparar contra excluded.tags re-embebía en
         # cada transición degradada↔sana (V2-1/C9, VD.9).
+        # G3/P3-8: las tags van al FINAL de build_job_text y el encoder trunca a
+        # 128 tokens, así que en una oferta con descripción larga no llegan al
+        # vector (medido: con 1700 chars de descripción, tags=[...] y tags=[]
+        # producen el MISMO vector). Invalidar por ellas dejaba la oferta con
+        # embedding NULL —fuera de _stage1_vector_search y de
+        # find_semantic_duplicates— hasta el siguiente embed_all_pending, a
+        # cambio de re-calcular un vector idéntico. Un cambio de tags solo
+        # invalida si la descripción efectiva es lo bastante corta como para
+        # dejarles sitio en la ventana (EMBEDDING_TAGS_VISIBLE_MAX_CHARS).
+        tags_reach_encoder = (
+            func.char_length(func.coalesce(effective_description, ""))
+            <= EMBEDDING_TAGS_VISIBLE_MAX_CHARS
+        )
         set_["embedding"] = case(
             (
                 or_(
                     Job.description.is_distinct_from(effective_description),
-                    Job.tags.is_distinct_from(effective_tags),
+                    and_(
+                        Job.tags.is_distinct_from(effective_tags),
+                        tags_reach_encoder,
+                    ),
                 ),
                 null(),
             ),

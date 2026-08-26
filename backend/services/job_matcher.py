@@ -21,6 +21,22 @@ DEFAULT_WEIGHTS = {
     "language": 0.10,
 }
 
+# G3/P1-2, G3/P3-8 — ventana REAL del encoder, medida en vivo sobre
+# paraphrase-multilingual-MiniLM-L12-v2: `max_seq_length = 128` tokens. Todo lo
+# que build_job_text ponga más allá (típicamente el final de la descripción y
+# SIEMPRE las tags de una oferta con descripción larga) NO entra en el vector.
+# No se reordena ni se recorta el texto aquí: el vector está persistido en
+# pgvector y lo consumen matching y dedup — cambiar el texto exigiría re-embeber
+# el corpus entero. La cota se declara para que quien dependa del contenido del
+# vector (invalidación de embeddings, dedup semántico) razone con ella.
+EMBEDDING_MAX_SEQ_TOKENS = 128
+# Cota en CARACTERES a partir de la cual la descripción agota por sí sola esos
+# 128 tokens y nada posterior (las tags) puede influir en el vector. Medido con
+# el tokenizer real: 600 chars de alemán = 116 tokens, 800 = 153; el idioma menos
+# denso de los cuatro del proyecto es el inglés, ~5.9 chars/token. 1000 chars son
+# >128 tokens con margen incluso en el peor caso realista (~7 chars/token).
+EMBEDDING_TAGS_VISIBLE_MAX_CHARS = 1000
+
 # Maps ISO 639-1 language codes → lowercase name variants used in user profiles
 _LANGUAGE_CODE_MAP: dict[str, set[str]] = {
     "en": {"english", "inglés", "ingles"},
@@ -65,7 +81,13 @@ class JobMatcher:
 
     @staticmethod
     def build_job_text(job: dict) -> str:
-        """Combine job fields into a single text for embedding."""
+        """Combine job fields into a single text for embedding.
+
+        OJO (G3/P1-2): el encoder trunca a `EMBEDDING_MAX_SEQ_TOKENS` (128), así
+        que de este texto solo se vectoriza el arranque — title + company + el
+        principio de la descripción. Las tags de una oferta con descripción larga
+        no llegan al vector.
+        """
         parts = [
             job.get("title", ""),
             job.get("company", ""),
