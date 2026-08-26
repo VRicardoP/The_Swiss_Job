@@ -152,7 +152,12 @@ class TestLaPlantillaSinFormatearNoEsUnaCredencial:
 
     @pytest.mark.parametrize("hueco", ["%s", "%(clave)s", "{token}"])
     def test_los_huecos_de_plantilla_se_dejan_intactos(self, hueco):
-        assert redact_credentials(f"key={hueco}") == f"key={hueco}"
+        # G8/P3-1: la guarda sigue existiendo, pero solo se aplica al texto que
+        # ES una plantilla pendiente de formatear. Aplicada a TODO texto dejaba
+        # escapar ENTERA una credencial percent-encoded cuyo primer carácter es
+        # reservado (`?key=%2Fsecreto`), y `%2F` no se puede distinguir de un
+        # especificador de formato por su forma: es uno válido en Python.
+        assert redact_credentials(f"key={hueco}", plantilla=True) == f"key={hueco}"
 
 
 class TestLasFormasQueElPatronNoEntendia:

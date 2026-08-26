@@ -91,10 +91,28 @@ class CredentialRedactingFilter(logging.Filter):
                 # se pierde la estructura `msg`/`args` del registro, y no
                 # alcanza a `uvicorn.access` —cuya plantilla no nombra ninguna
                 # credencial— cuyo formateador sí desempaqueta `record.args`.
-                record.msg = redact_credentials(record.getMessage())
-                record.args = ()
+                try:
+                    formateado = record.getMessage()
+                except Exception:
+                    # G8/P3-2: `getMessage()` es `msg % args` y una plantilla
+                    # con args de más o de menos lanza `TypeError`. Las
+                    # excepciones de un `Filter` NO las captura `logging`
+                    # (`handleError` solo envuelve `emit`), así que subían hasta
+                    # el `logger.info(...)` del código de negocio e invertían el
+                    # contrato «logging nunca revienta a su llamante»: antes del
+                    # fix ese mismo error lo absorbía `logging` (registro
+                    # descartado + traza por stderr). Se cae al camino normal,
+                    # que redacta plantilla y argumentos por separado y deja que
+                    # `logging` haga lo de siempre con el formateo roto.
+                    record.msg = redact_credentials(record.msg, plantilla=True)
+                else:
+                    record.msg = redact_credentials(formateado)
+                    record.args = ()
             else:
-                record.msg = redact_credentials(record.msg)
+                # `plantilla` solo cuando queda un `%`/`{` por sustituir: si no
+                # hay args, un valor que empieza por `%` es percent-encoding y
+                # hay que taparlo (G8/P3-1).
+                record.msg = redact_credentials(record.msg, plantilla=bool(record.args))
         if isinstance(record.args, tuple):
             record.args = tuple(_redact_arg(a) for a in record.args)
         elif isinstance(record.args, dict):
