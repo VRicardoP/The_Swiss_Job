@@ -48,7 +48,7 @@ class TestGeminiGenerate:
             "candidates": [{"content": {"parts": [{"text": "# CV\n\nProfil..."}]}}]
         }
         with patch(
-            "services.gemini_service.httpx.AsyncClient",
+            "services.gemini_service._client_factory",
             return_value=_mock_async_client(_resp(200, payload)),
         ):
             out = await svc.get_chat_response("user", system_prompt="sys")
@@ -58,7 +58,7 @@ class TestGeminiGenerate:
         svc = _service_with_key()
         payload = {"error": {"message": "You exceeded your current quota"}}
         with patch(
-            "services.gemini_service.httpx.AsyncClient",
+            "services.gemini_service._client_factory",
             return_value=_mock_async_client(_resp(429, payload)),
         ):
             with pytest.raises(RuntimeError, match="429"):
@@ -68,7 +68,7 @@ class TestGeminiGenerate:
         svc = _service_with_key()
         payload = {"candidates": [{"content": {"parts": []}, "finishReason": "SAFETY"}]}
         with patch(
-            "services.gemini_service.httpx.AsyncClient",
+            "services.gemini_service._client_factory",
             return_value=_mock_async_client(_resp(200, payload)),
         ):
             with pytest.raises(RuntimeError, match="sin texto"):

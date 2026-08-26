@@ -16,6 +16,12 @@ logger = logging.getLogger(__name__)
 
 _API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
+# Costura de red, con nombre propio. Parchear `httpx.AsyncClient` para doblar
+# a Gemini no es local: el módulo `httpx` es el MISMO objeto en todo el
+# proceso, así que el doble se colaba también en el cliente del core y en
+# cualquier otro que abra un AsyncClient. Esto sí se sustituye solo aquí.
+_client_factory = httpx.AsyncClient
+
 
 class GeminiService:
     """Cliente async para Gemini generateContent (generación de documentos)."""
@@ -61,7 +67,7 @@ class GeminiService:
             payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
 
         url = f"{_API_BASE}/{self._model}:generateContent"
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        async with _client_factory(timeout=self._timeout) as client:
             resp = await client.post(
                 url, headers={"x-goog-api-key": self._api_key}, json=payload
             )

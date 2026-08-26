@@ -12,6 +12,7 @@ from config import settings
 from core.rate_limit import limiter
 from database import Base, get_db
 from main import app
+from tests.llm_stub import llm_boundary_stub
 
 # Disable rate limiting in tests
 limiter.enabled = False
@@ -116,6 +117,22 @@ async def setup_db(_ensure_test_db):
         dirty = [row[0] for row in (await conn.execute(text(_DIRTY_PROBE))).all()]
         if dirty:
             await conn.execute(text("TRUNCATE TABLE " + ", ".join(dirty) + " CASCADE"))
+
+
+@pytest.fixture(autouse=True)
+def stub_llm_boundary():
+    """Sustituye la frontera de RED de los proveedores LLM por un doble.
+
+    Ver `tests/llm_stub.py`: se sustituye el SDK de Groq y el cliente HTTP de
+    Gemini, no los servicios — todo lo que hay por encima sigue siendo código
+    real. Cede la lista de llamadas salientes, que un test puede CONTAR.
+
+    Es `autouse` a propósito: la alternativa —mockear a mano en los 130
+    ficheros que tocan un router— deja huecos por los que la suite vuelve a
+    salir a la red sin que nadie se entere.
+    """
+    with llm_boundary_stub() as calls:
+        yield calls
 
 
 @pytest.fixture
