@@ -150,9 +150,14 @@
 --          LEFT JOIN jobs j ON j.hash = sl.external_id
 --         WHERE s.name IN ('legacy:arbeitnow','legacy:jobgether','legacy:irishjobs')
 --           AND j.hash IS NULL;
---      Debe bajar (no subir) respecto a antes de la maniobra: los únicos
---      huérfanos nuevos son los slots de los clones borrados, que el proyector
---      cierra por su `op=D`.
+--      Medido HOY (2026-08-26, antes de la maniobra): **924** — todos de
+--      arbeitnow, de filas legacy ya borradas hace tiempo. La cifra SUBE, no
+--      baja, y la subida esperada es EXACTAMENTE el número de slots de clones
+--      que imprimen los dos informes (`sombra: slots de clones …`):
+--        924 + 371 (g3) + 40 (g6) = **1.335**.
+--      Esos 411 son legítimos: su fila legacy desaparece en el PASO 6 y el
+--      `op=D` correspondiente cierra su encarnación. Lo que NO puede pasar es
+--      que suba en 6.553: eso sería el fallo que el PASO 7c evita.
 --
 -- LO QUE ESTE ORDEN **NO** ARREGLA (declarado, G8/P2-6). El fondo del problema
 -- vive en `jobhunt_core/shadow/capture.py:522`
