@@ -66,7 +66,10 @@ async def create_saved_search(
     search = SavedSearch(
         user_id=current_user.id,
         name=body.name,
-        filters=body.filters,
+        # G3/P2-8: `filters` ya es un modelo validado; se persiste solo lo que
+        # el usuario envio (`exclude_unset`) para no inventar claves por
+        # defecto en la fila ni cambiar la forma que devuelve la API.
+        filters=body.filters.model_dump(exclude_unset=True),
         min_score=body.min_score,
         notify_frequency=body.notify_frequency,
         notify_push=body.notify_push,
@@ -100,7 +103,11 @@ async def update_saved_search(
             detail="Saved search not found",
         )
 
-    update_data = body.model_dump(exclude_unset=True)
+    # G3/P2-7: `exclude_none` ademas de `exclude_unset` — ningun campo de
+    # SavedSearchUpdate es anulable en BD, y un `{"filters": null}` escribia
+    # `'null'::jsonb` (valor JSON valido: el NOT NULL no salta) que tumbaba
+    # GET /api/v1/searches ENTERO, filas sanas incluidas.
+    update_data = body.model_dump(exclude_unset=True, exclude_none=True)
     for field, value in update_data.items():
         setattr(search, field, value)
 

@@ -6,6 +6,17 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from models.enums import RemotePreference
 
 
+def _empty_list_if_null(v):
+    """G3/P2-7: columna JSONB NOT NULL envenenada con `'null'::jsonb`.
+
+    SQLAlchemy la devuelve como None y la lectura reventaba con 500 PARA
+    SIEMPRE (GET /profile y GET /profile/export, portabilidad GDPR). Se lee
+    como lista vacia — el valor que la columna deberia tener — para que una
+    fila ya corrupta siga siendo legible y reparable desde la UI.
+    """
+    return [] if v is None else v
+
+
 class ProfileData(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -21,6 +32,10 @@ class ProfileData(BaseModel):
     score_weights: dict | None
     watchlist_schools_enabled: bool = False
     updated_at: datetime
+
+    _null_json_as_empty = field_validator(
+        "skills", "languages", "locations", mode="before"
+    )(_empty_list_if_null)
 
 
 class ProfileUpdate(BaseModel):
@@ -92,6 +107,10 @@ class ProfileResponse(BaseModel):
     score_weights: dict | None
     watchlist_schools_enabled: bool = False
     updated_at: datetime
+
+    _null_json_as_empty = field_validator(
+        "skills", "languages", "locations", mode="before"
+    )(_empty_list_if_null)
 
 
 class CVUploadResponse(BaseModel):

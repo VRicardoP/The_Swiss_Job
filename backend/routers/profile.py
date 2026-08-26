@@ -47,6 +47,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/profile", tags=["profile"])
 
+# Campos de `user_profiles` anulables en BD: aqui un `null` explicito SI
+# significa «borra este valor» (G3/P2-7). El resto son NOT NULL — o JSONB
+# NOT NULL, donde el None se persiste como `'null'::jsonb` y corrompe la fila.
+NULLABLE_PROFILE_FIELDS = frozenset(
+    {"title", "experience_years", "salary_min", "salary_max", "score_weights"}
+)
+
 
 def _profile_http_error(exc: ProfileError) -> HTTPException:
     """Traduce errores de la costura a HTTP (solo alcanzable con routing a core)."""
@@ -103,7 +110,18 @@ async def update_profile(
             detail="Profile not found",
         )
 
-    update_data = body.model_dump(exclude_unset=True)
+    # G3/P2-7: `exclude_unset` NO distingue «campo ausente» de «campo enviado
+    # como null», y la red de seguridad NOT NULL no salta en JSONB (SQLAlchemy
+    # serializa el None de Python como el valor JSON `null`, que para Postgres
+    # es un valor valido). Un `{"skills": null}` escribia `'null'::jsonb` y
+    # desde ahi GET /profile y GET /profile/export respondian 500 PARA
+    # SIEMPRE. Se descartan los None salvo en los campos que SI admiten
+    # borrado por null en BD.
+    update_data = {
+        field: value
+        for field, value in body.model_dump(exclude_unset=True).items()
+        if value is not None or field in NULLABLE_PROFILE_FIELDS
+    }
     for field, value in update_data.items():
         setattr(profile, field, value)
 
