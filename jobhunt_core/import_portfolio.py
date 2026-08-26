@@ -25,7 +25,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jobhunt_core import import_portfolio_ledger as pil
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
-from jobhunt_core.harvest.sink import MAX_URL_LEN, RawListingSink, _preprocess, normalize_url
+from jobhunt_core.harvest.sink import (
+    MAX_URL_LEN,
+    RawListingSink,
+    _preprocess,
+    canonical_payload,
+    normalize_url,
+)
 from jobhunt_core.harvest.types import RawListing
 
 logger = logging.getLogger(__name__)
@@ -144,6 +150,19 @@ def _synthesizable(item: dict, listing: RawListing, url_normalized: str) -> tupl
     sintetiza si ≥1 de sus durables es sintetizable; la razón solo aplica si NINGUNO lo es."""
     if not title_normalizable(item.get("title")):
         return False, pil.Q_NO_TITLE
+    # G2-P3-2: la TOXICIDAD se comprueba ANTES que el límite, como en el sink
+    # (_preprocess encodea estricto y serializa el payload antes de medir) y
+    # como manda la precedencia declarada del módulo (malformed > limit): una
+    # url >2048 bytes con un surrogate en el fragmento —que normalize_url
+    # descarta, así que no revienta antes— se registraba como 'limit' mientras
+    # el sink la cuarentena por tóxica. La partición ya coincidía; mentía la
+    # razón AUDITABLE.
+    try:
+        canonical_payload(listing.payload).encode()  # el sink hashea el canon
+        listing.external_id.encode()
+        listing.url.encode()
+    except (TypeError, ValueError, UnicodeEncodeError):
+        return False, pil.Q_MALFORMED
     # G1-P3-5: BYTES, no caracteres — el sink mide bytes (_limit_violations,
     # C6-P2-2); medir chars aquí mandaba una url multibyte ≤2048 chars pero
     # >2048 bytes a _preprocess y el ledger registraba 'malformed' en vez de

@@ -782,3 +782,59 @@ def test_migration_survives_nan_durable_and_nan_min_score():
             assert min_score == 0  # degradado al default, no un crash
 
     asyncio.run(_on_disposable_db(_run))
+
+
+def test_ledger_over_limit_url_with_surrogate_reason_is_malformed():
+    """Regresión G2-P3-2 (residual de G1-P3-5): una url que ADEMÁS de superar
+    los 2048 bytes porta un surrogate en el FRAGMENTO (que normalize_url
+    descarta, así que no revienta antes) quedaba registrada como 'limit'. El
+    sink real la cuarentena como TÓXICA (encode estricto en _preprocess) y la
+    precedencia declarada del propio módulo dice malformed > limit: la razón
+    AUDITABLE mentía en la esquina compuesta. Ahora la toxicidad se comprueba
+    ANTES del límite, en el MISMO orden que el sink."""
+
+    async def _run(factory):
+        async with factory() as s:
+            scope_id = await ip.ensure_import_scope(s)
+            await s.commit()
+            url = "https://x.example.ch/" + "a" * 2100 + "#\ud800"
+            assert len(url.encode("utf-8", "surrogatepass")) > 2048
+            led: list = []
+            await ip.synthesize_vacancies(
+                s, scope_id, [{"url": url, "title": "U", "company": "A"}], ledger=led
+            )
+            await s.commit()
+            e = _by_url(led)[url]
+            assert e.disposition == pil.QUARANTINE
+            assert e.reason == pil.Q_MALFORMED  # antes: limit (razón falseada)
+            # Y la precedencia del módulo coincide con la razón registrada.
+            assert ip._group_reason({pil.Q_LIMIT, pil.Q_MALFORMED}) == pil.Q_MALFORMED
+            assert ip.durable_synthesizable({"url": url, "title": "U"}) == (
+                False, pil.Q_MALFORMED
+            )
+
+    asyncio.run(_on_disposable_db(_run))
+
+
+def test_ledger_payload_toxico_con_url_larga_reason_is_malformed():
+    """Misma familia (G2-P3-2): el payload TÓXICO (título con surrogate) sobre
+    una url excesiva también daba 'limit'. El sink serializa el payload antes de
+    medir los límites, así que la razón real es malformed."""
+
+    async def _run(factory):
+        async with factory() as s:
+            scope_id = await ip.ensure_import_scope(s)
+            await s.commit()
+            url = "https://y.example.ch/" + "b" * 2100
+            led: list = []
+            await ip.synthesize_vacancies(
+                s, scope_id,
+                [{"url": url, "title": "T\ud800", "company": "A"}],
+                ledger=led,
+            )
+            await s.commit()
+            e = _by_url(led)[url]
+            assert e.disposition == pil.QUARANTINE
+            assert e.reason == pil.Q_MALFORMED  # antes: limit
+
+    asyncio.run(_on_disposable_db(_run))
