@@ -183,22 +183,31 @@ class SchulJobsScraper(BaseScraper):
                             next_page,
                             e,
                         )
+                        # G2/P2-2: fallo a mitad de scroll — sin marcarlo, el
+                        # cursor aprendía la página inicial y el early-stop
+                        # del run siguiente dejaba las páginas de scroll sin
+                        # pedir jamás (mismo trato que el motor base, G1/P2-4).
+                        self._stop_reason = "error"
                         break
 
                     if resp.status_code in self.BLOCK_STATUS:
                         await self._report_block(resp.status_code)
+                        self._stop_reason = "error"  # G2/P2-2
                         break
                     if resp.status_code != 200:
+                        self._stop_reason = "error"  # G2/P2-2
                         break
 
                     try:
                         data = resp.json()
                     except Exception:
+                        self._stop_reason = "error"  # G2/P2-2
                         break
 
                     # G1/P3-8: un 200 cuyo JSON sea una lista (u otro no-dict)
                     # hacía AttributeError en .get y tiraba el run entero.
                     if not isinstance(data, dict):
+                        self._stop_reason = "error"  # G2/P2-2
                         break
 
                     html_fragment = data.get("html", "")

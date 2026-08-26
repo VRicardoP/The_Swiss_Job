@@ -475,9 +475,15 @@ class IrishJobsScraper(BaseScraper):
                 )
             except (CircuitBreakerOpen, httpx.HTTPError) as e:
                 logger.error("%s %s page %d error: %s", self.SOURCE_NAME, host, page, e)
+                # G2/P2-1: corte por FALLO, no fin de listado — sin marcarlo,
+                # el cursor aprendía las páginas cosechadas y el early-stop
+                # del run siguiente enterraba las ofertas de la página caída
+                # (mismo trato que el motor base, G1/P2-4).
+                self._stop_reason = "error"
                 break
 
             if await self._listing_status_stops(response.status_code, page):
+                self._stop_reason = "error"  # G2/P2-1
                 break
 
             soup = BeautifulSoup(response.text, "lxml")
@@ -485,6 +491,7 @@ class IrishJobsScraper(BaseScraper):
             if data is None:
                 # Decode falló (redeploy ya logueado): abortar este host, no petar.
                 await self._maybe_report_soft_block(response.text, page)
+                self._stop_reason = "error"  # G2/P2-1
                 break
 
             page_stubs = self._items_to_stubs(data, host, url)
