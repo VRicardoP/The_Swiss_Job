@@ -231,6 +231,7 @@ def test_loader_excluye_ambiguos_y_sinteticos_y_es_idempotente(db):
         "ya_presentes": 0,
         "excluidos_ambiguous_owner": 1,
         "excluidos_sinteticos": 3,
+        "excluidos_reciclado": 0,
         "congelada": False,
     }
     rows = _pairs_in_cohort(factory, cohort)
@@ -507,3 +508,99 @@ def test_g7n6_un_slot_reciclado_no_se_carga_en_silencio(db):
     filas = _pairs_in_cohort(factory, cohort)
     assert len(filas) == 1 and filas[0].verdict == "duplicate"
     assert sorted((filas[0].job_ref_a, filas[0].job_ref_b)) == sorted((ext, ext_otro))
+
+
+def test_g8p3_4_excluir_desbloquea_sin_falsear_el_acta_ni_el_contador(db):
+    """REGRESIÓN G8-P3-4: las guardas fail-closed de G7-N-6 muerden bien y no
+    tienen falsos positivos, pero el módulo no ofrecía CÓMO desbloquearse.
+
+    Sobre el acta ratificada rechazan 13 `pair_id` por round-trip y 0 por
+    colisión, dejando 187 cargables — y la carga aún no se ha ejecutado. Sin
+    bandera, el operador solo podía editar el JSON del acta RATIFICADA (el
+    artefacto de trazabilidad) o pasar los pares por `synthetic_excluded`,
+    donde se contarían como `excluidos_sinteticos`: una etiqueta FALSA en un
+    resumen auditable, porque no son los sintéticos B-26/27/28 del corpus de
+    test sino slots reciclados.
+
+    Se fija (a) que excluir desbloquea la carga, (b) que el par excluido no
+    entra, (c) que el conteo sale por `excluidos_reciclado` y NO contamina
+    `excluidos_sinteticos`, y (d) que una errata en la bandera falla FUERTE en
+    vez de excluir nada mientras el resumen dice lo contrario."""
+    factory, created = db
+    prefix = "g8p34-" + uuid.uuid4().hex[:8]
+    sid = _mk_source(factory, f"legacy:{prefix}")
+    created["sources"].append(sid)
+    v1, v2, v3, ext, ext_otro = _mk_slot_reciclado(factory, sid, prefix)
+    created["dedup_refs"] += [ext, ext_otro]
+    cohort = f"stratum-{prefix}"
+    created["cohorts"].append(cohort)
+
+    candidates = {"B": [_cand(v1, v3, 0.9), _cand(v2, v3, 0.8)]}
+    labels = {"B-01": "duplicate", "B-02": "distinct"}
+
+    # (d) una errata NO excluye en silencio.
+    with pytest.raises(ValueError) as err:
+        _load(factory, candidates, labels, cohort=cohort,
+              manual_excluded=frozenset({"B-99"}))
+    assert "B-99" in str(err.value)
+
+    # (a) el par que la guarda NOMBRA se excluye y la carga sale adelante.
+    resumen = _load(factory, candidates, labels, cohort=cohort,
+                    manual_excluded=frozenset({"B-01"}))
+    assert resumen["cargables"] == 1
+    assert resumen["insertados"] == 1
+    # (c) el contador dice lo que es, y no miente por la vía de los sintéticos.
+    assert resumen["excluidos_reciclado"] == 1
+    assert resumen["excluidos_sinteticos"] == 0
+    assert resumen["excluidos_ambiguous_owner"] == 0
+
+    # (b) el par cargado es el OTRO, con su veredicto.
+    cargados = _pairs_in_cohort(factory, cohort)
+    assert len(cargados) == 1
+    assert cargados[0][2] == "distinct"
+
+
+def test_g8_parse_excluidos_tolera_el_copiar_y_pegar_del_error():
+    """La guarda imprime `['B-17', 'C-05', ...]`; el operador copia y pega. El
+    troceado tiene que quedarse con los pair_ids y no con los espacios."""
+    assert stratum.parse_excluidos("B-17, C-05 ,E-09") == frozenset(
+        {"B-17", "C-05", "E-09"}
+    )
+    assert stratum.parse_excluidos("") == frozenset()
+    assert stratum.parse_excluidos("  ,, ") == frozenset()
+
+
+def test_g8n6_la_colision_entre_pares_nombra_los_grupos_ordenados(db):
+    """Primera regresión de la guarda de COLISIÓN, y G8-N-6 de paso.
+
+    Sobre el acta real dispara 0 veces —la de round-trip ya elimina un miembro
+    de cada grupo que chocaba— así que nadie la había ejercitado. Aquí choca
+    de verdad y sin reciclados de por medio: dos `pair_id` DISTINTOS de la
+    hoja con los mismos dos lados en orden opuesto canonizan al mismo
+    `(LEAST, GREATEST)`, así que el segundo INSERT moriría en el
+    `ON CONFLICT DO NOTHING` contado como `ya_presentes` y, con veredictos
+    contradictorios, ganaría el primero por orden alfabético del pair_id.
+
+    G8-N-6: el mensaje ordena los GRUPOS pero antes no las listas internas
+    —a diferencia de `sorted(bad)` y `sorted(reciclados)`—, así que el error
+    salía como `[['B-02','B-01']]`. Un diagnóstico que el operador copia y
+    pega a `--excluir` no puede depender del orden de iteración de un dict."""
+    factory, created = db
+    prefix = "g8n6-" + uuid.uuid4().hex[:8]
+    sid = _mk_source(factory, f"legacy:{prefix}")
+    created["sources"].append(sid)
+    vac = _mk_legacy_pair(factory, sid, prefix, 2)
+    created["dedup_refs"] += [ext for _v, ext in vac]
+    cohort = f"stratum-{prefix}"
+    created["cohorts"].append(cohort)
+    (va, _ea), (vb, _eb) = vac
+
+    candidates = {"B": [_cand(va, vb, 0.9), _cand(vb, va, 0.8)]}
+    with pytest.raises(ValueError) as exc:
+        # el acta llega con B-02 ANTES que B-01: el orden de iteración del
+        # dict es el que se cuela en el mensaje si no se ordena la lista.
+        _load(factory, candidates,
+              {"B-02": "distinct", "B-01": "duplicate"}, cohort=cohort)
+    assert "canonizan al MISMO par" in str(exc.value)
+    assert "[['B-01', 'B-02']]" in str(exc.value), str(exc.value)
+    assert _pairs_in_cohort(factory, cohort) == []

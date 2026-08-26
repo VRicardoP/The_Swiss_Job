@@ -26,7 +26,19 @@ Decisiones (no obvias):
   INVARIANTE (G7-N-6): ese ref tiene que VOLVER a la misma vacante. Sobre un
   slot RECICLADO no vuelve —la vuelta gana por `seq DESC`— y el par acabaría
   puntuado contra otra oferta o desaparecido en el ON CONFLICT; se comprueba
-  y se falla fuerte nombrando los pares (`_resolve_legacy_refs`).
+  y se falla fuerte nombrando los pares (`_resolve_legacy_refs`); los que
+  salgan nombrados se excluyen con `--excluir` (contador propio
+  `excluidos_reciclado`), NUNCA editando el acta ratificada.
+  G8-N-7, RIESGO DIFERIDO que este guard NO cubre y que conviene que esté en
+  el acta de la cohorte: la comprobación es una FOTO del momento de la carga,
+  y el espacio de nombres `job_ref = external_id` identifica al SLOT, no a la
+  vacante. De los 187 pares cargables del acta ratificada, 30 se apoyan en
+  uno de los 22 slots legacy que YA tienen más de una vacante: el PRÓXIMO
+  reciclado de cualquiera de esos slots vuelve a re-apuntar el par en
+  silencio. Y no hay lock entre el SELECT del guard y el INSERT (mismo READ
+  COMMITTED), así que una cosecha concurrente puede reciclar en la ventana.
+  El cierre real —ref por `vacancy_id`, o por `(external_id, seq)`— es otro
+  trabajo y otra cohorte.
 - EXCLUSIONES del acta de etiquetado: los `ambiguous-owner` (§3 — la decisión
   es del propietario, no entran hasta que adjudique) y los pares SINTÉTICOS
   B-26/27/28 («SkipDedup Collapse Test», Clera — registros de test, no
@@ -40,7 +52,7 @@ Decisiones (no obvias):
 
 CLI (patrón migrate.py / miner):
   docker compose run --rm core-migrate python -m jobhunt_core.shadow.stratum \
-      candidatos.json etiquetas.json
+      candidatos.json etiquetas.json [--excluir B-17,C-05,...]
 """
 
 import argparse
@@ -97,6 +109,7 @@ async def load_positive_stratum(
     labels_by_pair: dict[str, str],
     cohort: str = POSITIVE_STRATUM_COHORT,
     synthetic_excluded: frozenset[str] = SYNTHETIC_PAIR_IDS,
+    manual_excluded: frozenset[str] = frozenset(),
 ) -> dict:
     """Carga idempotente del estrato etiquetado a la cohorte `cohort`.
 
@@ -104,11 +117,21 @@ async def load_positive_stratum(
     NULL — el freeze con manifest es acto del operador) e inserta los pares
     con veredicto real, excluyendo ambiguous-owner y sintéticos. Devuelve el
     resumen de la pasada (conteos auditables). NO commitea.
+
+    G8-P3-4 — `manual_excluded` (bandera `--excluir` del CLI) es la vía LIMPIA
+    para los pares que las guardas fail-closed de `_resolve_legacy_refs`
+    nombran: sin ella el operador solo podía editar el JSON del acta
+    RATIFICADA —que es el artefacto de trazabilidad— o colarlos por
+    `synthetic_excluded`, donde se contarían como `excluidos_sinteticos`, que
+    es una etiqueta FALSA en un resumen auditable (no son los sintéticos
+    B-26/27/28 del corpus de test: son slots reciclados). Salen con contador
+    propio, `excluidos_reciclado`, para que la exclusión quede registrada como
+    lo que es.
     """
     await _require_unfrozen(session, cohort)
     pair_refs = pair_ids_from_candidates(candidates)
     loadable, excluded = _classify_labels(
-        labels_by_pair, pair_refs, synthetic_excluded
+        labels_by_pair, pair_refs, synthetic_excluded, manual_excluded
     )
     vacancy_refs = await _resolve_legacy_refs(session, loadable, pair_refs)
     await session.execute(
@@ -144,6 +167,7 @@ async def load_positive_stratum(
         "ya_presentes": len(loadable) - inserted,
         "excluidos_ambiguous_owner": excluded[AMBIGUOUS_OWNER_LABEL],
         "excluidos_sinteticos": excluded["sintetico"],
+        "excluidos_reciclado": excluded["reciclado"],
         "congelada": False,  # el freeze es acto APARTE del operador (§4.1)
     }
 
@@ -171,19 +195,34 @@ def _classify_labels(
     labels_by_pair: dict[str, str],
     pair_refs: dict[str, tuple[str, str]],
     synthetic_excluded: frozenset[str],
+    manual_excluded: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, str], dict[str, int]]:
     """(cargables {pair_id: verdict}, conteos de exclusión). Falla FUERTE con
     pair_ids desconocidos o etiquetas fuera de vocabulario: un desajuste
-    entre actas jamás debe cargarse a medias en silencio."""
+    entre actas jamás debe cargarse a medias en silencio.
+
+    La exclusión MANUAL se aplica antes que ninguna otra (es un acto explícito
+    del operador) y también falla fuerte si nombra un pair_id que no está
+    etiquetado: una exclusión con una errata que no excluye nada sería peor
+    que no tenerla, porque el par entra igual y el resumen dice que se
+    excluyó."""
     unknown = sorted(set(labels_by_pair) - set(pair_refs))
     if unknown:
         raise ValueError(
             f"pair_ids sin candidato en la hoja (¿actas desparejadas?): {unknown}"
         )
+    fantasma = sorted(set(manual_excluded) - set(labels_by_pair))
+    if fantasma:
+        raise ValueError(
+            f"--excluir nombra pair_ids que no están etiquetados: {fantasma} — "
+            "no excluirían nada y el resumen diría lo contrario"
+        )
     loadable: dict[str, str] = {}
-    excluded = {AMBIGUOUS_OWNER_LABEL: 0, "sintetico": 0}
+    excluded = {AMBIGUOUS_OWNER_LABEL: 0, "sintetico": 0, "reciclado": 0}
     for pair_id, label in labels_by_pair.items():
-        if pair_id in synthetic_excluded:
+        if pair_id in manual_excluded:
+            excluded["reciclado"] += 1
+        elif pair_id in synthetic_excluded:
             excluded["sintetico"] += 1
         elif label == AMBIGUOUS_OWNER_LABEL:
             excluded[AMBIGUOUS_OWNER_LABEL] += 1
@@ -275,8 +314,12 @@ async def _resolve_legacy_refs(
         raise ValueError(
             "pares sobre un slot legacy RECICLADO: su job_ref ya no resuelve a "
             "la vacante JUZGADA sino a la de mayor seq del mismo slot "
-            "(G7-N-6), así que el par se puntuaría contra otra oferta — "
-            f"excluir o re-etiquetar sobre la vacante vigente: {sorted(reciclados)}"
+            "(G7-N-6), así que el par se puntuaría contra otra oferta — o, "
+            "menos probable pero indistinguible desde aquí, su external_id lo "
+            "comparten DOS slots legacy distintos y el DISTINCT ON de la "
+            "vuelta colapsa uno (G8-N-5; 0 casos en el clúster el "
+            "2026-08-26). Excluir con --excluir o re-etiquetar sobre la "
+            f"vacante vigente: {sorted(reciclados)}"
         )
     # Dos pair_ids DISTINTOS que canonizan al mismo (LEAST, GREATEST): el
     # segundo INSERT moriría en el ON CONFLICT DO NOTHING contado como
@@ -285,7 +328,9 @@ async def _resolve_legacy_refs(
     canonicos: dict[tuple[str, str], list[str]] = {}
     for pair_id, refs in resolved.items():
         canonicos.setdefault(tuple(sorted(refs)), []).append(pair_id)
-    chocan = sorted(v for v in canonicos.values() if len(v) > 1)
+    # G8-N-6: se ordenan también las listas INTERNAS (como `sorted(bad)` y
+    # `sorted(reciclados)`), o el error sale como [['B-31','B-29'], ...].
+    chocan = sorted(sorted(v) for v in canonicos.values() if len(v) > 1)
     if chocan:
         raise ValueError(
             "pares DISTINTOS del acta que canonizan al MISMO par de job_refs "
@@ -294,12 +339,27 @@ async def _resolve_legacy_refs(
     return resolved
 
 
+def parse_excluidos(texto: str) -> frozenset[str]:
+    """`--excluir` → conjunto de pair_ids. Función aparte (y no un lambda en
+    el `main`, que es `pragma: no cover`) para que el troceado tenga su propia
+    regresión: los espacios de un copiar-pegar del error de la guarda —que
+    imprime `['B-17', 'C-05']`— no pueden convertirse en pair_ids fantasma."""
+    return frozenset(p.strip() for p in texto.split(",") if p.strip())
+
+
 def main() -> None:  # pragma: no cover — envoltorio fino del CLI
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("candidates_json", help="payload de JSON_CANDIDATOS (minería)")
     ap.add_argument("labels_json", help="JSON pair_id → label (acta de etiquetado)")
     ap.add_argument("--cohorte", default=POSITIVE_STRATUM_COHORT)
+    ap.add_argument(
+        "--excluir", default="",
+        help="pair_ids separados por coma a excluir de la carga (los que las "
+             "guardas de round-trip o colisión hayan nombrado). Se contabilizan "
+             "como `excluidos_reciclado`: el acta ratificada NO se toca",
+    )
     args = ap.parse_args()
+    manual = parse_excluidos(args.excluir)
     candidates = json.loads(Path(args.candidates_json).read_text())
     labels_by_pair = json.loads(Path(args.labels_json).read_text())
 
@@ -309,7 +369,8 @@ def main() -> None:  # pragma: no cover — envoltorio fino del CLI
         async with task_session_factory() as factory:
             async with factory() as s:
                 summary = await load_positive_stratum(
-                    s, candidates, labels_by_pair, cohort=args.cohorte
+                    s, candidates, labels_by_pair, cohort=args.cohorte,
+                    manual_excluded=manual,
                 )
                 await s.commit()
                 return summary
