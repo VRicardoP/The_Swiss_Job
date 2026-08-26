@@ -391,10 +391,23 @@ class MatchService:
             # DOCUMENTADA del prompt («0-39 = poor fit»), y descartarlo dejaba
             # la fila con el `score_llm` y la explicación de una corrida
             # anterior —texto que el usuario ve en MatchCard— junto a un
-            # `score_final` recalculado con llm=0: incoherencia de 13.8 puntos
-            # sobre la clave de orden y sobre el umbral de `qualified`, así que
-            # una oferta que solo pasaba por el aporte del LLM entraba en la
-            # poda de `_save_results` y, sin engagement, se borraba.
+            # `score_final` recalculado con llm=0: incoherencia sobre la clave
+            # de orden y sobre la presentación.
+            #
+            # G5/P3-8 — RECTIFICACIÓN de lo que este comentario afirmaba: NO
+            # cerraba además ninguna «pérdida de datos por poda». Para un poor
+            # fit, `_apply_llm_result` recalcula `score_final` con las MISMAS
+            # entradas que la etapa 2 (`:315` ya usa `llm_score=0.0`), así que
+            # el valor es EXACTAMENTE el de la etapa 2 — verificado: 49.5 y
+            # 49.5, idénticos. El umbral ve lo mismo con y sin el fix. Lo que
+            # sí cambia es el orden y lo que el usuario lee, que es bastante.
+            # Y la poda no es la vía de pérdida que se le atribuía:
+            # `_save_results` solo borra huérfanas SIN engagement
+            # (`_has_engagement`), y una fila con feedback, estado o borrador
+            # se conserva congelada aunque caiga del umbral. Medido en
+            # producción (SOLO LECTURA): de 1.331 filas de `match_results`, 71
+            # tienen `score_llm > 0` y **0** caerían bajo
+            # `MATCH_SCORE_THRESHOLD` (42.0) al retirar el aporte del LLM.
             # Los lotes DEGRADADOS (LLM caído) quedan fuera: sus ceros no son
             # un veredicto y borrarían la explicación buena.
             if llm_data and not llm_data.get("degraded"):
@@ -430,7 +443,16 @@ class MatchService:
         # sin borrar la explicación previa.
         r[LLM_VERDICT_KEY] = True
         r["score_llm"] = round(llm_data.get("score", 0) / 100.0, 4)
-        r["explanation"] = llm_data.get("reason", "")
+        # G5/P3-7: `reason` vacía NO se escribe. Al aplicar ahora los veredictos
+        # de score 0 (G4/P2-6), el caso «el LLM devolvió índice y score y OMITIÓ
+        # reason» pasaba a guardar `explanation = ""`, que es lo que el usuario
+        # ve —en blanco— en `MatchCard`. Y como ese veredicto SÍ es real, se
+        # cachea (`GROQ_CACHE_TTL_DAYS=7`) y se re-aplica en cada corrida
+        # durante la semana, incluso con el LLM caído. Conservar el texto de
+        # otra corrida junto a un score bajo es peor que nada solo en teoría;
+        # en la práctica el vacío borra información y no añade ninguna.
+        if llm_data.get("reason"):
+            r["explanation"] = llm_data["reason"]
         # Merge LLM skill analysis if richer than rule-based
         if llm_data.get("matching_skills"):
             r["matching_skills"] = llm_data["matching_skills"]
@@ -482,7 +504,10 @@ class MatchService:
         }
         if r.get(LLM_VERDICT_KEY):
             values["score_llm"] = r["score_llm"]
-            values["explanation"] = r.get("explanation")
+            # G5/P3-7: sin explicación en ESTA corrida no se toca la columna —
+            # escribir `None` aquí borraba lo mismo que el `""` de arriba.
+            if r.get("explanation"):
+                values["explanation"] = r["explanation"]
         return values
 
     @classmethod

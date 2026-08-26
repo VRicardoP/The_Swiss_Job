@@ -100,7 +100,10 @@ class TestStage3Rerank:
         # siguen preservadas porque el merge sigue condicionado a que el LLM
         # aporte alguna.
         assert r1["score_llm"] == 0.0
-        assert r1["explanation"] == ""
+        # G5/P3-7: aquí se afirmaba `explanation == ""`. Un veredicto que omite
+        # `reason` ya NO escribe la explicación: el `""` borraba el texto bueno
+        # de otra corrida y se cacheaba 7 días. Se conserva lo que hubiera.
+        assert r1["explanation"] is None
         assert r1["matching_skills"] == ["rule"]
         assert r1["missing_skills"] == ["rule_miss"]
 
