@@ -4,6 +4,8 @@ import asyncio
 import logging
 from typing import Any
 
+from celery.exceptions import SoftTimeLimitExceeded
+
 from celery_app import celery_app
 from config import settings
 from database import task_session
@@ -182,6 +184,10 @@ async def _fetch_providers_async() -> dict[str, Any]:
         # un factor de ~7 a 23. No revisar N con este número sin corregirlo.
         "window_skipped": 0,
         "window_no_date": 0,
+        # G3/P2-10 — True si el run se cortó por el soft time limit: la cosecha
+        # es PARCIAL. Con soft=540/hard=600 el margen es de 60 s, así que el
+        # aviso hay que atenderlo, no contarlo como un error más.
+        "soft_time_limit": False,
         "unhealthy": [],
     }
 
@@ -200,6 +206,13 @@ async def _fetch_providers_async() -> dict[str, Any]:
             diag.begin()
             try:
                 jobs = await provider.fetch_jobs("", "Switzerland")
+            except SoftTimeLimitExceeded:
+                # G3/P2-10 — el aviso de soft time limit NO es un fallo de esta
+                # fuente: tragarlo aquí le colgaba un OUTCOME_ERROR falso (y su
+                # alerta de salud) al provider que tuviera la mala suerte de
+                # estar descargando, y dejaba correr el resto hasta el SIGKILL
+                # del límite duro. Sube a la fase 1 completa, que corta el run.
+                raise
             except Exception as e:
                 logger.error("Provider %s fetch failed: %s", source, e)
                 return (
@@ -227,7 +240,20 @@ async def _fetch_providers_async() -> dict[str, Any]:
                 logger.info("Provider %s returned %d jobs", source, len(jobs))
             return source, jobs, outcome, collected
 
-    fetch_results = await asyncio.gather(*[_fetch_one(p) for p in providers])
+    try:
+        fetch_results = await asyncio.gather(*[_fetch_one(p) for p in providers])
+    except SoftTimeLimitExceeded:
+        # G3/P2-10 — la fase 1 (descarga en paralelo) es donde se va casi todo
+        # el presupuesto de tiempo, así que es el sitio MÁS probable del aviso.
+        # Nada se ha persistido todavía (la fase 2 ni ha empezado): se devuelve
+        # el summary vacío y la tarea TERMINA, en vez de seguir hasta que el
+        # límite duro mate el worker por SIGKILL.
+        summary["soft_time_limit"] = True
+        logger.warning(
+            "fetch_providers: soft time limit durante la descarga — "
+            "run abortado sin persistir"
+        )
+        return summary
 
     # Phase 2: sequential DB persist
     async with task_session() as db:
@@ -351,6 +377,12 @@ async def _fetch_providers_async() -> dict[str, Any]:
 
                         stored_count += 1
 
+                    except SoftTimeLimitExceeded:
+                        # G3/P2-10 — hereda de Exception: el genérico de abajo
+                        # contaba el aviso (que se emite UNA sola vez) como un
+                        # error más de la oferta y el bucle seguía hasta el
+                        # SIGKILL del límite duro. Sube al bucle de fuentes.
+                        raise
                     except Exception as e:
                         summary["errors"] += 1
                         logger.error("Error processing job from %s: %s", source, e)
@@ -392,6 +424,22 @@ async def _fetch_providers_async() -> dict[str, Any]:
 
                 summary["providers"] += 1
 
+            except SoftTimeLimitExceeded:
+                # G3/P2-10 — presupuesto blando agotado: se descarta el lote en
+                # curso (sin commit) y se sale del bucle con lo ya persistido —
+                # «cosecha parcial», no «sin cosecha». NO se registra
+                # `record_storage(attempted, 0)`: la fuente no falló al
+                # guardar, se quedó sin tiempo, y contarlo producía un
+                # «FUENTE DEGRADADA» falso a los dos runs lentos.
+                await db.rollback()
+                summary["soft_time_limit"] = True
+                logger.warning(
+                    "fetch_providers: soft time limit durante %s — cosecha "
+                    "PARCIAL con %d fuentes completadas",
+                    source,
+                    summary["providers"],
+                )
+                break
             except Exception as e:
                 await db.rollback()
                 summary["errors"] += 1

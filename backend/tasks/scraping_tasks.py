@@ -45,6 +45,8 @@ import asyncio
 import logging
 from typing import Any
 
+from celery.exceptions import SoftTimeLimitExceeded
+
 from celery_app import celery_app
 from config import settings
 from database import task_session
@@ -129,6 +131,10 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
         # diferencia del de providers, que es flujo por run).
         "window_skipped": 0,
         "window_no_date": 0,
+        # G3/P2-10 — True si el run se cortó por el soft time limit: la cosecha
+        # es PARCIAL (las fuentes ya commiteadas valen; las restantes no se
+        # pidieron). Antes no había forma de distinguirlo de un run completo.
+        "soft_time_limit": False,
         "unhealthy": [],
     }
 
@@ -295,6 +301,16 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                         stored_identities.append(identity)
                         stored_count += 1
 
+                    except SoftTimeLimitExceeded:
+                        # G3/P2-10 — el aviso de soft time limit se emite UNA
+                        # sola vez y NO es un fallo de esta oferta. Como hereda
+                        # de Exception, el genérico de abajo lo contaba como un
+                        # error más y el bucle seguía hasta que el límite DURO
+                        # mataba el worker por SIGKILL: ese día no había
+                        # embeddings, ni dedup, ni matching, ni digest. Sube al
+                        # bucle de fuentes, que cierra el run como «cosecha
+                        # parcial» (mismo patrón que maintenance_tasks, G1/P2-14).
+                        raise
                     except Exception as e:
                         summary["errors"] += 1
                         logger.error(
@@ -409,6 +425,25 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
 
                 summary["scrapers"] += 1
 
+            except SoftTimeLimitExceeded:
+                # G3/P2-10 — se agotó el presupuesto BLANDO de la tarea. Se
+                # descarta la fuente en curso (sus savepoints no están
+                # commiteados; VD.2 mantiene el cursor limpio y el próximo run
+                # la vuelve a bajar) y se sale del bucle devolviendo lo ya
+                # cosechado: «cosecha parcial» en vez de «sin cosecha».
+                # A propósito NO se registra `record_storage(attempted, 0)`:
+                # la fuente no falló al guardar, se quedó sin tiempo — hacerlo
+                # engordaba `consecutive_unstored` y a los dos runs lentos
+                # producía un «FUENTE DEGRADADA» falso.
+                await db.rollback()
+                summary["soft_time_limit"] = True
+                logger.warning(
+                    "fetch_scrapers: soft time limit durante %s — cosecha "
+                    "PARCIAL con %d fuentes completadas",
+                    source,
+                    summary["scrapers"],
+                )
+                break
             except Exception as e:
                 await db.rollback()
                 summary["errors"] += 1
