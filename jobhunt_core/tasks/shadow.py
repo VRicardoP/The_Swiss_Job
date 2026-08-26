@@ -92,11 +92,14 @@ def compute_cycle_task(
 
 
 @celery_app.task(name="jobhunt.shadow.purge_staging", bind=True, max_retries=1)
-def purge_staging_task(self) -> dict[str, Any]:
+def purge_staging_task(self, legacy_schema: str = "public") -> dict[str, Any]:
     """Purga del staging aplicado (retención §2, asignada a B-04):
-    idempotente y SIEMPRE preservando la última fila users por pk."""
+    idempotente, preservando SIEMPRE la última fila aplicada de cada pk de
+    `users` y —acotada a los pks VIVOS del legacy (G6-P2-3)— de `jobs`."""
     try:
-        return asyncio.run(_in_session(metrics.purge_staging))
+        return asyncio.run(
+            _in_session(metrics.purge_staging, None, legacy_schema)
+        )
     except Exception as exc:
         logger.error("shadow.purge_staging falló: %s", exc)
         raise self.retry(exc=exc, countdown=120)

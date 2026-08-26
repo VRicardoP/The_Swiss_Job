@@ -1119,11 +1119,22 @@ async def _huecos_en_transicion(
     (el caso G4-P2-1 con su cierre aplicado hace más de 7 días).
 
     El espejo del payload es EXACTO porque wal2json emite todas las columnas
-    no-TOAST en cada I/U (`is_active` es boolean: jamás se omite). G5-N-1: si
-    aun así una fila declara `is_active`/`duplicate_of` en `_omitted`, es
-    CIEGA para este predicado y se salta al elegir el «último aplicado» — leer
-    su `is_active` ausente como «no cierra» convertiría un renombrado de
-    columna en el legacy en un falso ROJO masivo.
+    no-TOAST en cada I/U (`is_active` es boolean: jamás se omite).
+
+    G6-P3-1 — por qué NO se saltan las filas con `_omitted`: G5-N-1 las
+    descartaba al elegir el «último aplicado» para evitar un falso ROJO masivo
+    ante un renombrado de columna en el legacy, y con eso ROMPÍA el espejo que
+    este criterio dice ser. `_is_close` lee `fold.cols.get("is_active") is
+    False`, y una columna AUSENTE no es False: para el proyector esa fila es
+    una APERTURA y habría creado slot. Al saltarla, el criterio juzgaba con
+    una fila ANTERIOR — si esa era un cierre, GRACIABA una pérdida real y
+    encima nombraba una razón falsa («último cambio aplicado = …» sobre un
+    cambio que no es el último). Y el falso ROJO que compraba no puede
+    ocurrir: si TODAS las `U` omitieran `is_active`, el proyector las trataría
+    como aperturas, crearía slot y no habría hueco que graciar. El aviso de
+    renombrado ya lo da `spec["required"]` de `capture.py`. La ausencia se lee
+    ahora como el proyector la lee —no cierra ⇒ PÉRDIDA—, que además es la
+    dirección conservadora.
 
     Las CUATRO patologías que este criterio cubre a la vez:
     - G2-P2-2 (falso ROJO): reactivación de un job con slot CERRADO y su CDC
@@ -1145,16 +1156,15 @@ async def _huecos_en_transicion(
     rows = await session.execute(
         sa.text(
             # Último cambio APLICADO por pk en el orden en que el proyector
-            # los consume (lsn, seq_in_tx), saltando las filas CIEGAS para el
-            # predicado (G5-N-1), y espejo de _is_close sobre él.
+            # los consume (lsn, seq_in_tx) — TODAS las filas, incluidas las
+            # que declaran `_omitted` (G6-P3-1): el espejo de _is_close exige
+            # juzgar la MISMA fila que el proyector plegó, y una columna
+            # ausente NO cierra.
             "WITH ultimo AS ("
             "  SELECT DISTINCT ON (a.pk) a.pk, a.op, a.payload "
             "  FROM shadow_change_log a "
             "  WHERE a.src_table = 'jobs' AND a.pk = ANY(:cands) "
             "    AND a.applied_at IS NOT NULL "
-            "    AND NOT COALESCE("
-            "      a.payload -> '_omitted' @> '[\"is_active\"]' "
-            "      OR a.payload -> '_omitted' @> '[\"duplicate_of\"]', false) "
             "  ORDER BY a.pk, a.lsn DESC, a.seq_in_tx DESC), "
             # Estado DURABLE del proyector: existe slot legacy para el pk (si
             # llega aquí, sin encarnación activa ⇒ cerrado).
@@ -1933,7 +1943,9 @@ def _report_details(details_by: dict) -> list[str]:
 
 
 async def purge_staging(
-    session: AsyncSession, now: datetime | None = None
+    session: AsyncSession,
+    now: datetime | None = None,
+    legacy_schema: str = "public",
 ) -> dict:
     """Purga del staging APLICADO (§7, retención de §2: ciclos cerrados + 7
     días): DELETE de shadow_change_log WHERE applied_at IS NOT NULL AND
@@ -1945,11 +1957,31 @@ async def purge_staging(
     tiene que conocer los dos (G5-P2-1: la purga conocía uno solo):
     - `users` (op I/U): `projector.inactive_user_refs` — borrarla haría
       olvidar la exclusión de usuarios inactivos (su NOTA documentada);
-    - `jobs` (CUALQUIER op, la D incluida: un borrado es un CIERRE y es
+    - `jobs` (CUALQUIER op de un pk que SIGA EXISTIENDO en
+      `{legacy_schema}.jobs`, la D incluida: un borrado es un CIERRE y es
       evidencia): `_huecos_en_transicion` decide con ella si un hueco del
       espejo está EXPLICADO. Sin la fila, el criterio es fail-closed y pinta
       de ROJO un cierre legítimo aplicado hace más de 7 días (el caso
-      G4-P2-1). Coste: ~1 fila retenida por job — el mismo trato que `users`.
+      G4-P2-1).
+
+    G6-P2-3 — por qué la preservación de `jobs` va ACOTADA a los pks vivos:
+    sin esa cota no había NINGUNA (ni de edad, ni de existencia). Una vez que
+    la última fila aplicada de un pk queda preservada seguirá siéndolo para
+    siempre —a ese pk ya no le llegan cambios—, así que la purga dejaba de
+    acotar la tabla que purga: retenía una fila por pk de `jobs` visto ALGUNA
+    VEZ. Y el pk es `public.jobs.hash`, que ROTA. Un pk que ya no existe en el
+    legacy no puede ser candidato de `_huecos_en_transicion` (ese predicado
+    solo pregunta por jobs VIVOS), así que su fila es peso muerto por
+    construcción.
+    MEDIDO en el clúster (2026-08-26, SELECT de solo lectura): el suelo
+    preservado era de 5.222 filas —1 por pk visto—, de las que 1.396 (26,7 %)
+    son lápidas `D` de pks SIN job vivo; el desglose por op es exacto: las
+    1.396 `D` no tienen job vivo y las 3.826 `U` lo tienen TODAS. Con la cota
+    el suelo baja a esas 3.826 y queda acotado por el corpus legacy (10.805
+    jobs, payload medio 1.132 B ⇒ techo ~12 MB) en vez de crecer con los
+    1.506/1.705/2.011 pks NUEVOS por jornada de cosecha medidos en las tres
+    jornadas retenidas (~1.741/día ⇒ ~635 k filas y ~0,7 GB al año,
+    monótonamente). Coste real: ~1 fila retenida por job VIVO con evidencia.
 
     También poda los arrays details.samples de outbox_lag_p99 en ciclos ya
     fuera de retención, SOLO en filas cuyo p99 quedó SELLADO por
@@ -1962,8 +1994,31 @@ async def purge_staging(
     (_outbox_lag_row devuelve None y no hay upsert), jamás lo machaca con
     el centinela sin-datos.
     IDEMPOTENTE: el segundo pase no encuentra nada que borrar ni podar."""
+    _check_legacy_schema(legacy_schema)
     cid_now = current_cycle_id(now)
     cutoff = cycle_bounds(cid_now)[1] - timedelta(days=STAGING_RETENTION_DAYS)
+    # La cota de existencia solo puede aplicarse si la tabla legacy es
+    # ALCANZABLE desde esta sesión. Si no lo es (BD del core sin legacy) no hay
+    # forma de saber qué pks siguen vivos, y borrar evidencia es mucho peor que
+    # retenerla de más: se preserva SIN acotar y se avisa.
+    legacy_jobs = (
+        await session.execute(
+            sa.text("SELECT to_regclass(:t)"), {"t": f"{legacy_schema}.jobs"}
+        )
+    ).scalar()
+    cota_pk_vivo = (
+        "      AND (src_table <> 'jobs' OR EXISTS ("
+        f"        SELECT 1 FROM {legacy_schema}.jobs j WHERE j.hash = l.pk)) "
+        if legacy_jobs
+        else ""
+    )
+    if not legacy_jobs:
+        logger.warning(
+            "metrics: %s.jobs no es alcanzable — la preservación de `jobs` se "
+            "queda SIN la cota de pk vivo (G6-P2-3) y el suelo de "
+            "shadow_change_log vuelve a crecer con los pks históricos",
+            legacy_schema,
+        )
     deleted = (
         await session.execute(
             sa.text(
@@ -1972,13 +2027,17 @@ async def purge_staging(
                 "AND NOT ((c.lsn, c.seq_in_tx) IN ("
                 "  SELECT lsn, seq_in_tx FROM ("
                 "    SELECT DISTINCT ON (src_table, pk) lsn, seq_in_tx "
-                "    FROM shadow_change_log "
+                "    FROM shadow_change_log l "
                 "    WHERE src_table IN ('users', 'jobs') "
                 "      AND applied_at IS NOT NULL "
                 # users: solo I/U (la D de un usuario ya la ejecutó el ERASE y
-                # no aporta estado a inactive_user_refs). jobs: TODAS las ops.
+                # no aporta estado a inactive_user_refs). jobs: TODAS las ops…
                 "      AND (src_table <> 'users' OR op IN ('I', 'U')) "
-                "    ORDER BY src_table, pk, lsn DESC, seq_in_tx DESC"
+                # …pero SOLO de pks que sigan vivos en el legacy (G6-P2-3): un
+                # pk que ya no está en jobs jamás será candidato de
+                # _huecos_en_transicion, así que su fila no se consulta nunca.
+                + cota_pk_vivo
+                + "    ORDER BY src_table, pk, lsn DESC, seq_in_tx DESC"
                 "  ) last_rows))"
             ),
             {"cutoff": cutoff},

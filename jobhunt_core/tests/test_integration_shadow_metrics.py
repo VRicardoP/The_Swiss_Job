@@ -24,6 +24,7 @@ JAMÁS tocan `public` ni el staging del slot real. Ejecutar vía core-migrate.
 
 import asyncio
 import json
+import logging
 import math
 import os
 import uuid
@@ -1996,6 +1997,138 @@ def test_perdida_roja_cuando_la_purga_se_llevo_la_evidencia_del_hueco(db):
     assert (row.details["huecos_graciados_razones"][react]
             == "slot cerrado (sin cambio aplicado)")
     assert _gates(factory)["perdida"]["ok"] is False
+
+
+def test_g6_una_fila_con_omitted_no_gracia_el_hueco_que_el_proyector_abriria(db):
+    """Regresión G6-P3-1: G5-N-1 saltaba, al elegir el «último cambio
+    aplicado», las filas cuyo `_omitted` declara `is_active`/`duplicate_of`, y
+    con eso ROMPÍA el espejo que este criterio dice ser. El proyector NO las
+    salta: `_is_close` lee `fold.cols.get("is_active") is False`, y una columna
+    AUSENTE no es False ⇒ para él esa fila es una APERTURA y habría creado
+    slot. Al saltarla, el criterio juzgaba con una fila ANTERIOR —aquí, un
+    cierre— y GRACIABA una pérdida REAL, encima nombrando una razón falsa
+    («último cambio aplicado = is_active=false» sobre un cambio que no es el
+    último). El falso ROJO que compraba no puede ocurrir: si TODAS las `U`
+    omitieran `is_active`, el proyector las trataría como aperturas, crearía
+    slot y no habría hueco que graciar."""
+    factory = db
+    _mk_source(factory, "legacy:g6ciegafx")
+    p = uuid.uuid4().hex[:6]
+    ciego, control = f"{p}-ciego", f"{p}-plano"
+    viejo = CSTART - timedelta(days=3)
+    en_vuelo = AFTER - timedelta(minutes=5)
+
+    for pk, omitido in ((ciego, True), (control, False)):
+        _legacy_job(factory, pk)
+        # 1) cierre APLICADO…
+        _cambio(factory, 9910 if omitido else 9920, pk, viejo, applied=viejo,
+                op="U", payload={"is_active": False})
+        # 2) …y encima el cambio aplicado MÁS RECIENTE, que para el proyector
+        #    es una APERTURA (no trae is_active=false). Debía haber slot.
+        payload = {"title": "reactivado"}
+        if omitido:
+            payload["_omitted"] = ["is_active"]
+        _cambio(factory, 9911 if omitido else 9921, pk,
+                viejo + timedelta(minutes=1),
+                applied=viejo + timedelta(minutes=1), op="U", payload=payload)
+        # 3) el UPDATE rutinario de la re-cosecha, aún sin aplicar
+        _cambio(factory, 9912 if omitido else 9922, pk, en_vuelo,
+                payload={"is_active": True})
+
+    _compute(factory)
+    row = _metric_row(factory, "perdida")
+    # Las DOS son pérdida: el corpus es idéntico salvo la clave `_omitted`.
+    assert float(row.value) == 2  # antes del fix: 1 (la ciega, graciada)
+    assert sorted(row.details["huecos_muestra"]) == sorted([ciego, control])
+    assert row.details["huecos_graciados_muestra"] == []
+    assert _gates(factory)["perdida"]["ok"] is False
+
+
+def test_g6_la_purga_no_retiene_los_pks_que_el_legacy_ya_borro(db):
+    """Regresión G6-P2-3: al preservar la última fila aplicada por pk de
+    `jobs` (G5-P2-1), `purge_staging` dejó de acotar la tabla que purga. La
+    preservación no tenía cota de edad NI condición de que el pk siguiera
+    existiendo: una vez preservada, esa fila lo es para siempre (a ese pk ya
+    no le llegan cambios). Y el pk es `public.jobs.hash`, que ROTA, así que el
+    suelo crecía con los pks HISTÓRICOS, no con los jobs vivos — lápidas `D`
+    incluidas, que `_huecos_en_transicion` no puede consultar JAMÁS porque
+    solo pregunta por jobs VIVOS.
+
+    Medido en el clúster (2026-08-26, solo SELECT): 5.222 filas preservadas,
+    de las que 1.396 (26,7 %) eran lápidas `D` sin job vivo — el desglose por
+    op es exacto (las 1.396 `D` sin job, las 3.826 `U` todas con job) — con
+    1.506/1.705/2.011 pks NUEVOS por jornada de cosecha ⇒ ~635 k filas y
+    ~0,7 GB al año frente al «~1 fila retenida por job (10 k)» declarado.
+
+    Lo que el gate necesita se conserva ENTERO: la evidencia de un pk vivo
+    (que es la mitad funcional de G5-P2-1) no se toca."""
+    factory = db
+    p = uuid.uuid4().hex[:6]
+    vivo, muerto = f"{p}-vivo", f"{p}-muerto"
+    viejo = CSTART - timedelta(days=30)
+    _legacy_job(factory, vivo)  # el pk MUERTO no existe en el legacy
+
+    for i, pk in enumerate((vivo, muerto)):
+        _cambio(factory, 9930 + i * 3, pk, viejo, applied=viejo, op="I",
+                payload={"is_active": True})
+        _cambio(factory, 9931 + i * 3, pk, viejo, applied=viejo, op="U",
+                payload={"is_active": True})
+    # …y el legacy BORRA el segundo: lápida D, inconsultable por construcción.
+    _cambio(factory, 9935, muerto, viejo, applied=viejo, op="D", payload={})
+
+    async def purga():
+        async with factory() as s:
+            r = await metrics.purge_staging(s, now=AFTER, legacy_schema=LEG)
+            await s.commit()
+            return r
+
+    r1 = _run(purga())
+    quedan = {
+        (row.pk, row.op) for row in _rows(
+            factory, "SELECT pk, op FROM shadow_change_log WHERE pk = ANY(:p)",
+            p=[vivo, muerto],
+        )
+    }
+    # Del pk VIVO se conserva su última fila aplicada (la evidencia del gate);
+    # del pk que el legacy ya borró, NADA — ni la lápida.
+    assert quedan == {(vivo, "U")}
+    assert r1["staging_deleted"] == 4  # antes del fix: 3 (la lápida sobrevivía)
+
+    # IDEMPOTENTE: el segundo pase no encuentra nada más que borrar…
+    assert _run(purga())["staging_deleted"] == 0
+    # …y la evidencia del pk vivo sigue ahí (el criterio no se queda ciego).
+    assert _rows(
+        factory, "SELECT lsn FROM shadow_change_log WHERE pk = :p", p=vivo
+    )[0].lsn == 9931
+
+
+def test_g6_sin_tabla_legacy_alcanzable_la_purga_preserva_y_avisa(db, caplog):
+    """La cota de G6-P2-3 necesita leer `{legacy}.jobs`. Si no es alcanzable
+    no hay forma de saber qué pks siguen vivos, y borrar evidencia es mucho
+    peor que retenerla de más: se preserva SIN acotar y se AVISA (nunca en
+    silencio)."""
+    factory = db
+    pk = f"{uuid.uuid4().hex[:6]}-huerfano"
+    viejo = CSTART - timedelta(days=30)
+    _cambio(factory, 9940, pk, viejo, applied=viejo, op="I",
+            payload={"is_active": True})
+    _cambio(factory, 9941, pk, viejo, applied=viejo, op="U",
+            payload={"is_active": True})
+
+    async def purga():
+        async with factory() as s:
+            r = await metrics.purge_staging(
+                s, now=AFTER, legacy_schema="esquema_que_no_existe"
+            )
+            await s.commit()
+            return r
+
+    with caplog.at_level(logging.WARNING, logger="jobhunt_core.shadow.metrics"):
+        assert _run(purga())["staging_deleted"] == 1
+    assert any("SIN la cota de pk vivo" in r.getMessage() for r in caplog.records)
+    assert _rows(
+        factory, "SELECT lsn FROM shadow_change_log WHERE pk = :p", p=pk
+    )[0].lsn == 9941
 
 
 def test_informe_de_la_gracia_no_afirma_un_slot_que_nunca_existio(db):

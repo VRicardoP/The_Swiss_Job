@@ -240,7 +240,11 @@ async def _run_cycle_locked(
             result["metrics"] = await compute_cycle(
                 session, cycle_id=cid, legacy_schema=legacy_schema, now=now
             )
-            result["purge"] = await purge_staging(session, now=now)
+            # G6-P2-3: la purga necesita el esquema legacy para acotar la
+            # preservación de `jobs` a los pks que siguen vivos.
+            result["purge"] = await purge_staging(
+                session, now=now, legacy_schema=legacy_schema
+            )
             await session.commit()
         # 5) Gates del ciclo + contador de consecutivos (lectura pura).
         async with factory() as session:
