@@ -204,11 +204,31 @@ _NUM = rf"({_SPACED}|\d(?:[\d.,'’]*\d)?)"
 # letra y no es divisa.
 _K = r"\s*([kK])?(?=$|[^0-9A-Za-zÀ-ÿ]|(?i:CHF|EUR|USD|GBP)\b)"
 # G3/P2-4: la forma canónica británica/irlandesa repite la divisa en el segundo
-# extremo ("£30,000 - £40,000"). Sin este token opcional el rango no casaba y el
-# parser caía EN SILENCIO al camino `single`, que devuelve la primera cifra como
-# mínimo Y máximo (30000-30000 persistido). No captura: los grupos siguen 1..4.
-_CUR_TOK = r"(?:(?i:CHF|EUR|USD|GBP)\s*|[€$£]\s*)?"
-_SALARY_RANGE_RE = re.compile(rf"{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_CUR_TOK}{_NUM}{_K}")
+# extremo ("£30,000 - £40,000"). Sin ella el rango no casaba y el parser caía EN
+# SILENCIO al camino `single`, que devuelve la primera cifra como mínimo Y
+# máximo (30000-30000 persistido).
+#
+# G4/P2-1: hacer la divisa OPCIONAL en el patrón único fue una regresión. Como
+# `re.search` es leftmost, «<número de ruido> - <DIVISA><importe>» pasaba a ser
+# un rango válido y el ruido secuestraba la cota baja: «Grade 6 - £30,000» se
+# persistía con salary_min_chf = 6. Antes del cambio ese patrón NO casaba —el
+# `£` cortaba el segundo `_NUM`— y el `single` encontraba el importe real: la
+# red de seguridad desapareció. Los productores están vivos (`scrapers/tes.py`
+# e `scrapers/irishjobs.py` vuelcan texto libre) y las escalas salariales
+# británicas e irlandesas se escriben exactamente así: Grade N, Band N,
+# NJC Scale N, MPS/UPS N, Point N.
+#
+# Son DOS patrones probados en orden, no uno con la divisa opcional:
+#   1) divisa EXIGIDA delante de AMBOS extremos — el caso de G3/P2-4. Al ir
+#      primero también desempata «Main Pay Scale 1 - 6 (£31,650 - £43,607)»
+#      a favor del importe y no de la escala.
+#   2) el patrón clásico anterior a `c20c0b8`, sin divisa entre medias.
+# Ninguno captura la divisa: los grupos siguen siendo 1..4 en los dos.
+_CUR_TOK = r"(?:(?i:CHF|EUR|USD|GBP)\s*|[€$£]\s*)"
+_SALARY_RANGE_CUR_RE = re.compile(
+    rf"{_CUR_TOK}{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_CUR_TOK}{_NUM}{_K}"
+)
+_SALARY_RANGE_RE = re.compile(rf"{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_NUM}{_K}")
 # El single exige ≥2 dígitos (como el `[\d.,]+` original): un dígito suelto
 # ("Level 5") no es un salario.
 _SALARY_SINGLE_RE = re.compile(rf"({_SPACED}|\d[\d.,'’]*\d){_K}")
@@ -234,7 +254,22 @@ _CURRENCY_SYMBOL_MAP: dict[str, str] = {
     "eur": "EUR",
     "usd": "USD",
     "gbp": "GBP",
+    # Abreviatura suiza del franco, de uso corriente en los portales DE/FR.
+    "fr.": "CHF",
+    "fr": "CHF",
+    "sfr": "CHF",
+    "sfr.": "CHF",
 }
+
+
+def _canonical_currency(raw: str) -> str:
+    """Código ISO de una divisa escrita como venga (G4/P3-8).
+
+    Tolera espacios, minúsculas y símbolos; lo que no reconoce lo devuelve en
+    mayúsculas para que el llamante decida (hoy: descartar el importe).
+    """
+    cleaned = (raw or "").strip()
+    return _CURRENCY_SYMBOL_MAP.get(cleaned.lower(), cleaned.upper())
 
 
 class DataNormalizer:
@@ -325,7 +360,12 @@ class DataNormalizer:
         # siguen en la fila, así que el dato crudo no se pierde.
         rate = 1.0
         if currency:
-            known_rate = CURRENCY_TO_CHF.get(currency.upper())
+            # G4/P3-8: la divisa llega cruda del portal (`providers/jsearch.py`
+            # pasa el valor de la API tal cual). " EUR ", "chf ", "€", "$",
+            # "£" y "Fr." caían todas en el camino «divisa desconocida» del fix
+            # G3/P2-5 y descartaban el importe ENTERO. Se normaliza con el
+            # mismo mapa que usa el parser de la cadena libre.
+            known_rate = CURRENCY_TO_CHF.get(_canonical_currency(currency))
             if known_rate is None:
                 logger.warning(
                     "Unknown salary currency %r — salary_*_chf left empty", currency
@@ -355,13 +395,15 @@ class DataNormalizer:
         if cur_match:
             # group(1) = código ISO con \b; group(2) = símbolo €/$/£ sin \b.
             raw_cur = cur_match.group(1) or cur_match.group(2)
-            currency = _CURRENCY_SYMBOL_MAP.get(raw_cur.lower(), raw_cur.upper())
+            currency = _canonical_currency(raw_cur)
 
         # Pensums/porcentajes fuera: "60-80%" es workload, no salario.
         text = _PCT_TOKEN_RE.sub(" ", text)
 
-        # Try range first: "80000-100000" or "80k-100k"
-        range_match = _SALARY_RANGE_RE.search(text)
+        # Try range first: "80000-100000" or "80k-100k". El patrón con divisa
+        # en ambos extremos va PRIMERO (G4/P2-1): es el más específico y el
+        # único que puede desempatar un rango real de una escala salarial.
+        range_match = _SALARY_RANGE_CUR_RE.search(text) or _SALARY_RANGE_RE.search(text)
         if range_match:
             lo = DataNormalizer._parse_number(
                 range_match.group(1), has_k=bool(range_match.group(2))
