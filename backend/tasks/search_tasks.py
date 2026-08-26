@@ -17,6 +17,10 @@ from celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
+# G3/P1-1 — marcador «ya notificada» por (búsqueda, oferta). Es lo que permite
+# solapar la ventana sin repetir avisos (ver tasks/watermarks.py).
+_SENT_PREFIX = "saved_search:sent"
+
 
 @celery_app.task(
     name="tasks.search_tasks.run_saved_searches",
@@ -103,11 +107,12 @@ async def _execute_single_search(db, search, settings) -> int:
     """Execute a single saved search and create notifications if matches found."""
     from datetime import datetime, timedelta, timezone
 
+    import redis
     from models.notification import Notification
     from models.job import Job
-    from sqlalchemy import select, func
+    from sqlalchemy import select
 
-    from tasks.watermarks import watermark_lag
+    from tasks.watermarks import filter_unsent, watermark_lag
 
     now = datetime.now(timezone.utc)
     filters = search.filters or {}
@@ -141,9 +146,8 @@ async def _execute_single_search(db, search, settings) -> int:
         # Postgres, que hasta esta corrección era `now()` = INICIO de la
         # transacción de cosecha. Una cosecha de varios minutos daba de alta
         # ofertas fechadas ANTES del `last_run_at` que este barrido ya había
-        # guardado: no las contaba nunca más. Con el retroceso, la ventana
-        # solapa; el precio es que una oferta del borde puede contarse dos
-        # veces (aquí la salida es un CONTEO, no un envío: es el lado barato).
+        # guardado: no las contaba nunca más. El solape no duplica avisos
+        # porque la novedad se decide por oferta (marcador `_SENT_PREFIX`).
         floor = search.last_run_at - watermark_lag()
         conditions.append(Job.first_seen_at > floor)
     else:
@@ -160,8 +164,17 @@ async def _execute_single_search(db, search, settings) -> int:
     # fixes hermanos de G1/P2-15 en alert_tasks y el digest de watchlist.
     conditions.append(Job.first_seen_at <= now)
 
-    stmt = select(func.count()).select_from(Job).where(*conditions)
-    match_count = (await db.execute(stmt)).scalar_one()
+    # G3/P1-1: la ventana SOLAPA a propósito, así que el conteo crudo volvería
+    # a notificar lo ya notificado (justo lo que cerró G2/P3-5). La novedad se
+    # decide POR OFERTA con un marcador en Redis por (búsqueda, oferta): el
+    # solape recupera lo que la cosecha commiteó tarde sin repetir avisos.
+    hashes = list((await db.execute(select(Job.hash).where(*conditions))).scalars())
+    r = redis.from_url(settings.REDIS_URL)
+    try:
+        fresh = filter_unsent(r, f"{_SENT_PREFIX}:{search.id}", hashes)
+    finally:
+        r.close()
+    match_count = len(fresh)
 
     # Update search metadata
     search.last_run_at = now
