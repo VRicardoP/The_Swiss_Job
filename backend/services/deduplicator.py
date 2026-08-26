@@ -2,23 +2,13 @@
 
 import hashlib
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from models.job import Job
-
-# G6/P3-3 — antigüedad MÍNIMA de la gemela para llamarla «fila histórica». Por
-# debajo de este margen las dos filas entraron en la MISMA corrida y el texto
-# que la alarma escribía —«la fila histórica ya no refresca `last_seen_at`»— era
-# factualmente FALSO: ninguna es histórica y las dos se refrescan en el run
-# siguiente. Medido: de los 634 grupos gemelos de hoy, 206 (32,5 %) están dentro
-# de la misma hora. NO se usa para FILTRAR (eso perdería 61 de los 406 clones
-# reales, que el portal re-listó dentro de la misma corrida) sino para CALIFICAR
-# el hallazgo, que es lo que estaba mal: el dato, no la detección.
-_CLONE_TWIN_MIN_AGE = timedelta(hours=1)
 
 # Legal suffixes to strip from company names
 COMPANY_SUFFIXES: set[str] = {
@@ -104,15 +94,31 @@ class Deduplicator:
         ⚠ G6/P3-4 — ESTE VALOR SE PERSISTE (`jobs.fuzzy_hash`) y solo se
         refresca cuando el portal RE-LISTA la oferta. Cambiar esta fórmula, o
         cualquiera de sus dos normalizaciones, PARTE el corpus en dos
-        algoritmos: las tres consultas que comparan un hash recién calculado
-        contra los almacenados —`find_fuzzy_duplicate`,
-        `find_same_source_clone` y el prefiltro de `find_semantic_duplicates`—
-        dejan de ver las filas viejas, y nada deja rastro de la partición.
-        Quien la toque DEBE ejecutar después
+        algoritmos: las DOS consultas que comparan un hash recién calculado
+        contra los almacenados —`find_fuzzy_duplicate` y
+        `find_same_source_clone`— dejan de ver las filas viejas, y nada deja
+        rastro de la partición. Quien la toque DEBE ejecutar después
         `scripts/g6_backfill_fuzzy_hash.py` (o meter el UPDATE en la misma
-        migración). Estado medido 2026-08-26: 610 de 10.524 filas activas
-        llevan ya un hash que este código no produciría — 570 de ellas
-        identidades degeneradas anteriores a la guarda de G3/P2-12.
+        migración); `tests/test_g7_fix_deduplicador.py` fija los hashes de cuatro
+        pares conocidos para que tocarla ROMPA la suite en vez de partir el
+        corpus en silencio.
+
+        G7/P3-5 — el texto anterior decía «las TRES consultas» e incluía «el
+        prefiltro de `find_semantic_duplicates`». Ese prefiltro NO existe:
+        `find_semantic_duplicates` no menciona `fuzzy_hash` en ninguna parte
+        (su `WHERE` es hash/source/is_active/duplicate_of/embedding/description/
+        distancia coseno) y su único llamante, `tasks/maintenance_tasks.py`,
+        tampoco prefiltra. La afirmación inflaba en un 50 % la superficie
+        afectada.
+
+        Estado medido 2026-08-26: 610 de 10.524 filas activas llevan el hash de
+        un algoritmo anterior; 570 son identidades degeneradas previas a la
+        guarda de G3/P2-12, con `MD5("titulo|")`, que este código NO puede
+        producir (si la empresa normaliza a vacío devuelve `""`): son
+        inalcanzables antes y después del backfill. Las otras 40 no ocultan ni
+        un par. **Decisiones de dedup que el backfill cambiaría hoy: 0**
+        (medido). El backfill se conserva porque el próximo cambio de fórmula sí
+        las cambiará, no porque hoy repare nada.
         """
         norm_title = Deduplicator._normalize_title(title)
         norm_company = Deduplicator._normalize_company(company)
@@ -180,7 +186,11 @@ class Deduplicator:
 
     @staticmethod
     async def find_same_source_clone(
-        db: AsyncSession, fuzzy_hash: str, source: str, job_hash: str
+        db: AsyncSession,
+        fuzzy_hash: str,
+        source: str,
+        job_hash: str,
+        run_started_at: datetime,
     ) -> tuple[str, bool] | None:
         """ALARMA de deriva de identidad: gemela intra-fuente ya persistida.
 
@@ -215,20 +225,30 @@ class Deduplicator:
         fuente: arbeitnow 118/387 (30,5 %), irishjobs 46/125 (36,8 %),
         nav_arbeidsplassen 14/30, jobgether 13/22.
 
-        Se calificó en vez de filtrarse. Exigir que la gemela sea más antigua
-        que `_CLONE_TWIN_MIN_AGE` habría dejado la alarma muda para **61 de los
-        406 clones REALES** (medido: el portal re-lista dentro de la misma
-        corrida y el gap es de segundos, indistinguible por tiempo de dos
-        plazas simultáneas). Lo que estaba mal no era detectarlos: era el texto
-        que se escribía después. Por eso se devuelve `es_histórica` y el
-        llamante dice la verdad en cada caso, contando como deriva solo el que
-        de verdad deja una fila sin refrescar.
+        Se CALIFICA en vez de filtrarse: detectar una gemela intra-fuente y
+        decidir si es un clon son dos cosas distintas, y filtrar por tiempo
+        confundiría las dos. Por eso se devuelve `es_histórica` y el llamante
+        escribe la verdad en cada caso, contando como deriva solo el que de
+        verdad deja una fila sin refrescar.
 
-        Cobertura sobre los clones reales, medida: 406/406 comparten
-        `fuzzy_hash`, 397 con la fila histórica aún activa y sin
-        `duplicate_of` (los 9 restantes ya están en el estado terminal). Coste
-        del SELECT: Index Scan por `ix_jobs_fuzzy_hash`, 5 buffers y ~0,05 ms
-        por alta (`EXPLAIN ANALYZE` contra producción).
+        G7/P3-6 — aquí había tres cifras («61 de los 406 clones REALES»,
+        «406/406 comparten `fuzzy_hash`», «397 con la fila histórica aún
+        activa») que NO son reproducibles: once definiciones plausibles de «clon
+        real» probadas contra el mismo corpus dan 864, 888, 571, 545, 531, 541,
+        428… y ninguna da 406, 397 ni 61. El docstring tampoco definía el
+        término de forma recalculable, así que se retiran. Y el mecanismo que
+        declaraban —«el portal re-lista dentro de la misma corrida y el gap es
+        de SEGUNDOS»— lo desmienten los datos: no hay ni un par con gap entre
+        0 y 60 min; los intra-corrida tienen gap EXACTAMENTE 0, porque la
+        migración `b3c7d1a95e42` sigue sin aplicar y `jobs.first_seen_at`
+        conserva el `DEFAULT now()`, que es la marca de la transacción entera.
+
+        Lo que SÍ es reproducible, con la consulta escrita, contra producción
+        el 2026-08-26 (`jobs` agrupadas por `(fuzzy_hash, source)` con la gemela
+        activa y sin `duplicate_of`): **571 pares** con gemela histórica, **los
+        571 con gap > 1 h**, y 0 pares en el tramo 0 < gap < 1 h. Coste del
+        SELECT: Index Scan por `ix_jobs_fuzzy_hash`, 5 buffers y ~0,05 ms por
+        alta (`EXPLAIN ANALYZE` contra producción).
         """
         if not fuzzy_hash:
             return None
@@ -248,11 +268,25 @@ class Deduplicator:
         if row is None:
             return None
         twin_hash, twin_first_seen = row
-        return twin_hash, Deduplicator._is_historical_twin(twin_first_seen)
+        return twin_hash, Deduplicator._is_historical_twin(
+            twin_first_seen, run_started_at
+        )
 
     @staticmethod
-    def _is_historical_twin(first_seen_at) -> bool:
-        """La gemela es HISTÓRICA si no entró en esta misma corrida.
+    def _is_historical_twin(first_seen_at, run_started_at: datetime) -> bool:
+        """La gemela es HISTÓRICA si entró ANTES de esta corrida.
+
+        G7/P3-6 — antes se comparaba contra `now() - 1 h`, una cota que los
+        datos no apoyan: de los 571 pares de gemelas del corpus NO hay ni uno
+        con un gap entre 0 y 60 min (los intra-corrida tienen gap exactamente 0,
+        misma marca de transacción; el resto pasa de la hora), así que cualquier
+        valor entre 0 s y 60 min clasificaba idéntico. Y el riesgo real era el
+        INVERSO al que la constante temía: las corridas duran 100-321 s, así que
+        una re-ejecución manual dentro de la hora anterior —el journal las
+        tiene: 10:21:59, 10:22:01 y 10:23:44 del 2026-07-28— degradaba un clon
+        REAL a la rama «gemela de la misma corrida» y NO lo contaba. Falso
+        negativo silencioso. Comparar contra el instante de arranque de la tarea
+        responde exactamente la pregunta que el docstring enuncia.
 
         `first_seen_at` puede llegar sin tz según el dialecto; se asume UTC en
         ese caso, que es lo que la columna almacena.
@@ -261,7 +295,7 @@ class Deduplicator:
             return False
         if first_seen_at.tzinfo is None:
             first_seen_at = first_seen_at.replace(tzinfo=UTC)
-        return first_seen_at < datetime.now(UTC) - _CLONE_TWIN_MIN_AGE
+        return first_seen_at < run_started_at
 
     @staticmethod
     def _title_overlap(title_a: str, title_b: str) -> float:

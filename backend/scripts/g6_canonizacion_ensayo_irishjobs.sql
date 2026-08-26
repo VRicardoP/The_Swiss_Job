@@ -52,4 +52,5 @@ SELECT 'C intacta (sin -job<id>, fuera del mapa)', EXISTS(SELECT 1 FROM jobs WHE
 SELECT 'sin duplicados (user_id,job_hash)', NOT EXISTS(SELECT 1 FROM match_results GROUP BY user_id,job_hash HAVING count(*)>1);
 SELECT 'UNA sola fila de match, la que trae SENAL', (SELECT count(*)=1 AND bool_and(feedback='thumbs_up') FROM match_results WHERE job_hash='3c03e086a31d46752d05ca62f1beb620');
 SELECT 'A conserva el first_seen_at mas antiguo', (SELECT first_seen_at < now()-interval '25 days' FROM jobs WHERE hash='3c03e086a31d46752d05ca62f1beb620');
+SELECT 'G7/P3-8: ninguna fila queda ACTIVA con duplicate_of puesto', NOT EXISTS(SELECT 1 FROM jobs WHERE is_active AND duplicate_of IS NOT NULL);
 ROLLBACK;

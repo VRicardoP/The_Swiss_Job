@@ -113,6 +113,13 @@ async def _sembrar_historica(db_session, source: str, *, antigua: bool = True) -
     await db_session.commit()
 
 
+# G7/P3-6: `find_same_source_clone` recibe el instante de arranque de la corrida
+# en vez de aproximarlo con `now() - 1 h`. En los tests, la corrida «arranca»
+# ahora: la sembrada como antigua (2 días) es histórica y la sembrada en este
+# mismo momento no lo es.
+_ARRANQUE = datetime.now(timezone.utc)
+
+
 class TestRamaMudaDeLaDeriva:
     async def test_la_consulta_gemela_ve_el_clon_intra_fuente(self, db_session):
         """`find_fuzzy_duplicate` excluye la misma fuente; la alarma NO."""
@@ -127,12 +134,12 @@ class TestRamaMudaDeLaDeriva:
         # fila con ella misma.
         assert (
             await Deduplicator.find_same_source_clone(
-                db_session, fuzzy, "arbeitnow", "b" * 32
+                db_session, fuzzy, "arbeitnow", "b" * 32, _ARRANQUE
             )
         ) == ("a" * 32, True)
         assert (
             await Deduplicator.find_same_source_clone(
-                db_session, fuzzy, "arbeitnow", "a" * 32
+                db_session, fuzzy, "arbeitnow", "a" * 32, _ARRANQUE
             )
         ) is None
 
@@ -145,7 +152,7 @@ class TestRamaMudaDeLaDeriva:
 
         # Se DETECTA igual (perder esto costaría 61 de los 406 clones reales)…
         gemela = await Deduplicator.find_same_source_clone(
-            db_session, fuzzy, "arbeitnow", "b" * 32
+            db_session, fuzzy, "arbeitnow", "b" * 32, _ARRANQUE
         )
         assert gemela is not None
         # …pero NO se llama histórica, que es lo que el diagnóstico afirmaba.

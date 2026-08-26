@@ -43,6 +43,7 @@ afectadas:
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from celery.exceptions import SoftTimeLimitExceeded
@@ -116,6 +117,12 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
     contenido conocido (early-stop), y tras el run actualiza el cursor. Así el nº
     de páginas pedidas depende de las ofertas NUEVAS, no del total del portal.
     """
+    # G7/P3-6: instante de arranque de la corrida. `find_same_source_clone` lo
+    # usa para separar «gemela de ESTA corrida» de «clon de una anterior», que
+    # es la pregunta exacta; antes se aproximaba con `now() - 1 h`, y una
+    # re-ejecución manual dentro de esa hora degradaba clones REALES a
+    # «misma corrida» sin contarlos.
+    run_started_at = datetime.now(UTC)
     import math
 
     scrapers = get_all_scrapers()
@@ -340,6 +347,7 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                                         job["fuzzy_hash"],
                                         job["source"],
                                         job["hash"],
+                                        run_started_at,
                                     )
                                     if twin:
                                         # G6/P3-3 — la gemela de la MISMA

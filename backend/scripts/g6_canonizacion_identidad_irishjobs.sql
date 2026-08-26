@@ -167,10 +167,22 @@ $$;
 -- ---------------------------------------------------------------------
 -- 4. El superviviente hereda la última vista y la actividad del grupo
 --    (first_seen_at NO se toca: ya es el mínimo del grupo por construcción).
+--
+-- ⚠ COTA CERRADA (G7/P3-8). `is_active = j.is_active OR g.any_active` a secas
+-- puede RESUCITAR un superviviente que está inactivo PORQUE `mark_duplicate` lo
+-- marcó: esa función pone `duplicate_of` Y `is_active = FALSE` a la vez
+-- (`job_repository.py:536`), así que si alguno de sus clones sigue activo el OR
+-- lo dejaría `is_active = TRUE` CON `duplicate_of` puesto — un estado que ni
+-- `mark_duplicate` ni el `ON CONFLICT` producen jamás
+-- (`job_repository.py:416-417`: `case((duplicate_of IS NOT NULL, False),
+-- else_=True)`). Medido contra producción el 2026-08-26: de los 12
+-- supervivientes con `duplicate_of` en las tres fuentes, los 12 están
+-- inactivos, y 0 tienen un clon activo — así que hoy NO hay ningún caso. El
+-- `AND j.duplicate_of IS NULL` cierra la cota sin cambiar nada de lo medido.
 -- ---------------------------------------------------------------------
 UPDATE jobs j
 SET last_seen_at = GREATEST(j.last_seen_at, g.max_last_seen),
-    is_active    = j.is_active OR g.any_active
+    is_active    = (j.is_active OR g.any_active) AND j.duplicate_of IS NULL
 FROM (
     SELECT l.survivor_hash,
            max(jl.last_seen_at) AS max_last_seen,

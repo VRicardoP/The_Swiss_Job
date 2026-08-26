@@ -99,4 +99,5 @@ SELECT 'grupo C: los DOS documentos generados sobreviven reapuntados', (SELECT c
 SELECT 'grupo D intacto (no entra en el mapa)', EXISTS(SELECT 1 FROM jobs WHERE hash='8c6ecae2c9de23f6ee99b8607222156f');
 SELECT 'grupo A hereda is_active y last_seen del clon mas reciente', (SELECT is_active AND last_seen_at > now()-interval '1 hour' FROM jobs WHERE hash='6cb0bb5e7e470fc24297a6b9e82475b9');
 SELECT 'las 3 FK a jobs(hash) estan restauradas', (SELECT count(*) FROM pg_constraint WHERE conname IN ('match_results_job_hash_fkey','job_applications_job_hash_fkey','generated_documents_job_hash_fkey')) = 3;
+SELECT 'G7/P3-8: ninguna fila queda ACTIVA con duplicate_of puesto', NOT EXISTS(SELECT 1 FROM jobs WHERE is_active AND duplicate_of IS NOT NULL);
 ROLLBACK;
