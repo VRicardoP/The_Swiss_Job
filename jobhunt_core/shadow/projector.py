@@ -885,7 +885,19 @@ def _merge_job_payload(
         JOB_PAYLOAD_MAP[c]: fold.cols[c] for c in JOB_PAYLOAD_MAP if c in fold.cols
     }
     missing = _missing_cols(fold)
-    if missing and prev_raw is None and prev_change is None:
+    # G3-A-P3-1: la guarda miraba si HABÍA estado previo, no si se puede
+    # COMPLETAR. Con prev_raw None (pk con cambio aplicado y sin revisión en el
+    # core) y un prev_change que a su vez venía TOAST-truncado, no degradaba y
+    # el sink creaba la PRIMERA revisión del slot SIN la columna: el texto que
+    # alimenta el embedding sombra difiere del del legacy —justo la
+    # comparabilidad que B-02 existe para preservar—, sin alerta
+    # (_alert_unnormalizable solo mira el título) y AUTOPERPETUADO, porque a
+    # partir de ahí prev_raw ES la revisión truncada. La justificación de
+    # `_fill_from_previous` («misma forma que el payload previo ⇒ mismo
+    # content_hash ⇒ DO NOTHING») solo vale con prev_raw presente.
+    if missing and prev_raw is None and not all(
+        c in (prev_change or {}) for c in missing
+    ):
         return None, None, None
     for col in missing:
         _fill_from_previous(payload, col, prev_raw, prev_change)

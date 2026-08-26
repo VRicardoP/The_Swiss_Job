@@ -436,6 +436,93 @@ def test_task_two_consecutive_runs_same_process(db):
     assert r2.successful() and r2.result["status"] == "skipped"
 
 
+def test_reparacion_sin_normalizador_en_este_proceso_conserva_la_canonica(db):
+    """Regresión G3-A-P3-2: `_rebuild_canonical_after_repair` trataba el None de
+    `normalize_offer` como «contenido no normalizable», pero esa función
+    devuelve None TAMBIÉN cuando el proceso no tiene registrado el normalizador
+    de esa fuente — y el registry es memoria POR PROCESO: los `legacy:*` los
+    registra solo el proyector, que comparte la cola `core.harvest` con la
+    cosecha. Anular el puntero canónico de una vacante VIVA la saca de /v1, del
+    corpus de matching y del de dedup, y dispara una re-evaluación completa por
+    bump_corpus_generation. Ahora sin normalizador se CONSERVA lo vigente (con
+    alerta) y solo se anula cuando el normalizador SÍ existe y rechaza el raw."""
+    from jobhunt_core.harvest import providers  # noqa: F401  (auto-registro)
+    from jobhunt_core.harvest.providers import arbeitnow  # noqa: F401
+
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    ext = f"g3norm-{uuid.uuid4().hex[:8]}"
+    _sink_batch(factory, scope, [
+        RawListing(external_id=ext, url=f"https://x/{ext}",
+                   payload={"title": "SRE Engineer", "company_name": "ACME AG"}),
+    ])
+
+    def _target():
+        async def go():
+            async with factory() as s:
+                return (
+                    await s.execute(
+                        sa.text(
+                            "SELECT v.id AS vid, i.id AS iid, "
+                            "v.current_offer_revision_id AS ptr "
+                            "FROM vacancies v "
+                            "JOIN source_listing_incarnations i ON i.vacancy_id = v.id "
+                            "JOIN source_listings l ON l.id = i.source_listing_id "
+                            "WHERE l.external_id = :e"
+                        ),
+                        {"e": ext},
+                    )
+                ).one()
+
+        return asyncio.run(go())
+
+    antes = _target()
+    assert antes.ptr is not None  # canónica VIVA
+
+    def _rebuild(source_name):
+        async def go():
+            async with factory() as s:
+                await s.execute(
+                    sa.text("UPDATE sources SET name = :n WHERE id = :i"),
+                    {"n": source_name, "i": created["source"]},
+                )
+                await RawListingSink()._rebuild_canonical_after_repair(
+                    s, [(antes.vid, antes.iid)]
+                )
+                await s.commit()
+
+        asyncio.run(go())
+
+    # Fuente cuyo normalizador NO está registrado en ESTE proceso.
+    sin_norm = f"legacy:g3-sin-normalizador-{uuid.uuid4().hex[:6]}"
+    from jobhunt_core.harvest import normalize
+
+    assert normalize.has_normalizer(sin_norm) is False
+    _rebuild(sin_norm)
+    assert _target().ptr == antes.ptr  # antes: None (canónica viva anulada)
+
+    # Control: con el normalizador SÍ registrado y un raw que rechaza (sin
+    # título), el puntero sigue anulándose — esa rama no cambia.
+    normalize.register_normalizer(sin_norm, lambda raw: raw)
+    try:
+        async def sin_titulo():
+            async with factory() as s:
+                await s.execute(
+                    sa.text(
+                        "UPDATE source_listing_revisions SET raw = '{}'::jsonb "
+                        "WHERE incarnation_id = :i"
+                    ),
+                    {"i": antes.iid},
+                )
+                await s.commit()
+
+        asyncio.run(sin_titulo())
+        _rebuild(sin_norm)
+        assert _target().ptr is None
+    finally:
+        normalize._NORMALIZERS.pop(sin_norm, None)
+
+
 def test_e2e_run_scope_with_real_sink(db):
     """E2E A-03+A-04: runner + sink real — grafo y estado commiteados juntos."""
     factory, created = db

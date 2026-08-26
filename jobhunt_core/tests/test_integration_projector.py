@@ -467,6 +467,52 @@ def test_u_orphan_without_previous_value_degrades_with_alert(db, caplog):
     ) == 0
 
 
+def test_u_con_previo_tambien_truncado_degrada_en_vez_de_crear_revision_coja(
+    db, caplog
+):
+    """Regresión G3-A-P3-1: la guarda de degradación miraba si HABÍA estado
+    previo (`prev_raw is None and prev_change is None`), no si se puede
+    COMPLETAR. Con un pk que tiene cambio APLICADO pero NINGUNA revisión en el
+    core (prev_raw None) y un prev_change que a su vez venía TOAST-truncado, no
+    degradaba: el sink creaba la PRIMERA revisión del slot SIN la columna, con
+    lo que el texto que alimenta el embedding SOMBRA difiere del que produce el
+    legacy —la comparabilidad que B-02 existe para preservar—, sin alerta
+    (`_alert_unnormalizable` solo mira el título) y AUTOPERPETUADO: a partir de
+    ahí prev_raw ES la revisión truncada."""
+    factory = db
+    src = f"fx{uuid.uuid4().hex[:6]}"
+    pk = "job-trunc"
+    # Cambio previo YA APLICADO (sellado) que NUNCA produjo revisión en el core
+    # y que venía él mismo truncado: sin `description`.
+    previo = _job(pk, src, chash="ch-prev")
+    del previo["description"]
+    previo["_omitted"] = ["description"]
+    _exec(
+        factory,
+        "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
+        "payload, applied_at) VALUES (:l, 0, 'jobs', 'U', :p, "
+        "CAST(:j AS jsonb), now())",
+        l=next(_LSN), p=pk, j=json.dumps(previo),
+    )
+    # El U nuevo llega con la MISMA columna omitida.
+    u = _job(pk, src, title="Dev v2", chash="ch-nuevo")
+    del u["description"]
+    u["_omitted"] = ["description"]
+    _seed(factory, [("jobs", "U", pk, u)])
+
+    with caplog.at_level(logging.ERROR, logger="jobhunt_core.shadow.projector"):
+        totals = _project()
+    assert totals["upserts"] == 0  # antes: 1, con la revisión coja
+    assert "SIN valor previo conocido" in caplog.text
+    sid = _source_id(factory, src)
+    assert sid is None or _scalar(
+        factory, "SELECT count(*) FROM source_listings WHERE source_id = :s", s=sid,
+    ) == 0  # ni slot ni revisión truncada
+    assert _scalar(
+        factory, "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+    ) == 0  # sellado: no se re-procesa en bucle
+
+
 def test_alert_when_normalize_returns_none_for_legacy_source(db, caplog):
     """§3: normalize→None en fuente legacy:* es ALERTA (no solo warning) —
     el raw se persiste pero la vacante queda sin canónica."""

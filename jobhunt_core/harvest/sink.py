@@ -770,6 +770,22 @@ class RawListingSink:
         to_point, to_null = [], []
         for vac_id, inc_id in repaired:
             r = latest.get(inc_id)
+            # G3-A-P3-2: `normalize_offer` devuelve None por DOS causas muy
+            # distintas — «contenido no normalizable» y «este PROCESO no tiene
+            # registrado el normalizador de esa fuente» (el registry es memoria
+            # por proceso y los `legacy:*` los registra SOLO el proyector, que
+            # comparte cola con la cosecha). Confundirlas ANULABA el puntero
+            # canónico de una vacante VIVA: fuera de /v1, del corpus de
+            # matching y del de dedup, con re-evaluación completa por
+            # bump_corpus_generation. Sin normalizador se CONSERVA el puntero
+            # vigente y se alerta; el proyector lo actualizará al re-emitir.
+            if r is not None and not normalize.has_normalizer(r.source_name):
+                logger.error(
+                    "sink: reparación de primary sobre %s sin normalizador de %r "
+                    "en este proceso — se CONSERVA la canónica vigente",
+                    vac_id, r.source_name,
+                )
+                continue
             content = (
                 normalize.normalize_offer(r.source_name, r.raw) if r is not None else None
             )
