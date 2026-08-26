@@ -16,7 +16,7 @@ from services.data_normalizer import DataNormalizer
 from services.deduplicator import Deduplicator
 from services.job_repository import JobIdentityConflictError, JobRepository
 from utils import fetch_diagnostics as diag
-from utils.fetch_diagnostics import KIND_NETWORK, FetchIssue
+from utils.fetch_diagnostics import KIND_NETWORK, FetchIssue, mark_chronic
 
 logger = logging.getLogger(__name__)
 
@@ -515,11 +515,17 @@ async def _fetch_providers_async() -> dict[str, Any]:
                         "ix_jobs_url (corpus histórico sin migrar)"
                     )
                 if identity_clones:
+                    # G7/P2-4: crónica. Dispara en 14 de 14 días (2,0-19,2 % de
+                    # las altas) porque la remediación —los dos scripts de
+                    # canonización y la migración `b3c7d1a95e42`— sigue
+                    # pendiente. Se publica igual; no sube el nivel del run.
                     summary["unhealthy"].append(
-                        f"{source}: DERIVA DE IDENTIDAD — {identity_clones} "
-                        "ofertas re-listadas con id NUEVO entraron como CLON "
-                        "(sin choque de url; la fila histórica ya no refresca "
-                        "last_seen_at)"
+                        mark_chronic(
+                            f"{source}: DERIVA DE IDENTIDAD — {identity_clones} "
+                            "ofertas re-listadas con id NUEVO entraron como CLON "
+                            "(sin choque de url; la fila histórica ya no refresca "
+                            "last_seen_at)"
+                        )
                     )
 
                 # VD.3 — señal de persistencia, DESPUÉS del commit del lote a

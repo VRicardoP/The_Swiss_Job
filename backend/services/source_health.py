@@ -20,7 +20,7 @@ from models.source_health import (
     OUTCOME_OK,
     SourceHealth,
 )
-from utils.fetch_diagnostics import FetchIssue
+from utils.fetch_diagnostics import FetchIssue, mark_chronic
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +207,18 @@ async def record_storage(
     return motivo
 
 
+def _alerta(racha: int, umbral: int, motivo: str) -> str:
+    """Devuelve el motivo, marcado como crónico si ya avisaba en el run anterior.
+
+    G7/P2-4: la racha es un contador MONÓTONO que no se limpia hasta que la
+    fuente se arregla, así que una fuente rota mantiene su línea de `unhealthy`
+    para siempre y con ella el WARNING del run. Que la racha valga EXACTAMENTE
+    el umbral es la única corrida en que la fuente acaba de degradarse: esa es
+    la noticia. A partir de ahí el aviso se publica igual, pero marcado.
+    """
+    return motivo if racha == umbral else mark_chronic(motivo)
+
+
 def _fetch_alert(row: SourceHealth) -> str | None:
     """Señal de DESCARGA: rachas de error y de vacío.
 
@@ -215,12 +227,18 @@ def _fetch_alert(row: SourceHealth) -> str | None:
     vacíos puede ser estacionalidad o un selector roto (hay que mirarlo).
     """
     if row.consecutive_errors >= settings.SOURCE_HEALTH_ERROR_STREAK:
-        return (
+        return _alerta(
+            row.consecutive_errors,
+            settings.SOURCE_HEALTH_ERROR_STREAK,
             f"{row.consecutive_errors} runs seguidos con error"
-            f" — último: {row.last_error_detail or 'sin detalle'}"
+            f" — último: {row.last_error_detail or 'sin detalle'}",
         )
     if row.consecutive_empty >= settings.SOURCE_HEALTH_EMPTY_STREAK:
-        return f"{row.consecutive_empty} runs seguidos sin traer ofertas"
+        return _alerta(
+            row.consecutive_empty,
+            settings.SOURCE_HEALTH_EMPTY_STREAK,
+            f"{row.consecutive_empty} runs seguidos sin traer ofertas",
+        )
     return None
 
 
@@ -229,9 +247,11 @@ def _storage_alert(row: SourceHealth) -> str | None:
     bien pero pierde todo al persistir (colisiones, datos inválidos — hay que
     mirar la BD/el parser)."""
     if row.consecutive_unstored >= settings.SOURCE_HEALTH_UNSTORED_STREAK:
-        return (
+        return _alerta(
+            row.consecutive_unstored,
+            settings.SOURCE_HEALTH_UNSTORED_STREAK,
             f"{row.consecutive_unstored} runs seguidos descargando ofertas"
-            " sin conseguir guardar ninguna"
+            " sin conseguir guardar ninguna",
         )
     return None
 

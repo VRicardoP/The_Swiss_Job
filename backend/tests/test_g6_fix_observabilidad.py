@@ -90,8 +90,6 @@ class TestElNivelVuelveADiscriminar:
         "clave,valor",
         [
             ("identity_conflicts", 3),
-            ("identity_clones", 55),
-            ("fetch_failed", 2),
             ("soft_time_limit", True),
         ],
     )

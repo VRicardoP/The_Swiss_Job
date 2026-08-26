@@ -183,6 +183,23 @@ def classify(job_count: int, collected: list[FetchIssue]) -> str:
     return "error" if collected else "empty"
 
 
+# Marca de una incidencia CRÓNICA: la que YA venía avisando en el run anterior.
+# Se conserva en el texto de `unhealthy` —el operador la sigue viendo— pero no
+# sube el nivel del run: un aviso que lleva ocho corridas sonando no es «algo
+# que mirar hoy».
+CHRONIC_MARK = "[crónico]"
+
+
+def mark_chronic(motivo: str) -> str:
+    """Marca un motivo de `unhealthy` como ya avisado en el run anterior."""
+    return f"{CHRONIC_MARK} {motivo}"
+
+
+def is_chronic(entrada: str) -> bool:
+    """¿Esta entrada de `unhealthy` es un aviso que ya venía sonando?"""
+    return CHRONIC_MARK in entrada
+
+
 # Claves de `summary` que son INCIDENCIA ESTRUCTURAL: si traen valor, algo dejó
 # de funcionar. Se declaran aquí, junto al resto del vocabulario de diagnóstico
 # de la cosecha, para que añadir un contador nuevo sea una línea y no un olvido.
@@ -193,10 +210,27 @@ def classify(job_count: int, collected: list[FetchIssue]) -> str:
 # de 10 a 23. Con ellos dentro, los 34 runs reales salían WARNING y NINGUNO
 # INFO: el nivel dejó de discriminar y la observabilidad seguía terminando en
 # una línea indistinguible de un run perfecto, solo que un peldaño más arriba.
+#
+# G7/P2-4 — y de aquí salieron `identity_clones` y `fetch_failed`. La medición
+# que validó el fix de G6 no PODÍA verlos: los 34 summaries del journal son
+# anteriores al código que emite esas claves (`identity_clones` aparece en 0 de
+# 34) y con ellas dentro el reparto vuelve a 34 WARNING / 0 INFO. Medido contra
+# producción, SOLO LECTURA:
+#
+# * `identity_clones` es una TASA, no una avería: 14 de 14 días con valor, entre
+#   el 2,0 % y el 19,2 % de las altas del día (10-87 clones sobre 125-1100).
+#   Es una condición estructural conocida, con remediación pendiente (los dos
+#   scripts de canonización + la migración `b3c7d1a95e42`). Sigue publicándose
+#   en el `summary` y en su propia línea de `unhealthy`, marcada como crónica.
+#   Cuando la canonización corra, el contador debe colapsar y volver aquí.
+# * `fetch_failed` tiene su calibración —más estricta y POR FUENTE— en
+#   `services/source_health` (`SOURCE_HEALTH_ERROR_STREAK`), exactamente el
+#   mismo argumento con el que G6 sacó `window_no_date`. Con él dentro, las
+#   fuentes crónicas (`proz` y `remoteco` llevan 8 runs seguidos con error) lo
+#   mantienen por encima de 0 para siempre. Se pierden como mucho dos runs de
+#   antelación sobre un fallo NUEVO, que a la tercera entra por `unhealthy`.
 _SUMMARY_INCIDENT_KEYS = (
     "identity_conflicts",
-    "identity_clones",
-    "fetch_failed",
     "soft_time_limit",
 )
 
@@ -253,6 +287,18 @@ def log_run_summary(run_logger, label: str, summary: dict) -> None:
     ESTRUCTURALES, `errors` entra solo por encima de `_ERROR_RATE_WARNING` de lo
     cosechado, y `window_no_date` no entra: tiene su propio aviso calibrado y
     por fuente en `harvest_window`.
+
+    G7/P2-4 — y ese 26/8 se midió sobre un corpus que no podía refutarlo: tres
+    de las cuatro claves del conjunto aparecen en 0 de los 34 summaries del
+    journal, porque son ANTERIORES al código que las emite. Con la clave que el
+    código sí emite hoy (`identity_clones`, presente en 14 de 14 días) el
+    reparto volvía a 34 WARNING / 0 INFO. Además, los dos disparadores que
+    quedaban —`fetch_failed` y `unhealthy`— son PEGAJOSOS por construcción:
+    `source_health` avisa por «N runs seguidos», un contador monótono que no se
+    limpia hasta que la fuente se arregla. La regla es ahora que el run GRITA
+    cuando hay algo NUEVO: incidencia estructural, `errors` por encima de su
+    tasa, o una fuente que ACABA de cruzar su umbral de racha. Lo crónico se
+    publica igual, marcado, sin subir el nivel.
     """
     incidencias = [
         f"{k}={summary[k]}"
@@ -261,8 +307,11 @@ def log_run_summary(run_logger, label: str, summary: dict) -> None:
     ]
     if _errors_are_material(summary):
         incidencias.append(f"errors={summary['errors']}")
-    if summary.get("unhealthy"):
-        incidencias.append(f"unhealthy={len(summary['unhealthy'])}")
+    # G7/P2-4: solo las fuentes que ACABAN de degradarse. Las crónicas siguen
+    # en el `summary` y en el texto de la línea, pero no suben el nivel.
+    nuevas = [e for e in summary.get("unhealthy") or () if not is_chronic(e)]
+    if nuevas:
+        incidencias.append(f"unhealthy={len(nuevas)}")
 
     if incidencias:
         run_logger.warning(

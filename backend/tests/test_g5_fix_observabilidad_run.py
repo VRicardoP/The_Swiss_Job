@@ -58,24 +58,33 @@ class TestElCierreDelRunGritaCuandoHayQueMirar:
         logger = logging.getLogger("g5.runsummary")
         s = _limpio()
         s["identity_clones"] = 55
+        s["unhealthy"] = [
+            diag.mark_chronic("arbeitnow: DERIVA DE IDENTIDAD — 55 ofertas")
+        ]
         with caplog.at_level(logging.INFO, logger="g5.runsummary"):
             diag.log_run_summary(logger, "Fetch complete", s)
 
-        assert [r.levelno for r in caplog.records] == [logging.WARNING]
-        assert "identity_clones=55" in caplog.text
+        # G7/P2-4: el contador es una TASA presente en 14 de 14 días, no una
+        # avería del run. Sigue PUBLICÁNDOSE —que es lo que este test de G5
+        # vino a garantizar— pero en su línea crónica, sin subir el nivel.
+        assert [r.levelno for r in caplog.records] == [logging.INFO]
+        assert "'identity_clones': 55" in caplog.text
+        assert "DERIVA DE IDENTIDAD" in caplog.text
 
     def test_cada_contador_de_incidencia_eleva_el_nivel(self, caplog):
         """G6/P3-2 — `window_no_date` salió del conjunto: ver el test de G6.
 
         `errors` sigue aquí, pero con el valor MATERIAL (7 sobre 120
         cosechadas = 5,8 %); marginal ya no eleva el nivel.
+
+        G7/P2-4 — `identity_clones` y `fetch_failed` también salieron: los dos
+        traen valor en TODAS las corridas reales y devolvían el reparto a
+        34 WARNING / 0 INFO. Ver `tests/test_g7_fix_observabilidad.py`.
         """
         logger = logging.getLogger("g5.runsummary")
         for clave, valor in (
             ("identity_conflicts", 3),
-            ("identity_clones", 1),
             ("errors", 7),
-            ("fetch_failed", 2),
             ("soft_time_limit", True),
         ):
             caplog.clear()
@@ -92,6 +101,7 @@ class TestElCierreDelRunGritaCuandoHayQueMirar:
     def test_unhealthy_no_vacio_eleva_el_nivel(self, caplog):
         logger = logging.getLogger("g5.runsummary")
         s = _limpio()
+        # Sin marcar: una fuente que ACABA de degradarse sí es noticia.
         s["unhealthy"] = ["arbeitnow: DERIVA DE IDENTIDAD — 55 ofertas"]
         with caplog.at_level(logging.INFO, logger="g5.runsummary"):
             diag.log_run_summary(logger, "Fetch complete", s)
