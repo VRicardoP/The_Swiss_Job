@@ -506,6 +506,128 @@ def test_reparacion_da_de_alta_el_handler_sombra_en_vez_de_anular_la_canonica(db
         legacy_shadow._registered.discard(sombra)
 
 
+def _exec_sql(factory, stmt, **params):
+    async def go():
+        async with factory() as s:
+            r = await s.execute(sa.text(stmt), params)
+            await s.commit()
+            return r
+
+    return asyncio.run(go())
+
+
+def test_g4_reparacion_da_de_alta_el_handler_de_portfolio_import(db):
+    """Regresión G4-P2-4: el alta en caliente de G3-A-P3-2 solo cubría
+    `legacy:*` y volvía —logueando— para cualquier otra fuente. El registro es
+    memoria POR PROCESO y a `portfolio-import` no la importa NINGÚN módulo del
+    `celery_app.conf.include`, así que el `core-worker` que repara el primary
+    de una vacante COMPARTIDA (attach cross-source por la misma
+    `url_normalized`) le anulaba la canónica estando VIVA: fuera de /v1, del
+    corpus de matching y del de dedup, y con re-evaluación completa por
+    `bump_corpus_generation`. Y son justo las vacantes a las que el usuario se
+    apuntó o marcó — que nadie vuelve a cosechar (su scope nace deshabilitado),
+    así que no se auto-reparaba jamás.
+
+    El alta no depende ya del PREFIJO: cada namespace conocido tiene su alta
+    idempotente (`harvest/registry.py`)."""
+    from jobhunt_core.harvest import normalize
+    from jobhunt_core.harvest.providers import arbeitnow  # noqa: F401
+    from jobhunt_core.import_portfolio import PORTFOLIO_IMPORT_SOURCE
+
+    factory, created = db
+    scope = _seed_scope(factory, created)  # fuente 'arbeitnow'
+    ext = f"g4pf-{uuid.uuid4().hex[:8]}"
+    _sink_batch(factory, scope, [
+        RawListing(external_id=ext, url=f"https://x/{ext}",
+                   payload={"title": "SRE Engineer", "company_name": "ACME AG"}),
+    ])
+
+    def _target():
+        async def go():
+            async with factory() as s:
+                return (
+                    await s.execute(
+                        sa.text(
+                            "SELECT v.id AS vid, i.id AS iid, "
+                            "v.current_offer_revision_id AS ptr "
+                            "FROM vacancies v "
+                            "JOIN source_listing_incarnations i ON i.vacancy_id = v.id "
+                            "JOIN source_listings l ON l.id = i.source_listing_id "
+                            "WHERE l.external_id = :e"
+                        ),
+                        {"e": ext},
+                    )
+                ).one()
+
+        return asyncio.run(go())
+
+    antes = _target()
+    assert antes.ptr is not None  # canónica VIVA
+
+    # El slot pasa a colgar de la fuente REAL `portfolio-import` (alta
+    # idempotente: puede existir ya de otro test) y se devuelve al terminar,
+    # para que el teardown por fuente siga limpiando el grafo.
+    mia = uuid.uuid4()
+    _exec_sql(
+        factory,
+        "INSERT INTO sources (id, name, tier) VALUES (:i, :n, 0) "
+        "ON CONFLICT (name) DO NOTHING",
+        i=mia, n=PORTFOLIO_IMPORT_SOURCE,
+    )
+    src_pf = _exec_sql(
+        factory, "SELECT id FROM sources WHERE name = :n", n=PORTFOLIO_IMPORT_SOURCE
+    ).scalar_one()
+    _exec_sql(
+        factory,
+        "UPDATE source_listings SET source_id = :s WHERE external_id = :e",
+        s=src_pf, e=ext,
+    )
+    # Proceso que NUNCA importó `import_portfolio` (el core-worker real).
+    fn = normalize._NORMALIZERS.pop(PORTFOLIO_IMPORT_SOURCE)
+    assert normalize.has_normalizer(PORTFOLIO_IMPORT_SOURCE) is False
+
+    async def rebuild():
+        async with factory() as s:
+            await RawListingSink()._rebuild_canonical_after_repair(
+                s, [(antes.vid, antes.iid)]
+            )
+            await s.commit()
+
+    try:
+        asyncio.run(rebuild())
+        assert _target().ptr is not None  # antes: None (canónica viva anulada)
+        assert normalize.has_normalizer(PORTFOLIO_IMPORT_SOURCE) is True
+    finally:
+        normalize._NORMALIZERS.setdefault(PORTFOLIO_IMPORT_SOURCE, fn)
+        _exec_sql(
+            factory,
+            "UPDATE source_listings SET source_id = :s WHERE external_id = :e",
+            s=created["source"], e=ext,
+        )
+        _exec_sql(factory, "DELETE FROM sources WHERE id = :i", i=mia)
+
+
+def test_g4_registry_solo_da_de_alta_los_namespaces_conocidos():
+    """El alta por namespace no adivina: `legacy:*` va al handler genérico de
+    la sombra, las exact-match a la suya, y una fuente AJENA sigue sin
+    normalizador (A-06: antes que servir el contenido del primary ANTERIOR
+    —que puede ser otra empresa— se anula el puntero)."""
+    from jobhunt_core.harvest import normalize, registry
+    from jobhunt_core.harvest.providers import legacy_shadow
+
+    assert registry.ensure_handler("arbeitnow") is True
+    assert registry.ensure_handler("portfolio-import") is True
+    assert registry.ensure_handler("fuente-ajena-inexistente") is False
+
+    sombra = f"legacy:g4-registry-{uuid.uuid4().hex[:6]}"
+    try:
+        assert registry.ensure_handler(sombra) is True
+        assert normalize.has_normalizer(sombra) is True
+    finally:
+        normalize._NORMALIZERS.pop(sombra, None)
+        legacy_shadow._registered.discard(sombra)
+
+
 def test_contenido_que_revierte_refresca_la_marca_del_raw_vigente(db):
     """Regresión G3-A-P3-3: «última revisión» se lee por `fetched_at DESC` en
     los dos sitios que necesitan el raw VIGENTE (el guard de reciclado y

@@ -32,27 +32,40 @@ from jobhunt_core.harvest.types import FetchResult, RawListing
 
 logger = logging.getLogger(__name__)
 
-# Identidad determinista (A-05): título/empresa crudos del payload Arbeitnow.
-register_extractor(
-    "arbeitnow",
-    lambda payload: (payload.get("title"), payload.get("company_name")),
-)
+SOURCE_NAME = "arbeitnow"
 
-# Contenido canónico (A-06): el fn solo ESCOGE campos; la coerción es central.
-# Arbeitnow no publica salario en el feed → salary None (content_hash del raw
-# sí cambiaría si apareciera, pero el text_hash no depende de él — ADR-02).
-register_normalizer(
-    "arbeitnow",
-    lambda raw: {
-        "title": raw.get("title"),
-        "company": raw.get("company_name"),
-        "description": raw.get("description"),
-        "tags": raw.get("tags"),
-        "location": raw.get("location"),
-        "remote": raw.get("remote"),
-        "salary": None,
-    },
-)
+
+def register_handlers() -> None:
+    """Alta IDEMPOTENTE de identidad y normalización de la fuente.
+
+    Se invoca al importar el módulo y, cuando un proceso llega a la fuente sin
+    haberlo importado, desde `harvest.registry` (G4-P2-4): el registro es
+    memoria POR PROCESO y confiarlo al EFECTO de un import lo hace
+    irrecuperable si el import ya ocurrió."""
+    # Identidad determinista (A-05): título/empresa crudos del payload.
+    register_extractor(
+        SOURCE_NAME,
+        lambda payload: (payload.get("title"), payload.get("company_name")),
+    )
+    # Contenido canónico (A-06): el fn solo ESCOGE campos; la coerción es
+    # central. Arbeitnow no publica salario en el feed → salary None (el
+    # content_hash del raw sí cambiaría si apareciera, pero el text_hash no
+    # depende de él — ADR-02).
+    register_normalizer(
+        SOURCE_NAME,
+        lambda raw: {
+            "title": raw.get("title"),
+            "company": raw.get("company_name"),
+            "description": raw.get("description"),
+            "tags": raw.get("tags"),
+            "location": raw.get("location"),
+            "remote": raw.get("remote"),
+            "salary": None,
+        },
+    )
+
+
+register_handlers()
 
 API_URL = "https://www.arbeitnow.com/api/job-board-api"
 # Objetivo inicial de páginas por run; crece solo (x2, persistido en el cursor)

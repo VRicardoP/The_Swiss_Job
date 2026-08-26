@@ -44,25 +44,36 @@ PORTFOLIO_IMPORT_TIER = 0
 # (ON CONFLICT (id) DO NOTHING con el mismo id en cada invocación).
 PORTFOLIO_IMPORT_SCOPE_ID = uuid.uuid5(uuid.NAMESPACE_URL, "portfolio-import-scope")
 
-# Registro exact-match de identidad/normalización (mismo patrón que arbeitnow/
-# legacy_shadow): sin esto el sink no produce canónica (offer_revisions) para
-# la fuente. El payload usa las claves del core (`company_name`, no `company`).
-register_extractor(
-    PORTFOLIO_IMPORT_SOURCE,
-    lambda payload: (payload.get("title"), payload.get("company_name")),
-)
-register_normalizer(
-    PORTFOLIO_IMPORT_SOURCE,
-    lambda raw: {
-        "title": raw.get("title"),
-        "company": raw.get("company_name"),
-        "description": raw.get("description"),
-        "tags": raw.get("tags"),
-        "location": None,
-        "remote": None,
-        "salary": None,
-    },
-)
+def register_handlers() -> None:
+    """Alta IDEMPOTENTE de identidad/normalización de `portfolio-import`
+    (mismo patrón que arbeitnow/legacy_shadow): sin esto el sink no produce
+    canónica (offer_revisions) para la fuente. El payload usa las claves del
+    core (`company_name`, no `company`).
+
+    G4-P2-4: se invoca al importar el módulo y también desde
+    `harvest.registry`, porque NINGÚN módulo del `celery_app.conf.include` la
+    importa — el worker llegaba a reparar el primary de una vacante
+    `portfolio-import` (la que el usuario se apuntó) sin normalizador y le
+    anulaba la canónica estando VIVA."""
+    register_extractor(
+        PORTFOLIO_IMPORT_SOURCE,
+        lambda payload: (payload.get("title"), payload.get("company_name")),
+    )
+    register_normalizer(
+        PORTFOLIO_IMPORT_SOURCE,
+        lambda raw: {
+            "title": raw.get("title"),
+            "company": raw.get("company_name"),
+            "description": raw.get("description"),
+            "tags": raw.get("tags"),
+            "location": None,
+            "remote": None,
+            "salary": None,
+        },
+    )
+
+
+register_handlers()
 
 
 async def ensure_import_scope(session: AsyncSession) -> uuid.UUID:
