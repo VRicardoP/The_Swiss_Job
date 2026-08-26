@@ -1926,6 +1926,117 @@ def test_perdida_gracia_por_estado_aplicado_cubre_las_tres_patologias(db):
     assert _gates(factory)["perdida"]["ok"] is True
 
 
+def test_perdida_roja_cuando_la_purga_se_llevo_la_evidencia_del_hueco(db):
+    """Regresión G5-P2-1: el criterio de la gracia (G4) decide leyendo el
+    ÚLTIMO CAMBIO APLICADO del pk en `shadow_change_log`, y `purge_staging`
+    —en el MISMO módulo— borraba esa evidencia a los 7 días preservando solo
+    la última fila de `users`. Sin evidencia, la rama «ningún cambio aplicado»
+    concedía GRACIA: una pérdida REAL y PERMANENTE se sellaba en VERDE y
+    contaba para la racha de 7 (en el clúster real, 6.979 de 10.805 jobs
+    legacy ya no tenían ninguna fila en el log).
+
+    Dos mitades, porque el fix tiene dos:
+    (1) la purga PRESERVA ya la última fila aplicada de cada pk de `jobs`
+        (mismo trato que `users`), así que la evidencia no se evapora;
+    (2) y aunque falte —el histórico purgado por el código anterior—, la
+        ausencia NO gracia: sin slot y sin cambio aplicado no hay nada que
+        explique el hueco (fail-closed).
+    El transitorio legítimo de G2-P2-2 (slot CERRADO + CDC en vuelo) sigue
+    graciado por la evidencia DURABLE del slot."""
+    factory = db
+    src = _mk_source(factory, "legacy:g5purgafx")
+    p = uuid.uuid4().hex[:6]
+    perdido, react = f"{p}-perdido", f"{p}-react"
+    hace_30 = CSTART - timedelta(days=30)
+    en_vuelo = AFTER - timedelta(minutes=5)
+
+    # PÉRDIDA REAL: job vivo y antiguo, SIN slot jamás, cuyo último cambio
+    # APLICADO fue una APERTURA hace 30 días (el proyector tuvo su turno) +
+    # el UPDATE rutinario de la re-cosecha recién capturado.
+    _legacy_job(factory, perdido)
+    _cambio(factory, 9701, perdido, hace_30, applied=hace_30, op="I",
+            payload={"is_active": True})
+    _cambio(factory, 9702, perdido, en_vuelo, payload={"is_active": True})
+    # NO-REGRESIÓN G2-P2-2: reactivación legítima, slot CERRADO, sin ningún
+    # cambio aplicado que consultar.
+    _legacy_job(factory, react)
+    _mk_slot(factory, src, react, active=False)
+    _cambio(factory, 9703, react, en_vuelo, payload={"is_active": True})
+
+    # (1) La purga NOMINAL (la que gate.run_cycle ejecuta en CADA ciclo) ya
+    # no se lleva la evidencia: es la última fila aplicada de ese pk.
+    async def purga():
+        async with factory() as s:
+            r = await metrics.purge_staging(s, now=AFTER)
+            await s.commit()
+            return r
+
+    assert _run(purga())["staging_deleted"] == 0  # antes del fix: 1
+    assert {r.lsn for r in _rows(
+        factory, "SELECT lsn FROM shadow_change_log WHERE pk = :p", p=perdido
+    )} == {9701, 9702}
+
+    _compute(factory)  # PRIMER cómputo, SIN force: el ciclo queda SELLADO
+    row = _metric_row(factory, "perdida")
+    assert "recomputed_at" not in row.details  # contaría para la racha
+    assert float(row.value) == 1  # antes del fix: 0 (falso VERDE sellado)
+    assert row.details["huecos_muestra"] == [perdido]
+    assert row.details["huecos_graciados_muestra"] == [react]
+    assert _gates(factory)["perdida"]["ok"] is False
+
+    # (2) Histórico YA purgado por el código anterior: la evidencia no está y
+    # no volverá. La ausencia no gracia — y el transitorio legítimo, que se
+    # apoya en el slot cerrado, se mantiene verde.
+    _exec(factory, "DELETE FROM shadow_change_log WHERE lsn = 9701")
+    _compute(factory, force=True)
+    row = _metric_row(factory, "perdida")
+    assert float(row.value) == 1  # antes del fix: 0
+    assert row.details["huecos_muestra"] == [perdido]
+    assert row.details["huecos_graciados_muestra"] == [react]
+    assert (row.details["huecos_graciados_razones"][react]
+            == "slot cerrado (sin cambio aplicado)")
+    assert _gates(factory)["perdida"]["ok"] is False
+
+
+def test_informe_de_la_gracia_no_afirma_un_slot_que_nunca_existio(db):
+    """Regresión G5-P3-1: la ÚNICA línea legible que explica un
+    enmascaramiento decía «slot cerrado» — justo para la población que
+    G4-P2-1 añadió, que JAMÁS tuvo slot. El informe es lo que lee un operador
+    para decidir un go/no-go: tiene que decir la verdad y desglosar la razón
+    por pk."""
+    factory = db
+    _mk_source(factory, "legacy:g5lineafx")
+    p = uuid.uuid4().hex[:6]
+    boot = f"{p}-boot"
+    viejo = CSTART - timedelta(days=3)
+    _legacy_job(factory, boot)
+    # backfill: I ya INACTIVO ⇒ el proyector lo aplicó como CIERRE sin slot
+    _cambio(factory, 9801, boot, viejo, applied=viejo, op="I",
+            payload={"is_active": False})
+    _cambio(factory, 9802, boot, AFTER - timedelta(minutes=5),
+            payload={"is_active": True})
+    _compute(factory)
+
+    row = _metric_row(factory, "perdida")
+    assert float(row.value) == 0  # la gracia es CORRECTA
+    assert row.details["huecos_graciados_muestra"] == [boot]
+
+    async def go():
+        async with factory() as s:
+            slots = await s.scalar(
+                sa.text("SELECT count(*) FROM source_listings "
+                        "WHERE external_id = :e"), {"e": boot},
+            )
+            return slots, await metrics.render_report(s, CYCLE)
+
+    slots, informe = _run(go())
+    linea = next(x for x in informe.splitlines() if "GRACIADOS" in x)
+    assert slots == 0                     # jamás hubo slot, ni cerrado
+    assert "slot cerrado" not in linea    # antes del fix: lo afirmaba
+    assert "último cambio aplicado = is_active=false" in linea
+    assert boot in linea
+
+
 def test_umbral_del_ciclo_queda_persistido_y_no_se_recolorea(db):
     """Regresión G1 H-8: evaluate_gates re-evaluaba ciclos SELLADOS con las
     constantes VIGENTES — un cambio de umbral recoloreaba la historia sin
@@ -1974,6 +2085,10 @@ def test_umbral_del_ciclo_queda_persistido_y_no_se_recolorea(db):
 
 
 def test_purge_deletes_old_applied_preserving_last_users_and_unapplied(db):
+    """G5-P2-1: la purga preserva la ÚLTIMA fila aplicada de CADA pk de
+    `users` (inactive_user_refs) Y de `jobs` (_huecos_en_transicion) — la
+    versión anterior solo conocía el primer consumidor y borraba la evidencia
+    del segundo, que es la que decide si un hueco del espejo está EXPLICADO."""
     factory = db
     now = datetime(2026, 7, 25, 12, 0, tzinfo=metrics.CYCLE_TZ)
     # cutoff = cierre del ciclo actual (2026-07-26 06:00) − 7 días.
@@ -1982,13 +2097,18 @@ def test_purge_deletes_old_applied_preserving_last_users_and_unapplied(db):
     u1, u2 = str(uuid.uuid4()), str(uuid.uuid4())
     rows = [
         # (lsn, tabla, op, pk, payload, received, applied?)
-        (1, "jobs", "I", "j-old", {}, old, True),          # borra
+        (1, "jobs", "I", "j-old", {}, old, True),          # borra (superada)
         (2, "users", "I", u1, {"id": u1, "is_active": True}, old, True),   # borra
         (3, "users", "U", u1, {"id": u1, "is_active": False}, old, True),  # PRESERVA (última users de u1)
         (4, "users", "I", u2, {"id": u2, "is_active": False}, old, True),  # PRESERVA (última users de u2)
         (5, "users", "D", "u-gone", {}, old, True),        # borra (el ERASE ya corrió)
         (6, "jobs", "U", "j-pend", {}, old, False),        # PRESERVA (sin aplicar)
         (7, "jobs", "I", "j-recent", {}, recent, True),    # PRESERVA (reciente)
+        (8, "jobs", "U", "j-old", {}, old, True),          # PRESERVA (última de j-old)
+        # G5-P2-1: para `jobs` la última puede ser una D — un borrado es un
+        # CIERRE y es EVIDENCIA para el criterio de la gracia (a diferencia de
+        # la D de `users`, que no aporta nada a inactive_user_refs).
+        (9, "jobs", "D", "j-gone", {}, old, True),         # PRESERVA (última de j-gone)
     ]
     for lsn, t, op, pk, payload, recv, applied in rows:
         _exec(
@@ -2029,7 +2149,7 @@ def test_purge_deletes_old_applied_preserving_last_users_and_unapplied(db):
     assert result["staging_deleted"] == 3  # lsn 1, 2 y 5
     assert result["sample_rows_pruned"] == 1
     kept = {r.lsn for r in _rows(factory, "SELECT lsn FROM shadow_change_log")}
-    assert kept == {3, 4, 6, 7}
+    assert kept == {3, 4, 6, 7, 8, 9}
     # La NOTA del proyector se cumple: la exclusión de inactivos SIGUE viva.
     assert _run(exclusion()) == {u1, u2}
     # Poda de samples: el ciclo viejo queda con el rastro, el actual intacto.

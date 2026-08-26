@@ -129,7 +129,7 @@ from jobhunt_core.shadow.labels import (
     dedup_cohort_frozen_at,
     map_job_refs_to_vacancies,
 )
-from jobhunt_core.shadow.projector import SHADOW_CONSUMER, inactive_user_refs
+from jobhunt_core.shadow.projector import inactive_user_refs
 
 logger = logging.getLogger(__name__)
 
@@ -1076,64 +1076,110 @@ def _sink_quarantines_url(url: str | None) -> bool:
 
 async def _huecos_en_transicion(
     session: AsyncSession, candidatos: list[str]
-) -> set[str]:
+) -> dict[str, str]:
     """De los huecos con cambio PENDIENTE reciente, los que la sombra SÍ
     explica: aquellos para los que el proyector NO DEBÍA tener slot abierto.
+    Devuelve {pk: razón} — la razón se persiste en `details` y la imprime el
+    informe legible (G5-P3-1: el operador tiene que poder distinguir un
+    enmascaramiento legítimo de uno indebido sin abrir la BD).
 
-    CRITERIO ÚNICO (léase antes de tocar esta función — lleva tres ciclos
-    reinterpretándose): el veredicto lo da el ESTADO QUE EL PROYECTOR HA
-    APLICADO, no la forma del slot. Se espeja el predicado PROPIO del
-    proyector (`projector._is_close`: `op='D'`, `is_active=false` o
-    `duplicate_of` no nulo) sobre el ÚLTIMO cambio APLICADO de ese pk:
+    CRITERIO ÚNICO (léase antes de tocar esta función — lleva cuatro ciclos
+    reinterpretándose). La gracia exige EVIDENCIA POSITIVA de que el proyector
+    obró bien; la AUSENCIA de evidencia nunca la concede (G5-P2-1: ausencia de
+    evidencia ≠ evidencia de ausencia). Dos fuentes de evidencia, en este
+    orden de prioridad:
 
-    - último aplicado = CIERRE  ⇒ no había slot que crear ⇒ GRACIA (el hueco
-      lo explica el cambio pendiente, que es la reapertura en vuelo);
-    - último aplicado = APERTURA (cualquier payload que `_is_close` no cierre,
-      incluido uno vacío: el proyector lo habría upserteado) y aun así NO hay
-      slot ⇒ el proyector tuvo su oportunidad y no la usó ⇒ PÉRDIDA;
-    - NINGÚN cambio aplicado ⇒ el proyector no ha tenido turno todavía ⇒
-      GRACIA (y si el pendiente se atasca >1h, el término de BACKLOG lo pinta
-      rojo igual: la gracia jamás puede volverse permanente).
+    1. El ÚLTIMO cambio APLICADO del pk, espejando el predicado PROPIO del
+       proyector (`projector._is_close`: `op='D'`, `is_active=false` o
+       `duplicate_of` no nulo):
+       - último aplicado = CIERRE  ⇒ no había slot que crear ⇒ GRACIA (el
+         hueco lo explica el cambio pendiente, que es la reapertura en vuelo);
+       - último aplicado = APERTURA (cualquier payload que `_is_close` no
+         cierre, incluido uno vacío: el proyector lo habría upserteado) y aun
+         así NO hay slot ⇒ el proyector tuvo su oportunidad y no la usó ⇒
+         PÉRDIDA. Esta rama MANDA sobre la 2: un slot cerrado al que el
+         proyector ya declaró activo sin reabrirlo es pérdida (G3-P2-1, 2ª
+         forma), no una reapertura en vuelo.
+    2. Sin ningún cambio aplicado que consultar, el ESTADO DURABLE del propio
+       proyector: si el pk TIENE slot `legacy:*` (necesariamente CERRADO — con
+       encarnación activa no sería hueco), ese cierre es evidencia de que el
+       proyector lo gestionó y el pendiente es la reapertura ⇒ GRACIA
+       (G2-P2-2). Si NO hay slot NI cambio aplicado, no hay nada que explique
+       el hueco ⇒ PÉRDIDA.
 
-    El espejo es EXACTO porque wal2json emite todas las columnas no-TOAST en
-    cada I/U (`is_active` es boolean: jamás se omite), así que el último
-    cambio aplicado lleva el mismo estado que el fold por lote del proyector.
+    G5-P2-1 — por qué la ausencia dejó de graciar: `purge_staging` (este mismo
+    módulo) borra el staging aplicado a los 7 días. Con la rama antigua
+    «ningún cambio aplicado ⇒ GRACIA», bastaba con que la purga se llevara la
+    evidencia para que una pérdida REAL y PERMANENTE se sellara en VERDE y
+    contara para la racha de 7 (medido en el clúster: 6.979 de 10.805 jobs
+    legacy ya no tenían ninguna fila en el log). El criterio es ahora
+    FAIL-CLOSED ante la ausencia, y `purge_staging` PRESERVA además la última
+    fila aplicada de cada pk de `jobs` —igual que ya hacía con `users`— para
+    que la evidencia legítima no se evapore y produzca el falso ROJO simétrico
+    (el caso G4-P2-1 con su cierre aplicado hace más de 7 días).
 
-    Las TRES patologías que este criterio cubre a la vez:
+    El espejo del payload es EXACTO porque wal2json emite todas las columnas
+    no-TOAST en cada I/U (`is_active` es boolean: jamás se omite). G5-N-1: si
+    aun así una fila declara `is_active`/`duplicate_of` en `_omitted`, es
+    CIEGA para este predicado y se salta al elegir el «último aplicado» — leer
+    su `is_active` ausente como «no cierra» convertiría un renombrado de
+    columna en el legacy en un falso ROJO masivo.
+
+    Las CUATRO patologías que este criterio cubre a la vez:
     - G2-P2-2 (falso ROJO): reactivación de un job con slot CERRADO y su CDC
-      en vuelo ⇒ último aplicado = cierre ⇒ gracia.
-    - G3-P2-1 (falso VERDE): job vivo cuyo cambio se aplicó como APERTURA hace
-      días sin que se creara slot ⇒ pérdida, la gracia no lo tapa por mucho
-      que llegue el UPDATE rutinario de la re-cosecha.
+      en vuelo ⇒ gracia (por evidencia 1 si su cierre está aplicado, por la 2
+      si no).
+    - G3-P2-1 (falso VERDE): job vivo cuyo cambio se aplicó como APERTURA sin
+      que se creara slot ⇒ pérdida, la gracia no lo tapa por mucho que llegue
+      el UPDATE rutinario de la re-cosecha.
     - G4-P2-1 (falso ROJO): job INACTIVO en el bootstrap — el backfill vuelca
       `jobs` sin filtrar `is_active` y el proyector aplica ese I como cierre
-      SIN crear slot (correcto y documentado). Al reactivarlo el legacy
-      (rutinario) el hueco NO es pérdida: el último aplicado es un cierre.
-      La forma del slot no lo distinguía; el ESTADO APLICADO sí.
+      SIN crear slot (correcto y documentado). Al reactivarlo el legacy el
+      hueco NO es pérdida: el último aplicado es un cierre.
       (G4-N-5: por espejar el predicado COMPLETO, un cierre por
-      `duplicate_of` tampoco veta ya la gracia de la reactivación posterior.)"""
+      `duplicate_of` tampoco veta ya la gracia de la reactivación posterior.)
+    - G5-P2-1 (falso VERDE): pérdida real cuya evidencia purgó la retención
+      ⇒ sin slot y sin cambio aplicado ⇒ PÉRDIDA."""
     if not candidatos:
-        return set()
+        return {}
     rows = await session.execute(
         sa.text(
             # Último cambio APLICADO por pk en el orden en que el proyector
-            # los consume (lsn, seq_in_tx) y espejo de _is_close sobre él.
+            # los consume (lsn, seq_in_tx), saltando las filas CIEGAS para el
+            # predicado (G5-N-1), y espejo de _is_close sobre él.
             "WITH ultimo AS ("
             "  SELECT DISTINCT ON (a.pk) a.pk, a.op, a.payload "
             "  FROM shadow_change_log a "
             "  WHERE a.src_table = 'jobs' AND a.pk = ANY(:cands) "
             "    AND a.applied_at IS NOT NULL "
-            "  ORDER BY a.pk, a.lsn DESC, a.seq_in_tx DESC) "
-            "SELECT c.ext FROM unnest(CAST(:cands AS text[])) AS c(ext) "
+            "    AND NOT COALESCE("
+            "      a.payload -> '_omitted' @> '[\"is_active\"]' "
+            "      OR a.payload -> '_omitted' @> '[\"duplicate_of\"]', false) "
+            "  ORDER BY a.pk, a.lsn DESC, a.seq_in_tx DESC), "
+            # Estado DURABLE del proyector: existe slot legacy para el pk (si
+            # llega aquí, sin encarnación activa ⇒ cerrado).
+            "slot AS ("
+            "  SELECT DISTINCT l.external_id AS pk "
+            "  FROM source_listings l "
+            "  JOIN sources s ON s.id = l.source_id AND s.name LIKE 'legacy:%' "
+            "  WHERE l.external_id = ANY(:cands)) "
+            "SELECT c.ext, CASE "
+            "  WHEN u.pk IS NULL THEN 'slot cerrado (sin cambio aplicado)' "
+            "  WHEN u.op = 'D' THEN 'último cambio aplicado = borrado (D)' "
+            "  WHEN u.payload ->> 'is_active' = 'false' "
+            "    THEN 'último cambio aplicado = is_active=false' "
+            "  ELSE 'último cambio aplicado = duplicate_of' END AS razon "
+            "FROM unnest(CAST(:cands AS text[])) AS c(ext) "
             "LEFT JOIN ultimo u ON u.pk = c.ext "
-            "WHERE u.pk IS NULL "
-            "   OR u.op = 'D' "
-            "   OR u.payload ->> 'is_active' = 'false' "
-            "   OR u.payload ->> 'duplicate_of' IS NOT NULL"
+            "LEFT JOIN slot k ON k.pk = c.ext "
+            "WHERE CASE WHEN u.pk IS NULL THEN k.pk IS NOT NULL "
+            "  ELSE (u.op = 'D' "
+            "        OR u.payload ->> 'is_active' = 'false' "
+            "        OR u.payload ->> 'duplicate_of' IS NOT NULL) END"
         ),
         {"cands": sorted(candidatos)},
     )
-    return set(rows.scalars().all())
+    return {r.ext: r.razon for r in rows}
 
 
 async def _perdida_rows(
@@ -1209,10 +1255,12 @@ async def _perdida_rows(
         )
     }
     sin_slot = [h for h in vivos_hashes if h not in active_slots]
-    # G3-P2-1 / G4-P2-1: la gracia exige que la sombra EXPLIQUE este hueco —
-    # que el ÚLTIMO cambio APLICADO fuera un cierre para el propio predicado
-    # del proyector—, no que exista un cambio cualquiera del mismo pk (falso
-    # VERDE) ni que el slot tenga cierta forma (falso ROJO).
+    # G3-P2-1 / G4-P2-1 / G5-P2-1: la gracia exige EVIDENCIA POSITIVA de que
+    # la sombra explica este hueco (último cambio APLICADO = cierre, o slot
+    # cerrado cuando no queda cambio aplicado que consultar), no que exista un
+    # cambio cualquiera del mismo pk (falso VERDE), ni que el slot tenga
+    # cierta forma (falso ROJO), ni la mera AUSENCIA de evidencia — que la
+    # purga de retención fabrica sola (falso VERDE, G5-P2-1).
     graciados = await _huecos_en_transicion(
         session, [h for h in sin_slot if h in en_vuelo]
     )
@@ -1239,6 +1287,12 @@ async def _perdida_rows(
         # imprimía).
         "huecos_con_cambio_en_vuelo": len(graciados),
         "huecos_graciados_muestra": sorted(graciados)[:50],  # acotada
+        # G5-P3-1: la RAZÓN por pk — el informe legible afirmaba «slot
+        # cerrado» para huecos que jamás tuvieron slot. El operador decide un
+        # go/no-go con esta traza: tiene que decir la verdad y desglosarse.
+        "huecos_graciados_razones": {
+            h: graciados[h] for h in sorted(graciados)[:50]
+        },
         "gracia_backlog_s": STAGING_BACKLOG_GRACE_S,
         "gracia_alta_s": STAGING_BACKLOG_GRACE_S,  # misma gracia (H-7)
         "gracia_transicion_s": STAGING_BACKLOG_GRACE_S,  # G2-P2-2
@@ -1801,10 +1855,20 @@ def _report_details(details_by: dict) -> list[str]:
         # así que un enmascaramiento era invisible para el operador.
         graciados = perdida.get("huecos_con_cambio_en_vuelo", 0)
         if graciados:
+            # G5-P3-1: la línea decía «slot cerrado» para TODOS, incluida la
+            # población que G4-P2-1 añadió — huecos que JAMÁS tuvieron slot.
+            # Ahora nombra el criterio real y desglosa la razón por pk (los
+            # ciclos sellados antes del fix no la tienen: se degrada al
+            # listado a secas, nunca a una afirmación falsa).
+            razones = perdida.get("huecos_graciados_razones") or {}
+            muestra = perdida.get("huecos_graciados_muestra", [])[:5]
+            detalle = ", ".join(
+                f"{h} [{razones[h]}]" if h in razones else h for h in muestra
+            )
             lines.append(
                 f"    · {graciados} hueco(s) GRACIADOS por reapertura en vuelo"
-                f" (slot cerrado + cambio pendiente <1h): "
-                f"{', '.join(perdida.get('huecos_graciados_muestra', [])[:5])}"
+                f" (el proyector NO debía tener slot abierto + cambio"
+                f" pendiente <1h): {detalle}"
             )
     # G3-A-P2-1: el colapso de refs juzgados en una MISMA vacante (attach) es
     # lo que separa el ideal del core del ideal del legacy — sin verlo, un
@@ -1853,10 +1917,18 @@ async def purge_staging(
     """Purga del staging APLICADO (§7, retención de §2: ciclos cerrados + 7
     días): DELETE de shadow_change_log WHERE applied_at IS NOT NULL AND
     received_at < (cierre del ciclo ACTUAL − 7 días), PRESERVANDO SIEMPRE la
-    última fila `users` (op I/U, aplicada) de CADA pk — es EXACTAMENTE la
-    fila que lee inactive_user_refs del proyector (su NOTA documentada):
-    borrarla haría olvidar la exclusión de usuarios inactivos. Lo NO aplicado
+    ÚLTIMA fila aplicada de CADA pk de `users` Y de `jobs`. Lo NO aplicado
     jamás se toca (sigue pendiente de proyectar, sea de cuando sea).
+
+    DOS consumidores dependen de ese «último por pk» — quien toque esta purga
+    tiene que conocer los dos (G5-P2-1: la purga conocía uno solo):
+    - `users` (op I/U): `projector.inactive_user_refs` — borrarla haría
+      olvidar la exclusión de usuarios inactivos (su NOTA documentada);
+    - `jobs` (CUALQUIER op, la D incluida: un borrado es un CIERRE y es
+      evidencia): `_huecos_en_transicion` decide con ella si un hueco del
+      espejo está EXPLICADO. Sin la fila, el criterio es fail-closed y pinta
+      de ROJO un cierre legítimo aplicado hace más de 7 días (el caso
+      G4-P2-1). Coste: ~1 fila retenida por job — el mismo trato que `users`.
 
     También poda los arrays details.samples de outbox_lag_p99 en ciclos ya
     fuera de retención, SOLO en filas cuyo p99 quedó SELLADO por
@@ -1876,13 +1948,17 @@ async def purge_staging(
             sa.text(
                 "DELETE FROM shadow_change_log c "
                 "WHERE c.applied_at IS NOT NULL AND c.received_at < :cutoff "
-                "AND NOT (c.src_table = 'users' AND (c.lsn, c.seq_in_tx) IN ("
+                "AND NOT ((c.lsn, c.seq_in_tx) IN ("
                 "  SELECT lsn, seq_in_tx FROM ("
-                "    SELECT DISTINCT ON (pk) lsn, seq_in_tx "
+                "    SELECT DISTINCT ON (src_table, pk) lsn, seq_in_tx "
                 "    FROM shadow_change_log "
-                "    WHERE src_table = 'users' AND op IN ('I', 'U') "
+                "    WHERE src_table IN ('users', 'jobs') "
                 "      AND applied_at IS NOT NULL "
-                "    ORDER BY pk, lsn DESC, seq_in_tx DESC) last_users))"
+                # users: solo I/U (la D de un usuario ya la ejecutó el ERASE y
+                # no aporta estado a inactive_user_refs). jobs: TODAS las ops.
+                "      AND (src_table <> 'users' OR op IN ('I', 'U')) "
+                "    ORDER BY src_table, pk, lsn DESC, seq_in_tx DESC"
+                "  ) last_rows))"
             ),
             {"cutoff": cutoff},
         )
