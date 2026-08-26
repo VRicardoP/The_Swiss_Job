@@ -355,6 +355,12 @@ class TestP22AlertaProfesorDePrimaria:
         [
             ("ENSEIGNANTE PRIMAIRE POUR UN REMPLACEMENT", WATCHLIST_TAGS),
             ("UNO INSTRUCTOR PER LA SCUOLA ELEMENTARE", SKILL_TAGS),
+            # G4/P1-4 — los DOS títulos con los que `5cc91d3` justificó su fix
+            # del clasificador NO estaban en esta clase end-to-end: solo se
+            # parametrizaban las grafías sin guion. El clasificador los daba
+            # por H y la alerta seguía muda.
+            ("ENSEIGNANT-E PRIMAIRE POUR UN REMPLACEMENT", WATCHLIST_TAGS),
+            ("UN-E ENSEIGNANT-E PRIMAIRE", WATCHLIST_TAGS),
         ],
     )
     def test_la_alerta_vuelve_a_dispararse(self, title, tags):

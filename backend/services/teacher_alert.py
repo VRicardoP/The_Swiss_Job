@@ -46,6 +46,20 @@ _PRIMARY_MARKERS: tuple[str, ...] = (
     "maestro de primaria",
 )
 
+# G4/P1-4 — marcadores COMPUESTOS: todos sus términos deben aparecer en el
+# haystack, en cualquier orden y a cualquier distancia. Existen por la forma
+# EPICENA del francés administrativo suizo —«Enseignant-e», «Enseignant·e»,
+# «Enseignant(e)», «Enseignants-es»—, que es la convención DOMINANTE en la
+# Suiza francófona (Champittet/NAE, Ecolint, HautLac, ISCS) y no casa con
+# ningún literal contiguo de la lista de arriba: entre «enseignant» y
+# «primaire» se cuela el sufijo epiceno, así que «enseignant-e primaire» no
+# contiene «enseignant primaire». Un par de términos lo cubre sin tener que
+# enumerar cada grafía (guion, punto medio, paréntesis, barra, plural
+# «-es»), y de paso recoge las inversiones («Un-e enseignant-e pour le degré
+# primaire»). Sobre-inclusivo a propósito: esta alerta es opt-in y su razón
+# de ser es NO perder la vacante.
+_PRIMARY_MARKER_PAIRS: tuple[tuple[str, ...], ...] = (("enseignant", "primaire"),)
+
 
 def is_primary_teacher_job(
     category: str | None, title: str | None, tags: list[str] | None
@@ -54,7 +68,9 @@ def is_primary_teacher_job(
     if (category or "") != _TEACHING_CATEGORY:
         return False
     haystack = (title or "").lower() + " " + " ".join(tags or []).lower()
-    return any(marker in haystack for marker in _PRIMARY_MARKERS)
+    if any(marker in haystack for marker in _PRIMARY_MARKERS):
+        return True
+    return any(all(term in haystack for term in pair) for pair in _PRIMARY_MARKER_PAIRS)
 
 
 def build_alert_email(jobs: list) -> tuple[str, str, str]:

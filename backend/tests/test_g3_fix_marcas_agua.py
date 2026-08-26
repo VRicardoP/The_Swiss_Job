@@ -180,6 +180,16 @@ class TestP11AlertaProfesor:
         assert len(email.sent) == 1
 
     async def test_fallo_de_envio_libera_el_marcador(self, db_session, monkeypatch):
+        """G4/P1-2 — la oferta nace FUERA del lag de 15 min, que es el caso real.
+
+        Este test nacía con `first_seen_at = ahora`, dentro de los 15 minutos
+        de `NOTIFY_WATERMARK_LAG_MINUTES`, así que el retry la recuperaba por
+        el solape aunque la marca hubiera avanzado: verificaba el
+        `unmark_sent` y NO la aritmética de la marca. Con la cosecha diaria y
+        la alerta cada 6 h, toda oferta de la ventana tiene HORAS de
+        antigüedad — y con la marca guardada antes del envío quedaba por
+        debajo de la marca nueva y no volvía a entrar en ninguna corrida.
+        """
         monkeypatch.setattr(settings, "TEACHER_ALERT_ENABLED", True)
         monkeypatch.setattr(settings, "TEACHER_ALERT_EMAIL", "aviso@example.com")
         fake = _FakeRedis()
@@ -188,6 +198,7 @@ class TestP11AlertaProfesor:
             "g3wm-teacher-3",
             title="Primarlehrperson 60%",
             category="H",
+            first_seen_at=datetime.now(timezone.utc) - timedelta(hours=3),
         )
 
         with pytest.raises(RuntimeError):
@@ -198,6 +209,7 @@ class TestP11AlertaProfesor:
         assert result["matched"] == 1, (
             "tras un fallo de SMTP el aviso debe reintentarse, no perderse"
         )
+        assert len(ok.sent) == 1
 
 
 @pytest.mark.asyncio

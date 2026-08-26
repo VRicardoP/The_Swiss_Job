@@ -96,13 +96,8 @@ async def _detect_and_notify() -> dict[str, Any]:
     ]
 
     # G3/P1-1: la marca se guarda con LAG (ventana solapada, ver
-    # tasks/watermarks.py) y la idempotencia pasa a ser POR OFERTA. Eso
-    # deroga el trade-off de G1/P2-15 («marca antes de enviar para no
-    # duplicar nunca, aun a costa de perder ese aviso»): ahora el solape
-    # recupera lo que la cosecha commiteó tarde y el marcador impide el
-    # reenvío.
-    save_watermark(r, _WATERMARK_KEY, now)
-
+    # tasks/watermarks.py) y la idempotencia pasa a ser POR OFERTA, así que el
+    # solape recupera lo que la cosecha commiteó tarde sin reenviar nada.
     fresh_hashes = set(filter_unsent(r, _SENT_PREFIX, [j.hash for j in matches]))
     fresh = [j for j in matches if j.hash in fresh_hashes]
 
@@ -121,6 +116,17 @@ async def _detect_and_notify() -> dict[str, Any]:
             len(fresh),
             settings.TEACHER_ALERT_EMAIL,
         )
+
+    # G4/P1-2 — la marca se guarda DESPUÉS del envío, dentro del camino de
+    # éxito (mismo criterio que digest_tasks:149 y watchlist_tasks). Guardarla
+    # antes perdía el lote ENTERO ante un fallo de SMTP: el `unmark_sent` de
+    # arriba retira los marcadores por-oferta, pero la marca de agua ya había
+    # avanzado y solo retrocede `NOTIFY_WATERMARK_LAG_MINUTES` (15 min) —
+    # con la cosecha diaria y la alerta cada 6 h, TODA oferta de la ventana
+    # tiene más de 15 minutos y quedaba por debajo de la marca nueva: no
+    # volvía a entrar en ninguna corrida. Con `fresh` vacío se guarda igual
+    # (no hubo nada que enviar, la ventana está limpia).
+    save_watermark(r, _WATERMARK_KEY, now)
 
     r.close()
 
