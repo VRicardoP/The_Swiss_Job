@@ -62,6 +62,38 @@ def _is_lock_timeout(exc: DBAPIError) -> bool:
     return code == _LOCK_NOT_AVAILABLE
 
 
+async def _reserve_or_read(session, keys, request_hash, expires):
+    """(owned, row): reserva la key con INSERT ... ON CONFLICT DO NOTHING y, si
+    conflictó, LEE la fila del dueño. `row` es None cuando la fila que provocó
+    el conflicto ya no existe (purga concurrente — G2-P3-3): el llamador decide
+    si reintentar. Ambas sentencias son las del contrato; el `.one_or_none()`
+    sustituye al `.one()` que reventaba en esa carrera."""
+    owned = (
+        await session.execute(
+            sa.text(
+                "INSERT INTO idempotency_records "
+                "(consumer_id, key, route, request_hash, response, expires_at) "
+                "VALUES (:cid, :k, :r, :h, NULL, :exp) "
+                "ON CONFLICT (consumer_id, key, route) DO NOTHING "
+                "RETURNING consumer_id"
+            ),
+            {**keys, "h": request_hash, "exp": expires},
+        )
+    ).scalar_one_or_none()
+    if owned is not None:
+        return owned, None
+    row = (
+        await session.execute(
+            sa.text(
+                "SELECT request_hash, response FROM idempotency_records "
+                "WHERE consumer_id = :cid AND key = :k AND route = :r"
+            ),
+            keys,
+        )
+    ).one_or_none()
+    return None, row
+
+
 async def run_idempotent(session, principal, route, request_hash, key, handler):
     """Ejecuta `handler` con idempotencia si `key` no es None.
 
@@ -91,18 +123,15 @@ async def run_idempotent(session, principal, route, request_hash, key, handler):
         {"ms": str(settings.CORE_IDEMPOTENCY_LOCK_TIMEOUT_MS)},
     )
     try:
-        owned = (
-            await session.execute(
-                sa.text(
-                    "INSERT INTO idempotency_records "
-                    "(consumer_id, key, route, request_hash, response, expires_at) "
-                    "VALUES (:cid, :k, :r, :h, NULL, :exp) "
-                    "ON CONFLICT (consumer_id, key, route) DO NOTHING "
-                    "RETURNING consumer_id"
-                ),
-                {**keys, "h": request_hash, "exp": expires},
-            )
-        ).scalar_one_or_none()
+        owned, row = await _reserve_or_read(session, keys, request_hash, expires)
+        if owned is None and row is None:
+            # G2-P3-3: la reserva conflictó pero la fila YA NO ESTÁ — la purga
+            # (beat horario) borró la caducada y commiteó entre el INSERT (que
+            # con DO NOTHING no bloquea la fila existente) y el SELECT (READ
+            # COMMITTED: snapshot nuevo por sentencia). La key quedó LIBRE, así
+            # que se reintenta la reserva UNA vez: ejecución normal en vez de un
+            # NoResultFound → 500.
+            owned, row = await _reserve_or_read(session, keys, request_hash, expires)
     except DBAPIError as exc:
         # asyncpg envuelve el 55P03 como DBAPIError (no siempre OperationalError):
         # se captura la base y se filtra por sqlstate. Cualquier otro error de BD
@@ -138,15 +167,15 @@ async def run_idempotent(session, principal, route, request_hash, key, handler):
         return status, payload
 
     # CONFLICTO: nuestro INSERT esperó al dueño; su fila ya está commiteada.
-    row = (
-        await session.execute(
-            sa.text(
-                "SELECT request_hash, response FROM idempotency_records "
-                "WHERE consumer_id = :cid AND key = :k AND route = :r"
-            ),
-            keys,
+    if row is None:
+        # Dos carreras seguidas con la purga (ventana de milisegundos): 409
+        # reintentable, jamás un 500 ni una doble ejecución.
+        raise ApiError(
+            409, "idempotency_in_progress",
+            "la reserva de esta Idempotency-Key se purgó a mitad de la "
+            "petición — reintenta",
+            {"key": key},
         )
-    ).one()
     if row.request_hash != request_hash:
         raise ApiError(
             409, "idempotency_conflict",

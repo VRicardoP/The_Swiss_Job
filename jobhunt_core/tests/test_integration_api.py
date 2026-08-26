@@ -1177,3 +1177,67 @@ def test_erase_gdpr_removes_applications_and_saved_searches(db):
             return tuple(out)
 
     assert asyncio.run(counts()) == (0, 0, 0)
+
+
+def test_idempotency_purge_race_reserves_again_instead_of_500(db):
+    """Regresión G2-P3-3: en el camino de CONFLICTO, el `INSERT ... ON CONFLICT
+    DO NOTHING` NO bloquea la fila existente, así que la purga (beat horario)
+    puede borrar la reserva CADUCADA y commitear entre ese INSERT y el SELECT
+    posterior (READ COMMITTED: snapshot nuevo por sentencia) — el `.one()`
+    lanzaba NoResultFound ⇒ 500 internal_error al cliente. Con la fila purgada
+    la key quedó LIBRE: la reserva se reintenta y la petición se EJECUTA."""
+    from jobhunt_core.api.deps import Principal
+    from jobhunt_core.api.idempotency import run_idempotent
+
+    factory, created = db
+    cid, _kid, _token = _issue(factory, created, "tenant-race", ALL_SCOPES)
+    route, key = "POST /v1/race", "k-race"
+
+    class _PurgeAfterReserve:
+        """Proxy de sesión: ejecuta la purga en OTRA conexión JUSTO después del
+        INSERT-reserva, que es la ventana exacta de la carrera."""
+
+        def __init__(self, inner):
+            self._inner = inner
+            self._fired = False
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        async def execute(self, statement, *args, **kwargs):
+            result = await self._inner.execute(statement, *args, **kwargs)
+            if not self._fired and "ON CONFLICT (consumer_id, key, route)" in str(
+                statement
+            ):
+                self._fired = True
+                async with factory() as purger:
+                    await purger.execute(sa.text(
+                        "DELETE FROM idempotency_records WHERE expires_at < now()"
+                    ))
+                    await purger.commit()
+            return result
+
+    calls = {"n": 0}
+
+    async def handler():
+        calls["n"] += 1
+        return 201, {"ok": True}
+
+    async def go():
+        async with factory() as s:  # reserva CADUCADA ya commiteada
+            await s.execute(sa.text(
+                "INSERT INTO idempotency_records "
+                "(consumer_id, key, route, request_hash, response, expires_at) "
+                "VALUES (:c, :k, :r, 'h0', '{\"status\": 200, \"body\": {}}'::jsonb, "
+                " now() - interval '1 second')"
+            ), {"c": cid, "k": key, "r": route})
+            await s.commit()
+        async with factory() as s:
+            return await run_idempotent(
+                _PurgeAfterReserve(s), Principal(cid, tuple(ALL_SCOPES)),
+                route, "h1", key, handler,
+            )
+
+    status, payload = asyncio.run(go())  # antes: NoResultFound → 500
+    assert (status, payload) == (201, {"ok": True})
+    assert calls["n"] == 1  # ejecución NORMAL, no un 500 ni una doble ejecución
