@@ -337,3 +337,65 @@ def test_list_keyset_pagination(db):
     assert tia._api(
         factory, f"/v1/saved-searches?profile={pid}", token=intruder
     ).status_code == 404
+
+
+def test_g7_cuerpo_no_almacenable_es_400_de_frontera_y_no_500(db):
+    """REGRESIÓN G7-P3-1: `NaN`/`Infinity` y el NUL del cuerpo HTTP daban un
+    **500** en vez del 400 del contrato.
+
+    El decodificador de cuerpo de Starlette es el `json.loads` de la stdlib,
+    que acepta los literales NO estándar `NaN`/`Infinity` y el escape
+    `\\u0000`; `filters: Any` no los filtra, `json.dumps` los re-emite tal cual
+    y el `CAST(:filters AS jsonb)` los RECHAZA — el sobre de error de
+    `api/main.py` convertía el `DBAPIError` en un 500 servido por ENTRADA DE
+    USUARIO. El camino de IMPORT fue endurecido para esta misma clase (G1-P2-1,
+    G2-P2-1, G3-P3-2) pero por COERCIÓN, que es lo correcto en una migración y
+    lo incorrecto en un endpoint vivo: aquí se rechaza en frontera, no se
+    sustituyen caracteres del filtro del usuario en silencio.
+
+    Se comprueban las dos formas y las dos direcciones (POST y PUT), y que
+    nada se escribe."""
+    factory, created = db
+    token, _tenant, pid = _seed_profile(factory, created)
+
+    # (1) NaN — solo viaja como cuerpo CRUDO: httpx serializa con allow_nan=False.
+    crudo = (
+        '{"profile_id": "%s", "name": "nan", "filters": {"salary_min": NaN}}' % pid
+    )
+    r = tia._api(
+        factory, "/v1/saved-searches", token=token,
+        headers={"Idempotency-Key": "ssk-" + uuid.uuid4().hex[:10]},
+        method="POST", content=crudo,
+    )
+    assert r.status_code == 400, r.text
+    assert r.json()["code"] == "invalid_json", r.text
+
+    # (2) NUL — JSON perfectamente válido (`\\u0000`), tóxico para jsonb y text.
+    r = _post(
+        factory, token,
+        {"profile_id": str(pid), "name": "nul", "filters": {"q": "a\x00b"}},
+    )
+    assert r.status_code == 400, r.text
+    assert r.json()["code"] == "invalid_json", r.text
+
+    # Ninguna de las dos llegó a escribir nada.
+    assert _rows(
+        factory, "SELECT 1 FROM saved_searches WHERE profile_id = :p", p=pid
+    ) == []
+
+    # (3) El PUT tiene el mismo guard y la fila vigente NO se toca.
+    ok = _post(factory, token, {"profile_id": str(pid), "name": "buena",
+                                "filters": {"q": "python"}})
+    assert ok.status_code == 201, ok.text
+    sid = ok.json()["id"]
+    bad = tia._api(
+        factory, f"/v1/saved-searches/{sid}", token=token, method="PUT",
+        content='{"name": "rota", "filters": {"x": Infinity}}',
+    )
+    assert bad.status_code == 400, bad.text
+    assert bad.json()["code"] == "invalid_json"
+    vigente = _rows(
+        factory,
+        "SELECT name, revision FROM saved_searches WHERE id = :i", i=sid,
+    )[0]
+    assert (vigente.name, vigente.revision) == ("buena", 1)

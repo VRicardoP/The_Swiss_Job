@@ -969,3 +969,30 @@ def test_erase_covers_v1_written_rows(db):
         factory,
         "SELECT 1 FROM integration_outbox WHERE subject_profile_id = :p", p=pid,
     ) == []
+
+
+def test_g7_cuerpo_no_almacenable_es_400_de_frontera_y_no_500(db):
+    """REGRESIÓN G7-P3-1 en el otro extremo de la misma clase: el snapshot
+    (`title/company/url/source/description`) va a un `CAST(:snap AS jsonb)` y
+    `notes` a una columna `text`. Ninguno de los dos admite el NUL que el
+    `json.loads` de la stdlib decodifica sin rechistar desde `\\u0000`, y los
+    DTO no lo filtran (un NUL no viola ningún `max_length`). Salía **500** por
+    entrada de usuario; ahora es el 400 de frontera del contrato, y no se
+    crea la candidatura."""
+    factory, created = db
+    token, _tenant, pid, vacs = _seed(factory, created, n=1)
+    vid, _url = vacs[0]
+
+    for campo, valor in (("description", "linea1\x00linea2"), ("notes", "a\x00b")):
+        r = _post_app(
+            factory, token,
+            {"profile_id": str(pid), "vacancy_id": str(vid), "title": "T",
+             campo: valor},
+            key="app-" + uuid.uuid4().hex[:10],
+        )
+        assert r.status_code == 400, (campo, r.text)
+        assert r.json()["code"] == "invalid_json", (campo, r.text)
+
+    assert _rows(
+        factory, "SELECT 1 FROM applications WHERE profile_id = :p", p=pid
+    ) == []

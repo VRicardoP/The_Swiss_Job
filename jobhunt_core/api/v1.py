@@ -25,6 +25,7 @@ from jobhunt_core.api import schemas
 from jobhunt_core.api.deps import (
     ApiError,
     Principal,
+    ensure_json_storable,
     error_404,
     get_session,
     require_scope,
@@ -484,6 +485,11 @@ async def put_profile(
       Devuelve la representación nueva con su ETag."""
     idem_key = request.headers.get("idempotency-key")
     route = f"PUT {request.url.path}"
+    # G7-P3-1: frontera ANTES de reservar la idempotencia — el CV entero va a
+    # un CAST(:content AS jsonb) en `profiles.save_profile_revision`. Se mira
+    # el volcado PYTHON, no el de mode="json": pydantic serializa los floats
+    # no finitos a `null` y el guard no llegaría a verlos.
+    ensure_json_storable(body.model_dump())
     req_hash = hashlib.sha256(
         json.dumps(
             body.model_dump(mode="json"), sort_keys=True, ensure_ascii=False
@@ -531,7 +537,17 @@ async def put_profile(
         session, principal, route, req_hash, idem_key, handler
     )
     return Response(
-        content=json.dumps(payload, ensure_ascii=False, default=str),
+        # G7-P3-2: `sort_keys` — era el ÚNICO endpoint que no canonicalizaba.
+        # En la 1ª ejecución `payload` es el dict de `ProfileDTO.model_dump()`
+        # (orden de declaración); en el REPLAY es `row.response["body"]` leído
+        # de una columna JSONB, que NO conserva el orden de claves (las
+        # reordena por longitud y bytes). Misma Idempotency-Key, mismo
+        # request_hash, cuerpos DISTINTOS — y el ETag no cambia (`_etag_of` sí
+        # ordena), así que un cliente que valide el cuerpo contra el ETag, o
+        # que cachee por hash del cuerpo, veía una incoherencia. El replay
+        # idempotente es byte a byte por contrato (Decisión 1), como en los
+        # cuatro endpoints de C-4 (`json_response`, v1_applications.py).
+        content=json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str),
         media_type="application/json",
         status_code=status,
         headers={"ETag": _etag_of(payload)},

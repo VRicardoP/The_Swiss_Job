@@ -24,6 +24,7 @@ from jobhunt_core.api import schemas
 from jobhunt_core.api.deps import (
     ApiError,
     Principal,
+    ensure_json_storable,
     error_404,
     get_session,
     require_scope,
@@ -74,6 +75,24 @@ def json_response(status: int, payload) -> Response:
         status_code=status,
         headers={"ETag": _etag_of(payload)},
     )
+
+
+def _check_storable(body) -> None:
+    """G7-P3-1 en este router, con UNA excepción: la `url`.
+
+    El snapshot (title/company/url/source/description) va a un
+    `CAST(:snap AS jsonb)` y `notes` a una columna `text`; ninguno de los dos
+    admite el NUL que el `json.loads` de Starlette decodifica desde `\\u0000`
+    sin rechistar y que ningún `max_length` filtra. Pero la `url` YA tiene su
+    propia frontera, más específica y contractual —la cuarentena del sink en
+    `_link` responde `400 invalid_url`—, así que adelantarse a ella solo
+    degradaría el diagnóstico del cliente. Volcado PYTHON: en `mode="json"`
+    pydantic serializa los floats no finitos a `null` y los escondería."""
+    cuerpo = body.model_dump()
+    cuerpo.pop("url", None)
+    for item in cuerpo.get("bookmarks") or []:
+        item.pop("url", None)
+    ensure_json_storable(cuerpo)
 
 
 def check_if_match(request: Request, payload: dict) -> None:
@@ -238,6 +257,7 @@ async def create_application(
     Duplicado del par (perfil, vacante) → 409 application_exists."""
     idem_key = request.headers.get("idempotency-key")
     route = f"POST {request.url.path}"
+    _check_storable(body)  # G7-P3-1, antes de reservar la idempotencia
     req_hash = request_hash(body.model_dump(mode="json"))
 
     async def handler():
@@ -354,6 +374,7 @@ async def patch_application(
     del perfil, el identificador REDIRIGE a ella). If-Match bajo FOR UPDATE."""
     idem_key = request.headers.get("idempotency-key")
     route = f"PATCH {request.url.path}"
+    _check_storable(body)  # G7-P3-1
     req_hash = request_hash(body.model_dump(mode="json", exclude_unset=True))
     provided = body.model_fields_set
 
@@ -437,6 +458,7 @@ async def sync_bookmarks(
     SOLO las creadas + los items salteados por irresolubles (G1-P3-2)."""
     idem_key = request.headers.get("idempotency-key")
     route = f"PUT {request.url.path}"
+    _check_storable(body)  # G7-P3-1
     req_hash = request_hash(body.model_dump(mode="json"))
 
     async def handler():

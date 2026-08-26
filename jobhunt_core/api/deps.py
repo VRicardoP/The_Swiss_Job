@@ -41,6 +41,55 @@ def error_404(resource: str):
     return ApiError(404, "not_found", f"{resource} no encontrado")
 
 
+def ensure_json_storable(payload, path: str = "body") -> None:
+    """400 en FRONTERA para el cuerpo que Postgres NO puede almacenar.
+
+    G7-P3-1 — la regla que faltaba en el camino VIVO. El decodificador de
+    cuerpo de Starlette es el `json.loads` de la stdlib, que acepta los
+    literales NO estándar `NaN`/`Infinity` y el escape `\\u0000`; los DTO los
+    dejan pasar (`filters: Any`, y un NUL no viola ningún `max_length`) y
+    aguas abajo acaban en un `CAST(:x AS jsonb)` —`saved_searches.filters`,
+    `applications.snapshot`, `profile_revisions.content`— o en una columna
+    `text`, que Postgres RECHAZA. Sin este guard el error salía como **500**
+    del sobre de `api/main.py`, no como el 400 de frontera del contrato, y lo
+    disparaba entrada de usuario.
+
+    El camino de IMPORT fue endurecido para esta MISMA clase (G1-P2-1,
+    G2-P2-1, G3-P3-2) pero con la respuesta que allí corresponde: COERCIÓN
+    (`_json_safe` mapea NUL→U+FFFD y no-finito→texto), porque una migración no
+    puede perder una fila por un byte. Aquí la respuesta correcta es la
+    CONTRARIA: rechazar. Un endpoint vivo que sustituya en silencio un
+    carácter del CV o del filtro del usuario le devuelve un 201 sobre datos
+    que él no escribió.
+
+    Se llama con el `model_dump` que el endpoint ya calcula para el
+    `request_hash`, ANTES de reservar la idempotencia."""
+    if isinstance(payload, str):
+        if "\x00" in payload:
+            raise ApiError(
+                400, "invalid_json",
+                f"{path}: carácter NUL (U+0000), que Postgres no admite ni en "
+                "text ni en jsonb",
+            )
+        return
+    if isinstance(payload, float):
+        if payload != payload or payload in (float("inf"), float("-inf")):
+            raise ApiError(
+                400, "invalid_json",
+                f"{path}: {payload} no es JSON válido (NaN/Infinity son "
+                "literales no estándar que Postgres rechaza)",
+            )
+        return
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            ensure_json_storable(key, f"{path}.<clave>")
+            ensure_json_storable(value, f"{path}.{key}")
+        return
+    if isinstance(payload, (list, tuple)):
+        for i, value in enumerate(payload):
+            ensure_json_storable(value, f"{path}[{i}]")
+
+
 @dataclasses.dataclass(frozen=True)
 class Principal:
     consumer_id: uuid.UUID

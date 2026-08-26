@@ -22,6 +22,7 @@ from jobhunt_core.api import schemas
 from jobhunt_core.api.deps import (
     ApiError,
     Principal,
+    ensure_json_storable,
     error_404,
     get_session,
     require_scope,
@@ -123,6 +124,10 @@ async def create_saved_search(
             "POST /v1/saved-searches exige el header Idempotency-Key",
         )
     route = f"POST {request.url.path}"
+    # G7-P3-1: frontera ANTES de reservar la idempotencia — `filters` va a un
+    # CAST(:filters AS jsonb) que rechaza NaN/Infinity y NUL. Volcado PYTHON:
+    # `mode="json"` serializa los no finitos a `null` y los escondería.
+    ensure_json_storable(body.model_dump())
     req_hash = request_hash(body.model_dump(mode="json"))
     values = _client_values(body, body.model_fields_set)
 
@@ -162,6 +167,7 @@ async def update_saved_search(
     revision+1 + evento `saved_search.changed` en la misma tx (Decisión 6)."""
     idem_key = request.headers.get("idempotency-key")
     route = f"PUT {request.url.path}"
+    ensure_json_storable(body.model_dump())  # G7-P3-1
     req_hash = request_hash(body.model_dump(mode="json", exclude_unset=True))
     provided = body.model_fields_set
     if body.filters is None:

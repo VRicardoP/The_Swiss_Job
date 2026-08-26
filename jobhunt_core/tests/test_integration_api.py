@@ -59,8 +59,16 @@ def db():
     asyncio.run(cleanup())
 
 
-def _api(factory, url, token=None, headers=None, method="GET", json_body=None):
-    """Petición contra la app real (ASGITransport) con la sesión inyectada."""
+def _api(
+    factory, url, token=None, headers=None, method="GET", json_body=None,
+    content=None,
+):
+    """Petición contra la app real (ASGITransport) con la sesión inyectada.
+
+    `content` manda el cuerpo CRUDO: httpx serializa `json=` con
+    `allow_nan=False`, así que los literales NO estándar `NaN`/`Infinity`
+    —que el `json.loads` de la stdlib con el que Starlette decodifica SÍ
+    acepta— solo se pueden enviar por esta vía (G7-P3-1)."""
 
     async def go():
         from httpx import ASGITransport, AsyncClient
@@ -80,7 +88,12 @@ def _api(factory, url, token=None, headers=None, method="GET", json_body=None):
                 h = dict(headers or {})
                 if token is not None:
                     h["Authorization"] = f"Bearer {token}"
-                kw = {"json": json_body} if json_body is not None else {}
+                kw = {}
+                if json_body is not None:
+                    kw["json"] = json_body
+                elif content is not None:
+                    kw["content"] = content
+                    h.setdefault("Content-Type", "application/json")
                 return await client.request(method, url, headers=h, **kw)
         finally:
             app.dependency_overrides.clear()
@@ -986,6 +999,15 @@ def test_idempotency_same_key_replays_without_reexecution(db):
     r2 = _api(factory, url, token=token, method="PUT", headers=h, json_body=body)
     assert r2.status_code == 200
     assert r2.json() == r1.json() and r2.headers["etag"] == r1.headers["etag"]
+    # G7-P3-2: BYTE A BYTE, no solo "el mismo objeto JSON" (Decisión 1, la que
+    # cumplen los cuatro endpoints de C-4 vía `json_response`). En la 1ª
+    # ejecución el cuerpo se serializa desde el dict del DTO (orden de
+    # DECLARACIÓN) y en el replay se relee de la columna JSONB de
+    # idempotency_records, que NO conserva el orden de claves (las reordena por
+    # longitud y bytes). Sin canonicalizar, mismo ETag —`_etag_of` sí ordena—
+    # con cuerpos DISTINTOS: un cliente que valide el cuerpo contra el ETag, o
+    # que cachee por hash del cuerpo, ve una incoherencia.
+    assert r2.content == r1.content
     # Respuesta GUARDADA (refleja el estado de r1, no la intervención externa).
     assert r2.json()["current_revision"]["content"]["title"] == "idem-title"
     # Y CERO re-ejecución: ninguna activación nueva.
@@ -1241,3 +1263,29 @@ def test_idempotency_purge_race_reserves_again_instead_of_500(db):
     status, payload = asyncio.run(go())  # antes: NoResultFound → 500
     assert (status, payload) == (201, {"ok": True})
     assert calls["n"] == 1  # ejecución NORMAL, no un 500 ni una doble ejecución
+
+
+def test_g7_put_profile_rechaza_cuerpo_no_almacenable(db):
+    """REGRESIÓN G7-P3-1, tercera boca de la misma clase: el CV del PUT entero
+    va a un `CAST(:content AS jsonb)` (`profiles.save_profile_revision`), así
+    que un NUL en `cv_text` o en un `skill` —que el `json.loads` de Starlette
+    decodifica desde `\\u0000` sin rechistar y ningún `max_length` filtra—
+    daba un 500 por entrada de usuario. La regla es de FRONTERA y vale para
+    todo endpoint de escritura, no solo para los dos que la auditoría nombró.
+    (Aquí no se prueba `NaN`: `ProfileWriteDTO` no tiene ningún campo de tipo
+    libre por el que pudiera entrar un float; ese lado lo cubre `filters` en
+    test_integration_api_saved_searches.)"""
+    factory, created = db
+    pid, _vacs, token = _seed_writable(factory, created)
+    url = f"/v1/profiles/{pid}"
+    antes = _api(factory, url, token=token).json()["current_revision"]
+
+    for cuerpo in (
+        {"title": "t", "cv_text": "a\x00b"},
+        {"title": "t", "cv_text": "sano", "skills": ["py", "p\x00g"]},
+    ):
+        r = _api(factory, url, token=token, method="PUT", json_body=cuerpo)
+        assert (r.status_code, r.json()["code"]) == (400, "invalid_json"), r.text
+
+    # Ninguna de las dos creó revisión: la vigente sigue siendo la de antes.
+    assert _api(factory, url, token=token).json()["current_revision"] == antes
