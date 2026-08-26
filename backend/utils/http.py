@@ -12,6 +12,107 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_RETRY_STATUSES = [429, 500, 502, 503, 504]
 
+# Códigos de redirección y los dos que PRESERVAN el método y el cuerpo.
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_METHOD_PRESERVING = frozenset({307, 308})
+
+# G4/P3-1: `httpx.TooManyRedirects` deriva de `httpx.HTTPError`, así que el
+# `except` de reintento lo repetía — 21 saltos × 4 intentos = 84 peticiones
+# donde antes había 4. Con el seguimiento manual el tope es duro y por
+# petición; el bucle no puede multiplicarlo.
+_MAX_REDIRECTS = 3
+
+# Cabeceras que httpx SÍ retira al saltar de host. El resto (las propietarias:
+# `x-rapidapi-key`, `x-api-key`…) las conservaba, así que una credencial
+# viajaba al host nuevo (G4/P3-2). Aquí se retiran TODAS las cabeceras del
+# llamante en un salto cross-host: es la política conservadora y no hay ningún
+# provider que necesite lo contrario.
+_CROSS_HOST_SAFE_HEADERS = frozenset({"accept", "accept-language", "user-agent"})
+
+
+async def _send(client, method: str, url: str, kwargs: dict) -> httpx.Response:
+    """Una sola petición, sin seguir redirecciones."""
+    if method.upper() == "POST":
+        return await client.post(url, **kwargs)
+    return await client.get(url, **kwargs)
+
+
+def _resolve_redirect(current: httpx.URL, location: str) -> httpx.URL:
+    """Destino de un `Location`, CONSERVANDO la query de la base.
+
+    G4/P2-7: `httpx` resuelve el `Location` con `URL.join`, que DESCARTA la
+    query de la base. Un portal que responda `308` con
+    `Location: /public/vacancy/search` (sin query) hacía que la petición
+    seguida perdiera `page`/`size`: cada página pedida devolvía la PÁGINA 1, el
+    provider cosechaba N veces las mismas 20 ofertas, el dedup exacto las
+    colapsaba y el run terminaba con `job_count > 0`, cero issues y veredicto
+    `ok`. Pérdida silenciosa del inventario profundo — peor, en
+    observabilidad, que el 308 no seguido que originó el fix G3/P1-3.
+    Si el `Location` trae su propia query, manda la suya: el portal está
+    diciendo explícitamente adónde ir.
+    """
+    target = current.join(location)
+    if not target.query and current.query:
+        target = target.copy_with(query=current.query)
+    return target
+
+
+def _headers_for_host(headers: dict[str, str] | None, cross_host: bool) -> dict | None:
+    """Cabeceras que pueden viajar al destino (ver `_CROSS_HOST_SAFE_HEADERS`)."""
+    if not headers or not cross_host:
+        return headers
+    return {k: v for k, v in headers.items() if k.lower() in _CROSS_HOST_SAFE_HEADERS}
+
+
+async def _send_following_redirects(
+    client, method: str, url: str, kwargs: dict, params: dict | None
+) -> httpx.Response:
+    """Petición siguiendo redirecciones A MANO, con tres garantías que
+    `follow_redirects=True` de httpx no da (G4/P2-7, P3-1, P3-2, P3-3):
+
+    - la query de la base SOBREVIVE a un `Location` relativo sin query;
+    - las cabeceras propietarias NO cruzan de host;
+    - un 301/302/303 sobre un POST NO se degrada a GET perdiendo el cuerpo:
+      se devuelve el 3xx tal cual, que el llamante registra como fallo visible.
+
+    Devuelve la última respuesta: si no se pudo (o no se debió) seguir, es el
+    propio 3xx y el llamante lo trata como no-2xx.
+    """
+    current = httpx.URL(url)
+    if params:
+        current = current.copy_merge_params(params)
+    origin_host = current.host
+
+    for _ in range(_MAX_REDIRECTS + 1):
+        response = await _send(client, method, str(current), kwargs)
+        if response.status_code not in _REDIRECT_STATUSES:
+            return response
+
+        location = response.headers.get("location")
+        if not location:
+            return response
+
+        if method.upper() == "POST" and response.status_code not in _METHOD_PRESERVING:
+            # G4/P3-3: 301/302/303 degradan el POST a GET y descartan el cuerpo
+            # — el `keywords`/`location`/`page` de jooble se perdía y el run
+            # salía `ok` con la respuesta de un GET sin filtros.
+            logger.error(
+                "HTTP %d sobre un POST a %s: seguirlo degradaría el método y "
+                "perdería el cuerpo — no se sigue",
+                response.status_code,
+                current,
+            )
+            return response
+
+        target = _resolve_redirect(current, location)
+        if target.host != origin_host:
+            kwargs = dict(kwargs)
+            kwargs["headers"] = _headers_for_host(kwargs.get("headers"), True)
+        current = target
+
+    logger.error("Demasiadas redirecciones (%d) para %s", _MAX_REDIRECTS, url)
+    return response
+
 
 async def fetch_with_retry(
     client: httpx.AsyncClient,
@@ -41,23 +142,22 @@ async def fetch_with_retry(
             # G3/P1-3: httpx trae follow_redirects=False por defecto. Un portal
             # que empieza a responder 308 (ostjob/zentraljob, 2026-08-18) mataba
             # la fuente entera. Se sigue el redirect AQUÍ, en la raíz, para que
-            # ningún provider dependa de acordarse de activarlo. 307/308
-            # preservan el método, así que el POST de jooble sigue siendo POST.
+            # ningún provider dependa de acordarse de activarlo — pero A MANO
+            # (ver `_send_following_redirects`): el `follow_redirects=True` de
+            # httpx perdía la query, filtraba las cabeceras propietarias a otro
+            # host y degradaba el POST.
             kwargs: dict[str, Any] = {
                 "timeout": timeout,
-                "follow_redirects": True,
+                "follow_redirects": False,
             }
             if headers:
                 kwargs["headers"] = headers
-            if params:
-                kwargs["params"] = params
             if json_body and method.upper() == "POST":
                 kwargs["json"] = json_body
 
-            if method.upper() == "POST":
-                response = await client.post(url, **kwargs)
-            else:
-                response = await client.get(url, **kwargs)
+            response = await _send_following_redirects(
+                client, method, url, kwargs, params
+            )
 
             # Retryable server errors
             if response.status_code in retry_on_status and attempt < max_retries:
@@ -78,18 +178,20 @@ async def fetch_with_retry(
                     url,
                     response.text[:500],
                 )
-                # Non-retryable client error (except 429)
-                if 400 <= response.status_code < 500 and response.status_code != 429:
-                    diag.record(diag.KIND_HTTP, url, status=response.status_code)
-                    return None
-                if attempt == max_retries:
-                    diag.record(diag.KIND_HTTP, url, status=response.status_code)
-                    return None
-                # G3/P1-3: era el ÚNICO camino de reintento sin pausa — cuatro
-                # peticiones en ráfaga medidas en 0.00 s. Misma escalera que el
-                # resto de reintentos.
-                await asyncio.sleep(min(backoff_factor * (2**attempt), max_retry_delay))
-                continue
+                # G4/P2-4: `retry_on_status` es la ÚNICA fuente de verdad sobre
+                # qué se reintenta. Antes, todo status no-2xx que no fuera 4xx
+                # caía en la escalera de reintentos con la pausa que añadió
+                # G3/P1-3 — incluidos los 520/521/522/524 de Cloudflare, que no
+                # están en `DEFAULT_RETRY_STATUSES`. Cada petición pasaba de
+                # instantánea a 7 s, y `thehub` paga el helper UNA VEZ POR
+                # OFERTA en su bucle de detalles: ×46 detalles = 322 s, ×75 =
+                # 526 s, contra un `soft_time_limit` de 540 s que es para los
+                # 20 providers. Un solo endpoint detrás de un challenge de
+                # Cloudflare se comía la cosecha de API entera. El caso
+                # retryable ya se ha reintentado (y pausado) arriba: aquí solo
+                # queda registrar y salir.
+                diag.record(diag.KIND_HTTP, url, status=response.status_code)
+                return None
 
             data = response.json()
             if data is None:
@@ -161,8 +263,16 @@ async def fetch_rss(
         try:
             # G3/P1-3: sigue redirecciones también en los feeds RSS (un feed
             # que migra de host responde 301/308 y, sin esto, la fuente muere).
-            response = await client.get(
-                url, headers=headers, timeout=timeout, follow_redirects=True
+            # Mismo seguimiento manual que `fetch_with_retry` (G4/P2-7, P3-1,
+            # P3-2): tope duro de saltos y cabeceras que no cruzan de host.
+            rss_kwargs: dict[str, Any] = {
+                "timeout": timeout,
+                "follow_redirects": False,
+            }
+            if headers:
+                rss_kwargs["headers"] = headers
+            response = await _send_following_redirects(
+                client, "GET", url, rss_kwargs, None
             )
             if response.status_code == 200:
                 return response.text

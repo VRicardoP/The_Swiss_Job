@@ -140,9 +140,19 @@ class TestP13SeguirRedirecciones:
         assert diag.issues() == []
 
     @pytest.mark.asyncio
-    async def test_el_continue_mudo_espera_entre_reintentos(self, monkeypatch):
-        """G3/P1-3: era el único camino de reintento sin pausa (ráfaga de 4)."""
+    async def test_un_status_no_declarado_ni_se_reintenta_ni_pausa(self, monkeypatch):
+        """G3/P1-3 + G4/P2-4.
+
+        G3 cerró la «ráfaga de 4 peticiones en 0.00 s» metiendo el camino mudo
+        en la escalera de reintentos. Eso costaba 7 s por petición a TODO
+        status no-2xx que no fuera 4xx —los 520/521/522/524 de Cloudflare
+        incluidos—, y `thehub` paga el helper una vez POR OFERTA: ×46 detalles
+        = 322 s contra un `soft_time_limit` de 540 s para los 20 providers.
+        G4 lo cierra por el otro lado: `retry_on_status` es la única fuente de
+        verdad, así que no hay ni ráfaga ni pausa — hay UNA petición.
+        """
         waits: list[float] = []
+        peticiones: list[str] = []
 
         async def _record_sleep(seconds):
             waits.append(seconds)
@@ -150,11 +160,36 @@ class TestP13SeguirRedirecciones:
         monkeypatch.setattr("utils.http.asyncio.sleep", _record_sleep)
 
         def _handler(request: httpx.Request) -> httpx.Response:
-            # 501: ni está en DEFAULT_RETRY_STATUSES ni es 4xx → cae en el
-            # `continue` que no pausaba.
-            return httpx.Response(501, text="not implemented")
+            # 520: challenge de Cloudflare. Ni está en DEFAULT_RETRY_STATUSES
+            # ni es 4xx → era el camino que pausaba 7 s en balde.
+            peticiones.append(str(request.url))
+            return httpx.Response(520, text="cloudflare")
 
         _mock_transport(monkeypatch, _handler)
+
+        diag.begin()
+        async with httpx.AsyncClient() as client:
+            data = await fetch_with_retry(client, "https://example.org/api")
+
+        assert data is None
+        assert len(peticiones) == 1, "un status no reintentable se reintentó"
+        assert waits == [], f"pausa inútil de {sum(waits)} s en un 520"
+        assert [i.status for i in diag.issues()] == [520], (
+            "el fallo tiene que seguir registrado para source_health"
+        )
+
+    @pytest.mark.asyncio
+    async def test_un_status_declarado_retryable_sigue_pausando(self, monkeypatch):
+        """Control de G3/P1-3: lo que SÍ se reintenta sigue con su escalera."""
+        waits: list[float] = []
+
+        async def _record_sleep(seconds):
+            waits.append(seconds)
+
+        monkeypatch.setattr("utils.http.asyncio.sleep", _record_sleep)
+        _mock_transport(
+            monkeypatch, lambda request: httpx.Response(503, text="unavailable")
+        )
 
         diag.begin()
         async with httpx.AsyncClient() as client:
