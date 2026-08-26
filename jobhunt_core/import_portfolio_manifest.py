@@ -24,6 +24,7 @@ import logging
 import math
 import uuid
 from collections import Counter
+from decimal import Decimal
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
@@ -104,6 +105,15 @@ def _pg_text(value) -> str:
     # 'NaN' contra el 'nan' real y un falso divergent.
     if isinstance(value, float) and not math.isfinite(value):
         return str(value)
+    if isinstance(value, float):
+        # G2-P3-1: jsonb NORMALIZA los números a `numeric`, y numeric_out JAMÁS
+        # usa notación exponencial: json.dumps(1.5e300) da '1.5e+300' mientras
+        # `->>` devuelve los 301 dígitos ⇒ falso 'divergent' y cutover abortado
+        # (la clase que H-9 cerró para int, reabierta para el repr exponencial
+        # de Python: |x| >= 1e16 o < 1e-4). Decimal(repr(x)) conserva los
+        # dígitos significativos y 'f' los expande como numeric.
+        dec = Decimal(repr(value))
+        return format(dec.copy_abs() if dec == 0 else dec, "f")  # numeric no tiene -0
     return json.dumps(value, ensure_ascii=False)
 
 

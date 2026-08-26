@@ -468,3 +468,40 @@ def test_company_no_str_no_es_falso_divergent():
             await s.commit()
 
     asyncio.run(_on_disposable_db(_run))
+
+
+def test_company_float_exponencial_no_es_falso_divergent():
+    """Regresión G2-P3-1: `_pg_text` decía serializar los escalares «como los
+    serializa jsonb», pero jsonb NORMALIZA los números a `numeric` y numeric_out
+    jamás usa exponente: json.dumps(1.5e300) daba '1.5e+300' contra los 301
+    dígitos que devuelve `->>` ⇒ falso 'divergent' y cutover abortado — la clase
+    que H-9 cerró para int, reabierta para el repr exponencial de Python
+    (|x| >= 1e16 o < 1e-4)."""
+
+    async def _run(factory):
+        async with factory() as s:
+            users = [{
+                "external_ref": 1,
+                "applications": [{
+                    "url": "https://g2p31.example.ch/1", "status": "applied",
+                    "title": "T", "company": 1.5e300, "description": 1e-5,
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                }],
+                "saved_searches": [],
+            }]
+            manifest = await man.migrate_and_reconcile(s, users)
+            assert manifest["verdict"] == "ok", manifest["divergences"]
+            snap = (
+                await s.execute(
+                    sa.text(
+                        "SELECT snapshot->>'company' AS c, "
+                        "snapshot->>'description' AS d FROM applications"
+                    )
+                )
+            ).one()
+            # Lo que jsonb devuelve DE VERDAD: numeric expandido, sin exponente.
+            assert snap.c == man._pg_text(1.5e300) and len(snap.c) == 301
+            assert snap.d == man._pg_text(1e-5) == "0.00001"
+            await s.commit()
+
+    asyncio.run(_on_disposable_db(_run))
