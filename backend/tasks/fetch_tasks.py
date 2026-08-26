@@ -562,5 +562,5 @@ async def _fetch_providers_async() -> dict[str, Any]:
                 if motivo:
                     summary["unhealthy"].append(f"{source}: {motivo}")
 
-    logger.info("Fetch complete: %s", summary)
+    diag.log_run_summary(logger, "Fetch complete", summary)
     return summary

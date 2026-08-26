@@ -165,3 +165,50 @@ def classify(job_count: int, collected: list[FetchIssue]) -> str:
     if job_count > 0:
         return "ok"
     return "error" if collected else "empty"
+
+
+# Claves de `summary` que son INCIDENCIAS: si traen valor, el run no fue
+# limpio. Se declaran aquí, junto al resto del vocabulario de diagnóstico de la
+# cosecha, para que añadir un contador nuevo sea una línea y no un olvido.
+_SUMMARY_INCIDENT_KEYS = (
+    "identity_conflicts",
+    "identity_clones",
+    "errors",
+    "fetch_failed",
+    "soft_time_limit",
+    "window_no_date",
+)
+
+
+def log_run_summary(run_logger, label: str, summary: dict) -> None:
+    """Cierra el run con su `summary`, en el NIVEL que le corresponde.
+
+    G5/P3-6 — los cinco ciclos de auditoría han ido añadiendo contadores al
+    `summary` (`identity_conflicts`, `identity_clones`, `unhealthy`,
+    `soft_time_limit`, `window_skipped`, `window_no_date`) y **ninguno tiene
+    lector aguas arriba**: `tasks/pipeline_tasks.py` encadena con `.si()`, que
+    NO propaga el resultado, y no hay ningún consumidor en `tasks/`,
+    `services/`, `routers/` ni en el frontend. Toda esa observabilidad
+    terminaba en un `logger.info` — el mismo nivel con el que se anuncia un run
+    perfecto, y por tanto invisible entre el ruido.
+
+    Esto no fabrica el canal que falta (eso exige un consumidor de verdad del
+    payload de resultado Celery); lo que hace es que la línea de cierre GRITE
+    cuando hay algo que mirar: WARNING si algún contador de incidencia trae
+    valor o si `unhealthy` no está vacío, INFO cuando el run fue limpio. Es la
+    misma cota que ya tenía el `logger.error` por-oferta, elevada al run.
+    """
+    incidencias = [
+        f"{k}={summary[k]}"
+        for k in _SUMMARY_INCIDENT_KEYS
+        if summary.get(k)  # 0, False y ausente son «sin incidencia»
+    ]
+    if summary.get("unhealthy"):
+        incidencias.append(f"unhealthy={len(summary['unhealthy'])}")
+
+    if incidencias:
+        run_logger.warning(
+            "%s con INCIDENCIAS (%s): %s", label, ", ".join(incidencias), summary
+        )
+    else:
+        run_logger.info("%s: %s", label, summary)

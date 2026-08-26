@@ -604,5 +604,5 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                     if motivo:
                         summary["unhealthy"].append(f"{source}: {motivo}")
 
-    logger.info("Scraper fetch complete: %s", summary)
+    diag.log_run_summary(logger, "Scraper fetch complete", summary)
     return summary
