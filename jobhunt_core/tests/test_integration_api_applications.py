@@ -380,6 +380,49 @@ def test_g5_la_cadena_merged_into_resuelve_aunque_el_GANADOR_este_archivado(db):
     assert r3.json()["code"] == "not_found"
 
 
+def test_g6_la_cadena_resuelve_con_el_adjunto_en_el_PERDEDOR(db):
+    """Regresión G6-P3-3: la comprobación del adjunto de G5-P3-4 viaja con la
+    cadena pero solo mira el GANADOR, así que cubría media patología. La otra
+    mitad —el usuario marcó `V` ANTES de la fusión, que es igual de natural y
+    probablemente más frecuente— seguía rota: `V` no está archivada (las dos
+    ramas del barrido exigen `merged_into IS NULL`) ⇒ `resolve_direct` no
+    consulta su adjunto; la cadena llega a `W`, que sí está archivada, y
+    `_profile_attached(pid, W)` es False ⇒ None. Item VISIBLE en el feed sobre
+    el que ninguna escritura de vínculo funciona: 404 al re-POST y `skipped`
+    en el PUT de bookmarks — el síntoma que el commit de G5 declaró cerrado.
+    Ahora el adjunto se busca en la cadena ENTERA, en UNA consulta."""
+    factory, created = db
+    token, _tenant, pid, vacs = _seed(factory, created, n=2)
+    (loser, _), (winner, _) = vacs
+    # El perfil marcó el PERDEDOR (antes de la fusión), no el ganador.
+    r = _post_app(factory, token, {
+        "profile_id": str(pid), "vacancy_id": str(loser), "title": "T-lose",
+    })
+    assert r.status_code == 201, r.text
+    _exec(factory, "UPDATE vacancies SET merged_into = :w WHERE id = :l",
+          w=winner, l=loser)
+    _exec(factory, "UPDATE vacancies SET archived_at = now() WHERE id = :w",
+          w=winner)
+
+    # Con el id del PERDEDOR la cadena RESUELVE al ganador y el vínculo se
+    # escribe sobre él (antes del fix: 404 not_found, con el item aún visible
+    # en el feed y ninguna escritura de vínculo posible).
+    r2 = _post_app(factory, token, {
+        "profile_id": str(pid), "vacancy_id": str(loser), "title": "T-lose",
+    })
+    assert r2.status_code == 201, r2.text
+    assert r2.json()["vacancy_id"] == str(winner)
+
+    # NO-REGRESIÓN del aislamiento: otro perfil, sin adjunto en NINGÚN eslabón
+    # de la cadena, sigue en 404.
+    otro = asyncio.run(_perfil_extra(factory, pid))
+    r3 = _post_app(factory, token, {
+        "profile_id": str(otro), "vacancy_id": str(loser), "title": "T",
+    })
+    assert r3.status_code == 404
+    assert r3.json()["code"] == "not_found"
+
+
 async def _perfil_extra(factory, pid):
     """Segundo perfil del MISMO consumer (sin adjunto sobre el ganador)."""
     async with factory() as s:

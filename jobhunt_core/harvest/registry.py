@@ -45,16 +45,23 @@ def ensure_handler(source_name: str) -> bool:
     del PREFIJO: cada namespace se resuelve por su propia vía de alta."""
     if normalize.has_normalizer(source_name):
         return True
-    # Import local: `providers` importa el sink, que importa esto.
-    from jobhunt_core.harvest.providers import legacy_shadow
-
-    if source_name.startswith(legacy_shadow.LEGACY_PREFIX):
-        legacy_shadow.ensure_registered(source_name)  # handler GENÉRICO sombra
-        return True
-    alta = _altas_exact_match().get(source_name)
-    if alta is None:
-        return False
     try:
+        # G6-P3-2: los IMPORTS van DENTRO del try, no solo la llamada al alta.
+        # El fix de G5-N-3 dejaba `_altas_exact_match()` (que es quien hace
+        # `from jobhunt_core import import_portfolio`) y el import de
+        # `legacy_shadow` una línea ANTES del bloque protegido, así que `alta`
+        # era ya una referencia a `register_handlers` de un módulo YA
+        # importado: el modo de fallo que el commit describía —un ImportError
+        # o un efecto de import que revienta— seguía propagando entero.
+        # Import local: `providers` importa el sink, que importa esto.
+        from jobhunt_core.harvest.providers import legacy_shadow
+
+        if source_name.startswith(legacy_shadow.LEGACY_PREFIX):
+            legacy_shadow.ensure_registered(source_name)  # handler GENÉRICO
+            return True
+        alta = _altas_exact_match().get(source_name)
+        if alta is None:
+            return False
         alta()
     except Exception:
         # G5-N-3: el alta importa un módulo (hoy `import_portfolio`) DENTRO de

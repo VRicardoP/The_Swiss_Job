@@ -80,23 +80,35 @@ async def profile_owner(session, profile_id, consumer_id) -> str | None:
 # ------------------------------------------------------- cascada Decisión 3
 
 
-async def _merge_winner(session, vacancy_id, profile_id=None) -> uuid.UUID | None:
+async def _merge_winner(
+    session, vacancy_id, profile_id=None, origen=()
+) -> uuid.UUID | None:
     """Sigue la cadena merged_into (bucle ACOTADO) hasta un ganador
     presentable; None si la cadena muere, se pasa de cota o el ganador está
-    archivado — jamás se enlaza a ciegas.
+    archivado sin adjunto — jamás se enlaza a ciegas.
 
     G5-P3-4: la comprobación del adjunto viaja CON la cadena. El perfil tiene
     su candidatura/bookmark sobre el GANADOR y el BFF conserva el id del
     PERDEDOR (`V.merged_into = W`) — el caso que la Decisión 3a existe para
-    cubrir. `V`, por estar fundida, NUNCA se archiva (la rama 1 del barrido
-    exige `merged_into IS NULL`), así que `resolve_direct` ni consulta el
-    adjunto para `V`: está en `W`, dentro de la cadena, donde antes no miraba
-    nadie. Retirado el guard PF.3 de la rama 1, `W` sí se archiva y la cadena
-    devolvía None: un item VISIBLE en el feed sobre el que ninguna escritura
-    de vínculo funciona — el síntoma literal que el fix de G4 declaró cerrado.
+    cubrir. `V`, por estar fundida, NUNCA se archiva (las DOS ramas del
+    barrido exigen `merged_into IS NULL`), así que `resolve_direct` ni
+    consulta el adjunto para `V`: está en `W`, dentro de la cadena, donde
+    antes no miraba nadie. Retirado el guard PF.3 de la rama 1, `W` sí se
+    archiva y la cadena devolvía None: un item VISIBLE en el feed sobre el que
+    ninguna escritura de vínculo funciona — el síntoma literal que el fix de
+    G4 declaró cerrado.
+
+    G6-P3-3: la comprobación miraba SOLO el extremo (el ganador), así que
+    cubría media cadena. La otra mitad —el usuario marcó `V` ANTES de la
+    fusión, que es igual de natural y probablemente más frecuente— seguía
+    rota: `V` no está archivada ⇒ `resolve_direct` no consulta su adjunto, la
+    cadena llega a `W` archivada, y el adjunto de `W` es False ⇒ None, el
+    mismo 404 de siempre. Ahora se acumula la cadena ENTERA (`origen` incluye
+    la vacante consultada) y se pregunta por TODOS sus ids de una vez.
     Sin `profile_id` (p.ej. `resolve_by_url_any_source`) el comportamiento es
-    el estricto de siempre. Coste: 1 consulta y solo si el ganador está
+    el estricto de siempre. Coste: UNA consulta, y solo si el ganador está
     archivado."""
+    cadena = list(origen)
     vid = vacancy_id
     for _ in range(MERGE_CHAIN_MAX):
         row = (
@@ -109,12 +121,13 @@ async def _merge_winner(session, vacancy_id, profile_id=None) -> uuid.UUID | Non
         ).one_or_none()
         if row is None:
             return None
+        cadena.append(vid)
         if row.merged_into is None:
             if row.archived_at is None:
                 return vid
             return (
                 vid
-                if await _profile_attached(session, profile_id, vid)
+                if await _profile_attached(session, profile_id, cadena)
                 else None
             )
         vid = row.merged_into
@@ -125,23 +138,36 @@ async def _merge_winner(session, vacancy_id, profile_id=None) -> uuid.UUID | Non
     return None
 
 
-async def _profile_attached(session, profile_id, vacancy_id) -> bool:
-    """El perfil YA tiene esta vacante adjunta: candidatura o bookmark (el
-    PURO, `profile_vacancy_state.saved_at`, es la población mayoritaria del
-    cutover). Scopeado al PERFIL: el adjunto de un tenant ajeno no abre nada.
-    """
+async def _profile_attached(session, profile_id, vacancy_ids) -> bool:
+    """El perfil YA tiene adjunta ALGUNA de estas vacantes: candidatura o
+    bookmark (el PURO, `profile_vacancy_state.saved_at`, es la población
+    mayoritaria del cutover). Scopeado al PERFIL: el adjunto de un tenant
+    ajeno no abre nada.
+
+    G6-P3-3: recibe la CADENA (una vacante suelta es la cadena de un
+    elemento). El adjunto puede estar en cualquier eslabón: la fusión lo dejó
+    donde el usuario lo puso, no en el ganador."""
     if profile_id is None:
+        return False
+    ids = (
+        list(vacancy_ids)
+        if isinstance(vacancy_ids, (list, tuple, set))
+        else [vacancy_ids]
+    )
+    if not ids:
         return False
     return bool(
         await session.scalar(
             sa.text(
                 "SELECT EXISTS (SELECT 1 FROM applications a "
-                "               WHERE a.profile_id = :p AND a.vacancy_id = :v) "
+                "               WHERE a.profile_id = :p "
+                "                 AND a.vacancy_id = ANY(CAST(:v AS uuid[]))) "
                 "    OR EXISTS (SELECT 1 FROM profile_vacancy_state s "
-                "               WHERE s.profile_id = :p AND s.vacancy_id = :v "
+                "               WHERE s.profile_id = :p "
+                "                 AND s.vacancy_id = ANY(CAST(:v AS uuid[])) "
                 "                 AND s.saved_at IS NOT NULL)"
             ),
-            {"p": profile_id, "v": vacancy_id},
+            {"p": profile_id, "v": [str(v) for v in ids]},
         )
     )
 
@@ -177,7 +203,11 @@ async def resolve_direct(session, vacancy_id, profile_id=None) -> uuid.UUID | No
         return None
     if row.merged_into is None:
         return vacancy_id
-    return await _merge_winner(session, row.merged_into, profile_id)
+    # G6-P3-3: la vacante CONSULTADA entra en la cadena — el adjunto puede
+    # estar en el PERDEDOR (marcado antes de la fusión), no solo en el ganador.
+    return await _merge_winner(
+        session, row.merged_into, profile_id, origen=(vacancy_id,)
+    )
 
 
 async def resolve_by_url_any_source(session, url: str) -> uuid.UUID | None:

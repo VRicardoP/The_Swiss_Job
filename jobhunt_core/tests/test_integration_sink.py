@@ -667,6 +667,55 @@ def test_g5_un_alta_que_revienta_no_tumba_la_cosecha(monkeypatch):
     assert registry.ensure_handler("fuente-rota") is False
 
 
+class _ImportRoto:
+    """Finder de `sys.meta_path` que hace explotar el import de un módulo."""
+
+    def __init__(self, fullname):
+        self.fullname = fullname
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == self.fullname:
+            raise ImportError(f"efecto de import roto en {fullname}")
+        return None
+
+
+def test_g6_un_import_roto_del_alta_tampoco_tumba_la_cosecha(monkeypatch, caplog):
+    """Regresión G6-P3-2: el `try/except` de G5-N-3 NO envolvía el import que
+    decía proteger. `alta = _altas_exact_match().get(...)` estaba una línea
+    ANTES del `try`, y es `_altas_exact_match()` quien hace
+    `from jobhunt_core import import_portfolio`: para cuando el `try` empieza,
+    `alta` es ya una referencia a `register_handlers` de un módulo YA
+    importado. El modo de fallo que el commit describe —un ImportError o un
+    efecto de import que revienta— seguía propagando y abortando la
+    transacción de reparación del sink. Lo mismo valía para el import de
+    `legacy_shadow`, que cubre TODAS las fuentes `legacy:*`.
+
+    El test de regresión de G5 no lo cazaba porque monkeypatcheaba
+    `registry._altas_exact_match`: ejercitaba el `try` nuevo, jamás el import.
+    Aquí el import falla DE VERDAD, vía un finder en `sys.meta_path`."""
+    import sys
+
+    import jobhunt_core
+    from jobhunt_core.harvest import normalize, registry
+    from jobhunt_core.import_portfolio import PORTFOLIO_IMPORT_SOURCE
+
+    monkeypatch.setattr(normalize, "has_normalizer", lambda n: False)
+    for modname in (
+        "jobhunt_core.import_portfolio",
+        "jobhunt_core.harvest.providers.legacy_shadow",
+    ):
+        monkeypatch.delattr(jobhunt_core, modname.rsplit(".", 1)[1], raising=False)
+        monkeypatch.delitem(sys.modules, modname, raising=False)
+    monkeypatch.setattr(
+        sys, "meta_path",
+        [_ImportRoto("jobhunt_core.import_portfolio")] + list(sys.meta_path),
+    )
+    with caplog.at_level(logging.ERROR, logger="jobhunt_core.harvest.registry"):
+        # antes del fix: ImportError propagada al sink (cosecha abortada)
+        assert registry.ensure_handler(PORTFOLIO_IMPORT_SOURCE) is False
+    assert any("alta en caliente" in r.getMessage() for r in caplog.records)
+
+
 def test_g4_registry_solo_da_de_alta_los_namespaces_conocidos():
     """El alta por namespace no adivina: `legacy:*` va al handler genérico de
     la sombra, las exact-match a la suya, y una fuente AJENA sigue sin
