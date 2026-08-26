@@ -40,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 
-from jobhunt_core.api.deps import ApiError
+from jobhunt_core.api.deps import ApiError, ensure_text_storable
 from jobhunt_core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -111,6 +111,14 @@ async def run_idempotent(session, principal, route, request_hash, key, handler):
             400, "invalid_idempotency_key",
             f"Idempotency-Key vacía o mayor de {KEY_MAX_LEN}",
         )
+    # G8-N-4: la cabecera va CRUDA a `idempotency_records.key` (columna
+    # `text`), que es el mismo sink que el resto del cuerpo — misma clase,
+    # misma regla, con el código de error que esta frontera ya tiene. Lo que
+    # hoy para un NUL ahí es el parser HTTP (`h11` responde 400 antes del
+    # ASGI porque la imagen no lleva `httptools`), y eso es una propiedad de
+    # la IMAGEN, no del código: si un día entra httptools, el 500 aparece sin
+    # que nadie toque una línea.
+    ensure_text_storable(key, "Idempotency-Key", code="invalid_idempotency_key")
     expires = datetime.now(timezone.utc) + IDEM_TTL
     keys = {"cid": principal.consumer_id, "k": key, "r": route}
 

@@ -33,6 +33,7 @@ pytestmark = pytest.mark.skipif(
     reason="requiere BD (ejecutar vía core-migrate)",
 )
 
+NUL = chr(0)  # el NUL literal no puede vivir en el fuente
 APP_SCOPES = ["applications:read", "applications:write"]
 
 
@@ -996,3 +997,81 @@ def test_g7_cuerpo_no_almacenable_es_400_de_frontera_y_no_500(db):
     assert _rows(
         factory, "SELECT 1 FROM applications WHERE profile_id = :p", p=pid
     ) == []
+
+
+def test_g8_la_url_toxica_con_vacancy_id_es_400_de_frontera_y_no_500(db):
+    """REGRESIÓN G8-P3-3: la excepción de la `url` en `_check_storable` era
+    INCONDICIONAL, y su justificación escrita —«la url ya tiene su propia
+    frontera: la cuarentena del sink en `_link` responde 400 invalid_url»—
+    solo se cumple en la rama por-URL.
+
+    `link_vacancy` valida la url dentro de `if url is not None:`, y a esa
+    rama solo se llega tras `if vacancy_id is not None: return
+    resolve_direct(...)`. Los DTO permiten mandar los DOS: con `vacancy_id`
+    presente el vínculo NI MIRA la url, pero la url entra igual en el
+    snapshot (`SNAPSHOT_KEYS`) ⇒ `CAST(:snap AS jsonb)` ⇒
+    `UntranslatableCharacterError` ⇒ 500 por entrada de usuario. El test que
+    motivó la excepción manda la url tóxica SIN `vacancy_id`: cubre justo el
+    caso en que la cuarentena sí corre y no ve el otro.
+
+    Se comprueban las dos rutas expuestas (`POST /v1/applications` y cada item
+    de `PUT /v1/profiles/{pid}/bookmarks`; el `PATCH` no tiene `url`) y, como
+    control, que el diagnóstico específico de la rama por-URL NO se degrada."""
+    factory, created = db
+    token, _tenant, pid, vacs = _seed(factory, created, n=1)
+    vid, _url = vacs[0]
+    url_toxica = "https://x.example.ch/rota" + NUL + "nul"
+
+    r = _post_app(
+        factory, token,
+        {"profile_id": str(pid), "vacancy_id": str(vid), "title": "T",
+         "url": url_toxica},
+        key="app-" + uuid.uuid4().hex[:10],
+    )
+    assert r.status_code == 400, r.text
+    assert r.json()["code"] == "invalid_json", r.text
+
+    b = tia._api(
+        factory, f"/v1/profiles/{pid}/bookmarks", token=token, method="PUT",
+        json_body={"bookmarks": [
+            {"vacancy_id": str(vid), "title": "T", "url": url_toxica},
+        ]},
+    )
+    assert b.status_code == 400, b.text
+    assert b.json()["code"] == "invalid_json", b.text
+
+    # Control: SIN vacancy_id la cuarentena del sink sí corre y su
+    # diagnóstico, más específico, se conserva.
+    c = _post_app(
+        factory, token,
+        {"profile_id": str(pid), "url": url_toxica, "title": "T"},
+        key="app-" + uuid.uuid4().hex[:10],
+    )
+    assert c.status_code == 400, c.text
+    assert c.json()["code"] == "invalid_url", c.text
+
+    assert _rows(
+        factory, "SELECT 1 FROM applications WHERE profile_id = :p", p=pid
+    ) == []
+
+
+def test_g8_el_nul_en_la_cabecera_de_idempotencia_es_400_y_no_500(db):
+    """REGRESIÓN G8-N-4: `Idempotency-Key` iba CRUDA a
+    `idempotency_records.key` (columna `text`) sin pasar por ninguna regla de
+    almacenabilidad. Un NUL ahí revienta con
+    `CharacterNotInRepertoireError` ⇒ 500. Hoy no es alcanzable POR LA RED
+    —la imagen no lleva `httptools`, así que uvicorn usa `h11`, que responde
+    400 antes del ASGI— pero eso es una propiedad de la IMAGEN y no del
+    código: el día que entre httptools el 500 aparece sin que nadie toque una
+    línea. El ASGI de este test entrega la cabecera tal cual, que es
+    exactamente el escenario contra el que se protege."""
+    factory, created = db
+    token, _tenant, pid, vacs = _seed(factory, created, n=1)
+    vid, _url = vacs[0]
+    r = _post_app(
+        factory, token,
+        {"profile_id": str(pid), "vacancy_id": str(vid), "title": "T"},
+        key="app-" + NUL + "k",
+    )
+    assert r.status_code == 400, r.text
+    assert r.json()["code"] == "invalid_idempotency_key", r.text

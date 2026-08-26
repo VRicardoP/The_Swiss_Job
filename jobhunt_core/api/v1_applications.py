@@ -78,20 +78,35 @@ def json_response(status: int, payload) -> Response:
 
 
 def _check_storable(body) -> None:
-    """G7-P3-1 en este router, con UNA excepción: la `url`.
+    """G7-P3-1 en este router, con UNA excepción CONDICIONADA: la `url`.
 
     El snapshot (title/company/url/source/description) va a un
     `CAST(:snap AS jsonb)` y `notes` a una columna `text`; ninguno de los dos
     admite el NUL que el `json.loads` de Starlette decodifica desde `\\u0000`
-    sin rechistar y que ningún `max_length` filtra. Pero la `url` YA tiene su
-    propia frontera, más específica y contractual —la cuarentena del sink en
-    `_link` responde `400 invalid_url`—, así que adelantarse a ella solo
-    degradaría el diagnóstico del cliente. Volcado PYTHON: en `mode="json"`
-    pydantic serializa los floats no finitos a `null` y los escondería."""
+    sin rechistar y que ningún `max_length` filtra. La `url` se exceptúa
+    porque tiene una frontera más específica y contractual —la cuarentena del
+    sink en `_link` responde `400 invalid_url`— y adelantarse a ella
+    degradaría el diagnóstico del cliente.
+
+    G8-P3-3: pero esa frontera SOLO corre en la rama por-URL.
+    `applications.link_vacancy` llama a `durable_synthesizable` dentro de
+    `if url is not None:`, y a esa rama solo se llega tras
+    `if vacancy_id is not None: return await resolve_direct(...)`. Los DTO
+    permiten mandar AMBOS: con `vacancy_id` presente el vínculo ni mira la
+    url, pero la url sigue entrando en el snapshot (`SNAPSHOT_KEYS`) ⇒
+    `CAST(:snap AS jsonb)` ⇒ 500 por entrada de usuario. La excepción se
+    condiciona por tanto a la MISMA condición que decide si `_link` va a
+    validarla, que es la única forma de que la justificación escrita y el
+    código no vuelvan a divergir.
+
+    Volcado PYTHON: en `mode="json"` pydantic serializa los floats no finitos
+    a `null` y los escondería."""
     cuerpo = body.model_dump()
-    cuerpo.pop("url", None)
+    if cuerpo.get("vacancy_id") is None:
+        cuerpo.pop("url", None)
     for item in cuerpo.get("bookmarks") or []:
-        item.pop("url", None)
+        if item.get("vacancy_id") is None:
+            item.pop("url", None)
     ensure_json_storable(cuerpo)
 
 

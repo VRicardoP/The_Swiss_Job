@@ -41,6 +41,46 @@ def error_404(resource: str):
     return ApiError(404, "not_found", f"{resource} no encontrado")
 
 
+def ensure_text_storable(texto: str, path: str, code: str = "invalid_json") -> None:
+    """Regla ÚNICA de la clase «carácter que Postgres no puede almacenar».
+
+    G8-P3-2 — la clase va por su sexta aparición (G1-P2-1, G2-P2-1, G3-P3-2,
+    G7-P2-3, G7-P3-1) y se cerraba caso a caso: el guard vivo solo miraba el
+    NUL, así que el SURROGATE SUELTO seguía sirviendo un 500 por entrada de
+    usuario. Son DOS vectores distintos y ninguno implica al otro —`"\\x00"`
+    codifica a UTF-8 sin protestar y `"\\ud800"` no contiene ningún NUL—, así
+    que la regla necesita las dos pruebas; lo que NO puede es estar repartida.
+    Todo punto del core que meta texto de usuario en una columna `text` o en
+    un `CAST(… AS jsonb)` llama AQUÍ, y aquí es donde se añade el siguiente
+    vector si aparece.
+
+    Alcance de cada uno: el NUL entra por cualquier campo (`json.loads` lo
+    decodifica desde `\\u0000` y ningún `max_length` lo filtra, pydantic
+    incluido); el surrogate suelto NO puede entrar por un campo tipado `str`
+    —pydantic v2 lo rechaza con 400 `invalid_request`, comprobado— sino solo
+    por el único campo `Any` del esquema, `filters`. Se comprueban los dos en
+    todos los caminos igualmente: el alcance es de HOY y depende de los tipos
+    de los DTO, no de esta frontera.
+
+    `code` existe para las fronteras que ya tienen su propio código de error
+    en el contrato (la cabecera `Idempotency-Key`): la regla es la misma, el
+    diagnóstico que el cliente merece no."""
+    if "\x00" in texto:
+        raise ApiError(
+            400, code,
+            f"{path}: carácter NUL (U+0000), que Postgres no admite ni en "
+            "text ni en jsonb",
+        )
+    try:
+        texto.encode()
+    except UnicodeEncodeError as exc:
+        raise ApiError(
+            400, code,
+            f"{path}: surrogate suelto (U+D800–U+DFFF), que no es codificable "
+            "en UTF-8 y que Postgres no admite ni en text ni en jsonb",
+        ) from exc
+
+
 def ensure_json_storable(payload, path: str = "body") -> None:
     """400 en FRONTERA para el cuerpo que Postgres NO puede almacenar.
 
@@ -65,12 +105,7 @@ def ensure_json_storable(payload, path: str = "body") -> None:
     Se llama con el `model_dump` que el endpoint ya calcula para el
     `request_hash`, ANTES de reservar la idempotencia."""
     if isinstance(payload, str):
-        if "\x00" in payload:
-            raise ApiError(
-                400, "invalid_json",
-                f"{path}: carácter NUL (U+0000), que Postgres no admite ni en "
-                "text ni en jsonb",
-            )
+        ensure_text_storable(payload, path)
         return
     if isinstance(payload, float):
         if payload != payload or payload in (float("inf"), float("-inf")):

@@ -399,3 +399,55 @@ def test_g7_cuerpo_no_almacenable_es_400_de_frontera_y_no_500(db):
         "SELECT name, revision FROM saved_searches WHERE id = :i", i=sid,
     )[0]
     assert (vigente.name, vigente.revision) == ("buena", 1)
+
+
+def test_g8_el_surrogate_suelto_en_filters_es_400_de_frontera_y_no_500(db):
+    """REGRESIÓN G8-P3-2: el guard de G7-P3-1 solo miraba el NUL, así que el
+    SURROGATE SUELTO seguía sirviendo un 500 por entrada de usuario — quinta
+    repetición de la clase «carácter que asyncpg no puede codificar»
+    (G1-P2-1, G2-P2-1, G3-P3-2, G7-P2-3).
+
+    El `json.loads` de la stdlib con el que Starlette decodifica el cuerpo
+    acepta `\\ud800` sin rechistar y produce un `str` que NO es codificable a
+    UTF-8. Revienta antes incluso de la BD, en `request_hash`
+    (`json.dumps(..., ensure_ascii=False).encode()`), y el sobre de
+    `api/main.py` lo servía como 500.
+
+    Alcance, que es lo que hace de esto un P3 y no un P2: pydantic v2 rechaza
+    los surrogates sueltos en TODO campo tipado `str` (400 `invalid_request`),
+    así que la única puerta es el único campo `Any` del esquema, `filters`.
+    Por eso la regla vive en `ensure_text_storable` y no en un parche por
+    campo: el alcance de HOY depende de los tipos de los DTO, no de la
+    frontera."""
+    factory, created = db
+    token, _tenant, pid = _seed_profile(factory, created)
+    surrogate = '"\\ud800"'
+
+    r = tia._api(
+        factory, "/v1/saved-searches", token=token, method="POST",
+        headers={"Idempotency-Key": "ssk-" + uuid.uuid4().hex[:10]},
+        content='{"profile_id": "%s", "name": "sur", "filters": {"q": %s}}'
+                % (pid, surrogate),
+    )
+    assert r.status_code == 400, r.text
+    assert r.json()["code"] == "invalid_json", r.text
+
+    assert _rows(
+        factory, "SELECT 1 FROM saved_searches WHERE profile_id = :p", p=pid
+    ) == []
+
+    # El PUT comparte guard y la fila vigente NO se toca.
+    ok = _post(factory, token, {"profile_id": str(pid), "name": "buena",
+                                "filters": {"q": "python"}})
+    assert ok.status_code == 201, ok.text
+    sid = ok.json()["id"]
+    bad = tia._api(
+        factory, f"/v1/saved-searches/{sid}", token=token, method="PUT",
+        content='{"name": "rota", "filters": {"q": %s}}' % surrogate,
+    )
+    assert bad.status_code == 400, bad.text
+    assert bad.json()["code"] == "invalid_json", bad.text
+    vigente = _rows(
+        factory, "SELECT name, revision FROM saved_searches WHERE id = :i", i=sid
+    )[0]
+    assert (vigente.name, vigente.revision) == ("buena", 1)
