@@ -600,6 +600,74 @@ def test_min_score_invalido_migra_desactivada_y_enumerada_en_staging():
     _asyncio.run(_on_disposable_db(_run))
 
 
+def test_escalar_no_json_del_durable_no_mata_la_transaccion_del_cutover():
+    """Regresión G3-P3-2: la frontera que decide si un durable es sintetizable
+    serializa el payload con `canonical_payload` (que lleva `default=str`), así
+    que ACEPTA un Decimal —lo que asyncpg entrega SIEMPRE para una columna
+    numeric— o un `date` en company/description; el ESCRITOR del durable no lo
+    llevaba y reventaba con TypeError en el INSERT de `applications`, matando
+    la transacción ENTERA del cutover, y el reconciliador cometía el mismo
+    error en el lado esperado (`_pg_text`), así que ni siquiera había
+    veredicto. Las cuatro serializaciones a jsonb quedan alineadas."""
+    import asyncio as _asyncio
+    from decimal import Decimal
+
+    from jobhunt_core import import_portfolio as ip
+    from jobhunt_core.import_portfolio_manifest import (
+        _canon, _pg_text, migrate_and_reconcile,
+    )
+    from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import (
+        _on_disposable_db,
+    )
+
+    durables = [
+        {"url": "https://g3dec.example.ch/1", "title": "T1",
+         "company": Decimal("1.5"), "description": None, "status": "applied",
+         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+        {"url": "https://g3dt.example.ch/1", "title": "T2", "company": "A",
+         "description": date(2026, 1, 1), "status": "applied",
+         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+    ]
+    # La frontera los acepta: si el escritor no los acepta, el cutover muere.
+    for d in durables:
+        assert ip.durable_synthesizable(d) == (True, None)
+    # El lado ESPERADO lee lo que el destino GUARDA (jsonb ->> del str).
+    assert _pg_text(Decimal("1.5")) == "1.5"  # antes: TypeError
+    assert _pg_text(date(2026, 1, 1)) == "2026-01-01"  # antes: TypeError
+    assert _canon({"x": Decimal("1.5")}) == '{"x": "1.5"}'  # antes: TypeError
+
+    async def _run(factory):
+        async with factory() as s:
+            users = [{
+                "external_ref": 1, "applications": durables,
+                "saved_searches": [
+                    {"name": "f", "filters": {"min": Decimal("2.5")},
+                     "min_score": 60, "is_active": True},
+                ],
+            }]
+            report = await migrate_and_reconcile(s, users)  # antes: TypeError
+            assert report["verdict"] == "ok", report["divergences"]
+
+    _asyncio.run(_on_disposable_db(_run))
+
+
+def test_json_safe_no_pierde_entradas_aunque_la_clave_desambiguada_colisione():
+    """Regresión G3-P3-3: el desambiguador de G2-H-1 no iteraba, así que si la
+    clave YA sufijada existía en la salida la entrada se pisaba igual que antes
+    del fix (3 claves → 2). Y no degrada «solo la auditoría»: `_json_safe` sanea
+    también `filters` y el `snapshot`, que son DATOS DE PRODUCTO."""
+    from jobhunt_core.import_portfolio_durables import _json_safe
+
+    # 'a\ufffd' y 'a\x00' COLAPSAN a la misma clave tras el saneo, y la clave
+    # desambiguada ('a\ufffd#2') YA existe: el sufijo colisiona a su vez.
+    entrada = {"a\ufffd": 1, "a\ufffd#2": 2, "a\x00": 3}
+    salida = _json_safe(entrada)
+    assert len(salida) == 3  # antes: 2 — el valor 2 se perdía
+    assert sorted(salida.values()) == [1, 2, 3]
+    assert salida["a\ufffd"] == 1 and salida["a\ufffd#2"] == 2
+    assert salida["a\ufffd#3"] == 3  # el desambiguador ITERA hasta hueco
+
+
 def test_saved_search_filters_dict_y_last_run_at_del_extractor():
     """Regresión G1 H-3 (contrato del extractor): la columna origen `filters` es
     JSONB real — el driver entrega un DICT, y json.loads(dict) → TypeError hacía

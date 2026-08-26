@@ -292,8 +292,14 @@ async def migrate_applications(
                 ),
                 {
                     "id": uuid.uuid4(), "pid": profile_id, "vid": vacancy_id,
+                    # G3-P3-2: `default=str` — la frontera que decide si el
+                    # durable es sintetizable serializa con canonical_payload
+                    # (que SÍ lo lleva), así que acepta un Decimal/date/UUID en
+                    # company/description; sin él, el INSERT reventaba con
+                    # TypeError y mataba la transacción ENTERA del cutover.
                     "snap": json.dumps(
-                        _json_safe(snapshot), ensure_ascii=False, allow_nan=False
+                        _json_safe(snapshot), ensure_ascii=False,
+                        allow_nan=False, default=str,
                     ),
                     "st": winner["status"], "n": notes, "fud": follow_up,
                 },
@@ -408,8 +414,11 @@ async def migrate_saved_searches(
             )
             _record_skipped(staging, "saved_search", "invalid_filters", row)
             filters = {}
+        # G3-P3-2: `default=str`, como canonical_payload y persist_manifest —
+        # un escalar no-JSON (Decimal de una columna numeric, date) abortaba la
+        # transacción del cutover en el INSERT.
         filters_json = json.dumps(
-            _json_safe(filters), ensure_ascii=False, allow_nan=False
+            _json_safe(filters), ensure_ascii=False, allow_nan=False, default=str
         )
         # Dedup por la TUPLA MATERIAL COMPLETA (name, filters, min_score, is_active,
         # last_run_at): dos búsquedas con igual name+filters pero distinto min_score/
@@ -500,9 +509,16 @@ def _json_safe(value):
                 # G2-H-1: dos claves DISTINTAS que colapsan tras el saneo
                 # ('a\x00' y 'a\ufffd' — las urls tóxicas viajan como clave en
                 # ledger/staging) perdían una entrada del manifiesto en
-                # silencio. Se desambigua en vez de pisar: el registro de
-                # auditoría no pierde nada.
-                key = f"{key}#{len(out)}"
+                # silencio. Se desambigua en vez de pisar.
+                # G3-P3-3: el sufijo puede COLISIONAR a su vez (si la clave
+                # sufijada ya existe se seguía pisando, 3 entradas → 2), y esto
+                # no toca solo la auditoría: _json_safe se aplica también a
+                # `filters` y al `snapshot`, que son DATOS DE PRODUCTO. Se
+                # itera hasta encontrar hueco.
+                base, n = key, len(out)
+                while key in out:
+                    key = f"{base}#{n}"
+                    n += 1
             out[key] = _json_safe(v)
         return out
     if isinstance(value, (list, tuple)):

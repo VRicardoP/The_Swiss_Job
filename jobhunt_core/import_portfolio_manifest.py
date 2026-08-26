@@ -63,9 +63,14 @@ def _canon(value) -> str:
 
     G2-P2-1: pasa por el MISMO saneo que la escritura (_json_safe) — el destino
     guarda los floats no finitos como texto, así que sin sanear también el lado
-    ESPERADO un NaN daría 'NaN' contra '"nan"' y un falso divergent."""
+    ESPERADO un NaN daría 'NaN' contra '"nan"' y un falso divergent.
+
+    G3-P3-2: `default=str` — el ESCRITOR guarda así los escalares no-JSON
+    (Decimal/date/UUID), y sin el espejo aquí el lado esperado reventaba con
+    TypeError antes de dar veredicto."""
     return json.dumps(
-        _json_safe(value), ensure_ascii=False, sort_keys=True, allow_nan=False
+        _json_safe(value), ensure_ascii=False, sort_keys=True,
+        allow_nan=False, default=str,
     )
 
 
@@ -114,7 +119,13 @@ def _pg_text(value) -> str:
         # dígitos significativos y 'f' los expande como numeric.
         dec = Decimal(repr(value))
         return format(dec.copy_abs() if dec == 0 else dec, "f")  # numeric no tiene -0
-    return json.dumps(value, ensure_ascii=False)
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except TypeError:
+        # G3-P3-2: el escritor serializa con `default=str`, así que jsonb
+        # guarda la CADENA str(value) para un Decimal/date/UUID — el lado
+        # esperado debe leer EXACTAMENTE lo que el destino guarda.
+        return str(value)
 
 
 def _ident(value) -> str:
