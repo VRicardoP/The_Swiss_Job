@@ -3,7 +3,9 @@
 El sink delegaba en un barrido que no existía: el core acumuló ~4.000
 vacantes activas más que el legacy en producción. Estos tests fijan las dos
 ramas (muertas con gracia · rancias 120 d sin adjunto), la idempotencia y
-las guardas (recién cerrada, con candidatura, sin encarnación alguna).
+las guardas (recién cerrada, con candidatura en la rama 2, sin encarnación
+alguna) y, en la rama 1, que el adjunto NO retiene la vacante muerta en el
+corpus pero sigue siendo resoluble para su perfil (G4-P2-3).
 BD desechable vía core-migrate (mismo patrón que test_integration_sink).
 """
 
@@ -15,6 +17,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from jobhunt_core import applications
 from jobhunt_core.tests import dbcleanup
 from jobhunt_core.archive import archive_sweep
 from jobhunt_core.config import settings
@@ -220,50 +223,89 @@ def test_rancia_con_candidatura_se_conserva_pf3(db):
     assert st.archivada is False and st.con_activa is True  # PF.3: se conserva
 
 
-def test_muerta_con_candidatura_se_conserva_pf3(db):
-    """Regresión G3-A-P2-3: el guard PF.3 («con candidatura se conserva»)
-    estaba SOLO en la rama de RANCIAS, y la rama de MUERTAS es justo donde el
-    adjunto es más probable — el portal retira la oferta a la que el usuario se
-    apuntó. Como el archivado es IRREVERSIBLE (nada en el core limpia
-    archived_at), `resolve_direct` devolvía 404 para siempre: el re-POST fallaba
-    y el PUT de bookmarks dejaba la vacante en `skipped` en CADA sync. El mismo
-    dato por la rama 2 SÍ se conservaba: la asimetría estaba entre ramas."""
+def _vac_id(factory, ext):
+    return _sql(
+        factory,
+        "SELECT i.vacancy_id FROM source_listing_incarnations i "
+        "JOIN source_listings l ON l.id = i.source_listing_id "
+        "WHERE l.external_id = :e LIMIT 1",
+        e=ext,
+    ).scalar_one()
+
+
+def test_g4_muerta_con_adjunto_se_archiva_pero_sigue_resoluble_para_su_perfil(db):
+    """Regresión G4-P2-3 y G4-P3-2. El guard PF.3 que G3-A-P2-3 añadió a la
+    rama de MUERTAS no estaba scopeado a perfil ni a consumer y, como no hay
+    otra ruta que ponga `archived_at`, dejaba la oferta RETIRADA circulando
+    COMO ACTIVA en el catálogo global y en el corpus de matching/dedup de
+    TODOS los tenants, para siempre (ningún consumidor exige encarnación
+    activa) — la patología de las ~4.000 vacantes de más, con ancla
+    CROSS-TENANT. Y tampoco cubría el BOOKMARK PURO, la población mayoritaria
+    del cutover y el síntoma que citaba su propio comentario.
+
+    Ahora la vacante muerta SALE del corpus siempre, y lo que el guard
+    protegía —que el adjunto no quede irresoluble— lo da `resolve_direct`,
+    scopeado AL PERFIL que ya la tiene adjunta (candidatura o bookmark puro).
+    """
     factory, created = db
     scope = _seed_scope(factory, created)
-    _ingest(factory, scope, "muerta-adjunta")
-    _ingest(factory, scope, "muerta-sola")
+    for ext in ("muerta-adjunta", "muerta-marcada", "muerta-sola"):
+        _ingest(factory, scope, ext)
     _sql(
         factory,
         "UPDATE source_listing_incarnations SET ended_at = now() - interval '30 days' "
         "WHERE id IN (SELECT i.id FROM source_listing_incarnations i "
         " JOIN source_listings l ON l.id=i.source_listing_id "
-        " WHERE l.external_id IN ('muerta-adjunta', 'muerta-sola'))",
+        " WHERE l.external_id IN ('muerta-adjunta', 'muerta-marcada', 'muerta-sola'))",
     )
-    cid, pid, aid = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    cid, pid, otro_pid, aid = (uuid.uuid4() for _ in range(4))
     _sql(factory, f"INSERT INTO consumers (id, name) VALUES ('{cid}', 'test-arch-m')")
-    _sql(
-        factory,
-        f"INSERT INTO profiles (id, consumer_id, external_ref) "
-        f"VALUES ('{pid}', '{cid}', 'arch-m')",
-    )
+    for p_id, ref in ((pid, "arch-m"), (otro_pid, "arch-m-otro")):
+        _sql(
+            factory,
+            f"INSERT INTO profiles (id, consumer_id, external_ref) "
+            f"VALUES ('{p_id}', '{cid}', '{ref}')",
+        )
+    v_adjunta = _vac_id(factory, "muerta-adjunta")
+    v_marcada = _vac_id(factory, "muerta-marcada")
+    v_sola = _vac_id(factory, "muerta-sola")
     _sql(
         factory,
         f"INSERT INTO applications (id, profile_id, vacancy_id) "
-        f"SELECT '{aid}', '{pid}', i.vacancy_id FROM source_listing_incarnations i "
-        "JOIN source_listings l ON l.id=i.source_listing_id "
-        "WHERE l.external_id='muerta-adjunta'",
+        f"VALUES ('{aid}', '{pid}', '{v_adjunta}')",
+    )
+    # Bookmark PURO: fila de profile_vacancy_state con saved_at y SIN
+    # application (lo que produce el cutover de durables).
+    _sql(
+        factory,
+        f"INSERT INTO profile_vacancy_state (profile_id, vacancy_id, saved_at) "
+        f"VALUES ('{pid}', '{v_marcada}', now())",
     )
     created["extra_sql"] += [
         f"DELETE FROM consumers WHERE id = '{cid}'",
-        f"DELETE FROM profiles WHERE id = '{pid}'",
+        f"DELETE FROM profiles WHERE consumer_id = '{cid}'",
         f"DELETE FROM applications WHERE id = '{aid}'",
+        f"DELETE FROM profile_vacancy_state WHERE profile_id = '{pid}'",
     ]
 
-    _sweep(factory)
-    # La vacante CON candidatura se conserva (antes: archivada, irreversible)…
-    assert _estado(factory, "muerta-adjunta").archivada is False
-    # …y la salida del corpus sigue funcionando para el resto.
-    assert _estado(factory, "muerta-sola").archivada is True
+    assert _sweep(factory)["archivadas_muertas"] == 3  # antes del fix: 2
+    for ext in ("muerta-adjunta", "muerta-marcada", "muerta-sola"):
+        # Las TRES salen del corpus: nada muerto se sirve como activo.
+        assert _estado(factory, ext).archivada is True
+
+    async def _resolver(vid, profile_id):
+        async with factory() as s:
+            return await applications.resolve_direct(s, vid, profile_id)
+
+    # El adjunto del perfil sigue RESOLUBLE pese al archivado — candidatura…
+    assert asyncio.run(_resolver(v_adjunta, pid)) == v_adjunta
+    # …y bookmark PURO (lo que el guard nunca cubrió).
+    assert asyncio.run(_resolver(v_marcada, pid)) == v_marcada
+    # Sin adjunto sigue siendo 404, y el adjunto es del PERFIL: ni siquiera
+    # otro perfil del MISMO consumer la resuelve (antes el guard era global).
+    assert asyncio.run(_resolver(v_sola, pid)) is None
+    assert asyncio.run(_resolver(v_adjunta, otro_pid)) is None
+    assert asyncio.run(_resolver(v_adjunta, None)) is None
 
 
 def test_b3_sink_no_refresca_snapshot_archivado_por_el_barrido(db):

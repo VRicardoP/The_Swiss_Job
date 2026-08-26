@@ -2,7 +2,8 @@
 
 El endpoint /v1 es una capa fina; aquí vive:
 - La CASCADA de vínculo a vacante (Decisión 3): (a) vacancy_id directo
-  validado presentable + cadena merged_into seguida al ganador; (b) resolución
+  validado presentable —o ARCHIVADO pero ya adjunto a ESE perfil, G4-P2-3— +
+  cadena merged_into seguida al ganador; (b) resolución
   por URL en TODAS las fuentes (sin scope de fuente — el helper del import
   queda scopeado a SU contexto); (c) síntesis en `portfolio-import` por el
   camino ya entregado del import; (d) candidatura manual SIN url con
@@ -105,17 +106,55 @@ async def _merge_winner(session, vacancy_id) -> uuid.UUID | None:
     return None
 
 
-async def resolve_direct(session, vacancy_id) -> uuid.UUID | None:
+async def _profile_attached(session, profile_id, vacancy_id) -> bool:
+    """El perfil YA tiene esta vacante adjunta: candidatura o bookmark (el
+    PURO, `profile_vacancy_state.saved_at`, es la población mayoritaria del
+    cutover). Scopeado al PERFIL: el adjunto de un tenant ajeno no abre nada.
+    """
+    if profile_id is None:
+        return False
+    return bool(
+        await session.scalar(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM applications a "
+                "               WHERE a.profile_id = :p AND a.vacancy_id = :v) "
+                "    OR EXISTS (SELECT 1 FROM profile_vacancy_state s "
+                "               WHERE s.profile_id = :p AND s.vacancy_id = :v "
+                "                 AND s.saved_at IS NOT NULL)"
+            ),
+            {"p": profile_id, "v": vacancy_id},
+        )
+    )
+
+
+async def resolve_direct(session, vacancy_id, profile_id=None) -> uuid.UUID | None:
     """(a) vacancy_id directo: existe y PRESENTABLE (archived_at IS NULL); si
     tiene merged_into se sigue la cadena al ganador. None → 404 del endpoint
-    (indistinguible de cross-tenant)."""
+    (indistinguible de cross-tenant).
+
+    G4-P2-3/G4-P3-2: una vacante ARCHIVADA que ESTE perfil ya tiene adjunta
+    (candidatura o bookmark puro) SÍ se resuelve. El archivado es irreversible
+    y dejaba el adjunto muerto: el re-POST en 404 y el PUT de bookmarks
+    devolviendo `skipped` en CADA sync, mientras el item seguía visible en
+    `GET /v1/applications` (la rama bookmark del feed no filtra archivado) —
+    una UI con un item sobre el que ninguna acción funciona. La alternativa
+    —no archivar la vacante con adjunto— ancla corpus MUERTO en el catálogo
+    global y en el matching de TODOS los tenants (ningún consumidor exige
+    encarnación activa), que es justo la patología que `archive.py` existe
+    para cerrar. Esta vía no añade nada al corpus: solo deja RESOLUBLE lo que
+    el usuario ya tenía, y solo para él. Sin `profile_id` (llamadores que no
+    lo tienen) el comportamiento es el estricto de siempre."""
     row = (
         await session.execute(
             sa.text("SELECT merged_into, archived_at FROM vacancies WHERE id = :v"),
             {"v": vacancy_id},
         )
     ).one_or_none()
-    if row is None or row.archived_at is not None:
+    if row is None:
+        return None
+    if row.archived_at is not None and not await _profile_attached(
+        session, profile_id, vacancy_id
+    ):
         return None
     if row.merged_into is None:
         return vacancy_id
@@ -210,7 +249,7 @@ async def link_vacancy(
     endpoint responde 404 indistinguible); los caminos (b)-(d) resuelven o
     lanzan LinkError (→ 400). Con vacancy_id NO se consulta la URL."""
     if vacancy_id is not None:
-        return await resolve_direct(session, vacancy_id)
+        return await resolve_direct(session, vacancy_id, profile_id)
     if url is not None:
         item = {"url": url, "title": title, "company": company,
                 "description": description}

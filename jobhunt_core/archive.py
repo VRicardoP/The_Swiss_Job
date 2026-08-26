@@ -9,14 +9,22 @@ cerró entraba como cierre de encarnación y nadie archivaba la vacante.
 
 Dos ramas, ambas set-based e idempotentes:
 
-1. MUERTAS — sin encarnación activa (el legacy/portal las cerró) y SIN
-   adjunto (PF.3, igual que la rama 2). Archivar es SEGURO respecto a la
-   reactivación: un slot cerrado que revive abre una encarnación NUEVA con
-   vacante NUEVA (sink `_open_incarnations`) — jamás reutiliza la archivada.
-   La GRACIA (default 3 d) solo evita archivar en medio de un flap
-   cierre→reapertura del mismo día. Lo que NO es seguro es el adjunto del
-   usuario: archivar deja `resolve_direct` en 404 de forma IRREVERSIBLE
-   (G3-A-P2-3), y esta rama es justo donde el adjunto es más probable.
+1. MUERTAS — sin encarnación activa (el legacy/portal las cerró). Archivar
+   es SEGURO respecto a la reactivación: un slot cerrado que revive abre una
+   encarnación NUEVA con vacante NUEVA (sink `_open_incarnations`) — jamás
+   reutiliza la archivada. La GRACIA (default 3 d) solo evita archivar en
+   medio de un flap cierre→reapertura del mismo día.
+   El adjunto del usuario NO exime aquí (G4-P2-3): esta rama es la única que
+   pone `archived_at` para una vacante muerta, así que eximirla la dejaba
+   circulando COMO ACTIVA para siempre —ningún consumidor del corpus exige
+   encarnación activa: catálogo global `GET /v1/vacancies`, matching, dedup y
+   embeddings se conforman con `archived_at IS NULL`— y el ancla era
+   CROSS-TENANT (una candidatura del consumer A retenía la vacante en el
+   corpus del consumer B). Reaparecía la patología de las ~4.000 vacantes de
+   más. Lo que G3-A-P2-3 protegía —que archivar no deje el adjunto en 404
+   irreversible— lo da ahora `applications.resolve_direct`, que resuelve la
+   vacante ARCHIVADA cuando el perfil que pregunta ya la tiene adjunta; y
+   cubre también el BOOKMARK PURO (G4-P3-2), que este guard no veía.
 2. RANCIAS (ADR-07 literal) — encarnación activa pero sin verse en
    `CORE_CORPUS_STALE_DAYS` (120 d) y SIN adjunto (candidatura, PF.3: con
    adjunto se conserva). Se cierra también la encarnación para conservar el
@@ -73,14 +81,6 @@ async def archive_sweep(session: AsyncSession) -> dict:
                 "  WHERE v.archived_at IS NULL AND v.merged_into IS NULL"
                 "    AND NOT a.tiene_activa"
                 "    AND a.ultimo_cierre < now() - make_interval(days => :grace)"
-                # G3-A-P2-3: el guard PF.3 estaba SOLO en la rama 2, y es aquí
-                # donde el adjunto es MÁS probable (el portal retiró justo la
-                # oferta a la que el usuario se apuntó). Archivar es
-                # IRREVERSIBLE —nada en el core limpia archived_at— y deja
-                # `resolve_direct` en 404 para siempre: el re-POST falla y el
-                # PUT de bookmarks devuelve `skipped` en CADA sync.
-                "    AND NOT EXISTS (SELECT 1 FROM applications ap"
-                "                    WHERE ap.vacancy_id = v.id)"
                 "  ORDER BY v.id FOR UPDATE OF v SKIP LOCKED"
                 ") "
                 "UPDATE vacancies v SET archived_at = now() "
@@ -102,6 +102,10 @@ async def archive_sweep(session: AsyncSession) -> dict:
                 "  AND a.ultimo_visto < now() - make_interval(days => :stale) "
                 # PF.3: con candidatura se conserva (archivar no borra, pero
                 # el contrato dice conservar la vacante VIVA para el usuario).
+                # Aquí SÍ es inocuo: la vacante conserva encarnación ACTIVA,
+                # así que no ancla corpus muerto (a diferencia de la rama 1,
+                # G4-P2-3). La resolubilidad del adjunto ya no depende de este
+                # guard: la garantiza `resolve_direct`.
                 "  AND NOT EXISTS (SELECT 1 FROM applications ap "
                 "                  WHERE ap.vacancy_id = v.id) "
                 "ORDER BY v.id FOR UPDATE OF v SKIP LOCKED"
