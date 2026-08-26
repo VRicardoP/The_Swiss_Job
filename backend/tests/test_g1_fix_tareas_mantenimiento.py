@@ -211,6 +211,8 @@ class TestP214BarridoPorLotes:
 
 
 class _FakeRedis:
+    """Doble de Redis: marca de agua + marcador «ya avisado» (`SET NX EX`)."""
+
     def __init__(self):
         self.store: dict[str, str] = {}
 
@@ -218,8 +220,14 @@ class _FakeRedis:
         value = self.store.get(key)
         return value.encode() if value is not None else None
 
-    def set(self, key, value):
-        self.store[key] = value
+    def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.store:
+            return None
+        self.store[key] = value.decode() if isinstance(value, bytes) else value
+        return True
+
+    def delete(self, key):
+        self.store.pop(key, None)
 
     def close(self):
         pass
@@ -263,10 +271,19 @@ class TestP215AlertaProfesor:
             await db_session.commit()
         return h
 
-    async def test_smtp_ok_pero_fallo_posterior_no_reenvia(
+    async def test_envio_fallido_se_reintenta_y_el_exitoso_no_se_repite(
         self, db_session, monkeypatch
     ):
-        """G1/P2-15: la marca avanza ANTES del envío — el retry no duplica."""
+        """G3/P1-1 SUSTITUYE la decisión de G1/P2-15 en este punto.
+
+        G1 guardaba la marca ANTES de enviar y aceptaba perder ESE aviso si el
+        envío fallaba, a cambio de no duplicar jamás. Con el marcador «ya
+        avisado» POR OFERTA la disyuntiva desaparece: un envío fallido retira
+        su marcador y el reintento lo recupera; un envío correcto deja el
+        marcador puesto y la ventana solapada no lo repite. El duplicado solo
+        es posible si el proceso muere entre el envío y el marcador — mucho
+        más barato que perder la alerta (el criterio del ciclo G3).
+        """
         marker = uuid.uuid4().hex[:8]
         await self._seed_primary_job(db_session, marker)
 
@@ -274,23 +291,30 @@ class TestP215AlertaProfesor:
         email_mock = MagicMock()
         email_mock.is_available = True
         sends: list = []
+        fail = True
 
-        def _send_then_fail(*args, **kwargs):
+        def _send(*args, **kwargs):
             sends.append(1)
-            raise ConnectionError("se cae DESPUÉS de entregar")
+            if fail:
+                raise ConnectionError("SMTP caído")
 
-        email_mock.send = _send_then_fail
+        email_mock.send = _send
 
-        # 1ª corrida: envía (y el fallo posterior sube al retry de Celery).
+        # 1ª corrida: el envío falla y sube al retry de Celery.
         with pytest.raises(ConnectionError):
             await self._run(db_session, monkeypatch, fake_redis, email_mock)
         assert len(sends) == 1
-        assert fake_redis.store, "la marca debe estar guardada antes del envío"
 
-        # 2ª corrida (retry): la marca ya avanzó → no re-envía el mismo lote.
+        # 2ª corrida (retry): la oferta NO se perdió — se reintenta y sale.
+        fail = False
         result = await self._run(db_session, monkeypatch, fake_redis, email_mock)
-        assert result["matched"] == 0
-        assert len(sends) == 1, "el retry no debe duplicar el email"
+        assert result["matched"] == 1, "el aviso fallido debe reintentarse"
+        assert len(sends) == 2
+
+        # 3ª corrida: ya enviado — el solape de la ventana no lo repite.
+        third = await self._run(db_session, monkeypatch, fake_redis, email_mock)
+        assert third["matched"] == 0
+        assert len(sends) == 2, "el marcador impide el reenvío"
 
     async def test_cota_superior_excluye_altas_futuras(self, db_session, monkeypatch):
         """G1/P2-15: una oferta con first_seen_at > now no entra en esta
