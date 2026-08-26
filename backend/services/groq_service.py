@@ -270,6 +270,12 @@ class GroqService:
         desplazaba todos los scores un puesto (score/explicación al job
         vecino). Se exige 0 <= index < batch_len y unicidad; la violación
         lanza y degrada por el mismo camino seguro.
+
+        G3/P3-1: se exige además COBERTURA COMPLETA del lote. Una respuesta
+        válida pero corta (qwen truncado: 9 de 25) se aceptaba y se CACHEABA
+        7 días con los índices ausentes sin score LLM y sin haber probado
+        Gemini; ahora cae por el mismo camino seguro (fallback → degradado
+        sin cachear) que el JSON inválido.
         """
         text = response.strip()
         if text.startswith("```"):
@@ -309,6 +315,14 @@ class GroqService:
                     "missing_skills": r.get("missing_skills", []),
                     "reason": r.get("reason", ""),
                 }
+            )
+
+        # G3/P3-1: cobertura completa del lote — los índices válidos y únicos ya
+        # están garantizados arriba, así que basta el recuento.
+        if len(normalized) != batch_len:
+            raise ValueError(
+                f"respuesta del LLM incompleta: {len(normalized)} resultados "
+                f"para un batch de {batch_len}"
             )
 
         return normalized

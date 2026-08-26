@@ -339,13 +339,21 @@ class CoreCatalog:
         return await LocalCatalog(self._db).get(job_ref)
 
     async def _resolve_legacy_hashes(self, urls: list[str]) -> dict[str, str]:
-        """url → hash MD5 del Job local de respaldo (lote). {} sin sesion."""
+        """url → hash MD5 del Job local de respaldo (lote). {} sin sesion.
+
+        G3/P3-5: solo Jobs ACTIVOS. Sin el filtro se presentaba el hash
+        «accionable» del fix G1/P2-17 para ofertas ya archivadas y el detalle
+        respondia 404 (`LocalCatalog.get` SI filtra por is_active), dejando el
+        item del feed inabrible. Mismo criterio que `local.py`.
+        """
         clean = [u for u in urls if u]
         if self._db is None or not clean:
             return {}
         rows = (
             await self._db.execute(
-                select(Job.url, Job.hash).where(Job.url.in_(clean))
+                select(Job.url, Job.hash).where(
+                    Job.url.in_(clean), Job.is_active.is_(True)
+                )
             )
         ).all()
         return {url: job_hash for url, job_hash in rows}

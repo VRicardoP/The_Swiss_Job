@@ -29,6 +29,10 @@ from services.skill_synonyms import filter_missing_skills
 
 logger = logging.getLogger(__name__)
 
+# Clave interna de los scored results: True cuando el LLM emitió veredicto para
+# ese result en ESTA corrida (G3/P3-9). Nunca sale del pipeline de matching.
+LLM_VERDICT_KEY = "llm_verdict"
+
 
 class MatchService:
     """Orchestrates the full matching pipeline for a user."""
@@ -234,9 +238,7 @@ class MatchService:
                 # aprobado no excluía NUNCA. Comparación con lower() sobre los
                 # elementos del array (EXISTS correlacionado), case-insensitive
                 # en ambos lados.
-                elem = func.jsonb_array_elements_text(Job.tags).table_valued(
-                    "value"
-                )
+                elem = func.jsonb_array_elements_text(Job.tags).table_valued("value")
                 tag_hit = (
                     select(literal(1))
                     .select_from(elem)
@@ -409,6 +411,11 @@ class MatchService:
         self, r: dict, llm_data: dict, profile: UserProfile, weights: dict
     ) -> None:
         """Mergea el resultado del LLM en un scored result y recalcula score_final."""
+        # G3/P3-9: marca de «esta corrida SÍ tuvo veredicto del LLM para este
+        # result» — la lee `_score_values` para decidir si persiste score_llm
+        # y explanation. Solo se llega aquí con score > 0, así que el degradado
+        # a ceros (LLM caído) queda fuera y no borra la explicación previa.
+        r[LLM_VERDICT_KEY] = True
         r["score_llm"] = round(llm_data["score"] / 100.0, 4)
         r["explanation"] = llm_data.get("reason", "")
         # Merge LLM skill analysis if richer than rule-based
@@ -439,19 +446,31 @@ class MatchService:
         Fuente unica para el UPDATE en sesion y para el upsert ON CONFLICT:
         NUNCA incluye feedback/feedback_implicit/application_status/
         draft_letter — el estado del usuario no se pisa desde el motor.
+
+        G3/P3-9: `score_llm`/`explanation` solo viajan si ESTA corrida obtuvo
+        veredicto del LLM para el result (flag LLM_VERDICT_KEY, puesta en
+        `_apply_llm_result`). Sin la guarda, la cola que no entra en el
+        re-ranking —modo avalancha: >MATCH_LLM_RERANK_MAX ⇒ solo se re-rankean
+        MATCH_LLM_RERANK_TOP— escribía `score_llm=0.0` y `explanation=NULL`
+        encima de los valores buenos del día anterior, y la explicación «por
+        qué encaja» aparecía y desaparecía según el volumen del día. El mismo
+        criterio protege el degradado a ceros (Groq+Gemini caídos): un fallo
+        de proveedor no borra lo ya explicado.
         """
-        return {
+        values = {
             "score_embedding": r["score_embedding"],
             "score_salary": r["score_salary"],
             "score_location": r["score_location"],
             "score_recency": r["score_recency"],
-            "score_llm": r["score_llm"],
             "score_final": r["score_final"],
             "urgency_score": r.get("urgency_score", 0),
-            "explanation": r.get("explanation"),
             "matching_skills": r["matching_skills"],
             "missing_skills": r["missing_skills"],
         }
+        if r.get(LLM_VERDICT_KEY):
+            values["score_llm"] = r["score_llm"]
+            values["explanation"] = r.get("explanation")
+        return values
 
     @classmethod
     def _apply_scores(cls, row: MatchResult, r: dict) -> None:
@@ -464,9 +483,20 @@ class MatchService:
 
     @staticmethod
     def _has_engagement(row: MatchResult) -> bool:
-        """True si la fila tiene interacción del usuario → no se borra en el prune."""
+        """True si la fila tiene interacción del usuario → no se borra en el prune.
+
+        G3/P2-11: `feedback_implicit` faltaba, así que una fila cuya única
+        interacción era implícita (creada por `record_implicit_feedback`:
+        feedback=None, application_status='detected', draft_letter=None) se
+        consideraba «limpia» y se BORRABA en cada corrida — de rebote la oferta
+        dejaba de estar `attached` y `cleanup_stale_jobs` la borraba con su
+        cascada a los 60 días. Mismo criterio que `attached` en
+        `maintenance_tasks`, pero por verdad (no `is not None`): una lista
+        vacía no es interacción.
+        """
         return (
             row.feedback is not None
+            or bool(row.feedback_implicit)
             or row.application_status != "detected"
             or row.draft_letter is not None
         )
