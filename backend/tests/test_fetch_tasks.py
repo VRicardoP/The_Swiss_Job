@@ -53,6 +53,11 @@ def _mock_session_factory(db_session):
     return _factory
 
 
+def _sin_deriva(entries: list[str]) -> list[str]:
+    """Incidencias de `unhealthy` que NO son la deriva de identidad (G4/P1-1)."""
+    return [e for e in entries if "DERIVA DE IDENTIDAD" not in e]
+
+
 class TestFetchPipeline:
     @patch("tasks.fetch_tasks.get_all_providers")
     async def test_empty_providers_returns_zero(self, mock_providers, db_session):
@@ -165,7 +170,12 @@ class TestFetchPipeline:
                 )
             ]
             summary1 = await _fetch_providers_async()
-            assert summary1["unhealthy"] == []  # un run solo puede ser un hipo
+            # un run solo puede ser un hipo
+            # G4/P1-1: el choque contra `ix_jobs_url` ya sale como incidencia
+            # desde el PRIMER run (antes era mudo). Lo que sigue necesitando
+            # dos runs es la racha de PERSISTENCIA, que es lo que mide este
+            # test: se filtra la otra señal para no confundirlas.
+            assert _sin_deriva(summary1["unhealthy"]) == []
 
             mock_providers.return_value = [
                 _make_mock_provider(
@@ -175,7 +185,10 @@ class TestFetchPipeline:
             ]
             summary2 = await _fetch_providers_async()
 
-        assert any(entry.startswith("unstored_src:") for entry in summary2["unhealthy"])
+        assert any(
+            entry.startswith("unstored_src:")
+            for entry in _sin_deriva(summary2["unhealthy"])
+        )
 
     @patch("tasks.fetch_tasks.get_all_providers")
     async def test_filtro_tech_no_degrada_la_fuente(

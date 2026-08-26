@@ -106,7 +106,11 @@ class TestCursorSoloAprendeLoPersistido:
         ):
             summary = await _fetch_scrapers_async()
 
-        assert summary["errors"] == 1
+        # G4/P1-1: el choque contra `ix_jobs_url` ya NO se disuelve entre los
+        # `errors` por-oferta — se cuenta aparte porque su modo de fallo es la
+        # pérdida silenciosa de una oferta re-listada, no un error cualquiera.
+        assert summary["errors"] == 0
+        assert summary["identity_conflicts"] == 1
         cursor = (
             await db_session.execute(
                 select(SourceCursor).where(SourceCursor.source_key == "scr_test")
@@ -173,7 +177,11 @@ class TestCursorAprendeDescartadasPorVentana:
 
         assert summary["window_skipped"] == 1
         assert summary["window_no_date"] == 1
-        assert summary["errors"] == 1
+        # G4/P1-1: el choque contra `ix_jobs_url` ya NO se disuelve entre los
+        # `errors` por-oferta — se cuenta aparte porque su modo de fallo es la
+        # pérdida silenciosa de una oferta re-listada, no un error cualquiera.
+        assert summary["errors"] == 0
+        assert summary["identity_conflicts"] == 1
         cursor = (
             await db_session.execute(
                 select(SourceCursor).where(SourceCursor.source_key == "schuljobs")
@@ -186,6 +194,11 @@ class TestCursorAprendeDescartadasPorVentana:
         assert "http://schuljobs.test/nodate" not in cursor.recent_identities
         # VD.2 intacto: el fallo de persistencia no se aprende.
         assert "http://schuljobs.test/taken" not in cursor.recent_identities
+
+
+def _sin_deriva(entries: list[str]) -> list[str]:
+    """Incidencias de `unhealthy` que NO son la deriva de identidad (G4/P1-1)."""
+    return [e for e in entries if "DERIVA DE IDENTIDAD" not in e]
 
 
 class TestSaludDePersistencia:
@@ -215,7 +228,11 @@ class TestSaludDePersistencia:
             ]
             summary1 = await _fetch_scrapers_async()
             # Primer run: puede ser un hipo transitorio — todavía sin alerta.
-            assert summary1["unhealthy"] == []
+            # G4/P1-1: el choque contra `ix_jobs_url` ya sale como incidencia
+            # desde el PRIMER run (antes era mudo). Lo que sigue necesitando
+            # dos runs es la racha de PERSISTENCIA, que es lo que mide este
+            # test: se filtra la otra señal para no confundirlas.
+            assert _sin_deriva(summary1["unhealthy"]) == []
 
             mock_scrapers.return_value = [
                 _make_mock_scraper(
@@ -225,7 +242,10 @@ class TestSaludDePersistencia:
             ]
             summary2 = await _fetch_scrapers_async()
 
-        assert any(entry.startswith("scr_test:") for entry in summary2["unhealthy"])
+        assert any(
+            entry.startswith("scr_test:")
+            for entry in _sin_deriva(summary2["unhealthy"])
+        )
         fila = (
             await db_session.execute(
                 select(SourceHealth).where(SourceHealth.source_key == "scr_test")
@@ -514,7 +534,10 @@ class TestScraperQueLanzaDejaSenalDeSalud:
         ):
             summary = await _fetch_scrapers_async()
 
+        # Un fallo de DESCARGA sigue contando como `errors`: solo la deriva de
+        # identidad se cuenta aparte (G4/P1-1).
         assert summary["errors"] == 1
+        assert summary["identity_conflicts"] == 0
         assert summary["fetch_failed"] == 1
         fila = (
             await db_session.execute(

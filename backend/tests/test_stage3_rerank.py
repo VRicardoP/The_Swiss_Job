@@ -93,10 +93,16 @@ class TestStage3Rerank:
         assert r0["missing_skills"] == ["llm_miss"]
         assert r0["score_final"] != 10.0
 
-        # r1: score LLM 0 → NO se toca (skills rule-based preservados).
+        # r1: score LLM 0 → G4/P2-6, SÍ es un veredicto («0-39 = poor fit» es
+        # salida documentada del prompt) y se aplica: antes se descartaba y la
+        # fila se quedaba con el score_llm y la explicación de otra corrida
+        # junto a un score_final calculado con llm=0. Las skills rule-based
+        # siguen preservadas porque el merge sigue condicionado a que el LLM
+        # aporte alguna.
         assert r1["score_llm"] == 0.0
-        assert r1["explanation"] is None
+        assert r1["explanation"] == ""
         assert r1["matching_skills"] == ["rule"]
+        assert r1["missing_skills"] == ["rule_miss"]
 
         # Reordenado por score_final desc.
         assert out[0]["score_final"] >= out[1]["score_final"]
