@@ -1166,8 +1166,21 @@ async def _huecos_en_transicion(
             # Último cambio APLICADO por pk en el orden en que el proyector
             # los consume (lsn, seq_in_tx) — TODAS las filas, incluidas las
             # que declaran `_omitted` (G6-P3-1): el espejo de _is_close exige
-            # juzgar la MISMA fila que el proyector plegó, y una columna
-            # ausente NO cierra.
+            # juzgar la MISMA fila que el proyector plegó.
+            # G7-N-1, precisión de la razón escrita en G6-P3-1: el espejo es
+            # exacto FILA A FILA (comprobado contra los tipos JSON reales del
+            # staging) y APROXIMADO ENTRE FILAS DEL MISMO LOTE. No es cierto
+            # que «para el proyector una columna ausente sea una APERTURA»:
+            # `_fold_jobs` ACUMULA `cols` entre las filas del mismo pk
+            # (`f.cols.update(...)` solo pisa las claves presentes), así que
+            # si una `U` anterior del lote traía `is_active=false` el pliegue
+            # CONSERVA ese valor y `_is_close` devuelve CIERRE, mientras este
+            # espejo —que juzga solo la ÚLTIMA fila aplicada— diría PÉRDIDA.
+            # El fix sigue siendo el correcto por DIRECCIÓN (saltarse las
+            # filas `_omitted` era peor: descartaba evidencia), y la
+            # divergencia es LATENTE: censo del clúster hoy, la única columna
+            # omitida en todo el histórico es `description` e `is_active` está
+            # presente en 5.972/5.972 filas I+U.
             "WITH ultimo AS ("
             "  SELECT DISTINCT ON (a.pk) a.pk, a.op, a.payload "
             "  FROM shadow_change_log a "

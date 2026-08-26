@@ -32,8 +32,11 @@ nuevas de escritura:
   (revisiones de ofertas o cierres que mueven la canónica). A la SALIDA
   (bajo el single-flight, TRAS el drenado — fuera de las marcas de lote) el
   disparo se RE-GARANTIZA: se drenan los embeddings pendientes (no-op real
-  sin pendientes) y se re-evalúan SOLO los perfiles sombra activos que esta
-  invocación no evaluó Y cuya señal de recuperación está encendida
+  sin pendientes) y se re-evalúan los perfiles —de CUALQUIER consumer, no
+  solo los sombra (G7-N-5: la cabecera decía «solo los sombra» y contradecía
+  al código y al docstring de `_recovery_targets`, que sí lo explica y lo
+  justifica)— que esta invocación no evaluó Y cuya señal de recuperación
+  está encendida
   (_RECOVERY_NEEDED_SQL: revisión vigente sin match_evaluation para algún
   modelo+política activos, o corpus canónico embebido más reciente que su
   última evaluación) — un crash tras el commit de un lote pero durante
@@ -1498,7 +1501,8 @@ async def _replay_after_batch(session_factory, evaluated: set) -> int:
 
     Los embeddings pendientes se drenan SIEMPRE (run_pending sin pendientes
     es un no-op real); la evaluación NO es incondicional: solo los perfiles
-    sombra activos que _after_batch no evaluó en ESTA invocación
+    —de CUALQUIER consumer, ver `_recovery_targets`; G7-N-5— que
+    _after_batch no evaluó en ESTA invocación
     (`evaluated`) y cuya señal de recuperación está encendida — detección en
     UNA consulta (_RECOVERY_NEEDED_SQL): sin INTENTO registrado para su
     revisión vigente con algún (modelo, política) activos, o huella del corpus

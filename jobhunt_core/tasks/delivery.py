@@ -131,6 +131,12 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
                 if ok and not hechas:
                     # Transporte EJECUTADO cuyo resultado no pudo persistirse:
                     # la fila ya la resolvió otro dueño (G5-P3-3, en ORIGEN).
+                    # G7-N-3, para que nadie lo lea como una métrica exacta:
+                    # `lease_overrun` suma por DOS vías (esta y las `perdidas`
+                    # de `renew_lease`, abajo) y una MISMA fila perdida puede
+                    # contarse dos veces. Es un contador de ALARMA («G2-H-7
+                    # está ocurriendo»), no una cuenta de filas, y no gobierna
+                    # ningún gate.
                     lease_overrun += 1
                 # G2-H-7: renovar el lease del RESTO antes de agotarlo.
                 # G6-P2-2: solo si QUEDA resto. `renew_lease` sale por su
