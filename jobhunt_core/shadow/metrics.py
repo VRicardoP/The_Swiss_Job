@@ -556,12 +556,28 @@ async def _profile_metric_rows(
             vac_rel[vid] = max(vac_rel.get(vid, 0), rel)
 
     feed_rows, _cur = await matching.feed(session, prof.id, limit=NDCG_K)
-    idcg = _dcg(sorted(judgments.values(), reverse=True)[:NDCG_K])
+    # G3-A-P2-1: el IDCG tiene que vivir en el MISMO espacio que el numerador
+    # que normaliza. El feed del core solo puede ocupar UNA ranura por VACANTE;
+    # con dos refs juzgados atachados a la misma vacante (el attach cross-source
+    # que `reenlace_pct` existe para CONTAR), el ideal en espacio ref
+    # presupuestaba una ranura que el core no puede llenar mientras el legacy,
+    # que no dedujo, llenaba las dos y sacaba 1.0 — y como el umbral se ata al
+    # legacy, el core SUSPENDÍA el gate por deduplicar BIEN, tanto más seguro
+    # cuanto mejor cumpliera su función. El legacy puntúa por job_ref, así que
+    # conserva el ideal en espacio ref.
+    idcg_ref = _dcg(sorted(judgments.values(), reverse=True)[:NDCG_K])
+    idcg_core = _dcg(sorted(vac_rel.values(), reverse=True)[:NDCG_K])
     base = {"set_id": prof.set_id, "set_name": prof.set_name}
+    core_base = base | {
+        "espacio_idcg": "vacante",
+        "idcg_ref": round(idcg_ref, 6),  # el del legacy, para comparar
+        "refs_juzgados": len(judgments),
+        "vacantes_juzgadas": len(vac_rel),
+    }
 
     rows = [
-        _ndcg_core_row(scope, feed_rows, vac_rel, idcg, base),
-        _ndcg_legacy_row(scope, legacy_top, judgments, idcg, base),
+        _ndcg_core_row(scope, feed_rows, vac_rel, idcg_core, core_base),
+        _ndcg_legacy_row(scope, legacy_top, judgments, idcg_ref, base),
         _overlap_row(scope, feed_rows, legacy_top, mapping, base),
         await _falsos_negativos_row(
             session, prof, scope, judgments, mapping, base
@@ -1769,6 +1785,19 @@ def _report_details(details_by: dict) -> list[str]:
                 f"    · {graciados} hueco(s) GRACIADOS por reapertura en vuelo"
                 f" (slot cerrado + cambio pendiente <1h): "
                 f"{', '.join(perdida.get('huecos_graciados_muestra', [])[:5])}"
+            )
+    # G3-A-P2-1: el colapso de refs juzgados en una MISMA vacante (attach) es
+    # lo que separa el ideal del core del ideal del legacy — sin verlo, un
+    # ndcg@10 bajo parece un fallo de ranking cuando es deduplicación.
+    for (metric, scope), det in sorted(details_by.items()):
+        if metric != M_NDCG or not det:
+            continue
+        colapso = det.get("refs_juzgados", 0) - det.get("vacantes_juzgadas", 0)
+        if colapso > 0:
+            lines.append(
+                f"  ndcg@10 {scope}: {colapso} ref(s) juzgados COLAPSAN por"
+                f" attach en la misma vacante — IDCG en espacio vacante"
+                f" {det.get('idcg')} vs {det.get('idcg_ref')} en espacio ref"
             )
     coste = details_by.get((M_COSTE, SCOPE_GLOBAL))
     if coste:

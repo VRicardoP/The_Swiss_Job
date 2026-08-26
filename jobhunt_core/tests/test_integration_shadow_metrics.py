@@ -512,6 +512,63 @@ def test_ndcg_core_and_legacy_and_overlap_exact_values(db):
     )
 
 
+def test_ndcg_no_penaliza_al_core_por_deduplicar_dos_refs_juzgados(db):
+    """Regresión G3-A-P2-1: el IDCG se construía en espacio job_ref mientras el
+    DCG del core se puntúa en espacio VACANTE. Con dos refs juzgados atachados
+    a la MISMA vacante (el attach cross-source por url_normalized, justo lo que
+    `reenlace_pct` existe para contar), el ideal presupuestaba DOS ranuras que
+    el feed del core no puede llenar —solo tiene una vacante— mientras el
+    legacy, que no dedujo, llenaba las dos y sacaba 1.0. Como el umbral se ata
+    al legacy (legacy − 0.05), el core SUSPENDÍA el gate por deduplicar BIEN:
+    0.613147 vs umbral 0.95, y la racha de 7 ciclos a cero. Ahora cada nDCG se
+    normaliza con el ideal de SU espacio."""
+    factory = db
+    mp = _seed_model_policy(factory)
+    user = uuid.uuid4()
+    pid = _mk_profile(factory, str(user))
+    src_a = _mk_source(factory, "legacy:ndcgdup-a")
+    src_b = _mk_source(factory, "legacy:ndcgdup-b")
+    p = uuid.uuid4().hex[:6]
+    A, B = f"{p}-a", f"{p}-b"
+
+    _mk_frozen_set(factory, pid, {A: 3, B: 3})
+    # A y B, en DOS fuentes legacy distintas, atachados a la MISMA vacante.
+    vac, _, _ = _mk_slot(factory, src_a, A)
+    _mk_slot(factory, src_b, B, vacancy_id=vac)
+    _mk_eval(factory, mp, pid, vac, 90)  # feed core = [V]
+    for h in (A, B):
+        _legacy_job(factory, h)
+    _legacy_result(factory, user, A, 99)  # legacy visible = [A, B]
+    _legacy_result(factory, user, B, 98)
+
+    _compute(factory)
+    scope = f"profile:{pid}"
+    ndcg = _metric_row(factory, "ndcg@10", scope)
+    leg = _metric_row(factory, "ndcg@10_legacy", scope)
+    # A MANO — core: una ranura, rel 3 ⇒ dcg = idcg = 7 ⇒ 1.0 (antes:
+    # 7 / 11.416508 = 0.613147 contra el ideal de DOS ranuras).
+    assert float(ndcg.value) == pytest.approx(1.0)
+    assert ndcg.details["idcg"] == pytest.approx(7.0, abs=1e-6)
+    assert ndcg.details["espacio_idcg"] == "vacante"
+    assert ndcg.details["refs_juzgados"] == 2
+    assert ndcg.details["vacantes_juzgadas"] == 1
+    # El legacy sigue midiéndose en espacio REF, con SU ideal (dos ranuras).
+    assert ndcg.details["idcg_ref"] == pytest.approx(11.416508, abs=1e-6)
+    assert leg.details["idcg"] == pytest.approx(11.416508, abs=1e-6)
+    assert float(leg.value) == pytest.approx(1.0)
+    g = _gates(factory)[f"ndcg@10::{scope}"]
+    assert g["umbral"] == pytest.approx(0.95)
+    assert g["ok"] is True  # antes: False — suspenso por deduplicar bien
+
+    # El colapso queda VISIBLE en el informe legible (si no, un ndcg bajo
+    # parecería un fallo de ranking y es deduplicación).
+    async def report():
+        async with factory() as s:
+            return await metrics.render_report(s, CYCLE)
+
+    assert "COLAPSAN" in _run(report())
+
+
 def test_ndcg_unmeasurable_set_is_visible_not_green(db):
     """IDCG = 0 (set congelado sin etiquetas > 0): 0 con no_medible y gate
     ok=False — jamás un verde silencioso."""
