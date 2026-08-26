@@ -112,6 +112,23 @@ def _dejar_pendientes(factory, pid, n: int) -> list:
     return vivos[:n]
 
 
+def _sync_exec(sql, params=None):
+    """Escritura por una conexión SÍNCRONA aparte: se usa desde dentro del
+    transporte, que corre en el event loop del dispatcher (allí `asyncio.run`
+    sería un error)."""
+    url = settings.CORE_DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+    engine = sa.create_engine(
+        url,
+        poolclass=sa.pool.NullPool,
+        connect_args={"options": f"-csearch_path={settings.CORE_DB_SCHEMA},public"},
+    )
+    try:
+        with engine.begin() as c:
+            c.execute(sa.text(sql), params or {})
+    finally:
+        engine.dispose()
+
+
 def _dispatch(limit=100):
     from jobhunt_core.tasks.delivery import dispatch_outbox_task
 
@@ -998,6 +1015,227 @@ def test_g3_los_re_claims_de_un_mensaje_sano_no_lo_retiran_como_veneno(
     assert asyncio.run(_retirar()) == 0  # jamás veneno: hubo resultados
     st = _estado()
     assert st.state == "inflight" and st.attempts == 6  # los intentos REALES
+
+
+def test_g5_un_veneno_no_arrastra_a_dead_letter_a_sus_vecinos_entregados(
+    db, monkeypatch
+):
+    """Regresión G5-P2-2: `claims` mide «reclamos sin RESULTADO PERSISTIDO» y
+    el dispatcher persistía los resultados UNA SOLA VEZ, al final del lote.
+    Un payload que MATA al proceso en la posición K —el escenario exacto para
+    el que `claims` existe— hacía que NINGÚN mark del lote se ejecutara: los
+    eventos 1..K-1 se transportaban CORRECTAMENTE en cada vuelta y aun así
+    llegaban al tope de reclamos junto al veneno, y como el claim es
+    determinista el lote era el MISMO cada vuelta. Resultado: hasta 99 vecinos
+    ENTREGADOS retirados a DEAD-LETTER con `attempts = 0` y un `last_error`
+    que afirma lo contrario de lo ocurrido.
+
+    La muerte del proceso se simula con una BaseException, que el `except
+    Exception` del dispatcher NO captura: el bucle se aborta igual que un OOM
+    y solo sobrevive lo ya COMMITEADO."""
+    from jobhunt_core.tasks.delivery import _dispatch_impl
+
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created, titles=("backend python", "data eng"))
+    vivos = _dejar_pendientes(factory, pid, 2)
+    sano, veneno = vivos[0], vivos[1]
+    monkeypatch.setattr(delivery, "MAX_CLAIMS_WITHOUT_RESULT", 3)
+    inbox = FakeInbox()
+
+    def transporte_venenoso(dest, event):
+        if event["event_id"] == str(veneno):
+            raise BaseException("OOM: el payload tumba al dispatcher")  # noqa: TRY002
+        inbox.transport(dest, event)
+
+    def _caducar_leases():
+        async def go():
+            async with factory() as s:
+                await s.execute(
+                    sa.text(
+                        "UPDATE integration_outbox_deliveries SET lease = "
+                        "clock_timestamp() - interval '1 second' "
+                        "WHERE state = 'inflight' AND event_id = ANY(:ids)"
+                    ),
+                    {"ids": vivos},
+                )
+                await s.commit()
+
+        asyncio.run(go())
+
+    def _estado(eid):
+        return _rows(
+            factory,
+            "SELECT state, attempts, claims, last_error FROM "
+            "integration_outbox_deliveries WHERE event_id = :e", e=eid,
+        )[0]
+
+    delivery.set_transport(transporte_venenoso)
+    try:
+        for _ in range(delivery.MAX_CLAIMS_WITHOUT_RESULT):
+            with pytest.raises(BaseException, match="OOM"):
+                asyncio.run(_dispatch_impl(100))
+            _caducar_leases()
+    finally:
+        delivery.set_transport(None)
+
+    # El vecino SANO quedó ENTREGADO en la PRIMERA vuelta (su resultado se
+    # persiste al ocurrir), así que ni se re-reclama ni acumula reclamos.
+    st_sano = _estado(sano)
+    assert (st_sano.state, st_sano.claims) == ("delivered", 0)
+    assert inbox.calls == 1  # antes del fix: una entrega REAL por vuelta
+    # El veneno SÍ acumula reclamos sin un solo resultado.
+    assert _estado(veneno).claims == delivery.MAX_CLAIMS_WITHOUT_RESULT
+
+    with caplog_at_error() as records:
+        async def retirar():
+            async with factory() as s:
+                n = await delivery.retire_poisoned(s)
+                await s.commit()
+                return n
+
+        n_po = asyncio.run(retirar())
+
+    assert n_po == 1  # antes del fix: 2 (el sano ENTREGADO, arrastrado)
+    assert _estado(veneno).state == "dead"
+    assert _estado(sano).state == "delivered"  # jamás dead-letter
+    assert len([r for r in records if "VENENO" in r.getMessage()]) == 1
+
+
+def test_g5_el_exito_confirmado_gana_al_reintento_de_otro_dispatcher(db):
+    """Regresión G5-P2-3: la guarda `state = 'inflight'` del éxito NO era
+    equivalente al fence que sustituyó — fallaba también cuando otro
+    dispatcher ya había RESUELTO la fila. Bajo G2-H-7: A supera el lease
+    entregando BIEN, B se re-clama la fila y su transporte da timeout de
+    cliente; el `mark_failed` de B manda la fila a `pending` y consume el
+    intento, y el `mark_delivered` de A ya no encontraba `inflight`: el ÉXITO
+    CONFIRMADO se descartaba en silencio. Repetido, el evento moría por
+    MAX_ATTEMPTS con 8 entregas reales al inbox y un `last_error` que afirma
+    lo contrario. La guarda correcta es «no terminal»."""
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created, titles=("backend python",))
+    _dejar_pendientes(factory, pid, 1)
+
+    async def claim():
+        async with factory() as s:
+            rows, lease = await delivery.claim_deliveries(s, limit=10)
+            await s.commit()
+            return rows, lease
+
+    def _caducar():
+        async def go():
+            async with factory() as s:
+                await s.execute(
+                    sa.text(
+                        "UPDATE integration_outbox_deliveries d SET lease = "
+                        "clock_timestamp() - interval '1 second' "
+                        "FROM integration_outbox o WHERE o.event_id = d.event_id "
+                        "AND o.subject_profile_id = :p"
+                    ),
+                    {"p": pid},
+                )
+                await s.commit()
+
+        asyncio.run(go())
+
+    def _estado():
+        return _rows(
+            factory,
+            "SELECT d.state, d.attempts, d.last_error, d.next_attempt_at FROM "
+            "integration_outbox_deliveries d "
+            "JOIN integration_outbox o ON o.event_id = d.event_id "
+            "WHERE o.subject_profile_id = :p", p=pid,
+        )[0]
+
+    rows_a, lease_a = asyncio.run(claim())   # A se lleva el claim…
+    _caducar()                               # …y supera el lease entregando BIEN
+    rows_b, lease_b = asyncio.run(claim())   # el beat siguiente re-clama
+    assert rows_b
+
+    async def resolver():
+        async with factory() as s:
+            # B (dueño legítimo) abandona por timeout ANTES de que A marque.
+            ko = await delivery.mark_failed(
+                s,
+                [{"eid": rows_b[0].event_id, "dest": rows_b[0].destination,
+                  "attempts": rows_b[0].attempts + 1,
+                  "error": "timeout de cliente (504)"}],
+                lease_b,
+            )
+            # …y ahora llega el ÉXITO CONFIRMADO de A.
+            ok = await delivery.mark_delivered(
+                s, [{"eid": rows_a[0].event_id, "dest": rows_a[0].destination}],
+                lease_a,
+            )
+            await s.commit()
+            return ko, ok
+
+    ko, ok = asyncio.run(resolver())
+    assert ko == {"dead": 0, "retried": 1}
+    assert ok == 1  # antes del fix: 0 (el éxito confirmado, descartado)
+    st = _estado()
+    assert st.state == "delivered"
+    # G5-N-5: la entrega gana al reintento programado y no deja un error que
+    # ya no describe la fila.
+    assert st.last_error is None and st.next_attempt_at is None
+    # La cola AVANZA: nada que re-reclamar (antes moría por MAX_ATTEMPTS).
+    assert asyncio.run(claim())[0] == []
+
+    # NO-REGRESIÓN: la guarda sigue siendo «no terminal» — un mark tardío
+    # jamás resucita ni re-consume una fila ya entregada.
+    async def mark_tardio():
+        async with factory() as s:
+            n = await delivery.mark_delivered(
+                s, [{"eid": rows_a[0].event_id, "dest": rows_a[0].destination}],
+                None,
+            )
+            await s.commit()
+            return n
+
+    assert asyncio.run(mark_tardio()) == 0
+    assert _estado().attempts == st.attempts
+
+
+def test_g5_el_desbordamiento_del_lease_deja_rastro_en_el_resumen(db, monkeypatch):
+    """Regresión G5-P3-3 (+ cierre de G2-H-7): antes, un lote que superaba el
+    lease reportaba `fenced_out = N` — la única señal prevista para observar
+    G2-H-7. Al sacar el éxito del fence, los marks del dueño superado se
+    escriben igual, `fenced_out` vuelve a 0 y `claims` lo resetea el propio
+    mark: un ciclo que re-clama y re-entrega el lote entero era
+    INDISTINGUIBLE de uno sano. Ahora el dispatcher RENUEVA el lease del resto
+    del lote mientras trabaja y cuenta el desbordamiento en ORIGEN."""
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created, titles=("backend python", "data eng"))
+    _dejar_pendientes(factory, pid, 2)
+    # Renovar tras CADA entrega: el reloj real del test no llega a LEASE_S/2.
+    monkeypatch.setattr(delivery, "LEASE_RENEW_AFTER_S", 0)
+    inbox = FakeInbox()
+    calls = {"n": 0}
+
+    def transporte_lento(dest, event):
+        calls["n"] += 1
+        inbox.transport(dest, event)
+        if calls["n"] == 1:
+            # A mitad del lote OTRO dispatcher se re-clama lo que queda. El
+            # transporte es SÍNCRONO y corre dentro del loop del dispatcher:
+            # la escritura tiene que ir por una conexión síncrona aparte.
+            _sync_exec(
+                "UPDATE integration_outbox_deliveries d SET lease = "
+                "clock_timestamp() + interval '120 seconds', "
+                "claims = claims + 1 "
+                "FROM integration_outbox o WHERE o.event_id = d.event_id "
+                "AND o.subject_profile_id = :p AND d.state = 'inflight'",
+                {"p": str(pid)},
+            )
+
+    delivery.set_transport(transporte_lento)
+    try:
+        r = _dispatch(limit=10)
+    finally:
+        delivery.set_transport(None)
+
+    # La señal existe y es explícita (antes: fenced_out=0 y nada más).
+    assert r["lease_renewals"] >= 1
+    assert r["lease_overrun"] >= 1
 
 
 # --------------------------------- transporte sombra REAL (P1-1b, §8 Fase B)

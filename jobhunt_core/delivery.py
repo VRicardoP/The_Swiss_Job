@@ -40,15 +40,15 @@ MAX_CLAIMS_WITHOUT_RESULT = 25
 BACKOFF_BASE_S = 60
 BACKOFF_CAP_S = 3600
 LEASE_S = 120
-# G2-H-7 (registrado para el cutover de Fase C): UN solo lease para el lote
-# entero, sin renovación. Irrelevante con el transporte sombra (INSERT local),
-# pero con el HTTP real un lote lento puede superar el lease a mitad → re-claim
-# y re-entrega de la cola del lote (at-least-once legal, el inbox deduplica).
-# Es la CAUSA RAÍZ común de G3-P2-2 y G4-P2-2, y la vía de cierre definitiva es
-# renovar el lease por sub-lote. Mientras tanto ningún RESULTADO del transporte
-# se pierde por superar el lease: el fallo lo persiste `_persist_attempts` y el
-# éxito `mark_delivered`, ambos fuera del fence y solo sobre filas 'inflight'.
-# El consumo de intentos tampoco lo amplifica (G2-P3-4).
+# G2-H-7 (CERRADO en G5, tras ser la causa raíz común de G3-P2-2, G4-P2-2 y
+# G5-P2-3): el lote se transportaba con UN solo lease y sin renovación, así
+# que un lote lento —el HTTP real de Fase C con 100 destinos— lo superaba a
+# mitad y perdía sus marks. Ahora el dispatcher persiste el resultado de CADA
+# entrega en cuanto ocurre y RENUEVA el lease del resto del lote antes de
+# agotarlo (`renew_lease`, usada por tasks/delivery.py). La renovación es
+# también la telemetría que faltaba (G5-P3-3): `lease_renewals` y
+# `lease_overrun` en el resumen del ciclo, contados en ORIGEN.
+LEASE_RENEW_AFTER_S = LEASE_S / 2  # renovar a mitad de vida, no al filo
 
 _transport = None
 
@@ -75,9 +75,13 @@ async def claim_deliveries(session, limit: int = 100) -> tuple[list, object]:
     que un re-claim por lease caducado no gasta intentos.
 
     Devuelve (rows, lease_token): el lease es el TOKEN DE FENCING (auditoría
-    A-10) — un único timestamp por lote, calculado en BD; los marks solo
-    escriben si el lease sigue siendo EL SUYO (un claim superado por re-claim
-    jamás pisa el estado del nuevo dueño ni resucita un estado terminal)."""
+    A-10), un timestamp calculado en BD. G5-N-5 — qué protege HOY, que no es
+    lo que este docstring afirmaba: el fence condiciona el FALLO
+    (`mark_failed`), no el ÉXITO; una entrega confirmada es un hecho del
+    transporte y se persiste con la guarda de estado no-terminal. Ni una vía
+    ni la otra resucitan un `delivered`/`dead`. El token no es fijo para todo
+    el lote: `renew_lease` lo renueva mientras el dispatcher siga trabajando
+    (G2-H-7) y el token nuevo describe las filas que aún poseemos."""
     rows = (
         await session.execute(
             sa.text(
@@ -90,7 +94,13 @@ async def claim_deliveries(session, limit: int = 100) -> tuple[list, object]:
                 "       AND (d.next_attempt_at IS NULL "
                 "            OR d.next_attempt_at <= clock_timestamp())) "
                 "   OR (d.state = 'inflight' AND d.lease < clock_timestamp()) "
-                "ORDER BY d.next_attempt_at ASC NULLS FIRST "
+                # Orden TOTAL y determinista (G5-P2-2): con el desempate por
+                # (event_id, destination) la CABEZA de la cola es la misma en
+                # cada vuelta y la comparte `retire_poisoned`, que retira
+                # exactamente la fila que el dispatcher intenta transportar
+                # primero — el veneno, por construcción.
+                "ORDER BY d.next_attempt_at ASC NULLS FIRST, "
+                "         d.event_id, d.destination "
                 "LIMIT :n "
                 "FOR UPDATE OF d SKIP LOCKED"
             ),
@@ -130,6 +140,57 @@ async def claim_deliveries(session, limit: int = 100) -> tuple[list, object]:
         ],
     )
     return rows, lease_token
+
+
+async def renew_lease(session, rows, lease_token) -> tuple[object, int]:
+    """Renueva el lease de lo que QUEDA del lote y devuelve (token_nuevo,
+    perdidas) — G2-H-7.
+
+    El transporte corre fuera de la transacción del claim, así que un lote
+    lento supera el lease a mitad y el resto del lote se lo re-clama otro
+    dispatcher: re-entrega (legal, el inbox deduplica) y, sobre todo, marks
+    descartados. Renovando a mitad de vida el dueño conserva su claim mientras
+    siga trabajando. Solo se renuevan las filas que TODAVÍA son nuestras
+    ('inflight' con NUESTRO lease); las que ya no lo son se cuentan como
+    `perdidas` y se registran — es la señal de desbordamiento contada en
+    ORIGEN que G5-P3-3 echaba en falta. El token nuevo describe exactamente
+    las filas que seguimos poseyendo, así que el fence sigue siendo exacto."""
+    if not rows:
+        return lease_token, 0
+    nuevo = (
+        await session.execute(
+            sa.text(
+                "SELECT clock_timestamp() + "
+                f"make_interval(secs => {int(LEASE_S)})"
+            )
+        )
+    ).scalar_one()
+    kept = (
+        await session.execute(
+            sa.text(
+                "UPDATE integration_outbox_deliveries d SET lease = :nuevo "
+                "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[])) "
+                "  AS t(eid, dest) "
+                "WHERE d.event_id = t.eid AND d.destination = t.dest "
+                "AND d.state = 'inflight' AND d.lease = :old "
+                "RETURNING d.event_id"
+            ),
+            {
+                "nuevo": nuevo, "old": lease_token,
+                "eids": [str(r.event_id) for r in rows],
+                "dests": [r.destination for r in rows],
+            },
+        )
+    ).all()
+    perdidas = len(rows) - len(kept)
+    if perdidas:
+        logger.warning(
+            "delivery: el lote superó el lease — %d de %d entregas pendientes "
+            "ya no son nuestras (otro dispatcher las re-clamó): re-entrega "
+            "at-least-once en curso",
+            perdidas, len(rows),
+        )
+    return nuevo, perdidas
 
 
 # Guarda de FENCING común: solo escribe quien aún posee el claim.
@@ -214,7 +275,18 @@ async def retire_exhausted(session) -> int:
 async def retire_poisoned(session) -> int:
     """DEAD-LETTER por VENENO: entregas reclamadas MAX_CLAIMS_WITHOUT_RESULT
     veces seguidas sin producir JAMÁS un resultado, y que ahora no posee nadie
-    (lease caducado).
+    (lease caducado). UNA sola por ciclo, la CABEZA de la cola.
+
+    G5-P2-2: el radio de explosión estaba sin acotar. Con el dispatcher
+    persistiendo los resultados al final del lote entero, un payload que MATA
+    al proceso hacía que NINGÚN mark del lote se ejecutara, así que sus hasta
+    99 vecinos —transportados CORRECTAMENTE en cada vuelta— cruzaban el umbral
+    a la vez y se retiraban todos como veneno, con un `last_error` que afirma
+    lo contrario de lo ocurrido. La otra mitad del cierre está en
+    tasks/delivery.py (resultado persistido por entrega). Aquí: LIMIT 1 con el
+    MISMO orden total que `claim_deliveries`, así que la fila retirada es la
+    que el dispatcher intenta transportar PRIMERO — el veneno por
+    construcción, no un vecino sano.
 
     G3-H-1: es el modo de fallo que abrió G2-P3-4 al sacar el consumo de
     intentos del claim — un payload que mata al proceso del dispatcher antes
@@ -230,8 +302,13 @@ async def retire_poisoned(session) -> int:
                 "UPDATE integration_outbox_deliveries d "
                 "SET state = 'dead', lease = NULL, dead_at = clock_timestamp(), "
                 "    last_error = :reason "
-                "WHERE d.state = 'inflight' AND d.lease < clock_timestamp() "
-                "AND d.claims >= :max "
+                "WHERE (d.event_id, d.destination) = ("
+                "  SELECT x.event_id, x.destination "
+                "  FROM integration_outbox_deliveries x "
+                "  WHERE x.state = 'inflight' AND x.lease < clock_timestamp() "
+                "  AND x.claims >= :max "
+                "  ORDER BY x.next_attempt_at ASC NULLS FIRST, "
+                "           x.event_id, x.destination LIMIT 1) "
                 "RETURNING d.event_id, d.destination, d.claims, d.attempts"
             ),
             {
@@ -255,9 +332,14 @@ async def retire_poisoned(session) -> int:
     return len(rows)
 
 
-async def mark_delivered(session, marks: list, lease_token) -> int:
+async def mark_delivered(session, marks: list, lease_token=None) -> int:
     """marks = [{'eid', 'dest'}]. La entrega CONFIRMADA se persiste aunque el
     lease ya no sea nuestro. Devuelve las filas REALMENTE transicionadas.
+
+    `lease_token` NO condiciona la escritura (G5-N-5: era un parámetro muerto
+    desde que el éxito salió del fence). Se conserva —opcional— porque los
+    llamadores lo tienen y porque documenta de qué claim viene el mark; el
+    contrato que importa es el de la guarda de estado, abajo.
 
     G4-P2-2: G3-P2-2 sacó del fence la persistencia del resultado SOLO para el
     FALLO. El camino de ÉXITO seguía entero detrás del fence, y es el único
@@ -271,13 +353,24 @@ async def mark_delivered(session, marks: list, lease_token) -> int:
     RESULTADO»: dos cosas distintas en cuanto el fence se interpone.
 
     Por qué el lease NO condiciona esta escritura: una entrega confirmada es un
-    HECHO del transporte, independiente de quién posea el claim — el fence
-    existe para no resucitar un terminal ni pisar al nuevo dueño, y la guarda
-    `state = 'inflight'` da ambas cosas (una fila `delivered`/`dead` jamás se
-    toca; el nuevo dueño, que entregará el mismo evento, encuentra el trabajo
-    hecho y su mark es un no-op legal). Cierra además la RE-ENTREGA INFINITA:
-    antes la fila volvía a `pending` cada ciclo sin avanzar nada.
-    `attempts` sigue consumiéndose SOLO en el resultado (G2-P3-4 intacto)."""
+    HECHO del transporte, independiente de quién posea el claim. Lo que el
+    fence protege de verdad es no resucitar un estado TERMINAL, y eso lo da la
+    guarda `state IN ('pending','inflight')`: `delivered`/`dead` siguen
+    intocables. Cierra además la RE-ENTREGA INFINITA: antes la fila volvía a
+    `pending` cada ciclo sin avanzar nada. `attempts` sigue consumiéndose SOLO
+    en el resultado (G2-P3-4 intacto).
+
+    G5-P2-3: la guarda NO podía ser `state = 'inflight'`. Protegía menos de lo
+    que el comentario prometía: fallaba también cuando otro dispatcher ya
+    había RESUELTO la fila. Bajo la condición G2-H-7, A supera el lease
+    entregando BIEN, B se re-clama la fila y su transporte da timeout; el
+    `mark_failed` de B (dueño legítimo) manda la fila a `pending` y consume el
+    intento, y el éxito CONFIRMADO de A se descartaba en silencio. Repetido,
+    el evento moría por MAX_ATTEMPTS con un `last_error` que afirma lo
+    contrario de lo ocurrido — 8 entregas reales al inbox y estado final
+    `dead`. Una entrega confirmada gana sobre un reintento programado, así que
+    también se limpian `next_attempt_at` y `last_error` (G5-N-5: una fila que
+    falló y luego se entregó quedaba `delivered` con el error anterior)."""
     if not marks:
         return 0
     done = (
@@ -287,18 +380,35 @@ async def mark_delivered(session, marks: list, lease_token) -> int:
                 "SET state = 'delivered', ack_at = clock_timestamp(), lease = NULL, "
                 # G2-P3-4: el intento se consume al EJECUTAR el transporte.
                 # G3-H-1: y el contador de veneno se limpia con el resultado.
-                "attempts = d.attempts + 1, claims = 0 "
+                "attempts = d.attempts + 1, claims = 0, "
+                # G5-P2-3/G5-N-5: la entrega gana sobre el reintento que otro
+                # dispatcher hubiera programado, y no deja un error que ya no
+                # describe el estado de la fila.
+                "next_attempt_at = NULL, last_error = NULL "
                 "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[])) "
                 "  AS t(eid, dest) "
                 "WHERE d.event_id = t.eid AND d.destination = t.dest "
-                "AND d.state = 'inflight' RETURNING d.event_id"
+                "AND d.state IN ('pending', 'inflight') "
+                # G5-P3-3: el desbordamiento del lease contado en ORIGEN — el
+                # mark aterrizó sobre una fila cuyo lease ya no era el nuestro.
+                "RETURNING d.event_id, (d.lease IS DISTINCT FROM :lease) AS robada"
             ),
             {
                 "eids": [str(m["eid"]) for m in marks],
                 "dests": [m["dest"] for m in marks],
+                "lease": lease_token,
             },
         )
     ).all()
+    robadas = sum(1 for r in done if r.robada)
+    if robadas and lease_token is not None:
+        logger.warning(
+            "delivery: %d entrega(s) CONFIRMADAS marcadas sobre filas cuyo "
+            "lease ya no era nuestro — el lote superó LEASE_S y otro "
+            "dispatcher re-clamó (re-entrega at-least-once, el inbox "
+            "deduplica): G2-H-7 en vivo",
+            robadas,
+        )
     return len(done)
 
 
