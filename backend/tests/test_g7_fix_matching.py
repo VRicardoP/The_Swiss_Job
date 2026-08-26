@@ -41,8 +41,14 @@ _PESOS = {
 
 
 class _Perfil:
-    skills: list[str] = ["python"]
     preferred_categories = None
+
+    def __init__(self, skills: list[str] | None = None):
+        # G8/P3-5: `matching_skills` ya no se persiste sin contrastar con el
+        # perfil, así que los tests que comprueban la UNIÓN tienen que darle al
+        # perfil la skill que el LLM va a reconocer. Antes daba igual: entraba
+        # cualquier cosa que dijera el LLM, incluida una alucinación.
+        self.skills = ["python"] if skills is None else skills
 
 
 @pytest.fixture
@@ -119,7 +125,7 @@ class TestElEnriquecimientoDelLLMSeSumaNoSustituye:
                 "matching_skills": ["fastapi"],
                 "missing_skills": ["kubernetes"],
             },
-            _Perfil(),
+            _Perfil(["python", "fastapi"]),
             _PESOS,
         )
         assert r["matching_skills"] == ["python", "fastapi"]
@@ -133,7 +139,10 @@ class TestElEnriquecimientoDelLLMSeSumaNoSustituye:
             _Perfil(),
             _PESOS,
         )
-        assert r["matching_skills"] == ["python"]
+        # G8/P3-5 (menor): a igualdad de skill gana la variante con mayúsculas.
+        # `base` sale de `_compute_skill_overlap`, que lowercasea, y la tarjeta
+        # mostraba «python» donde el usuario escribió «Python».
+        assert r["matching_skills"] == ["Python"]
 
     def test_el_filtro_de_sinonimos_sigue_aplicandose_a_la_union(self, servicio):
         """`filter_missing_skills` corre DESPUÉS de unir, no antes."""
@@ -204,7 +213,7 @@ class TestLasSkillsDelLLMSeSanean:
                 "reason": "ok",
                 "matching_skills": [None, {"s": "x"}, "  ", "fastapi"],
             },
-            _Perfil(),
+            _Perfil(["python", "fastapi"]),
             _PESOS,
         )
         assert r["matching_skills"] == ["python", "fastapi"]

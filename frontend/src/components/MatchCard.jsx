@@ -207,13 +207,18 @@ function MatchCard({ match, onFeedback, onClearFeedback, onImplicit }) {
       {/* Skills matching / missing */}
       {(match.matching_skills.length > 0 || match.missing_skills.length > 0) && (
         <div className="mt-3 flex flex-wrap gap-1.5">
+          {/* G8/P2-3: las dos listas son hermanas del MISMO div, así que la
+              clave tiene que llevar la lista de la que sale. Cuando la misma
+              skill aparecía en las dos, React veía `key` duplicada entre
+              hermanos. El backend ya no puede producir ese solape, pero la
+              clave es del render y no debe depender de esa garantía. */}
           {match.matching_skills.map((skill) => (
-            <Badge key={skill} variant="success" size="xs" leftIcon={<Check className="h-3 w-3" />}>
+            <Badge key={`ok:${skill}`} variant="success" size="xs" leftIcon={<Check className="h-3 w-3" />}>
               {skill}
             </Badge>
           ))}
           {match.missing_skills.map((skill) => (
-            <Badge key={skill} variant="neutral" size="xs" className="line-through opacity-60">
+            <Badge key={`falta:${skill}`} variant="neutral" size="xs" className="line-through opacity-60">
               {skill}
             </Badge>
           ))}

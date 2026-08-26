@@ -25,6 +25,39 @@ def _solo_textos(valor: object) -> list[str]:
     return [s.strip() for s in valor if isinstance(s, str) and s.strip()]
 
 
+# G8/P3-4: versión del esquema de lo que se guarda en la caché de re-ranking.
+# Subirla invalida de golpe todo lo escrito por versiones anteriores, que de
+# otro modo se seguiría sirviendo durante `GROQ_CACHE_TTL_DAYS`.
+_CACHE_SCHEMA_VERSION = 2
+
+
+def _sanear_cacheados(valor: object) -> list[dict] | None:
+    """Re-normaliza un lote LEÍDO de la caché a la misma forma que emite
+    `_parse_llm_response`.
+
+    No revalida índices ni cobertura del lote —eso ya se comprobó cuando la
+    entrada se escribió y aquí no hay `batch_len` que consultar—: solo garantiza
+    los TIPOS que `match_service` da por buenos.
+    """
+    if not isinstance(valor, list):
+        return None
+    saneados: list[dict] = []
+    for r in valor:
+        if not isinstance(r, dict) or not isinstance(r.get("index"), int):
+            return None
+        entrada = {
+            "index": r["index"],
+            "score": r["score"] if isinstance(r.get("score"), (int, float)) else 0,
+            "matching_skills": _solo_textos(r.get("matching_skills")),
+            "missing_skills": _solo_textos(r.get("missing_skills")),
+            "reason": r["reason"] if isinstance(r.get("reason"), str) else "",
+        }
+        if r.get("degraded"):
+            entrada["degraded"] = True
+        saneados.append(entrada)
+    return saneados
+
+
 RERANK_SYSTEM_PROMPT = """You are an expert recruiter AI evaluating job-candidate fit for a non-technical profile focused on content, language, and people operations.
 
 TARGET DOMAINS (score generously — these are the candidate's goal):
@@ -323,8 +356,15 @@ class GroqService:
             # `matching_skills` con `None`/`{...}`/`""` dentro se persistía tal
             # cual y luego `schemas/match.py` declara `list[str]` estricto —
             # `ValidationError` = 500 en `/api/v1/match/results` ENTERO, no una
-            # tarjeta rota. Este es el único borde por el que entra la respuesta
-            # del LLM (Groq y el fallback Gemini pasan los dos por aquí).
+            # tarjeta rota.
+            # G8/P3-4 — RECTIFICACIÓN: «este es el único borde por el que entra
+            # la respuesta del LLM» era FALSO. La CACHÉ es un segundo borde:
+            # `_set_cached` guarda el resultado YA parseado y en un hit
+            # `batch_results = cached` iba directo al llamante SIN volver a
+            # pasar por aquí, así que una entrada escrita por una versión
+            # anterior del esquema (TTL de 7 días) reabría G7/P3-3 y G7/P3-4.
+            # Ahora `_get_cached` re-sanea lo que lee, y la clave lleva versión
+            # de esquema para que un cambio futuro invalide lo viejo.
             normalized.append(
                 {
                     "index": index,
@@ -370,18 +410,30 @@ class GroqService:
 
     @staticmethod
     def _cache_key(prompt: str) -> str:
-        """Generate a Redis cache key from the prompt hash."""
+        """Generate a Redis cache key from the prompt hash.
+
+        G8/P3-4: la clave lleva la versión del ESQUEMA de lo que se guarda. Sin
+        ella, un cambio en la normalización no podía invalidar lo ya escrito y
+        seguía sirviéndose durante `GROQ_CACHE_TTL_DAYS`.
+        """
         h = hashlib.md5(prompt.encode()).hexdigest()
-        return f"groq:rerank:{h}"
+        return f"groq:rerank:v{_CACHE_SCHEMA_VERSION}:{h}"
 
     async def _get_cached(self, key: str) -> list[dict] | None:
-        """Retrieve cached rerank results from Redis."""
+        """Retrieve cached rerank results from Redis.
+
+        G8/P3-4: lo que sale de la caché se re-sanea con la MISMA función que
+        el borde de red. La caché es el segundo camino por el que la respuesta
+        del LLM llega a `match_service`, y saltarse el saneo reabría G7/P3-3
+        (un `reason` no-`str` → AttributeError → `except` POR USUARIO → se
+        pierde el matching entero del perfil).
+        """
         if not self.redis:
             return None
         try:
             data = await self.redis.get(key)
             if data:
-                return json.loads(data)
+                return _sanear_cacheados(json.loads(data))
         except Exception:
             logger.debug("Redis cache read failed for %s", key)
         return None

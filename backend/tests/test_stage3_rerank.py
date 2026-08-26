@@ -77,8 +77,12 @@ class TestStage3Rerank:
             ]
         )
         svc = MatchService(db=None, groq=groq)
+        # G8/P3-5: el perfil debe RESPALDAR la skill que el LLM reconoce; si no,
+        # ya no se firma como suya (una skill alucinada se persistía en verde).
         profile = SimpleNamespace(
-            cv_text="cv", skills=["python"], watchlist_schools_enabled=False
+            cv_text="cv",
+            skills=["python", "llm_match"],
+            watchlist_schools_enabled=False,
         )
 
         r0 = _scored(score_final=10.0)  # base baja; el LLM la sube

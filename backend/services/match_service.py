@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 # Clave interna de los scored results: True cuando el LLM emitió veredicto para
 # ese result en ESTA corrida (G3/P3-9). Nunca sale del pipeline de matching.
 LLM_VERDICT_KEY = "llm_verdict"
+# G8/P2-4: «esta corrida SÍ tenía LLM y decidió NO mandar esta fila» (la cola
+# de la avalancha). Es distinto de «no hay veredicto»: un lote DEGRADADO (LLM
+# caído) tampoco deja veredicto, y ahí lo correcto es no tocar nada. Sin
+# distinguir los dos casos, una caída del LLM borraría todas las explicaciones.
+LLM_SKIPPED_KEY = "llm_skipped"
 
 
 def _unir_skills(base: list[str], extra: list[str]) -> list[str]:
@@ -41,7 +46,15 @@ def _unir_skills(base: list[str], extra: list[str]) -> list[str]:
     perfil, en vez de reemplazarlo. Reemplazar obligaba a no escribir nunca una
     lista vacía para no perderlo, y eso congelaba el `[]`.
     """
-    vistas: set[str] = set()
+    # G8/P3-4: total en el ARGUMENTO, no solo en sus elementos. La docstring
+    # prometía totalidad pero `(*base, *extra)` revienta con `TypeError` si
+    # `extra` no es iterable (`extra=7`) y desgrana en LETRAS si es un `str`
+    # (`"Python"` -> ['P','y','t',...]). El `TypeError` reproduce exactamente el
+    # daño de G7/P3-3: sube hasta el `except` POR USUARIO de
+    # `tasks/matching_tasks.py` y se pierde el matching entero del perfil.
+    base = base if isinstance(base, list) else []
+    extra = extra if isinstance(extra, list) else []
+    vistas: dict[str, int] = {}
     union: list[str] = []
     for skill in (*base, *extra):
         # G7/P3-4: lo que viene del LLM ya se sanea en `_parse_llm_response`;
@@ -51,9 +64,34 @@ def _unir_skills(base: list[str], extra: list[str]) -> list[str]:
             continue
         clave = skill.lower()
         if clave not in vistas:
-            vistas.add(clave)
+            vistas[clave] = len(union)
             union.append(skill)
+        elif union[vistas[clave]].islower() and not skill.islower():
+            # G8/P3-5 (menor): `base` sale de `_compute_skill_overlap`, que
+            # lowercasea, así que el dedup case-insensitive conservaba la
+            # variante de REGLA y la tarjeta pasaba de «Python / English / Excel»
+            # a «python / english / Excel». Gana la variante con mayúsculas.
+            union[vistas[clave]] = skill
     return union
+
+
+def _respaldadas_por_el_perfil(perfil: list[str], candidatas: object) -> list[str]:
+    """Las skills que el LLM llama «matching» y el perfil SÍ respalda.
+
+    `filter_missing_skills` devuelve las que el candidato NO tiene (directa ni
+    por sinónimo); el complemento son las respaldadas. Reutilizarla mantiene una
+    sola definición de «el perfil cubre esta skill» (G8/P3-5).
+    """
+    if not isinstance(candidatas, list):
+        return []
+    # `filter_missing_skills` hace `.strip()` sobre cada elemento: un `None` o
+    # un `{...}` colado por el borde reventaría con AttributeError dentro del
+    # `except` POR USUARIO de `tasks/matching_tasks.py`. Se filtra aquí, que es
+    # donde entra lo ajeno (G7/P3-4 vive en `_unir_skills`, no cubre este uso).
+    textos = [s for s in candidatas if isinstance(s, str) and s.strip()]
+    respaldo = [s for s in perfil if isinstance(s, str)]
+    sin_respaldo = set(filter_missing_skills(respaldo, textos))
+    return [s for s in textos if s not in sin_respaldo]
 
 
 class MatchService:
@@ -181,6 +219,13 @@ class MatchService:
         )
         head = qualified[:rerank_n]
         tail = qualified[rerank_n:]
+        # G8/P2-4: la cola no pasa por el LLM en esta corrida, y sus listas de
+        # skills SÍ se escriben (de regla, puras). Marcarla es lo que permite a
+        # `_score_values` borrar también `score_llm`/`explanation` y mantener el
+        # bloque LLM ATÓMICO: sin la marca, la fila queda con la prosa del LLM
+        # de otro día y CERO badges que la respalden.
+        for r in tail:
+            r[LLM_SKIPPED_KEY] = True
 
         head = await self._stage3_llm_rerank(
             profile=profile,
@@ -492,14 +537,38 @@ class MatchService:
         # Sustituirlo era lo que obligaba a no escribir nunca `[]` (ver
         # `_score_values`) y lo que congelaba la tarjeta.
         if llm_data.get("matching_skills"):
+            # G8/P3-5: `missing_skills` pasa por `filter_missing_skills`;
+            # `matching_skills` no pasaba por NADA. Con perfil `['python']` y un
+            # LLM que devuelve `['Kubernetes','Rust','Fluent German']` se
+            # persistía las tres y la tarjeta afirmaba EN VERDE que el usuario
+            # habla alemán con fluidez. Se exige respaldo del perfil —directo o
+            # por sinónimo, la misma maquinaria que ya decide qué «falta de
+            # verdad»— antes de firmar una skill como suya.
             r["matching_skills"] = _unir_skills(
-                r["matching_skills"], llm_data["matching_skills"]
+                r["matching_skills"],
+                _respaldadas_por_el_perfil(
+                    profile.skills or [], llm_data["matching_skills"]
+                ),
             )
         if llm_data.get("missing_skills"):
             r["missing_skills"] = filter_missing_skills(
                 profile.skills or [],
                 _unir_skills(r["missing_skills"], llm_data["missing_skills"]),
             )
+        # G8/P2-3: las dos listas se construyen por caminos que NO se hablan.
+        # La «missing» de regla es `tags - perfil`; el prompt le enseña al LLM
+        # ESOS MISMOS tags pidiéndole que puntúe generosamente, así que que el
+        # LLM llame *matching* a un tag que la regla acaba de marcar *missing*
+        # es el caso frecuente, no el borde: 18 de las 71 filas con veredicto
+        # LLM en producción. `filter_missing_skills` contrasta contra
+        # `profile.skills`, nunca contra `matching_skills`, así que no lo cazaba.
+        # La tarjeta pintaba la MISMA skill en verde «✓» y tachada «te falta»,
+        # como hermanas del mismo `<div>` y con `key` de React duplicada
+        # (`MatchCard.jsx`). Gana la lista positiva: el LLM ha visto el CV.
+        vistas = {s.lower() for s in r["matching_skills"]}
+        r["missing_skills"] = [
+            s for s in r["missing_skills"] if s.lower() not in vistas
+        ]
         # Recalculate final score with real LLM score + category multiplier
         base = self.matcher.compute_final_score(
             embedding_score=r["score_embedding"],
@@ -569,6 +638,20 @@ class MatchService:
             # lo mismo que el `""` de arriba.
             if (r.get("explanation") or "").strip():
                 values["explanation"] = r["explanation"]
+        elif r.get(LLM_SKIPPED_KEY):
+            # G8/P2-4: el bloque del LLM es ATÓMICO. Si esta corrida reescribe
+            # las skills con las de regla puras porque la fila se quedó en la
+            # cola, la prosa y el score del LLM de otro día NO pueden
+            # sobrevivir: la fila quedaría mitad fresca y mitad rancia, con un
+            # recuadro azul citando skills que ningún badge respalda y un
+            # `score_llm` que ya no está dentro de `score_final` (la etapa 2 lo
+            # calcula con `llm_score=0.0`). Medido en producción: 53 de 71 filas
+            # quedarían con `matching_skills = []` y las 71 explicaciones
+            # intactas; el total de skills caía de 174 a 18.
+            # Un lote DEGRADADO no entra aquí (no lleva la marca): sus ceros no
+            # son un veredicto y borrarían una explicación buena.
+            values["score_llm"] = 0.0
+            values["explanation"] = None
         return values
 
     @classmethod
