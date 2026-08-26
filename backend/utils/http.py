@@ -50,9 +50,18 @@ def _resolve_redirect(current: httpx.URL, location: str) -> httpx.URL:
     observabilidad, que el 308 no seguido que originó el fix G3/P1-3.
     Si el `Location` trae su propia query, manda la suya: el portal está
     diciendo explícitamente adónde ir.
+
+    G5/P3-1 — la query se conserva SOLO dentro del mismo host. `_headers_for_host`
+    ya retira las cabeceras propietarias en un salto cross-host, pero la query
+    se copiaba SIEMPRE, incluido ese salto: el `app_id`+`app_key` de adzuna y el
+    `affid` de careerjet viajaban enteros al host nuevo. El canal no existía
+    antes de este seguimiento manual (el `follow_redirects=True` de httpx
+    resuelve con `URL.join`, que DESCARTA la query); lo abrió el fix de G4/P2-7
+    por la otra puerta. Un `Location` cross-host es el portal diciendo «vete a
+    otro sitio»: los parámetros de la petición original no son suyos.
     """
     target = current.join(location)
-    if not target.query and current.query:
+    if not target.query and current.query and target.host == current.host:
         target = target.copy_with(query=current.query)
     return target
 
