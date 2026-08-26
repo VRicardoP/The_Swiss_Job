@@ -80,10 +80,23 @@ async def profile_owner(session, profile_id, consumer_id) -> str | None:
 # ------------------------------------------------------- cascada Decisión 3
 
 
-async def _merge_winner(session, vacancy_id) -> uuid.UUID | None:
+async def _merge_winner(session, vacancy_id, profile_id=None) -> uuid.UUID | None:
     """Sigue la cadena merged_into (bucle ACOTADO) hasta un ganador
     presentable; None si la cadena muere, se pasa de cota o el ganador está
-    archivado — jamás se enlaza a ciegas."""
+    archivado — jamás se enlaza a ciegas.
+
+    G5-P3-4: la comprobación del adjunto viaja CON la cadena. El perfil tiene
+    su candidatura/bookmark sobre el GANADOR y el BFF conserva el id del
+    PERDEDOR (`V.merged_into = W`) — el caso que la Decisión 3a existe para
+    cubrir. `V`, por estar fundida, NUNCA se archiva (la rama 1 del barrido
+    exige `merged_into IS NULL`), así que `resolve_direct` ni consulta el
+    adjunto para `V`: está en `W`, dentro de la cadena, donde antes no miraba
+    nadie. Retirado el guard PF.3 de la rama 1, `W` sí se archiva y la cadena
+    devolvía None: un item VISIBLE en el feed sobre el que ninguna escritura
+    de vínculo funciona — el síntoma literal que el fix de G4 declaró cerrado.
+    Sin `profile_id` (p.ej. `resolve_by_url_any_source`) el comportamiento es
+    el estricto de siempre. Coste: 1 consulta y solo si el ganador está
+    archivado."""
     vid = vacancy_id
     for _ in range(MERGE_CHAIN_MAX):
         row = (
@@ -97,7 +110,13 @@ async def _merge_winner(session, vacancy_id) -> uuid.UUID | None:
         if row is None:
             return None
         if row.merged_into is None:
-            return vid if row.archived_at is None else None
+            if row.archived_at is None:
+                return vid
+            return (
+                vid
+                if await _profile_attached(session, profile_id, vid)
+                else None
+            )
         vid = row.merged_into
     logger.warning(
         "applications: cadena merged_into > %d saltos desde %s — no se enlaza",
@@ -158,7 +177,7 @@ async def resolve_direct(session, vacancy_id, profile_id=None) -> uuid.UUID | No
         return None
     if row.merged_into is None:
         return vacancy_id
-    return await _merge_winner(session, row.merged_into)
+    return await _merge_winner(session, row.merged_into, profile_id)
 
 
 async def resolve_by_url_any_source(session, url: str) -> uuid.UUID | None:

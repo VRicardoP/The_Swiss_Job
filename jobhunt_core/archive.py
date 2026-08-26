@@ -102,10 +102,13 @@ async def archive_sweep(session: AsyncSession) -> dict:
                 "  AND a.ultimo_visto < now() - make_interval(days => :stale) "
                 # PF.3: con candidatura se conserva (archivar no borra, pero
                 # el contrato dice conservar la vacante VIVA para el usuario).
-                # Aquí SÍ es inocuo: la vacante conserva encarnación ACTIVA,
-                # así que no ancla corpus muerto (a diferencia de la rama 1,
-                # G4-P2-3). La resolubilidad del adjunto ya no depende de este
-                # guard: la garantiza `resolve_direct`.
+                # G5-N-7(a): el guard es inocuo por lo que se DEJA DE HACER, no
+                # por el estado del SELECT — la vacante tiene encarnación
+                # activa AHORA, pero el bloque de abajo la CIERRA antes de
+                # archivar (invariante «archivada ⇒ sin encarnación activa»).
+                # Conservarla evita anclar en el catálogo global una vacante
+                # rancia con candidatura; la resolubilidad del adjunto ya no
+                # depende de este guard: la garantiza `resolve_direct`.
                 "  AND NOT EXISTS (SELECT 1 FROM applications ap "
                 "                  WHERE ap.vacancy_id = v.id) "
                 "ORDER BY v.id FOR UPDATE OF v SKIP LOCKED"

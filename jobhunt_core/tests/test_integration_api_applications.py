@@ -335,6 +335,64 @@ def test_post_direct_follows_merge_chain(db):
     assert r.json()["vacancy_id"] == str(winner)
 
 
+def test_g5_la_cadena_merged_into_resuelve_aunque_el_GANADOR_este_archivado(db):
+    """Regresión G5-P3-4: `resolve_direct` conoce el perfil y comprueba el
+    adjunto para la vacante CONSULTADA, pero delegaba en `_merge_winner` SIN
+    propagarlo. El perfil tiene la candidatura sobre el GANADOR `W` y el BFF
+    conserva el id del PERDEDOR `V` (`V.merged_into = W`) — el caso que la
+    Decisión 3a existe para cubrir. `V`, por estar fundida, nunca se archiva
+    (la rama 1 del barrido exige `merged_into IS NULL`), así que el adjunto ni
+    se consulta para `V`: está en `W`, dentro de la cadena. Retirado el guard
+    PF.3, `W` sí se archiva y la cadena devolvía None ⇒ 404 al re-POST y
+    `skipped` en el PUT, con el item VISIBLE en el feed: una UI con un item
+    sobre el que ninguna escritura de vínculo funciona."""
+    factory, created = db
+    token, _tenant, pid, vacs = _seed(factory, created, n=2)
+    (loser, _), (winner, _) = vacs
+    # El perfil YA tiene su candidatura sobre el GANADOR…
+    r = _post_app(factory, token, {
+        "profile_id": str(pid), "vacancy_id": str(winner), "title": "T-win",
+    })
+    assert r.status_code == 201, r.text
+    # …el perdedor se funde en él y el barrido archiva al ganador (muerto).
+    _exec(factory, "UPDATE vacancies SET merged_into = :w WHERE id = :l",
+          w=winner, l=loser)
+    _exec(factory, "UPDATE vacancies SET archived_at = now() WHERE id = :w",
+          w=winner)
+
+    # Con el id del PERDEDOR, la cadena sigue resolviendo al ganador adjunto:
+    # el 409 NOMBRA la vacante resuelta (antes del fix era un 404 opaco, con
+    # el item aún visible en el feed).
+    r2 = _post_app(factory, token, {
+        "profile_id": str(pid), "vacancy_id": str(loser), "title": "T-win",
+    })
+    assert r2.status_code == 409, r2.text  # antes del fix: 404 not_found
+    assert r2.json()["code"] == "application_exists"
+    assert r2.json()["details"]["vacancy_id"] == str(winner)
+
+    # NO-REGRESIÓN del aislamiento: otro perfil SIN adjunto sigue en 404 (el
+    # archivado es la regla; la excepción es «lo que el usuario ya tenía»).
+    otro = asyncio.run(_perfil_extra(factory, pid))
+    r3 = _post_app(factory, token, {
+        "profile_id": str(otro), "vacancy_id": str(loser), "title": "T",
+    })
+    assert r3.status_code == 404
+    assert r3.json()["code"] == "not_found"
+
+
+async def _perfil_extra(factory, pid):
+    """Segundo perfil del MISMO consumer (sin adjunto sobre el ganador)."""
+    async with factory() as s:
+        cid = await s.scalar(
+            sa.text("SELECT consumer_id FROM profiles WHERE id = :p"), {"p": pid}
+        )
+        vid = await profiles.upsert_profile(
+            s, cid, f"g5-extra-{uuid.uuid4().hex[:8]}"
+        )
+        await s.commit()
+        return vid
+
+
 def test_post_by_url_resolves_harvested_no_shadow_duplicate(db):
     """(3b — R2-1) URL de una vacante COSECHADA (fuente arbeitnow): se
     resuelve SIN scope de fuente y JAMÁS se sintetiza un duplicado-sombra en
