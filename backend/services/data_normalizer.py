@@ -363,6 +363,16 @@ class DataNormalizer:
         if not (sal_min or sal_max):
             return job
 
+        # G6/P2-1 — los extremos se ORDENAN. Ninguna cota posterior corregía un
+        # rango invertido y `compute_salary_match` recibía un intervalo
+        # imposible (`salary_min_chf` 5.600 > `salary_max_chf` 2.240). Es
+        # alcanzable por varias vías —un bonus con divisa detrás del rango real,
+        # o formas del corpus como "€100,000 - €00 per annum"— así que se
+        # arregla aquí, donde los dos extremos ya están juntos, y no en cada
+        # patrón.
+        if sal_min is not None and sal_max is not None and sal_min > sal_max:
+            sal_min, sal_max = sal_max, sal_min
+
         # Convert currency to CHF. G3/P2-5: una divisa que NO sabemos convertir
         # ya no se guarda 1:1 como CHF — eso puntuaba al máximo en el factor
         # salario y desplazaba vacantes suizas reales del top del feed. Mejor
@@ -413,15 +423,32 @@ class DataNormalizer:
         # Try range first: "80000-100000" or "80k-100k". El patrón con divisa
         # en ambos extremos va PRIMERO (G4/P2-1): es el más específico y el
         # único que puede desempatar un rango real de una escala salarial.
-        # G5/P3-5: en medio va el de divisa solo a la derecha, cuya cota baja
-        # debe parecer un salario para no reabrir la regresión de G4/P2-1.
+        # G5/P3-5: después, el de divisa solo a la derecha, cuya cota baja debe
+        # parecer un salario para no reabrir la regresión de G4/P2-1.
+        #
+        # G6/P2-1 — entre el de divisa-a-la-derecha y el clásico se elige por
+        # POSICIÓN, no por prioridad global. `re.search` barre TODO el texto, así
+        # que encadenar prioridades hacía que un match del patrón nuevo en la
+        # posición 23 desplazara al clásico en la 0 y el clásico ni se probara:
+        #   "90000 - 110000 par an (7500 - CHF 9200 par mois)"
+        #       -> persistía el MENSUAL (7500-9200), ~12x menos que el anual;
+        #   "80'000 - 100'000 (bonus 5,000 - GBP 2,000)"
+        #       -> persistía el bonus, y con los extremos INVERTIDOS
+        #          (salary_min_chf 5600 > salary_max_chf 2240).
+        # El más a la izquierda gana: es el rango que el anuncio enuncia como
+        # suyo, y lo de después (paréntesis, bonus, referencia) es glosa.
         range_match = _SALARY_RANGE_CUR_RE.search(text)
         if range_match is None:
             right = _SALARY_RANGE_CUR_RIGHT_RE.search(text)
-            if right is not None and DataNormalizer._low_looks_like_salary(right):
+            plain = _SALARY_RANGE_RE.search(text)
+            if (
+                right is not None
+                and DataNormalizer._low_looks_like_salary(right)
+                and (plain is None or right.start() <= plain.start())
+            ):
                 range_match = right
-        if range_match is None:
-            range_match = _SALARY_RANGE_RE.search(text)
+            else:
+                range_match = plain
         if range_match:
             lo = DataNormalizer._parse_number(
                 range_match.group(1), has_k=bool(range_match.group(2))
