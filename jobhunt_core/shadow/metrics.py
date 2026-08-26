@@ -1120,9 +1120,11 @@ async def _huecos_en_transicion(
     contara para la racha de 7 (medido en el clúster: 6.979 de 10.805 jobs
     legacy ya no tenían ninguna fila en el log). El criterio es ahora
     FAIL-CLOSED ante la ausencia, y `purge_staging` PRESERVA además la última
-    fila aplicada de cada pk de `jobs` —igual que ya hacía con `users`— para
-    que la evidencia legítima no se evapore y produzca el falso ROJO simétrico
-    (el caso G4-P2-1 con su cierre aplicado hace más de 7 días).
+    fila aplicada de cada pk de `jobs` —igual que ya hacía con `users`, y desde
+    G6-P2-3 acotada a los pks que SIGUEN VIVOS en el legacy, que son
+    exactamente los que este criterio puede llegar a consultar— para que la
+    evidencia legítima no se evapore y produzca el falso ROJO simétrico (el
+    caso G4-P2-1 con su cierre aplicado hace más de 7 días).
 
     El espejo del payload es EXACTO porque wal2json emite todas las columnas
     no-TOAST en cada I/U (`is_active` es boolean: jamás se omite).
@@ -1180,7 +1182,8 @@ async def _huecos_en_transicion(
             "  JOIN sources s ON s.id = l.source_id AND s.name LIKE 'legacy:%' "
             "  WHERE l.external_id = ANY(:cands)) "
             "SELECT c.ext, CASE "
-            "  WHEN u.pk IS NULL THEN 'slot legacy sin encarnación activa (sin cambio aplicado)' "
+            "  WHEN u.pk IS NULL THEN "
+            "    'slot legacy sin encarnación activa (sin cambio aplicado)' "
             "  WHEN u.op = 'D' THEN 'último cambio aplicado = borrado (D)' "
             "  WHEN u.payload ->> 'is_active' = 'false' "
             "    THEN 'último cambio aplicado = is_active=false' "
