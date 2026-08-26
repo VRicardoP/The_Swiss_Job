@@ -78,9 +78,11 @@
 -- puente: deja las filas viejas con la identidad nueva, conservando su
 -- `first_seen_at`.
 --
--- ORDEN OBLIGATORIO (no es una recomendación): **parar el worker/beat →
--- `pg_dump` → ejecutar este script → rearrancar el worker**. El worker NO
--- debe correr una cosecha con el código nuevo sobre datos sin migrar.
+-- ORDEN OBLIGATORIO (no es una recomendación) — ver el bloque «ORDEN
+-- OPERATIVO COMPLETO» al final de este encabezado. Resumen: parar
+-- `worker`/`worker-ai` y `core-worker` → `pg_dump` → ensayar sobre la copia →
+-- ejecutar → rearrancar. El worker legacy NO debe correr una cosecha con el
+-- código nuevo sobre datos sin migrar.
 --
 -- ESTADO: **NO EJECUTADO contra ninguna base real**. Pendiente de aplicar.
 --
@@ -112,12 +114,55 @@
 -- `compute_hash` + `canonical_identity_*` sobre las mismas URLs). Todo dentro
 -- de una transacción revertida; residuo verificado: 0 filas en las 5 tablas.
 -- JAMÁS contra producción sin backup previo (`pg_dump`) y sin haberlo
--- ensayado antes sobre una copia. Orden OBLIGATORIO (ver arriba):
---   1) parar el worker/beat (que no arranque una cosecha a medias),
---   2) `pg_dump` de la base,
---   3) ejecutar este script sobre la COPIA y revisar el informe final,
---   4) ejecutarlo sobre la base real,
---   5) rearrancar el worker.
+-- ensayado antes sobre una copia.
+--
+-- ORDEN OPERATIVO COMPLETO (G8/P2-6 — sustituye al «parar el worker → dump →
+-- ejecutar → rearrancar» de las cuatro redacciones anteriores, que NO
+-- contemplaban la sombra CDC)
+-- ---------------------------------------------------------------------
+--   1) `docker compose stop worker worker-ai`
+--      Para la cosecha legacy. El scheduler es APScheduler DENTRO de
+--      `backend` y solo despacha a Celery: sin worker no arranca ninguna
+--      cosecha, y `backend` puede seguir sirviendo la API.
+--   2) `docker compose stop core-worker`
+--      Para el PROYECTOR de la sombra (vive en el beat embebido de
+--      `core-worker`): que no proyecte con la maniobra a medias ni compita por
+--      los locks de `jobhunt.source_listings` que toma el PASO 7c.
+--      `core-capture` puede seguir en marcha: el PASO 7c va en la MISMA
+--      transacción que la reescritura del hash y la decodificación lógica solo
+--      entrega la transacción al COMMIT. Pararlo también es correcto — el WAL
+--      queda retenido en el slot y se reproduce al rearrancar.
+--   3) `pg_dump` de la base (incluyendo el esquema `jobhunt`).
+--   4) Ensayo sobre la COPIA (o sobre `swissjobhunter_test` con la fixture,
+--      ver «VALIDACIÓN») y revisar el informe final: las dos líneas
+--      `sombra: …` deben cuadrar con lo medido.
+--   5) Ejecutar sobre la base real (última línea `COMMIT;`) LOS DOS scripts,
+--      este y `g6_canonizacion_identidad_irishjobs.sql`, en cualquier orden.
+--   6) `docker compose start core-worker worker worker-ai`.
+--      Al rearrancar, `core-capture` reproduce el WAL de la maniobra: los
+--      `op=U` llegan con la pk canónica y encuentran su slot ya reapuntado por
+--      el PASO 7c; los `op=D` de los clones cierran sus encarnaciones. NO hay
+--      que soltar ni recrear el slot `jobhunt_shadow`, ni re-sembrar el
+--      snapshot, ni se invalida el GATE-SOMBRA.
+--   7) Comprobación posterior (SOLO LECTURA), cuando el proyector haya drenado:
+--        SELECT count(*) FROM jobhunt.source_listings sl
+--          JOIN jobhunt.sources s ON s.id = sl.source_id
+--          LEFT JOIN jobs j ON j.hash = sl.external_id
+--         WHERE s.name IN ('legacy:arbeitnow','legacy:jobgether','legacy:irishjobs')
+--           AND j.hash IS NULL;
+--      Debe bajar (no subir) respecto a antes de la maniobra: los únicos
+--      huérfanos nuevos son los slots de los clones borrados, que el proyector
+--      cierra por su `op=D`.
+--
+-- LO QUE ESTE ORDEN **NO** ARREGLA (declarado, G8/P2-6). El fondo del problema
+-- vive en `jobhunt_core/shadow/capture.py:522`
+-- (`columns.get(pk, identity.get(pk))`): en un `op=U` que cambia la PK,
+-- `columns` trae la NUEVA y la vieja se pierde, así que la sombra no puede
+-- emitir por sí misma «cierre del viejo + alta del nuevo». Verificado
+-- ejecutando un slot wal2json sobre `swissjobhunter_test`: el `update` sale con
+-- `columns.hash = <nuevo>` y `oldkeys.hash = <viejo>`. El PASO 7c compensa ese
+-- hueco DESDE FUERA para esta maniobra concreta; cualquier otro cambio de PK
+-- de `jobs` volvería a romper la sombra en silencio.
 --
 -- COTA G4 — **CERRADA en G6**. G4 dejó escrito que el `DELETE` del PASO 5 se
 -- quedaba SIEMPRE con la fila del superviviente sin mirar si la del clon lleva
@@ -200,11 +245,22 @@ CREATE INDEX ON g3_map (new_hash);
 -- MÁS ANTIGUA por `first_seen_at` — así el `first_seen_at` de la vacante es el
 -- de su primera aparición real y no el del último clon. Desempate estable por
 -- `old_hash` para que el script sea determinista.
+--
+-- ⚠ G8/P3-7f — LO QUE EL SUPERVIVIENTE **NO** HEREDA. El PASO 7b le pasa
+-- `last_seen_at` e `is_active` del grupo, y nada más: `url`, `description`,
+-- `salary_*`, `published_at`, `content_hash` y `embedding` se quedan en la
+-- versión VIEJA, aunque el clon que se borra sea el que trae el contenido
+-- actual. Medido el 2026-08-26 (SOLO LECTURA, las tres fuentes): de los **345**
+-- grupos con clones, en **294** algún clon es más reciente que el
+-- superviviente. Se autocura en la primera cosecha posterior (el upsert
+-- refresca esas columnas por `hash`), pero entre la migración y esa cosecha el
+-- usuario ve la versión antigua marcada como vigente.
 -- ---------------------------------------------------------------------
 CREATE TEMP TABLE g3_survivors ON COMMIT DROP AS
 SELECT DISTINCT ON (new_hash)
     new_hash,
-    old_hash AS survivor_hash
+    old_hash AS survivor_hash,
+    source
 FROM g3_map
 ORDER BY new_hash, first_seen_at ASC, old_hash ASC;
 
@@ -212,7 +268,7 @@ CREATE UNIQUE INDEX ON g3_survivors (new_hash);
 CREATE UNIQUE INDEX ON g3_survivors (survivor_hash);
 
 CREATE TEMP TABLE g3_losers ON COMMIT DROP AS
-SELECT m.old_hash AS loser_hash, s.survivor_hash, m.new_hash
+SELECT m.old_hash AS loser_hash, s.survivor_hash, m.new_hash, m.source
 FROM g3_map m
 JOIN g3_survivors s ON s.new_hash = m.new_hash
 WHERE m.old_hash <> s.survivor_hash;
@@ -241,8 +297,22 @@ END
 $$;
 
 -- ---------------------------------------------------------------------
--- 4. El superviviente hereda la última vista y la actividad del grupo
+-- 4. El superviviente hereda la última vista y la actividad del grupo:
+--    aquí solo se CALCULA (los clones todavía existen); se APLICA en el
+--    PASO 7b, cuando el superviviente ya lleva su hash canónico.
 --    (first_seen_at NO se toca: ya es el mínimo del grupo por construcción).
+--
+-- ⚠ G8/P2-6 — POR QUÉ SE CALCULA AQUÍ Y SE APLICA DESPUÉS. `jobs` es tabla
+-- CONTRACTUAL del CDC de la sombra, con `"pk": "hash"`. Un `UPDATE` del
+-- superviviente ANTES del PASO 7 viaja al proyector bajo el hash VIEJO, que el
+-- PASO 7c ya habrá reapuntado: no resuelve slot, el sink intenta dar de alta
+-- uno nuevo con la MISMA `url_normalized`, choca con `uq_listing_source_url` y
+-- sale por `logger.warning("sink: listing %r saltado")`. Medido contra
+-- producción el 2026-08-26 (SOLO LECTURA): 345 supervivientes con clones y 298
+-- de ellos con slot de sombra ⇒ 298 avisos espurios, indistinguibles del
+-- síntoma real que el PASO 7c existe para evitar. Aplicando la herencia
+-- DESPUÉS del PASO 7, el único evento del superviviente va bajo el hash
+-- canónico y el proyector lo resuelve por su camino normal.
 --
 -- ⚠ COTA CERRADA (G7/P3-8). `is_active = j.is_active OR g.any_active` a secas
 -- puede RESUCITAR un superviviente que está inactivo PORQUE `mark_duplicate` lo
@@ -251,23 +321,33 @@ $$;
 -- lo dejaría `is_active = TRUE` CON `duplicate_of` puesto — un estado que ni
 -- `mark_duplicate` ni el `ON CONFLICT` producen jamás
 -- (`job_repository.py:416-417`: `case((duplicate_of IS NOT NULL, False),
--- else_=True)`). Medido contra producción el 2026-08-26: de los 12
--- supervivientes con `duplicate_of` en las tres fuentes, los 12 están
--- inactivos, y 0 tienen un clon activo — así que hoy NO hay ningún caso. El
+-- else_=True)`).
+--
+-- ⚠ G8/P3-7a — «un estado que ni `mark_duplicate` ni el `ON CONFLICT` producen
+-- jamás» es FALSO como invariante global: producción tiene **1 fila**
+-- (`workingnomads`, `0c089993…`) activa con `duplicate_of` puesto, sin
+-- productor identificado y preexistente. No la toca ninguno de los dos
+-- scripts; se declara aquí porque el ORDEN OPERATIVO manda ensayar sobre una
+-- copia de producción y una aserción sin acotar daría `f` por ella.
+--
+-- ⚠ G8/P3-7b — el denominador correcto. Medido de nuevo el 2026-08-26 (SOLO
+-- LECTURA, las tres fuentes): 12 filas con `duplicate_of` puesto, de las que
+-- **10 son supervivientes** del mapa y solo **2 son supervivientes CON
+-- clones** — los únicos que el `OR g.any_active` puede tocar. Los 12 están
+-- inactivos y ninguno tiene un clon activo, así que hoy NO hay ningún caso; el
 -- `AND j.duplicate_of IS NULL` cierra la cota sin cambiar nada de lo medido.
+-- Lo que sí cambia es la MORDIDA: el GRUPO E/D de la fixture de ensayo monta
+-- por fin esa forma y sin el `AND` el ensayo aborta (G8/P2-5).
 -- ---------------------------------------------------------------------
-UPDATE jobs j
-SET last_seen_at = GREATEST(j.last_seen_at, g.max_last_seen),
-    is_active    = (j.is_active OR g.any_active) AND j.duplicate_of IS NULL
-FROM (
-    SELECT l.survivor_hash,
-           max(jl.last_seen_at) AS max_last_seen,
-           bool_or(jl.is_active) AS any_active
-    FROM g3_losers l
-    JOIN jobs jl ON jl.hash = l.loser_hash
-    GROUP BY l.survivor_hash
-) g
-WHERE j.hash = g.survivor_hash;
+CREATE TEMP TABLE g3_inherit ON COMMIT DROP AS
+SELECT l.survivor_hash,
+       max(jl.last_seen_at) AS max_last_seen,
+       bool_or(jl.is_active) AS any_active
+FROM g3_losers l
+JOIN jobs jl ON jl.hash = l.loser_hash
+GROUP BY l.survivor_hash;
+
+CREATE UNIQUE INDEX ON g3_inherit (survivor_hash);
 
 -- ---------------------------------------------------------------------
 -- 5. Reapuntar las tablas hijas de los clones al superviviente, respetando
@@ -427,6 +507,92 @@ ALTER TABLE generated_documents
     FOREIGN KEY (job_hash) REFERENCES jobs(hash) ON DELETE CASCADE;
 
 -- ---------------------------------------------------------------------
+-- 7b. Aplicar la herencia calculada en el PASO 4, ya sobre el hash canónico
+--     (ver la nota de G8/P2-6 en el PASO 4: así el superviviente emite UN
+--     solo evento CDC y va bajo la pk que el PASO 7c deja en los slots).
+-- ---------------------------------------------------------------------
+UPDATE jobs j
+SET last_seen_at = GREATEST(j.last_seen_at, g.max_last_seen),
+    is_active    = (j.is_active OR g.any_active) AND j.duplicate_of IS NULL
+FROM g3_inherit g
+JOIN g3_survivors s ON s.survivor_hash = g.survivor_hash
+WHERE j.hash = s.new_hash;
+
+-- ---------------------------------------------------------------------
+-- 7c. Reapuntar los slots de la SOMBRA CDC al hash canónico (G8/P2-6).
+--
+-- `jobs` es tabla contractual del slot lógico `jobhunt_shadow` con
+-- `"pk": "hash"` (`jobhunt_core/shadow/capture.py`), y `jobhunt.source_listings`
+-- guarda ese hash LITERAL en `external_id` (el proyector construye
+-- `RawListing(external_id=pk, …)`). Al reescribir la pk, wal2json emite
+-- `columns.hash = <NUEVO>` y deja el viejo solo en `identity`/`oldkeys`
+-- —verificado ejecutando un slot wal2json de prueba sobre
+-- `swissjobhunter_test`—, y `capture._change_row` se queda con `columns`: el
+-- hash viejo NO genera ningún evento. Sin este paso, el slot antiguo queda
+-- abierto para siempre y el alta del nuevo choca con `uq_listing_source_url`
+-- (el script no toca `jobs.url`) → `ON CONFLICT DO NOTHING` → la fila legacy
+-- se vuelve INVISIBLE para la sombra sin un solo error. Medido contra
+-- producción el 2026-08-26 (SOLO LECTURA): 5.263 slots de arbeitnow/jobgether
+-- + 879 de irishjobs quedarían huérfanos, más 411 de clones.
+--
+-- Los slots de los CLONES no se tocan: su fila muere en el PASO 6 y el `op=D`
+-- correspondiente cierra su encarnación por el camino normal del proyector.
+--
+-- Va en la MISMA transacción que la reescritura del hash a propósito: la
+-- decodificación lógica solo entrega la transacción al COMMIT (wal2json v2 sin
+-- streaming de transacciones en curso), así que la sombra jamás observa un
+-- estado intermedio.
+--
+-- Si el esquema `jobhunt` no existe (despliegue sin Fase B) el paso es un
+-- no-op declarado en el informe.
+-- ---------------------------------------------------------------------
+CREATE TEMP TABLE g3_shadow_report (concepto text, filas bigint) ON COMMIT DROP;
+
+DO $$
+DECLARE
+    n_colision bigint;
+    n_remap    bigint;
+    n_cierre   bigint;
+BEGIN
+    IF to_regclass('jobhunt.source_listings') IS NULL THEN
+        INSERT INTO g3_shadow_report
+        VALUES ('sombra: esquema jobhunt ausente, PASO 7c omitido', 0);
+        RETURN;
+    END IF;
+
+    -- Guarda: el external_id canónico no puede estar ya ocupado en la misma
+    -- fuente (violaría `uq_listing_source_external`). Se aborta, no se adivina.
+    SELECT count(*) INTO n_colision
+    FROM g3_survivors s
+    JOIN jobhunt.sources src ON src.name = 'legacy:' || s.source
+    JOIN jobhunt.source_listings sl
+      ON sl.source_id = src.id AND sl.external_id = s.new_hash;
+    IF n_colision > 0 THEN
+        RAISE EXCEPTION
+            'ABORTADO: % slots de sombra ya usan el external_id canónico', n_colision;
+    END IF;
+
+    SELECT count(*) INTO n_cierre
+    FROM g3_losers l
+    JOIN jobhunt.sources src ON src.name = 'legacy:' || l.source
+    JOIN jobhunt.source_listings sl
+      ON sl.source_id = src.id AND sl.external_id = l.loser_hash;
+
+    UPDATE jobhunt.source_listings sl
+    SET external_id = s.new_hash
+    FROM g3_survivors s
+    JOIN jobhunt.sources src ON src.name = 'legacy:' || s.source
+    WHERE sl.source_id = src.id
+      AND sl.external_id = s.survivor_hash;
+    GET DIAGNOSTICS n_remap = ROW_COUNT;
+
+    INSERT INTO g3_shadow_report VALUES
+        ('sombra: slots reapuntados al hash canonico', n_remap),
+        ('sombra: slots de clones (los cierra el op=D del PASO 6)', n_cierre);
+END
+$$;
+
+-- ---------------------------------------------------------------------
 -- 8. Informe
 -- ---------------------------------------------------------------------
 SELECT 'reescritas'            AS concepto, count(*) AS filas FROM g3_survivors
@@ -450,7 +616,9 @@ WHERE j.source IN ('arbeitnow', 'jobgether')
 UNION ALL
 SELECT 'arbeitnow tras el script', count(*) FROM jobs WHERE source = 'arbeitnow'
 UNION ALL
-SELECT 'jobgether tras el script', count(*) FROM jobs WHERE source = 'jobgether';
+SELECT 'jobgether tras el script', count(*) FROM jobs WHERE source = 'jobgether'
+UNION ALL
+SELECT concepto, filas FROM g3_shadow_report;
 
 -- ---------------------------------------------------------------------
 -- CAMBIAR A `COMMIT;` PARA APLICARLO DE VERDAD.
