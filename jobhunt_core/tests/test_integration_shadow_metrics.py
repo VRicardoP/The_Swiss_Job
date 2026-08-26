@@ -566,7 +566,57 @@ def test_ndcg_no_penaliza_al_core_por_deduplicar_dos_refs_juzgados(db):
         async with factory() as s:
             return await metrics.render_report(s, CYCLE)
 
-    assert "COLAPSAN" in _run(report())
+    rep = _run(report())
+    assert "COLAPSAN" in rep
+    # G4-P3-3: aquí el colapso es REAL y no hay refs ausentes.
+    assert ndcg.details["refs_colapsados_por_attach"] == 1
+    assert ndcg.details["refs_sin_vacante"] == 0
+    assert "1 ref(s) juzgados COLAPSAN" in rep
+
+
+def test_g4_el_informe_no_afirma_un_attach_que_no_ocurrio(db):
+    """Regresión G4-P3-3: `colapso = refs_juzgados − vacantes_juzgadas` suma
+    DOS poblaciones distintas —los refs colapsados por attach Y los que el
+    core NO TIENE (sin slot legacy: `map_job_refs_to_vacancies` los deja fuera
+    por contrato)— y la línea las etiquetaba todas como «COLAPSAN por attach».
+    Es el ÚNICO rastro legible de por qué el ideal del core encogió, y mentía
+    en la dirección tranquilizadora: afirmaba deduplicación donde hay AUSENCIA
+    de corpus. Aquí no hay un solo attach en todo el corpus."""
+    factory = db
+    mp = _seed_model_policy(factory)
+    user = uuid.uuid4()
+    pid = _mk_profile(factory, str(user))
+    src = _mk_source(factory, "legacy:g4inf")
+    p = uuid.uuid4().hex[:6]
+    A, X = f"{p}-a", f"{p}-x"
+
+    # Set congelado con DOS juicios; el core solo tiene vacante para A. X no
+    # se atacha con nadie: sencillamente NO está en el core.
+    _mk_frozen_set(factory, pid, {A: 3, X: 3})
+    vac_a = _mk_slot(factory, src, A)[0]
+    _mk_eval(factory, mp, pid, vac_a, 90)
+    for h in (A, X):
+        _legacy_job(factory, h)
+    _legacy_result(factory, user, A, 99)
+    _legacy_result(factory, user, X, 98)
+
+    _compute(factory)
+
+    async def report():
+        async with factory() as s:
+            return await metrics.render_report(s, CYCLE)
+
+    linea = [ln for ln in _run(report()).splitlines() if "COLAPSAN" in ln]
+    assert linea, "el informe tiene que seguir explicando por qué encogió el ideal"
+    # Antes del fix: «1 ref(s) juzgados COLAPSAN por attach…» — falso.
+    assert "0 ref(s) juzgados COLAPSAN" in linea[0]
+    assert "1 NO tienen vacante en el core" in linea[0]
+
+    row = _metric_row(factory, "ndcg@10", scope=f"profile:{pid}")
+    assert row.details["refs_juzgados"] == 2
+    assert row.details["vacantes_juzgadas"] == 1
+    assert row.details["refs_colapsados_por_attach"] == 0  # NINGÚN attach
+    assert row.details["refs_sin_vacante"] == 1
 
 
 def test_ndcg_unmeasurable_set_is_visible_not_green(db):

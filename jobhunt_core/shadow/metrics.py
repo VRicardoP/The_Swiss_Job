@@ -568,11 +568,19 @@ async def _profile_metric_rows(
     idcg_ref = _dcg(sorted(judgments.values(), reverse=True)[:NDCG_K])
     idcg_core = _dcg(sorted(vac_rel.values(), reverse=True)[:NDCG_K])
     base = {"set_id": prof.set_id, "set_name": prof.set_name}
+    # G4-P3-3: la diferencia refs−vacantes suma DOS poblaciones distintas y el
+    # informe las etiquetaba todas como «colapsan por attach». Se separan: lo
+    # que de verdad colapsa (varios refs MAPEADOS a la misma vacante) y lo que
+    # el core NO TIENE (ref juzgado sin slot legacy, que `map_job_refs_to_
+    # vacancies` deja fuera por su propio contrato).
+    refs_mapeados = sum(1 for ref in judgments if mapping.get(ref) is not None)
     core_base = base | {
         "espacio_idcg": "vacante",
         "idcg_ref": round(idcg_ref, 6),  # el del legacy, para comparar
         "refs_juzgados": len(judgments),
         "vacantes_juzgadas": len(vac_rel),
+        "refs_colapsados_por_attach": refs_mapeados - len(vac_rel),
+        "refs_sin_vacante": len(judgments) - refs_mapeados,
     }
 
     rows = [
@@ -1801,15 +1809,23 @@ def _report_details(details_by: dict) -> list[str]:
     # G3-A-P2-1: el colapso de refs juzgados en una MISMA vacante (attach) es
     # lo que separa el ideal del core del ideal del legacy — sin verlo, un
     # ndcg@10 bajo parece un fallo de ranking cuando es deduplicación.
+    # G4-P3-3: y lo que el core NO TIENE se nombra APARTE — la resta
+    # refs−vacantes las sumaba y las etiquetaba todas como attach, afirmando
+    # deduplicación donde puede haber AUSENCIA DE CORPUS (la dirección
+    # tranquilizadora) en el único rastro legible que lee el operador.
     for (metric, scope), det in sorted(details_by.items()):
         if metric != M_NDCG or not det:
             continue
-        colapso = det.get("refs_juzgados", 0) - det.get("vacantes_juzgadas", 0)
-        if colapso > 0:
+        colapso = det.get("refs_colapsados_por_attach", 0)
+        sin_vacante = det.get("refs_sin_vacante", 0)
+        if colapso or sin_vacante:
             lines.append(
                 f"  ndcg@10 {scope}: {colapso} ref(s) juzgados COLAPSAN por"
-                f" attach en la misma vacante — IDCG en espacio vacante"
-                f" {det.get('idcg')} vs {det.get('idcg_ref')} en espacio ref"
+                f" attach en la misma vacante y {sin_vacante} NO tienen vacante"
+                f" en el core (fuera del ideal: el ndcg@10 no los penaliza —"
+                f" la cobertura la miden `perdida` y `no_ingeribles`) — IDCG en"
+                f" espacio vacante {det.get('idcg')} vs {det.get('idcg_ref')}"
+                f" en espacio ref"
             )
     coste = details_by.get((M_COSTE, SCOPE_GLOBAL))
     if coste:
