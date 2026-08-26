@@ -715,7 +715,16 @@ def classify_job(title: str, tags: list[str]) -> str:
     # Normalizar puntuación a espacios para que \b funcione correctamente
     text = _PUNCT_RE.sub(" ", combined)
 
+    # G2/P3-2: en un texto TODO-MAYÚSCULAS la caja no aporta señal — «POUR UN
+    # REMPLACEMENT» contiene el token UN sin nombrar al organismo, y el patrón
+    # case-sensitive de _ACRONYM_CASE_SENSITIVE volvía a clasificar F un
+    # título de docencia (anulando la penalización H y la teacher_alert).
+    # Esos patrones (los únicos SIN IGNORECASE) se omiten en ese caso.
+    all_caps = text == text.upper()
+
     for cat_id, patterns in _COMPILED:
-        if any(p.search(text) for p in patterns):
+        if any(
+            p.search(text) for p in patterns if not all_caps or p.flags & _re.IGNORECASE
+        ):
             return cat_id
     return "otros"
