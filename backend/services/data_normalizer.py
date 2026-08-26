@@ -11,11 +11,27 @@ logger = logging.getLogger(__name__)
 # Currency conversion rates (CHF base)
 # ---------------------------------------------------------------------------
 
+# Tasas APROXIMADAS y ESTÁTICAS (no hay feed de divisas en el proyecto): su
+# función es ordenar salarios entre sí para el matching, no dar una conversión
+# financiera exacta. G3/P2-5 amplía el mapa más allá de CHF/EUR/USD/GBP porque
+# una divisa AUSENTE ya no se convierte 1:1 — se descarta el importe.
 CURRENCY_TO_CHF: dict[str, float] = {
     "CHF": 1.0,
     "EUR": 0.96,
     "USD": 0.88,
     "GBP": 1.12,
+    # G3/P2-5: divisas emitidas por portales remotos globales (jobgether y
+    # compañía). Sin ellas, 107 filas de producción quedaron con el importe
+    # nominal guardado como CHF (INR ≈ ×106, ZAR ≈ ×21).
+    "CAD": 0.64,
+    "AUD": 0.58,
+    "NOK": 0.082,
+    "SEK": 0.083,
+    "DKK": 0.13,
+    "PLN": 0.22,
+    "INR": 0.010,
+    "ZAR": 0.048,
+    "SGD": 0.66,
 }
 
 PERIOD_MULTIPLIER: dict[str, int] = {
@@ -172,7 +188,14 @@ CONTRACT_PATTERNS: list[tuple[str, list[str]]] = [
 # letra (G1/P2-7: "80 CHF ... Kanton" no debe multiplicar ×1000). El separador
 # de rango es un guion o la palabra "to" — NO una clase de caracteres, que
 # casaba letras sueltas (G1/P3-13).
-_NUM = r"(\d(?:[\d.,'’]*\d)?)"
+# G3/P2-3: el ESPACIO (y el espacio duro U+00A0) es el separador de miles del
+# francés, del uso suizo francófono y de la propia norma ISO 31-0. Se admite
+# SOLO entre grupos de EXACTAMENTE 3 dígitos, para no tragarse números vecinos
+# ("80000 100000" siguen siendo dos números). La alternativa va PRIMERO: el
+# motor debe preferir "100 000" antes que quedarse en "100" (que persistía
+# 100 CHF donde el portal decía 100 000 — error ×1000).
+_SPACED = r"\d{1,3}(?:[ \xa0][0-9]{3})+"
+_NUM = rf"({_SPACED}|\d(?:[\d.,'’]*\d)?)"
 # G2/P3-3: el fin de número(+k) exige borde REAL — fin de texto, un carácter
 # no alfanumérico o un código de divisa pegado ("80'000CHF", "100kEUR"). El
 # lookahead negativo anterior (solo letras) dejaba retroceder al motor DENTRO
@@ -180,10 +203,15 @@ _NUM = r"(\d(?:[\d.,'’]*\d)?)"
 # (plausible-pero-falso). "Kanton" sigue sin multiplicar: su K va seguida de
 # letra y no es divisa.
 _K = r"\s*([kK])?(?=$|[^0-9A-Za-zÀ-ÿ]|(?i:CHF|EUR|USD|GBP)\b)"
-_SALARY_RANGE_RE = re.compile(rf"{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_NUM}{_K}")
+# G3/P2-4: la forma canónica británica/irlandesa repite la divisa en el segundo
+# extremo ("£30,000 - £40,000"). Sin este token opcional el rango no casaba y el
+# parser caía EN SILENCIO al camino `single`, que devuelve la primera cifra como
+# mínimo Y máximo (30000-30000 persistido). No captura: los grupos siguen 1..4.
+_CUR_TOK = r"(?:(?i:CHF|EUR|USD|GBP)\s*|[€$£]\s*)?"
+_SALARY_RANGE_RE = re.compile(rf"{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_CUR_TOK}{_NUM}{_K}")
 # El single exige ≥2 dígitos (como el `[\d.,]+` original): un dígito suelto
 # ("Level 5") no es un salario.
-_SALARY_SINGLE_RE = re.compile(rf"(\d[\d.,'’]*\d){_K}")
+_SALARY_SINGLE_RE = re.compile(rf"({_SPACED}|\d[\d.,'’]*\d){_K}")
 # Pensums/porcentajes ("60-80%", "50 %"): se eliminan ANTES de parsear para
 # que un workload no se confunda con un salario (G1/P3-13).
 _PCT_TOKEN_RE = re.compile(r"\d[\d.,'’]*(?:\s*[-–—]\s*\d[\d.,'’]*)?\s*%")
@@ -290,8 +318,22 @@ class DataNormalizer:
         if not (sal_min or sal_max):
             return job
 
-        # Convert currency to CHF
-        rate = CURRENCY_TO_CHF.get(currency.upper(), 1.0) if currency else 1.0
+        # Convert currency to CHF. G3/P2-5: una divisa que NO sabemos convertir
+        # ya no se guarda 1:1 como CHF — eso puntuaba al máximo en el factor
+        # salario y desplazaba vacantes suizas reales del top del feed. Mejor
+        # sin importe que un importe ×100: salary_original y salary_currency
+        # siguen en la fila, así que el dato crudo no se pierde.
+        rate = 1.0
+        if currency:
+            known_rate = CURRENCY_TO_CHF.get(currency.upper())
+            if known_rate is None:
+                logger.warning(
+                    "Unknown salary currency %r — salary_*_chf left empty", currency
+                )
+                job["salary_min_chf"] = None
+                job["salary_max_chf"] = None
+                return job
+            rate = known_rate
 
         # Annualize
         multiplier = PERIOD_MULTIPLIER.get(period, 1) if period else 1
@@ -357,14 +399,22 @@ class DataNormalizer:
         `.`/`,` se interpretan por POSICIÓN (G1/P2-6): un grupo final de
         exactamente 3 dígitos es separador de miles ("80.000", "1,234");
         1-2 dígitos finales son decimales ("25.5", "45,50"). `'`/`’` son
-        SIEMPRE separador de miles (formato suizo "80'000").
+        SIEMPRE separador de miles (formato suizo "80'000"), y el espacio
+        (normal o duro) también lo es: el regex ya sólo lo deja pasar entre
+        grupos de 3 dígitos, aquí basta con eliminarlo (G3/P2-3).
 
         `has_k`: la "k" la detecta el REGEX adyacente al número — nunca una
         palabra del texto circundante como "Kanton" (G1/P2-7).
         """
         if not raw:
             return None
-        cleaned = raw.strip().replace("'", "").replace("’", "")
+        cleaned = (
+            raw.strip()
+            .replace("'", "")
+            .replace("’", "")
+            .replace(" ", "")
+            .replace("\xa0", "")
+        )
         last_sep = max(cleaned.rfind("."), cleaned.rfind(","))
         if last_sep != -1:
             frac = cleaned[last_sep + 1 :]
