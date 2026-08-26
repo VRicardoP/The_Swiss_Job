@@ -436,18 +436,21 @@ def test_task_two_consecutive_runs_same_process(db):
     assert r2.successful() and r2.result["status"] == "skipped"
 
 
-def test_reparacion_sin_normalizador_en_este_proceso_conserva_la_canonica(db):
+def test_reparacion_da_de_alta_el_handler_sombra_en_vez_de_anular_la_canonica(db):
     """Regresión G3-A-P3-2: `_rebuild_canonical_after_repair` trataba el None de
     `normalize_offer` como «contenido no normalizable», pero esa función
     devuelve None TAMBIÉN cuando el proceso no tiene registrado el normalizador
     de esa fuente — y el registry es memoria POR PROCESO: los `legacy:*` los
-    registra solo el proyector, que comparte la cola `core.harvest` con la
-    cosecha. Anular el puntero canónico de una vacante VIVA la saca de /v1, del
-    corpus de matching y del de dedup, y dispara una re-evaluación completa por
-    bump_corpus_generation. Ahora sin normalizador se CONSERVA lo vigente (con
-    alerta) y solo se anula cuando el normalizador SÍ existe y rechaza el raw."""
-    from jobhunt_core.harvest import providers  # noqa: F401  (auto-registro)
-    from jobhunt_core.harvest.providers import arbeitnow  # noqa: F401
+    registra el proyector, que comparte la cola `core.harvest` con la cosecha.
+    La vacante VIVA perdía su canónica (fuera de /v1, del corpus de matching y
+    del de dedup, con re-evaluación completa por bump_corpus_generation). Ahora
+    esa causa se ELIMINA dando de alta el handler sombra en caliente.
+
+    El invariante de A-06 no se toca: una fuente AJENA sin handler sigue
+    anulando el puntero (test_recycled_shared_primary_without_normalizer_nulls_pointer),
+    porque servir el contenido del primary ANTERIOR —otra empresa— es peor."""
+    from jobhunt_core.harvest import normalize
+    from jobhunt_core.harvest.providers import arbeitnow, legacy_shadow  # noqa: F401
 
     factory, created = db
     scope = _seed_scope(factory, created)
@@ -479,48 +482,28 @@ def test_reparacion_sin_normalizador_en_este_proceso_conserva_la_canonica(db):
     antes = _target()
     assert antes.ptr is not None  # canónica VIVA
 
-    def _rebuild(source_name):
-        async def go():
-            async with factory() as s:
-                await s.execute(
-                    sa.text("UPDATE sources SET name = :n WHERE id = :i"),
-                    {"n": source_name, "i": created["source"]},
-                )
-                await RawListingSink()._rebuild_canonical_after_repair(
-                    s, [(antes.vid, antes.iid)]
-                )
-                await s.commit()
+    # Fuente SOMBRA cuyo handler no está registrado en ESTE proceso.
+    sombra = f"legacy:g3-sin-registrar-{uuid.uuid4().hex[:6]}"
+    assert normalize.has_normalizer(sombra) is False
 
-        asyncio.run(go())
+    async def rebuild():
+        async with factory() as s:
+            await s.execute(
+                sa.text("UPDATE sources SET name = :n WHERE id = :i"),
+                {"n": sombra, "i": created["source"]},
+            )
+            await RawListingSink()._rebuild_canonical_after_repair(
+                s, [(antes.vid, antes.iid)]
+            )
+            await s.commit()
 
-    # Fuente cuyo normalizador NO está registrado en ESTE proceso.
-    sin_norm = f"legacy:g3-sin-normalizador-{uuid.uuid4().hex[:6]}"
-    from jobhunt_core.harvest import normalize
-
-    assert normalize.has_normalizer(sin_norm) is False
-    _rebuild(sin_norm)
-    assert _target().ptr == antes.ptr  # antes: None (canónica viva anulada)
-
-    # Control: con el normalizador SÍ registrado y un raw que rechaza (sin
-    # título), el puntero sigue anulándose — esa rama no cambia.
-    normalize.register_normalizer(sin_norm, lambda raw: raw)
     try:
-        async def sin_titulo():
-            async with factory() as s:
-                await s.execute(
-                    sa.text(
-                        "UPDATE source_listing_revisions SET raw = '{}'::jsonb "
-                        "WHERE incarnation_id = :i"
-                    ),
-                    {"i": antes.iid},
-                )
-                await s.commit()
-
-        asyncio.run(sin_titulo())
-        _rebuild(sin_norm)
-        assert _target().ptr is None
+        asyncio.run(rebuild())
+        assert _target().ptr is not None  # antes: None (canónica viva anulada)
+        assert normalize.has_normalizer(sombra) is True  # alta en caliente
     finally:
-        normalize._NORMALIZERS.pop(sin_norm, None)
+        normalize._NORMALIZERS.pop(sombra, None)
+        legacy_shadow._registered.discard(sombra)
 
 
 def test_contenido_que_revierte_refresca_la_marca_del_raw_vigente(db):

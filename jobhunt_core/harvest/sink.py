@@ -738,6 +738,28 @@ class RawListingSink:
         ).all()
         return [(r.id, r.primary_incarnation_id) for r in rows]
 
+    @staticmethod
+    def _ensure_shadow_handler(source_name: str) -> None:
+        """Alta en caliente del handler de una fuente sombra `legacy:*` cuando
+        este proceso no lo tiene (G3-A-P3-2). Import LOCAL: `providers/` importa
+        el sink, y este camino es excepcional (una reparación de primary sobre
+        una fuente que este worker aún no ha proyectado)."""
+        from jobhunt_core.harvest.providers import legacy_shadow
+
+        if not source_name.startswith(legacy_shadow.LEGACY_PREFIX):
+            logger.error(
+                "sink: reparación de primary sobre fuente %r SIN normalizador "
+                "en este proceso — la canónica queda NULL (A-06: jamás el "
+                "contenido del primary anterior)", source_name,
+            )
+            return
+        legacy_shadow.ensure_registered(source_name)
+        logger.warning(
+            "sink: handler sombra de %r dado de alta en caliente durante una "
+            "reparación de primary (registry vacío en este proceso)",
+            source_name,
+        )
+
     async def _rebuild_canonical_after_repair(self, session, repaired) -> None:
         """La canónica vigente debe seguir SIEMPRE al primary (rev. A-06 #1):
         tras reasignar el primary de una vacante compartida, se reconstruye
@@ -772,19 +794,19 @@ class RawListingSink:
             # G3-A-P3-2: `normalize_offer` devuelve None por DOS causas muy
             # distintas — «contenido no normalizable» y «este PROCESO no tiene
             # registrado el normalizador de esa fuente» (el registry es memoria
-            # por proceso y los `legacy:*` los registra SOLO el proyector, que
-            # comparte cola con la cosecha). Confundirlas ANULABA el puntero
-            # canónico de una vacante VIVA: fuera de /v1, del corpus de
-            # matching y del de dedup, con re-evaluación completa por
-            # bump_corpus_generation. Sin normalizador se CONSERVA el puntero
-            # vigente y se alerta; el proyector lo actualizará al re-emitir.
+            # POR PROCESO: los `legacy:*` los registra el proyector al arrancar
+            # y `jobhunt.harvest.*` comparte la cola `core.harvest` con él, así
+            # que un proceso del pool que aún no haya proyectado tiene el
+            # registry vacío). Confundirlas anulaba el puntero de una vacante
+            # VIVA: fuera de /v1, del corpus de matching y del de dedup, con
+            # re-evaluación completa por bump_corpus_generation. La segunda
+            # causa se ELIMINA dando de alta el handler sombra aquí mismo (alta
+            # idempotente y en memoria, la misma que hace el proyector).
+            # Una fuente AJENA sin handler sigue anulando: el invariante de
+            # A-06 (jamás servir el contenido del primary ANTERIOR, que puede
+            # ser otra empresa) manda sobre conservar el puntero.
             if r is not None and not normalize.has_normalizer(r.source_name):
-                logger.error(
-                    "sink: reparación de primary sobre %s sin normalizador de %r "
-                    "en este proceso — se CONSERVA la canónica vigente",
-                    vac_id, r.source_name,
-                )
-                continue
+                self._ensure_shadow_handler(r.source_name)
             content = (
                 normalize.normalize_offer(r.source_name, r.raw) if r is not None else None
             )
