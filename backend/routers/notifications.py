@@ -55,6 +55,16 @@ async def notification_stream(
             detail="Invalid or inactive user",
         )
 
+    # G2/P2-4: FastAPI no cierra las dependencias con `yield` hasta que la
+    # RESPUESTA termina — y este stream es infinito. Tras el SELECT, la sesión
+    # quedaba con su transacción abierta («idle in transaction») anclando una
+    # conexión del pool POR PESTAÑA durante toda la vida del stream (30
+    # streams agotan pool+overflow y cuelgan el API entero). Se libera AQUÍ,
+    # antes de devolver el StreamingResponse; el cierre posterior de get_db
+    # es idempotente.
+    await db.rollback()
+    await db.close()
+
     sse: SSEManager = request.app.state.sse_manager
 
     queue = await sse.subscribe(user_id)
