@@ -1,6 +1,7 @@
 """DataNormalizer — enrich job dicts with salary, language, seniority, contract type."""
 
 import logging
+import math
 import re
 
 from langdetect import LangDetectException, detect_langs
@@ -194,8 +195,17 @@ CONTRACT_PATTERNS: list[tuple[str, list[str]]] = [
 # ("80000 100000" siguen siendo dos números). La alternativa va PRIMERO: el
 # motor debe preferir "100 000" antes que quedarse en "100" (que persistía
 # 100 CHF donde el portal decía 100 000 — error ×1000).
-_SPACED = r"\d{1,3}(?:[ \xa0][0-9]{3})+"
-_NUM = rf"({_SPACED}|\d(?:[\d.,'’]*\d)?)"
+# G7/P3-2: la clase admitía SOLO U+0020 y U+00A0, y los tres espacios estrechos
+# caían al camino `single` en silencio — la firma exacta de la familia ×1000.
+# U+202F (narrow no-break space) es lo que emite `Intl.NumberFormat('de-CH')` en
+# ICU moderno y buena parte de los CMS suizos, U+2009 (thin space) es el que
+# prescribe la ISO 31-0 que invoca el párrafo de arriba, y U+2007 (figure space)
+# el que usan las tablas alineadas. Igual con el prime tipográfico U+2032 (′),
+# variante de `'` en tipografía suiza: "80′000" valía 80.
+_SEP_MILES = " \xa0\u202f\u2009\u2007"
+_SEP_APOSTROFO = "'’′"
+_SPACED = rf"\d{{1,3}}(?:[{_SEP_MILES}][0-9]{{3}})+"
+_NUM = rf"({_SPACED}|\d(?:[\d.,{_SEP_APOSTROFO}]*\d)?)"
 # G2/P3-3: el fin de número(+k) exige borde REAL — fin de texto, un carácter
 # no alfanumérico o un código de divisa pegado ("80'000CHF", "100kEUR"). El
 # lookahead negativo anterior (solo letras) dejaba retroceder al motor DENTRO
@@ -241,10 +251,28 @@ _SALARY_RANGE_CUR_RIGHT_RE = re.compile(
 _SALARY_RANGE_RE = re.compile(rf"{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_NUM}{_K}")
 # El single exige ≥2 dígitos (como el `[\d.,]+` original): un dígito suelto
 # ("Level 5") no es un salario.
-_SALARY_SINGLE_RE = re.compile(rf"({_SPACED}|\d[\d.,'’]*\d){_K}")
+# G7/P3-9: el texto que entra al parser se acota a lo que cabe en la columna
+# `jobs.salary_original` (`String(200)`).
+_MAX_SALARY_TEXT = 200
+# `jobs.salary_*_chf` son `Integer` — INT4 en Postgres. Un importe con 20
+# dígitos parsea a 1e20 y desborda la columna; el multiplicador de periodo puede
+# desbordarla partiendo de un valor que por sí solo cabía.
+_MAX_CHF_INTEGER = 2**31 - 1
+
+
+def _to_chf_integer(value: float) -> int | None:
+    """Redondea a entero el importe en CHF, o lo descarta si no cabe en INT4."""
+    if not math.isfinite(value) or abs(value) > _MAX_CHF_INTEGER:
+        return None
+    return int(value)
+
+
+_SALARY_SINGLE_RE = re.compile(rf"({_SPACED}|\d[\d.,{_SEP_APOSTROFO}]*\d){_K}")
 # Pensums/porcentajes ("60-80%", "50 %"): se eliminan ANTES de parsear para
 # que un workload no se confunda con un salario (G1/P3-13).
-_PCT_TOKEN_RE = re.compile(r"\d[\d.,'’]*(?:\s*[-–—]\s*\d[\d.,'’]*)?\s*%")
+_PCT_TOKEN_RE = re.compile(
+    rf"\d[\d.,{_SEP_APOSTROFO}]*(?:\s*[-–—]\s*\d[\d.,{_SEP_APOSTROFO}]*)?\s*%"
+)
 # Los símbolos €/$/£ no tienen word-boundary a su lado ("\b€\b" no casa nunca,
 # G1/P3-12): se buscan sin \b, en alternancia con los códigos ISO. Los códigos
 # usan borde de LETRA, no \b: entre dígito y letra no hay \b y "80'000CHF"
@@ -399,9 +427,9 @@ class DataNormalizer:
         multiplier = PERIOD_MULTIPLIER.get(period, 1) if period else 1
 
         if sal_min:
-            job["salary_min_chf"] = int(sal_min * rate * multiplier)
+            job["salary_min_chf"] = _to_chf_integer(sal_min * rate * multiplier)
         if sal_max:
-            job["salary_max_chf"] = int(sal_max * rate * multiplier)
+            job["salary_max_chf"] = _to_chf_integer(sal_max * rate * multiplier)
 
         return job
 
@@ -410,6 +438,12 @@ class DataNormalizer:
         text: str,
     ) -> tuple[float | None, float | None, str | None]:
         """Extract min, max salary and currency from a free-text salary string."""
+        # G7/P3-9: `_SALARY_RANGE_*` no es exponencial pero escala en O(n²) —con
+        # `'9'*16000 + " - "` tarda 37 s—, y el parseo corre ANTES del
+        # `String(200)` de la columna, así que un texto patológico se paga
+        # entero. Lo que no cabe en la columna no puede persistirse de todas
+        # formas: se parsea solo lo que sí cabe.
+        text = text[:_MAX_SALARY_TEXT]
         currency = None
         cur_match = _CURRENCY_RE.search(text)
         if cur_match:
@@ -426,10 +460,10 @@ class DataNormalizer:
         # G5/P3-5: después, el de divisa solo a la derecha, cuya cota baja debe
         # parecer un salario para no reabrir la regresión de G4/P2-1.
         #
-        # G6/P2-1 — entre el de divisa-a-la-derecha y el clásico se elige por
-        # POSICIÓN, no por prioridad global. `re.search` barre TODO el texto, así
-        # que encadenar prioridades hacía que un match del patrón nuevo en la
-        # posición 23 desplazara al clásico en la 0 y el clásico ni se probara:
+        # G6/P2-1 — se elige por POSICIÓN, no por prioridad global. `re.search`
+        # barre TODO el texto, así que encadenar prioridades hacía que un match
+        # de un patrón en la posición 23 desplazara al de otro en la 0 y el
+        # segundo ni se probara:
         #   "90000 - 110000 par an (7500 - CHF 9200 par mois)"
         #       -> persistía el MENSUAL (7500-9200), ~12x menos que el anual;
         #   "80'000 - 100'000 (bonus 5,000 - GBP 2,000)"
@@ -437,18 +471,40 @@ class DataNormalizer:
         #          (salary_min_chf 5600 > salary_max_chf 2240).
         # El más a la izquierda gana: es el rango que el anuncio enuncia como
         # suyo, y lo de después (paréntesis, bonus, referencia) es glosa.
-        range_match = _SALARY_RANGE_CUR_RE.search(text)
-        if range_match is None:
-            right = _SALARY_RANGE_CUR_RIGHT_RE.search(text)
-            plain = _SALARY_RANGE_RE.search(text)
-            if (
-                right is not None
-                and DataNormalizer._low_looks_like_salary(right)
-                and (plain is None or right.start() <= plain.start())
-            ):
-                range_match = right
-            else:
-                range_match = plain
+        #
+        # G7/P2-2 y G7/P3-1 — la elección posicional se implementó SOLO entre
+        # `right` y `plain`, con `_SALARY_RANGE_CUR_RE` probado antes y cortando
+        # el `if` entero: ni era «el más a la izquierda gana» (P3-1), ni le
+        # exigía a `plain` la guarda de magnitud que sí le exigía a `right`
+        # (P2-2). Con eso, cualquier rango de RUIDO a la izquierda —una escala
+        # salarial UK/IE (`Grade N`, `Band N`, `MPS`, `NJC Scale`), un número de
+        # referencia, un pensum, unos años de experiencia— secuestraba el
+        # parseo por la puerta del `else` y reintroducía la corrupción que cerró
+        # G4/P2-1: «Grade 6 - 8, salary 30,000 - £40,000» -> salary_min = 6.
+        #
+        # Ahora compiten los TRES y gana el primero del texto. `plain` es el
+        # único que puede casar ruido puro (no lleva divisa que lo ancle), así
+        # que se descarta cuando va primero, su cota baja no parece salario y
+        # hay OTRO candidato que ocupar su lugar. La condición «y hay otro
+        # candidato» no es cosmética: exigirle la guarda a `plain` siempre rompe
+        # tres filas reales del corpus ("12-42508 EUR", "21-42508 EUR",
+        # "720-2400 EUR"), donde la cota baja es pequeña pero es el salario.
+        parece_salario = DataNormalizer._low_looks_like_salary
+        plain = _SALARY_RANGE_RE.search(text)
+        right = _SALARY_RANGE_CUR_RIGHT_RE.search(text)
+        if right is not None and not parece_salario(right):
+            right = None
+        candidatos = [
+            m
+            for m in (_SALARY_RANGE_CUR_RE.search(text), right, plain)
+            if m is not None
+        ]
+        # Estable: a igualdad de posición gana el patrón más específico, que es
+        # el orden en que se han construido.
+        candidatos.sort(key=lambda m: m.start())
+        if len(candidatos) > 1 and candidatos[0] is plain and not parece_salario(plain):
+            candidatos.pop(0)
+        range_match = candidatos[0] if candidatos else None
         if range_match:
             lo = DataNormalizer._parse_number(
                 range_match.group(1), has_k=bool(range_match.group(2))
@@ -535,13 +591,9 @@ class DataNormalizer:
         """
         if not raw:
             return None
-        cleaned = (
-            raw.strip()
-            .replace("'", "")
-            .replace("’", "")
-            .replace(" ", "")
-            .replace("\xa0", "")
-        )
+        cleaned = raw.strip()
+        for separador in _SEP_APOSTROFO + _SEP_MILES:
+            cleaned = cleaned.replace(separador, "")
         last_sep = max(cleaned.rfind("."), cleaned.rfind(","))
         if last_sep != -1:
             frac = cleaned[last_sep + 1 :]
@@ -555,6 +607,11 @@ class DataNormalizer:
         try:
             value = float(cleaned)
         except ValueError:
+            return None
+        # G7/P3-9: con ≥309 dígitos `float()` devuelve `inf`, y `inf` sobrevive
+        # a todas las comparaciones de más abajo hasta reventar el `int()` de
+        # `normalize_salary` con OverflowError.
+        if not math.isfinite(value):
             return None
         if has_k and value < 1000:
             value *= 1000
