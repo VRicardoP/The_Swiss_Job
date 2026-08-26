@@ -108,7 +108,19 @@ def json_items(data, url: str, source: str, *, key: str | None = None) -> list |
       puso `utils.http` (no duplicar).
     - estructura reconocible ⇒ la lista, aunque esté vacía (fin de paginación
       o feed sin resultados: eso sí es legítimo y no se registra).
+    - la clave PRESENTE con valor `null` ⇒ lista vacía, sin registrar (ver
+      abajo).
     - cualquier otra cosa ⇒ se REGISTRA el fallo de estructura y `None`.
+
+    G5/P3-4 — el caso `{clave: null}` tenía DOS contratos opuestos dentro del
+    mismo commit: `careerjet` lo trataba como vacío legítimo (su `or []`, con
+    el comentario de G3/P2-6 que lo declara así) y los otros nueve providers
+    pasaron a declararlo fallo de estructura al adoptar este helper — 9 de 11
+    cambiaron de `empty` a `error`. Se elige UN contrato y se escribe: la clave
+    presente con `null` es «esta página no trae ofertas», que es lo que los
+    `or []` originales de los providers sugieren que alguien vio. La clave
+    AUSENTE o de tipo equivocado sigue siendo fallo de estructura — que es el
+    caso que G4/P2-8 quería cazar (la clave renombrada).
 
     `key=None` para los endpoints cuyo cuerpo es la lista directamente.
     """
@@ -122,8 +134,11 @@ def json_items(data, url: str, source: str, *, key: str | None = None) -> list |
         items = data.get(key)
         if isinstance(items, list):
             return items
+        if items is None and key in data:
+            # Clave PRESENTE con `null`: fin de paginación, no fallo.
+            return []
         forma = (
-            f"la clave {key!r} falta o no es una lista"
+            f"la clave {key!r} falta"
             if items is None
             else f"la clave {key!r} llegó como {type(items).__name__}"
         )

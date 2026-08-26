@@ -115,9 +115,21 @@ class NavArbeidsplassenProvider(BaseJobProvider):
                 diag.record(diag.KIND_NETWORK, self.API_URL, detail=detail)
                 break
 
-            page_hits = hits_block.get("hits") or []
+            # G5/P3-3 — el nivel INTERNO se endurece igual que el envoltorio,
+            # trece líneas más arriba. Con `hits_block.get("hits") or []` un
+            # `hits.hits` que llegara como dict o string producía un
+            # `AttributeError` que ESCAPABA de `fetch_jobs`: no era muerte
+            # silenciosa (el `except Exception` de fetch_tasks lo convierte en
+            # error de fuente), pero se perdían ENTERAS las ofertas ya
+            # cosechadas de la faceta anterior en vez de degradar parcialmente,
+            # y el panel recibía un `AttributeError` en lugar del «200 con
+            # estructura desconocida» legible que se propuso dar G4/P2-8.
+            page_hits = diag.json_items(
+                hits_block, self.API_URL, self.SOURCE_NAME, key="hits"
+            )
             if not page_hits:
-                # Fin de la faceta: página vacía es éxito, no fallo.
+                # Fin de la faceta: página vacía es éxito, no fallo. Si la
+                # estructura era ilegible, `json_items` ya registró el issue.
                 break
 
             hits.extend(page_hits)
