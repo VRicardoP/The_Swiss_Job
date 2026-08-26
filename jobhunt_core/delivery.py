@@ -43,9 +43,12 @@ LEASE_S = 120
 # G2-H-7 (registrado para el cutover de Fase C): UN solo lease para el lote
 # entero, sin renovación. Irrelevante con el transporte sombra (INSERT local),
 # pero con el HTTP real un lote lento puede superar el lease a mitad → re-claim
-# y re-entrega de la cola del lote (at-least-once legal, el inbox deduplica) con
-# los marks tardíos `fenced_out`. Si aquello se vuelve visible, renovar el lease
-# por sub-lote; el consumo de intentos ya no lo amplifica (G2-P3-4).
+# y re-entrega de la cola del lote (at-least-once legal, el inbox deduplica).
+# Es la CAUSA RAÍZ común de G3-P2-2 y G4-P2-2, y la vía de cierre definitiva es
+# renovar el lease por sub-lote. Mientras tanto ningún RESULTADO del transporte
+# se pierde por superar el lease: el fallo lo persiste `_persist_attempts` y el
+# éxito `mark_delivered`, ambos fuera del fence y solo sobre filas 'inflight'.
+# El consumo de intentos tampoco lo amplifica (G2-P3-4).
 
 _transport = None
 
@@ -253,9 +256,28 @@ async def retire_poisoned(session) -> int:
 
 
 async def mark_delivered(session, marks: list, lease_token) -> int:
-    """marks = [{'eid', 'dest'}]. Solo si el claim sigue siendo NUESTRO.
-    Devuelve las filas REALMENTE transicionadas (2ª rev. A-10: los contadores
-    reportan lo que el fence permitió escribir, no la intención)."""
+    """marks = [{'eid', 'dest'}]. La entrega CONFIRMADA se persiste aunque el
+    lease ya no sea nuestro. Devuelve las filas REALMENTE transicionadas.
+
+    G4-P2-2: G3-P2-2 sacó del fence la persistencia del resultado SOLO para el
+    FALLO. El camino de ÉXITO seguía entero detrás del fence, y es el único
+    sitio donde `claims` vuelve a 0 tras una entrega buena: un transporte que
+    ENTREGA BIEN pero supera el lease (G2-H-7 — un lote de 100 entregas HTTP
+    de Fase C lo supera de sobra) veía TODOS sus marks descartados, `attempts`
+    se quedaba en 0 (fuera del alcance de `retire_exhausted`) y `claims` crecía
+    hasta 25 ⇒ `retire_poisoned` mataba como VENENO un evento entregado
+    correctamente 25 veces, con un `last_error` que afirma lo contrario de lo
+    ocurrido. El detector medía «reclamos sin MARK» y no «reclamos sin
+    RESULTADO»: dos cosas distintas en cuanto el fence se interpone.
+
+    Por qué el lease NO condiciona esta escritura: una entrega confirmada es un
+    HECHO del transporte, independiente de quién posea el claim — el fence
+    existe para no resucitar un terminal ni pisar al nuevo dueño, y la guarda
+    `state = 'inflight'` da ambas cosas (una fila `delivered`/`dead` jamás se
+    toca; el nuevo dueño, que entregará el mismo evento, encuentra el trabajo
+    hecho y su mark es un no-op legal). Cierra además la RE-ENTREGA INFINITA:
+    antes la fila volvía a `pending` cada ciclo sin avanzar nada.
+    `attempts` sigue consumiéndose SOLO en el resultado (G2-P3-4 intacto)."""
     if not marks:
         return 0
     done = (
@@ -269,12 +291,11 @@ async def mark_delivered(session, marks: list, lease_token) -> int:
                 "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[])) "
                 "  AS t(eid, dest) "
                 "WHERE d.event_id = t.eid AND d.destination = t.dest "
-                f"{_FENCE} RETURNING d.event_id"
+                "AND d.state = 'inflight' RETURNING d.event_id"
             ),
             {
                 "eids": [str(m["eid"]) for m in marks],
                 "dests": [m["dest"] for m in marks],
-                "lease": lease_token,
             },
         )
     ).all()

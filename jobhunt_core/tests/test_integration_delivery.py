@@ -839,6 +839,104 @@ def test_g3_veneno_que_mata_al_dispatcher_se_retira_y_desbloquea_la_cola(
     assert _estado(sano).state == "delivered"
 
 
+def test_g4_transporte_lento_pero_exitoso_no_muere_como_veneno(db, monkeypatch):
+    """Regresión G4-P2-2: G3-P2-2 sacó del fence la persistencia del resultado
+    SOLO para el FALLO. El camino de ÉXITO —único sitio donde `claims` vuelve
+    a 0 tras una entrega buena— seguía fenceado, así que un transporte que
+    ENTREGA BIEN pero supera el lease (G2-H-7) perdía todos sus marks:
+    `attempts` en 0 (fuera de `retire_exhausted`) y `claims` creciendo hasta el
+    tope ⇒ `retire_poisoned` mataba como VENENO un evento entregado
+    correctamente en CADA vuelta, con un `last_error` que afirma lo contrario
+    de lo ocurrido. Una entrega confirmada es un hecho del transporte,
+    independiente de quién posea el lease: se persiste sobre filas aún
+    'inflight' (jamás resucita un terminal)."""
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created, titles=("backend python",))
+    _dejar_pendientes(factory, pid, 1)
+    monkeypatch.setattr(delivery, "MAX_CLAIMS_WITHOUT_RESULT", 2)
+
+    def _estado():
+        return _rows(
+            factory,
+            "SELECT d.state, d.attempts, d.claims, d.last_error FROM "
+            "integration_outbox_deliveries d "
+            "JOIN integration_outbox o ON o.event_id = d.event_id "
+            "WHERE o.subject_profile_id = :p", p=pid,
+        )[0]
+
+    async def _ciclo_lento_pero_exitoso():
+        """claim → el transporte TARDA más que el lease → y ENTREGA BIEN."""
+        async with factory() as s:
+            rows, lease = await delivery.claim_deliveries(s, limit=10)
+            await s.commit()
+        assert len(rows) == 1
+        async with factory() as s:  # el lote se pasa del lease
+            await s.execute(
+                sa.text(
+                    "UPDATE integration_outbox_deliveries d SET lease = "
+                    "clock_timestamp() - interval '1 second' "
+                    "FROM integration_outbox o WHERE o.event_id = d.event_id "
+                    "AND o.subject_profile_id = :p"
+                ),
+                {"p": pid},
+            )
+            await s.commit()
+        async with factory() as s:
+            n = await delivery.mark_delivered(
+                s, [{"eid": rows[0].event_id, "dest": rows[0].destination}], lease
+            )
+            await s.commit()
+        return n
+
+    async def _retirar():
+        async with factory() as s:
+            n_ex = await delivery.retire_exhausted(s)
+            n_po = await delivery.retire_poisoned(s)
+            await s.commit()
+            return n_ex, n_po
+
+    # La entrega CONFIRMADA se persiste pese al lease perdido…
+    assert asyncio.run(_ciclo_lento_pero_exitoso()) == 1  # antes del fix: 0
+    st = _estado()
+    assert (st.state, st.attempts, st.claims) == ("delivered", 1, 0)
+    # …ninguna vía de retirada la toca (antes: dead por VENENO tras N vueltas)…
+    assert asyncio.run(_retirar()) == (0, 0)
+    assert st.last_error is None
+
+    # …y la cola AVANZA: sin transición, la fila se re-reclamaba y re-entregaba
+    # para siempre (re-entrega infinita, G2-H-7).
+    async def _reclamar():
+        async with factory() as s:
+            rows, _lease = await delivery.claim_deliveries(s, limit=10)
+            await s.commit()
+            return rows
+
+    assert asyncio.run(_reclamar()) == []
+
+    # El fence que SÍ importa sigue en pie: un mark tardío jamás resucita un
+    # terminal (la fila ya entregada no vuelve a contar ni a tocar attempts).
+    async def _mark_tardio():
+        async with factory() as s:
+            row = (
+                await s.execute(
+                    sa.text(
+                        "SELECT d.event_id, d.destination FROM "
+                        "integration_outbox_deliveries d JOIN integration_outbox o "
+                        "ON o.event_id = d.event_id WHERE o.subject_profile_id = :p"
+                    ),
+                    {"p": pid},
+                )
+            ).one()
+            n = await delivery.mark_delivered(
+                s, [{"eid": row.event_id, "dest": row.destination}], None
+            )
+            await s.commit()
+            return n
+
+    assert asyncio.run(_mark_tardio()) == 0
+    assert _estado().attempts == 1  # sin doble consumo de intento
+
+
 def test_g3_los_re_claims_de_un_mensaje_sano_no_lo_retiran_como_veneno(
     db, monkeypatch
 ):
