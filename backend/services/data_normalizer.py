@@ -173,7 +173,13 @@ CONTRACT_PATTERNS: list[tuple[str, list[str]]] = [
 # de rango es un guion o la palabra "to" — NO una clase de caracteres, que
 # casaba letras sueltas (G1/P3-13).
 _NUM = r"(\d(?:[\d.,'’]*\d)?)"
-_K = r"\s*([kK])?(?![A-Za-zÀ-ÿ])"
+# G2/P3-3: el fin de número(+k) exige borde REAL — fin de texto, un carácter
+# no alfanumérico o un código de divisa pegado ("80'000CHF", "100kEUR"). El
+# lookahead negativo anterior (solo letras) dejaba retroceder al motor DENTRO
+# del número hasta que siguiera un dígito: "80'000CHF" casaba `80'00` → 8000
+# (plausible-pero-falso). "Kanton" sigue sin multiplicar: su K va seguida de
+# letra y no es divisa.
+_K = r"\s*([kK])?(?=$|[^0-9A-Za-zÀ-ÿ]|(?i:CHF|EUR|USD|GBP)\b)"
 _SALARY_RANGE_RE = re.compile(rf"{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_NUM}{_K}")
 # El single exige ≥2 dígitos (como el `[\d.,]+` original): un dígito suelto
 # ("Level 5") no es un salario.
@@ -182,8 +188,15 @@ _SALARY_SINGLE_RE = re.compile(rf"(\d[\d.,'’]*\d){_K}")
 # que un workload no se confunda con un salario (G1/P3-13).
 _PCT_TOKEN_RE = re.compile(r"\d[\d.,'’]*(?:\s*[-–—]\s*\d[\d.,'’]*)?\s*%")
 # Los símbolos €/$/£ no tienen word-boundary a su lado ("\b€\b" no casa nunca,
-# G1/P3-12): se buscan sin \b, en alternancia con los códigos ISO.
-_CURRENCY_RE = re.compile(r"\b(CHF|EUR|USD|GBP)\b|([€$£])", re.IGNORECASE)
+# G1/P3-12): se buscan sin \b, en alternancia con los códigos ISO. Los códigos
+# usan borde de LETRA, no \b: entre dígito y letra no hay \b y "80'000CHF"
+# (divisa pegada, G2/P3-3) se quedaba sin divisa → sin conversión a CHF. El
+# lookbehind alternativo `\d[kK]` cubre el shorthand con divisa pegada
+# ("100kEUR"), donde la letra que precede al código es la propia «k».
+_CURRENCY_RE = re.compile(
+    r"(?:(?<=\d[kK])|(?<![A-Za-z]))(CHF|EUR|USD|GBP)(?![A-Za-z])|([€$£])",
+    re.IGNORECASE,
+)
 
 _CURRENCY_SYMBOL_MAP: dict[str, str] = {
     "€": "EUR",
@@ -314,6 +327,17 @@ class DataNormalizer:
             hi = DataNormalizer._parse_number(
                 range_match.group(3), has_k=bool(range_match.group(4))
             )
+            # G2/P2-3: shorthand «80-100k» — la única "k" (en la cota alta)
+            # cubre también la baja: 80-100k significa 80k-100k. Sin esto,
+            # salary_min quedaba en 80 CHF anuales (dato corrupto persistido).
+            if (
+                lo is not None
+                and hi is not None
+                and range_match.group(4)
+                and not range_match.group(2)
+                and lo < 1000 <= hi
+            ):
+                lo *= 1000
             return lo, hi, currency
 
         # Single value: treat as both min and max
