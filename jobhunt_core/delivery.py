@@ -281,7 +281,7 @@ async def retire_exhausted(session) -> int:
 async def retire_poisoned(session) -> int:
     """DEAD-LETTER por VENENO: entregas reclamadas MAX_CLAIMS_WITHOUT_RESULT
     veces seguidas sin producir JAMÁS un resultado, y que ahora no posee nadie
-    (lease caducado). UNA sola por ciclo, la CABEZA de la cola.
+    (lease caducado). UNA sola por ciclo, la CABEZA de los candidatos.
 
     G5-P2-2: el radio de explosión estaba sin acotar. Con el dispatcher
     persistiendo los resultados al final del lote entero, un payload que MATA
@@ -291,9 +291,12 @@ async def retire_poisoned(session) -> int:
     lo contrario de lo ocurrido. La otra mitad del cierre está en
     tasks/delivery.py (resultado persistido por entrega, que salva a los
     vecinos 1..K-1 de un veneno en posición K > 0). Aquí: LIMIT 1 con el MISMO
-    orden total que `claim_deliveries`, así que la fila retirada es la que el
-    dispatcher intenta transportar PRIMERO — el veneno por construcción, no un
-    vecino sano. G6-N-1: en el caso base (veneno en la cabeza) es ESTE LIMIT 1
+    orden total que `claim_deliveries`, así que la fila retirada es la CABEZA
+    de los CANDIDATOS a veneno — el veneno por construcción, no un vecino
+    sano. G7-N-2: «candidatos a veneno», no «lo que el dispatcher transporta
+    primero»: el claim admite además `pending` con `next_attempt_at` vencido,
+    que este filtro ni ve, así que la cabeza del claim puede ser otra fila.
+    G6-N-1: en el caso base (veneno en la cabeza) es ESTE LIMIT 1
     el que acota el radio, no la persistencia por entrega: detrás del veneno
     nadie llega a transportarse, así que los 99 de atrás acumulan reclamos
     igual que antes del fix y lo único que impide la matanza colateral es que
@@ -308,10 +311,21 @@ async def retire_poisoned(session) -> int:
     igualdad contra una constante como único qual, la fila se pisaba fuera cual
     fuera su estado nuevo: una entrega CONFIRMADA (`delivered`, con `ack_at`)
     acababa `dead` con un `last_error` de veneno, y un reintento `pending` con
-    intentos por delante moría TERMINAL. El `FOR UPDATE SKIP LOCKED` del
-    subplan cierra además la doble retirada de la MISMA fila por dos
-    dispatchers (dos `poisoned`, dos alertas y `dead_at` reescrito, que es lo
-    que ventana el gate `outbox_dead`).
+    intentos por delante moría TERMINAL. Esa misma guarda es la que cierra la
+    doble retirada de la MISMA fila por dos dispatchers (dos `poisoned`, dos
+    alertas y `dead_at` reescrito, que es lo que ventana el gate
+    `outbox_dead`): el segundo UPDATE la encuentra ya `dead` y no la toca.
+
+    G7-P2-1: el `FOR UPDATE SKIP LOCKED` que G6 añadió al subplan para cerrar
+    esa doble retirada ANULABA el LIMIT 1 —ver el comentario del propio
+    subplan— y devolvía la matanza colateral que G5-P2-2 había cerrado. Se
+    retiró: la elegibilidad la decide el WHERE del UPDATE, y el subplan solo
+    elige la CABEZA. Arista conocida (no reproducida): al volver a bloquear,
+    este UPDATE puede esperar el lock de otro dispatcher mientras retiene los
+    que `retire_exhausted` tomó justo antes en el mismo ciclo (mismo orden de
+    llegada en `tasks/delivery.py`, pero `retire_exhausted` no impone orden
+    explícito) ⇒ deadlock teórico entre dos ciclos solapados; Postgres lo
+    detecta y aborta uno, y `dispatch_outbox_task` reintenta.
 
     G3-H-1: es el modo de fallo que abrió G2-P3-4 al sacar el consumo de
     intentos del claim — un payload que mata al proceso del dispatcher antes
@@ -342,9 +356,27 @@ async def retire_poisoned(session) -> int:
                 "  AND x.claims >= :max "
                 "  ORDER BY x.next_attempt_at ASC NULLS FIRST, "
                 "           x.event_id, x.destination "
-                # SKIP LOCKED: dos dispatchers concurrentes NO eligen la misma
-                # fila (ni se bloquean entre sí), igual que `claim_deliveries`.
-                "  LIMIT 1 FOR UPDATE SKIP LOCKED) "
+                # G7-P2-1: el subplan NO lleva cláusula de bloqueo. `SKIP
+                # LOCKED` no evita bloquear: ELIGE OTRA FILA. Con la cabeza
+                # bloqueada —el caso NORMAL: `claim_deliveries` la bloquea con
+                # su propio FOR UPDATE SKIP LOCKED— el subplan la saltaba y el
+                # UPDATE se ejecutaba sobre el VECINO: un evento con
+                # `attempts = 0` que jamás se transportó moría en dead-letter
+                # mientras el veneno REAL sobrevivía, y dos dispatchers
+                # solapados retiraban DOS filas por ciclo. Es la matanza
+                # colateral de G5-P2-2, reabierta. `FOR UPDATE` a secas
+                # TAMPOCO vale: el LockRows espera el lock, re-evalúa los
+                # quals del subplan sobre la fila nueva y, si la cabeza dejó
+                # de ser elegible, la filtra y el LIMIT 1 toma al mismo vecino
+                # por otra puerta. Sin cláusula de bloqueo el subplan elige
+                # SIEMPRE la cabeza y quien decide es el recheck EPQ del
+                # propio UPDATE —que sí re-evalúa state/lease/claims
+                # (G6-P2-1)—: si otro dispatcher se la re-clamó no se toca
+                # nada; si sigue siendo veneno, se retira UNA. Esa misma
+                # guarda cierra ya la doble retirada que el SKIP LOCKED decía
+                # comprar. Coste: el UPDATE puede esperar un lock breve, que
+                # es exactamente lo que se quiere aquí.
+                "  LIMIT 1) "
                 "RETURNING d.event_id, d.destination, d.claims, d.attempts"
             ),
             {
@@ -393,8 +425,21 @@ async def mark_delivered(session, marks: list, lease_token=None) -> int:
     WARNING «G2-H-7 en vivo» —el único rastro que sustituye a `fenced_out`
     (G5-P3-3)— se emitía en el 100 % de las entregas SANAS. Un operador que lo
     siguiera concluiría que G2-H-7 está en vivo de forma permanente y, en
-    cuanto aprendiera a ignorarlo, el caso REAL pasaría inadvertido. Ahora el
-    lease previo sale de un self-join (`prev`), que ve la versión ANTERIOR.
+    cuanto aprendiera a ignorarlo, el caso REAL pasaría inadvertido.
+
+    G7-P2-2: el self-join `prev` con el que G6 lo arregló leía el SNAPSHOT de
+    la sentencia, SIN lock, y eso lo rompía en la otra dirección. En READ
+    COMMITTED el snapshot se toma al empezar la sentencia: el UPDATE espera el
+    lock del ladrón y, al desbloquearse, hace EPQ sobre la fila NUEVA — pero
+    el escaneo de `prev` NO participa del EPQ y sigue devolviendo la versión
+    ANTERIOR al commit del ladrón. `prev.lease` valía todavía el NUESTRO y el
+    aviso NO sonaba justo en el interleaving REAL de G2-H-7 (el re-claim de B
+    commitea MIENTRAS el UPDATE de A espera): falso positivo permanente
+    cambiado por falso negativo en el único caso que la señal existe para
+    delatar. Ahora el lease previo se lee CON LOCK en un pre-SELECT
+    `FOR UPDATE` (una fila: el dispatcher marca de una en una,
+    tasks/delivery.py), que devuelve la versión más reciente COMMITEADA y de
+    paso deja al UPDATE sin EPQ que hacer.
 
     G6-N-3, escrito para que nadie lo lea como un bug: `attempts` se incrementa
     también cuando la fila llegó a `pending` porque el `mark_failed` de OTRO
@@ -424,6 +469,32 @@ async def mark_delivered(session, marks: list, lease_token=None) -> int:
     falló y luego se entregó quedaba `delivered` con el error anterior)."""
     if not marks:
         return 0
+    eids = [str(m["eid"]) for m in marks]
+    dests = [m["dest"] for m in marks]
+    # G7-P2-2: la foto PREVIA de la fila, leída CON LOCK. Bloquea hasta que
+    # el eventual ladrón commitea, así que el lease que vuelve es el vigente
+    # de VERDAD y no el del snapshot. `ORDER BY` para no introducir orden de
+    # lock nuevo (el mismo del claim). Es de solo lectura: no transiciona
+    # nada, y las filas que va a tocar el UPDATE de abajo son exactamente
+    # éstas.
+    previos = {
+        (r.event_id, r.destination): r.lease
+        for r in (
+            await session.execute(
+                sa.text(
+                    "SELECT d.event_id, d.destination, d.lease "
+                    "FROM integration_outbox_deliveries d "
+                    "WHERE (d.event_id, d.destination) IN ("
+                    "  SELECT t.eid, t.dest FROM unnest("
+                    "    CAST(:eids AS uuid[]), CAST(:dests AS text[])"
+                    "  ) AS t(eid, dest)) "
+                    "ORDER BY d.event_id, d.destination "
+                    "FOR UPDATE"
+                ),
+                {"eids": eids, "dests": dests},
+            )
+        ).all()
+    }
     done = (
         await session.execute(
             sa.text(
@@ -438,31 +509,25 @@ async def mark_delivered(session, marks: list, lease_token=None) -> int:
                 "next_attempt_at = NULL, last_error = NULL "
                 "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[])) "
                 "  AS t(eid, dest) "
-                # G6-P2-2: la foto PREVIA de la fila. El RETURNING de un UPDATE
-                # se evalúa sobre la fila NUEVA, y esta misma SET pone
-                # `lease = NULL`, así que `d.lease IS DISTINCT FROM :lease` era
-                # TRUE en el 100 % de las entregas SANAS. Este self-join lee la
-                # versión ANTERIOR (mismo snapshot de sentencia, sin lock) y es
-                # el único sitio del que puede salir el lease de VERDAD previo.
-                "JOIN integration_outbox_deliveries prev "
-                "  ON prev.event_id = t.eid AND prev.destination = t.dest "
                 "WHERE d.event_id = t.eid AND d.destination = t.dest "
                 "AND d.state IN ('pending', 'inflight') "
-                # G5-P3-3: el desbordamiento del lease contado en ORIGEN — el
-                # mark aterrizó sobre una fila cuyo lease ya no era el nuestro
-                # (otro dispatcher la re-clamó, o su mark_failed la devolvió a
-                # 'pending' con el lease a NULL).
-                "RETURNING d.event_id, "
-                "  (prev.lease IS DISTINCT FROM :lease) AS robada"
+                # El `robada` NO puede salir de aquí: el RETURNING de un
+                # UPDATE se evalúa sobre la fila NUEVA y esta misma SET pone
+                # `lease = NULL` (G6-P2-2). Sale del pre-SELECT bloqueante.
+                "RETURNING d.event_id, d.destination"
             ),
-            {
-                "eids": [str(m["eid"]) for m in marks],
-                "dests": [m["dest"] for m in marks],
-                "lease": lease_token,
-            },
+            {"eids": eids, "dests": dests},
         )
     ).all()
-    robadas = sum(1 for r in done if r.robada)
+    # G5-P3-3: el desbordamiento del lease contado en ORIGEN — el mark aterrizó
+    # sobre una fila cuyo lease ya no era el nuestro (otro dispatcher la
+    # re-clamó, o su mark_failed la devolvió a 'pending' con el lease a NULL).
+    # Solo se cuentan filas REALMENTE transicionadas por el UPDATE.
+    robadas = sum(
+        1
+        for r in done
+        if previos.get((r.event_id, r.destination)) != lease_token
+    )
     if robadas and lease_token is not None:
         logger.warning(
             "delivery: %d entrega(s) CONFIRMADAS marcadas sobre filas cuyo "

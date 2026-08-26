@@ -10,6 +10,7 @@ Ejecutar vía core-migrate.
 import asyncio
 import logging
 import os
+import time
 import uuid
 
 import pytest
@@ -1494,29 +1495,43 @@ def test_g6_retire_poisoned_no_pisa_lo_que_otro_dispatcher_acaba_de_resolver(
     assert st.state == "dead" and st.claims == delivery.MAX_CLAIMS_WITHOUT_RESULT
 
 
-def test_g6_el_aviso_de_lease_robado_solo_suena_cuando_de_verdad_lo_robaron(db):
-    """Regresión G6-P2-2: el `RETURNING` de un UPDATE se evalúa sobre la fila
-    NUEVA, y la propia SET de `mark_delivered` pone `lease = NULL`. Así que
+def test_g7_el_aviso_de_lease_robado_muerde_en_LAS_DOS_direcciones(db, monkeypatch):
+    """Regresión G6-P2-2 + G7-P2-2, las dos direcciones y la SEGUNDA con
+    CONCURRENCIA REAL.
+
+    G6-P2-2: el `RETURNING` de un UPDATE se evalúa sobre la fila NUEVA, y la
+    propia SET de `mark_delivered` pone `lease = NULL`. Así que
     `(d.lease IS DISTINCT FROM :lease)` era TRUE SIEMPRE y el WARNING
     «G2-H-7 en vivo» —el único rastro que sustituye a `fenced_out` tras
     G5-P3-3— se emitía en el 100 % de las entregas SANAS. Una señal atascada
     en ON no es observabilidad: en cuanto el operador aprende a ignorarla, el
-    caso REAL pasa inadvertido. El lease previo sale ahora de un self-join.
+    caso REAL pasa inadvertido.
 
-    Se comprueban las DOS direcciones: cero falsos positivos y el positivo
-    VERDADERO sigue sonando."""
+    G7-P2-2: el self-join `prev` con el que G6 lo arregló leía el SNAPSHOT de
+    la sentencia, SIN lock, y falla en la dirección contraria. Aquí el
+    positivo VERDADERO se construye con el interleaving que produce G2-H-7
+    —el re-claim de B commitea MIENTRAS el UPDATE de A espera el lock—, no
+    con un cambio ya commiteado ANTES de la sentencia: en ese orden `prev`
+    devuelve la versión ANTIGUA (nuestro propio lease) y el aviso NO suena.
+    La versión SECUENCIAL de este test (la de G6) pasaba con el defecto
+    puesto: por eso se ha reescrito y no añadido.
+
+    El lease de A caduca por el RELOJ (claim con LEASE_S corto), sin tocar la
+    fila: su valor tiene que seguir siendo EXACTAMENTE el suyo, o el aviso
+    sonaría por el motivo equivocado (falso verde de la propia regresión)."""
     factory, created = db
     pid, _ = _setup_evaluated(factory, created, titles=("backend python", "data eng"))
     sano, robada = _dejar_pendientes(factory, pid, 2)
 
-    async def claim():
+    async def claim(limit=10):
         async with factory() as s:
-            rows, lease = await delivery.claim_deliveries(s, limit=10)
+            rows, lease = await delivery.claim_deliveries(s, limit=limit)
             await s.commit()
             return {r.event_id: r for r in rows}, lease
 
     porfila, lease = asyncio.run(claim())
     assert sano in porfila and robada in porfila
+    dest = porfila[robada].destination
 
     # (a) La fila es NUESTRA y su lease está intacto: ni un aviso.
     with caplog_at_warning() as records:
@@ -1533,26 +1548,47 @@ def test_g6_el_aviso_de_lease_robado_solo_suena_cuando_de_verdad_lo_robaron(db):
         assert asyncio.run(marcar_sana()) == 1
     assert [r for r in records if "lease ya no era nuestro" in r.getMessage()] == []
 
-    # (b) Otro dispatcher SÍ se la re-clama: el aviso tiene que sonar.
+    # (b) A vuelve a reclamar con un lease CORTO y lo deja caducar solo; B se
+    # la re-clama de VERDAD (claim_deliveries real) y RETIENE el lock mientras
+    # A llega tarde con el mark de un transporte YA ejecutado.
     _sync_exec(
-        "UPDATE integration_outbox_deliveries SET lease = "
-        "clock_timestamp() + interval '120 seconds' WHERE event_id = :e",
+        "UPDATE integration_outbox_deliveries SET state = 'pending', "
+        "lease = NULL, next_attempt_at = NULL WHERE event_id = :e",
         {"e": str(robada)},
     )
-    with caplog_at_warning() as records:
-        async def marcar_robada():
-            async with factory() as s:
-                n = await delivery.mark_delivered(
-                    s,
-                    [{"eid": robada, "dest": porfila[robada].destination}],
-                    lease,
-                )
-                await s.commit()
-                return n
+    monkeypatch.setattr(delivery, "LEASE_S", 1)
+    _, lease_a = asyncio.run(claim(limit=100))
+    monkeypatch.undo()
+    time.sleep(2)  # caduca por el RELOJ, no por un UPDATE
+    en_bd = _rows(
+        factory,
+        "SELECT lease FROM integration_outbox_deliveries WHERE event_id = :e",
+        e=str(robada),
+    )[0].lease
+    assert en_bd == lease_a, "la fila ya no lleva el lease de A"
 
-        assert asyncio.run(marcar_robada()) == 1
+    async def carrera():
+        async with factory() as sB, factory() as sA:
+            _rows_b, lease_b = await delivery.claim_deliveries(sB, limit=100)
+            tarea = asyncio.create_task(
+                delivery.mark_delivered(sA, [{"eid": robada, "dest": dest}], lease_a)
+            )
+            await asyncio.sleep(0.5)
+            await sB.commit()  # el ladrón commitea MIENTRAS A espera el lock
+            n = await tarea
+            await sA.commit()
+            return n, lease_b
+
+    with caplog_at_warning() as records:
+        n, lease_b = asyncio.run(carrera())
+    assert lease_b != lease_a
+    assert n == 1  # la entrega CONFIRMADA se persiste igual (G5-P2-3)
     avisos = [r for r in records if "lease ya no era nuestro" in r.getMessage()]
-    assert len(avisos) == 1  # el positivo VERDADERO sigue delatándose
+    assert len(avisos) == 1, (
+        "el mark aterrizó sobre una fila cuyo lease ya NO era el nuestro y el "
+        "único rastro de G2-H-7 no sonó (el lease previo se lee del snapshot "
+        "de la sentencia, no de la fila real)"
+    )
 
 
 def test_g6_lease_renewals_solo_cuenta_renovaciones_que_ocurren(db, monkeypatch):
@@ -1577,3 +1613,118 @@ def test_g6_lease_renewals_solo_cuenta_renovaciones_que_ocurren(db, monkeypatch)
     assert (r["claimed"], r["delivered"]) == (1, 1)
     assert r["lease_renewals"] == 0  # antes del fix: 1, sin renovar nada
     assert r["lease_overrun"] == 0
+
+
+# --------------------------------- G7: la elección de la cabeza bajo concurrencia
+
+
+def _dos_venenos(db, monkeypatch):
+    """DOS candidatos a veneno, no uno. Es el caso BASE del detector, no un
+    borde: detrás del veneno nadie llega a transportarse, así que los vecinos
+    acumulan `claims` a la vez que él y cruzan el umbral a la vez (G6-N-1).
+    Con UNA sola fila —como hacían las regresiones de G5 y G6— la diferencia
+    entre «retira la cabeza» y «retira a cualquiera» es INVISIBLE."""
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created, titles=("backend python", "data eng"))
+    vivos = _dejar_pendientes(factory, pid, 2)
+    monkeypatch.setattr(delivery, "MAX_CLAIMS_WITHOUT_RESULT", 3)
+    for e in vivos:
+        _envenenar(factory, e, delivery.MAX_CLAIMS_WITHOUT_RESULT)
+    cabeza, vecino = sorted(vivos, key=str)  # el ORDER BY del subplan
+    return factory, cabeza, vecino
+
+
+def _estados(factory, eids):
+    return {
+        r.event_id: (r.state, r.attempts, r.dead_at is not None)
+        for r in _rows(
+            factory,
+            "SELECT event_id, state, attempts, dead_at FROM "
+            "integration_outbox_deliveries WHERE event_id = ANY(:ids)",
+            ids=[str(e) for e in eids],
+        )
+    }
+
+
+def test_g7_con_la_cabeza_bloqueada_retire_poisoned_no_ejecuta_al_vecino(
+    db, monkeypatch
+):
+    """Regresión G7-P2-1: `SKIP LOCKED` no evita bloquear — ELIGE OTRA FILA.
+
+    G6 lo añadió al subplan del `LIMIT 1` para cerrar la doble retirada de la
+    MISMA fila, y con eso ANULÓ el propio LIMIT 1: con la cabeza bloqueada
+    —el caso NORMAL, porque `claim_deliveries` la bloquea con su propio
+    `FOR UPDATE OF d SKIP LOCKED`— el subplan la SALTABA y el UPDATE se
+    ejecutaba sobre el VECINO. Resultado: un evento con `attempts = 0` que
+    JAMÁS se transportó moría en dead-letter (terminal, con un `last_error`
+    que afirma lo contrario de lo ocurrido) mientras el veneno REAL sobrevivía
+    y seguía secuestrando la cabeza — la inversión completa del detector, y la
+    matanza colateral que G5-P2-2 había cerrado.
+
+    Sin cláusula de bloqueo en el subplan quien decide es el recheck EPQ del
+    propio UPDATE (G6-P2-1): la cabeza acaba de ser re-clamada ⇒ su lease es
+    futuro ⇒ no es elegible ⇒ CERO retiradas. El vecino ni se mira: el subplan
+    sigue apuntando a la cabeza."""
+    factory, cabeza, vecino = _dos_venenos(db, monkeypatch)
+
+    async def carrera():
+        async with factory() as sB, factory() as sA:
+            # B (dispatcher 2) re-clama la CABEZA y RETIENE el lock: el
+            # interleaving que el beat produce con --concurrency=2.
+            rows, _lease = await delivery.claim_deliveries(sB, limit=1)
+            tarea = asyncio.create_task(delivery.retire_poisoned(sA))
+            await asyncio.sleep(0.5)
+            await sB.commit()
+            n = await tarea
+            await sA.commit()
+            return [r.event_id for r in rows], n
+
+    with caplog_at_error() as records:
+        reclamadas, retiradas = asyncio.run(carrera())
+    st = _estados(factory, [cabeza, vecino])
+    assert reclamadas == [cabeza], "el claim de B no cogió la cabeza"
+    assert st[vecino][0] != "dead", (
+        "el subplan saltó la cabeza bloqueada y ejecutó al VECINO: un evento "
+        f"con attempts={st[vecino][1]} que nunca se transportó muere en "
+        "dead-letter mientras el veneno real sobrevive"
+    )
+    assert retiradas == 0 and st[cabeza][0] == "inflight"
+    assert [r for r in records if "VENENO" in r.getMessage()] == []
+
+
+def test_g7_dos_dispatchers_solapados_retiran_UNA_fila_habiendo_dos_candidatos(
+    db, monkeypatch
+):
+    """Regresión G7-P2-1 (2ª mitad): «UNA sola por ciclo» pasaba a ser «una
+    por dispatcher». Con dos candidatos y dos ciclos solapados, el `SKIP
+    LOCKED` hacía que el segundo dispatcher, en vez de encontrarse la fila ya
+    resuelta, se llevara al VECINO: 2 muertas por ciclo, el radio escalando
+    con la concurrencia y el gate `outbox_dead` (umbral 0) en ROJO por cada
+    una. El test de G6 no lo veía porque tenía UNA sola fila: sin vecino al
+    que saltar, el SKIP LOCKED era indistinguible del comportamiento bueno.
+
+    La doble retirada de la MISMA fila —lo único que el SKIP LOCKED decía
+    comprar— la cierra ya la guarda de estado del WHERE (G6-P2-1): el segundo
+    UPDATE encuentra la cabeza `dead` y no la toca."""
+    factory, cabeza, vecino = _dos_venenos(db, monkeypatch)
+
+    async def dos():
+        async with factory() as sA, factory() as sB:
+            t1 = asyncio.create_task(delivery.retire_poisoned(sA))
+            await asyncio.sleep(0.3)
+            t2 = asyncio.create_task(delivery.retire_poisoned(sB))
+            await asyncio.sleep(0.3)
+            n1 = await t1
+            await sA.commit()
+            n2 = await t2
+            await sB.commit()
+            return n1, n2
+
+    with caplog_at_error() as records:
+        n1, n2 = asyncio.run(dos())
+    st = _estados(factory, [cabeza, vecino])
+    muertas = [e for e in (cabeza, vecino) if st[e][0] == "dead"]
+    assert n1 + n2 == 1, f"el ciclo retiró {n1 + n2} filas (LIMIT 1 anulado)"
+    assert muertas == [cabeza], "la retirada no cayó sobre la CABEZA"
+    assert st[vecino][0] == "inflight"
+    assert len([r for r in records if "VENENO" in r.getMessage()]) == 1
