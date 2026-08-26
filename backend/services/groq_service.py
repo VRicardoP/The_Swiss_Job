@@ -17,6 +17,14 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def _solo_textos(valor: object) -> list[str]:
+    """Deja solo las cadenas con contenido de una lista que viene del LLM."""
+    if not isinstance(valor, list):
+        return []
+    return [s.strip() for s in valor if isinstance(s, str) and s.strip()]
+
+
 RERANK_SYSTEM_PROMPT = """You are an expert recruiter AI evaluating job-candidate fit for a non-technical profile focused on content, language, and people operations.
 
 TARGET DOMAINS (score generously — these are the candidate's goal):
@@ -307,13 +315,23 @@ class GroqService:
             if index in seen_indexes:
                 raise ValueError(f"índice duplicado en la respuesta del LLM: {index}")
             seen_indexes.add(index)
+            # G7/P3-3 y G7/P3-4: `index` se validaba a fondo y `score` se
+            # acotaba, pero `reason` y las dos listas de skills pasaban CRUDAS.
+            # Un `reason` no-`str` reventaba con AttributeError en
+            # `match_service._apply_llm_result`, cuyo `except` más cercano es
+            # POR USUARIO: se perdía el matching entero de ese perfil. Y un
+            # `matching_skills` con `None`/`{...}`/`""` dentro se persistía tal
+            # cual y luego `schemas/match.py` declara `list[str]` estricto —
+            # `ValidationError` = 500 en `/api/v1/match/results` ENTERO, no una
+            # tarjeta rota. Este es el único borde por el que entra la respuesta
+            # del LLM (Groq y el fallback Gemini pasan los dos por aquí).
             normalized.append(
                 {
                     "index": index,
                     "score": max(0, min(100, r.get("score", 0))),
-                    "matching_skills": r.get("matching_skills", []),
-                    "missing_skills": r.get("missing_skills", []),
-                    "reason": r.get("reason", ""),
+                    "matching_skills": _solo_textos(r.get("matching_skills")),
+                    "missing_skills": _solo_textos(r.get("missing_skills")),
+                    "reason": r["reason"] if isinstance(r.get("reason"), str) else "",
                 }
             )
 

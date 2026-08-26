@@ -108,15 +108,24 @@ class TestUnaReasonEnBlancoNoBorraLaExplicacion:
 
 
 class TestLasSkillsVaciasNoPisanLasDelLLM:
-    def test_sin_veredicto_del_LLM_las_listas_vacias_no_viajan(self):
-        """Modo avalancha: la cola no re-rankeada no puede borrar nada."""
+    def test_la_asimetria_que_motivo_P3_5_sigue_cerrada_para_el_LLM(self):
+        """Modo avalancha: la cola no re-rankeada no puede borrar nada del LLM.
+
+        G7/P2-3 corrigió la MITAD de este fix: `matching_skills` y
+        `missing_skills` sí vuelven a escribirse siempre —son deterministas del
+        perfil actual, y no escribirlas congelaba el `[]` de forma
+        irrecuperable—, y lo que las protege de la avalancha es ahora la UNIÓN
+        de `_apply_llm_result`, no el silencio de `_score_values`. Lo que este
+        test fija es la parte que no cambia: `score_llm`/`explanation`, que solo
+        produce el LLM, siguen fuera. Ver `tests/test_g7_fix_matching.py`.
+        """
         r = _result_con_explicacion_previa()
         values = MatchService._score_values(r)
-        assert "matching_skills" not in values
-        assert "missing_skills" not in values
-        # La asimetría era justo esta: score_llm/explanation ya estaban fuera.
         assert "score_llm" not in values
         assert "explanation" not in values
+        # Las dos listas SÍ viajan: `[]` es un valor, no una ausencia de dato.
+        assert values["matching_skills"] == []
+        assert values["missing_skills"] == []
 
     def test_las_listas_con_contenido_si_viajan(self, servicio):
         r = _result_con_explicacion_previa()

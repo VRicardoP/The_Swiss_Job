@@ -34,6 +34,28 @@ logger = logging.getLogger(__name__)
 LLM_VERDICT_KEY = "llm_verdict"
 
 
+def _unir_skills(base: list[str], extra: list[str]) -> list[str]:
+    """Une dos listas de skills sin duplicar, sin distinguir mayúsculas.
+
+    G7/P2-3: el enriquecimiento del LLM se SUMA a lo que la regla deduce del
+    perfil, en vez de reemplazarlo. Reemplazar obligaba a no escribir nunca una
+    lista vacía para no perderlo, y eso congelaba el `[]`.
+    """
+    vistas: set[str] = set()
+    union: list[str] = []
+    for skill in (*base, *extra):
+        # G7/P3-4: lo que viene del LLM ya se sanea en `_parse_llm_response`;
+        # aquí se ignora lo que no sea texto para que este helper sea total y
+        # no dependa de que su llamante lo haya hecho.
+        if not isinstance(skill, str) or not skill.strip():
+            continue
+        clave = skill.lower()
+        if clave not in vistas:
+            vistas.add(clave)
+            union.append(skill)
+    return union
+
+
 class MatchService:
     """Orchestrates the full matching pipeline for a user."""
 
@@ -457,14 +479,26 @@ class MatchService:
         # bloque— pintaban el recuadro de info con el icono y NINGÚN texto,
         # peor que el `""` que este fix venía a quitar. Y se cacheaban 7 días
         # igual. Se exige contenido real, no solo verdad booleana.
-        if (llm_data.get("reason") or "").strip():
-            r["explanation"] = llm_data["reason"]
-        # Merge LLM skill analysis if richer than rule-based
+        # G7/P3-3: `reason` llegaba SIN comprobación de tipo desde
+        # `_parse_llm_response`, y un `.strip()` sobre una lista/dict/int subía
+        # como AttributeError hasta el `except` POR USUARIO de
+        # `tasks/matching_tasks.py`: se perdía el matching entero de ese perfil,
+        # no una oferta. Se sanea en el borde (`groq_service`) y se comprueba
+        # también aquí, que es donde revienta.
+        reason = llm_data.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            r["explanation"] = reason
+        # G7/P2-3: el análisis del LLM se SUMA al de regla, no lo sustituye.
+        # Sustituirlo era lo que obligaba a no escribir nunca `[]` (ver
+        # `_score_values`) y lo que congelaba la tarjeta.
         if llm_data.get("matching_skills"):
-            r["matching_skills"] = llm_data["matching_skills"]
+            r["matching_skills"] = _unir_skills(
+                r["matching_skills"], llm_data["matching_skills"]
+            )
         if llm_data.get("missing_skills"):
             r["missing_skills"] = filter_missing_skills(
-                profile.skills or [], llm_data["missing_skills"]
+                profile.skills or [],
+                _unir_skills(r["missing_skills"], llm_data["missing_skills"]),
             )
         # Recalculate final score with real LLM score + category multiplier
         base = self.matcher.compute_final_score(
@@ -498,15 +532,25 @@ class MatchService:
         criterio protege el degradado a ceros (Groq+Gemini caídos): un fallo
         de proveedor no borra lo ya explicado.
 
-        G6/P3-5: `matching_skills`/`missing_skills` quedaban FUERA de esa
-        guarda y se escribían siempre. En modo avalancha una oferta que cae
-        fuera del top escribía las skills DE REGLA —a menudo `[]`— encima de
-        las que el LLM había enriquecido el día anterior: la misma asimetría
-        que G3/P3-9 cerró para `explanation`, en las dos columnas de al lado.
-        `_apply_llm_result` sí tiene su guarda (solo pisa si el LLM trae
-        lista no vacía), así que el hueco estaba únicamente en la persistencia.
-        Ahora las dos listas solo se escriben si traen algo: una lista vacía no
-        aporta nada que merezca borrar lo que ya había.
+        G6/P3-5 aplicó a `matching_skills`/`missing_skills` esa MISMA guarda, y
+        G7/P2-3 la retiró: la premisa «una lista vacía no aporta nada que
+        merezca borrar lo que ya había» vale para `explanation` —que solo
+        produce el LLM y solo a veces— y es FALSA para estas dos.
+        `_stage2_multifactor_score` las recalcula SIEMPRE y
+        `_compute_skill_overlap` las deriva del perfil ACTUAL del usuario: aquí
+        una lista vacía no es «hoy no hubo dato», es «el dato correcto de hoy es
+        ninguno». Con la guarda, `[]` no podía escribirse nunca y el efecto era
+        irreversible: el usuario adquiere la última skill que le faltaba,
+        `missing_skills` pasa a `[]`, no se escribe, y la tarjeta sigue diciendo
+        «te falta k8s» para siempre — justo en la oferta de encaje perfecto, y
+        sin ninguna corrida futura capaz de pisarlo.
+
+        El hueco que G6/P3-5 sí cerraba —la avalancha borrando lo que el LLM
+        enriqueció— se cubre ahora donde corresponde: `_apply_llm_result` UNE
+        las skills del LLM con las de regla en vez de sustituirlas. Coste
+        aceptado y recuperable: una oferta que cae fuera del top pierde ese día
+        las skills que solo el LLM sabía, y las recupera la próxima vez que
+        entre en el re-ranking.
         """
         values = {
             "score_embedding": r["score_embedding"],
@@ -515,10 +559,9 @@ class MatchService:
             "score_recency": r["score_recency"],
             "score_final": r["score_final"],
             "urgency_score": r.get("urgency_score", 0),
+            "matching_skills": r["matching_skills"],
+            "missing_skills": r["missing_skills"],
         }
-        for clave in ("matching_skills", "missing_skills"):
-            if r.get(clave):
-                values[clave] = r[clave]
         if r.get(LLM_VERDICT_KEY):
             values["score_llm"] = r["score_llm"]
             # G5/P3-7 + G6/P3-1: sin explicación con CONTENIDO en ESTA corrida
