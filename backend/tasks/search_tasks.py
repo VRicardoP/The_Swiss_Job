@@ -115,7 +115,13 @@ async def _execute_single_search(db, search, settings) -> int:
     # casa, CADA run — «Found 800 new jobs» diarios sin ningún alta real.
     # `first_seen_at` es la fecha de ALTA: eso sí mide novedad.
     if search.last_run_at:
-        conditions.append(Job.first_seen_at >= search.last_run_at)
+        # `>` estricto: el borde exacto ya lo contó el run que fijó last_run_at.
+        conditions.append(Job.first_seen_at > search.last_run_at)
+    # G2/P3-5: cota superior — una oferta insertada entre la captura de `now`
+    # y la query entraba en ESTE run y en el SIGUIENTE (>= last_run_at == now):
+    # notificación y total_matches duplicados. Misma marca de agua que los
+    # fixes hermanos de G1/P2-15 en alert_tasks y el digest de watchlist.
+    conditions.append(Job.first_seen_at <= now)
 
     stmt = select(func.count()).select_from(Job).where(*conditions)
     match_count = (await db.execute(stmt)).scalar_one()
