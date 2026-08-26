@@ -545,10 +545,12 @@ class DataNormalizer:
         # COTA declarada del ancla: un `plain` en MEDIO de la prosa y sin
         # palabra de sueldo delante pierde ante un candidato con divisa aunque
         # ese candidato sea una glosa entre paréntesis. Es la dirección
-        # conservadora (la divisa es evidencia más fuerte que la posición) y no
-        # afecta a ninguno de los 637 valores vivos ni al corpus de prosa; queda
-        # fijada como `xfail` estricto en `tests/test_g8_corpus_prosa_salarios.py`
-        # para que el ciclo que la cierre se entere.
+        # conservadora —la divisa es evidencia más fuerte que la posición— y no
+        # toca ninguno de los 637 valores vivos ni ninguno de los 795 literales
+        # de la suite. Es el ÚNICO caso que el fix introduce en el corpus de
+        # prosa (D10), y queda fijado ahí como `xfail` ESTRICTO en
+        # `tests/test_g8_corpus_prosa_salarios.py`: el ciclo que lo cierre se
+        # enterará porque la suite marcará el XPASS como fallo.
         #
         # VÍA MUERTA, medida antes de descartarla (G8): «un candidato con divisa
         # y FUERA de paréntesis gana a `plain`» recupera también las nueve
