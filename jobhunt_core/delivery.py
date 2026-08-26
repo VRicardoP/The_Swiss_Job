@@ -289,10 +289,15 @@ async def retire_poisoned(session) -> int:
     99 vecinos —transportados CORRECTAMENTE en cada vuelta— cruzaban el umbral
     a la vez y se retiraban todos como veneno, con un `last_error` que afirma
     lo contrario de lo ocurrido. La otra mitad del cierre está en
-    tasks/delivery.py (resultado persistido por entrega). Aquí: LIMIT 1 con el
-    MISMO orden total que `claim_deliveries`, así que la fila retirada es la
-    que el dispatcher intenta transportar PRIMERO — el veneno por
-    construcción, no un vecino sano.
+    tasks/delivery.py (resultado persistido por entrega, que salva a los
+    vecinos 1..K-1 de un veneno en posición K > 0). Aquí: LIMIT 1 con el MISMO
+    orden total que `claim_deliveries`, así que la fila retirada es la que el
+    dispatcher intenta transportar PRIMERO — el veneno por construcción, no un
+    vecino sano. G6-N-1: en el caso base (veneno en la cabeza) es ESTE LIMIT 1
+    el que acota el radio, no la persistencia por entrega: detrás del veneno
+    nadie llega a transportarse, así que los 99 de atrás acumulan reclamos
+    igual que antes del fix y lo único que impide la matanza colateral es que
+    solo se retire UNA fila por ciclo.
 
     G6-P2-1: el LIMIT 1 elige la CABEZA; la ELEGIBILIDAD la decide el WHERE del
     UPDATE. Al mover `state/lease/claims` DENTRO del subplan se perdió la
@@ -390,6 +395,13 @@ async def mark_delivered(session, marks: list, lease_token=None) -> int:
     siguiera concluiría que G2-H-7 está en vivo de forma permanente y, en
     cuanto aprendiera a ignorarlo, el caso REAL pasaría inadvertido. Ahora el
     lease previo sale de un self-join (`prev`), que ve la versión ANTERIOR.
+
+    G6-N-3, escrito para que nadie lo lea como un bug: `attempts` se incrementa
+    también cuando la fila llegó a `pending` porque el `mark_failed` de OTRO
+    dispatcher ya consumió su intento. Son DOS transportes REALMENTE
+    ejecutados (el nuestro, que entregó, y el suyo, que falló) ⇒ dos intentos:
+    el contador mide ejecuciones del transporte, que es la garantía de
+    G2-P3-4, y no «vueltas de la fila».
 
     Por qué el lease NO condiciona esta escritura: una entrega confirmada es un
     HECHO del transporte, independiente de quién posea el claim. Lo que el

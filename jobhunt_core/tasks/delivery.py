@@ -13,9 +13,16 @@ payload que MATA al proceso en la posición K hacía que NINGUNO se ejecutara.
 Los eventos 1..K-1 se transportaban CORRECTAMENTE en cada vuelta y aun así
 llegaban al tope de reclamos junto al veneno: hasta 99 vecinos ENTREGADOS
 retirados a DEAD-LETTER con el diagnóstico invertido. Persistiendo por entrega,
-un vecino entregado vuelve a `claims = 0` antes de que el veneno mate al
-proceso, y solo la cabeza de la cola —el veneno— acumula reclamos sin
-resultado. G2-H-7: la MISMA costura renueva el lease del resto del lote.
+un vecino ya transportado vuelve a `claims = 0` en cuanto ocurre, así que solo
+acumula reclamos sin resultado quien nunca llega a producirlo.
+G6-N-1 — el alcance exacto de esta costura, que la redacción anterior
+sobredimensionaba: solo salva a los vecinos ANTERIORES al veneno, y por el
+`ORDER BY` del claim el veneno es la CABEZA de la cola, así que normalmente no
+hay ninguno. Lo que acota el radio en el caso base es el `LIMIT 1` de
+`retire_poisoned` (una retirada por ciclo, la cabeza); persistir por entrega
+sigue siendo necesario y correcto, pero para el veneno en posición K > 0, que
+es cuando sí hay 1..K-1 vecinos que salvar.
+G2-H-7: la MISMA costura renueva el lease del resto del lote.
 
 P1-1 (rev. externa parte 2): en el ARRANQUE del worker (señal
 worker_process_init — cada proceso del pool, jamás en tests con `.apply()`)

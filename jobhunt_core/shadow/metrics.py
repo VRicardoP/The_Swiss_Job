@@ -1101,11 +1101,17 @@ async def _huecos_en_transicion(
          proyector ya declaró activo sin reabrirlo es pérdida (G3-P2-1, 2ª
          forma), no una reapertura en vuelo.
     2. Sin ningún cambio aplicado que consultar, el ESTADO DURABLE del propio
-       proyector: si el pk TIENE slot `legacy:*` (necesariamente CERRADO — con
-       encarnación activa no sería hueco), ese cierre es evidencia de que el
-       proyector lo gestionó y el pendiente es la reapertura ⇒ GRACIA
+       proyector: si el pk TIENE slot `legacy:*` (necesariamente sin
+       encarnación ACTIVA — con una activa no sería hueco), eso es evidencia de
+       que el proyector lo gestionó y el pendiente es la reapertura ⇒ GRACIA
        (G2-P2-2). Si NO hay slot NI cambio aplicado, no hay nada que explique
        el hueco ⇒ PÉRDIDA.
+       G6-N-4: la razón que se imprime dice «slot legacy sin encarnación
+       activa», no «slot cerrado». El predicado mira `source_listings`, así que
+       cubre también el caso —hoy no construible, el sink crea listing y
+       encarnación juntos— de un listing que NUNCA llegó a abrirse: no es lo
+       mismo «cerrado» que «nunca abierto», y el informe lo lee un operador
+       para decidir un go/no-go.
 
     G5-P2-1 — por qué la ausencia dejó de graciar: `purge_staging` (este mismo
     módulo) borra el staging aplicado a los 7 días. Con la rama antigua
@@ -1174,7 +1180,7 @@ async def _huecos_en_transicion(
             "  JOIN sources s ON s.id = l.source_id AND s.name LIKE 'legacy:%' "
             "  WHERE l.external_id = ANY(:cands)) "
             "SELECT c.ext, CASE "
-            "  WHEN u.pk IS NULL THEN 'slot cerrado (sin cambio aplicado)' "
+            "  WHEN u.pk IS NULL THEN 'slot legacy sin encarnación activa (sin cambio aplicado)' "
             "  WHEN u.op = 'D' THEN 'último cambio aplicado = borrado (D)' "
             "  WHEN u.payload ->> 'is_active' = 'false' "
             "    THEN 'último cambio aplicado = is_active=false' "

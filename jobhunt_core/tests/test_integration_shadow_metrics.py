@@ -1995,7 +1995,7 @@ def test_perdida_roja_cuando_la_purga_se_llevo_la_evidencia_del_hueco(db):
     assert row.details["huecos_muestra"] == [perdido]
     assert row.details["huecos_graciados_muestra"] == [react]
     assert (row.details["huecos_graciados_razones"][react]
-            == "slot cerrado (sin cambio aplicado)")
+            == "slot legacy sin encarnación activa (sin cambio aplicado)")
     assert _gates(factory)["perdida"]["ok"] is False
 
 
