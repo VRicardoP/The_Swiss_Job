@@ -1,11 +1,14 @@
 """G4 — familia del DEDUP SEMÁNTICO (`services/deduplicator.py`).
 
 - **P3-6**: la segunda condición del veredicto es puramente LÉXICA
-  (`_title_overlap`), y `_TITLE_OVERLAP_MIN` era una constante de módulo. Eso
-  dejaba `SEMANTIC_DEDUP_THRESHOLD` sin efecto como mando de remediación:
-  bajar el umbral del coseno no servía de nada porque la puerta léxica seguía
-  rechazando. Medido con el encoder real: 20/20 pares de la MISMA vacante en
-  DE↔FR/IT/EN rechazados, 15 de ellos con solape exactamente 0.000.
+  (`_title_overlap`), y `_TITLE_OVERLAP_MIN` era una constante de módulo. Se
+  convierte en el setting `SEMANTIC_DEDUP_TITLE_OVERLAP_MIN`, que es el mando
+  que de verdad actúa sobre esa puerta.
+  ⚠ La OTRA mitad de aquel fix —saltarse la puerta entre idiomas declarados
+  distintos— se retiró en G5/P2-2: sin ella el veredicto quedaba en un coseno
+  que mide boilerplate y que separa AL REVÉS (falso positivo 0.8220 > duplicado
+  real 0.8195), con `is_active=False` como consecuencia. Ver
+  `tests/test_g5_fix_dedup_crossidioma.py`.
 - **P3-7**: las puertas de cantón y salario rechazaron 0 pares en el barrido de
   6 umbrales. `_cantons_conflict` comparaba el string crudo (`'zh'` vs `'ZH'`
   → conflicto inventado) y el salario decidía sobre el campo MENOS fiable del
@@ -43,36 +46,16 @@ def _vacancy(hash_, source, title, body, **kw) -> Job:
 
 
 @pytest.mark.asyncio
-class TestP36LaPuertaLexicaEsConfigurableYNoBloqueaEntreIdiomas:
-    async def test_la_misma_vacante_en_dos_idiomas_ya_no_se_rechaza(self, db_session):
-        """DE↔FR de la MISMA vacante: solape léxico 0.000, coseno alto."""
-        canonical = _vacancy(
-            "g4dedlangde",
-            "publicjobs",
-            "Primarlehrperson 60%",
-            "Unterricht in der Primarschule.",
-            language="de",
-        )
-        candidate = _vacancy(
-            "g4dedlangfr",
-            "schuljobs",
-            "Enseignant-e primaire 60%",
-            "Enseignement au degre primaire.",
-            language="fr",
-        )
-        db_session.add_all([canonical, candidate])
-        await db_session.commit()
-
-        assert (
-            Deduplicator._title_overlap(canonical.title, candidate.title)
-            < settings.SEMANTIC_DEDUP_TITLE_OVERLAP_MIN
-        )
-        assert await Deduplicator.find_semantic_duplicates(db_session, candidate) == [
-            canonical.hash
-        ], (
-            "la puerta léxica rechaza el par cross-idioma: es el único aporte "
-            "propio del camino semántico y entre idiomas no mide nada"
-        )
+class TestP36LaPuertaLexicaEsConfigurable:
+    # G5/P2-2 — aquí vivía `test_la_misma_vacante_en_dos_idiomas_ya_no_se_rechaza`,
+    # que fijaba el salto de la puerta léxica entre idiomas distintos. Esa rama
+    # se RETIRÓ: el coseno del texto completo separa AL REVÉS (una maestra de
+    # primaria y un contable puntúan 0.8220, por encima del duplicado real, que
+    # puntúa 0.8195), y `mark_duplicate` pone `is_active=False`. El
+    # comportamiento restaurado y la cota aceptada los fija ahora
+    # `tests/test_g5_fix_dedup_crossidioma.py`.
+    # Lo que este fichero sigue cubriendo de G4/P3-6 es lo que SÍ se conserva:
+    # que el umbral léxico es un setting y no una constante de módulo.
 
     async def test_el_mismo_idioma_sigue_exigiendo_lexico_comun(self, db_session):
         """No-regresión de G3/P1-2: los gemelos de boilerplate no se marcan."""

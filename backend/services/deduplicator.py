@@ -332,7 +332,6 @@ class Deduplicator:
                 Job.hash,
                 Job.title,
                 Job.canton,
-                Job.language,
                 Job.salary_min_chf,
                 Job.salary_max_chf,
                 Job.salary_period,
@@ -362,19 +361,49 @@ class Deduplicator:
 
         overlap_min = settings.SEMANTIC_DEDUP_TITLE_OVERLAP_MIN
         for row in rows:
-            # G4/P3-6: la puerta léxica es el único aporte propio del camino
-            # semántico frente al `fuzzy_hash`, pero entre IDIOMAS DECLARADOS
-            # DISTINTOS no mide nada: la misma vacante en DE y en FR comparte
-            # 0.000 de léxico (medido, 15 de 20 pares reales). Si los dos lados
-            # declaran idioma y difieren, el veredicto lo deciden el coseno
-            # cross-lingüe del encoder (que para eso es multilingüe) y las
-            # puertas de cantón y salario.
-            cross_language = bool(job.language and row.language) and (
-                job.language != row.language
-            )
-            if not cross_language:
-                if Deduplicator._title_overlap(job.title, row.title) < overlap_min:
-                    continue
+            # G5/P2-2 — la puerta léxica se aplica SIEMPRE, también entre
+            # idiomas declarados distintos. `a63745c` la retiraba en ese caso
+            # (G4/P3-6) para recuperar la misma vacante publicada en DE y en
+            # FR; se RETIRA esa excepción. Los tres motivos, todos MEDIDOS con
+            # el encoder real y contra el corpus de producción:
+            #
+            #  1. La separación está INVERTIDA. Sin la puerta, el veredicto
+            #     cross-idioma queda en manos de un coseno que sigue midiendo
+            #     boilerplate (cota de G3/P1-2): una maestra de primaria (DE) y
+            #     un contable de deudores (FR) del mismo municipio puntúan
+            #     0.8220 — POR ENCIMA del duplicado real, que puntúa 0.8195. No
+            #     existe ningún valor de `SEMANTIC_DEDUP_THRESHOLD` que recoja
+            #     el segundo sin recoger también el primero.
+            #  2. No servía de nada igualmente. Con el umbral por defecto (0.95)
+            #     el prefiltro SQL de arriba mata el par a 0.8195 una capa
+            #     antes: la rama era INALCANZABLE. Sobre una muestra aleatoria
+            #     de 200 ofertas activas, las que tienen algún candidato
+            #     cross-source son 0/200 a 0.95, 0/200 a 0.86 y 2/200 incluso a
+            #     0.80 — y los pares CROSS-IDIOMA son **0 a los cuatro
+            #     umbrales**. No hay tráfico que atender.
+            #  3. El precio de equivocarse no es cosmético: `mark_duplicate`
+            #     escribe `duplicate_of` **y `is_active=False`**. La oferta
+            #     desaparece del catálogo y del matching. Este proyecto ya
+            #     sufrió ese incidente una vez (664 vacantes reales
+            #     recuperadas), y el gatillo aquí estaba documentado en el
+            #     propio mensaje del commit: «baja el umbral».
+            #
+            # COTA ACEPTADA, por escrito: la misma vacante publicada en dos
+            # idiomas NO se deduplica por esta vía (falso negativo; su dedup
+            # cross-source real lo cubre `fuzzy_hash` cuando el título coincide).
+            # Es el lado seguro: un duplicado que sobrevive se ve en el
+            # catálogo; una vacante real desactivada, no.
+            #
+            # Si alguna vez hace falta reabrirlo, NO basta con bajar el umbral.
+            # El discriminante que sí cruza idiomas es el coseno de los TÍTULOS
+            # SOLOS (sin boilerplate): medido sobre 8 pares reales DE/FR y 8
+            # falsos del mismo municipio, separa en el sentido correcto
+            # —min(reales)=0.6067 > max(falsos)=0.5033—, al contrario que el
+            # coseno del texto completo. Haría falta ese discriminante Y su
+            # propio umbral Y abrir el prefiltro; y por (2) hoy no tendría
+            # ningún par sobre el que actuar.
+            if Deduplicator._title_overlap(job.title, row.title) < overlap_min:
+                continue
             if Deduplicator._cantons_conflict(job.canton, row.canton):
                 continue
             if Deduplicator._salaries_conflict(job, row):
