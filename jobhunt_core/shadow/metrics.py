@@ -1050,6 +1050,57 @@ def _sink_quarantines_url(url: str | None) -> bool:
             or len(url_norm.encode()) > MAX_URL_LEN)
 
 
+async def _huecos_en_transicion(
+    session: AsyncSession, candidatos: list[str]
+) -> set[str]:
+    """De los huecos con cambio PENDIENTE reciente, los que ese cambio SÍ
+    explica: el slot EXISTE y está CERRADO (reapertura en vuelo).
+
+    G3-P2-1: la gracia de G2-P2-2 se concedía por la MERA existencia de un
+    cambio pendiente reciente con ese pk, sin relación con el hueco — así que
+    un job vivo cuyo slot NUNCA se creó (su cambio se aplicó hace días y el
+    proyector no creó slot: la pérdida REAL y PERMANENTE que esta métrica
+    existe para cazar) desaparecía del conteo en cuanto llegaba el UPDATE
+    RUTINARIO de la re-cosecha. El falso ROJO que G2 cerró se había convertido
+    en un falso VERDE que sella el ciclo y cuenta para la racha de 7.
+
+    La gracia queda LIGADA a la forma del hueco:
+    - sin slot NUNCA creado ⇒ el cambio pendiente no lo explica (el alta
+      legítima en vuelo ya la cubre la gracia de `first_seen_at`) ⇒ PÉRDIDA;
+    - slot creado y CERRADO ⇒ es la reactivación de G2-P2-2 (el upsert de cada
+      cosecha re-activa toda oferta re-vista) ⇒ gracia;
+    - …salvo que el proyector ya haya APLICADO, DESPUÉS de ese cierre, un
+      cambio que declaraba el job ACTIVO (`payload->>'is_active' = 'true'`,
+      mismo idiomático que projector.inactive_user_refs) y aun así no
+      reabriera: tuvo su oportunidad y no la usó ⇒ PÉRDIDA.
+
+    Dirección conservadora: el conjunto devuelto es un SUBCONJUNTO estricto de
+    los graciados de G2 — nunca convierte en verde algo que hoy sea rojo."""
+    if not candidatos:
+        return set()
+    rows = await session.execute(
+        sa.text(
+            "WITH cerrados AS ("
+            "  SELECT l.external_id AS ext, max(i.ended_at) AS cerrado_en "
+            "  FROM source_listings l "
+            "  JOIN sources s ON s.id = l.source_id AND s.name LIKE 'legacy:%' "
+            "  JOIN source_listing_incarnations i "
+            "    ON i.source_listing_id = l.id "
+            "  WHERE l.external_id = ANY(:cands) "
+            "  GROUP BY l.external_id) "
+            "SELECT c.ext FROM cerrados c "
+            "WHERE c.cerrado_en IS NOT NULL "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM shadow_change_log a "
+            "  WHERE a.src_table = 'jobs' AND a.pk = c.ext "
+            "    AND a.applied_at IS NOT NULL AND a.applied_at > c.cerrado_en "
+            "    AND a.payload ->> 'is_active' = 'true')"
+        ),
+        {"cands": sorted(candidatos)},
+    )
+    return set(rows.scalars().all())
+
+
 async def _perdida_rows(
     session: AsyncSession, legacy_schema: str, moment: datetime
 ) -> list[tuple]:
@@ -1122,12 +1173,15 @@ async def _perdida_rows(
             {"cutoff": cutoff},
         )
     }
-    huecos = [
-        h for h in vivos_hashes if h not in active_slots and h not in en_vuelo
-    ]
-    graciados = sum(
-        1 for h in vivos_hashes if h not in active_slots and h in en_vuelo
+    sin_slot = [h for h in vivos_hashes if h not in active_slots]
+    # G3-P2-1: la gracia exige que el cambio pendiente EXPLIQUE este hueco
+    # (slot cerrado a la espera de reapertura), no que exista un cambio
+    # cualquiera del mismo pk — si no, la pérdida real y permanente se
+    # enmascaraba y el ciclo se sellaba VERDE.
+    graciados = await _huecos_en_transicion(
+        session, [h for h in sin_slot if h in en_vuelo]
     )
+    huecos = [h for h in sin_slot if h not in graciados]
     backlog = (
         await session.execute(
             sa.text(
@@ -1144,7 +1198,11 @@ async def _perdida_rows(
         "huecos_sin_slot": len(huecos),
         "huecos_muestra": sorted(huecos)[:50],  # acotada, no crece
         "staging_sin_aplicar_1h": int(backlog),
-        "huecos_con_cambio_en_vuelo": graciados,  # gracia de transición (G2-P2-2)
+        # gracia de transición (G2-P2-2, acotada por G3-P2-1): el conteo Y la
+        # muestra — el enmascaramiento tiene que ser AUDITABLE (antes solo
+        # existía el contador y ni el informe legible lo imprimía).
+        "huecos_con_cambio_en_vuelo": len(graciados),
+        "huecos_graciados_muestra": sorted(graciados)[:50],  # acotada
         "gracia_backlog_s": STAGING_BACKLOG_GRACE_S,
         "gracia_alta_s": STAGING_BACKLOG_GRACE_S,  # misma gracia (H-7)
         "gracia_transicion_s": STAGING_BACKLOG_GRACE_S,  # G2-P2-2
@@ -1703,6 +1761,15 @@ def _report_details(details_by: dict) -> list[str]:
             f" (vivos ingeribles: {perdida['legacy_activos_ingeribles']}, "
             f"slots activos: {perdida['slots_legacy_activos']})"
         )
+        # G3-P2-1: los graciados por la gracia de transición NO se imprimían,
+        # así que un enmascaramiento era invisible para el operador.
+        graciados = perdida.get("huecos_con_cambio_en_vuelo", 0)
+        if graciados:
+            lines.append(
+                f"    · {graciados} hueco(s) GRACIADOS por reapertura en vuelo"
+                f" (slot cerrado + cambio pendiente <1h): "
+                f"{', '.join(perdida.get('huecos_graciados_muestra', [])[:5])}"
+            )
     coste = details_by.get((M_COSTE, SCOPE_GLOBAL))
     if coste:
         lines.append(

@@ -1635,6 +1635,114 @@ def test_perdida_verde_con_reactivacion_y_cdc_en_vuelo(db):
     assert _gates(factory)["perdida"]["ok"] is False
 
 
+def test_perdida_roja_con_cambio_pendiente_que_no_explica_el_hueco(db):
+    """Regresión G3-P2-1: la gracia de TRANSICIÓN (G2-P2-2) se concedía por la
+    MERA existencia de un cambio pendiente reciente con ese pk. Un job vivo
+    cuyo slot NUNCA se creó —su cambio se APLICÓ hace días y el proyector no
+    creó slot: la pérdida REAL y PERMANENTE que esta métrica existe para
+    cazar— desaparecía del conteo en cuanto llegaba el UPDATE RUTINARIO de la
+    re-cosecha: perdida=0, gate VERDE y ciclo SELLADO que cuenta para la racha
+    de 7 (falso VERDE, la dirección peligrosa). Ahora la gracia exige que el
+    cambio EXPLIQUE el hueco (slot cerrado a la espera de reapertura), y el
+    transitorio legítimo de G2-P2-2 sigue en verde."""
+    factory = db
+    src = _mk_source(factory, "legacy:g3maskfx")
+    p = uuid.uuid4().hex[:6]
+    perdido, react = f"{p}-perdido", f"{p}-react"
+
+    # (1) PÉRDIDA REAL: job vivo y antiguo, SIN slot jamás, con su cambio YA
+    # APLICADO hace 3 días…
+    _legacy_job(factory, perdido)
+    _exec(
+        factory,
+        "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
+        "payload, received_at, applied_at) VALUES (9401, 0, 'jobs', 'I', :p, "
+        "CAST('{}' AS jsonb), :r, :a)",
+        {"p": perdido, "r": CSTART - timedelta(days=3),
+         "a": CSTART - timedelta(days=3)},
+    )
+    # …y el UPDATE RUTINARIO de la re-cosecha recién capturado (la gracia
+    # indebida). Tras el cierre del ciclo: no bloquea el sellado.
+    _exec(
+        factory,
+        "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
+        "payload, received_at) VALUES (9402, 0, 'jobs', 'U', :p, "
+        "CAST('{}' AS jsonb), :r)",
+        {"p": perdido, "r": AFTER - timedelta(minutes=5)},
+    )
+
+    # (2) NO-REGRESIÓN de G2-P2-2: reactivación legítima — slot CERRADO y su
+    # CDC en vuelo. Debe seguir GRACIADA (verde).
+    _legacy_job(factory, react)
+    _mk_slot(factory, src, react, active=False)
+    _exec(
+        factory,
+        "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
+        "payload, received_at) VALUES (9403, 0, 'jobs', 'U', :p, "
+        "CAST('{}' AS jsonb), :r)",
+        {"p": react, "r": AFTER - timedelta(minutes=5)},
+    )
+
+    _compute(factory)  # PRIMER cómputo, SIN force: el ciclo queda SELLADO
+    row = _metric_row(factory, "perdida")
+    assert "recomputed_at" not in row.details  # cuenta para la racha
+    assert float(row.value) == 1  # antes del fix: 0 (pérdida enmascarada)
+    assert row.details["huecos_sin_slot"] == 1
+    assert row.details["huecos_muestra"] == [perdido]
+    assert row.details["huecos_con_cambio_en_vuelo"] == 1  # solo la reactivación
+    assert row.details["huecos_graciados_muestra"] == [react]
+    assert _gates(factory)["perdida"]["ok"] is False  # antes del fix: True
+
+    # El enmascaramiento es AUDITABLE en el informe legible (antes ni se
+    # imprimía el contador de graciados).
+    async def report():
+        async with factory() as s:
+            return await metrics.render_report(s, CYCLE)
+
+    assert "GRACIADOS" in _run(report())
+
+
+def test_perdida_roja_cuando_la_reapertura_ya_se_aplico_sin_crear_slot(db):
+    """G3-P2-1, 2ª forma: el slot EXISTE cerrado, pero el proyector ya APLICÓ
+    después del cierre un cambio que declaraba el job ACTIVO y aun así no
+    reabrió — tuvo su oportunidad. Un UPDATE rutinario posterior no lo gracia.
+    El mismo montaje con el cambio aplicado declarando is_active=false (un
+    UPDATE cualquiera sobre el job ya cerrado) SÍ conserva la gracia."""
+    factory = db
+    src = _mk_source(factory, "legacy:g3reopenfx")
+    p = uuid.uuid4().hex[:6]
+    perdido, benigno = f"{p}-noreabre", f"{p}-benigno"
+    cerrado = CSTART - timedelta(days=2)
+    aplicado = CSTART - timedelta(days=1)
+
+    for h, activo in ((perdido, "true"), (benigno, "false")):
+        _legacy_job(factory, h)
+        _mk_slot(factory, src, h, active=False, ended=cerrado)
+        _exec(
+            factory,
+            "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
+            "payload, received_at, applied_at) VALUES "
+            f"(:l, 0, 'jobs', 'U', :p, CAST('{{\"is_active\": {activo}}}' AS jsonb), "
+            ":r, :a)",
+            {"l": 9410 + (0 if activo == "true" else 1), "p": h,
+             "r": cerrado, "a": aplicado},
+        )
+        _exec(
+            factory,
+            "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
+            "payload, received_at) VALUES (:l, 0, 'jobs', 'U', :p, "
+            "CAST('{}' AS jsonb), :r)",
+            {"l": 9420 + (0 if activo == "true" else 1), "p": h,
+             "r": AFTER - timedelta(minutes=5)},
+        )
+
+    _compute(factory)
+    row = _metric_row(factory, "perdida")
+    assert float(row.value) == 1  # antes del fix: 0 (ambos graciados)
+    assert row.details["huecos_muestra"] == [perdido]
+    assert row.details["huecos_graciados_muestra"] == [benigno]
+
+
 def test_umbral_del_ciclo_queda_persistido_y_no_se_recolorea(db):
     """Regresión G1 H-8: evaluate_gates re-evaluaba ciclos SELLADOS con las
     constantes VIGENTES — un cambio de umbral recoloreaba la historia sin
