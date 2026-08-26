@@ -505,3 +505,41 @@ def test_company_float_exponencial_no_es_falso_divergent():
             await s.commit()
 
     asyncio.run(_on_disposable_db(_run))
+
+
+def test_g7_url_con_surrogate_en_el_fragmento_no_mata_el_cutover():
+    """REGRESIÓN G7-P2-3: `_url_resolves` era el ÚNICO sitio de C-4 que ligaba la url CRUDA del
+    ledger, y la ligaba sobre el campo que `build_ledger` guarda crudo A PROPÓSITO.
+
+    Los tres eslabones que hacen falta, en UN solo camino end-to-end y con el pipeline REAL:
+      1. un surrogate suelto EN EL FRAGMENTO no revienta antes, porque `normalize_url` descarta
+         el fragmento cuando no lleva identidad ⇒ la clave normalizada sale limpia;
+      2. por eso choca con su gemela limpia y `synthesize_vacancies` la manda a cuarentena por
+         COLISIÓN (la rama de colisión se evalúa ANTES que la de sintetizabilidad), que es la
+         razón por la que `verify_migration` filtra;
+      3. al ligarla, asyncpg lanzaba `DataError` DENTRO de la transacción del cutover y ANTES de
+         `persist_manifest` ⇒ `migrate_and_reconcile` moría sin verdict, sin manifiesto y con un
+         error de driver en vez de un diagnóstico.
+
+    Una url no codificable jamás pudo persistirse (el sink la cuarentena en `_preprocess`), así
+    que "no resuelve" es la respuesta CORRECTA: la cuarentena por colisión es legítima y el
+    cutover tiene que terminar con veredicto."""
+    toxica = "https://surr.example.ch/job/1#\udcff"
+    limpia = "https://surr.example.ch/job/1"
+
+    async def _run(factory):
+        async with factory() as s:
+            users = [_user([_app(toxica), _app(limpia)])]
+            manifest = await man.migrate_and_reconcile(s, users)
+            porurl = {e["url"]: (e["disposition"], e["reason"]) for e in manifest["ledger"]}
+            # Eslabones 1 y 2: la tóxica llega al ledger CRUDA y con razón de COLISIÓN.
+            assert porurl[toxica][0] == "quarantine"
+            assert porurl[toxica][1].startswith("collision"), porurl[toxica]
+            # Eslabón 3: hubo veredicto y hubo manifiesto persistido.
+            assert manifest["verification"]["verdict"] == "verified", (
+                manifest["verification"]["discrepancies"]
+            )
+            assert manifest["id"]
+            await s.commit()
+
+    asyncio.run(_on_disposable_db(_run))

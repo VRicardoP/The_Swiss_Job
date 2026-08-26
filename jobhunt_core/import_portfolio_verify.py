@@ -27,6 +27,15 @@ los durables (sería redundante con reconcile).
 Es de SOLO LECTURA (no muta). Devuelve verdict 'verified' | 'discrepant' + la lista de
 discrepancias. NO importa import_portfolio (recibe source_name) — sin ciclo. La query del estado
 final es PROPIA (no reusa la del ledger) para que un bug en la síntesis no se enmascare a sí mismo.
+
+INVARIANTE DE C-4 (G7-P2-3): la url CRUDA del ledger NO es una clave usable — `build_ledger` la
+guarda tal cual A PROPÓSITO (es el contrato POR-URL contra el origen), así que puede llevar un
+surrogate suelto y NINGUNA query puede ligarla sin `_is_bindable`. Las CLAVES (url_normalized,
+external_id) sí son seguras: `_safe_key` del ledger las descarta a None cuando el `.encode()` falla,
+y este módulo filtra las None antes de ligarlas. La url normalizada NO protege a la cruda: un
+surrogate en el FRAGMENTO desaparece al normalizar (`normalize_url` descarta el fragmento sin
+identidad), de modo que la clave sale limpia y la url cruda sigue siendo tóxica — que es
+exactamente cómo llega aquí, con `reason = collision_intra`, tras chocar con su gemela limpia.
 """
 
 import logging
@@ -233,10 +242,32 @@ async def verify_migration(
     return {"verdict": verdict, "discrepancies": discrepancies, "checked": checked}
 
 
+def _is_bindable(url: str) -> bool:
+    """True si esa url CRUDA puede viajar como bind-param a Postgres (INVARIANTE de C-4, ver
+    cabecera). Un surrogate suelto —`json.loads` los produce sin rechistar desde `\uD800`-`\uDFFF`,
+    y el portfolio de entrada es JSON de USUARIO— pasa `normalize_url` (urlsplit/urlunsplit no
+    codifican) pero revienta en asyncpg con `DataError`. UnicodeEncodeError ⊂ ValueError."""
+    try:
+        url.encode()
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 async def _url_resolves(session: AsyncSession, url: str, source_name: str) -> bool:
     """True si esa url ORIGINAL tiene una incarnación ACTIVA portfolio-import en una vacante
     presentable. Distingue "la url colisionada quedó vinculada" (ilegítimo) de "la clave
-    existe por la url ganadora" (legítimo)."""
+    existe por la url ganadora" (legítimo).
+
+    G7-P2-3: era el ÚNICO sitio de C-4 que ligaba una url SIN sanear, y la ligaba justo sobre el
+    campo que el ledger guarda CRUDO. Una url no codificable JAMÁS pudo persistirse —el sink la
+    cuarentena en `_preprocess`, y `_safe_key` ni le dio clave—, así que "no resuelve" es la
+    respuesta CORRECTA, no una evasión: la cuarentena por colisión que estamos verificando es
+    legítima. Sin el guard, el `DataError` de asyncpg subía por `verify_migration` DENTRO de la
+    transacción del cutover y ANTES de `persist_manifest`, y `migrate_and_reconcile` moría sin
+    veredicto, sin manifiesto y con un error de driver en vez de un diagnóstico."""
+    if not _is_bindable(url):
+        return False
     row = await session.execute(
         sa.text(
             "SELECT 1 FROM source_listing_incarnations i "
