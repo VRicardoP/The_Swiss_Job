@@ -1594,6 +1594,47 @@ def test_perdida_verde_con_alta_reciente_y_cdc_en_vuelo(db):
     assert _gates(factory)["perdida"]["ok"] is True
 
 
+def test_perdida_verde_con_reactivacion_y_cdc_en_vuelo(db):
+    """Regresión G2-P2-2: la gracia de G1 H-7 se apoyaba en `first_seen_at`,
+    así que cubría las ALTAS pero NO las REACTIVACIONES (is_active false→true),
+    que el upsert de cada cosecha legacy produce de forma RUTINARIA. Un job
+    ANTIGUO reactivado con su CDC en vuelo (<1h, aún sin proyectar) y su slot
+    legítimamente cerrado daba hueco=+1 ⇒ perdida=1 ⇒ falso ROJO y racha de 7
+    ciclos a cero con el pipeline SANO. La gracia se aplica ahora a la
+    TRANSICIÓN (cambio pendiente reciente), no solo al alta."""
+    factory = db
+    src = _mk_source(factory, "legacy:reactfx")
+    p = uuid.uuid4().hex[:6]
+    react = f"{p}-react"
+    # Job ANTIGUO (sin gracia de alta) recién REACTIVADO: su slot se cerró
+    # legítimamente cuando se desactivó…
+    _legacy_job(factory, react)
+    _mk_slot(factory, src, react, active=False)
+    # …y el UPDATE de reactivación lleva 5 min en staging sin aplicar.
+    _exec(
+        factory,
+        "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
+        "payload, received_at) VALUES (9201, 0, 'jobs', 'U', :p, "
+        "CAST('{}' AS jsonb), :r)",
+        {"p": react, "r": AFTER - timedelta(minutes=5)},
+    )
+
+    _compute(factory)
+    row = _metric_row(factory, "perdida")
+    assert float(row.value) == 0  # antes: 1 (falso rojo por reactivación)
+    assert row.details["huecos_sin_slot"] == 0
+    assert row.details["huecos_con_cambio_en_vuelo"] == 1
+    assert _gates(factory)["perdida"]["ok"] is True
+
+    # El hueco REAL sigue en rojo: job vivo sin slot y SIN cambio en vuelo.
+    _legacy_job(factory, f"{p}-hueco")
+    _compute(factory, force=True)
+    row = _metric_row(factory, "perdida")
+    assert float(row.value) == 1
+    assert row.details["huecos_sin_slot"] == 1
+    assert _gates(factory)["perdida"]["ok"] is False
+
+
 def test_umbral_del_ciclo_queda_persistido_y_no_se_recolorea(db):
     """Regresión G1 H-8: evaluate_gates re-evaluaba ciclos SELLADOS con las
     constantes VIGENTES — un cambio de umbral recoloreaba la historia sin

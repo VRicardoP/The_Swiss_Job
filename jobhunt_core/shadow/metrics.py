@@ -1069,7 +1069,10 @@ async def _perdida_rows(
     CDC+proyector proyectan en minutos: >1h sin slot ES un hueco real);
     (b) se cuentan HUECOS por anti-join (job vivo sin SU slot), no la
     resta agregada — un cierre en vuelo ya no produce un −1 que tape o
-    invente pérdidas. El cierre ATASCADO no se pierde: su fila de staging
+    invente pérdidas; (c) G2-P2-2: la MISMA gracia se aplica a la
+    TRANSICIÓN (job con cambio pendiente y reciente en staging), no solo
+    al alta — si no, cada REACTIVACIÓN legacy (first_seen_at antiguo)
+    volvía a producir el falso rojo que (a) elimina para las altas. El cierre ATASCADO no se pierde: su fila de staging
     >1h cae en el término de backlog, y un capture caído lo cazan
     heartbeat/healthcheck. COSTE: una pasada sobre (hash, url) de los jobs
     activos no duplicados + el set de external_id de slots activos."""
@@ -1100,7 +1103,31 @@ async def _perdida_rows(
             )
         )
     }
-    huecos = [h for h in vivos_hashes if h not in active_slots]
+    # G2-P2-2: la gracia de 1h sobre first_seen_at solo cubre las ALTAS. Una
+    # REACTIVACIÓN legacy (is_active false→true, RUTINARIA: el upsert de cada
+    # cosecha re-activa toda oferta re-vista) llega con first_seen_at antiguo,
+    # así que su CDC en vuelo daba hueco=+1 ⇒ falso ROJO y racha a 0 con el
+    # pipeline SANO. La gracia se aplica ahora a la TRANSICIÓN: un job cuyo
+    # cambio está en staging PENDIENTE y RECIENTE (<1h) no es un hueco — el
+    # atascado de verdad (>1h sin aplicar) sigue puntuando por el término de
+    # backlog, y el hueco sin cambio en vuelo sigue en rojo.
+    en_vuelo = {
+        r.pk
+        for r in await session.execute(
+            sa.text(
+                "SELECT DISTINCT pk FROM shadow_change_log "
+                "WHERE applied_at IS NULL AND received_at >= :cutoff "
+                "AND src_table = 'jobs' AND pk IS NOT NULL"
+            ),
+            {"cutoff": cutoff},
+        )
+    }
+    huecos = [
+        h for h in vivos_hashes if h not in active_slots and h not in en_vuelo
+    ]
+    graciados = sum(
+        1 for h in vivos_hashes if h not in active_slots and h in en_vuelo
+    )
     backlog = (
         await session.execute(
             sa.text(
@@ -1117,8 +1144,10 @@ async def _perdida_rows(
         "huecos_sin_slot": len(huecos),
         "huecos_muestra": sorted(huecos)[:50],  # acotada, no crece
         "staging_sin_aplicar_1h": int(backlog),
+        "huecos_con_cambio_en_vuelo": graciados,  # gracia de transición (G2-P2-2)
         "gracia_backlog_s": STAGING_BACKLOG_GRACE_S,
         "gracia_alta_s": STAGING_BACKLOG_GRACE_S,  # misma gracia (H-7)
+        "gracia_transicion_s": STAGING_BACKLOG_GRACE_S,  # G2-P2-2
     }
     ni_details = {
         "fuente": (
@@ -1539,8 +1568,9 @@ def _global_gates(out: dict, by: dict, thr: dict) -> None:
     }
     # Métricas que usan el centinela NO_DATA_VALUE (fila con placeholder del
     # muestreador ANTES de compute_cycle, o dedup sin pares evaluables —
-    # P1-2): el centinela es "sin datos", jamás un valor — perdida sí puede
-    # ser negativa legítima y queda FUERA de este conjunto.
+    # P1-2): el centinela es "sin datos", jamás un valor. `perdida` queda
+    # FUERA de este conjunto: se cuenta por anti-join (G1 H-7), así que ya
+    # no puede ser negativa y su 0 es un valor REAL, no un centinela.
     sentinel_metrics = {M_OUTBOX_LAG, M_LATENCIA, M_DEDUP_PRECISION, M_DEDUP_RECALL}
     for metric in _EXPECTED_GLOBAL:
         umbral, check = checks[metric]
