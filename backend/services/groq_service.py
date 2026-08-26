@@ -329,7 +329,15 @@ class GroqService:
 
     @staticmethod
     def _fallback_results(count: int) -> list[dict]:
-        """Generate empty fallback results when LLM fails."""
+        """Generate empty fallback results when LLM fails.
+
+        G4/P2-6: llevan `degraded=True`. Sin esa marca, un lote degradado
+        (LLM caído) y un veredicto legítimo de score 0 —salida DOCUMENTADA del
+        prompt: «0-39 = poor fit»— eran indistinguibles para el llamante, que
+        tenía que descartar AMBOS con un `score > 0`. Consecuencia: un poor fit
+        real no marcaba la corrida como evaluada y la fila conservaba para
+        siempre el `score_llm` y la explicación de otro día.
+        """
         return [
             {
                 "index": i,
@@ -337,6 +345,7 @@ class GroqService:
                 "matching_skills": [],
                 "missing_skills": [],
                 "reason": "",
+                "degraded": True,
             }
             for i in range(count)
         ]

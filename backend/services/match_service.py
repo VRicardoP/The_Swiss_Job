@@ -386,7 +386,18 @@ class MatchService:
         llm_by_index = {r["global_index"]: r for r in llm_results}
         for i, r in enumerate(scored_results):
             llm_data = llm_by_index.get(i)
-            if llm_data and llm_data.get("score", 0) > 0:
+            # G4/P2-6: la condición es «HUBO veredicto del LLM para este
+            # índice», no «el veredicto fue positivo». Un score de 0 es salida
+            # DOCUMENTADA del prompt («0-39 = poor fit»), y descartarlo dejaba
+            # la fila con el `score_llm` y la explicación de una corrida
+            # anterior —texto que el usuario ve en MatchCard— junto a un
+            # `score_final` recalculado con llm=0: incoherencia de 13.8 puntos
+            # sobre la clave de orden y sobre el umbral de `qualified`, así que
+            # una oferta que solo pasaba por el aporte del LLM entraba en la
+            # poda de `_save_results` y, sin engagement, se borraba.
+            # Los lotes DEGRADADOS (LLM caído) quedan fuera: sus ceros no son
+            # un veredicto y borrarían la explicación buena.
+            if llm_data and not llm_data.get("degraded"):
                 self._apply_llm_result(r, llm_data, profile, weights)
 
         # Re-sort after LLM scoring
@@ -413,10 +424,12 @@ class MatchService:
         """Mergea el resultado del LLM en un scored result y recalcula score_final."""
         # G3/P3-9: marca de «esta corrida SÍ tuvo veredicto del LLM para este
         # result» — la lee `_score_values` para decidir si persiste score_llm
-        # y explanation. Solo se llega aquí con score > 0, así que el degradado
-        # a ceros (LLM caído) queda fuera y no borra la explicación previa.
+        # y explanation. G4/P2-6: se llega aquí con CUALQUIER veredicto real,
+        # incluido un 0 («poor fit»); el degradado a ceros (LLM caído) lo
+        # filtra `_stage3_llm_rerank` por su marca `degraded`, así que sigue
+        # sin borrar la explicación previa.
         r[LLM_VERDICT_KEY] = True
-        r["score_llm"] = round(llm_data["score"] / 100.0, 4)
+        r["score_llm"] = round(llm_data.get("score", 0) / 100.0, 4)
         r["explanation"] = llm_data.get("reason", "")
         # Merge LLM skill analysis if richer than rule-based
         if llm_data.get("matching_skills"):
