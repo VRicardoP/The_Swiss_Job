@@ -28,6 +28,7 @@ from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.sink import (
     MAX_URL_LEN,
     RawListingSink,
+    _payload_has_nul,
     _preprocess,
     canonical_payload,
     normalize_url,
@@ -162,6 +163,14 @@ def _synthesizable(item: dict, listing: RawListing, url_normalized: str) -> tupl
         listing.external_id.encode()
         listing.url.encode()
     except (TypeError, ValueError, UnicodeEncodeError):
+        return False, pil.Q_MALFORMED
+    # G3-P3-2 (residual de G2-P3-2): el NUL es 'malformed' por el docstring de
+    # aquí arriba y por la precedencia declarada del módulo (malformed > limit),
+    # pero solo lo detectaba _preprocess, que corre DESPUÉS de medir el límite:
+    # una url con NUL Y más de MAX_URL_LEN bytes se registraba como 'limit'. El
+    # sink SÍ reporta el NUL (_limit_violations), así que la razón AUDITABLE
+    # mentía en la esquina compuesta.
+    if "\x00" in listing.url or _payload_has_nul(listing.payload):
         return False, pil.Q_MALFORMED
     # G1-P3-5: BYTES, no caracteres — el sink mide bytes (_limit_violations,
     # C6-P2-2); medir chars aquí mandaba una url multibyte ≤2048 chars pero

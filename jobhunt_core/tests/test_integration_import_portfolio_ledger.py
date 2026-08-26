@@ -840,6 +840,41 @@ def test_ledger_payload_toxico_con_url_larga_reason_is_malformed():
     asyncio.run(_on_disposable_db(_run))
 
 
+def test_url_con_nul_y_url_larga_reason_is_malformed():
+    """Regresión G3-P3-4 (tercera instancia de la familia G1-P3-5 / G2-P3-2):
+    el bloque de toxicidad de G2-P3-2 cubría el encode() estricto (surrogates)
+    pero NO el NUL, que solo detectaba `_preprocess` — DESPUÉS de medir el
+    límite. Una url con NUL Y más de 2048 bytes se registraba como 'limit'
+    mientras el docstring del propio módulo la clasifica como 'malformed' y su
+    precedencia declarada dice malformed > limit; el sink SÍ reporta el NUL
+    (_limit_violations). La razón AUDITABLE mentía en la esquina compuesta.
+
+    Pure-Python sobre la frontera real: una url con NUL no llega a persistirse
+    (Postgres rechaza el byte 0x00), así que el ledger de BD no es el sitio
+    para fijar esto — lo es la partición sintetizable/no."""
+    corta = "https://n.example.ch/a\x00b"
+    larga = "https://n.example.ch/" + "a" * 2100 + "\x00"
+    assert len(larga.encode()) > 2048
+    # La url CORTA con NUL ya era 'malformed'…
+    assert ip.durable_synthesizable({"url": corta, "title": "U"}) == (
+        False, pil.Q_MALFORMED
+    )
+    # …y la larga mentía con 'limit'.
+    assert ip.durable_synthesizable({"url": larga, "title": "U"}) == (
+        False, pil.Q_MALFORMED
+    )
+    # NUL en el PAYLOAD sobre url larga: misma razón.
+    assert ip.durable_synthesizable(
+        {"url": larga, "title": "U", "company": "A\x00B"}
+    ) == (False, pil.Q_MALFORMED)
+    # Coherente con la precedencia declarada del módulo.
+    assert ip._group_reason({pil.Q_LIMIT, pil.Q_MALFORMED}) == pil.Q_MALFORMED
+    # Sin NUL, una url excesiva sigue siendo 'limit' (no se traga el límite).
+    assert ip.durable_synthesizable(
+        {"url": "https://n.example.ch/" + "a" * 2100, "title": "U"}
+    ) == (False, pil.Q_LIMIT)
+
+
 def test_json_safe_claves_que_colapsan_no_pierden_entradas():
     """G2-H-1 (hipótesis CONFIRMADA): dos claves DISTINTAS que colapsan tras el
     saneo ('a\\x00' → 'a\\ufffd' cuando ya existe 'a\\ufffd') perdían una entrada
