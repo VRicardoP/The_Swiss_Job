@@ -189,8 +189,9 @@ class GroqService:
             else:
                 async with sem:
                     try:
-                        response = await self._rerank_call(user_prompt, fallback)
-                        batch_results = self._parse_llm_response(response, len(batch))
+                        batch_results = await self._rerank_call(
+                            user_prompt, fallback, len(batch)
+                        )
                         await self._set_cached(cache_key, batch_results)
                     except Exception:
                         logger.exception(
@@ -214,32 +215,45 @@ class GroqService:
 
         return all_results
 
-    async def _rerank_call(self, user_prompt: str, fallback: "object | None") -> str:
-        """Pide el re-ranking a Groq; si falla o no está, cae al fallback (Gemini).
+    async def _rerank_call(
+        self, user_prompt: str, fallback: "object | None", batch_len: int
+    ) -> list[dict]:
+        """Pide el re-ranking a Groq y PARSEA su respuesta; si Groq falla O
+        responde basura no parseable, cae al fallback (Gemini).
 
-        Ambos servicios exponen `get_chat_response` con firma compatible (Gemini
-        no recibe `model`). Lanza si ninguno responde, para que el llamante degrade
-        a `_fallback_results`.
+        G2/P3-4 (mitad residual de G1/P2-12): con el parseo FUERA de este
+        método, la excepción de `_parse_llm_response` saltaba después de
+        retornar y el llamante degradaba a ceros SIN probar Gemini — el
+        fallback solo cubría «Groq lanza», no «Groq responde basura» (el caso
+        real documentado: qwen truncado por max_tokens).
+
+        Ambos servicios exponen `get_chat_response` con firma compatible
+        (Gemini no recibe `model`). Lanza si ninguno da una respuesta
+        parseable, para que el llamante degrade a `_fallback_results`.
         """
         if self.is_available:
             try:
-                return await self.get_chat_response(
+                response = await self.get_chat_response(
                     user_message=user_prompt,
                     system_prompt=RERANK_SYSTEM_PROMPT,
                     model=settings.GROQ_RERANK_MODEL,
                     temperature=settings.GROQ_RERANK_TEMPERATURE,
                     max_tokens=settings.GROQ_RERANK_MAX_TOKENS,
                 )
+                return self._parse_llm_response(response, batch_len)
             except Exception:
-                logger.warning("Groq rerank falló; intentando fallback (Gemini)")
+                logger.warning(
+                    "Groq rerank falló o respondió basura; intentando fallback (Gemini)"
+                )
 
         if fallback is not None and getattr(fallback, "is_available", False):
-            return await fallback.get_chat_response(
+            response = await fallback.get_chat_response(
                 user_message=user_prompt,
                 system_prompt=RERANK_SYSTEM_PROMPT,
                 temperature=settings.GROQ_RERANK_TEMPERATURE,
                 max_tokens=settings.GROQ_RERANK_MAX_TOKENS,
             )
+            return self._parse_llm_response(response, batch_len)
         raise RuntimeError("Sin proveedor LLM disponible para el re-ranking")
 
     @staticmethod

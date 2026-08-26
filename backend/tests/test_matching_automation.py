@@ -33,6 +33,19 @@ class _FakeGemini:
 
 
 # --- _rerank_call: selección de proveedor -------------------------------------
+# G2/P3-4: _rerank_call ahora PARSEA la respuesta del proveedor (devuelve la
+# lista normalizada, no el texto crudo) para que la basura de Groq también
+# dispare el fallback a Gemini. Los tests reflejan el nuevo contrato.
+
+_PARSED_80 = [
+    {
+        "index": 0,
+        "score": 80,
+        "matching_skills": [],
+        "missing_skills": [],
+        "reason": "",
+    }
+]
 
 
 async def test_rerank_uses_gemini_when_groq_absent():
@@ -41,9 +54,9 @@ async def test_rerank_uses_gemini_when_groq_absent():
     groq.client = None  # garantiza is_available False sin depender del entorno
     gemini = _FakeGemini()
 
-    out = await groq._rerank_call("prompt", gemini)
+    out = await groq._rerank_call("prompt", gemini, batch_len=1)
 
-    assert out == '[{"index":0,"score":80}]'
+    assert out == _PARSED_80
     assert gemini.calls == 1
 
 
@@ -54,9 +67,9 @@ async def test_rerank_falls_back_when_groq_raises():
     groq.get_chat_response = AsyncMock(side_effect=RuntimeError("HTTP 401"))
     gemini = _FakeGemini()
 
-    out = await groq._rerank_call("prompt", gemini)
+    out = await groq._rerank_call("prompt", gemini, batch_len=1)
 
-    assert out == '[{"index":0,"score":80}]'
+    assert out == _PARSED_80
     groq.get_chat_response.assert_awaited_once()
     assert gemini.calls == 1
 
@@ -66,7 +79,7 @@ async def test_rerank_raises_when_no_provider():
     groq = GroqService()
     groq.client = None
     with pytest.raises(RuntimeError):
-        await groq._rerank_call("prompt", None)
+        await groq._rerank_call("prompt", None, batch_len=1)
 
 
 async def test_rerank_jobs_empty_without_any_provider():
