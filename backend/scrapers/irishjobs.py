@@ -445,9 +445,20 @@ class IrishJobsScraper(BaseScraper):
         """Cosecha irishjobs.ie + jobs.ie; deduplica por id de plataforma StepStone."""
         seen_ids: set = set()
         all_stubs: list[dict] = []
+        had_error = False
         async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
             for host in self.HOSTS:
                 all_stubs.extend(await self._harvest_host(client, host, seen_ids))
+                # G3/P2-1: los DOS hosts comparten `_stop_reason` — si el
+                # segundo termina en early-stop ("known_page"), sobreescribía
+                # el "error" parcial del primero y el guard del cursor en
+                # scraping_tasks dejaba de verlo: el cursor aprendía una
+                # pasada incompleta y el early-stop del run siguiente enterraba
+                # las ofertas no descargadas. El error de cualquier host gana
+                # (mismo acumulador que recibieron NAE/Inspired en G2/P3-1).
+                had_error = had_error or self._stop_reason == "error"
+        if had_error:
+            self._stop_reason = "error"
 
         logger.info(
             "%s scraped %d raw jobs across %d hosts",

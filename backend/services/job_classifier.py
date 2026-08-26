@@ -694,6 +694,21 @@ _COMPILED: list[tuple[str, list[_re.Pattern]]] = [
 ]
 
 
+def _first_matching_category(text: str, *, skip_case_sensitive: bool) -> str | None:
+    """Primera categoría A→M cuyo patrón casa en `text`; None si ninguna.
+
+    `skip_case_sensitive` omite los patrones SIN IGNORECASE (los acrónimos de
+    _ACRONYM_CASE_SENSITIVE), los únicos que dependen de la caja del texto.
+    """
+    for cat_id, patterns in _COMPILED:
+        for pattern in patterns:
+            if skip_case_sensitive and not pattern.flags & _re.IGNORECASE:
+                continue
+            if pattern.search(text):
+                return cat_id
+    return None
+
+
 def classify_job(title: str, tags: list[str]) -> str:
     """Clasifica un job en una de las 13 categorías o devuelve 'otros'.
 
@@ -719,12 +734,22 @@ def classify_job(title: str, tags: list[str]) -> str:
     # REMPLACEMENT» contiene el token UN sin nombrar al organismo, y el patrón
     # case-sensitive de _ACRONYM_CASE_SENSITIVE volvía a clasificar F un
     # título de docencia (anulando la penalización H y la teacher_alert).
-    # Esos patrones (los únicos SIN IGNORECASE) se omiten en ese caso.
-    all_caps = text == text.upper()
+    # G3/P2-2: ese guard se calculaba sobre título+tags y era INERTE en
+    # producción — basta UN tag en minúsculas para que el texto deje de ser
+    # todo-mayúsculas, y todas las fuentes emiten tags así (la watchlist,
+    # literalmente ["education", "international school", <id>]). La señal de
+    # caja vive en el TÍTULO, que es donde aparece «POUR UN REMPLACEMENT».
+    title_all_caps = bool(title.strip()) and title == title.upper()
 
-    for cat_id, patterns in _COMPILED:
-        if any(
-            p.search(text) for p in patterns if not all_caps or p.flags & _re.IGNORECASE
-        ):
-            return cat_id
-    return "otros"
+    # Con el título en mayúsculas la caja ya no distingue el artículo francés
+    # del acrónimo, así que los patrones case-sensitive dejan de decidir por sí
+    # solos: se consultan SOLO si ninguna otra categoría casa. Así
+    # «ENSEIGNANTE PRIMAIRE POUR UN REMPLACEMENT» vuelve a ser H (y dispara la
+    # teacher_alert) sin mandar a 'otros' a un organismo real en mayúsculas
+    # como «UN VOLUNTEER PROGRAMME OFFICER», que sigue siendo F.
+    if title_all_caps:
+        relaxed = _first_matching_category(text, skip_case_sensitive=True)
+        if relaxed is not None:
+            return relaxed
+
+    return _first_matching_category(text, skip_case_sensitive=False) or "otros"
