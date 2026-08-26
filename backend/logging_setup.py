@@ -23,12 +23,19 @@ llama a `configure_logging`: quien monta su logging es Celery. `celery_app` la
 engancha a `after_setup_logger`/`after_setup_task_logger`, que se disparan
 DESPUÉS de que Celery haya puesto sus handlers, y así el filtro aterriza sobre
 los handlers reales sin tocar el nivel que el worker trae por `-l`.
+
+G7/P2-1 — ese razonamiento era correcto y su ALCANCE no: el filtro se instalaba
+en el root y en nada más, y los loggers con `propagate=False` y handler propio
+—`uvicorn.access`, `celery.task`— quedaban fuera. Por el primero salía en claro
+el JWT de sesión de cada conexión SSE. `install_credential_redaction` recorre
+ahora todos los loggers vivos con handler propio.
 """
 
 import logging
+import traceback
 
 from config import settings
-from utils.redact import redact_credentials
+from utils.redact import has_placeholder_credential, redact_credentials
 
 # Loggers de la app que deben emitir al nivel configurado aunque otro proceso
 # (gunicorn/uvicorn) haya tocado el root con un nivel distinto.
@@ -39,6 +46,25 @@ _APP_LOGGERS = ("services", "providers", "tasks", "apscheduler")
 _NOISY_HTTP_LOGGERS = ("httpx", "httpcore")
 
 
+def _redact_arg(value: object) -> object:
+    """Redacta un argumento de log mirando su REPRESENTACIÓN, no su tipo.
+
+    G7/P3-7a: filtrar por `isinstance(a, str)` dejaba pasar el caso que el
+    código auditado usa de verdad — `utils/http.py:246` y `:266` pasan el objeto
+    excepción, no `str(exc)`, y `logging` lo convierte con `str()` DESPUÉS del
+    filtro. Los escalares se devuelven intactos: no pueden llevar credencial y
+    convertirlos rompería un `%d`/`%f`. Y si la redacción no cambia nada se
+    devuelve el objeto ORIGINAL, para no alterar cómo lo formatea un `%r`.
+    """
+    if isinstance(value, str):
+        return redact_credentials(value)
+    if value is None or isinstance(value, (int, float, complex)):
+        return value
+    texto = str(value)
+    redactado = redact_credentials(texto)
+    return redactado if redactado != texto else value
+
+
 class CredentialRedactingFilter(logging.Filter):
     """Tapa el valor de los parámetros de credencial de CUALQUIER registro.
 
@@ -46,21 +72,47 @@ class CredentialRedactingFilter(logging.Filter):
     formateador los una— porque los loggers de terceros pasan la URL como
     argumento (`httpx` emite `"HTTP Request: %s %s ..."` con la URL en `args`).
     Muta el registro, así que la redacción alcanza a todos los handlers.
+
+    G7/P3-7a: el traceback NO pasa por `msg` ni por `args` — lo formatea el
+    `Formatter` desde `record.exc_info`, así que un secreto en el `str()` de la
+    excepción salía entero en la línea siguiente al mensaje ya redactado. Se
+    precalcula `record.exc_text` (que es justo lo que el `Formatter` reutiliza
+    si ya está puesto) con el traceback redactado.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.msg, str):
-            record.msg = redact_credentials(record.msg)
+            if record.args and has_placeholder_credential(record.msg):
+                # El NOMBRE del parámetro está en la plantilla y el VALOR llega
+                # en los argumentos (`logger.info("... key=%s", clave)`):
+                # redactar las dos piezas por separado no tapa nada, porque
+                # ninguna contiene por sí sola la forma `nombre=valor`. Se
+                # formatea aquí y se tapa el resultado. Es el ÚNICO caso en que
+                # se pierde la estructura `msg`/`args` del registro, y no
+                # alcanza a `uvicorn.access` —cuya plantilla no nombra ninguna
+                # credencial— cuyo formateador sí desempaqueta `record.args`.
+                record.msg = redact_credentials(record.getMessage())
+                record.args = ()
+            else:
+                record.msg = redact_credentials(record.msg)
         if isinstance(record.args, tuple):
-            record.args = tuple(
-                redact_credentials(a) if isinstance(a, str) else a for a in record.args
-            )
+            record.args = tuple(_redact_arg(a) for a in record.args)
         elif isinstance(record.args, dict):
-            record.args = {
-                k: redact_credentials(v) if isinstance(v, str) else v
-                for k, v in record.args.items()
-            }
+            record.args = {k: _redact_arg(v) for k, v in record.args.items()}
+        if record.exc_info and not record.exc_text:
+            record.exc_text = redact_credentials(
+                "".join(traceback.format_exception(*record.exc_info))
+            ).rstrip("\n")
+        if isinstance(record.stack_info, str):
+            record.stack_info = redact_credentials(record.stack_info)
         return True
+
+
+def _enganchar_en_handlers(target: logging.Logger | None) -> None:
+    """Cuelga el filtro de cada handler de `target` que aún no lo tenga."""
+    for handler in getattr(target, "handlers", ()):
+        if not any(isinstance(f, CredentialRedactingFilter) for f in handler.filters):
+            handler.addFilter(CredentialRedactingFilter())
 
 
 def install_credential_redaction(*_args, **_kwargs) -> None:
@@ -70,13 +122,33 @@ def install_credential_redaction(*_args, **_kwargs) -> None:
     `configure_logging` (API) como las señales de Celery (worker). Acepta y
     descarta argumentos porque las señales de Celery pasan `logger`, `loglevel`,
     `format`… como kwargs.
+
+    G7/P2-1 — instalarlo solo en el root NO basta. Un `logging.Filter` colgado
+    de un *logger* corre únicamente para lo que se loguea directamente en él; a
+    los registros que suben de un hijo solo los ve el filtro de los HANDLERS. Y
+    dos loggers que llevan credenciales no suben al root:
+
+    * `uvicorn.access`, con `propagate=False` y `StreamHandler` propio porque
+      `uvicorn` aplica su `dictConfig` ANTES de importar `main.py`. Por él sale
+      el **JWT de sesión** de cada conexión SSE, que viaja en la query string
+      porque `EventSource` no puede mandar cabeceras
+      (`routers/notifications.py`);
+    * `celery.task` (G7/P3-7b), el logger canónico del worker, que
+      `after_setup_task_logger` entregaba en el kwarg `logger=` que esta función
+      descartaba.
+
+    Se recorren, por eso, TODOS los loggers vivos con handler propio. Los que se
+    creen DESPUÉS de esta llamada quedan fuera; los dos citados existen ya
+    cuando se ejecuta (uvicorn por su `dictConfig`, `celery.task` porque la
+    señal se dispara tras montar los handlers).
     """
     root = logging.getLogger()
     if not any(isinstance(f, CredentialRedactingFilter) for f in root.filters):
         root.addFilter(CredentialRedactingFilter())
-    for handler in root.handlers:
-        if not any(isinstance(f, CredentialRedactingFilter) for f in handler.filters):
-            handler.addFilter(CredentialRedactingFilter())
+    _enganchar_en_handlers(root)
+    for obj in list(logging.root.manager.loggerDict.values()):
+        if isinstance(obj, logging.Logger):
+            _enganchar_en_handlers(obj)
 
     for name in _NOISY_HTTP_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
