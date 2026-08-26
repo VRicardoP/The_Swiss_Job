@@ -81,15 +81,26 @@ async def _run_saved_searches_async() -> dict[str, Any]:
             # tipado: `{"source": 123}`) de UN usuario lanzaba, la excepción
             # salía del bucle, el retry tropezaba con la MISMA fila y todas las
             # búsquedas POSTERIORES —de otros usuarios— no se ejecutaban nunca.
+            # G4/P1-3 — los ids se capturan ANTES del `try`. Tras un flush
+            # fallido SQLAlchemy desactiva la transacción y EXPIRA los objetos
+            # que participaban en ella: `search.id` dentro del handler
+            # disparaba un refresh implícito → `PendingRollbackError` desde
+            # DENTRO del `except`, antes de llegar al `rollback`. La excepción
+            # salía del bucle exactamente igual que sin guarda, y la guarda
+            # solo cubría la clase que lanza ANTES de tocar la BD (un
+            # `filters` mal tipado).
+            sid, uid = search.id, search.user_id
             try:
                 matches = await _execute_single_search(db, search, settings)
             except Exception:
+                # El rollback va PRIMERO: reactiva la sesión antes de que
+                # nadie toque un atributo expirado.
+                await db.rollback()
                 logger.exception(
                     "Saved search %s (usuario %s) falló; se omite y sigue el barrido",
-                    search.id,
-                    search.user_id,
+                    sid,
+                    uid,
                 )
-                await db.rollback()
                 failed += 1
                 continue
             total_matches += matches
@@ -108,11 +119,10 @@ async def _execute_single_search(db, search, settings) -> int:
     from datetime import datetime, timedelta, timezone
 
     import redis
-    from models.notification import Notification
     from models.job import Job
-    from sqlalchemy import select
+    from sqlalchemy import String, cast, select, text
 
-    from tasks.watermarks import filter_unsent, watermark_lag
+    from tasks.watermarks import filter_unsent, unmark_sent, watermark_lag
 
     now = datetime.now(timezone.utc)
     filters = search.filters or {}
@@ -135,6 +145,36 @@ async def _execute_single_search(db, search, settings) -> int:
 
     if filters.get("language"):
         conditions.append(Job.language == filters["language"])
+
+    # G4/P2-3 — `q`, `seniority`, `contract_type`, `salary_min` y `salary_max`
+    # se declaraban en `SavedSearchFilters`, se guardaban y se mostraban, pero
+    # NO se aplicaban aquí: el usuario guardaba «Python developer» desde la UI
+    # («Captures the current filters from the Search page») y recibía «Found
+    # 412 new jobs» con todo el corpus que casaba por fuente/cantón/idioma.
+    # Misma semántica EXACTA que `/api/v1/jobs/search`
+    # (services/catalog/local.py:40-71), para que lo guardado y lo buscado
+    # signifiquen lo mismo. `min_score` sigue inerte a propósito (G3/P3-4,
+    # documentado en schemas/saved_searches.py).
+    if filters.get("q"):
+        conditions.append(
+            text(
+                "search_vector @@ plainto_tsquery('pg_catalog.simple', :q)"
+            ).bindparams(q=filters["q"])
+        )
+
+    if filters.get("seniority"):
+        conditions.append(cast(Job.seniority, String) == filters["seniority"])
+
+    if filters.get("contract_type"):
+        conditions.append(cast(Job.contract_type, String) == filters["contract_type"])
+
+    # Solape de rangos, igual que el catálogo: una oferta entra si su banda
+    # salarial se cruza con la pedida.
+    if filters.get("salary_min") is not None:
+        conditions.append(Job.salary_max_chf >= filters["salary_min"])
+
+    if filters.get("salary_max") is not None:
+        conditions.append(Job.salary_min_chf <= filters["salary_max"])
 
     # Solo ofertas NUEVAS desde el último run (G1/P1-4): `last_seen_at` lo
     # refresca el upsert cada día para toda oferta aún listada (mecanismo
@@ -170,11 +210,38 @@ async def _execute_single_search(db, search, settings) -> int:
     # solape recupera lo que la cosecha commiteó tarde sin repetir avisos.
     hashes = list((await db.execute(select(Job.hash).where(*conditions))).scalars())
     r = redis.from_url(settings.REDIS_URL)
+    marker_key = f"{_SENT_PREFIX}:{search.id}"
     try:
-        fresh = filter_unsent(r, f"{_SENT_PREFIX}:{search.id}", hashes)
+        fresh = filter_unsent(r, marker_key, hashes)
+        match_count = len(fresh)
+        await _notify_and_commit(db, search, now, fresh, match_count)
+    except Exception:
+        # G4/P2-5 — `filter_unsent` marca los hashes ANTES de crear la
+        # Notification y de commitear. Si algo falla entre medias (el flush,
+        # el commit, un corte de conexión) el barrido se traga la excepción y
+        # la transacción se revierte —`last_run_at` incluido—, pero los
+        # marcadores seguían vivos 14 días (`NOTIFY_SENT_MARKER_TTL_DAYS`):
+        # ofertas «ya notificadas» sin ninguna notificación detrás, y
+        # `match_count` a 0 en las corridas siguientes. Los dos hermanos
+        # (alert_tasks, digest_tasks, watchlist_tasks) ya los retiran.
+        unmark_sent(r, marker_key, fresh)
+        raise
     finally:
+        # El cierre va DESPUÉS del commit: cerrarlo antes dejaba el
+        # `unmark_sent` sin conexión justo cuando hace falta.
         r.close()
-    match_count = len(fresh)
+
+    return match_count
+
+
+async def _notify_and_commit(db, search, now, fresh, match_count: int) -> None:
+    """Actualiza la búsqueda, crea la notificación y COMMITEA.
+
+    Separado de `_execute_single_search` para que el camino que marca en Redis
+    (`filter_unsent`) tenga un bloque propio del que retirar los marcadores si
+    algo de esto falla (G4/P2-5).
+    """
+    from models.notification import Notification
 
     # Update search metadata
     search.last_run_at = now
@@ -191,7 +258,13 @@ async def _execute_single_search(db, search, settings) -> int:
         notification = Notification(
             user_id=search.user_id,
             event_type="new_matches",
-            title=f"New matches for '{search.name}'",
+            # G4/P1-3 — `SavedSearchCreate.name` admite 200 caracteres y el
+            # prefijo suma 18 sobre una columna `varchar(200)`: cualquier
+            # nombre de más de 182 caracteres reventaba el FLUSH y envenenaba
+            # el barrido de TODOS los usuarios desde un POST perfectamente
+            # válido. Se recorta el nombre, no la columna: el título es texto
+            # de presentación y `data["search_name"]` conserva el completo.
+            title=f"New matches for '{search.name[:150]}'",
             body=f"Found {match_count} new jobs matching your saved search.",
             data={
                 "search_id": str(search.id),
@@ -212,8 +285,6 @@ async def _execute_single_search(db, search, settings) -> int:
     # pedir una notificación que aún no era visible (o que un rollback anulaba).
     if match_count > 0 and search.notify_push:
         _publish_new_matches(search, match_count, notification_id)
-
-    return match_count
 
 
 def _publish_new_matches(search, match_count: int, notification_id: str) -> None:
