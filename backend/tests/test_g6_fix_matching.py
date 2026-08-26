@@ -32,8 +32,14 @@ _PESOS = {
 
 
 class _Perfil:
-    skills: list[str] = []
     preferred_categories = None
+
+    def __init__(self, skills: list[str] | None = None):
+        # G8/P3-5: `matching_skills` ya no se persiste sin contrastar con el
+        # perfil — una skill que el LLM alucina no se firma como del usuario.
+        # Los tests que comprueban que la lista VIAJA tienen que darle al perfil
+        # las skills que el LLM reconoce.
+        self.skills = [] if skills is None else skills
 
 
 @pytest.fixture
@@ -138,7 +144,7 @@ class TestLasSkillsVaciasNoPisanLasDelLLM:
                 "matching_skills": ["python", "sql"],
                 "missing_skills": ["kubernetes"],
             },
-            _Perfil(),
+            _Perfil(["python", "sql"]),
             _PESOS,
         )
         values = MatchService._score_values(r)

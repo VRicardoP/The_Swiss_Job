@@ -86,15 +86,19 @@ class TestElNivelVuelveADiscriminar:
     def test_las_fuentes_caidas_siguen_elevando_el_nivel(self, caplog):
         assert _nivel(caplog, _RUN_CON_FUENTES_CAIDAS) == logging.WARNING
 
-    @pytest.mark.parametrize(
-        "clave,valor",
-        [
-            ("identity_conflicts", 3),
-            ("soft_time_limit", True),
-        ],
-    )
+    @pytest.mark.parametrize("clave,valor", [("soft_time_limit", True)])
     def test_las_incidencias_ESTRUCTURALES_siguen_gritando(self, caplog, clave, valor):
         assert _nivel(caplog, {**_RUN_SANO, clave: valor}) == logging.WARNING
+
+    def test_la_deriva_de_identidad_pasa_a_entrar_por_TASA(self, caplog):
+        """G8/P2-2 — `identity_conflicts=3` sobre 1.230 cosechadas es el goteo
+        conocido (dispara en 11 de los 13 días con cosecha del journal), y como
+        incidencia estructural devolvía el reparto a 17 WARNING / 1 INFO. El
+        episodio real —42 % y 72 % en los dos peores del histórico— sí grita."""
+        assert _nivel(caplog, {**_RUN_SANO, "identity_conflicts": 3}) == logging.INFO
+        assert (
+            _nivel(caplog, {**_RUN_SANO, "identity_conflicts": 99}) == logging.WARNING
+        )
 
 
 class TestElUmbralDeErrores:

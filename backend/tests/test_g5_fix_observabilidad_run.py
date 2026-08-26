@@ -80,10 +80,16 @@ class TestElCierreDelRunGritaCuandoHayQueMirar:
         G7/P2-4 — `identity_clones` y `fetch_failed` también salieron: los dos
         traen valor en TODAS las corridas reales y devolvían el reparto a
         34 WARNING / 0 INFO. Ver `tests/test_g7_fix_observabilidad.py`.
+
+        G8/P2-2 — y `identity_conflicts` pasó a entrar por TASA, como `errors`,
+        por la misma razón: dispara en 11 de los 13 días con cosecha del
+        journal y devolvía el reparto a 17 WARNING / 1 INFO. Aquí se le da el
+        valor MATERIAL (7 sobre 120 = 5,8 %); el goteo conocido ya no eleva el
+        nivel. Ver `tests/test_g8_fix_observabilidad.py`.
         """
         logger = logging.getLogger("g5.runsummary")
         for clave, valor in (
-            ("identity_conflicts", 3),
+            ("identity_conflicts", 7),
             ("errors", 7),
             ("soft_time_limit", True),
         ):
