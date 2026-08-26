@@ -349,7 +349,8 @@ async def migrate_saved_searches(
     filters inválido (importadas desactivadas) se ENUMERAN en la lista
     {kind, reason, durable} para arreglo/reconciliación manual.
     """
-    counts = {"migrated": 0, "existing": 0, "invalid_filters": 0, "no_name": 0}
+    counts = {"migrated": 0, "existing": 0, "invalid_filters": 0,
+              "invalid_min_score": 0, "no_name": 0}
     for row in rows:
         name = row.get("name")
         if not name or not isinstance(name, str):
@@ -387,6 +388,10 @@ async def migrate_saved_searches(
             # G3-P3-5: mismo patrón que invalid_filters — un 0 ACTIVO alertaría
             # de TODAS las ofertas, así que se importa DESACTIVADA y el durable
             # ORIGINAL se ENUMERA en staging para arreglo manual.
+            # G5-P3-5: y CUENTA, como su hermano. Sin contador, el resumen del
+            # cutover reportaba la búsqueda DESACTIVADA como «migrada» y nada
+            # más — cero rastro del umbral en la línea que lee el operador.
+            counts["invalid_min_score"] += 1
             is_active = False
             logger.warning(
                 "import_portfolio_durables: min_score INVÁLIDO (%r) en búsqueda "
@@ -426,6 +431,41 @@ async def migrate_saved_searches(
         # no se colapsa una config material en silencio (P1 rev. externa). La igualdad
         # EXACTA de las 5 columnas ⇒ re-run idempotente; IS NOT DISTINCT FROM iguala
         # NULL con NULL. `.first()`/LIMIT 1 evita MultipleResultsFound.
+        if bad_score:
+            # G5-P3-6: el existence-check es por TUPLA MATERIAL, así que la
+            # fila escrita por un import o ENSAYO con la regla ANTERIOR
+            # (umbral fuera de cota, ACTIVA) ya no casa: se insertaría una
+            # SEGUNDA búsqueda homónima y —peor— la garantía del propio fix
+            # («fuera de cota ⇒ DESACTIVADA») no se cumpliría sobre el estado
+            # pre-fix, que sobreviviría intacto. La idempotencia por tupla
+            # material es indiferente a la INTENCIÓN de un cambio de regla, así
+            # que se converge esa fila —y solo esa: MISMO durable, difiere
+            # únicamente en lo que la regla cambió— antes de comprobar la
+            # existencia. Sin esto haría falta un `rollback` previo en cada
+            # cutover posterior a un cambio de cota.
+            degradadas = (
+                await session.execute(
+                    sa.text(
+                        "UPDATE saved_searches SET min_score = :ms, "
+                        "is_active = :act "
+                        "WHERE profile_id = :pid AND name = :n "
+                        "AND filters = CAST(:f AS jsonb) "
+                        "AND last_run_at IS NOT DISTINCT FROM :lra "
+                        "AND (min_score < 0 OR min_score > :cota)"
+                    ),
+                    {"pid": profile_id, "n": name, "f": filters_json,
+                     "ms": min_score, "act": is_active, "lra": last_run,
+                     "cota": MIN_SCORE_MAX},
+                )
+            ).rowcount
+            if degradadas:
+                logger.warning(
+                    "import_portfolio_durables: %d fila(s) previas de la "
+                    "búsqueda %r tenían el umbral FUERA DE COTA sin degradar "
+                    "(import anterior al cambio de regla) — convergidas a "
+                    "0/DESACTIVADA en vez de duplicar la búsqueda",
+                    degradadas, name,
+                )
         exists = (
             await session.execute(
                 sa.text(
@@ -457,11 +497,13 @@ async def migrate_saved_searches(
         counts["migrated"] += 1
     logger.info(
         "import_portfolio_durables: %d saved_searches → %d migradas, %d ya "
-        "existentes (%d filters inválidos, %d sin name)",
+        "existentes (%d filters inválidos, %d min_score fuera de rango, "
+        "%d sin name)",
         len(rows),
         counts["migrated"],
         counts["existing"],
         counts["invalid_filters"],
+        counts["invalid_min_score"],
         counts["no_name"],
     )
     return counts

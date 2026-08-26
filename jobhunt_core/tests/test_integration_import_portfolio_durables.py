@@ -252,7 +252,8 @@ async def _scenario(factory, caplog):
             sc = await ipd.migrate_saved_searches(s, profile_id, searches)
         await s.commit()
         assert sc == {
-            "migrated": 2, "existing": 0, "invalid_filters": 1, "no_name": 0,
+            "migrated": 2, "existing": 0, "invalid_filters": 1,
+            "invalid_min_score": 0, "no_name": 0,
         }
         assert "filters INVÁLIDO" in caplog.text
         row = (
@@ -289,7 +290,8 @@ async def _scenario(factory, caplog):
         sc2 = await ipd.migrate_saved_searches(s, profile_id, searches)
         await s.commit()
         assert sc2 == {
-            "migrated": 0, "existing": 2, "invalid_filters": 1, "no_name": 0,
+            "migrated": 0, "existing": 2, "invalid_filters": 1,
+            "invalid_min_score": 0, "no_name": 0,
         }
         assert await _count(s, "saved_searches") == 2
 
@@ -689,6 +691,116 @@ def test_json_safe_no_pierde_entradas_aunque_la_clave_desambiguada_colisione():
     assert sorted(salida.values()) == [1, 2, 3]
     assert salida["a\ufffd"] == 1 and salida["a\ufffd#2"] == 2
     assert salida["a\ufffd#3"] == 3  # el desambiguador ITERA hasta hueco
+
+
+def test_g5_la_degradacion_por_cota_tiene_contador_propio_en_el_resumen():
+    """Regresión G5-P3-5: la rama `bad_score` desactivaba la búsqueda, la
+    logueaba y la enumeraba en staging, pero NO incrementaba ningún contador
+    —al contrario que su hermano `invalid_filters` del mismo bucle—, así que
+    el resumen del cutover reportaba la búsqueda DESACTIVADA como «migrada» y
+    nada más: cero rastro del umbral en la única línea que lee el operador.
+    La cota de G4 ensanchó además la clase muda (todo [101, 2³¹) y todo
+    negativo)."""
+    import asyncio as _asyncio
+
+    from jobhunt_core.import_portfolio_durables import migrate_saved_searches
+    from jobhunt_core.profiles import ensure_consumer, upsert_profile
+    from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import (
+        _on_disposable_db,
+    )
+
+    async def _run(factory):
+        async with factory() as s:
+            cid = await ensure_consumer(s, "portfolio")
+            pid = await upsert_profile(s, cid, "g5-minscore")
+            staging: list = []
+            counts = await migrate_saved_searches(
+                s, pid,
+                [
+                    {"name": "cota", "filters": {"q": "a"}, "min_score": 150,
+                     "is_active": True},
+                    {"name": "filtros", "filters": "no-json", "min_score": 50,
+                     "is_active": True},
+                ],
+                staging=staging,
+            )
+            await s.commit()
+            # Los dos degradados se cuentan por SU razón, no como «migrated».
+            assert counts["invalid_min_score"] == 1  # antes: la clave ni existía
+            assert counts["invalid_filters"] == 1
+            filas = {
+                r.name: (r.min_score, r.is_active)
+                for r in (
+                    await s.execute(
+                        sa.text(
+                            "SELECT name, min_score, is_active FROM saved_searches "
+                            "WHERE profile_id = :p"
+                        ),
+                        {"p": pid},
+                    )
+                ).all()
+            }
+            assert filas == {"cota": (0, False), "filtros": (50, False)}
+            assert {r["reason"] for r in staging} == {
+                "invalid_min_score", "invalid_filters"
+            }
+
+    _asyncio.run(_on_disposable_db(_run))
+
+
+def test_g5_rerun_tras_el_cambio_de_cota_converge_la_fila_en_vez_de_duplicarla():
+    """Regresión G5-P3-6: el existence-check es por TUPLA MATERIAL (name,
+    filters, min_score, is_active, last_run_at). La cota cambió el valor que
+    produce `_as_min_score` para todo [101, 2³¹), así que la fila escrita por
+    un import o ENSAYO anterior ya no casaba: se insertaba una SEGUNDA
+    búsqueda homónima y —peor— la garantía del propio fix («fuera de cota ⇒
+    DESACTIVADA») no se cumplía sobre el estado pre-fix, que sobrevivía
+    intacto (150 / is_active=true). La idempotencia por tupla material es
+    indiferente a la INTENCIÓN de un cambio de regla."""
+    import asyncio as _asyncio
+
+    from jobhunt_core.import_portfolio_durables import migrate_saved_searches
+    from jobhunt_core.profiles import ensure_consumer, upsert_profile
+    from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import (
+        _on_disposable_db,
+    )
+
+    durable = {"name": "cota", "filters": {"q": "a"}, "min_score": 150,
+               "is_active": True}
+
+    async def _run(factory):
+        async with factory() as s:
+            cid = await ensure_consumer(s, "portfolio")
+            pid = await upsert_profile(s, cid, "g5-rerun")
+            # Estado que dejó un import PRE-cota (valor tal cual, ACTIVA).
+            await s.execute(
+                sa.text(
+                    "INSERT INTO saved_searches (id, profile_id, name, filters, "
+                    "min_score, is_active) VALUES (:i, :p, 'cota', "
+                    "CAST(:f AS jsonb), 150, true)"
+                ),
+                {"i": uuid.uuid4(), "p": pid, "f": '{"q": "a"}'},
+            )
+            counts = await migrate_saved_searches(s, pid, [durable], staging=[])
+            await s.commit()
+            filas = [
+                (r.name, r.min_score, r.is_active)
+                for r in (
+                    await s.execute(
+                        sa.text(
+                            "SELECT name, min_score, is_active FROM saved_searches "
+                            "WHERE profile_id = :p ORDER BY min_score"
+                        ),
+                        {"p": pid},
+                    )
+                ).all()
+            ]
+            # UNA sola fila, convergida a la representación de la regla nueva.
+            assert filas == [("cota", 0, False)]  # antes: [(0, False), (150, True)]
+            assert counts["existing"] == 1  # ya representada: no se re-inserta
+            assert counts["invalid_min_score"] == 1
+
+    _asyncio.run(_on_disposable_db(_run))
 
 
 def test_saved_search_filters_dict_y_last_run_at_del_extractor():

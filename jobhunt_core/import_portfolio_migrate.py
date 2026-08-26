@@ -51,7 +51,9 @@ _APP_COUNT_KEYS = (
     "applications", "bookmarks", "unresolved", "consolidated", "invalid_status",
     "collision", "no_title",
 )
-_SS_COUNT_KEYS = ("migrated", "existing", "invalid_filters", "no_name")
+_SS_COUNT_KEYS = (
+    "migrated", "existing", "invalid_filters", "invalid_min_score", "no_name",
+)
 
 # Tablas de tracking del core que produce la migración (core0011).
 CORE_TRACKING_TABLES = (

@@ -133,7 +133,8 @@ EXPECTED_APPS = {
     "applications": 5, "bookmarks": 4, "unresolved": 1,
     "consolidated": 1, "invalid_status": 0, "collision": 0, "no_title": 0,
 }
-EXPECTED_SS = {"migrated": 5, "existing": 0, "invalid_filters": 1, "no_name": 0}
+EXPECTED_SS = {"migrated": 5, "existing": 0, "invalid_filters": 1,
+               "invalid_min_score": 0, "no_name": 0}
 # Filas resultantes por objetivo de reconciliación (4 tracking + canónica
 # sintetizada: 6 URLs distintas → 6 vacantes-sombra portfolio-import).
 EXPECTED_ROWS = {
@@ -1011,7 +1012,8 @@ async def _scenario(factory):
         await s.commit()
         assert report2["applications"] == EXPECTED_APPS
         assert report2["saved_searches"] == {
-            "migrated": 0, "existing": 5, "invalid_filters": 1, "no_name": 0,
+            "migrated": 0, "existing": 5, "invalid_filters": 1,
+            "invalid_min_score": 0, "no_name": 0,
         }
         chk2 = await ipm.table_checksums(s)
         assert chk2 == chk1  # MISMOS conteos Y checksums: idempotente de verdad
