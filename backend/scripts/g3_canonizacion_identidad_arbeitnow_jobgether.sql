@@ -47,10 +47,16 @@
 --     **CLON** con `first_seen_at` de hoy y la histórica **deja de refrescar
 --     `last_seen_at` para siempre**. Corpus duplicado *y* fila original
 --     abandonada, las dos cosas.
---     ESTADO MEDIDO (producción, 2026-08-26, SOLO LECTURA): **388 filas clon
---     en arbeitnow** (4.233 filas para 3.845 identidades canónicas, en 289
---     grupos) y **81 en jobgether** (1.592 filas / 1.511 identidades). Solo el
---     2026-08-25 aparecieron **55 grupos** con clon nuevo.
+--     ESTADO MEDIDO (producción, 2026-08-26, SOLO LECTURA, RE-MEDIDO en G6):
+--     **383 filas clon en arbeitnow** (4.233 filas para 3.850 identidades
+--     canónicas, en 284 grupos) y **23 en jobgether** (1.592 filas / 1.569
+--     identidades, 21 grupos): 406 en total, exactamente las que el PASO 5
+--     fusiona. Las cifras que traían G4/G5 (388 y 81) contaban URLs canónicas
+--     distintas, no identidades: el slug de jobgether sin su ObjectId NO es
+--     único —«…/offer/account-manager» lo usan CUATRO empresas distintas— y
+--     esas filas son vacantes DIFERENTES que el script, con razón, no fusiona,
+--     porque el `hash` incluye título y empresa. Clones nuevos por día en la
+--     última semana: 58 el 08-25, 52 el 08-21, 31 el 08-20, 25 el 08-19.
 --     SEÑAL: hasta G5 **NINGUNA**. Ni `identity_conflicts` (no hay excepción
 --     que contar), ni el dedup fuzzy (`find_fuzzy_duplicate` excluye a
 --     propósito los pares de la MISMA fuente), ni `harvest_window.watch_drift`
@@ -78,13 +84,28 @@
 --
 -- ESTADO: **NO EJECUTADO contra ninguna base real**. Pendiente de aplicar.
 --
--- VALIDACIÓN hecha (G3, lote B): el script se ensayó contra `swissjobhunter_test`
--- (NUNCA contra `swissjobhunter`) con una fixture sintética de 5 filas — 2 clones
--- de arbeitnow, 2 de jobgether y 1 oferta única. Resultado: 3 identidades
--- reescritas, 2 clones fusionados, `first_seen_at` = el de la aparición más
--- antigua y `last_seen_at` = el máximo del grupo; los 3 hashes resultantes
--- COINCIDEN carácter a carácter con los que emiten hoy `ArbeitnowProvider` y
--- `JobgetherProvider` tras el fix G3/P3-13. La fixture se borró al terminar.
+-- VALIDACIÓN (G6, 2026-08-26 — sustituye a la de G3/lote B). La fixture de G3
+-- tenía **un clon por superviviente** y por eso NO podía alcanzar el fallo del
+-- PASO 5 que G6 encontró: el ensayo montaba el escenario que esquiva la
+-- condición. La fixture de ensayo vive ahora en
+-- `g3_canonizacion_ensayo_g6.sql` (con la orden exacta para relanzarla) y sí
+-- incluye esa forma. Ensayado contra `swissjobhunter_test` (NUNCA contra
+-- `swissjobhunter`), 9 filas en 4 grupos:
+--   · superviviente + DOS clones con match del MISMO usuario en los dos y
+--     ninguno en el superviviente — la forma que ABORTABA;
+--   · superviviente + clon con la SEÑAL del usuario en el CLON;
+--   · superviviente + DOS clones con `job_applications` en los dos y
+--     `generated_documents` en ambos;
+--   · una oferta que la canonización no cambia.
+-- Resultado ejecutado: **3 identidades reescritas, 5 clones fusionados, 13/13
+-- aserciones en verde**, sin violación de unicidad, `first_seen_at` = el de la
+-- aparición más antigua, `last_seen_at`/`is_active` heredados del grupo, la
+-- fila de match con señal CONSERVADA, la candidatura enviada conservada, los
+-- dos documentos generados reapuntados y las 3 FK restauradas. Los 3 hashes
+-- canónicos resultantes COINCIDEN carácter a carácter con los que emiten hoy
+-- `ArbeitnowProvider` y `JobgetherProvider` (verificado ejecutando su
+-- `compute_hash` + `canonical_identity_*` sobre las mismas URLs). Todo dentro
+-- de una transacción revertida; residuo verificado: 0 filas en las 5 tablas.
 -- JAMÁS contra producción sin backup previo (`pg_dump`) y sin haberlo
 -- ensayado antes sobre una copia. Orden OBLIGATORIO (ver arriba):
 --   1) parar el worker/beat (que no arranque una cosecha a medias),
@@ -93,15 +114,17 @@
 --   4) ejecutarlo sobre la base real,
 --   5) rearrancar el worker.
 --
--- COTA CONOCIDA (G4, medida): el `DELETE` del PASO 5 resuelve el choque
--- clon/superviviente por el mismo usuario quedándose SIEMPRE con la fila del
--- superviviente, sin mirar si la del clon lleva `feedback`,
--- `feedback_implicit`, `draft_letter` o un `application_status` avanzado. La
--- regla correcta —la de `maintenance_tasks.py:284-294`— es preferir la fila
--- CON señal del usuario. Hoy son **0 filas** afectadas (simulado sobre los
--- datos de producción del 2026-08-26: 29 `match_results` de clones a borrar,
--- 0 de ellos con señal), por eso se deja como cota escrita y no se cambia el
--- script validado. Re-medirlo antes de aplicarlo si ha pasado tiempo.
+-- COTA G4 — **CERRADA en G6**. G4 dejó escrito que el `DELETE` del PASO 5 se
+-- quedaba SIEMPRE con la fila del superviviente sin mirar si la del clon lleva
+-- `feedback`, `feedback_implicit`, `draft_letter` o un `application_status`
+-- avanzado. Ya no: el PASO 5 fusiona el grupo entero prefiriendo la fila CON
+-- señal del usuario —la regla de `maintenance_tasks.py:283-294`— y solo a
+-- igualdad de señal se queda con la del superviviente. Medido en producción
+-- 2026-08-26 (SOLO LECTURA): 75 `match_results` de clones, **30** filas que la
+-- fusión descarta y **0** de ellas con señal; 0 `job_applications` y 0
+-- `generated_documents` de clones. El informe del PASO 8 imprime esas dos
+-- cifras en cada ejecución, así que la fusión no ocurre en silencio.
+-- Re-medirlo antes de aplicarlo si ha pasado tiempo.
 --
 -- USO
 -- ---
@@ -231,30 +254,92 @@ WHERE j.hash = g.survivor_hash;
 
 -- ---------------------------------------------------------------------
 -- 5. Reapuntar las tablas hijas de los clones al superviviente, respetando
---    sus claves únicas (user_id, job_hash): si el usuario ya tiene fila para
---    el superviviente, la del clon se descarta (la del superviviente es la
---    buena: es la más antigua).
+--    sus claves únicas (user_id, job_hash).
+--
+-- ⚠ RECTIFICACIÓN (G6/P1-1, 2026-08-26). La versión anterior de este paso
+-- ABORTABA sobre los datos de producción de hoy. Su guarda solo miraba la
+-- colisión *clon ↔ superviviente* (`EXISTS` de una fila del superviviente) y
+-- un superviviente puede tener VARIOS clones: si el mismo usuario tiene fila
+-- en DOS clones y ninguna en el superviviente, el `EXISTS` no encontraba nada,
+-- el `DELETE` no borraba ni una, y el `UPDATE` apuntaba las DOS al mismo
+-- `survivor_hash` → `duplicate key value violates unique constraint
+-- "uq_match_user_job"`. Medido en producción 2026-08-26: 60 grupos canónicos
+-- con >= 2 clones y **1** grupo (user 46f0b4c2…, superviviente 140b0440…) con
+-- la colisión clon↔clon exacta. Fallaba cerrado (todo en una transacción), pero
+-- dejaba al operador con el worker parado y la migración a medias.
+--
+-- Ahora el grupo se fusiona ENTERO —la fila del superviviente más las de TODOS
+-- sus clones— conservando UNA sola por (user_id, superviviente), con este
+-- orden de preferencia:
+--   1) la que tiene SEÑAL del usuario (`feedback`, `feedback_implicit`,
+--      `draft_letter`, o `application_status` distinto del inicial
+--      'detected') — la misma regla que `maintenance_tasks.py:283-294`;
+--   2) a igualdad de señal, la del SUPERVIVIENTE (es la fila más antigua);
+--   3) desempate estable por `id`, para que el script sea determinista.
+--
+-- Esto cierra además la COTA que el encabezado declaraba en G4 ("el DELETE se
+-- queda SIEMPRE con la del superviviente sin mirar la señal"): ya no es cierta.
+-- Las filas descartadas se CUENTAN en el informe del PASO 8 (con cuántas
+-- llevaban señal), para que la fusión no ocurra en silencio.
 -- ---------------------------------------------------------------------
+CREATE TEMP TABLE g3_mr_merge ON COMMIT DROP AS
+SELECT
+    m.id,
+    (m.feedback IS NOT NULL
+     OR m.feedback_implicit IS NOT NULL
+     OR m.draft_letter IS NOT NULL
+     OR m.application_status <> 'detected') AS has_signal,
+    row_number() OVER (
+        PARTITION BY m.user_id, COALESCE(l.survivor_hash, m.job_hash)
+        ORDER BY (m.feedback IS NOT NULL
+                  OR m.feedback_implicit IS NOT NULL
+                  OR m.draft_letter IS NOT NULL
+                  OR m.application_status <> 'detected') DESC,
+                 (l.loser_hash IS NULL) DESC,
+                 m.id ASC
+    ) AS rn
+FROM match_results m
+LEFT JOIN g3_losers l ON l.loser_hash = m.job_hash
+WHERE m.job_hash IN (SELECT loser_hash FROM g3_losers)
+   OR m.job_hash IN (SELECT survivor_hash FROM g3_losers);
+
+CREATE UNIQUE INDEX ON g3_mr_merge (id);
+
 DELETE FROM match_results m
-USING g3_losers l
-WHERE m.job_hash = l.loser_hash
-  AND EXISTS (
-      SELECT 1 FROM match_results m2
-      WHERE m2.user_id = m.user_id AND m2.job_hash = l.survivor_hash
-  );
+USING g3_mr_merge x
+WHERE m.id = x.id AND x.rn > 1;
 
 UPDATE match_results m
 SET job_hash = l.survivor_hash
 FROM g3_losers l
 WHERE m.job_hash = l.loser_hash;
 
+-- `job_applications` tiene la MISMA forma de clave única
+-- (`uq_application_user_job`) y por tanto el mismo fallo. Aquí toda fila es
+-- señal del usuario por definición, así que el orden de preferencia es:
+-- candidatura ya enviada (`applied_at`), luego la del superviviente, luego la
+-- más antigua. Hoy son 0 filas (medido 2026-08-26), pero la guarda queda con
+-- la forma correcta.
+CREATE TEMP TABLE g3_app_merge ON COMMIT DROP AS
+SELECT
+    a.id,
+    row_number() OVER (
+        PARTITION BY a.user_id, COALESCE(l.survivor_hash, a.job_hash)
+        ORDER BY (a.applied_at IS NOT NULL) DESC,
+                 (l.loser_hash IS NULL) DESC,
+                 a.created_at ASC,
+                 a.id ASC
+    ) AS rn
+FROM job_applications a
+LEFT JOIN g3_losers l ON l.loser_hash = a.job_hash
+WHERE a.job_hash IN (SELECT loser_hash FROM g3_losers)
+   OR a.job_hash IN (SELECT survivor_hash FROM g3_losers);
+
+CREATE UNIQUE INDEX ON g3_app_merge (id);
+
 DELETE FROM job_applications a
-USING g3_losers l
-WHERE a.job_hash = l.loser_hash
-  AND EXISTS (
-      SELECT 1 FROM job_applications a2
-      WHERE a2.user_id = a.user_id AND a2.job_hash = l.survivor_hash
-  );
+USING g3_app_merge x
+WHERE a.id = x.id AND x.rn > 1;
 
 UPDATE job_applications a
 SET job_hash = l.survivor_hash
@@ -330,6 +415,15 @@ ALTER TABLE generated_documents
 SELECT 'reescritas'            AS concepto, count(*) AS filas FROM g3_survivors
 UNION ALL
 SELECT 'clones fusionados',    count(*) FROM g3_losers
+UNION ALL
+SELECT 'match_results descartados por la fusion',
+       count(*) FROM g3_mr_merge WHERE rn > 1
+UNION ALL
+SELECT '  ... de ellos CON senal del usuario',
+       count(*) FROM g3_mr_merge WHERE rn > 1 AND has_signal
+UNION ALL
+SELECT 'job_applications descartadas por la fusion',
+       count(*) FROM g3_app_merge WHERE rn > 1
 UNION ALL
 SELECT 'intactas (ya canonicas o no verificadas)',
        count(*)
