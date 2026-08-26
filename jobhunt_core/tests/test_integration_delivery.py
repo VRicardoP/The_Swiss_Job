@@ -1745,6 +1745,40 @@ def _destinos(factory, eids):
     }
 
 
+def _lease_comun(factory, eids, off="+5 minutes"):
+    """Deja esas entregas 'inflight' con EL MISMO lease (un solo valor, no uno
+    por fila: `clock_timestamp()` avanza dentro de la sentencia) y lo devuelve.
+
+    Las escribe UNA A UNA y en el orden de `eids`. Un UPDATE que toca `lease`
+    —columna indexada por `ix_outbox_deliv_inflight`— reescribe la fila al
+    final del heap, así que el orden de escritura FIJA el orden físico y, con
+    todos los leases iguales, el del índice (el TID desempata en el btree).
+    Es lo que convierte al corpus en ADVERSARIAL: sin esto el orden del scan
+    coincide con el canónico por casualidad y la sonda no prueba nada."""
+
+    async def go():
+        async with factory() as s:
+            lease = (
+                await s.execute(
+                    sa.text(f"SELECT clock_timestamp() + interval '{off}'")
+                )
+            ).scalar_one()
+            for eid in eids:
+                await s.execute(
+                    sa.text(
+                        "UPDATE integration_outbox_deliveries SET state = 'inflight', "
+                        "lease = :l, ack_at = NULL, dead_at = NULL, "
+                        "next_attempt_at = NULL, last_error = NULL "
+                        "WHERE event_id = :e"
+                    ),
+                    {"l": lease, "e": str(eid)},
+                )
+            await s.commit()
+            return lease
+
+    return asyncio.run(go())
+
+
 async def _lock(session, eid, dest):
     await session.execute(
         sa.text(
@@ -1753,6 +1787,32 @@ async def _lock(session, eid, dest):
         ),
         {"e": str(eid), "d": dest},
     )
+
+
+async def _libre(factory, eid, dest) -> bool:
+    """¿Nadie tiene bloqueada esa fila AHORA MISMO? `NOWAIT` responde sin
+    esperar; la sesión se cierra inmediatamente para no retener nada."""
+    async with factory() as s:
+        try:
+            await s.execute(
+                sa.text(
+                    "SELECT 1 FROM integration_outbox_deliveries "
+                    "WHERE event_id = :e AND destination = :d FOR UPDATE NOWAIT"
+                ),
+                {"e": str(eid), "d": dest},
+            )
+            return True
+        except sa.exc.DBAPIError:
+            return False
+        finally:
+            await s.rollback()
+
+
+class _Fila:
+    """Lo mínimo que `renew_lease` consume de una fila reclamada."""
+
+    def __init__(self, event_id, destination):
+        self.event_id, self.destination = event_id, destination
 
 
 def test_g8_el_mark_no_espera_en_filas_terminales_que_el_update_ni_mira(db):
@@ -1819,3 +1879,144 @@ def test_g8_el_mark_no_espera_en_filas_terminales_que_el_update_ni_mira(db):
         "filtro de estado"
     )
     assert _estados(factory, [eid])[eid][0] == "dead"
+
+
+def test_g8_renew_lease_toma_los_locks_en_el_orden_canonico_del_modulo(
+    db, monkeypatch
+):
+    """Regresión G8-N-3: `renew_lease` es la ÚNICA sentencia multifila del
+    camino normal (un lote lento renueva TODO lo que le queda) y tomaba los
+    locks en el orden del array del llamador —el del claim,
+    `next_attempt_at, event_id, destination`—, que es un TERCER orden distinto
+    del que usan el pre-SELECT de `mark_delivered` y `retire_exhausted`. Tres
+    órdenes de lock sobre la misma tabla es la mitad WAIT del par
+    HOLD-then-WAIT de G8-N-2, y hoy solo es inocuo por una invariante del
+    LLAMADOR que ningún sitio del módulo enunciaba (`tasks/delivery.py` marca
+    de UNA en una).
+
+    Prueba directa del orden, sin depender de que el deadlock ocurra: con la
+    fila canónicamente PRIMERA bloqueada por otro y el lote pasado al revés,
+    `renew_lease` tiene que quedarse esperando en ELLA sin haber tocado
+    todavía la ÚLTIMA."""
+    factory, created = db
+    pid, _ = _setup_evaluated(
+        factory, created, titles=("backend python", "data eng", "devops sre",
+                                  "ml engineer"),
+    )
+    vivos = sorted(_dejar_pendientes(factory, pid, 4), key=str)
+    dests = _destinos(factory, vivos)
+    # orden físico INVERSO al canónico: el scan del UPDATE viejo iba por
+    # `ix_outbox_deliv_inflight` y, con leases iguales, por TID.
+    lease = _lease_comun(factory, list(reversed(vivos)))
+    primera, ultima = vivos[0], vivos[-1]
+    filas_al_reves = [_Fila(e, dests[e]) for e in reversed(vivos)]
+
+    async def carrera():
+        async with factory() as sH, factory() as sR:
+            await _lock(sH, primera, dests[primera])          # RETIENE la 1ª
+            tarea = asyncio.create_task(
+                delivery.renew_lease(sR, filas_al_reves, lease)
+            )
+            await asyncio.sleep(0.6)                          # ya está esperando
+            ultima_libre = await _libre(factory, ultima, dests[ultima])
+            await sH.commit()
+            nuevo, perdidas = await tarea
+            await sR.commit()
+            return ultima_libre, nuevo, perdidas
+
+    ultima_libre, nuevo, perdidas = asyncio.run(carrera())
+    assert ultima_libre, (
+        "`renew_lease` bloqueó la fila canónicamente ÚLTIMA mientras esperaba "
+        "la PRIMERA: retiene-y-espera en el orden del SCAN (el índice "
+        "ix_outbox_deliv_inflight, y con leases iguales el TID), no en el "
+        "orden canónico (event_id, destination) del módulo"
+    )
+    assert perdidas == 0 and nuevo != lease, "la renovación tiene que ocurrir"
+    vigentes = _rows(
+        factory,
+        "SELECT DISTINCT lease FROM integration_outbox_deliveries "
+        "WHERE event_id = ANY(:ids)", ids=[str(e) for e in vivos],
+    )
+    assert [r.lease for r in vigentes] == [nuevo]
+
+
+def test_g8_retire_exhausted_toma_los_locks_en_el_orden_canonico_del_modulo(
+    db, monkeypatch
+):
+    """Regresión G8-N-3 (segunda sentencia): `retire_exhausted` era un UPDATE
+    a secas, así que bloqueaba en el orden del SCAN — el tercer orden. Se
+    comprueban las DOS direcciones sobre el mismo corpus, que es lo que
+    distingue «ordena» de «acertó por el orden físico»:
+
+    (a) con la PRIMERA canónica retenida, la ÚLTIMA sigue libre;
+    (b) con la ÚLTIMA canónica retenida, la PRIMERA ya está bloqueada por él.
+
+    Los quals de elegibilidad se repiten FUERA del subplan (G6-P2-1): el
+    LockRows re-evalúa los del subplan bajo EPQ y el UPDATE no puede quedarse
+    con la igualdad contra una fila que dejó de ser elegible."""
+    factory, created = db
+    monkeypatch.setattr(delivery, "MAX_ATTEMPTS", 2)
+    pid, _ = _setup_evaluated(
+        factory, created, titles=("backend python", "data eng", "devops sre",
+                                  "ml engineer"),
+    )
+    vivos = sorted(_dejar_pendientes(factory, pid, 4), key=str)
+    dests = _destinos(factory, vivos)
+    primera, ultima = vivos[0], vivos[-1]
+
+    def _agotadas():
+        """Corpus ADVERSARIAL: el lease DECRECE al avanzar el orden canónico
+        (la primera es la MÁS reciente, la última la más vieja), así que
+        el `ix_outbox_deliv_inflight` (por el que iba el UPDATE a secas)
+        devuelve las filas justo al revés. Sin esto el orden del scan coincide
+        con el canónico por casualidad y la sonda no prueba nada."""
+
+        async def go():
+            async with factory() as s:
+                for i, eid in enumerate(vivos):
+                    await s.execute(
+                        sa.text(
+                            "UPDATE integration_outbox_deliveries "
+                            "SET state = 'inflight', "
+                            f"lease = clock_timestamp() - interval '{7 + i} minutes', "
+                            "attempts = :a, claims = 0, ack_at = NULL, "
+                            "dead_at = NULL, next_attempt_at = NULL, "
+                            "last_error = NULL WHERE event_id = :e"
+                        ),
+                        {"a": delivery.MAX_ATTEMPTS, "e": str(eid)},
+                    )
+                await s.commit()
+
+        asyncio.run(go())
+
+    def _sonda(retenida, observada):
+        _agotadas()
+
+        async def carrera():
+            async with factory() as sH, factory() as sE:
+                await _lock(sH, retenida, dests[retenida])
+                tarea = asyncio.create_task(delivery.retire_exhausted(sE))
+                await asyncio.sleep(0.6)
+                libre = await _libre(factory, observada, dests[observada])
+                await sH.commit()
+                n = await tarea
+                await sE.commit()
+                return libre, n
+
+        return asyncio.run(carrera())
+
+    with caplog_at_error():
+        libre_ultima, n1 = _sonda(primera, ultima)
+        libre_primera, n2 = _sonda(ultima, primera)
+
+    assert libre_ultima, (
+        "esperando la fila canónicamente PRIMERA ya tenía bloqueada la ÚLTIMA: "
+        "el orden de lock es el del scan, no (event_id, destination)"
+    )
+    assert not libre_primera, (
+        "esperando la ÚLTIMA no había bloqueado todavía la PRIMERA: los locks "
+        "no se están tomando en orden canónico ascendente"
+    )
+    assert n1 == 4 and n2 == 4, (
+        f"cada pasada retira las 4 agotadas del corpus (n1={n1}, n2={n2})"
+    )

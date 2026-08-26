@@ -17,6 +17,33 @@
   SOMBRA (shadow/inbox.py → jobhunt.shadow_inbox, P1-1b) SOLO si nadie
   inyectó otro: entrega real y continua sin efectos visibles (§8 del
   contrato de Fase B).
+
+ORDEN DE LOCK (G8-N-2/G8-N-3, medido el 2026-08-26). Toda sentencia MULTIFILA
+del módulo toma los locks por `(event_id, destination)` ASCENDENTE:
+`retire_exhausted`, `renew_lease` y el pre-SELECT de `mark_delivered`. Antes
+era el orden del SCAN elegido por el planificador —las tres iban por
+`ix_outbox_deliv_inflight` (lease, con el TID desempatando), no por el orden
+del array ni el del claim—, distinto en cada sentencia y no estable. Eso
+deja abierta la mitad WAIT de un par HOLD-then-WAIT: la transacción de CICLO
+retiene lo que `retire_exhausted` acaba de matar y DESPUÉS espera en
+`retire_poisoned` (esa espera es lo que G7 devolvió al quitar el
+`SKIP LOCKED`), mientras el `renew_lease` de un lote lento retiene unas filas
+y espera en otra dentro de su ÚNICA sentencia.
+
+Ese deadlock EXISTE y se reprodujo forzando órdenes opuestos: Postgres lo
+detecta en ~1 s, aborta `renew_lease` —el lote lento, cuyo trabajo es
+re-reclamable por construcción— y el ciclo sobrevive retirando las dos filas
+correctas; el reintento converge SIN pérdida (nada terminal por error, un
+re-transporte at-least-once que el inbox deduplica). Bajo carga realista NO
+apareció: **0 deadlocks en 600 ciclos**, de los cuales 240 con CUATRO
+dispatchers en paralelo real (4 hilos, 4 event loops), 464 transportes, 145
+retiradas por veneno, 118 renovaciones de lease y 239 desbordamientos de
+lease. Por eso el mecanismo NO se toca —forzar el orden dentro de
+`retire_poisoned` es lo que rompió esta zona en G5, G6 y G7—: lo único que se
+hace es unificar el orden de lock DENTRO de cada sentencia multifila, que es
+gratis y no cambia semántica. La arista ENTRE sentencias (ciclo vs. lote
+lento) se queda documentada aquí y sin código: su dirección de fallo es
+benigna y su frecuencia medida es cero.
 """
 
 import logging
@@ -174,10 +201,29 @@ async def renew_lease(session, rows, lease_token) -> tuple[object, int]:
     kept = (
         await session.execute(
             sa.text(
+                # G8-N-3: mismo orden de lock canónico que `retire_exhausted`
+                # y que el pre-SELECT de `mark_delivered`. Sin el subplan
+                # ordenado, esta sentencia —la ÚNICA multifila del camino
+                # normal, porque un lote lento renueva todo lo que le queda—
+                # tomaba los locks en el orden del SCAN: el plan medido no
+                # recorre el `unnest`, recorre `ix_outbox_deliv_inflight`
+                # (`Index Cond: lease = …`) y, con todos los leases iguales,
+                # desempata por TID — o sea, orden FÍSICO del heap. Es la
+                # mitad WAIT del par HOLD-then-WAIT de G8-N-2 y no lo controla
+                # el llamador. `FOR UPDATE OF y` porque el `unnest` es un
+                # function scan y no se puede bloquear.
                 "UPDATE integration_outbox_deliveries d SET lease = :nuevo "
-                "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[])) "
-                "  AS t(eid, dest) "
-                "WHERE d.event_id = t.eid AND d.destination = t.dest "
+                "FROM ("
+                "  SELECT y.event_id, y.destination "
+                "  FROM integration_outbox_deliveries y "
+                "  JOIN unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[])) "
+                "    AS t(eid, dest) "
+                "    ON y.event_id = t.eid AND y.destination = t.dest "
+                "  WHERE y.state = 'inflight' AND y.lease = :old "
+                "  ORDER BY y.event_id, y.destination "
+                "  FOR UPDATE OF y"
+                ") AS c "
+                "WHERE d.event_id = c.event_id AND d.destination = c.destination "
                 "AND d.state = 'inflight' AND d.lease = :old "
                 "RETURNING d.event_id"
             ),
@@ -259,9 +305,31 @@ async def retire_exhausted(session) -> int:
     rows = (
         await session.execute(
             sa.text(
+                # G8-N-3: los locks se toman por el orden CANÓNICO del módulo,
+                # (event_id, destination) ASC — el mismo del pre-SELECT de
+                # `mark_delivered` y de `renew_lease`. Un UPDATE a secas los
+                # toma en el orden del scan, que aquí es
+                # `ix_outbox_deliv_inflight` (por LEASE ascendente, medido con
+                # EXPLAIN): un orden distinto del de las otras dos sentencias
+                # y ajeno a la clave. Con una sentencia multifila enfrente (el
+                # `renew_lease` de un lote lento) eso es un ciclo de espera
+                # POSIBLE dentro de una sola sentencia (G8-N-2). Los quals de
+                # elegibilidad se REPITEN fuera a propósito (G6-P2-1): el
+                # LockRows re-evalúa los del subplan bajo EPQ, y el UPDATE no
+                # puede quedarse con la igualdad contra una fila que dejó de
+                # serlo mientras esperábamos el lock.
                 "UPDATE integration_outbox_deliveries d "
                 "SET state = 'dead', lease = NULL, dead_at = clock_timestamp() "
-                "WHERE d.state = 'inflight' AND d.lease < clock_timestamp() "
+                "FROM ("
+                "  SELECT x.event_id, x.destination "
+                "  FROM integration_outbox_deliveries x "
+                "  WHERE x.state = 'inflight' AND x.lease < clock_timestamp() "
+                "  AND x.attempts >= :max "
+                "  ORDER BY x.event_id, x.destination "
+                "  FOR UPDATE"
+                ") AS c "
+                "WHERE d.event_id = c.event_id AND d.destination = c.destination "
+                "AND d.state = 'inflight' AND d.lease < clock_timestamp() "
                 "AND d.attempts >= :max "
                 "RETURNING d.event_id, d.destination, d.attempts, d.last_error"
             ),
@@ -326,6 +394,18 @@ async def retire_poisoned(session) -> int:
     llegada en `tasks/delivery.py`, pero `retire_exhausted` no impone orden
     explícito) ⇒ deadlock teórico entre dos ciclos solapados; Postgres lo
     detecta y aborta uno, y `dispatch_outbox_task` reintenta.
+
+    G8-N-1 — el CONTRATO exacto, porque el nombre «la CABEZA» promete de más:
+    lo garantizado es «UNA fila que ES veneno por ciclo», no «la que es cabeza
+    en el instante del UPDATE». El subplan elige la cabeza con el snapshot de
+    la sentencia; si mientras el UPDATE espera el lock otro dispatcher hace
+    ELEGIBLE a un candidato con `next_attempt_at` anterior, se retira la que
+    eligió el subplan, que ya no es la cabeza. No es un fallo: la retirada
+    sigue cumpliendo las TRES condiciones de veneno (el recheck EPQ las
+    re-evalúa), sigue siendo UNA por ciclo, y ningún camino del código mueve
+    el `next_attempt_at` de una fila `inflight` sin sacarla antes de ese
+    estado (`mark_failed` la pasa a `pending` en la misma SET). El vecino sano
+    —lo que G5-P2-2 protege— sigue intocable.
 
     G3-H-1: es el modo de fallo que abrió G2-P3-4 al sacar el consumo de
     intentos del claim — un payload que mata al proceso del dispatcher antes
@@ -441,6 +521,18 @@ async def mark_delivered(session, marks: list, lease_token=None) -> int:
     tasks/delivery.py), que devuelve la versión más reciente COMMITEADA y de
     paso deja al UPDATE sin EPQ que hacer.
 
+    G8-N-3 — INVARIANTE DEL LLAMADOR, escrita aquí porque la firma invita a lo
+    contrario (`marks` es una LISTA): hoy `tasks/delivery.py` llama con UN
+    solo mark por iteración, así que ninguna de las dos sentencias de abajo
+    puede retener una fila y esperar en otra DENTRO de su propia ejecución.
+    Si Fase C agrupa marks —la tentación aparece sola cuando el transporte
+    pasa a ser HTTP—, ese lote pasa a ser multifila y solo el ORDEN DE LOCK
+    lo mantiene libre de ciclos de espera: TODAS las sentencias multifila del
+    módulo toman los locks por `(event_id, destination)` ASCENDENTE
+    (`retire_exhausted`, `renew_lease` y este pre-SELECT), y el UPDATE de
+    abajo opera sobre filas que este pre-SELECT ya posee. Agrupar marks sin
+    ordenar los arrays por esa misma clave reabre la arista de G8-N-2.
+
     G6-N-3, escrito para que nadie lo lea como un bug: `attempts` se incrementa
     también cuando la fila llegó a `pending` porque el `mark_failed` de OTRO
     dispatcher ya consumió su intento. Son DOS transportes REALMENTE
@@ -473,9 +565,9 @@ async def mark_delivered(session, marks: list, lease_token=None) -> int:
     dests = [m["dest"] for m in marks]
     # G7-P2-2: la foto PREVIA de la fila, leída CON LOCK. Bloquea hasta que
     # el eventual ladrón commitea, así que el lease que vuelve es el vigente
-    # de VERDAD y no el del snapshot. `ORDER BY` para no introducir orden de
-    # lock nuevo (el mismo del claim). Es de solo lectura: no transiciona
-    # nada.
+    # de VERDAD y no el del snapshot. `ORDER BY` para fijar el orden de lock
+    # canónico del módulo, (event_id, destination). Es de solo lectura: no
+    # transiciona nada.
     # G8-P3-1: y lleva el MISMO filtro de estado que el UPDATE de abajo, que
     # es un qual del SCAN: una fila ya `dead`/`delivered` se descarta ANTES
     # de pedir su lock. Sin repetirlo aquí, el pre-SELECT pedía el lock de
