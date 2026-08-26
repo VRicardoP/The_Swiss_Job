@@ -26,6 +26,12 @@ MAX_ATTEMPTS = 8
 BACKOFF_BASE_S = 60
 BACKOFF_CAP_S = 3600
 LEASE_S = 120
+# G2-H-7 (registrado para el cutover de Fase C): UN solo lease para el lote
+# entero, sin renovación. Irrelevante con el transporte sombra (INSERT local),
+# pero con el HTTP real un lote lento puede superar el lease a mitad → re-claim
+# y re-entrega de la cola del lote (at-least-once legal, el inbox deduplica) con
+# los marks tardíos `fenced_out`. Si aquello se vuelve visible, renovar el lease
+# por sub-lote; el consumo de intentos ya no lo amplifica (G2-P3-4).
 
 _transport = None
 

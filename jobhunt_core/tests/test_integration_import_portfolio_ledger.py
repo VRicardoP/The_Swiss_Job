@@ -838,3 +838,14 @@ def test_ledger_payload_toxico_con_url_larga_reason_is_malformed():
             assert e.reason == pil.Q_MALFORMED  # antes: limit
 
     asyncio.run(_on_disposable_db(_run))
+
+
+def test_json_safe_claves_que_colapsan_no_pierden_entradas():
+    """G2-H-1 (hipótesis CONFIRMADA): dos claves DISTINTAS que colapsan tras el
+    saneo ('a\\x00' → 'a\\ufffd' cuando ya existe 'a\\ufffd') perdían una entrada
+    del manifiesto en SILENCIO — solo degrada el registro de auditoría, pero es
+    pérdida silenciosa igualmente. Ahora se desambigua."""
+    from jobhunt_core.import_portfolio_durables import _json_safe
+
+    out = _json_safe({"a\x00": 1, "a\ufffd": 2})
+    assert len(out) == 2 and sorted(out.values()) == [1, 2]

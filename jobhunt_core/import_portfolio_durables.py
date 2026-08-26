@@ -482,7 +482,18 @@ def _json_safe(value):
     if isinstance(value, float) and not math.isfinite(value):
         return str(value)
     if isinstance(value, dict):
-        return {_json_safe(k): _json_safe(v) for k, v in value.items()}
+        out = {}
+        for k, v in value.items():
+            key = _json_safe(k)
+            if key in out:
+                # G2-H-1: dos claves DISTINTAS que colapsan tras el saneo
+                # ('a\x00' y 'a\ufffd' — las urls tóxicas viajan como clave en
+                # ledger/staging) perdían una entrada del manifiesto en
+                # silencio. Se desambigua en vez de pisar: el registro de
+                # auditoría no pierde nada.
+                key = f"{key}#{len(out)}"
+            out[key] = _json_safe(v)
+        return out
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
     return value
