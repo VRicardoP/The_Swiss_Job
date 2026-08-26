@@ -21,6 +21,9 @@ from celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 _WATERMARK_KEY = "teacher_alert:watermark"
+# G3/P1-1 — marcador «ya avisado» por oferta: es lo que permite que la
+# ventana solape sin reenviar (ver tasks/watermarks.py).
+_SENT_PREFIX = "teacher_alert:sent"
 
 
 @celery_app.task(
@@ -46,6 +49,7 @@ async def _detect_and_notify() -> dict[str, Any]:
     from models.job import Job
     from services.email_service import EmailService
     from services.teacher_alert import build_alert_email, is_primary_teacher_job
+    from tasks.watermarks import filter_unsent, save_watermark, unmark_sent
 
     if not settings.TEACHER_ALERT_ENABLED:
         return {"status": "disabled"}
@@ -91,20 +95,30 @@ async def _detect_and_notify() -> dict[str, Any]:
         j for j in candidates if is_primary_teacher_job(j.category, j.title, j.tags)
     ]
 
-    # G1/P2-15: la marca se guarda ANTES de enviar. Con la marca al final, un
-    # fallo POSTERIOR al SMTP OK (p.ej. Redis caído en _save_watermark) hacía
-    # que el retry (max_retries=1, except genérico) re-enviara el email
-    # completo. Trade-off elegido y documentado: si el envío falla tras
-    # avanzar la marca se pierde ESE aviso (las ofertas siguen en el board);
-    # el duplicado molesto queda descartado por construcción.
-    _save_watermark(r, now)
+    # G3/P1-1: la marca se guarda con LAG (ventana solapada, ver
+    # tasks/watermarks.py) y la idempotencia pasa a ser POR OFERTA. Eso
+    # deroga el trade-off de G1/P2-15 («marca antes de enviar para no
+    # duplicar nunca, aun a costa de perder ese aviso»): ahora el solape
+    # recupera lo que la cosecha commiteó tarde y el marcador impide el
+    # reenvío.
+    save_watermark(r, _WATERMARK_KEY, now)
 
-    if matches:
-        subject, text, html = build_alert_email(matches)
-        email.send(settings.TEACHER_ALERT_EMAIL, subject, text, html)
+    fresh_hashes = set(filter_unsent(r, _SENT_PREFIX, [j.hash for j in matches]))
+    fresh = [j for j in matches if j.hash in fresh_hashes]
+
+    if fresh:
+        subject, text, html = build_alert_email(fresh)
+        try:
+            email.send(settings.TEACHER_ALERT_EMAIL, subject, text, html)
+        except Exception:
+            # El envío falló: retirar los marcadores para que el retry (o la
+            # corrida siguiente, que ya solapa) lo vuelva a intentar.
+            unmark_sent(r, _SENT_PREFIX, fresh_hashes)
+            r.close()
+            raise
         logger.info(
             "Alerta profesor primaria: %d ofertas enviadas a %s",
-            len(matches),
+            len(fresh),
             settings.TEACHER_ALERT_EMAIL,
         )
 
@@ -113,7 +127,8 @@ async def _detect_and_notify() -> dict[str, Any]:
     return {
         "status": "success",
         "candidates": len(candidates),
-        "matched": len(matches),
+        "matched": len(fresh),
+        "already_sent": len(matches) - len(fresh),
     }
 
 
@@ -127,7 +142,3 @@ def _load_watermark(r, now: datetime, lookback_days: int) -> datetime:
         except (ValueError, AttributeError):
             logger.warning("Marca de agua inválida en Redis; reiniciando ventana")
     return now - timedelta(days=lookback_days)
-
-
-def _save_watermark(r, now: datetime) -> None:
-    r.set(_WATERMARK_KEY, now.isoformat())

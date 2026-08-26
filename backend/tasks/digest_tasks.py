@@ -15,6 +15,9 @@ from celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 _WATERMARK_KEY = "daily_digest:watermark"
+# G3/P1-1 — marcador «ya enviado» por (usuario, oferta): permite que la
+# ventana solape sin reenviar (ver tasks/watermarks.py).
+_SENT_PREFIX = "daily_digest:sent"
 
 
 @celery_app.task(name="tasks.digest_tasks.send_daily_digest", bind=True, max_retries=1)
@@ -39,6 +42,7 @@ async def _send_daily_digest_async() -> dict[str, Any]:
     from services.daily_digest import build_digest_email
     from services.email_service import EmailService
     from services.routing import CAPABILITY_MATCHING, legacy_owned_sql
+    from tasks.watermarks import filter_unsent, save_watermark, unmark_sent
 
     if not settings.DAILY_DIGEST_ENABLED:
         return {"status": "disabled"}
@@ -66,6 +70,7 @@ async def _send_daily_digest_async() -> dict[str, Any]:
                 Job.location,
                 Job.canton,
                 Job.url,
+                Job.hash,
                 MatchResult.score_final,
             )
             .join(User, User.id == MatchResult.user_id)
@@ -110,27 +115,39 @@ async def _send_daily_digest_async() -> dict[str, Any]:
                 "location": row.canton or row.location,
                 "url": row.url,
                 "score": row.score_final,
+                "hash": row.hash,
             }
         )
 
     sent = 0
     failures = 0
-    for data in by_user.values():
+    for user_id, data in by_user.items():
         if not data["jobs"]:
             continue
-        subject, text, html = build_digest_email(data["jobs"])
+        # G3/P1-1: idempotencia POR (usuario, oferta). La ventana solapa a
+        # propósito para recuperar lo que la transacción de matching commiteó
+        # después de la marca; el marcador impide que ese solape reenvíe.
+        marker_ids = [f"{user_id}:{j['hash']}" for j in data["jobs"]]
+        fresh_ids = set(filter_unsent(r, _SENT_PREFIX, marker_ids))
+        fresh_jobs = [
+            j for j, marker in zip(data["jobs"], marker_ids) if marker in fresh_ids
+        ]
+        if not fresh_jobs:
+            continue
+        subject, text, html = build_digest_email(fresh_jobs)
         try:
             email.send(data["email"], subject, text, html)
             sent += 1
         except Exception as exc:  # un fallo por usuario no aborta el resto
             failures += 1
+            unmark_sent(r, _SENT_PREFIX, fresh_ids)
             logger.warning("Digest: fallo enviando a %s: %s", data["email"], exc)
 
     # Solo avanzar la marca si NADIE falló: un fallo transitorio de SMTP no debe
     # dejar matches por debajo de la marca y perderlos para siempre. Si hubo
     # fallos, la próxima corrida reintenta (a costa de reenviar a quien sí recibió).
     if failures == 0:
-        _save_watermark(r, now)
+        save_watermark(r, _WATERMARK_KEY, now)
     else:
         logger.warning(
             "Digest: %d envío(s) fallaron; marca NO avanzada, se reintentará", failures
@@ -156,7 +173,3 @@ def _load_watermark(r, now: datetime, lookback_hours: int) -> datetime:
         except (ValueError, AttributeError):
             logger.warning("Marca de agua del digest inválida; reiniciando ventana")
     return now - timedelta(hours=lookback_hours)
-
-
-def _save_watermark(r, now: datetime) -> None:
-    r.set(_WATERMARK_KEY, now.isoformat())

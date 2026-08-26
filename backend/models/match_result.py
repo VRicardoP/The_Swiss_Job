@@ -81,8 +81,13 @@ class MatchResult(Base):
     draft_letter: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Timestamps
+    # G3/P1-1: `clock_timestamp()` por el mismo motivo que `Job.first_seen_at`
+    # — `run_matching` abre la transacción en `_get_profile` y la cierra en
+    # `_save_results`, con el rerank LLM en medio: con `now()` los matches
+    # nacían fechados minutos antes de existir y caían bajo la marca del
+    # digest.
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.clock_timestamp(), nullable=False
     )
 
     def __repr__(self) -> str:

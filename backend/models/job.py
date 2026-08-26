@@ -64,11 +64,18 @@ class Job(Base):
     employment_type: Mapped[str | None] = mapped_column(String(100))
 
     # Timestamps
+    # G3/P1-1: `clock_timestamp()`, NO `now()`. En Postgres `now()` es
+    # `transaction_timestamp()` — se congela al ABRIR la transacción, así que
+    # una cosecha de varios minutos daba de alta ofertas fechadas al inicio de
+    # la transacción, por debajo de la marca de agua que las tareas de aviso
+    # ya habían guardado: el lote no se notificaba jamás. `clock_timestamp()`
+    # reduce el desfase a «INSERT→commit» (la red de seguridad sigue siendo el
+    # lag de `tasks/watermarks.py`).
     first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.clock_timestamp(), nullable=False
     )
     last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.clock_timestamp(), nullable=False
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False, index=True

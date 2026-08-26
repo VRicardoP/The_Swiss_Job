@@ -49,6 +49,9 @@ _HEALTH_NOTIFY_COOLDOWN_SECONDS = 24 * 3600
 # schedule que deriva producía solapes (matches notificados dos veces) o
 # huecos (matches nunca notificados).
 _DIGEST_WATERMARK_KEY = "watchlist_digest:watermark"
+# G3/P1-1 — marcador «ya avisado» por (usuario, oferta), que es lo que
+# permite solapar la ventana sin duplicar (ver tasks/watermarks.py).
+_DIGEST_SENT_PREFIX = "watchlist_digest:sent"
 
 
 @celery_app.task(name="tasks.watchlist.check_health")
@@ -222,14 +225,18 @@ async def _notify_users(db, users, issues: list[dict]) -> int:
     return count
 
 
-@celery_app.task(name="tasks.watchlist.send_digest")
-def send_watchlist_digest() -> dict[str, Any]:
+@celery_app.task(name="tasks.watchlist.send_digest", bind=True, max_retries=1)
+def send_watchlist_digest(self) -> dict[str, Any]:
     """Digest diario para matches de watchlist con score 40-69 (no push)."""
     try:
         return asyncio.run(_send_digest_async())
     except Exception as exc:
+        # G3/P2-9: antes se devolvía un dict de error y Celery marcaba la tarea
+        # como SUCCEEDED — con la marca de agua ya avanzada, la ventana entera
+        # se perdía en silencio. Ahora la marca avanza DESPUÉS del commit y el
+        # fallo se propaga para que haya reintento.
         logger.error("send_watchlist_digest failed: %s", exc)
-        return {"status": "error", "error": str(exc)}
+        raise self.retry(exc=exc, countdown=120)
 
 
 async def _send_digest_async() -> dict[str, Any]:
@@ -246,9 +253,15 @@ async def _send_digest_async() -> dict[str, Any]:
 
     # G1/P3-20 — ventana por MARCA DE AGUA (antes: now-24h fija, que con la
     # deriva del schedule producía solapes o huecos). Primera corrida:
-    # lookback de 24h. La marca avanza ANTES de notificar (mismo trade-off
-    # documentado que la alerta de profesor, P2-15: nunca duplicar).
+    # lookback de 24h.
+    # G3/P2-9 + G3/P1-1 — la marca ya NO avanza aquí: avanzaba ANTES de
+    # trabajar y, si la BD fallaba, la tarea devolvía un dict de error con la
+    # ventana ya consumida (perdida para siempre). Ahora avanza tras el commit
+    # y RETROCEDIDA el lag de seguridad; la no-duplicación la garantiza el
+    # marcador por (usuario, oferta), no el instante de la marca.
     import redis
+
+    from tasks.watermarks import filter_unsent, save_watermark, unmark_sent
 
     now = datetime.now(timezone.utc)
     r = redis.from_url(settings.REDIS_URL)
@@ -262,66 +275,92 @@ async def _send_digest_async() -> dict[str, Any]:
             logger.warning("Marca de agua del digest inválida; ventana de 24h")
     if since is None:
         since = now - timedelta(hours=24)
-    r.set(_DIGEST_WATERMARK_KEY, now.isoformat())
-    r.close()
     watchlist_sources = _get_watchlist_sources()
 
-    async with task_session() as db:
-        users_stmt = (
-            select(User)
-            .join(UserProfile, UserProfile.user_id == User.id)
-            .where(
-                User.is_active.is_(True),
-                UserProfile.watchlist_schools_enabled.is_(True),
-                # Gate anti-doble-motor D.1 (§15bis), EN SQL: este digest se
-                # construye desde `match_results` LEGACY igual que el diario.
-                # Para un perfil migrado esos matches YA NO se actualizan (el
-                # gate de run_all_matches lo omite), así que seguir enviándolo
-                # sería correo con recomendaciones viejas para siempre.
-                legacy_owned_sql(User.id, CAPABILITY_MATCHING),
-            )
-        )
-        users = (await db.execute(users_stmt)).scalars().all()
-
-        notified = 0
-        for user in users:
-            stmt = (
-                select(MatchResult, Job)
-                .join(Job, Job.hash == MatchResult.job_hash)
+    try:
+        async with task_session() as db:
+            users_stmt = (
+                select(User)
+                .join(UserProfile, UserProfile.user_id == User.id)
                 .where(
-                    MatchResult.user_id == user.id,
-                    MatchResult.created_at >= since,
-                    # Cota superior = la marca guardada: sin ella, un match
-                    # creado entre la query y la marca se notificaría dos
-                    # veces (el cierre de digest_tasks/P2-15).
-                    MatchResult.created_at <= now,
-                    Job.source.in_(watchlist_sources),
-                    and_(
-                        MatchResult.score_final >= settings.WATCHLIST_DIGEST_MIN_SCORE,
-                        MatchResult.score_final < settings.WATCHLIST_PUSH_THRESHOLD,
-                    ),
-                )
-                .order_by(MatchResult.score_final.desc())
-                .limit(20)
-            )
-            rows = (await db.execute(stmt)).all()
-            if not rows:
-                continue
-
-            lines = [
-                f"• {j.company or '?'} — {j.title[:60]} (score {m.score_final:.0f})"
-                for m, j in rows
-            ]
-            db.add(
-                Notification(
-                    user_id=user.id,
-                    event_type="watchlist_digest",
-                    title=f"Digest watchlist — {len(rows)} matches potenciales",
-                    body="\n".join(lines),
-                    data={"count": len(rows)},
+                    User.is_active.is_(True),
+                    UserProfile.watchlist_schools_enabled.is_(True),
+                    # Gate anti-doble-motor D.1 (§15bis), EN SQL: este digest se
+                    # construye desde `match_results` LEGACY igual que el diario.
+                    # Para un perfil migrado esos matches YA NO se actualizan (el
+                    # gate de run_all_matches lo omite), así que seguir enviándolo
+                    # sería correo con recomendaciones viejas para siempre.
+                    legacy_owned_sql(User.id, CAPABILITY_MATCHING),
                 )
             )
-            notified += 1
+            users = (await db.execute(users_stmt)).scalars().all()
 
-        await db.commit()
-        return {"status": "ok", "users_notified": notified}
+            notified = 0
+            marked: set[str] = set()
+            for user in users:
+                stmt = (
+                    select(MatchResult, Job)
+                    .join(Job, Job.hash == MatchResult.job_hash)
+                    .where(
+                        MatchResult.user_id == user.id,
+                        MatchResult.created_at >= since,
+                        # Cota superior = la marca guardada: sin ella, un match
+                        # creado entre la query y la marca se notificaría dos
+                        # veces (el cierre de digest_tasks/P2-15).
+                        MatchResult.created_at <= now,
+                        Job.source.in_(watchlist_sources),
+                        and_(
+                            MatchResult.score_final
+                            >= settings.WATCHLIST_DIGEST_MIN_SCORE,
+                            MatchResult.score_final < settings.WATCHLIST_PUSH_THRESHOLD,
+                        ),
+                    )
+                    .order_by(MatchResult.score_final.desc())
+                    .limit(20)
+                )
+                rows = (await db.execute(stmt)).all()
+                if not rows:
+                    continue
+
+                # Idempotencia por (usuario, oferta): la ventana solapa a propósito
+                # para recuperar los matches que el commit de `run_matching` dejó
+                # por debajo de la marca; el marcador impide re-avisar.
+                markers = [f"{user.id}:{m.job_hash}" for m, _ in rows]
+                fresh_markers = set(filter_unsent(r, _DIGEST_SENT_PREFIX, markers))
+                fresh = [
+                    (m, j)
+                    for (m, j), marker in zip(rows, markers)
+                    if marker in fresh_markers
+                ]
+                if not fresh:
+                    continue
+                marked.update(fresh_markers)
+
+                lines = [
+                    f"• {j.company or '?'} — {j.title[:60]} (score {m.score_final:.0f})"
+                    for m, j in fresh
+                ]
+                db.add(
+                    Notification(
+                        user_id=user.id,
+                        event_type="watchlist_digest",
+                        title=f"Digest watchlist — {len(fresh)} matches potenciales",
+                        body="\n".join(lines),
+                        data={"count": len(fresh)},
+                    )
+                )
+                notified += 1
+
+            try:
+                await db.commit()
+            except Exception:
+                # Sin commit no hay notificación: los marcadores deben caer para
+                # que el reintento vuelva a construir el digest.
+                unmark_sent(r, _DIGEST_SENT_PREFIX, marked)
+                raise
+
+            # La marca solo avanza cuando las notificaciones YA están persistidas.
+            save_watermark(r, _DIGEST_WATERMARK_KEY, now)
+            return {"status": "ok", "users_notified": notified}
+    finally:
+        r.close()

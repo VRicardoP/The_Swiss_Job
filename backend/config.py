@@ -180,6 +180,22 @@ class Settings(BaseSettings):
     )
     SCHEDULER_TEACHER_ALERT_INTERVAL_HOURS: int = 6
 
+    # G3/P1-1 — marcas de agua de las tareas de notificación. `now()` de
+    # Postgres es el INICIO de la transacción, así que una cosecha larga
+    # persiste ofertas cuyo `first_seen_at` es ANTERIOR a la marca que la
+    # tarea guardó mientras esa cosecha seguía abierta: sin solape, ese lote
+    # no se notifica jamás. El LAG debe superar la transacción de
+    # cosecha/matching más larga (los soft limits actuales son de 30 min en
+    # scraping, pero la transacción POR FUENTE es de minutos).
+    NOTIFY_WATERMARK_LAG_MINUTES: int = Field(default=15, ge=0)
+    # Caducidad del marcador «ya avisado» por elemento, que es lo que evita
+    # que el solape reenvíe. Debe ser >> LAG y >> intervalo de la tarea.
+    NOTIFY_SENT_MARKER_TTL_DAYS: int = Field(default=14, ge=1)
+    # Cota inferior de la PRIMERA corrida de una búsqueda guardada (G3/P3-2):
+    # sin ella la corrida de estreno cuenta el corpus activo entero como
+    # «nuevo» y notifica cientos de ofertas de hace meses.
+    SAVED_SEARCH_INITIAL_LOOKBACK_DAYS: int = Field(default=1, ge=0)
+
     # Digest diario de matches por email (opt-in, requiere SMTP_*). Resume los
     # mejores matches NUEVOS de cada usuario desde el último envío (marca de agua
     # en Redis, sin re-enviar). Distinto de la alerta de profesor (destinatario fijo).
