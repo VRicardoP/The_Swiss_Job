@@ -9,6 +9,7 @@ import httpx
 from config import settings
 from services.circuit_breaker import CircuitBreakerOpen
 from services.job_service import BaseJobProvider
+from utils import fetch_diagnostics as diag
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -59,15 +60,32 @@ class CareerjetProvider(BaseJobProvider):
                 if not data:
                     break
 
-                # Verify response type
+                # Verify response type. G3/P2-6: la API responde HTTP 200 con
+                # {"type": "ERROR", ...} cuando el affid es inválido o está
+                # revocado. Sin registrar el fallo, el día que caduque
+                # CAREERJET_AFFID la fuente muere en silencio y el panel de
+                # salud la da por sana (clase V.0).
                 resp_type = data.get("type", "")
                 if resp_type != "JOBS":
-                    logger.warning(
-                        "Careerjet response type: %s (expected JOBS)", resp_type
+                    detail = (
+                        f"respuesta type={resp_type or 'ausente'} (se esperaba JOBS)"
                     )
+                    logger.error("Careerjet: %s", detail)
+                    diag.record(diag.KIND_NETWORK, self.API_URL, detail=detail)
                     break
 
-                raw_jobs = data.get("jobs", [])
+                # G3/P2-6: `jobs` AUSENTE es estructura desconocida; `jobs`
+                # presente y vacío sí es fin de paginación / sin resultados
+                # legítimo (una búsqueda sin hits devuelve type=JOBS, jobs=[]).
+                if "jobs" not in data:
+                    detail = (
+                        "respuesta JOBS sin la clave 'jobs': estructura desconocida"
+                    )
+                    logger.error("Careerjet: %s", detail)
+                    diag.record(diag.KIND_NETWORK, self.API_URL, detail=detail)
+                    break
+
+                raw_jobs = data.get("jobs") or []
                 if not raw_jobs:
                     break
 

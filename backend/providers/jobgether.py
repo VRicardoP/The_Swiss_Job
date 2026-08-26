@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 
 import httpx
 
@@ -20,6 +21,23 @@ logger = logging.getLogger(__name__)
 _NON_REMOTE_TYPES = frozenset(
     {"no remote", "not remote", "on-site", "onsite", "office"}
 )
+
+# G3/P3-13: el slug es "<id>-<titulo>" y el id cambia cuando el portal reemite
+# la MISMA vacante, así que la identidad era volátil y cada reemisión creaba
+# una fila nueva (el dedup semántico excluye a propósito los pares de la misma
+# fuente y nadie las recogía después). Se ancla al id real de Jobgether —24
+# hex, formato ObjectId— para no amputar un slug que empiece por otra cosa.
+_VOLATILE_SLUG_ID = re.compile(r"^[0-9a-f]{24}-")
+
+
+def canonical_identity_slug(slug: str) -> str:
+    """Slug sin el id volátil inicial, para computar una identidad ESTABLE.
+
+    Solo se usa para el `hash`: la `url` publicada sigue siendo la real y
+    `ON CONFLICT (hash)` la refresca, de modo que la reemisión pasa a ser una
+    re-vista de la oferta existente en vez de un clon.
+    """
+    return _VOLATILE_SLUG_ID.sub("", slug.strip())
 
 
 class JobgetherProvider(BaseJobProvider):
@@ -105,8 +123,12 @@ class JobgetherProvider(BaseJobProvider):
         tags = self._build_tags(raw, title)
         salary_original, salary_currency = self._parse_salary(raw)
 
+        identity_url = (
+            f"{self.OFFER_URL_BASE}{canonical_identity_slug(slug)}" if slug else ""
+        )
+
         return {
-            "hash": self.compute_hash(title, company, url),
+            "hash": self.compute_hash(title, company, identity_url),
             "source": self.SOURCE_NAME,
             "title": title,
             "company": company,

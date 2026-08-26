@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 
 import httpx
 
@@ -14,6 +15,23 @@ logger = logging.getLogger(__name__)
 
 MAX_PAGES = 3
 PAGE_DELAY_SECONDS = 0.5
+
+# G3/P3-13: el id numérico final de la URL cambia cada vez que el portal
+# reemite la MISMA vacante ("…-stuttgart-459633" y "…-stuttgart-198909" son la
+# misma oferta), así que la identidad era volátil y cada reemisión creaba una
+# fila nueva. El dedup semántico excluye a propósito los pares de la misma
+# fuente, de modo que nadie los recogía después.
+_VOLATILE_ID_SUFFIX = re.compile(r"-\d+/?$")
+
+
+def canonical_identity_url(url: str) -> str:
+    """URL sin el id volátil final, para computar una identidad ESTABLE.
+
+    Solo se usa para el `hash`: la `url` publicada sigue siendo la real y
+    `ON CONFLICT (hash)` la refresca, de modo que la reemisión pasa a ser una
+    re-vista de la oferta existente en vez de un clon.
+    """
+    return _VOLATILE_ID_SUFFIX.sub("", url.strip())
 
 
 class ArbeitnowProvider(BaseJobProvider):
@@ -74,7 +92,7 @@ class ArbeitnowProvider(BaseJobProvider):
         employment_type = ", ".join(job_types) if job_types else None
 
         return {
-            "hash": self.compute_hash(title, company, url),
+            "hash": self.compute_hash(title, company, canonical_identity_url(url)),
             "source": self.SOURCE_NAME,
             "title": title,
             "company": company,

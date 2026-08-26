@@ -159,7 +159,9 @@ class UNTalentProvider(BaseJobProvider):
         is_remote = (
             "home-based" in location_str.lower()
             or "remote" in location_str.lower()
-            or "homebased" in raw.get("type", "").lower()
+            # G3/P3-14: un `type` con null explícito rompía con AttributeError
+            # (residual del fix G1/P3-1: el default de .get no cubre el null).
+            or "homebased" in (raw.get("type") or "").lower()
         )
 
         return {

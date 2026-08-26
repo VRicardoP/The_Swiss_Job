@@ -62,9 +62,15 @@ class JoobleProvider(BaseJobProvider):
 
                 results.extend(self._process_raw_jobs(raw_jobs))
 
-                # Check if there are more results
-                total_count = data.get("totalCount", 0)
-                if len(results) >= total_count:
+                # Check if there are more results.
+                # G3/P3-11: casteo seguro (residual del fix G1/P3-3, aplicado
+                # entonces a careerjet.pages y jobgether.maxPages). Un
+                # totalCount string daba TypeError que ESCAPABA de fetch_jobs
+                # —el except de arriba no lo cubre— y perdía la fuente entera;
+                # ausente o 0 cortaba en la página 1 en silencio. El 0 es
+                # falsy: se sigue paginando hasta el tope o la página vacía.
+                total_count = self._safe_int(data.get("totalCount"))
+                if total_count and len(results) >= total_count:
                     break
 
                 # Delay between pages

@@ -100,21 +100,42 @@ class NavArbeidsplassenProvider(BaseJobProvider):
             if not data:
                 break
 
-            page_hits = data.get("hits", {}).get("hits", [])
+            hits_block = data.get("hits")
+            if not isinstance(hits_block, dict):
+                # Estructura desconocida: no es una página vacía legítima.
+                logger.warning("NAV faceta '%s': respuesta sin bloque 'hits'", facet)
+                break
+
+            page_hits = hits_block.get("hits") or []
             if not page_hits:
                 # Fin de la faceta: página vacía es éxito, no fallo.
                 break
 
             hits.extend(page_hits)
 
-            total = data.get("hits", {}).get("total", {}).get("value", 0)
-            if offset + PAGE_SIZE >= total:
+            total = self._total_hits(hits_block)
+            if total and offset + PAGE_SIZE >= total:
                 break
 
             if page < budget - 1:
                 await asyncio.sleep(PAGE_DELAY_SECONDS)
 
         return hits
+
+    def _total_hits(self, hits_block: dict) -> int:
+        """Total de resultados del bloque `hits`, en formato ES6 y ES7+.
+
+        G3/P3-15: se asumía Elasticsearch 7+ (`total` como objeto con `value`).
+        Con el formato ES6 (`"total": 1234`, entero) el `.get` sobre un int
+        lanzaba AttributeError que ESCAPABA de fetch_jobs; con `total` ausente,
+        `offset + PAGE_SIZE >= 0` era siempre cierto y cosechaba 1 página de
+        las 3 en silencio. El 0 es falsy: el llamante sigue paginando hasta la
+        página vacía o el presupuesto.
+        """
+        total = hits_block.get("total")
+        if isinstance(total, dict):
+            total = total.get("value")
+        return self._safe_int(total)
 
     def normalize_job(self, raw: dict) -> dict:
         """Transforma un hit de Elasticsearch de NAV al esquema unificado."""

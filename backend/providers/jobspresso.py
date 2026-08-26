@@ -13,6 +13,7 @@ import httpx
 
 from services.job_service import BaseJobProvider
 from utils.dates import parse_published_at
+from utils import fetch_diagnostics as diag
 from utils.http import fetch_rss
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -46,6 +47,17 @@ class JobspressoProvider(BaseJobProvider):
 
     SOURCE_NAME = "jobspresso"
 
+    def _record_structure_failure(self, detail: str) -> None:
+        """Registra un fallo de estructura como error de fetch VISIBLE.
+
+        G3/P2-6: un HTTP 200 cuyo cuerpo no podemos leer NO es "no hay
+        ofertas". Sin este registro el veredicto del run salía `empty` (sequía
+        legítima) en vez de `error` y el panel de salud daba por sana una
+        fuente rota. Mismo patrón que zebis (clase V.0/VD.7).
+        """
+        logger.error("jobspresso: %s", detail)
+        diag.record(diag.KIND_NETWORK, RSS_URL, detail=detail)
+
     async def fetch_jobs(self, query: str, location: str = "Switzerland") -> list[dict]:
         """Fetch remote jobs from Jobspresso RSS."""
         async with httpx.AsyncClient() as client:
@@ -58,18 +70,21 @@ class JobspressoProvider(BaseJobProvider):
                 )
             )
 
-        if not xml_text:
+        # G3/P2-6: SOLO el None de fetch_rss corta aquí (fetch fallido cuyo
+        # issue ya registró utils.http). Un "" —200 con cuerpo vacío— fluye a
+        # ET.fromstring y sale como fallo de estructura, no como feed vacío.
+        if xml_text is None:
             return []
 
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError as exc:
-            logger.error("Failed to parse Jobspresso RSS XML: %s", exc)
+            self._record_structure_failure(f"RSS XML ilegible: {exc}")
             return []
 
         channel = root.find("channel")
         if channel is None:
-            logger.warning("No <channel> in Jobspresso RSS feed")
+            self._record_structure_failure("RSS sin <channel>: estructura desconocida")
             return []
 
         items = channel.findall("item")

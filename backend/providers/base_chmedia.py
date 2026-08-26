@@ -16,7 +16,13 @@ def build_chmedia_url(domain: str, job: dict) -> str:
     ext_id = job.get("externalId", "")
     if ext_id:
         return f"https://{domain}/stelle/{ext_id}"
-    return f"https://{domain}"
+    # G3/P3-12 (clase VD.1): devolver f"https://{domain}" daba la MISMA URL a
+    # toda oferta sin urlApplication/urlDescription/externalId (o con un
+    # mailto:). `jobs.url` es UNIQUE y el ON CONFLICT solo contempla `hash`:
+    # la segunda de esas ofertas abortaba su savepoint y se perdía en silencio
+    # en cada run. Sin URL usable se devuelve "" y _process_raw_jobs la
+    # descarta con log visible.
+    return ""
 
 
 def normalize_chmedia_job(raw: dict, source: str, domain: str) -> dict:

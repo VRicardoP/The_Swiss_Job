@@ -18,6 +18,7 @@ from typing import Any
 
 from config import settings
 from services.job_service import BaseJobProvider
+from utils import fetch_diagnostics as diag
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +50,17 @@ class RestrictedPartnerProvider(BaseJobProvider):
 
         # Con credencial presente pero conector aún sin implementar: se deja
         # explícito para no simular datos ni hacer scraping no autorizado.
+        # G3/P3-15: además se REGISTRA como fallo de fetch. Devolver [] mudo
+        # presentaba la fuente como sana y seca cuando en realidad está
+        # pendiente de implementar. (El camino sin credencial —0 peticiones—
+        # sí es un vacío legítimo y sigue mudo a propósito.)
+        detail = "credencial presente pero el conector partner no está implementado"
         logger.warning(
-            "%s: credencial presente pero el conector partner no está implementado "
-            "todavía. Implementar la llamada al feed autorizado en fetch_jobs.",
+            "%s: %s. Implementar la llamada al feed autorizado en fetch_jobs.",
             self.SOURCE_NAME,
+            detail,
         )
+        diag.record(diag.KIND_NETWORK, f"partner://{self.SOURCE_NAME}", detail=detail)
         return self._finalize_fetch([])
 
     def normalize_job(self, raw: Any) -> dict:

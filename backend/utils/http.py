@@ -38,7 +38,15 @@ async def fetch_with_retry(
     last_error: str = ""
     for attempt in range(max_retries + 1):
         try:
-            kwargs: dict[str, Any] = {"timeout": timeout}
+            # G3/P1-3: httpx trae follow_redirects=False por defecto. Un portal
+            # que empieza a responder 308 (ostjob/zentraljob, 2026-08-18) mataba
+            # la fuente entera. Se sigue el redirect AQUÍ, en la raíz, para que
+            # ningún provider dependa de acordarse de activarlo. 307/308
+            # preservan el método, así que el POST de jooble sigue siendo POST.
+            kwargs: dict[str, Any] = {
+                "timeout": timeout,
+                "follow_redirects": True,
+            }
             if headers:
                 kwargs["headers"] = headers
             if params:
@@ -77,6 +85,10 @@ async def fetch_with_retry(
                 if attempt == max_retries:
                     diag.record(diag.KIND_HTTP, url, status=response.status_code)
                     return None
+                # G3/P1-3: era el ÚNICO camino de reintento sin pausa — cuatro
+                # peticiones en ráfaga medidas en 0.00 s. Misma escalera que el
+                # resto de reintentos.
+                await asyncio.sleep(min(backoff_factor * (2**attempt), max_retry_delay))
                 continue
 
             data = response.json()
@@ -147,7 +159,11 @@ async def fetch_rss(
     last_error: str = ""
     for attempt in range(max_retries + 1):
         try:
-            response = await client.get(url, headers=headers, timeout=timeout)
+            # G3/P1-3: sigue redirecciones también en los feeds RSS (un feed
+            # que migra de host responde 301/308 y, sin esto, la fuente muere).
+            response = await client.get(
+                url, headers=headers, timeout=timeout, follow_redirects=True
+            )
             if response.status_code == 200:
                 return response.text
             last_status = response.status_code
