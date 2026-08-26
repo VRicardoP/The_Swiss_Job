@@ -213,6 +213,13 @@ async def _fetch_providers_async() -> dict[str, Any]:
         # de fallo es pérdida silenciosa de ofertas re-listadas, no un error
         # por-oferta cualquiera.
         "identity_conflicts": 0,
+        # G5/P1-1 — la OTRA rama de la misma deriva, la que no choca:
+        # el portal re-lista con un id NUEVO, el INSERT tiene éxito y
+        # entra un CLON mientras la fila histórica se pudre. Contador
+        # propio porque el remedio es el mismo (canonizar) pero el
+        # síntoma es el contrario: corpus que CRECE, no ofertas que se
+        # descartan.
+        "identity_clones": 0,
         "unhealthy": [],
     }
 
@@ -372,6 +379,7 @@ async def _fetch_providers_async() -> dict[str, Any]:
                 # "todo descartado deliberadamente", no "fallo pre-bucle".
                 attempted_count = 0
                 identity_conflicts = 0
+                identity_clones = 0
                 for job, verdict in zip(batch, precheck.verdicts):
                     if verdict != harvest_window.ACCEPT:
                         continue
@@ -396,6 +404,35 @@ async def _fetch_providers_async() -> dict[str, Any]:
                                     summary["dupes"] += 1
                                 else:
                                     summary["new"] += 1
+                                    # G5/P1-1 — la rama MUDA de la deriva de
+                                    # identidad: el portal re-listó la vacante
+                                    # con un id NUEVO en la url, así que no hay
+                                    # choque con `ix_jobs_url` y el INSERT tiene
+                                    # ÉXITO. Entra un CLON y la fila histórica
+                                    # deja de refrescar `last_seen_at` para
+                                    # siempre. Solo se ALARMA (nunca se marca
+                                    # `duplicate_of` ni se desactiva): ver
+                                    # `Deduplicator.find_same_source_clone`.
+                                    twin = await Deduplicator.find_same_source_clone(
+                                        db,
+                                        job["fuzzy_hash"],
+                                        job["source"],
+                                        job["hash"],
+                                    )
+                                    if twin:
+                                        summary["identity_clones"] += 1
+                                        identity_clones += 1
+                                        logger.error(
+                                            "DERIVA DE IDENTIDAD (clon) en %s: "
+                                            "%s entra como ALTA nueva pero %s ya "
+                                            "cubre la misma vacante (%s) — la "
+                                            "histórica dejará de refrescar "
+                                            "last_seen_at",
+                                            source,
+                                            job["hash"],
+                                            twin,
+                                            job["url"],
+                                        )
                             else:
                                 summary["updated"] += 1
 
@@ -454,6 +491,13 @@ async def _fetch_providers_async() -> dict[str, Any]:
                         f"{source}: DERIVA DE IDENTIDAD — {identity_conflicts} "
                         "ofertas re-listadas descartadas por choque con "
                         "ix_jobs_url (corpus histórico sin migrar)"
+                    )
+                if identity_clones:
+                    summary["unhealthy"].append(
+                        f"{source}: DERIVA DE IDENTIDAD — {identity_clones} "
+                        "ofertas re-listadas con id NUEVO entraron como CLON "
+                        "(sin choque de url; la fila histórica ya no refresca "
+                        "last_seen_at)"
                     )
 
                 # VD.3 — señal de persistencia, DESPUÉS del commit del lote a

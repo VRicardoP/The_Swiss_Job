@@ -155,6 +155,48 @@ class Deduplicator:
         return row
 
     @staticmethod
+    async def find_same_source_clone(
+        db: AsyncSession, fuzzy_hash: str, source: str, job_hash: str
+    ) -> str | None:
+        """ALARMA de deriva de identidad: gemela intra-fuente ya persistida.
+
+        G5/P1-1 — `find_fuzzy_duplicate` excluye a propósito los pares de la
+        MISMA fuente (los reposts intra-fuente los cubría la identidad exacta).
+        Esa exclusión es correcta para MARCAR, pero deja ciega la rama
+        DOMINANTE de la deriva de identidad: cuando el portal re-lista la
+        vacante con un id NUEVO en la url, el INSERT no choca con `ix_jobs_url`
+        —la url es distinta—, entra una fila CLON y la histórica deja de
+        refrescar `last_seen_at` para siempre. No hay `UniqueViolationError`,
+        así que `JobIdentityConflictError` no se arma y el run sale con
+        `identity_conflicts=0` y la fuente `ok`.
+
+        Esta consulta es la gemela SIN esa exclusión, y se usa SOLO como
+        alarma: NO escribe `duplicate_of` ni desactiva nada. La exclusión de
+        misma fuente es deliberada para el marcado (G3), pero no tiene por qué
+        serlo para la observabilidad.
+
+        Cota declarada (medida, no razonada): dos vacantes REALMENTE distintas
+        de la misma fuente con idéntico `title`+`company` normalizados producen
+        una alarma que no corresponde a ninguna deriva. Por eso solo cuenta y
+        registra — nunca desactiva.
+        """
+        if not fuzzy_hash:
+            return None
+        stmt = (
+            select(Job.hash)
+            .where(
+                Job.fuzzy_hash == fuzzy_hash,
+                Job.source == source,
+                Job.hash != job_hash,  # la recién insertada no es su propio clon
+                Job.is_active.is_(True),
+                Job.duplicate_of.is_(None),
+            )
+            .order_by(Job.first_seen_at.asc())  # la más antigua = la que se pudre
+            .limit(1)
+        )
+        return (await db.execute(stmt)).scalar_one_or_none()
+
+    @staticmethod
     def _title_overlap(title_a: str, title_b: str) -> float:
         """Jaccard de los tokens del título normalizado (G3/P1-2).
 

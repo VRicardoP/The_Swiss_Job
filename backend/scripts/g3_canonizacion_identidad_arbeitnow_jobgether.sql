@@ -16,37 +16,60 @@
 --
 -- POR QUÉ HAY QUE EJECUTARLO **ANTES** DE LA SIGUIENTE COSECHA
 -- -----------------------------------------------------------
--- URGENCIA: **ALTA — el fallo es PÉRDIDA SILENCIOSA DE DATOS, no duplicación.**
+-- URGENCIA: **ALTA — el fallo es PÉRDIDA SILENCIOSA DE DATOS *Y* DUPLICACIÓN
+-- DEL CORPUS, a la vez.**
+--
+-- ⚠ RECTIFICACIÓN (G5, 2026-08-26). Las DOS redacciones anteriores de este
+-- encabezado eran medias verdades y un operador decidía la urgencia leyéndolas:
+-- la primera decía «duplicando el corpus» (y omitía la pérdida); la segunda
+-- —de G4— decía que la duplicación «NO» ocurre (y omitía los clones). Ocurren
+-- **AMBAS**, por dos ramas distintas, y el peor caso es su SUMA.
 --
 -- El fix cambia la identidad que emiten los providers y YA ESTÁ DESPLEGADO en
 -- el código. Si una cosecha corre ANTES que este script, el
 -- `ON CONFLICT (hash)` no reconoce NINGUNA de las 5.825 filas existentes
 -- (4.233 arbeitnow + 1.592 jobgether — medido en producción 2026-08-26: el
--- 100 % cambia de hash). Lo que ocurre entonces NO es que entren como altas
--- nuevas y se duplique el corpus: `jobs.url` tiene índice **UNIQUE**
--- (`ix_jobs_url`) y el upsert solo declara el conflicto por `hash`, así que
+-- 100 % cambia de hash). A partir de ahí, lo que pasa depende de si el portal
+-- re-lista la vacante en la MISMA url o en una NUEVA:
 --
---   * la oferta que el portal RE-LISTA en la misma URL provoca una
---     `UniqueViolationError` sobre `ix_jobs_url`, el savepoint por-oferta la
---     aborta y el `except Exception` de `tasks/fetch_tasks.py` la cuenta como
---     un `errors` más: **la oferta se descarta y `last_seen_at` NO se
---     refresca**. Exposición medida por corrida: 0 en la mayoría de días,
---     pero 143/199 (72 %) el 2026-08-16 y 128/304 (42 %) el 08-17;
---   * las 5.825 filas históricas dejan de refrescar `last_seen_at` **para
---     siempre** → `cleanup_stale_jobs` las archiva y luego las BORRA al
---     cumplirse `max_age_days`, mientras hasta entonces se sirven al usuario
---     sin re-verificar;
---   * la fuente sigue ingiriendo las URLs NUEVAS, así que `job_count > 0` y
---     `classify(...)` la da por `ok`: **ni `source_health` ni el panel
---     avisan**. (Desde G4 el choque con `ix_jobs_url` se reclasifica como
---     `JobIdentityConflictError` y sale como incidencia visible en
---     `summary["identity_conflicts"]` + `unhealthy`; eso hace el fallo
---     DETECTABLE, no lo repara.)
+--   RAMA 1 — el portal re-lista en la MISMA url. El INSERT con hash nuevo
+--     CHOCA con el índice UNIQUE `ix_jobs_url`: `UniqueViolationError`, el
+--     savepoint por-oferta la aborta y **la oferta se descarta sin refrescar
+--     `last_seen_at`**. Exposición medida por corrida: 0 en la mayoría de los
+--     días, pero 143/199 (72 %) el 2026-08-16 y 128/304 (42 %) el 08-17.
+--     SEÑAL: desde G4 se tipa como `JobIdentityConflictError` y sale en
+--     `summary["identity_conflicts"]` + `unhealthy`.
 --
--- Es decir: el peor caso NO es «duplicados que ya limpiaremos», es
--- **desaparición silenciosa de ofertas del corpus**. Cada `daily_harvest` que
--- pase sin ejecutar este script amplía el daño. Este script hace el puente:
--- deja las filas viejas con la identidad nueva, conservando su
+--   RAMA 2 — el portal re-lista con un id NUEVO en la url (que es EXACTAMENTE
+--     el fenómeno que motivó canonizar: "…-stuttgart-459633" y
+--     "…-stuttgart-198909" son la misma vacante). `jobs.url` es distinta, así
+--     que **no hay choque alguno: el INSERT tiene ÉXITO**. Entra una fila
+--     **CLON** con `first_seen_at` de hoy y la histórica **deja de refrescar
+--     `last_seen_at` para siempre**. Corpus duplicado *y* fila original
+--     abandonada, las dos cosas.
+--     ESTADO MEDIDO (producción, 2026-08-26, SOLO LECTURA): **388 filas clon
+--     en arbeitnow** (4.233 filas para 3.845 identidades canónicas, en 289
+--     grupos) y **81 en jobgether** (1.592 filas / 1.511 identidades). Solo el
+--     2026-08-25 aparecieron **55 grupos** con clon nuevo.
+--     SEÑAL: hasta G5 **NINGUNA**. Ni `identity_conflicts` (no hay excepción
+--     que contar), ni el dedup fuzzy (`find_fuzzy_duplicate` excluye a
+--     propósito los pares de la MISMA fuente), ni `harvest_window.watch_drift`
+--     (exige `recognized == 0` y esta deriva es PARCIAL). El run salía
+--     `new=1, errors=0, identity_conflicts=0, unhealthy=[]`. Desde G5 la
+--     detecta `Deduplicator.find_same_source_clone` y la cuenta
+--     `summary["identity_clones"]` — **como ALARMA: no marca `duplicate_of`
+--     ni desactiva nada.**
+--
+-- Y en las DOS ramas, las 5.825 filas históricas dejan de refrescar
+-- `last_seen_at` → `cleanup_stale_jobs` las archiva y luego las BORRA al
+-- cumplirse `max_age_days`, arrastrando por FK `ON DELETE CASCADE` sus
+-- `match_results` y `generated_documents`; hasta entonces se sirven al usuario
+-- sin re-verificar. La fuente, mientras tanto, ingiere las URLs nuevas, así que
+-- `job_count > 0` y `classify(...)` la da por `ok`.
+--
+-- Nada de lo anterior REPARA la deriva: la hace visible. Cada `daily_harvest`
+-- que pase sin ejecutar este script amplía el daño. Este script hace el
+-- puente: deja las filas viejas con la identidad nueva, conservando su
 -- `first_seen_at`.
 --
 -- ORDEN OBLIGATORIO (no es una recomendación): **parar el worker/beat →

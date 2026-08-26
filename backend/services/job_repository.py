@@ -38,6 +38,13 @@ class JobIdentityConflictError(Exception):
     de datos, `scripts/g3_canonizacion_identidad_*.sql`): la hace VISIBLE, para
     que el pipeline pueda contarla en su propio contador y elevarla a
     incidencia de salud en vez de disolverla entre los errores por-oferta.
+
+    G5/P1-1 — ALCANCE: esta excepción cubre UNA de las DOS ramas de la deriva.
+    Si el portal re-lista con un id NUEVO en la url no hay choque de unicidad,
+    el INSERT tiene ÉXITO y entra una fila CLON sin que esta excepción llegue
+    a existir. Esa rama la vigila `Deduplicator.find_same_source_clone` y la
+    cuenta `summary["identity_clones"]`. No confundir la ausencia de
+    `identity_conflicts` con la ausencia de deriva.
     """
 
 
