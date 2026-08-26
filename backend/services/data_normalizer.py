@@ -228,6 +228,16 @@ _CUR_TOK = r"(?:(?i:CHF|EUR|USD|GBP)\s*|[€$£]\s*)"
 _SALARY_RANGE_CUR_RE = re.compile(
     rf"{_CUR_TOK}{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_CUR_TOK}{_NUM}{_K}"
 )
+# G5/P3-5: la forma «divisa solo en el extremo DERECHO» ("30,000 - £40,000")
+# no casaba ninguno de los dos anteriores —el `£` corta el segundo `_NUM` del
+# clásico— y colapsaba EN SILENCIO al camino `single`, que persiste
+# 30000-30000. Va en TERCER lugar y su cota baja pasa además por
+# `_LOW_LOOKS_LIKE_SALARY`: sin esa comprobación este patrón reabriría
+# exactamente la regresión que cerró G4/P2-1, porque «Grade 6 - £30,000» tiene
+# LA MISMA forma que «30,000 - £40,000» y el ruido secuestraría el mínimo.
+_SALARY_RANGE_CUR_RIGHT_RE = re.compile(
+    rf"{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_CUR_TOK}{_NUM}{_K}"
+)
 _SALARY_RANGE_RE = re.compile(rf"{_NUM}{_K}\s*(?:[-–—]+|to)\s*{_NUM}{_K}")
 # El single exige ≥2 dígitos (como el `[\d.,]+` original): un dígito suelto
 # ("Level 5") no es un salario.
@@ -403,7 +413,15 @@ class DataNormalizer:
         # Try range first: "80000-100000" or "80k-100k". El patrón con divisa
         # en ambos extremos va PRIMERO (G4/P2-1): es el más específico y el
         # único que puede desempatar un rango real de una escala salarial.
-        range_match = _SALARY_RANGE_CUR_RE.search(text) or _SALARY_RANGE_RE.search(text)
+        # G5/P3-5: en medio va el de divisa solo a la derecha, cuya cota baja
+        # debe parecer un salario para no reabrir la regresión de G4/P2-1.
+        range_match = _SALARY_RANGE_CUR_RE.search(text)
+        if range_match is None:
+            right = _SALARY_RANGE_CUR_RIGHT_RE.search(text)
+            if right is not None and DataNormalizer._low_looks_like_salary(right):
+                range_match = right
+        if range_match is None:
+            range_match = _SALARY_RANGE_RE.search(text)
         if range_match:
             lo = DataNormalizer._parse_number(
                 range_match.group(1), has_k=bool(range_match.group(2))
@@ -422,6 +440,21 @@ class DataNormalizer:
                 and lo < 1000 <= hi
             ):
                 lo *= 1000
+            # G5/P3-5: la divisa se toma del PROPIO rango que casó, no de un
+            # `_CURRENCY_RE.search` aparte sobre TODO el texto. Los dos regex
+            # pueden apuntar a sitios distintos y el resultado mezclaba el
+            # importe de uno con la divisa del otro: en
+            # "90'000 - 110'000 CHF (env. £75,000 - £90,000)" el rango elegido
+            # es el del paréntesis (delimitado por divisa, el más específico) y
+            # la divisa de todo el texto es la PRIMERA, `CHF` — se persistía
+            # 75.000-90.000 CHF cuando el texto dice libras. Si el rango que
+            # casó no lleva divisa dentro, se conserva la del texto (que es el
+            # comportamiento de siempre para "80000-100000 CHF").
+            cur_in_range = _CURRENCY_RE.search(range_match.group(0))
+            if cur_in_range:
+                currency = _canonical_currency(
+                    cur_in_range.group(1) or cur_in_range.group(2)
+                )
             return lo, hi, currency
 
         # Single value: treat as both min and max
@@ -433,6 +466,31 @@ class DataNormalizer:
             return val, val, currency
 
         return None, None, currency
+
+    @staticmethod
+    def _low_looks_like_salary(match: re.Match) -> bool:
+        """¿La cota baja de un rango «<num> - <divisa><num>» es un importe?
+
+        G5/P3-5 — «30,000 - £40,000» y «Grade 6 - £30,000» tienen la MISMA
+        forma; lo único que las separa es la magnitud. Sin este filtro, admitir
+        el patrón de divisa-a-la-derecha reabriría la regresión de G4/P2-1
+        (`salary_min_chf = 6`), y las escalas británicas e irlandesas —Grade N,
+        Band N, NJC Scale N, MPS/UPS N, Point N— se escriben exactamente así.
+        Se exige que la cota baja llegue a 1.000 o traiga su propia «k».
+
+        COTA PREEXISTENTE que este fix NO cierra (medida, no razonada): cuando
+        el número de escala tiene DOS dígitos y no hay rango que casar
+        —«Point 12 - €35,000», «Stufe 12 - CHF 90'000»—, el camino `single`
+        sigue tomando el primero que encuentra (12) porque `re.search` es
+        leftmost y `_SALARY_SINGLE_RE` solo exige 2 dígitos. Es el mismo
+        comportamiento de antes de G5 y no produce ninguna diferencia sobre los
+        637 valores reales del corpus; se deja escrito para que no se confunda
+        con lo que aquí sí se arregla.
+        """
+        if match.group(2):  # shorthand con «k»: "30k - £40,000"
+            return True
+        low = DataNormalizer._parse_number(match.group(1))
+        return low is not None and low >= 1000
 
     @staticmethod
     def _parse_number(raw: str, has_k: bool = False) -> float | None:
