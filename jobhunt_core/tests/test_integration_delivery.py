@@ -515,6 +515,24 @@ import contextlib
 
 
 @contextlib.contextmanager
+def caplog_at_warning():
+    """Idéntico a caplog_at_error pero al nivel WARNING (G6-P2-2)."""
+    records = []
+
+    class H(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    h = H(level=logging.WARNING)
+    lg = logging.getLogger("jobhunt_core.delivery")
+    lg.addHandler(h)
+    try:
+        yield records
+    finally:
+        lg.removeHandler(h)
+
+
+@contextlib.contextmanager
 def caplog_at_error():
     """Captura records ERROR del logger de delivery sin la fixture caplog
     (usable dentro de contextos anidados)."""
@@ -1338,3 +1356,224 @@ def test_delivery_task_registered_and_routed():
     assert by_task["jobhunt.delivery.dispatch_outbox"]["schedule"] == float(
         core_settings.CORE_DELIVERY_DISPATCH_EVERY_S
     )
+
+
+# ------------------------------------- G6: la guarda del UPDATE y su telemetría
+
+
+def _envenenar(factory, eid, claims):
+    """Deja ESA entrega justo en el borde del veneno: 'inflight', lease
+    CADUCADO (no la posee nadie) y `claims` al tope, sin rastro del ciclo
+    anterior. Devuelve el lease para poder fencear con él."""
+    async def go():
+        async with factory() as s:
+            lease = (
+                await s.execute(
+                    sa.text(
+                        "UPDATE integration_outbox_deliveries SET state = 'inflight', "
+                        "lease = clock_timestamp() - interval '5 minutes', "
+                        "claims = :c, ack_at = NULL, dead_at = NULL, "
+                        "next_attempt_at = NULL, last_error = NULL "
+                        "WHERE event_id = :e RETURNING lease"
+                    ),
+                    {"e": eid, "c": claims},
+                )
+            ).scalar_one()
+            await s.commit()
+            return lease
+
+    return asyncio.run(go())
+
+
+def _carrera_con_retire_poisoned(factory, resolver):
+    """CONCURRENCIA REAL (no un mock): B resuelve la fila y RETIENE el lock;
+    A arranca su retirada por veneno mientras tanto; B commitea y A termina.
+    Es el interleaving exacto que el beat produce con `--concurrency=2` y un
+    ciclo que se pasa del tick."""
+    async def go():
+        async with factory() as sB, factory() as sA:
+            res = await resolver(sB)
+            tarea = asyncio.create_task(delivery.retire_poisoned(sA))
+            await asyncio.sleep(0.5)
+            await sB.commit()
+            retiradas = await tarea
+            await sA.commit()
+            return res, retiradas
+
+    return asyncio.run(go())
+
+
+def test_g6_retire_poisoned_no_pisa_lo_que_otro_dispatcher_acaba_de_resolver(
+    db, monkeypatch
+):
+    """Regresión G6-P2-1: `retire_poisoned` perdió la guarda de estado de su
+    PROPIO UPDATE cuando G5-P2-2 metió `state/lease/claims` dentro del subplan
+    del LIMIT 1. El subplan es uncorrelated ⇒ Postgres lo resuelve como
+    InitPlan UNA vez por sentencia y el recheck EPQ —el que corre cuando el
+    UPDATE por fin obtiene el lock que otra transacción tenía— re-evalúa los
+    quals con la fila NUEVA pero NO vuelve a ejecutar el InitPlan. Con la
+    igualdad contra una constante como ÚNICO qual, la fila se pisaba fuera
+    cual fuera el estado al que la otra transacción acababa de llevarla:
+
+    1. una entrega CONFIRMADA (`delivered`, con `ack_at`) acababa `dead` con
+       un `last_error` de veneno sobre un evento que el consumidor SÍ recibió,
+       y la alerta se contradecía a sí misma («tras 0 reclamos», porque el
+       `RETURNING` lee la fila que `mark_delivered` acaba de poner a 0);
+    2. un reintento PROGRAMADO (`pending`, 7 intentos por delante) moría
+       TERMINAL y el diagnóstico culpaba al mensaje de un 503 del destino;
+    3. dos dispatchers retiraban DOS veces la MISMA fila: dos `poisoned`, dos
+       alertas y `dead_at` reescrito — justo lo que ventana `outbox_dead`.
+
+    El fix de G5-P2-3 (que un mark TARDÍO del dueño superado SÍ escriba) hace
+    que ese «otra transacción» sea el caso NORMAL, no el exótico."""
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created, titles=("backend python",))
+    (eid,) = _dejar_pendientes(factory, pid, 1)
+    monkeypatch.setattr(delivery, "MAX_CLAIMS_WITHOUT_RESULT", 3)
+
+    def _estado():
+        return _rows(
+            factory,
+            "SELECT state, claims, attempts, ack_at, dead_at, next_attempt_at, "
+            "last_error FROM integration_outbox_deliveries WHERE event_id = :e",
+            e=eid,
+        )[0]
+
+    dest = _rows(
+        factory,
+        "SELECT destination FROM integration_outbox_deliveries WHERE event_id = :e",
+        e=eid,
+    )[0].destination
+
+    # (1) El dueño LENTO por fin CONFIRMA la entrega.
+    _envenenar(factory, eid, delivery.MAX_CLAIMS_WITHOUT_RESULT)
+    hechas, retiradas = _carrera_con_retire_poisoned(
+        factory,
+        lambda s: delivery.mark_delivered(s, [{"eid": eid, "dest": dest}]),
+    )
+    assert hechas == 1
+    assert retiradas == 0, "retire_poisoned retiró una entrega ya CONFIRMADA"
+    st = _estado()
+    assert (st.state, st.dead_at, st.last_error) == ("delivered", None, None)
+    assert st.ack_at is not None
+
+    # (2) El dueño legítimo falla y PROGRAMA el reintento (le quedan intentos).
+    lease = _envenenar(factory, eid, delivery.MAX_CLAIMS_WITHOUT_RESULT)
+    res, retiradas = _carrera_con_retire_poisoned(
+        factory,
+        lambda s: delivery.mark_failed(
+            s, [{"eid": eid, "dest": dest, "attempts": 1, "error": "BFF 503"}], lease
+        ),
+    )
+    assert res == {"dead": 0, "retried": 1}
+    assert retiradas == 0, "retire_poisoned mató un reintento PROGRAMADO"
+    st = _estado()
+    assert st.state == "pending" and st.next_attempt_at is not None
+    assert st.last_error == "BFF 503"  # el destino, no el mensaje
+
+    # (3) Dos dispatchers a la vez sobre un veneno REAL: UNA sola retirada.
+    _envenenar(factory, eid, delivery.MAX_CLAIMS_WITHOUT_RESULT)
+
+    async def dos_dispatchers():
+        async with factory() as sA, factory() as sB:
+            t1 = asyncio.create_task(delivery.retire_poisoned(sA))
+            await asyncio.sleep(0.3)
+            t2 = asyncio.create_task(delivery.retire_poisoned(sB))
+            await asyncio.sleep(0.3)
+            n1 = await t1
+            await sA.commit()
+            n2 = await t2
+            await sB.commit()
+            return n1, n2
+
+    with caplog_at_error() as records:
+        n1, n2 = asyncio.run(dos_dispatchers())
+    assert n1 + n2 == 1, "la MISMA fila se retiró dos veces"
+    assert len([r for r in records if "VENENO" in r.getMessage()]) == 1
+    st = _estado()
+    assert st.state == "dead" and st.claims == delivery.MAX_CLAIMS_WITHOUT_RESULT
+
+
+def test_g6_el_aviso_de_lease_robado_solo_suena_cuando_de_verdad_lo_robaron(db):
+    """Regresión G6-P2-2: el `RETURNING` de un UPDATE se evalúa sobre la fila
+    NUEVA, y la propia SET de `mark_delivered` pone `lease = NULL`. Así que
+    `(d.lease IS DISTINCT FROM :lease)` era TRUE SIEMPRE y el WARNING
+    «G2-H-7 en vivo» —el único rastro que sustituye a `fenced_out` tras
+    G5-P3-3— se emitía en el 100 % de las entregas SANAS. Una señal atascada
+    en ON no es observabilidad: en cuanto el operador aprende a ignorarla, el
+    caso REAL pasa inadvertido. El lease previo sale ahora de un self-join.
+
+    Se comprueban las DOS direcciones: cero falsos positivos y el positivo
+    VERDADERO sigue sonando."""
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created, titles=("backend python", "data eng"))
+    sano, robada = _dejar_pendientes(factory, pid, 2)
+
+    async def claim():
+        async with factory() as s:
+            rows, lease = await delivery.claim_deliveries(s, limit=10)
+            await s.commit()
+            return {r.event_id: r for r in rows}, lease
+
+    porfila, lease = asyncio.run(claim())
+    assert sano in porfila and robada in porfila
+
+    # (a) La fila es NUESTRA y su lease está intacto: ni un aviso.
+    with caplog_at_warning() as records:
+        async def marcar_sana():
+            async with factory() as s:
+                n = await delivery.mark_delivered(
+                    s,
+                    [{"eid": sano, "dest": porfila[sano].destination}],
+                    lease,
+                )
+                await s.commit()
+                return n
+
+        assert asyncio.run(marcar_sana()) == 1
+    assert [r for r in records if "lease ya no era nuestro" in r.getMessage()] == []
+
+    # (b) Otro dispatcher SÍ se la re-clama: el aviso tiene que sonar.
+    _sync_exec(
+        "UPDATE integration_outbox_deliveries SET lease = "
+        "clock_timestamp() + interval '120 seconds' WHERE event_id = :e",
+        {"e": str(robada)},
+    )
+    with caplog_at_warning() as records:
+        async def marcar_robada():
+            async with factory() as s:
+                n = await delivery.mark_delivered(
+                    s,
+                    [{"eid": robada, "dest": porfila[robada].destination}],
+                    lease,
+                )
+                await s.commit()
+                return n
+
+        assert asyncio.run(marcar_robada()) == 1
+    avisos = [r for r in records if "lease ya no era nuestro" in r.getMessage()]
+    assert len(avisos) == 1  # el positivo VERDADERO sigue delatándose
+
+
+def test_g6_lease_renewals_solo_cuenta_renovaciones_que_ocurren(db, monkeypatch):
+    """Regresión G6-P2-2 (2ª mitad): `lease_renewals` se incrementaba aunque
+    `renew_lease` saliera por su early-return SIN renovar nada — el caso del
+    ÚLTIMO elemento del lote, donde la cola que queda está vacía. Con el
+    umbral cumplido, un lote de UN evento y milisegundos de duración reportaba
+    `lease_renewals = 1` y el resumen afirmaba un desbordamiento del lease que
+    no había ocurrido. Y el disparo es LEASE_S/2, no LEASE_S (comentario)."""
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created, titles=("backend python",))
+    _dejar_pendientes(factory, pid, 1)
+    monkeypatch.setattr(delivery, "LEASE_RENEW_AFTER_S", 0)  # siempre "vencido"
+    assert delivery.LEASE_RENEW_AFTER_S != delivery.LEASE_S  # el umbral es /2
+    inbox = FakeInbox()
+    delivery.set_transport(inbox.transport)
+    try:
+        r = _dispatch(limit=10)
+    finally:
+        delivery.set_transport(None)
+
+    assert (r["claimed"], r["delivered"]) == (1, 1)
+    assert r["lease_renewals"] == 0  # antes del fix: 1, sin renovar nada
+    assert r["lease_overrun"] == 0

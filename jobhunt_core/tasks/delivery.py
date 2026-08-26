@@ -126,9 +126,15 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
                     # la fila ya la resolvió otro dueño (G5-P3-3, en ORIGEN).
                     lease_overrun += 1
                 # G2-H-7: renovar el lease del RESTO antes de agotarlo.
-                if time.monotonic() - desde >= delivery.LEASE_RENEW_AFTER_S:
+                # G6-P2-2: solo si QUEDA resto. `renew_lease` sale por su
+                # early-return sin renovar nada cuando la cola está vacía (el
+                # último elemento del lote), y contar esa vuelta como
+                # renovación hacía que `lease_renewals` avisara de un
+                # desbordamiento inexistente en lotes de milisegundos.
+                resto = claimed[idx + 1:]
+                if resto and time.monotonic() - desde >= delivery.LEASE_RENEW_AFTER_S:
                     lease_token, perdidas = await delivery.renew_lease(
-                        session, claimed[idx + 1:], lease_token
+                        session, resto, lease_token
                     )
                     await session.commit()
                     lease_renewals += 1
@@ -145,8 +151,10 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
         "fenced_out": len(claimed) - real,
         # G5-P3-3: el desbordamiento del lease contado en ORIGEN, no por
         # diferencia — `fenced_out` dejó de delatarlo cuando el éxito salió del
-        # fence, y `claims = 0` borraba el otro rastro. `lease_renewals > 0`
-        # dice que el lote superó LEASE_S; `lease_overrun > 0`, que además
+        # fence, y `claims = 0` borraba el otro rastro. G6-P2-2 — qué dicen de
+        # verdad: `lease_renewals > 0` dice que el lote superó
+        # LEASE_RENEW_AFTER_S (= LEASE_S/2, el punto de renovación, NO LEASE_S)
+        # con entregas todavía por transportar; `lease_overrun > 0`, que además
         # perdimos filas o resultados por ello (G2-H-7 en vivo).
         "lease_renewals": lease_renewals,
         "lease_overrun": lease_overrun,
