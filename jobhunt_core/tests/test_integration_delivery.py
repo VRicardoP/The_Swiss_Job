@@ -77,6 +77,41 @@ def _rows(factory, sql, **params):
     return asyncio.run(go())
 
 
+def _dejar_pendientes(factory, pid, n: int) -> list:
+    """Deja EXACTAMENTE `n` entregas pendientes del perfil y aparta el resto
+    (marcadas como entregadas). El corpus de la BD compartida crece con la
+    suite, así que un perfil puede acabar con decenas de evaluaciones: sin
+    esto, la cabeza de la cola y el `rows[0]` de un claim dependerían del
+    orden en que se ejecuten los demás tests. Devuelve los event_id que
+    quedan vivos, en el orden en que el claim los verá."""
+    vivos = [
+        r.event_id for r in _rows(
+            factory,
+            "SELECT d.event_id FROM integration_outbox_deliveries d "
+            "JOIN integration_outbox o ON o.event_id = d.event_id "
+            "WHERE o.subject_profile_id = :p AND d.state = 'pending' "
+            "ORDER BY d.event_id", p=pid,
+        )
+    ]
+    assert len(vivos) >= n, f"el perfil solo tiene {len(vivos)} entregas"
+    sobra = vivos[n:]
+    if sobra:
+        async def apartar():
+            async with factory() as s:
+                await s.execute(
+                    sa.text(
+                        "UPDATE integration_outbox_deliveries "
+                        "SET state = 'delivered', ack_at = clock_timestamp() "
+                        "WHERE event_id = ANY(:ids)"
+                    ),
+                    {"ids": sobra},
+                )
+                await s.commit()
+
+        asyncio.run(apartar())
+    return vivos[:n]
+
+
 def _dispatch(limit=100):
     from jobhunt_core.tasks.delivery import dispatch_outbox_task
 
@@ -619,6 +654,7 @@ def test_g3_lease_vencido_no_pierde_el_intento_ni_el_dead_letter(db, monkeypatch
     dead-letter con alerta al re-reclamar."""
     factory, created = db
     pid, _ = _setup_evaluated(factory, created, titles=("backend python",))
+    _dejar_pendientes(factory, pid, 1)
     monkeypatch.setattr(delivery, "MAX_ATTEMPTS", 3)
 
     def _deliv():
@@ -690,6 +726,7 @@ def test_g3_retire_exhausted_respeta_al_dueno_vigente_y_los_terminales(db, monke
     ni de robarle la transición al dueño."""
     factory, created = db
     pid, _ = _setup_evaluated(factory, created, titles=("backend python",))
+    _dejar_pendientes(factory, pid, 1)
     monkeypatch.setattr(delivery, "MAX_ATTEMPTS", 1)
 
     async def inflight_vigente():
@@ -716,6 +753,153 @@ def test_g3_retire_exhausted_respeta_al_dueno_vigente_y_los_terminales(db, monke
         "WHERE o.subject_profile_id = :p", p=pid,
     )[0]
     assert row.state == "inflight"  # intacta
+
+
+def test_g3_veneno_que_mata_al_dispatcher_se_retira_y_desbloquea_la_cola(
+    db, monkeypatch
+):
+    """Cierre de G3-H-1 (hipótesis CONFIRMADA): desde que el intento lo consume
+    el RESULTADO y no el claim (G2-P3-4), una entrega cuyo payload MATA al
+    proceso del dispatcher (OOM, segfault del driver) no llega nunca a marcar,
+    así que `attempts` se queda en 0, el DEAD-LETTER por agotamiento es
+    inalcanzable y —por el `ORDER BY next_attempt_at NULLS FIRST`— secuestra la
+    CABEZA de la cola: el resto del outbox no avanza. El contador `claims`
+    (core0032), separado de `attempts`, cuenta los reclamos CONSECUTIVOS sin
+    resultado y retira el veneno con una razón propia."""
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created, titles=("backend python", "data eng"))
+    monkeypatch.setattr(delivery, "MAX_CLAIMS_WITHOUT_RESULT", 4)
+
+    veneno, sano = _dejar_pendientes(factory, pid, 2)
+    # El sano espera su turno DETRÁS (next_attempt_at no nulo): con limit=1 la
+    # cabeza de la cola es siempre el veneno mientras siga vivo.
+    async def _atrasar():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "UPDATE integration_outbox_deliveries "
+                    "SET next_attempt_at = clock_timestamp() "
+                    "WHERE event_id = :e"
+                ),
+                {"e": sano},
+            )
+            await s.commit()
+
+    asyncio.run(_atrasar())
+
+    def _estado(eid):
+        return _rows(
+            factory,
+            "SELECT state, attempts, claims, last_error FROM "
+            "integration_outbox_deliveries WHERE event_id = :e", e=eid,
+        )[0]
+
+    async def _ciclo_que_mata_al_proceso():
+        """Reclama y MUERE: ni mark_delivered ni mark_failed, como un OOM."""
+        async with factory() as s:
+            rows, _lease = await delivery.claim_deliveries(s, limit=1)
+            await s.commit()
+        return rows
+
+    for i in range(delivery.MAX_CLAIMS_WITHOUT_RESULT):
+        rows = asyncio.run(_ciclo_que_mata_al_proceso())
+        assert [r.event_id for r in rows] == [veneno], f"ciclo {i}: la cabeza cambió"
+        # El lease caduca (el proceso murió con el claim commiteado).
+        async def _caducar():
+            async with factory() as s:
+                await s.execute(
+                    sa.text(
+                        "UPDATE integration_outbox_deliveries SET lease = "
+                        "clock_timestamp() - interval '1 second' WHERE event_id = :e"
+                    ),
+                    {"e": veneno},
+                )
+                await s.commit()
+
+        asyncio.run(_caducar())
+        st = _estado(veneno)
+        assert (st.state, st.attempts, st.claims) == ("inflight", 0, i + 1)
+
+    # El siguiente despacho lo retira POR VENENO, con razón propia y alerta —
+    # y en el MISMO beat la cola ya avanza: se entrega el mensaje sano.
+    inbox = FakeInbox()
+    delivery.set_transport(inbox.transport)
+    try:
+        with caplog_at_error() as records:
+            r = _dispatch(limit=1)
+    finally:
+        delivery.set_transport(None)
+    assert r["poisoned"] == 1  # antes: reintento infinito, jamás dead
+    assert any("VENENO" in rec.getMessage() for rec in records)
+    st = _estado(veneno)
+    assert (st.state, st.attempts) == ("dead", 0)  # attempts INTACTO (G2-P3-4)
+    assert "veneno" in st.last_error and "destino caído" in st.last_error
+    # La cabeza de la cola quedó libre: el sano se entregó en ese mismo ciclo.
+    assert (r["claimed"], r["delivered"]) == (1, 1)
+    assert _estado(sano).state == "delivered"
+
+
+def test_g3_los_re_claims_de_un_mensaje_sano_no_lo_retiran_como_veneno(
+    db, monkeypatch
+):
+    """No-regresión de G3-H-1: un mensaje que SÍ produce resultado en cada
+    ciclo —destino caído, el caso normal— no se acerca jamás al tope de
+    veneno, porque el resultado pone `claims` a 0 aunque el fence descarte la
+    transición (lease vencido a mitad del lote, G2-H-7). El veneno es «el
+    dispatcher nunca llegó a marcar», no «el destino falla»."""
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created, titles=("backend python",))
+    _dejar_pendientes(factory, pid, 1)
+    monkeypatch.setattr(delivery, "MAX_CLAIMS_WITHOUT_RESULT", 2)
+    monkeypatch.setattr(delivery, "MAX_ATTEMPTS", 100)  # aislar la vía de veneno
+
+    def _estado():
+        return _rows(
+            factory,
+            "SELECT d.state, d.attempts, d.claims FROM "
+            "integration_outbox_deliveries d "
+            "JOIN integration_outbox o ON o.event_id = d.event_id "
+            "WHERE o.subject_profile_id = :p", p=pid,
+        )[0]
+
+    async def _ciclo_con_fallo_real():
+        async with factory() as s:
+            rows, lease = await delivery.claim_deliveries(s, limit=10)
+            await s.commit()
+        async with factory() as s:  # el lote se pasa del lease
+            await s.execute(
+                sa.text(
+                    "UPDATE integration_outbox_deliveries d SET lease = "
+                    "clock_timestamp() - interval '1 second' "
+                    "FROM integration_outbox o WHERE o.event_id = d.event_id "
+                    "AND o.subject_profile_id = :p"
+                ),
+                {"p": pid},
+            )
+            await s.commit()
+        async with factory() as s:
+            await delivery.mark_failed(
+                s,
+                [{"eid": rows[0].event_id, "dest": rows[0].destination,
+                  "attempts": rows[0].attempts + 1, "error": "destino caído"}],
+                lease,
+            )
+            await s.commit()
+
+    for _ in range(delivery.MAX_CLAIMS_WITHOUT_RESULT * 3):
+        asyncio.run(_ciclo_con_fallo_real())
+        st = _estado()
+        assert st.claims == 0, "el resultado tiene que limpiar el contador"
+
+    async def _retirar():
+        async with factory() as s:
+            n = await delivery.retire_poisoned(s)
+            await s.commit()
+            return n
+
+    assert asyncio.run(_retirar()) == 0  # jamás veneno: hubo resultados
+    st = _estado()
+    assert st.state == "inflight" and st.attempts == 6  # los intentos REALES
 
 
 # --------------------------------- transporte sombra REAL (P1-1b, §8 Fase B)

@@ -3,7 +3,10 @@
 - La EMISIÓN va en la misma transacción que la escritura (matching, ADR-05);
   aquí vive el DESPACHO: claim con `FOR UPDATE SKIP LOCKED` + lease (un lease
   caducado se re-reclama: at-least-once real), backoff exponencial por
-  intento, DEAD-LETTER con ALERTA al agotar los intentos.
+  intento, DEAD-LETTER con ALERTA al agotar los intentos — y, por una vía
+  SEPARADA (`claims`, G3-H-1), al agotar los RECLAMOS sin haber producido
+  jamás un resultado: el veneno que tumba al dispatcher no consume intentos y
+  bloquearía la cabeza de la cola para siempre.
 - El INBOX vive en la BD de CADA consumidor (BFF; NO en el core) y desduplica
   por (consumer_id, event_id) — contrato de transporte at-least-once +
   consumo idempotente. El TRANSPORTE es una costura inyectable:
@@ -23,6 +26,17 @@ import sqlalchemy as sa
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 8
+# G3-H-1: tope de RECLAMOS CONSECUTIVOS SIN resultado (`claims`, core0032) —
+# el detector de VENENO: un payload que MATA al proceso del dispatcher (OOM,
+# segfault del driver) nunca llega a marcar, así que no consume `attempts` y
+# el dead-letter por agotamiento no puede alcanzarlo; y con
+# `ORDER BY next_attempt_at NULLS FIRST` ocupa la CABEZA de la cola. 25 con la
+# cadencia del beat (CORE_DELIVERY_DISPATCH_EVERY_S = 5 min) son ~2 h de
+# crash-loop ININTERRUMPIDO sobre el MISMO mensaje sin un solo resultado: un
+# redespliegue en bucle o un OOM puntual —el escenario que G2-P3-4 protege— no
+# llega ahí, y como triplica MAX_ATTEMPTS un destino simplemente CAÍDO siempre
+# muere antes por la vía normal (que sí consumió intentos reales).
+MAX_CLAIMS_WITHOUT_RESULT = 25
 BACKOFF_BASE_S = 60
 BACKOFF_CAP_S = 3600
 LEASE_S = 120
@@ -100,8 +114,11 @@ async def claim_deliveries(session, limit: int = 100) -> tuple[list, object]:
             # el PRIMER fallo real llegaba con attempts=8 ⇒ dead-letter con una
             # única ejecución real. El módulo ya enunciaba el principio
             # contrario para el caso sin-transporte.
+            # G3-H-1: `claims` SÍ se toca aquí (no `attempts`): mide reclamos
+            # CONSECUTIVOS sin resultado y lo pone a 0 el primer mark, así que
+            # solo crece cuando el transporte no llega NUNCA a completar.
             "UPDATE integration_outbox_deliveries "
-            "SET state = 'inflight', lease = :lease "
+            "SET state = 'inflight', lease = :lease, claims = claims + 1 "
             "WHERE event_id = :eid AND destination = :dest"
         ),
         [
@@ -137,7 +154,12 @@ async def _persist_attempts(session, fails: list) -> None:
         sa.text(
             "UPDATE integration_outbox_deliveries d "
             "SET attempts = GREATEST(d.attempts, t.attempts), "
-            "    last_error = t.error "
+            "    last_error = t.error, "
+            # G3-H-1: hubo RESULTADO (el transporte se ejecutó y falló) — el
+            # contador de veneno vuelve a 0 aunque el fence descarte la
+            # transición: un destino caído jamás se confunde con un payload
+            # que mata al proceso.
+            "    claims = 0 "
             "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[]), "
             "            CAST(:errors AS text[]), CAST(:tries AS int[])) "
             "  AS t(eid, dest, error, attempts) "
@@ -186,6 +208,50 @@ async def retire_exhausted(session) -> int:
     return len(rows)
 
 
+async def retire_poisoned(session) -> int:
+    """DEAD-LETTER por VENENO: entregas reclamadas MAX_CLAIMS_WITHOUT_RESULT
+    veces seguidas sin producir JAMÁS un resultado, y que ahora no posee nadie
+    (lease caducado).
+
+    G3-H-1: es el modo de fallo que abrió G2-P3-4 al sacar el consumo de
+    intentos del claim — un payload que mata al proceso del dispatcher antes
+    de cualquier mark reintenta para siempre con `attempts = 0` y, por el
+    `ORDER BY next_attempt_at NULLS FIRST`, bloquea la CABEZA de la cola. No se
+    toca `attempts` (G2-P3-4 sigue intacto: nadie gasta intentos sin
+    transporte); se retira por un contador PROPIO y con una razón que
+    distingue el veneno del agotamiento normal — el operador necesita saber si
+    el problema es el MENSAJE o el DESTINO."""
+    rows = (
+        await session.execute(
+            sa.text(
+                "UPDATE integration_outbox_deliveries d "
+                "SET state = 'dead', lease = NULL, dead_at = clock_timestamp(), "
+                "    last_error = :reason "
+                "WHERE d.state = 'inflight' AND d.lease < clock_timestamp() "
+                "AND d.claims >= :max "
+                "RETURNING d.event_id, d.destination, d.claims, d.attempts"
+            ),
+            {
+                "max": MAX_CLAIMS_WITHOUT_RESULT,
+                "reason": (
+                    f"veneno: {MAX_CLAIMS_WITHOUT_RESULT} reclamos consecutivos "
+                    "sin un solo resultado del transporte (el dispatcher nunca "
+                    "llegó a marcar) — NO es un destino caído"
+                ),
+            },
+        )
+    ).all()
+    for row in rows:
+        logger.error(
+            "delivery: evento %s → %s en DEAD-LETTER por VENENO tras %d "
+            "reclamos consecutivos SIN un solo resultado (intentos "
+            "consumidos: %d): el payload tumba al dispatcher — revisar el "
+            "MENSAJE, no el destino",
+            row.event_id, row.destination, row.claims, row.attempts,
+        )
+    return len(rows)
+
+
 async def mark_delivered(session, marks: list, lease_token) -> int:
     """marks = [{'eid', 'dest'}]. Solo si el claim sigue siendo NUESTRO.
     Devuelve las filas REALMENTE transicionadas (2ª rev. A-10: los contadores
@@ -198,7 +264,8 @@ async def mark_delivered(session, marks: list, lease_token) -> int:
                 "UPDATE integration_outbox_deliveries d "
                 "SET state = 'delivered', ack_at = clock_timestamp(), lease = NULL, "
                 # G2-P3-4: el intento se consume al EJECUTAR el transporte.
-                "attempts = d.attempts + 1 "
+                # G3-H-1: y el contador de veneno se limpia con el resultado.
+                "attempts = d.attempts + 1, claims = 0 "
                 "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[])) "
                 "  AS t(eid, dest) "
                 "WHERE d.event_id = t.eid AND d.destination = t.dest "

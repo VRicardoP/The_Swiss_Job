@@ -57,7 +57,7 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
         )
         return {
             "claimed": 0, "delivered": 0, "failed": 0, "dead": 0,
-            "fenced_out": 0, "no_transport": True,
+            "poisoned": 0, "fenced_out": 0, "no_transport": True,
         }
 
     async with task_session_factory() as session_factory:
@@ -68,11 +68,16 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
             # dueño superado siempre cae por el fence y la transición a 'dead'
             # no llegaba a escribirse nunca.
             retired = await delivery.retire_exhausted(session)
+            # G3-H-1: y el VENENO — reclamado una y otra vez sin producir
+            # jamás un resultado (mata al proceso antes de marcar), con la
+            # cabeza de la cola secuestrada mientras siga vivo.
+            poisoned = await delivery.retire_poisoned(session)
             claimed, lease_token = await delivery.claim_deliveries(session, limit=limit)
             await session.commit()
         if not claimed:
             return {
-                "claimed": 0, "delivered": 0, "failed": 0, "dead": retired,
+                "claimed": 0, "delivered": 0, "failed": 0,
+                "dead": retired + poisoned, "poisoned": poisoned,
                 "fenced_out": 0, "no_transport": False,
             }
 
@@ -102,7 +107,8 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
         "claimed": len(claimed),
         "delivered": delivered_real,
         "failed": fail_result["retried"],
-        "dead": fail_result["dead"] + retired,
+        "dead": fail_result["dead"] + retired + poisoned,
+        "poisoned": poisoned,
         # Marks que el fence descartó (claim superado): observabilidad.
         "fenced_out": len(claimed) - real,
         "no_transport": False,
