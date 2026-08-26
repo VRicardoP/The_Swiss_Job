@@ -52,6 +52,12 @@ class JoobleProvider(BaseJobProvider):
                             api_url,
                             method="POST",
                             json_body=body,
+                            # G5/P2-1 — la key va en el PATH: todo lo que
+                            # `utils.http` registra (403, 429, parseo,
+                            # reintentos agotados) acaba en
+                            # `SourceHealth.last_error_detail`, que el panel
+                            # muestra, y en el cuerpo de la alerta.
+                            diag_url=_REDACTED_URL,
                         )
                     )
                 except (CircuitBreakerOpen, httpx.HTTPError, json.JSONDecodeError) as e:

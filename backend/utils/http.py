@@ -65,7 +65,12 @@ def _headers_for_host(headers: dict[str, str] | None, cross_host: bool) -> dict 
 
 
 async def _send_following_redirects(
-    client, method: str, url: str, kwargs: dict, params: dict | None
+    client,
+    method: str,
+    url: str,
+    kwargs: dict,
+    params: dict | None,
+    safe_url: str | None = None,
 ) -> httpx.Response:
     """Petición siguiendo redirecciones A MANO, con tres garantías que
     `follow_redirects=True` de httpx no da (G4/P2-7, P3-1, P3-2, P3-3):
@@ -82,6 +87,9 @@ async def _send_following_redirects(
     if params:
         current = current.copy_merge_params(params)
     origin_host = current.host
+    # G5/P2-1 — lo que se REGISTRA nunca es `current`: lleva la credencial
+    # (el path de jooble, la query de adzuna/careerjet tras fusionar `params`).
+    log_url = safe_url or url
 
     for _ in range(_MAX_REDIRECTS + 1):
         response = await _send(client, method, str(current), kwargs)
@@ -100,7 +108,7 @@ async def _send_following_redirects(
                 "HTTP %d sobre un POST a %s: seguirlo degradaría el método y "
                 "perdería el cuerpo — no se sigue",
                 response.status_code,
-                current,
+                log_url,
             )
             return response
 
@@ -110,7 +118,7 @@ async def _send_following_redirects(
             kwargs["headers"] = _headers_for_host(kwargs.get("headers"), True)
         current = target
 
-    logger.error("Demasiadas redirecciones (%d) para %s", _MAX_REDIRECTS, url)
+    logger.error("Demasiadas redirecciones (%d) para %s", _MAX_REDIRECTS, log_url)
     return response
 
 
@@ -127,14 +135,27 @@ async def fetch_with_retry(
     max_retry_delay: float = 30.0,
     timeout: float = 15.0,
     retry_on_status: list[int] | None = None,
+    diag_url: str | None = None,
 ) -> Any | None:
     """HTTP request with exponential-backoff retry.
 
     Returns parsed JSON on success, None on failure.
     Supports both GET and POST methods.
+
+    G5/P2-1 — `diag_url` es la forma de la URL que se PUBLICA (logs,
+    `fetch_diagnostics` y, a través de ellos, `SourceHealth.last_error_detail`,
+    que el panel muestra, y el cuerpo de la alerta de fuente caída). Por
+    defecto es `url`; los providers que incrustan una credencial en la URL
+    —hoy solo `jooble`, con la API key en el path— pasan aquí su forma
+    redactada. Se aplica en la RAÍZ y no en cada rama a propósito: `fa5d493`
+    redactó únicamente la salida de `diag.json_items` y dejó abiertas las tres
+    de este helper (403, 429 y fallo de parseo), que además son las
+    PROBABLES — key revocada, rate limit, timeout.
     """
     if retry_on_status is None:
         retry_on_status = DEFAULT_RETRY_STATUSES
+    # A partir de aquí NINGUNA salida visible usa `url`: solo `safe_url`.
+    safe_url = diag_url or url
 
     last_error: str = ""
     for attempt in range(max_retries + 1):
@@ -156,7 +177,7 @@ async def fetch_with_retry(
                 kwargs["json"] = json_body
 
             response = await _send_following_redirects(
-                client, method, url, kwargs, params
+                client, method, url, kwargs, params, safe_url
             )
 
             # Retryable server errors
@@ -165,7 +186,7 @@ async def fetch_with_retry(
                 logger.warning(
                     "HTTP %d from %s, retrying in %.1fs...",
                     response.status_code,
-                    url,
+                    safe_url,
                     wait,
                 )
                 await asyncio.sleep(wait)
@@ -175,7 +196,7 @@ async def fetch_with_retry(
                 logger.error(
                     "HTTP %d from %s: %s",
                     response.status_code,
-                    url,
+                    safe_url,
                     response.text[:500],
                 )
                 # G4/P2-4: `retry_on_status` es la ÚNICA fuente de verdad sobre
@@ -190,7 +211,7 @@ async def fetch_with_retry(
                 # Cloudflare se comía la cosecha de API entera. El caso
                 # retryable ya se ha reintentado (y pausado) arriba: aquí solo
                 # queda registrar y salir.
-                diag.record(diag.KIND_HTTP, url, status=response.status_code)
+                diag.record(diag.KIND_HTTP, safe_url, status=response.status_code)
                 return None
 
             data = response.json()
@@ -200,7 +221,9 @@ async def fetch_with_retry(
                 # contrato del que dependen todos los llamantes — "el None de
                 # fetch_with_retry es un fetch fallido cuyo issue ya registró
                 # utils.http" — y el run salía `empty` en silencio.
-                diag.record(diag.KIND_NETWORK, url, detail="200 con cuerpo JSON null")
+                diag.record(
+                    diag.KIND_NETWORK, safe_url, detail="200 con cuerpo JSON null"
+                )
             return data
 
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
@@ -237,8 +260,8 @@ async def fetch_with_retry(
 
     # Solo se llega aquí agotando reintentos por excepción (los cortes por
     # status ya han registrado y devuelto arriba).
-    logger.error("Failed after %d attempts for %s", max_retries + 1, url)
-    diag.record(diag.KIND_NETWORK, url, detail=last_error or "sin respuesta")
+    logger.error("Failed after %d attempts for %s", max_retries + 1, safe_url)
+    diag.record(diag.KIND_NETWORK, safe_url, detail=last_error or "sin respuesta")
     return None
 
 
@@ -250,13 +273,18 @@ async def fetch_rss(
     timeout: float = 15.0,
     max_retries: int = 3,
     backoff_factor: float = 1.0,
+    diag_url: str | None = None,
 ) -> str | None:
     """Fetch RSS/XML content as raw text. Returns None on failure.
 
     El fallo DEFINITIVO (agotados los reintentos) se registra en
     `fetch_diagnostics` para que el pipeline no lo confunda con un feed vacío
     (V.0). Se registra el último estado visto, no cada reintento.
+
+    G5/P2-1 — `diag_url`: misma garantía que en `fetch_with_retry`, para un
+    feed con token en la URL.
     """
+    safe_url = diag_url or url
     last_status: int | None = None
     last_error: str = ""
     for attempt in range(max_retries + 1):
@@ -272,7 +300,7 @@ async def fetch_rss(
             if headers:
                 rss_kwargs["headers"] = headers
             response = await _send_following_redirects(
-                client, "GET", url, rss_kwargs, None
+                client, "GET", url, rss_kwargs, None, safe_url
             )
             if response.status_code == 200:
                 return response.text
@@ -289,7 +317,7 @@ async def fetch_rss(
                 await asyncio.sleep(backoff_factor * (2**attempt))
 
     if last_status is not None:
-        diag.record(diag.KIND_HTTP, url, status=last_status)
+        diag.record(diag.KIND_HTTP, safe_url, status=last_status)
     else:
-        diag.record(diag.KIND_NETWORK, url, detail=last_error or "sin respuesta")
+        diag.record(diag.KIND_NETWORK, safe_url, detail=last_error or "sin respuesta")
     return None
