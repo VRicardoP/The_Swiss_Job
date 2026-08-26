@@ -2358,3 +2358,49 @@ def test_project_all_stops_when_leadership_lost(db):
     assert _scalar(
         factory, "SELECT applied_at FROM shadow_change_log WHERE pk = :p", p=pk
     ) is None  # el pendiente queda intacto para el proyector legítimo
+
+
+def test_project_all_skips_aggregate_work_after_losing_leadership(db, monkeypatch):
+    """G2-H-3 (hipótesis CONFIRMADA): tras `lock_lost` el drenado se cortaba,
+    pero la evaluación AGREGADA y el replay seguían corriendo SIN liderazgo, en
+    paralelo con el proyector entrante — contra la letra «se detiene al
+    perderlo». Ahora se sale en el acto; lo drenado ya está commiteado por lote
+    y el líder legítimo evaluará su propio agregado."""
+    factory = db
+    src = f"fxlead2{uuid.uuid4().hex[:4]}"
+    pk = f"lead2-{uuid.uuid4().hex[:6]}"
+    _seed(factory, [("jobs", "I", pk, _job(pk, src))])
+
+    calls = {"after": 0, "replay": 0}
+
+    async def spy_after(*_a, **_k):
+        calls["after"] += 1
+        return set()
+
+    async def spy_replay(*_a, **_k):
+        calls["replay"] += 1
+        return 0
+
+    monkeypatch.setattr(projector, "_after_batch", spy_after)
+    monkeypatch.setattr(projector, "_replay_after_batch", spy_replay)
+
+    totals = {
+        "status": "ok", "batches": 0, "changes": 0, "upserts": 0, "closes": 0,
+        "erased": 0, "revisions_new": 0, "profiles_evaluated": 0,
+        "recovery_evaluated": 0, "batches_recovered": 0,
+    }
+    alive = {"n": 1}  # líder VIVO para el primer lote, muerto después
+
+    async def dying_leader() -> bool:
+        ok = alive["n"] > 0
+        alive["n"] -= 1
+        return ok
+
+    _run(
+        projector._project_all(
+            totals, projector.DEFAULT_BATCH_SIZE, None, still_leader=dying_leader
+        )
+    )
+    assert totals["status"] == "lock_lost"
+    assert totals["batches"] == 1  # el lote CON liderazgo sí se drenó
+    assert calls == {"after": 0, "replay": 0}  # antes: 1 y 1, sin liderazgo

@@ -526,7 +526,12 @@ def _as_date(value) -> date | None:
         try:
             return date.fromisoformat(value)
         except ValueError:
-            return None
+            # G2-H-2: un ISO-string de DATETIME ('2026-01-02T00:30:00+01:00')
+            # no lo acepta date.fromisoformat y el follow_up se perdía en
+            # SILENCIO (y el reconciliador, con el mismo helper, no lo veía).
+            # Se reencamina por _as_datetime → misma regla de zona.
+            dt = _as_datetime(value)
+            return _as_date(dt) if dt is not None else None
     return None
 
 

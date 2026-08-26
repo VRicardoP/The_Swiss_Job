@@ -327,6 +327,13 @@ async def _project_all(totals, batch_size, max_batches, still_leader=None) -> No
             agg_corpus_changed = agg_corpus_changed or result.corpus_changed
             agg_affected |= result.affected_profiles
             agg_revisions_new += result.revisions_new
+        if totals.get("status") == "lock_lost":
+            # G2-H-3: sin liderazgo NO se sigue trabajando — la evaluación
+            # agregada y el replay corrían igualmente, en paralelo con el
+            # proyector entrante, contra la letra «se detiene al perderlo».
+            # Lo drenado ya está commiteado por lote; el líder legítimo
+            # evaluará su propio agregado.
+            return
         aggregate = _BatchResult(
             changes=0, upserts=0, closes=0, erased=0,
             revisions_new=agg_revisions_new,

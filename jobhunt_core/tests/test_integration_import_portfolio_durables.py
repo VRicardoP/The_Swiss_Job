@@ -490,6 +490,22 @@ def test_follow_up_aware_takes_product_tz_date_not_utc():
     assert _as_date("2026-01-01") == date(2026, 1, 1)
 
 
+def test_follow_up_iso_datetime_string_no_se_pierde():
+    """G2-H-2 (hipótesis CONFIRMADA): un follow_up_date que llegue como
+    ISO-string de DATETIME (no de date) lo rechazaba date.fromisoformat y
+    `_as_date` devolvía None — el seguimiento se perdía en SILENCIO, y el
+    reconciliador tampoco lo veía (mismo helper en ambos lados). Se reencamina
+    por _as_datetime, con la MISMA regla de zona del producto (G1-P3-7)."""
+    from jobhunt_core.import_portfolio_durables import _as_date
+
+    # 00:30 hora suiza = 2026-01-01T23:30Z → la fecha que el usuario ve.
+    assert _as_date("2026-01-01T23:30:00+00:00") == date(2026, 1, 2)
+    assert _as_date("2026-01-01T12:00:00+00:00") == date(2026, 1, 1)
+    # NAIVE: se ancla a UTC como en _as_datetime (00:30 UTC = 01:30 CH).
+    assert _as_date("2026-01-01T00:30:00") == date(2026, 1, 1)
+    assert _as_date("ni-fecha-ni-hora") is None
+
+
 def test_saved_search_filters_dict_y_last_run_at_del_extractor():
     """Regresión G1 H-3 (contrato del extractor): la columna origen `filters` es
     JSONB real — el driver entrega un DICT, y json.loads(dict) → TypeError hacía
