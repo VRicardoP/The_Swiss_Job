@@ -84,6 +84,11 @@
 --
 -- ESTADO: **NO EJECUTADO contra ninguna base real**. Pendiente de aplicar.
 --
+-- HAY UN SEGUNDO SCRIPT PENDIENTE con la misma forma y la misma urgencia:
+-- `g6_canonizacion_identidad_irishjobs.sql` (G6/P2-3: 40 filas clon en 919, el
+-- portal reedita el slug conservando el `-job<id>`). Los DOS se aplican en la
+-- MISMA parada del worker, en cualquier orden: no comparten ni una fila.
+--
 -- VALIDACIÓN (G6, 2026-08-26 — sustituye a la de G3/lote B). La fixture de G3
 -- tenía **un clon por superviviente** y por eso NO podía alcanzar el fallo del
 -- PASO 5 que G6 encontró: el ensayo montaba el escenario que esquiva la
