@@ -15,6 +15,7 @@ import httpx
 from services.circuit_breaker import CircuitBreakerOpen
 from services.job_service import BaseJobProvider
 from utils.dates import parse_published_at
+from utils import fetch_diagnostics as diag
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -97,13 +98,21 @@ class NavArbeidsplassenProvider(BaseJobProvider):
                 logger.warning("NAV faceta '%s' omitida (breaker): %s", facet, exc)
                 break
 
-            if not data:
+            if data is None:
+                # Fetch fallido: el issue ya lo registró utils.http.
                 break
 
-            hits_block = data.get("hits")
+            hits_block = data.get("hits") if isinstance(data, dict) else None
             if not isinstance(hits_block, dict):
-                # Estructura desconocida: no es una página vacía legítima.
-                logger.warning("NAV faceta '%s': respuesta sin bloque 'hits'", facet)
+                # G4/P2-8 — estructura desconocida: NO es una página vacía
+                # legítima. Antes solo se logueaba, así que la fuente salía
+                # `empty` y el panel de salud la daba por sana.
+                detail = (
+                    f"{self.SOURCE_NAME}: 200 sin bloque 'hits' en la faceta "
+                    f"'{facet}' — estructura desconocida"
+                )
+                logger.error(detail)
+                diag.record(diag.KIND_NETWORK, self.API_URL, detail=detail)
                 break
 
             page_hits = hits_block.get("hits") or []

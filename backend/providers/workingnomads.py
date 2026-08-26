@@ -12,6 +12,7 @@ import httpx
 
 from services.job_service import BaseJobProvider
 from utils.dates import parse_published_at
+from utils import fetch_diagnostics as diag
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -65,10 +66,13 @@ class WorkingNomadsProvider(BaseJobProvider):
                 )
             )
 
-        if not data or not isinstance(data, list):
+        # G4/P2-8: un 200 ilegible (aquí: cualquier cosa que no sea la lista)
+        # ya no se confunde con "no hay ofertas" — se registra y sale `error`.
+        raw_jobs = diag.json_items(data, API_URL, self.SOURCE_NAME)
+        if not raw_jobs:
             return []
 
-        all_jobs = self._process_raw_jobs(data)
+        all_jobs = self._process_raw_jobs(raw_jobs)
         filtered = self._filter_relevant(all_jobs)
 
         if query:

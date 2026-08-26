@@ -8,6 +8,7 @@ import httpx
 
 from services.job_service import BaseJobProvider
 from utils.dates import parse_published_at
+from utils import fetch_diagnostics as diag
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -52,10 +53,12 @@ class ArbeitnowProvider(BaseJobProvider):
                     )
                 )
 
-                if not data:
-                    break
-
-                raw_jobs = data.get("data", [])
+                # G4/P2-8: un 200 ilegible (cuerpo vacío, clave renombrada) ya no
+                # se confunde con "no hay ofertas" — se registra y la fuente sale
+                # `error`, no `empty`.
+                raw_jobs = diag.json_items(
+                    data, self.API_URL, self.SOURCE_NAME, key="data"
+                )
                 if not raw_jobs:
                     break
 

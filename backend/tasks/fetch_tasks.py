@@ -148,6 +148,25 @@ def fetch_providers(self) -> dict[str, Any]:
             )
 
         return result
+    except SoftTimeLimitExceeded:
+        # G4/P2-2 — el pool prefork levanta `SoftTimeLimitExceeded` desde un
+        # SIGNAL HANDLER, y un run de cosecha pasa casi todo su tiempo
+        # bloqueado en `epoll_wait` (HTTP, Playwright, BD). Si la señal llega
+        # ahí, la excepción se levanta dentro de `selectors.EpollSelector.select()`
+        # —FUERA del árbol de corrutinas— y ESCAPA de `asyncio.run()`: ninguno
+        # de los cuatro handlers internos que añadió `f073d92` la ve. Caía en
+        # el `except Exception` de abajo → `self.retry(...)` → se reintentaba
+        # la cosecha ENTERA con el mismo presupuesto que ya no alcanzó, y al
+        # agotar los reintentos la cadena `daily_harvest` abortaba por
+        # `link_error`: ese día no había embeddings, ni dedup, ni matching, ni
+        # digest. Aquí NO se reintenta: se declara la cosecha parcial y se
+        # devuelve el summary, que es lo mismo que hacen los handlers
+        # internos para el caso «la señal llegó durante CPU».
+        logger.warning(
+            "fetch_providers: soft time limit fuera del árbol de corrutinas — "
+            "cosecha PARCIAL, sin reintento"
+        )
+        return {"status": "soft_time_limit", "soft_time_limit": True}
     except Exception as exc:
         logger.error("fetch_providers failed: %s", exc)
         raise self.retry(exc=exc, countdown=300)

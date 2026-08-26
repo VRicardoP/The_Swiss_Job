@@ -92,6 +92,50 @@ def issues() -> list[FetchIssue]:
     return list(_issues.get() or [])
 
 
+def json_items(data, url: str, source: str, *, key: str | None = None) -> list | None:
+    """Lista de ofertas de un cuerpo JSON, o `None` si el run debe CORTAR.
+
+    G4/P2-8 — un HTTP 200 cuyo cuerpo no sabemos leer (`{}`, `[]` donde se
+    esperaba un envoltorio, la clave renombrada) NO es «no hay ofertas»: hasta
+    ahora los providers lo cortaban con `if not data: break` y la fuente salía
+    `empty`, indistinguible de un feed legítimamente vacío. El día que
+    ostjob/zentraljob cambien su 308 por un 200 con cuerpo vacío volverían a
+    morir en silencio — exactamente la clase V.0 que cerró el fix de los seis
+    RSS de G3/P2-6.
+
+    Contrato:
+    - `data is None` ⇒ `None` SIN registrar: el fetch falló y el issue ya lo
+      puso `utils.http` (no duplicar).
+    - estructura reconocible ⇒ la lista, aunque esté vacía (fin de paginación
+      o feed sin resultados: eso sí es legítimo y no se registra).
+    - cualquier otra cosa ⇒ se REGISTRA el fallo de estructura y `None`.
+
+    `key=None` para los endpoints cuyo cuerpo es la lista directamente.
+    """
+    if data is None:
+        return None
+    if key is None:
+        if isinstance(data, list):
+            return data
+        forma = f"se esperaba una lista y llegó {type(data).__name__}"
+    elif isinstance(data, dict):
+        items = data.get(key)
+        if isinstance(items, list):
+            return items
+        forma = (
+            f"la clave {key!r} falta o no es una lista"
+            if items is None
+            else f"la clave {key!r} llegó como {type(items).__name__}"
+        )
+    else:
+        forma = f"se esperaba un objeto con {key!r} y llegó {type(data).__name__}"
+
+    detail = f"{source}: 200 con estructura desconocida — {forma}"
+    logger.error(detail)
+    record(KIND_NETWORK, url, detail=detail)
+    return None
+
+
 def classify(job_count: int, collected: list[FetchIssue]) -> str:
     """Veredicto del run de una fuente: `ok` | `empty` | `error`.
 

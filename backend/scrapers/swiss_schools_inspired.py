@@ -57,23 +57,24 @@ class SwissSchoolsInspiredScraper(SwissSchoolBaseScraper):
         fuente apagada para siempre si caía en el kill-switch.
         """
         all_jobs: list[dict] = []
-        had_error = False
+        # G2/P3-1 + G4/P3-4: las N pasadas comparten `_stop_reason`. Se recoge
+        # el de cada colegio y se combinan con la prioridad
+        # `error > None > known_page`: el acumulador booleano anterior
+        # propagaba el `error` pero borraba el `None` («con hambre»), que es la
+        # señal que consume el re-bootstrap del presupuesto en scraping_tasks.
+        stop_reasons: list = []
         for school in self._schools:
             self._current_school = school
+            self._stop_reason = None
             all_jobs.extend(await super()._scrape_with_httpx(query))
-            # G2/P3-1: las N pasadas comparten `_stop_reason` — si el colegio
-            # siguiente termina en early-stop ("known_page"), sobreescribía el
-            # "error" parcial del anterior y el guard del cursor en
-            # scraping_tasks dejaba de verlo. El error de cualquier pasada gana.
-            had_error = had_error or self._stop_reason == "error"
+            stop_reasons.append(self._stop_reason)
             # G1/P3-10: los N colegios comparten HOST — si uno reporta
             # bloqueo, seguir con el resto sumaría N reportes en un solo run
             # y alcanzaria el kill-switch (threshold 3) por un episodio
             # transitorio (hasta 24h de silencio). Un bloqueo corta el run.
             if self._run_block_reported:
                 break
-        if had_error:
-            self._stop_reason = "error"
+        self._stop_reason = self.combine_stop_reasons(stop_reasons)
         return all_jobs
 
     def build_listing_url(self, page: int, query: str) -> str:

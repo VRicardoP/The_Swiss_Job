@@ -7,6 +7,7 @@ import httpx
 
 from config import settings
 from services.job_service import BaseJobProvider
+from utils import fetch_diagnostics as diag
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -59,10 +60,12 @@ class AdzunaProvider(BaseJobProvider):
                         lambda u=url, p=params: fetch_with_retry(client, u, params=p)
                     )
 
-                    if not data:
-                        break
-
-                    raw_jobs = data.get("results", [])
+                    # G4/P2-8: un 200 ilegible (cuerpo vacío, clave renombrada) ya no
+                    # se confunde con "no hay ofertas" — se registra y la fuente sale
+                    # `error`, no `empty`.
+                    raw_jobs = diag.json_items(
+                        data, url, self.SOURCE_NAME, key="results"
+                    )
                     if not raw_jobs:
                         break
 

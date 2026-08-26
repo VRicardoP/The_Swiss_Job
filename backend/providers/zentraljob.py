@@ -9,6 +9,7 @@ import httpx
 from providers.base_chmedia import normalize_chmedia_job
 from services.circuit_breaker import CircuitBreakerOpen
 from services.job_service import BaseJobProvider
+from utils import fetch_diagnostics as diag
 from utils.http import fetch_with_retry
 
 logger = logging.getLogger(__name__)
@@ -44,10 +45,12 @@ class ZentraljobProvider(BaseJobProvider):
                     logger.error("Zentraljob fetch error on page %d: %s", page, e)
                     break
 
-                if not data:
-                    break
-
-                raw_jobs = data.get("items", [])
+                # G4/P2-8: un 200 ilegible (cuerpo vacío, clave renombrada) ya no
+                # se confunde con "no hay ofertas" — se registra y la fuente sale
+                # `error`, no `empty`.
+                raw_jobs = diag.json_items(
+                    data, self.API_URL, self.SOURCE_NAME, key="items"
+                )
                 if not raw_jobs:
                     break
 

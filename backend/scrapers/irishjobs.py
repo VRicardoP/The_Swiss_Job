@@ -445,20 +445,24 @@ class IrishJobsScraper(BaseScraper):
         """Cosecha irishjobs.ie + jobs.ie; deduplica por id de plataforma StepStone."""
         seen_ids: set = set()
         all_stubs: list[dict] = []
-        had_error = False
+        # G3/P2-1 + G4/P3-4: los DOS hosts comparten `_stop_reason`, así que se
+        # recoge el de CADA uno (rearmándolo antes de la pasada) y se combinan
+        # con la prioridad `error > None > known_page`. El acumulador booleano
+        # anterior propagaba el `error` pero borraba el `None` («con hambre»),
+        # que es la señal que consume el re-bootstrap de scraping_tasks.
+        stop_reasons: list = []
         async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
             for host in self.HOSTS:
+                self._stop_reason = None
                 all_stubs.extend(await self._harvest_host(client, host, seen_ids))
-                # G3/P2-1: los DOS hosts comparten `_stop_reason` — si el
-                # segundo termina en early-stop ("known_page"), sobreescribía
-                # el "error" parcial del primero y el guard del cursor en
-                # scraping_tasks dejaba de verlo: el cursor aprendía una
-                # pasada incompleta y el early-stop del run siguiente enterraba
-                # las ofertas no descargadas. El error de cualquier host gana
-                # (mismo acumulador que recibieron NAE/Inspired en G2/P3-1).
-                had_error = had_error or self._stop_reason == "error"
-        if had_error:
-            self._stop_reason = "error"
+                stop_reasons.append(self._stop_reason)
+                # G4/P3-5: los DOS hosts comparten `SOURCE_NAME`, así que
+                # seguir tras un bloqueo suma DOS reportes de compliance en un
+                # solo run y el kill-switch (threshold 3) salta en 2 runs en
+                # vez de 3. Mismo corte que NAE e Inspired (G1/P3-10).
+                if self._run_block_reported:
+                    break
+        self._stop_reason = self.combine_stop_reasons(stop_reasons)
 
         logger.info(
             "%s scraped %d raw jobs across %d hosts",

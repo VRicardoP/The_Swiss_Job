@@ -9,10 +9,15 @@ import httpx
 from config import settings
 from services.circuit_breaker import CircuitBreakerOpen
 from services.job_service import BaseJobProvider
+from utils import fetch_diagnostics as diag
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
 logger = logging.getLogger(__name__)
+
+# La URL real incrusta la API key en el path: para los diagnósticos (que se
+# muestran en el panel de salud) se usa esta forma redactada.
+_REDACTED_URL = "https://jooble.org/api/<api_key>"
 
 
 class JoobleProvider(BaseJobProvider):
@@ -53,10 +58,14 @@ class JoobleProvider(BaseJobProvider):
                     logger.error("Jooble fetch error on page %d: %s", page, e)
                     break
 
-                if not data:
-                    break
-
-                raw_jobs = data.get("jobs", [])
+                # G4/P2-8: un 200 ilegible (cuerpo vacío, clave renombrada) ya no
+                # se confunde con "no hay ofertas" — se registra y la fuente sale
+                # `error`, no `empty`.
+                # OJO: la url lleva la API key incrustada y `diag` acaba en la
+                # columna de salud, que el panel muestra — se registra redactada.
+                raw_jobs = diag.json_items(
+                    data, _REDACTED_URL, self.SOURCE_NAME, key="jobs"
+                )
                 if not raw_jobs:
                     break
 

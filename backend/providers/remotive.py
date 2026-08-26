@@ -6,6 +6,7 @@ import httpx
 
 from services.job_service import BaseJobProvider
 from utils.dates import parse_published_at
+from utils import fetch_diagnostics as diag
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills, strip_html_tags
 
@@ -29,10 +30,11 @@ class RemotiveProvider(BaseJobProvider):
                 lambda: fetch_with_retry(client, self.API_URL, params=params)
             )
 
-        if not data:
+        # G4/P2-8: un 200 ilegible ya no se confunde con "no hay ofertas".
+        raw_jobs = diag.json_items(data, self.API_URL, self.SOURCE_NAME, key="jobs")
+        if not raw_jobs:
             return []
 
-        raw_jobs = data.get("jobs", [])
         results: list[dict] = []
         results.extend(self._process_raw_jobs(raw_jobs))
 

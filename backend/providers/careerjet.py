@@ -57,7 +57,23 @@ class CareerjetProvider(BaseJobProvider):
                     logger.error("Careerjet fetch error on page %d: %s", page, e)
                     break
 
-                if not data:
+                if data is None:
+                    # Fetch fallido: el issue ya lo registró utils.http.
+                    break
+
+                # G4/P2-8: las dos guardas de estructura de G3/P2-6 estaban
+                # DETRÁS de un `if not data: break`, así que un 200 con `{}` o
+                # `[]` las esquivaba y la fuente volvía a salir `empty`. El
+                # corte por falsy se sustituye por el corte por None (que es lo
+                # único que utils.http ya ha registrado) y las guardas se
+                # evalúan siempre.
+                if not isinstance(data, dict):
+                    detail = (
+                        "200 con estructura desconocida: se esperaba un objeto "
+                        f"y llegó {type(data).__name__}"
+                    )
+                    logger.error("Careerjet: %s", detail)
+                    diag.record(diag.KIND_NETWORK, self.API_URL, detail=detail)
                     break
 
                 # Verify response type. G3/P2-6: la API responde HTTP 200 con

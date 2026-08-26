@@ -11,6 +11,7 @@ from services.circuit_breaker import CircuitBreakerOpen
 from services.job_service import BaseJobProvider
 from services.scraper_stealth import realistic_headers
 from utils.dates import parse_published_at
+from utils import fetch_diagnostics as diag
 from utils.http import fetch_with_retry
 from utils.text import extract_canton, extract_job_skills
 
@@ -74,10 +75,12 @@ class JobgetherProvider(BaseJobProvider):
                     logger.error("Jobgether fetch error on page %d: %s", page, e)
                     break
 
-                if not data:
-                    break
-
-                raw_jobs = data.get("data", [])
+                # G4/P2-8: un 200 ilegible (cuerpo vacío, clave renombrada) ya no
+                # se confunde con "no hay ofertas" — se registra y la fuente sale
+                # `error`, no `empty`.
+                raw_jobs = diag.json_items(
+                    data, self.API_URL, self.SOURCE_NAME, key="data"
+                )
                 if not raw_jobs:
                     break
 

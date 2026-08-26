@@ -101,6 +101,31 @@ class BaseScraper(BaseJobProvider):
     _run_block_reported: bool = False
     _run_verified_empty: bool = False
 
+    @staticmethod
+    def combine_stop_reasons(reasons: list) -> str | None:
+        """Señal de parada de un run de VARIAS pasadas (hosts o colegios).
+
+        G4/P3-4 — `_stop_reason` tiene TRES estados y cada uno lo consume un
+        guard distinto en `tasks/scraping_tasks.py`:
+          * `"error"`  → no se actualiza el cursor (el run fue incompleto);
+          * `None`     → el run agotó su presupuesto SIN early-stop, o sea
+                         terminó «con hambre»: es lo que dispara el
+                         re-bootstrap que cerró `ebb2c51`;
+          * `"known_page"` → early-stop limpio, el run vio todo lo nuevo.
+        El acumulador `had_error` de las pasadas propagaba el `error` pero
+        BORRABA la señal «con hambre»: si la pasada 1 se quedaba con hambre y
+        la 2 hacía `known_page`, ganaba `known_page` y el re-bootstrap no se
+        disparaba nunca — el lazo de autolimitación del presupuesto seguía
+        abierto por esta puerta.
+
+        Prioridad: `error` > `None` > `known_page`.
+        """
+        if "error" in reasons:
+            return "error"
+        if None in reasons:
+            return None
+        return "known_page" if reasons else None
+
     async def fetch_jobs(self, query: str, location: str = "Switzerland") -> list[dict]:
         """Fetch jobs via scraping. Overrides BaseJobProvider.fetch_jobs().
 
