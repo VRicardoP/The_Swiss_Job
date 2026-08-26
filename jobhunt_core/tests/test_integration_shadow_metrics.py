@@ -1800,6 +1800,82 @@ def test_perdida_roja_cuando_la_reapertura_ya_se_aplico_sin_crear_slot(db):
     assert row.details["huecos_graciados_muestra"] == [benigno]
 
 
+def _cambio(factory, lsn, pk, received, applied=None, payload=None, op="U"):
+    """Fila de shadow_change_log con payload y sellado INYECTABLES."""
+    _exec(
+        factory,
+        "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
+        "payload, received_at, applied_at) VALUES (:l, 0, 'jobs', :o, :p, "
+        "CAST(:j AS jsonb), :r, :a)",
+        {"l": lsn, "o": op, "p": pk, "j": json.dumps(payload or {}),
+         "r": received, "a": applied},
+    )
+
+
+def test_perdida_gracia_por_estado_aplicado_cubre_las_tres_patologias(db):
+    """Regresión G4-P2-1: la gracia se decidía por la FORMA DEL SLOT, así que
+    no distinguía «el proyector debía crear slot y no lo creó» (pérdida) de
+    «no debía crearlo porque el job estaba INACTIVO» (bootstrap: el backfill
+    vuelca `jobs` SIN filtrar is_active y el proyector aplica ese I como
+    cierre sin slot). La reactivación posterior —rutinaria en el legacy—
+    reabría el falso ROJO de G2-P2-2 y reseteaba la racha de 7 ciclos.
+
+    El criterio es ahora el ESTADO APLICADO (espejo de `projector._is_close`
+    sobre el último cambio aplicado) y cubre las TRES patologías en el MISMO
+    corpus: transitorio legítimo VERDE, pérdida real ROJA, y reactivación de
+    un job que nunca debió tener slot VERDE."""
+    factory = db
+    src = _mk_source(factory, "legacy:g4estadofx")
+    p = uuid.uuid4().hex[:6]
+    boot = f"{p}-boot"        # inactivo en el bootstrap, sin slot: GRACIA
+    dupl = f"{p}-dupl"        # cerrado por duplicate_of, sin slot: GRACIA (N-5)
+    perdido = f"{p}-perdido"  # el proyector debía crear slot y no lo creó: ROJO
+    react = f"{p}-react"      # slot cerrado + CDC en vuelo (G2-P2-2): GRACIA
+    viejo = CSTART - timedelta(days=3)
+    en_vuelo = AFTER - timedelta(minutes=5)
+
+    # (1) G4-P2-1: el backfill emitió su I ya INACTIVO (aplicado como cierre,
+    # sin slot) y HOY el legacy lo re-activó con el CDC aún en vuelo.
+    _legacy_job(factory, boot)
+    _cambio(factory, 9601, boot, viejo, applied=viejo, op="I",
+            payload={"is_active": False})
+    _cambio(factory, 9602, boot, en_vuelo, payload={"is_active": True})
+
+    # (2) G4-N-5: cierre por DUPLICADO — `is_active` sigue en true y aun así
+    # `_is_close` cierra: la gracia debe espejar el predicado COMPLETO.
+    _legacy_job(factory, dupl)
+    _cambio(factory, 9603, dupl, viejo, applied=viejo,
+            payload={"is_active": True, "duplicate_of": "otro"})
+    _cambio(factory, 9604, dupl, en_vuelo, payload={"is_active": True})
+
+    # (3) NO-REGRESIÓN de G3-P2-1: el último aplicado ABRE (el proyector tuvo
+    # su oportunidad) y no hay slot ⇒ pérdida REAL, la gracia no la tapa.
+    _legacy_job(factory, perdido)
+    _cambio(factory, 9605, perdido, viejo, applied=viejo, op="I",
+            payload={"is_active": True})
+    _cambio(factory, 9606, perdido, en_vuelo, payload={"is_active": True})
+
+    # (4) NO-REGRESIÓN de G2-P2-2: slot CERRADO y reapertura en vuelo.
+    _legacy_job(factory, react)
+    _mk_slot(factory, src, react, active=False)
+    _cambio(factory, 9607, react, en_vuelo, payload={"is_active": True})
+
+    _compute(factory)  # PRIMER cómputo, SIN force: el ciclo queda SELLADO
+    row = _metric_row(factory, "perdida")
+    assert "recomputed_at" not in row.details  # cuenta para la racha
+    assert float(row.value) == 1  # antes del fix: 3 (falso ROJO en boot/dupl)
+    assert row.details["huecos_muestra"] == [perdido]
+    assert set(row.details["huecos_graciados_muestra"]) == {boot, dupl, react}
+    assert _gates(factory)["perdida"]["ok"] is False  # la pérdida real, roja
+
+    # Sin la pérdida real, el mismo corpus queda VERDE y SELLABLE.
+    _exec(factory, f"DELETE FROM {LEG}.jobs WHERE hash = :h", {"h": perdido})
+    _compute(factory, force=True)
+    row = _metric_row(factory, "perdida")
+    assert float(row.value) == 0
+    assert _gates(factory)["perdida"]["ok"] is True
+
+
 def test_umbral_del_ciclo_queda_persistido_y_no_se_recolorea(db):
     """Regresión G1 H-8: evaluate_gates re-evaluaba ciclos SELLADOS con las
     constantes VIGENTES — un cambio de umbral recoloreaba la historia sin
