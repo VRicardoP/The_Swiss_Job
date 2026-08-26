@@ -30,7 +30,9 @@ def normalize_chmedia_job(raw: dict, source: str, domain: str) -> dict:
     title = (raw.get("title") or "").strip()
     company_data = raw.get("company", {})
     company = (
-        (company_data.get("name") or "").strip() if isinstance(company_data, dict) else ""
+        (company_data.get("name") or "").strip()
+        if isinstance(company_data, dict)
+        else ""
     )
     url = build_chmedia_url(domain, raw)
 
