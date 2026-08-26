@@ -54,5 +54,18 @@ def ensure_handler(source_name: str) -> bool:
     alta = _altas_exact_match().get(source_name)
     if alta is None:
         return False
-    alta()
+    try:
+        alta()
+    except Exception:
+        # G5-N-3: el alta importa un módulo (hoy `import_portfolio`) DENTRO de
+        # la transacción de reparación del sink. Donde el camino anterior solo
+        # LOGUEABA, un ImportError o un efecto de import abortaría la cosecha
+        # entera. Fail-soft: sin normalizador la canónica queda NULL, que es el
+        # contrato ya escrito para este caso (A-06), no una excepción que
+        # tumbe el run.
+        logger.exception(
+            "registry: el alta en caliente del handler de %r ha fallado — "
+            "la fuente queda sin normalizador en este proceso", source_name
+        )
+        return False
     return normalize.has_normalizer(source_name)

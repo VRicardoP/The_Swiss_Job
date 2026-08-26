@@ -649,6 +649,24 @@ def test_g4_reparacion_da_de_alta_el_handler_de_portfolio_import(db):
         _exec_sql(factory, "DELETE FROM sources WHERE id = :i", i=mia)
 
 
+def test_g5_un_alta_que_revienta_no_tumba_la_cosecha(monkeypatch):
+    """G5-N-3: `_altas_exact_match()` se evalúa para CUALQUIER fuente no
+    `legacy:*`, y el alta importa un módulo DENTRO de la transacción de
+    reparación del sink. Donde el camino anterior solo LOGUEABA, un
+    ImportError o un efecto de import abortaría la cosecha entera. Fail-soft:
+    se devuelve False (canónica NULL, el contrato A-06 ya escrito) y se
+    registra, en vez de propagar."""
+    from jobhunt_core.harvest import registry
+
+    def _alta_rota():
+        raise ImportError("ciclo de import simulado")
+
+    monkeypatch.setattr(
+        registry, "_altas_exact_match", lambda: {"fuente-rota": _alta_rota}
+    )
+    assert registry.ensure_handler("fuente-rota") is False
+
+
 def test_g4_registry_solo_da_de_alta_los_namespaces_conocidos():
     """El alta por namespace no adivina: `legacy:*` va al handler genérico de
     la sombra, las exact-match a la suya, y una fuente AJENA sigue sin
