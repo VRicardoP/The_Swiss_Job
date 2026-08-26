@@ -516,6 +516,48 @@ def _exec_sql(factory, stmt, **params):
     return asyncio.run(go())
 
 
+def test_g4_la_marca_del_raw_re_visto_es_monotona(db):
+    """G4-N-2: `now()` es `transaction_timestamp()`, no la hora de escritura, y
+    el `DO UPDATE` ASIGNABA en vez de maximizar — una tx que selló su reloj
+    antes pero escribe después (espera del advisory lock por fuente +
+    preprocesado del lote) hacía RETROCEDER el `fetched_at` de la revisión
+    vigente y reabría G3-A-P3-3: los dos call-sites del raw vigente leen por
+    `fetched_at DESC` y devolverían la revisión SUPERADA."""
+    from jobhunt_core.harvest.providers import arbeitnow  # noqa: F401
+
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    ext = f"g4mono-{uuid.uuid4().hex[:8]}"
+    payload = {"title": "SRE", "company_name": "ACME AG"}
+    _sink_batch(factory, scope, [
+        RawListing(external_id=ext, url=f"https://x/{ext}", payload=payload),
+    ])
+
+    def _fetched():
+        return _exec_sql(
+            factory,
+            "SELECT r.fetched_at FROM source_listing_revisions r "
+            "JOIN source_listing_incarnations i ON i.id = r.incarnation_id "
+            "JOIN source_listings l ON l.id = i.source_listing_id "
+            "WHERE l.external_id = :e", e=ext,
+        ).scalar_one()
+
+    # Otra transacción dejó una marca POSTERIOR a la que traerá la siguiente
+    # cosecha (el interleaving del que habla la nota, sin construirlo).
+    _exec_sql(
+        factory,
+        "UPDATE source_listing_revisions SET fetched_at = now() + interval '1 hour' "
+        "WHERE incarnation_id IN (SELECT i.id FROM source_listing_incarnations i "
+        " JOIN source_listings l ON l.id = i.source_listing_id "
+        " WHERE l.external_id = :e)", e=ext,
+    )
+    futuro = _fetched()
+    _sink_batch(factory, scope, [  # re-cosecha del MISMO contenido
+        RawListing(external_id=ext, url=f"https://x/{ext}", payload=payload),
+    ])
+    assert _fetched() == futuro  # antes: retrocedía a now() de esta tx
+
+
 def test_g4_reparacion_da_de_alta_el_handler_de_portfolio_import(db):
     """Regresión G4-P2-4: el alta en caliente de G3-A-P3-2 solo cubría
     `legacy:*` y volvía —logueando— para cualquier otra fuente. El registro es

@@ -1349,13 +1349,19 @@ class RawListingSink:
             # (el pre-filtro es optimización, no la corrección) y REFRESCA la
             # marca temporal del contenido re-visto (G3-A-P3-3) — `raw` no se
             # toca: mismo content_hash ⇒ mismo canon.
+            # G4-N-2: la marca es MONÓTONA. `now()` es transaction_timestamp():
+            # una tx que selló su reloj antes pero escribe después (espera del
+            # advisory lock por fuente + preprocesado del lote) haría RETROCEDER
+            # el fetched_at y reabriría G3-A-P3-3 —«última revisión» se lee por
+            # fetched_at DESC— con >=2 revisiones vivas en la encarnación.
             await session.execute(
                 sa.text(
                     "INSERT INTO source_listing_revisions "
                     "(id, incarnation_id, content_hash, raw) "
                     "VALUES (:id, :iid, :chash, CAST(:raw AS jsonb)) "
                     "ON CONFLICT (incarnation_id, content_hash) "
-                    "DO UPDATE SET fetched_at = now()"
+                    "DO UPDATE SET fetched_at = "
+                    "  GREATEST(source_listing_revisions.fetched_at, now())"
                 ),
                 candidates,
             )
