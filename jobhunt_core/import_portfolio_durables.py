@@ -526,6 +526,12 @@ def _json_safe(value):
     return value
 
 
+# Cota del umbral de una búsqueda guardada: la del contrato de la API para el
+# mismo campo (api/schemas.py, `ge=0, le=100`) — el destino es int4, así que
+# fuera de rango el INSERT del cutover reventaría la transacción (G4-P3-1).
+MIN_SCORE_MAX = 100
+
+
 def _as_int(value, default: int | None = 0) -> int | None:
     """Coerción defensiva de frontera: entero del durable → int, o `default`.
 
@@ -566,11 +572,27 @@ def _as_min_score(value) -> tuple[int, bool]:
     `invalid_filters` del mismo bucle. El caller ENUMERA la degradación y no
     la activa. Ausente (None) NO es degradación: la columna es nullable y 0 es
     su valor por contrato. DEFINICIÓN ÚNICA: la usan la migración y el lado
-    ESPERADO del reconciliador, o divergirían."""
+    ESPERADO del reconciliador, o divergirían.
+
+    G4-P3-1: el helper blindaba lo NO FINITO pero no la COTA del destino, la
+    única que la BD impone (`saved_searches.min_score` es int4) — un valor
+    numéricamente válido y fuera de rango se coercionaba SIN marcar
+    degradación, se importaba ACTIVO, no iba a staging y el INSERT reventaba
+    con `DataError: value out of int32 range`: excepción no capturada en la
+    frontera que ABORTA el cutover entero, la lección de G1-P2-2/G2-P2-1/
+    G3-P3-2. Y el segundo intento de coerción que añadió G3 (`float(str(v))`
+    en `_as_int`, cuyo ÚNICO consumidor es esta función) AMPLIABA el vector:
+    `Decimal('1e10')` antes degradaba a 0 y pasó a producir el int que
+    revienta. La cota es la del CONTRATO de la API para el mismo campo
+    (`Field(None, ge=0, le=100)`), más estrecha que la de int4: fuera de ella
+    el valor entra por el camino ya escrito (`invalid_min_score` + búsqueda
+    DESACTIVADA), espejado en `_classify_expected` por compartir helper."""
     if value is None:
         return 0, False
     coerced = _as_int(value, default=None)
-    return (0, True) if coerced is None else (coerced, False)
+    if coerced is None or not 0 <= coerced <= MIN_SCORE_MAX:
+        return 0, True
+    return coerced, False
 
 
 def _as_date(value) -> date | None:

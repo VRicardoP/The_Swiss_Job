@@ -545,6 +545,29 @@ def test_min_score_decimal_textual_no_degrada_al_valor_menos_restrictivo():
     assert _as_min_score("sesenta") == (0, True)
 
 
+def test_g4_min_score_fuera_de_cota_degrada_en_vez_de_matar_el_cutover():
+    """Regresión G4-P3-1: el helper blindaba lo NO FINITO pero no la COTA del
+    destino (int4), la única que la BD impone. Un valor numéricamente válido y
+    fuera de rango se coercionaba SIN marcar degradación, se importaba ACTIVO,
+    no iba a staging —el reconciliador tampoco lo veía— y el INSERT abortaba la
+    transacción del cutover con `DataError: value out of int32 range`. El
+    segundo intento de coerción que añadió G3 AMPLIABA el vector: `1e10`
+    degradaba antes a 0 y pasó a producir el int que revienta."""
+    from decimal import Decimal
+
+    from jobhunt_core.import_portfolio_durables import _as_min_score
+
+    for valor in (3_000_000_000, "3000000000", Decimal("3e9"), 3e9):
+        assert _as_min_score(valor) == (0, True), valor  # antes: (3000000000, False)
+    # Segundo grado, sin crash: dentro de int4 pero fuera del contrato de la
+    # API (ge=0, le=100) — se importaba ACTIVA y muda.
+    assert _as_min_score(101) == (0, True)
+    assert _as_min_score(-1) == (0, True)
+    # Las cotas siguen siendo válidas y NO degradan.
+    assert _as_min_score(0) == (0, False)
+    assert _as_min_score(100) == (100, False)
+
+
 def test_min_score_invalido_migra_desactivada_y_enumerada_en_staging():
     """G3-P3-5 (2ª mitad): un min_score irrecuperable ya no se cuela como 0
     ACTIVO (alertar de TODO) sin rastro — se importa DESACTIVADA y el durable
