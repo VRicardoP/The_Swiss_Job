@@ -393,6 +393,11 @@ async def test_teacher_alert_fires_even_with_whole_consumer_migrated(
     ):
         out = await _detect_and_notify()
 
-    assert out == {"status": "success", "candidates": 1, "matched": 1}
+    # G3/P1-1: la tarea añade `already_sent` (ofertas que el solape de la
+    # ventana vuelve a ver y el marcador ya avisó). Se comprueban las claves
+    # que fija este contrato, no la forma exacta del dict.
+    assert out["status"] == "success"
+    assert out["candidates"] == 1
+    assert out["matched"] == 1
     fake_email.send.assert_called_once()
     assert fake_email.send.call_args.args[0] == "teacher@example.com"
