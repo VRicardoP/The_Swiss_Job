@@ -392,3 +392,118 @@ def test_modo_desconocido_del_miner_falla_fuerte():
         stratum.pair_ids_from_candidates(
             {"Z": [_cand("a", "b", 0.9)], "B": [_cand("c", "d", 0.8)]}
         )
+
+
+def _mk_slot_reciclado(factory, source_id, prefix):
+    """Slot RECICLADO auténtico (harvest/sink.py:495-509): UN source_listing
+    con DOS encarnaciones (seq 1 CERRADA y seq 2 activa) sobre vacantes
+    DISTINTAS, cada una primaria de la suya — más una tercera vacante con slot
+    propio. Devuelve (v_seq1, v_seq2, v_otra, ext_reciclado, ext_otro)."""
+    ext, ext_otro = f"{prefix}-reciclado", f"{prefix}-otro"
+    v1, v2, v3 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    lid, lid3 = uuid.uuid4(), uuid.uuid4()
+    i1, i2, i3 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+
+    async def go():
+        async with factory() as s:
+            for lid_, ext_ in ((lid, ext), (lid3, ext_otro)):
+                await s.execute(
+                    sa.text(
+                        "INSERT INTO source_listings "
+                        "(id, source_id, external_id, url_normalized) "
+                        "VALUES (:i, :s, :e, :u)"
+                    ),
+                    {"i": lid_, "s": source_id, "e": ext_, "u": f"https://fx/{ext_}"},
+                )
+            for vid, lid_, iid, seq in ((v1, lid, i1, 1), (v2, lid, i2, 2),
+                                        (v3, lid3, i3, 1)):
+                if iid is i2:
+                    # El reciclado CIERRA la vieja antes de abrir la nueva
+                    # (sink.py:304 + el índice parcial uq_incarnation_active).
+                    await s.execute(
+                        sa.text(
+                            "UPDATE source_listing_incarnations "
+                            "SET ended_at = now() WHERE id = :i"
+                        ),
+                        {"i": i1},
+                    )
+                await s.execute(
+                    sa.text("INSERT INTO vacancies (id) VALUES (:i)"), {"i": vid}
+                )
+                await s.execute(
+                    sa.text(
+                        "INSERT INTO source_listing_incarnations "
+                        "(id, source_listing_id, vacancy_id, seq, url) "
+                        "VALUES (:i, :l, :v, :q, :u)"
+                    ),
+                    {"i": iid, "l": lid_, "v": vid, "q": seq, "u": f"https://fx/{iid}"},
+                )
+                await s.execute(
+                    sa.text(
+                        "UPDATE vacancies SET primary_incarnation_id = :p "
+                        "WHERE id = :i"
+                    ),
+                    {"p": iid, "i": vid},
+                )
+            await s.commit()
+
+    _run(go())
+    return str(v1), str(v2), str(v3), ext, ext_otro
+
+
+def test_g7n6_un_slot_reciclado_no_se_carga_en_silencio(db):
+    """REGRESIÓN G7-N-6: las dos direcciones del mapeo `vacancy ↔ job_ref` no
+    eran inversas.
+
+    `_resolve_legacy_refs` resuelve por `v.primary_incarnation_id` y
+    `labels.map_job_refs_to_vacancies` —la que usan las MÉTRICAS— por
+    `ORDER BY i.seq DESC`. «1 vacante = 1 identidad primaria» es cierto, pero
+    no implica «1 identidad = 1 vacante»: sobre un slot RECICLADO un
+    `external_id` legacy mapea a N vacantes, cada una primaria de la suya.
+    Medido en el clúster el 2026-08-26: 569 `source_listings` `legacy:*` con
+    más de una vacante y 569 round-trips que no vuelven.
+
+    Consecuencias que este test fija, con DOS pares que solo son distintos en
+    el espacio de VACANTES y que canonizaban al MISMO par de job_refs:
+      (a) el segundo INSERT moría en el `ON CONFLICT DO NOTHING` contado como
+          `ya_presentes` y SIN un solo log (el módulo no tiene logger), así
+          que su veredicto —aquí CONTRADICTORIO— se evaporaba;
+      (b) el ref superviviente resuelve a la vacante de mayor `seq`, que no es
+          la que el etiquetador juzgó.
+    Ahora es un error FUERTE que NOMBRA los pares, y nada se carga a medias."""
+    factory, created = db
+    prefix = "g7n6-" + uuid.uuid4().hex[:8]
+    sid = _mk_source(factory, f"legacy:{prefix}")
+    created["sources"].append(sid)
+    v1, v2, v3, ext, ext_otro = _mk_slot_reciclado(factory, sid, prefix)
+    created["dedup_refs"] += [ext, ext_otro]
+    cohort = f"stratum-{prefix}"
+    created["cohorts"].append(cohort)
+
+    # El round-trip NO vuelve: el ref del slot reciclado resuelve a la de seq 2.
+    async def vuelta():
+        async with factory() as s:
+            return await labels.map_job_refs_to_vacancies(s, [ext, ext_otro])
+
+    de_vuelta = _run(vuelta())
+    assert str(de_vuelta[ext]) == v2 and v2 != v1
+
+    candidates = {"B": [_cand(v1, v3, 0.9), _cand(v2, v3, 0.8)]}
+    with pytest.raises(ValueError) as exc:
+        _load(
+            factory, candidates,
+            {"B-01": "duplicate", "B-02": "distinct"},  # veredictos OPUESTOS
+            cohort=cohort,
+        )
+    assert "RECICLADO" in str(exc.value)
+    assert "B-01" in str(exc.value)  # el par se NOMBRA, no se pierde
+    assert _pairs_in_cohort(factory, cohort) == []
+
+    # La vacante VIGENTE del slot (la de mayor seq) sí carga: el guard no
+    # cierra el slot reciclado entero, solo las vacantes que no vuelven.
+    ok = _load(factory, {"B": [_cand(v2, v3, 0.9)]}, {"B-01": "duplicate"},
+               cohort=cohort)
+    assert (ok["insertados"], ok["ya_presentes"]) == (1, 0)
+    filas = _pairs_in_cohort(factory, cohort)
+    assert len(filas) == 1 and filas[0].verdict == "duplicate"
+    assert sorted((filas[0].job_ref_a, filas[0].job_ref_b)) == sorted((ext, ext_otro))

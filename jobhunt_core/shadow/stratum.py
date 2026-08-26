@@ -23,6 +23,10 @@ Decisiones (no obvias):
   holdout/development. Así `map_job_refs_to_vacancies` los resuelve sin
   código nuevo (la fila informativa de metrics usa la misma consulta) y las
   pasadas futuras de minería los EXCLUYEN por refs como al resto.
+  INVARIANTE (G7-N-6): ese ref tiene que VOLVER a la misma vacante. Sobre un
+  slot RECICLADO no vuelve —la vuelta gana por `seq DESC`— y el par acabaría
+  puntuado contra otra oferta o desaparecido en el ON CONFLICT; se comprueba
+  y se falla fuerte nombrando los pares (`_resolve_legacy_refs`).
 - EXCLUSIONES del acta de etiquetado: los `ambiguous-owner` (§3 — la decisión
   es del propietario, no entran hasta que adjudique) y los pares SINTÉTICOS
   B-26/27/28 («SkipDedup Collapse Test», Clera — registros de test, no
@@ -47,6 +51,8 @@ from pathlib import Path
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from jobhunt_core.shadow import labels
 
 # Cohorte v1 del estrato (§4.1). Las rondas futuras crean cohortes NUEVAS
 # (positive-stratum-v2, ...) — nunca se añade a una cohorte congelada.
@@ -198,8 +204,31 @@ async def _resolve_legacy_refs(
 ) -> dict[str, tuple[str, str]]:
     """pair_id → (job_ref_a, job_ref_b) legacy, vía la encarnación PRIMARIA
     de cada vacante (determinista: 1 vacante = 1 identidad primaria). Falla
-    FUERTE si alguna vacante no resuelve a un slot legacy o si ambos lados
-    colapsan en el mismo ref (violaría el CHECK a<>b)."""
+    FUERTE si alguna vacante no resuelve a un slot legacy, si ambos lados
+    colapsan en el mismo ref (violaría el CHECK a<>b), si el ref no VUELVE a
+    su vacante o si dos pares distintos canonizan al mismo par.
+
+    G7-N-6 — «1 vacante = 1 identidad primaria» es cierto, pero NO implica
+    «1 identidad = 1 vacante», que es lo que este loader necesitaba. Sobre un
+    slot RECICLADO (`harvest/sink.py:495-509`: cambia la identidad de empresa
+    ⇒ se cierra la encarnación y se abre otra `seq+1` con vacante NUEVA sobre
+    el MISMO `source_listing`) un `external_id` legacy mapea a N vacantes,
+    cada una primaria de la suya. La dirección de VUELTA
+    —`labels.map_job_refs_to_vacancies`, la que usan las métricas— resuelve
+    por `ORDER BY i.seq DESC`, así que las dos direcciones NO eran inversas.
+    Medido en el clúster el 2026-08-26: 569 `source_listings` `legacy:*` con
+    más de una vacante y 569 vacantes cuyo round-trip no vuelve a sí misma;
+    sobre el acta ratificada, 12 pares de 200 se evaporaban en el
+    `ON CONFLICT DO NOTHING` contados como `ya_presentes` y SIN un solo log
+    (este módulo no tiene logger), y 6 más quedaban puntuados contra una
+    vacante distinta de la juzgada.
+
+    El guard NO reimplementa el desempate: pregunta a la función REAL de
+    vuelta, así que si un día cambia su orden total el invariante la sigue.
+    Una vacante que no vuelve se convierte en un ERROR que NOMBRA sus pares
+    —el operador los excluye o re-etiqueta sobre la vacante vigente— en vez
+    de en una pérdida silenciosa; es la misma dirección fail-closed que el
+    resto de la función."""
     vids = sorted({v for p in loadable for v in pair_refs[p]})
     rows = (
         await session.execute(
@@ -216,19 +245,51 @@ async def _resolve_legacy_refs(
         )
     ).all()
     by_vid = {str(r.vid): r.ref for r in rows}
+    # G7-N-6: el round-trip tiene que volver a la MISMA vacante. Se pregunta a
+    # la función que usan las métricas (`map_job_refs_to_vacancies`), no a una
+    # copia de su ORDER BY.
+    de_vuelta = await labels.map_job_refs_to_vacancies(
+        session, sorted(set(by_vid.values()))
+    )
+    no_vuelven = {
+        vid for vid, ref in by_vid.items() if str(de_vuelta.get(ref)) != vid
+    }
     resolved: dict[str, tuple[str, str]] = {}
     bad: list[str] = []
+    reciclados: list[str] = []
     for pair_id in loadable:
         id_a, id_b = pair_refs[pair_id]
         ref_a, ref_b = by_vid.get(id_a), by_vid.get(id_b)
         if ref_a is None or ref_b is None or ref_a == ref_b:
             bad.append(pair_id)
+        elif id_a in no_vuelven or id_b in no_vuelven:
+            reciclados.append(pair_id)
         else:
             resolved[pair_id] = (ref_a, ref_b)
     if bad:
         raise ValueError(
             "pares sin job_ref legacy resoluble (vacante inexistente, sin "
             f"slot legacy, o refs colapsados): {sorted(bad)}"
+        )
+    if reciclados:
+        raise ValueError(
+            "pares sobre un slot legacy RECICLADO: su job_ref ya no resuelve a "
+            "la vacante JUZGADA sino a la de mayor seq del mismo slot "
+            "(G7-N-6), así que el par se puntuaría contra otra oferta — "
+            f"excluir o re-etiquetar sobre la vacante vigente: {sorted(reciclados)}"
+        )
+    # Dos pair_ids DISTINTOS que canonizan al mismo (LEAST, GREATEST): el
+    # segundo INSERT moriría en el ON CONFLICT DO NOTHING contado como
+    # `ya_presentes`, y si los veredictos se contradicen gana el primero por
+    # orden alfabético del pair_id. Duplicado del acta, no dato: error fuerte.
+    canonicos: dict[tuple[str, str], list[str]] = {}
+    for pair_id, refs in resolved.items():
+        canonicos.setdefault(tuple(sorted(refs)), []).append(pair_id)
+    chocan = sorted(v for v in canonicos.values() if len(v) > 1)
+    if chocan:
+        raise ValueError(
+            "pares DISTINTOS del acta que canonizan al MISMO par de job_refs "
+            f"(el segundo se perdería sin rastro en el ON CONFLICT): {chocan}"
         )
     return resolved
 
