@@ -100,6 +100,19 @@ class Deduplicator:
         empresas y fuentes distintas; con un título de solo seniority el hash era
         MD5("|") y TODO caía en un único bucket global. Misma disciplina que
         `job_identity()` en `job_service.py`.
+
+        ⚠ G6/P3-4 — ESTE VALOR SE PERSISTE (`jobs.fuzzy_hash`) y solo se
+        refresca cuando el portal RE-LISTA la oferta. Cambiar esta fórmula, o
+        cualquiera de sus dos normalizaciones, PARTE el corpus en dos
+        algoritmos: las tres consultas que comparan un hash recién calculado
+        contra los almacenados —`find_fuzzy_duplicate`,
+        `find_same_source_clone` y el prefiltro de `find_semantic_duplicates`—
+        dejan de ver las filas viejas, y nada deja rastro de la partición.
+        Quien la toque DEBE ejecutar después
+        `scripts/g6_backfill_fuzzy_hash.py` (o meter el UPDATE en la misma
+        migración). Estado medido 2026-08-26: 610 de 10.524 filas activas
+        llevan ya un hash que este código no produciría — 570 de ellas
+        identidades degeneradas anteriores a la guarda de G3/P2-12.
         """
         norm_title = Deduplicator._normalize_title(title)
         norm_company = Deduplicator._normalize_company(company)

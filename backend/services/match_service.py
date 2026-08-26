@@ -451,7 +451,13 @@ class MatchService:
         # durante la semana, incluso con el LLM caído. Conservar el texto de
         # otra corrida junto a un score bajo es peor que nada solo en teoría;
         # en la práctica el vacío borra información y no añade ninguna.
-        if llm_data.get("reason"):
+        # G6/P3-1: la guarda era de TRUTHINESS y `"   "`, `"\n\t"` o un
+        # espacio duro (U+00A0) son truthy en Python: se escribían en la
+        # columna y en `MatchCard.jsx` —donde `""` es falsy y OCULTA el
+        # bloque— pintaban el recuadro de info con el icono y NINGÚN texto,
+        # peor que el `""` que este fix venía a quitar. Y se cacheaban 7 días
+        # igual. Se exige contenido real, no solo verdad booleana.
+        if (llm_data.get("reason") or "").strip():
             r["explanation"] = llm_data["reason"]
         # Merge LLM skill analysis if richer than rule-based
         if llm_data.get("matching_skills"):
@@ -491,6 +497,16 @@ class MatchService:
         qué encaja» aparecía y desaparecía según el volumen del día. El mismo
         criterio protege el degradado a ceros (Groq+Gemini caídos): un fallo
         de proveedor no borra lo ya explicado.
+
+        G6/P3-5: `matching_skills`/`missing_skills` quedaban FUERA de esa
+        guarda y se escribían siempre. En modo avalancha una oferta que cae
+        fuera del top escribía las skills DE REGLA —a menudo `[]`— encima de
+        las que el LLM había enriquecido el día anterior: la misma asimetría
+        que G3/P3-9 cerró para `explanation`, en las dos columnas de al lado.
+        `_apply_llm_result` sí tiene su guarda (solo pisa si el LLM trae
+        lista no vacía), así que el hueco estaba únicamente en la persistencia.
+        Ahora las dos listas solo se escriben si traen algo: una lista vacía no
+        aporta nada que merezca borrar lo que ya había.
         """
         values = {
             "score_embedding": r["score_embedding"],
@@ -499,14 +515,16 @@ class MatchService:
             "score_recency": r["score_recency"],
             "score_final": r["score_final"],
             "urgency_score": r.get("urgency_score", 0),
-            "matching_skills": r["matching_skills"],
-            "missing_skills": r["missing_skills"],
         }
+        for clave in ("matching_skills", "missing_skills"):
+            if r.get(clave):
+                values[clave] = r[clave]
         if r.get(LLM_VERDICT_KEY):
             values["score_llm"] = r["score_llm"]
-            # G5/P3-7: sin explicación en ESTA corrida no se toca la columna —
-            # escribir `None` aquí borraba lo mismo que el `""` de arriba.
-            if r.get("explanation"):
+            # G5/P3-7 + G6/P3-1: sin explicación con CONTENIDO en ESTA corrida
+            # no se toca la columna — escribir `None` (o espacios) aquí borraba
+            # lo mismo que el `""` de arriba.
+            if (r.get("explanation") or "").strip():
                 values["explanation"] = r["explanation"]
         return values
 

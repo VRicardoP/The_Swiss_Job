@@ -65,6 +65,11 @@ class TestElCierreDelRunGritaCuandoHayQueMirar:
         assert "identity_clones=55" in caplog.text
 
     def test_cada_contador_de_incidencia_eleva_el_nivel(self, caplog):
+        """G6/P3-2 — `window_no_date` salió del conjunto: ver el test de G6.
+
+        `errors` sigue aquí, pero con el valor MATERIAL (7 sobre 120
+        cosechadas = 5,8 %); marginal ya no eleva el nivel.
+        """
         logger = logging.getLogger("g5.runsummary")
         for clave, valor in (
             ("identity_conflicts", 3),
@@ -72,7 +77,6 @@ class TestElCierreDelRunGritaCuandoHayQueMirar:
             ("errors", 7),
             ("fetch_failed", 2),
             ("soft_time_limit", True),
-            ("window_no_date", 4),
         ):
             caplog.clear()
             s = _limpio()

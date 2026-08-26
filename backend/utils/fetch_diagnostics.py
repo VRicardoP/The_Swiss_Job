@@ -183,17 +183,48 @@ def classify(job_count: int, collected: list[FetchIssue]) -> str:
     return "error" if collected else "empty"
 
 
-# Claves de `summary` que son INCIDENCIAS: si traen valor, el run no fue
-# limpio. Se declaran aquí, junto al resto del vocabulario de diagnóstico de la
-# cosecha, para que añadir un contador nuevo sea una línea y no un olvido.
+# Claves de `summary` que son INCIDENCIA ESTRUCTURAL: si traen valor, algo dejó
+# de funcionar. Se declaran aquí, junto al resto del vocabulario de diagnóstico
+# de la cosecha, para que añadir un contador nuevo sea una línea y no un olvido.
+#
+# G6/P3-2 — de aquí salieron `errors` y `window_no_date`. NO son incidencias
+# estructurales sino RUIDO DE CAUDAL: `errors` (fallos por-oferta) trae valor en
+# 33 de 34 runs reales y `window_no_date` en todos los que cosechan, con valores
+# de 10 a 23. Con ellos dentro, los 34 runs reales salían WARNING y NINGUNO
+# INFO: el nivel dejó de discriminar y la observabilidad seguía terminando en
+# una línea indistinguible de un run perfecto, solo que un peldaño más arriba.
 _SUMMARY_INCIDENT_KEYS = (
     "identity_conflicts",
     "identity_clones",
-    "errors",
     "fetch_failed",
     "soft_time_limit",
-    "window_no_date",
 )
+
+# `errors` sí sube a WARNING cuando deja de ser marginal: son fallos POR OFERTA
+# y su valor normal es un puñado sobre más de mil. Por encima de esta fracción
+# de lo cosechado —o con cosecha CERO, donde no hay caudal contra el que
+# relativizar— el run se rompió de verdad: son los seis runs de
+# `errors=1143..1223` con `fetched=0` que hay en el journal.
+_ERROR_RATE_WARNING = 0.05
+
+# `window_no_date` NO entra ni con umbral: la calibración ya existe en el módulo
+# que lo produce (`services/harvest_window._MIN_NO_DATE_FOR_WARNING = 3`, que
+# además exige `new_count == 0`), es POR FUENTE y es más estricta. Duplicarla
+# aquí sobre el contador agregado —que trae de 10 a 23 en cada run que
+# cosecha— solo reproduce el WARNING permanente que este fix quita.
+
+
+def _errors_are_material(summary: dict) -> bool:
+    """¿Los fallos por-oferta dejaron de ser marginales en este run?
+
+    Marginal = un puñado sobre lo que se llegó a cosechar. Con `fetched` en 0 y
+    errores, no hay caudal contra el que relativizar: el run se rompió.
+    """
+    errors = summary.get("errors") or 0
+    if not errors:
+        return False
+    fetched = summary.get("fetched") or 0
+    return errors > fetched * _ERROR_RATE_WARNING
 
 
 def log_run_summary(run_logger, label: str, summary: dict) -> None:
@@ -213,12 +244,23 @@ def log_run_summary(run_logger, label: str, summary: dict) -> None:
     cuando hay algo que mirar: WARNING si algún contador de incidencia trae
     valor o si `unhealthy` no está vacío, INFO cuando el run fue limpio. Es la
     misma cota que ya tenía el `logger.error` por-oferta, elevada al run.
+
+    G6/P3-2 — el nivel cambió pero la SEÑAL no: sobre los 34 summaries reales
+    del journal del worker, la primera versión daba **34 WARNING y 0 INFO**,
+    porque `errors` y `window_no_date` estaban en el conjunto y traen valor casi
+    siempre. Un WARNING que sale en el 100 % de los runs discrimina exactamente
+    igual que el INFO al que sustituyó. Ahora el conjunto son las incidencias
+    ESTRUCTURALES, `errors` entra solo por encima de `_ERROR_RATE_WARNING` de lo
+    cosechado, y `window_no_date` no entra: tiene su propio aviso calibrado y
+    por fuente en `harvest_window`.
     """
     incidencias = [
         f"{k}={summary[k]}"
         for k in _SUMMARY_INCIDENT_KEYS
         if summary.get(k)  # 0, False y ausente son «sin incidencia»
     ]
+    if _errors_are_material(summary):
+        incidencias.append(f"errors={summary['errors']}")
     if summary.get("unhealthy"):
         incidencias.append(f"unhealthy={len(summary['unhealthy'])}")
 
