@@ -20,6 +20,8 @@ import logging
 from contextvars import ContextVar
 from dataclasses import dataclass
 
+from utils.redact import redact_credentials
+
 logger = logging.getLogger(__name__)
 
 # Clases de fallo. `http_error` cubre 4xx/5xx tras agotar reintentos;
@@ -76,13 +78,27 @@ def record(
     detail: str = "",
     root_cause: bool = False,
 ) -> None:
-    """Registra un fallo DEFINITIVO de descarga (no un reintento intermedio)."""
+    """Registra un fallo DEFINITIVO de descarga (no un reintento intermedio).
+
+    G6/P3-6 — la URL y el detalle se REDACTAN aquí, en la raíz de verdad. Lo que
+    `record` guarda acaba en `SourceHealth.last_error_detail` (que el panel
+    muestra) y en el cuerpo de la alerta de fuente caída, y hasta ahora solo se
+    salvaba de publicar la credencial quien se acordara de pasar `diag_url` —
+    «alguien tiene que acordarse» es la fragilidad que ese parámetro venía a
+    evitar, desplazada del sitio de la fuga al sitio de la llamada.
+    `diag_url` sigue siendo necesario para la credencial en el PATH (jooble),
+    que ningún patrón de query puede reconocer.
+    """
     current = _issues.get()
     if current is None:
         return
     current.append(
         FetchIssue(
-            kind=kind, url=url, status=status, detail=detail, root_cause=root_cause
+            kind=kind,
+            url=redact_credentials(url),
+            status=status,
+            detail=redact_credentials(detail),
+            root_cause=root_cause,
         )
     )
 

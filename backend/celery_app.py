@@ -1,8 +1,17 @@
 import os
 
 from celery import Celery
+from celery.signals import after_setup_logger, after_setup_task_logger
 
 from config import settings
+from logging_setup import install_credential_redaction
+
+# G6/P2-2 — el worker NO llama a `configure_logging` (quien monta su logging es
+# Celery), y era justo el worker el que publicaba la `GEMINI_API_KEY` real en 32
+# líneas del journal vía el INFO de httpx. Estas señales corren DESPUÉS de que
+# Celery ponga sus handlers, así que el filtro de redacción aterriza sobre ellos.
+after_setup_logger.connect(install_credential_redaction, weak=False)
+after_setup_task_logger.connect(install_credential_redaction, weak=False)
 
 celery_app = Celery(
     "swissjobhunter",

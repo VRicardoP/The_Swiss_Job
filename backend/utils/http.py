@@ -163,7 +163,12 @@ async def fetch_with_retry(
     """
     if retry_on_status is None:
         retry_on_status = DEFAULT_RETRY_STATUSES
-    # A partir de aquí NINGUNA salida visible usa `url`: solo `safe_url`.
+    # A partir de aquí ninguna salida de ESTE helper usa `url`: solo `safe_url`.
+    # G6/P2-2 — la redacción de este fichero nunca fue la única que hacía falta:
+    # el canal más prolífico era el logger de httpx (URL completa por petición,
+    # a nivel INFO), que se cierra en `logging_setup`. Y la credencial de la
+    # QUERY la redacta ya `diag.record()`; `safe_url` cubre el caso que un
+    # patrón no puede reconocer: la credencial en el PATH (jooble).
     safe_url = diag_url or url
 
     last_error: str = ""
@@ -282,7 +287,6 @@ async def fetch_rss(
     timeout: float = 15.0,
     max_retries: int = 3,
     backoff_factor: float = 1.0,
-    diag_url: str | None = None,
 ) -> str | None:
     """Fetch RSS/XML content as raw text. Returns None on failure.
 
@@ -290,10 +294,14 @@ async def fetch_rss(
     `fetch_diagnostics` para que el pipeline no lo confunda con un feed vacío
     (V.0). Se registra el último estado visto, no cada reintento.
 
-    G5/P2-1 — `diag_url`: misma garantía que en `fetch_with_retry`, para un
-    feed con token en la URL.
+    G6/P3-6 — aquí NO hay `diag_url`. Lo tuvo desde G5/P2-1 y no lo pasó nunca
+    ningún llamante, mientras el comportamiento por defecto SÍ publicaba el
+    token de la query en la columna de salud. Ahora la credencial de la query
+    la redacta `fetch_diagnostics.record()` en la raíz, para todos los
+    llamantes y sin que nadie tenga que acordarse; `diag_url` queda solo en
+    `fetch_with_retry`, donde tiene el caso que ningún patrón puede reconocer:
+    la credencial en el PATH (jooble).
     """
-    safe_url = diag_url or url
     last_status: int | None = None
     last_error: str = ""
     for attempt in range(max_retries + 1):
@@ -309,7 +317,7 @@ async def fetch_rss(
             if headers:
                 rss_kwargs["headers"] = headers
             response = await _send_following_redirects(
-                client, "GET", url, rss_kwargs, None, safe_url
+                client, "GET", url, rss_kwargs, None, url
             )
             if response.status_code == 200:
                 return response.text
@@ -326,7 +334,7 @@ async def fetch_rss(
                 await asyncio.sleep(backoff_factor * (2**attempt))
 
     if last_status is not None:
-        diag.record(diag.KIND_HTTP, safe_url, status=last_status)
+        diag.record(diag.KIND_HTTP, url, status=last_status)
     else:
-        diag.record(diag.KIND_NETWORK, safe_url, detail=last_error or "sin respuesta")
+        diag.record(diag.KIND_NETWORK, url, detail=last_error or "sin respuesta")
     return None

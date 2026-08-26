@@ -39,7 +39,13 @@ class GeminiService:
         """Genera texto con Gemini. Lanza en error HTTP/API o salida vacía.
 
         Lanzar (en vez de degradar en silencio) es deliberado: deja que el llamante
-        decida el fallback a Groq. No se registra la URL/params (llevan la API key).
+        decida el fallback a Groq. No se registra la URL/params.
+
+        G6/P2-2 — la API key viaja por la cabecera `x-goog-api-key` y NO por
+        `?key=`. Con `params={"key": …}` la clave acababa escrita en el INFO de
+        httpx (32 líneas del journal del worker con la clave real) y también en
+        cualquier proxy o agregador intermedio, que registran la query. La
+        cabecera no aparece en ninguna de las dos.
         """
         if not self._api_key:
             raise RuntimeError("Gemini no configurado (GEMINI_API_KEY vacío)")
@@ -56,7 +62,9 @@ class GeminiService:
 
         url = f"{_API_BASE}/{self._model}:generateContent"
         async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(url, params={"key": self._api_key}, json=payload)
+            resp = await client.post(
+                url, headers={"x-goog-api-key": self._api_key}, json=payload
+            )
 
         if resp.status_code != 200:
             # El cuerpo trae .error.message (p.ej. "high demand", "quota"); NO la key.
