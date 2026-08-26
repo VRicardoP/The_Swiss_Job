@@ -229,10 +229,31 @@ def is_chronic(entrada: str) -> bool:
 #   fuentes crónicas (`proz` y `remoteco` llevan 8 runs seguidos con error) lo
 #   mantienen por encima de 0 para siempre. Se pierden como mucho dos runs de
 #   antelación sobre un fallo NUEVO, que a la tercera entra por `unhealthy`.
-_SUMMARY_INCIDENT_KEYS = (
-    "identity_conflicts",
-    "soft_time_limit",
-)
+#
+# G8/P2-2 — y de aquí sale `identity_conflicts`, por TERCERA vez el mismo
+# fallo de método: la medición que validó el fix de G7 tampoco podía verlo
+# (`identity_conflicts` aparece en 0 de los 18 summaries del journal, igual que
+# `identity_clones`). Pero el rastro SÍ está en el journal: la colisión de
+# `ix_jobs_url` deja línea literal, y el código de hoy la convierte en
+# `identity_conflicts` (`job_repository.py` la reclasifica como
+# `JobIdentityConflictError`, `fetch_tasks.py` la cuenta). Medido: **11 de los
+# 13 días con cosecha**, entre 2 y 9 colisiones por día, hasta el 2026-08-25
+# incluido. Con la clave dentro, el reparto vuelve a **17 WARNING / 1 INFO**.
+#
+# Es la MISMA mitad del mismo fenómeno que `identity_clones` (el portal
+# re-lista con identidad nueva sobre corpus sin migrar) y su remediación es la
+# MISMA acción pendiente. La diferencia importante es que aquí SÍ hay pérdida
+# —la oferta se descarta—, así que no basta con sacarlo: entra por TASA, como
+# `errors`. Una deriva marginal (0,2-0,7 % de lo cosechado, que es lo medido)
+# no sube el nivel; un episodio real sí — los dos peores del histórico fueron
+# 143/199 (72 %) y 128/304 (42 %) por fuente.
+#
+# `soft_time_limit` se queda. No se puede medir sobre el corpus (0 de 18) y se
+# deja escrito: los 8 `SoftTimeLimitExceeded` del journal son TODOS de
+# `tasks.check_job_urls`, una tarea distinta que no publica este summary, así
+# que la clave nunca ha traído valor en un run de cosecha y no puede producir
+# el WARNING permanente que este conjunto existe para evitar.
+_SUMMARY_INCIDENT_KEYS = ("soft_time_limit",)
 
 # `errors` sí sube a WARNING cuando deja de ser marginal: son fallos POR OFERTA
 # y su valor normal es un puñado sobre más de mil. Por encima de esta fracción
@@ -240,6 +261,12 @@ _SUMMARY_INCIDENT_KEYS = (
 # relativizar— el run se rompió de verdad: son los seis runs de
 # `errors=1143..1223` con `fetched=0` que hay en el journal.
 _ERROR_RATE_WARNING = 0.05
+
+# G8/P2-2: misma forma para `identity_conflicts`. Calibrado con lo medido en
+# producción — 2 a 9 colisiones sobre 960-1.314 ofertas cosechadas, un máximo
+# del 0,73 % — y con los dos episodios reales del histórico, del 42 % y el
+# 72 %. El 5 % separa los dos regímenes con holgura por los dos lados.
+_IDENTITY_CONFLICT_RATE_WARNING = 0.05
 
 # `window_no_date` NO entra ni con umbral: la calibración ya existe en el módulo
 # que lo produce (`services/harvest_window._MIN_NO_DATE_FOR_WARNING = 3`, que
@@ -259,6 +286,21 @@ def _errors_are_material(summary: dict) -> bool:
         return False
     fetched = summary.get("fetched") or 0
     return errors > fetched * _ERROR_RATE_WARNING
+
+
+def _identity_conflicts_are_material(summary: dict) -> bool:
+    """¿La deriva de identidad de este run es un episodio, o el goteo conocido?
+
+    G8/P2-2 — mismo criterio que `_errors_are_material`, y por la misma razón:
+    un contador que trae valor en 11 de 13 días no puede subir el nivel del run
+    sin volver a hacer la línea de cierre indistinguible. Con cosecha CERO no
+    hay caudal contra el que relativizar y cualquier colisión es material.
+    """
+    conflicts = summary.get("identity_conflicts") or 0
+    if not conflicts:
+        return False
+    fetched = summary.get("fetched") or 0
+    return conflicts > fetched * _IDENTITY_CONFLICT_RATE_WARNING
 
 
 def log_run_summary(run_logger, label: str, summary: dict) -> None:
@@ -299,6 +341,16 @@ def log_run_summary(run_logger, label: str, summary: dict) -> None:
     cuando hay algo NUEVO: incidencia estructural, `errors` por encima de su
     tasa, o una fuente que ACABA de cruzar su umbral de racha. Lo crónico se
     publica igual, marcado, sin subir el nivel.
+
+    G8/P2-2 — tercera medición y tercera vez que el corpus no podía refutar el
+    fix: `identity_conflicts` seguía dentro del conjunto y aparece en 0 de los
+    18 summaries del journal, pero su rastro (`ix_jobs_url`) dispara en 11 de
+    los 13 días con cosecha y devolvía el reparto a 17 WARNING / 1 INFO. Ahora
+    entra por TASA, como `errors`, y su línea de `unhealthy` va marcada como
+    crónica mientras la canonización esté pendiente. La regla de método que
+    este ciclo confirma por tercera vez: **un corpus que no contiene la clave
+    que el fix declara no puede validar el fix**; si la clave no está en los
+    summaries, hay que reconstruirla del rastro que sí está.
     """
     incidencias = [
         f"{k}={summary[k]}"
@@ -307,6 +359,8 @@ def log_run_summary(run_logger, label: str, summary: dict) -> None:
     ]
     if _errors_are_material(summary):
         incidencias.append(f"errors={summary['errors']}")
+    if _identity_conflicts_are_material(summary):
+        incidencias.append(f"identity_conflicts={summary['identity_conflicts']}")
     # G7/P2-4: solo las fuentes que ACABAN de degradarse. Las crónicas siguen
     # en el `summary` y en el texto de la línea, pero no suben el nivel.
     nuevas = [e for e in summary.get("unhealthy") or () if not is_chronic(e)]

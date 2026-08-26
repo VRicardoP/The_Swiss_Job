@@ -519,10 +519,20 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 # sin esto la fuente salía `ok` (las URLs nuevas sí entran) y
                 # nadie se enteraba de que las re-listadas se estaban cayendo.
                 if identity_conflicts:
+                    # G8/P2-2: crónica, por la MISMA razón y con la MISMA
+                    # remediación pendiente que `identity_clones` — es la otra
+                    # mitad del mismo fenómeno. Dispara en 11 de los 13 días
+                    # con cosecha del journal (2-9 colisiones/día), así que sin
+                    # marcar volvía a hacer WARNING el ~85 % de las corridas.
+                    # Se publica igual —el operador la sigue viendo, y aquí SÍ
+                    # hay pérdida: la oferta se descarta—; el nivel del run lo
+                    # decide la TASA, en `fetch_diagnostics`.
                     summary["unhealthy"].append(
-                        f"{source}: DERIVA DE IDENTIDAD — {identity_conflicts} "
-                        "ofertas re-listadas descartadas por choque con "
-                        "ix_jobs_url (corpus histórico sin migrar)"
+                        mark_chronic(
+                            f"{source}: DERIVA DE IDENTIDAD — {identity_conflicts} "
+                            "ofertas re-listadas descartadas por choque con "
+                            "ix_jobs_url (corpus histórico sin migrar)"
+                        )
                     )
                 if identity_clones:
                     # G7/P2-4: crónica. Dispara en 14 de 14 días (2,0-19,2 % de

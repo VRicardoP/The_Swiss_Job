@@ -103,12 +103,23 @@ class TestElRuidoCronicoYaNoSubeElNivel:
 class TestLoQueSiSigueGritando:
     """Sin esto el fix no discrimina: silencia el ruido, no la señal."""
 
-    @pytest.mark.parametrize(
-        "clave,valor", [("identity_conflicts", 3), ("soft_time_limit", True)]
-    )
+    @pytest.mark.parametrize("clave,valor", [("soft_time_limit", True)])
     def test_las_incidencias_estructurales(self, caplog, clave, valor):
         s = _limpio()
         s[clave] = valor
+        assert _nivel(caplog, s) == logging.WARNING
+
+    def test_la_deriva_de_identidad_grita_por_TASA(self, caplog):
+        """G8/P2-2 — `identity_conflicts` estaba aquí como incidencia
+        estructural (`=3` sobre 120 cosechadas → WARNING) y ese es justo el
+        goteo conocido que hace WARNING el ~85 % de las corridas: dispara en 11
+        de los 13 días con cosecha del journal. Ahora entra por tasa, como
+        `errors`. La señal que importa —un episodio real, 42 % y 72 % en los
+        dos peores del histórico— sigue gritando."""
+        s = _limpio()
+        s["identity_conflicts"] = 3  # 3 sobre 120 = 2,5 %: el goteo conocido
+        assert _nivel(caplog, s) == logging.INFO
+        s["identity_conflicts"] = 7  # 7 sobre 120 = 5,8 %: episodio
         assert _nivel(caplog, s) == logging.WARNING
 
     def test_una_tasa_de_error_material(self, caplog):
