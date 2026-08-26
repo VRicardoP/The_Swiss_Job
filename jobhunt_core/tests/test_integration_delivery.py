@@ -1728,3 +1728,94 @@ def test_g7_dos_dispatchers_solapados_retiran_UNA_fila_habiendo_dos_candidatos(
     assert muertas == [cabeza], "la retirada no cayó sobre la CABEZA"
     assert st[vecino][0] == "inflight"
     assert len([r for r in records if "VENENO" in r.getMessage()]) == 1
+
+
+# --------------------------------------------------------------- G8 (ciclo 8)
+
+
+def _destinos(factory, eids):
+    return {
+        r.event_id: r.destination
+        for r in _rows(
+            factory,
+            "SELECT event_id, destination FROM integration_outbox_deliveries "
+            "WHERE event_id = ANY(:ids)",
+            ids=[str(e) for e in eids],
+        )
+    }
+
+
+async def _lock(session, eid, dest):
+    await session.execute(
+        sa.text(
+            "SELECT 1 FROM integration_outbox_deliveries "
+            "WHERE event_id = :e AND destination = :d FOR UPDATE"
+        ),
+        {"e": str(eid), "d": dest},
+    )
+
+
+def test_g8_el_mark_no_espera_en_filas_terminales_que_el_update_ni_mira(db):
+    """Regresión G8-P3-1: el pre-SELECT `FOR UPDATE` de `mark_delivered` no
+    llevaba el filtro de estado del UPDATE, así que pedía el lock de las
+    filas del `unnest` CUALQUIERA que fuese su estado.
+
+    `AND d.state IN ('pending','inflight')` es un qual del SCAN: una fila ya
+    `dead`/`delivered` se descarta ANTES de pedir su lock, y el UPDATE a
+    secas devolvía 0 al instante aunque otro escritor la tuviera retenida.
+    Con el pre-SELECT sin filtrar, ese mismo mark esperaba a que el retenedor
+    commiteara. No es corrección (el resultado, `mark = 0`, era y sigue
+    siendo el correcto: un terminal ajeno no resucita): es LIVENESS, y cada
+    segundo ahí es lease consumido del lote en curso, que es la moneda de
+    G2-H-7.
+
+    El terminal se deja COMMITEADO a propósito, que es donde la diferencia
+    existe. Con el terminal SIN commitear la espera NO es atribuible al
+    pre-SELECT: el snapshot de READ COMMITTED ve todavía la fila como
+    `pending`, el qual la deja pasar y el UPDATE a secas toma el lock y
+    espera lo mismo antes de descartarla en el recheck EPQ (medido: 1,00 s
+    con y sin pre-SELECT y con y sin filtro)."""
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created)
+    eid = _dejar_pendientes(factory, pid, 1)[0]
+    dest = _destinos(factory, [eid])[eid]
+
+    async def terminal():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "UPDATE integration_outbox_deliveries SET state = 'dead', "
+                    "lease = NULL, dead_at = clock_timestamp() "
+                    "WHERE event_id = :e AND destination = :d"
+                ),
+                {"e": str(eid), "d": dest},
+            )
+            await s.commit()
+
+    asyncio.run(terminal())
+
+    async def carrera():
+        async with factory() as sB, factory() as sA:
+            # B RETIENE el lock de la fila ya terminal durante 1 s.
+            await _lock(sB, eid, dest)
+
+            async def marcar():
+                t0 = time.monotonic()
+                n = await delivery.mark_delivered(sA, [{"eid": eid, "dest": dest}])
+                return n, time.monotonic() - t0
+
+            tarea = asyncio.create_task(marcar())
+            await asyncio.sleep(1.0)
+            await sB.commit()
+            n, espera = await tarea
+            await sA.commit()
+            return n, espera
+
+    n, espera = asyncio.run(carrera())
+    assert n == 0, "un estado TERMINAL ajeno no puede resucitar"
+    assert espera < 0.5, (
+        f"el mark esperó {espera:.2f}s por el lock de una fila TERMINAL que "
+        "el UPDATE descarta en el scan: el pre-SELECT bloqueante no lleva su "
+        "filtro de estado"
+    )
+    assert _estados(factory, [eid])[eid][0] == "dead"

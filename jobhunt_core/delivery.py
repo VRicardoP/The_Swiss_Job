@@ -475,8 +475,28 @@ async def mark_delivered(session, marks: list, lease_token=None) -> int:
     # el eventual ladrón commitea, así que el lease que vuelve es el vigente
     # de VERDAD y no el del snapshot. `ORDER BY` para no introducir orden de
     # lock nuevo (el mismo del claim). Es de solo lectura: no transiciona
-    # nada, y las filas que va a tocar el UPDATE de abajo son exactamente
-    # éstas.
+    # nada.
+    # G8-P3-1: y lleva el MISMO filtro de estado que el UPDATE de abajo, que
+    # es un qual del SCAN: una fila ya `dead`/`delivered` se descarta ANTES
+    # de pedir su lock. Sin repetirlo aquí, el pre-SELECT pedía el lock de
+    # TODAS las filas del `unnest`, así que un mark que aterriza sobre una
+    # fila terminal RETENIDA por cualquier otro escritor esperaba a que ese
+    # commiteara donde el UPDATE solo devolvía 0 al instante — liveness, no
+    # corrección, pero cada segundo ahí es lease consumido del lote en curso
+    # (G2-H-7). MEDIDO el 2026-08-26 con el terminal ya COMMITEADO y el lock
+    # en manos de otro: 1,00 s → 0,03 s.
+    #
+    # Matiz que la auditoría G8 no aisló: si el estado terminal está SIN
+    # COMMITEAR, la espera NO es atribuible a este pre-SELECT. El snapshot de
+    # READ COMMITTED sigue viendo la fila como `pending`/`inflight`, así que
+    # el qual la deja pasar y el UPDATE a secas toma el lock y espera
+    # EXACTAMENTE lo mismo antes de descartarla en el recheck EPQ (medido:
+    # 1,00 s en las tres variantes). Esta línea no compra nada ahí, y no
+    # pretende hacerlo.
+    #
+    # No cambia `robadas`: una fila terminal tampoco la transiciona el
+    # UPDATE, así que jamás aparece en `done` y su entrada de `previos` no se
+    # consulta.
     previos = {
         (r.event_id, r.destination): r.lease
         for r in (
@@ -488,6 +508,7 @@ async def mark_delivered(session, marks: list, lease_token=None) -> int:
                     "  SELECT t.eid, t.dest FROM unnest("
                     "    CAST(:eids AS uuid[]), CAST(:dests AS text[])"
                     "  ) AS t(eid, dest)) "
+                    "AND d.state IN ('pending', 'inflight') "
                     "ORDER BY d.event_id, d.destination "
                     "FOR UPDATE"
                 ),
