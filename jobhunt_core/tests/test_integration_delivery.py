@@ -255,6 +255,58 @@ def test_no_transport_claims_nothing_and_burns_no_attempts(db):
     assert (row.state, row.attempts) == ("pending", 0)  # intento NO consumido
 
 
+def test_reclaim_by_expired_lease_burns_no_attempts(db):
+    """Regresión G2-P3-4: `attempts` se consumía AL RECLAMAR, así que un
+    dispatcher que muere entre el claim commiteado y los marks (OOM, redeploy
+    en bucle) devolvía el evento por lease caducado y cada re-claim quemaba un
+    intento SIN que el transporte hubiera corrido jamás — tras MAX_ATTEMPTS-1
+    claims fantasma, el PRIMER fallo real dead-leterreaba el evento con una
+    única ejecución real. Ahora el intento lo consume el RESULTADO."""
+    factory, created = db
+    pid, _vacs = _setup_evaluated(factory, created, titles=("backend python",))
+
+    async def claim_and_expire():
+        """Claim commiteado + lease vencido: el proceso murió antes de marcar."""
+        async with factory() as s:
+            rows, _lease = await delivery.claim_deliveries(s, limit=10)
+            await s.commit()
+        async with factory() as s:
+            await s.execute(sa.text(
+                "UPDATE integration_outbox_deliveries d "
+                "SET lease = clock_timestamp() - interval '1 second' "
+                "FROM integration_outbox o "
+                "WHERE o.event_id = d.event_id AND o.subject_profile_id = :p"
+            ), {"p": pid})
+            await s.commit()
+        return rows
+
+    for _ in range(delivery.MAX_ATTEMPTS + 3):  # crash-loop largo
+        assert len(asyncio.run(claim_and_expire())) == 1
+    row = _rows(
+        factory,
+        "SELECT d.state, d.attempts FROM integration_outbox_deliveries d "
+        "JOIN integration_outbox o ON o.event_id = d.event_id "
+        "WHERE o.subject_profile_id = :p", p=pid,
+    )[0]
+    assert row.attempts == 0  # antes: 11 intentos fantasma
+
+    # Y el primer fallo REAL del transporte es el intento 1: reintento, no dead.
+    inbox = FakeInbox(fail_times=1)
+    delivery.set_transport(inbox.transport)
+    try:
+        r = _dispatch()
+    finally:
+        delivery.set_transport(None)
+    assert (r["failed"], r["dead"]) == (1, 0)
+    row = _rows(
+        factory,
+        "SELECT d.state, d.attempts FROM integration_outbox_deliveries d "
+        "JOIN integration_outbox o ON o.event_id = d.event_id "
+        "WHERE o.subject_profile_id = :p", p=pid,
+    )[0]
+    assert (row.state, row.attempts) == ("pending", 1)  # el intento REAL sí cuenta
+
+
 def test_wide_consumer_name_does_not_abort_evaluation(db):
     """Auditoría A-10 #1 (repro): un consumer de 61-100 chars reventaba el
     INSERT de la entrega (VARCHAR(60)) y — misma tx — revertía la evaluación

@@ -47,8 +47,9 @@ def backoff_seconds(attempts: int) -> int:
 async def claim_deliveries(session, limit: int = 100) -> tuple[list, object]:
     """Reclama entregas elegibles: pending vencidas o inflight con lease
     CADUCADO (el productor murió sin marcar: se re-entrega — at-least-once).
-    SKIP LOCKED: varios dispatchers no se pisan. Incrementa attempts y toma
-    el lease en el MISMO claim.
+    SKIP LOCKED: varios dispatchers no se pisan. Toma el lease; `attempts`
+    NO se toca aquí (G2-P3-4): lo consume el RESULTADO del transporte, así
+    que un re-claim por lease caducado no gasta intentos.
 
     Devuelve (rows, lease_token): el lease es el TOKEN DE FENCING (auditoría
     A-10) — un único timestamp por lote, calculado en BD; los marks solo
@@ -85,8 +86,16 @@ async def claim_deliveries(session, limit: int = 100) -> tuple[list, object]:
     ).scalar_one()
     await session.execute(
         sa.text(
+            # G2-P3-4: el claim NO consume intento — lo consume el RESULTADO
+            # (mark_delivered/mark_failed). Un dispatcher que muere entre el
+            # claim commiteado y los marks (OOM, redeploy en bucle) devolvía el
+            # evento por lease caducado y cada re-claim quemaba un intento SIN
+            # que el transporte hubiera corrido jamás: tras 7 claims fantasma,
+            # el PRIMER fallo real llegaba con attempts=8 ⇒ dead-letter con una
+            # única ejecución real. El módulo ya enunciaba el principio
+            # contrario para el caso sin-transporte.
             "UPDATE integration_outbox_deliveries "
-            "SET state = 'inflight', attempts = attempts + 1, lease = :lease "
+            "SET state = 'inflight', lease = :lease "
             "WHERE event_id = :eid AND destination = :dest"
         ),
         [
@@ -111,7 +120,9 @@ async def mark_delivered(session, marks: list, lease_token) -> int:
         await session.execute(
             sa.text(
                 "UPDATE integration_outbox_deliveries d "
-                "SET state = 'delivered', ack_at = clock_timestamp(), lease = NULL "
+                "SET state = 'delivered', ack_at = clock_timestamp(), lease = NULL, "
+                # G2-P3-4: el intento se consume al EJECUTAR el transporte.
+                "attempts = d.attempts + 1 "
                 "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[])) "
                 "  AS t(eid, dest) "
                 "WHERE d.event_id = t.eid AND d.destination = t.dest "
@@ -128,8 +139,9 @@ async def mark_delivered(session, marks: list, lease_token) -> int:
 
 
 async def mark_failed(session, fails: list, lease_token) -> dict:
-    """fails = [{'eid', 'dest', 'attempts', 'error'}] (attempts YA
-    incrementado por el claim). Con fencing: un mark TARDÍO de un claim
+    """fails = [{'eid', 'dest', 'attempts', 'error'}] — `attempts` es el NÚMERO
+    del intento que el dispatcher ACABA de ejecutar (r.attempts + 1), y este
+    mark es quien lo persiste (G2-P3-4: el claim ya no lo consume). Con fencing: un mark TARDÍO de un claim
     superado no toca nada (ni resucita delivered/dead) Y TAMPOCO alerta ni
     cuenta (2ª rev. A-10: la ALERTA de dead-letter se emite SOLO para filas
     realmente transicionadas por el UPDATE — jamás una página falsa por un
@@ -146,11 +158,15 @@ async def mark_failed(session, fails: list, lease_token) -> dict:
                 sa.text(
                     "UPDATE integration_outbox_deliveries d "
                     "SET state = 'dead', last_error = t.error, lease = NULL, "
+                    # G2-P3-4: `attempts` lo fija el RESULTADO (el nº de intento
+                    # que el dispatcher acaba de ejecutar), no el claim.
+                    "attempts = t.attempts, "
                     # dead_at (core0030): instante de la TRANSICIÓN — el gate
                     # outbox_dead cuenta por ventana de ciclo, no el histórico.
                     "dead_at = clock_timestamp() "
                     "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[]), "
-                    "            CAST(:errors AS text[])) AS t(eid, dest, error) "
+                    "            CAST(:errors AS text[]), CAST(:tries AS int[])) "
+                    "  AS t(eid, dest, error, attempts) "
                     "WHERE d.event_id = t.eid AND d.destination = t.dest "
                     f"{_FENCE} RETURNING d.event_id, d.destination, d.attempts, "
                     "d.last_error"
@@ -159,6 +175,7 @@ async def mark_failed(session, fails: list, lease_token) -> dict:
                     "eids": [str(f["eid"]) for f in dead],
                     "dests": [f["dest"] for f in dead],
                     "errors": [f["error"] for f in dead],
+                    "tries": [int(f["attempts"]) for f in dead],
                     "lease": lease_token,
                 },
             )
@@ -178,12 +195,13 @@ async def mark_failed(session, fails: list, lease_token) -> dict:
                 sa.text(
                     "UPDATE integration_outbox_deliveries d "
                     "SET state = 'pending', last_error = t.error, lease = NULL, "
-                    "ack_at = NULL, "
+                    "ack_at = NULL, attempts = t.attempts, "
                     "next_attempt_at = clock_timestamp() + "
                     "make_interval(secs => t.backoff) "
                     "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[]), "
-                    "            CAST(:errors AS text[]), CAST(:backoffs AS int[])) "
-                    "  AS t(eid, dest, error, backoff) "
+                    "            CAST(:errors AS text[]), CAST(:backoffs AS int[]), "
+                    "            CAST(:tries AS int[])) "
+                    "  AS t(eid, dest, error, backoff, attempts) "
                     "WHERE d.event_id = t.eid AND d.destination = t.dest "
                     f"{_FENCE} RETURNING d.event_id"
                 ),
@@ -192,6 +210,7 @@ async def mark_failed(session, fails: list, lease_token) -> dict:
                     "dests": [f["dest"] for f in retry],
                     "errors": [f["error"] for f in retry],
                     "backoffs": [backoff_seconds(f["attempts"]) for f in retry],
+                    "tries": [int(f["attempts"]) for f in retry],
                     "lease": lease_token,
                 },
             )

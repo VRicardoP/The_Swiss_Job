@@ -1,9 +1,10 @@
 """Tarea Celery de despacho del outbox (A-10) — at-least-once por destino.
 
 Convención del repo: `def` + asyncio.run(_impl()). El claim es transaccional
-(SKIP LOCKED + lease + attempts); el transporte corre FUERA de la transacción
-del claim y los marks van en lotes. Sin transporte configurado los eventos se
-conservan pending sin consumir intentos.
+(SKIP LOCKED + lease); el transporte corre FUERA de la transacción del claim y
+los marks van en lotes — que son quienes CONSUMEN el intento (G2-P3-4), así que
+ni un dispatcher en crash-loop ni un lease caducado gastan intentos sin
+transporte. Sin transporte configurado no se reclama nada.
 
 P1-1 (rev. externa parte 2): en el ARRANQUE del worker (señal
 worker_process_init — cada proceso del pool, jamás en tests con `.apply()`)
@@ -47,10 +48,8 @@ def dispatch_outbox_task(self, limit: int = 100) -> dict[str, Any]:
 
 
 async def _dispatch_impl(limit: int) -> dict[str, Any]:
-    # Sin transporte NO se reclama nada (2ª rev. A-10: el claim incrementa
-    # attempts y un fallo posterior + retry de la task inflaría el contador
-    # violando "sin transporte → sin consumir intentos"; no reclamar es la
-    # solución de raíz).
+    # Sin transporte NO se reclama nada (2ª rev. A-10): reclamar sin poder
+    # entregar solo movería estado y leases para nada.
     transport = delivery.get_transport()
     if transport is None:
         logger.warning(
