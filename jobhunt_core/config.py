@@ -75,8 +75,14 @@ class CoreSettings(BaseSettings):
     CORE_ARCHIVE_GRACE_DAYS: int = 3
     CORE_CORPUS_STALE_DAYS: int = 120
     # Vigilancia de la salud de la COSECHA (G9 P2-C, jobhunt_core/harvest/health.py):
-    # `consecutive_failures` y `last_complete_at` no los leía nadie. FAILURES=3 sigue
-    # el kill-switch de compliance del legacy (3 bloqueos seguidos = fuente rota);
+    # `consecutive_failures` y `last_complete_at` no los leía nadie. FAILURES=3 se
+    # inspira en el kill-switch de compliance del legacy (3 bloqueos seguidos = fuente
+    # rota), pero OJO A LA UNIDAD (auditoría G10 P3-3): aquí se cuentan INTENTOS DE
+    # TAREA, no barridos. Un fallo blando (sobre roto en la página k>1) suma 1 por
+    # barrido, pero uno duro (fallo en la página 1, 429, cuerpo no-JSON) suma 1 y
+    # dispara `self.retry(max_retries=1)`, que suma otro: un solo fallo lógico avanza
+    # el contador 2. La dirección es segura —avisa antes, no después—, pero 3 significa
+    # «dos fallos duros seguidos», no «tres cosechas rotas».
     # STALE_ALERT=7 d avisa con MESES de margen sobre los 120 d a partir de los
     # cuales el archivado ADR-07 empieza a retirar vacantes todavía publicadas.
     CORE_HARVEST_MAX_CONSECUTIVE_FAILURES: int = 3

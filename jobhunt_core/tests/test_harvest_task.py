@@ -24,7 +24,32 @@ def test_task_returns_result_dict():
     with patch.object(harvest_task, "_run_scope_impl", fake_impl):
         r = harvest_task.run_scope_task.apply(args=["s1"])
     assert r.successful()
-    assert r.result == {"scope_id": "s1", "status": "ok", "listings": 3, "pages": 2}
+    assert r.result == {
+        "scope_id": "s1", "status": "ok", "listings": 3, "pages": 2, "error": None,
+    }
+
+
+def test_task_result_distingue_un_partial_por_fallo_de_uno_por_tope():
+    """REGRESIÓN auditoría G10 P3-3: `run_scope_task` descartaba `result.error`, así que
+    en el resultado Celery un 'partial' por sobre roto a mitad de barrido era
+    indistinguible de un 'partial' por tope de páginas — dos cosas con urgencias
+    opuestas. El runner sí lo logueaba; quien lea el resultado de la tarea, no."""
+    async def por_fallo(scope_id):
+        return ScopeRunResult(
+            scope_id=scope_id, status="partial", listings=2, pages=1,
+            error="página 2: HTTP 429",
+        )
+
+    async def por_tope(scope_id):
+        return ScopeRunResult(scope_id=scope_id, status="partial", listings=9, pages=50)
+
+    with patch.object(harvest_task, "_run_scope_impl", por_fallo):
+        con_fallo = harvest_task.run_scope_task.apply(args=["s1"]).result
+    with patch.object(harvest_task, "_run_scope_impl", por_tope):
+        con_tope = harvest_task.run_scope_task.apply(args=["s1"]).result
+    assert con_fallo["error"] == "página 2: HTTP 429"
+    assert con_tope["error"] is None
+    assert con_fallo["status"] == con_tope["status"] == "partial"
 
 
 def test_task_partial_and_stale_do_not_retry():

@@ -48,6 +48,9 @@ def run_scope_task(self, scope_id: str) -> dict[str, Any]:
         "status": result.status,
         "listings": result.listings,
         "pages": result.pages,
+        # Sin esto, un 'partial' por fallo a mitad de barrido era indistinguible en el
+        # resultado Celery de un 'partial' por tope de páginas (auditoría G10 P3-3).
+        "error": result.error,
     }
 
 
