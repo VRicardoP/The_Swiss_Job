@@ -380,7 +380,7 @@ una release que el proceso no sabe nombrar no verifica nada (G9 P2-B). `[V]` —
 
 | Tema | Documento |
 |---|---|
-| Los nueve ciclos, por ciclo y por repo | `/home/lothar/Public/AUDITORIA_GLOBAL_{CORE,LEGACY,PORTFOLIO}_G1..G8_2026-08-26.md` y `AUDITORIA_BUGS_C1..C9_2026-08-25.md` |
+| Los once ciclos, por ciclo y por repo | Retirados del árbol tras consolidarse aquí. Recuperables del historial del repo de documentación: `git log --diff-filter=D --name-only -- 'AUDITORIA_GLOBAL_*' 'AUDITORIA_BUGS_C*'`. **No son estado actual**: varias de sus cifras fueron refutadas después por quien las implementó |
 | La fase de optimización | `/home/lothar/Public/OPTIMIZACION_{CORE,LEGACY,PORTFOLIO}_2026-08-27.md` |
 | Estado y contadores vigentes | `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` **§20** (§19 es la foto previa al 2026-08-27) |
 | Decisiones ratificadas del propietario | `/home/lothar/Public/ACTA_DECISIONES_2026-08-26.md` |
