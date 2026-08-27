@@ -2,7 +2,9 @@
 
 Se ejecutan vía el contenedor de migración (DB accesible):
 
-    docker compose run --rm core-migrate python -m pytest jobhunt_core/tests -q
+    docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+    run --rm core-migrate python -m pytest jobhunt_core/tests -q
+(sin los dos `-f` se probaría el código de la IMAGEN, no el del árbol de trabajo)
 
 Conectan como el ROL DEL CORE (no admin): prueban el esquema tal y como lo verá
 el servicio. Cada test abre su transacción y hace rollback: sin residuos.

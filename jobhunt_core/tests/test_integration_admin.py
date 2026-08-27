@@ -2,7 +2,9 @@
 
 Requieren el DSN admin → se ejecutan vía el contenedor del job de migración:
 
-    docker compose run --rm core-migrate python -m pytest jobhunt_core/tests -q
+    docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+    run --rm core-migrate python -m pytest jobhunt_core/tests -q
+(sin los dos `-f` se probaría el código de la IMAGEN, no el del árbol de trabajo)
 
 Sin CORE_ADMIN_DATABASE_URL (p.ej. en core-api --no-deps) se saltan. Cada test
 trabaja dentro de una transacción SIN commit: no deja rastro en la BD.
