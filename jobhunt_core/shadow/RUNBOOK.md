@@ -363,11 +363,12 @@ Es el que se siguió el 2026-08-27, paso a paso. Sirve tal cual para repetirlo e
 >
 > **Comprobar antes (SOLO SELECT), y decidir con el resultado en la mano:**
 >
+> **PARES afectados** (lo que la segunda mitad no podrá re-mapear):
+>
 > ```sql
 > SELECT c.source, count(*) AS pares_afectados
 > FROM labeled_dedup_pairs p
 > JOIN labeled_dedup_cohorts c ON c.source = p.source AND c.frozen_at IS NOT NULL
-> JOIN sources s ON true
 > WHERE EXISTS (  -- ¿algún lado del par vive en una fuente que la maniobra reescribe?
 >   SELECT 1 FROM source_listings sl JOIN sources s2 ON s2.id = sl.source_id
 >   WHERE sl.external_id IN (p.job_ref_a, p.job_ref_b)
@@ -375,11 +376,33 @@ Es el que se siguió el 2026-08-27, paso a paso. Sirve tal cual para repetirlo e
 > GROUP BY c.source;
 > ```
 >
+> **REFS afectados** (la cifra que da la prosa de abajo — un par tiene DOS refs y un ref
+> puede estar en varios pares, así que los dos números NO son el mismo y no se comparan):
+>
+> ```sql
+> SELECT s2.name AS fuente, count(DISTINCT r.ref) AS refs_afectados
+> FROM labeled_dedup_pairs p
+> JOIN labeled_dedup_cohorts c ON c.source = p.source AND c.frozen_at IS NOT NULL
+> CROSS JOIN LATERAL (VALUES (p.job_ref_a), (p.job_ref_b)) AS r(ref)
+> JOIN source_listings sl ON sl.external_id = r.ref
+> JOIN sources s2 ON s2.id = sl.source_id
+> WHERE s2.name IN ('legacy:arbeitnow','legacy:jobgether','legacy:irishjobs')
+> GROUP BY ROLLUP (s2.name) ORDER BY 1 NULLS LAST;
+> ```
+>
+> ⚠ **Corrección (auditoría G10 P3-1).** La consulta publicada aquí llevaba un
+> `JOIN sources s ON true` —producto cartesiano con las 29 filas de `sources`— y devolvía
+> **1 943 = 67 × 29**. El operador que siguiera el procedimiento veía tres cifras
+> distintas para la misma comprobación: 1 943 en pantalla, 67 reales y 84 en el texto (que
+> además son refs, no pares). No cambiaba el go/no-go —cualquiera de las tres es > 0 y la
+> respuesta es PARAR—, pero era una cifra fabricada dentro de un procedimiento
+> irreversible.
+>
 > **Estado local hoy (medido 2026-08-27, SOLO SELECT):** `positive-stratum-v1` está
-> **SELLADA** y **84 de sus 229** `job_ref` viven en las tres fuentes que la maniobra
-> reescribe (arbeitnow 45, jobgether 27, irishjobs 12). Es decir: **repetir la maniobra
-> en local hoy dejaría la primera mitad aplicada y la segunda abortada.** La ventana que
-> §7.3 daba por abierta se CERRÓ al sellar la cohorte.
+> **SELLADA**; **67 de sus 966 pares** están afectados y **84 de sus 229** `job_ref` viven
+> en las tres fuentes que la maniobra reescribe (arbeitnow 45, jobgether 27, irishjobs
+> 12). Es decir: **repetir la maniobra en local hoy dejaría la primera mitad aplicada y la
+> segunda abortada.** La ventana que §7.3 daba por abierta se CERRÓ al sellar la cohorte.
 >
 > **Salida** (la que declara el propio módulo): no se fuerza el sello — se carga una
 > cohorte **nueva** con los refs canónicos y la vieja se retira del gate. Impacto acotado
