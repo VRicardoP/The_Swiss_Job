@@ -361,3 +361,73 @@ def test_broken_envelope_on_the_first_page_still_raises():
     cursor y `last_complete_at` como estaban."""
     with pytest.raises(ProviderResponseError):
         _fetch(pages={1: {"data": "no-soy-una-lista", "links": {}}})
+
+
+def test_empty_page_with_next_announced_is_not_a_complete_harvest():
+    """REGRESIÓN auditoría G10 P1-1: el sobre se contradecía a sí mismo y ganaba el silencio.
+
+    `data: []` con `links.next` PRESENTE no es el final del feed: es un paginador que anuncia
+    página siguiente y no la entrega. El código calculaba `has_next` y lo tiraba, así que un
+    barrido que emitía CERO ofertas quedaba registrado como cosecha COMPLETA —cursor persistido,
+    `last_complete_at` refrescado, `consecutive_failures = 0`— y la vigilancia de `health.py`
+    callaba. Es el mismo falso verde de P1-1/G9 P1-A por la cuarta puerta, y contradice el
+    contrato escrito en el propio módulo («un barrido que no agota `links.next` devuelve
+    `complete=False`»). No es teórico: medido en vivo el 2026-08-27, la paginación real ya es
+    incoherente (`?page=1` → from=1,to=175; `?page=2` → from=101,to=175).
+    """
+    vacia_con_next = {"data": [], "links": {"next": "?page=2"}}
+    # Página 1: nada que preservar → el error tipado sube (el runner cuenta el fallo).
+    with pytest.raises(ProviderResponseError):
+        _fetch(pages={1: vacia_con_next})
+    # A mitad de barrido: lo cosechado se emite, pero JAMÁS como cosecha completa.
+    result, hits = _fetch(pages={1: PAGES[1], 2: vacia_con_next})
+    assert _ids(result) == ["a", "b"] and hits == [1, 2]
+    assert result.complete is False and result.error and "next" in result.error
+
+
+def test_empty_page_without_next_is_still_the_end_of_the_feed():
+    """La OTRA dirección de P1-1 (sobre-corrección): el final legítimo sigue cerrando.
+
+    Forma terminal real del feed (medida en vivo): `data: []` con `links.next: null`. Exigir
+    coherencia entre `data` y `links.next` no puede convertir un feed agotado en un fallo
+    perpetuo.
+    """
+    for links in ({"next": None}, {}, {"next": ""}):
+        vacia, hits = _fetch(pages={1: {"data": [], "links": links}})
+        assert _ids(vacia) == [] and vacia.complete is True and vacia.error is None
+        assert hits == [1]
+
+
+def test_page_of_items_with_none_usable_is_not_a_complete_harvest():
+    """REGRESIÓN auditoría G10 P2-1: el hermano de P1-1 una capa más abajo (la del ITEM).
+
+    El sobre puede ser impecable —`data` es lista, `links` es objeto— y su contenido
+    inservible: es exactamente el aspecto de una subida de versión de la API que renombra
+    `url`→`job_url`. `_to_listing` descartaba cada item con un warning y el barrido se
+    declaraba COMPLETO con cero listings; peor, la vigilancia de G9 quedaba CIEGA porque
+    `last_complete_at` se refrescaba y `consecutive_failures` se reseteaba en cada corrida.
+    Una cosecha que no ingiere NADA no es una cosecha completa salvo que el feed declare
+    explícitamente que está vacío (ese caso lo fija el test de arriba).
+    """
+    renombrada = {"data": [{"id": 1, "job_url": "https://x/a", "name": "T"}],
+                  "links": {"next": None}}
+    no_objetos = {"data": ["x", "y", 3], "links": {"next": None}}
+    for body in (renombrada, no_objetos):
+        with pytest.raises(ProviderResponseError):
+            _fetch(pages={1: body})
+    # A mitad de barrido: preservación, como cualquier otra forma inválida.
+    result, _ = _fetch(pages={1: PAGES[1], 2: renombrada})
+    assert _ids(result) == ["a", "b"]
+    assert result.complete is False and result.error and "utilizables" in result.error
+
+
+def test_keyword_filtering_everything_out_is_still_a_complete_harvest():
+    """La otra dirección de P2-1: 0 emitidos por el FILTRO DEL SCOPE no es forma inválida.
+
+    Los items son perfectamente utilizables; simplemente ninguno casa con la keyword. Confundir
+    «el scope no quiere nada de esta página» con «la API cambió de forma» dejaría un scope
+    estrecho fallando para siempre.
+    """
+    r, hits = _fetch(params={"keyword": "no-existe-esta-palabra"})
+    assert _ids(r) == [] and r.complete is True and r.error is None
+    assert hits == [1, 2, 3]

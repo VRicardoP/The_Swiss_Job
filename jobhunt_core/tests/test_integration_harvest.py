@@ -647,6 +647,39 @@ def test_envelope_without_links_does_not_confirm_a_complete_harvest(db):
     assert ahora.consecutive_failures == previo.consecutive_failures + 1
 
 
+def test_a_harvest_that_ingests_nothing_is_never_confirmed_complete(db):
+    """REGRESIÓN auditoría G10 P1-1 y P2-1, provider REAL → runner → BD.
+
+    Las dos maneras de fingir una cosecha con el sobre INTACTO, que es lo que las hacía
+    invisibles: (a) `data: []` con `links.next` presente —el feed se contradice y el
+    barrido se declaraba agotado emitiendo cero ofertas—; (b) `data` con items que ya no
+    se reconocen como ofertas (subida de versión que renombra `url`→`job_url`). Las dos
+    dejaban `last_complete_at` fresco y `consecutive_failures = 0`, que son EXACTAMENTE
+    las dos señales que mira la vigilancia de `harvest/health.py`: el corpus se congelaba
+    en verde y el archivado ADR-07 acabaría retirando vacantes todavía publicadas.
+    """
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+    assert _run_arbeitnow(factory, s1, CollectSink(), _FEED_OK).status == "ok"
+    previo = _state(factory, s1)
+    assert previo.last_complete_at is not None and previo.consecutive_failures == 0
+
+    for feed in (
+        {1: {"data": [], "links": {"next": "?page=2"}}},                      # P1-1
+        {1: {"data": [{"id": 1, "job_url": "https://x/a", "name": "T"}],      # P2-1
+             "links": {"next": None}}},
+    ):
+        sink = CollectSink()
+        r = _run_arbeitnow(factory, s1, sink, feed)
+        assert r.status == "error"
+        assert sink.batches == []                       # nada que ingerir, nada ingerido
+        ahora = _state(factory, s1)
+        assert ahora.cursor == previo.cursor            # cursor INTACTO
+        assert ahora.last_complete_at == previo.last_complete_at   # NO se confirmó nada
+        assert ahora.consecutive_failures == previo.consecutive_failures + 1  # y se VE
+        previo = ahora
+
+
 def test_broken_page_mid_sweep_persists_the_good_pages_and_counts_the_failure(db):
     """REGRESIÓN auditoría G9 P2-C, provider REAL → runner → BD: las dos mitades.
 

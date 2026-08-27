@@ -23,6 +23,11 @@ de paginación por offset MUTABLE y sin cursor/snapshot del proveedor:
   `ProviderResponseError` — un sobre inválido degradado a "página vacía" es
   indistinguible del final del feed y hacía confirmar cosechas completas que
   nunca ocurrieron (auditoría externa 2026-08-27 P1-1; `links`, auditoría G9 P1-A).
+- UNA COSECHA QUE NO INGIERE NADA NO ES UNA COSECHA COMPLETA (auditoría G10),
+  salvo que el feed lo declare explícitamente (`data` vacío y `links.next` nulo).
+  Las dos formas de fingirlo con el sobre intacto son error de frontera:
+  `data: []` CONTRADICIENDO su propio `links.next` (P1-1) y una página de items
+  que ya no se reconocen como ofertas (P2-1, p.ej. `url`→`job_url`).
 - Un sobre inválido a MITAD de barrido no tira las páginas ya cosechadas: se
   emiten como barrido INCOMPLETO con el fallo marcado (`FetchResult.error`),
   que el runner contabiliza. Solo en la PRIMERA página, sin nada que preservar,
@@ -194,12 +199,28 @@ async def _sweep_feed(
             # atrás (auditoría G9 P1-A).
             items = _page_items(body, page)
             has_next = _has_next_page(body, page)
+            if items:
+                cosecha = _collect_items(items, keyword, collected, top_seen)
+                if not cosecha.usable:
+                    # El sobre es impecable y el CONTENIDO inservible: es el aspecto
+                    # de una subida de versión que renombra los campos del item
+                    # (`url`→`job_url`). Cero listings NO es una página vacía
+                    # (auditoría G10 P2-1).
+                    raise ProviderResponseError(
+                        f"página {page}: {len(items)} items y 0 utilizables — la forma "
+                        "del item dejó de cumplir el contrato (¿campos renombrados?)"
+                    )
+                top_seen = cosecha.top_seen
+            elif has_next:
+                # El sobre se CONTRADICE a sí mismo (auditoría G10 P1-1): una página
+                # sin ofertas que anuncia página siguiente no es el final del feed, y
+                # tomarla por tal registraba una cosecha COMPLETA de cero ofertas.
+                raise ProviderResponseError(
+                    f"página {page}: 'data' vacío pero el sobre anuncia links.next — "
+                    "el feed se contradice; no es el final"
+                )
             pages += 1
-            if not items:
-                exhausted = True
-                break
-            top_seen = _collect_items(items, keyword, collected, top_seen)
-            if not has_next:
+            if not items or not has_next:
                 exhausted = True
                 break
             page += 1
@@ -210,15 +231,29 @@ async def _sweep_feed(
     return _Sweep(tuple(collected), pages, top_seen, exhausted, error)
 
 
+@dataclass(frozen=True)
+class _PageHarvest:
+    """Lo que aporta UNA página: watermark y cuántos items CUMPLEN el contrato de item.
+
+    `usable` se cuenta ANTES del filtro de scope a propósito (G10 P2-1): un item válido
+    que la keyword descarta sigue demostrando que la API mantiene su forma, mientras que
+    una página entera de items irreconocibles demuestra lo contrario.
+    """
+
+    top_seen: int
+    usable: int
+
+
 def _collect_items(
     items: list, keyword: str | None, collected: list[RawListing], top_seen: int
-) -> int:
-    """Emite los items VÁLIDOS de una página y devuelve el watermark actualizado.
+) -> _PageHarvest:
+    """Emite los items VÁLIDOS de una página y devuelve watermark + items utilizables.
 
     AISLAMIENTO por item: un item malformado (no-objeto, tags no-string, fecha rara…) se
     SALTA con log — jamás revienta la página entera dejando el scope reintentando la misma
     página tóxica (P2 rev. externa integral).
     """
+    usable = 0
     for item in items:
         if not isinstance(item, dict):
             logger.warning("arbeitnow: item no-objeto saltado: %r", item)
@@ -227,17 +262,20 @@ def _collect_items(
             created = _parse_created_at(item)
             if created is not None:
                 top_seen = max(top_seen, created)
+            listing = _to_listing(item)
+            if listing is None:
+                continue
+            usable += 1
             # EMISIÓN TOTAL de lo válido que casa con el scope: el watermark
             # ya NO filtra (A-04 refresca last_seen_at/revisiones con esto).
-            listing = _to_listing(item, keyword)
-            if listing is not None:
+            if keyword is None or _matches_keyword(item, keyword):
                 collected.append(listing)
         except Exception as exc:  # frontera de datos externos: nunca tumbar el barrido
             logger.warning(
                 "arbeitnow: item malformado saltado (%s): %r",
                 exc, item.get("slug") or item.get("url"),
             )
-    return top_seen
+    return _PageHarvest(top_seen, usable)
 
 
 def _page_items(body, page: int) -> list:
@@ -332,14 +370,17 @@ def _parse_created_at(item: dict) -> int | None:
         return None
 
 
-def _to_listing(item: dict, keyword: str | None) -> RawListing | None:
-    """Validación en frontera: sin url o sin identidad estable → se salta con log."""
+def _to_listing(item: dict) -> RawListing | None:
+    """Validación en frontera: sin url o sin identidad estable → se salta con log.
+
+    Decide si el item CUMPLE EL CONTRATO, nada más: el filtro de scope (keyword) vive
+    aparte porque son dos preguntas distintas y confundirlas hacía indistinguible «la API
+    cambió de forma» de «este scope no quiere nada de esta página» (G10 P2-1).
+    """
     url = item.get("url")
     external_id = item.get("slug") or url
     if not url or not external_id:
         logger.warning("arbeitnow: item sin url/slug, saltado: %r", item.get("title"))
-        return None
-    if keyword and not _matches_keyword(item, keyword):
         return None
     return RawListing(external_id=str(external_id), url=str(url), payload=item)
 
