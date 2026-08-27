@@ -136,14 +136,36 @@ async def health() -> dict:
     return {"status": "ok", "service": "jobhunt-core", "version": __version__}
 
 
-@lru_cache(maxsize=1)
-def _expected_head() -> str:
-    """Head de la cadena de migraciones del core (según el código desplegado)."""
+def _versions_fingerprint() -> tuple[int, float]:
+    """Huella barata del directorio de revisiones: (nº de ficheros, mtime máx.).
+
+    Sirve de clave de caché. El código va montado como volumen, así que la
+    cadena puede crecer sin que el proceso reinicie.
+    """
+    versions = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+    ficheros = list(versions.glob("*.py"))
+    return len(ficheros), max((f.stat().st_mtime for f in ficheros), default=0.0)
+
+
+@lru_cache(maxsize=4)
+def _expected_head_para(_huella: tuple[int, float]) -> str:
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
     cfg = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     return ScriptDirectory.from_config(cfg).get_heads()[0]
+
+
+def _expected_head() -> str:
+    """Head de la cadena de migraciones del core (según el código desplegado).
+
+    La caché va indexada por la huella del directorio de revisiones y NO por
+    la vida del proceso. Con `@lru_cache(maxsize=1)` sin clave, este proceso
+    sirvió durante dos días un `expected=core0029` congelado en el arranque
+    mientras la cadena ya iba por `core0032`: `/v1/ready` respondía 503 con la
+    BD sana, y nadie actuaba porque `core-api` no tiene healthcheck.
+    """
+    return _expected_head_para(_versions_fingerprint())
 
 
 @app.get("/v1/ready")

@@ -128,8 +128,9 @@ tasks/
                     #   Los 15 scrapers corren EN SERIE a propósito (paralelizar = otra huella; ver COTAS §4)
   matching_tasks.py # matching automático de todos los perfiles con embedding
   alert_tasks.py    # alerta profesor primaria por email (cada 6h)
-api/                # FastAPI routers
-models/             # SQLAlchemy + Pydantic (incl. source_cursor.py para el crawler incremental)
+routers/            # FastAPI routers (NO existe backend/api/)
+schemas/            # Pydantic de entrada/salida de la API
+models/             # SQLAlchemy (incl. source_cursor.py para el crawler incremental)
 jobhunt_core/       # Core Fase A COMPLETA 2026-07-24 (ensayo GATE A superado): API /v1 FastAPI (core-api :8003),
                     #   worker Celery jobhunt.* (broker redis-core, colas core.*), harvest/ + matching/embeddings/
                     #   delivery/runs/profiles, Alembic propio core0001..core0032, tests 668/668 (vía core-migrate)
