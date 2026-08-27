@@ -64,12 +64,48 @@ async def check_harvest_health(
             )
         )
     ).all()
+    if not rows:
+        return {"alertas": [], "scopes": 0, "sin_observacion": await _censo(session)}
     alertas: list[dict] = []
     for row in rows:
         alertas += _scope_alerts(row, moment, max_failures, days)
     for alerta in alertas:
         logger.error("harvest_health: %s", alerta["msg"])
     return {"alertas": alertas, "scopes": len(rows)}
+
+
+async def _censo(session: AsyncSession) -> dict:
+    """Por qué no se observa NADA, y dicho en voz alta (auditoría G10 P3-4).
+
+    Un parque entero deshabilitado devolvía el MISMO `{'alertas': [], 'scopes': 0}` que
+    un parque sano: la vigilancia medía el vacío y no lo decía, y la única prueba de que
+    ve algo eran sus propios tests. El silencio para scopes sin fila o deshabilitados es
+    deliberado (no son averías), pero que NINGUNO sea observable sí es un estado que hay
+    que mirar antes de leer `alertas: []` como «cosecha sana».
+    """
+    censo = (
+        await session.execute(
+            sa.text(
+                "SELECT count(*) AS scopes, "
+                "  count(*) FILTER (WHERE hs.enabled) AS habilitados, "
+                "  count(sss.scope_id) FILTER (WHERE hs.enabled) AS con_estado "
+                "FROM harvest_scopes hs "
+                "LEFT JOIN source_scope_state sss ON sss.scope_id = hs.id"
+            )
+        )
+    ).one()
+    detalle = {
+        "scopes": int(censo.scopes),
+        "habilitados": int(censo.habilitados),
+        "con_estado": int(censo.con_estado),
+    }
+    logger.warning(
+        "harvest_health: la vigilancia no está midiendo nada — %d scopes, %d "
+        "habilitados, %d de ellos ya ejecutados. `alertas: []` aquí NO significa "
+        "cosecha sana: significa que no hay nada que observar",
+        detalle["scopes"], detalle["habilitados"], detalle["con_estado"],
+    )
+    return detalle
 
 
 def _scope_alerts(row, moment: datetime, max_failures: int, stale_days: int) -> list[dict]:

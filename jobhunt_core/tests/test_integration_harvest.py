@@ -797,6 +797,38 @@ def test_harvest_health_is_silent_for_never_run_and_disabled_scopes(db):
     assert out["alertas"] == [] and out["scopes"] == 0
 
 
+def test_harvest_health_dice_en_voz_alta_cuando_no_observa_nada(db, caplog):
+    """REGRESIÓN auditoría G10 P3-4: la vigilancia medía el vacío y callaba igual.
+
+    Reproducido dentro de `swissjob-core-worker` contra la base real: `{'alertas': [],
+    'scopes': 0}` — hay 29 scopes y los 29 están `enabled = false`, ninguno con fila en
+    `source_scope_state`. Un parque entero apagado devolvía EXACTAMENTE la misma
+    respuesta que un parque sano, y la única prueba de que la vigilancia ve algo eran sus
+    propios tests. El silencio por scope sigue siendo deliberado; lo que no puede pasar
+    inadvertido es que no haya NADA que observar.
+    """
+    import logging
+
+    factory, created = db
+    apagado, nunca = _seed_scopes(factory, created, n=2)
+
+    async def disable():
+        async with factory() as s:
+            await s.execute(
+                sa.text("UPDATE harvest_scopes SET enabled = false WHERE id = :i"),
+                {"i": apagado},
+            )
+            await s.execute(sa.text("DELETE FROM harvest_scopes WHERE id = :i"), {"i": nunca})
+            await s.commit()
+
+    asyncio.run(disable())
+    with caplog.at_level(logging.WARNING):
+        out = _health(factory)
+    assert out["scopes"] == 0
+    assert out["sin_observacion"] == {"scopes": 1, "habilitados": 0, "con_estado": 0}
+    assert "no está midiendo nada" in caplog.text
+
+
 def test_harvest_health_task_is_wired_to_the_beat_on_the_light_queue():
     """La vigilancia solo sirve si CORRE: va en el beat del core-worker y se rutea a
     core.default — el comodín `jobhunt.harvest.*` la habría puesto en core.harvest, detrás
