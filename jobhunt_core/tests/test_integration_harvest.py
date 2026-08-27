@@ -827,9 +827,38 @@ def test_harvest_health_dice_en_voz_alta_cuando_no_observa_nada(db, caplog):
     assert out["scopes"] == 0
     # El censo mira TODO el parque, no solo los scopes de este test: lo que importa es
     # que hay scopes y ninguno observable (habilitados 0), no cuántos haya en total.
-    censo = out["sin_observacion"]
+    censo = out["censo"]
     assert censo["scopes"] >= 1 and censo["habilitados"] == 0 and censo["con_estado"] == 0
     assert "no está midiendo nada" in caplog.text
+
+
+def test_harvest_health_publica_el_censo_y_delata_los_scopes_invisibles(db, caplog):
+    """REGRESIÓN auditoría G11 P3-2: el censo solo salía cuando NO se observaba NADA.
+
+    Bastaba UN scope observable para que desapareciera y el resto volviera a ser
+    invisible. Y hay un modo de fallo que nunca llega a ser observable: `run_scope`
+    re-lanza `ProviderConfigError` ANTES de `_record_failure_safe` (deliberado: no es
+    fallo de la fuente), así que un scope habilitado con `params` inválidos jamás escribe
+    fila en `source_scope_state` y el JOIN de la vigilancia lo deja fuera PARA SIEMPRE.
+    Reproducido por la auditoría en una base migrada: 3 scopes habilitados —uno sano, uno
+    con `params={'keyword': 123}` y uno nunca ejecutado— y el informe decía
+    `{'alertas': [], 'scopes': 1}`, que se lee como «cosecha sana».
+    """
+    import logging
+
+    factory, created = db
+    sano, roto, nunca = _seed_scopes(factory, created, n=3)
+    _set_state(factory, sano, failures=0, last_complete_at=datetime.now(timezone.utc))
+
+    with caplog.at_level(logging.WARNING):
+        out = _health(factory)
+
+    assert out["alertas"] == [] and out["scopes"] == 1   # el sano, y solo el sano
+    censo = out["censo"]                                 # …pero el censo va SIEMPRE
+    assert censo["habilitados"] >= 3 and censo["con_estado"] == 1
+    assert censo["habilitados"] > out["scopes"]
+    assert "3 scopes habilitados y solo 1 se observan" in caplog.text
+    assert "nunca han escrito estado" in caplog.text
 
 
 def test_harvest_health_task_is_wired_to_the_beat_on_the_light_queue():

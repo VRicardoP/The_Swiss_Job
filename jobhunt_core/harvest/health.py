@@ -17,6 +17,11 @@ SILENCIO DELIBERADO en dos casos que NO son avería de cosecha:
 - scope sin fila en `source_scope_state`: nunca se ha ejecutado (la cosecha del
   core se lanza a mano, sin beat propio) — no hay nada que se haya roto;
 - scope deshabilitado: no se espera que coseche.
+
+El silencio es POR SCOPE, no del conjunto: el CENSO (cuántos scopes hay, cuántos
+se espera que cosechen y cuántos han escrito estado alguna vez) se publica y se
+loguea SIEMPRE que falte alguien por observar — `alertas: []` sobre un parque
+medio invisible se lee como «cosecha sana» y no lo es (G10 P3-4, G11 P3-2).
 """
 
 import logging
@@ -42,8 +47,9 @@ async def check_harvest_health(
     - no confirma una cosecha COMPLETA desde hace más de
       `CORE_HARVEST_STALE_ALERT_DAYS` (o no la ha confirmado nunca).
 
-    Devuelve `{"alertas": [...], "scopes": n}` JSON-serializable (tarea Celery).
-    Los umbrales son inyectables SOLO para tests.
+    Devuelve `{"alertas": [...], "scopes": n, "censo": {...}}` JSON-serializable (tarea
+    Celery). El censo va SIEMPRE: `scopes` dice cuántos se están mirando, y solo el censo
+    dice cuántos habría que mirar. Los umbrales son inyectables SOLO para tests.
     """
     moment = now or datetime.now(timezone.utc)
     max_failures = (
@@ -64,25 +70,47 @@ async def check_harvest_health(
             )
         )
     ).all()
-    if not rows:
-        return {"alertas": [], "scopes": 0, "sin_observacion": await _censo(session)}
+    censo = await _censo(session)
+    _report_blind_spot(censo, len(rows))
     alertas: list[dict] = []
     for row in rows:
         alertas += _scope_alerts(row, moment, max_failures, days)
     for alerta in alertas:
         logger.error("harvest_health: %s", alerta["msg"])
-    return {"alertas": alertas, "scopes": len(rows)}
+    return {"alertas": alertas, "scopes": len(rows), "censo": censo}
+
+
+def _report_blind_spot(censo: dict, observados: int) -> None:
+    """Lo que la vigilancia NO está mirando, dicho en voz alta (G10 P3-4 + G11 P3-2).
+
+    Dos estados distintos, los dos ilegibles en `alertas: []`:
+    - no se observa NADA (parque apagado o recién creado): la vigilancia mide el vacío;
+    - se observa ALGO pero no todo: bastaba UN scope observable para que el censo
+      desapareciera y el resto volviera a ser invisible. Y hay un modo de fallo que nunca
+      llega a ser observable — `run_scope` re-lanza `ProviderConfigError` ANTES de
+      `_record_failure_safe` (deliberado: no es fallo de la fuente), así que un scope
+      habilitado con `params` inválidos jamás escribe fila en `source_scope_state` y el
+      JOIN de arriba lo deja fuera PARA SIEMPRE. Reproducido: 3 scopes habilitados, uno
+      roto de forma permanente, informe `{'alertas': [], 'scopes': 1}`.
+    """
+    if not observados:
+        logger.warning(
+            "harvest_health: la vigilancia no está midiendo nada — %d scopes, %d "
+            "habilitados, %d de ellos ya ejecutados. `alertas: []` aquí NO significa "
+            "cosecha sana: significa que no hay nada que observar",
+            censo["scopes"], censo["habilitados"], censo["con_estado"],
+        )
+    elif censo["habilitados"] > observados:
+        logger.warning(
+            "harvest_health: %d scopes habilitados y solo %d se observan — los otros %d "
+            "nunca han escrito estado (un scope que solo falla por configuración no lo "
+            "escribe JAMÁS: revisar sus params antes de leer `alertas` como cosecha sana)",
+            censo["habilitados"], observados, censo["habilitados"] - observados,
+        )
 
 
 async def _censo(session: AsyncSession) -> dict:
-    """Por qué no se observa NADA, y dicho en voz alta (auditoría G10 P3-4).
-
-    Un parque entero deshabilitado devolvía el MISMO `{'alertas': [], 'scopes': 0}` que
-    un parque sano: la vigilancia medía el vacío y no lo decía, y la única prueba de que
-    ve algo eran sus propios tests. El silencio para scopes sin fila o deshabilitados es
-    deliberado (no son averías), pero que NINGUNO sea observable sí es un estado que hay
-    que mirar antes de leer `alertas: []` como «cosecha sana».
-    """
+    """Cuántos scopes hay, cuántos se espera que cosechen y cuántos se han ejecutado."""
     censo = (
         await session.execute(
             sa.text(
@@ -94,18 +122,11 @@ async def _censo(session: AsyncSession) -> dict:
             )
         )
     ).one()
-    detalle = {
+    return {
         "scopes": int(censo.scopes),
         "habilitados": int(censo.habilitados),
         "con_estado": int(censo.con_estado),
     }
-    logger.warning(
-        "harvest_health: la vigilancia no está midiendo nada — %d scopes, %d "
-        "habilitados, %d de ellos ya ejecutados. `alertas: []` aquí NO significa "
-        "cosecha sana: significa que no hay nada que observar",
-        detalle["scopes"], detalle["habilitados"], detalle["con_estado"],
-    )
-    return detalle
 
 
 def _scope_alerts(row, moment: datetime, max_failures: int, stale_days: int) -> list[dict]:
