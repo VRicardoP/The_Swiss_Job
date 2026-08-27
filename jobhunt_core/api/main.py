@@ -6,7 +6,7 @@ ruta→scope→ownership, ETag, cursor keyset opaco); errores del contrato
 """
 
 import logging
-from functools import lru_cache
+import os
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -16,7 +16,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from jobhunt_core import __version__
+from jobhunt_core import __release_sha__, __version__
 from jobhunt_core.api.deps import ApiError
 from jobhunt_core.api.v1 import router as v1_router
 from jobhunt_core.api.v1_applications import router as applications_router
@@ -130,25 +130,33 @@ def _openapi_with_contract_errors():
 app.openapi = _openapi_with_contract_errors
 
 
+# Perfil de DESARROLLO: `docker-compose.dev.yml` monta ./jobhunt_core como
+# volumen, así que el código en disco puede no ser el de la imagen. Ese readiness
+# NO autoriza operaciones (flip, maniobras de datos) y lo dice en su respuesta.
+CODE_MUTABLE = os.getenv("CORE_CODE_MUTABLE", "").strip().lower() in {"1", "true", "yes"}
+
+
 @app.get("/v1/health")
 async def health() -> dict:
-    """Liveness: el proceso responde (no implica BD migrada — ver /v1/ready)."""
-    return {"status": "ok", "service": "jobhunt-core", "version": __version__}
+    """Liveness: el proceso responde (no implica BD migrada — ver /v1/ready).
 
-
-def _versions_fingerprint() -> tuple[int, float]:
-    """Huella barata del directorio de revisiones: (nº de ficheros, mtime máx.).
-
-    Sirve de clave de caché. El código va montado como volumen, así que la
-    cadena puede crecer sin que el proceso reinicie.
+    Publica la IDENTIDAD de la release: `version` es la constante 0.1.0 y no
+    distingue despliegues, así que van también el SHA de la imagen y el head de
+    migraciones que este proceso espera. Con esas dos señales el paso de
+    verificación de un despliegue («todos publican el mismo SHA y head») es
+    comprobable en vez de confiado (auditoría externa 2026-08-27 P1-3).
     """
-    versions = Path(__file__).resolve().parents[1] / "alembic" / "versions"
-    ficheros = list(versions.glob("*.py"))
-    return len(ficheros), max((f.stat().st_mtime for f in ficheros), default=0.0)
+    return {
+        "status": "ok",
+        "service": "jobhunt-core",
+        "version": __version__,
+        "release": __release_sha__,
+        "alembic_expected": _expected_head(),
+    }
 
 
-@lru_cache(maxsize=4)
-def _expected_head_para(_huella: tuple[int, float]) -> str:
+def _read_expected_head() -> str:
+    """Lee de disco el head de la cadena de migraciones DE ESTA IMAGEN."""
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
@@ -156,25 +164,38 @@ def _expected_head_para(_huella: tuple[int, float]) -> str:
     return ScriptDirectory.from_config(cfg).get_heads()[0]
 
 
-def _expected_head() -> str:
-    """Head de la cadena de migraciones del core (según el código desplegado).
+# CONGELADO AL IMPORTAR, desde la misma imagen que trae los handlers.
+#
+# Historia de las dos caras del mismo error, ambas vividas en este despliegue:
+# con `@lru_cache` sin clave la expectativa quedaba fijada al arrancar mientras
+# el volumen de código sí cambiaba → 503 con la BD sana durante dos días (falso
+# ROJO, bf3fbfd). Releerla del volumen en caliente cierra ese caso y abre el
+# simétrico: los ficheros pasan a la release B, `core-migrate` migra a B y
+# `/v1/ready` certifica B mientras los módulos ya importados siguen siendo los
+# de A (falso VERDE). Lo único coherente es que la expectativa venga de donde
+# viene el código que responde. La incoherencia desaparece porque el perfil
+# operativo ya no monta el código: cambiar la cadena exige cambiar la imagen, y
+# eso recrea el proceso. Si la cadena no se puede leer, el proceso NO arranca —
+# preferible a servir peticiones con una expectativa inventada.
+_EXPECTED_HEAD = _read_expected_head()
 
-    La caché va indexada por la huella del directorio de revisiones y NO por
-    la vida del proceso. Con `@lru_cache(maxsize=1)` sin clave, este proceso
-    sirvió durante dos días un `expected=core0029` congelado en el arranque
-    mientras la cadena ya iba por `core0032`: `/v1/ready` respondía 503 con la
-    BD sana, y nadie actuaba porque `core-api` no tiene healthcheck.
-    """
-    return _expected_head_para(_versions_fingerprint())
+
+def _expected_head() -> str:
+    """Head de migraciones que espera el CÓDIGO QUE ESTÁ CORRIENDO."""
+    return _EXPECTED_HEAD
 
 
 @app.get("/v1/ready")
 async def ready() -> JSONResponse:
-    """Readiness: la BD del core responde Y está migrada al head esperado.
+    """Readiness: la BD del core responde Y está migrada al head que espera ESTE código.
 
     Evita el falso-verde de un health estático cuando core-migrate falló
     (revisión externa A-01 #4). La query resuelve por search_path (fijado a
     jobhunt en la conexión), sin interpolar el nombre del esquema.
+
+    La expectativa se congela al arrancar (ver `_EXPECTED_HEAD`) y la respuesta
+    lleva la release del proceso: un 200 certifica el par (código, esquema) de
+    UNA release, no el esquema de una y los handlers de otra.
     """
     try:
         async with engine.connect() as conn:
@@ -193,6 +214,20 @@ async def ready() -> JSONResponse:
     if current != expected:
         return JSONResponse(
             status_code=503,
-            content={"status": "not_ready", "alembic": current, "expected": expected},
+            content={
+                "status": "not_ready",
+                "alembic": current,
+                "expected": expected,
+                "release": __release_sha__,
+            },
         )
-    return JSONResponse(content={"status": "ready", "alembic": current})
+    return JSONResponse(
+        content={
+            "status": "ready",
+            "alembic": current,
+            "release": __release_sha__,
+            # False en el perfil de desarrollo (código montado): verde informativo,
+            # no autorización para operar.
+            "authoritative": not CODE_MUTABLE,
+        }
+    )

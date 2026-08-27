@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
 
+import jobhunt_core
 import jobhunt_core.api.main as api
 
 
@@ -48,46 +49,49 @@ def test_ready_db_down_is_generic_503(monkeypatch):
     assert "postgres" not in r.text and "jobhunt_core" not in r.text
 
 
-def test_expected_head_no_se_congela_cuando_la_cadena_crece(monkeypatch, tmp_path):
-    """El head esperado NO puede quedar cacheado para toda la vida del proceso.
+def test_expected_head_se_fija_al_arrancar(monkeypatch):
+    """REGRESIÓN auditoría externa 2026-08-27 P1-3.
 
-    El código va montado como volumen: `core-migrate` puede añadir revisiones
-    sin que `core-api` reinicie. Con la caché atada al proceso, este servicio
-    sirvió dos días un `expected` congelado en el arranque mientras la BD ya
-    estaba en un head posterior — 503 con la BD sana.
+    CORRIGE `test_expected_head_no_se_congela_cuando_la_cadena_crece`, que fijaba el
+    comportamiento opuesto: releer el directorio de revisiones en caliente. Aquella prueba
+    nació para cerrar un falso ROJO (dos días de 503 con la BD sana, commit bf3fbfd) pero
+    abrió el falso VERDE simétrico: los ficheros del volumen podían pasar a la release B
+    mientras los handlers en memoria seguían siendo los de la A, y `/v1/ready` certificaba
+    la B. El head esperado tiene que venir de la MISMA imagen que sirve las peticiones, y
+    por eso se lee UNA vez al importar.
+
+    El falso rojo ya no puede volver: sin bind mount de código (docker-compose.dev.yml es
+    el único que lo monta), la única forma de cambiar la cadena de migraciones es cambiar
+    la imagen, y eso recrea el proceso.
     """
-    llamadas: list[tuple[int, float]] = []
-
-    def _head_falso(huella: tuple[int, float]) -> str:
-        llamadas.append(huella)
-        return f"head_de_{huella[0]}_ficheros"
-
-    monkeypatch.setattr(api, "_expected_head_para", _head_falso)
-
-    huella_inicial = (3, 100.0)
-    monkeypatch.setattr(api, "_versions_fingerprint", lambda: huella_inicial)
-    assert api._expected_head() == "head_de_3_ficheros"
-
-    # Llega una revisión nueva al directorio montado, sin reiniciar el proceso.
-    monkeypatch.setattr(api, "_versions_fingerprint", lambda: (4, 200.0))
-    assert api._expected_head() == "head_de_4_ficheros"
-
-    assert llamadas == [(3, 100.0), (4, 200.0)]
+    congelado = api._EXPECTED_HEAD
+    # El sistema de ficheros cambia bajo el proceso: la respuesta NO puede moverse.
+    monkeypatch.setattr(api, "_read_expected_head", lambda: "core9999")
+    assert api._expected_head() == congelado != "core9999"
 
 
-def test_expected_head_reusa_la_cache_con_la_cadena_quieta(monkeypatch):
-    """Mientras el directorio no cambia, no se vuelve a parsear la cadena."""
-    api._expected_head_para.cache_clear()
-    llamadas: list[tuple[int, float]] = []
-    real = api._expected_head_para.__wrapped__
+def test_el_head_congelado_es_el_de_la_imagen():
+    """El valor congelado no es un artefacto: coincide con la cadena real del paquete
+    (una congelación equivocada sería un 503 permanente, el falso rojo por otra vía)."""
+    assert api._EXPECTED_HEAD == api._read_expected_head()
 
-    def _contando(huella: tuple[int, float]) -> str:
-        llamadas.append(huella)
-        return real(huella)
 
-    monkeypatch.setattr(api._expected_head_para, "__wrapped__", _contando, raising=False)
-    monkeypatch.setattr(api, "_versions_fingerprint", lambda: (7, 42.0))
-    primero = api._expected_head()
-    segundo = api._expected_head()
-    assert primero == segundo
-    assert api._expected_head_para.cache_info().hits >= 1
+def test_ready_publica_la_release_del_proceso(monkeypatch):
+    """P1-3: sin SHA en la sonda, un operador no puede distinguir releases — es lo que
+    dejó pasar dos incidentes (capturador cinco días con código viejo, API dos días en
+    503). `/v1/ready` publica la release del proceso que responde."""
+    monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
+    r = TestClient(api.app).get("/v1/ready")
+    assert r.status_code == 200
+    assert r.json()["release"] == jobhunt_core.__release_sha__
+
+
+def test_ready_declara_si_autoriza_operaciones(monkeypatch):
+    """P1-3 (perfil de desarrollo): con el código montado como volumen el readiness NO
+    autoriza operaciones — el proceso puede estar sirviendo código distinto del de la
+    imagen. La sonda lo dice en vez de dejarlo a la memoria del operador."""
+    monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
+    monkeypatch.setattr(api, "CODE_MUTABLE", False)
+    assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is True
+    monkeypatch.setattr(api, "CODE_MUTABLE", True)
+    assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is False
