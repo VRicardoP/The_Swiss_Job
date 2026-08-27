@@ -3,6 +3,16 @@
 Documento generado: 2026-02-24
 Objetivo: Identificar portales de empleo suizos **no exclusivamente tecnologicos** para ampliar la cobertura del dashboard.
 
+> ⚠ **DOCUMENTO DE INVESTIGACION Y PLANIFICACION, de febrero de 2026.** Su valor es el
+> estudio de portales; **sus cifras y su pseudocodigo NO describen el sistema de hoy** y no
+> deben citarse como estado actual. En particular, las tareas del tipo «migrar los 12
+> providers existentes» son planificacion historica: hoy hay **25 providers registrados**
+> (20 sin restriccion + 5 restringidos *gated*) y **15 scrapers**.
+>
+> Para el estado vigente: `CLAUDE.md` (arquitectura y contadores),
+> `docs/COTAS_Y_DECISIONES.md` (limitaciones aceptadas y su motivo) y
+> `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` §19 (contadores verificados).
+
 **Ya integrados (excluidos):** Jobicy, Remotive, Arbeitnow, JSearch, RemoteOK, Himalayas, Adzuna, WeWorkRemotely, Ostjob.ch, Zentraljob.ch, SwissTechJobs.com, ICTjobs.ch
 
 ---
@@ -2111,6 +2121,9 @@ class JobMatcher:
         ...
 
     # EVOLUCION — scoring multi-factor
+    # >> DESFASADO (2026-08-27): el codigo real tiene SEIS factores, no cinco --
+    #    falta `language: 0.10`. Pesos vigentes en services/job_matcher.py:
+    #    embedding .35 · salary .15 · location .10 · recency .15 · llm .15 · language .10
     async def compute_final_score(self, user_profile, job, embedding_score, ai_score):
         weights = user_profile.score_weights or DEFAULT_WEIGHTS
         return (

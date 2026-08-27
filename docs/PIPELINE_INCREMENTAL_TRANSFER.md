@@ -94,6 +94,14 @@ async def _run_all_matches_async() -> dict:
 el top-N (`MATCH_LLM_RERANK_TOP=50`) va al LLM. Nada se pierde por ese límite: TODO lo que
 supera `MATCH_SCORE_THRESHOLD` se guarda; el 50 solo limita la afinación LLM.
 
+> ⚠ **El valor efectivo de `MATCH_SCORE_THRESHOLD` es 42.0** (`.env`), no el `35.0` del
+> default de `backend/config.py`. Cítalo desde el `.env`, no desde el default.
+>
+> **Cota del modo avalancha, medida:** el tope de 50 **no es recuperable**. El `head` se
+> elige por el `score_final` de la etapa 2, que se calcula con `llm_score = 0.0`, así que
+> una oferta que quede bajo el puesto 50 tiende a quedarse ahí en corridas sucesivas. Ver
+> `docs/COTAS_Y_DECISIONES.md` §3.
+
 ### 1.3 `embed_all_pending` (en `tasks/embedding_tasks.py`)
 
 Drena TODOS los embeddings pendientes en bucle (modelo local, sin coste API) antes del
