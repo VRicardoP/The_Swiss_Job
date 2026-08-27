@@ -5,11 +5,13 @@ objetivo adaptativo de páginas (liveness sin tope manual). HTTP MOCKEADO.
 
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
 
 from jobhunt_core.harvest.provider import ProviderConfigError, ProviderResponseError
+from jobhunt_core.harvest.providers import arbeitnow
 from jobhunt_core.harvest.providers.arbeitnow import ArbeitnowProvider
 
 # p1: a300,b250 · p2: c200,d100 · p3: e50.
@@ -431,3 +433,111 @@ def test_keyword_filtering_everything_out_is_still_a_complete_harvest():
     r, hits = _fetch(params={"keyword": "no-existe-esta-palabra"})
     assert _ids(r) == [] and r.complete is True and r.error is None
     assert hits == [1, 2, 3]
+
+
+def _feed_con_fallo_en(page_mala: int, respuesta):
+    """Handler del feed sano salvo en `page_mala`, donde devuelve `respuesta()`."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params.get("page", 1))
+        if page == page_mala:
+            return respuesta()
+        return httpx.Response(200, text=json.dumps(PAGES.get(page, {"data": [], "links": {}})))
+
+    return handler
+
+
+_FALLOS_TRANSITORIOS = {
+    "HTTP 429": lambda: httpx.Response(429),
+    "200 con cuerpo vacío": lambda: httpx.Response(200, text=""),
+    "200 con HTML del CDN": lambda: httpx.Response(200, text="<html>502 Bad Gateway</html>"),
+}
+
+
+def test_transport_failures_mid_sweep_keep_the_pages_already_harvested():
+    """REGRESIÓN auditoría G10 P1-2: la preservación de G9 solo cubría la excepción PROPIA.
+
+    `_sweep_feed` promete en su docstring emitir las k−1 páginas buenas «hasta un sobre
+    inválido», pero solo capturaba `ProviderResponseError`. Los tres fallos que de verdad
+    ocurren contra el feed real —HTTP 429 (medido en vivo: llega en la petición 11 sin
+    pausa), un 200 con el cuerpo vacío y un 200 con HTML de una página de error de CDN—
+    subían como `HTTPStatusError`/`JSONDecodeError` y tiraban el barrido ENTERO: el mismo
+    todo-o-nada que G9 dice haber cerrado, por la puerta del transporte.
+    """
+    for nombre, respuesta in _FALLOS_TRANSITORIOS.items():
+        result, _ = _fetch(handler=_feed_con_fallo_en(2, respuesta))
+        assert _ids(result) == ["a", "b"], nombre        # la página 1, íntegra
+        assert result.complete is False, nombre          # jamás cosecha completa
+        assert result.error, nombre                      # el runner lo contabiliza
+        assert result.pages_fetched == 1, nombre
+
+
+def test_transport_failure_on_the_first_page_still_raises():
+    """El otro lado: sin páginas anteriores no hay nada que preservar y el fallo sube tal
+    cual — el runner lo cuenta y deja cursor y `last_complete_at` como estaban."""
+    for respuesta in _FALLOS_TRANSITORIOS.values():
+        with pytest.raises((httpx.HTTPError, json.JSONDecodeError)):
+            _fetch(handler=_feed_con_fallo_en(1, respuesta))
+
+
+def test_the_sweep_paces_itself_between_pages(monkeypatch):
+    """REGRESIÓN auditoría G10 P1-2 (la mitad del RITMO): el barrido no tenía un solo sleep.
+
+    Medido en vivo el 2026-08-27 contra el feed público: a ráfaga la petición 11 devuelve
+    HTTP 429 y el feed necesita 18–31 páginas, así que `complete=True` era INALCANZABLE —
+    y el `self.retry(countdown=120)` de la tarea repetía la ráfaga. Con 3,5 s de pausa
+    pasaron 16 de 16 peticiones sin un solo rechazo.
+    """
+    monkeypatch.setattr(arbeitnow, "PAGE_PAUSE_S", 0.1)
+    t0 = time.monotonic()
+    r, hits = _fetch()  # feed de 3 páginas → 2 pausas
+    transcurrido = time.monotonic() - t0
+    assert r.complete is True and hits == [1, 2, 3]
+    assert transcurrido >= 0.2, transcurrido
+    # …y NINGUNA pausa antes de la primera página: un feed de una sola no espera.
+    t1 = time.monotonic()
+    _fetch(pages={1: {"data": [], "links": {"next": None}}})
+    assert time.monotonic() - t1 < 0.1
+
+
+def test_a_rate_limited_page_is_retried_and_the_sweep_completes():
+    """REGRESIÓN G10 P1-2: el 429 del bucket es transitorio POR DEFINICIÓN — reintentarlo
+    con backoff es lo que permite terminar el barrido en vez de tirarlo."""
+    rechazos = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params.get("page", 1))
+        if page == 2 and rechazos["n"] < arbeitnow.HTTP_ATTEMPTS - 1:
+            rechazos["n"] += 1
+            return httpx.Response(429)
+        return httpx.Response(200, text=json.dumps(PAGES.get(page, {"data": [], "links": {}})))
+
+    r, _ = _fetch(handler=handler)
+    assert rechazos["n"] == arbeitnow.HTTP_ATTEMPTS - 1
+    assert _ids(r) == ["a", "b", "c", "d", "e"]
+    assert r.complete is True and r.error is None
+
+
+def test_a_permanent_http_status_is_not_retried():
+    """Insistir en un 404/403 no lo arregla: solo gasta peticiones contra una API que
+    pide explícitamente que no se abuse de ella."""
+    peticiones = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        peticiones["n"] += 1
+        return httpx.Response(404)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _fetch(handler=handler)
+    assert peticiones["n"] == 1
+
+
+def test_retry_delay_prefers_the_header_and_falls_back_to_exponential_backoff():
+    """El 429 del feed real NO trae `Retry-After` (medido), así que el backoff es
+    exponencial sobre la pausa; si algún día lo trae, manda el servidor."""
+    peticion = httpx.Request("GET", arbeitnow.API_URL)
+    con = httpx.Response(429, headers={"retry-after": "42"}, request=peticion)
+    sin = httpx.Response(429, request=peticion)
+    delay = arbeitnow._retry_delay
+    assert delay(httpx.HTTPStatusError("429", request=peticion, response=con), 1.0, 1) == 42.0
+    assert delay(httpx.HTTPStatusError("429", request=peticion, response=sin), 1.0, 1) == 2.0
+    assert delay(httpx.HTTPStatusError("429", request=peticion, response=sin), 1.0, 2) == 4.0

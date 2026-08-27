@@ -32,6 +32,8 @@ import os
 import uuid
 from urllib.parse import urlsplit, urlunsplit
 
+import pytest
+
 # Estado del hook (una BD por invocación de pytest; sin fixtures de por medio).
 _suite: dict = {}
 
@@ -114,3 +116,14 @@ def pytest_unconfigure(config):
     finally:
         admin_engine.dispose()
         _suite.clear()
+
+
+@pytest.fixture(autouse=True)
+def _barrido_sin_pausa(monkeypatch):
+    """El barrido de arbeitnow se AUTOLIMITA a `PAGE_PAUSE_S` s/página (auditoría G10
+    P1-2): contra el feed real es lo que hace `complete=True` alcanzable, pero en la
+    suite el feed va MOCKEADO y ahí la pausa solo alarga la ejecución. Los tests que
+    fijan el RITMO o el backoff la restablecen ellos mismos."""
+    from jobhunt_core.harvest.providers import arbeitnow
+
+    monkeypatch.setattr(arbeitnow, "PAGE_PAUSE_S", 0.0)

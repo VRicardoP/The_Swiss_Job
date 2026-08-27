@@ -31,10 +31,17 @@ de paginación por offset MUTABLE y sin cursor/snapshot del proveedor:
 - Un sobre inválido a MITAD de barrido no tira las páginas ya cosechadas: se
   emiten como barrido INCOMPLETO con el fallo marcado (`FetchResult.error`),
   que el runner contabiliza. Solo en la PRIMERA página, sin nada que preservar,
-  el error sube tal cual (auditoría G9 P2-C).
+  el error sube tal cual (auditoría G9 P2-C). Y la preservación cubre TODA la
+  familia de fallos transitorios —429, timeouts, 200 con HTML o cuerpo vacío—,
+  no solo la excepción propia: el docstring lo prometía y no era cierto (G10 P1-2).
+- El barrido se AUTOLIMITA (`PAGE_PAUSE_S`) y reintenta con backoff los rechazos
+  del bucket: sin ritmo, `complete=True` era INALCANZABLE contra el feed real
+  (auditoría G10 P1-2).
 NO está en la lista restringida del proyecto (jobs.ch/LinkedIn/... siguen OFF).
 """
 
+import asyncio
+import json
 import logging
 from dataclasses import dataclass
 
@@ -97,6 +104,20 @@ DEFAULT_PAGE_TARGET = 50
 HARD_MAX_PAGES = 500
 MIN_PAGE_TARGET = 2
 HTTP_TIMEOUT_S = 20.0
+# RITMO DEL BARRIDO (auditoría G10 P1-2). Medido en vivo contra el feed público el
+# 2026-08-27: a ráfaga, la petición 11 devuelve HTTP 429 (sin Retry-After); con 1 s
+# de pausa el 429 llega en la 12 y a partir de ahí solo pasa ~1 de cada 3 (el bucket
+# repone ~1 petición cada 3,2 s); con 3,5 s pasaron 16 de 16 sin un solo rechazo. El
+# feed necesita entre 18 y 31 páginas, así que SIN ritmo `complete=True` era
+# inalcanzable y el reintento de la tarea volvía a golpear con la misma ráfaga. A 3,5
+# s/página un barrido completo son ~110 s una vez al día, y respeta el «this is a free
+# public API for jobs, please do not abuse» que la propia API manda en `meta.terms`.
+PAGE_PAUSE_S = 3.5
+# Reintento del TRANSPORTE (no del sobre): 3 intentos por página con backoff
+# exponencial sobre la pausa del barrido — escala CON ella a propósito, así que con
+# pausa 0 (feed mockeado en la suite) no duerme.
+HTTP_ATTEMPTS = 3
+RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
 
 class ArbeitnowProvider(BaseProvider):
@@ -113,7 +134,11 @@ class ArbeitnowProvider(BaseProvider):
         # barrido anterior se quedó corto, usa el objetivo crecido persistido.
         target = min(max(configured, _cursor_int(cur, "page_target")), hard_max)
 
-        sweep = await _sweep_feed(http, target, keyword, _cursor_int(cur, "last_top_seen"))
+        # PAGE_PAUSE_S se lee AQUÍ (no como default del parámetro): un default se
+        # congelaría al importar y el ritmo dejaría de ser ajustable.
+        sweep = await _sweep_feed(
+            http, target, keyword, _cursor_int(cur, "last_top_seen"), PAGE_PAUSE_S
+        )
         collected, pages = sweep.listings, sweep.pages
 
         next_cursor: dict = {"last_top_seen": sweep.top_seen}
@@ -172,16 +197,23 @@ class _Sweep:
 
 
 async def _sweep_feed(
-    http: httpx.AsyncClient, target: int, keyword: str | None, top_seen: int
+    http: httpx.AsyncClient, target: int, keyword: str | None, top_seen: int,
+    pause: float,
 ) -> _Sweep:
-    """Recorre el feed hasta agotarlo, hasta el tope de páginas o hasta un sobre inválido.
+    """Recorre el feed hasta agotarlo, hasta el tope de páginas o hasta un fallo.
 
-    PRESERVACIÓN (auditoría G9 P2-C): si el sobre se rompe en la página k>1, las k−1
-    páginas anteriores son válidas y se emiten igual — el runner las persiste como
+    RITMO (auditoría G10 P1-2): `pause` segundos entre páginas. El feed real corta con
+    429 a la petición ~11 si se le dispara a ráfaga, y necesita 18–31 páginas: sin ritmo
+    el barrido no podía terminar NUNCA y el retry de la tarea repetía la ráfaga.
+
+    PRESERVACIÓN (auditoría G9 P2-C, ampliada en G10 P1-2): si algo falla en la página
+    k>1, las k−1 anteriores son válidas y se emiten igual — el runner las persiste como
     barrido INCOMPLETO (su invariante de siempre) y contabiliza el fallo por
-    `FetchResult.error`. El todo-o-nada dejaba a una fuente con forma inválida
-    PERSISTENTE en la página 2 sin ingerir una sola oferta, y sin más rastro que un log.
-    En la PRIMERA página no hay nada que preservar: el error sube tal cual (P1-1).
+    `FetchResult.error`. El todo-o-nada dejaba a una fuente averiada en la página 2 sin
+    ingerir una sola oferta, y sin más rastro que un log. Cubre las TRES familias que
+    ocurren de verdad —sobre inválido, fallo HTTP y cuerpo no-JSON (HTML de CDN, cuerpo
+    vacío)—, no solo la excepción propia. En la PRIMERA página no hay nada que preservar:
+    el error sube tal cual (P1-1).
     """
     collected: list[RawListing] = []
     pages = 0
@@ -190,9 +222,9 @@ async def _sweep_feed(
     error: str | None = None
     try:
         while pages < target:
-            resp = await http.get(API_URL, params={"page": page}, timeout=HTTP_TIMEOUT_S)
-            resp.raise_for_status()
-            body = resp.json()
+            if page > 1:
+                await asyncio.sleep(pause)
+            body = await _get_page(http, page, pause)
             # El sobre se valida ENTERO (`data` Y `links`) ANTES de usar nada de él:
             # una página VACÍA sin `links` cortaba el barrido como "fin del feed" sin
             # llegar nunca a mirar `links` — el mismo falso verde por la puerta de
@@ -224,11 +256,71 @@ async def _sweep_feed(
                 exhausted = True
                 break
             page += 1
-    except ProviderResponseError as exc:
+    except (ProviderResponseError, httpx.HTTPError, json.JSONDecodeError) as exc:
         if page == 1:
             raise
-        error = str(exc)
+        error = _describe_failure(exc, page)
     return _Sweep(tuple(collected), pages, top_seen, exhausted, error)
+
+
+async def _get_page(http: httpx.AsyncClient, page: int, pause: float):
+    """Una página del feed, con REINTENTO de los fallos transitorios del transporte.
+
+    El 429 del feed real llega SIN `Retry-After` (medido), así que el backoff es
+    exponencial sobre la pausa del barrido; si algún día lo trae, manda la cabecera.
+    Un fallo que sobrevive a los reintentos sube: lo clasifica `_sweep_feed` (página 1
+    ⇒ error de la fuente; página k>1 ⇒ preservar lo cosechado).
+    """
+    intento = 0
+    while True:
+        intento += 1
+        try:
+            resp = await http.get(API_URL, params={"page": page}, timeout=HTTP_TIMEOUT_S)
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.HTTPStatusError, httpx.TransportError) as exc:
+            if intento >= HTTP_ATTEMPTS or not _is_retryable(exc):
+                raise
+            espera = _retry_delay(exc, pause, intento)
+            logger.warning(
+                "arbeitnow: página %d falló (%s), intento %d/%d; reintento en %.1f s",
+                page, _reason(exc), intento, HTTP_ATTEMPTS, espera,
+            )
+            await asyncio.sleep(espera)
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Un rechazo del bucket (429) o un 5xx pasajero se reintentan; un 404/403 no
+    se arregla insistiendo."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in RETRYABLE_STATUS
+    return True  # timeouts y cortes de conexión
+
+
+def _retry_delay(exc: Exception, pause: float, intento: int) -> float:
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            return float(exc.response.headers["retry-after"])
+        except (KeyError, TypeError, ValueError):
+            pass
+    return pause * 2**intento
+
+
+def _reason(exc: Exception) -> str:
+    """Etiqueta CORTA del fallo: el mensaje de httpx trae la URL entera y el del
+    JSONDecodeError, el cuerpo — ninguno cabe en un `FetchResult.error`."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    if isinstance(exc, json.JSONDecodeError):
+        return f"cuerpo no-JSON ({exc.msg})"
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _describe_failure(exc: Exception, page: int) -> str:
+    """El texto que viaja en `FetchResult.error` hasta el log del runner."""
+    if isinstance(exc, ProviderResponseError):
+        return str(exc)  # ya viene con el número de página
+    return f"página {page}: {_reason(exc)}"
 
 
 @dataclass(frozen=True)
