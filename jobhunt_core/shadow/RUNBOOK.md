@@ -4,6 +4,22 @@
 > lo no confirmado y la PK del staging absorbe duplicados). **RTO consumidor ≤ 1 h**.
 > TODO LOCAL: prod/QNAP fuera de alcance.
 
+## 0. Estado operativo vigente (verificado 2026-08-27)
+
+| Hecho | Estado | Cómo se comprobó |
+|---|---|---|
+| `core-capture` **YA REINICIADO** | Contenedor levantado **2026-08-26T23:06:59Z**, `RestartCount=0` | `docker inspect -f '{{.State.StartedAt}}'` |
+| La avería del lazo de cola | **CERRADA** | slot retiene **5 088 bytes** (eran 2,6 GB creciendo a 2,1–3,0 MB/s), `confirmed_flush` a **424 bytes**, `active=t` |
+| Ritmo del latido | **~0/s** (techo 10/s; la avería marcaba 559–979/s) | dos muestras de `n_tup_upd` separadas en el tiempo: **sin variación** |
+| Código del **streamer** en el proceso vivo | **al día** | el último commit del camino de streaming (`a1ac816`, 2026-08-25T22:19Z) es ANTERIOR al arranque del contenedor |
+| Código del **healthcheck** (`20ed0b2`, posterior al arranque) | **al día igualmente** | `--health` es un proceso de UN disparo: reimporta el módulo en cada invocación, y `jobhunt_core/` va bind-montado en local |
+
+**REGLA VIGENTE hasta que se ejecute la maniobra de canonización (§7):** NO reiniciar
+`worker`, `worker-ai` ni `backend`. La maniobra los para ella misma, en su paso 1, y
+pararlos antes de tiempo no compra nada mientras abre la ventana en la que un ciclo de
+métricas podría observar el estado intermedio. `core-capture` queda FUERA de esa regla:
+ya se reinició, con medidas tomadas antes y después.
+
 ## 1. Diagnóstico del slot
 
 ```bash
@@ -30,11 +46,54 @@ asyncio.run(main())"
 
 Señales: `active=false` = consumidor caído (el slot **retiene WAL** mientras tanto);
 `wal_retenido` creciendo = consumidor caído o atascado; `heartbeat_at` viejo = consumidor
-SIN LATIDO (es lo que puntúa el healthcheck de core-capture — umbral 26 h,
-`CORE_CAPTURE_HEALTH_MAX_AGE_S`; el latido avanza con cada keepalive ~10 s y cada tx
-aplicada); `updated_at` viejo = sin transacciones aplicadas — **progreso de DATOS,
-informativo**: con slot activo y días sin tráfico legacy es NORMAL y ya no da unhealthy
-(P2-7, core0009).
+SIN LATIDO (umbral 26 h, `CORE_CAPTURE_HEALTH_MAX_AGE_S`; el latido avanza con cada
+keepalive ~10 s y cada tx aplicada); `updated_at` viejo = sin transacciones aplicadas —
+**progreso de DATOS, informativo**: con slot activo y días sin tráfico legacy es NORMAL y
+ya no da unhealthy (P2-7, core0009).
+
+### Qué puntúa HOY el healthcheck de `core-capture` (`--health`)
+
+**Ocho** comprobaciones en cascada (la primera que falla decide y devuelve 1). Las nº 5 y 6
+se añadieron el 2026-08-27 (corolario de O-1) porque **un latido fresco no es prueba de
+salud**: en la avería de agosto lo fresco del latido ERA la avería, y el healthcheck estuvo
+VERDE cinco días seguidos.
+
+| # | Señal | Umbral (env) | Qué detecta |
+|---|---|---|---|
+| 1 | Conexión al core | `connect_timeout=5` | core caído |
+| 2 | Slot presente | — | slot borrado (continuidad WAL perdida ⇒ §3) |
+| 3 | Slot `active` (walsender conectado) | el `start_period` de 300 s del compose cubre el backfill del bootstrap | consumidor caído mientras el slot retiene WAL |
+| 4 | WAL retenido sobre `restart_lsn` | **2 GiB** · `CORE_CAPTURE_SLOT_LAG_MAX_BYTES` (I-1) | fallo BRUTO. **Es lento para un fallo lento** |
+| 5 | **RITMO** del latido: `n_tup_upd`/s de `shadow_capture_state` | **10/s** · `CORE_CAPTURE_HEARTBEAT_MAX_RATE`; ventana mín. **30 s** · `CORE_CAPTURE_HEARTBEAT_MIN_WINDOW_S` | el lazo de cola del heartbeat. **Nombra la causa** |
+| 6 | **PROGRESO**: distancia a `confirmed_flush_lsn` | suelo **512 MiB** · `CORE_CAPTURE_FLUSH_STALL_MIN_BYTES`; ventana **1800 s** · `CORE_CAPTURE_FLUSH_STALL_MAX_S` | consumidor que late pero no gana terreno |
+| 7 | Frontera registrada + edad del latido | **26 h** · `CORE_CAPTURE_HEALTH_MAX_AGE_S` | bootstrap incompleto · consumidor sin latido |
+| 8 | Staging DRENADO (`shadow_change_log` sin aplicar) | **2 h** · `CORE_CAPTURE_STAGING_STALE_MAX_S` | proyector/worker colgado — vive AQUÍ, en OTRO contenedor, fuera de ese dominio de fallo (B-1: 22 días parado sin una alerta) |
+
+Separación medida entre sano y averiado (mismo instrumento): latido **0,23/s sano** frente
+a **559–979/s averiado**; retención **0,7–14 MB oscilando** sano frente a **2,6 GB creciendo
+a 2,1–3,0 MB/s** averiado. El techo de 10/s queda 43× por encima de lo sano y 56× por debajo
+de lo averiado: no hay zona gris.
+
+La señal 5 **RE-ANCLA con cualquier mejora** — una ráfaga legítima del legacy que luego se
+drena no puntúa; solo puntúa quedarse por encima del suelo SIN mejorar durante toda la
+ventana. Con el déficit medido eso delata el lazo en **~35 min**, no en cinco días.
+
+El muestreo (necesario porque 4 y 5 son *tasas*, y una tasa necesita memoria) se persiste en
+`/tmp/jobhunt_capture_health.json` dentro del contenedor · `CORE_CAPTURE_HEALTH_STATE` —
+**nunca en la BD**: escribir de más es justo el pecado que se vigila. El fichero es memoria,
+no dependencia: ausente o corrupto = «primera vez», jamás unhealthy.
+
+> **Trampa que costó cinco días, y no la arregla ningún healthcheck:** Python lee cada módulo
+> UNA vez, al importarlo. `core-capture` arrancó el 2026-08-22T12:03:20Z y el commit que
+> introduce el throttle del heartbeat (`accc10e`) es de 2 h 14 min DESPUÉS, así que el proceso
+> vivo ejecutó durante cinco días una versión anterior a su propio arreglo — **con el fichero
+> ya corregido dentro del contenedor**. `grep` al fichero NO responde qué código corre; solo
+> lo responde la fecha de arranque del contenedor contra la del commit:
+> `docker inspect -f '{{.State.StartedAt}}' swissjob-core-capture` frente a `git log -1 --format=%cI -- jobhunt_core/shadow/capture.py`.
+> En LOCAL `jobhunt_core/` va bind-montado, así que **basta `docker compose restart core-capture`**
+> para que reimporte; en el NAS el código va HORNEADO en la imagen y hace falta imagen nueva +
+> recreate. En ambos casos, tras tocar `shadow/capture.py` el proceso hay que **reiniciarlo
+> explícitamente** — nada lo hace solo.
 
 ## 2. Reinicio del consumidor (RTO ≤ 1 h)
 
@@ -142,12 +201,24 @@ reconstruirla, ejecutar el rollback/replay completo (§3) cuando haya margen —
 
 ## 5. Cadencias (beat EMBEBIDO en core-worker)
 
-El `beat_schedule` vive en `celery_app.py` (ajustable por settings
-`CORE_SHADOW_*` / `CORE_DELIVERY_DISPATCH_EVERY_S`): `sample_outbox_lag`,
-`check_slot_health`, **`jobhunt.shadow.project`** (P1-1: sin cadencia, la
-proyección solo al cierre del ciclo acumulaba ~20 h de latencia) y
-**`jobhunt.delivery.dispatch_outbox`** cada 5 min; `run_cycle` diario 06:05
-Europe/Zurich (tras el cierre del ciclo, §5). SOLO colas `core.*`.
+El `beat_schedule` vive en `celery_app.py`. Son **9 cadencias** (verificado
+enumerando `celery_app.conf.beat_schedule` en el contenedor vivo). SOLO colas `core.*`.
+
+| Cadencia | Tarea | Cuándo | Setting |
+|---|---|---|---|
+| 5 min | `jobhunt.shadow.sample_outbox_lag` | — | `CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S=300` |
+| 5 min | `jobhunt.shadow.check_slot_health` | — | `CORE_SHADOW_SLOT_HEALTH_EVERY_S=300` |
+| 5 min | `jobhunt.shadow.project` | P1-1: sin cadencia, la proyección solo al cierre del ciclo acumulaba ~20 h de latencia | `CORE_SHADOW_PROJECT_EVERY_S=300` |
+| 5 min | `jobhunt.delivery.dispatch_outbox` | — | `CORE_DELIVERY_DISPATCH_EVERY_S=300` |
+| **1 h** | `jobhunt.idempotency.purge_expired` | **NO son 5 min** — el valor es 3600 s | `CORE_IDEMPOTENCY_PURGE_EVERY_S=3600` |
+| diaria | `jobhunt.maintenance.dedup_scan` | **05:20** — antes del barrido (un candidato sobre vacante recién archivada no estorba) | crontab fijo |
+| diaria | `jobhunt.maintenance.archive_sweep` | **05:35** — ANTES del cierre de ciclo, para que las métricas del gate midan el corpus podado (F-2/ADR-07) | crontab fijo |
+| diaria | `jobhunt.shadow.run_cycle` | **06:05** Europe/Zurich | `CORE_SHADOW_RUN_CYCLE_HOUR/_MINUTE` |
+| diaria | `jobhunt.maintenance.purge_retention` | **06:40** — DESPUÉS del cierre de ciclo: el ciclo cuenta evaluaciones y dead-letters de la ventana que acaba de cerrar, y purgar antes le cambiaría los números por debajo de los pies (O-4) | crontab fijo |
+
+El orden diario **05:20 → 05:35 → 06:05 → 06:40 no es casual**: cada cita está colocada
+respecto al cierre de ciclo de las 06:05 por una razón distinta, anotada arriba. Moverlas
+cambia lo que mide el gate.
 
 **Entrega sombra real (P1-1b)**: al arrancar, el worker registra el transporte
 `shadow/inbox.py` — INSERT síncrono e idempotente en `jobhunt.shadow_inbox`
