@@ -401,7 +401,7 @@ def test_empty_page_without_next_is_still_the_end_of_the_feed():
         assert hits == [1]
 
 
-def test_page_of_items_with_none_usable_is_not_a_complete_harvest():
+def test_a_sweep_of_items_none_usable_is_not_a_complete_harvest():
     """REGRESIÓN auditoría G10 P2-1: el hermano de P1-1 una capa más abajo (la del ITEM).
 
     El sobre puede ser impecable —`data` es lista, `links` es objeto— y su contenido
@@ -411,6 +411,10 @@ def test_page_of_items_with_none_usable_is_not_a_complete_harvest():
     `last_complete_at` se refrescaba y `consecutive_failures` se reseteaba en cada corrida.
     Una cosecha que no ingiere NADA no es una cosecha completa salvo que el feed declare
     explícitamente que está vacío (ese caso lo fija el test de arriba).
+
+    El juicio es del BARRIDO ENTERO (auditoría G11 P2-1): una subida de versión deja
+    TODAS las páginas sin un solo item utilizable, así que medirlo al final no pierde
+    nada y no confunde «la API cambió de forma» con «este anuncio vino roto».
     """
     renombrada = {"data": [{"id": 1, "job_url": "https://x/a", "name": "T"}],
                   "links": {"next": None}}
@@ -418,10 +422,35 @@ def test_page_of_items_with_none_usable_is_not_a_complete_harvest():
     for body in (renombrada, no_objetos):
         with pytest.raises(ProviderResponseError):
             _fetch(pages={1: body})
-    # A mitad de barrido: preservación, como cualquier otra forma inválida.
-    result, _ = _fetch(pages={1: PAGES[1], 2: renombrada})
-    assert _ids(result) == ["a", "b"]
-    assert result.complete is False and result.error and "utilizables" in result.error
+    # Varias páginas, ni un item reconocible en ninguna: la forma cambió, y se dice.
+    with pytest.raises(ProviderResponseError, match="en TODO el barrido"):
+        _fetch(pages={1: {**renombrada, "links": {"next": "?page=2"}}, 2: renombrada})
+
+
+def test_one_broken_ad_alone_on_the_last_page_is_not_a_broken_contract():
+    """REGRESIÓN auditoría G11 P2-1: el criterio POR PÁGINA atropellaba el aislamiento
+    POR ITEM que el módulo declara, y encendía un ROJO FALSO permanente.
+
+    El feed es un `simplePaginate` de Laravel: su página final trae `len(feed) mod
+    tamaño_de_página` items — puede ser UNO. Un anuncio sin `url` ahí es el caso que la
+    validación de frontera existe para TOLERAR; con el juicio por página, ese mismo item
+    era inocuo si iba acompañado (caso de abajo) y catastrófico si iba solo: `complete`
+    nunca volvía a ser True, `consecutive_failures` subía una por corrida y a la tercera
+    la vigilancia gritaba «¿campos renombrados?» sobre un feed perfectamente sano.
+    """
+    roto = {"id": 1, "job_url": "https://x/z", "name": "T"}   # sin `url`: se salta
+    sano = {"slug": "z", "url": "https://x/z", "title": "T", "created_at": 10, "tags": []}
+    # El item roto SOLO en la página terminal, con el resto del feed sano.
+    solo, hits = _fetch(pages={1: PAGES[1], 2: {"data": [roto], "links": {"next": None}}})
+    assert _ids(solo) == ["a", "b"]
+    assert solo.complete is True and solo.error is None, solo.error
+    assert hits == [1, 2]
+    # …y acompañado, que es como salía bien desde siempre.
+    con_otro, _ = _fetch(
+        pages={1: PAGES[1], 2: {"data": [roto, sano], "links": {"next": None}}}
+    )
+    assert _ids(con_otro) == ["a", "b", "z"]
+    assert con_otro.complete is True and con_otro.error is None
 
 
 def test_keyword_filtering_everything_out_is_still_a_complete_harvest():

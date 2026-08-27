@@ -26,8 +26,11 @@ de paginación por offset MUTABLE y sin cursor/snapshot del proveedor:
 - UNA COSECHA QUE NO INGIERE NADA NO ES UNA COSECHA COMPLETA (auditoría G10),
   salvo que el feed lo declare explícitamente (`data` vacío y `links.next` nulo).
   Las dos formas de fingirlo con el sobre intacto son error de frontera:
-  `data: []` CONTRADICIENDO su propio `links.next` (P1-1) y una página de items
-  que ya no se reconocen como ofertas (P2-1, p.ej. `url`→`job_url`).
+  `data: []` CONTRADICIENDO su propio `links.next` (P1-1) y un BARRIDO ENTERO de
+  items que ya no se reconocen como ofertas (P2-1, p.ej. `url`→`job_url`). Lo
+  segundo se juzga sobre el barrido, no página a página: por página atropellaba el
+  aislamiento POR ITEM de aquí arriba y un solo anuncio roto —solo, en la página
+  final de un simplePaginate— encendía un rojo falso permanente (G11 P2-1).
 - Un sobre inválido a MITAD de barrido no tira las páginas ya cosechadas: se
   emiten como barrido INCOMPLETO con el fallo marcado (`FetchResult.error`),
   que el runner contabiliza. Solo en la PRIMERA página, sin nada que preservar,
@@ -259,6 +262,12 @@ async def _sweep_feed(
     reintentos cada una son 3,4 h de sueño legítimo—, y una tarea que se pasa de la hora
     con `acks_late=True` ve su mensaje restituido a la cola. Al vencer, el barrido se
     rinde con lo cosechado: `timed_out`, que NO es fallo de la fuente.
+
+    FORMA DEL ITEM (auditoría G11 P2-1): «items y cero utilizables» se juzga sobre el
+    BARRIDO ENTERO, no página a página. Una subida de versión que renombra `url`→`job_url`
+    deja TODAS las páginas sin un item reconocible, así que medirlo al final no pierde
+    nada; medirlo por página convertía el caso que la validación de frontera existe para
+    TOLERAR —un anuncio roto, solo, en la página final— en un rojo falso permanente.
     """
     collected: list[RawListing] = []
     pages = 0
@@ -266,6 +275,8 @@ async def _sweep_feed(
     exhausted = False
     timed_out = False
     error: str | None = None
+    usables = 0
+    vio_items = False
     vence = time.monotonic() + budget
     try:
         while pages < target:
@@ -281,7 +292,10 @@ async def _sweep_feed(
             # atrás (auditoría G9 P1-A).
             items = _page_items(body, page)
             has_next = _has_next_page(body, page)
-            top_seen = _harvest_page(items, has_next, keyword, collected, top_seen, page)
+            cosecha = _harvest_page(items, has_next, keyword, collected, top_seen, page)
+            top_seen = cosecha.top_seen
+            usables += cosecha.usable
+            vio_items = vio_items or bool(items)
             pages += 1
             if not items or not has_next:
                 exhausted = True
@@ -291,6 +305,15 @@ async def _sweep_feed(
         if page == 1:
             raise
         error = _describe_failure(exc, page)
+    if error is None and vio_items and not usables:
+        # Ni un item reconocible en TODO el barrido: la API cambió de forma. No hay nada
+        # que preservar (sin utilizables no hay emitidos), así que sube tal cual —el
+        # runner cuenta el fallo y deja cursor y `last_complete_at` intactos—. Con un
+        # fallo de transporte ya registrado NO se juzga: el barrido vio media verdad.
+        raise ProviderResponseError(
+            f"{pages} páginas con items y 0 utilizables en TODO el barrido — la forma "
+            "del item dejó de cumplir el contrato (¿campos renombrados?)"
+        )
     return _Sweep(tuple(collected), pages, top_seen, exhausted, error, timed_out)
 
 
@@ -370,18 +393,20 @@ def _describe_failure(exc: Exception, page: int) -> str:
 def _harvest_page(
     items: list, has_next: bool, keyword: str | None,
     collected: list[RawListing], top_seen: int, page: int,
-) -> int:
-    """Cosecha UNA página y devuelve el watermark, exigiendo que la página no se
-    contradiga a sí misma (auditoría G10 P1-1 y P2-1).
+) -> "_PageHarvest":
+    """Cosecha UNA página, exigiendo que la página no se contradiga A SÍ MISMA (G10 P1-1).
 
-    Las dos incoherencias tienen el sobre INTACTO y por eso pasaban la validación de
-    frontera entera; las dos declaraban COMPLETA una cosecha de cero ofertas:
-    - `data` vacío mientras `links.next` anuncia página siguiente: el feed dice a la vez
-      que se acabó y que no. No es el final; es una respuesta que dejó de cumplir.
-    - items que ya no se reconocen como ofertas (subida de versión que renombra
-      `url`→`job_url`): página con contenido y cero utilizables. Tampoco es el final.
-    Las dos son `ProviderResponseError`, o sea el camino que ya existía: página 1 sube,
-    página k>1 preserva lo cosechado.
+    `data` vacío mientras `links.next` anuncia página siguiente: el feed dice a la vez que
+    se acabó y que no. El sobre está INTACTO —por eso pasaba la validación de frontera
+    entera— y declaraba COMPLETA una cosecha de cero ofertas. No es el final; es una
+    respuesta que dejó de cumplir, y sigue el camino de siempre: `ProviderResponseError`,
+    que en la página 1 sube y en la k>1 preserva lo cosechado.
+
+    Lo que ya NO se juzga aquí es la FORMA DEL ITEM (auditoría G11 P2-1): «items y cero
+    utilizables» es una pregunta sobre la API, no sobre una página suelta, y la responde
+    `_sweep_feed` al final. Preguntarla por página hacía que el mismo anuncio roto fuera
+    inocuo acompañado y catastrófico si iba solo — que es justo lo que le pasa al último
+    item de un `simplePaginate`.
     """
     if not items:
         if has_next:
@@ -389,14 +414,9 @@ def _harvest_page(
                 f"página {page}: 'data' vacío pero el sobre anuncia links.next — "
                 "el feed se contradice; no es el final"
             )
-        return top_seen  # final LEGÍTIMO del feed: vacío y sin anunciar siguiente
-    cosecha = _collect_items(items, keyword, collected, top_seen)
-    if not cosecha.usable:
-        raise ProviderResponseError(
-            f"página {page}: {len(items)} items y 0 utilizables — la forma del item "
-            "dejó de cumplir el contrato (¿campos renombrados?)"
-        )
-    return cosecha.top_seen
+        # Final LEGÍTIMO del feed: vacío y sin anunciar siguiente.
+        return _PageHarvest(top_seen, 0)
+    return _collect_items(items, keyword, collected, top_seen)
 
 
 @dataclass(frozen=True)
@@ -405,7 +425,8 @@ class _PageHarvest:
 
     `usable` se cuenta ANTES del filtro de scope a propósito (G10 P2-1): un item válido
     que la keyword descarta sigue demostrando que la API mantiene su forma, mientras que
-    una página entera de items irreconocibles demuestra lo contrario.
+    un BARRIDO entero de items irreconocibles demuestra lo contrario (`_sweep_feed` los
+    suma y juzga al final — G11 P2-1).
     """
 
     top_seen: int
