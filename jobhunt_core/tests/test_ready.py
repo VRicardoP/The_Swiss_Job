@@ -1,5 +1,6 @@
 """Sonda /v1/ready (rev. externa #6): estados y NO-fuga de internals."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -104,6 +105,9 @@ def test_ready_declara_si_autoriza_operaciones(monkeypatch):
     # (test_no_hay_autoritatividad_sin_SHA_de_release, G9 P2-B).
     monkeypatch.setattr(api, "__release_sha__", "abc1234")
     monkeypatch.setattr(api, "_BAKED_RELEASE", "abc1234")  # la que hornea la imagen (G10 P2-2)
+    # El árbol de la suite SÍ va montado (perfil de desarrollo): este test fija las
+    # OTRAS condiciones de la marca, y la del montaje tiene test propio (G11 P2-2).
+    monkeypatch.setattr(api, "_code_is_mounted", lambda: False)
     monkeypatch.setattr(api, "CODE_MUTABLE", False)
     assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is True
     monkeypatch.setattr(api, "CODE_MUTABLE", True)
@@ -127,6 +131,9 @@ def test_no_hay_autoritatividad_sin_SHA_de_release(monkeypatch):
     no saben nombrar, y el paso «todos publican el mismo SHA» se cumplía trivialmente
     (`unknown == unknown == unknown`). Autoritativo exige las DOS cosas: código inmutable
     y release NOMBRABLE."""
+    # El árbol de la suite SÍ va montado (perfil de desarrollo): este test fija las
+    # OTRAS condiciones de la marca, y la del montaje tiene test propio (G11 P2-2).
+    monkeypatch.setattr(api, "_code_is_mounted", lambda: False)
     monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
     monkeypatch.setattr(api, "CODE_MUTABLE", False)
     monkeypatch.setattr(api, "_BAKED_RELEASE", jobhunt_core.UNKNOWN_RELEASE)
@@ -150,6 +157,9 @@ def test_un_RELEASE_SHA_del_entorno_no_puede_hacer_autoritativa_la_sonda(monkeyp
     código que responde, justo donde `docs/DEPLOY_NAS.md` la convierte en la autorización
     para operar (flip, maniobras de datos).
     """
+    # El árbol de la suite SÍ va montado (perfil de desarrollo): este test fija las
+    # OTRAS condiciones de la marca, y la del montaje tiene test propio (G11 P2-2).
+    monkeypatch.setattr(api, "_code_is_mounted", lambda: False)
     monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
     monkeypatch.setattr(api, "CODE_MUTABLE", False)
     monkeypatch.setattr(api, "_BAKED_RELEASE", "450c561")   # lo que la IMAGEN hornea
@@ -182,3 +192,63 @@ def test_la_release_horneada_sale_del_fichero_de_la_imagen(tmp_path, monkeypatch
     assert api._read_baked_release() == "450c561"
     monkeypatch.setattr(api, "_BAKED_RELEASE_PATH", tmp_path / "no-existe")
     assert api._read_baked_release() is None
+
+
+def test_el_codigo_montado_quita_la_autoritatividad_aunque_nadie_ponga_la_variable(
+    tmp_path, monkeypatch
+):
+    """REGRESIÓN auditoría G11 P2-2: la primera condición de la marca era una SUPOSICIÓN.
+
+    `CORE_CODE_MUTABLE` no observa nada: dice lo que alguien escribió en el compose. El
+    docstring de `_authoritative` y `docs/DEPLOY_NAS.md` lo elevaban a hecho («es false si
+    el código va montado»), y no lo era. Reproducido contra la imagen viva: sustituyendo
+    `/app/jobhunt_core` por un bind mount SIN poner la variable, la sonda publicaba la
+    release verdadera `1d686a4` con `authoritative: true` mientras respondía código del
+    auditor. Es una vía MÁS fuerte que la que cerró G10: no falsifica el nombre de la
+    release, falsifica el código que responde bajo un nombre verdadero. El montaje SÍ es
+    observable desde dentro del proceso — `/proc/self/mountinfo` lo lista.
+    """
+    monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
+    monkeypatch.setattr(api, "CODE_MUTABLE", False)      # nadie puso la variable
+    monkeypatch.setattr(api, "_BAKED_RELEASE", "abc1234")
+    monkeypatch.setattr(api, "__release_sha__", "abc1234")
+    raiz = str(Path(jobhunt_core.__file__).parent)
+
+    limpio = tmp_path / "sin-montaje"
+    limpio.write_text("31 25 0:29 / /proc/sys rw,relatime shared:16 - proc proc rw\n")
+    monkeypatch.setattr(api, "_MOUNTINFO_PATH", limpio)
+    assert api._code_is_mounted() is False
+    assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is True
+
+    montado = tmp_path / "con-montaje"
+    montado.write_text(
+        "31 25 0:29 / /proc/sys rw,relatime shared:16 - proc proc rw\n"
+        f"812 745 0:64 /home/x/SwissJob/jobhunt_core {raiz} rw,relatime - ext4 /dev/sda1 rw\n"
+    )
+    monkeypatch.setattr(api, "_MOUNTINFO_PATH", montado)
+    assert api._code_is_mounted() is True
+    assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is False
+    assert TestClient(api.app).get("/v1/health").json()["authoritative"] is False
+
+    # Un fichero SUELTO montado dentro del paquete sustituye el código que responde
+    # igual de bien: comprobar solo la raíz lo daba por limpio (verificado en vivo).
+    dentro = tmp_path / "un-fichero"
+    dentro.write_text(
+        f"812 745 0:64 /home/x/main.py {raiz}/api/main.py rw,relatime - ext4 /dev/sda1 rw\n"
+    )
+    monkeypatch.setattr(api, "_MOUNTINFO_PATH", dentro)
+    assert api._code_is_mounted() is True
+    assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is False
+
+    # …y un montaje que solo COMPARTE PREFIJO con la raíz no es el código.
+    vecino = tmp_path / "vecino"
+    vecino.write_text(
+        f"812 745 0:64 /home/x/otro {raiz}_backup rw,relatime - ext4 /dev/sda1 rw\n"
+    )
+    monkeypatch.setattr(api, "_MOUNTINFO_PATH", vecino)
+    assert api._code_is_mounted() is False
+
+    # Sin `/proc` legible no se puede DESCARTAR el montaje: dirección segura.
+    monkeypatch.setattr(api, "_MOUNTINFO_PATH", tmp_path / "no-existe")
+    assert api._code_is_mounted() is True
+    assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is False

@@ -135,6 +135,39 @@ app.openapi = _openapi_with_contract_errors
 # NO autoriza operaciones (flip, maniobras de datos) y lo dice en su respuesta.
 CODE_MUTABLE = os.getenv("CORE_CODE_MUTABLE", "").strip().lower() in {"1", "true", "yes"}
 
+# El montaje del código es un HECHO OBSERVABLE del proceso (auditoría G11 P2-2). La
+# variable de arriba solo dice lo que alguien escribió en el compose: montando
+# `/app/jobhunt_core` sin ponerla, la sonda publicaba la release verdadera con
+# `authoritative: true` mientras respondía código de otra procedencia — una vía MÁS
+# fuerte que la que cerró G10, porque no falsifica el nombre de la release sino el código
+# que responde bajo un nombre verdadero. `/proc/self/mountinfo` lista los montajes del
+# namespace de ESTE proceso, así que la suposición se puede sustituir por una lectura.
+_MOUNTINFO_PATH = Path("/proc/self/mountinfo")
+
+
+def _code_is_mounted() -> bool:
+    """Si el código que este proceso importa —o CUALQUIER trozo suyo— viene de un montaje.
+
+    Mira el árbol entero, no solo su raíz: montar `main.py` suelto sustituye el código que
+    responde igual de bien que montar el paquete, y un `/app/jobhunt_core` sin montajes no
+    prueba nada si la sustitución vive un nivel más abajo (comprobado montando un único
+    fichero: la comprobación de la raíz lo daba por limpio).
+    """
+    raiz = str(Path(__file__).resolve().parent.parent)
+    try:
+        lineas = _MOUNTINFO_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        # Sin `/proc` legible no se puede DESCARTAR el montaje. Dirección segura: la
+        # marca solo afirma cuando puede comprobarlo.
+        return True
+    for linea in lineas:
+        campos = linea.split(" ")
+        # Formato de mountinfo: el 5º campo es el punto de montaje (los caracteres raros
+        # viajan escapados como \040, y aquí la ruta no lleva ninguno).
+        if len(campos) > 4 and (campos[4] == raiz or campos[4].startswith(raiz + "/")):
+            return True
+    return False
+
 
 # La release HORNEADA en la imagen, en un sitio que el entorno no puede pisar
 # (auditoría G10 P2-2). `RELEASE_SHA` es un ENV de la imagen y el ENV de una imagen lo
@@ -161,10 +194,13 @@ _BAKED_RELEASE = _read_baked_release()  # CONGELADO al importar, como el head es
 def _authoritative() -> bool:
     """Si lo que publican las sondas se puede usar para VERIFICAR una release.
 
-    Exige las tres cosas (auditoría G9 P2-A/P2-B y G10 P2-2):
-    - código INMUTABLE: sin `CORE_CODE_MUTABLE` no hay bind mount, así que el `release`
-      del ENV y el `alembic_expected` leído del disco vienen de la MISMA imagen; con él,
-      el proceso puede estar sirviendo código que no es el del SHA que publica;
+    Exige las tres cosas (auditoría G9 P2-A/P2-B, G10 P2-2 y G11 P2-2):
+    - código INMUTABLE: ni la variable de opt-out `CORE_CODE_MUTABLE` NI un bind mount
+      sobre el árbol de código —comprobado en `/proc/self/mountinfo`, porque la variable
+      solo dice lo que alguien escribió en el compose y montando el código sin ponerla la
+      marca seguía en verde—. Sin montaje, el `release` del ENV y el `alembic_expected`
+      leído del disco vienen de la MISMA imagen; con él, el proceso puede estar sirviendo
+      código que no es el del SHA que publica;
     - release NOMBRABLE: una imagen construida sin el build arg hornea `unknown`, y el
       paso «todos publican el mismo SHA» se satisface entre `unknown`s sin decir nada;
     - release ATADA A LA IMAGEN: el SHA que se publica tiene que ser el que la imagen
@@ -176,6 +212,7 @@ def _authoritative() -> bool:
     """
     return (
         not CODE_MUTABLE
+        and not _code_is_mounted()
         and __release_sha__ != UNKNOWN_RELEASE
         and __release_sha__ == _BAKED_RELEASE
     )

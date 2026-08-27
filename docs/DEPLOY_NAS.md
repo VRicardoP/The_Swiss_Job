@@ -203,7 +203,10 @@ curl -s localhost:8003/v1/ready    # {"release":"<sha>","authoritative":true,...
 Todos los procesos del core deben publicar **el mismo** `release` y el mismo head, y
 `authoritative: true`. Las dos sondas llevan la marca (G9 P2-A: health la publicaba sin
 ella, y es la primera que se ejecuta aquí). `authoritative` es **false** si el código va
-montado (perfil de desarrollo), si la imagen no sabe nombrar su release
+montado —y eso ya **se comprueba**, no se supone: el proceso lee `/proc/self/mountinfo` y
+busca montajes sobre su propio árbol (G11 P2-2; antes bastaba montar el código sin poner
+`CORE_CODE_MUTABLE` para que la marca siguiera en verde sobre código sustituido)—, si la
+imagen no sabe nombrar su release
 (`RELEASE_SHA=unknown`) —sin esa condición el «mismo SHA» se cumpliría entre `unknown`s
 sin decir nada (G9 P2-B)— **o si el `RELEASE_SHA` del entorno no es el que la imagen
 lleva horneado en `/app/RELEASE`** (G10 P2-2). Esto último cierra el agujero de la

@@ -38,6 +38,9 @@ def test_health_declara_si_el_proceso_es_autoritativo(monkeypatch):
 
     monkeypatch.setattr(api, "__release_sha__", "abc1234")
     monkeypatch.setattr(api, "_BAKED_RELEASE", "abc1234")  # la que hornea la imagen (G10 P2-2)
+    # El árbol de la suite SÍ va montado (perfil de desarrollo): este test fija las
+    # OTRAS condiciones de la marca, y la del montaje tiene test propio (G11 P2-2).
+    monkeypatch.setattr(api, "_code_is_mounted", lambda: False)
     monkeypatch.setattr(api, "CODE_MUTABLE", False)
     assert TestClient(app).get("/v1/health").json()["authoritative"] is True
     monkeypatch.setattr(api, "CODE_MUTABLE", True)
