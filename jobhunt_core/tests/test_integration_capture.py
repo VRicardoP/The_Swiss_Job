@@ -17,6 +17,7 @@ PROPIO (nombre único) con DROP en finally SIEMPRE: un slot huérfano retiene
 WAL y bloquearía el DROP DATABASE. Ejecutar vía core-migrate.
 """
 
+import json
 import logging
 import os
 import time
@@ -811,6 +812,124 @@ def test_health_check_slot_sin_progreso_es_unhealthy(
     monkeypatch.setenv("CORE_CAPTURE_SLOT_LAG_MAX_BYTES", "-1")
     assert health_check() == 1
     assert "SIN PROGRESO" in capsys.readouterr().err
+
+
+def test_health_check_latido_desbocado_es_unhealthy(
+    capture, capture_db, monkeypatch, capsys, tmp_path
+):
+    """REGRESIÓN O-1 corolario (auditoría de eficiencia 2026-08-27).
+
+    El 2026-08-22 `core-capture` quedó cinco días corriendo el código ANTERIOR
+    al throttle del latido: 559-979 UPDATE/s sobre una tabla de UNA fila y 228
+    GB/día de WAL. El healthcheck estuvo VERDE todo ese tiempo porque miraba
+    que `heartbeat_at` fuese RECIENTE — y con ese ritmo el latido era
+    fresquísimo. La señal de vida mentía: la frescura del latido era el
+    síntoma de la avería, no su desmentido.
+
+    Aquí se reproduce el ritmo (no la causa) y se exige que el healthcheck lo
+    llame por su nombre. La misma tabla, el mismo latido fresco: la ÚNICA
+    diferencia entre sano y no sano es a qué velocidad late."""
+    make, slot, engine = capture
+    monkeypatch.setenv("CORE_DATABASE_URL", capture_db["core_dsn"])
+    monkeypatch.setenv("CORE_CAPTURE_SLOT", slot)
+    monkeypatch.setenv("CORE_CAPTURE_HEALTH_STATE", str(tmp_path / "hc.json"))
+    monkeypatch.setenv("CORE_CAPTURE_HEARTBEAT_MIN_WINDOW_S", "0")
+    monkeypatch.setenv("CORE_CAPTURE_HEARTBEAT_MAX_RATE", "1.0")
+
+    cap = make()
+    cap.start()
+    _wait_slot_active(engine, slot)
+
+    assert health_check() == 0  # 1er muestreo: hay latido, aún no hay TASA
+    assert health_check() == 0  # 2º sin ráfaga: el ritmo real está muy por debajo
+
+    # La ráfaga: el latido SIN throttle que ejecutaba el proceso averiado.
+    # 500 UPDATE en una tabla de 1 fila — a 1 UPDATE/s de techo haría falta
+    # que el healthcheck tardase 500 s en volver para que esto NO dispare.
+    for _ in range(500):
+        _exec(
+            engine,
+            f"UPDATE {S}.shadow_capture_state SET heartbeat_at = now() WHERE id = 1",
+        )
+    assert health_check() == 1
+    err = capsys.readouterr().err
+    assert "LATIDO DESBOCADO" in err
+    # `heartbeat_at` estaba RECIÉN escrito: el veredicto no puede venir de la
+    # comprobación de frescura (esa dice "sano"), tiene que venir del ritmo.
+    assert "sin LATIDO" not in err
+
+    # Y la tasa vuelve a bajar sola: el estado guarda un ritmo, no un castigo.
+    assert health_check() == 0
+
+
+def test_health_check_lsn_confirmado_sin_avanzar_es_unhealthy(
+    capture, capture_db, monkeypatch, capsys, tmp_path
+):
+    """O-1 corolario, 2ª señal: el consumidor tiene que GANAR TERRENO.
+
+    El techo absoluto de 2 GiB (I-1) solo delata el fallo bruto; el lazo del
+    2026-08-22 tenía déficit 10:1 y tardó cinco días en acercarse a él. Lo que
+    lo delata de verdad es que la distancia hasta `confirmed_flush_lsn` no baje
+    nunca. Se siembra el estado del muestreo anterior —lo único que hace falta
+    para que esto sea determinista sin fabricar gigabytes de WAL— y se
+    comprueban las DOS direcciones: si la retención mejoró, sano; si no mejoró
+    en toda la ventana, unhealthy."""
+    make, slot, engine = capture
+    monkeypatch.setenv("CORE_DATABASE_URL", capture_db["core_dsn"])
+    monkeypatch.setenv("CORE_CAPTURE_SLOT", slot)
+    estado = tmp_path / "hc.json"
+    monkeypatch.setenv("CORE_CAPTURE_HEALTH_STATE", str(estado))
+    monkeypatch.setenv("CORE_CAPTURE_FLUSH_STALL_MIN_BYTES", "-1")  # todo cuenta
+    monkeypatch.setenv("CORE_CAPTURE_FLUSH_STALL_MAX_S", "0")
+
+    cap = make()
+    cap.start()
+    _wait_slot_active(engine, slot)
+
+    def sembrar(lag_anterior: float) -> None:
+        estado.write_text(
+            json.dumps({"lag": lag_anterior, "lag_ts": time.time() - 10_000}),
+            encoding="utf-8",
+        )
+
+    # El muestreo anterior vio MÁS retención que ahora ⇒ el consumidor ganó
+    # terreno ⇒ sano (y el ancla se rehace: no arrastra el pasado).
+    sembrar(1e18)
+    assert health_check() == 0
+
+    # El muestreo anterior vio MENOS (o igual) ⇒ no ha ganado terreno en toda
+    # la ventana ⇒ unhealthy, con el latido igual de fresco que antes.
+    sembrar(-1e18)
+    assert health_check() == 1
+    err = capsys.readouterr().err
+    assert "LSN CONFIRMADO SIN AVANZAR" in err
+    assert "sin LATIDO" not in err
+
+
+def test_health_check_sobrevive_a_un_estado_ilegible(
+    capture, capture_db, monkeypatch, capsys, tmp_path
+):
+    """El fichero de estado es MEMORIA para puntuar tasas, no una dependencia:
+    ausente o corrupto ⇒ primera vez (sin veredicto), nunca unhealthy. Un
+    healthcheck que se cae por su propio scratchpad es peor que el fallo que
+    vigila."""
+    make, slot, engine = capture
+    monkeypatch.setenv("CORE_DATABASE_URL", capture_db["core_dsn"])
+    monkeypatch.setenv("CORE_CAPTURE_SLOT", slot)
+    estado = tmp_path / "hc.json"
+    monkeypatch.setenv("CORE_CAPTURE_HEALTH_STATE", str(estado))
+
+    cap = make()
+    cap.start()
+    _wait_slot_active(engine, slot)
+
+    assert not estado.exists()
+    assert health_check() == 0  # ausente
+    assert estado.exists()  # y queda escrito para la próxima
+
+    estado.write_text("{esto no es json", encoding="utf-8")
+    assert health_check() == 0  # corrupto
+    assert "unhealthy" not in capsys.readouterr().err
 
 
 def test_heartbeat_advances_on_keepalive_without_traffic(capture):

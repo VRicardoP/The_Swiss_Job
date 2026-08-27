@@ -758,10 +758,170 @@ def _core_dsn() -> str:
     )
 
 
+# --------------------------------------------------------------- healthcheck
+#
+# O-1 corolario (auditoría de eficiencia 2026-08-27). El 2026-08-22 este
+# servicio quedó cinco días ejecutando el código ANTERIOR a su propio arreglo
+# del throttle del latido: 559-979 UPDATE/s sobre una tabla de UNA fila, 228
+# GB/día de WAL, y un slot con déficit 10:1 que no podía converger. El
+# healthcheck estuvo VERDE todo ese tiempo, porque lo que miraba era que
+# `heartbeat_at` fuese reciente — y en esta avería el latido fresco ERA el
+# síntoma. La señal de vida mentía.
+#
+# Lo que un latido NO puede decir por sí solo es (a) a qué RITMO late y (b) si
+# el consumidor gana terreno. Las dos son tasas, y una tasa necesita memoria
+# entre invocaciones: `--health` es un proceso de un disparo, así que el
+# muestreo se persiste en un fichero del propio contenedor (nada de escribir en
+# la BD: el pecado que se está vigilando es precisamente escribir de más).
+#
+# Separación medida entre sano y averiado, con el mismo instrumento:
+#   latido    averiado 559-979/s   ->   sano 0,23/s (medido tras el reinicio)
+#   retención averiado 2,6 GB creciendo 2,1-3,0 MB/s -> sano 0,7-14 MB oscilando
+_HEALTH_STATE_DEFAULT = "/tmp/jobhunt_capture_health.json"
+# Techo del latido: 43x por encima de lo medido en sano (0,23/s) y 56x por
+# debajo de lo medido en la avería (559-979/s). Entre ambos extremos hay tres
+# órdenes de magnitud: no hay zona gris que calibrar, y el margen de arriba
+# absorbe de sobra una ráfaga legítima de transacciones del legacy.
+_HEARTBEAT_MAX_RATE_DEFAULT = 10.0
+# Ventana mínima para que una tasa signifique algo (el compose llama cada 60 s).
+_HEARTBEAT_MIN_WINDOW_DEFAULT = 30.0
+# Suelo de retención por debajo del cual no hay nada que puntuar: el consumidor
+# está al día y la oscilación normal (hasta ~14 MB medidos) no es un fallo.
+_FLUSH_STALL_MIN_BYTES_DEFAULT = 512 * 1024**2
+# Tiempo que la retención puede quedarse SIN GANAR TERRENO por encima del suelo
+# antes de declararlo avería. Con el déficit medido (2,1-3,0 MB/s) esto delata
+# el lazo en ~35 min en vez de en los 5 días que tardó el techo absoluto.
+_FLUSH_STALL_MAX_S_DEFAULT = 1800.0
+
+
+def _read_health_state(path: str) -> dict:
+    """Muestreo anterior. Fichero ausente/corrupto = primera vez (sin veredicto,
+    jamás unhealthy: la memoria es para puntuar tasas, no una dependencia)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_health_state(path: str, state: dict) -> None:
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
+    except OSError as exc:
+        # Un /tmp de solo lectura no debe tumbar un servicio sano, pero que se
+        # VEA: sin estado las dos comprobaciones de tasa quedan mudas para
+        # siempre, y ese silencio es justo el modo de fallo de esta historia.
+        print(f"warn: healthcheck sin estado persistente ({exc})", file=sys.stderr)
+
+
+def _rate_verdict(cur, now: float, prev: dict, state: dict) -> str | None:
+    """(a) RITMO del latido: `n_tup_upd` de shadow_capture_state por segundo.
+
+    El contador es acumulativo desde `stats_reset`; un valor MENOR que el
+    anterior es un reset y re-ancla en vez de dar un delta negativo."""
+    cur.execute(
+        "SELECT n_tup_upd FROM pg_stat_user_tables "
+        "WHERE schemaname = %s AND relname = 'shadow_capture_state'",
+        (settings.CORE_DB_SCHEMA,),
+    )
+    row = cur.fetchone()
+    upd = int(row[0]) if row and row[0] is not None else None
+    antes, antes_ts = prev.get("upd"), prev.get("upd_ts")
+    if upd is None:  # sin estadísticas todavía: conserva el ancla previa
+        state["upd"], state["upd_ts"] = antes, antes_ts
+        return None
+    if antes is None or upd < int(antes):
+        state["upd"], state["upd_ts"] = upd, now
+        return None
+    ventana = float(
+        os.getenv(
+            "CORE_CAPTURE_HEARTBEAT_MIN_WINDOW_S",
+            str(_HEARTBEAT_MIN_WINDOW_DEFAULT),
+        )
+    )
+    transcurrido = now - float(antes_ts or now)
+    if transcurrido < ventana:
+        # Aún no es una tasa: se sigue acumulando contra la MISMA ancla.
+        state["upd"], state["upd_ts"] = antes, antes_ts
+        return None
+    state["upd"], state["upd_ts"] = upd, now
+    tasa = (upd - int(antes)) / transcurrido
+    techo = float(
+        os.getenv("CORE_CAPTURE_HEARTBEAT_MAX_RATE", str(_HEARTBEAT_MAX_RATE_DEFAULT))
+    )
+    if tasa > techo:
+        return (
+            f"unhealthy: LATIDO DESBOCADO — {tasa:.1f} UPDATE/s sobre "
+            f"shadow_capture_state (techo {techo:.1f}/s, ventana "
+            f"{transcurrido:.0f}s). El latido fresco NO es señal de salud a "
+            "este ritmo: es el lazo de cola del heartbeat sin throttle "
+            "(¿proceso con código anterior a su propio arreglo?)"
+        )
+    return None
+
+
+def _progress_verdict(cur, slot: str, now: float, prev: dict, state: dict) -> str | None:
+    """(b) PROGRESO del LSN confirmado: el consumidor debe ganar terreno.
+
+    Distancia entre el extremo del WAL y `confirmed_flush_lsn` — el progreso
+    del propio consumidor (el techo absoluto de 2 GiB mide sobre `restart_lsn`,
+    que es lo que el servidor no puede reciclar). Cualquier mejora RE-ANCLA:
+    una ráfaga legítima del legacy que luego se drena no puntúa. Solo puntúa
+    quedarse por encima del suelo SIN mejorar durante toda la ventana — que es
+    lo que hace un consumidor que escribe más WAL del que consume."""
+    cur.execute(
+        "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) "
+        "FROM pg_replication_slots WHERE slot_name = %s",
+        (slot,),
+    )
+    row = cur.fetchone()
+    lag = float(row[0]) if row and row[0] is not None else None
+    suelo = float(
+        os.getenv(
+            "CORE_CAPTURE_FLUSH_STALL_MIN_BYTES", str(_FLUSH_STALL_MIN_BYTES_DEFAULT)
+        )
+    )
+    if lag is None or lag < suelo:
+        return None  # al día: el ancla se descarta (no se copia al estado)
+    ancla, ancla_ts = prev.get("lag"), prev.get("lag_ts")
+    if ancla is None or lag < float(ancla):
+        state["lag"], state["lag_ts"] = lag, now  # ganó terreno: re-ancla
+        return None
+    state["lag"], state["lag_ts"] = float(ancla), ancla_ts
+    edad = now - float(ancla_ts or now)
+    ventana = float(
+        os.getenv("CORE_CAPTURE_FLUSH_STALL_MAX_S", str(_FLUSH_STALL_MAX_S_DEFAULT))
+    )
+    if edad >= ventana:
+        return (
+            f"unhealthy: LSN CONFIRMADO SIN AVANZAR — el slot {slot} retiene "
+            f"{lag:.0f} bytes y no ha bajado de {float(ancla):.0f} en {edad:.0f}s "
+            f"(ventana {ventana:.0f}s, suelo {suelo:.0f}). El consumidor late "
+            "pero no gana terreno: genera WAL más rápido de lo que lo confirma"
+        )
+    return None
+
+
+def _check_capture_progress(cur, slot: str) -> str | None:
+    """Las dos señales que el latido no da: ritmo y progreso. Motivo o None."""
+    path = os.getenv("CORE_CAPTURE_HEALTH_STATE", _HEALTH_STATE_DEFAULT)
+    prev = _read_health_state(path)
+    now = time.time()
+    state: dict = {}
+    motivo = _rate_verdict(cur, now, prev, state)
+    motivo_progreso = _progress_verdict(cur, slot, now, prev, state)
+    _write_health_state(path, state)
+    # El ritmo manda en el mensaje: nombra la CAUSA; el progreso es el efecto.
+    return motivo or motivo_progreso
+
+
 def health_check() -> int:
     """Healthcheck ligero para compose (`--health`): conexión core OK + slot
     presente y ACTIVO (walsender conectado) + slot con PROGRESO (WAL retenido
-    < 2 GiB, I-1) + LATIDO reciente + staging DRENADO. Exit 0 sano / 1 no.
+    < 2 GiB, I-1) + RITMO del latido y AVANCE del LSN confirmado (O-1
+    corolario) + LATIDO reciente + staging DRENADO. Exit 0 sano / 1 no.
 
     Slot presente pero `active=false` = consumidor caído mientras el slot
     retiene WAL de la BD compartida (§8): unhealthy con motivo. El único
@@ -778,6 +938,16 @@ def health_check() -> int:
     CORE_CAPTURE_HEALTH_MAX_AGE_S) — un consumidor vivo lo satisface de
     sobra con latido cada 10 s. COALESCE a updated_at: estado anterior a
     core0009 sin latido registrado.
+
+    O-1 corolario (2026-08-27) — POR QUÉ el latido no basta: en la avería del
+    2026-08-22 (cinco días con el código anterior al throttle) `heartbeat_at`
+    estuvo SIEMPRE fresco, porque el consumidor lo escribía 559-979 veces por
+    segundo. La frescura del latido era el síntoma, no la salud. Se añaden por
+    eso las dos señales que una foto instantánea no puede dar —el RITMO del
+    latido y el AVANCE del LSN confirmado, ambas tasas, ambas con memoria en un
+    fichero de estado del contenedor— en `_check_capture_progress`. El techo
+    absoluto de 2 GiB sobre `restart_lsn` se conserva: cubre el fallo bruto; lo
+    nuevo cubre el fallo LENTO, que es el que se comió cinco días.
     """
     slot = os.getenv("CORE_CAPTURE_SLOT", DEFAULT_SLOT)
     max_age = float(os.getenv("CORE_CAPTURE_HEALTH_MAX_AGE_S", str(26 * 3600)))
@@ -825,6 +995,12 @@ def health_check() -> int:
                         f"{lag_max:.0f}; el consumidor no confirma flush)",
                         file=sys.stderr,
                     )
+                    return 1
+                # O-1 corolario: ritmo del latido + avance del LSN
+                # confirmado (ver comentario de _check_capture_progress).
+                motivo = _check_capture_progress(cur, slot)
+                if motivo:
+                    print(motivo, file=sys.stderr)
                     return 1
                 cur.execute(
                     "SELECT last_applied_lsn, "
