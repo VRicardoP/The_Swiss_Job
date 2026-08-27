@@ -825,7 +825,10 @@ def test_harvest_health_dice_en_voz_alta_cuando_no_observa_nada(db, caplog):
     with caplog.at_level(logging.WARNING):
         out = _health(factory)
     assert out["scopes"] == 0
-    assert out["sin_observacion"] == {"scopes": 1, "habilitados": 0, "con_estado": 0}
+    # El censo mira TODO el parque, no solo los scopes de este test: lo que importa es
+    # que hay scopes y ninguno observable (habilitados 0), no cuántos haya en total.
+    censo = out["sin_observacion"]
+    assert censo["scopes"] >= 1 and censo["habilitados"] == 0 and censo["con_estado"] == 0
     assert "no está midiendo nada" in caplog.text
 
 
