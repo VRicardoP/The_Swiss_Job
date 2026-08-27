@@ -281,7 +281,7 @@ volver a muestrear (protocolo intacto, semilla nueva, excluyendo los pares que y
 | ⚠ **Los tests del core exigen el override de desarrollo** `[V]` | Desde `ae7fbf2` el compose base **no monta** `./jobhunt_core`. `docker compose run --rm core-migrate python -m pytest …` **a secas prueba el código de la IMAGEN**, no el árbol de trabajo, y puede salir verde sobre código que no es el que acabas de editar. El comando correcto lleva `-f docker-compose.yml -f docker-compose.dev.yml` |
 
 **Contadores vigentes al 2026-08-27** (los aporta el propietario, no re-medidos en esta
-pasada — `[I]`): core **675**, backend legacy **2.280** (+4 xfailed), backend de portfolio
+pasada — `[I]`): core **689** (675 + 14 regresiones de G9), backend legacy **2.280** (+4 xfailed), backend de portfolio
 **1.823** (+1 skip), frontend **330**.
 
 **Protocolo de sondas** que las auditorías siguieron y conviene mantener: escrituras **solo**
