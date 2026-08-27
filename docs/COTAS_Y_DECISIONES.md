@@ -13,6 +13,13 @@
 > **Estado de verificación.** Marco `[V]` lo que he comprobado ejecutando o leyendo el
 > código al escribir este fichero (2026-08-27), y `[I]` lo que viene de un informe y **no**
 > he vuelto a medir. Ninguna cifra `[I]` debe citarse como hecho sin re-medirla.
+>
+> **Pasada del 2026-08-27 por la tarde.** A los nueve ciclos internos se sumó una
+> **auditoría externa independiente** (veredicto NO-GO con cinco condiciones) que encontró
+> cuatro hallazgos, ya corregidos, y dos hipótesis más que resultaron ciertas. Además se
+> ejecutaron las dos maniobras que §9 listaba como pendientes. **§9 está reescrita entera**;
+> §9.1 cuenta el caso en que un arreglo mío cerró un falso rojo y abrió el falso verde
+> opuesto — el ejemplo canónico de §0.
 
 ---
 
@@ -141,6 +148,10 @@ no tendría ningún par sobre el que actuar.
 | El superviviente de la canonización conserva SU contenido `[I]` | En 254 de 305 grupos el clon es más reciente; se autocura en la primera cosecha posterior |
 | Reemisión con id nuevo NO es canonizable `[I]` | Medido en las 17 fuentes con grupos gemelos: la decisión de no canonizar más fuentes está medida, no supuesta |
 
+> **La maniobra de canonización ya NO es hipotética: se ejecutó el 2026-08-27** (commit
+> `2462717`). Las dos cotas de arriba describen ahora el estado real de la base, no un plan.
+> Cifras y verificaciones posteriores en **§9**.
+
 ---
 
 ## 3. Matching, LLM y embeddings
@@ -249,6 +260,11 @@ tiene que acordarse» es exactamente la fragilidad que se está cerrando.
 | `NullPool` se CONSERVA en la suite `[I]` | El pool normal ahorraría ~150 s más **pero rompe 85 de 85 tests** (`pytest-asyncio` en modo `auto` crea un bucle por test), y hay tests que dependen del comportamiento del pool. «Se aborda después, nunca a la vez» |
 | ⚠ **Dos `pytest` concurrentes se pisan** `[I]` | El teardown hace `TRUNCATE ... CASCADE` de todas las tablas de `swissjobhunter_test`: dos corridas simultáneas = deadlocks y falsos rojos. Un rojo de 8F+2E se cerró como artefacto de concurrencia |
 | Cada test del core sigue creando **su** BD desechable y migrándola desde cero `[V]` | La optimización de `run_alembic` quita el `fork` y el `import`, no la fidelidad. No se comparte base, ni esquema, ni estado de Alembic |
+| ⚠ **Los tests del core exigen el override de desarrollo** `[V]` | Desde `ae7fbf2` el compose base **no monta** `./jobhunt_core`. `docker compose run --rm core-migrate python -m pytest …` **a secas prueba el código de la IMAGEN**, no el árbol de trabajo, y puede salir verde sobre código que no es el que acabas de editar. El comando correcto lleva `-f docker-compose.yml -f docker-compose.dev.yml` |
+
+**Contadores vigentes al 2026-08-27** (los aporta el propietario, no re-medidos en esta
+pasada — `[I]`): core **675**, backend legacy **2.280** (+4 xfailed), backend de portfolio
+**1.823** (+1 skip), frontend **330**.
 
 **Protocolo de sondas** que las auditorías siguieron y conviene mantener: escrituras **solo**
 contra `swissjobhunter_test`, en transacción revertida; contra producción **solo `SELECT` y
@@ -262,32 +278,80 @@ terminar; **ningún servicio reiniciado, recreado ni reconstruido**; árbol del 
 
 ---
 
-## 8. Afirmaciones falsas VIVAS (no corregidas)
+## 8. Afirmaciones falsas — RE-VERIFICADAS el 2026-08-27 por la tarde
 
-Estas están **abiertas** al cierre de esta pasada. Viven en ficheros de código, que esta
-documentación no puede tocar.
+> ⚠ **Esta sección se titulaba «Afirmaciones falsas VIVAS (no corregidas)» y era ella misma
+> una afirmación falsa.** Al comprobar sus seis entradas **una a una contra el código**,
+> **cinco ya estaban corregidas** — dos de ellas por `de56ae0`, minutos después de que se
+> escribiera esta sección; las otras tres el 2026-08-26, o sea **antes**. El registro de
+> cotas se convirtió en el ejemplo de §0 aplicado a sí mismo. Es exactamente por eso que
+> una entrada `[V]` tiene que re-verificarse cada vez que se cita, no heredarse.
 
-| Dónde | Qué afirma | Qué hace en realidad |
+### Cerradas — comprobadas hoy en el código `[V]`
+
+| Dónde | Qué afirmaba | Comprobación de hoy |
 |---|---|---|
-| **`backend/services/deduplicator.py`**, docstring de `find_semantic_duplicates` `[V]` | «Por eso la puerta se SALTA cuando los idiomas declarados difieren» | **La puerta se aplica SIEMPRE.** `0465681` retiró esa excepción y añadió el comentario que lo explica 30 líneas más abajo, pero **no tocó el docstring**, que sigue describiendo el comportamiento de `a63745c`. Comprobado: `grep -n "language" backend/services/deduplicator.py` no devuelve **ni una línea** |
-| **`backend/services/scheduler.py`**, log de resumen `[V]` | «URL check weekly Sun 03:00» | El job es `CronTrigger(hour=3)` — **diario**. El comentario cinco líneas más arriba ya dice «DIARIA a las 03:00 CET (antes: semanal los domingos)»: al cambiar el trigger no se cambió la cadena del resumen |
-| **`fbe22f0`**, mensaje del commit de consolidación `[V]` | «1.083 escrituras/s, 42 GB de WAL al día» | Medido con **dos instrumentos independientes que coinciden dentro del 0,6 %**: **559–979 UPDATE/s** (48,3 M/día) y **228 GB/día**. Las cifras válidas son las del informe |
-| `backend/scrapers/irishjobs.py`, docstring `[I]` | Los dos hosts «se deduplican por ese `id` de plataforma (misma oferta en ambos)» | Los datos lo desmienten: 35 grupos cross-host con descripción idéntica byte a byte e **ids que difieren** — cada host los numera por su cuenta |
-| `backend/services/groq_service.py` `[I]` | «Este es el único borde por el que entra la respuesta del LLM» | En un **cache hit** el resultado va directo a `_apply_llm_result` sin pasar por `_parse_llm_response` |
-| `jobhunt_core/delivery.py`, pre-SELECT de `mark_delivered` `[I]` | «las filas que va a tocar el UPDATE de abajo son **exactamente éstas**» | Son un **superconjunto** |
+| `backend/services/deduplicator.py`, docstring de `find_semantic_duplicates` | «la puerta se SALTA cuando los idiomas declarados difieren» | ✅ **Corregido** (`de56ae0`). El docstring habla ya en pasado de «la excepción que **saltaba** la puerta léxica», y el comentario del cuerpo explica que `a63745c` la retiró |
+| `backend/services/scheduler.py`, log de resumen | «URL check weekly Sun 03:00» | ✅ **Corregido** (`de56ae0`). `grep -n "weekly\|Sun" backend/services/scheduler.py` no devuelve **ni una línea** |
+| `backend/scrapers/irishjobs.py`, docstring | Los dos hosts «se deduplican por ese `id` de plataforma» | ✅ **Rectificado** el 2026-08-26 (`319fbe7`). El docstring dice ahora que los ids compartidos entre hosts son **0**, que las descripciones idénticas tienen ids distintos y que `_dedupe_new` **nunca** ha deduplicado cross-host |
+| `backend/services/groq_service.py` | «Este es el único borde por el que entra la respuesta del LLM» | ✅ **Rectificado** el 2026-08-26 (`c056837`). El comentario lo declara FALSO y explica el segundo borde (la caché); `_get_cached` re-sanea lo que lee y la clave lleva versión de esquema |
+| `jobhunt_core/delivery.py`, pre-SELECT de `mark_delivered` | «las filas que va a tocar el UPDATE son **exactamente éstas**» | ✅ **Rectificado** el 2026-08-26 (`4fe2378`). La frase ya no está en el fichero |
+
+### Abierta — y no se puede cerrar
+
+| Dónde | Qué afirma | Qué es en realidad |
+|---|---|---|
+| **`fbe22f0`**, mensaje del commit de consolidación `[V]` | «1.083 escrituras/s, 42 GB de WAL al día» | Medido con **dos instrumentos independientes que coinciden dentro del 0,6 %**: **559–979 UPDATE/s** (48,3 M/día) y **228 GB/día**. **Un mensaje de commit es inmutable**: esta entrada no se cierra nunca, solo se anota. Las cifras válidas son las del informe de optimización. ⚠ `PROMPT_AGENTE_EXTERNO_2026-08-27.md` propagó la cifra refutada |
 
 ---
 
 ## 9. Estado operativo — lo que está pendiente y NO es código
 
+> **Actualizado el 2026-08-27 por la tarde.** Las dos maniobras que esta tabla listaba
+> como pendientes **se ejecutaron esa misma mañana**. Lo que sigue abierto está abajo,
+> en «Sigue pendiente».
+
+### Ya hecho el 2026-08-27
+
 | Qué | Estado verificado |
 |---|---|
-| **Migración legacy `b3c7d1a95e42`** | ⚠ **SIN APLICAR** `[V]`. La BD está en `a1f2e3d4c5b6` y el head del repo es `b3c7d1a95e42`. Pone `clock_timestamp()` en los defaults de `jobs.first_seen_at/last_seen_at` y `match_results.created_at`; sin ella, `now()` == `transaction_timestamp()` **se congela al ABRIR la transacción** y muchas filas comparten marca temporal al microsegundo |
-| **Scripts de canonización de identidad** | ⚠ **SIN EJECUTAR** `[I]`. Limpios y validados desde G7. Ver el orden de CINCO pasos en `jobhunt_core/shadow/RUNBOOK.md` §7 — tiene **dos mitades** y solo una vive en `backend/` |
-| **Carga del estrato positivo (187 pares)** | Va **DESPUÉS** de la canonización `[I]`: cargarlo antes graba refs que la maniobra invalida, y `--excluir` no sirve porque **el daño no lo detecta ninguna guarda del loader** |
-| **Rotar `GEMINI_API_KEY`** | ⚠ **SIN HACER** `[V]`. El canal está cerrado desde `7ef7d89` (2026-08-26), pero cerrar el canal no borra lo publicado: la clave estuvo en claro en el journal. El `.env` local sigue con `mtime` del **2026-07-02**. Acción del propietario |
-| **NO reiniciar `worker`/`worker-ai`/`backend`** | Regla vigente hasta la canonización, que los para ella misma en su paso 1 |
-| **`core-capture`** | ✅ **YA reiniciado** `[V]`, fuera de esa regla. Contenedor de 2026-08-26T23:06:59Z; slot con 5.088 bytes retenidos y latido sin variación entre dos muestras: la avería O-1 está cerrada |
+| **Migración legacy `b3c7d1a95e42`** | ✅ **APLICADA** `[V]`. `SELECT version_num FROM alembic_version` → `b3c7d1a95e42`, y los tres defaults leídos de `information_schema.columns` **en la base real** son `clock_timestamp()`: `jobs.first_seen_at`, `jobs.last_seen_at`, `match_results.created_at`. 37 regresiones de marcas de agua en verde. Copia previa en `/home/lothar/Documents/swissjob_pre_b3c7d1a95e42_20260827.sql.gz` |
+| **Scripts de canonización de identidad** | ✅ **EJECUTADOS** contra `swissjobhunter` (local), commit `2462717`, autorizados por el propietario `[V]`. Ensayo en seco y ejecución dieron cifras **idénticas**. g3 (arbeitnow + jobgether): 5.419 identidades reescritas, 406 clones fusionados, 30 `match_results` descartados y **0 con señal del usuario**, 5.263 slots de sombra reapuntados + 371 de clones. g6 (irishjobs): 879 reescritas, 40 clones, 0 descartes, 879 slots reapuntados + 40 de clones. Copia previa en `/home/lothar/Documents/swissjob_pre_canonizacion_20260827.sql.gz` (117 MB, incluye el esquema `jobhunt`). **Los ficheros del repo siguen terminando en `ROLLBACK`: seguros por defecto** |
+| **La otra mitad: `shadow/canonical_refs.py`** | ✅ **EJECUTADA** en la misma parada `[V]`. 6.298 filas canonizadas en el mapa; 10 juicios y 162 pares re-mapeados |
+| **Comprobación posterior — huérfanos** | ✅ `[V]` re-medida hoy con la consulta literal del PASO 7 del script: **1.335** slots huérfanos en las tres fuentes canonizadas (arbeitnow 1.274 + jobgether 21 + irishjobs 40) = los **924** previos + 371 + 40, **exactamente lo previsto**. NO los 7.477 que habrían delatado el fallo que el PASO 7c evita |
+| **Comprobación posterior — etiquetas** | ✅ `[V]` re-medida hoy: **91 de 91** juicios siguen resolviendo contra `source_listings` de fuentes `legacy:%` → **cero etiquetas perdidas**. De los 779 pares de `seed_duplicate_of`, **261** tienen sus DOS refs resueltos (la medición previa a la maniobra, del 2026-08-26, daba 260 mapeables y anticipaba perder 1; no se perdió ninguno). 0 pares quedaron con `job_ref_a = job_ref_b` |
+| **Comprobación posterior — sombra drenada** | ✅ `[V]`: `jobhunt.shadow_change_log` con **0** filas sin aplicar (`applied_at IS NULL`) sobre 16.173, y el slot `jobhunt_shadow` activo con retención de pocos KB. El GATE-SOMBRA **no** se invalidó: no hubo que soltar el slot ni re-sembrar el snapshot |
+| **Imagen operativa inmutable del core** | ✅ **DESPLEGADA** `[V]` (`f728518` + `ae7fbf2`). Los tres procesos publican `release=ae7fbf2` (comprobado con `printenv RELEASE_SHA` en `core-api`, `core-worker` y `core-capture`), `/v1/ready` responde `authoritative: true` y `core-api` reporta *healthy*. `docker inspect` confirma **0 mounts** en `core-api`. Ver §9.1 |
+| **`core-capture`** | ✅ **YA reiniciado** `[V]` desde el 2026-08-26; la avería O-1 está cerrada |
+| **NO reiniciar `worker`/`worker-ai`/`backend`** | ✅ **REGLA LEVANTADA** `[V]`. Existía solo para proteger la canonización, que los paró ella misma en su paso 1 y ya terminó. Los tres corren desde el rearranque de hoy |
+
+### 9.1 El arreglo que abrió el fallo simétrico (léelo antes de citar `bf3fbfd`)
+
+`bf3fbfd` (2026-08-26) **no es el cierre definitivo** de la avería de `/v1/ready`, y
+cualquier documento que lo presente así está desfasado. Es el caso didáctico de la regla
+de oro de §0, encontrado por una auditoría **externa** el 2026-08-27 (P1-3):
+
+| Versión | Qué hacía `_expected_head()` | Fallo |
+|---|---|---|
+| Antes de `bf3fbfd` | `@lru_cache` sin clave: expectativa fijada para toda la vida del proceso | **Falso ROJO** — dos días de 503 con la BD sana |
+| `bf3fbfd` | Releía la cadena del volumen montado, en caliente | **Falso VERDE** — el proceso sirve la release A mientras ficheros y esquema van por la B |
+| `f728518` + `ae7fbf2` (vigente) | `_EXPECTED_HEAD` se lee **una vez al importar**, de la misma imagen que trae los handlers; si no se puede leer, el proceso **no arranca** | — |
+
+Lo que cierra la incoherencia no es la lectura sino el **despliegue**: el perfil operativo
+ya no monta el código, así que cambiar la cadena exige cambiar la imagen, y eso recrea el
+proceso. `/v1/health` publica además `release` + `alembic_expected`, y `/v1/ready` añade
+`authoritative` (false en el perfil de desarrollo: verde **informativo**, no autorización
+para operar). `[V]` — leído en `jobhunt_core/api/main.py:158-235` y comprobado contra los
+tres procesos vivos.
+
+### Sigue pendiente
+
+| Qué | Estado verificado |
+|---|---|
+| **Rotar `GEMINI_API_KEY`** | ⚠ **SIN HACER** `[V]`. El canal está cerrado desde `7ef7d89` (2026-08-26), pero cerrar el canal no borra lo publicado: la clave estuvo en claro en el journal. Acción **del propietario**, no de un agente (esta sesión no toca `.env`) |
+| **`core-api` sin healthcheck en producción** | ⚠ **ABIERTO** `[V]`. `docker-compose.prod.yml` y `docker-compose.qnap.yml` definen `core-api` sin bloque `healthcheck:` (comprobado leyendo los dos ficheros). No se tocaron **a propósito**: son de producción y requieren confirmación explícita. El compose base **sí** lo tiene |
+| **El NAS** | ⚠ **DESACTUALIZADO** `[I]`. Corre imágenes anteriores a toda la jornada del 2026-08-27. Cuando se suban las imágenes nuevas **habrá que aplicar allí la MISMA canonización, en el MISMO despliegue**: el código nuevo emite ya la identidad canónica, y una cosecha con código nuevo sobre datos sin canonizar es pérdida silenciosa + duplicación a la vez (ver el encabezado de `backend/scripts/g3_canonizacion_identidad_arbeitnow_jobgether.sql`). Los dos scripts del repo terminan en `ROLLBACK`; hay que cambiar esa línea a `COMMIT` sobre una copia |
+| **Carga y congelado de la cohorte de dedup** | 🔄 **EN CURSO** por otro agente al cierre de esta pasada. `jobhunt.labeled_dedup_cohorts` estaba **vacía** al medirlo `[V]`. **Resultado no documentado aquí: no se conocía al escribir esto.** Va DESPUÉS de la canonización, que ya está hecha, así que el bloqueo que lo retenía ha desaparecido |
 
 ---
 
@@ -297,7 +361,8 @@ documentación no puede tocar.
 |---|---|
 | Los nueve ciclos, por ciclo y por repo | `/home/lothar/Public/AUDITORIA_GLOBAL_{CORE,LEGACY,PORTFOLIO}_G1..G8_2026-08-26.md` y `AUDITORIA_BUGS_C1..C9_2026-08-25.md` |
 | La fase de optimización | `/home/lothar/Public/OPTIMIZACION_{CORE,LEGACY,PORTFOLIO}_2026-08-27.md` |
-| Estado y contadores vigentes | `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` **§19** |
+| Estado y contadores vigentes | `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` **§20** (§19 es la foto previa al 2026-08-27) |
 | Decisiones ratificadas del propietario | `/home/lothar/Public/ACTA_DECISIONES_2026-08-26.md` |
-| Operación de la sombra y la maniobra de canonización | `jobhunt_core/shadow/RUNBOOK.md` |
+| Operación de la sombra y la maniobra de canonización (ya ejecutada) | `jobhunt_core/shadow/RUNBOOK.md` §7 |
+| La auditoría externa del 2026-08-27 (veredicto NO-GO, 5 condiciones) | `/home/lothar/Public/AUDITORIA_EXTERNA_BUGS_2026-08-27.md` y `AUDITORIA_EXTERNA_DISENO_2026-08-27.md` |
 | Contratos del core | `/home/lothar/Public/CONTRATOS_FASE_{A,B,C}.md` |

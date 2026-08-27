@@ -4,21 +4,32 @@
 > lo no confirmado y la PK del staging absorbe duplicados). **RTO consumidor ≤ 1 h**.
 > TODO LOCAL: prod/QNAP fuera de alcance.
 
-## 0. Estado operativo vigente (verificado 2026-08-27)
+## 0. Estado operativo vigente (re-verificado 2026-08-27, tarde)
 
 | Hecho | Estado | Cómo se comprobó |
 |---|---|---|
-| `core-capture` **YA REINICIADO** | Proceso levantado **2026-08-26T23:06:59Z** (el contenedor se CREÓ el 2026-07-28: son fechas distintas). `RestartCount=0` no lo desmiente — solo cuenta reinicios de la *restart policy*, no un `stop`+`start` manual | `docker inspect -f '{{.State.StartedAt}}'`, **no** `docker compose ps` |
-| La avería del lazo de cola | **CERRADA** | slot retiene **5 088 bytes** (eran 2,6 GB creciendo a 2,1–3,0 MB/s), `confirmed_flush` a **424 bytes**, `active=t` |
-| Ritmo del latido | **~0/s** (techo 10/s; la avería marcaba 559–979/s) | dos muestras de `n_tup_upd` separadas en el tiempo: **sin variación** |
-| Código del **streamer** en el proceso vivo | **al día** | el último commit del camino de streaming (`a1ac816`, 2026-08-25T22:19Z) es ANTERIOR al arranque del contenedor |
-| Código del **healthcheck** (`20ed0b2`, posterior al arranque) | **al día igualmente** | `--health` es un proceso de UN disparo: reimporta el módulo en cada invocación, y `jobhunt_core/` va bind-montado en local |
+| Release que corre el core | **`ae7fbf2`** en los tres procesos (`core-api`, `core-worker`, `core-capture`) | `printenv RELEASE_SHA` en cada contenedor, y el campo `release` de `/v1/health` y `/v1/ready` |
+| `core-capture` **RECREADO hoy** | Contenedor **creado** 2026-08-27T11:35:58Z y **arrancado** 11:36:03Z. `RestartCount=0` no lo desmiente — solo cuenta reinicios de la *restart policy*, no una recreación | `docker inspect -f '{{.Created}} {{.State.StartedAt}}'`, **no** `docker compose ps` (ésa da la CREACIÓN, y ahora coinciden porque el contenedor es nuevo) |
+| La avería del lazo de cola | **CERRADA** | slot con **424 bytes** retenidos (eran 2,6 GB creciendo a 2,1–3,0 MB/s), `confirmed_flush` a 368 B, `active=t` |
+| Ritmo del latido | **~0/s** (techo 10/s; la avería marcaba 559–979/s) | dos muestras de `n_tup_upd` separadas en el tiempo: sin variación |
+| Staging drenado | **0** filas sin aplicar sobre 16 173 | `SELECT count(*) FROM jobhunt.shadow_change_log WHERE applied_at IS NULL` |
+| Código del proceso vivo (streamer **y** healthcheck) | **al día** | **Ya no hace falta razonarlo:** desde `ae7fbf2` el compose base **no monta** `./jobhunt_core` (`docker inspect` da **0 mounts** en `core-capture`), así que el contenedor corre lo que lleva la imagen y el `RELEASE_SHA` que publica **identifica el código**. Cambiar el código exige reconstruir y recrear |
 
-**REGLA VIGENTE hasta que se ejecute la maniobra de canonización (§7):** NO reiniciar
-`worker`, `worker-ai` ni `backend`. La maniobra los para ella misma, en su paso 1, y
-pararlos antes de tiempo no compra nada mientras abre la ventana en la que un ciclo de
-métricas podría observar el estado intermedio. `core-capture` queda FUERA de esa regla:
-ya se reinició, con medidas tomadas antes y después.
+> ⚠ **Corrección de la redacción anterior de esta tabla.** Decía que el healthcheck estaba
+> al día «porque `jobhunt_core/` va bind-montado en local». **Esa premisa dejó de ser cierta
+> el 2026-08-27**: el perfil operativo ya no monta el código. La conclusión sigue siendo la
+> misma, pero por otro motivo —el contenedor se recreó con la imagen nueva—, y el motivo
+> importa: era exactamente el razonamiento que hacía indistinguibles «el proceso corre el
+> código nuevo» y «los ficheros del disco son nuevos». Ver §7 de este runbook y
+> `docs/COTAS_Y_DECISIONES.md` §9.1.
+>
+> Con el **override de desarrollo** (`-f docker-compose.yml -f docker-compose.dev.yml`) el
+> bind mount vuelve, y entonces el `release` que publica el proceso **deja de identificar el
+> código**: por eso `/v1/ready` responde `authoritative: false` en ese perfil.
+
+**✅ REGLA LEVANTADA (2026-08-27):** ya se puede reiniciar `worker`, `worker-ai` y `backend`.
+La prohibición existía **solo** para proteger la maniobra de canonización (§7), que los paró
+ella misma en su paso 1, se ejecutó y los rearrancó al terminar.
 
 ## 1. Diagnóstico del slot
 
@@ -92,15 +103,28 @@ no dependencia: ausente o corrupto = «primera vez», jamás unhealthy.
 > `docker inspect -f '{{.State.StartedAt}}' swissjob-core-capture` frente a `git log -1 --format=%cI -- jobhunt_core/shadow/capture.py`.
 >
 > **Y no vale `docker compose ps`**: su columna de antigüedad es la de **CREACIÓN**, no la del
-> proceso. Hoy mismo (2026-08-27) dice «4 weeks ago» para un `core-capture` cuyo proceso lleva
-> **9 horas** — `Created=2026-07-28`, `StartedAt=2026-08-26T23:06:59Z`. Tampoco vale
-> `RestartCount`: solo cuenta los reinicios de la *restart policy*, así que un `stop`+`start`
-> manual lo deja en **0**. Es la misma trampa una capa más abajo, y es la que hace que un
-> proceso con código viejo parezca recién levantado.
-> En LOCAL `jobhunt_core/` va bind-montado, así que **basta `docker compose restart core-capture`**
-> para que reimporte; en el NAS el código va HORNEADO en la imagen y hace falta imagen nueva +
-> recreate. En ambos casos, tras tocar `shadow/capture.py` el proceso hay que **reiniciarlo
-> explícitamente** — nada lo hace solo.
+> proceso. El 2026-08-27 por la mañana decía «4 weeks ago» para un `core-capture` cuyo proceso
+> llevaba **9 horas** — `Created=2026-07-28`, `StartedAt=2026-08-26T23:06:59Z`. (Ese contenedor
+> ya no existe: la recreación de la tarde dejó `Created` y `StartedAt` a la misma hora, y por
+> eso hoy la columna **sí** cuadra. La trampa no ha desaparecido, solo está dormida.) Tampoco
+> vale `RestartCount`: solo cuenta los reinicios de la *restart policy*, así que un
+> `stop`+`start` manual lo deja en **0**. Es la misma trampa una capa más abajo, y es la que
+> hace que un proceso con código viejo parezca recién levantado.
+>
+> **La señal directa, desde `ae7fbf2`:** `docker compose exec -T core-capture printenv
+> RELEASE_SHA` (y el campo `release` de `/v1/health` en `core-api`). Compara ese SHA con
+> `git rev-parse --short HEAD`: si difieren, el proceso corre otra release, sin razonar sobre
+> fechas. Es la respuesta que las dos averías de este runbook necesitaban y no tenían.
+> ⚠ **Desde `ae7fbf2` (2026-08-27) esto cambió, y en la dirección segura.** Ya **no** basta
+> `docker compose restart core-capture` en local: el perfil operativo **no monta**
+> `./jobhunt_core`, así que local y NAS se comportan igual — el código va **horneado en la
+> imagen** y tocar `shadow/capture.py` exige **reconstruir la imagen y recrear el contenedor**.
+> Un `restart` a secas volvería a levantar el MISMO código.
+> Con el override de desarrollo (`-f docker-compose.yml -f docker-compose.dev.yml`) el bind
+> mount vuelve y `restart` sí basta para reimportar — pero entonces el `release` que publica el
+> proceso deja de identificar el código y `/v1/ready` lo declara `authoritative: false`.
+> En todos los casos, tras tocar `shadow/capture.py` el proceso hay que **reiniciarlo o
+> recrearlo explícitamente** — nada lo hace solo.
 
 ## 2. Reinicio del consumidor (RTO ≤ 1 h)
 
@@ -286,6 +310,25 @@ cambiar una constante NO recolorea ciclos ya sellados.
 
 ## 7. Canonización de identidad legacy: las DOS mitades (G8/P2-6)
 
+> ## ✅ EJECUTADA el 2026-08-27 sobre `swissjobhunter` (local) — commit `2462717`
+>
+> Esta sección deja de ser un plan y pasa a ser el **acta** de una maniobra hecha, más
+> el procedimiento por si hay que repetirla (el **NAS** todavía la necesita: ver §7.3).
+> Autorizada por el propietario. Ensayo en seco y ejecución en firme dieron cifras
+> **idénticas**. Copia previa: `/home/lothar/Documents/swissjob_pre_canonizacion_20260827.sql.gz`
+> (117 MB, con el esquema `jobhunt`).
+>
+> | Script | Reescritas | Clones fusionados | `match_results` descartados | Slots reapuntados | Slots de clones |
+> |---|---|---|---|---|---|
+> | g3 (arbeitnow + jobgether) | 5.419 | 406 | 30, **0 con señal del usuario** | 5.263 | 371 |
+> | g6 (irishjobs) | 879 | 40 | 0 | 879 | 40 |
+>
+> La otra mitad, `shadow/canonical_refs.py`, corrió en la **misma parada**: 6.298 filas
+> canonizadas en el mapa, **10 juicios** y **162 pares** re-mapeados.
+>
+> **Los ficheros del repo siguen terminando en `ROLLBACK`**: son seguros por defecto y
+> ejecutarlos tal cual es un ensayo, no una maniobra.
+
 Los scripts `backend/scripts/g3_canonizacion_identidad_arbeitnow_jobgether.sql`
 y `g6_canonizacion_identidad_irishjobs.sql` reescriben `jobs.hash`. Eso toca
 la sombra por **dos** caminos distintos, y solo uno vive en `backend/`:
@@ -295,6 +338,9 @@ la sombra por **dos** caminos distintos, y solo uno vive en `backend/`:
 | El slot CDC de `jobhunt.source_listings` queda huérfano | **PASO 7c** del script | 6.553 slots huérfanos; la fila legacy se vuelve invisible para la sombra |
 | Los `job_ref` de las ETIQUETAS se quedan con el hash viejo | **`shadow/canonical_refs.py`** | 10 de 91 juicios y 1 de 260 pares dejan de resolver, SIN error |
 
+Las dos mitades se aplicaron, así que ninguna de esas dos columnas «si falta» ocurrió.
+Lo comprobado después está en §7.2.
+
 Las etiquetas (`labeled_judgments.job_ref`, `labeled_dedup_pairs.job_ref_a/b`)
 viven en el espacio de nombres del `hash` legacy, no tienen FK y ningún PASO
 las toca; `map_job_refs_to_vacancies` deja fuera del dict los refs sin slot
@@ -302,7 +348,9 @@ las toca; `map_job_refs_to_vacancies` deja fuera del dict los refs sin slot
 juicios de los 3 sets congelados se pierden 10 — **8 del MISMO set**, y **6
 con `relevance > 0`** de sus 20 relevantes.
 
-### Orden operativo (los dos scripts + el core)
+### 7.1 Orden operativo (los dos scripts + el core)
+
+Es el que se siguió el 2026-08-27, paso a paso. Sirve tal cual para repetirlo en el NAS.
 
 ```bash
 # 1. Parar los workers (paso 2 del ORDEN de los scripts)
@@ -311,6 +359,7 @@ docker compose stop core-worker worker worker-ai
 # 2. pg_dump incluyendo el esquema jobhunt, y ensayo sobre la COPIA
 
 # 3. Los dos scripts, con COMMIT, en cualquier orden
+#    (los del repo terminan en ROLLBACK: hay que cambiar esa línea en una copia)
 
 # 4. LA OTRA MITAD, con los workers TODAVÍA parados.
 #    Primero se mide, y solo después se aplica:
@@ -322,6 +371,45 @@ docker compose run --rm core-migrate \
 # 5. Arrancar
 docker compose start core-worker worker worker-ai
 ```
+
+> **OJO al perfil de compose (desde `ae7fbf2`).** El compose base ya **no monta**
+> `./jobhunt_core`: `core-migrate` corre el módulo **de la imagen**. Al operar eso es lo
+> correcto —la maniobra debe usar código publicado, no un árbol de trabajo editado—, pero
+> exige que la imagen esté reconstruida con el `canonical_refs.py` que quieres ejecutar.
+> Para probarlo contra el árbol de trabajo hay que pedir el override explícito:
+> `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm core-migrate …`
+
+### 7.2 Verificación posterior — lo que se midió, y lo que se volvió a medir
+
+Con el proyector ya drenado. Re-medido el 2026-08-27 por la tarde (SOLO `SELECT`):
+
+| Comprobación | Esperado | Medido | |
+|---|---|---|---|
+| Slots huérfanos en las 3 fuentes canonizadas | 924 + 371 + 40 = **1.335** | **1.335** (arbeitnow 1.274 · jobgether 21 · irishjobs 40) | ✅ |
+| El número que delataría el fallo que el PASO 7c evita | **7.477** | no alcanzado | ✅ |
+| Juicios que siguen resolviendo | 91 de 91 | **91 de 91** — cero etiquetas perdidas | ✅ |
+| Pares con sus DOS refs resueltos | ≥ 260 | **261** de 779 (`seed_duplicate_of`); 0 con `job_ref_a = job_ref_b` | ✅ |
+| `shadow_change_log` sin aplicar | 0 | **0** de 16.173 | ✅ |
+| Slot `jobhunt_shadow` | activo, retención baja | activo, pocos KB retenidos | ✅ |
+
+La consulta de huérfanos es la literal del PASO 7 del script (las tres fuentes
+`legacy:arbeitnow`, `legacy:jobgether`, `legacy:irishjobs`, `LEFT JOIN jobs ON j.hash =
+sl.external_id WHERE j.hash IS NULL`). La de etiquetas reproduce
+`map_job_refs_to_vacancies`: `source_listings` de fuentes `legacy:%` con alguna
+encarnación.
+
+**El GATE-SOMBRA NO se invalidó**: no hubo que soltar ni recrear el slot, ni re-sembrar
+el snapshot. Los `op=U` llegaron con la pk canónica y encontraron su slot ya reapuntado;
+los `op=D` de los clones cerraron sus encarnaciones por el camino normal.
+
+### 7.3 Lo que queda: el NAS
+
+El NAS corre **imágenes anteriores** a esta maniobra y a los fixes de identidad. Cuando se
+suban las imágenes nuevas hay que aplicar allí **la misma canonización, en el MISMO
+despliegue**: el código nuevo emite ya la identidad canónica, y una cosecha con código
+nuevo sobre datos sin canonizar es pérdida silenciosa **y** duplicación del corpus a la
+vez. El razonamiento largo está en el encabezado de
+`backend/scripts/g3_canonizacion_identidad_arbeitnow_jobgether.sql`.
 
 **Por qué DESPUÉS y no antes**: el mapa `old→new` se reconstruye de la propia
 `jobs` sin duplicar la lógica de canonización de URL — los scripts no tocan

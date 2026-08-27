@@ -19,10 +19,12 @@
 
 - [0. Particularidades de QNAP Container Station — LEE ESTO PRIMERO](#0-particularidades-de-qnap-container-station--lee-esto-primero)
 - [1. Variantes del compose](#1-variantes-del-compose)
+  - [1.1 Perfil operativo vs. perfil de desarrollo del core](#11-perfil-operativo-vs-perfil-de-desarrollo-del-core-2026-08-27-p1-3)
 - [2. Arquitectura del stack](#2-arquitectura-del-stack)
 - [3. Despliegue desde cero en el NAS — paso a paso](#3-despliegue-desde-cero-en-el-nas--paso-a-paso)
 - [4. Operaciones cotidianas](#4-operaciones-cotidianas)
 - [5. Actualización de versión](#5-actualización-de-versión)
+  - [⚠ 5.4 DEUDA BLOQUEANTE: canonización de identidad sin aplicar en el NAS](#54--deuda-bloqueante-la-canonización-de-identidad-legacy-todavía-sin-aplicar-en-el-nas)
 - [6. Troubleshooting](#6-troubleshooting)
 - [7. Backups](#7-backups)
 - [8. Recursos esperados](#8-recursos-esperados)
@@ -158,8 +160,53 @@ grep -E "^POSTGRES_|^DATABASE_URL" /share/Public/swissjob/.env.prod
 | [`docker-compose.prebuilt.yml`](../docker-compose.prebuilt.yml) | NAS con tars cargados | `docker load` previo | Relativos |
 | [`docker-compose.qnap.yml`](../docker-compose.qnap.yml) | **Container Station** | `docker load` previo | **Absolutos** |
 
+| [`docker-compose.dev.yml`](../docker-compose.dev.yml) | **Override de DESARROLLO del core** (nunca en el NAS) | — | Relativos |
+
 > **Para Container Station usa siempre `docker-compose.qnap.yml`.** Es el único
 > testeado con los gotchas de la sección 0.
+
+### 1.1 Perfil operativo vs. perfil de desarrollo del core (2026-08-27, P1-3)
+
+Desde `ae7fbf2`, `docker-compose.yml` es un perfil **OPERATIVO**: `core-api`,
+`core-worker`, `core-capture` y `core-migrate` **ya no montan** `./jobhunt_core`.
+Corren el código de la imagen, y `RELEASE_SHA` se hornea como *build arg*
+(ARG → ENV en `jobhunt_core/Dockerfile`) — deliberadamente **no** va en ningún
+`environment:`, para que no pueda desligarse del código que identifica.
+
+Motivo: un proceso podía servir la release A con los ficheros y el esquema ya en la
+B. Pasó dos veces en este despliegue (el capturador cinco días con código viejo en
+memoria; la API dos días en 503 con la base sana). Si el código no se monta, cambiarlo
+exige reconstruir la imagen, y eso recrea el contenedor.
+
+**Todo comando del core que deba ver el árbol de trabajo necesita el override
+explícito**, empezando por la suite:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+  run --rm core-migrate python -m pytest jobhunt_core/tests
+```
+
+Sin los dos `-f` se probaría el código de la **imagen**. No es un
+`docker-compose.override.yml` a propósito: uno implícito se aplicaría también al
+desplegar y devolvería el defecto en silencio; olvidarse del `-f` deja el perfil
+**seguro**, no el mutable. El override pone `CORE_CODE_MUTABLE=1`, con lo que
+`/v1/ready` responde `authoritative: false` (verde **informativo**, no autorización
+para operar).
+
+**Verificación de una release, comprobable en vez de confiada:**
+
+```bash
+curl -s localhost:8003/v1/health   # {"release":"<sha>","alembic_expected":"core0032",...}
+curl -s localhost:8003/v1/ready    # {"release":"<sha>","authoritative":true,...}
+```
+
+Todos los procesos del core deben publicar **el mismo** `release` y el mismo head.
+
+> ⚠ **Deuda abierta en producción.** `core-api` tiene healthcheck de compose contra
+> `/v1/ready` en `docker-compose.yml`, pero **no** en `docker-compose.prod.yml` ni en
+> `docker-compose.qnap.yml` — no se tocaron por ser de producción y requerir
+> confirmación explícita del propietario. Sin esa sonda, un `core-api` en 503 puede
+> pasar días sin que nadie se entere: es exactamente lo que ocurrió.
 
 ### Puertos por variante
 
@@ -536,6 +583,36 @@ se aplican automáticamente en el arranque del backend (Alembic) y el modelo
 embedding NO se vuelve a descargar.
 
 **Tiempo esperado**: <60s gracias a `hfcache`.
+
+### 5.4 ⚠ DEUDA BLOQUEANTE: la canonización de identidad legacy, todavía SIN aplicar en el NAS
+
+**Estado al 2026-08-27:** el NAS corre imágenes **anteriores** a la jornada del
+2026-08-27. La canonización de identidad se ejecutó **solo en la base local**
+(commit `2462717`).
+
+**La próxima subida de imágenes al NAS tiene que aplicar allí la MISMA canonización,
+en el MISMO despliegue.** No es opcional ni aplazable:
+
+- El código nuevo **ya emite la identidad canónica**. Una cosecha con código nuevo
+  sobre datos sin canonizar produce **pérdida silenciosa de ofertas Y duplicación del
+  corpus, a la vez**, por dos ramas distintas — y el peor caso es su suma. El
+  razonamiento medido está en el encabezado de
+  `backend/scripts/g3_canonizacion_identidad_arbeitnow_jobgether.sql`.
+- La maniobra tiene **dos mitades**: los dos scripts SQL (`g3_…`, `g6_…`) y
+  `python -m jobhunt_core.shadow.canonical_refs`, que re-mapea las etiquetas del
+  oráculo. Saltarse la segunda rompe etiquetas **sin un solo error**.
+- Los scripts del repo terminan en `ROLLBACK` (son ensayos por defecto): hay que
+  cambiar esa línea a `COMMIT` **en una copia**, nunca en el fichero versionado.
+
+Orden ejecutable completo, con sus verificaciones posteriores:
+`jobhunt_core/shadow/RUNBOOK.md` **§7**. Resumen: parar `worker`/`worker-ai`/`core-worker`
+→ `pg_dump` **incluyendo el esquema `jobhunt`** → ensayo en seco sobre la copia → los dos
+scripts en firme → `canonical_refs` (primero `--dry-run`) con los workers **todavía**
+parados → arrancar → comprobar huérfanos y etiquetas.
+
+En local, ensayo y ejecución dieron cifras idénticas y las verificaciones posteriores
+salieron en el número previsto. **Las cifras del NAS serán distintas** (otro corpus):
+hay que re-medirlas allí, no copiarlas.
 
 ---
 

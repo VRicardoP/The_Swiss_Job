@@ -97,10 +97,18 @@
 -- huérfanos (924 + 371 + 40), el número esperado; NO 7.477.
 -- NO aplicado todavía en el NAS: allí corren imágenes anteriores a estos fixes.
 --
--- HAY UN SEGUNDO SCRIPT PENDIENTE con la misma forma y la misma urgencia:
--- `g6_canonizacion_identidad_irishjobs.sql` (G6/P2-3: 40 filas clon en 919, el
--- portal reedita el slug conservando el `-job<id>`). Los DOS se aplican en la
--- MISMA parada del worker, en cualquier orden: no comparten ni una fila.
+-- EL SEGUNDO SCRIPT, `g6_canonizacion_identidad_irishjobs.sql` (G6/P2-3: 40
+-- filas clon en 919, el portal reedita el slug conservando el `-job<id>`), tiene
+-- la misma forma y la misma urgencia y **se aplicó en la MISMA parada del worker**
+-- el 2026-08-27, como estaba previsto: no comparten ni una fila y el orden da
+-- igual. Si hay que repetir la maniobra en otra base (el NAS), van los dos.
+--
+-- LA TERCERA PIEZA, y no vive en `backend/`: `jobhunt_core/shadow/canonical_refs.py`
+-- re-mapea los `job_ref` de las ETIQUETAS del oráculo, que no tienen FK y que
+-- ningún PASO de estos scripts toca. Se ejecutó también el 2026-08-27, con los
+-- workers TODAVÍA parados: 6.298 filas canonizadas en el mapa, 10 juicios y 162
+-- pares re-mapeados. Saltársela rompe etiquetas SIN un solo error.
+-- Orden completo y verificaciones: `jobhunt_core/shadow/RUNBOOK.md` §7.
 --
 -- VALIDACIÓN (G6, 2026-08-26 — sustituye a la de G3/lote B). La fixture de G3
 -- tenía **un clon por superviviente** y por eso NO podía alcanzar el fallo del
