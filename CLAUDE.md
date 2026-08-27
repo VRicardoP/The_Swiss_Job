@@ -57,9 +57,13 @@ de la IMAGEN.
 Identidad de la release, comprobable en vez de confiada:
 
 ```bash
-curl -s localhost:8003/v1/health   # {"release": "<sha>", "alembic_expected": "core0032", ...}
+curl -s localhost:8003/v1/health   # {"release": "<sha>", "alembic_expected": "…", "authoritative": true}
 curl -s localhost:8003/v1/ready    # {"release": "<sha>", "authoritative": true, ...}
 ```
+
+`authoritative: true` exige código inmutable (sin el override de desarrollo) **y** un
+`release` nombrable: con `RELEASE_SHA=unknown` la comparación «todos publican el mismo
+SHA» se cumpliría entre `unknown`s sin significar nada (auditoría G9 P2-A/P2-B).
 
 `core-api` tiene además healthcheck de compose contra `/v1/ready` (sin él, la API
 estuvo dos días en 503 sin que nadie se enterara). `docker-compose.prod.yml` y

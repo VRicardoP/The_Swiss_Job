@@ -24,3 +24,20 @@ def test_health_publica_release_y_head_esperado():
     body = TestClient(app).get("/v1/health").json()
     assert body["release"] == jobhunt_core.__release_sha__
     assert body["alembic_expected"]
+
+
+def test_health_declara_si_el_proceso_es_autoritativo(monkeypatch):
+    """REGRESIÓN auditoría G9 P2-A: `/v1/health` emparejaba dos datos de PROCEDENCIA
+    DISTINTA sin decirlo — `release` sale del ENV horneado en la imagen y
+    `alembic_expected` se lee del sistema de ficheros (en el perfil de desarrollo, el
+    árbol montado). La marca `authoritative` solo existía en `/v1/ready`, y health es
+    justo la sonda que el ritual de verificación de despliegue ejecuta primero: publicaba
+    el SHA de una imagen mientras corría código que demostrablemente no era ese SHA.
+    """
+    import jobhunt_core.api.main as api
+
+    monkeypatch.setattr(api, "__release_sha__", "abc1234")
+    monkeypatch.setattr(api, "CODE_MUTABLE", False)
+    assert TestClient(app).get("/v1/health").json()["authoritative"] is True
+    monkeypatch.setattr(api, "CODE_MUTABLE", True)
+    assert TestClient(app).get("/v1/health").json()["authoritative"] is False

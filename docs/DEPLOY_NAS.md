@@ -196,11 +196,16 @@ para operar).
 **Verificación de una release, comprobable en vez de confiada:**
 
 ```bash
-curl -s localhost:8003/v1/health   # {"release":"<sha>","alembic_expected":"core0032",...}
+curl -s localhost:8003/v1/health   # {"release":"<sha>","alembic_expected":"…","authoritative":true}
 curl -s localhost:8003/v1/ready    # {"release":"<sha>","authoritative":true,...}
 ```
 
-Todos los procesos del core deben publicar **el mismo** `release` y el mismo head.
+Todos los procesos del core deben publicar **el mismo** `release` y el mismo head, y
+`authoritative: true`. Las dos sondas llevan la marca (G9 P2-A: health la publicaba sin
+ella, y es la primera que se ejecuta aquí). `authoritative` es **false** si el código va
+montado (perfil de desarrollo) **o** si la imagen no sabe nombrar su release
+(`RELEASE_SHA=unknown`): sin esa segunda condición, el «mismo SHA» se cumpliría entre
+`unknown`s sin decir nada (G9 P2-B).
 
 > ⚠ **Deuda abierta en producción.** `core-api` tiene healthcheck de compose contra
 > `/v1/ready` en `docker-compose.yml`, pero **no** en `docker-compose.prod.yml` ni en

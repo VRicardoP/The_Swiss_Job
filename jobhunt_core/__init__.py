@@ -16,4 +16,8 @@ __version__ = "0.1.0"
 # y volvería a ser una etiqueta que puede mentir. `version` es una constante que
 # no distingue releases, así que sin este dato un operador no puede saber si API,
 # worker y capturador corren lo mismo (auditoría externa 2026-08-27 P1-3).
-__release_sha__ = os.getenv("RELEASE_SHA") or "unknown"
+# Valor cuando la imagen se construyó SIN el build arg: una release que el proceso
+# no sabe nombrar. Las sondas lo tratan como NO autoritativo — «todos publican el
+# mismo SHA» se cumple trivialmente entre `unknown`s (auditoría G9 P2-B).
+UNKNOWN_RELEASE = "unknown"
+__release_sha__ = os.getenv("RELEASE_SHA") or UNKNOWN_RELEASE

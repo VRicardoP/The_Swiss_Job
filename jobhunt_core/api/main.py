@@ -16,7 +16,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from jobhunt_core import __release_sha__, __version__
+from jobhunt_core import UNKNOWN_RELEASE, __release_sha__, __version__
 from jobhunt_core.api.deps import ApiError
 from jobhunt_core.api.v1 import router as v1_router
 from jobhunt_core.api.v1_applications import router as applications_router
@@ -136,6 +136,19 @@ app.openapi = _openapi_with_contract_errors
 CODE_MUTABLE = os.getenv("CORE_CODE_MUTABLE", "").strip().lower() in {"1", "true", "yes"}
 
 
+def _authoritative() -> bool:
+    """Si lo que publican las sondas se puede usar para VERIFICAR una release.
+
+    Exige las dos cosas (auditoría G9 P2-A/P2-B):
+    - código INMUTABLE: sin `CORE_CODE_MUTABLE` no hay bind mount, así que el `release`
+      del ENV y el `alembic_expected` leído del disco vienen de la MISMA imagen; con él,
+      el proceso puede estar sirviendo código que no es el del SHA que publica;
+    - release NOMBRABLE: una imagen construida sin el build arg hornea `unknown`, y el
+      paso «todos publican el mismo SHA» se satisface entre `unknown`s sin decir nada.
+    """
+    return not CODE_MUTABLE and __release_sha__ != UNKNOWN_RELEASE
+
+
 @app.get("/v1/health")
 async def health() -> dict:
     """Liveness: el proceso responde (no implica BD migrada — ver /v1/ready).
@@ -145,6 +158,11 @@ async def health() -> dict:
     migraciones que este proceso espera. Con esas dos señales el paso de
     verificación de un despliegue («todos publican el mismo SHA y head») es
     comprobable en vez de confiado (auditoría externa 2026-08-27 P1-3).
+
+    Los dos datos tienen PROCEDENCIA distinta —`release` del ENV horneado en la
+    imagen, `alembic_expected` del sistema de ficheros— y esta es la sonda con la que
+    empieza el ritual de verificación, así que lleva la MISMA marca que `/v1/ready`:
+    sin ella publicaba el SHA de una imagen mientras corría otro código (G9 P2-A).
     """
     return {
         "status": "ok",
@@ -152,6 +170,7 @@ async def health() -> dict:
         "version": __version__,
         "release": __release_sha__,
         "alembic_expected": _expected_head(),
+        "authoritative": _authoritative(),
     }
 
 
@@ -199,7 +218,8 @@ async def ready() -> JSONResponse:
     lleva la release del proceso: en el perfil operativo un 200 certifica el par
     (código, esquema) de UNA release, no el esquema de una y los handlers de otra.
     En el de desarrollo el código va montado y el 200 llega con
-    `authoritative: false` — informativo, no autorización para operar.
+    `authoritative: false` — informativo, no autorización para operar; lo mismo si la
+    imagen no sabe nombrar su release (`RELEASE_SHA=unknown`, G9 P2-B).
     """
     try:
         async with engine.connect() as conn:
@@ -223,6 +243,7 @@ async def ready() -> JSONResponse:
                 "alembic": current,
                 "expected": expected,
                 "release": __release_sha__,
+                "authoritative": _authoritative(),
             },
         )
     return JSONResponse(
@@ -230,8 +251,8 @@ async def ready() -> JSONResponse:
             "status": "ready",
             "alembic": current,
             "release": __release_sha__,
-            # False en el perfil de desarrollo (código montado): verde informativo,
-            # no autorización para operar.
-            "authoritative": not CODE_MUTABLE,
+            # False en el perfil de desarrollo (código montado) y con la release sin
+            # nombrar: verde informativo, no autorización para operar.
+            "authoritative": _authoritative(),
         }
     )

@@ -91,7 +91,36 @@ def test_ready_declara_si_autoriza_operaciones(monkeypatch):
     autoriza operaciones — el proceso puede estar sirviendo código distinto del de la
     imagen. La sonda lo dice en vez de dejarlo a la memoria del operador."""
     monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
+    # Release NOMBRABLE: la otra condición de la autoritatividad se prueba aparte
+    # (test_no_hay_autoritatividad_sin_SHA_de_release, G9 P2-B).
+    monkeypatch.setattr(api, "__release_sha__", "abc1234")
     monkeypatch.setattr(api, "CODE_MUTABLE", False)
     assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is True
     monkeypatch.setattr(api, "CODE_MUTABLE", True)
     assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is False
+
+
+def test_ready_503_por_head_tambien_lleva_la_marca(monkeypatch):
+    """G9 P2-A: la rama 503 por head desalineado publicaba `release` SIN la marca de
+    autoritatividad — el estado en el que más importa saber si el SHA es de fiar."""
+    monkeypatch.setattr(api, "engine", _engine_yielding("deadbeef0000"))
+    monkeypatch.setattr(api, "__release_sha__", "abc1234")
+    monkeypatch.setattr(api, "CODE_MUTABLE", True)
+    body = TestClient(api.app).get("/v1/ready").json()
+    assert body["release"] == "abc1234" and body["authoritative"] is False
+
+
+def test_no_hay_autoritatividad_sin_SHA_de_release(monkeypatch):
+    """REGRESIÓN auditoría G9 P2-B(b): en el NAS los composes de producción no pasan el
+    build arg, así que la imagen hornea `RELEASE_SHA=unknown` y allí `CORE_CODE_MUTABLE`
+    no está puesto — las sondas se declaraban `authoritative: true` sobre una release que
+    no saben nombrar, y el paso «todos publican el mismo SHA» se cumplía trivialmente
+    (`unknown == unknown == unknown`). Autoritativo exige las DOS cosas: código inmutable
+    y release NOMBRABLE."""
+    monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
+    monkeypatch.setattr(api, "CODE_MUTABLE", False)
+    monkeypatch.setattr(api, "__release_sha__", jobhunt_core.UNKNOWN_RELEASE)
+    assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is False
+    assert TestClient(api.app).get("/v1/health").json()["authoritative"] is False
+    monkeypatch.setattr(api, "__release_sha__", "abc1234")
+    assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is True

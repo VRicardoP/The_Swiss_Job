@@ -339,10 +339,12 @@ de oro de §0, encontrado por una auditoría **externa** el 2026-08-27 (P1-3):
 
 Lo que cierra la incoherencia no es la lectura sino el **despliegue**: el perfil operativo
 ya no monta el código, así que cambiar la cadena exige cambiar la imagen, y eso recrea el
-proceso. `/v1/health` publica además `release` + `alembic_expected`, y `/v1/ready` añade
-`authoritative` (false en el perfil de desarrollo: verde **informativo**, no autorización
-para operar). `[V]` — leído en `jobhunt_core/api/main.py:158-235` y comprobado contra los
-tres procesos vivos.
+proceso. `/v1/health` publica además `release` + `alembic_expected`, y **las dos sondas** llevan
+`authoritative` (G9 P2-A: solo lo tenía `/v1/ready`, y health es la primera del ritual de
+verificación). Es **false** en el perfil de desarrollo —código montado: verde
+**informativo**, no autorización para operar— y también con `RELEASE_SHA=unknown`, porque
+una release que el proceso no sabe nombrar no verifica nada (G9 P2-B). `[V]` — leído en
+`jobhunt_core/api/main.py:158-235` y comprobado contra los tres procesos vivos.
 
 ### Sigue pendiente
 
