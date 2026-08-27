@@ -23,10 +23,15 @@ de paginación por offset MUTABLE y sin cursor/snapshot del proveedor:
   `ProviderResponseError` — un sobre inválido degradado a "página vacía" es
   indistinguible del final del feed y hacía confirmar cosechas completas que
   nunca ocurrieron (auditoría externa 2026-08-27 P1-1; `links`, auditoría G9 P1-A).
+- Un sobre inválido a MITAD de barrido no tira las páginas ya cosechadas: se
+  emiten como barrido INCOMPLETO con el fallo marcado (`FetchResult.error`),
+  que el runner contabiliza. Solo en la PRIMERA página, sin nada que preservar,
+  el error sube tal cual (auditoría G9 P2-C).
 NO está en la lista restringida del proyecto (jobs.ch/LinkedIn/... siguen OFF).
 """
 
 import logging
+from dataclasses import dataclass
 
 import httpx
 
@@ -103,53 +108,22 @@ class ArbeitnowProvider(BaseProvider):
         # barrido anterior se quedó corto, usa el objetivo crecido persistido.
         target = min(max(configured, _cursor_int(cur, "page_target")), hard_max)
 
-        collected: list[RawListing] = []
-        top_seen = _cursor_int(cur, "last_top_seen")
-        pages = 0
-        page = 1
-        exhausted = False
-        while pages < target:
-            resp = await http.get(API_URL, params={"page": page}, timeout=HTTP_TIMEOUT_S)
-            resp.raise_for_status()
-            body = resp.json()
-            # El sobre se valida ENTERO (`data` Y `links`) ANTES de usar nada de él:
-            # una página VACÍA sin `links` cortaba el barrido como "fin del feed" sin
-            # llegar nunca a mirar `links` — el mismo falso verde por la puerta de
-            # atrás (auditoría G9 P1-A).
-            items = _page_items(body, page)
-            has_next = _has_next_page(body, page)
-            pages += 1
-            if not items:
-                exhausted = True
-                break
-            for item in items:
-                # AISLAMIENTO por item: un item malformado (no-objeto, tags no-string, fecha
-                # rara…) se SALTA con log — jamás revienta la página entera dejando el scope
-                # reintentando la misma página tóxica (P2 rev. externa integral).
-                if not isinstance(item, dict):
-                    logger.warning("arbeitnow: item no-objeto saltado: %r", item)
-                    continue
-                try:
-                    created = _parse_created_at(item)
-                    if created is not None:
-                        top_seen = max(top_seen, created)
-                    # EMISIÓN TOTAL de lo válido que casa con el scope: el watermark
-                    # ya NO filtra (A-04 refresca last_seen_at/revisiones con esto).
-                    listing = _to_listing(item, keyword)
-                    if listing is not None:
-                        collected.append(listing)
-                except Exception as exc:  # frontera de datos externos: nunca tumbar el barrido
-                    logger.warning(
-                        "arbeitnow: item malformado saltado (%s): %r",
-                        exc, item.get("slug") or item.get("url"),
-                    )
-            if not has_next:
-                exhausted = True
-                break
-            page += 1
+        sweep = await _sweep_feed(http, target, keyword, _cursor_int(cur, "last_top_seen"))
+        collected, pages = sweep.listings, sweep.pages
 
-        next_cursor: dict = {"last_top_seen": top_seen}
-        if exhausted:
+        next_cursor: dict = {"last_top_seen": sweep.top_seen}
+        if sweep.error is not None:
+            # Sobre inválido a mitad de barrido (G9 P2-C): NI completo NI corto de
+            # páginas — el objetivo adaptativo NO crece (no fue el tope quien cortó),
+            # pero se conserva el tamaño ya aprendido.
+            complete = False
+            if target > configured:
+                next_cursor["page_target"] = target
+            logger.error(
+                "arbeitnow: barrido CORTADO por forma inválida tras %d páginas "
+                "(lo cosechado se emite igual): %s", pages, sweep.error,
+            )
+        elif sweep.exhausted:
             complete = True
             # Conservar el tamaño APRENDIDO (rev. 5ª P2#1): sin esto el ciclo
             # oscilaría partial/complete con alertas periódicas. Un feed que
@@ -176,9 +150,94 @@ class ArbeitnowProvider(BaseProvider):
             len(collected), pages, "completo" if complete else "PARCIAL", next_cursor,
         )
         return FetchResult(
-            listings=tuple(collected), next_cursor=next_cursor,
-            pages_fetched=pages, complete=complete,
+            listings=collected, next_cursor=next_cursor,
+            pages_fetched=pages, complete=complete, error=sweep.error,
         )
+
+
+@dataclass(frozen=True)
+class _Sweep:
+    """Resultado CRUDO de un barrido del feed (sin decisiones de cursor)."""
+
+    listings: tuple[RawListing, ...]
+    pages: int          # páginas con el sobre ÍNTEGRO recorridas
+    top_seen: int
+    exhausted: bool     # el feed se agotó (fin legítimo), no el tope de páginas
+    error: str | None   # sobre inválido a mitad de barrido (lo previo se conserva)
+
+
+async def _sweep_feed(
+    http: httpx.AsyncClient, target: int, keyword: str | None, top_seen: int
+) -> _Sweep:
+    """Recorre el feed hasta agotarlo, hasta el tope de páginas o hasta un sobre inválido.
+
+    PRESERVACIÓN (auditoría G9 P2-C): si el sobre se rompe en la página k>1, las k−1
+    páginas anteriores son válidas y se emiten igual — el runner las persiste como
+    barrido INCOMPLETO (su invariante de siempre) y contabiliza el fallo por
+    `FetchResult.error`. El todo-o-nada dejaba a una fuente con forma inválida
+    PERSISTENTE en la página 2 sin ingerir una sola oferta, y sin más rastro que un log.
+    En la PRIMERA página no hay nada que preservar: el error sube tal cual (P1-1).
+    """
+    collected: list[RawListing] = []
+    pages = 0
+    page = 1
+    exhausted = False
+    error: str | None = None
+    try:
+        while pages < target:
+            resp = await http.get(API_URL, params={"page": page}, timeout=HTTP_TIMEOUT_S)
+            resp.raise_for_status()
+            body = resp.json()
+            # El sobre se valida ENTERO (`data` Y `links`) ANTES de usar nada de él:
+            # una página VACÍA sin `links` cortaba el barrido como "fin del feed" sin
+            # llegar nunca a mirar `links` — el mismo falso verde por la puerta de
+            # atrás (auditoría G9 P1-A).
+            items = _page_items(body, page)
+            has_next = _has_next_page(body, page)
+            pages += 1
+            if not items:
+                exhausted = True
+                break
+            top_seen = _collect_items(items, keyword, collected, top_seen)
+            if not has_next:
+                exhausted = True
+                break
+            page += 1
+    except ProviderResponseError as exc:
+        if page == 1:
+            raise
+        error = str(exc)
+    return _Sweep(tuple(collected), pages, top_seen, exhausted, error)
+
+
+def _collect_items(
+    items: list, keyword: str | None, collected: list[RawListing], top_seen: int
+) -> int:
+    """Emite los items VÁLIDOS de una página y devuelve el watermark actualizado.
+
+    AISLAMIENTO por item: un item malformado (no-objeto, tags no-string, fecha rara…) se
+    SALTA con log — jamás revienta la página entera dejando el scope reintentando la misma
+    página tóxica (P2 rev. externa integral).
+    """
+    for item in items:
+        if not isinstance(item, dict):
+            logger.warning("arbeitnow: item no-objeto saltado: %r", item)
+            continue
+        try:
+            created = _parse_created_at(item)
+            if created is not None:
+                top_seen = max(top_seen, created)
+            # EMISIÓN TOTAL de lo válido que casa con el scope: el watermark
+            # ya NO filtra (A-04 refresca last_seen_at/revisiones con esto).
+            listing = _to_listing(item, keyword)
+            if listing is not None:
+                collected.append(listing)
+        except Exception as exc:  # frontera de datos externos: nunca tumbar el barrido
+            logger.warning(
+                "arbeitnow: item malformado saltado (%s): %r",
+                exc, item.get("slug") or item.get("url"),
+            )
+    return top_seen
 
 
 def _page_items(body, page: int) -> list:

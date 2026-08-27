@@ -11,6 +11,10 @@ FINAL, en la MISMA transacción que la persistencia. Además (revisión externa)
   enterraría ofertas que el filtro nuevo sí quiere.
 - Si el sink falla: rollback conjunto, el cursor NO avanza y se registra el
   fallo (consecutive_failures) sin enmascarar jamás el error original.
+- Un barrido que el provider corta por forma inválida a MITAD (FetchResult.error)
+  se persiste como `partial` —lo cosechado antes del fallo es válido— pero
+  INCREMENTA consecutive_failures en la misma transacción: preservarlo sin contar
+  el fallo dejaría la avería sin ningún rastro en el estado (auditoría G9 P2-C).
 """
 
 import json
@@ -170,20 +174,31 @@ async def run_scope(
             # Un barrido INCOMPLETO se persiste (sus listings son válidos) pero
             # NO cuenta como cosecha completa: last_complete_at intacto y los
             # fallos no se resetean (rev. 4ª #1).
+            # Y si fue incompleto POR FALLO (result.error: sobre inválido a mitad de
+            # barrido), el fallo se CUENTA aquí — dentro de la misma transacción que ya
+            # tiene el scope bloqueado y la autoritatividad verificada. Sin esto,
+            # preservar lo cosechado dejaba `consecutive_failures` quieto en 0 y la
+            # avería no tenía ningún rastro en el estado (auditoría G9 P2-C).
+            failed = result.error is not None
             await session.execute(
                 sa.text(
                     "INSERT INTO source_scope_state "
                     "(scope_id, cursor, last_complete_at, consecutive_failures) "
                     "VALUES (:sid, CAST(:cur AS jsonb), "
-                    "CASE WHEN :complete THEN now() END, 0) "
+                    "CASE WHEN :complete THEN now() END, "
+                    "CASE WHEN :failed THEN 1 ELSE 0 END) "
                     "ON CONFLICT (scope_id) DO UPDATE SET "
                     "cursor = EXCLUDED.cursor, "
                     "last_complete_at = CASE WHEN :complete THEN now() "
                     "ELSE source_scope_state.last_complete_at END, "
                     "consecutive_failures = CASE WHEN :complete THEN 0 "
+                    "WHEN :failed THEN source_scope_state.consecutive_failures + 1 "
                     "ELSE source_scope_state.consecutive_failures END"
                 ),
-                {"sid": scope_id, "cur": json.dumps(new_cursor), "complete": result.complete},
+                {
+                    "sid": scope_id, "cur": json.dumps(new_cursor),
+                    "complete": result.complete, "failed": failed,
+                },
             )
             await session.commit()
         except Exception as exc:
@@ -197,12 +212,14 @@ async def run_scope(
         status = "ok" if result.complete else "partial"
         log = logger.info if result.complete else logger.warning
         log(
-            "scope %s: %d listings, %d páginas, cursor commiteado (%s)",
+            "scope %s: %d listings, %d páginas, cursor commiteado (%s)%s",
             scope_id, len(result.listings), result.pages_fetched, status,
+            f" — fallo contabilizado: {result.error}" if failed else "",
         )
         return ScopeRunResult(
             scope_id=scope_id, status=status,
             listings=len(result.listings), pages=result.pages_fetched,
+            error=result.error[:200] if result.error else None,
         )
 
 

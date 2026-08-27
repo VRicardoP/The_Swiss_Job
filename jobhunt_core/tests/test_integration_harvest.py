@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -644,3 +645,136 @@ def test_envelope_without_links_does_not_confirm_a_complete_harvest(db):
     assert ahora.cursor == previo.cursor
     assert ahora.last_complete_at == previo.last_complete_at
     assert ahora.consecutive_failures == previo.consecutive_failures + 1
+
+
+def test_broken_page_mid_sweep_persists_the_good_pages_and_counts_the_failure(db):
+    """REGRESIÓN auditoría G9 P2-C, provider REAL → runner → BD: las dos mitades.
+
+    (a) Lo cosechado ANTES del sobre roto se persiste — el todo-o-nada dejaba una fuente con
+    forma inválida persistente en la página 2 sin ingerir una sola oferta.
+    (b) El barrido NO se confirma completo y el fallo SÍ se contabiliza: un 'partial' que
+    dejara `consecutive_failures` quieto convertiría el rojo mudo en un silencio total.
+    """
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+    feed = {
+        1: {
+            "data": [{"slug": "a", "url": "https://x/a", "title": "T", "created_at": 300,
+                      "tags": []}],
+            "links": {"next": "?page=2"},
+        },
+        2: {"data": {"no": "soy una lista"}, "links": {}},
+    }
+    sink = CollectSink()
+    r = _run_arbeitnow(factory, s1, sink, feed)
+
+    assert r.status == "partial"
+    assert [x.external_id for _, batch in sink.batches for x in batch] == ["a"]
+    st = _state(factory, s1)
+    assert st.cursor is not None                 # cursor del barrido parcial persistido
+    assert st.last_complete_at is None           # NUNCA cosecha completa
+    assert st.consecutive_failures == 1          # el fallo es VISIBLE, no un silencio
+
+
+def _set_state(factory, scope_id, *, failures=0, last_complete_at=None):
+    """Fija el estado del scope (la avería que la vigilancia debe VER)."""
+    async def go():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "INSERT INTO source_scope_state "
+                    "(scope_id, consecutive_failures, last_complete_at) "
+                    "VALUES (:i, :f, :t) ON CONFLICT (scope_id) DO UPDATE SET "
+                    "consecutive_failures = EXCLUDED.consecutive_failures, "
+                    "last_complete_at = EXCLUDED.last_complete_at"
+                ),
+                {"i": scope_id, "f": failures, "t": last_complete_at},
+            )
+            await s.commit()
+
+    asyncio.run(go())
+
+
+def _health(factory, **kw):
+    from jobhunt_core.harvest.health import check_harvest_health
+
+    async def go():
+        async with factory() as s:
+            return await check_harvest_health(s, **kw)
+
+    return asyncio.run(go())
+
+
+def test_harvest_health_alerts_on_failing_and_stale_scopes(db):
+    """REGRESIÓN auditoría G9 P2-C (2ª mitad): el rojo tenía que dejar de ser MUDO.
+
+    `consecutive_failures` y `last_complete_at` existían desde A-03 y no los leía ninguna
+    métrica, gate ni alerta: una fuente que dejaba de cosechar no producía señal hasta que,
+    120 d después, el archivado ADR-07 empezaba a retirar vacantes todavía publicadas.
+    """
+    factory, created = db
+    fallando, rancio, sano = _seed_scopes(factory, created, n=3)
+    ahora = datetime.now(timezone.utc)
+    _set_state(factory, fallando, failures=3, last_complete_at=ahora)
+    _set_state(factory, rancio, failures=0, last_complete_at=ahora - timedelta(days=30))
+    _set_state(factory, sano, failures=1, last_complete_at=ahora - timedelta(hours=2))
+
+    out = _health(factory, now=ahora)
+    por_scope = {(a["scope_id"], a["code"]) for a in out["alertas"]}
+
+    assert (fallando, "cosecha_fallando") in por_scope
+    assert (rancio, "cosecha_sin_completar") in por_scope
+    assert not [a for a in out["alertas"] if a["scope_id"] == sano]  # 1 fallo y fresco: sin ruido
+    assert out["scopes"] == 3
+
+
+def test_harvest_health_alerts_when_a_scope_never_completed_a_sweep(db):
+    """El caso EXACTO del barrido parcial perpetuo (G9 P2-C): el scope se ejecuta, persiste
+    listings y nunca confirma una cosecha completa. `last_complete_at IS NULL` es la señal —
+    sin ella el corpus se congela con el contador de fallos en un valor cualquiera."""
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+    _set_state(factory, s1, failures=0, last_complete_at=None)
+
+    alertas = _health(factory)["alertas"]
+
+    assert [a["code"] for a in alertas] == ["cosecha_sin_completar"]
+    assert alertas[0]["dias_sin_cosecha_completa"] is None
+    assert "NUNCA" in alertas[0]["msg"]
+
+
+def test_harvest_health_is_silent_for_never_run_and_disabled_scopes(db):
+    """Silencio DELIBERADO: sin fila de estado el scope no se ha ejecutado nunca (la cosecha
+    del core se lanza a mano, sin beat propio) y un scope deshabilitado no debe cosechar —
+    ninguno de los dos es una avería, y una alerta ahí sería ruido que entrena a ignorarlas."""
+    factory, created = db
+    nunca, apagado = _seed_scopes(factory, created, n=2)
+    _set_state(factory, apagado, failures=9, last_complete_at=None)
+
+    async def disable():
+        async with factory() as s:
+            await s.execute(
+                sa.text("UPDATE harvest_scopes SET enabled = false WHERE id = :i"),
+                {"i": apagado},
+            )
+            await s.commit()
+
+    asyncio.run(disable())
+    out = _health(factory)
+    assert out["alertas"] == [] and out["scopes"] == 0
+
+
+def test_harvest_health_task_is_wired_to_the_beat_on_the_light_queue():
+    """La vigilancia solo sirve si CORRE: va en el beat del core-worker y se rutea a
+    core.default — el comodín `jobhunt.harvest.*` la habría puesto en core.harvest, detrás
+    de los lotes de cosecha (misma decisión que la vigilancia del slot de la sombra)."""
+    from jobhunt_core.celery_app import celery_app
+    from jobhunt_core.tasks import harvest as harvest_tasks  # registra las tareas
+
+    assert harvest_tasks.check_harvest_health_task.name == "jobhunt.harvest.check_health"
+    assert "jobhunt.harvest.check_health" in celery_app.tasks
+    assert celery_app.conf.task_routes["jobhunt.harvest.check_health"] == {
+        "queue": "core.default"
+    }
+    beat_tasks = {e["task"] for e in celery_app.conf.beat_schedule.values()}
+    assert "jobhunt.harvest.check_health" in beat_tasks

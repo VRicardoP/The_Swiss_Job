@@ -62,6 +62,11 @@ celery_app.conf.update(
         # vigilancia del slot es observabilidad ligera — core.default.
         "jobhunt.shadow.run_cycle": {"queue": "core.harvest"},
         "jobhunt.shadow.check_slot_health": {"queue": "core.default"},
+        # Salud de la COSECHA (G9 P2-C): observabilidad de solo lectura — misma
+        # decisión que la vigilancia del slot, cola core.default para no quedar
+        # detrás de un lote de cosecha en core.harvest (donde la enviaría el
+        # comodín "jobhunt.harvest.*").
+        "jobhunt.harvest.check_health": {"queue": "core.default"},
     },
     task_acks_late=True,
     worker_prefetch_multiplier=1,
@@ -76,6 +81,13 @@ celery_app.conf.update(
         "shadow-sample-outbox-lag": {
             "task": "jobhunt.shadow.sample_outbox_lag",
             "schedule": float(settings.CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S),
+        },
+        # G9 P2-C: nadie leía consecutive_failures/last_complete_at — una fuente
+        # que dejaba de cosechar no producía alerta alguna hasta que el archivado
+        # ADR-07 empezaba a retirar vacantes vivas (120 d después).
+        "harvest-check-health": {
+            "task": "jobhunt.harvest.check_health",
+            "schedule": float(settings.CORE_HARVEST_HEALTH_EVERY_S),
         },
         "shadow-check-slot-health": {
             "task": "jobhunt.shadow.check_slot_health",

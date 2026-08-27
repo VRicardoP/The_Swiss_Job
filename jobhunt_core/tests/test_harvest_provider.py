@@ -330,6 +330,34 @@ def test_terminal_page_of_the_real_feed_is_complete():
     }
     result, hits = _fetch(pages={1: terminal})
     assert _ids(result) == ["ok"] and result.complete is True and hits == [1]
+    assert result.error is None
     # Y vacía con la misma forma terminal: fin del feed, sin listings.
     vacia, _ = _fetch(pages={1: {"data": [], "links": {"next": None}}})
     assert _ids(vacia) == [] and vacia.complete is True
+
+
+def test_broken_envelope_mid_sweep_keeps_the_pages_already_harvested():
+    """REGRESIÓN auditoría G9 P2-C: el endurecimiento de la frontera tiraba el barrido entero.
+
+    Páginas 1 y 2 válidas, página 3 con el sobre roto: lo ya cosechado es VÁLIDO y se emite
+    (invariante de `runner.py`: un barrido incompleto se persiste pero no cuenta como cosecha
+    completa). Con una forma inválida PERSISTENTE en la página 3, el todo-o-nada dejaba la
+    fuente sin ingerir una sola oferta. El fallo NO se pierde: viaja en `FetchResult.error`
+    para que el runner lo contabilice.
+    """
+    pages = dict(PAGES)
+    pages[3] = {"data": "no-soy-una-lista", "links": {}}
+    result, hits = _fetch(pages=pages)
+    assert _ids(result) == ["a", "b", "c", "d"]  # páginas 1 y 2, íntegras
+    assert hits == [1, 2, 3]
+    assert result.complete is False              # jamás cosecha completa
+    assert result.error and "data" in result.error
+    assert result.pages_fetched == 2             # solo las páginas bien formadas
+
+
+def test_broken_envelope_on_the_first_page_still_raises():
+    """El otro lado de P2-C: sin páginas anteriores no hay nada que preservar y el sobre
+    inválido sube como error tipado (P1-1 intacto) — el runner cuenta el fallo y deja
+    cursor y `last_complete_at` como estaban."""
+    with pytest.raises(ProviderResponseError):
+        _fetch(pages={1: {"data": "no-soy-una-lista", "links": {}}})

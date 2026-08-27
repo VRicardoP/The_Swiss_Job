@@ -51,6 +51,24 @@ def run_scope_task(self, scope_id: str) -> dict[str, Any]:
     }
 
 
+@celery_app.task(name="jobhunt.harvest.check_health")
+def check_harvest_health_task() -> dict:
+    """Vigilancia de la salud de la cosecha (G9 P2-C, jobhunt_core/harvest/health.py).
+
+    Observabilidad LIGERA y de solo lectura: va en el beat y se rutea a core.default
+    —jamás detrás de un lote de cosecha en core.harvest—, igual que la vigilancia del
+    slot de la sombra. Sin retry: si falla, el siguiente tick vuelve a medir."""
+    return asyncio.run(_check_harvest_health_impl())
+
+
+async def _check_harvest_health_impl() -> dict:
+    from jobhunt_core.harvest.health import check_harvest_health
+
+    async with task_session_factory() as session_factory:
+        async with session_factory() as session:
+            return await check_harvest_health(session)
+
+
 @celery_app.task(name="jobhunt.harvest.run_all", bind=True, max_retries=1)
 def run_all_task(self, run_key: str) -> dict[str, Any]:
     """Orquestador del RUN de cosecha (A-11): idempotente por run_key — el

@@ -74,6 +74,14 @@ class CoreSettings(BaseSettings):
     # "sin visto y sin adjunto" del contrato ADR-07.
     CORE_ARCHIVE_GRACE_DAYS: int = 3
     CORE_CORPUS_STALE_DAYS: int = 120
+    # Vigilancia de la salud de la COSECHA (G9 P2-C, jobhunt_core/harvest/health.py):
+    # `consecutive_failures` y `last_complete_at` no los leía nadie. FAILURES=3 sigue
+    # el kill-switch de compliance del legacy (3 bloqueos seguidos = fuente rota);
+    # STALE_ALERT=7 d avisa con MESES de margen sobre los 120 d a partir de los
+    # cuales el archivado ADR-07 empieza a retirar vacantes todavía publicadas.
+    CORE_HARVEST_MAX_CONSECUTIVE_FAILURES: int = 3
+    CORE_HARVEST_STALE_ALERT_DAYS: int = 7
+    CORE_HARVEST_HEALTH_EVERY_S: int = 3600         # jobhunt.harvest.check_health
     # Dedup semántico nivel 3 (F-5): generador de candidatos cross-source.
     # SIM_MIN hereda el umbral del dedup semántico legado (0,95) como punto
     # de partida operativo — B.3 dejó los SIM_* abiertos y la precisión

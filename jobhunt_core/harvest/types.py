@@ -22,12 +22,20 @@ class FetchResult:
     error (disciplina commit-del-cursor-al-final, ADR-05). `complete=False`
     significa barrido INCOMPLETO (tope de seguridad): el runner lo persiste
     igualmente pero NO actualiza last_complete_at y reporta `partial`.
+
+    `error` marca un barrido incompleto POR FALLO (p.ej. sobre inválido en la
+    página k>1) frente a uno incompleto por el tope de páginas: lo cosechado
+    antes del fallo es válido y se persiste, pero el runner INCREMENTA
+    `consecutive_failures` — sin esa marca, preservar el barrido parcial
+    convertía un rojo mudo en silencio absoluto (auditoría G9 P2-C).
+    Invariante: `error is not None` ⇒ `complete is False`.
     """
 
     listings: tuple[RawListing, ...]
     next_cursor: dict
     pages_fetched: int = 1
     complete: bool = True
+    error: str | None = None
 
 
 @dataclass
