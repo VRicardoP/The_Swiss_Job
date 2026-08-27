@@ -620,3 +620,27 @@ def test_disabled_scope_is_skipped(db):
     r = _run(factory, s1, CollectSink())
     assert r.status == "skipped"
     assert _state(factory, s1) is None  # ni cursor ni fallos: no se tocó
+
+
+def test_envelope_without_links_does_not_confirm_a_complete_harvest(db):
+    """REGRESIÓN auditoría G9 P1-A, provider REAL → runner → BD.
+
+    Hermano exacto del caso #3 por la OTRA clave del sobre: un HTTP 200 sin `links` se leía
+    como final contractual del feed y el runner registraba cosecha completa (last_complete_at
+    refrescado, consecutive_failures=0) sobre un barrido cortado en la página 1.
+    """
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+    assert _run_arbeitnow(factory, s1, CollectSink(), _FEED_OK).status == "ok"
+    previo = _state(factory, s1)
+
+    sink = CollectSink()
+    sin_links = {1: {"data": [{"slug": "z", "url": "https://x/z", "title": "T", "tags": []}]}}
+    r = _run_arbeitnow(factory, s1, sink, sin_links)
+
+    assert r.status == "error"
+    assert sink.batches == []
+    ahora = _state(factory, s1)
+    assert ahora.cursor == previo.cursor
+    assert ahora.last_complete_at == previo.last_complete_at
+    assert ahora.consecutive_failures == previo.consecutive_failures + 1

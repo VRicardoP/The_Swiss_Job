@@ -22,7 +22,7 @@ de paginación por offset MUTABLE y sin cursor/snapshot del proveedor:
   `links`) tiene que cumplir la forma contractual o el barrido falla con
   `ProviderResponseError` — un sobre inválido degradado a "página vacía" es
   indistinguible del final del feed y hacía confirmar cosechas completas que
-  nunca ocurrieron (auditoría externa 2026-08-27 P1-1).
+  nunca ocurrieron (auditoría externa 2026-08-27 P1-1; `links`, auditoría G9 P1-A).
 NO está en la lista restringida del proyecto (jobs.ch/LinkedIn/... siguen OFF).
 """
 
@@ -112,7 +112,12 @@ class ArbeitnowProvider(BaseProvider):
             resp = await http.get(API_URL, params={"page": page}, timeout=HTTP_TIMEOUT_S)
             resp.raise_for_status()
             body = resp.json()
+            # El sobre se valida ENTERO (`data` Y `links`) ANTES de usar nada de él:
+            # una página VACÍA sin `links` cortaba el barrido como "fin del feed" sin
+            # llegar nunca a mirar `links` — el mismo falso verde por la puerta de
+            # atrás (auditoría G9 P1-A).
             items = _page_items(body, page)
+            has_next = _has_next_page(body, page)
             pages += 1
             if not items:
                 exhausted = True
@@ -138,7 +143,7 @@ class ArbeitnowProvider(BaseProvider):
                         "arbeitnow: item malformado saltado (%s): %r",
                         exc, item.get("slug") or item.get("url"),
                     )
-            if not _has_next_page(body, page):
+            if not has_next:
                 exhausted = True
                 break
             page += 1
@@ -198,16 +203,21 @@ def _page_items(body, page: int) -> list:
 
 
 def _has_next_page(body: dict, page: int) -> bool:
-    """Si el sobre anuncia página siguiente. `links` ausente o `null` = fin normal
-    (la última página del feed puede no traerlo); `links` presente pero NO-objeto es
-    forma inválida → error tipado, jamás un fin de paginación inventado que declararía
-    completo un barrido cortado a medias (auditoría externa 2026-08-27 P1-1)."""
+    """Si el sobre anuncia página siguiente. `links` es OBLIGATORIO y objeto.
+
+    Arbeitnow es un paginador Laravel: `links` viaja en TODAS las páginas, también en la
+    TERMINAL — lo que se anula allí es `links.next`, no `links` (comprobado en vivo contra
+    el feed público el 2026-08-27: `?page=1` y `?page=5000` responden 200 con las claves
+    `data`/`links`/`meta`, y la terminal trae `links.next: null`). Un sobre SIN `links`, o
+    con `links: null`, no es "la última página": es una respuesta que dejó de cumplir el
+    contrato, y leerla como fin de paginación declaraba COMPLETO un barrido cortado a
+    medias — el mismo falso verde de P1-1 por la otra clave (auditoría G9 P1-A).
+    `links.next` ausente o `null` sigue siendo el final LEGÍTIMO del feed.
+    """
     links = body.get("links")
-    if links is None:
-        return False
     if not isinstance(links, dict):
         raise ProviderResponseError(
-            f"página {page}: 'links' no es un objeto, sino {type(links).__name__}"
+            f"página {page}: 'links' ausente o no-objeto ({type(links).__name__})"
         )
     return bool(links.get("next"))
 

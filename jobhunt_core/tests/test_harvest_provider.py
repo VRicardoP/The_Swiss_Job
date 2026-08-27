@@ -298,3 +298,38 @@ def test_http_error_propagates():
         raise AssertionError("debió propagar el error HTTP")
     except httpx.HTTPStatusError:
         pass
+
+
+def test_missing_links_is_typed_response_error():
+    """REGRESIÓN auditoría G9 P1-A (la otra clave del mismo sobre).
+
+    `data` quedó protegido en P1-1 pero `links` ausente/`null` seguía leyéndose como final
+    contractual del feed: `complete=True`, cursor persistido, `last_complete_at` refrescado y
+    `consecutive_failures=0` sobre un barrido cortado en la página 1 — el defecto que P1-1 vino
+    a cerrar, por la otra puerta. Arbeitnow es un paginador Laravel y `links` va SIEMPRE
+    (comprobado en vivo contra el feed público: ver `test_terminal_page_of_the_real_feed_...`),
+    así que un sobre sin `links` no es la última página: es forma inválida.
+    """
+    item = {"slug": "ok", "url": "https://x/ok", "title": "T", "tags": []}
+    for body in ({"data": [item]}, {"data": [item], "links": None}, {"data": []}):
+        with pytest.raises(ProviderResponseError):
+            _fetch(pages={1: body})
+
+
+def test_terminal_page_of_the_real_feed_is_complete():
+    """La otra dirección de P1-A: la página TERMINAL legítima sigue cerrando el barrido.
+
+    Forma REAL medida contra https://www.arbeitnow.com/api/job-board-api?page=5000 (HTTP 200):
+    `links` PRESENTE con `next: null` y `last: null`. Endurecer `links` no puede convertir un
+    feed agotado en un fallo perpetuo.
+    """
+    terminal = {
+        "data": [{"slug": "ok", "url": "https://x/ok", "title": "T", "tags": []}],
+        "links": {"first": "?page=1", "last": None, "prev": "?page=4999", "next": None},
+        "meta": {"current_page": 5000},
+    }
+    result, hits = _fetch(pages={1: terminal})
+    assert _ids(result) == ["ok"] and result.complete is True and hits == [1]
+    # Y vacía con la misma forma terminal: fin del feed, sin listings.
+    vacia, _ = _fetch(pages={1: {"data": [], "links": {"next": None}}})
+    assert _ids(vacia) == [] and vacia.complete is True
