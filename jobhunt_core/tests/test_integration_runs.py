@@ -950,3 +950,42 @@ def test_run_all_task_registered():
     from jobhunt_core.celery_app import celery_app
 
     assert "jobhunt.harvest.run_all" in celery_app.tasks
+
+
+def test_run_all_publica_el_motivo_de_cada_scope_que_falla(db, monkeypatch):
+    """REGRESIÓN auditoría G11 P3-1: `54c5322` arregló la tarea INDIVIDUAL, no la orquestada.
+
+    `run_all_task` guardaba solo el string de estado, con la misma consecuencia que aquel
+    commit describe: en el resultado Celery, un 'partial' por sobre roto a mitad de barrido
+    es indistinguible de un 'partial' por tope de páginas, y el motivo solo vive en el log.
+    Peor: un `ProviderConfigError` —permanente, reintentarlo no lo arregla— caía en el
+    `except Exception` y se archivaba como 'error' a secas. El mapa `scopes` no cambia de
+    forma (lo leen tests y operadores); los motivos van en una clave PARALELA.
+    """
+    import jobhunt_core.tasks.harvest as harvest_task
+    from jobhunt_core.harvest.provider import ProviderConfigError
+
+    factory, created = db
+    parcial, roto, mal_configurado = _seed_scopes(factory, created, n=3)
+
+    async def fake_impl(scope_id, claim_token=None):
+        if scope_id == str(roto):
+            raise RuntimeError("la fuente devolvió HTML del CDN")
+        if scope_id == str(mal_configurado):
+            raise ProviderConfigError("keyword debe ser string, no int")
+        return ScopeRunResult(
+            scope_id=scope_id, status="partial", listings=2, pages=1,
+            error="página 2: HTTP 429",
+        )
+
+    monkeypatch.setattr(harvest_task, "_run_scope_impl", fake_impl)
+    r = _run_all("ventana-motivos", created)
+
+    assert r["scopes"][str(parcial)] == "partial"          # la forma de siempre, intacta
+    assert r["scopes"][str(roto)] == "error"
+    assert "HTTP 429" in r["errores"][str(parcial)]
+    assert "HTML del CDN" in r["errores"][str(roto)]
+    # Un fallo de CONFIGURACIÓN es permanente y el resultado tiene que decirlo.
+    assert "config" in r["errores"][str(mal_configurado)].lower()
+    # Y un scope sin motivo no aparece: la clave lista averías, no scopes.
+    assert set(r["errores"]) == {str(parcial), str(roto), str(mal_configurado)}

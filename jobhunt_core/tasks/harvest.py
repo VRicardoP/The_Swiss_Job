@@ -88,6 +88,13 @@ async def _run_all_impl(run_key: str) -> dict[str, Any]:
     from jobhunt_core import runs
 
     results: dict[str, str] = {}
+    # Los MOTIVOS van en una clave PARALELA (auditoría G11 P3-1): `scopes` lo leen tests
+    # y operadores como un mapa scope→estado, y cambiarle la forma rompería a todos. Sin
+    # esto, un 'partial' por sobre roto a mitad de barrido era indistinguible en el
+    # resultado Celery de un 'partial' por tope de páginas —dos cosas con urgencias
+    # opuestas— y un fallo de CONFIGURACIÓN (permanente) se archivaba como 'error' a
+    # secas. `54c5322` lo arregló en la tarea individual y esta se quedó atrás.
+    errores: dict[str, str] = {}
     executed = skipped = 0
     async with task_session_factory() as session_factory:
         async with session_factory() as session:
@@ -117,9 +124,13 @@ async def _run_all_impl(run_key: str) -> dict[str, Any]:
                 async with runs.scope_heartbeat(session_factory, run_id, scope_id, token):
                     result = await _run_scope_impl(str(scope_id), token)
                 status = result.status
+                motivo = result.error
             except Exception as exc:  # el run sigue con el resto de scopes
                 logger.warning("run %s: scope %s falló: %s", run_key, scope_id, exc)
                 status = "error"
+                motivo = _describe_scope_failure(exc)
+            if motivo:
+                errores[str(scope_id)] = motivo[:200]
             executed += 1
             async with session_factory() as session:
                 # Fencing: si el lease venció y OTRO worker re-armó el scope, finish devuelve
@@ -133,7 +144,20 @@ async def _run_all_impl(run_key: str) -> dict[str, Any]:
     return {
         "run_id": str(run_id), "status": overall,
         "executed": executed, "skipped": skipped, "scopes": results,
+        "errores": errores,
     }
+
+
+def _describe_scope_failure(exc: Exception) -> str:
+    """El motivo de un scope caído, distinguiendo lo PERMANENTE de lo transitorio.
+
+    Un provider desconocido o unos `params` inválidos no se arreglan reintentando: quien
+    lea el resultado del run tiene que saber que hay que tocar la configuración, no
+    esperar. La tarea individual ya hace esta distinción (sin retry); la orquestada la
+    perdía por el camino."""
+    if isinstance(exc, (UnknownProviderError, ProviderConfigError)):
+        return f"config inválida (permanente, no se reintenta): {exc}"
+    return str(exc)
 
 
 async def _run_scope_impl(scope_id: str, claim_token=None) -> ScopeRunResult:
