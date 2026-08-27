@@ -84,7 +84,18 @@
 -- ejecutar → rearrancar. El worker legacy NO debe correr una cosecha con el
 -- código nuevo sobre datos sin migrar.
 --
--- ESTADO: **NO EJECUTADO contra ninguna base real**. Pendiente de aplicar.
+-- ESTADO: **APLICADO a `swissjobhunter` (local) el 2026-08-27**, autorizado por
+-- el propietario, siguiendo el ORDEN OPERATIVO de abajo paso a paso. Ensayo en
+-- seco previo contra los mismos datos (este fichero termina en ROLLBACK) y
+-- ejecución con una copia temporal cambiando la última línea a COMMIT: las dos
+-- pasadas dieron cifras IDÉNTICAS. Resultado: 5.419 reescritas, 406 clones
+-- fusionados, 30 match_results descartados y **0 de ellos con señal**, 5.263
+-- slots de sombra reapuntados, 371 slots de clones. Copia previa en
+-- `/home/lothar/Documents/swissjob_pre_canonizacion_20260827.sql.gz` (117 MB,
+-- incluye las 50 tablas del esquema `jobhunt`).
+-- Comprobación posterior del PASO 7, con el proyector ya drenado: **1.335**
+-- huérfanos (924 + 371 + 40), el número esperado; NO 7.477.
+-- NO aplicado todavía en el NAS: allí corren imágenes anteriores a estos fixes.
 --
 -- HAY UN SEGUNDO SCRIPT PENDIENTE con la misma forma y la misma urgencia:
 -- `g6_canonizacion_identidad_irishjobs.sql` (G6/P2-3: 40 filas clon en 919, el

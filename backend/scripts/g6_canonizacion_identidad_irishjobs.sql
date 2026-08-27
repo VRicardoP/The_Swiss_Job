@@ -77,7 +77,14 @@
 -- snapshot: el PASO 7c reapunta los slots de `jobhunt.source_listings` en la
 -- misma transacción, y el GATE-SOMBRA sigue siendo válido.
 --
--- ESTADO: **NO EJECUTADO contra ninguna base real**. Pendiente de aplicar.
+-- ESTADO: **APLICADO a `swissjobhunter` (local) el 2026-08-27**, autorizado por
+-- el propietario, en la misma parada de workers que
+-- `g3_canonizacion_identidad_arbeitnow_jobgether.sql`. Ensayo en seco previo
+-- contra los mismos datos y ejecución con copia temporal en COMMIT: cifras
+-- idénticas en las dos pasadas. Resultado: 879 reescritas, 40 clones
+-- fusionados, 0 match_results descartados, 879 slots de sombra reapuntados,
+-- 40 slots de clones.
+-- NO aplicado todavía en el NAS: allí corren imágenes anteriores a estos fixes.
 --
 -- VALIDACIÓN (G6, ejecutada): ensayado contra `swissjobhunter_test` con la
 -- fixture `g6_canonizacion_ensayo_irishjobs.sql`, que incluye deriva de slug,
