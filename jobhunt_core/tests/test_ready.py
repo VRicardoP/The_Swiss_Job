@@ -39,13 +39,22 @@ def test_ready_wrong_head_is_503(monkeypatch):
 
 
 def test_ready_db_down_is_generic_503(monkeypatch):
-    # El texto de la excepción (host/usuario/SQL) NO debe llegar al cliente.
+    """El texto de la excepción (host/usuario/SQL) NO debe llegar al cliente, pero la
+    IDENTIDAD de la release sí: G10 P3-2 — de los dos 503 de esta sonda, el de head
+    desalineado llevaba `release` + `authoritative` y este no llevaba ninguno de los dos,
+    justo cuando el operador está diagnosticando qué proceso tiene delante."""
     boom = RuntimeError('connection to server at "postgres" failed for user "jobhunt_core"')
     monkeypatch.setattr(api, "engine", _engine_yielding(boom))
+    monkeypatch.setattr(api, "__release_sha__", "abc1234")
     r = TestClient(api.app).get("/v1/ready")
     assert r.status_code == 503
     body = r.json()
-    assert body == {"status": "not_ready", "reason": "database_unavailable"}
+    assert body == {
+        "status": "not_ready",
+        "reason": "database_unavailable",
+        "release": "abc1234",
+        "authoritative": api._authoritative(),
+    }
     assert "postgres" not in r.text and "jobhunt_core" not in r.text
 
 

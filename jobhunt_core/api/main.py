@@ -264,7 +264,17 @@ async def ready() -> JSONResponse:
         logger.exception("readiness: la BD del core no está disponible/migrada")
         return JSONResponse(
             status_code=503,
-            content={"status": "not_ready", "reason": "database_unavailable"},
+            content={
+                "status": "not_ready",
+                "reason": "database_unavailable",
+                # La identidad de la release va en los DOS 503, no solo en el de head
+                # desalineado (auditoría G10 P3-2): con la BD caída es justo cuando el
+                # operador necesita saber qué proceso tiene delante, y esta rama le
+                # dejaba sin `release` ni `authoritative`. No filtra internals: el SHA
+                # ya es público en /v1/health.
+                "release": __release_sha__,
+                "authoritative": _authoritative(),
+            },
         )
     expected = _expected_head()
     if current != expected:
