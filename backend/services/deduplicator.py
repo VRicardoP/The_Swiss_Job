@@ -418,11 +418,19 @@ class Deduplicator:
         de sentido — "Primarlehrperson 60%" vs "Lehrperson Primarstufe 60%"
         (coseno 0.9487, solape 0.250) — y, entre idiomas, siempre: 20/20 pares
         reales de la misma vacante en DE↔FR/IT/EN medidos, 15 con solape
-        exactamente 0.000. Por eso la puerta se SALTA cuando los idiomas
-        declarados difieren, y su umbral es ahora un setting
+        exactamente 0.000. Su umbral es un setting
         (`SEMANTIC_DEDUP_TITLE_OVERLAP_MIN`) y no una constante de módulo:
         bajar `SEMANTIC_DEDUP_THRESHOLD` como mando de remediación no servía de
         nada mientras la puerta léxica siguiera fija.
+
+        La excepción que saltaba la puerta léxica cuando los idiomas declarados
+        difieren (`a63745c`) se RETIRÓ en `0465681`: medido con el encoder real,
+        un falso positivo cross-idioma puntuaba 0.8220 y un duplicado auténtico
+        0.8195 —separación invertida, sin umbral posible— y el alcance era nulo
+        (0 pares cross-idioma en 200 activas de producción a cuatro umbrales).
+        Como marcar un duplicado desactiva la oferta, quedaba armada una vía
+        que podía desactivar vacantes reales. El motivo detallado está en el
+        comentario de `_pares_por_coseno` más abajo.
         """
         if job.embedding is None:
             return []

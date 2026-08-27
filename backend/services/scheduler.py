@@ -224,7 +224,7 @@ def setup_schedules() -> None:
 
     logger.info(
         "Scheduler configured: daily harvest=%s, dedup daily 04:00, "
-        "URL check weekly Sun 03:00, saved searches every %d min, "
+        "URL check daily 03:00, saved searches every %d min, "
         "cleanup stale jobs daily 03:30",
         settings.SCHEDULER_DAILY_HARVEST_ENABLED,
         settings.SCHEDULER_SEARCH_INTERVAL_MINUTES,
