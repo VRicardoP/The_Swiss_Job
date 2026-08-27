@@ -65,7 +65,8 @@ class TestP212JsonMalformado:
             profile_text="dev", profile_skills=["python"], candidates=_CANDIDATES
         )
         assert [r["score"] for r in results] == [90, 40]
-        assert len(cached_writes) == 1
+        # G9: la caché es POR OFERTA — una entrada por candidato, no una por lote.
+        assert len(cached_writes) == 2
 
 
 @pytest.mark.anyio

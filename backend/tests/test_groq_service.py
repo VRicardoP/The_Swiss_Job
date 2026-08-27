@@ -142,16 +142,23 @@ class TestGroqServiceReasoningEffort:
 
 @pytest.mark.anyio
 class TestGroqServiceCacheKey:
-    def test_cache_key_deterministic(self):
-        key1 = GroqService._cache_key("hello world")
-        key2 = GroqService._cache_key("hello world")
-        assert key1 == key2
-        assert key1.startswith("groq:rerank:")
+    @staticmethod
+    def _key(**overrides) -> str:
+        view = {"title": "Editor", "company": "Acme", "description": "x", **overrides}
+        return GroqService._verdict_key(view, overrides.pop("perfil", "huella-perfil"))
 
-    def test_cache_key_differs_for_different_input(self):
-        key1 = GroqService._cache_key("prompt A")
-        key2 = GroqService._cache_key("prompt B")
-        assert key1 != key2
+    def test_cache_key_deterministic(self):
+        assert self._key() == self._key()
+        assert self._key().startswith("groq:rerank:")
+
+    def test_cache_key_differs_for_different_job(self):
+        assert self._key() != self._key(title="Otro puesto")
+
+    def test_cache_key_differs_for_different_profile(self):
+        view = {"title": "Editor"}
+        assert GroqService._verdict_key(view, "perfil-a") != GroqService._verdict_key(
+            view, "perfil-b"
+        )
 
 
 @pytest.mark.anyio
@@ -269,8 +276,8 @@ class TestGroqServiceCache:
         svc.client = MagicMock()
 
         mock_redis = AsyncMock()
-        cached_data = json.dumps([{"index": 0, "score": 95, "reason": "Cached result"}])
-        mock_redis.get = AsyncMock(return_value=cached_data.encode())
+        cached_data = json.dumps({"score": 95, "reason": "Cached result"})
+        mock_redis.mget = AsyncMock(return_value=[cached_data.encode()])
         svc.redis = mock_redis
 
         svc.get_chat_response = AsyncMock()
@@ -298,7 +305,7 @@ class TestGroqServiceCache:
         svc.client = MagicMock()
 
         mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)
+        mock_redis.mget = AsyncMock(return_value=[None])
         mock_redis.set = AsyncMock()
         svc.redis = mock_redis
 

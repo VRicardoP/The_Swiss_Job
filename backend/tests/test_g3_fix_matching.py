@@ -364,7 +364,9 @@ class TestP31LoteIncompleto:
         assert len(results) == 10, "ningún índice del lote se queda sin score LLM"
         assert all(r["score"] == 60 for r in results)
         # Lo cacheado es la respuesta COMPLETA de Gemini, nunca la corta de Groq.
-        assert cached_writes and all(len(w) == 10 for w in cached_writes)
+        # G9: la caché es POR OFERTA, así que son diez entradas, una por oferta.
+        assert len(cached_writes) == 10
+        assert all(w["score"] == 60 for w in cached_writes)
 
     async def test_lote_incompleto_sin_fallback_degrada_sin_cachear(self):
         short = json.dumps([{"index": i, "score": 80} for i in range(4)])

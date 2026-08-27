@@ -28,34 +28,35 @@ def _solo_textos(valor: object) -> list[str]:
 # G8/P3-4: versión del esquema de lo que se guarda en la caché de re-ranking.
 # Subirla invalida de golpe todo lo escrito por versiones anteriores, que de
 # otro modo se seguiría sirviendo durante `GROQ_CACHE_TTL_DAYS`.
-_CACHE_SCHEMA_VERSION = 2
+# G9 — v3: la entrada dejó de ser un LOTE entero bajo el hash de su prompt y
+# pasó a ser UN veredicto por oferta (ver `GroqService._verdict_key`).
+_CACHE_SCHEMA_VERSION = 3
 
 
-def _sanear_cacheados(valor: object) -> list[dict] | None:
-    """Re-normaliza un lote LEÍDO de la caché a la misma forma que emite
-    `_parse_llm_response`.
+def _sanear_veredicto(valor: object) -> dict | None:
+    """Normaliza UN veredicto a la forma que `match_service` da por buena.
 
-    No revalida índices ni cobertura del lote —eso ya se comprobó cuando la
-    entrada se escribió y aquí no hay `batch_len` que consultar—: solo garantiza
-    los TIPOS que `match_service` da por buenos.
+    G8/P3-4: es la MISMA función en los dos sentidos de la caché — lo que se
+    escribe y lo que se lee pasan por aquí, así que lo guardado tiene por
+    construcción la forma que espera quien lo lee. La caché es el segundo
+    camino por el que la respuesta del LLM llega a `match_service`, y saltarse
+    el saneo reabría G7/P3-3 (un `reason` no-`str` → AttributeError → `except`
+    POR USUARIO → se pierde el matching entero del perfil).
+
+    No revalida el índice: desde v3 la caché es POR OFERTA y el índice es
+    posicional dentro del lote, así que ni se guarda ni se lee de aquí.
     """
-    if not isinstance(valor, list):
+    if not isinstance(valor, dict):
         return None
-    saneados: list[dict] = []
-    for r in valor:
-        if not isinstance(r, dict) or not isinstance(r.get("index"), int):
-            return None
-        entrada = {
-            "index": r["index"],
-            "score": r["score"] if isinstance(r.get("score"), (int, float)) else 0,
-            "matching_skills": _solo_textos(r.get("matching_skills")),
-            "missing_skills": _solo_textos(r.get("missing_skills")),
-            "reason": r["reason"] if isinstance(r.get("reason"), str) else "",
-        }
-        if r.get("degraded"):
-            entrada["degraded"] = True
-        saneados.append(entrada)
-    return saneados
+    veredicto = {
+        "score": valor["score"] if isinstance(valor.get("score"), (int, float)) else 0,
+        "matching_skills": _solo_textos(valor.get("matching_skills")),
+        "missing_skills": _solo_textos(valor.get("missing_skills")),
+        "reason": valor["reason"] if isinstance(valor.get("reason"), str) else "",
+    }
+    if valor.get("degraded"):
+        veredicto["degraded"] = True
+    return veredicto
 
 
 RERANK_SYSTEM_PROMPT = """You are an expert recruiter AI evaluating job-candidate fit for a non-technical profile focused on content, language, and people operations.
@@ -96,6 +97,11 @@ Evaluation criteria:
 10. For international organisations: weight multilingualism, international experience, UN/NGO background
 
 IMPORTANT: Respond ONLY with a valid JSON array. No markdown fences, no extra text."""
+
+# Huella del prompt de sistema. Entra en la clave de caché para que reescribir
+# las reglas de puntuación invalide los veredictos viejos, en vez de seguir
+# sirviéndolos durante `GROQ_CACHE_TTL_DAYS`.
+_SYSTEM_PROMPT_FINGERPRINT = hashlib.md5(RERANK_SYSTEM_PROMPT.encode()).hexdigest()
 
 
 class GroqService:
@@ -166,6 +172,11 @@ class GroqService:
     ) -> list[dict]:
         """Re-rank job candidates using LLM evaluation.
 
+        La caché es POR OFERTA, no por lote: solo se mandan al LLM las ofertas
+        cuyo veredicto no está ya cacheado, y los lotes se forman con esos
+        fallos de caché. Ver `_verdict_key` para por qué la caché anterior
+        —hash del prompt del LOTE entero— no acertaba nunca.
+
         Args:
             profile_text: User CV text or profile summary.
             profile_skills: User skills list.
@@ -181,80 +192,50 @@ class GroqService:
         if not self.is_available and not fallback_ok:
             return []
 
-        batch_size = settings.GROQ_RERANK_BATCH_SIZE
-        batches = [
-            candidates[i : i + batch_size]
-            for i in range(0, len(candidates), batch_size)
-        ]
-
         skills_text = ", ".join(profile_skills) if profile_skills else "Not specified"
-        sem = asyncio.Semaphore(settings.GROQ_CONCURRENCY)
+        views = [self._job_view(c) for c in candidates]
+        profile_key = self._profile_fingerprint(profile_text, skills_text)
+        keys = [self._verdict_key(v, profile_key) for v in views]
 
-        async def _process_batch(batch_idx: int, batch: list[dict]) -> list[dict]:
-            jobs_for_prompt = [
-                {
-                    "index": i,
-                    "title": c.get("title", ""),
-                    "company": c.get("company", ""),
-                    "description": (c.get("description", "") or "")[:800],
-                    "tags": (c.get("tags") or [])[:15],
-                    "location": c.get("location", ""),
-                    "remote": c.get("remote", False),
-                    "language": c.get("language", ""),
-                    "contract_type": c.get("contract_type", ""),
-                }
-                for i, c in enumerate(batch)
+        verdicts: list[dict | None] = await self._get_cached_verdicts(keys)
+        pending = [i for i, v in enumerate(verdicts) if v is None]
+        if pending:
+            batch_size = settings.GROQ_RERANK_BATCH_SIZE
+            batches = [
+                pending[i : i + batch_size] for i in range(0, len(pending), batch_size)
             ]
+            sem = asyncio.Semaphore(settings.GROQ_CONCURRENCY)
 
-            jobs_json = json.dumps(jobs_for_prompt, ensure_ascii=False)
-            user_prompt = (
-                f"## Candidate Profile\n"
-                f"Skills: {skills_text}\n"
-                f"{profile_text[:2000]}\n\n"
-                f"## Jobs to Evaluate (batch {batch_idx + 1}/{len(batches)})\n"
-                f"{jobs_json}\n\n"
-                "Evaluate each job. Return a JSON array where each element has:\n"
-                '- "index": the job index from above\n'
-                '- "score": 0-100\n'
-                '- "matching_skills": list of matching skills\n'
-                '- "missing_skills": list of missing skills\n'
-                '- "reason": one-sentence explanation\n\n'
-                "Respond ONLY with the JSON array."
-            )
-
-            cache_key = self._cache_key(user_prompt)
-            cached = await self._get_cached(cache_key)
-            if cached is not None:
-                logger.debug("Groq cache hit for batch %d", batch_idx + 1)
-                batch_results = cached
-            else:
+            async def _process_batch(positions: list[int]) -> None:
+                prompt = self._rerank_prompt(
+                    skills_text, profile_text, [views[p] for p in positions]
+                )
                 async with sem:
                     try:
-                        batch_results = await self._rerank_call(
-                            user_prompt, fallback, len(batch)
+                        results = await self._rerank_call(
+                            prompt, fallback, len(positions)
                         )
-                        await self._set_cached(cache_key, batch_results)
                     except Exception:
                         logger.exception(
-                            "Rerank failed for batch %d/%d (Groq+fallback)",
-                            batch_idx + 1,
-                            len(batches),
+                            "Rerank failed for %d jobs (Groq+fallback)", len(positions)
                         )
-                        batch_results = self._fallback_results(len(batch))
+                        # Degradado: NO se cachea (indistinguible de un «poor
+                        # fit» legítimo si se sirviera después). G1/P2-12.
+                        for r in self._fallback_results(len(positions)):
+                            verdicts[positions[r["index"]]] = r
+                        return
+                for r in results:
+                    position = positions[r["index"]]
+                    verdicts[position] = r
+                    await self._set_cached(keys[position], r)
 
-            for r in batch_results:
-                r["global_index"] = r.get("index", 0) + (batch_idx * batch_size)
-            return batch_results
+            await asyncio.gather(*[_process_batch(b) for b in batches])
 
-        batch_results_list = await asyncio.gather(
-            *[_process_batch(i, b) for i, b in enumerate(batches)]
-        )
-
-        all_results: list[dict] = []
-        for batch_results in batch_results_list:
-            all_results.extend(batch_results)
-
-        return all_results
+        return [
+            {**verdict, "index": i, "global_index": i}
+            for i, verdict in enumerate(verdicts)
+            if verdict is not None
+        ]
 
     async def _rerank_call(
         self, user_prompt: str, fallback: "object | None", batch_len: int
@@ -409,18 +390,94 @@ class GroqService:
         ]
 
     @staticmethod
-    def _cache_key(prompt: str) -> str:
-        """Generate a Redis cache key from the prompt hash.
+    def _job_view(candidate: dict) -> dict:
+        """Proyección de UNA oferta tal y como la ve el LLM (ya truncada).
 
-        G8/P3-4: la clave lleva la versión del ESQUEMA de lo que se guarda. Sin
-        ella, un cambio en la normalización no podía invalidar lo ya escrito y
-        seguía sirviéndose durante `GROQ_CACHE_TTL_DAYS`.
+        Es a la vez el material del prompt y el material de la clave de caché:
+        que sean lo mismo es lo que garantiza que un veredicto cacheado
+        corresponde exactamente a la oferta que se le enseñó al modelo.
         """
-        h = hashlib.md5(prompt.encode()).hexdigest()
+        return {
+            "title": candidate.get("title", ""),
+            "company": candidate.get("company", ""),
+            "description": (candidate.get("description", "") or "")[:800],
+            "tags": (candidate.get("tags") or [])[:15],
+            "location": candidate.get("location", ""),
+            "remote": candidate.get("remote", False),
+            "language": candidate.get("language", ""),
+            "contract_type": candidate.get("contract_type", ""),
+        }
+
+    @staticmethod
+    def _rerank_prompt(skills_text: str, profile_text: str, views: list[dict]) -> str:
+        """Prompt de un lote. Los índices son LOCALES al lote (0..n-1).
+
+        G9: se retiró el encabezado «(batch i/N)». El modelo no lo usaba para
+        nada —evalúa cada oferta por separado— y era lo que ataba el texto al
+        tamaño del pool.
+        """
+        jobs_json = json.dumps(
+            [{"index": i, **view} for i, view in enumerate(views)], ensure_ascii=False
+        )
+        return (
+            f"## Candidate Profile\n"
+            f"Skills: {skills_text}\n"
+            f"{profile_text[:2000]}\n\n"
+            f"## Jobs to Evaluate\n"
+            f"{jobs_json}\n\n"
+            "Evaluate each job. Return a JSON array where each element has:\n"
+            '- "index": the job index from above\n'
+            '- "score": 0-100\n'
+            '- "matching_skills": list of matching skills\n'
+            '- "missing_skills": list of missing skills\n'
+            '- "reason": one-sentence explanation\n\n'
+            "Respond ONLY with the JSON array."
+        )
+
+    @staticmethod
+    def _profile_fingerprint(profile_text: str, skills_text: str) -> str:
+        """Huella de lo que el prompt le enseña al LLM del CANDIDATO, ya truncado."""
+        material = f"{skills_text}\n{profile_text[:2000]}"
+        return hashlib.md5(material.encode()).hexdigest()
+
+    @staticmethod
+    def _verdict_key(job_view: dict, profile_fingerprint: str) -> str:
+        """Clave de caché de UN veredicto: esta oferta para este candidato.
+
+        Lleva TODO lo que determina el veredicto y NADA que no lo determine:
+        la proyección exacta de la oferta que va al prompt, la huella del
+        perfil, el modelo, el prompt de sistema y la versión del esquema de lo
+        que se guarda.
+
+        Y deliberadamente NO lleva el índice dentro del lote, ni el número de
+        lotes, ni el orden del pool. La clave anterior hasheaba el prompt del
+        LOTE ENTERO, así que los llevaba los tres — y el orden lo mueve
+        `recency_score`, una función ESCALONADA del tiempo (saltos a los días
+        2, 8, 15 y 31): el pool se reordenaba solo con que pasara el tiempo, y
+        una oferta nueva en el top-50 desplazaba en cascada e invalidaba su
+        lote y todos los posteriores. Resultado medido: CERO claves
+        `groq:rerank:*` vivas en Redis. Cada corrida escribía claves que la
+        siguiente ya no buscaba.
+
+        El modelo que se firma es el primario (`GROQ_RERANK_MODEL`). Si el
+        veredicto acabó viniendo del fallback (Gemini), sigue siendo un
+        veredicto válido para ESA oferta y ESE perfil; lo que la clave impide
+        es servirlo después de cambiar de modelo primario o de reescribir las
+        reglas de puntuación.
+        """
+        material = "\n".join(
+            (
+                json.dumps(job_view, sort_keys=True, ensure_ascii=False),
+                profile_fingerprint,
+                settings.GROQ_RERANK_MODEL,
+                _SYSTEM_PROMPT_FINGERPRINT,
+            )
+        )
+        h = hashlib.md5(material.encode()).hexdigest()
         return f"groq:rerank:v{_CACHE_SCHEMA_VERSION}:{h}"
 
-    async def _get_cached(self, key: str) -> list[dict] | None:
-        """Retrieve cached rerank results from Redis.
+    async def _get_cached_verdicts(self, keys: list[str]) -> list[dict | None]:
+        """Lee de golpe (MGET, un solo viaje) los veredictos ya cacheados.
 
         G8/P3-4: lo que sale de la caché se re-sanea con la MISMA función que
         el borde de red. La caché es el segundo camino por el que la respuesta
@@ -428,22 +485,35 @@ class GroqService:
         (un `reason` no-`str` → AttributeError → `except` POR USUARIO → se
         pierde el matching entero del perfil).
         """
-        if not self.redis:
-            return None
+        if not self.redis or not keys:
+            return [None] * len(keys)
         try:
-            data = await self.redis.get(key)
-            if data:
-                return _sanear_cacheados(json.loads(data))
+            raw = await self.redis.mget(keys)
         except Exception:
-            logger.debug("Redis cache read failed for %s", key)
-        return None
+            logger.debug("Redis cache read failed for %d rerank verdicts", len(keys))
+            return [None] * len(keys)
 
-    async def _set_cached(self, key: str, results: list[dict]) -> None:
-        """Store rerank results in Redis with TTL."""
+        out: list[dict | None] = []
+        for item in raw:
+            if not item:
+                out.append(None)
+                continue
+            try:
+                out.append(_sanear_veredicto(json.loads(item)))
+            except (TypeError, ValueError):
+                out.append(None)
+        return out
+
+    async def _set_cached(self, key: str, verdict: dict) -> None:
+        """Guarda UN veredicto con TTL. Se guarda ya saneado: lo que se escribe
+        tiene exactamente la forma que espera quien lo lee."""
         if not self.redis:
+            return
+        payload = _sanear_veredicto(verdict)
+        if payload is None:
             return
         try:
             ttl = settings.GROQ_CACHE_TTL_DAYS * 86400
-            await self.redis.set(key, json.dumps(results), ex=ttl)
+            await self.redis.set(key, json.dumps(payload), ex=ttl)
         except Exception:
             logger.debug("Redis cache write failed for %s", key)

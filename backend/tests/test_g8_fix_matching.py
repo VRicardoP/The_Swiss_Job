@@ -217,7 +217,7 @@ class TestLaCacheDeGroqYaNoEsUnBordeSinSanear:
     """P3-4."""
 
     def test_lo_leido_de_la_cache_se_sanea(self):
-        from services.groq_service import _sanear_cacheados
+        from services.groq_service import _sanear_veredicto
 
         crudo = [
             {
@@ -228,20 +228,18 @@ class TestLaCacheDeGroqYaNoEsUnBordeSinSanear:
                 "reason": ["no", "soy", "texto"],
             }
         ]
-        assert _sanear_cacheados(crudo) == [
-            {
-                "index": 0,
-                "score": 80,
-                "matching_skills": ["python"],
-                "missing_skills": [],
-                "reason": "",
-            }
-        ]
+        assert _sanear_veredicto(crudo[0]) == {
+            "score": 80,
+            "matching_skills": ["python"],
+            "missing_skills": [],
+            "reason": "",
+        }
 
     def test_la_clave_de_cache_lleva_version_de_esquema(self):
-        from services.groq_service import GroqService
+        from services.groq_service import _CACHE_SCHEMA_VERSION, GroqService
 
-        assert GroqService._cache_key("x").startswith("groq:rerank:v")
+        clave = GroqService._verdict_key({"title": "x"}, "huella")
+        assert clave.startswith(f"groq:rerank:v{_CACHE_SCHEMA_VERSION}:")
 
     @pytest.mark.parametrize("extra", ["Python, Excel", {"a": 1}, 7, None])
     def test_unir_skills_es_total_en_su_argumento(self, extra):
