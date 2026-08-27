@@ -21,12 +21,38 @@ Quién podía: solo un superusuario (`jobhunt_core` y `jobhunt_capture` reciben
 modelo de amenaza de la guarda es justamente el borrado masivo accidental del
 operador.
 
-ALCANCE: las CUATRO guardas del ORÁCULO. Las otras 10 guardas del esquema
-(`trg_corpus_generation_*`, `trg_offrev_vacancy_immutable`, …) siguen en 'O' a
-propósito: protegen tablas de datos masivos y `ENABLE ALWAYS` las haría disparar
-también durante un `pg_restore --disable-triggers`, que usa exactamente este
-mecanismo. El oráculo no se restaura así: es una cohorte sellada de 187 pares
-cuya reconstrucción es una maniobra deliberada, con DDL del owner y rastro.
+ALCANCE: las CUATRO guardas del ORÁCULO. Las otras 10 del esquema se quedan
+fuera de ESTA migración por ser un cambio que no hace falta para cerrar la vía
+del oráculo, no por el motivo que aquí se alegó primero.
+
+CORRECCIÓN (auditoría G11 P2-3). El párrafo original decía que `ENABLE ALWAYS`
+en las otras diez las habría hecho disparar durante un `pg_restore
+--disable-triggers` «que usa exactamente este mecanismo». Es FALSO, y se ha
+verificado ejecutando contra este mismo clúster (PostgreSQL 16.14):
+
+  $ pg_dump --data-only --disable-triggers --table=jobhunt.corpus_generation
+    ALTER TABLE jobhunt.corpus_generation DISABLE TRIGGER ALL;
+    COPY jobhunt.corpus_generation ... FROM stdin;
+    ALTER TABLE jobhunt.corpus_generation ENABLE TRIGGER ALL;
+
+Ni un `SET session_replication_role`: el mecanismo es DDL del owner, y ese DDL
+apaga TAMBIÉN las `ENABLE ALWAYS` (medido en base desechable: 'A' → 'D'). O sea
+que `ENABLE ALWAYS` nunca habría estorbado a ningún restore.
+
+Y de propina, el peligro que el párrafo falso ocultaba: el `ENABLE TRIGGER ALL`
+con que el propio dump cierra devuelve las guardas a **'O'**, no a 'A'. Un
+restore data-only de `labeled_dedup_pairs`/`_cohorts` DEGRADA EN SILENCIO estas
+cuatro guardas y reabre el ataque. Por eso toda maniobra de datos termina
+comprobando el catálogo: RUNBOOK §8 (`jobhunt_core/shadow/RUNBOOK.md`), con la
+consulta y el DDL de re-armado. El test que lo fija es
+`test_las_guardas_del_oraculo_disparan_tambien_en_modo_replica`.
+
+Sobre el fondo —«¿queda alguna vía de borrado masivo abierta?»— la respuesta es
+NO, y por un motivo que este párrafo tampoco daba: ninguna de las otras diez
+DENIEGA nada (seis son contadores de `corpus_generation` a nivel de STATEMENT y
+tres vigilan columnas inmutables SOLO en UPDATE). Las tres de inmutabilidad sí
+pasan a `ENABLE ALWAYS` en core0035: disparan solo en UPDATE, que es algo que un
+restore data-only (`COPY`) no hace jamás.
 
 ADVERTENCIA: `ENABLE ALWAYS` hace que la guarda dispare también en un nodo que
 APLIQUE replicación lógica. Aquí no se replica hacia estas tablas —`core-capture`

@@ -495,3 +495,64 @@ maniobra graba refs que la maniobra invalida, y `--excluir` no sirve para eso
 porque el daño no lo detecta ninguna guarda del loader.
 
 No hace falta migración nueva: el re-mapeo es una maniobra de DATOS, sin DDL.
+
+---
+
+## 8. Cierre de TODA maniobra de datos: ¿siguen armadas las guardas?
+
+**Cuándo**: al terminar cualquier maniobra que escriba datos en bloque —un
+`pg_restore`/`psql` de un dump, una carga masiva, una copia entre entornos—, y en
+particular si tocó `labeled_dedup_pairs`, `labeled_dedup_cohorts`, `offer_revisions`,
+`source_listing_incarnations` o `source_listing_revisions`.
+
+**Por qué** (auditoría G11 P2-3, verificado contra este clúster, PostgreSQL 16.14): un
+restore data-only NO usa `session_replication_role`, usa DDL del owner —
+
+```
+ALTER TABLE jobhunt.<tabla> DISABLE TRIGGER ALL;
+COPY jobhunt.<tabla> ... FROM stdin;
+ALTER TABLE jobhunt.<tabla> ENABLE TRIGGER ALL;
+```
+
+— y ese DDL apaga **también** las guardas en `ENABLE ALWAYS` (`'A'` → `'D'`). Lo grave
+es el cierre: `ENABLE TRIGGER ALL` las devuelve a **`'O'`**, no a `'A'`. O sea que un
+restore de esas tablas **degrada en silencio** las siete guardas que core0034/core0035
+armaron, y con ellas vuelve a funcionar el borrado/reasignación masiva bajo
+`SET session_replication_role='replica'` — sin que nada parezca roto.
+
+**Comprobar (SOLO SELECT).** Las siete tienen que salir en `'A'`:
+
+```sql
+SELECT c.relname || '.' || t.tgname AS guarda, t.tgenabled
+FROM pg_trigger t
+JOIN pg_class c ON c.oid = t.tgrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'jobhunt' AND NOT t.tgisinternal
+  AND t.tgname IN ('labeled_dedup_pairs_frozen_guard',
+                   'labeled_dedup_pairs_truncate_guard',
+                   'labeled_dedup_cohorts_frozen_guard',
+                   'labeled_dedup_cohorts_truncate_guard',
+                   'trg_offrev_vacancy_immutable',
+                   'trg_incarnation_vacancy_immutable',
+                   'trg_slr_incarnation_immutable')
+ORDER BY 1;
+```
+
+**Re-armar si alguna salió en `'O'`** (o en `'D'`, si el restore murió a media faena).
+Es idempotente y no se puede pedir por alembic: las migraciones que las armaron ya están
+aplicadas y no se vuelven a ejecutar.
+
+```sql
+ALTER TABLE jobhunt.labeled_dedup_pairs   ENABLE ALWAYS TRIGGER labeled_dedup_pairs_frozen_guard;
+ALTER TABLE jobhunt.labeled_dedup_pairs   ENABLE ALWAYS TRIGGER labeled_dedup_pairs_truncate_guard;
+ALTER TABLE jobhunt.labeled_dedup_cohorts ENABLE ALWAYS TRIGGER labeled_dedup_cohorts_frozen_guard;
+ALTER TABLE jobhunt.labeled_dedup_cohorts ENABLE ALWAYS TRIGGER labeled_dedup_cohorts_truncate_guard;
+ALTER TABLE jobhunt.offer_revisions       ENABLE ALWAYS TRIGGER trg_offrev_vacancy_immutable;
+ALTER TABLE jobhunt.source_listing_incarnations ENABLE ALWAYS TRIGGER trg_incarnation_vacancy_immutable;
+ALTER TABLE jobhunt.source_listing_revisions    ENABLE ALWAYS TRIGGER trg_slr_incarnation_immutable;
+```
+
+> La suite fija el catálogo esperado sobre una base recién migrada
+> (`test_las_guardas_del_oraculo_disparan_tambien_en_modo_replica` y
+> `test_las_guardas_de_inmutabilidad_disparan_tambien_en_modo_replica`), pero **no puede
+> ver la base de producción**: ahí la comprobación es esta, y es del operador.

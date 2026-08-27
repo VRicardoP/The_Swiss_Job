@@ -774,3 +774,33 @@ def test_las_guardas_del_oraculo_disparan_tambien_en_modo_replica(conn):
         "labeled_dedup_pairs.labeled_dedup_pairs_truncate_guard",
     ]
     assert [f.tgenabled for f in filas] == ["A"] * 4, filas  # 'A' = ENABLE ALWAYS
+
+
+def test_las_guardas_de_inmutabilidad_disparan_tambien_en_modo_replica(conn):
+    """auditoría G11 P2-3 (migración core0035): lo que a core0034 le sobraba por acotar.
+
+    core0034 dejó las otras diez guardas en 'O' con un motivo FALSO: `pg_restore
+    --disable-triggers` no usa `session_replication_role`, sino `ALTER TABLE … DISABLE
+    TRIGGER ALL` (verificado sobre el `pg_dump` 16.14 del clúster real), que desactiva
+    también las 'A' — o sea que `ENABLE ALWAYS` nunca le habría estorbado. Estas tres
+    guardan columnas INMUTABLES por ADR-04 y disparan SOLO en UPDATE, que es algo que un
+    restore data-only (`COPY`/`INSERT`) no hace jamás: no rozan ninguna maniobra legítima
+    y cierran la vía de la sesión en réplica, donde un UPDATE masivo de `vacancy_id`
+    reasignaba revisiones e incarnaciones sin que nada lo impidiera ni dejara rastro.
+    """
+    filas = conn.execute(
+        sa.text(
+            "SELECT t.tgname, t.tgenabled FROM pg_trigger t "
+            "JOIN pg_class c ON c.oid = t.tgrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = :s AND NOT t.tgisinternal "
+            "AND t.tgname IN ('trg_offrev_vacancy_immutable', "
+            "'trg_incarnation_vacancy_immutable', 'trg_slr_incarnation_immutable')"
+        ),
+        {"s": settings.CORE_DB_SCHEMA},
+    ).all()
+    assert {f.tgname: f.tgenabled for f in filas} == {
+        "trg_offrev_vacancy_immutable": "A",
+        "trg_incarnation_vacancy_immutable": "A",
+        "trg_slr_incarnation_immutable": "A",
+    }
