@@ -233,6 +233,24 @@ tiene que acordarse» es exactamente la fragilidad que se está cerrando.
 | El `commit` por entrega del dispatcher se conserva `[I]` | ~13 s/día. «Es un intercambio deliberado que compra corrección» y toca un camino crítico recién estabilizado tras ocho ciclos |
 | Los INSERT por par del dedup core siguen uno a uno `[I]` | 0,064 ms de ida y vuelta, 2.549 candidatos/mes; y `rowcount` de un `executemany` **no es fiable** para el contador que el gate lee |
 
+### `ensayo_c2`: el único ejemplar del corpus del holdout de agosto `[V]`
+
+Descubierto por la auditoría G9 (P3-E) y **verificado aquí con `SELECT`**: la base
+`ensayo_c2` del clúster local (169 MB, 27.723 vacantes) es la **única** copia del corpus
+sobre el que se muestreó y etiquetó el holdout `holdout-dedup-2026-08-23`. Los 115
+`vacancy_id` del `holdout_map.csv` están **todos** allí y **ninguno** en el corpus vivo:
+el holdout nunca se midió sobre este corpus, y por eso no hay nada que restaurar —hay que
+volver a muestrear (protocolo intacto, semilla nueva, excluyendo los pares que ya viven en
+`labeled_dedup_pairs`, incluidos los 187 de `positive-stratum-v1`).
+
+- **No estaba en ningún inventario** y convive con tres bases de ensayo desechables
+  (`jobhunt_cap_*`, `jobhunt_rehearsal_pf_*`, `swissjobhunter_migration_smoke`): cualquier
+  limpieza rutinaria la habría borrado sin que nadie lo notara. Queda declarada aquí.
+- **Respaldada fuera del clúster por el propietario el 2026-08-27.** No la borres ni la
+  reutilices como base de ensayo: es un **archivo histórico**, no un desecho.
+- El resultado del holdout (precision 0.636 / recall 0.259) se conserva como medición
+  histórica **sobre otro corpus**; la cohorte se declara retirada.
+
 ### `claims` y la retirada por veneno `[V]`
 
 - `attempts` = transportes **EJECUTADOS**; se consume en el **resultado**, nunca en el

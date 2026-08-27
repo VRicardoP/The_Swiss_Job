@@ -352,11 +352,47 @@ con `relevance > 0`** de sus 20 relevantes.
 
 Es el que se siguió el 2026-08-27, paso a paso. Sirve tal cual para repetirlo en el NAS.
 
+> ### 🚫 ANTES del COMMIT de la primera mitad: ¿hay cohortes dedup SELLADAS? (G9 P3-D)
+>
+> Las dos mitades **no comparten transacción**, y la segunda
+> (`shadow/canonical_refs.py`) aborta *fail-closed* si una cohorte **sellada** tiene
+> pares que re-mapear (`_require_no_frozen_affected`). Si se commitea la primera y la
+> segunda aborta, los `job_ref` de esa cohorte quedan apuntando a **otras ofertas** y
+> **no se pueden reparar**: son inmutables por `core0025`, y ese es justamente el
+> propósito del sello. Es un enclavamiento sin marcha atrás, no un fallo recuperable.
+>
+> **Comprobar antes (SOLO SELECT), y decidir con el resultado en la mano:**
+>
+> ```sql
+> SELECT c.source, count(*) AS pares_afectados
+> FROM labeled_dedup_pairs p
+> JOIN labeled_dedup_cohorts c ON c.source = p.source AND c.frozen_at IS NOT NULL
+> JOIN sources s ON true
+> WHERE EXISTS (  -- ¿algún lado del par vive en una fuente que la maniobra reescribe?
+>   SELECT 1 FROM source_listings sl JOIN sources s2 ON s2.id = sl.source_id
+>   WHERE sl.external_id IN (p.job_ref_a, p.job_ref_b)
+>     AND s2.name IN ('legacy:arbeitnow','legacy:jobgether','legacy:irishjobs'))
+> GROUP BY c.source;
+> ```
+>
+> **Estado local hoy (medido 2026-08-27, SOLO SELECT):** `positive-stratum-v1` está
+> **SELLADA** y **84 de sus 229** `job_ref` viven en las tres fuentes que la maniobra
+> reescribe (arbeitnow 45, jobgether 27, irishjobs 12). Es decir: **repetir la maniobra
+> en local hoy dejaría la primera mitad aplicada y la segunda abortada.** La ventana que
+> §7.3 daba por abierta se CERRÓ al sellar la cohorte.
+>
+> **Salida** (la que declara el propio módulo): no se fuerza el sello — se carga una
+> cohorte **nueva** con los refs canónicos y la vieja se retira del gate. Impacto acotado
+> mientras `positive-stratum-v1` sea *development* y no vincule al gate.
+
 ```bash
 # 1. Parar los workers (paso 2 del ORDEN de los scripts)
 docker compose stop core-worker worker worker-ai
 
 # 2. pg_dump incluyendo el esquema jobhunt, y ensayo sobre la COPIA
+
+# 2b. ¿COHORTES SELLADAS AFECTADAS? (recuadro de arriba) — si las hay, PARAR:
+#     commitear el paso 3 con la segunda mitad condenada a abortar es irreversible.
 
 # 3. Los dos scripts, con COMMIT, en cualquier orden
 #    (los del repo terminan en ROLLBACK: hay que cambiar esa línea en una copia)
@@ -423,10 +459,12 @@ intermedio**, que es lo que hace innecesario que las dos mitades compartan
 transacción.
 
 **Ventana que hay que respetar**: el re-mapeo aborta si una cohorte dedup
-SELLADA tiene pares que tocar (core0025 los hace inmutables). Hoy no hay
-ninguna cohorte registrada, así que la ventana está abierta. Si se sella el
-holdout antes de la maniobra y sus pares llevan refs canonizables, la única
-salida es cargar una cohorte NUEVA con los refs canónicos y retirar la vieja
+SELLADA tiene pares que tocar (core0025 los hace inmutables). ⚠ **Esa ventana ya
+NO está abierta en local** (G9 P3-D): `positive-stratum-v1` se selló el
+2026-08-27 y **84 de sus 229 refs** viven en las tres fuentes que la maniobra
+reescribe. Antes de commitear la primera mitad —aquí o en el NAS— hay que correr
+la comprobación del recuadro de §7.1. La única salida cuando hay cohorte
+afectada es cargar una cohorte NUEVA con los refs canónicos y retirar la vieja
 del gate — el sello existe justo para que el acta no se reescriba.
 
 **El estrato positivo va DESPUÉS** (G8-N-7): cargar sus 187 pares antes de la
