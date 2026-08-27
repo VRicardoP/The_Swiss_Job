@@ -385,6 +385,46 @@ def test_cohorte_estrato_congelada_rechaza_loader_y_mutaciones(db):
     ]
 
 
+def test_cohorte_congelada_tampoco_se_puede_truncar(db):
+    """REGRESIÓN auditoría G9 P3-A: el trigger de core0025 es FOR EACH ROW y `TRUNCATE`
+    no dispara triggers de fila, así que el rol dueño podía vaciar el oráculo sellado de
+    un golpe — el acta lo llamaba «inmutabilidad física» y era inmutabilidad fila a fila.
+    core0033 añade la guarda BEFORE TRUNCATE ... FOR EACH STATEMENT sobre los pares y
+    sobre la tabla de sellos (truncar ESA descongelaría todo por la puerta de atrás)."""
+    factory, created = db
+    p = uuid.uuid4().hex[:8]
+    cohort = f"stratum-trunc-{p}"
+    created["cohorts"].append(cohort)
+    src = _mk_source(factory, f"legacy:strtr{p}")
+    created["sources"].append(src)
+    vacs = _mk_legacy_pair(factory, src, p, 2)
+    created["dedup_refs"] += [ext for _v, ext in vacs]
+    (va, ra), (vb, rb) = vacs
+    _load(factory, {"B": [_cand(va, vb, 0.9)]}, {"B-01": "duplicate"}, cohort=cohort)
+
+    async def freeze():
+        async with factory() as s:
+            await labels.freeze_dedup_cohort(s, cohort, {"sha256_hoja": "fx"})
+            await s.commit()
+
+    _run(freeze())
+
+    for tabla in ("labeled_dedup_pairs", "labeled_dedup_cohorts"):
+        with pytest.raises(DBAPIError, match="CONGELADA"):
+
+            async def truncar(tabla=tabla):
+                async with factory() as s:
+                    await s.execute(sa.text(f"TRUNCATE {tabla}"))
+                    await s.commit()
+
+            _run(truncar())
+
+    # y el par sellado sigue ahí (si la guarda no mordiera, esto saldría vacío)
+    assert [(r.job_ref_a, r.job_ref_b) for r in _pairs_in_cohort(factory, cohort)] == [
+        (ra, rb)
+    ]
+
+
 def test_modo_desconocido_del_miner_falla_fuerte():
     """Regresión G1 H-14b: un modo del miner fuera de 'ABCDEFM' desaparecía en
     SILENCIO de la numeración (sus pares jamás se numeraban y la hoja quedaba
