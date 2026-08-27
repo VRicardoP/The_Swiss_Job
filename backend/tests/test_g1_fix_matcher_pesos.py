@@ -197,7 +197,10 @@ class TestP319UrgencyDescripcionCompleta:
         )
         svc = MatchService(db=None, groq=None)
         results = svc._stage2_multifactor_score(
-            profile=profile, candidates=[job], weights=None
+            # La etapa 1 entrega (oferta, distancia coseno); 0.0 = coseno 1.
+            profile=profile,
+            candidates=[(job, 0.0)],
+            weights=None,
         )
         assert len(results) == 1
         assert "Bewerbungsfrist" in captured["description"], (

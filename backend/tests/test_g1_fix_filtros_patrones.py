@@ -41,7 +41,7 @@ class TestP216TagFilterCaseInsensitive:
 
         # Sin filtro: el job es candidato.
         sin_filtro = await svc._stage1_vector_search(probe_embedding, set(), [])
-        assert job_hash in {j.hash for j in sin_filtro}
+        assert job_hash in {job.hash for job, _ in sin_filtro}
 
         # Con el filtro aprobado (guardado en minúsculas): DEBE excluirlo.
         con_filtro = await svc._stage1_vector_search(
@@ -49,7 +49,7 @@ class TestP216TagFilterCaseInsensitive:
             set(),
             [{"type": "tag_contains", "pattern": "informatik"}],
         )
-        assert job_hash not in {j.hash for j in con_filtro}, (
+        assert job_hash not in {job.hash for job, _ in con_filtro}, (
             "el filtro 'informatik' debe excluir el tag 'Informatik'"
         )
 
@@ -74,7 +74,7 @@ class TestP216TagFilterCaseInsensitive:
         result = await svc._stage1_vector_search(
             [0.1] * 384, set(), [{"type": "tag_contains", "pattern": "informatik"}]
         )
-        assert job_hash in {j.hash for j in result}
+        assert job_hash in {job.hash for job, _ in result}
 
 
 class TestP323PatronCubierto:

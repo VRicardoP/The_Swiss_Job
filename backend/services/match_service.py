@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import delete, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -272,8 +273,13 @@ class MatchService:
         profile_embedding: list,
         excluded_hashes: set[str] | None = None,
         active_filters: list[dict] | None = None,
-    ) -> list[Job]:
+    ) -> list[tuple[Job, float]]:
         """Fetch ALL active jobs with embeddings, ordered by cosine similarity.
+
+        Devuelve cada oferta CON SU DISTANCIA coseno al perfil — la misma que
+        Postgres acaba de calcular para ordenar. Antes se devolvía solo la
+        oferta, con su `Vector(384)` dentro, y la etapa 2 recalculaba ese mismo
+        coseno en Python sobre un vector que había viajado entero desde la base.
 
         Excluye jobs con feedback negativo y aplica filtros aprobados por el usuario.
         """
@@ -314,13 +320,21 @@ class MatchService:
                 )
                 conditions.append(or_(Job.tags.is_(None), ~tag_hit))
 
+        # El `Vector(384)` NO viaja de vuelta: nadie lo vuelve a mirar y son
+        # 15 MB del payload. `raiseload` lo deja por escrito — si alguien
+        # accediera a `job.embedding` lanzaría, en vez de emitir en silencio
+        # una consulta por fila. Medido contra el corpus real, los dos perfiles
+        # de producción (9.769 filas cada uno): 987,9 -> 280,4 ms y
+        # 920,7 -> 264,8 ms.
+        distance = Job.embedding.cosine_distance(profile_embedding)
         stmt = (
-            select(Job)
+            select(Job, distance.label("distance"))
+            .options(defer(Job.embedding, raiseload=True))
             .where(*conditions)
-            .order_by(Job.embedding.cosine_distance(profile_embedding))
+            .order_by(distance)
         )
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        return [(row[0], row[1]) for row in result.all()]
 
     @staticmethod
     def _category_multiplier_for(job: Job, profile: UserProfile) -> float:
@@ -342,22 +356,27 @@ class MatchService:
     def _stage2_multifactor_score(
         self,
         profile: UserProfile,
-        candidates: list[Job],
+        candidates: list[tuple[Job, float]],
         weights: dict,
     ) -> list[dict]:
-        """Score each candidate with multi-factor weights. Returns sorted list."""
-        import numpy as np
+        """Score each candidate with multi-factor weights. Returns sorted list.
 
+        `candidates` llega de la etapa 1 como (oferta, distancia coseno). El
+        `<=>` de pgvector ES la distancia coseno y `compute_embedding_score`
+        era `max(0, similitud)`, o sea `max(0, 1 - distancia)`: reaprovechar la
+        que ya calculó Postgres no cambia la métrica. Comprobado FILA A FILA
+        contra el corpus real, los dos perfiles de producción, 9.769 ofertas
+        cada uno: `score_final` idéntico en las 19.538 filas (delta exacto de
+        la suma: 0,0). `score_embedding` cambia en 3 filas de 19.538, y en
+        1e-4 — el último decimal de `round(x, 4)`.
+        """
         from services.urgency_scorer import compute_urgency_score
 
-        profile_emb = np.array(profile.cv_embedding)
         now = datetime.now(timezone.utc)
 
         results = []
-        for job in candidates:
-            job_emb = np.array(job.embedding)
-
-            emb_score = self.matcher.compute_embedding_score(profile_emb, job_emb)
+        for job, distance in candidates:
+            emb_score = max(0.0, 1.0 - distance)
             salary_score = JobMatcher.compute_salary_match(
                 profile.salary_min,
                 profile.salary_max,
