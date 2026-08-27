@@ -65,7 +65,11 @@ docker compose up -d
 docker compose exec -T backend python -m pytest tests/ -v --timeout=30
 
 # Tests core (Fase A/B/C, 668 passed, 5:31 — reconfirmar con pytest tras cada crecida)
-docker compose run --rm core-migrate python -m pytest jobhunt_core/tests
+# OJO al perfil: desde la auditoría P1-3 el compose BASE no monta ./jobhunt_core
+# (imagen operativa inmutable). Los tests van con el override de desarrollo, que
+# es el que monta el árbol de trabajo; sin él se probaría el código de la IMAGEN.
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+  run --rm core-migrate python -m pytest jobhunt_core/tests
 
 # Linting
 docker compose exec -T backend ruff check --no-cache .

@@ -152,6 +152,11 @@ services:
     build:
       context: .
       dockerfile: jobhunt_core/Dockerfile
+      args:
+        # SHA horneado en la imagen (auditoría externa P1-3): identifica la release
+        # que corre cada proceso. `RELEASE_SHA=$(git rev-parse --short HEAD) docker
+        # compose build core-api core-worker core-capture core-migrate`.
+        RELEASE_SHA: ${RELEASE_SHA:-unknown}
     image: swissjob-core:dev
     container_name: swissjob-core-migrate
     command: python -m jobhunt_core.migrate
@@ -163,10 +168,6 @@ services:
       # crea jobhunt_capture con la MISMA credencial que usa core-capture en
       # su CAPTURE_DSN (mismo default jobhunt_capture_dev en ambos lados).
       - CORE_CAPTURE_PASSWORD=${CORE_CAPTURE_PASSWORD:-jobhunt_capture_dev}
-    volumes:
-      # Código vivo también en el job de migración (mismo trato que api/worker):
-      # evita ejecutar una imagen desactualizada en dev.
-      - ./jobhunt_core:/app/jobhunt_core
     networks:
       - default
       - core-net
@@ -179,6 +180,8 @@ services:
     build:
       context: .
       dockerfile: jobhunt_core/Dockerfile
+      args:  # identidad de la release (ver core-migrate)
+        RELEASE_SHA: ${RELEASE_SHA:-unknown}
     image: swissjob-core:dev
     container_name: swissjob-core-api
     command: uvicorn jobhunt_core.api.main:app --host 0.0.0.0 --port 8000
@@ -189,8 +192,17 @@ services:
       - CORE_DATABASE_URL=postgresql+asyncpg://jobhunt_core:${CORE_DB_PASSWORD:-jobhunt_core_dev}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
       - CORE_BROKER_URL=redis://:${CORE_REDIS_PASSWORD:-core_redis_dev}@redis-core:6379/0
       - CORE_RESULT_BACKEND=redis://:${CORE_REDIS_PASSWORD:-core_redis_dev}@redis-core:6379/1
-    volumes:
-      - ./jobhunt_core:/app/jobhunt_core
+    healthcheck:
+      # /v1/ready, no un health estático: comprueba que la BD responde Y que su
+      # head de Alembic es el que espera el código DE ESTA IMAGEN. Sin este
+      # healthcheck la API estuvo dos días en 503 sin que nadie se enterara
+      # (auditoría externa 2026-08-27 P1-3). urlopen lanza en cualquier respuesta
+      # que no sea 2xx → exit != 0.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/ready', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - default
       - core-net
@@ -207,6 +219,8 @@ services:
     build:
       context: .
       dockerfile: jobhunt_core/Dockerfile
+      args:  # identidad de la release (ver core-migrate)
+        RELEASE_SHA: ${RELEASE_SHA:-unknown}
     image: swissjob-core:dev
     container_name: swissjob-core-worker
     # SOLO colas core.* — el worker legacy escucha default/scraping/ai en OTRO broker.
@@ -222,8 +236,6 @@ services:
       - CORE_DATABASE_URL=postgresql+asyncpg://jobhunt_core:${CORE_DB_PASSWORD:-jobhunt_core_dev}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
       - CORE_BROKER_URL=redis://:${CORE_REDIS_PASSWORD:-core_redis_dev}@redis-core:6379/0
       - CORE_RESULT_BACKEND=redis://:${CORE_REDIS_PASSWORD:-core_redis_dev}@redis-core:6379/1
-    volumes:
-      - ./jobhunt_core:/app/jobhunt_core
     networks:
       - default
       - core-net
@@ -242,6 +254,8 @@ services:
     build:
       context: .
       dockerfile: jobhunt_core/Dockerfile
+      args:  # identidad de la release (ver core-migrate)
+        RELEASE_SHA: ${RELEASE_SHA:-unknown}
     image: swissjob-core:dev
     container_name: swissjob-core-capture
     command: python -m jobhunt_core.shadow.capture
@@ -249,8 +263,6 @@ services:
     environment:
       - CORE_DATABASE_URL=postgresql+asyncpg://jobhunt_core:${CORE_DB_PASSWORD:-jobhunt_core_dev}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
       - CAPTURE_DSN=postgresql://jobhunt_capture:${CORE_CAPTURE_PASSWORD:-jobhunt_capture_dev}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
-    volumes:
-      - ./jobhunt_core:/app/jobhunt_core
     healthcheck:
       # Subcomando --health del propio módulo: conexión core OK + slot
       # presente y ACTIVO (walsender conectado) + updated_at de la frontera

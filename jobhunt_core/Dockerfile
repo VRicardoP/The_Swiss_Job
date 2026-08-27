@@ -15,6 +15,14 @@ RUN addgroup --system core && adduser --system --ingroup core core
 COPY --chown=core:core jobhunt_core /app/jobhunt_core
 USER core
 
+# Identidad de la release, horneada en la imagen (auditoría externa 2026-08-27
+# P1-3): `__version__` es una constante y no distingue despliegues. Se pasa al
+# construir — `RELEASE_SHA=$(git rev-parse --short HEAD) docker compose build ...` —
+# y NO se inyecta por `environment:` en runtime, para que no pueda desligarse del
+# código que lleva la imagen. La API la publica en /v1/health y /v1/ready.
+ARG RELEASE_SHA=unknown
+ENV RELEASE_SHA=${RELEASE_SHA}
+
 # Comando por defecto: la API. worker/migrate pasan su propio command en compose.
 CMD ["uvicorn", "jobhunt_core.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 

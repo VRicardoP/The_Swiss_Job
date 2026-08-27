@@ -73,8 +73,10 @@ docker exec -t swissjob-postgres pg_dump -U swissjob swissjobhunter \
   | gzip > /share/Public/backups/swissjob/db-pre-sombra-$(date +%Y%m%d-%H%M).sql.gz
 ```
 
-- En dev: repo al día, suite core verde (`docker compose run --rm core-migrate
-  python -m pytest jobhunt_core/tests`).
+- En dev: repo al día, suite core verde (`docker compose -f docker-compose.yml
+  -f docker-compose.dev.yml run --rm core-migrate python -m pytest
+  jobhunt_core/tests` — el override de desarrollo es el que monta el árbol de
+  trabajo; el compose base corre la imagen).
 
 ## 2. Build local de las 2 imágenes nuevas
 

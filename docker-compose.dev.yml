@@ -1,0 +1,46 @@
+# Perfil de DESARROLLO del core — override EXPLÍCITO de docker-compose.yml.
+#
+# Uso:  docker compose -f docker-compose.yml -f docker-compose.dev.yml <cmd>
+#
+# Por qué existe (auditoría externa 2026-08-27, P1-3): el perfil operativo dejó
+# de montar `./jobhunt_core` como volumen. Con el código montado, un proceso
+# puede seguir sirviendo en memoria la release A mientras los ficheros y la BD
+# ya van por la B — es lo que pasó dos veces en este despliegue (el capturador
+# cinco días con código viejo; la API dos días en 503). La imagen inmutable
+# elimina esa clase de estado: cambiar el código exige reconstruir y recrear.
+#
+# Este fichero devuelve el bind mount para el ciclo de desarrollo (editar y
+# probar sin reconstruir), a cambio de que el readiness de esos procesos NO
+# autorice operaciones: con CORE_CODE_MUTABLE=1, `/v1/ready` responde
+# `authoritative: false` y su `release` no identifica el código que corre.
+#
+# NO es un `docker-compose.override.yml` a propósito: un override implícito se
+# aplicaría también al desplegar y devolvería el defecto en silencio. Aquí hay
+# que pedirlo, y olvidarse deja el perfil SEGURO.
+#
+# Los tests del core se ejecutan con este perfil (montan el árbol de trabajo):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#     run --rm core-migrate python -m pytest jobhunt_core/tests -q
+
+services:
+  core-migrate:
+    volumes:
+      - ./jobhunt_core:/app/jobhunt_core
+
+  core-api:
+    environment:
+      - CORE_CODE_MUTABLE=1
+    volumes:
+      - ./jobhunt_core:/app/jobhunt_core
+
+  core-worker:
+    environment:
+      - CORE_CODE_MUTABLE=1
+    volumes:
+      - ./jobhunt_core:/app/jobhunt_core
+
+  core-capture:
+    environment:
+      - CORE_CODE_MUTABLE=1
+    volumes:
+      - ./jobhunt_core:/app/jobhunt_core

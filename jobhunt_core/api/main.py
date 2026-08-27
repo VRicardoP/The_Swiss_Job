@@ -156,7 +156,9 @@ async def health() -> dict:
 
 
 def _read_expected_head() -> str:
-    """Lee de disco el head de la cadena de migraciones DE ESTA IMAGEN."""
+    """Lee de disco el head de la cadena de migraciones del paquete. En el perfil
+    operativo el disco ES la imagen (no hay bind mount); en el de desarrollo es el
+    árbol de trabajo montado, y por eso ese readiness se declara no autoritativo."""
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
@@ -194,8 +196,10 @@ async def ready() -> JSONResponse:
     jobhunt en la conexión), sin interpolar el nombre del esquema.
 
     La expectativa se congela al arrancar (ver `_EXPECTED_HEAD`) y la respuesta
-    lleva la release del proceso: un 200 certifica el par (código, esquema) de
-    UNA release, no el esquema de una y los handlers de otra.
+    lleva la release del proceso: en el perfil operativo un 200 certifica el par
+    (código, esquema) de UNA release, no el esquema de una y los handlers de otra.
+    En el de desarrollo el código va montado y el 200 llega con
+    `authoritative: false` — informativo, no autorización para operar.
     """
     try:
         async with engine.connect() as conn:
