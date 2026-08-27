@@ -8,7 +8,7 @@
 
 | Hecho | Estado | Cómo se comprobó |
 |---|---|---|
-| `core-capture` **YA REINICIADO** | Contenedor levantado **2026-08-26T23:06:59Z**, `RestartCount=0` | `docker inspect -f '{{.State.StartedAt}}'` |
+| `core-capture` **YA REINICIADO** | Proceso levantado **2026-08-26T23:06:59Z** (el contenedor se CREÓ el 2026-07-28: son fechas distintas). `RestartCount=0` no lo desmiente — solo cuenta reinicios de la *restart policy*, no un `stop`+`start` manual | `docker inspect -f '{{.State.StartedAt}}'`, **no** `docker compose ps` |
 | La avería del lazo de cola | **CERRADA** | slot retiene **5 088 bytes** (eran 2,6 GB creciendo a 2,1–3,0 MB/s), `confirmed_flush` a **424 bytes**, `active=t` |
 | Ritmo del latido | **~0/s** (techo 10/s; la avería marcaba 559–979/s) | dos muestras de `n_tup_upd` separadas en el tiempo: **sin variación** |
 | Código del **streamer** en el proceso vivo | **al día** | el último commit del camino de streaming (`a1ac816`, 2026-08-25T22:19Z) es ANTERIOR al arranque del contenedor |
@@ -90,6 +90,13 @@ no dependencia: ausente o corrupto = «primera vez», jamás unhealthy.
 > ya corregido dentro del contenedor**. `grep` al fichero NO responde qué código corre; solo
 > lo responde la fecha de arranque del contenedor contra la del commit:
 > `docker inspect -f '{{.State.StartedAt}}' swissjob-core-capture` frente a `git log -1 --format=%cI -- jobhunt_core/shadow/capture.py`.
+>
+> **Y no vale `docker compose ps`**: su columna de antigüedad es la de **CREACIÓN**, no la del
+> proceso. Hoy mismo (2026-08-27) dice «4 weeks ago» para un `core-capture` cuyo proceso lleva
+> **9 horas** — `Created=2026-07-28`, `StartedAt=2026-08-26T23:06:59Z`. Tampoco vale
+> `RestartCount`: solo cuenta los reinicios de la *restart policy*, así que un `stop`+`start`
+> manual lo deja en **0**. Es la misma trampa una capa más abajo, y es la que hace que un
+> proceso con código viejo parezca recién levantado.
 > En LOCAL `jobhunt_core/` va bind-montado, así que **basta `docker compose restart core-capture`**
 > para que reimporte; en el NAS el código va HORNEADO en la imagen y hace falta imagen nueva +
 > recreate. En ambos casos, tras tocar `shadow/capture.py` el proceso hay que **reiniciarlo
