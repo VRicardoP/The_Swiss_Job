@@ -119,6 +119,13 @@ def db(met_db, monkeypatch):
 
     async def cleanup():
         async with engine.begin() as c:
+            # core0033 (G9 P3-A): con una cohorte CONGELADA el TRUNCATE de los pares y
+            # de los sellos está prohibido — se desmonta la guarda como las de
+            # core0025/0026 en el resto de fixtures (DDL del owner) y se vuelve a montar.
+            for tabla in ("labeled_dedup_pairs", "labeled_dedup_cohorts"):
+                await c.execute(
+                    sa.text(f"ALTER TABLE {tabla} DISABLE TRIGGER {tabla}_truncate_guard")
+                )
             await c.execute(
                 sa.text(
                     "TRUNCATE shadow_change_log, shadow_projection_batches, "
@@ -126,6 +133,10 @@ def db(met_db, monkeypatch):
                     "labeled_dedup_cohorts"
                 )
             )
+            for tabla in ("labeled_dedup_pairs", "labeled_dedup_cohorts"):
+                await c.execute(
+                    sa.text(f"ALTER TABLE {tabla} ENABLE TRIGGER {tabla}_truncate_guard")
+                )
             await c.execute(sa.text("TRUNCATE integration_outbox CASCADE"))
             await c.execute(
                 sa.text(
