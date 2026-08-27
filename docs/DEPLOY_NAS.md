@@ -203,9 +203,20 @@ curl -s localhost:8003/v1/ready    # {"release":"<sha>","authoritative":true,...
 Todos los procesos del core deben publicar **el mismo** `release` y el mismo head, y
 `authoritative: true`. Las dos sondas llevan la marca (G9 P2-A: health la publicaba sin
 ella, y es la primera que se ejecuta aquí). `authoritative` es **false** si el código va
-montado (perfil de desarrollo) **o** si la imagen no sabe nombrar su release
-(`RELEASE_SHA=unknown`): sin esa segunda condición, el «mismo SHA» se cumpliría entre
-`unknown`s sin decir nada (G9 P2-B).
+montado (perfil de desarrollo), si la imagen no sabe nombrar su release
+(`RELEASE_SHA=unknown`) —sin esa condición el «mismo SHA» se cumpliría entre `unknown`s
+sin decir nada (G9 P2-B)— **o si el `RELEASE_SHA` del entorno no es el que la imagen
+lleva horneado en `/app/RELEASE`** (G10 P2-2). Esto último cierra el agujero de la
+marca: `RELEASE_SHA` es un ENV de la imagen y el ENV de una imagen lo pisa cualquier
+`environment:`/`env_file:` del contenedor, así que un `-e RELEASE_SHA=deadbee` bastaba
+para publicar `deadbee` con `authoritative: true` sobre el código de otra construcción.
+Si una sonda da `authoritative: false` con el código NO montado y un SHA con pinta
+normal, comprueba justamente eso:
+
+```bash
+docker compose exec -T core-api printenv RELEASE_SHA   # lo que el entorno inyecta
+docker compose exec -T core-api cat /app/RELEASE       # lo que la imagen hornea
+```
 
 > ⚠ **Deuda abierta en producción.** `core-api` tiene healthcheck de compose contra
 > `/v1/ready` en `docker-compose.yml`, pero **no** en `docker-compose.prod.yml` ni en
