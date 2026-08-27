@@ -97,6 +97,19 @@ class CoreSettings(BaseSettings):
     # DESACTIVADO — un 0 reintroduciría la espera infinita que este setting cierra.
     # Cota superior operativa (le=60s): más allá no acota nada útil.
     CORE_IDEMPOTENCY_LOCK_TIMEOUT_MS: int = Field(3000, gt=0, le=60_000)
+    # RETENCIÓN de las tablas de trabajo terminado (O-4, jobhunt_core/
+    # retention.py). Medido 2026-08-27: 28,9 MB en 28 días sin cota alguna
+    # ⇒ ~377 MB/año. Con 30 días el estado estacionario se queda donde está.
+    # Las evaluaciones llevan retención PROPIA y más larga porque el gate las
+    # cuenta por ciclo (_coste_row) y solo se borran las SUPERADAS.
+    # gt=0 en todas: un 0 significaría "borra lo de hoy mismo".
+    CORE_OUTBOX_RETENTION_DAYS: int = Field(30, gt=0)
+    CORE_SHADOW_INBOX_RETENTION_DAYS: int = Field(30, gt=0)
+    CORE_EVAL_RETENTION_DAYS: int = Field(90, gt=0)
+    # Tope de filas por tabla y pasada: la purga no coge un lock largo sobre
+    # tablas que el dispatcher y el matching están usando. Lo que sobre se lo
+    # lleva la pasada siguiente.
+    CORE_RETENTION_MAX_ROWS: int = Field(20_000, gt=0)
 
     model_config = {"extra": "ignore"}
 

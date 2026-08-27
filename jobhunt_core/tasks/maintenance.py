@@ -6,6 +6,7 @@ from jobhunt_core.archive import archive_sweep
 from jobhunt_core.celery_app import celery_app
 from jobhunt_core.database import task_session_factory
 from jobhunt_core.dedup import scan_semantic_candidates
+from jobhunt_core.retention import purge_retention
 
 
 @celery_app.task(name="jobhunt.maintenance.archive_sweep")
@@ -37,6 +38,12 @@ def dedup_revalidate_by_rule_task(apply: bool = False) -> dict:
     from jobhunt_core.dedup import revalidate_pending_candidates
 
     return asyncio.run(_run(partial(revalidate_pending_candidates, apply=apply)))
+
+
+@celery_app.task(name="jobhunt.maintenance.purge_retention")
+def purge_retention_task() -> dict:
+    """Retención de las tablas de trabajo terminado (O-4, jobhunt_core/retention.py)."""
+    return asyncio.run(_run(purge_retention))
 
 
 @celery_app.task(name="jobhunt.maintenance.dedup_scan")

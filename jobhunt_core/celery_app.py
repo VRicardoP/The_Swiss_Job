@@ -44,6 +44,7 @@ celery_app.conf.update(
         "jobhunt.maintenance.dedup_scan": {"queue": "core.default"},
         "jobhunt.maintenance.dedup_lex_backfill": {"queue": "core.default"},
         "jobhunt.maintenance.dedup_revalidate_by_rule": {"queue": "core.default"},
+        "jobhunt.maintenance.purge_retention": {"queue": "core.default"},
         # Proyector de la sombra (B-02, contrato §3): comparte la cola de
         # cosecha — es ingesta, y serializa con los locks del sink.
         "jobhunt.shadow.project": {"queue": "core.harvest"},
@@ -118,6 +119,14 @@ celery_app.conf.update(
         "maintenance-dedup-scan": {
             "task": "jobhunt.maintenance.dedup_scan",
             "schedule": crontab(hour=5, minute=20),
+        },
+        # O-4: retención de outbox/entregas/inbox sombra/evaluaciones. DESPUÉS
+        # del cierre de ciclo de las 06:05 — el ciclo cuenta evaluaciones y
+        # dead-letters de la ventana que acaba de cerrar, y purgar antes le
+        # cambiaría los números por debajo de los pies.
+        "maintenance-purge-retention": {
+            "task": "jobhunt.maintenance.purge_retention",
+            "schedule": crontab(hour=6, minute=40),
         },
     },
 )
