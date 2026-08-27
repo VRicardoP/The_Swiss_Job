@@ -1,0 +1,72 @@
+"""core0034 — las guardas del oráculo también disparan en modo réplica.
+
+Auditoría G10 P2-3: los `CREATE TRIGGER` de core0025/core0026/core0033 nacen con
+`tgenabled = 'O'` (*origin*), que es el default. Un
+`SET session_replication_role = 'replica'` —sentencia de SESIÓN, no DDL— los deja
+INERTES a todos y no cambia el catálogo, así que **no deja rastro alguno**, a
+diferencia del `ALTER TABLE … DISABLE TRIGGER` que esas mismas migraciones
+documentan como vía de desmontaje legítima («DDL del owner, con rastro»).
+
+Reproducido en una base desechable con réplica exacta de las cuatro guardas y de
+la cohorte sellada: TRUNCATE, DELETE sin WHERE y UPDATE del sello se bloquean,
+pero `SET session_replication_role='replica'; TRUNCATE labeled_dedup_pairs;`
+vacía el oráculo y **deja el sello intacto** — nada parece roto. Con los pares a
+cero las métricas de dedup salen con el centinela `no_data` y el gate se pone
+rojo sin causa visible: literalmente el escenario que core0033 vino a impedir.
+Con `ENABLE ALWAYS` el mismo ataque vuelve a fallar en las tres variantes.
+
+Quién podía: solo un superusuario (`jobhunt_core` y `jobhunt_capture` reciben
+`permission denied to set parameter "session_replication_role"`). Pero `swissjob`
+—el rol con el que se opera esta caja y el que usan los runbooks— lo es, y el
+modelo de amenaza de la guarda es justamente el borrado masivo accidental del
+operador.
+
+ALCANCE: las CUATRO guardas del ORÁCULO. Las otras 10 guardas del esquema
+(`trg_corpus_generation_*`, `trg_offrev_vacancy_immutable`, …) siguen en 'O' a
+propósito: protegen tablas de datos masivos y `ENABLE ALWAYS` las haría disparar
+también durante un `pg_restore --disable-triggers`, que usa exactamente este
+mecanismo. El oráculo no se restaura así: es una cohorte sellada de 187 pares
+cuya reconstrucción es una maniobra deliberada, con DDL del owner y rastro.
+
+ADVERTENCIA: `ENABLE ALWAYS` hace que la guarda dispare también en un nodo que
+APLIQUE replicación lógica. Aquí no se replica hacia estas tablas —`core-capture`
+LEE del slot, no escribe—; si algún día la sombra se replicara hacia un nodo con
+estas tablas, hay que revisarlo.
+
+Revision ID: core0034
+Revises: core0033
+Create Date: 2026-08-27
+"""
+
+from typing import Sequence, Union
+
+from alembic import op
+
+from jobhunt_core.config import settings
+
+revision: str = "core0034"
+down_revision: Union[str, None] = "core0033"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+S = settings.CORE_DB_SCHEMA  # "jobhunt"
+
+# (tabla, guarda) — la inmutabilidad de fila (core0025/core0026) y la del
+# statement TRUNCATE (core0033), que sin esto caían con la MISMA sentencia.
+_GUARDAS = (
+    ("labeled_dedup_pairs", "labeled_dedup_pairs_frozen_guard"),
+    ("labeled_dedup_pairs", "labeled_dedup_pairs_truncate_guard"),
+    ("labeled_dedup_cohorts", "labeled_dedup_cohorts_frozen_guard"),
+    ("labeled_dedup_cohorts", "labeled_dedup_cohorts_truncate_guard"),
+)
+
+
+def upgrade() -> None:
+    for tabla, guarda in _GUARDAS:
+        op.execute(f"ALTER TABLE {S}.{tabla} ENABLE ALWAYS TRIGGER {guarda}")
+
+
+def downgrade() -> None:
+    # Vuelta a 'O' (origin), el default de CREATE TRIGGER.
+    for tabla, guarda in _GUARDAS:
+        op.execute(f"ALTER TABLE {S}.{tabla} ENABLE TRIGGER {guarda}")

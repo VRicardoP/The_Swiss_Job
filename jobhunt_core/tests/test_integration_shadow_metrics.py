@@ -135,7 +135,7 @@ def db(met_db, monkeypatch):
             )
             for tabla in ("labeled_dedup_pairs", "labeled_dedup_cohorts"):
                 await c.execute(
-                    sa.text(f"ALTER TABLE {tabla} ENABLE TRIGGER {tabla}_truncate_guard")
+                    sa.text(f"ALTER TABLE {tabla} ENABLE ALWAYS TRIGGER {tabla}_truncate_guard")
                 )
             await c.execute(sa.text("TRUNCATE integration_outbox CASCADE"))
             await c.execute(
@@ -2625,7 +2625,7 @@ def test_render_report_ciclo_mixto_dice_inelegible_no_apto(db):
         _exec(
             factory,
             "ALTER TABLE labeled_dedup_cohorts "
-            "ENABLE TRIGGER labeled_dedup_cohorts_frozen_guard",
+            "ENABLE ALWAYS TRIGGER labeled_dedup_cohorts_frozen_guard",
         )
 
     async def report():

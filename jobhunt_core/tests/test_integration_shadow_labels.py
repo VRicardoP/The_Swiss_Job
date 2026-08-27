@@ -606,7 +606,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                     )
                 ).scalar_one()
 
-        assert asyncio.run(seed_and_version()) == "core0033"
+        assert asyncio.run(seed_and_version()) == "core0034"
 
         run_alembic(temp_url, "downgrade", "core0007")
 
@@ -640,7 +640,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                         sa.text("SELECT version_num FROM alembic_version")
                     )
                 ).scalar_one()
-                assert version == "core0033"
+                assert version == "core0034"
                 # El esquema re-creado FUNCIONA y con sus guardas: smoke real.
                 cid = await profiles.ensure_consumer(s, "b03-post")
                 pid = await profiles.upsert_profile(s, cid, "user-post")
@@ -772,7 +772,7 @@ async def _desmonta_cohorte(factory, src):
         await s.execute(
             sa.text(
                 "ALTER TABLE labeled_dedup_cohorts "
-                "ENABLE TRIGGER labeled_dedup_cohorts_frozen_guard"
+                "ENABLE ALWAYS TRIGGER labeled_dedup_cohorts_frozen_guard"
             )
         )
         await s.commit()
@@ -967,7 +967,7 @@ def test_freeze_exige_manifest_no_vacio(db):
             await s.execute(
                 sa.text(
                     "ALTER TABLE labeled_dedup_cohorts "
-                    "ENABLE TRIGGER labeled_dedup_cohorts_frozen_guard"
+                    "ENABLE ALWAYS TRIGGER labeled_dedup_cohorts_frozen_guard"
                 )
             )
             await s.execute(

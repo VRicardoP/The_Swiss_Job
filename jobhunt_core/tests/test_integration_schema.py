@@ -734,3 +734,43 @@ def test_idempotency_scoped_by_consumer_and_route(conn):
         {"s": settings.CORE_DB_SCHEMA},
     ).scalar()
     assert idx == 1
+
+
+def test_las_guardas_del_oraculo_disparan_tambien_en_modo_replica(conn):
+    """REGRESIÓN auditoría G10 P2-3 (migración core0034).
+
+    Los `CREATE TRIGGER` nacen con `tgenabled = 'O'` (*origin*), que es el default, y un
+    `SET session_replication_role = 'replica'` —sentencia de SESIÓN, no DDL— los deja
+    inertes SIN tocar el catálogo: no deja rastro alguno, a diferencia del
+    `ALTER TABLE … DISABLE TRIGGER` que las propias migraciones documentan como vía de
+    desmontaje legítima («DDL del owner, con rastro»). Verificado en base desechable: con
+    las cuatro en 'O', un `SET session_replication_role='replica'; TRUNCATE
+    labeled_dedup_pairs;` vaciaba el oráculo SELLADO dejando el sello intacto — y con los
+    pares a cero las métricas de dedup salen con el centinela `no_data` y el gate se pone
+    rojo sin causa visible, que es literalmente lo que core0033 vino a impedir.
+
+    Solo un superusuario puede hacerlo (`jobhunt_core` recibe `permission denied to set
+    parameter`), pero `swissjob` —el rol con el que se opera esta caja y el de los
+    runbooks— lo es, y el modelo de amenaza de la guarda es justamente el borrado masivo
+    accidental del operador. Por eso el test mira el CATÁLOGO: el rol de la suite no puede
+    montar el ataque, pero sí comprobar que la guarda está en el modo que lo bloquea.
+    """
+    filas = conn.execute(
+        sa.text(
+            "SELECT c.relname || '.' || t.tgname AS guarda, t.tgenabled "
+            "FROM pg_trigger t "
+            "JOIN pg_class c ON c.oid = t.tgrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = :s AND NOT t.tgisinternal "
+            "AND c.relname IN ('labeled_dedup_pairs', 'labeled_dedup_cohorts') "
+            "ORDER BY 1"
+        ),
+        {"s": settings.CORE_DB_SCHEMA},
+    ).all()
+    assert [f.guarda for f in filas] == [
+        "labeled_dedup_cohorts.labeled_dedup_cohorts_frozen_guard",
+        "labeled_dedup_cohorts.labeled_dedup_cohorts_truncate_guard",
+        "labeled_dedup_pairs.labeled_dedup_pairs_frozen_guard",
+        "labeled_dedup_pairs.labeled_dedup_pairs_truncate_guard",
+    ]
+    assert [f.tgenabled for f in filas] == ["A"] * 4, filas  # 'A' = ENABLE ALWAYS

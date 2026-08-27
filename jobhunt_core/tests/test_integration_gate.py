@@ -171,7 +171,7 @@ def db(gate_db, monkeypatch):
             )
             for tabla in ("labeled_dedup_pairs", "labeled_dedup_cohorts"):
                 await c.execute(
-                    sa.text(f"ALTER TABLE {tabla} ENABLE TRIGGER {tabla}_truncate_guard")
+                    sa.text(f"ALTER TABLE {tabla} ENABLE ALWAYS TRIGGER {tabla}_truncate_guard")
                 )
             await c.execute(sa.text("TRUNCATE integration_outbox CASCADE"))
             await c.execute(
@@ -455,7 +455,7 @@ def _freeze_holdout(factory, when):
     _exec(
         factory,
         "ALTER TABLE labeled_dedup_cohorts "
-        "ENABLE TRIGGER labeled_dedup_cohorts_frozen_guard",
+        "ENABLE ALWAYS TRIGGER labeled_dedup_cohorts_frozen_guard",
     )
 
 

@@ -63,7 +63,7 @@ def db():
             await s.execute(
                 sa.text(
                     "ALTER TABLE labeled_dedup_cohorts "
-                    "ENABLE TRIGGER labeled_dedup_cohorts_frozen_guard"
+                    "ENABLE ALWAYS TRIGGER labeled_dedup_cohorts_frozen_guard"
                 )
             )
             await dbcleanup.purge_shadow(s, dedup_refs=created["dedup_refs"])
