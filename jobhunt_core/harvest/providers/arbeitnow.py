@@ -231,26 +231,7 @@ async def _sweep_feed(
             # atrás (auditoría G9 P1-A).
             items = _page_items(body, page)
             has_next = _has_next_page(body, page)
-            if items:
-                cosecha = _collect_items(items, keyword, collected, top_seen)
-                if not cosecha.usable:
-                    # El sobre es impecable y el CONTENIDO inservible: es el aspecto
-                    # de una subida de versión que renombra los campos del item
-                    # (`url`→`job_url`). Cero listings NO es una página vacía
-                    # (auditoría G10 P2-1).
-                    raise ProviderResponseError(
-                        f"página {page}: {len(items)} items y 0 utilizables — la forma "
-                        "del item dejó de cumplir el contrato (¿campos renombrados?)"
-                    )
-                top_seen = cosecha.top_seen
-            elif has_next:
-                # El sobre se CONTRADICE a sí mismo (auditoría G10 P1-1): una página
-                # sin ofertas que anuncia página siguiente no es el final del feed, y
-                # tomarla por tal registraba una cosecha COMPLETA de cero ofertas.
-                raise ProviderResponseError(
-                    f"página {page}: 'data' vacío pero el sobre anuncia links.next — "
-                    "el feed se contradice; no es el final"
-                )
+            top_seen = _harvest_page(items, has_next, keyword, collected, top_seen, page)
             pages += 1
             if not items or not has_next:
                 exhausted = True
@@ -321,6 +302,38 @@ def _describe_failure(exc: Exception, page: int) -> str:
     if isinstance(exc, ProviderResponseError):
         return str(exc)  # ya viene con el número de página
     return f"página {page}: {_reason(exc)}"
+
+
+def _harvest_page(
+    items: list, has_next: bool, keyword: str | None,
+    collected: list[RawListing], top_seen: int, page: int,
+) -> int:
+    """Cosecha UNA página y devuelve el watermark, exigiendo que la página no se
+    contradiga a sí misma (auditoría G10 P1-1 y P2-1).
+
+    Las dos incoherencias tienen el sobre INTACTO y por eso pasaban la validación de
+    frontera entera; las dos declaraban COMPLETA una cosecha de cero ofertas:
+    - `data` vacío mientras `links.next` anuncia página siguiente: el feed dice a la vez
+      que se acabó y que no. No es el final; es una respuesta que dejó de cumplir.
+    - items que ya no se reconocen como ofertas (subida de versión que renombra
+      `url`→`job_url`): página con contenido y cero utilizables. Tampoco es el final.
+    Las dos son `ProviderResponseError`, o sea el camino que ya existía: página 1 sube,
+    página k>1 preserva lo cosechado.
+    """
+    if not items:
+        if has_next:
+            raise ProviderResponseError(
+                f"página {page}: 'data' vacío pero el sobre anuncia links.next — "
+                "el feed se contradice; no es el final"
+            )
+        return top_seen  # final LEGÍTIMO del feed: vacío y sin anunciar siguiente
+    cosecha = _collect_items(items, keyword, collected, top_seen)
+    if not cosecha.usable:
+        raise ProviderResponseError(
+            f"página {page}: {len(items)} items y 0 utilizables — la forma del item "
+            "dejó de cumplir el contrato (¿campos renombrados?)"
+        )
+    return cosecha.top_seen
 
 
 @dataclass(frozen=True)
