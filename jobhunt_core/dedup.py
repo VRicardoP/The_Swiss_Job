@@ -20,7 +20,10 @@ MÍNIMO que el gate necesita y el MÁXIMO que es seguro hoy:
 
 Corpus y vectores: el MISMO join probado del matching (vacante elegible →
 revisión vigente → embedding del modelo activo) y el MISMO índice HNSW; la
-consulta kNN es un LATERAL por vacante nueva, no un O(n²).
+consulta kNN es un LATERAL por vacante nueva, no un O(n²). Los VECTORES no
+salen de la base (O-3): el barrido lleva ids, y el kNN resuelve el vector de
+la fila sondeada con una sonda por id que el planificador convierte en
+InitPlan — el índice HNSW se sigue usando (verificado con EXPLAIN ANALYZE).
 
 Incremental: cada pasada mira las vacantes cuya revisión vigente nació en la
 ventana (`CORE_DEDUP_SCAN_WINDOW_H`, 48 h — un día de margen sobre el beat
@@ -44,8 +47,17 @@ logger = logging.getLogger(__name__)
 
 # Corpus elegible CON vector y fuente (la fuente sale del primary — una
 # vacante sin primary no puede afirmar su procedencia: se salta).
+# OPT O-3 (auditoría de eficiencia 2026-08-27): el corpus NO se trae el
+# vector. Lo traía —y su único uso era devolverlo como parámetro :vec en la
+# consulta SIGUIENTE—, así que cada fila bajaba ~4,7 KB y volvía a subir otros
+# ~4,7 KB (medido: `avg(length(oe.vector::text)) = 4 690` bytes sobre las
+# 13 273 filas del modelo activo). Para las 8 311 vacantes de la ventana de
+# 48 h eso son ~39 MB de bajada y ~39 MB de subida de datos que nunca
+# necesitaron salir de la base. El join a offer_embeddings SE CONSERVA: es la
+# condición de elegibilidad («tiene vector del modelo activo»), no un
+# transporte.
 _CORPUS_SQL = (
-    "SELECT v.id, oe.vector, sl.source_id, "
+    "SELECT v.id, sl.source_id, "
     "       coalesce(orv.content->>'location', '') AS loc "
     "FROM vacancies v "
     "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
@@ -178,9 +190,26 @@ def _loc_compat_sql(a: str, b: str) -> str:
 # dup (~0.96). Regla: compatible si alguna ubicación está VACÍA (sin dato
 # no se veta) o si una contiene a la otra (case-insensitive, con btrim) —
 # «Zürich» ~ «Zürich, Zürich». Ver ANALISIS_TRACK_R_2026-08-24.md.
+# OPT O-3: el vector de la fila sondeada, resuelto DENTRO de la base a partir
+# de su id — mismo join que el corpus, así que es el MISMO vector. La sonda no
+# es correlacionada con la consulta de fuera, de modo que el planificador la
+# resuelve como InitPlan y el kNN recibe un Param, no una expresión: el índice
+# HNSW se sigue usando. VERIFICADO con EXPLAIN (ANALYZE, BUFFERS) contra los
+# datos reales — «Index Scan using offer_embeddings_..._vector_idx» con
+# «Order By: (vector <=> $5)», InitPlan de 0,03 ms y 10 buffers. (Era el punto
+# donde esto podía torcerse: un ORDER BY que dejara de ser «columna <=>
+# constante» habría caído a barrido secuencial en silencio.)
+_VEC_SUBQ = (
+    "(SELECT oe2.vector FROM vacancies v2 "
+    " JOIN offer_revisions orv2 ON orv2.id = v2.current_offer_revision_id "
+    " JOIN offer_embeddings oe2 "
+    "   ON oe2.text_hash = orv2.text_hash AND oe2.model_id = :mid "
+    " WHERE v2.id = :vid)"
+)
+
 _KNN_SQL = (
     "SELECT v.id AS vacancy_id, sl.source_id, "
-    "       1 - (oe.vector <=> CAST(:vec AS vector)) AS sim "
+    "       1 - (oe.vector <=> " + _VEC_SUBQ + ") AS sim "
     "FROM vacancies v "
     "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
     "JOIN offer_embeddings oe "
@@ -192,7 +221,7 @@ _KNN_SQL = (
     "  AND " + _loc_compat_sql(
         "CAST(:loc AS text)", "coalesce(orv.content->>'location', '')"
     ) + " "
-    "ORDER BY oe.vector <=> CAST(:vec AS vector) "
+    "ORDER BY oe.vector <=> " + _VEC_SUBQ + " "
     "LIMIT :k"
 )
 
@@ -485,7 +514,7 @@ async def scan_semantic_candidates(
 
     inserted = 0
     for row in nuevos:
-        knn_params = {"vec": row.vector, "mid": model_id, "k": k,
+        knn_params = {"mid": model_id, "k": k,
                       "vid": row.id, "src": row.source_id, "loc": row.loc}
         vecinos = (
             await session.execute(sa.text(_KNN_SQL), knn_params)
@@ -520,7 +549,11 @@ async def scan_semantic_candidates(
                     sa.text("SET LOCAL enable_bitmapscan = on")
                 )
         for n in vecinos:
-            if float(n.sim) < sim_min:
+            # `sim is None` solo puede ocurrir si la sonda del vector (O-3) no
+            # resuelve nada —la vacante perdió su revisión vigente o su
+            # embedding entre el corpus y este kNN, en otra transacción—: sin
+            # vector no hay similitud que afirmar, y la fila se salta entera.
+            if n.sim is None or float(n.sim) < sim_min:
                 break  # ordenados por distancia: los siguientes son peores
             r = await session.execute(
                 sa.text(_INSERT_SQL),

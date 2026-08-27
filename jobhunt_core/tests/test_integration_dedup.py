@@ -9,6 +9,7 @@ candidato como "core dice duplicado". BD vía core-migrate.
 
 import asyncio
 import os
+import re
 import uuid
 
 import pytest
@@ -1099,3 +1100,48 @@ def test_opt2_conteo_se_ejecuta_con_underfill(db):
     r = asyncio.run(scan1h())
     assert r["status"] == "ok"
     assert r["candidatos_nuevos"] == 2
+
+
+def test_el_vector_no_viaja_y_el_orden_kNN_sigue_siendo_una_constante(db):
+    """GUARDA de O-3 (auditoría de eficiencia 2026-08-27), dos mitades.
+
+    1. TRANSPORTE. El barrido traía `oe.vector` al cliente para devolverlo
+       inmediatamente como parámetro de la consulta siguiente. Medido:
+       `avg(length(oe.vector::text)) = 4 690` bytes y 8 311 filas en la
+       ventana de 48 h ⇒ ~39 MB de bajada y ~39 MB de subida de datos que
+       nunca necesitaron salir de la base. El corpus ya no lo selecciona.
+
+    2. FORMA DEL PLAN. Es la mitad que podía torcerse en silencio: pgvector
+       solo usa el índice HNSW si el operando derecho del `<=>` del ORDER BY
+       es una CONSTANTE en tiempo de ejecución. La sonda por id no está
+       correlacionada con la consulta de fuera, así que el planificador la
+       resuelve como InitPlan y el kNN recibe un `$n`. Si alguien la
+       convirtiera en correlacionada (un `SubPlan`), el ORDER BY dejaría de
+       ser indexable y la consulta caería a barrido secuencial del corpus
+       entero SIN que ningún test de comportamiento se enterara.
+    """
+    import jobhunt_core.dedup as dedup_mod
+
+    factory, _created = db
+    assert "oe.vector" not in dedup_mod._CORPUS_SQL
+    assert ":vec" not in dedup_mod._KNN_SQL
+
+    async def plan() -> str:
+        async with factory() as s:
+            rows = (
+                await s.execute(
+                    sa.text("EXPLAIN " + dedup_mod._KNN_SQL),
+                    {
+                        "mid": uuid.uuid4(), "k": 5, "vid": uuid.uuid4(),
+                        "src": uuid.uuid4(), "loc": "Zürich",
+                    },
+                )
+            ).scalars().all()
+            await s.rollback()
+            return "\n".join(rows)
+
+    texto = asyncio.run(plan())
+    assert "InitPlan" in texto, texto
+    # El operando del <=> es un Param ($n), no una expresión correlacionada.
+    assert re.search(r"<=> \$\d+", texto), texto
+    assert "SubPlan" not in texto, texto
