@@ -22,6 +22,23 @@ class ProviderConfigError(ValueError):
     subir SIN contarlo como fallo de fuente y la tarea falla sin retry."""
 
 
+class ProviderResponseError(RuntimeError):
+    """La fuente respondió con una FORMA que no es la contractual (sobre no-objeto,
+    colección de items que no es lista, `links` que no es objeto) — error
+    TRANSITORIO de frontera.
+
+    Distinto de `ProviderConfigError` (permanente, no cuenta como fallo de fuente):
+    aquí el scope SÍ falla. El runner lo trata como cualquier fallo de fetch:
+    rollback, `consecutive_failures + 1`, cursor y `last_complete_at` intactos.
+
+    Motivo (auditoría externa 2026-08-27 P1-1): degradar un sobre inválido a
+    "página vacía" lo hacía indistinguible del FINAL CONTRACTUAL del feed, y el
+    runner confirmaba una cosecha completa que nunca ocurrió — corpus truncado,
+    contador de fallos a cero y, pasado `CORE_CORPUS_STALE_DAYS`, archivado de
+    vacantes todavía publicadas.
+    """
+
+
 class BaseProvider(ABC):
     """Una fuente Tier 0/1 (API/feed). Sin estado: el cursor viene del scope."""
 

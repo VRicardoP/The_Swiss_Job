@@ -17,7 +17,12 @@ de paginación por offset MUTABLE y sin cursor/snapshot del proveedor:
 - Borrados/desplazamientos durante la paginación solo causan omisión TEMPORAL
   (el siguiente barrido completo los ve): sin filtro de emisión no existe
   estado capaz de convertir una omisión en pérdida permanente.
-- Items sin url/slug se saltan con log (validación de frontera).
+- Items sin url/slug se saltan con log (validación de frontera). El AISLAMIENTO
+  es POR ITEM, dentro de una página bien formada: el SOBRE (cuerpo, `data`,
+  `links`) tiene que cumplir la forma contractual o el barrido falla con
+  `ProviderResponseError` — un sobre inválido degradado a "página vacía" es
+  indistinguible del final del feed y hacía confirmar cosechas completas que
+  nunca ocurrieron (auditoría externa 2026-08-27 P1-1).
 NO está en la lista restringida del proyecto (jobs.ch/LinkedIn/... siguen OFF).
 """
 
@@ -27,7 +32,11 @@ import httpx
 
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
-from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError
+from jobhunt_core.harvest.provider import (
+    BaseProvider,
+    ProviderConfigError,
+    ProviderResponseError,
+)
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 logger = logging.getLogger(__name__)
@@ -103,14 +112,7 @@ class ArbeitnowProvider(BaseProvider):
             resp = await http.get(API_URL, params={"page": page}, timeout=HTTP_TIMEOUT_S)
             resp.raise_for_status()
             body = resp.json()
-            data = body.get("data") if isinstance(body, dict) else None
-            items = data if isinstance(data, list) else []
-            if not isinstance(body, dict) or not isinstance(data, list):
-                # Cuerpo/'data' no conforme (API cambiada o respuesta corrupta): se trata como
-                # vacío en vez de reventar con AttributeError (P2 rev. externa integral).
-                logger.warning(
-                    "arbeitnow: página %d con cuerpo/'data' no conforme — tratada como vacía", page
-                )
+            items = _page_items(body, page)
             pages += 1
             if not items:
                 exhausted = True
@@ -136,10 +138,7 @@ class ArbeitnowProvider(BaseProvider):
                         "arbeitnow: item malformado saltado (%s): %r",
                         exc, item.get("slug") or item.get("url"),
                     )
-            links = body.get("links")
-            # `links` truthy no-objeto (string/lista/número) → tratar como FIN de paginación en vez
-            # de reventar con AttributeError (P2 rev. externa integral ronda 2).
-            if not (isinstance(links, dict) and links.get("next")):
+            if not _has_next_page(body, page):
                 exhausted = True
                 break
             page += 1
@@ -175,6 +174,42 @@ class ArbeitnowProvider(BaseProvider):
             listings=tuple(collected), next_cursor=next_cursor,
             pages_fetched=pages, complete=complete,
         )
+
+
+def _page_items(body, page: int) -> list:
+    """Items de una página, EXIGIENDO la forma contractual del sobre.
+
+    Un cuerpo no-objeto o un `data` que no es lista NO es una página vacía: es una
+    respuesta que ya no cumple el contrato. Degradarla a `[]` la hacía indistinguible
+    del final del feed y el runner confirmaba una cosecha completa inexistente
+    (auditoría externa 2026-08-27 P1-1). Error TRANSITORIO: el runner cuenta el fallo
+    y deja cursor y `last_complete_at` intactos.
+    """
+    if not isinstance(body, dict):
+        raise ProviderResponseError(
+            f"página {page}: el cuerpo no es un objeto JSON, sino {type(body).__name__}"
+        )
+    data = body.get("data")
+    if not isinstance(data, list):
+        raise ProviderResponseError(
+            f"página {page}: 'data' no es una lista, sino {type(data).__name__}"
+        )
+    return data
+
+
+def _has_next_page(body: dict, page: int) -> bool:
+    """Si el sobre anuncia página siguiente. `links` ausente o `null` = fin normal
+    (la última página del feed puede no traerlo); `links` presente pero NO-objeto es
+    forma inválida → error tipado, jamás un fin de paginación inventado que declararía
+    completo un barrido cortado a medias (auditoría externa 2026-08-27 P1-1)."""
+    links = body.get("links")
+    if links is None:
+        return False
+    if not isinstance(links, dict):
+        raise ProviderResponseError(
+            f"página {page}: 'links' no es un objeto, sino {type(links).__name__}"
+        )
+    return bool(links.get("next"))
 
 
 def _parse_config(params: dict) -> tuple[int, int, str | None]:

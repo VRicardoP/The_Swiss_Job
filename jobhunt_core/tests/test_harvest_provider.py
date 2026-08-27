@@ -9,7 +9,7 @@ import json
 import httpx
 import pytest
 
-from jobhunt_core.harvest.provider import ProviderConfigError
+from jobhunt_core.harvest.provider import ProviderConfigError, ProviderResponseError
 from jobhunt_core.harvest.providers.arbeitnow import ArbeitnowProvider
 
 # p1: a300,b250 · p2: c200,d100 · p3: e50.
@@ -200,22 +200,48 @@ def test_malformed_items_isolated_not_fatal():
     assert result.complete is True       # barrido TERMINÓ (no reintento infinito de página tóxica)
 
 
-def test_malformed_body_treated_as_empty_not_fatal():
-    """REGRESIÓN P2 rev. externa integral: un cuerpo/'data' no conforme (no-objeto o data no-lista)
-    se trata como página vacía en vez de reventar con AttributeError."""
-    pages = {1: {"data": "no-soy-una-lista", "links": {}}}
-    result, _ = _fetch(pages=pages)
-    assert _ids(result) == [] and result.complete is True
+def test_malformed_body_is_typed_response_error():
+    """REGRESIÓN auditoría externa 2026-08-27 P1-1 (#1).
+
+    CORRIGE la versión anterior de esta prueba (`test_malformed_body_treated_as_empty_not_fatal`),
+    que FIJABA el bug: exigía `complete=True` para un sobre no conforme. Degradar un cuerpo
+    no-objeto o un `data` no-lista a "página vacía" evita el AttributeError —eso sigue vigente—
+    pero lo hace INDISTINGUIBLE del final contractual del feed, y el runner confirma con ello una
+    cosecha completa que nunca ocurrió (cursor persistido, `last_complete_at` refrescado,
+    `consecutive_failures=0`). La forma inválida es un fallo TRANSITORIO de frontera, no un final.
+    """
+    for body in ("no-soy-un-objeto", ["tampoco"], 42, {"data": "no-soy-una-lista"}):
+        with pytest.raises(ProviderResponseError):
+            _fetch(pages={1: body})
 
 
-def test_malformed_links_treated_as_end_not_fatal():
-    """REGRESIÓN P2 rev. externa integral RONDA 2: un `links` truthy NO-objeto (string/lista/número)
-    reventaba `(body.get('links') or {}).get('next')` con AttributeError y perdía la página entera.
-    Ahora se trata como FIN de paginación; las ofertas válidas de la página SÍ se emiten."""
+def test_malformed_links_after_data_is_not_complete():
+    """REGRESIÓN auditoría externa 2026-08-27 P1-1 (#2).
+
+    CORRIGE `test_malformed_links_treated_as_end_not_fatal`. Un `links` truthy NO-objeto
+    (string/lista/número) tampoco puede reventar con AttributeError (eso lo arregló la ronda 2),
+    pero leerlo como FIN de paginación declara `complete=True` sobre un barrido que se cortó en la
+    página 1 con el feed a medias. Ahora es error tipado: el barrido NO se declara completo.
+    """
     pages = {1: {"data": [{"slug": "ok", "url": "https://x/ok", "title": "T", "tags": []}],
                  "links": "?page=2"}}  # links es un STRING, no un objeto
-    result, _ = _fetch(pages=pages)
-    assert _ids(result) == ["ok"] and result.complete is True
+    with pytest.raises(ProviderResponseError):
+        _fetch(pages=pages)
+
+
+def test_contractual_empty_page_is_complete():
+    """REGRESIÓN auditoría externa 2026-08-27 P1-1 (#4): una página VÁLIDA y vacía
+    (`data: []` con la forma contractual) sigue siendo el final legítimo del feed —
+    endurecer la frontera no puede convertir un feed agotado en un fallo perpetuo."""
+    # Página vacía con sobre contractual: fin del feed, sin listings.
+    vacia, hits = _fetch(pages={1: {"data": [], "links": {}}})
+    assert _ids(vacia) == [] and vacia.complete is True and hits == [1]
+    # Y con datos + `links` OBJETO sin `next`: también fin legítimo.
+    ultima, _ = _fetch(
+        pages={1: {"data": [{"slug": "ok", "url": "https://x/ok", "title": "T", "tags": []}],
+                   "links": {}}}
+    )
+    assert _ids(ultima) == ["ok"] and ultima.complete is True
 
 
 def test_max_pages_below_minimum_rejected():

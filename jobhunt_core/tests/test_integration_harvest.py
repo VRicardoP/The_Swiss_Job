@@ -6,6 +6,7 @@ Ejecutar vía core-migrate (los datos de prueba se limpian al final).
 """
 
 import asyncio
+import json
 import os
 import uuid
 
@@ -545,6 +546,63 @@ def test_partial_sweep_persists_but_not_complete(db):
     r2 = _run_with(factory, s1, FakeProvider(), CollectSink())
     assert r2.status == "ok"
     assert _state(factory, s1).last_complete_at is not None
+
+
+def _run_arbeitnow(factory, scope_id, sink, body):
+    """Corre el runner con el provider REAL de arbeitnow y un feed mockeado.
+
+    Sin FakeProvider: la propiedad auditada es justamente cómo el provider real
+    clasifica la respuesta y qué escribe el runner con esa clasificación.
+    """
+    from jobhunt_core.harvest.providers.arbeitnow import ArbeitnowProvider
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params.get("page", 1))
+        return httpx.Response(200, text=json.dumps(body.get(page, {"data": [], "links": {}})))
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            return await run_scope(
+                scope_id, ArbeitnowProvider(), sink, http, session_factory=factory
+            )
+
+    return asyncio.run(go())
+
+
+_FEED_OK = {
+    1: {
+        "data": [{"slug": "a", "url": "https://x/a", "title": "T", "created_at": 300, "tags": []}],
+        "links": {},
+    }
+}
+
+
+def test_invalid_provider_response_does_not_confirm_a_complete_harvest(db):
+    """REGRESIÓN auditoría externa 2026-08-27 P1-1 (#3), provider REAL → runner → BD.
+
+    Un HTTP 200 con `data` que no es lista NO puede quedar registrado como cosecha completa.
+    Antes del arreglo el provider devolvía `items=[]`/`complete=True` y el runner refrescaba
+    `last_complete_at` y ponía `consecutive_failures=0`: el corpus dejaba de refrescarse mientras
+    la salud del scope decía "todo bien" y, pasado CORE_CORPUS_STALE_DAYS, el archivado cerraba
+    encarnaciones de vacantes todavía publicadas.
+    """
+    factory, created = db
+    (s1,) = _seed_scopes(factory, created, n=1)
+    # 1) Cosecha buena: deja cursor, last_complete_at y contador a cero.
+    assert _run_arbeitnow(factory, s1, CollectSink(), _FEED_OK).status == "ok"
+    previo = _state(factory, s1)
+    assert previo.last_complete_at is not None and previo.consecutive_failures == 0
+
+    # 2) La fuente cambia de forma (200 con sobre no conforme).
+    sink = CollectSink()
+    r = _run_arbeitnow(factory, s1, sink, {1: {"data": "no-soy-una-lista", "links": {}}})
+
+    assert r.status == "error"
+    assert sink.batches == []  # nada llegó al sink: el fetch murió antes
+    ahora = _state(factory, s1)
+    assert ahora.cursor == previo.cursor  # cursor INTACTO
+    assert ahora.last_complete_at == previo.last_complete_at  # NO se confirmó cosecha
+    assert ahora.consecutive_failures == previo.consecutive_failures + 1
 
 
 def test_disabled_scope_is_skipped(db):
