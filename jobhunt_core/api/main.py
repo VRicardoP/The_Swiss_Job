@@ -136,17 +136,49 @@ app.openapi = _openapi_with_contract_errors
 CODE_MUTABLE = os.getenv("CORE_CODE_MUTABLE", "").strip().lower() in {"1", "true", "yes"}
 
 
+# La release HORNEADA en la imagen, en un sitio que el entorno no puede pisar
+# (auditoría G10 P2-2). `RELEASE_SHA` es un ENV de la imagen y el ENV de una imagen lo
+# pisa cualquier `environment:`/`env_file:` del contenedor —y los tres servicios del core
+# arrancan con `env_file`—, así que un `-e RELEASE_SHA=deadbee` publicaba `deadbee` con
+# `authoritative: true` sobre el código de otra construcción. El fichero lo escribe el
+# Dockerfile con el mismo build arg y vive FUERA de `/app/jobhunt_core` (que el perfil de
+# desarrollo monta): es propiedad de la IMAGEN, no del árbol de código.
+_BAKED_RELEASE_PATH = Path("/app/RELEASE")
+
+
+def _read_baked_release() -> str | None:
+    """None si la imagen no la hornea (o el proceso no corre en la imagen): sin ancla
+    con la que contrastar el ENV, la marca no puede afirmar nada."""
+    try:
+        return _BAKED_RELEASE_PATH.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+_BAKED_RELEASE = _read_baked_release()  # CONGELADO al importar, como el head esperado
+
+
 def _authoritative() -> bool:
     """Si lo que publican las sondas se puede usar para VERIFICAR una release.
 
-    Exige las dos cosas (auditoría G9 P2-A/P2-B):
+    Exige las tres cosas (auditoría G9 P2-A/P2-B y G10 P2-2):
     - código INMUTABLE: sin `CORE_CODE_MUTABLE` no hay bind mount, así que el `release`
       del ENV y el `alembic_expected` leído del disco vienen de la MISMA imagen; con él,
       el proceso puede estar sirviendo código que no es el del SHA que publica;
     - release NOMBRABLE: una imagen construida sin el build arg hornea `unknown`, y el
-      paso «todos publican el mismo SHA» se satisface entre `unknown`s sin decir nada.
+      paso «todos publican el mismo SHA» se satisface entre `unknown`s sin decir nada;
+    - release ATADA A LA IMAGEN: el SHA que se publica tiene que ser el que la imagen
+      lleva horneado en `/app/RELEASE`. Sin esto la marca certificaba dos cosas que sí
+      podía comprobar y ninguna que atara el SHA al código que responde, y un
+      `RELEASE_SHA` obsoleto en un `.env` —el modo de fallo más banal que hay— producía
+      un verde con nombre falso justo donde `docs/DEPLOY_NAS.md` lo convierte en la
+      autorización para operar.
     """
-    return not CODE_MUTABLE and __release_sha__ != UNKNOWN_RELEASE
+    return (
+        not CODE_MUTABLE
+        and __release_sha__ != UNKNOWN_RELEASE
+        and __release_sha__ == _BAKED_RELEASE
+    )
 
 
 @app.get("/v1/health")

@@ -94,6 +94,7 @@ def test_ready_declara_si_autoriza_operaciones(monkeypatch):
     # Release NOMBRABLE: la otra condición de la autoritatividad se prueba aparte
     # (test_no_hay_autoritatividad_sin_SHA_de_release, G9 P2-B).
     monkeypatch.setattr(api, "__release_sha__", "abc1234")
+    monkeypatch.setattr(api, "_BAKED_RELEASE", "abc1234")  # la que hornea la imagen (G10 P2-2)
     monkeypatch.setattr(api, "CODE_MUTABLE", False)
     assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is True
     monkeypatch.setattr(api, "CODE_MUTABLE", True)
@@ -119,8 +120,56 @@ def test_no_hay_autoritatividad_sin_SHA_de_release(monkeypatch):
     y release NOMBRABLE."""
     monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
     monkeypatch.setattr(api, "CODE_MUTABLE", False)
+    monkeypatch.setattr(api, "_BAKED_RELEASE", jobhunt_core.UNKNOWN_RELEASE)
     monkeypatch.setattr(api, "__release_sha__", jobhunt_core.UNKNOWN_RELEASE)
     assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is False
     assert TestClient(api.app).get("/v1/health").json()["authoritative"] is False
+    monkeypatch.setattr(api, "_BAKED_RELEASE", "abc1234")
     monkeypatch.setattr(api, "__release_sha__", "abc1234")
     assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is True
+
+
+def test_un_RELEASE_SHA_del_entorno_no_puede_hacer_autoritativa_la_sonda(monkeypatch):
+    """REGRESIÓN auditoría G10 P2-2: a la marca se la hacía mentir con una variable.
+
+    `RELEASE_SHA` es un ENV horneado por el Dockerfile, pero el ENV de una imagen lo pisa
+    cualquier `environment:`/`env_file:` del contenedor — y los tres servicios del core
+    arrancan con `env_file: .env.core.prod`. Reproducido contra la imagen viva:
+    `docker run -e RELEASE_SHA=deadbee swissjob-core:dev` publicaba `deadbee` con
+    `authoritative: true` mientras el código era el de `450c561`. La marca certificaba dos
+    cosas comprobables (código no montado, SHA no-`unknown`) y ninguna que atara el SHA al
+    código que responde, justo donde `docs/DEPLOY_NAS.md` la convierte en la autorización
+    para operar (flip, maniobras de datos).
+    """
+    monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
+    monkeypatch.setattr(api, "CODE_MUTABLE", False)
+    monkeypatch.setattr(api, "_BAKED_RELEASE", "450c561")   # lo que la IMAGEN hornea
+    monkeypatch.setattr(api, "__release_sha__", "deadbee")  # lo que el entorno inyecta
+    body = TestClient(api.app).get("/v1/ready").json()
+    assert body["release"] == "deadbee"          # se sigue publicando lo que corre
+    assert body["authoritative"] is False        # pero ya no autoriza nada
+    assert TestClient(api.app).get("/v1/health").json()["authoritative"] is False
+    # Y coincidiendo con la copia horneada, la marca vuelve a valer.
+    monkeypatch.setattr(api, "__release_sha__", "450c561")
+    assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is True
+
+
+def test_sin_release_horneada_en_la_imagen_no_hay_autoritatividad(monkeypatch):
+    """La otra dirección de G10 P2-2: sin ancla con la que contrastar el ENV, la sonda no
+    afirma nada — el único dato que queda es precisamente el que se puede inyectar."""
+    monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
+    monkeypatch.setattr(api, "CODE_MUTABLE", False)
+    monkeypatch.setattr(api, "__release_sha__", "abc1234")
+    monkeypatch.setattr(api, "_BAKED_RELEASE", None)
+    assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is False
+
+
+def test_la_release_horneada_sale_del_fichero_de_la_imagen(tmp_path, monkeypatch):
+    """`/app/RELEASE` lo escribe el Dockerfile con el MISMO build arg que el ENV, fuera de
+    `/app/jobhunt_core` (que el perfil de desarrollo monta): es de la imagen, no del árbol."""
+    fichero = tmp_path / "RELEASE"
+    fichero.write_text("450c561\n")
+    monkeypatch.setattr(api, "_BAKED_RELEASE_PATH", fichero)
+    assert api._read_baked_release() == "450c561"
+    monkeypatch.setattr(api, "_BAKED_RELEASE_PATH", tmp_path / "no-existe")
+    assert api._read_baked_release() is None

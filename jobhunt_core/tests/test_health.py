@@ -37,6 +37,7 @@ def test_health_declara_si_el_proceso_es_autoritativo(monkeypatch):
     import jobhunt_core.api.main as api
 
     monkeypatch.setattr(api, "__release_sha__", "abc1234")
+    monkeypatch.setattr(api, "_BAKED_RELEASE", "abc1234")  # la que hornea la imagen (G10 P2-2)
     monkeypatch.setattr(api, "CODE_MUTABLE", False)
     assert TestClient(app).get("/v1/health").json()["authoritative"] is True
     monkeypatch.setattr(api, "CODE_MUTABLE", True)
