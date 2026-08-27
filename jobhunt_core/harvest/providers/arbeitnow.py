@@ -36,13 +36,18 @@ de paginación por offset MUTABLE y sin cursor/snapshot del proveedor:
   no solo la excepción propia: el docstring lo prometía y no era cierto (G10 P1-2).
 - El barrido se AUTOLIMITA (`PAGE_PAUSE_S`) y reintenta con backoff los rechazos
   del bucket: sin ritmo, `complete=True` era INALCANZABLE contra el feed real
-  (auditoría G10 P1-2).
+  (auditoría G10 P1-2). Y el ritmo trae un PRESUPUESTO: cada espera tiene techo
+  (`MAX_RETRY_WAIT_S`) y el barrido entero tiene reloj (`SWEEP_BUDGET_S`) — sin
+  eso, obedecer `Retry-After` era dormir 24 h (o para siempre con `nan`/`inf`) en
+  una tarea que nada podía interrumpir (auditoría G11 P1-1).
 NO está en la lista restringida del proyecto (jobs.ch/LinkedIn/... siguen OFF).
 """
 
 import asyncio
 import json
 import logging
+import math
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -115,9 +120,25 @@ HTTP_TIMEOUT_S = 20.0
 PAGE_PAUSE_S = 3.5
 # Reintento del TRANSPORTE (no del sobre): 3 intentos por página con backoff
 # exponencial sobre la pausa del barrido — escala CON ella a propósito, así que con
-# pausa 0 (feed mockeado en la suite) no duerme.
+# pausa muy pequeña (feed mockeado en la suite) apenas duerme.
 HTTP_ATTEMPTS = 3
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+# TECHO DE UNA ESPERA (auditoría G11 P1-1). `Retry-After` se obedecía literalmente:
+# `86400` —el ban típico de un CDN— dormía 24 h dentro de la tarea Celery, y `nan`/`inf`
+# dormían PARA SIEMPRE (el temporizador de `asyncio.sleep` no vence nunca). El servidor
+# sigue mandando, pero dentro de un techo: por encima de un minuto ya no es "reintenta
+# luego", es "vuelve en otra corrida", y la cosecha es diaria.
+MAX_RETRY_WAIT_S = 60.0
+# PRESUPUESTO DE TIEMPO DEL BARRIDO COMPLETO (auditoría G11 P1-1). El tope de páginas no
+# acota el tiempo: medido instrumentando `asyncio.sleep`, 500 páginas (el tope
+# contractual, al que el objetivo adaptativo llega duplicándose) con dos reintentos por
+# página piden 12 246 s = 3,4 h SIN una sola cabecera hostil. Con `acks_late=True` y el
+# `visibility_timeout` de 3600 s del canal Redis, un barrido que pasa de la hora ve su
+# mensaje restituido a la cola mientras el original sigue vivo. Al vencer, el barrido se
+# RINDE con lo cosechado (parcial, sin marcar fallo de la fuente): 1500 s + el peor caso
+# de una página en curso (3 peticiones de 20 s + 2 esperas de 60 s + la pausa = 184 s)
+# = 1684 s, por debajo del `task_soft_time_limit` de 1800 s (celery_app.py).
+SWEEP_BUDGET_S = 1500.0
 
 
 class ArbeitnowProvider(BaseProvider):
@@ -134,10 +155,14 @@ class ArbeitnowProvider(BaseProvider):
         # barrido anterior se quedó corto, usa el objetivo crecido persistido.
         target = min(max(configured, _cursor_int(cur, "page_target")), hard_max)
 
-        # PAGE_PAUSE_S se lee AQUÍ (no como default del parámetro): un default se
-        # congelaría al importar y el ritmo dejaría de ser ajustable.
+        # El ritmo y el presupuesto se leen AQUÍ, no como default del parámetro: un
+        # default se evalúa UNA vez al importar y dejaría de responder a un
+        # `monkeypatch`/rebind del módulo, que es como los fija la suite. No son ajustes
+        # de entorno —no existe ningún `CORE_HARVEST_*` para ellos y es deliberado: la
+        # imagen del core es inmutable, así que cambiar el ritmo es reconstruir—.
         sweep = await _sweep_feed(
-            http, target, keyword, _cursor_int(cur, "last_top_seen"), PAGE_PAUSE_S
+            http, target, keyword, _cursor_int(cur, "last_top_seen"),
+            PAGE_PAUSE_S, SWEEP_BUDGET_S,
         )
         collected, pages = sweep.listings, sweep.pages
 
@@ -152,6 +177,19 @@ class ArbeitnowProvider(BaseProvider):
             logger.error(
                 "arbeitnow: barrido CORTADO por forma inválida tras %d páginas "
                 "(lo cosechado se emite igual): %s", pages, sweep.error,
+            )
+        elif sweep.timed_out:
+            # PRESUPUESTO agotado (G11 P1-1): parcial, pero NI fallo de la fuente (no
+            # cuenta backoff: la fuente no hizo nada mal) NI corte por el tope de páginas
+            # — el objetivo NO se duplica, porque duplicarlo solo alargaría un barrido que
+            # ya no cabe en el reloj. Se conserva el tamaño aprendido, como en el fallo.
+            complete = False
+            if target > configured:
+                next_cursor["page_target"] = target
+            logger.error(
+                "arbeitnow: barrido AGOTÓ SU PRESUPUESTO de %.0f s tras %d páginas — "
+                "el feed no cabe en una corrida a este ritmo; la vigilancia lo verá como "
+                "'cosecha_sin_completar' si persiste", SWEEP_BUDGET_S, pages,
             )
         elif sweep.exhausted:
             complete = True
@@ -194,11 +232,12 @@ class _Sweep:
     top_seen: int
     exhausted: bool     # el feed se agotó (fin legítimo), no el tope de páginas
     error: str | None   # sobre inválido a mitad de barrido (lo previo se conserva)
+    timed_out: bool     # se rindió por PRESUPUESTO de tiempo, no por tope ni por fallo
 
 
 async def _sweep_feed(
     http: httpx.AsyncClient, target: int, keyword: str | None, top_seen: int,
-    pause: float,
+    pause: float, budget: float,
 ) -> _Sweep:
     """Recorre el feed hasta agotarlo, hasta el tope de páginas o hasta un fallo.
 
@@ -214,15 +253,26 @@ async def _sweep_feed(
     ocurren de verdad —sobre inválido, fallo HTTP y cuerpo no-JSON (HTML de CDN, cuerpo
     vacío)—, no solo la excepción propia. En la PRIMERA página no hay nada que preservar:
     el error sube tal cual (P1-1).
+
+    PRESUPUESTO (auditoría G11 P1-1): `budget` segundos de reloj para el barrido entero.
+    Ni el tope de páginas ni el techo de una espera acotan el TIEMPO —500 páginas con dos
+    reintentos cada una son 3,4 h de sueño legítimo—, y una tarea que se pasa de la hora
+    con `acks_late=True` ve su mensaje restituido a la cola. Al vencer, el barrido se
+    rinde con lo cosechado: `timed_out`, que NO es fallo de la fuente.
     """
     collected: list[RawListing] = []
     pages = 0
     page = 1
     exhausted = False
+    timed_out = False
     error: str | None = None
+    vence = time.monotonic() + budget
     try:
         while pages < target:
             if page > 1:
+                if time.monotonic() >= vence:
+                    timed_out = True
+                    break
                 await asyncio.sleep(pause)
             body = await _get_page(http, page, pause)
             # El sobre se valida ENTERO (`data` Y `links`) ANTES de usar nada de él:
@@ -241,14 +291,15 @@ async def _sweep_feed(
         if page == 1:
             raise
         error = _describe_failure(exc, page)
-    return _Sweep(tuple(collected), pages, top_seen, exhausted, error)
+    return _Sweep(tuple(collected), pages, top_seen, exhausted, error, timed_out)
 
 
 async def _get_page(http: httpx.AsyncClient, page: int, pause: float):
     """Una página del feed, con REINTENTO de los fallos transitorios del transporte.
 
     El 429 del feed real llega SIN `Retry-After` (medido), así que el backoff es
-    exponencial sobre la pausa del barrido; si algún día lo trae, manda la cabecera.
+    exponencial sobre la pausa del barrido; si algún día lo trae, manda la cabecera —
+    pero ACOTADA por `MAX_RETRY_WAIT_S` (G11 P1-1: obedecerla a pelo era dormir un día).
     Un fallo que sobrevive a los reintentos sube: lo clasifica `_sweep_feed` (página 1
     ⇒ error de la fuente; página k>1 ⇒ preservar lo cosechado).
     """
@@ -279,12 +330,24 @@ def _is_retryable(exc: Exception) -> bool:
 
 
 def _retry_delay(exc: Exception, pause: float, intento: int) -> float:
+    """Cuánto esperar antes del siguiente intento — ACOTADO (auditoría G11 P1-1).
+
+    El servidor manda si manda un número de segundos, pero dentro de
+    `[0, MAX_RETRY_WAIT_S]`: `86400` dormía un día entero dentro de la tarea, `-5` daba
+    un reintento INMEDIATO contra una API que acababa de pedir calma, y `nan`/`inf` —que
+    `float()` acepta— dormían para siempre, porque su temporizador no vence nunca. Un
+    valor no finito no es una espera: se cae al backoff propio, también con techo.
+    """
+    espera = pause * 2**intento
     if isinstance(exc, httpx.HTTPStatusError):
         try:
-            return float(exc.response.headers["retry-after"])
+            cabecera = float(exc.response.headers["retry-after"])
         except (KeyError, TypeError, ValueError):
             pass
-    return pause * 2**intento
+        else:
+            if math.isfinite(cabecera):
+                espera = cabecera
+    return min(max(espera, 0.0), MAX_RETRY_WAIT_S)
 
 
 def _reason(exc: Exception) -> str:

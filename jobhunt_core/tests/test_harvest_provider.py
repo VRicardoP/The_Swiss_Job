@@ -5,6 +5,7 @@ objetivo adaptativo de páginas (liveness sin tope manual). HTTP MOCKEADO.
 
 import asyncio
 import json
+import math
 import time
 
 import httpx
@@ -541,3 +542,93 @@ def test_retry_delay_prefers_the_header_and_falls_back_to_exponential_backoff():
     assert delay(httpx.HTTPStatusError("429", request=peticion, response=con), 1.0, 1) == 42.0
     assert delay(httpx.HTTPStatusError("429", request=peticion, response=sin), 1.0, 1) == 2.0
     assert delay(httpx.HTTPStatusError("429", request=peticion, response=sin), 1.0, 2) == 4.0
+
+
+def _rechazo(valor: str | None, status: int = 429) -> httpx.HTTPStatusError:
+    """Un 429 con (o sin) la cabecera `Retry-After` que se quiera probar."""
+    peticion = httpx.Request("GET", arbeitnow.API_URL)
+    cabeceras = {} if valor is None else {"retry-after": valor}
+    respuesta = httpx.Response(status, headers=cabeceras, request=peticion)
+    return httpx.HTTPStatusError(str(status), request=peticion, response=respuesta)
+
+
+def test_retry_after_is_capped_and_never_yields_a_non_finite_wait():
+    """REGRESIÓN auditoría G11 P1-1: la cabecera se obedecía LITERALMENTE y sin techo.
+
+    `Retry-After: 86400` —el ban típico de un CDN— dormía 24 h dentro de la tarea; `nan`
+    e `inf` dormían PARA SIEMPRE (el temporizador de `asyncio.sleep` no vence nunca) y
+    `-5` devolvía un backoff NEGATIVO, o sea reintento inmediato contra una API que
+    acababa de pedir calma. El servidor sigue mandando, pero dentro de un techo y solo
+    con valores que son un número de segundos.
+    """
+    delay = arbeitnow._retry_delay
+    tope = arbeitnow.MAX_RETRY_WAIT_S
+    assert delay(_rechazo("42"), 3.5, 1) == 42.0            # sigue mandando el servidor
+    assert delay(_rechazo("86400"), 3.5, 1) == tope         # …hasta el techo
+    assert delay(_rechazo("1e9"), 3.5, 1) == tope
+    for veneno in ("nan", "inf", "-inf"):
+        espera = delay(_rechazo(veneno), 3.5, 1)
+        assert math.isfinite(espera) and 0.0 <= espera <= tope, veneno
+    assert delay(_rechazo("-5"), 3.5, 1) >= 0.0             # jamás por debajo de cero
+    # El backoff PROPIO también está acotado: la pausa del scope no puede colarlo.
+    assert delay(_rechazo(None), 3600.0, 3) == tope
+    # Y el camino de siempre no cambia mientras quepa bajo el techo.
+    assert delay(_rechazo(None), 1.0, 1) == 2.0
+    assert delay(_rechazo(None), 1.0, 2) == 4.0
+
+
+def test_a_hostile_retry_after_no_longer_parks_the_whole_worker(monkeypatch):
+    """El techo, de extremo a extremo: un feed que pide un día NO detiene el barrido.
+
+    Con el techo en 50 ms el barrido reintenta, cosecha y termina; sin él, esta misma
+    llamada se quedaba dentro de `asyncio.sleep(86400)` — y con `acks_late=True` y
+    concurrency 2, dos así paran el core entero (auditoría G11 P1-1).
+    """
+    monkeypatch.setattr(arbeitnow, "MAX_RETRY_WAIT_S", 0.05)
+    rechazos = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params.get("page", 1))
+        if page == 2 and rechazos["n"] < 1:
+            rechazos["n"] += 1
+            return httpx.Response(429, headers={"retry-after": "86400"})
+        return httpx.Response(200, text=json.dumps(PAGES.get(page, {"data": [], "links": {}})))
+
+    t0 = time.monotonic()
+    r, _ = _fetch(handler=handler)
+    transcurrido = time.monotonic() - t0
+    assert rechazos["n"] == 1 and r.complete is True and _ids(r) == ["a", "b", "c", "d", "e"]
+    assert transcurrido < 5.0, transcurrido      # no 86 400 s
+    assert transcurrido >= 0.05, transcurrido    # pero SÍ esperó lo que dice el techo
+
+
+def test_the_sweep_gives_up_when_it_spends_its_time_budget(monkeypatch):
+    """REGRESIÓN auditoría G11 P1-1: el barrido no tenía NINGÚN presupuesto de tiempo.
+
+    Medido por la auditoría instrumentando `asyncio.sleep`: 500 páginas (el tope
+    contractual, al que el objetivo adaptativo llega duplicándose) con dos reintentos por
+    página piden **12 246 s = 3,4 h** de sueño SIN una sola cabecera hostil. Con
+    `acks_late=True` y `visibility_timeout=3600` eso es una tarea viva cuyo mensaje kombu
+    ya devolvió a la cola. Ahora el barrido se rinde a tiempo: parcial, sin marcar fallo
+    de la fuente (no lo es) y sin duplicar el objetivo (no fue el tope quien cortó).
+    """
+    monkeypatch.setattr(arbeitnow, "PAGE_PAUSE_S", 0.05)
+    monkeypatch.setattr(arbeitnow, "SWEEP_BUDGET_S", 0.12)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params.get("page", 1))
+        return httpx.Response(200, text=json.dumps({
+            "data": [{"slug": f"s{page}", "url": f"https://x/{page}", "title": "T",
+                      "created_at": page, "tags": []}],
+            "links": {"next": f"?page={page + 1}"},   # feed INTERMINABLE
+        }))
+
+    t0 = time.monotonic()
+    r, hits = _fetch(handler=handler)
+    transcurrido = time.monotonic() - t0
+    assert transcurrido < 5.0, transcurrido
+    assert len(hits) < arbeitnow.DEFAULT_PAGE_TARGET   # cortó el reloj, no el tope
+    assert r.complete is False and r.error is None     # parcial, NO fallo de la fuente
+    assert r.listings                                  # y lo cosechado se emite
+    # El objetivo adaptativo NO crece: duplicarlo solo alargaría lo que ya no cabe.
+    assert "page_target" not in r.next_cursor

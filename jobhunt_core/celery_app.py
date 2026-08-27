@@ -70,6 +70,28 @@ celery_app.conf.update(
     },
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    # LÍMITE DE TIEMPO (auditoría G11 P1-1). No había ninguno: una tarea dormida —el
+    # barrido obedecía `Retry-After` sin techo— no podía ser interrumpida, y el
+    # `core-worker` corre con `--concurrency=2` escuchando TODAS las colas del core,
+    # incluida `core.default`, que es donde vive el beat: dos tareas así paraban el core
+    # entero (outbox, proyector, salud del slot, archivado…). El soft manda SoftTimeLimit
+    # (la tarea puede cerrar), el hard mata el proceso hijo. Los dos POR DEBAJO del
+    # `visibility_timeout` de 3600 s del canal Redis de kombu: por encima, el mensaje de
+    # una tarea VIVA vuelve a la cola y se ejecuta dos veces contra la misma fuente. El
+    # presupuesto del barrido (SWEEP_BUDGET_S=1500 + 184 s de peor caso) cabe debajo.
+    #
+    # CONSECUENCIA ASUMIDA: una tarea que necesite más de 30 min muere con
+    # `SoftTimeLimitExceeded` en vez de terminar. Es la dirección correcta, porque por
+    # encima de los 3600 s del `visibility_timeout` esa tarea YA estaba rota —se
+    # ejecutaba dos veces en silencio— y aquí al menos se entera alguien. Quien de verdad
+    # crezca con el parque es `run_all`, que barre los scopes en serie: está construido
+    # justo para esto (claim idempotente por scope + `skipped` de los ya cerrados), así
+    # que el reintento sigue por donde se quedó. Lo demás va por lotes (`limit`/
+    # `batch_size`) y hoy no se acerca: lo medido en el worker vivo es de décimas de
+    # segundo. Si algún día una tarea necesita más, se trocea; no se sube esto por encima
+    # del visibility_timeout.
+    task_soft_time_limit=1800,
+    task_time_limit=2100,
     # CADENCIAS de la sombra (B-05, §5/§6) — SOLO tareas de colas core.*.
     # El beat va EMBEBIDO en el command del core-worker (`worker ... -B`,
     # docker-compose.yml — decisión del propietario 2026-07-25): sobrevive

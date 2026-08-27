@@ -119,11 +119,19 @@ def pytest_unconfigure(config):
 
 
 @pytest.fixture(autouse=True)
-def _barrido_sin_pausa(monkeypatch):
+def _barrido_al_ralenti(monkeypatch):
     """El barrido de arbeitnow se AUTOLIMITA a `PAGE_PAUSE_S` s/página (auditoría G10
     P1-2): contra el feed real es lo que hace `complete=True` alcanzable, pero en la
-    suite el feed va MOCKEADO y ahí la pausa solo alarga la ejecución. Los tests que
-    fijan el RITMO o el backoff la restablecen ellos mismos."""
+    suite el feed va MOCKEADO y ahí la pausa solo alarga la ejecución.
+
+    La pausa se ESCALA, no se anula (auditoría G11 P1-1/P3-3). Con `0.0` el backoff del
+    reintento —`pause * 2**intento`— valía exactamente CERO en toda la suite: ningún test
+    podía observar una espera, y por eso 706 tests convivieron con un `Retry-After` que
+    dormía 24 h. Una prueba que no puede ver el mecanismo no lo protege. Con un épsilon
+    la forma se conserva (se calcula, se acota y se duerme de verdad) y la suite sigue
+    siendo instantánea. Los tests que MIDEN el ritmo o el techo suben el valor ellos
+    mismos.
+    """
     from jobhunt_core.harvest.providers import arbeitnow
 
-    monkeypatch.setattr(arbeitnow, "PAGE_PAUSE_S", 0.0)
+    monkeypatch.setattr(arbeitnow, "PAGE_PAUSE_S", 0.001)

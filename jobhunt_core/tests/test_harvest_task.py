@@ -258,3 +258,25 @@ def test_normalize_url_base_behavior_unchanged():
         normalize_url("HTTPS://X.ch/Jobs/?id=7")
         == "https://x.ch/Jobs?id=7"
     )
+
+
+def test_ninguna_tarea_del_core_puede_dormir_para_siempre():
+    """REGRESIÓN auditoría G11 P1-1: la app Celery del core no tenía LÍMITE DE TIEMPO.
+
+    Comprobado en el worker vivo: `task_time_limit` y `task_soft_time_limit` = None, con
+    `acks_late=True` y `--concurrency=2` escuchando TODAS las colas del core —incluida
+    `core.default`, donde vive el beat—. Una tarea dormida (el barrido obedecía
+    `Retry-After` sin techo) no podía ser interrumpida: dos de ellas paraban el core
+    entero. Y el límite tiene que quedar POR DEBAJO del `visibility_timeout` (3600 s) del
+    canal Redis de kombu: por encima, el mensaje de una tarea VIVA vuelve a la cola y se
+    ejecuta dos veces contra la misma fuente.
+    """
+    from kombu.transport.redis import Channel
+
+    conf = celery_app.conf
+    assert conf.task_soft_time_limit and conf.task_time_limit
+    assert conf.task_soft_time_limit < conf.task_time_limit
+    visibility = conf.broker_transport_options.get(
+        "visibility_timeout", Channel.visibility_timeout
+    )
+    assert conf.task_time_limit < visibility, (conf.task_time_limit, visibility)
