@@ -126,16 +126,44 @@ case "$1" in
                    *)        printf '%s\n' "$v" ;; esac
     done
     exit 0 ;;
-  rmi|logs) exit 0 ;;
+  rmi) exit 0 ;;
+  logs)
+    # Señales del beat EMBEBIDO (R5 P1-C). `--since` = solo lo NUEVO: un
+    # `Sending due task` ahí prueba que el planificador sigue vivo AHORA.
+    for a in "$@"; do nombre=$a; done
+    [ "$nombre" = "$beat" ] || exit 0
+    case "$*" in
+      *--since*)
+        case "$r" in
+          smoke_sin_beat|smoke_beat_muerto) ;;
+          *) echo "[INFO/Beat] Scheduler: Sending due task shadow-project (jobhunt.shadow.project)" ;;
+        esac
+        exit 0 ;;
+    esac
+    [ "$r" = smoke_sin_beat ] || echo "[INFO/Beat] beat: Starting..."
+    echo "[INFO/MainProcess] celery@simulado ready."
+    exit 0 ;;
   load) [ "$r" = paso3_load ] && exit 1; exit 0 ;;
   image)
     # `docker image inspect <img>` (existe) y `docker image inspect -f '{{.Id}}' <img>`.
     if [ "${3:-}" = "-f" ]; then id_imagen "${5:-}"; printf '\n'; fi
     exit 0 ;;
   inspect)
-    # `docker inspect -f <tmpl> <nombre>`: la red del core, o el estado de un contenedor.
+    # `docker inspect -f <tmpl> <nombre>`: la red del core, el command (para el
+    # diagnóstico del beat) o el estado de un contenedor.
     nombre=${4:-}
     if [ "$nombre" = swissjob-core-migrate ]; then echo "swissjob_core-net "; exit 0; fi
+    case "${3:-}" in
+      *Config.Cmd*)
+        # El worker SIN `-B` es el falso verde de R5 P1-C: contesta al ping
+        # igual, porque el ping prueba el consumidor y no el planificador.
+        if [ "$r" = smoke_sin_beat ]; then
+          echo '["celery","-A","jobhunt_core.celery_app","worker","-Q","core.default"]'
+        else
+          echo '["celery","-A","jobhunt_core.celery_app","worker","-B","-Q","core.default"]'
+        fi
+        exit 0 ;;
+    esac
     [ "$r" = smoke_ausente ] && [ "$nombre" = swissjob-core-worker ] && exit 1
     [ "$r" = smoke_frontend_ausente ] && [ "$nombre" = swissjob-frontend ] && exit 1
     estado=running
@@ -238,6 +266,24 @@ d=$DOBLES_DIR
 r=${ROMPER:-}
 A=__HA__; B=__HB__; C=__HC__; D=__HD__
 
+matar_grupo() {
+  [ "${MATAR_EN:-}" = "$1" ] || return 0
+  printf '%s\n' "$1" >>"$d/muertes"
+  kill -9 -"$(awk '{print $5}' /proc/self/stat)"
+  sleep 30
+}
+
+# CATÁLOGO simulado de `pg_database`: sin él la marcha atrás reanudable no se
+# puede probar, porque su resolución de estado es «qué bases existen».
+catalogo="$d/bases"
+[ -f "$catalogo" ] || printf '%s\n' "${PG_DB:-swissjobhunter}" >"$catalogo"
+existe_base() { grep -qx -- "$1" "$catalogo"; }
+alta_base() { existe_base "$1" || printf '%s\n' "$1" >>"$catalogo"; }
+baja_base() { grep -vx -- "$1" "$catalogo" >"$catalogo.tmp" || true; mv "$catalogo.tmp" "$catalogo"; }
+plano() { printf '%s' "$1" | tr '\n' ' '; }
+nombre_de() { plano "$sql" | sed -n "s/.*$1 \"\([^\"]*\)\".*/\1/p"; }
+nombre_datname() { plano "$sql" | sed -n "s/.*datname = '\([^']*\)'.*/\1/p"; }
+
 # MANIFIESTOS SEMÁNTICOS (R5 P1-A). La transformación declarada por los ensayos
 # en seco es `…01 -> …0a` en las dos copias; todo lo demás no se mueve.
 manifiesto_juicios() {
@@ -296,24 +342,6 @@ samples_outbox() {
   echo "$n" >"$d/samples"
   echo "$n"
 }
-
-matar_grupo() {
-  [ "${MATAR_EN:-}" = "$1" ] || return 0
-  printf '%s\n' "$1" >>"$d/muertes"
-  kill -9 -"$(awk '{print $5}' /proc/self/stat)"
-  sleep 30
-}
-
-# CATÁLOGO simulado de `pg_database`: sin él la marcha atrás reanudable no se
-# puede probar, porque su resolución de estado es «qué bases existen».
-catalogo="$d/bases"
-[ -f "$catalogo" ] || printf '%s\n' "${PG_DB:-swissjobhunter}" >"$catalogo"
-existe_base() { grep -qx -- "$1" "$catalogo"; }
-alta_base() { existe_base "$1" || printf '%s\n' "$1" >>"$catalogo"; }
-baja_base() { grep -vx -- "$1" "$catalogo" >"$catalogo.tmp" || true; mv "$catalogo.tmp" "$catalogo"; }
-plano() { printf '%s' "$1" | tr '\n' ' '; }
-nombre_de() { plano "$sql" | sed -n "s/.*$1 \"\([^\"]*\)\".*/\1/p"; }
-nombre_datname() { plano "$sql" | sed -n "s/.*datname = '\([^']*\)'.*/\1/p"; }
 
 sql=""
 esperando=0
@@ -493,6 +521,10 @@ def _montar_nas(raiz: Path) -> dict[str, str]:
         "COPIAS_SQL": "g3.sql g6.sql",
         "DOBLES_DIR": str(raiz / "estado"),
         "SLOT_ESPERA": "0",          # la sonda de progreso no tiene que dormir en tests
+        # La postcondición del beat espera DOS cadencias de cinco minutos en el
+        # NAS; aquí el doble contesta al primer sondeo.
+        "BEAT_ESPERA": "3",
+        "BEAT_SONDEO": "1",
     }
 
 
@@ -1017,6 +1049,32 @@ def test_la_vuelta_atras_verifica_tambien_las_guardas(tmp_path):
     assert p.returncode != 0, p.stdout
     assert "guarda" in (p.stdout + p.stderr).lower()
     assert "VERIFIED" not in p.stdout, p.stdout
+
+
+# --------------------------------------------------------------------------
+# R5 P1-C — el smoke no puede dar verde con el worker vivo y el beat ausente
+# --------------------------------------------------------------------------
+def test_el_smoke_no_da_verde_con_el_worker_vivo_y_el_beat_ausente(tmp_path, sonda):
+    """La reproducción del auditor: un worker SIN `-B` está `running`, corre la imagen
+    del Paso 3 y contesta `pong` al ping dirigido — el ping prueba el CONSUMIDOR, no el
+    PLANIFICADOR. Beat manda las nueve cadencias (proyector, despacho, salud del slot,
+    cierre de ciclo) y el runbook documenta que puede morir con el worker vivo."""
+    _preparar_smoke(tmp_path, "smoke_sin_beat")
+    p = _ejecutar(tmp_path, "smoke", "smoke_sin_beat")
+    salida = p.stdout + p.stderr
+    assert "pong" in salida, "el doble tiene que seguir contestando al ping: " + salida
+    assert p.returncode != 0, f"el smoke dio verde sin beat:\n{p.stdout}"
+    assert "beat" in salida.lower()
+
+
+def test_el_smoke_para_si_el_beat_arranco_y_esta_muerto(tmp_path, sonda):
+    """El caso insidioso del runbook: `beat: Starting` está en el log de hace horas y el
+    planificador ya no despacha nada. La postcondición es FUNCIONAL —una cadencia nueva
+    y crecimiento de `details.samples`—, no la traza de arranque."""
+    _preparar_smoke(tmp_path, "smoke_beat_muerto")
+    p = _ejecutar(tmp_path, "smoke", "smoke_beat_muerto")
+    assert p.returncode != 0, f"el smoke dio verde con el beat muerto:\n{p.stdout}"
+    assert "no dio señales" in p.stdout + p.stderr
 
 
 # --------------------------------------------------------------------------

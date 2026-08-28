@@ -114,6 +114,15 @@ set -Eeuo pipefail
 : "${SLOT_SOMBRA:=jobhunt_shadow}"
 : "${SLOT_ESPERA:=5}"
 : "${SLOT_LAG_MAX:=16777216}"
+# Postcondición FUNCIONAL del beat EMBEBIDO (auditoría R5 P1-C). El planificador
+# de las nueve cadencias (RUNBOOK §5) puede morir con el worker vivo, y el ping
+# dirigido no lo nota. `BEAT_ESPERA` cubre DOS cadencias de cinco minutos: el
+# smoke puede esperar; abrir con el planificador muerto no.
+: "${BEAT_CONTENEDOR:=swissjob-core-worker}"
+: "${BEAT_CADENCIAS:=shadow-sample-outbox-lag|shadow-check-slot-health|shadow-project|delivery-dispatch-outbox}"
+: "${BEAT_ESPERA:=660}"
+: "${BEAT_SONDEO:=15}"
+: "${BEAT_LOG_LINEAS:=5000}"
 # El `status` que la API contractual devuelve en /v1/ready. Lo fija
 # `jobhunt_core/api/main._READY_STATUS`, y `test_deploy_order.py` comprueba que
 # esta constante y aquella no puedan divergir (auditoría externa R3 P2-1: el
@@ -1414,6 +1423,69 @@ smoke_sondas_acotadas() {
     morir "el slot $SLOT_SOMBRA acumula WAL y CRECE: $antes → $despues bytes (techo $SLOT_LAG_MAX)"
 }
 
+# --------------------------------------------------------------------------
+# Paso 7d — Celery BEAT vivo (auditoría R5 P1-C)
+#
+# El smoke daba VERDE con el worker vivo y el beat AUSENTE. Comprobaba estado,
+# imagen y un ping dirigido, y un worker arrancado SIN `-B` cumple las tres
+# cosas: el ping prueba el CONSUMIDOR, no el PLANIFICADOR. Y beat es quien manda
+# las NUEVE cadencias —proyector, despacho del outbox, salud del slot, purga de
+# idempotencia y cierre de ciclo (RUNBOOK §5)—, que el propio runbook documenta
+# que pueden morir con el worker vivo.
+#
+# La postcondición es FUNCIONAL y reutiliza señales que ya existen:
+#   · `beat: Starting` en el log del worker —arrancó alguna vez—, y
+#   · dentro de DOS cadencias de cinco minutos, un `Sending due task` NUEVO de
+#     esas cadencias Y crecimiento del array `details.samples` de
+#     `outbox_lag_p99`. El muestreador es una de las cuatro cadencias de cinco
+#     minutos, así que las dos señales juntas prueban que el planificador MANDA
+#     y que el worker EJECUTA. `--since` mira solo lo nuevo: una traza de hace
+#     horas no vale como prueba de vida.
+#
+# Mirar si `Config.Cmd` trae `-B` mejora el DIAGNÓSTICO pero no prueba que beat
+# siga vivo, así que se imprime y no decide nada. Y el smoke puede esperar:
+# abrir con el planificador muerto es peor que unos minutos más de mantenimiento.
+# --------------------------------------------------------------------------
+SQL_SAMPLES_OUTBOX="/* samples-outbox */
+ SELECT coalesce(sum(jsonb_array_length(details->'samples')), 0)::bigint
+ FROM jobhunt.shadow_cycle_metrics
+ WHERE metric = 'outbox_lag_p99' AND scope = 'global'"
+
+smoke_beat() {
+  titulo "Paso 7d — Celery beat VIVO (el ping del worker NO lo prueba)"
+  local cmd samples0 samples1 t0 ahora transcurrido
+  cmd=$("$DOCKER" inspect -f '{{json .Config.Cmd}}' "$BEAT_CONTENEDOR" 2>/dev/null || true)
+  case "$cmd" in
+    *'"-B"'*) printf 'diagnóstico: %s arranca con -B (beat embebido, RUNBOOK §5)\n' "$BEAT_CONTENEDOR" ;;
+    *) printf '⚠ diagnóstico: el command de %s NO trae -B (%s). El beat va EMBEBIDO en el worker; esto explicaría el rojo que viene.\n' "$BEAT_CONTENEDOR" "${cmd:-desconocido}" ;;
+  esac
+
+  "$DOCKER" logs --tail "$BEAT_LOG_LINEAS" "$BEAT_CONTENEDOR" >"$WORK_DIR/beat.log" 2>&1 ||
+    morir "no se pudo leer el log de $BEAT_CONTENEDOR"
+  grep -q 'beat: Starting' "$WORK_DIR/beat.log" ||
+    morir "«beat: Starting» no aparece en las últimas $BEAT_LOG_LINEAS líneas de $BEAT_CONTENEDOR: el planificador de las nueve cadencias NO arrancó. El ping del worker NO lo prueba (R5 P1-C)"
+
+  samples0=$(psql_valor "$SQL_SAMPLES_OUTBOX"); entero "$samples0" "samples de outbox_lag_p99"
+  printf 'esperando hasta %ss (dos cadencias de 5 min) a que el beat despache: samples=%s\n' \
+    "$BEAT_ESPERA" "$samples0"
+  t0=$(date +%s); samples1=$samples0
+  while :; do
+    sleep "$BEAT_SONDEO"
+    ahora=$(date +%s); transcurrido=$((ahora - t0 + 2))
+    "$DOCKER" logs --since "${transcurrido}s" "$BEAT_CONTENEDOR" >"$WORK_DIR/beat.nuevo.log" 2>&1 || true
+    samples1=$(psql_valor "$SQL_SAMPLES_OUTBOX") || samples1=$samples0
+    entero "$samples1" "samples de outbox_lag_p99"
+    if grep -qE "Sending due task \[?($BEAT_CADENCIAS)" "$WORK_DIR/beat.nuevo.log" &&
+       [ "$samples1" -gt "$samples0" ]; then
+      printf 'beat VIVO: despachó una cadencia de 5 min y los samples de outbox_lag_p99 subieron %s → %s\n' \
+        "$samples0" "$samples1"
+      return 0
+    fi
+    [ $((ahora - t0)) -lt "$BEAT_ESPERA" ] || break
+  done
+  morir "el beat de $BEAT_CONTENEDOR no dio señales en ${BEAT_ESPERA}s: ningún «Sending due task» nuevo de ($BEAT_CADENCIAS) y samples de outbox_lag_p99 $samples0 → $samples1. El worker contesta al ping pero NADIE planifica las nueve cadencias (proyector, despacho, salud del slot, cierre de ciclo): NO se abre a nadie"
+}
+
 smoke() {
   titulo "Paso 7 — smoke"
   [ -f "$ESTADO" ] || morir "no hay $ESTADO: el smoke necesita la release y los IDs de imagen medidos en el Paso 3"
@@ -1457,11 +1529,15 @@ PY
     morir "el smoke de /v1/ready no pasa: NO se abre a nadie"
   fi
 
+  # El beat va el ÚLTIMO porque es el único que ESPERA: los rojos baratos
+  # (contenedores, ping, slot, /v1/ready) salen antes de gastar dos cadencias.
+  smoke_beat
+
   # Evidencia para el acta. NO es postcondición de nada: las postcondiciones son
-  # las de 7a y 7b, que sí paran.
+  # las de 7a, 7b y 7d, que sí paran.
   "$DOCKER" logs --tail 50 swissjob-core-capture || true
   "$DOCKER" logs --tail 50 swissjob-worker || true
-  printf '\nsmoke OK — release %s, %s autoritativo, seis contenedores sanos con las imágenes del Paso 3.\n' \
+  printf '\nsmoke OK — release %s, %s autoritativo, seis contenedores sanos con las imágenes del Paso 3 y beat VIVO.\n' \
     "$RELEASE_ESPERADA" "$READY_STATUS_ESPERADO"
 }
 

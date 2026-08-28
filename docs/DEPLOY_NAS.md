@@ -1131,9 +1131,33 @@ esas imágenes (comprobado), así que la sonda de proceso es funcional:
   (medido allí, no copiado aquí).
 - `release` igual al `RELEASE` horneado que se leyó en el Paso 3.
 
+**Aserción (7d) — Celery BEAT vivo** (auditoría externa R5 P1-C). El smoke daba **verde**
+con el worker vivo y el beat **ausente**: `running`, la imagen correcta y el ping dirigido
+los cumple un worker arrancado **sin `-B`**, porque el ping prueba el **consumidor** y no
+el **planificador**. Reproducido: un worker sin `-B` con cola exclusiva vacía contesta
+`pong` y `1 node online`. Y beat es quien manda las **nueve cadencias** —muestreador,
+salud del slot, proyector, despacho del outbox, purga de idempotencia y cierre de ciclo
+(`jobhunt_core/shadow/RUNBOOK.md` §5)—, que el propio runbook documenta que pueden morir
+con el worker vivo.
+
+La postcondición es **funcional** y reutiliza señales que ya existen:
+
+- `beat: Starting` en el log de `swissjob-core-worker` (arrancó alguna vez); y
+- dentro de **dos cadencias de cinco minutos**, un `Sending due task` **nuevo**
+  (`docker logs --since`, no una traza de hace horas) de las cuatro cadencias de 5 min, y
+  **crecimiento** del array `details.samples` de `outbox_lag_p99` en
+  `jobhunt.shadow_cycle_metrics`. El muestreador es una de esas cuatro, así que las dos
+  señales juntas prueban que el planificador **manda** y que el worker **ejecuta**.
+
+Que `Config.Cmd` traiga `-B` se imprime como **diagnóstico** —explica el rojo en un
+segundo— pero **no decide nada**: no prueba que beat siga vivo. El chequeo va el último de
+los cuatro porque es el único que espera: los rojos baratos salen antes. **El smoke puede
+esperar**; abrir con el planificador muerto es peor que unos minutos más de mantenimiento.
+Se ajusta con `BEAT_ESPERA` (660 s por defecto), `BEAT_SONDEO` y `BEAT_CONTENEDOR`.
+
 Después imprime `docker logs --tail 50` de `swissjob-core-capture` y de
 `swissjob-worker`. Eso es **evidencia para el acta, no postcondición**: las
-postcondiciones son 7a, 7b y 7c, que sí paran. Con el smoke en verde el gate de la
+postcondiciones son 7a, 7b, 7c y 7d, que sí paran. Con el smoke en verde el gate de la
 cabecera de §5 pasa a **SÍ** y las siguientes subidas usan §5.4.
 
 ### 5.4 Actualización rutinaria — SOLO con el gate de §5 en SÍ
