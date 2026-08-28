@@ -938,8 +938,33 @@ que falte al arrancar y el modelo de embeddings no se vuelve a descargar (<60 s)
 ./nas_cutover.sh smoke
 ```
 
-**Aserción** — los cinco escritores vuelven a estar `Up` y `/v1/ready` cumple las
-cuatro condiciones a la vez, o el script sale 1:
+**Aserción (7a) — estado ESTRUCTURADO de los SEIS contenedores.** No se lee el texto de
+`docker ps` sino `docker inspect -f '{{.State.Status}}|{{…Health.Status}}|{{.Image}}'`
+(auditoría externa R4 P1-5: el filtro miraba si el estado **empezaba** por `Up`, y
+`Up 3 minutes (unhealthy)` empieza por `Up` — el smoke devolvía 0 con el capturador
+enfermo, es decir, con el CDC caído). Para cada uno:
+
+- estado exactamente `running` — ni `exited`, ni `restarting`, ni ausente;
+- si el contenedor **tiene healthcheck**, `healthy` (backend, core-api, core-capture y
+  frontend lo tienen; los dos workers, no);
+- y el **ID de imagen** exactamente el que cargó el Paso 3 para su tag. Antes se podía
+  cargar una imagen equivocada pero saludable sin atestación equivalente a la del core.
+
+La lista es `SERVICIOS_IMAGEN` e incluye **`swissjob-frontend`**, que no está en
+`ESCRITORES` (no se para porque no escribe) pero sin el cual no hay UI que abrir.
+
+**Aserción (7b) — sondas ACOTADAS de lo que no tiene healthcheck.** `ps` no existe en
+esas imágenes (comprobado), así que la sonda de proceso es funcional:
+
+- `swissjob-core-worker` y `swissjob-worker`: `celery -A <app> inspect ping -d
+  celery@$(hostname) -t 15` **dirigido** al nodo de ESE contenedor — un `inspect ping` a
+  secas lo contesta cualquier worker del broker y pasaría con este muerto;
+- CDC: el slot `jobhunt_shadow` tiene que estar **`active`** (hay consumidor conectado) y
+  su retraso, medido dos veces con `SLOT_ESPERA` segundos de separación, o **baja** o está
+  por debajo de `SLOT_LAG_MAX` (16 MiB por defecto). Un slot activo que solo acumula WAL
+  es el capturador atascado.
+
+**Aserción (7c) — `/v1/ready` cumple las cuatro condiciones a la vez**, o el script sale 1:
 
 - `status: ready` — **no `ok`**. La postcondición decía `ok` y la API contractual
   devuelve `ready` desde siempre (R3 P2-1): un cutover correcto habría terminado en
@@ -952,8 +977,9 @@ cuatro condiciones a la vez, o el script sale 1:
   (medido allí, no copiado aquí).
 - `release` igual al `RELEASE` horneado que se leyó en el Paso 3.
 
-Después imprime `docker logs --tail 50` de `swissjob-core-capture` (reproduce el WAL
-retenido y alcanza el slot) y de `swissjob-worker`. Con el smoke en verde el gate de la
+Después imprime `docker logs --tail 50` de `swissjob-core-capture` y de
+`swissjob-worker`. Eso es **evidencia para el acta, no postcondición**: las
+postcondiciones son 7a, 7b y 7c, que sí paran. Con el smoke en verde el gate de la
 cabecera de §5 pasa a **SÍ** y las siguientes subidas usan §5.4.
 
 ### 5.4 Actualización rutinaria — SOLO con el gate de §5 en SÍ

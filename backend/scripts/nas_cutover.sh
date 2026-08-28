@@ -14,7 +14,7 @@
 # Aquí cada postcondición es una condición de EJECUCIÓN: si no cuadra, se sale
 # distinto de cero y no hay paso siguiente.
 #
-# LO QUE CORRIGIÓ LA AUDITORÍA R4 (P1-1 a P1-4):
+# LO QUE CORRIGIÓ LA AUDITORÍA R4 (cinco P1, todos sobre este fichero):
 #   P1-1  el aislamiento del ENSAYO comparaba el DSN por SUFIJO, y una URL con
 #         `?query`, `#fragmento` o percent-encoding lo esquivaba y llegaba al
 #         Paso 5 EN FIRME sobre la base viva. Ahora hay UNA forma de DSN
@@ -35,6 +35,12 @@
 #         devolvía 0 dejando una MEZCLA pre/post. Ahora la copia es `-Fc`,
 #         verificada con el MISMO `pg_restore` que la restaurará, sellada con
 #         sha256 + manifiesto, y hay un subcomando `restaurar` todo-o-nada.
+#   P1-5  el smoke aceptaba `Up 3 minutes (unhealthy)` porque miraba si el texto
+#         empezaba por `Up`, no exigía frontend y solo sondaba la API del core.
+#         Ahora el estado es estructurado (`docker inspect`), `healthy` es
+#         obligatorio para todo contenedor que tenga healthcheck, se exige el
+#         frontend, se contrastan los IDs de las tres imágenes y hay sondas
+#         acotadas de Celery y del slot de la sombra.
 #
 # CIFRAS: este script NO lleva ninguna constante del corpus. Mide el estado
 # ANTES, lee las cifras de los informes en seco y aserta el estado DESPUÉS
@@ -66,6 +72,23 @@ set -Eeuo pipefail
 : "${COPIAS_SQL:=g3_canonizacion_identidad_arbeitnow_jobgether.sql g6_canonizacion_identidad_irishjobs.sql}"
 : "${TARS:=swissjob-core.tar swissjob-backend.tar swissjob-frontend.tar}"
 : "${IMAGENES:=swissjob-core:prod swissjob-backend:prod swissjob-frontend:prod}"
+# Qué contenedor corre QUÉ imagen. El smoke exige presencia, estado y —para los
+# seis— que el ID de imagen sea EXACTAMENTE el que cargó el Paso 3: una imagen
+# equivocada pero saludable pasaba antes sin atestación (R4 P1-5). El frontend
+# está aquí y NO en ESCRITORES: no se para (no escribe), pero sin él no hay UI y
+# el smoke no puede decir que el servicio está abierto.
+: "${SERVICIOS_IMAGEN:=swissjob-backend=swissjob-backend:prod swissjob-worker=swissjob-backend:prod swissjob-core-api=swissjob-core:prod swissjob-core-worker=swissjob-core:prod swissjob-core-capture=swissjob-core:prod swissjob-frontend=swissjob-frontend:prod}"
+# Sondas ACOTADAS para los procesos sin healthcheck: `contenedor=app_celery`.
+# `ps` no existe en estas imágenes (comprobado), así que la sonda de proceso es
+# el ping dirigido de Celery — que además es funcional.
+: "${SONDAS_CELERY:=swissjob-core-worker=jobhunt_core.celery_app swissjob-worker=celery_app}"
+: "${SONDA_CELERY_TIMEOUT:=15}"
+# Sonda de PROGRESO del CDC: el slot lógico de la sombra tiene que estar ACTIVO
+# (hay un consumidor conectado) y no acumular WAL sin parar. Vacío = no medirlo
+# (despliegue sin Fase B).
+: "${SLOT_SOMBRA:=jobhunt_shadow}"
+: "${SLOT_ESPERA:=5}"
+: "${SLOT_LAG_MAX:=16777216}"
 # El `status` que la API contractual devuelve en /v1/ready. Lo fija
 # `jobhunt_core/api/main._READY_STATUS`, y `test_deploy_order.py` comprueba que
 # esta constante y aquella no puedan divergir (auditoría externa R3 P2-1: el
@@ -142,6 +165,10 @@ cifra() { # <fichero informe> <prefijo del concepto>
 entero() { # <valor> <qué es>
   case "$1" in ''|*[!0-9-]*) morir "«$2» no es un número: '$1'";; esac
 }
+
+# Nombre de variable a partir de un tag de imagen (`swissjob-core:prod` →
+# `swissjob_core_prod`): lo que sigue se pasa a `eval`, así que solo alfanumérico.
+identificador() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '_'; }
 
 # --------------------------------------------------------------------------
 # Aislamiento del ENSAYO (auditoría R4 P1-1)
@@ -376,7 +403,7 @@ paso3_imagenes() {
     printf '⚠ ENSAYO: no se cargan imágenes (y por eso no habrá smoke).\n'
     return 0
   fi
-  local tar img release
+  local tar img release id
   for tar in $TARS; do
     [ -f "$BASE_DIR/$tar" ] || morir "falta $BASE_DIR/$tar (§5.2)"
   done
@@ -384,6 +411,12 @@ paso3_imagenes() {
   for tar in $TARS; do "$DOCKER" load -i "$BASE_DIR/$tar" || morir "docker load falló con $tar"; done
   for img in $IMAGENES; do
     "$DOCKER" image inspect "$img" >/dev/null 2>&1 || morir "$img no quedó cargada"
+    # El ID exacto de cada imagen: el smoke exige que los contenedores recreados
+    # corran ESTAS y no otras (R4 P1-5).
+    id=$("$DOCKER" image inspect -f '{{.Id}}' "$img") || morir "no se pudo leer el ID de $img"
+    [ -n "$id" ] || morir "$img no publica ID"
+    printf 'IMAGEN_ID_%s=%s\n' "$(identificador "$img")" "$id" >>"$ESTADO"
+    printf 'imagen cargada: %s → %s\n' "$img" "$id"
   done
 
   # La imagen tiene que saber nombrar su release: sin el build arg hornea
@@ -762,22 +795,87 @@ restaurar() { # [fichero .dump]
 
 # --------------------------------------------------------------------------
 # Paso 7 — Smoke, DESPUÉS del Recreate de Container Station
+#
+# Auditoría R4 P1-5. El filtro miraba si el texto de `docker ps` empezaba por
+# `Up`, y `Up 3 minutes (unhealthy)` empieza por `Up`: el smoke devolvía 0 con
+# el capturador enfermo. Además el frontend no estaba en la lista, los `docker
+# logs … || true` no eran postcondición de nada y solo la API del core tenía
+# sonda funcional. Aquí el estado es ESTRUCTURADO y todo lo de abajo es una
+# condición de ejecución.
 # --------------------------------------------------------------------------
+estado_contenedor() { # <nombre> -> «estado|salud|imagen»
+  "$DOCKER" inspect \
+    -f '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}sin-healthcheck{{end}}|{{.Image}}' \
+    "$1" 2>/dev/null
+}
+
+smoke_contenedores() {
+  titulo "Paso 7a — estado ESTRUCTURADO de los seis contenedores"
+  local par nombre imagen linea estado salud id esperado
+  for par in $SERVICIOS_IMAGEN; do
+    nombre=${par%%=*}; imagen=${par#*=}
+    linea=$(estado_contenedor "$nombre") ||
+      morir "$nombre no existe tras el Recreate (docker inspect no lo encuentra)"
+    [ -n "$linea" ] || morir "$nombre no existe tras el Recreate"
+    estado=${linea%%|*}; linea=${linea#*|}
+    salud=${linea%%|*}; id=${linea#*|}
+    printf '%-26s estado=%-11s salud=%-16s imagen=%s\n' "$nombre" "$estado" "$salud" "$id"
+    [ "$estado" = running ] ||
+      morir "$nombre está en estado '$estado' (se exige 'running'): NO se abre a nadie"
+    case "$salud" in
+      healthy|sin-healthcheck) ;;
+      *) morir "$nombre tiene healthcheck y está '$salud': 'Up (unhealthy)' NO es verde (R4 P1-5)" ;;
+    esac
+    eval "esperado=\${IMAGEN_ID_$(identificador "$imagen"):-}"
+    [ -n "$esperado" ] ||
+      morir "$ESTADO no trae el ID de $imagen: repite el Paso 3, el smoke no puede atestiguar qué imagen corre"
+    [ "$id" = "$esperado" ] ||
+      morir "$nombre corre la imagen $id y el Paso 3 cargó $esperado para $imagen"
+  done
+}
+
+smoke_sondas_acotadas() {
+  titulo "Paso 7b — sondas acotadas de los procesos SIN healthcheck"
+  local par nombre app salida
+  for par in $SONDAS_CELERY; do
+    nombre=${par%%=*}; app=${par#*=}
+    salida="$WORK_DIR/sonda.$nombre.txt"
+    # Ping DIRIGIDO (`-d celery@$(hostname)`): un `inspect ping` a secas lo
+    # contesta CUALQUIER worker del broker, así que pasaría con este muerto.
+    "$DOCKER" exec "$nombre" sh -c \
+      "celery -A $app inspect ping -d celery@\$(hostname) -t $SONDA_CELERY_TIMEOUT" \
+      >"$salida" 2>&1 ||
+      { cat "$salida" >&2; morir "$nombre no contesta al ping dirigido de Celery"; }
+    grep -q pong "$salida" || { cat "$salida" >&2; morir "$nombre respondió al ping sin «pong»"; }
+    printf '%s: pong\n' "$nombre"
+  done
+
+  [ -n "$SLOT_SOMBRA" ] || { printf 'SLOT_SOMBRA vacío: no se mide el progreso del CDC.\n'; return 0; }
+  local activo antes despues
+  activo=$(psql_valor "SELECT active FROM pg_replication_slots WHERE slot_name = '$SLOT_SOMBRA'")
+  [ "$activo" = t ] ||
+    morir "el slot $SLOT_SOMBRA no está ACTIVO (active='$activo'): swissjob-core-capture no está consumiendo el WAL y la sombra se queda atrás en silencio"
+  antes=$(psql_valor "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)::bigint FROM pg_replication_slots WHERE slot_name = '$SLOT_SOMBRA'")
+  sleep "$SLOT_ESPERA"
+  despues=$(psql_valor "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)::bigint FROM pg_replication_slots WHERE slot_name = '$SLOT_SOMBRA'")
+  entero "$antes" "retraso del slot"; entero "$despues" "retraso del slot"
+  printf 'slot %s: activo, retraso %s → %s bytes en %ss\n' "$SLOT_SOMBRA" "$antes" "$despues" "$SLOT_ESPERA"
+  # Progreso: o el capturador está recuperando terreno, o ya está al día.
+  [ "$despues" -le "$antes" ] || [ "$despues" -le "$SLOT_LAG_MAX" ] ||
+    morir "el slot $SLOT_SOMBRA acumula WAL y CRECE: $antes → $despues bytes (techo $SLOT_LAG_MAX)"
+}
+
 smoke() {
   titulo "Paso 7 — smoke"
-  [ -f "$ESTADO" ] || morir "no hay $ESTADO: el smoke necesita la release medida en el Paso 3"
+  [ -f "$ESTADO" ] || morir "no hay $ESTADO: el smoke necesita la release y los IDs de imagen medidos en el Paso 3"
   # shellcheck disable=SC1090
   . "$ESTADO"
   [ -n "${RELEASE_ESPERADA:-}" ] || morir "$ESTADO no trae RELEASE_ESPERADA (Paso 3)"
 
-  local vivos vivo
-  vivos=$("$DOCKER" ps --format '{{.Names}}\t{{.Status}}')
-  printf '%s\n' "$vivos"
-  for vivo in $ESCRITORES; do
-    printf '%s\n' "$vivos" | awk -F'\t' -v n="$vivo" '$1==n && $2 ~ /^Up/ {ok=1} END {exit !ok}' ||
-      morir "$vivo no está Up tras el Recreate"
-  done
+  smoke_contenedores
+  smoke_sondas_acotadas
 
+  titulo "Paso 7c — contrato de /v1/ready"
   # UN solo parser, dentro del contenedor que responde: compara /v1/ready con
   # /v1/health (de donde sale el head esperado, medido allí y no copiado aquí)
   # y con la release horneada del Paso 3.
@@ -810,9 +908,12 @@ PY
     morir "el smoke de /v1/ready no pasa: NO se abre a nadie"
   fi
 
+  # Evidencia para el acta. NO es postcondición de nada: las postcondiciones son
+  # las de 7a y 7b, que sí paran.
   "$DOCKER" logs --tail 50 swissjob-core-capture || true
   "$DOCKER" logs --tail 50 swissjob-worker || true
-  printf '\nsmoke OK — release %s, %s autoritativo.\n' "$RELEASE_ESPERADA" "$READY_STATUS_ESPERADO"
+  printf '\nsmoke OK — release %s, %s autoritativo, seis contenedores sanos con las imágenes del Paso 3.\n' \
+    "$RELEASE_ESPERADA" "$READY_STATUS_ESPERADO"
 }
 
 # --------------------------------------------------------------------------

@@ -24,6 +24,9 @@ aquí se rompen a propósito:
   P1-4  la copia era SQL plano y la restauración documentada devolvía 0 dejando una mezcla:
         aquí la copia tiene que ser un archivo que `pg_restore` lea, y `restaurar` es un
         subcomando con verificación contra el manifiesto pre-corte.
+  P1-5  `Up 3 minutes (unhealthy)` empieza por `Up` y pasaba: ahora el estado se lee con
+        `docker inspect` y hay casos para ausente/exited/restarting/unhealthy/healthy,
+        frontend, IDs de imagen y sondas acotadas de Celery y del slot.
 
 La guarda de orden (`test_deploy_order.py`) protege la SECUENCIA; no puede demostrar que
 una etapa rota la detenga. Esto sí: ejecuta `backend/scripts/nas_cutover.sh` con dobles de
@@ -56,6 +59,16 @@ _ANTES = {"slots": 100, "jobs": 1000, "pares": 10, "juicios": "5 5"}
 _DESPUES = {"slots": 108, "jobs": 994, "pares": 10, "juicios": "5 5"}
 _RELEASE = "deadbee"
 _HEAD = "core0035"
+# Las tres imágenes del Paso 3 y el ID que el doble les asigna: el smoke exige que los
+# contenedores recreados corran EXACTAMENTE estas.
+_IMAGENES = ("swissjob-core:prod", "swissjob-backend:prod", "swissjob-frontend:prod")
+
+
+def _id_imagen(tag: str) -> str:
+    limpio = "".join(c if c.isalnum() else "_" for c in tag)
+    return f"sha256:id-de-{limpio}"
+
+
 _DOBLE_DOCKER = r"""#!/usr/bin/env bash
 # DOBLE de `docker`. $ROMPER nombra la etapa que se rompe.
 set -u
@@ -65,14 +78,20 @@ r=${ROMPER:-}
 # cuando se rompe la sonda a propósito.
 IDENTIDAD="${PG_DB:-swissjobhunter}|16384|2026-08-28 00:00:00.000000"
 
+id_imagen() { printf 'sha256:id-de-%s' "$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_')"; }
+imagen_de() {
+  case "$1" in
+    swissjob-backend|swissjob-worker) printf 'swissjob-backend:prod' ;;
+    swissjob-frontend)                printf 'swissjob-frontend:prod' ;;
+    *)                                printf 'swissjob-core:prod' ;;
+  esac
+}
+
 case "$1" in
   stop) : >"$d/parados"; exit 0 ;;
   ps)
     if [ ! -f "$d/parados" ] || [ "$r" = paso1 ] || [ "$r" = restaurar_escritor_vivo ]; then
       vivos="swissjob-backend swissjob-worker swissjob-core-api swissjob-core-worker swissjob-core-capture"
-    elif [ -f "$d/recreado" ]; then
-      vivos="swissjob-backend swissjob-worker swissjob-core-api swissjob-core-worker swissjob-core-capture"
-      [ "$r" = smoke_escritor_caido ] && vivos="swissjob-backend swissjob-worker"
     else
       vivos="swissjob-postgres swissjob-redis"
     fi
@@ -83,8 +102,29 @@ case "$1" in
     exit 0 ;;
   rmi|logs) exit 0 ;;
   load) [ "$r" = paso3_load ] && exit 1; exit 0 ;;
-  image) exit 0 ;;
-  inspect) echo "swissjob_core-net "; exit 0 ;;
+  image)
+    # `docker image inspect <img>` (existe) y `docker image inspect -f '{{.Id}}' <img>`.
+    if [ "${3:-}" = "-f" ]; then id_imagen "${5:-}"; printf '\n'; fi
+    exit 0 ;;
+  inspect)
+    # `docker inspect -f <tmpl> <nombre>`: la red del core, o el estado de un contenedor.
+    nombre=${4:-}
+    if [ "$nombre" = swissjob-core-migrate ]; then echo "swissjob_core-net "; exit 0; fi
+    [ "$r" = smoke_ausente ] && [ "$nombre" = swissjob-core-worker ] && exit 1
+    [ "$r" = smoke_frontend_ausente ] && [ "$nombre" = swissjob-frontend ] && exit 1
+    estado=running
+    salud=sin-healthcheck
+    case "$nombre" in
+      swissjob-backend|swissjob-core-api|swissjob-core-capture|swissjob-frontend) salud=healthy ;;
+    esac
+    [ "$r" = smoke_unhealthy ] && [ "$nombre" = swissjob-core-capture ] && salud=unhealthy
+    [ "$r" = smoke_frontend_unhealthy ] && [ "$nombre" = swissjob-frontend ] && salud=unhealthy
+    [ "$r" = smoke_exited ] && [ "$nombre" = swissjob-core-worker ] && estado=exited
+    [ "$r" = smoke_restarting ] && [ "$nombre" = swissjob-backend ] && estado=restarting
+    img=$(id_imagen "$(imagen_de "$nombre")")
+    [ "$r" = smoke_imagen ] && [ "$nombre" = swissjob-frontend ] && img=sha256:otra-imagen
+    printf '%s|%s|%s\n' "$estado" "$salud" "$img"
+    exit 0 ;;
   exec)
     shift
     while [ "${1#-}" != "$1" ]; do shift; done
@@ -117,6 +157,11 @@ case "$1" in
         fi
         exec sha256sum ;;
       psql) shift; exec psql "$@" ;;
+      sh)
+        # La sonda ACOTADA de los workers sin healthcheck (ping dirigido de Celery).
+        [ "$r" = smoke_celery ] && { echo "Error: No nodes replied within time constraint" >&2; exit 1; }
+        printf -- '->  celery@simulado: OK\n        pong\n\n1 node online.\n'
+        exit 0 ;;
       python)
         # El smoke: el programa embebido en el script se ejecuta DE VERDAD contra el
         # servidor HTTP que levanta el test en 127.0.0.1:8000.
@@ -169,6 +214,18 @@ if [ -n "$sql" ]; then                      # consultas escalares y manifiestos
   case "$sql" in
     *pg_postmaster_start_time*)             # sonda de destino (R4 P1-1)
       echo "${PG_DB:-swissjobhunter}|16384|2026-08-28 00:00:00.000000" ;;
+    *pg_replication_slots*)                 # sonda de progreso del CDC (R4 P1-5)
+      case "$sql" in
+        *"SELECT active"*)
+          if [ "$r" = smoke_slot_inactivo ]; then echo f; else echo t; fi ;;
+        *)
+          n=$(cat "$d/lag" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$d/lag"
+          if [ "$r" = smoke_slot_atrasado ]; then
+            if [ "$n" = 1 ]; then echo 1000; else echo 999999999; fi
+          else
+            if [ "$n" = 1 ]; then echo 500; else echo 100; fi
+          fi ;;
+      esac ;;
     *"p.id::text"*)                         # MANIFIESTO de pares (identidades)
       if [ "$fase" = antes ]; then printf 'p-1\np-2\n'
       elif [ "$r" = paso6_identidad_pares ]; then printf 'p-1\np-3\n'
@@ -289,6 +346,7 @@ def _montar_nas(raiz: Path) -> dict[str, str]:
         "WORK_DIR": str(raiz / "trabajo"),
         "COPIAS_SQL": "g3.sql g6.sql",
         "DOBLES_DIR": str(raiz / "estado"),
+        "SLOT_ESPERA": "0",          # la sonda de progreso no tiene que dormir en tests
     }
 
 
@@ -361,10 +419,15 @@ def _preparar_smoke(raiz: Path, romper: str | None) -> None:
     trabajo = raiz / "trabajo"
     trabajo.mkdir(parents=True, exist_ok=True)
     if romper != "smoke_sin_paso3":
-        (trabajo / "estado.env").write_text(f"RELEASE_ESPERADA={_RELEASE}\n", encoding="utf-8")
+        lineas = [f"RELEASE_ESPERADA={_RELEASE}"]
+        if romper != "smoke_sin_ids":
+            lineas += [
+                f"IMAGEN_ID_{''.join(c if c.isalnum() else '_' for c in tag)}={_id_imagen(tag)}"
+                for tag in _IMAGENES
+            ]
+        (trabajo / "estado.env").write_text("\n".join(lineas) + "\n", encoding="utf-8")
     (raiz / "estado").mkdir(parents=True, exist_ok=True)
     (raiz / "estado" / "parados").touch()
-    (raiz / "estado" / "recreado").touch()
 
 
 # --------------------------------------------------------------------------
@@ -538,12 +601,33 @@ def test_las_cifras_pueden_cuadrar_y_aun_asi_perderse_un_par_conocido(tmp_path):
 @pytest.mark.parametrize(
     "etapa",
     ["smoke_status", "smoke_release", "smoke_authoritative", "smoke_alembic",
-     "smoke_escritor_caido", "smoke_sin_paso3"],
+     "smoke_sin_paso3", "smoke_sin_ids",
+     "smoke_ausente", "smoke_exited", "smoke_restarting", "smoke_unhealthy",
+     "smoke_frontend_ausente", "smoke_frontend_unhealthy", "smoke_imagen",
+     "smoke_celery", "smoke_slot_inactivo", "smoke_slot_atrasado"],
 )
 def test_el_smoke_falla_cerrado(tmp_path, sonda, etapa):
     _preparar_smoke(tmp_path, etapa)
     p = _ejecutar(tmp_path, "smoke", etapa)
     assert p.returncode != 0, f"el smoke aceptó {etapa}:\n{p.stdout}"
+    assert "PARAR" in p.stdout + p.stderr
+
+
+def test_el_smoke_rechaza_up_unhealthy(tmp_path, sonda):
+    """R4 P1-5, el hallazgo literal: `Up 3 minutes (unhealthy)` empieza por `Up`. El smoke
+    devolvía 0 con el capturador enfermo, es decir, con el CDC caído."""
+    _preparar_smoke(tmp_path, "smoke_unhealthy")
+    p = _ejecutar(tmp_path, "smoke", "smoke_unhealthy")
+    assert p.returncode != 0
+    assert "unhealthy" in p.stdout + p.stderr
+
+
+def test_el_smoke_exige_el_frontend(tmp_path, sonda):
+    """`ESCRITORES` no incluía el frontend: se podía reabrir el servicio sin UI."""
+    _preparar_smoke(tmp_path, "smoke_frontend_ausente")
+    p = _ejecutar(tmp_path, "smoke", "smoke_frontend_ausente")
+    assert p.returncode != 0
+    assert "swissjob-frontend" in p.stdout + p.stderr
 
 
 def test_el_smoke_rechaza_el_status_ok_que_exigia_el_runbook(tmp_path, sonda):
