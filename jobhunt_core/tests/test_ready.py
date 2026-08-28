@@ -184,8 +184,8 @@ def test_sin_release_horneada_en_la_imagen_no_hay_autoritatividad(monkeypatch):
 
 
 def test_la_release_horneada_sale_del_fichero_de_la_imagen(tmp_path, monkeypatch):
-    """`/app/RELEASE` lo escribe el Dockerfile con el MISMO build arg que el ENV, fuera de
-    `/app/jobhunt_core` (que el perfil de desarrollo monta): es de la imagen, no del árbol."""
+    """`/opt/jobhunt-release/RELEASE` lo escribe el Dockerfile con el MISMO build arg que
+    el ENV, fuera de `/app` entero (que un bind mount sustituye): es de la imagen."""
     fichero = tmp_path / "RELEASE"
     fichero.write_text("450c561\n")
     monkeypatch.setattr(api, "_BAKED_RELEASE_PATH", fichero)
@@ -252,3 +252,89 @@ def test_el_codigo_montado_quita_la_autoritatividad_aunque_nadie_ponga_la_variab
     monkeypatch.setattr(api, "_MOUNTINFO_PATH", tmp_path / "no-existe")
     assert api._code_is_mounted() is True
     assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is False
+
+
+def test_un_montaje_ANCESTRO_del_paquete_tambien_quita_la_autoritatividad(
+    tmp_path, monkeypatch
+):
+    """REGRESIÓN auditoría externa R2 P1-1: el montaje que MÁS sustituye era el único
+    que no se miraba.
+
+    `_code_is_mounted` solo consideraba peligroso el punto de montaje IGUAL a la raíz
+    del paquete o situado DEBAJO. Un bind mount en `/app` es ANCESTRO de
+    `/app/jobhunt_core`: sustituye el paquete entero —y de paso el marcador horneado—,
+    y la función lo daba por limpio. Con el marcador del árbol montado igual al
+    `RELEASE_SHA` del entorno, la sonda publicaba `authoritative: true` sobre código
+    ajeno. Reproducido por el auditor con un `mountinfo` sintético cuyo 5º campo es
+    `/app`: `mount_at_parent_app_detected = False`, `authoritative = True`.
+
+    El rootfs `/` es ancestro de TODO y NO debe marcar mutable ninguna imagen: es el
+    montaje normal de cualquier contenedor.
+    """
+    monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
+    monkeypatch.setattr(api, "CODE_MUTABLE", False)
+    monkeypatch.setattr(api, "_BAKED_RELEASE", "abc1234")
+    monkeypatch.setattr(api, "__release_sha__", "abc1234")
+    raiz = str(Path(jobhunt_core.__file__).parent)
+    padre = str(Path(raiz).parent)          # `/app` en la imagen
+
+    ancestro = tmp_path / "montaje-en-el-padre"
+    ancestro.write_text(
+        "31 25 0:29 / / rw,relatime shared:1 - overlay overlay rw\n"
+        f"812 745 0:64 /home/x/SwissJob {padre} rw,relatime - ext4 /dev/sda1 rw\n"
+    )
+    monkeypatch.setattr(api, "_MOUNTINFO_PATH", ancestro)
+    assert api._code_is_mounted() is True
+    assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is False
+    assert TestClient(api.app).get("/v1/health").json()["authoritative"] is False
+
+    # …y el rootfs de cualquier contenedor NO puede marcar mutable a toda la imagen:
+    # `/` es ancestro de todo, así que la regla de ancestros lo excluye a propósito.
+    solo_rootfs = tmp_path / "solo-rootfs"
+    solo_rootfs.write_text(
+        "31 25 0:29 / / rw,relatime shared:1 - overlay overlay rw\n"
+        "32 31 0:30 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw\n"
+        "33 31 0:31 / /etc/hosts rw,relatime - ext4 /dev/sda1 rw\n"
+    )
+    monkeypatch.setattr(api, "_MOUNTINFO_PATH", solo_rootfs)
+    assert api._code_is_mounted() is False
+    assert api._release_marker_is_mounted() is False
+    assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is True
+
+
+def test_el_marcador_de_release_montado_quita_la_autoritatividad(tmp_path, monkeypatch):
+    """REGRESIÓN auditoría externa R2 P1-1 (segunda mitad): el marcador vive FUERA del
+    árbol de código, y ese sitio nuevo también hay que observarlo.
+
+    Mover el marcador a `/opt/jobhunt-release/RELEASE` lo saca del alcance de un
+    montaje sobre el código, pero montarlo A ÉL falsificaría el ancla contra la que se
+    contrasta `RELEASE_SHA` (el mismo agujero que cerró G10, en la ruta nueva). El
+    valor se lee al IMPORTAR, así que un montaje presente al arrancar ya lo habría
+    envenenado: la marca solo puede afirmar si tampoco hay montaje aquí.
+    """
+    monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
+    monkeypatch.setattr(api, "CODE_MUTABLE", False)
+    monkeypatch.setattr(api, "_BAKED_RELEASE", "abc1234")
+    monkeypatch.setattr(api, "__release_sha__", "abc1234")
+    marcador = str(api._BAKED_RELEASE_PATH)
+
+    for punto in (marcador, str(Path(marcador).parent)):
+        montado = tmp_path / "marcador-montado"
+        montado.write_text(
+            "31 25 0:29 / / rw,relatime shared:1 - overlay overlay rw\n"
+            f"812 745 0:64 /home/x/falso {punto} rw,relatime - ext4 /dev/sda1 rw\n"
+        )
+        monkeypatch.setattr(api, "_MOUNTINFO_PATH", montado)
+        assert api._release_marker_is_mounted() is True, punto
+        assert TestClient(api.app).get("/v1/ready").json()["authoritative"] is False
+
+
+def test_el_marcador_horneado_vive_fuera_del_arbol_de_codigo():
+    """El marcador NO puede vivir bajo el árbol que el perfil de desarrollo monta ni
+    bajo `/app` (auditoría externa R2 P1-1): si estuviera dentro, sustituir el árbol
+    sustituiría también el ancla contra la que se compara el `RELEASE_SHA` del entorno.
+    """
+    marcador = str(api._BAKED_RELEASE_PATH)
+    arbol = str(Path(jobhunt_core.__file__).parent)
+    assert not marcador.startswith(arbol + "/")
+    assert not marcador.startswith("/app/")

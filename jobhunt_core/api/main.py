@@ -144,16 +144,36 @@ CODE_MUTABLE = os.getenv("CORE_CODE_MUTABLE", "").strip().lower() in {"1", "true
 # namespace de ESTE proceso, así que la suposición se puede sustituir por una lectura.
 _MOUNTINFO_PATH = Path("/proc/self/mountinfo")
 
+# La release HORNEADA en la imagen, FUERA de todo árbol que un compose sustituya
+# (auditorías G10 P2-2 y externa R2 P1-1). `RELEASE_SHA` es un ENV de la imagen y el ENV
+# de una imagen lo pisa cualquier `environment:`/`env_file:` del contenedor —y los
+# servicios del core arrancan con `env_file`—, así que un `-e RELEASE_SHA=deadbee`
+# publicaba `deadbee` con `authoritative: true` sobre el código de otra construcción. El
+# fichero lo escribe el Dockerfile con el mismo build arg.
+#
+# Vivía en `/app/RELEASE` y el comentario lo llamaba «un sitio que el entorno no puede
+# pisar»: era FALSO. `/app` es el WORKDIR y contiene el paquete, así que un bind mount en
+# `/app` sustituye de un golpe el código Y el marcador. Ahora vive en `/opt`, que la
+# imagen no usa para nada más, y —esto es lo que de verdad cierra el hueco— su montaje se
+# OBSERVA igual que el del código, en vez de suponerse imposible.
+_BAKED_RELEASE_PATH = Path("/opt/jobhunt-release/RELEASE")
 
-def _code_is_mounted() -> bool:
-    """Si el código que este proceso importa —o CUALQUIER trozo suyo— viene de un montaje.
 
-    Mira el árbol entero, no solo su raíz: montar `main.py` suelto sustituye el código que
-    responde igual de bien que montar el paquete, y un `/app/jobhunt_core` sin montajes no
-    prueba nada si la sustitución vive un nivel más abajo (comprobado montando un único
-    fichero: la comprobación de la raíz lo daba por limpio).
+def _mounted_over(raiz: str) -> bool:
+    """¿Algún montaje del namespace de este proceso sustituye lo que hay en `raiz`?
+
+    Cuentan tres formas de sustituirlo, y las tres se han demostrado:
+    - el punto de montaje IGUAL a `raiz` (montar el paquete entero);
+    - un punto DEBAJO de `raiz` — montar `main.py` suelto sustituye el código que
+      responde igual de bien, y mirar solo la raíz lo daba por limpio (comprobado);
+    - un punto ANCESTRO de `raiz`: un bind mount en `/app` sustituye `/app/jobhunt_core`
+      sin ser ni igual ni descendiente, y era el ÚNICO caso que no se miraba
+      (auditoría externa R2 P1-1, reproducido con un `mountinfo` sintético).
+
+    `/` queda fuera de la regla de ancestros a propósito: es el rootfs de CUALQUIER
+    contenedor y con él dentro toda imagen se declararía mutable, que es lo mismo que no
+    comprobar nada.
     """
-    raiz = str(Path(__file__).resolve().parent.parent)
     try:
         lineas = _MOUNTINFO_PATH.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -162,21 +182,33 @@ def _code_is_mounted() -> bool:
         return True
     for linea in lineas:
         campos = linea.split(" ")
+        if len(campos) <= 4:
+            continue
         # Formato de mountinfo: el 5º campo es el punto de montaje (los caracteres raros
         # viajan escapados como \040, y aquí la ruta no lleva ninguno).
-        if len(campos) > 4 and (campos[4] == raiz or campos[4].startswith(raiz + "/")):
+        punto = campos[4]
+        if (
+            punto == raiz
+            or punto.startswith(raiz + "/")
+            or (punto != "/" and raiz.startswith(punto + "/"))
+        ):
             return True
     return False
 
 
-# La release HORNEADA en la imagen, en un sitio que el entorno no puede pisar
-# (auditoría G10 P2-2). `RELEASE_SHA` es un ENV de la imagen y el ENV de una imagen lo
-# pisa cualquier `environment:`/`env_file:` del contenedor —y los tres servicios del core
-# arrancan con `env_file`—, así que un `-e RELEASE_SHA=deadbee` publicaba `deadbee` con
-# `authoritative: true` sobre el código de otra construcción. El fichero lo escribe el
-# Dockerfile con el mismo build arg y vive FUERA de `/app/jobhunt_core` (que el perfil de
-# desarrollo monta): es propiedad de la IMAGEN, no del árbol de código.
-_BAKED_RELEASE_PATH = Path("/app/RELEASE")
+def _code_is_mounted() -> bool:
+    """Si el código que este proceso importa —o CUALQUIER trozo suyo— viene de un montaje."""
+    return _mounted_over(str(Path(__file__).resolve().parent.parent))
+
+
+def _release_marker_is_mounted() -> bool:
+    """Si el ANCLA contra la que se contrasta `RELEASE_SHA` viene de un montaje.
+
+    Sacar el marcador del árbol de código no basta por sí solo: montar su ruta nueva
+    reabriría el agujero de G10 en otro sitio. Se lee al importar, así que un montaje ya
+    presente al arrancar habría envenenado el valor congelado.
+    """
+    return _mounted_over(str(_BAKED_RELEASE_PATH))
 
 
 def _read_baked_release() -> str | None:
@@ -194,25 +226,36 @@ _BAKED_RELEASE = _read_baked_release()  # CONGELADO al importar, como el head es
 def _authoritative() -> bool:
     """Si lo que publican las sondas se puede usar para VERIFICAR una release.
 
-    Exige las tres cosas (auditoría G9 P2-A/P2-B, G10 P2-2 y G11 P2-2):
+    Exige las cuatro cosas (auditoría G9 P2-A/P2-B, G10 P2-2, G11 P2-2 y externa R2 P1-1):
     - código INMUTABLE: ni la variable de opt-out `CORE_CODE_MUTABLE` NI un bind mount
       sobre el árbol de código —comprobado en `/proc/self/mountinfo`, porque la variable
       solo dice lo que alguien escribió en el compose y montando el código sin ponerla la
       marca seguía en verde—. Sin montaje, el `release` del ENV y el `alembic_expected`
       leído del disco vienen de la MISMA imagen; con él, el proceso puede estar sirviendo
       código que no es el del SHA que publica;
+    - ANCLA INMUTABLE: tampoco puede venir de un montaje el fichero horneado contra el
+      que se contrasta el ENV, o la comparación de abajo se compara consigo misma;
     - release NOMBRABLE: una imagen construida sin el build arg hornea `unknown`, y el
       paso «todos publican el mismo SHA» se satisface entre `unknown`s sin decir nada;
     - release ATADA A LA IMAGEN: el SHA que se publica tiene que ser el que la imagen
-      lleva horneado en `/app/RELEASE`. Sin esto la marca certificaba dos cosas que sí
-      podía comprobar y ninguna que atara el SHA al código que responde, y un
+      lleva horneado en `_BAKED_RELEASE_PATH`. Sin esto la marca certificaba dos cosas
+      que sí podía comprobar y ninguna que atara el SHA al código que responde, y un
       `RELEASE_SHA` obsoleto en un `.env` —el modo de fallo más banal que hay— producía
       un verde con nombre falso justo donde `docs/DEPLOY_NAS.md` lo convierte en la
       autorización para operar.
+
+    LO QUE ESTA MARCA **NO** ES (acotación de la auditoría externa R2 P1-1, conservada
+    a propósito): una garantía industrial de procedencia. Todo lo que compara lo observa
+    el propio proceso desde DENTRO del contenedor, así que cierra la falsificación local
+    demostrada —montar código o el ancla, o inyectar `RELEASE_SHA`— y nada más. La
+    garantía definitiva exige además contrastar el DIGEST de la imagen tal y como lo ve
+    el orquestador (`docker inspect`/registro), que es la única señal que no vive dentro
+    del contenedor que se está auditando.
     """
     return (
         not CODE_MUTABLE
         and not _code_is_mounted()
+        and not _release_marker_is_mounted()
         and __release_sha__ != UNKNOWN_RELEASE
         and __release_sha__ == _BAKED_RELEASE
     )

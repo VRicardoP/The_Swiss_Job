@@ -23,9 +23,17 @@ ENV RELEASE_SHA=${RELEASE_SHA}
 # …y la MISMA identidad en un fichero de solo lectura para el usuario del servicio
 # (auditoría G10 P2-2): el ENV de una imagen lo pisa cualquier `environment:`/`env_file:`
 # del contenedor, así que `authoritative` se decide comparando el ENV publicado con esta
-# copia horneada. Va en /app (raíz del root) y NO dentro de /app/jobhunt_core, que el
-# perfil de desarrollo monta como volumen: es propiedad de la IMAGEN, no del código.
-RUN printf '%s' "${RELEASE_SHA}" > /app/RELEASE && chmod 0444 /app/RELEASE
+# copia horneada.
+#
+# Vivía en /app/RELEASE «donde el entorno no puede pisarlo», y eso era FALSO (auditoría
+# externa R2 P1-1): /app es el WORKDIR y contiene el paquete, así que un bind mount en
+# /app sustituye de una vez el código Y el marcador. Va a /opt/jobhunt-release/, que la
+# imagen no usa para nada más y no es ancestro de ningún árbol montable. El montaje de
+# esta ruta lo comprueba además la propia API (`_release_marker_is_mounted`): mudarlo
+# reduce la superficie, observarlo es lo que cierra el hueco.
+RUN mkdir -p /opt/jobhunt-release \
+    && printf '%s' "${RELEASE_SHA}" > /opt/jobhunt-release/RELEASE \
+    && chmod 0555 /opt/jobhunt-release && chmod 0444 /opt/jobhunt-release/RELEASE
 
 COPY --chown=core:core jobhunt_core /app/jobhunt_core
 USER core

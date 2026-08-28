@@ -209,17 +209,37 @@ busca montajes sobre su propio árbol (G11 P2-2; antes bastaba montar el código
 imagen no sabe nombrar su release
 (`RELEASE_SHA=unknown`) —sin esa condición el «mismo SHA» se cumpliría entre `unknown`s
 sin decir nada (G9 P2-B)— **o si el `RELEASE_SHA` del entorno no es el que la imagen
-lleva horneado en `/app/RELEASE`** (G10 P2-2). Esto último cierra el agujero de la
-marca: `RELEASE_SHA` es un ENV de la imagen y el ENV de una imagen lo pisa cualquier
-`environment:`/`env_file:` del contenedor, así que un `-e RELEASE_SHA=deadbee` bastaba
-para publicar `deadbee` con `authoritative: true` sobre el código de otra construcción.
-Si una sonda da `authoritative: false` con el código NO montado y un SHA con pinta
-normal, comprueba justamente eso:
+lleva horneado en `/opt/jobhunt-release/RELEASE`** (G10 P2-2). Esto último cierra el
+agujero de la marca: `RELEASE_SHA` es un ENV de la imagen y el ENV de una imagen lo pisa
+cualquier `environment:`/`env_file:` del contenedor, así que un `-e RELEASE_SHA=deadbee`
+bastaba para publicar `deadbee` con `authoritative: true` sobre el código de otra
+construcción. Si una sonda da `authoritative: false` con el código NO montado y un SHA
+con pinta normal, comprueba justamente eso:
 
 ```bash
-docker compose exec -T core-api printenv RELEASE_SHA   # lo que el entorno inyecta
-docker compose exec -T core-api cat /app/RELEASE       # lo que la imagen hornea
+docker compose exec -T core-api printenv RELEASE_SHA                  # lo que inyecta el entorno
+docker compose exec -T core-api cat /opt/jobhunt-release/RELEASE      # lo que hornea la imagen
 ```
+
+> **Por qué el marcador NO vive en `/app/RELEASE`** (auditoría externa R2 P1-1). Vivía
+> ahí, con un comentario que llamaba a `/app` «un sitio que el entorno no puede pisar».
+> Era falso: `/app` es el WORKDIR y **contiene** el paquete, así que un bind mount en
+> `/app` sustituye de un golpe el código y el marcador. Y la comprobación de montajes
+> solo miraba el punto IGUAL a la raíz del paquete o por DEBAJO, nunca sus ancestros: con
+> un montaje en `/app` que trajera un `RELEASE` igual al `RELEASE_SHA` del entorno, la
+> sonda daba `authoritative: true` sobre código ajeno. Hoy cuenta como mutable el punto
+> igual, el descendiente **y el ancestro no-`/`** —de la raíz del paquete y del marcador—,
+> y el marcador vive fuera de `/app`.
+>
+> ⚠ **Hasta dónde llega esta marca, y hasta dónde no.** Todo lo que compara lo observa el
+> propio proceso **desde dentro** del contenedor: cierra la falsificación local
+> demostrada (montar el código, montar el ancla, inyectar `RELEASE_SHA`) y **nada más**.
+> Una garantía industrial de procedencia exige además contrastar el **digest de la imagen
+> tal y como lo ve el orquestador** —`docker inspect --format '{{.Image}}'
+> swissjob-core-api` y el digest del repositorio—, que es la única señal que no vive
+> dentro de lo que se está auditando. Mientras eso no se haga, `authoritative: true`
+> significa «este proceso no puede detectar sustitución», no «esta imagen es la
+> aprobada».
 
 > ⚠ **Deuda abierta en producción.** `core-api` tiene healthcheck de compose contra
 > `/v1/ready` en `docker-compose.yml`, pero **no** en `docker-compose.prod.yml` ni en
