@@ -191,3 +191,22 @@ def test_ningun_comando_de_la_seccion_5_pierde_el_estado_de_salida():
     for linea in _bloques_bash(_seccion_5()):
         assert not re.search(r"\bpsql\b[^|]*\|", linea), f"psql canalizado en §5: {linea}"
         assert not re.search(r"\bpg_dump\b[^|]*\|", linea), f"pg_dump canalizado en §5: {linea}"
+
+
+def test_el_smoke_y_la_API_no_pueden_divergir_en_el_status_de_ready():
+    """R3 P2-1: la postcondición exigía `status: ok` y `/v1/ready` devuelve `ready` desde
+    siempre, así que un cutover correcto habría terminado en falso rojo DESPUÉS de la
+    parte irreversible. Una sola constante, comprobada contra la de la API — sin un
+    segundo parser de la respuesta."""
+    from jobhunt_core.api.main import _READY_STATUS
+
+    guion = _CUTOVER.read_text(encoding="utf-8")
+    declarado = re.search(r'READY_STATUS_ESPERADO:=([a-z_]+)\}', guion)
+    assert declarado, "el cutover ya no declara READY_STATUS_ESPERADO"
+    assert declarado.group(1) == _READY_STATUS, (
+        f"el smoke exige status={declarado.group(1)!r} y la API devuelve {_READY_STATUS!r}"
+    )
+    paso7 = _seccion_5()[_primera(_seccion_5(), r"#### Paso 7 ") :]
+    assert not any(re.search(r"`status: ok`", l) for l in paso7), (
+        "§5 vuelve a exigir `status: ok` en el Paso 7"
+    )
