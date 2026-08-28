@@ -14,6 +14,14 @@
 # Aquí cada postcondición es una condición de EJECUCIÓN: si no cuadra, se sale
 # distinto de cero y no hay paso siguiente.
 #
+# LO QUE CORRIGIÓ LA AUDITORÍA R4 (P1-1):
+#   P1-1  el aislamiento del ENSAYO comparaba el DSN por SUFIJO, y una URL con
+#         `?query`, `#fragmento` o percent-encoding lo esquivaba y llegaba al
+#         Paso 5 EN FIRME sobre la base viva. Ahora hay UNA forma de DSN
+#         admitida (parseada, no comparada) y, antes de cualquier escritura, una
+#         SONDA que exige que el core y `psql` vean la MISMA base del MISMO
+#         servidor.
+#
 # CIFRAS: este script NO lleva ninguna constante del corpus. Mide el estado
 # ANTES, lee las cifras de los informes en seco y aserta el estado DESPUÉS
 # contra lo que él mismo midió. Las del NAS serán otras que las locales.
@@ -55,6 +63,12 @@ set -Eeuo pipefail
 # que un «ensayo» sin esto escribiría en la base viva.
 : "${ENSAYO:=0}"
 : "${CORE_DSN:=}"
+# Host que el CORE_DSN del ensayo puede nombrar. Es el alias del contenedor de
+# Postgres dentro de la red del core, no el del host.
+: "${CORE_DSN_HOST:=postgres}"
+# Módulo que imprime la identidad de la base a la que el core se conecta DE
+# VERDAD (resolviendo el DSN igual que el one-shot del Paso 5).
+: "${MODULO_IDENTIDAD:=jobhunt_core.shadow.identidad_destino}"
 # El Paso 4 PARA si la fusión descarta match_results con señal del usuario. Es
 # una decisión humana, no un umbral: por eso hay que pedirla a mano.
 : "${PERMITIR_SENAL_USUARIO:=0}"
@@ -98,6 +112,119 @@ cifra() { # <fichero informe> <prefijo del concepto>
 
 entero() { # <valor> <qué es>
   case "$1" in ''|*[!0-9-]*) morir "«$2» no es un número: '$1'";; esac
+}
+
+# --------------------------------------------------------------------------
+# Aislamiento del ENSAYO (auditoría R4 P1-1)
+#
+# La guarda anterior rechazaba las cadenas que TERMINABAN en `/<base de prod>`.
+# Una URL de PostgreSQL válida admite `?parámetros`, y `…/swissjobhunter?ssl=
+# require` pasaba y llegaba al Paso 5 EN FIRME sobre la base viva. Lo mismo con
+# `#fragmento` y con percent-encoding (`swissjobhunte%72`).
+#
+# Aquí no se compara: se PARSEA, y solo hay UNA forma admitida
+#
+#   <esquema>://[usuario[:clave]@]<host>[:puerto]/<base>[?clave=valor&…]
+#
+# Cualquier otra cosa —fragmentos, rutas con más de un segmento, parámetros que
+# puedan REDEFINIR el destino (`dbname`, `host`, `service`…)— se rechaza. Lo no
+# parseable también: fallar cerrado no cuesta nada, un ensayo que escribe en
+# producción sí.
+# --------------------------------------------------------------------------
+_PARAMS_DSN_PERMITIDOS=" ssl sslmode sslrootcert sslcert sslkey connect_timeout application_name target_session_attrs "
+
+# Percent-decoding de un segmento ya validado como `[A-Za-z0-9._~-]` o `%HH`.
+decodificar_dsn() { printf '%b' "${1//%/\\x}"; }
+
+# Imprime «host|base» del DSN; devuelve 1 si no es la forma admitida.
+partes_dsn() { # <dsn>
+  local dsn=$1 resto host puerto base consulta par clave
+  case "$dsn" in *'#'*) return 1 ;; esac        # libpq no usa fragmentos
+  case "$dsn" in *'\'*|*' '*) return 1 ;; esac  # ni barras invertidas ni espacios
+  case "$dsn" in
+    postgresql://*|postgres://*|postgresql+asyncpg://*|postgresql+psycopg://*) ;;
+    *) return 1 ;;
+  esac
+  resto=${dsn#*://}
+  case "$resto" in *@*) resto=${resto##*@} ;; esac   # userinfo fuera (clave con `@` incluida)
+  case "$resto" in */*) ;; *) return 1 ;; esac       # sin `/base` no hay base que validar
+  host=${resto%%/*}
+  base=${resto#*/}
+  puerto=""
+  case "$host" in *:*) puerto=${host##*:}; host=${host%%:*} ;; esac
+  [ -z "$puerto" ] || case "$puerto" in ''|*[!0-9]*) return 1 ;; esac
+  case "$host" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  consulta=""
+  case "$base" in *'?'*) consulta=${base#*\?}; base=${base%%\?*} ;; esac
+  case "$base" in *'/'*) return 1 ;; esac            # `/a/b` no es un nombre de base
+  [ -n "$base" ] || return 1
+  # El nombre de base solo puede traer caracteres «no reservados» o %HH bien
+  # formado: así el decodificado no puede fabricar separadores.
+  [[ $base =~ ^([A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+$ ]] || return 1
+  base=$(decodificar_dsn "$base")
+  case "$base" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  # Parámetros: solo los que NO pueden cambiar el destino.
+  if [ -n "$consulta" ]; then
+    local IFS='&'
+    for par in $consulta; do
+      clave=${par%%=*}
+      case "$par" in *=*) ;; *) return 1 ;; esac
+      case "$_PARAMS_DSN_PERMITIDOS" in *" $clave "*) ;; *) return 1 ;; esac
+    done
+  fi
+  printf '%s|%s' "$host" "$base"
+}
+
+guarda_ensayo() {
+  [ "$ENSAYO" = 1 ] || return 0
+  [ "$PG_DB" != "$PG_DB_PROD" ] || morir "ENSAYO=1 con PG_DB en la base de producción ($PG_DB_PROD)"
+  [ -n "$CORE_DSN" ] || morir "ENSAYO=1 exige CORE_DSN: sin él el Paso 5 escribiría en la base viva"
+  local partes host base
+  partes=$(partes_dsn "$CORE_DSN") ||
+    morir "ENSAYO=1 con un CORE_DSN que no es la ÚNICA forma admitida (esquema://[usuario[:clave]@]host[:puerto]/base[?parámetros seguros]): '$CORE_DSN'"
+  host=${partes%%|*}; base=${partes#*|}
+  [ "$base" != "$PG_DB_PROD" ] ||
+    morir "ENSAYO=1 con CORE_DSN apuntando a la base de producción ($PG_DB_PROD): '$CORE_DSN'"
+  [ "$base" = "$PG_DB" ] ||
+    morir "ENSAYO=1 con CORE_DSN en la base '$base' y psql en '$PG_DB': el Paso 5 y los Pasos 4/6 medirían bases DISTINTAS"
+  [ "$host" = "$CORE_DSN_HOST" ] ||
+    morir "ENSAYO=1 con CORE_DSN en el host '$host' y no en el esperado '$CORE_DSN_HOST' (ajústalo con CORE_DSN_HOST=)"
+  printf 'ENSAYO validado: el core irá a %s@%s y psql a %s\n' "$base" "$host" "$PG_DB"
+}
+
+# --------------------------------------------------------------------------
+# Sonda de destino (auditoría R4 P1-1) — ANTES de cualquier escritura
+#
+# La guarda de arriba mira una CADENA. Esto mira la BASE: el módulo del Paso 5
+# resuelve su DSN igual que el one-shot y publica la identidad de la base a la
+# que se conecta de verdad; `psql` publica la suya. Si no coinciden, el Paso 4
+# escribiría en una base y el Paso 5 en otra — y el Paso 6 verificaría la
+# equivocada.
+#
+# La identidad es «base|oid|arranque del postmaster en UTC»: no necesita
+# privilegios, distingue dos bases del mismo servidor y dos servidores con la
+# misma base, y `to_char` la deja libre de DateStyle/TimeZone (dos clientes
+# distintos formatean el timestamptz de forma distinta).
+# --------------------------------------------------------------------------
+SQL_IDENTIDAD="SELECT current_database()
+ || '|' || (SELECT oid::text FROM pg_database WHERE datname = current_database())
+ || '|' || to_char(pg_postmaster_start_time() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US')"
+
+sonda_destino() {
+  titulo "Sonda de destino — el core y psql tienen que ver la MISMA base"
+  local por_psql por_core
+  por_psql=$(psql_valor "$SQL_IDENTIDAD") ||
+    morir "no se pudo leer la identidad de la base por psql"
+  por_core=$(core_run python -m "$MODULO_IDENTIDAD" "$SQL_IDENTIDAD") ||
+    morir "no se pudo leer la identidad de la base por el DSN del core ($MODULO_IDENTIDAD)"
+  por_core=$(printf '%s' "$por_core" | tr -d '\r' | grep -v '^$' | tail -n 1)
+  printf 'psql: %s\ncore: %s\n' "$por_psql" "$por_core"
+  case "$por_psql" in
+    "$PG_DB|"*) ;;
+    *) morir "psql no está en la base que dice PG_DB ($PG_DB): '$por_psql'" ;;
+  esac
+  [ "$por_psql" = "$por_core" ] ||
+    morir "el core NO apunta a la base de psql: core='$por_core' psql='$por_psql'. Con ENSAYO=1 revisa CORE_DSN; sin él, los --env-file de $ENV_CORE"
 }
 
 # --------------------------------------------------------------------------
@@ -220,6 +347,7 @@ SQL_PARES="SELECT count(*) FILTER (WHERE r.a AND r.b)
            JOIN jobhunt.sources src ON src.id = l.source_id
            JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
            WHERE src.name LIKE 'legacy:%' AND l.external_id = p.job_ref_b) AS b) r"
+
 # Enclavamiento 4b: pares de cohortes SELLADAS que habría que re-mapear.
 SQL_ENCLAVAMIENTO="SELECT count(*)
  FROM jobhunt.labeled_dedup_pairs p
@@ -427,18 +555,13 @@ main() {
   mkdir -p "$WORK_DIR"
   case "${1:-}" in
     cutover)
-      if [ "$ENSAYO" = 1 ]; then
-        [ "$PG_DB" != "$PG_DB_PROD" ] || morir "ENSAYO=1 con PG_DB en la base de producción ($PG_DB_PROD)"
-        [ -n "$CORE_DSN" ] || morir "ENSAYO=1 exige CORE_DSN: sin él el Paso 5 escribiría en la base viva"
-        case "$CORE_DSN" in
-          *"/$PG_DB_PROD") morir "ENSAYO=1 con CORE_DSN apuntando a la base de producción" ;;
-        esac
-      fi
+      guarda_ensayo
       : >"$ESTADO"
       paso1_parar
       paso2_backup
       paso3_imagenes
       medir antes          # la referencia del Paso 6 se MIDE aquí, no se copia
+      sonda_destino        # ANTES de la primera escritura: misma base para psql y para el core
       paso4_copias
       paso5_canonical_refs
       paso6_verificar

@@ -525,3 +525,48 @@ def test_el_remapeo_renormaliza_el_orden_canonico_del_par(db, legacy_fx):
         "el re-mapeo dejó el par sin re-normalizar: `job_ref_a` ya no es el "
         "menor, que es como lo guarda `seed_dedup_pairs`"
     )
+
+
+# --------------------------------------------------------------------------
+# La sonda de destino del cutover (auditoría externa R4 P1-1)
+# --------------------------------------------------------------------------
+_SQL_IDENTIDAD = (
+    "SELECT current_database()"
+    " || '|' || (SELECT oid::text FROM pg_database WHERE datname = current_database())"
+    " || '|' || to_char(pg_postmaster_start_time() AT TIME ZONE 'UTC',"
+    " 'YYYY-MM-DD HH24:MI:SS.US')"
+)
+
+
+def test_la_sonda_publica_la_identidad_de_la_base_que_ve_el_dsn_del_core(db, capsys):
+    """`backend/scripts/nas_cutover.sh` compara esta identidad con la de `psql` ANTES de
+    la primera escritura. La guarda del ensayo mira una CADENA; esto mira la BASE.
+
+    Tiene que resolver el DSN por el MISMO camino que el one-shot del Paso 5
+    (`task_session_factory` → `settings.CORE_DATABASE_URL`): si divergiera, la sonda
+    daría por buena una base a la que el módulo no se conecta."""
+    from jobhunt_core.shadow import identidad_destino
+
+    factory, _created = db
+    esperado = _run(_leer_identidad(factory))
+
+    assert identidad_destino.main([_SQL_IDENTIDAD]) == 0
+    assert capsys.readouterr().out.strip() == esperado
+    # Tres campos: base, oid y arranque del postmaster con formato fijo (sin él,
+    # dos clientes con distinto DateStyle darían un rojo falso).
+    base, oid, arranque = esperado.split("|")
+    assert base and oid.isdigit()
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}", arranque), arranque
+
+
+def test_la_sonda_rechaza_lo_que_no_sea_un_select(capsys):
+    """No escribe: es una sonda que corre con la credencial admin del core."""
+    from jobhunt_core.shadow import identidad_destino
+
+    assert identidad_destino.main(["DELETE FROM jobhunt.labeled_judgments"]) == 2
+    assert identidad_destino.main([]) == 2
+
+
+async def _leer_identidad(factory):
+    async with factory() as session:
+        return str((await session.execute(sa.text(_SQL_IDENTIDAD))).scalar_one())

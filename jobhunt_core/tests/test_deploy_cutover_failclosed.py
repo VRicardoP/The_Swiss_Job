@@ -7,11 +7,20 @@ cinco escritores vivos y obtuvo `POSTCOND_EXIT=0`; con la SEGUNDA copia SQL abor
 confirmar la primera, la secuencia seguía hasta el Paso 5 — el estado que el propio
 documento declara IRREPARABLE (`core0025` sella las cohortes).
 
+REGRESIÓN auditoría externa R4 (los cinco P1 viven en este script). Los dobles de R3
+respetaban precisamente los agregados y las cadenas que había que poner en duda, así que
+aquí se rompen a propósito:
+
+  P1-1  un `CORE_DSN` de PRODUCCIÓN con `?query`, `#fragmento` o percent-encoding
+        esquivaba la guarda del ensayo (comparaba por SUFIJO) y llegaba al Paso 5 en
+        firme. Además el DSN podía ser sintácticamente inocente y apuntar a otra base:
+        ahora hay una SONDA que compara la identidad de la base por psql y por el core.
+
 La guarda de orden (`test_deploy_order.py`) protege la SECUENCIA; no puede demostrar que
 una etapa rota la detenga. Esto sí: ejecuta `backend/scripts/nas_cutover.sh` con dobles de
 `docker` y `psql` en el PATH (el doble de `docker` delega en el de `psql`, igual que el
 runbook, que invoca `psql` a través de `docker exec`), inyecta un fallo por etapa y exige
-salida no cero. El camino feliz sale 0: sin eso, «todo rojo» no demostraría nada.
+salida no cero. Los caminos felices salen 0: sin eso, «todo rojo» no demostraría nada.
 
 `gzip` NO se dobla —es el real— así que `gzip -t` se ejercita en el camino feliz; lo que
 se inyecta del Paso 2 es el fallo de `pg_dump` y la ausencia de cada esquema en el volcado.
@@ -38,12 +47,15 @@ _ANTES = {"slots": 100, "jobs": 1000, "pares": 10, "juicios": "5 5"}
 _DESPUES = {"slots": 108, "jobs": 994, "pares": 10, "juicios": "5 5"}
 _RELEASE = "deadbee"
 _HEAD = "core0035"
-
 _DOBLE_DOCKER = r"""#!/usr/bin/env bash
 # DOBLE de `docker`. $ROMPER nombra la etapa que se rompe.
 set -u
 d=$DOBLES_DIR
 r=${ROMPER:-}
+# La identidad que ve psql y la que declara el core tienen que coincidir salvo
+# cuando se rompe la sonda a propósito.
+IDENTIDAD="${PG_DB:-swissjobhunter}|16384|2026-08-28 00:00:00.000000"
+
 case "$1" in
   stop) : >"$d/parados"; exit 0 ;;
   ps)
@@ -87,6 +99,11 @@ case "$1" in
       *"/opt/jobhunt-release/RELEASE"*)
         [ "$r" = paso3_release_unknown ] && { echo unknown; exit 0; }
         echo "RELEASE_SIMULADA"; exit 0 ;;
+      *identidad_destino*)
+        # La sonda de destino (R4 P1-1): la identidad que ve el DSN del core.
+        if [ "$r" = sonda_destino ]; then echo "otra_base|99999|2000-01-01 00:00:00.000000"
+        else echo "$IDENTIDAD"; fi
+        exit 0 ;;
       *canonical_refs*)
         n=$(cat "$d/canon" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$d/canon"
         juicios=2
@@ -117,9 +134,11 @@ for a in "$@"; do
   [ "$a" = "-c" ] && esperando=1
 done
 
-if [ -n "$sql" ]; then                      # consultas escalares (medición / 4b)
+if [ -n "$sql" ]; then                      # consultas escalares y manifiestos
   fase=antes; [ -f "$d/firme" ] && fase=despues
   case "$sql" in
+    *pg_postmaster_start_time*)             # sonda de destino (R4 P1-1)
+      echo "${PG_DB:-swissjobhunter}|16384|2026-08-28 00:00:00.000000" ;;
     *labeled_dedup_cohorts*)
       [ "$r" = paso4b_enclavamiento ] && { echo 67; exit 0; }; echo 0 ;;
     *"j.hash IS NULL"*)
@@ -142,7 +161,8 @@ if [ -n "$sql" ]; then                      # consultas escalares (medición / 4
   exit 0
 fi
 
-cuerpo=$(cat)                               # las dos copias, por `-f -`
+cuerpo=$(cat)                               # las dos copias y la verificación por hash, por `-f -`
+
 case "$cuerpo" in *"COMMIT;"*) modo=firme ;; *) modo=seco ;; esac
 case "$cuerpo" in *"-- G6"*) copia=segunda ;; *) copia=primera ;; esac
 [ "$modo" = firme ] && : >"$d/firme"
@@ -218,6 +238,8 @@ def _ejecutar(raiz: Path, subcomando: str, romper: str | None) -> subprocess.Com
     entorno["CORE_NET"] = "red-de-mentira"
     if romper:
         entorno["ROMPER"] = romper
+    else:
+        entorno.pop("ROMPER", None)
     return subprocess.run(
         ["bash", str(_SCRIPT), subcomando],
         env=entorno, capture_output=True, text=True, timeout=120,
@@ -314,6 +336,7 @@ def test_la_copia_de_seguridad_queda_verificada_y_con_nombre_definitivo(tmp_path
         "paso2_sin_jobhunt",     # el rol no lee `jobhunt`: la copia no sirve
         "paso3_load",
         "paso3_release_unknown", # imagen sin RELEASE_SHA → authoritative: false
+        "sonda_destino",         # el core apunta a OTRA base que psql (R4 P1-1)
         "paso4a_primera",
         "paso4a_segunda",        # preflight de LAS DOS antes de confirmar la primera
         "paso4b_enclavamiento",  # cohortes SELLADAS afectadas
@@ -344,6 +367,9 @@ def test_la_segunda_copia_abortada_no_deja_pasar_al_paso_5(tmp_path):
     assert "RESTAURA el volcado del Paso 2" in p.stdout + p.stderr
 
 
+# --------------------------------------------------------------------------
+# R4 P1-5 — el smoke
+# --------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "etapa",
     ["smoke_status", "smoke_release", "smoke_authoritative", "smoke_alembic",
@@ -364,24 +390,89 @@ def test_el_smoke_rechaza_el_status_ok_que_exigia_el_runbook(tmp_path, sonda):
     assert "'ok'" in p.stdout + p.stderr and "'ready'" in p.stdout + p.stderr
 
 
-@pytest.mark.parametrize(
-    ("entorno", "porque"),
-    [
-        ({"ENSAYO": "1"}, "sin CORE_DSN el Paso 5 escribiría en la base viva"),
-        ({"ENSAYO": "1", "PG_DB": "swissjobhunter",
-          "CORE_DSN": "postgresql://u:p@h:5432/swissjob_ensayo"}, "PG_DB es la de producción"),
-        ({"ENSAYO": "1", "PG_DB": "swissjob_ensayo",
-          "CORE_DSN": "postgresql://u:p@h:5432/swissjobhunter"}, "CORE_DSN es la de producción"),
-    ],
-)
-def test_el_unico_escape_del_ensayo_no_puede_apuntar_a_produccion(tmp_path, entorno, porque):
-    """`ENSAYO=1` es la única salida del fallo cerrado y se salta dos pasos, así que no
-    puede convertirse en la maniobra real por descuido — ni tocar la base viva."""
+# --------------------------------------------------------------------------
+# R4 P1-1 — el aislamiento del ensayo
+# --------------------------------------------------------------------------
+_ENSAYO_OK = {
+    "ENSAYO": "1",
+    "PG_DB": "swissjob_ensayo",
+    "CORE_DSN": "postgresql+asyncpg://u:p@postgres:5432/swissjob_ensayo",
+}
+
+
+def _con_entorno(tmp_path, entorno, subcomando="cutover", romper=None):
     guardado = {k: os.environ.get(k) for k in entorno}
     os.environ.update(entorno)
     try:
-        p = _ejecutar(tmp_path, "cutover", None)
+        return _ejecutar(tmp_path, subcomando, romper)
     finally:
         for k, v in guardado.items():
             os.environ.pop(k, None) if v is None else os.environ.update({k: v})
+
+
+@pytest.mark.parametrize(
+    ("dsn", "porque"),
+    [
+        (None, "sin CORE_DSN el Paso 5 escribiría en la base viva"),
+        ("postgresql://u:p@postgres:5432/swissjobhunter", "es la base de producción"),
+        ("postgresql://u:p@postgres:5432/swissjobhunter?ssl=require",
+         "query string: la guarda comparaba por SUFIJO (R4 P1-1)"),
+        ("postgresql://u:p@postgres:5432/swissjobhunter?ssl=require&application_name=x",
+         "varios parámetros tras la base de producción"),
+        ("postgresql://u:p@postgres:5432/swissjobhunter#/swissjob_ensayo",
+         "fragmento: el sufijo visible no es la base"),
+        ("postgresql://u:p@postgres:5432/swissjobhunte%72",
+         "percent-encoding: decodifica a la base de producción"),
+        ("postgresql://u:p@postgres:5432/%73wissjobhunter",
+         "percent-encoding en la primera letra"),
+        ("postgresql://u:p@postgres:5432/swissjob_ensayo?dbname=swissjobhunter",
+         "un parámetro que puede REDEFINIR la base de destino"),
+        ("postgresql://u:p@postgres:5432/swissjob_ensayo?host=otro",
+         "un parámetro que puede redefinir el host"),
+        ("postgresql://u:p@otro-servidor:5432/swissjob_ensayo",
+         "la base se llama bien pero el servidor no es el esperado"),
+        ("postgresql://u:p@postgres:5432/otra_base",
+         "el core mediría una base distinta de la de psql"),
+        ("esto no es una url", "no es parseable"),
+        ("postgresql://u:p@postgres:5432/", "no nombra ninguna base"),
+        ("mysql://u:p@postgres:3306/swissjob_ensayo", "no es un DSN de PostgreSQL"),
+    ],
+)
+def test_el_unico_escape_del_ensayo_no_puede_apuntar_a_produccion(tmp_path, dsn, porque):
+    """`ENSAYO=1` es la única salida del fallo cerrado y se salta dos pasos, así que no
+    puede convertirse en la maniobra real por descuido — ni tocar la base viva. La guarda
+    vieja comparaba por sufijo y `…/swissjobhunter?ssl=require` llegaba al Paso 5 EN
+    FIRME."""
+    entorno = {"ENSAYO": "1", "PG_DB": "swissjob_ensayo", "CORE_DSN": dsn or ""}
+    p = _con_entorno(tmp_path, entorno)
     assert p.returncode != 0, f"el ensayo se aceptó aunque {porque}:\n{p.stdout}"
+    assert "Paso 4c" not in p.stdout, f"llegó a escribir con un DSN que {porque}:\n{p.stdout}"
+    assert "Paso 5" not in p.stdout, f"llegó al Paso 5 con un DSN que {porque}:\n{p.stdout}"
+
+
+def test_el_ensayo_con_pg_db_de_produccion_no_arranca(tmp_path):
+    p = _con_entorno(
+        tmp_path,
+        {"ENSAYO": "1", "PG_DB": "swissjobhunter",
+         "CORE_DSN": "postgresql://u:p@postgres:5432/swissjob_ensayo"},
+    )
+    assert p.returncode != 0
+    assert "producción" in p.stdout + p.stderr
+
+
+def test_un_ensayo_bien_aislado_si_recorre_la_maniobra(tmp_path):
+    """Sin esto, «todo rojo» solo demostraría que la guarda rechaza cualquier cosa."""
+    p = _con_entorno(tmp_path, dict(_ENSAYO_OK))
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "ENSAYO validado" in p.stdout
+    assert "Pasos 1–6 OK" in p.stdout
+
+
+def test_la_sonda_de_destino_para_si_el_core_ve_otra_base(tmp_path):
+    """La guarda mira una CADENA; la sonda mira la BASE. Un DSN sintácticamente perfecto
+    puede resolver a otro servidor (env-file, DNS, pooler): entonces el Paso 4 escribiría
+    en una base y el Paso 5 en otra."""
+    p = _con_entorno(tmp_path, dict(_ENSAYO_OK), romper="sonda_destino")
+    assert p.returncode != 0
+    assert "Paso 4c" not in p.stdout, p.stdout
+    assert "NO apunta a la base de psql" in p.stdout + p.stderr

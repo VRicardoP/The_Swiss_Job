@@ -687,12 +687,29 @@ ENSAYO=1 PG_DB=swissjob_ensayo \
 
 `ENSAYO=1` se salta los pasos 1 y 3 (no para producción ni recarga imágenes) y **exige**
 `CORE_DSN`: el módulo del Paso 5 saca su DSN de los `--env-file`, que apuntan a la base
-viva, así que un «ensayo» sin esa variable escribiría en producción. El script rechaza
-`ENSAYO=1` si `PG_DB` o `CORE_DSN` apuntan a la base de producción: un ensayo no puede
-convertirse en la maniobra por descuido, ni al revés. **Las cifras del NAS serán
-distintas a las locales** (otro corpus): el script las MIDE allí y aserta contra lo que
-él mismo midió — no lleva ninguna constante de corpus. Las del acta local sirven para
-reconocer la FORMA del resultado, nunca como valor esperado.
+viva, así que un «ensayo» sin esa variable escribiría en producción.
+
+**Cómo se comprueba ese aislamiento** (auditoría externa R4 P1-1 — la guarda anterior
+comparaba el DSN por SUFIJO, así que `…/swissjobhunter?ssl=require` la esquivaba y
+llegaba al Paso 5 **en firme** sobre la base viva; con `#fragmento` y con
+percent-encoding, igual):
+
+1. el DSN se **parsea**, y solo se admite UNA forma:
+   `esquema://[usuario[:clave]@]host[:puerto]/base[?parámetros]`. Se rechazan los
+   fragmentos, las rutas de más de un segmento, los esquemas que no son de PostgreSQL y
+   los parámetros que pueden **redefinir el destino** (`dbname`, `host`, `service`…: solo
+   se permiten `ssl*`, `connect_timeout`, `application_name`, `target_session_attrs`);
+2. el nombre de base se **decodifica** y tiene que ser exactamente `PG_DB`, distinto de
+   `PG_DB_PROD`; el host, exactamente `CORE_DSN_HOST` (por defecto `postgres`);
+3. y **antes de la primera escritura** —con `ENSAYO=1` y sin él— el script ejecuta una
+   **sonda de destino**: pide a `psql` y al módulo `jobhunt_core.shadow.identidad_destino`
+   —que resuelve el DSN igual que el one-shot del Paso 5— la identidad
+   `base|oid|arranque del postmaster en UTC`, y para si no coinciden. Una cadena bien
+   formada no demuestra a qué base se conecta el proceso; esto sí.
+
+**Las cifras del NAS serán distintas a las locales** (otro corpus): el script las MIDE
+allí y aserta contra lo que él mismo midió — no lleva ninguna constante de corpus. Las
+del acta local sirven para reconocer la FORMA del resultado, nunca como valor esperado.
 
 Ventana estimada: 20–40 min con la aplicación caída. Por SSH `docker compose` no
 funciona (§0.3): todo va con `docker` directo o por la UI de Container Station.
