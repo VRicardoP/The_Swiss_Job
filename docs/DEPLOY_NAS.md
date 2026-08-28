@@ -807,6 +807,32 @@ así que el bucle continuaba. Además, si el informe dice que la fusión descart
 `match_results` **con señal del usuario**, el script PARA: es una decisión humana y hay
 que repetir a mano con `PERMITIR_SENAL_USUARIO=1` tras revisarla.
 
+**4a′. La TRANSFORMACIÓN que declaran los ensayos, y la precondición que la hace
+verificable** (auditoría externa R5 P1-A). Además del enclavamiento, cada ensayo en seco
+emite en su informe el mapa exacto de los supervivientes:
+
+```text
+IDENT|remap|<hash viejo>|<hash canónico>
+```
+
+Es lo que el Paso 6 necesita para construir el estado **esperado** de las etiquetas en
+vez de conformarse con «no se ha perdido ninguna». Se declaran **solo los
+supervivientes** y no el mapa entero: el clon se BORRA en el PASO 6 y su hash ya no se
+puede reconstruir desde ninguna fila, así que sus `job_ref` **no** se remapean (su slot
+de sombra tampoco se reapunta: lo cierra el `op=D`). Declarar el mapa completo produciría
+un manifiesto esperado que la maniobra no cumple.
+
+El script valida el mapa antes de seguir: los dos lados md5, ningún hash mapeado a sí
+mismo, ningún `old_hash` con dos destinos y ningún destino que sea a la vez origen (un
+remapeo encadenado dependería del orden de aplicación).
+
+Y mide una **precondición**: `public.jobs` no puede tener filas que no reproduzcan su
+hash (`md5(titulo|empresa|url) <> hash`). El Paso 5 no lee este mapa — lo **reconstruye**
+de `jobs` —, y esa reconstrucción coincide con los supervivientes **solo** si hoy no hay
+ya filas así; cada una metería en `canon_map` un remapeo fantasma que ningún ensayo
+declaró. Medido contra producción el 2026-08-26 (SOLO SELECT): **0 de 10.805**. Se vuelve
+a medir aquí, antes de escribir nada, porque parar antes del 4c es barato y después no.
+
 **4b. 🚫 Enclavamiento sin marcha atrás — ¿hay cohortes dedup SELLADAS afectadas?**
 Las dos mitades NO comparten transacción, y la segunda aborta *fail-closed* si una
 cohorte sellada tiene pares que re-mapear. Commitear la primera con la segunda
@@ -876,6 +902,14 @@ $CORE_RUN python -m jobhunt_core.shadow.canonical_refs             # aplica
 `filas_canonizadas_en_legacy: 0`: el módulo es idempotente y si no lo quedó, hay que
 restaurar.
 
+**Aserción adicional (R5 P1-A) — el mapa de este módulo ES el declarado en 4a′.** El
+manifiesto esperado del Paso 6 se construye con el mapa de G3/G6, pero quien mueve los
+`job_ref` es este módulo, que **no lee ese mapa**: lo reconstruye de `jobs`. Si el
+`filas_canonizadas_en_legacy` del `--dry-run` no es exactamente el número de
+`IDENT|remap|` declarados, el Paso 5 movería etiquetas que el Paso 6 no podría distinguir
+de una permuta, y el script PARA **antes de aplicarlo** (aún no ha escrito nada; la
+salida es restaurar la copia del Paso 2).
+
 #### Paso 6 — Verificar antes de dejar entrar a nadie
 
 Todo `SELECT`, con los escritores aún parados, y **con aserciones**: el script mide el
@@ -889,8 +923,10 @@ inspecciona a ojo.
 | b | `labeled_judgments` y cuántos resuelven a un `source_listing` legacy | `resuelven = juicios`: ningún juicio puede dejar de resolver |
 | c | pares con sus DOS refs resueltos | no puede BAJAR respecto a lo medido antes |
 | d | `count(*)` de `public.jobs` | `después = antes − Σ «clones fusionados»` |
-| **b′** | **manifiesto ordenado de `set_id\|job_ref` que resuelven** | ningún juicio que resolvía ANTES puede dejar de resolver — **por identidad** |
-| **c′** | **manifiesto ordenado de `pair_id` con sus dos refs resueltos** | ningún par que resolvía ANTES puede dejar de resolver — **por identidad** |
+| **b′** | **manifiesto de juicios `set_id\|job_ref\|relevance\|source`** | **igualdad EXACTA** con el manifiesto ESPERADO = el de antes con el mapa de 4a′ aplicado |
+| **c′** | **manifiesto de pares `pair_id\|source\|verdict\|refA\|refB`** (refs normalizados menor/mayor) | **igualdad EXACTA** con el esperado — una permuta no declarada es roja aunque conserve el `pair_id` |
+| **b″** | juicios que resuelven, con la clave que les dará la transformación | ninguno que resolvía puede dejar de resolver |
+| **c″** | pares con sus dos refs resueltos | ninguno que resolvía puede dejar de resolver |
 | **e** | los `IDENT\|desaparece\|<hash>` que declararon los dry-runs | ninguno puede seguir en `public.jobs` |
 | **f** | los `IDENT\|canonico\|<hash>` que declararon los dry-runs | todos tienen que existir en `public.jobs` |
 
@@ -899,12 +935,33 @@ comparan **cantidades**, y una pérdida se compensa con una ganancia distinta. R
 el 2026-08-28 en una base desechable: mutando las `source_listings` de un par positivo
 conocido (`pair_duplicate_A_B`) a otro par (`pair_distinct_C_D`), las cuatro fórmulas
 salen idénticas —`SLOTS 0→0`, `JOBS 4→4`, `PARES 1→1`, `JUICIOS 0→0`— mientras el par que
-importaba **deja de resolver**. Con el manifiesto por identidad, `comm -23` sobre los dos
-ficheros ordenados nombra exactamente `pair_duplicate_A_B`.
+importaba **deja de resolver**.
 
-Los manifiestos se guardan ordenados con la colación de C (`LC_ALL=C sort`) para que la
-comparación sea determinista, y una copia viaja junto al backup: son también lo que
-`restaurar` usa para comprobar la vuelta atrás.
+**Y por qué el manifiesto es SEMÁNTICO y no una lista de filas** (auditoría externa R5
+P1-A). La primera versión de b′/c′ etiquetaba la **fila**, no la entidad ni la
+transformación, y fallaba en las **dos** direcciones:
+
+- **falso verde** — el de pares guardaba solo `pair_id`. Un par que sigue resolviendo
+  pero cuyos **dos lados** pasan a vacantes distintas no cambiaba el fichero: cantidades,
+  resolubilidad y manifiesto pasaban mientras cambiaba justo la materia etiquetada.
+- **falso rojo** — el de juicios guardaba `set_id|job_ref`, y el remapeo **correcto** del
+  Paso 5 cambia el ref: `comm -23` declaraba perdido el valor antiguo aunque la etiqueta
+  siguiera unida a la MISMA vacante. El procedimiento habría parado una transformación
+  correcta, justo después de la parte irreversible.
+
+Ahora el manifiesto lleva la etiqueta **entera** y se compara por **igualdad exacta**
+contra el manifiesto **esperado**, que se construye aplicando al de ANTES el mapa
+`IDENT|remap|` de 4a′. El remapeo previsto se acepta; cualquier permuta no declarada se
+rechaza, y el rojo nombra las dos direcciones (lo que falta y lo que sobra sin declarar).
+La resolubilidad se comprueba **aparte y en una sola dirección** porque no es simétrica:
+un juicio que apuntaba al hash de un clon puede EMPEZAR a resolver tras el remapeo, y
+exigir igualdad ahí sería otro falso rojo.
+
+Los manifiestos se guardan ordenados con la colación de C (`LC_ALL=C sort`), y los dos
+refs de cada par se normalizan (menor\|mayor) con esa **misma** comparación de bytes, para
+que el orden de los lados no pueda ser jamás la diferencia entre los ficheros. Una copia
+viaja junto al backup —junto con las guardas de inmutabilidad— y es lo que `restaurar`
+usa para certificar la vuelta atrás.
 
 Las consultas están en el script y verificadas ejecutándolas (SOLO `SELECT`) contra la
 base local el 2026-08-28. **Sus resultados en el NAS serán otros**: los mide allí.

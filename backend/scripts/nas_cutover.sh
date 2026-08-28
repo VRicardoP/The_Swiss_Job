@@ -42,6 +42,31 @@
 #         frontend, se contrastan los IDs de las tres imágenes y hay sondas
 #         acotadas de Celery y del slot de la sombra.
 #
+# LO QUE CORRIGIÓ LA AUDITORÍA R5 (ronda dirigida SOLO al cutover, porque es lo
+# único del proyecto que se ejecuta UNA vez sobre datos irreemplazables):
+#   P1-A  los manifiestos etiquetaban la FILA, no la ENTIDAD ni la
+#         TRANSFORMACIÓN, y fallaban en las DOS direcciones: el de pares
+#         guardaba solo `p.id` (un par que sigue resolviendo con sus dos lados
+#         en OTRAS vacantes no cambiaba el fichero → falso VERDE) y el de
+#         juicios guardaba `set_id|job_ref` (un remapeo CORRECTO cambia el ref
+#         → falso ROJO, y el procedimiento pararía una transformación buena).
+#         Ahora los ensayos en seco DECLARAN el mapa exacto `old_hash ->
+#         new_hash` (`IDENT|remap|…`), el manifiesto lleva la etiqueta entera
+#         y se compara por IGUALDAD EXACTA contra el manifiesto ESPERADO que
+#         se construye aplicando ese mapa al de ANTES.
+#   P1-B  un `SIGKILL` entre el `RENAME` y el `CREATE DATABASE` dejaba el
+#         restore sin destino y sin reanudación: el nombre de la base apartada
+#         vivía SOLO en una variable del proceso, y la siguiente invocación
+#         abortaba con «no existe la base». Ahora `restaurar` es una máquina de
+#         estados reanudable, con exclusión mutua y checkpoint DURABLE junto a
+#         la copia, que resuelve su estado POR CATÁLOGO. Los traps no bastan:
+#         `SIGKILL` y un reinicio no los ejecutan.
+#   P1-C  el smoke daba verde con el worker vivo y el beat AUSENTE: un worker
+#         sin `-B` está `running`, corre la imagen del Paso 3 y contesta al
+#         ping dirigido, porque el ping prueba el CONSUMIDOR y no el
+#         PLANIFICADOR de las nueve cadencias. Ahora hay postcondición
+#         FUNCIONAL del beat (Paso 7d).
+#
 # CIFRAS: este script NO lleva ninguna constante del corpus. Mide el estado
 # ANTES, lee las cifras de los informes en seco y aserta el estado DESPUÉS
 # contra lo que él mismo midió. Las del NAS serán otras que las locales.
@@ -407,7 +432,13 @@ sellar_manifiesto() {
   } >>"$final.manifiesto"
   cp "$WORK_DIR/manifiesto.pares.antes" "$final.pares"
   cp "$WORK_DIR/manifiesto.juicios.antes" "$final.juicios"
-  printf 'manifiesto pre-corte sellado junto a la copia: %s.manifiesto\n' "$final"
+  cp "$WORK_DIR/resuelven.pares.antes" "$final.pares.resuelven"
+  cp "$WORK_DIR/resuelven.juicios.antes" "$final.juicios.resuelven"
+  # Las guardas de inmutabilidad tal y como estaban: `restaurar` no marca
+  # VERIFIED si la vuelta atrás trae los datos y los triggers degradados.
+  psql_lineas "$SQL_GUARDAS" "$final.guardas" ||
+    morir "no se pudieron medir las guardas de inmutabilidad para el manifiesto pre-corte"
+  printf 'manifiesto pre-corte sellado junto a la copia: %s.manifiesto (+ pares/juicios/resuelven/guardas)\n' "$final"
 }
 
 # --------------------------------------------------------------------------
@@ -478,10 +509,47 @@ SQL_PARES="SELECT count(*) FILTER (WHERE r.a AND r.b)
            JOIN jobhunt.sources src ON src.id = l.source_id
            JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
            WHERE src.name LIKE 'legacy:%' AND l.external_id = p.job_ref_b) AS b) r"
-# IDENTIDADES, no cardinalidades: QUÉ pares resuelven sus dos refs y QUÉ juicios
-# resuelven. `p.id::text` y `j.set_id::text` son además los discriminantes que
-# usan los dobles para no confundir estas consultas con las de arriba.
-SQL_MANIFIESTO_PARES="SELECT p.id::text
+# --------------------------------------------------------------------------
+# MANIFIESTOS SEMÁNTICOS (auditoría R5 P1-A)
+#
+# Los manifiestos de R4 etiquetaban la FILA, no la entidad ni la transformación,
+# y fallaban en las DOS direcciones:
+#
+#   · falso VERDE — el de pares guardaba solo `p.id`. Si el par seguía
+#     resolviendo pero sus DOS lados pasaban a vacantes distintas, el fichero no
+#     cambiaba y `comm -23` salía vacío: cambió justo la materia etiquetada y
+#     las cantidades, la resolubilidad y el manifiesto pasaban.
+#   · falso ROJO — el de juicios guardaba `set_id|job_ref`. Un remapeo CORRECTO
+#     (el Paso 5 reapunta `job_ref` al hash canónico) cambia el ref, y `comm -23`
+#     declaraba PERDIDO el valor antiguo aunque la etiqueta siguiera unida a la
+#     MISMA vacante: el procedimiento pararía una transformación correcta.
+#
+# La corrección NO es otro contador. El manifiesto lleva ahora la etiqueta
+# ENTERA —identidad, refs y atributos— y se compara por IGUALDAD EXACTA contra
+# un manifiesto ESPERADO, que se construye aplicando al de ANTES el mapa
+# `old_hash -> new_hash` que los propios ensayos en seco DECLARAN
+# (`IDENT|remap|viejo|nuevo`, §9 de cada SQL). Así el remapeo previsto se ACEPTA
+# y cualquier permuta NO declarada se RECHAZA — incluida la que conserva
+# cardinalidad, resolubilidad y `pair_id`.
+#
+# La resolubilidad se sigue midiendo aparte y en una sola dirección (lo que
+# resolvía no puede dejar de resolver), porque NO es simétrica: un juicio que
+# apuntaba al hash de un clon puede EMPEZAR a resolver tras el remapeo, y exigir
+# igualdad ahí sería otro falso rojo.
+#
+# Los comentarios `/* … */` del principio de cada consulta son su nombre: son lo
+# que distingue estas cuatro consultas entre sí y de las de cantidades.
+# --------------------------------------------------------------------------
+SQL_MANIFIESTO_PARES="/* manifiesto-pares */
+ SELECT p.id::text || '|' || p.source || '|' || p.verdict
+        || '|' || p.job_ref_a || '|' || p.job_ref_b
+ FROM jobhunt.labeled_dedup_pairs p"
+SQL_MANIFIESTO_JUICIOS="/* manifiesto-juicios */
+ SELECT j.set_id::text || '|' || j.job_ref || '|' || j.relevance::text
+        || '|' || j.source
+ FROM jobhunt.labeled_judgments j"
+SQL_RESUELVEN_PARES="/* resuelven-pares */
+ SELECT p.id::text
  FROM jobhunt.labeled_dedup_pairs p
  CROSS JOIN LATERAL (SELECT
    EXISTS (SELECT 1 FROM jobhunt.source_listings l
@@ -493,13 +561,32 @@ SQL_MANIFIESTO_PARES="SELECT p.id::text
            JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
            WHERE src.name LIKE 'legacy:%' AND l.external_id = p.job_ref_b) AS b) r
  WHERE r.a AND r.b"
-SQL_MANIFIESTO_JUICIOS="SELECT j.set_id::text || '|' || j.job_ref
+SQL_RESUELVEN_JUICIOS="/* resuelven-juicios */
+ SELECT j.set_id::text || '|' || j.job_ref
  FROM jobhunt.labeled_judgments j
  WHERE EXISTS (
    SELECT 1 FROM jobhunt.source_listings l
    JOIN jobhunt.sources src ON src.id = l.source_id
    JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
    WHERE src.name LIKE 'legacy:%' AND l.external_id = j.job_ref)"
+# Las guardas de inmutabilidad de las cohortes: `restaurar` no marca VERIFIED si
+# la vuelta atrás trae los datos y deja los triggers degradados.
+SQL_GUARDAS="/* guardas-inmutabilidad */
+ SELECT n.nspname || '|' || c.relname || '|' || t.tgname || '|' || t.tgenabled
+ FROM pg_trigger t
+ JOIN pg_class c ON c.oid = t.tgrelid
+ JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE NOT t.tgisinternal AND n.nspname IN ('jobhunt', 'public')"
+
+# El par se guarda con los dos refs NORMALIZADOS (menor|mayor) por la misma
+# comparación de bytes que usa el manifiesto esperado: así el ORDEN de los dos
+# lados no puede ser jamás la diferencia entre los ficheros que se comparan.
+psql_lineas_pares() { # <sql> <fichero>
+  psql_valor "$1" >"$2.crudo" || return 1
+  LC_ALL=C awk -F'|' -v OFS='|' '{ if ($4 > $5) { t = $4; $4 = $5; $5 = t } print }' \
+    "$2.crudo" | LC_ALL=C sort >"$2"
+  rm -f "$2.crudo"
+}
 
 medir() { # deja SLOTS/JOBS/PARES/JUICIOS_TOTAL/JUICIOS_RESUELVEN con el sufijo $1
   local slots jobs pares juicios
@@ -512,22 +599,129 @@ medir() { # deja SLOTS/JOBS/PARES/JUICIOS_TOTAL/JUICIOS_RESUELVEN con el sufijo 
   entero "$juicios_total" "juicios"; entero "$juicios_resuelven" "juicios que resuelven"
   eval "SLOTS_$1=\$slots; JOBS_$1=\$jobs; PARES_$1=\$pares"
   eval "JUICIOS_$1=\$juicios_total; RESUELVEN_$1=\$juicios_resuelven"
-  psql_lineas "$SQL_MANIFIESTO_PARES" "$WORK_DIR/manifiesto.pares.$1" ||
+  psql_lineas_pares "$SQL_MANIFIESTO_PARES" "$WORK_DIR/manifiesto.pares.$1" ||
     morir "no se pudo medir el manifiesto de pares ($1)"
   psql_lineas "$SQL_MANIFIESTO_JUICIOS" "$WORK_DIR/manifiesto.juicios.$1" ||
     morir "no se pudo medir el manifiesto de juicios ($1)"
+  psql_lineas "$SQL_RESUELVEN_PARES" "$WORK_DIR/resuelven.pares.$1" ||
+    morir "no se pudo medir qué pares resuelven ($1)"
+  psql_lineas "$SQL_RESUELVEN_JUICIOS" "$WORK_DIR/resuelven.juicios.$1" ||
+    morir "no se pudo medir qué juicios resuelven ($1)"
   printf 'medición %s: slots_huerfanos=%s jobs=%s pares_con_los_dos_refs=%s juicios=%s resuelven=%s (manifiestos: %s pares · %s juicios)\n' \
     "$1" "$slots" "$jobs" "$pares" "$juicios_total" "$juicios_resuelven" \
     "$(wc -l <"$WORK_DIR/manifiesto.pares.$1")" "$(wc -l <"$WORK_DIR/manifiesto.juicios.$1")"
 }
 
-# Ninguna identidad que estaba puede faltar. `comm -23` sobre dos ficheros ya
-# ordenados con la colación de C: lo que sobra en el primero es lo que se perdió.
-sin_perdidas() { # <fichero antes> <fichero despues> <qué son>
+# Ninguna identidad que resolvía puede dejar de resolver. `comm -23` sobre dos
+# ficheros ya ordenados con la colación de C: lo que sobra en el primero es lo
+# que se perdió.
+sin_perdidas() { # <fichero esperado> <fichero despues> <qué son>
   local perdidas
   perdidas=$(LC_ALL=C comm -23 "$1" "$2")
   [ -z "$perdidas" ] ||
     morir "IDENTIDAD: $(printf '%s\n' "$perdidas" | wc -l) $3 resolvían ANTES y ya no. Los primeros: $(printf '%s\n' "$perdidas" | head -n 5 | tr '\n' ' ')"
+}
+
+# Igualdad EXACTA, y el rojo NOMBRA las dos direcciones: lo que falta (se
+# perdió) y lo que sobra (apareció sin que nadie lo declarara).
+identicos_o_morir() { # <fichero esperado> <fichero real> <qué son>
+  cmp -s "$1" "$2" && return 0
+  local faltan sobran
+  faltan=$(LC_ALL=C comm -23 "$1" "$2" | head -n 3 | tr '\n' ' ')
+  sobran=$(LC_ALL=C comm -13 "$1" "$2" | head -n 3 | tr '\n' ' ')
+  morir "IDENTIDAD: $3 DESPUÉS no son la transformación que declararon los ensayos en seco. Faltan: ${faltan:-(nada)} · Sobran sin declarar: ${sobran:-(nada)}"
+}
+
+# --------------------------------------------------------------------------
+# El mapa `old_hash -> new_hash` que DECLARAN los ensayos en seco: es la
+# transformación prevista, y con ella se construye el manifiesto esperado.
+# Cada SQL lo emite desde su PROPIA tabla de supervivientes (`IDENT|remap|…`),
+# igual que el enclavamiento de 4b: aquí no hay un segundo oráculo.
+# --------------------------------------------------------------------------
+mapa_de() { # <fichero crudo del informe>
+  awk -F'|' '$1 == "IDENT" && $2 == "remap" && NF == 4 { print $3 "|" $4 }' "$1" |
+    LC_ALL=C sort -u
+}
+
+leer_mapa_declarado() {
+  local f base viejo nuevo mapa="$WORK_DIR/mapa.declarado"
+  : >"$mapa.crudo"
+  for f in $COPIAS_SQL; do
+    base=${f%.sql}
+    mapa_de "$WORK_DIR/$base.dryrun.txt" >>"$mapa.crudo"
+  done
+  LC_ALL=C sort -u "$mapa.crudo" >"$mapa"
+  rm -f "$mapa.crudo"
+  while IFS='|' read -r viejo nuevo; do
+    [ -n "$viejo" ] || continue
+    { [[ $viejo =~ ^[0-9a-f]{32}$ ]] && [[ $nuevo =~ ^[0-9a-f]{32}$ ]]; } ||
+      morir "un ensayo en seco declara un remapeo que no son dos md5: '$viejo' -> '$nuevo'"
+    [ "$viejo" != "$nuevo" ] ||
+      morir "un ensayo en seco declara un remapeo de un hash a sí mismo: $viejo"
+  done <"$mapa"
+  # Un `old_hash` con DOS destinos haría indeterminable el manifiesto esperado.
+  local ambiguos encadenados
+  ambiguos=$(cut -d'|' -f1 "$mapa" | LC_ALL=C sort | uniq -d)
+  [ -z "$ambiguos" ] ||
+    morir "el mapa declarado es AMBIGUO (un hash viejo con varios destinos): $(printf '%s' "$ambiguos" | tr '\n' ' ')"
+  # Y un destino que es a la vez origen encadenaría el remapeo: el resultado
+  # dependería del orden en que se aplicara, así que no se adivina.
+  encadenados=$(LC_ALL=C comm -12 \
+    <(cut -d'|' -f1 "$mapa" | LC_ALL=C sort -u) \
+    <(cut -d'|' -f2 "$mapa" | LC_ALL=C sort -u))
+  [ -z "$encadenados" ] ||
+    morir "el mapa declarado ENCADENA remapeos (un destino que es también origen): $(printf '%s' "$encadenados" | tr '\n' ' ')"
+  printf 'transformación declarada por los ensayos en seco: %s remapeos old→new\n' \
+    "$(grep -c . "$mapa" || true)"
+}
+
+# El manifiesto esperado vale SOLO si el mapa declarado por G3/G6 es el MISMO
+# que el Paso 5 aplicará a las etiquetas. `canonical_refs` no lee ese mapa: lo
+# RECONSTRUYE de `jobs` (`md5(titulo|empresa|url) <> hash`), y esa
+# reconstrucción coincide exactamente con los supervivientes SOLO si hoy no hay
+# ya filas que no reproducen su hash — cada una de ellas metería en `canon_map`
+# un remapeo FANTASMA que ningún ensayo declaró, y el Paso 5 podría reapuntar
+# etiquetas que nadie vio venir. Medido contra producción el 2026-08-26 (SOLO
+# SELECT): 0 de 10.805. Se vuelve a medir aquí, ANTES de escribir nada, porque
+# es más barato parar antes del Paso 4c que después.
+SQL_HASHES_NO_REPRODUCIBLES="/* hashes-no-reproducibles */
+ SELECT count(*) FROM public.jobs j
+ WHERE md5(lower(btrim(j.title)) || '|' || lower(btrim(j.company)) || '|' || j.url) <> j.hash"
+
+exigir_mapa_reconstruible() {
+  local fantasmas
+  fantasmas=$(psql_valor "$SQL_HASHES_NO_REPRODUCIBLES") ||
+    morir "no se pudo medir cuántas filas de jobs no reproducen su hash"
+  entero "$fantasmas" "filas de jobs que no reproducen su hash"
+  printf 'filas de jobs que no reproducen su hash: %s (tienen que ser 0)\n' "$fantasmas"
+  [ "$fantasmas" -eq 0 ] ||
+    morir "$fantasmas filas de public.jobs NO reproducen su hash: el mapa que el Paso 5 reconstruye de jobs traería $fantasmas remapeos que NINGÚN ensayo en seco declara, y el Paso 6 no podría distinguirlos de una permuta. NADA se ha escrito todavía: averigua por qué esas filas no reproducen su hash (¿una canonización anterior sin re-mapear sus etiquetas? ¿títulos truncados?) antes de seguir"
+}
+
+# El estado que las etiquetas TIENEN que tener después: el de antes con el mapa
+# aplicado. Nada más se mueve.
+construir_esperados() {
+  local mapa="$WORK_DIR/mapa.declarado"
+  local remapeo='FILENAME == mapa { m[$1] = $2; next }'
+  LC_ALL=C awk -F'|' -v OFS='|' -v mapa="$mapa" \
+    "$remapeo"' { if ($2 in m) $2 = m[$2]; print }' \
+    "$mapa" "$WORK_DIR/manifiesto.juicios.antes" |
+    LC_ALL=C sort >"$WORK_DIR/manifiesto.juicios.esperado"
+  LC_ALL=C awk -F'|' -v OFS='|' -v mapa="$mapa" \
+    "$remapeo"' { a = $4; b = $5
+        if (a in m) a = m[a]
+        if (b in m) b = m[b]
+        if (a > b) { t = a; a = b; b = t }
+        $4 = a; $5 = b; print }' \
+    "$mapa" "$WORK_DIR/manifiesto.pares.antes" |
+    LC_ALL=C sort >"$WORK_DIR/manifiesto.pares.esperado"
+  LC_ALL=C awk -F'|' -v OFS='|' -v mapa="$mapa" \
+    "$remapeo"' { if ($2 in m) $2 = m[$2]; print }' \
+    "$mapa" "$WORK_DIR/resuelven.juicios.antes" |
+    LC_ALL=C sort >"$WORK_DIR/resuelven.juicios.esperado"
+  printf 'manifiesto ESPERADO tras la transformación: %s juicios · %s pares\n' \
+    "$(wc -l <"$WORK_DIR/manifiesto.juicios.esperado")" \
+    "$(wc -l <"$WORK_DIR/manifiesto.pares.esperado")"
 }
 
 # --------------------------------------------------------------------------
@@ -549,6 +743,11 @@ paso4_copias() {
       morir "$f descartaría $senal match_results CON señal del usuario. Es una decisión humana: revísala y, si se acepta, repite con PERMITIR_SENAL_USUARIO=1"
     fi
   done
+
+  # LA TRANSFORMACIÓN, no solo los conjuntos: con este mapa el Paso 6 construye
+  # el manifiesto ESPERADO de las etiquetas (R5 P1-A).
+  leer_mapa_declarado
+  exigir_mapa_reconstruible
 
   titulo "Paso 4b — enclavamiento: lo que declara CADA ensayo en seco"
   # Se comprueba con las DOS copias ya ensayadas y ANTES de confirmar la
@@ -593,6 +792,10 @@ paso4_copias() {
       [ "$(identidades "$WORK_DIR/$base.dryrun.txt" "$clase")" = "$(identidades "$WORK_DIR/$base.firme.txt" "$clase")" ] ||
         morir "las identidades «$clase» que declara $f en firme DIFIEREN de las del ensayo"
     done
+    # Y el MAPA: el manifiesto esperado del Paso 6 se construyó con el del
+    # ensayo, así que si en firme es otro estaríamos verificando otra cosa.
+    [ "$(mapa_de "$WORK_DIR/$base.dryrun.txt")" = "$(mapa_de "$WORK_DIR/$base.firme.txt")" ] ||
+      morir "el mapa old→new que declara $f EN FIRME difiere del que declaró el ensayo: el manifiesto esperado del Paso 6 se construyó con el del ensayo"
   done
 }
 
@@ -619,6 +822,21 @@ paso5_canonical_refs() {
   core_run python -m "$modulo" --dry-run >"$WORK_DIR/canonical_refs.dryrun.json" ||
     morir "canonical_refs --dry-run falló"
   cat "$WORK_DIR/canonical_refs.dryrun.json"
+
+  # El mapa que este módulo va a aplicar tiene que ser EXACTAMENTE el que
+  # declararon los ensayos en seco: con ese mapa se construye el manifiesto
+  # esperado del Paso 6, y un remapeo de más aquí sería indistinguible de una
+  # permuta allí. El módulo no lee el mapa —lo reconstruye de `jobs`—, así que
+  # esto es lo que ata las dos mitades. Todavía no ha escrito nada.
+  local declarados aplicara
+  declarados=$(grep -c . "$WORK_DIR/mapa.declarado" || true)
+  aplicara=$(sed -n 's/.*"filas_canonizadas_en_legacy": *\([0-9][0-9]*\).*/\1/p' \
+    "$WORK_DIR/canonical_refs.dryrun.json" | head -n 1)
+  entero "${aplicara:-x}" "filas que canonical_refs reconstruye"
+  [ "$aplicara" = "$declarados" ] ||
+    morir "canonical_refs reconstruye un mapa de $aplicara filas y los ensayos en seco declararon $declarados remapeos: el Paso 5 movería etiquetas que el Paso 6 no puede verificar. NO se ha aplicado nada del Paso 5: RESTAURA la copia del Paso 2 ($0 restaurar)"
+  printf 'el mapa de canonical_refs (%s filas) coincide con el declarado por los ensayos\n' "$aplicara"
+
   core_run python -m "$modulo" >"$WORK_DIR/canonical_refs.firme.json" ||
     morir "canonical_refs falló al aplicar"
   cat "$WORK_DIR/canonical_refs.firme.json"
@@ -731,11 +949,20 @@ paso6_verificar() {
   [ "$JOBS_despues" -eq "$((JOBS_antes - clones))" ] ||
     morir "(d) jobs: $JOBS_antes → $JOBS_despues, esperado $((JOBS_antes - clones))"
 
-  # (b') y (c') por IDENTIDAD: (b) y (c) son cantidades y una pérdida se
-  # compensa con una ganancia distinta (R4 P1-3). Aquí no: los `pair_id` y los
-  # `set_id|job_ref` que resolvían ANTES tienen que seguir resolviendo.
-  sin_perdidas "$WORK_DIR/manifiesto.pares.antes" "$WORK_DIR/manifiesto.pares.despues" "pares"
-  sin_perdidas "$WORK_DIR/manifiesto.juicios.antes" "$WORK_DIR/manifiesto.juicios.despues" "juicios"
+  # (b') y (c') por IDENTIDAD SEMÁNTICA (R4 P1-3 + R5 P1-A): (b) y (c) son
+  # cantidades y una pérdida se compensa con una ganancia distinta; y el
+  # manifiesto de R4 etiquetaba la FILA, así que una permuta de los dos lados de
+  # un par pasaba y un remapeo correcto de un juicio paraba. Aquí se compara el
+  # estado ENTERO de las etiquetas contra el que declara la transformación.
+  construir_esperados
+  identicos_o_morir "$WORK_DIR/manifiesto.juicios.esperado" \
+    "$WORK_DIR/manifiesto.juicios.despues" "los juicios"
+  identicos_o_morir "$WORK_DIR/manifiesto.pares.esperado" \
+    "$WORK_DIR/manifiesto.pares.despues" "los pares"
+  # Y en una sola dirección, la resolubilidad: lo que resolvía no puede dejar de
+  # resolver (con la clave que la transformación le dará).
+  sin_perdidas "$WORK_DIR/resuelven.juicios.esperado" "$WORK_DIR/resuelven.juicios.despues" "juicios"
+  sin_perdidas "$WORK_DIR/resuelven.pares.antes" "$WORK_DIR/resuelven.pares.despues" "pares"
   # (e) y (f): los hashes exactos que declararon los dry-runs.
   verificar_identidad_de_vacantes
   printf 'las cuatro invariantes del Paso 6 cuadran, y también las identidades.\n'

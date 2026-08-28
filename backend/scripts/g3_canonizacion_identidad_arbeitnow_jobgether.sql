@@ -713,9 +713,28 @@ SELECT concepto, filas FROM g3_enclave_report;
 --                 reescribe, el clon se borra): ninguno de estos `old_hash`
 --                 puede seguir en `jobs`.
 --   canonico   -> el `new_hash` de cada superviviente tiene que existir.
+--   remap      -> LA TRANSFORMACIÓN (auditoría externa R5 P1-A). Los dos
+--                 anteriores son CONJUNTOS: dicen qué hashes hay antes y qué
+--                 hashes hay después, pero no cuál se convierte en cuál, así
+--                 que con ellos el Paso 6 no puede construir el estado
+--                 ESPERADO de las etiquetas y tenía que conformarse con «no
+--                 se pierde ninguna» — que daba falso VERDE ante una permuta
+--                 y falso ROJO ante un remapeo correcto.
+--
+--                 Se declaran SOLO los SUPERVIVIENTES, y no `g3_map` entero,
+--                 porque este es exactamente el mapa que `canonical_refs`
+--                 (Paso 5) reconstruye de `jobs` y aplica a `job_ref`: el
+--                 clon se BORRA en el PASO 6 y su hash ya no se puede
+--                 reconstruir desde ninguna fila, así que sus refs NO se
+--                 remapean (su slot de sombra tampoco se reapunta: lo cierra
+--                 el `op=D`). Declarar el mapa completo produciría un
+--                 manifiesto esperado que la maniobra no cumple — un falso
+--                 rojo en el sitio más caro.
 -- ---------------------------------------------------------------------
 SELECT 'IDENT|desaparece|' || old_hash FROM g3_map ORDER BY 1;
 SELECT 'IDENT|canonico|' || new_hash FROM g3_survivors ORDER BY 1;
+SELECT 'IDENT|remap|' || survivor_hash || '|' || new_hash
+FROM g3_survivors ORDER BY 1;
 
 -- ---------------------------------------------------------------------
 -- CAMBIAR A `COMMIT;` PARA APLICARLO DE VERDAD.

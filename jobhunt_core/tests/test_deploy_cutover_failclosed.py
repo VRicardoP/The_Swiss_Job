@@ -70,6 +70,13 @@ _HEAD = "core0035"
 # contenedores recreados corran EXACTAMENTE estas.
 _IMAGENES = ("swissjob-core:prod", "swissjob-backend:prod", "swissjob-frontend:prod")
 
+# Hashes del corpus SIMULADO (md5 = 32 hex). Cada copia declara UN remapeo de
+# superviviente (`…01` → `…0a`) y un clon que desaparece (`…02`). `C`/`D` son
+# vacantes que NINGÚN ensayo en seco declara: la permuta hacia ellas es la
+# reproducción del falso verde de R5 P1-A.
+_HA, _HB = "a" * 30, "b" * 30
+_HC, _HD = "c" * 30, "d" * 30
+
 
 def _id_imagen(tag: str) -> str:
     limpio = "".join(c if c.isalnum() else "_" for c in tag)
@@ -77,10 +84,22 @@ def _id_imagen(tag: str) -> str:
 
 
 _DOBLE_DOCKER = r"""#!/usr/bin/env bash
-# DOBLE de `docker`. $ROMPER nombra la etapa que se rompe.
+# DOBLE de `docker`. $ROMPER nombra la etapa que se rompe; $MATAR_EN, el borde
+# de la marcha atrás donde el proceso muere de golpe (auditoría R5 P1-B).
 set -u
 d=$DOBLES_DIR
 r=${ROMPER:-}
+beat=${BEAT_CONTENEDOR:-swissjob-core-worker}
+
+# `SIGKILL` al GRUPO de procesos: no ejecuta traps y es lo que hace un corte de
+# corriente o un `docker kill`. El script corre en su propia sesión
+# (`start_new_session`), así que esto no alcanza a pytest.
+matar_grupo() {
+  [ "${MATAR_EN:-}" = "$1" ] || return 0
+  printf '%s\n' "$1" >>"$d/muertes"
+  kill -9 -"$(awk '{print $5}' /proc/self/stat)"
+  sleep 30
+}
 # La identidad que ve psql y la que declara el core tienen que coincidir salvo
 # cuando se rompe la sonda a propósito.
 IDENTIDAD="${PG_DB:-swissjobhunter}|16384|2026-08-28 00:00:00.000000"
@@ -190,9 +209,14 @@ case "$1" in
         n=$(cat "$d/canon" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$d/canon"
         juicios=2
         case "$*" in *--dry-run*) seco=true ;; *) seco=false ;; esac
-        filas=6
+        # `filas_canonizadas_en_legacy` = tamaño del mapa que el módulo
+        # RECONSTRUYE de `jobs`: tiene que ser el que declararon los ensayos
+        # (un remapeo por copia = 2), o el Paso 5 movería etiquetas que el
+        # Paso 6 no puede verificar (R5 P1-A).
+        filas=2
+        [ "$r" = paso5_mapa_ajeno ] && filas=5
         [ "$n" = 3 ] && filas=0                                  # idempotente: ceros
-        [ "$n" = 3 ] && [ "$r" = paso5_idempotencia ] && filas=6
+        [ "$n" = 3 ] && [ "$r" = paso5_idempotencia ] && filas=2
         [ "$n" = 2 ] && [ "$r" = paso5_json ] && juicios=3
         printf '{\n  "filas_canonizadas_en_legacy": %s,\n  "juicios_remapeados": %s,\n  "pares_remapeados": 1,\n  "dry_run": %s\n}\n' \
           "$filas" "$juicios" "$seco"
@@ -208,6 +232,66 @@ _DOBLE_PSQL = r"""#!/usr/bin/env bash
 set -u
 d=$DOBLES_DIR
 r=${ROMPER:-}
+A=__HA__; B=__HB__; C=__HC__; D=__HD__
+
+# MANIFIESTOS SEMÁNTICOS (R5 P1-A). La transformación declarada por los ensayos
+# en seco es `…01 -> …0a` en las dos copias; todo lo demás no se mueve.
+manifiesto_juicios() {
+  if [ "$1" = antes ]; then printf 'j-1|%s01|1|seed\nj-2|%s02|0|seed\n' "$A" "$B"; return; fi
+  case "$r" in
+    paso6_juicio_permutado)  printf 'j-1|%s0a|1|seed\nj-2|%s02|0|seed\n' "$C" "$B" ;;
+    paso6_relevancia)        printf 'j-1|%s0a|0|seed\nj-2|%s02|0|seed\n' "$A" "$B" ;;
+    paso6_identidad_juicios) printf 'j-3|%s0a|1|seed\nj-2|%s02|0|seed\n' "$A" "$B" ;;
+    *)                       printf 'j-1|%s0a|1|seed\nj-2|%s02|0|seed\n' "$A" "$B" ;;
+  esac
+}
+manifiesto_pares() {
+  if [ "$1" = antes ]; then
+    printf 'p-1|cohorte-1|duplicate|%s01|%s01\np-2|cohorte-1|distinct|%s03|%s04\n' "$A" "$B" "$A" "$A"
+    return
+  fi
+  case "$r" in
+    # LA reproducción del falso verde: el par sigue existiendo, resolviendo y
+    # con el MISMO `pair_id`, pero sus dos lados apuntan a otras vacantes.
+    paso6_permuta_par)     printf 'p-1|cohorte-1|duplicate|%s0a|%s0a\np-2|cohorte-1|distinct|%s03|%s04\n' "$C" "$D" "$A" "$A" ;;
+    paso6_veredicto)       printf 'p-1|cohorte-1|distinct|%s0a|%s0a\np-2|cohorte-1|distinct|%s03|%s04\n' "$A" "$B" "$A" "$A" ;;
+    paso6_identidad_pares) printf 'p-1|cohorte-1|duplicate|%s0a|%s0a\np-3|cohorte-1|distinct|%s03|%s04\n' "$A" "$B" "$A" "$A" ;;
+    *)                     printf 'p-1|cohorte-1|duplicate|%s0a|%s0a\np-2|cohorte-1|distinct|%s03|%s04\n' "$A" "$B" "$A" "$A" ;;
+  esac
+}
+resuelven_juicios() {
+  if [ "$1" = antes ]; then printf 'j-1|%s01\nj-2|%s02\n' "$A" "$B"; return; fi
+  case "$r" in
+    paso6_juicio_no_resuelve) printf 'j-2|%s02\n' "$B" ;;
+    paso6_juicio_permutado)   printf 'j-1|%s0a\nj-2|%s02\n' "$C" "$B" ;;
+    paso6_identidad_juicios)  printf 'j-3|%s0a\nj-2|%s02\n' "$A" "$B" ;;
+    *)                        printf 'j-1|%s0a\nj-2|%s02\n' "$A" "$B" ;;
+  esac
+}
+resuelven_pares() {
+  if [ "$1" = antes ]; then printf 'p-1\np-2\n'; return; fi
+  case "$r" in
+    paso6_par_no_resuelve) printf 'p-1\n' ;;
+    paso6_identidad_pares) printf 'p-1\np-3\n' ;;
+    *) printf 'p-1\np-2\n' ;;
+  esac
+}
+guardas() {
+  # Las guardas de inmutabilidad, todas en `ENABLE ALWAYS` ('A'). Degradarlas
+  # SOLO despues de restaurar es el caso «la vuelta atras trajo los datos pero
+  # no las guardas».
+  estado=A
+  [ "$r" = restaurar_guarda_degradada ] && [ -f "$d/restaurado" ] && estado=D
+  for n in 1 2 3 4 5 6 7; do
+    printf 'jobhunt|labeled_dedup_pairs|trg_inmutable_%s|%s\n' "$n" "$estado"
+  done
+}
+samples_outbox() {
+  n=$(cat "$d/samples" 2>/dev/null || echo 0)
+  case "$r" in smoke_sin_beat|smoke_beat_muerto) ;; *) n=$((n + 1)) ;; esac
+  echo "$n" >"$d/samples"
+  echo "$n"
+}
 
 sql=""
 esperando=0
@@ -219,8 +303,18 @@ done
 if [ -n "$sql" ]; then                      # consultas escalares y manifiestos
   fase=antes; [ -f "$d/firme" ] && fase=despues
   case "$sql" in
+    *manifiesto-juicios*) manifiesto_juicios "$fase"; exit 0 ;;
+    *manifiesto-pares*)   manifiesto_pares "$fase"; exit 0 ;;
+    *resuelven-juicios*)  resuelven_juicios "$fase"; exit 0 ;;
+    *resuelven-pares*)    resuelven_pares "$fase"; exit 0 ;;
+    *guardas-inmutabilidad*) guardas; exit 0 ;;
+    *samples-outbox*)     samples_outbox; exit 0 ;;
+  esac
+  case "$sql" in
     *pg_encoding_to_char*)                  # atributos de la base a recrear
       echo "UTF8|en_US.utf8|en_US.utf8|swissjob" ;;
+    *hashes-no-reproducibles*)
+      if [ "$r" = paso4_hashes_fantasma ]; then echo 3; else echo 0; fi ;;
     *pg_terminate_backend*) : ;;
     *"RENAME TO"*)
       [ "$r" = restaurar_rename ] && { echo "ERROR: database is being accessed by other users" >&2; exit 1; }
@@ -243,14 +337,6 @@ if [ -n "$sql" ]; then                      # consultas escalares y manifiestos
             if [ "$n" = 1 ]; then echo 500; else echo 100; fi
           fi ;;
       esac ;;
-    *"p.id::text"*)                         # MANIFIESTO de pares (identidades)
-      if [ "$fase" = antes ]; then printf 'p-1\np-2\n'
-      elif [ "$r" = paso6_identidad_pares ]; then printf 'p-1\np-3\n'
-      else printf 'p-1\np-2\n'; fi ;;
-    *"j.set_id::text"*)                     # MANIFIESTO de juicios (identidades)
-      if [ "$fase" = antes ]; then printf 'j-1\nj-2\n'
-      elif [ "$r" = paso6_identidad_juicios ]; then printf 'j-1\nj-3\n'
-      else printf 'j-1\nj-2\n'; fi ;;
     *labeled_dedup_cohorts*)
       # El oráculo APROXIMADO que el script tenía en Bash (R4 P1-2). Ya no se
       # consulta; sigue aquí para demostrar que un 67 no vuelve a parar nada.
@@ -325,6 +411,14 @@ sufijo=01
 printf 'IDENT|desaparece|%s%s\n' "$p" "$sufijo"
 printf 'IDENT|desaparece|%s02\n' "$p"
 printf 'IDENT|canonico|%s0a\n' "$p"
+# LA TRANSFORMACIÓN declarada (R5 P1-A): solo el superviviente, que es el mapa
+# que `canonical_refs` reconstruye de `jobs` y aplica a las etiquetas.
+remap_viejo="${p}01"; remap_nuevo="${p}0a"
+[ "$r" = paso4c_remap ] && [ "$modo" = firme ] && remap_nuevo="${p}0b"
+[ "$r" = remap_no_md5 ] && remap_nuevo="no-es-un-md5"
+[ "$r" = remap_ambiguo ] && printf 'IDENT|remap|%s|%s0c\n' "$remap_viejo" "$p"
+[ "$r" = remap_encadenado ] && printf 'IDENT|remap|%s0a|%s0d\n' "$p" "$p"
+printf 'IDENT|remap|%s|%s\n' "$remap_viejo" "$remap_nuevo"
 exit 0
 """
 
@@ -335,6 +429,7 @@ def _plantar_dobles(raiz: Path) -> Path:
     binarios.mkdir(parents=True, exist_ok=True)
     psql = _DOBLE_PSQL
     for clave, valor in (
+        ("__HA__", _HA), ("__HB__", _HB), ("__HC__", _HC), ("__HD__", _HD),
         ("__SLOTS_ANTES__", _ANTES["slots"]), ("__SLOTS_DESPUES__", _DESPUES["slots"]),
         ("__JOBS_ANTES__", _ANTES["jobs"]), ("__JOBS_DESPUES__", _DESPUES["jobs"]),
         ("__PARES_ANTES__", _ANTES["pares"]), ("__PARES_DESPUES__", _DESPUES["pares"]),
@@ -664,6 +759,74 @@ def test_el_smoke_rechaza_el_status_ok_que_exigia_el_runbook(tmp_path, sonda):
 
 
 # --------------------------------------------------------------------------
+# R5 P1-A — el manifiesto etiqueta la ENTIDAD y la TRANSFORMACIÓN, no la fila
+#
+# Los manifiestos de R4 fallaban en las DOS direcciones y las dos están aquí:
+#   · falso VERDE: el de pares guardaba solo `p.id`, así que un par que sigue
+#     resolviendo con sus dos lados en OTRAS vacantes no cambiaba el fichero;
+#   · falso ROJO: el de juicios guardaba `set_id|job_ref`, y el remapeo
+#     CORRECTO del Paso 5 cambia el ref: `comm -23` lo declaraba perdido.
+# --------------------------------------------------------------------------
+def test_una_permuta_de_los_dos_lados_del_par_no_puede_pasar(tmp_path):
+    """Reproducción 1 del auditor (A/B → C/D): el par `p-1` sigue existiendo, sigue
+    resolviendo y conserva su `pair_id`, pero sus DOS lados pasan a vacantes que ningún
+    ensayo en seco declaró. Cardinalidad, resolubilidad y manifiesto de `p.id` pasan;
+    cambió justo la materia etiquetada."""
+    p = _ejecutar(tmp_path, "cutover", "paso6_permuta_par")
+    assert p.returncode != 0, f"la permuta de los dos lados pasó:\n{p.stdout}"
+    salida = p.stdout + p.stderr
+    assert "IDENTIDAD" in salida, salida
+    assert _HC in salida or _HD in salida, salida
+
+
+def test_el_mapa_declarado_y_el_que_aplica_el_paso_5_son_el_mismo(tmp_path):
+    """El manifiesto esperado se construye con el mapa que declaran G3/G6, pero quien
+    mueve los `job_ref` es `canonical_refs`, que NO lee ese mapa: lo reconstruye de
+    `jobs`. Si las dos mitades no coinciden, el Paso 5 movería etiquetas que el Paso 6
+    no puede distinguir de una permuta — así que se atan, y antes de escribir."""
+    p = _ejecutar(tmp_path, "cutover", None)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "coincide con el declarado por los ensayos" in p.stdout, p.stdout
+    assert "no reproducen su hash: 0" in p.stdout, p.stdout
+
+
+def test_un_remapeo_declarado_por_los_ensayos_no_puede_dar_rojo(tmp_path):
+    """Reproducción 2 del auditor, invertida: el Paso 5 remapea `job_ref` al hash
+    canónico —la etiqueta sigue unida a la MISMA vacante— y eso es exactamente lo que
+    los ensayos en seco declararon. El procedimiento tiene que ACEPTARLO; pararlo es
+    parar una transformación correcta."""
+    p = _ejecutar(tmp_path, "cutover", None)
+    assert p.returncode == 0, (
+        "el manifiesto declara perdido un juicio que solo cambió de clave:\n"
+        + p.stdout + p.stderr
+    )
+    assert "transformación declarada" in p.stdout, p.stdout
+
+
+@pytest.mark.parametrize(
+    ("etapa", "porque"),
+    [
+        ("paso6_permuta_par", "los dos lados del par a vacantes no declaradas"),
+        ("paso6_juicio_permutado", "el ref de un juicio a una vacante no declarada"),
+        ("paso6_veredicto", "el veredicto del par editado por el camino"),
+        ("paso6_relevancia", "la relevancia del juicio editada por el camino"),
+        ("paso6_juicio_no_resuelve", "un juicio deja de resolver"),
+        ("paso6_par_no_resuelve", "un par deja de resolver"),
+        ("paso4c_remap", "el mapa en firme no es el que declaró el ensayo"),
+        ("remap_no_md5", "un remapeo declarado que no es un md5"),
+        ("remap_ambiguo", "un `old_hash` con dos destinos"),
+        ("remap_encadenado", "un destino que es a la vez origen"),
+        ("paso4_hashes_fantasma", "filas de jobs que ya no reproducen su hash"),
+        ("paso5_mapa_ajeno", "canonical_refs reconstruye un mapa mayor que el declarado"),
+    ],
+)
+def test_el_manifiesto_semantico_rechaza(tmp_path, etapa, porque):
+    p = _ejecutar(tmp_path, "cutover", etapa)
+    assert p.returncode != 0, f"pasó {porque}:\n{p.stdout}"
+    assert "PARAR" in p.stdout + p.stderr
+
+
+# --------------------------------------------------------------------------
 # R4 P1-1 — el aislamiento del ensayo
 # --------------------------------------------------------------------------
 _ENSAYO_OK = {
@@ -673,11 +836,11 @@ _ENSAYO_OK = {
 }
 
 
-def _con_entorno(tmp_path, entorno, subcomando="cutover", romper=None):
+def _con_entorno(tmp_path, entorno, subcomando="cutover", romper=None, extra=(), **kw):
     guardado = {k: os.environ.get(k) for k in entorno}
     os.environ.update(entorno)
     try:
-        return _ejecutar(tmp_path, subcomando, romper)
+        return _ejecutar(tmp_path, subcomando, romper, *extra, **kw)
     finally:
         for k, v in guardado.items():
             os.environ.pop(k, None) if v is None else os.environ.update({k: v})
