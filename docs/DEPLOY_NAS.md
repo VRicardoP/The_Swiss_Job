@@ -746,10 +746,17 @@ credencial de `/share/Public/swissjob/.env.core.admin.prod`.
 
 ```bash
 docker exec swissjob-postgres \
-  pg_dump -U swissjob -Fc -Z 6 -n public -n jobhunt swissjobhunter > "$parcial"
+  pg_dump -U swissjob -Fc -Z 6 swissjobhunter > "$parcial"
 docker exec -i swissjob-postgres pg_restore -l < "$parcial"   # verificación
 docker exec -i swissjob-postgres sha256sum   < "$parcial"     # sello
 ```
+
+**La base ENTERA, sin `-n public -n jobhunt`.** Comprobado el 2026-08-28 contra el corpus
+real (SOLO LECTURA): un volcado por esquemas **no lleva `CREATE EXTENSION vector`** —las
+extensiones no son objetos de esquema— y sí lleva un `DROP SCHEMA public` que la propia
+extensión bloquea. Con la base entera el archivo es autosuficiente. La aserción de los dos
+esquemas sigue siendo la misma: el índice tiene que traer tablas de `public` **y** de
+`jobhunt` (16 y 50 en el corpus local).
 
 **Formato `custom` (`-Fc`), no SQL plano** (auditoría externa R4 P1-4). El `.sql.gz`
 anterior *parecía* una copia y no lo era: la recuperación que documentaba §7
@@ -913,10 +920,42 @@ documentaba §7 no lo hacía (R4 P1-4). Esta:
    `pg_restore -l` (número de tablas por esquema incluido);
 3. **para los CINCO escritores** y comprueba que están parados (restaurar con uno vivo
    deja el estado a medias en cuanto escriba);
-4. `pg_restore --clean --if-exists --exit-on-error --single-transaction`: o entra entera
+4. **aparta** la base rota con `ALTER DATABASE … RENAME TO <base>_previa_<sello>` —no la
+   borra— y crea una nueva vacía con la misma codificación, colación y propietario;
+5. `pg_restore --exit-on-error --single-transaction` sobre esa base vacía: o entra entera
    o no entra nada;
-5. y **después** vuelve a medir y compara con el manifiesto pre-corte: las cinco cifras
+6. y **después** vuelve a medir y compara con el manifiesto pre-corte: las cinco cifras
    y, `cmp` a `cmp`, los manifiestos de pares y juicios. Si algo no cuadra, sale 1.
+
+**Por qué se recrea la base y no se usa `--clean --if-exists`.** Probado el 2026-08-28
+restaurando un volcado del corpus REAL en una base desechable: sobre una base ya poblada
+—que es el caso que importa— `pg_restore --clean` muere en
+
+```text
+ERROR:  cannot drop inherited constraint "offer_embeddings_…_pkey"
+```
+
+porque `jobhunt.offer_embeddings_*` son PARTICIONES y `--clean` no sabe soltar sus
+constraints heredadas. Funcionaba sobre una base vacía y fallaba justo en la marcha atrás
+real. El RENOMBRE, en lugar de un `DROP DATABASE`, deja el estado roto entero y
+recuperable mientras el operador no lo borre a mano: si la restauración fallara, no se ha
+perdido nada.
+
+**Y sin paralelismo de mantenimiento.** La base nueva se crea con
+`ALTER DATABASE … SET max_parallel_maintenance_workers = 0` mientras dura la restauración:
+el índice HNSW de `offer_embeddings` se construye en paralelo y pide un segmento de
+memoria compartida de ~64 MB que NO cabe en el `/dev/shm` por defecto de Docker (64 MB, y
+ningún compose del proyecto fija `shm_size`). Medido: con el valor por defecto la
+restauración del corpus real aborta con `could not resize shared memory segment`; con 0
+entra entera en 13 s. Al terminar se hace `RESET`.
+
+⚠ **El slot lógico de la sombra NO sobrevive.** La base restaurada es NUEVA (otro OID), así
+que `jobhunt_shadow` se queda con la base apartada mientras `jobhunt.shadow_capture_state`
+vuelve del volcado: `core-capture` arrancaría con estado registrado y slot AUSENTE y
+aborta —correctamente— con «continuidad WAL perdida». **Antes del Recreate** hay que
+ejecutar el rollback/replay de `jobhunt_core/shadow/RUNBOOK.md` §3 (parar el consumidor,
+truncar staging, re-crear el slot y re-backfill por snapshot). El script lo recuerda al
+terminar.
 
 Los escritores quedan PARADOS a propósito: se arrancan con el Recreate de Container
 Station, no aquí.
@@ -925,8 +964,16 @@ Ensayado de punta a punta el 2026-08-28 contra un PostgreSQL **desechable** (con
 `postgres:16` efímero, jamás la base viva): huella del contenido antes del corte
 `049209e9…`, cutover completo, fallo simulado después de la canonización (borrado de
 `labeled_judgments`, corrupción de dos filas y una fila basura nueva) y `restaurar` →
-huella `049209e9…` otra vez, **idéntica**. Y falla cerrada con la copia alterada un byte
-(`sha256 … ≠ manifiesto …`) y con un escritor vivo.
+huella `049209e9…` otra vez, **idéntica**, con el estado roto apartado en
+`…_previa_<sello>`. Y falla cerrada con la copia alterada un byte (`sha256 … ≠
+manifiesto …`) y con un escritor vivo.
+
+Aparte, contra el **corpus real** (volcado SOLO LECTURA de `swissjobhunter`, restaurado en
+una base desechable): 66 tablas, 127 MB, restauración en 13 s con `--exit-on-error
+--single-transaction`, `md5` del conjunto de `jobs.hash` idéntico al del origen, mismos
+conteos de `source_listings`, `labeled_dedup_pairs`, `labeled_judgments` y cohortes
+selladas, y las guardas de `core0025` **vivas** tras restaurar (el `UPDATE` sobre un par
+congelado sigue abortando).
 
 #### Paso 7 — Recrear y smoke (y solo ahora)
 
@@ -1028,7 +1075,7 @@ f=/share/Public/backups/swissjob/db-$(date +%Y%m%d-%H%M).dump
 
 # Sin `-t` (un TTY reescribe el volcado) y SIN tubería: el estado es el de pg_dump.
 docker exec swissjob-postgres \
-  pg_dump -U swissjob -Fc -Z 6 -n public -n jobhunt swissjobhunter > "$f.parcial" || {
+  pg_dump -U swissjob -Fc -Z 6 swissjobhunter > "$f.parcial" || {
     rm -f "$f.parcial"; echo "pg_dump FALLÓ: no hay copia" >&2; exit 1; }
 
 # La verificación la hace la herramienta que va a RESTAURARLA.
@@ -1039,8 +1086,9 @@ mv "$f.parcial" "$f"                                       # el nombre solo lo g
 docker exec -i swissjob-postgres sha256sum < "$f" | awk '{print $1}' > "$f.sha256"
 ```
 
-`-n public -n jobhunt`: el esquema del core va en la copia. Si el rol `swissjob` no puede
-leer `jobhunt`, el índice no traerá sus tablas y hay que repetirla con la credencial de
+La base ENTERA, sin `-n`: un volcado por esquemas no lleva `CREATE EXTENSION vector` y sí
+un `DROP SCHEMA public` que la extensión bloquea. Si el rol `swissjob` no puede leer
+`jobhunt`, el índice no traerá sus tablas y hay que repetirla con la credencial de
 `.env.core.admin.prod`.
 
 ### Backup automático (semanal)
@@ -1068,17 +1116,29 @@ test "$(docker exec -i swissjob-postgres sha256sum < "$f" | awk '{print $1}')" \
      = "$(cat "$f.sha256")" || { echo "la copia NO cuadra con su sello" >&2; exit 1; }
 docker exec -i swissjob-postgres pg_restore -l < "$f" > /dev/null || exit 1
 
-# 3. TODO O NADA. `--single-transaction` implica `--exit-on-error`; `--clean --if-exists`
-#    sustituye los objetos del volcado en vez de apilarse sobre ellos.
-docker exec -i swissjob-postgres pg_restore -U swissjob -d swissjobhunter \
-  --clean --if-exists --exit-on-error --single-transaction < "$f"
+# 3. APARTAR la base (no borrarla) y crear una vacía igual. `--clean` NO sirve aquí:
+#    muere en las constraints heredadas de las particiones de jobhunt.offer_embeddings.
+p="docker exec -i swissjob-postgres psql -U swissjob -d postgres -v ON_ERROR_STOP=1 -X -q"
+$p -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+       WHERE datname='swissjobhunter' AND pid<>pg_backend_pid()"
+$p -c 'ALTER DATABASE swissjobhunter RENAME TO swissjobhunter_previa'
+$p -c "CREATE DATABASE swissjobhunter TEMPLATE template0 ENCODING 'UTF8'
+       LC_COLLATE 'en_US.utf8' LC_CTYPE 'en_US.utf8' OWNER swissjob"
+$p -c 'ALTER DATABASE swissjobhunter SET max_parallel_maintenance_workers = 0'
 
-# 4. Arrancar de nuevo (Container Station UI → Recreate, o docker start).
+# 4. TODO O NADA (`--single-transaction` implica `--exit-on-error`).
+docker exec -i swissjob-postgres pg_restore -U swissjob -d swissjobhunter \
+  --exit-on-error --single-transaction < "$f"
+$p -c 'ALTER DATABASE swissjobhunter RESET max_parallel_maintenance_workers'
+
+# 5. Re-bootstrap de la sombra (RUNBOOK.md §3) y arranque (Container Station → Recreate).
+#    Cuando todo esté conforme: DROP DATABASE swissjobhunter_previa.
 ```
 
-⚠ `--clean` sustituye los objetos que están EN la copia; los creados **después** del
-volcado (por ejemplo tablas de una migración posterior) sobreviven. Si lo que se
-restaura es un estado anterior a una migración, hay que recrear la base entera.
+⚠ `max_parallel_maintenance_workers = 0` no es cosmético: el índice HNSW en paralelo pide
+~64 MB de memoria compartida y el `/dev/shm` por defecto de Docker mide justo 64 MB.
+⚠ El slot lógico `jobhunt_shadow` se queda con la base apartada: sin el §3 del RUNBOOK,
+`core-capture` aborta con «Estado registrado pero slot AUSENTE».
 
 ⚠ Durante el cutover no se teclea nada de esto: la marcha atrás es
 `./nas_cutover.sh restaurar` (§5.3), que hace los cuatro pasos y **además** verifica

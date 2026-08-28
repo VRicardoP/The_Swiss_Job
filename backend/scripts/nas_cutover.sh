@@ -104,6 +104,9 @@ set -Eeuo pipefail
 # Host que el CORE_DSN del ensayo puede nombrar. Es el alias del contenedor de
 # Postgres dentro de la red del core, no el del host.
 : "${CORE_DSN_HOST:=postgres}"
+# Base de MANTENIMIENTO desde la que se renombra/crea la de producción: no se
+# puede hacer ninguna de las dos cosas estando conectado a ella.
+: "${PG_MAINT_DB:=postgres}"
 # Módulo que imprime la identidad de la base a la que el core se conecta DE
 # VERDAD (resolviendo el DSN igual que el one-shot del Paso 5).
 : "${MODULO_IDENTIDAD:=jobhunt_core.shadow.identidad_destino}"
@@ -133,6 +136,13 @@ psql_archivo() { # <fichero.sql> <fichero de salida>
 # se traga el estado de salida de la sustitución.
 psql_valor() { # <sql>
   "$DOCKER" exec -i "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" \
+    -v ON_ERROR_STOP=1 -X -q -A -t -c "$1" </dev/null
+}
+
+# Contra la base de MANTENIMIENTO: renombrar o crear la base de producción no se
+# puede hacer estando conectado a ella.
+psql_maint() { # <sql>
+  "$DOCKER" exec -i "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_MAINT_DB" \
     -v ON_ERROR_STOP=1 -X -q -A -t -c "$1" </dev/null
 }
 
@@ -322,10 +332,16 @@ paso1_parar() {
 # dejaba datos de los DOS estados mezclados. Una copia que no restaura no es una
 # copia, y el Paso 4c es irreversible.
 #
-# Ahora: formato `custom` (-Fc) —el único que `pg_restore --clean --if-exists
-# --single-transaction` puede aplicar todo-o-nada—, verificado con el MISMO
-# `pg_restore` que lo restaurará, sellado con sha256 y con un manifiesto que el
-# subcomando `restaurar` usa para comprobar que la vuelta atrás VOLVIÓ.
+# Ahora: formato `custom` (-Fc) —el único que `pg_restore` aplica en una sola
+# transacción—, verificado con el MISMO `pg_restore` que lo restaurará, sellado
+# con sha256 y con un manifiesto que el subcomando `restaurar` usa para
+# comprobar que la vuelta atrás VOLVIÓ.
+#
+# Y del volcado se quitó el `-n public -n jobhunt`: comprobado el 2026-08-28
+# contra el corpus real (SOLO LECTURA), un volcado por esquemas NO lleva
+# `CREATE EXTENSION vector` —las extensiones no son objetos de esquema— y sí
+# lleva un `DROP SCHEMA public` que la propia extensión bloquea. Con la base
+# entera el archivo es autosuficiente: extensiones incluidas.
 # --------------------------------------------------------------------------
 paso2_backup() {
   titulo "Paso 2 — copia de seguridad restaurable (public + jobhunt)"
@@ -341,7 +357,7 @@ paso2_backup() {
   # Sin `-t`: un TTY reescribe el volcado. Y sin tubería, para no perder el
   # estado de pg_dump.
   "$DOCKER" exec "$PG_CONTAINER" \
-    pg_dump -U "$PG_USER" -Fc -Z 6 -n public -n jobhunt "$PG_DB" >"$parcial" ||
+    pg_dump -U "$PG_USER" -Fc -Z 6 "$PG_DB" >"$parcial" ||
     morir "pg_dump falló: no hay copia de seguridad y el Paso 4 es irreversible"
 
   # La verificación se hace con la herramienta que va a RESTAURAR: si el archivo
@@ -732,8 +748,29 @@ paso6_verificar() {
 # escupía «ya existe» y dejaba datos de los dos estados MEZCLADOS. Aquí:
 #   · se paran los CINCO escritores (no dos) y se comprueba que están parados;
 #   · se verifica el sello sha256 y que `pg_restore -l` lee la copia entera;
-#   · `--clean --if-exists --single-transaction`: o vuelve entera, o no vuelve;
+#   · la base se RENOMBRA (no se borra) y se crea una nueva vacía con la misma
+#     codificación, colación y propietario;
+#   · `pg_restore --exit-on-error --single-transaction` sobre esa base vacía: o
+#     entra entera, o no entra nada;
 #   · y DESPUÉS se comprueba contra el manifiesto pre-corte que volvió.
+#
+# POR QUÉ NO `--clean --if-exists` (probado contra el corpus REAL el 2026-08-28,
+# restaurando en una base DESECHABLE): sobre una base ya poblada muere en
+#
+#   ERROR: cannot drop inherited constraint "offer_embeddings_…_pkey"
+#
+# — `jobhunt.offer_embeddings_*` son PARTICIONES y `--clean` no sabe soltar sus
+# constraints heredadas. Es decir: la marcha atrás con `--clean` funciona sobre
+# una base vacía y falla justo en el caso que importa. Por eso se recrea la base.
+# El RENOMBRE, y no un DROP, deja el estado roto recuperable mientras el operador
+# no lo borre a mano: si la restauración fallara, no se ha perdido nada.
+#
+# Y la base nueva lleva `max_parallel_maintenance_workers = 0` mientras dura la
+# restauración: el índice HNSW de `offer_embeddings` se construye en paralelo y
+# pide un segmento de memoria compartida de ~64 MB que NO cabe en el `/dev/shm`
+# por defecto de Docker (64 MB). Medido: con el valor por defecto la restauración
+# del corpus real aborta con «could not resize shared memory segment»; con 0,
+# entra entera en 13 s.
 # --------------------------------------------------------------------------
 restaurar() { # [fichero .dump]
   titulo "RESTAURAR — vuelta al estado previo al corte"
@@ -765,15 +802,42 @@ restaurar() { # [fichero .dump]
   # Restaurar con escritores vivos deja el estado a medias en cuanto uno escriba.
   parar_escritores
 
+  [ "$PG_DB" != "$PG_MAINT_DB" ] ||
+    morir "PG_DB y PG_MAINT_DB son la misma base ($PG_DB): no se puede renombrar la base a la que hay que conectarse"
+  local atributos enc coll ctype propietario previa
+  atributos=$(psql_maint "SELECT pg_encoding_to_char(encoding) || '|' || datcollate || '|' || datctype
+                          || '|' || pg_get_userbyid(datdba) FROM pg_database WHERE datname = '$PG_DB'")
+  [ -n "$atributos" ] || morir "no existe la base $PG_DB en el servidor"
+  enc=${atributos%%|*}; atributos=${atributos#*|}
+  coll=${atributos%%|*}; atributos=${atributos#*|}
+  ctype=${atributos%%|*}; propietario=${atributos#*|}
+  previa="${PG_DB}_previa_$(date +%Y%m%d%H%M%S)"
+
+  psql_maint "SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+              WHERE datname = '$PG_DB' AND pid <> pg_backend_pid()" >/dev/null ||
+    morir "no se pudieron cortar las conexiones a $PG_DB"
+  psql_maint "ALTER DATABASE \"$PG_DB\" RENAME TO \"$previa\"" >/dev/null ||
+    morir "no se pudo apartar $PG_DB (¿queda alguna conexión abierta?): NADA se ha tocado"
+  printf 'el estado roto queda APARTADO en la base %s (bórrala a mano cuando estés conforme)\n' "$previa"
+  psql_maint "CREATE DATABASE \"$PG_DB\" TEMPLATE template0 ENCODING '$enc'
+              LC_COLLATE '$coll' LC_CTYPE '$ctype' OWNER \"$propietario\"" >/dev/null ||
+    morir "no se pudo crear $PG_DB vacía. El estado anterior sigue ENTERO en $previa: devuélvelo con ALTER DATABASE \"$previa\" RENAME TO \"$PG_DB\""
+  # El índice HNSW en paralelo pide ~64 MB de memoria compartida y el /dev/shm
+  # por defecto de Docker mide justo 64 MB: la restauración del corpus real
+  # aborta con «could not resize shared memory segment». Sin paralelismo entra.
+  psql_maint "ALTER DATABASE \"$PG_DB\" SET max_parallel_maintenance_workers = 0" >/dev/null ||
+    morir "no se pudo desactivar el paralelismo de mantenimiento en $PG_DB"
+
   # `--single-transaction` implica `--exit-on-error`: o entra entera o no entra
-  # nada. `--clean --if-exists` sustituye los objetos del volcado en vez de
-  # apilarse sobre ellos, que era el defecto.
+  # nada. Sin `--clean`: la base está recién creada y vacía.
   "$DOCKER" exec -i "$PG_CONTAINER" pg_restore -U "$PG_USER" -d "$PG_DB" \
-    --clean --if-exists --exit-on-error --single-transaction <"$dump" \
+    --exit-on-error --single-transaction <"$dump" \
     >"$WORK_DIR/restaurar.out" 2>"$WORK_DIR/restaurar.err" || {
       cat "$WORK_DIR/restaurar.err" >&2
-      morir "pg_restore FALLÓ: la transacción no se confirmó y la base sigue como estaba. Revisa $WORK_DIR/restaurar.err"
+      morir "pg_restore FALLÓ y la base $PG_DB quedó vacía. El estado anterior sigue ENTERO en $previa: devuélvelo con ALTER DATABASE \"$PG_DB\" ... DROP y ALTER DATABASE \"$previa\" RENAME TO \"$PG_DB\". Revisa $WORK_DIR/restaurar.err"
     }
+  psql_maint "ALTER DATABASE \"$PG_DB\" RESET max_parallel_maintenance_workers" >/dev/null ||
+    morir "no se pudo devolver max_parallel_maintenance_workers a su valor por defecto en $PG_DB"
 
   titulo "RESTAURAR — comprobación contra el manifiesto pre-corte"
   medir restaurado
@@ -790,6 +854,15 @@ restaurar() { # [fichero .dump]
   cmp -s "$dump.juicios" "$WORK_DIR/manifiesto.juicios.restaurado" ||
     morir "los juicios que resuelven tras restaurar NO son los del manifiesto pre-corte ($dump.juicios)"
   printf '\nrestauración VERIFICADA contra %s.manifiesto: cantidades e identidades coinciden.\n' "$dump"
+  printf 'El estado roto sigue APARTADO en %s: bórralo a mano cuando estés conforme.\n' "$previa"
+  # La base es NUEVA (otro OID), así que el slot lógico de la sombra se quedó con
+  # la base apartada: `core-capture` arrancaría contra un `shadow_capture_state`
+  # restaurado y un slot AUSENTE, y aborta con «continuidad WAL perdida». Es
+  # correcto que aborte, pero hay que re-bootstrapearlo a mano.
+  printf 'ANTES del Recreate: el slot lógico %s NO existe en la base nueva. Ejecuta el\n' "$SLOT_SOMBRA"
+  printf 'rollback/replay de la sombra (jobhunt_core/shadow/RUNBOOK.md §3: truncar staging\n'
+  printf '+ re-crear slot + re-backfill) o core-capture abortará con «Estado registrado\n'
+  printf 'pero slot AUSENTE».\n'
   printf 'Los escritores siguen PARADOS a propósito. Arráncalos con el Recreate de Container Station.\n'
 }
 

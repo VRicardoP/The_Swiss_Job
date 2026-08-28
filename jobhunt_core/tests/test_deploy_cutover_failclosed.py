@@ -36,6 +36,13 @@ salida no cero. Los caminos felices salen 0: sin eso, «todo rojo» no demostrar
 
 `sha256sum` NO se dobla —es el real, dentro del doble de `docker exec`— así que el sello
 de la copia y su comprobación en `restaurar` se ejercitan de verdad.
+
+Lo que estos dobles NO pueden decidir es si `pg_restore` traga el esquema REAL: eso se
+probó aparte, restaurando un volcado del corpus de producción en una base DESECHABLE
+(2026-08-28). Allí salieron los dos modos de fallo que el diseño inicial de la marcha
+atrás no veía —`--clean` no sabe soltar las constraints heredadas de las particiones de
+`offer_embeddings`, y el índice HNSW en paralelo no cabe en el `/dev/shm` de 64 MB de
+Docker—, y por eso la base se RECREA y se restaura sin paralelismo de mantenimiento.
 """
 
 import json
@@ -212,6 +219,16 @@ done
 if [ -n "$sql" ]; then                      # consultas escalares y manifiestos
   fase=antes; [ -f "$d/firme" ] && fase=despues
   case "$sql" in
+    *pg_encoding_to_char*)                  # atributos de la base a recrear
+      echo "UTF8|en_US.utf8|en_US.utf8|swissjob" ;;
+    *pg_terminate_backend*) : ;;
+    *"RENAME TO"*)
+      [ "$r" = restaurar_rename ] && { echo "ERROR: database is being accessed by other users" >&2; exit 1; }
+      : ;;
+    *"CREATE DATABASE"*)
+      [ "$r" = restaurar_create ] && { echo "ERROR: permission denied to create database" >&2; exit 1; }
+      : ;;
+    *max_parallel_maintenance_workers*) : ;;
     *pg_postmaster_start_time*)             # sonda de destino (R4 P1-1)
       echo "${PG_DB:-swissjobhunter}|16384|2026-08-28 00:00:00.000000" ;;
     *pg_replication_slots*)                 # sonda de progreso del CDC (R4 P1-5)
@@ -476,6 +493,11 @@ def test_la_restauracion_verifica_sello_manifiesto_e_identidades(tmp_path):
     assert p.returncode == 0, p.stdout + p.stderr
     assert "restauración VERIFICADA" in p.stdout, p.stdout
     assert "escritores parados" in p.stdout, p.stdout
+    # El estado roto se APARTA (rename), no se borra: si la restauración fallara,
+    # no se habría perdido nada.
+    assert "APARTADO en" in p.stdout, p.stdout
+    # Y el slot lógico se queda con la base apartada: hay que re-bootstrapear.
+    assert "RUNBOOK.md §3" in p.stdout, p.stdout
 
 
 @pytest.mark.parametrize(
@@ -483,6 +505,8 @@ def test_la_restauracion_verifica_sello_manifiesto_e_identidades(tmp_path):
     [
         "restaurar_sha",            # el sello no cuadra con la copia
         "restaurar_toc",            # pg_restore no puede leer el archivo
+        "restaurar_rename",         # no se puede apartar la base rota
+        "restaurar_create",         # no se puede crear la base nueva
         "restaurar_pgrestore",      # la restauración aborta (single-transaction)
         "restaurar_verificacion",   # termina pero el estado NO es el del manifiesto
         "restaurar_escritor_vivo",  # restaurar con escritores vivos deja mezcla
