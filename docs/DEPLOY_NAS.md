@@ -762,8 +762,8 @@ esquemas sigue siendo la misma: el índice tiene que traer tablas de `public` **
 anterior *parecía* una copia y no lo era: la recuperación que documentaba §7
 (`gunzip … | psql`) devuelve **0** sobre una base poblada, escupe `ERROR: … already
 exists` y deja datos de los DOS estados **mezclados** — reproducido el 2026-08-28 en una
-base desechable. El `-Fc` es el único formato que `pg_restore --clean --if-exists
---single-transaction` puede aplicar **todo o nada**.
+base desechable. El `-Fc` es el único formato que `pg_restore` aplica en **una sola
+transacción** (`--exit-on-error --single-transaction`): o entra entero o no entra nada.
 
 **Aserción** — el volcado va a un fichero TEMPORAL y solo gana su nombre definitivo
 (`pre_canonizacion_<sello>.dump`) si `pg_dump` devolvió 0, si **`pg_restore -l` lee el
