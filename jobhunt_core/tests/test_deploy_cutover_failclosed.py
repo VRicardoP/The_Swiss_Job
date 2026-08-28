@@ -19,6 +19,8 @@ aquí se rompen a propósito:
         que G3/G6 no remapean (67 contra 0 en local). El caso `enclavamiento_falso_rojo`
         exige que eso ya NO pare; `paso4b_enclavamiento` exige que lo que los ensayos SÍ
         declaran siga parando.
+  P1-3  las cuatro invariantes eran cantidades: `paso6_identidad_*` mueve la identidad sin
+        mover ni una cifra, que es exactamente lo que el auditor reprodujo.
 
 La guarda de orden (`test_deploy_order.py`) protege la SECUENCIA; no puede demostrar que
 una etapa rota la detenga. Esto sí: ejecuta `backend/scripts/nas_cutover.sh` con dobles de
@@ -143,6 +145,14 @@ if [ -n "$sql" ]; then                      # consultas escalares y manifiestos
   case "$sql" in
     *pg_postmaster_start_time*)             # sonda de destino (R4 P1-1)
       echo "${PG_DB:-swissjobhunter}|16384|2026-08-28 00:00:00.000000" ;;
+    *"p.id::text"*)                         # MANIFIESTO de pares (identidades)
+      if [ "$fase" = antes ]; then printf 'p-1\np-2\n'
+      elif [ "$r" = paso6_identidad_pares ]; then printf 'p-1\np-3\n'
+      else printf 'p-1\np-2\n'; fi ;;
+    *"j.set_id::text"*)                     # MANIFIESTO de juicios (identidades)
+      if [ "$fase" = antes ]; then printf 'j-1\nj-2\n'
+      elif [ "$r" = paso6_identidad_juicios ]; then printf 'j-1\nj-3\n'
+      else printf 'j-1\nj-2\n'; fi ;;
     *labeled_dedup_cohorts*)
       # El oráculo APROXIMADO que el script tenía en Bash (R4 P1-2). Ya no se
       # consulta; sigue aquí para demostrar que un 67 no vuelve a parar nada.
@@ -171,6 +181,18 @@ fi
 
 cuerpo=$(cat)                               # las dos copias y la verificación por hash, por `-f -`
 
+# Verificación por IDENTIDAD de las vacantes (R4 P1-3): el script la GENERA con los
+# hashes que los dry-runs declararon.
+case "$cuerpo" in
+  *ident_desaparece*)
+    viejas=0; canonicas=0
+    [ "$r" = paso6_identidad_jobs ] && viejas=2
+    [ "$r" = paso6_identidad_canonicas ] && canonicas=1
+    printf 'identidad: viejas que NO desaparecieron|%s\n' "$viejas"
+    printf 'identidad: canonicas que NO aparecieron|%s\n' "$canonicas"
+    exit 0 ;;
+esac
+
 case "$cuerpo" in *"COMMIT;"*) modo=firme ;; *) modo=seco ;; esac
 case "$cuerpo" in *"-- G6"*) copia=segunda ;; *) copia=primera ;; esac
 [ "$modo" = firme ] && : >"$d/firme"
@@ -198,6 +220,13 @@ EOF
 [ "$r" != enclavamiento_sin_concepto ] &&
   printf 'enclavamiento: refs de cohortes SELLADAS que ESTE script remapea|%s\n' "$enclave"
 
+# IDENTIDADES declaradas: dos hashes que desaparecen y uno canónico por copia.
+if [ "$copia" = primera ]; then p=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; else p=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; fi
+sufijo=01
+[ "$r" = paso4c_ident ] && [ "$modo" = firme ] && sufijo=0f
+printf 'IDENT|desaparece|%s%s\n' "$p" "$sufijo"
+printf 'IDENT|desaparece|%s02\n' "$p"
+printf 'IDENT|canonico|%s0a\n' "$p"
 exit 0
 """
 
@@ -319,6 +348,7 @@ def test_el_camino_feliz_de_los_pasos_1_a_6_sale_cero(tmp_path):
     p = _ejecutar(tmp_path, "cutover", None)
     assert p.returncode == 0, p.stdout + p.stderr
     assert "las cuatro invariantes del Paso 6 cuadran" in p.stdout
+    assert "identidad de vacantes" in p.stdout
 
 
 def test_el_camino_feliz_del_smoke_sale_cero(tmp_path, sonda):
@@ -358,12 +388,17 @@ def test_la_copia_de_seguridad_queda_verificada_y_con_nombre_definitivo(tmp_path
         "paso4c_primera",
         "paso4c_segunda",        # EL caso irreparable: la primera ya confirmada
         "paso4c_informe",        # el informe en firme difiere del ensayo
+        "paso4c_ident",          # …y las identidades declaradas, también
         "paso5_json",            # la aplicación no cuadra con su --dry-run
         "paso5_idempotencia",
         "paso6_slots",
         "paso6_jobs",
         "paso6_juicios",
         "paso6_pares",
+        "paso6_identidad_pares",     # R4 P1-3: cifras iguales, par distinto
+        "paso6_identidad_juicios",   # R4 P1-3: cifras iguales, juicio distinto
+        "paso6_identidad_jobs",      # un hash declarado fusionado sigue vivo
+        "paso6_identidad_canonicas", # un hash canónico declarado no existe
     ],
 )
 def test_cada_etapa_rota_detiene_la_secuencia(tmp_path, etapa):
@@ -405,6 +440,20 @@ def test_el_enclavamiento_para_por_lo_que_el_ensayo_si_declara(tmp_path):
     assert p.returncode != 0
     assert "cohorte NUEVA" in p.stdout + p.stderr
     assert "Paso 4c" not in p.stdout, p.stdout
+
+
+# --------------------------------------------------------------------------
+# R4 P1-3 — identidades, no cardinalidades
+# --------------------------------------------------------------------------
+def test_las_cifras_pueden_cuadrar_y_aun_asi_perderse_un_par_conocido(tmp_path):
+    """La reproducción del auditor: mover las source listings de un par positivo a otro
+    par deja las cuatro fórmulas intactas (PARES antes = PARES después) y pierde
+    exactamente el par que importaba. Con manifiestos por identidad eso es rojo, y el rojo
+    NOMBRA el par perdido."""
+    p = _ejecutar(tmp_path, "cutover", "paso6_identidad_pares")
+    assert p.returncode != 0, p.stdout
+    salida = p.stdout + p.stderr
+    assert "IDENTIDAD" in salida and "p-2" in salida, salida
 
 
 # --------------------------------------------------------------------------

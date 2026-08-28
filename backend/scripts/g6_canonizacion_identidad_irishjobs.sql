@@ -590,6 +590,28 @@ UNION ALL
 SELECT concepto, filas FROM g3_enclave_report;
 
 -- ---------------------------------------------------------------------
+-- 9. IDENTIDADES declaradas (auditoría externa R4 P1-3)
+--
+-- El Paso 6 del cutover comparaba CANTIDADES, y una pérdida se compensa con una
+-- ganancia distinta: el auditor mutó las source listings de un par positivo
+-- conocido a otro par y las cuatro fórmulas pasaron mientras el par que
+-- importaba dejaba de resolver. Las cantidades no bastan, así que este script
+-- declara QUÉ hashes concretos deja de haber y cuáles tiene que haber, desde
+-- sus PROPIAS tablas de mapa y supervivientes. El Paso 6 los verifica uno a uno
+-- contra `public.jobs` en vez de contar.
+--
+-- Formato `IDENT|<clase>|<hash>` para que el filtro de informes del script
+-- (`^concepto|numero$`) no las confunda con conceptos.
+--
+--   desaparece -> TODA fila del mapa cambia de hash (el superviviente se
+--                 reescribe, el clon se borra): ninguno de estos `old_hash`
+--                 puede seguir en `jobs`.
+--   canonico   -> el `new_hash` de cada superviviente tiene que existir.
+-- ---------------------------------------------------------------------
+SELECT 'IDENT|desaparece|' || old_hash FROM g3_map ORDER BY 1;
+SELECT 'IDENT|canonico|' || new_hash FROM g3_survivors ORDER BY 1;
+
+-- ---------------------------------------------------------------------
 -- CAMBIAR A `COMMIT;` PARA APLICARLO DE VERDAD.
 -- ---------------------------------------------------------------------
 ROLLBACK;

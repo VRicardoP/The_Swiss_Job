@@ -826,7 +826,9 @@ sed 's/^ROLLBACK;$/COMMIT;/' "$f" > "$f.commit.sql"   # exactamente un COMMIT;
 **Aserción** — un solo `COMMIT;` en la copia, estado de salida de `psql` comprobado en
 cada una, y las cifras del informe en firme **idénticas** a las del ensayo de 4a
 (comparación automática de los informes, no un vistazo). Si la SEGUNDA falla, el
-mensaje ordena RESTAURAR el volcado del Paso 2: la primera ya está confirmada.
+mensaje ordena RESTAURAR el volcado del Paso 2: la primera ya está confirmada. Y también se comparan las IDENTIDADES que cada script
+declara (`IDENT|desaparece|…`, `IDENT|canonico|…`): si el conjunto de hashes cambia entre
+el ensayo y la aplicación, el Paso 6 estaría verificando otra cosa.
 
 #### Paso 5 — La otra mitad: `canonical_refs` con la imagen nueva, one-shot
 
@@ -849,7 +851,8 @@ restaurar.
 
 Todo `SELECT`, con los escritores aún parados, y **con aserciones**: el script mide el
 estado ANTES (justo después del Paso 3) y lo compara con el de después usando las
-cifras de los informes en firme del Paso 4. Nada aquí se inspecciona a ojo.
+cifras y las **identidades** de los informes en firme del Paso 4. Nada aquí se
+inspecciona a ojo.
 
 | # | Qué mide | Aserción del script |
 |---|---|---|
@@ -857,10 +860,26 @@ cifras de los informes en firme del Paso 4. Nada aquí se inspecciona a ojo.
 | b | `labeled_judgments` y cuántos resuelven a un `source_listing` legacy | `resuelven = juicios`: ningún juicio puede dejar de resolver |
 | c | pares con sus DOS refs resueltos | no puede BAJAR respecto a lo medido antes |
 | d | `count(*)` de `public.jobs` | `después = antes − Σ «clones fusionados»` |
+| **b′** | **manifiesto ordenado de `set_id\|job_ref` que resuelven** | ningún juicio que resolvía ANTES puede dejar de resolver — **por identidad** |
+| **c′** | **manifiesto ordenado de `pair_id` con sus dos refs resueltos** | ningún par que resolvía ANTES puede dejar de resolver — **por identidad** |
+| **e** | los `IDENT\|desaparece\|<hash>` que declararon los dry-runs | ninguno puede seguir en `public.jobs` |
+| **f** | los `IDENT\|canonico\|<hash>` que declararon los dry-runs | todos tienen que existir en `public.jobs` |
 
-Las cuatro consultas están en el script y verificadas ejecutándolas (SOLO `SELECT`)
-contra la base local el 2026-08-28. **Sus resultados en el NAS serán otros**: los mide
-allí. Cualquier desviación ⇒ el script PARA y el remedio es **restaurar el dump del
+**Por qué b′/c′/e/f y no solo a–d** (auditoría externa R4 P1-3). Las cuatro primeras
+comparan **cantidades**, y una pérdida se compensa con una ganancia distinta. Reproducido
+el 2026-08-28 en una base desechable: mutando las `source_listings` de un par positivo
+conocido (`pair_duplicate_A_B`) a otro par (`pair_distinct_C_D`), las cuatro fórmulas
+salen idénticas —`SLOTS 0→0`, `JOBS 4→4`, `PARES 1→1`, `JUICIOS 0→0`— mientras el par que
+importaba **deja de resolver**. Con el manifiesto por identidad, `comm -23` sobre los dos
+ficheros ordenados nombra exactamente `pair_duplicate_A_B`.
+
+Los manifiestos se guardan ordenados con la colación de C (`LC_ALL=C sort`) para que la
+comparación sea determinista, y una copia viaja junto al backup: son también lo que
+`restaurar` usa para comprobar la vuelta atrás.
+
+Las consultas están en el script y verificadas ejecutándolas (SOLO `SELECT`) contra la
+base local el 2026-08-28. **Sus resultados en el NAS serán otros**: los mide allí.
+Cualquier desviación ⇒ el script PARA y el remedio es **restaurar el dump del
 Paso 2** antes de arrancar nada.
 
 #### Paso 7 — Recrear y smoke (y solo ahora)

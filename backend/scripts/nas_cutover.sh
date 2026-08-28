@@ -14,7 +14,7 @@
 # Aquí cada postcondición es una condición de EJECUCIÓN: si no cuadra, se sale
 # distinto de cero y no hay paso siguiente.
 #
-# LO QUE CORRIGIÓ LA AUDITORÍA R4 (P1-1 y P1-2):
+# LO QUE CORRIGIÓ LA AUDITORÍA R4 (P1-1 a P1-3):
 #   P1-1  el aislamiento del ENSAYO comparaba el DSN por SUFIJO, y una URL con
 #         `?query`, `#fragmento` o percent-encoding lo esquivaba y llegaba al
 #         Paso 5 EN FIRME sobre la base viva. Ahora hay UNA forma de DSN
@@ -26,6 +26,11 @@
 #         pares cuando los mapas reales de G3/G6 remapean 0: el procedimiento
 #         habría parado sin motivo, quizá para siempre. Ahora lo declara CADA
 #         ensayo en seco desde su PROPIA tabla de supervivientes.
+#   P1-3  el Paso 6 comparaba CANTIDADES: una pérdida se compensaba con una
+#         ganancia distinta y las cuatro fórmulas pasaban mientras el par
+#         positivo conocido dejaba de resolver. Ahora se compara por IDENTIDAD
+#         (manifiestos ordenados de `pair_id` y `set_id|job_ref`, y los hashes
+#         exactos que declaran los dry-runs).
 #
 # CIFRAS: este script NO lleva ninguna constante del corpus. Mide el estado
 # ANTES, lee las cifras de los informes en seco y aserta el estado DESPUÉS
@@ -103,8 +108,22 @@ psql_valor() { # <sql>
     -v ON_ERROR_STOP=1 -X -q -A -t -c "$1" </dev/null
 }
 
-# Las filas `concepto|filas` del informe, descartando etiquetas de comando.
+# Un conjunto de IDENTIDADES, ordenado con la colación de C para que `comm` y
+# `cmp` sean deterministas entre invocaciones y entre servidores.
+psql_lineas() { # <sql> <fichero>
+  psql_valor "$1" >"$2.crudo" || return 1
+  LC_ALL=C sort "$2.crudo" >"$2"
+  rm -f "$2.crudo"
+}
+
+# Las filas `concepto|filas` del informe, descartando etiquetas de comando y las
+# líneas `IDENT|clase|hash` (tres campos, el último no numérico).
 informe() { grep -E '^[^|]+\|[0-9]+$' "$1" || true; }
+
+# Las identidades que un informe DECLARA: `IDENT|<clase>|<hash>`.
+identidades() { # <fichero crudo> <clase>
+  awk -F'|' -v c="$2" '$1=="IDENT" && $2==c {print $3}' "$1" | LC_ALL=C sort -u
+}
 
 # Valor de un concepto del informe (coincidencia por PREFIJO: los conceptos
 # llevan paréntesis y sangrías que no conviene repetir aquí).
@@ -327,7 +346,14 @@ paso3_imagenes() {
 }
 
 # --------------------------------------------------------------------------
-# Paso 6 (medición) — las cuatro consultas, ejecutables antes y después
+# Paso 6 (medición) — cantidades E IDENTIDADES, ejecutables antes y después
+#
+# Auditoría R4 P1-3: las cuatro fórmulas comparaban CANTIDADES. El auditor mutó
+# las source listings de un par positivo conocido a otro par distinto: el par
+# que importaba dejó de resolver, otro empezó a resolver, y las cuatro pasaron.
+# Por eso además de las cantidades se guardan MANIFIESTOS ordenados por
+# identidad (`pair_id`, `set_id|job_ref`) y se exige que ninguna identidad
+# resoluble ANTES deje de resolver DESPUÉS.
 # --------------------------------------------------------------------------
 SQL_SLOTS="SELECT count(*) FROM jobhunt.source_listings sl
  JOIN jobhunt.sources s ON s.id = sl.source_id
@@ -352,8 +378,30 @@ SQL_PARES="SELECT count(*) FILTER (WHERE r.a AND r.b)
            JOIN jobhunt.sources src ON src.id = l.source_id
            JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
            WHERE src.name LIKE 'legacy:%' AND l.external_id = p.job_ref_b) AS b) r"
+# IDENTIDADES, no cardinalidades: QUÉ pares resuelven sus dos refs y QUÉ juicios
+# resuelven. `p.id::text` y `j.set_id::text` son además los discriminantes que
+# usan los dobles para no confundir estas consultas con las de arriba.
+SQL_MANIFIESTO_PARES="SELECT p.id::text
+ FROM jobhunt.labeled_dedup_pairs p
+ CROSS JOIN LATERAL (SELECT
+   EXISTS (SELECT 1 FROM jobhunt.source_listings l
+           JOIN jobhunt.sources src ON src.id = l.source_id
+           JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
+           WHERE src.name LIKE 'legacy:%' AND l.external_id = p.job_ref_a) AS a,
+   EXISTS (SELECT 1 FROM jobhunt.source_listings l
+           JOIN jobhunt.sources src ON src.id = l.source_id
+           JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
+           WHERE src.name LIKE 'legacy:%' AND l.external_id = p.job_ref_b) AS b) r
+ WHERE r.a AND r.b"
+SQL_MANIFIESTO_JUICIOS="SELECT j.set_id::text || '|' || j.job_ref
+ FROM jobhunt.labeled_judgments j
+ WHERE EXISTS (
+   SELECT 1 FROM jobhunt.source_listings l
+   JOIN jobhunt.sources src ON src.id = l.source_id
+   JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
+   WHERE src.name LIKE 'legacy:%' AND l.external_id = j.job_ref)"
 
-medir() { # deja SLOTS/JOBS/PARES/JUICIOS_TOTAL/JUICIOS_RESUELVEN en variables con el sufijo $1
+medir() { # deja SLOTS/JOBS/PARES/JUICIOS_TOTAL/JUICIOS_RESUELVEN con el sufijo $1
   local slots jobs pares juicios
   slots=$(psql_valor "$SQL_SLOTS")
   jobs=$(psql_valor "$SQL_JOBS")
@@ -364,8 +412,22 @@ medir() { # deja SLOTS/JOBS/PARES/JUICIOS_TOTAL/JUICIOS_RESUELVEN en variables c
   entero "$juicios_total" "juicios"; entero "$juicios_resuelven" "juicios que resuelven"
   eval "SLOTS_$1=\$slots; JOBS_$1=\$jobs; PARES_$1=\$pares"
   eval "JUICIOS_$1=\$juicios_total; RESUELVEN_$1=\$juicios_resuelven"
-  printf 'medición %s: slots_huerfanos=%s jobs=%s pares_con_los_dos_refs=%s juicios=%s resuelven=%s\n' \
-    "$1" "$slots" "$jobs" "$pares" "$juicios_total" "$juicios_resuelven"
+  psql_lineas "$SQL_MANIFIESTO_PARES" "$WORK_DIR/manifiesto.pares.$1" ||
+    morir "no se pudo medir el manifiesto de pares ($1)"
+  psql_lineas "$SQL_MANIFIESTO_JUICIOS" "$WORK_DIR/manifiesto.juicios.$1" ||
+    morir "no se pudo medir el manifiesto de juicios ($1)"
+  printf 'medición %s: slots_huerfanos=%s jobs=%s pares_con_los_dos_refs=%s juicios=%s resuelven=%s (manifiestos: %s pares · %s juicios)\n' \
+    "$1" "$slots" "$jobs" "$pares" "$juicios_total" "$juicios_resuelven" \
+    "$(wc -l <"$WORK_DIR/manifiesto.pares.$1")" "$(wc -l <"$WORK_DIR/manifiesto.juicios.$1")"
+}
+
+# Ninguna identidad que estaba puede faltar. `comm -23` sobre dos ficheros ya
+# ordenados con la colación de C: lo que sobra en el primero es lo que se perdió.
+sin_perdidas() { # <fichero antes> <fichero despues> <qué son>
+  local perdidas
+  perdidas=$(LC_ALL=C comm -23 "$1" "$2")
+  [ -z "$perdidas" ] ||
+    morir "IDENTIDAD: $(printf '%s\n' "$perdidas" | wc -l) $3 resolvían ANTES y ya no. Los primeros: $(printf '%s\n' "$perdidas" | head -n 5 | tr '\n' ' ')"
 }
 
 # --------------------------------------------------------------------------
@@ -424,6 +486,13 @@ paso4_copias() {
     cat "$WORK_DIR/$base.firme.informe"
     [ "$(cat "$WORK_DIR/$base.dryrun.informe")" = "$(cat "$WORK_DIR/$base.firme.informe")" ] ||
       morir "el informe en firme de $f DIFIERE del ensayo: algo escribió entre medias (revisa el Paso 1)"
+    # Y las IDENTIDADES declaradas también: si el conjunto de hashes cambia
+    # entre el ensayo y la aplicación, el Paso 6 estaría verificando otra cosa.
+    local clase
+    for clase in desaparece canonico; do
+      [ "$(identidades "$WORK_DIR/$base.dryrun.txt" "$clase")" = "$(identidades "$WORK_DIR/$base.firme.txt" "$clase")" ] ||
+        morir "las identidades «$clase» que declara $f en firme DIFIEREN de las del ensayo"
+    done
   done
 }
 
@@ -471,8 +540,70 @@ paso5_canonical_refs() {
 }
 
 # --------------------------------------------------------------------------
-# Paso 6 — Verificar ANTES de dejar entrar a nadie (aserciones, no vistazo)
+# Paso 6 — Verificar ANTES de dejar entrar a nadie (identidades, no cantidades)
 # --------------------------------------------------------------------------
+
+# Construye y ejecuta la verificación por HASH: las identidades que los dry-runs
+# DECLARARON que desaparecen tienen que haber desaparecido de `public.jobs`, y
+# las canónicas que declararon, estar. No se recalcula nada aquí — se comprueba
+# lo que los propios SQL dijeron que iban a hacer.
+verificar_identidad_de_vacantes() {
+  local f base fichero sql salida hash n_desaparece=0 n_canonico=0
+  fichero="$WORK_DIR/identidad.hashes"
+  : >"$fichero.desaparece"; : >"$fichero.canonico"
+  for f in $COPIAS_SQL; do
+    base=${f%.sql}
+    identidades "$WORK_DIR/$base.firme.txt" desaparece >>"$fichero.desaparece"
+    identidades "$WORK_DIR/$base.firme.txt" canonico >>"$fichero.canonico"
+  done
+  # Nada que no sea un md5 hexadecimal entra en la SQL que se va a ejecutar.
+  local clase
+  for clase in desaparece canonico; do
+    while read -r hash; do
+      [ -n "$hash" ] || continue
+      [[ $hash =~ ^[0-9a-f]{32}$ ]] ||
+        morir "un dry-run declaró una identidad «$clase» que no es un md5: '$hash'"
+    done <"$fichero.$clase"
+  done
+  n_desaparece=$(grep -c . "$fichero.desaparece" || true)
+  n_canonico=$(grep -c . "$fichero.canonico" || true)
+
+  sql="$WORK_DIR/identidad.sql"
+  salida="$WORK_DIR/identidad.txt"
+  {
+    printf 'BEGIN;\n'
+    printf 'CREATE TEMP TABLE ident_desaparece(h text) ON COMMIT DROP;\n'
+    printf 'CREATE TEMP TABLE ident_canonico(h text) ON COMMIT DROP;\n'
+    if [ "$n_desaparece" -gt 0 ]; then
+      printf 'INSERT INTO ident_desaparece VALUES\n'
+      sed "s/^/('/; s/\$/'),/" "$fichero.desaparece" | sed '$ s/,$/;/'
+    fi
+    if [ "$n_canonico" -gt 0 ]; then
+      printf 'INSERT INTO ident_canonico VALUES\n'
+      sed "s/^/('/; s/\$/'),/" "$fichero.canonico" | sed '$ s/,$/;/'
+    fi
+    printf "SELECT 'identidad: viejas que NO desaparecieron' AS concepto, count(*) AS filas\n"
+    printf '  FROM ident_desaparece d JOIN public.jobs j ON j.hash = d.h\n'
+    printf 'UNION ALL\n'
+    printf "SELECT 'identidad: canonicas que NO aparecieron', count(*)\n"
+    printf '  FROM ident_canonico c LEFT JOIN public.jobs j ON j.hash = c.h WHERE j.hash IS NULL;\n'
+    printf 'ROLLBACK;\n'
+  } >"$sql"
+
+  psql_archivo "$sql" "$salida" || morir "la verificación por identidad de vacantes falló"
+  informe "$salida" >"$salida.informe"
+  local viejas canonicas
+  viejas=$(cifra "$salida.informe" "identidad: viejas que NO desaparecieron")
+  canonicas=$(cifra "$salida.informe" "identidad: canonicas que NO aparecieron")
+  entero "$viejas" "viejas que no desaparecieron"; entero "$canonicas" "canonicas que no aparecieron"
+  printf 'identidad de vacantes: %s declaradas a desaparecer (%s siguen) · %s canónicas declaradas (%s faltan)\n' \
+    "$n_desaparece" "$viejas" "$n_canonico" "$canonicas"
+  [ "$viejas" -eq 0 ] ||
+    morir "(e) IDENTIDAD: $viejas hashes que los dry-runs declararon fusionados siguen en public.jobs. RESTAURA el volcado"
+  [ "$canonicas" -eq 0 ] ||
+    morir "(f) IDENTIDAD: $canonicas hashes canónicos declarados por los dry-runs NO existen en public.jobs. RESTAURA el volcado"
+}
+
 paso6_verificar() {
   titulo "Paso 6 — verificación con aserciones"
   medir despues
@@ -499,7 +630,15 @@ paso6_verificar() {
   # (d) `jobs` baja exactamente en los clones fusionados.
   [ "$JOBS_despues" -eq "$((JOBS_antes - clones))" ] ||
     morir "(d) jobs: $JOBS_antes → $JOBS_despues, esperado $((JOBS_antes - clones))"
-  printf 'las cuatro invariantes del Paso 6 cuadran.\n'
+
+  # (b') y (c') por IDENTIDAD: (b) y (c) son cantidades y una pérdida se
+  # compensa con una ganancia distinta (R4 P1-3). Aquí no: los `pair_id` y los
+  # `set_id|job_ref` que resolvían ANTES tienen que seguir resolviendo.
+  sin_perdidas "$WORK_DIR/manifiesto.pares.antes" "$WORK_DIR/manifiesto.pares.despues" "pares"
+  sin_perdidas "$WORK_DIR/manifiesto.juicios.antes" "$WORK_DIR/manifiesto.juicios.despues" "juicios"
+  # (e) y (f): los hashes exactos que declararon los dry-runs.
+  verificar_identidad_de_vacantes
+  printf 'las cuatro invariantes del Paso 6 cuadran, y también las identidades.\n'
 }
 
 # --------------------------------------------------------------------------
@@ -572,7 +711,7 @@ main() {
       paso4_copias
       paso5_canonical_refs
       paso6_verificar
-      printf '\nevidencia (informes, JSON y stderr de cada psql): %s\n' "$WORK_DIR"
+      printf '\nevidencia (informes, JSON, manifiestos y stderr de cada psql): %s\n' "$WORK_DIR"
       printf 'Pasos 1–6 OK. Ahora el Recreate de Container Station y después: %s smoke\n' "$0"
       ;;
     smoke) smoke ;;
