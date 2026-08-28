@@ -604,7 +604,10 @@ docker volume rm swissjob_pgdata swissjob_redisdata swissjob_hfcache
 > `swissjob-core-worker` (`restart: unless-stopped` en `docker-compose.qnap.yml`), así
 > que seguir el único orden ejecutable documentado abría exactamente la ventana que el
 > propio documento declaraba obligatorio evitar. El orden lo fija ahora una guarda
-> ejecutable de la suite: `jobhunt_core/tests/test_deploy_order.py`.
+> ejecutable de la suite: `jobhunt_core/tests/test_deploy_order.py`. Y como sus
+> postcondiciones seguían siendo prosa que no paraba nada (R3 P1-1), la secuencia la
+> ejecuta `backend/scripts/nas_cutover.sh`, cuyo fallo cerrado demuestra etapa por etapa
+> `jobhunt_core/tests/test_deploy_cutover_failclosed.py`.
 
 ### 5.1 Build local + tar
 
@@ -638,24 +641,58 @@ scp /tmp/swissjob/swissjob-backend.tar  Ricardo@capsule:/share/Public/swissjob/
 scp /tmp/swissjob/swissjob-frontend.tar Ricardo@capsule:/share/Public/swissjob/
 scp /tmp/swissjob/swissjob-core.tar     Ricardo@capsule:/share/Public/swissjob/
 
-# Los dos scripts de la maniobra: sin ellos no hay Paso 4.
+# El cuerpo ejecutable de §5.3 y las dos copias SQL: sin ellos no hay maniobra.
 ssh Ricardo@capsule 'mkdir -p /share/Public/swissjob/scripts'
-scp backend/scripts/g3_canonizacion_identidad_arbeitnow_jobgether.sql \
+scp backend/scripts/nas_cutover.sh \
+    backend/scripts/g3_canonizacion_identidad_arbeitnow_jobgether.sql \
     backend/scripts/g6_canonizacion_identidad_irishjobs.sql \
     Ricardo@capsule:/share/Public/swissjob/scripts/
+ssh Ricardo@capsule 'chmod +x /share/Public/swissjob/scripts/nas_cutover.sh'
 ```
 
 ### 5.3 Secuencia única de mantenimiento (canonización + subida)
 
-Una sola maniobra, siete pasos, en este orden. **Cada paso tiene una postcondición
-que se comprueba antes de pasar al siguiente; si no cuadra, se PARA** — todos los
-pasos anteriores al 4 son reversibles y el 4 no lo es.
+Una sola maniobra, siete pasos, en este orden. **Cada paso tiene una postcondición que
+es una condición de EJECUCIÓN, no una nota: si no cuadra, el procedimiento SALE distinto
+de cero y no hay paso siguiente** — todos los pasos anteriores al 4 son reversibles y el
+4 no lo es.
+
+**El cuerpo ejecutable de esta sección es `backend/scripts/nas_cutover.sh`**, versionado
+con el repo y copiado al NAS en §5.2. Cada paso de abajo documenta lo que el script hace
+y **qué asertaría para parar**; los bloques de comandos son los que el script ejecuta,
+no una segunda copia que haya que teclear. Antes existían como prosa y una auditoría
+externa (R3 P1-1) demostró ejecutándolos que ninguno paraba nada: con los cinco
+escritores vivos la postcondición del Paso 1 salía `0`, con el volcado roto quedaba un
+`.gz` válido y vacío, y con la segunda copia SQL abortada tras confirmar la primera la
+secuencia seguía adelante — el estado que este mismo documento declara irreparable.
+
+```bash
+ssh Ricardo@capsule
+cd /share/Public/swissjob/scripts
+
+./nas_cutover.sh cutover     # Pasos 1–6. Para en la primera desviación.
+# → Container Station UI → Applications → swissjob → ⋮ → Recreate (Paso 7)
+./nas_cutover.sh smoke       # Paso 7. Solo entonces se abre a los usuarios.
+```
 
 **Ensáyala antes sobre una restauración desechable del backup del NAS**, no sobre la
 base viva: restaura el `.sql.gz` de §7 en una base nueva (`swissjob_ensayo`) y recorre
-los pasos 4, 5 y 6 contra ella. **Las cifras del NAS serán distintas a las locales**
-(otro corpus): el procedimiento las MIDE allí, nunca las copia — las del acta local
-sirven para reconocer la FORMA del resultado, no como valor esperado.
+los pasos 4, 5 y 6 contra ella:
+
+```bash
+ENSAYO=1 PG_DB=swissjob_ensayo \
+  CORE_DSN=postgresql+asyncpg://jobhunt_core:…@postgres:5432/swissjob_ensayo \
+  ./nas_cutover.sh cutover
+```
+
+`ENSAYO=1` se salta los pasos 1 y 3 (no para producción ni recarga imágenes) y **exige**
+`CORE_DSN`: el módulo del Paso 5 saca su DSN de los `--env-file`, que apuntan a la base
+viva, así que un «ensayo» sin esa variable escribiría en producción. El script rechaza
+`ENSAYO=1` si `PG_DB` o `CORE_DSN` apuntan a la base de producción: un ensayo no puede
+convertirse en la maniobra por descuido, ni al revés. **Las cifras del NAS serán
+distintas a las locales** (otro corpus): el script las MIDE allí y aserta contra lo que
+él mismo midió — no lleva ninguna constante de corpus. Las del acta local sirven para
+reconocer la FORMA del resultado, nunca como valor esperado.
 
 Ventana estimada: 20–40 min con la aplicación caída. Por SSH `docker compose` no
 funciona (§0.3): todo va con `docker` directo o por la UI de Container Station.
@@ -678,11 +715,9 @@ docker stop swissjob-backend swissjob-worker \
   `jobhunt_shadow` **retiene WAL**: otra razón para que la ventana sea corta. Al
   rearrancar lo reproduce (RPO=0).
 
-**Postcondición** — ninguno de los cinco puede seguir en `Up`:
-
-```bash
-docker ps --filter "name=swissjob" --format '{{.Names}}\t{{.Status}}'
-```
+**Aserción** — ninguno de los cinco puede seguir en `docker ps`. Se comprueba la
+presencia, no la palabra `Up`: un contenedor `Restarting` tampoco está parado y también
+escribiría. Si alguno sigue vivo, el script sale 1 y no hay Paso 2.
 
 #### Paso 2 — Copia de seguridad, con `public` **y** `jobhunt`
 
@@ -691,19 +726,16 @@ esquema `jobhunt`, el backup no sirve para esta maniobra y hay que repetirlo con
 credencial de `/share/Public/swissjob/.env.core.admin.prod`.
 
 ```bash
-mkdir -p /share/Public/backups/swissjob
-docker exec -t swissjob-postgres \
-  pg_dump -U swissjob -n public -n jobhunt swissjobhunter \
-  | gzip > /share/Public/backups/swissjob/pre_canonizacion_$(date +%Y%m%d-%H%M).sql.gz
+docker exec swissjob-postgres \
+  pg_dump -U swissjob -n public -n jobhunt swissjobhunter > "$crudo"
+gzip -c "$crudo" > "$parcial" && gzip -t "$parcial"
 ```
 
-**Postcondición** — el fichero contiene los DOS esquemas (si alguna cuenta es 0, PARAR):
-
-```bash
-DUMP=$(ls -t /share/Public/backups/swissjob/pre_canonizacion_*.sql.gz | head -1)
-zgrep -c 'CREATE TABLE public\.'  "$DUMP"
-zgrep -c 'CREATE TABLE jobhunt\.' "$DUMP"
-```
+**Aserción** — el volcado va a un fichero TEMPORAL y solo gana su nombre definitivo
+(`pre_canonizacion_<sello>.sql.gz`) si `pg_dump` devolvió 0, el `.gz` pasa `gzip -t` y
+contiene tablas de los DOS esquemas. Sin `-t` en `docker exec` (un TTY reescribe los
+saltos de línea del volcado) y **sin tubería**: `pg_dump | gzip` devuelve el estado de
+`gzip` y aceptaba un `.gz` válido y vacío.
 
 #### Paso 3 — Cargar la imagen nueva SIN arrancar servicios
 
@@ -711,44 +743,40 @@ zgrep -c 'CREATE TABLE jobhunt\.' "$DUMP"
 parados desde el Paso 1. No se recrea nada todavía.
 
 ```bash
-cd /share/Public/swissjob
-docker rmi swissjob-core:prod 2>/dev/null; docker load -i swissjob-core.tar
-docker rmi swissjob-backend:prod 2>/dev/null; docker load -i swissjob-backend.tar
-docker rmi swissjob-frontend:prod 2>/dev/null; docker load -i swissjob-frontend.tar
+docker rmi swissjob-core:prod; docker load -i swissjob-core.tar        # ídem backend y frontend
+docker run --rm --entrypoint sh swissjob-core:prod -c 'cat /opt/jobhunt-release/RELEASE'
 ```
 
-**Postcondición** — la imagen del core existe y sabe nombrar su release (si dice
-`unknown`, se construyó sin el build arg: volver a §5.1):
-
-```bash
-docker run --rm --entrypoint sh swissjob-core:prod -c 'cat /opt/jobhunt-release/RELEASE; echo'
-```
+**Aserción** — los tres tar existen, las tres imágenes quedan cargadas y la del core
+sabe nombrar su release. Si dice `unknown` se construyó sin el build arg (volver a
+§5.1) y el script para: esa imagen respondería `authoritative: false`. La release
+medida aquí se guarda y es la que el smoke del Paso 7 exigirá.
 
 #### Paso 4 — Las dos copias SQL: primero en seco, luego en firme
 
-**4a. Ensayo en seco.** Los ficheros del repo terminan en `ROLLBACK;`: tal cual son un
-ensayo que imprime su informe sin tocar nada.
+**4a. Ensayo en seco de LAS DOS.** Los ficheros del repo terminan en `ROLLBACK;`: tal
+cual son un ensayo que imprime su informe sin tocar nada.
 
 ```bash
-cd /share/Public/swissjob/scripts
-for f in g3_canonizacion_identidad_arbeitnow_jobgether.sql g6_canonizacion_identidad_irishjobs.sql; do
-  docker exec -i swissjob-postgres psql -U swissjob -d swissjobhunter \
-    -v ON_ERROR_STOP=1 -f - < "$f" | tee "/tmp/${f%.sql}.dryrun.txt"
-done
+docker exec -i swissjob-postgres psql -U swissjob -d swissjobhunter \
+  -v ON_ERROR_STOP=1 -X -q -A -t -F '|' -f - < "$f" > "$salida" 2> "$salida.err"
 ```
 
-Anota de cada informe: **reescritas**, **clones fusionados**, `match_results`
-descartados (y **cuántos con señal del usuario**: si ese número no es 0, PARAR y
-decidir) y `sombra: slots de clones`.
+**Aserción** — el estado de salida es el de `psql`, no el de nada más. El runbook
+canalizaba a `tee` y `tee` devuelve 0 aunque `psql` aborte (`false | tee /dev/null` → 0),
+así que el bucle continuaba. Además, si el informe dice que la fusión descartaría
+`match_results` **con señal del usuario**, el script PARA: es una decisión humana y hay
+que repetir a mano con `PERMITIR_SENAL_USUARIO=1` tras revisarla.
 
 **4b. 🚫 Enclavamiento sin marcha atrás — ¿hay cohortes dedup SELLADAS afectadas?**
 Las dos mitades NO comparten transacción, y la segunda aborta *fail-closed* si una
 cohorte sellada tiene pares que re-mapear. Commitear la primera con la segunda
 condenada a abortar deja esos `job_ref` apuntando a **otras ofertas**, y `core0025` los
-hace inmutables: **no se pueden reparar**.
+hace inmutables: **no se pueden reparar**. Por eso el preflight de **las dos** copias y
+esta consulta van ANTES de confirmar la primera.
 
 ```sql
-SELECT c.source, count(*) AS pares_afectados
+SELECT count(*)
 FROM jobhunt.labeled_dedup_pairs p
 JOIN jobhunt.labeled_dedup_cohorts c
   ON c.source = p.source AND c.frozen_at IS NOT NULL
@@ -756,103 +784,61 @@ WHERE EXISTS (
   SELECT 1 FROM jobhunt.source_listings sl
   JOIN jobhunt.sources s2 ON s2.id = sl.source_id
   WHERE sl.external_id IN (p.job_ref_a, p.job_ref_b)
-    AND s2.name IN ('legacy:arbeitnow','legacy:jobgether','legacy:irishjobs'))
-GROUP BY c.source;
+    AND s2.name IN ('legacy:arbeitnow','legacy:jobgether','legacy:irishjobs'));
 ```
 
-**Postcondición: cero filas.** Cualquier fila ⇒ **PARAR**. La única salida es cargar
-una cohorte NUEVA con los refs canónicos y retirar la vieja del gate; el sello existe
-justo para que el acta no se reescriba. (En local esta consulta devuelve hoy
-`positive-stratum-v1 | 67`, verificado el 2026-08-28 SOLO SELECT: sirve para ver la
-FORMA de la respuesta, no como valor esperado del NAS.)
+**Aserción: cero.** Cualquier fila ⇒ el script PARA. La única salida es cargar una
+cohorte NUEVA con los refs canónicos y retirar la vieja del gate; el sello existe justo
+para que el acta no se reescriba. (En local esta consulta devuelve hoy `67`, verificado
+el 2026-08-28 SOLO SELECT: sirve para ver la FORMA de la respuesta, no como valor
+esperado del NAS — allí el script la mide y para si no es 0.)
 
 **4c. En firme.** Solo si 4a y 4b salieron limpios. El `COMMIT` va en una **copia**,
 nunca en el fichero versionado:
 
 ```bash
-for f in g3_canonizacion_identidad_arbeitnow_jobgether.sql g6_canonizacion_identidad_irishjobs.sql; do
-  sed 's/^ROLLBACK;$/COMMIT;/' "$f" > "/tmp/${f%.sql}.commit.sql"
-  grep -c '^COMMIT;$' "/tmp/${f%.sql}.commit.sql"   # tiene que ser 1
-  docker exec -i swissjob-postgres psql -U swissjob -d swissjobhunter \
-    -v ON_ERROR_STOP=1 -f - < "/tmp/${f%.sql}.commit.sql" | tee "/tmp/${f%.sql}.firme.txt"
-done
+sed 's/^ROLLBACK;$/COMMIT;/' "$f" > "$f.commit.sql"   # exactamente un COMMIT;
 ```
 
-**Postcondición** — las cifras del informe en firme son **idénticas** a las del ensayo
-de 4a. Si difieren, algo escribió entre medias: PARAR y revisar el Paso 1.
+**Aserción** — un solo `COMMIT;` en la copia, estado de salida de `psql` comprobado en
+cada una, y las cifras del informe en firme **idénticas** a las del ensayo de 4a
+(comparación automática de los informes, no un vistazo). Si la SEGUNDA falla, el
+mensaje ordena RESTAURAR el volcado del Paso 2: la primera ya está confirmada.
 
 #### Paso 5 — La otra mitad: `canonical_refs` con la imagen nueva, one-shot
 
 Con los escritores **todavía parados**. Es un contenedor efímero de la imagen recién
-cargada — no arranca ningún servicio. Descubre el nombre real de la red (Container
-Station la prefija con el de la aplicación; no lo supongas):
+cargada — no arranca ningún servicio. El script descubre el nombre real de la red
+(Container Station la prefija con el de la aplicación) inspeccionando
+`swissjob-core-migrate`, y para si no lo consigue; se puede forzar con `CORE_NET=…`.
 
 ```bash
-docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' swissjob-core-migrate
-
-CORE_RUN="docker run --rm --network <la-red-del-postgres> \
-  --env-file /share/Public/swissjob/.env.core.prod \
-  --env-file /share/Public/swissjob/.env.core.admin.prod \
-  -e CORE_ENV=prod swissjob-core:prod"
-
 $CORE_RUN python -m jobhunt_core.shadow.canonical_refs --dry-run   # mide, no escribe
 $CORE_RUN python -m jobhunt_core.shadow.canonical_refs             # aplica
 ```
 
-**Postcondición** — el JSON de la aplicación cuadra con el del `--dry-run` (filas
-canonizadas en el mapa, juicios y pares re-mapeados). El módulo es idempotente:
-re-ejecutarlo debe devolver ceros.
+**Aserción** — el JSON de la aplicación cuadra con el del `--dry-run` salvo la bandera
+`dry_run` (comparación automática), y una tercera pasada en seco devuelve
+`filas_canonizadas_en_legacy: 0`: el módulo es idempotente y si no lo quedó, hay que
+restaurar.
 
 #### Paso 6 — Verificar antes de dejar entrar a nadie
 
-Todo `SELECT`, con los escritores aún parados.
+Todo `SELECT`, con los escritores aún parados, y **con aserciones**: el script mide el
+estado ANTES (justo después del Paso 3) y lo compara con el de después usando las
+cifras de los informes en firme del Paso 4. Nada aquí se inspecciona a ojo.
 
-```sql
--- a) Slots huérfanos de las tres fuentes canonizadas. SUBE, y la subida esperada es
---    EXACTAMENTE la suma de los «sombra: slots de clones» de los dos informes del
---    Paso 4. Lo que NO puede pasar es que suba en miles: eso sería el fallo que el
---    PASO 7c de los scripts evita.
-SELECT count(*) AS slots_huerfanos
-FROM jobhunt.source_listings sl
-JOIN jobhunt.sources s ON s.id = sl.source_id
-LEFT JOIN public.jobs j ON j.hash = sl.external_id
-WHERE s.name IN ('legacy:arbeitnow','legacy:jobgether','legacy:irishjobs')
-  AND j.hash IS NULL;
+| # | Qué mide | Aserción del script |
+|---|---|---|
+| a | slots huérfanos de las tres fuentes canonizadas (`source_listings` sin `jobs.hash`) | `después = antes + Σ «sombra: slots de clones»`. Sube por los clones borrados, y **solo** por ellos: si subiera en miles sería el fallo que el PASO 7c de los scripts evita |
+| b | `labeled_judgments` y cuántos resuelven a un `source_listing` legacy | `resuelven = juicios`: ningún juicio puede dejar de resolver |
+| c | pares con sus DOS refs resueltos | no puede BAJAR respecto a lo medido antes |
+| d | `count(*)` de `public.jobs` | `después = antes − Σ «clones fusionados»` |
 
--- b) Etiquetas: NINGÚN juicio puede dejar de resolver (`resuelven` = `juicios`).
-SELECT count(*) AS juicios,
-       count(*) FILTER (WHERE EXISTS (
-         SELECT 1 FROM jobhunt.source_listings l
-         JOIN jobhunt.sources src ON src.id = l.source_id
-         JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
-         WHERE src.name LIKE 'legacy:%' AND l.external_id = j.job_ref)) AS resuelven
-FROM jobhunt.labeled_judgments j;
-
--- c) Pares con sus DOS refs resueltos: no puede BAJAR respecto a lo medido antes.
-SELECT count(*) AS pares,
-       count(*) FILTER (WHERE r.a AND r.b) AS con_los_dos_refs
-FROM jobhunt.labeled_dedup_pairs p
-CROSS JOIN LATERAL (SELECT
-  EXISTS (SELECT 1 FROM jobhunt.source_listings l
-          JOIN jobhunt.sources src ON src.id = l.source_id
-          JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
-          WHERE src.name LIKE 'legacy:%' AND l.external_id = p.job_ref_a) AS a,
-  EXISTS (SELECT 1 FROM jobhunt.source_listings l
-          JOIN jobhunt.sources src ON src.id = l.source_id
-          JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
-          WHERE src.name LIKE 'legacy:%' AND l.external_id = p.job_ref_b) AS b) r;
-
--- d) Conteos de corpus: `jobs` baja EXACTAMENTE en los clones fusionados del Paso 4.
-SELECT count(*) AS jobs FROM public.jobs;
-```
-
-Las cuatro consultas están verificadas ejecutándolas (SOLO `SELECT`) contra la base
-local el 2026-08-28. **Sus resultados en el NAS serán otros**: mídelos allí.
-
-**Postcondición**: (a) sube en la cifra prevista y no en miles · (b) `resuelven` =
-`juicios` · (c) `con_los_dos_refs` no baja · (d) la caída de `jobs` es la de los clones
-fusionados. Cualquier desviación ⇒ **restaurar el dump del Paso 2** antes de arrancar
-nada.
+Las cuatro consultas están en el script y verificadas ejecutándolas (SOLO `SELECT`)
+contra la base local el 2026-08-28. **Sus resultados en el NAS serán otros**: los mide
+allí. Cualquier desviación ⇒ el script PARA y el remedio es **restaurar el dump del
+Paso 2** antes de arrancar nada.
 
 #### Paso 7 — Recrear y smoke (y solo ahora)
 
@@ -860,20 +846,27 @@ Container Station UI → Applications → swissjob → **⋮ menú** → **Recre
 los volúmenes (`pgdata`, `redisdata`, `hfcache`, `core_hf_cache`): Alembic aplica lo
 que falte al arrancar y el modelo de embeddings no se vuelve a descargar (<60 s).
 
-Smoke, en este orden:
-
 ```bash
-docker ps --filter "name=swissjob" --format '{{.Names}}\t{{.Status}}'   # todos Up/healthy
-docker exec swissjob-core-api python -c \
-  "import urllib.request,json;print(json.load(urllib.request.urlopen('http://127.0.0.1:8000/v1/ready')))"
-docker logs --tail 50 swissjob-core-capture   # reproduce el WAL retenido y alcanza el slot
-docker logs --tail 50 swissjob-worker
+./nas_cutover.sh smoke
 ```
 
-**Postcondición**: `/v1/ready` devuelve `status: ok`, el mismo `release` que el
-`RELEASE` horneado del Paso 3 y `authoritative: true` (si es `false`, §1.1 dice qué
-mirar; **no** es autorización para operar mientras siga en false). Con esto el gate de
-la cabecera de §5 pasa a **SÍ** y las siguientes subidas usan §5.4.
+**Aserción** — los cinco escritores vuelven a estar `Up` y `/v1/ready` cumple las
+cuatro condiciones a la vez, o el script sale 1:
+
+- `status: ready` — **no `ok`**. La postcondición decía `ok` y la API contractual
+  devuelve `ready` desde siempre (R3 P2-1): un cutover correcto habría terminado en
+  falso rojo justo después de la parte irreversible. La constante vive en
+  `jobhunt_core/api/main._READY_STATUS`, el script la lleva en `READY_STATUS_ESPERADO`
+  y `jobhunt_core/tests/test_deploy_order.py` impide que diverjan.
+- `authoritative: true` — si es `false`, §1.1 dice qué mirar; **no** es autorización
+  para operar mientras siga en false.
+- `alembic` igual al `alembic_expected` que publica `/v1/health` del mismo proceso
+  (medido allí, no copiado aquí).
+- `release` igual al `RELEASE` horneado que se leyó en el Paso 3.
+
+Después imprime `docker logs --tail 50` de `swissjob-core-capture` (reproduce el WAL
+retenido y alcanza el slot) y de `swissjob-worker`. Con el smoke en verde el gate de la
+cabecera de §5 pasa a **SÍ** y las siguientes subidas usan §5.4.
 
 ### 5.4 Actualización rutinaria — SOLO con el gate de §5 en SÍ
 

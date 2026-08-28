@@ -139,3 +139,55 @@ def test_el_compose_del_NAS_sigue_autoarrancando_los_escritores(servicio):
     arriba deja de proteger nada y hay que revisarla en vez de creerla."""
     qnap = yaml.safe_load(_QNAP.read_text(encoding="utf-8"))
     assert qnap["services"][servicio]["restart"] == "unless-stopped"
+
+
+# --------------------------------------------------------------------------
+# El cuerpo EJECUTABLE de la secuencia (auditoría externa R3 P1-1 y P2-1).
+#
+# La guarda de arriba fija el ORDEN. Estas fijan que ese orden lo ejecute un script
+# versionado y que sus postcondiciones sean condiciones de ejecución. Que cada etapa rota
+# detenga la secuencia se demuestra en `test_deploy_cutover_failclosed.py`, con dobles de
+# `docker` y `psql`.
+# --------------------------------------------------------------------------
+_CUTOVER = _REPO / "backend" / "scripts" / "nas_cutover.sh"
+
+
+def _bloques_bash(lineas: list[str]) -> list[str]:
+    """Las líneas DENTRO de las vallas de código de §5: lo que un operador ejecuta.
+    La prosa que EXPLICA una tubería rota (`pg_dump | gzip` devolvía el estado de gzip)
+    no puede confundirse con la tubería misma."""
+    dentro, cuerpo = False, []
+    for linea in lineas:
+        if linea.startswith("```"):
+            dentro = not dentro
+            continue
+        if dentro:
+            cuerpo.append(linea)
+    return cuerpo
+
+
+def test_la_secuencia_la_ejecuta_un_script_versionado():
+    """§5 tiene que invocar el script, y §5.2 tiene que llevárselo al NAS: un script que
+    no se copia no se ejecuta, y la maniobra volvería a ser copiar y pegar prosa."""
+    assert _CUTOVER.is_file(), (
+        f"{_CUTOVER} no está montado: esta guarda NO puede saltarse. Ejecuta la suite con "
+        "el perfil de dev (docker-compose.yml + docker-compose.dev.yml)."
+    )
+    guion = _CUTOVER.read_text(encoding="utf-8")
+    assert guion.startswith("#!/usr/bin/env bash"), "el cutover no declara su intérprete"
+    assert "set -Eeuo pipefail" in guion, "sin pipefail una tubería vuelve a tragarse el error"
+    lineas = _seccion_5()
+    assert _primera(lineas, r"nas_cutover\.sh cutover") is not None, "§5 no invoca el script"
+    assert _primera(lineas, r"nas_cutover\.sh smoke") is not None, "§5 no invoca el smoke"
+    assert _primera(lineas, r"scp .*nas_cutover\.sh") is not None or any(
+        "nas_cutover.sh" in l for l in lineas[: _primera(lineas, r"#### Paso 1")]
+    ), "§5.2 no copia el script al NAS"
+
+
+def test_ningun_comando_de_la_seccion_5_pierde_el_estado_de_salida():
+    """LA reproducción de shell del auditor, invertida: `false | tee /dev/null` → 0. Los
+    bloques ejecutables no pueden volver a canalizar `psql` ni `pg_dump` a otro comando,
+    porque el estado que sobrevive es el del ÚLTIMO de la tubería."""
+    for linea in _bloques_bash(_seccion_5()):
+        assert not re.search(r"\bpsql\b[^|]*\|", linea), f"psql canalizado en §5: {linea}"
+        assert not re.search(r"\bpg_dump\b[^|]*\|", linea), f"pg_dump canalizado en §5: {linea}"
