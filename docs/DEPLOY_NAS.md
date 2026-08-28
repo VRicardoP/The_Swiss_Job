@@ -24,7 +24,8 @@
 - [3. Despliegue desde cero en el NAS — paso a paso](#3-despliegue-desde-cero-en-el-nas--paso-a-paso)
 - [4. Operaciones cotidianas](#4-operaciones-cotidianas)
 - [5. Actualización de versión](#5-actualización-de-versión)
-  - [⚠ 5.4 DEUDA BLOQUEANTE: canonización de identidad sin aplicar en el NAS](#54--deuda-bloqueante-la-canonización-de-identidad-legacy-todavía-sin-aplicar-en-el-nas)
+  - [🚦 GATE: la canonización de identidad sigue SIN aplicar en el NAS](#-gate-de-subida--está-aplicada-ya-en-el-nas-la-canonización-de-identidad)
+  - [5.3 Secuencia única de mantenimiento (canonización + subida)](#53-secuencia-única-de-mantenimiento-canonización--subida)
 - [6. Troubleshooting](#6-troubleshooting)
 - [7. Backups](#7-backups)
 - [8. Recursos esperados](#8-recursos-esperados)
@@ -241,11 +242,13 @@ docker compose exec -T core-api cat /opt/jobhunt-release/RELEASE      # lo que h
 > significa «este proceso no puede detectar sustitución», no «esta imagen es la
 > aprobada».
 
-> ⚠ **Deuda abierta en producción.** `core-api` tiene healthcheck de compose contra
-> `/v1/ready` en `docker-compose.yml`, pero **no** en `docker-compose.prod.yml` ni en
-> `docker-compose.qnap.yml` — no se tocaron por ser de producción y requerir
-> confirmación explícita del propietario. Sin esa sonda, un `core-api` en 503 puede
-> pasar días sin que nadie se entere: es exactamente lo que ocurrió.
+> ✅ **Deuda cerrada (2026-08-28).** `core-api` ya tiene healthcheck de compose contra
+> `/v1/ready` en los TRES composes (`docker-compose.yml`, `.prod.yml` y `.qnap.yml`), y
+> `core-migrate` de `.prod.yml` construye con el build arg `RELEASE_SHA`. Sin esa sonda
+> un `core-api` en 503 podía pasar días sin que nadie se enterara — es exactamente lo
+> que ocurrió. Al desplegar, esto hace que Container Station marque `swissjob-core-api`
+> como *unhealthy* cuando la BD no responde o su head de Alembic no es el que espera la
+> imagen, en vez de mostrarlo verde.
 
 ### Puertos por variante
 
@@ -579,7 +582,29 @@ docker volume rm swissjob_pgdata swissjob_redisdata swissjob_hfcache
 
 ## 5. Actualización de versión
 
-Después de cambios en el código:
+> ### 🚦 GATE de subida — ¿está aplicada YA en el NAS la canonización de identidad?
+>
+> **Estado al 2026-08-28: NO.** El NAS corre imágenes anteriores al 2026-08-27 y su
+> base tiene la identidad legacy **sin canonizar**. En local se hizo el 2026-08-27
+> (commit `2462717`); el acta con cifras está en
+> [`jobhunt_core/shadow/RUNBOOK.md` §7](../jobhunt_core/shadow/RUNBOOK.md).
+>
+> **Mientras este gate diga NO, la ÚNICA secuencia autorizada para subir imágenes es
+> la §5.3, entera y en su orden.** La actualización rutinaria de §5.4 queda
+> **prohibida**: empieza por recrear la aplicación, y eso arranca los escritores del
+> código nuevo sobre identidades viejas. El código nuevo ya emite la identidad
+> canónica, así que esa primera cosecha produce **a la vez pérdida silenciosa de
+> ofertas y duplicación del corpus** — dos ramas distintas cuyo peor caso es su suma
+> (razonamiento medido en el encabezado de
+> `backend/scripts/g3_canonizacion_identidad_arbeitnow_jobgether.sql`).
+>
+> **Este documento tenía el orden al revés** (auditoría externa R2 P1-3): mandaba
+> recrear en §5.3 y solo después, en §5.4, avisaba de que la canonización exige los
+> workers parados. `Recreate` de Container Station levanta solos `swissjob-worker` y
+> `swissjob-core-worker` (`restart: unless-stopped` en `docker-compose.qnap.yml`), así
+> que seguir el único orden ejecutable documentado abría exactamente la ventana que el
+> propio documento declaraba obligatorio evitar. El orden lo fija ahora una guarda
+> ejecutable de la suite: `jobhunt_core/tests/test_deploy_order.py`.
 
 ### 5.1 Build local + tar
 
@@ -593,65 +618,271 @@ docker save swissjob-backend:prod -o /tmp/swissjob/swissjob-backend.tar
 # Si solo cambió frontend (recompilar tras editar /frontend)
 docker build -t swissjob-frontend:prod -f frontend/Dockerfile.prod frontend/
 docker save swissjob-frontend:prod -o /tmp/swissjob/swissjob-frontend.tar
+
+# El core va SIEMPRE con su SHA horneado (§1.1): sin el build arg la imagen
+# hornea `unknown` y las sondas responden `authoritative: false`.
+RELEASE_SHA=$(git rev-parse --short HEAD) \
+  docker compose -f docker-compose.prod.yml build core-migrate
+docker save swissjob-core:prod -o /tmp/swissjob/swissjob-core.tar
 ```
 
-### 5.2 Transfer + load
+⚠ `docker-compose.prod.yml` construye el backend con `INSTALL_BROWSERS=false`. El
+worker del NAS ejecuta los scrapers Playwright: si rebuildeas el backend desde ahí,
+constrúyelo con `INSTALL_BROWSERS=true` (ver el comentario del servicio `worker` en
+`docker-compose.qnap.yml`).
+
+### 5.2 Transferir al NAS — solo COPIAR (aquí no se carga ni se arranca nada)
 
 ```bash
-# Local
 scp /tmp/swissjob/swissjob-backend.tar  Ricardo@capsule:/share/Public/swissjob/
 scp /tmp/swissjob/swissjob-frontend.tar Ricardo@capsule:/share/Public/swissjob/
+scp /tmp/swissjob/swissjob-core.tar     Ricardo@capsule:/share/Public/swissjob/
 
-# SSH al NAS
-ssh Ricardo@capsule
-cd /share/Public/swissjob
-
-docker rmi swissjob-backend:prod 2>/dev/null
-docker load -i swissjob-backend.tar
-
-docker rmi swissjob-frontend:prod 2>/dev/null
-docker load -i swissjob-frontend.tar
+# Los dos scripts de la maniobra: sin ellos no hay Paso 4.
+ssh Ricardo@capsule 'mkdir -p /share/Public/swissjob/scripts'
+scp backend/scripts/g3_canonizacion_identidad_arbeitnow_jobgether.sql \
+    backend/scripts/g6_canonizacion_identidad_irishjobs.sql \
+    Ricardo@capsule:/share/Public/swissjob/scripts/
 ```
 
-### 5.3 Recreate
+### 5.3 Secuencia única de mantenimiento (canonización + subida)
 
-Container Station UI → Applications → swissjob → **⋮ menú** → **Recreate**.
+Una sola maniobra, siete pasos, en este orden. **Cada paso tiene una postcondición
+que se comprueba antes de pasar al siguiente; si no cuadra, se PARA** — todos los
+pasos anteriores al 4 son reversibles y el 4 no lo es.
 
-Mantiene los volúmenes (`pgdata`, `redisdata`, `hfcache`) → migraciones nuevas
-se aplican automáticamente en el arranque del backend (Alembic) y el modelo
-embedding NO se vuelve a descargar.
+**Ensáyala antes sobre una restauración desechable del backup del NAS**, no sobre la
+base viva: restaura el `.sql.gz` de §7 en una base nueva (`swissjob_ensayo`) y recorre
+los pasos 4, 5 y 6 contra ella. **Las cifras del NAS serán distintas a las locales**
+(otro corpus): el procedimiento las MIDE allí, nunca las copia — las del acta local
+sirven para reconocer la FORMA del resultado, no como valor esperado.
 
-**Tiempo esperado**: <60s gracias a `hfcache`.
+Ventana estimada: 20–40 min con la aplicación caída. Por SSH `docker compose` no
+funciona (§0.3): todo va con `docker` directo o por la UI de Container Station.
 
-### 5.4 ⚠ DEUDA BLOQUEANTE: la canonización de identidad legacy, todavía SIN aplicar en el NAS
+#### Paso 1 — Detener todo escritor y proyector
 
-**Estado al 2026-08-27:** el NAS corre imágenes **anteriores** a la jornada del
-2026-08-27. La canonización de identidad se ejecutó **solo en la base local**
-(commit `2462717`).
+`docker stop` es suficiente y no lo revierte `restart: unless-stopped`: esa política
+NO rearranca lo que se paró a mano (a diferencia de `always`). `swissjob-postgres` y
+`swissjob-redis*` se quedan EN MARCHA — la maniobra los necesita.
 
-**La próxima subida de imágenes al NAS tiene que aplicar allí la MISMA canonización,
-en el MISMO despliegue.** No es opcional ni aplazable:
+```bash
+docker stop swissjob-backend swissjob-worker \
+            swissjob-core-api swissjob-core-worker swissjob-core-capture
+```
 
-- El código nuevo **ya emite la identidad canónica**. Una cosecha con código nuevo
-  sobre datos sin canonizar produce **pérdida silenciosa de ofertas Y duplicación del
-  corpus, a la vez**, por dos ramas distintas — y el peor caso es su suma. El
-  razonamiento medido está en el encabezado de
-  `backend/scripts/g3_canonizacion_identidad_arbeitnow_jobgether.sql`.
-- La maniobra tiene **dos mitades**: los dos scripts SQL (`g3_…`, `g6_…`) y
-  `python -m jobhunt_core.shadow.canonical_refs`, que re-mapea las etiquetas del
-  oráculo. Saltarse la segunda rompe etiquetas **sin un solo error**.
-- Los scripts del repo terminan en `ROLLBACK` (son ensayos por defecto): hay que
-  cambiar esa línea a `COMMIT` **en una copia**, nunca en el fichero versionado.
+- `swissjob-backend` lleva dentro el scheduler APScheduler; el local se dejó vivo
+  porque nadie usaba la web, pero aquí se para: su API también escribe.
+- `swissjob-core-worker` lleva el **beat embebido** — es el proyector de la sombra.
+- `swissjob-core-capture` escribe en `jobhunt.shadow_change_log`. Parado, el slot
+  `jobhunt_shadow` **retiene WAL**: otra razón para que la ventana sea corta. Al
+  rearrancar lo reproduce (RPO=0).
 
-Orden ejecutable completo, con sus verificaciones posteriores:
-`jobhunt_core/shadow/RUNBOOK.md` **§7**. Resumen: parar `worker`/`worker-ai`/`core-worker`
-→ `pg_dump` **incluyendo el esquema `jobhunt`** → ensayo en seco sobre la copia → los dos
-scripts en firme → `canonical_refs` (primero `--dry-run`) con los workers **todavía**
-parados → arrancar → comprobar huérfanos y etiquetas.
+**Postcondición** — ninguno de los cinco puede seguir en `Up`:
 
-En local, ensayo y ejecución dieron cifras idénticas y las verificaciones posteriores
-salieron en el número previsto. **Las cifras del NAS serán distintas** (otro corpus):
-hay que re-medirlas allí, no copiarlas.
+```bash
+docker ps --filter "name=swissjob" --format '{{.Names}}\t{{.Status}}'
+```
+
+#### Paso 2 — Copia de seguridad, con `public` **y** `jobhunt`
+
+El dump por defecto de §7 se hace con el rol `swissjob`; si ese rol no puede leer el
+esquema `jobhunt`, el backup no sirve para esta maniobra y hay que repetirlo con la
+credencial de `/share/Public/swissjob/.env.core.admin.prod`.
+
+```bash
+mkdir -p /share/Public/backups/swissjob
+docker exec -t swissjob-postgres \
+  pg_dump -U swissjob -n public -n jobhunt swissjobhunter \
+  | gzip > /share/Public/backups/swissjob/pre_canonizacion_$(date +%Y%m%d-%H%M).sql.gz
+```
+
+**Postcondición** — el fichero contiene los DOS esquemas (si alguna cuenta es 0, PARAR):
+
+```bash
+DUMP=$(ls -t /share/Public/backups/swissjob/pre_canonizacion_*.sql.gz | head -1)
+zgrep -c 'CREATE TABLE public\.'  "$DUMP"
+zgrep -c 'CREATE TABLE jobhunt\.' "$DUMP"
+```
+
+#### Paso 3 — Cargar la imagen nueva SIN arrancar servicios
+
+`docker load` sustituye el tag; **no toca contenedores**, y los que escriben están
+parados desde el Paso 1. No se recrea nada todavía.
+
+```bash
+cd /share/Public/swissjob
+docker rmi swissjob-core:prod 2>/dev/null; docker load -i swissjob-core.tar
+docker rmi swissjob-backend:prod 2>/dev/null; docker load -i swissjob-backend.tar
+docker rmi swissjob-frontend:prod 2>/dev/null; docker load -i swissjob-frontend.tar
+```
+
+**Postcondición** — la imagen del core existe y sabe nombrar su release (si dice
+`unknown`, se construyó sin el build arg: volver a §5.1):
+
+```bash
+docker run --rm --entrypoint sh swissjob-core:prod -c 'cat /opt/jobhunt-release/RELEASE; echo'
+```
+
+#### Paso 4 — Las dos copias SQL: primero en seco, luego en firme
+
+**4a. Ensayo en seco.** Los ficheros del repo terminan en `ROLLBACK;`: tal cual son un
+ensayo que imprime su informe sin tocar nada.
+
+```bash
+cd /share/Public/swissjob/scripts
+for f in g3_canonizacion_identidad_arbeitnow_jobgether.sql g6_canonizacion_identidad_irishjobs.sql; do
+  docker exec -i swissjob-postgres psql -U swissjob -d swissjobhunter \
+    -v ON_ERROR_STOP=1 -f - < "$f" | tee "/tmp/${f%.sql}.dryrun.txt"
+done
+```
+
+Anota de cada informe: **reescritas**, **clones fusionados**, `match_results`
+descartados (y **cuántos con señal del usuario**: si ese número no es 0, PARAR y
+decidir) y `sombra: slots de clones`.
+
+**4b. 🚫 Enclavamiento sin marcha atrás — ¿hay cohortes dedup SELLADAS afectadas?**
+Las dos mitades NO comparten transacción, y la segunda aborta *fail-closed* si una
+cohorte sellada tiene pares que re-mapear. Commitear la primera con la segunda
+condenada a abortar deja esos `job_ref` apuntando a **otras ofertas**, y `core0025` los
+hace inmutables: **no se pueden reparar**.
+
+```sql
+SELECT c.source, count(*) AS pares_afectados
+FROM jobhunt.labeled_dedup_pairs p
+JOIN jobhunt.labeled_dedup_cohorts c
+  ON c.source = p.source AND c.frozen_at IS NOT NULL
+WHERE EXISTS (
+  SELECT 1 FROM jobhunt.source_listings sl
+  JOIN jobhunt.sources s2 ON s2.id = sl.source_id
+  WHERE sl.external_id IN (p.job_ref_a, p.job_ref_b)
+    AND s2.name IN ('legacy:arbeitnow','legacy:jobgether','legacy:irishjobs'))
+GROUP BY c.source;
+```
+
+**Postcondición: cero filas.** Cualquier fila ⇒ **PARAR**. La única salida es cargar
+una cohorte NUEVA con los refs canónicos y retirar la vieja del gate; el sello existe
+justo para que el acta no se reescriba. (En local esta consulta devuelve hoy
+`positive-stratum-v1 | 67`, verificado el 2026-08-28 SOLO SELECT: sirve para ver la
+FORMA de la respuesta, no como valor esperado del NAS.)
+
+**4c. En firme.** Solo si 4a y 4b salieron limpios. El `COMMIT` va en una **copia**,
+nunca en el fichero versionado:
+
+```bash
+for f in g3_canonizacion_identidad_arbeitnow_jobgether.sql g6_canonizacion_identidad_irishjobs.sql; do
+  sed 's/^ROLLBACK;$/COMMIT;/' "$f" > "/tmp/${f%.sql}.commit.sql"
+  grep -c '^COMMIT;$' "/tmp/${f%.sql}.commit.sql"   # tiene que ser 1
+  docker exec -i swissjob-postgres psql -U swissjob -d swissjobhunter \
+    -v ON_ERROR_STOP=1 -f - < "/tmp/${f%.sql}.commit.sql" | tee "/tmp/${f%.sql}.firme.txt"
+done
+```
+
+**Postcondición** — las cifras del informe en firme son **idénticas** a las del ensayo
+de 4a. Si difieren, algo escribió entre medias: PARAR y revisar el Paso 1.
+
+#### Paso 5 — La otra mitad: `canonical_refs` con la imagen nueva, one-shot
+
+Con los escritores **todavía parados**. Es un contenedor efímero de la imagen recién
+cargada — no arranca ningún servicio. Descubre el nombre real de la red (Container
+Station la prefija con el de la aplicación; no lo supongas):
+
+```bash
+docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' swissjob-core-migrate
+
+CORE_RUN="docker run --rm --network <la-red-del-postgres> \
+  --env-file /share/Public/swissjob/.env.core.prod \
+  --env-file /share/Public/swissjob/.env.core.admin.prod \
+  -e CORE_ENV=prod swissjob-core:prod"
+
+$CORE_RUN python -m jobhunt_core.shadow.canonical_refs --dry-run   # mide, no escribe
+$CORE_RUN python -m jobhunt_core.shadow.canonical_refs             # aplica
+```
+
+**Postcondición** — el JSON de la aplicación cuadra con el del `--dry-run` (filas
+canonizadas en el mapa, juicios y pares re-mapeados). El módulo es idempotente:
+re-ejecutarlo debe devolver ceros.
+
+#### Paso 6 — Verificar antes de dejar entrar a nadie
+
+Todo `SELECT`, con los escritores aún parados.
+
+```sql
+-- a) Slots huérfanos de las tres fuentes canonizadas. SUBE, y la subida esperada es
+--    EXACTAMENTE la suma de los «sombra: slots de clones» de los dos informes del
+--    Paso 4. Lo que NO puede pasar es que suba en miles: eso sería el fallo que el
+--    PASO 7c de los scripts evita.
+SELECT count(*) AS slots_huerfanos
+FROM jobhunt.source_listings sl
+JOIN jobhunt.sources s ON s.id = sl.source_id
+LEFT JOIN public.jobs j ON j.hash = sl.external_id
+WHERE s.name IN ('legacy:arbeitnow','legacy:jobgether','legacy:irishjobs')
+  AND j.hash IS NULL;
+
+-- b) Etiquetas: NINGÚN juicio puede dejar de resolver (`resuelven` = `juicios`).
+SELECT count(*) AS juicios,
+       count(*) FILTER (WHERE EXISTS (
+         SELECT 1 FROM jobhunt.source_listings l
+         JOIN jobhunt.sources src ON src.id = l.source_id
+         JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
+         WHERE src.name LIKE 'legacy:%' AND l.external_id = j.job_ref)) AS resuelven
+FROM jobhunt.labeled_judgments j;
+
+-- c) Pares con sus DOS refs resueltos: no puede BAJAR respecto a lo medido antes.
+SELECT count(*) AS pares,
+       count(*) FILTER (WHERE r.a AND r.b) AS con_los_dos_refs
+FROM jobhunt.labeled_dedup_pairs p
+CROSS JOIN LATERAL (SELECT
+  EXISTS (SELECT 1 FROM jobhunt.source_listings l
+          JOIN jobhunt.sources src ON src.id = l.source_id
+          JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
+          WHERE src.name LIKE 'legacy:%' AND l.external_id = p.job_ref_a) AS a,
+  EXISTS (SELECT 1 FROM jobhunt.source_listings l
+          JOIN jobhunt.sources src ON src.id = l.source_id
+          JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
+          WHERE src.name LIKE 'legacy:%' AND l.external_id = p.job_ref_b) AS b) r;
+
+-- d) Conteos de corpus: `jobs` baja EXACTAMENTE en los clones fusionados del Paso 4.
+SELECT count(*) AS jobs FROM public.jobs;
+```
+
+Las cuatro consultas están verificadas ejecutándolas (SOLO `SELECT`) contra la base
+local el 2026-08-28. **Sus resultados en el NAS serán otros**: mídelos allí.
+
+**Postcondición**: (a) sube en la cifra prevista y no en miles · (b) `resuelven` =
+`juicios` · (c) `con_los_dos_refs` no baja · (d) la caída de `jobs` es la de los clones
+fusionados. Cualquier desviación ⇒ **restaurar el dump del Paso 2** antes de arrancar
+nada.
+
+#### Paso 7 — Recrear y smoke (y solo ahora)
+
+Container Station UI → Applications → swissjob → **⋮ menú** → **Recreate**. Mantiene
+los volúmenes (`pgdata`, `redisdata`, `hfcache`, `core_hf_cache`): Alembic aplica lo
+que falte al arrancar y el modelo de embeddings no se vuelve a descargar (<60 s).
+
+Smoke, en este orden:
+
+```bash
+docker ps --filter "name=swissjob" --format '{{.Names}}\t{{.Status}}'   # todos Up/healthy
+docker exec swissjob-core-api python -c \
+  "import urllib.request,json;print(json.load(urllib.request.urlopen('http://127.0.0.1:8000/v1/ready')))"
+docker logs --tail 50 swissjob-core-capture   # reproduce el WAL retenido y alcanza el slot
+docker logs --tail 50 swissjob-worker
+```
+
+**Postcondición**: `/v1/ready` devuelve `status: ok`, el mismo `release` que el
+`RELEASE` horneado del Paso 3 y `authoritative: true` (si es `false`, §1.1 dice qué
+mirar; **no** es autorización para operar mientras siga en false). Con esto el gate de
+la cabecera de §5 pasa a **SÍ** y las siguientes subidas usan §5.4.
+
+### 5.4 Actualización rutinaria — SOLO con el gate de §5 en SÍ
+
+§5.1 → §5.2 → cargar las imágenes (`docker load`) → Container Station UI →
+Applications → swissjob → **⋮ menú** → **Recreate** → el smoke del Paso 7.
+
+Mantiene los volúmenes; migraciones nuevas se aplican solas en el arranque (Alembic
+en `backend`, `core-migrate` en el core). **Tiempo esperado**: <60 s gracias a
+`hfcache`.
 
 ---
 

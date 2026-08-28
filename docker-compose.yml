@@ -160,6 +160,16 @@ services:
     image: swissjob-core:dev
     container_name: swissjob-core-migrate
     command: python -m jobhunt_core.migrate
+    volumes:
+      # SOLO LECTURA y solo aquí (perfil de dev; prod/qnap no lo llevan): la suite
+      # incluye una guarda que lee `docs/DEPLOY_NAS.md` y comprueba que la secuencia de
+      # mantenimiento del NAS no manda arrancar escritores antes de canonizar
+      # (auditoría externa R2 P1-3). Sin el montaje esa guarda no podría ejecutarse, que
+      # es justamente como el defecto sobrevivió a varias revisiones.
+      - ./docs:/app/docs:ro
+      # …y el compose del NAS, que la misma guarda usa para fijar la PREMISA del
+      # hallazgo: los escritores que hay que parar son los que allí arrancan solos.
+      - ./docker-compose.qnap.yml:/app/docker-compose.qnap.yml:ro
     environment:
       - CORE_DATABASE_URL=postgresql+asyncpg://jobhunt_core:${CORE_DB_PASSWORD:-jobhunt_core_dev}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
       - CORE_ADMIN_DATABASE_URL=postgresql://${POSTGRES_USER:-swissjob}:${POSTGRES_PASSWORD:-swissjob_dev_2024}@postgres:5432/${POSTGRES_DB:-swissjobhunter}

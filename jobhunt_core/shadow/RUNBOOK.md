@@ -463,6 +463,12 @@ los `op=D` de los clones cerraron sus encarnaciones por el camino normal.
 
 ### 7.3 Lo que queda: el NAS
 
+> **La secuencia ejecutable del NAS está en `docs/DEPLOY_NAS.md` §5.3**, en siete pasos
+> con postcondiciones que fallan cerrado. Esta sección explica el PORQUÉ; aquélla es lo
+> que se ejecuta. Hasta el 2026-08-28 ese documento mandaba recrear la aplicación ANTES
+> de canonizar (auditoría externa R2 P1-3): el orden lo fija ahora la guarda
+> `jobhunt_core/tests/test_deploy_order.py`.
+
 El NAS corre **imágenes anteriores** a esta maniobra y a los fixes de identidad. Cuando se
 suban las imágenes nuevas hay que aplicar allí **la misma canonización, en el MISMO
 despliegue**: el código nuevo emite ya la identidad canónica, y una cosecha con código

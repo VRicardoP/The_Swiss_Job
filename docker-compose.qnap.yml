@@ -158,6 +158,14 @@ services:
       - core-net
 
   core-migrate:
+    # Container Station NO construye: la imagen llega por `docker load`. El SHA de la
+    # release va HORNEADO en ella, así que hay que construirla con el build arg
+    # (auditoría G9 P2-B) antes de exportarla:
+    #   RELEASE_SHA=$(git rev-parse --short HEAD) \
+    #     docker compose -f docker-compose.prod.yml build core-migrate
+    #   docker save swissjob-core:prod | gzip > swissjob-core.tar.gz
+    # Sin él la imagen hornea `unknown`, las sondas responden `authoritative: false`
+    # y la verificación «todos publican el mismo SHA» no dice nada.
     image: swissjob-core:prod
     container_name: swissjob-core-migrate
     command: python -m jobhunt_core.migrate
@@ -184,6 +192,16 @@ services:
     environment:
       - CORE_ENV=prod
     # SIN puerto de host: solo red interna (plan §21); nunca por ngrok.
+    healthcheck:
+      # /v1/ready, no un health estático: la BD responde Y su head de Alembic es el que
+      # espera el código DE ESTA IMAGEN. Sin esta sonda la API estuvo dos días en 503
+      # sin que nadie se enterara (auditoría externa P1-3). Sin ${VARS}: Container
+      # Station no los expande.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/ready', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
