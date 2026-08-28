@@ -834,9 +834,15 @@ aplica sobre su `canon_map`: cohortes **AFECTADAS**, no cohortes selladas.
 **Aserción: la suma de los dos informes es cero.** Cualquier fila ⇒ el script PARA. Y si
 un informe **no trae el concepto**, también para: no se confirma nada sin ese dato. La
 única salida es cargar una cohorte NUEVA con los refs canónicos y retirar la vieja del
-gate; el sello existe justo para que el acta no se reescriba. (En local esta consulta devuelve hoy `67`, verificado
-el 2026-08-28 SOLO SELECT: sirve para ver la FORMA de la respuesta, no como valor
-esperado del NAS — allí el script la mide y para si no es 0.)
+gate; el sello existe justo para que el acta no se reescriba.
+
+> **Cuidado con el `67`** (auditoría externa R5 P2-1). Los dos párrafos anteriores hablan
+> de DOS consultas distintas y el `67` es de la **retirada**: la consulta antigua del
+> script contaba 67 pares en local, y el concepto nuevo que declaran los ensayos —el que
+> el cutover asierta— **daba 0 en esa misma medición**. Aquí no se publica ninguna cifra
+> como valor esperado del NAS: allí el script la mide y **para si no es 0**. Leer «esta
+> consulta devuelve 67» en un paso de NO-GO llevaría a aceptar como esperado justo el
+> valor que el script tiene que rechazar.
 
 **4c. En firme.** Solo si 4a y 4b salieron limpios. El `COMMIT` va en una **copia**,
 nunca en el fichero versionado:
