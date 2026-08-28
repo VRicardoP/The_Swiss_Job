@@ -14,13 +14,18 @@
 # Aquí cada postcondición es una condición de EJECUCIÓN: si no cuadra, se sale
 # distinto de cero y no hay paso siguiente.
 #
-# LO QUE CORRIGIÓ LA AUDITORÍA R4 (P1-1):
+# LO QUE CORRIGIÓ LA AUDITORÍA R4 (P1-1 y P1-2):
 #   P1-1  el aislamiento del ENSAYO comparaba el DSN por SUFIJO, y una URL con
 #         `?query`, `#fragmento` o percent-encoding lo esquivaba y llegaba al
 #         Paso 5 EN FIRME sobre la base viva. Ahora hay UNA forma de DSN
 #         admitida (parseada, no comparada) y, antes de cualquier escritura, una
 #         SONDA que exige que el core y `psql` vean la MISMA base del MISMO
 #         servidor.
+#   P1-2  el enclavamiento 4b era un SEGUNDO oráculo aproximado («¿algún lado
+#         del par aparece en alguna de las tres fuentes?») y en local contaba 67
+#         pares cuando los mapas reales de G3/G6 remapean 0: el procedimiento
+#         habría parado sin motivo, quizá para siempre. Ahora lo declara CADA
+#         ensayo en seco desde su PROPIA tabla de supervivientes.
 #
 # CIFRAS: este script NO lleva ninguna constante del corpus. Mide el estado
 # ANTES, lee las cifras de los informes en seco y aserta el estado DESPUÉS
@@ -348,17 +353,6 @@ SQL_PARES="SELECT count(*) FILTER (WHERE r.a AND r.b)
            JOIN jobhunt.source_listing_incarnations i ON i.source_listing_id = l.id
            WHERE src.name LIKE 'legacy:%' AND l.external_id = p.job_ref_b) AS b) r"
 
-# Enclavamiento 4b: pares de cohortes SELLADAS que habría que re-mapear.
-SQL_ENCLAVAMIENTO="SELECT count(*)
- FROM jobhunt.labeled_dedup_pairs p
- JOIN jobhunt.labeled_dedup_cohorts c
-   ON c.source = p.source AND c.frozen_at IS NOT NULL
- WHERE EXISTS (
-   SELECT 1 FROM jobhunt.source_listings sl
-   JOIN jobhunt.sources s2 ON s2.id = sl.source_id
-   WHERE sl.external_id IN (p.job_ref_a, p.job_ref_b)
-     AND s2.name IN ('legacy:arbeitnow','legacy:jobgether','legacy:irishjobs'))"
-
 medir() { # deja SLOTS/JOBS/PARES/JUICIOS_TOTAL/JUICIOS_RESUELVEN en variables con el sufijo $1
   local slots jobs pares juicios
   slots=$(psql_valor "$SQL_SLOTS")
@@ -394,16 +388,29 @@ paso4_copias() {
     fi
   done
 
-  titulo "Paso 4b — enclavamiento: cohortes SELLADAS afectadas"
+  titulo "Paso 4b — enclavamiento: lo que declara CADA ensayo en seco"
   # Se comprueba con las DOS copias ya ensayadas y ANTES de confirmar la
   # primera: commitear la primera con la segunda condenada a abortar deja
   # `job_ref` apuntando a otras ofertas, y core0025 los hace inmutables.
-  local afectados
-  afectados=$(psql_valor "$SQL_ENCLAVAMIENTO")
-  entero "$afectados" "pares de cohortes selladas afectados"
-  printf 'pares de cohortes SELLADAS afectados: %s\n' "$afectados"
-  [ "$afectados" -eq 0 ] ||
-    morir "hay $afectados pares de cohortes selladas afectados: carga una cohorte NUEVA con los refs canónicos y retira la vieja del gate"
+  #
+  # Auditoría R4 P1-2. Antes esto era una consulta PROPIA del script: contaba
+  # cualquier par de cohorte sellada con un lado en cualquiera de las tres
+  # fuentes, sin preguntar si G3/G6 iba a cambiar ese ref. Era un SEGUNDO
+  # oráculo, distinto del mapa que los propios SQL calculan: en local contaba 67
+  # pares cuando los mapas remapean 0 — un rojo falso que podía bloquear la
+  # maniobra para siempre. Ahora la cifra la DECLARA cada script desde su propia
+  # tabla de supervivientes, y aquí solo se exige cero. Si un script no la
+  # declara, `cifra` para: no se confirma nada sin ese dato.
+  local afectados total=0
+  for f in $COPIAS_SQL; do
+    base=${f%.sql}
+    afectados=$(cifra "$WORK_DIR/$base.dryrun.informe" "enclavamiento: refs de cohortes SELLADAS")
+    entero "$afectados" "refs de cohortes selladas que remapea $f"
+    printf '%s declara %s refs de cohortes SELLADAS a remapear\n' "$f" "$afectados"
+    total=$((total + afectados))
+  done
+  [ "$total" -eq 0 ] ||
+    morir "los ensayos en seco declaran $total refs de cohortes SELLADAS que remapearían: carga una cohorte NUEVA con los refs canónicos y retira la vieja del gate"
 
   titulo "Paso 4c — en firme (IRREVERSIBLE a partir de aquí)"
   for f in $COPIAS_SQL; do

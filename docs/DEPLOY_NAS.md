@@ -790,23 +790,29 @@ Las dos mitades NO comparten transacción, y la segunda aborta *fail-closed* si 
 cohorte sellada tiene pares que re-mapear. Commitear la primera con la segunda
 condenada a abortar deja esos `job_ref` apuntando a **otras ofertas**, y `core0025` los
 hace inmutables: **no se pueden reparar**. Por eso el preflight de **las dos** copias y
-esta consulta van ANTES de confirmar la primera.
+esta comprobación van ANTES de confirmar la primera.
 
-```sql
-SELECT count(*)
-FROM jobhunt.labeled_dedup_pairs p
-JOIN jobhunt.labeled_dedup_cohorts c
-  ON c.source = p.source AND c.frozen_at IS NOT NULL
-WHERE EXISTS (
-  SELECT 1 FROM jobhunt.source_listings sl
-  JOIN jobhunt.sources s2 ON s2.id = sl.source_id
-  WHERE sl.external_id IN (p.job_ref_a, p.job_ref_b)
-    AND s2.name IN ('legacy:arbeitnow','legacy:jobgether','legacy:irishjobs'));
+**La cifra la declara CADA ensayo en seco, no el script** (auditoría externa R4 P1-2).
+Antes el script traía su propia consulta: contaba cualquier par de cohorte sellada con un
+lado presente en alguna de las tres fuentes, **sin preguntar si G3/G6 iba a cambiar ese
+ref**. Era un segundo oráculo, aproximado y distinto del mapa exacto que los propios SQL
+calculan — y medido en local el 2026-08-28 (SOLO SELECT) contaba **67** pares mientras los
+mapas de G3+G6 remapean **0** refs: el procedimiento habría parado sin motivo, y el
+remedio que sugería (cargar una cohorte nueva) podía dejarlo bloqueado para siempre.
+
+Ahora cada script emite en su informe, desde su PROPIA `g3_map`, el concepto
+
+```text
+enclavamiento: refs de cohortes SELLADAS que ESTE script remapea|<n>
 ```
 
-**Aserción: cero.** Cualquier fila ⇒ el script PARA. La única salida es cargar una
-cohorte NUEVA con los refs canónicos y retirar la vieja del gate; el sello existe justo
-para que el acta no se reescriba. (En local esta consulta devuelve hoy `67`, verificado
+con el mismo filtro que el guard `_require_no_frozen_affected` del módulo del Paso 5
+aplica sobre su `canon_map`: cohortes **AFECTADAS**, no cohortes selladas.
+
+**Aserción: la suma de los dos informes es cero.** Cualquier fila ⇒ el script PARA. Y si
+un informe **no trae el concepto**, también para: no se confirma nada sin ese dato. La
+única salida es cargar una cohorte NUEVA con los refs canónicos y retirar la vieja del
+gate; el sello existe justo para que el acta no se reescriba. (En local esta consulta devuelve hoy `67`, verificado
 el 2026-08-28 SOLO SELECT: sirve para ver la FORMA de la respuesta, no como valor
 esperado del NAS — allí el script la mide y para si no es 0.)
 

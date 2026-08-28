@@ -189,6 +189,55 @@ WHERE m.old_hash <> s.survivor_hash;
 CREATE UNIQUE INDEX ON g3_losers (loser_hash);
 
 -- ---------------------------------------------------------------------
+-- 2b. ENCLAVAMIENTO declarado (auditoría externa R4 P1-2)
+--
+-- El Paso 4b de `backend/scripts/nas_cutover.sh` tenía SU PROPIA consulta:
+-- contaba cualquier par de cohorte SELLADA con un lado presente en alguna de
+-- las tres fuentes canonizadas, sin preguntar si este script iba a cambiar ese
+-- ref. Era un SEGUNDO oráculo, aproximado y distinto del mapa exacto que se
+-- acaba de calcular aquí arriba: medido en local el 2026-08-28 (SOLO SELECT)
+-- contaba **67** pares cuando el mapa de G3+G6 remapea **0** refs. El
+-- procedimiento habría parado sin motivo — y el mensaje mandaba cargar una
+-- cohorte nueva, así que podía quedar bloqueado para siempre.
+--
+-- Quien sabe qué refs cambian es ESTE script, y ya lo tiene en `g3_map`. Así
+-- que lo declara en su informe y el Paso 4b se limita a exigir cero. Es el
+-- MISMO filtro que `jobhunt_core.shadow.canonical_refs._require_no_frozen_
+-- affected` aplica sobre su `canon_map`: cohortes AFECTADAS, no cohortes
+-- selladas.
+--
+-- Si el esquema `jobhunt` no existe (despliegue sin Fase B) no hay cohortes que
+-- enclavar y la cifra es 0 — declarada igualmente, porque el cutover PARA si el
+-- concepto falta.
+-- ---------------------------------------------------------------------
+CREATE TEMP TABLE g3_enclave_report (concepto text, filas bigint) ON COMMIT DROP;
+
+DO $$
+DECLARE
+    n_enclave bigint;
+BEGIN
+    IF to_regclass('jobhunt.labeled_dedup_pairs') IS NULL
+       OR to_regclass('jobhunt.labeled_dedup_cohorts') IS NULL THEN
+        INSERT INTO g3_enclave_report VALUES
+            ('enclavamiento: refs de cohortes SELLADAS que ESTE script remapea', 0),
+            ('  ... (esquema jobhunt ausente: no hay cohortes que enclavar)', 0);
+        RETURN;
+    END IF;
+
+    SELECT count(*) INTO n_enclave
+    FROM jobhunt.labeled_dedup_pairs p
+    JOIN jobhunt.labeled_dedup_cohorts c
+      ON c.source = p.source AND c.frozen_at IS NOT NULL
+    WHERE EXISTS (
+        SELECT 1 FROM g3_map m
+        WHERE m.old_hash IN (p.job_ref_a, p.job_ref_b));
+
+    INSERT INTO g3_enclave_report VALUES
+        ('enclavamiento: refs de cohortes SELLADAS que ESTE script remapea', n_enclave);
+END
+$$;
+
+-- ---------------------------------------------------------------------
 -- 3. Guarda: el hash canónico no puede chocar con una fila AJENA al mapa
 --    (otra fuente, u otra fila de la misma fuente que no entró en el mapa).
 --    Si ocurre, se aborta: hay que revisarlo a mano, no adivinar.
@@ -536,7 +585,9 @@ WHERE j.source = 'irishjobs'
 UNION ALL
 SELECT 'irishjobs tras el script', count(*) FROM jobs WHERE source = 'irishjobs'
 UNION ALL
-SELECT concepto, filas FROM g3_shadow_report;
+SELECT concepto, filas FROM g3_shadow_report
+UNION ALL
+SELECT concepto, filas FROM g3_enclave_report;
 
 -- ---------------------------------------------------------------------
 -- CAMBIAR A `COMMIT;` PARA APLICARLO DE VERDAD.

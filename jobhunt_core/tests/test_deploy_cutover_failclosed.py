@@ -15,6 +15,10 @@ aquí se rompen a propósito:
         esquivaba la guarda del ensayo (comparaba por SUFIJO) y llegaba al Paso 5 en
         firme. Además el DSN podía ser sintácticamente inocente y apuntar a otra base:
         ahora hay una SONDA que compara la identidad de la base por psql y por el core.
+  P1-2  el enclavamiento 4b era un oráculo APROXIMADO propio del script: paraba por pares
+        que G3/G6 no remapean (67 contra 0 en local). El caso `enclavamiento_falso_rojo`
+        exige que eso ya NO pare; `paso4b_enclavamiento` exige que lo que los ensayos SÍ
+        declaran siga parando.
 
 La guarda de orden (`test_deploy_order.py`) protege la SECUENCIA; no puede demostrar que
 una etapa rota la detenga. Esto sí: ejecuta `backend/scripts/nas_cutover.sh` con dobles de
@@ -140,7 +144,11 @@ if [ -n "$sql" ]; then                      # consultas escalares y manifiestos
     *pg_postmaster_start_time*)             # sonda de destino (R4 P1-1)
       echo "${PG_DB:-swissjobhunter}|16384|2026-08-28 00:00:00.000000" ;;
     *labeled_dedup_cohorts*)
-      [ "$r" = paso4b_enclavamiento ] && { echo 67; exit 0; }; echo 0 ;;
+      # El oráculo APROXIMADO que el script tenía en Bash (R4 P1-2). Ya no se
+      # consulta; sigue aquí para demostrar que un 67 no vuelve a parar nada.
+      if [ "$r" = paso4b_enclavamiento_legacy ] || [ "$r" = enclavamiento_falso_rojo ]; then
+        echo 67
+      else echo 0; fi ;;
     *"j.hash IS NULL"*)
       if [ "$fase" = antes ]; then echo __SLOTS_ANTES__
       elif [ "$r" = paso6_slots ]; then echo 999
@@ -176,6 +184,8 @@ fi
 
 senal=0; [ "$r" = paso4b_senal ] && senal=2
 clones=3; [ "$r" = paso4c_informe ] && [ "$modo" = firme ] && clones=4
+# El enclavamiento lo DECLARA el propio ensayo desde su tabla de supervivientes (R4 P1-2).
+enclave=0; [ "$r" = paso4b_enclavamiento ] && enclave=1
 cat <<EOF
 BEGIN
 reescritas|12
@@ -185,6 +195,9 @@ match_results descartados por la fusion|$senal
 sombra: slots reapuntados al hash canonico|9
 sombra: slots de clones (los cierra el op=D del PASO 6)|4
 EOF
+[ "$r" != enclavamiento_sin_concepto ] &&
+  printf 'enclavamiento: refs de cohortes SELLADAS que ESTE script remapea|%s\n' "$enclave"
+
 exit 0
 """
 
@@ -339,7 +352,8 @@ def test_la_copia_de_seguridad_queda_verificada_y_con_nombre_definitivo(tmp_path
         "sonda_destino",         # el core apunta a OTRA base que psql (R4 P1-1)
         "paso4a_primera",
         "paso4a_segunda",        # preflight de LAS DOS antes de confirmar la primera
-        "paso4b_enclavamiento",  # cohortes SELLADAS afectadas
+        "paso4b_enclavamiento",  # el ensayo DECLARA refs de cohortes selladas
+        "enclavamiento_sin_concepto",  # y si no lo declara, tampoco se sigue
         "paso4b_senal",          # descartaría match_results con señal del usuario
         "paso4c_primera",
         "paso4c_segunda",        # EL caso irreparable: la primera ya confirmada
@@ -365,6 +379,32 @@ def test_la_segunda_copia_abortada_no_deja_pasar_al_paso_5(tmp_path):
     assert p.returncode != 0
     assert "Paso 5" not in p.stdout, p.stdout
     assert "RESTAURA el volcado del Paso 2" in p.stdout + p.stderr
+
+
+# --------------------------------------------------------------------------
+# R4 P1-2 — el enclavamiento no puede parar por pares que G3/G6 no remapean
+# --------------------------------------------------------------------------
+def test_el_enclavamiento_no_para_por_pares_que_los_scripts_no_remapean(tmp_path):
+    """El oráculo aproximado contaba 67 pares en local mientras los mapas de G3/G6
+    remapeaban 0: el procedimiento paraba sin motivo y el remedio que sugería (cargar una
+    cohorte nueva) podía dejarlo bloqueado para siempre. Hoy la cifra la declara cada
+    ensayo desde su PROPIA tabla de supervivientes, y un 67 en la consulta vieja no para
+    nada."""
+    p = _ejecutar(tmp_path, "cutover", "enclavamiento_falso_rojo")
+    assert p.returncode == 0, (
+        "el enclavamiento sigue parando por pares que los scripts no remapean:\n"
+        + p.stdout + p.stderr
+    )
+    assert "declara 0 refs de cohortes SELLADAS" in p.stdout, p.stdout
+
+
+def test_el_enclavamiento_para_por_lo_que_el_ensayo_si_declara(tmp_path):
+    """El lado opuesto: si un ensayo declara que SÍ remapearía un ref congelado, no hay
+    Paso 4c. Es el enclavamiento sin marcha atrás que `core0025` hace irreparable."""
+    p = _ejecutar(tmp_path, "cutover", "paso4b_enclavamiento")
+    assert p.returncode != 0
+    assert "cohorte NUEVA" in p.stdout + p.stderr
+    assert "Paso 4c" not in p.stdout, p.stdout
 
 
 # --------------------------------------------------------------------------
