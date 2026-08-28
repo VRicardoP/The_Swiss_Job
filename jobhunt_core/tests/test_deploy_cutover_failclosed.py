@@ -21,6 +21,9 @@ aquí se rompen a propósito:
         declaran siga parando.
   P1-3  las cuatro invariantes eran cantidades: `paso6_identidad_*` mueve la identidad sin
         mover ni una cifra, que es exactamente lo que el auditor reprodujo.
+  P1-4  la copia era SQL plano y la restauración documentada devolvía 0 dejando una mezcla:
+        aquí la copia tiene que ser un archivo que `pg_restore` lea, y `restaurar` es un
+        subcomando con verificación contra el manifiesto pre-corte.
 
 La guarda de orden (`test_deploy_order.py`) protege la SECUENCIA; no puede demostrar que
 una etapa rota la detenga. Esto sí: ejecuta `backend/scripts/nas_cutover.sh` con dobles de
@@ -28,8 +31,8 @@ una etapa rota la detenga. Esto sí: ejecuta `backend/scripts/nas_cutover.sh` co
 runbook, que invoca `psql` a través de `docker exec`), inyecta un fallo por etapa y exige
 salida no cero. Los caminos felices salen 0: sin eso, «todo rojo» no demostraría nada.
 
-`gzip` NO se dobla —es el real— así que `gzip -t` se ejercita en el camino feliz; lo que
-se inyecta del Paso 2 es el fallo de `pg_dump` y la ausencia de cada esquema en el volcado.
+`sha256sum` NO se dobla —es el real, dentro del doble de `docker exec`— así que el sello
+de la copia y su comprobación en `restaurar` se ejercitan de verdad.
 """
 
 import json
@@ -65,7 +68,7 @@ IDENTIDAD="${PG_DB:-swissjobhunter}|16384|2026-08-28 00:00:00.000000"
 case "$1" in
   stop) : >"$d/parados"; exit 0 ;;
   ps)
-    if [ ! -f "$d/parados" ] || [ "$r" = paso1 ]; then
+    if [ ! -f "$d/parados" ] || [ "$r" = paso1 ] || [ "$r" = restaurar_escritor_vivo ]; then
       vivos="swissjob-backend swissjob-worker swissjob-core-api swissjob-core-worker swissjob-core-capture"
     elif [ -f "$d/recreado" ]; then
       vivos="swissjob-backend swissjob-worker swissjob-core-api swissjob-core-worker swissjob-core-capture"
@@ -89,9 +92,30 @@ case "$1" in
     case "$1" in
       pg_dump)
         [ "$r" = paso2_pg_dump ] && { echo "pg_dump: error: connection to server failed" >&2; exit 1; }
-        [ "$r" != paso2_sin_public ]  && echo "CREATE TABLE public.jobs ();"
-        [ "$r" != paso2_sin_jobhunt ] && echo "CREATE TABLE jobhunt.sources ();"
+        printf 'PGDMP-SIMULADO-%s\n' "${PG_DB:-swissjobhunter}"
         exit 0 ;;
+      pg_restore)
+        if [ "${2:-}" = "-l" ]; then          # índice del archivo
+          cat >/dev/null
+          [ "$r" = paso2_toc ] && { echo "pg_restore: error: could not read from input file" >&2; exit 1; }
+          [ "$r" = restaurar_toc ] && { echo "pg_restore: error: could not read from input file" >&2; exit 1; }
+          [ "$r" != paso2_sin_public ]  && echo "216; 1259 51066562 TABLE public jobs swissjob"
+          [ "$r" != paso2_sin_jobhunt ] && echo "217; 1259 51066567 TABLE jobhunt sources swissjob"
+          exit 0
+        fi
+        cat >/dev/null                        # la restauración de verdad
+        [ "$r" = restaurar_pgrestore ] && { echo "pg_restore: error: relation does not exist" >&2; exit 1; }
+        # La base vuelve al estado ANTES: es lo que el doble de psql lee de `$d/firme`.
+        [ "$r" = restaurar_verificacion ] || rm -f "$d/firme"
+        exit 0 ;;
+      sha256sum)
+        # El REAL: el sello de la copia y su comprobación se ejercitan de verdad.
+        if [ "$r" = restaurar_sha ]; then
+          cat >/dev/null
+          echo "0000000000000000000000000000000000000000000000000000000000000000  -"
+          exit 0
+        fi
+        exec sha256sum ;;
       psql) shift; exec psql "$@" ;;
       python)
         # El smoke: el programa embebido en el script se ejecuta DE VERDAD contra el
@@ -268,7 +292,9 @@ def _montar_nas(raiz: Path) -> dict[str, str]:
     }
 
 
-def _ejecutar(raiz: Path, subcomando: str, romper: str | None) -> subprocess.CompletedProcess:
+def _ejecutar(
+    raiz: Path, subcomando: str, romper: str | None, *extra: str
+) -> subprocess.CompletedProcess:
     assert _SCRIPT.is_file(), (
         f"{_SCRIPT} no está montado: esta guarda NO puede saltarse. Ejecuta la suite con "
         "el perfil de dev (docker-compose.yml + docker-compose.dev.yml)."
@@ -283,7 +309,7 @@ def _ejecutar(raiz: Path, subcomando: str, romper: str | None) -> subprocess.Com
     else:
         entorno.pop("ROMPER", None)
     return subprocess.run(
-        ["bash", str(_SCRIPT), subcomando],
+        ["bash", str(_SCRIPT), subcomando, *extra],
         env=entorno, capture_output=True, text=True, timeout=120,
     )
 
@@ -358,13 +384,62 @@ def test_el_camino_feliz_del_smoke_sale_cero(tmp_path, sonda):
     assert "smoke OK" in p.stdout
 
 
-def test_la_copia_de_seguridad_queda_verificada_y_con_nombre_definitivo(tmp_path):
-    """El `.gz` solo gana su nombre final tras `gzip -t` y los dos esquemas."""
+# --------------------------------------------------------------------------
+# P1-4 — la copia tiene que ser RESTAURABLE, y la restauración, todo o nada
+# --------------------------------------------------------------------------
+def test_la_copia_es_un_archivo_que_pg_restore_lee_y_queda_sellada(tmp_path):
+    """R4 P1-4: `.sql.gz` + `psql <` devolvía 0 dejando una MEZCLA pre/post. La copia es
+    ahora un archivo `-Fc`, verificado con el mismo `pg_restore` que la restaurará, con
+    sha256 y manifiesto pre-corte al lado."""
     assert _ejecutar(tmp_path, "cutover", None).returncode == 0
-    copias = sorted((tmp_path / "backups").glob("pre_canonizacion_*.sql.gz"))
-    assert len(copias) == 1, copias
+    copias = sorted((tmp_path / "backups").glob("pre_canonizacion_*.dump"))
+    assert len(copias) == 1, list((tmp_path / "backups").iterdir())
     assert not list((tmp_path / "backups").glob("*.parcial"))
-    subprocess.run(["gzip", "-t", str(copias[0])], check=True)
+    assert not list((tmp_path / "backups").glob("*.sql.gz")), "sigue siendo SQL plano"
+    manifiesto = (copias[0].parent / (copias[0].name + ".manifiesto")).read_text()
+    for clave in ("DUMP_SHA256=", "DUMP_TABLAS_PUBLIC=", "DUMP_TABLAS_JOBHUNT=",
+                  "DUMP_PG_DB=", "MEDIDA_JOBS=", "MEDIDA_PARES=", "MEDIDA_JUICIOS="):
+        assert clave in manifiesto, manifiesto
+    # Y las identidades pre-corte viajan con la copia, no solo en /tmp.
+    assert (copias[0].parent / (copias[0].name + ".pares")).is_file()
+    assert (copias[0].parent / (copias[0].name + ".juicios")).is_file()
+
+
+def test_la_restauracion_verifica_sello_manifiesto_e_identidades(tmp_path):
+    """La ÚNICA salida de emergencia del procedimiento: tiene que existir, parar a los
+    CINCO escritores y comprobar que la vuelta atrás VOLVIÓ."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    p = _ejecutar(tmp_path, "restaurar", None)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "restauración VERIFICADA" in p.stdout, p.stdout
+    assert "escritores parados" in p.stdout, p.stdout
+
+
+@pytest.mark.parametrize(
+    "etapa",
+    [
+        "restaurar_sha",            # el sello no cuadra con la copia
+        "restaurar_toc",            # pg_restore no puede leer el archivo
+        "restaurar_pgrestore",      # la restauración aborta (single-transaction)
+        "restaurar_verificacion",   # termina pero el estado NO es el del manifiesto
+        "restaurar_escritor_vivo",  # restaurar con escritores vivos deja mezcla
+    ],
+)
+def test_la_restauracion_falla_cerrada(tmp_path, etapa):
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    p = _ejecutar(tmp_path, "restaurar", etapa)
+    assert p.returncode != 0, f"la restauración aceptó {etapa}:\n{p.stdout}"
+    assert "PARAR" in p.stdout + p.stderr
+
+
+def test_restaurar_sin_manifiesto_no_toca_nada(tmp_path):
+    """Sin manifiesto pre-corte no se puede demostrar que la vuelta atrás volvió."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    copia = next((tmp_path / "backups").glob("pre_canonizacion_*.dump"))
+    (copia.parent / (copia.name + ".manifiesto")).unlink()
+    p = _ejecutar(tmp_path, "restaurar", None)
+    assert p.returncode != 0
+    assert "manifiesto" in (p.stdout + p.stderr)
 
 
 # --------------------------------------------------------------------------
@@ -374,7 +449,8 @@ def test_la_copia_de_seguridad_queda_verificada_y_con_nombre_definitivo(tmp_path
     "etapa",
     [
         "paso1",                 # los cinco escritores siguen vivos tras el `stop`
-        "paso2_pg_dump",         # pg_dump falla y el .gz saldría válido y vacío
+        "paso2_pg_dump",         # pg_dump falla y el archivo saldría vacío
+        "paso2_toc",             # el archivo no se puede leer entero: no hay copia
         "paso2_sin_public",
         "paso2_sin_jobhunt",     # el rol no lee `jobhunt`: la copia no sirve
         "paso3_load",
@@ -413,7 +489,7 @@ def test_la_segunda_copia_abortada_no_deja_pasar_al_paso_5(tmp_path):
     p = _ejecutar(tmp_path, "cutover", "paso4c_segunda")
     assert p.returncode != 0
     assert "Paso 5" not in p.stdout, p.stdout
-    assert "RESTAURA el volcado del Paso 2" in p.stdout + p.stderr
+    assert "restaurar" in p.stdout + p.stderr
 
 
 # --------------------------------------------------------------------------

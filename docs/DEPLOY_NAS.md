@@ -673,11 +673,13 @@ cd /share/Public/swissjob/scripts
 ./nas_cutover.sh cutover     # Pasos 1–6. Para en la primera desviación.
 # → Container Station UI → Applications → swissjob → ⋮ → Recreate (Paso 7)
 ./nas_cutover.sh smoke       # Paso 7. Solo entonces se abre a los usuarios.
+
+./nas_cutover.sh restaurar   # marcha atrás verificada (ver «Marcha atrás» más abajo)
 ```
 
 **Ensáyala antes sobre una restauración desechable del backup del NAS**, no sobre la
-base viva: restaura el `.sql.gz` de §7 en una base nueva (`swissjob_ensayo`) y recorre
-los pasos 4, 5 y 6 contra ella:
+base viva: restaura la copia de §7 en una base nueva (`swissjob_ensayo`) y recorre los
+pasos 4, 5 y 6 contra ella:
 
 ```bash
 ENSAYO=1 PG_DB=swissjob_ensayo \
@@ -736,7 +738,7 @@ docker stop swissjob-backend swissjob-worker \
 presencia, no la palabra `Up`: un contenedor `Restarting` tampoco está parado y también
 escribiría. Si alguno sigue vivo, el script sale 1 y no hay Paso 2.
 
-#### Paso 2 — Copia de seguridad, con `public` **y** `jobhunt`
+#### Paso 2 — Copia de seguridad RESTAURABLE, con `public` **y** `jobhunt`
 
 El dump por defecto de §7 se hace con el rol `swissjob`; si ese rol no puede leer el
 esquema `jobhunt`, el backup no sirve para esta maniobra y hay que repetirlo con la
@@ -744,15 +746,28 @@ credencial de `/share/Public/swissjob/.env.core.admin.prod`.
 
 ```bash
 docker exec swissjob-postgres \
-  pg_dump -U swissjob -n public -n jobhunt swissjobhunter > "$crudo"
-gzip -c "$crudo" > "$parcial" && gzip -t "$parcial"
+  pg_dump -U swissjob -Fc -Z 6 -n public -n jobhunt swissjobhunter > "$parcial"
+docker exec -i swissjob-postgres pg_restore -l < "$parcial"   # verificación
+docker exec -i swissjob-postgres sha256sum   < "$parcial"     # sello
 ```
 
+**Formato `custom` (`-Fc`), no SQL plano** (auditoría externa R4 P1-4). El `.sql.gz`
+anterior *parecía* una copia y no lo era: la recuperación que documentaba §7
+(`gunzip … | psql`) devuelve **0** sobre una base poblada, escupe `ERROR: … already
+exists` y deja datos de los DOS estados **mezclados** — reproducido el 2026-08-28 en una
+base desechable. El `-Fc` es el único formato que `pg_restore --clean --if-exists
+--single-transaction` puede aplicar **todo o nada**.
+
 **Aserción** — el volcado va a un fichero TEMPORAL y solo gana su nombre definitivo
-(`pre_canonizacion_<sello>.sql.gz`) si `pg_dump` devolvió 0, el `.gz` pasa `gzip -t` y
-contiene tablas de los DOS esquemas. Sin `-t` en `docker exec` (un TTY reescribe los
-saltos de línea del volcado) y **sin tubería**: `pg_dump | gzip` devuelve el estado de
-`gzip` y aceptaba un `.gz` válido y vacío.
+(`pre_canonizacion_<sello>.dump`) si `pg_dump` devolvió 0, si **`pg_restore -l` lee el
+archivo entero** (la verificación la hace la herramienta que va a restaurarlo: `gzip -t`
+solo validaba el envoltorio) y si su índice trae tablas de los DOS esquemas. Sin `-t` en
+`docker exec` y **sin tubería**: `pg_dump | gzip` devolvía el estado de `gzip`.
+
+Junto a la copia quedan además `…​.dump.manifiesto` (sha256, número de tablas por esquema,
+base de origen y las cinco cifras de la medición ANTES) y `…​.dump.pares` / `…​.dump.juicios`
+(las identidades que resolvían antes del corte). Son lo que `restaurar` compara para
+poder afirmar que la vuelta atrás **volvió**, y viven junto al backup y no en `/tmp`.
 
 #### Paso 3 — Cargar la imagen nueva SIN arrancar servicios
 
@@ -826,7 +841,8 @@ sed 's/^ROLLBACK;$/COMMIT;/' "$f" > "$f.commit.sql"   # exactamente un COMMIT;
 **Aserción** — un solo `COMMIT;` en la copia, estado de salida de `psql` comprobado en
 cada una, y las cifras del informe en firme **idénticas** a las del ensayo de 4a
 (comparación automática de los informes, no un vistazo). Si la SEGUNDA falla, el
-mensaje ordena RESTAURAR el volcado del Paso 2: la primera ya está confirmada. Y también se comparan las IDENTIDADES que cada script
+mensaje ordena RESTAURAR la copia del Paso 2 (`./nas_cutover.sh restaurar`): la
+primera ya está confirmada. Y también se comparan las IDENTIDADES que cada script
 declara (`IDENT|desaparece|…`, `IDENT|canonico|…`): si el conjunto de hashes cambia entre
 el ensayo y la aplicación, el Paso 6 estaría verificando otra cosa.
 
@@ -879,8 +895,38 @@ comparación sea determinista, y una copia viaja junto al backup: son también l
 
 Las consultas están en el script y verificadas ejecutándolas (SOLO `SELECT`) contra la
 base local el 2026-08-28. **Sus resultados en el NAS serán otros**: los mide allí.
-Cualquier desviación ⇒ el script PARA y el remedio es **restaurar el dump del
-Paso 2** antes de arrancar nada.
+Cualquier desviación ⇒ el script PARA y el remedio es **restaurar la copia del Paso 2**
+(`./nas_cutover.sh restaurar`) antes de arrancar nada.
+
+#### Marcha atrás — `./nas_cutover.sh restaurar`
+
+Es la ÚNICA salida de emergencia del procedimiento, así que tiene que funcionar. La que
+documentaba §7 no lo hacía (R4 P1-4). Esta:
+
+```bash
+./nas_cutover.sh restaurar                       # usa el BACKUP del estado.env del cutover
+./nas_cutover.sh restaurar /ruta/pre_…​.dump      # o el que se le pase
+```
+
+1. exige el `…​.dump.manifiesto` y que la copia sea de ESTA base (`DUMP_PG_DB`);
+2. recalcula el **sha256** y lo compara con el sello, y vuelve a leer el índice con
+   `pg_restore -l` (número de tablas por esquema incluido);
+3. **para los CINCO escritores** y comprueba que están parados (restaurar con uno vivo
+   deja el estado a medias en cuanto escriba);
+4. `pg_restore --clean --if-exists --exit-on-error --single-transaction`: o entra entera
+   o no entra nada;
+5. y **después** vuelve a medir y compara con el manifiesto pre-corte: las cinco cifras
+   y, `cmp` a `cmp`, los manifiestos de pares y juicios. Si algo no cuadra, sale 1.
+
+Los escritores quedan PARADOS a propósito: se arrancan con el Recreate de Container
+Station, no aquí.
+
+Ensayado de punta a punta el 2026-08-28 contra un PostgreSQL **desechable** (contenedor
+`postgres:16` efímero, jamás la base viva): huella del contenido antes del corte
+`049209e9…`, cutover completo, fallo simulado después de la canonización (borrado de
+`labeled_judgments`, corrupción de dos filas y una fila basura nueva) y `restaurar` →
+huella `049209e9…` otra vez, **idéntica**. Y falla cerrada con la copia alterada un byte
+(`sha256 … ≠ manifiesto …`) y con un escritor vivo.
 
 #### Paso 7 — Recrear y smoke (y solo ahora)
 
@@ -940,34 +986,77 @@ en `backend`, `core-migrate` en el core). **Tiempo esperado**: <60 s gracias a
 
 ## 7. Backups
 
+> **Formato `custom` (`-Fc`), no SQL plano, y sin tuberías.** Auditoría externa R4 P1-4:
+> la receta anterior (`pg_dump | gzip` y `gunzip | psql`) tenía los dos defectos que ya
+> se corrigieron en el Paso 2 del cutover. La tubería devuelve el estado del ÚLTIMO
+> comando, así que un `pg_dump` roto dejaba un `.gz` válido y vacío; y la restauración
+> sobre una base poblada devuelve **0**, escupe `ERROR: … already exists` y deja datos de
+> los DOS estados **mezclados** — reproducido el 2026-08-28 en una base desechable
+> (`RESTORE_PIPELINE_EXIT=0`, 8 errores, `public 1,2` y `jobhunt 10,20` conviviendo).
+
 ### Backup manual
 
 ```bash
 mkdir -p /share/Public/backups/swissjob
+f=/share/Public/backups/swissjob/db-$(date +%Y%m%d-%H%M).dump
 
-docker exec -t swissjob-postgres \
-  pg_dump -U swissjob swissjobhunter \
-  | gzip > /share/Public/backups/swissjob/db-$(date +%Y%m%d-%H%M).sql.gz
+# Sin `-t` (un TTY reescribe el volcado) y SIN tubería: el estado es el de pg_dump.
+docker exec swissjob-postgres \
+  pg_dump -U swissjob -Fc -Z 6 -n public -n jobhunt swissjobhunter > "$f.parcial" || {
+    rm -f "$f.parcial"; echo "pg_dump FALLÓ: no hay copia" >&2; exit 1; }
+
+# La verificación la hace la herramienta que va a RESTAURARLA.
+docker exec -i swissjob-postgres pg_restore -l < "$f.parcial" > "$f.toc" || {
+    rm -f "$f.parcial" "$f.toc"; echo "copia corrupta" >&2; exit 1; }
+
+mv "$f.parcial" "$f"                                       # el nombre solo lo gana lo verificado
+docker exec -i swissjob-postgres sha256sum < "$f" | awk '{print $1}' > "$f.sha256"
 ```
+
+`-n public -n jobhunt`: el esquema del core va en la copia. Si el rol `swissjob` no puede
+leer `jobhunt`, el índice no traerá sus tablas y hay que repetirla con la credencial de
+`.env.core.admin.prod`.
 
 ### Backup automático (semanal)
 
-QNAP Control Panel → Tareas Programadas → Crear "User defined script" semanal
-con el comando de arriba. Conserva las últimas N copias con:
+QNAP Control Panel → Tareas Programadas → Crear "User defined script" semanal con el
+bloque de arriba **dentro de un script con `set -euo pipefail`** (si no, el `||` no basta:
+una tarea programada que ignora el estado de salida es una copia que nadie sabe que no
+existe). Conserva las últimas N copias con:
 
 ```bash
-find /share/Public/backups/swissjob -name 'db-*.sql.gz' -mtime +90 -delete
+find /share/Public/backups/swissjob -name 'db-*.dump*' -mtime +90 -delete
 ```
 
 ### Restore
 
 ```bash
-gunzip < /share/Public/backups/swissjob/db-YYYYMMDD-HHMM.sql.gz \
-  | docker exec -i swissjob-postgres psql -U swissjob swissjobhunter
+# 1. PARAR LOS CINCO ESCRITORES (no dos): backend y worker escriben, pero core-api,
+#    core-worker y core-capture también, y el capturador además consume el WAL.
+docker stop swissjob-backend swissjob-worker \
+            swissjob-core-api swissjob-core-worker swissjob-core-capture
+
+# 2. Comprobar el sello y que el archivo se lee entero.
+f=/share/Public/backups/swissjob/db-YYYYMMDD-HHMM.dump
+test "$(docker exec -i swissjob-postgres sha256sum < "$f" | awk '{print $1}')" \
+     = "$(cat "$f.sha256")" || { echo "la copia NO cuadra con su sello" >&2; exit 1; }
+docker exec -i swissjob-postgres pg_restore -l < "$f" > /dev/null || exit 1
+
+# 3. TODO O NADA. `--single-transaction` implica `--exit-on-error`; `--clean --if-exists`
+#    sustituye los objetos del volcado en vez de apilarse sobre ellos.
+docker exec -i swissjob-postgres pg_restore -U swissjob -d swissjobhunter \
+  --clean --if-exists --exit-on-error --single-transaction < "$f"
+
+# 4. Arrancar de nuevo (Container Station UI → Recreate, o docker start).
 ```
 
-⚠ Antes de restaurar es recomendable hacer un backup del estado actual y
-parar el backend (`docker stop swissjob-backend swissjob-worker`).
+⚠ `--clean` sustituye los objetos que están EN la copia; los creados **después** del
+volcado (por ejemplo tablas de una migración posterior) sobreviven. Si lo que se
+restaura es un estado anterior a una migración, hay que recrear la base entera.
+
+⚠ Durante el cutover no se teclea nada de esto: la marcha atrás es
+`./nas_cutover.sh restaurar` (§5.3), que hace los cuatro pasos y **además** verifica
+contra el manifiesto pre-corte que el estado restaurado es el de antes.
 
 ---
 

@@ -14,7 +14,7 @@
 # Aquí cada postcondición es una condición de EJECUCIÓN: si no cuadra, se sale
 # distinto de cero y no hay paso siguiente.
 #
-# LO QUE CORRIGIÓ LA AUDITORÍA R4 (P1-1 a P1-3):
+# LO QUE CORRIGIÓ LA AUDITORÍA R4 (P1-1 a P1-4):
 #   P1-1  el aislamiento del ENSAYO comparaba el DSN por SUFIJO, y una URL con
 #         `?query`, `#fragmento` o percent-encoding lo esquivaba y llegaba al
 #         Paso 5 EN FIRME sobre la base viva. Ahora hay UNA forma de DSN
@@ -31,13 +31,18 @@
 #         positivo conocido dejaba de resolver. Ahora se compara por IDENTIDAD
 #         (manifiestos ordenados de `pair_id` y `set_id|job_ref`, y los hashes
 #         exactos que declaran los dry-runs).
+#   P1-4  la copia era SQL plano y el restore documentado (`psql < volcado`)
+#         devolvía 0 dejando una MEZCLA pre/post. Ahora la copia es `-Fc`,
+#         verificada con el MISMO `pg_restore` que la restaurará, sellada con
+#         sha256 + manifiesto, y hay un subcomando `restaurar` todo-o-nada.
 #
 # CIFRAS: este script NO lleva ninguna constante del corpus. Mide el estado
 # ANTES, lee las cifras de los informes en seco y aserta el estado DESPUÉS
 # contra lo que él mismo midió. Las del NAS serán otras que las locales.
 #
-#   Uso:  ./nas_cutover.sh cutover   # Pasos 1–6 (el 4 en firme es irreversible)
-#         ./nas_cutover.sh smoke     # Paso 7, DESPUÉS del Recreate de la UI
+#   Uso:  ./nas_cutover.sh cutover           # Pasos 1–6 (el 4 en firme es irreversible)
+#         ./nas_cutover.sh smoke             # Paso 7, DESPUÉS del Recreate de la UI
+#         ./nas_cutover.sh restaurar [dump]  # marcha atrás: todo-o-nada, verificada
 #
 set -Eeuo pipefail
 
@@ -254,13 +259,8 @@ sonda_destino() {
 # --------------------------------------------------------------------------
 # Paso 1 — Detener todo escritor y proyector
 # --------------------------------------------------------------------------
-paso1_parar() {
-  titulo "Paso 1 — detener escritores y proyector"
+parar_escritores() {
   [ -n "${ESCRITORES// /}" ] || morir "ESCRITORES vacío: la aserción sería trivialmente cierta"
-  if [ "$ENSAYO" = 1 ]; then
-    printf '⚠ ENSAYO contra %s: no se para nada y NO es la maniobra real.\n' "$PG_DB"
-    return 0
-  fi
   # `docker stop` basta: `restart: unless-stopped` NO rearranca lo parado a mano.
   # shellcheck disable=SC2086
   "$DOCKER" stop $ESCRITORES
@@ -272,48 +272,99 @@ paso1_parar() {
   vivos=$("$DOCKER" ps --format '{{.Names}}')
   for vivo in $ESCRITORES; do
     if printf '%s\n' "$vivos" | grep -qx -- "$vivo"; then
-      morir "$vivo sigue corriendo: la canonización NO puede empezar con escritores vivos"
+      morir "$vivo sigue corriendo: no se puede escribir en la base con escritores vivos"
     fi
   done
   printf 'escritores parados: %s\n' "$ESCRITORES"
 }
 
+paso1_parar() {
+  titulo "Paso 1 — detener escritores y proyector"
+  if [ "$ENSAYO" = 1 ]; then
+    printf '⚠ ENSAYO contra %s: no se para nada y NO es la maniobra real.\n' "$PG_DB"
+    return 0
+  fi
+  parar_escritores
+}
+
 # --------------------------------------------------------------------------
-# Paso 2 — Copia de seguridad, con `public` Y `jobhunt`
+# Paso 2 — Copia de seguridad RESTAURABLE, con `public` Y `jobhunt`
+#
+# Auditoría R4 P1-4. La copia era SQL plano y §7 la restauraba canalizándola a
+# `psql` sobre la base poblada: la tubería devolvía 0, escupía «ya existe» y
+# dejaba datos de los DOS estados mezclados. Una copia que no restaura no es una
+# copia, y el Paso 4c es irreversible.
+#
+# Ahora: formato `custom` (-Fc) —el único que `pg_restore --clean --if-exists
+# --single-transaction` puede aplicar todo-o-nada—, verificado con el MISMO
+# `pg_restore` que lo restaurará, sellado con sha256 y con un manifiesto que el
+# subcomando `restaurar` usa para comprobar que la vuelta atrás VOLVIÓ.
 # --------------------------------------------------------------------------
 paso2_backup() {
-  titulo "Paso 2 — copia de seguridad (public + jobhunt)"
+  titulo "Paso 2 — copia de seguridad restaurable (public + jobhunt)"
   mkdir -p "$BACKUP_DIR"
-  local sello crudo parcial final cuentas n_public n_jobhunt
+  local sello parcial final toc n_public n_jobhunt suma
   sello=$(date +%Y%m%d-%H%M%S)
-  # Los dos temporales van al MISMO almacén que la copia final: `/tmp` en el NAS es un
+  # El temporal va al MISMO almacén que la copia final: `/tmp` en el NAS es un
   # ramdisk pequeño y un volcado del corpus no cabe.
-  crudo="$BACKUP_DIR/.pre_canonizacion_$sello.sql.parcial"
-  parcial="$BACKUP_DIR/.pre_canonizacion_$sello.sql.gz.parcial"
-  final="$BACKUP_DIR/pre_canonizacion_$sello.sql.gz"
+  parcial="$BACKUP_DIR/.pre_canonizacion_$sello.dump.parcial"
+  final="$BACKUP_DIR/pre_canonizacion_$sello.dump"
+  toc="$BACKUP_DIR/.pre_canonizacion_$sello.toc"
 
-  # Sin `-t`: un TTY reescribe los saltos de línea del volcado. Y sin tubería,
-  # para no perder el estado de pg_dump.
+  # Sin `-t`: un TTY reescribe el volcado. Y sin tubería, para no perder el
+  # estado de pg_dump.
   "$DOCKER" exec "$PG_CONTAINER" \
-    pg_dump -U "$PG_USER" -n public -n jobhunt "$PG_DB" >"$crudo" ||
+    pg_dump -U "$PG_USER" -Fc -Z 6 -n public -n jobhunt "$PG_DB" >"$parcial" ||
     morir "pg_dump falló: no hay copia de seguridad y el Paso 4 es irreversible"
-  gzip -c "$crudo" >"$parcial" || morir "gzip falló sobre $crudo"
-  rm -f "$crudo"
-  gzip -t "$parcial" || morir "el .gz no pasa gzip -t: copia corrupta"
 
-  # Una sola pasada: descomprimir dos veces un volcado del corpus cuesta minutos.
-  cuentas=$(gzip -dc "$parcial" |
-    awk '/CREATE TABLE public\./ {p++} /CREATE TABLE jobhunt\./ {j++} END {print p+0, j+0}')
-  n_public=${cuentas%% *}; n_jobhunt=${cuentas##* }
+  # La verificación se hace con la herramienta que va a RESTAURAR: si el archivo
+  # no se puede leer entero, no hay copia. (`gzip -t` verificaba el envoltorio
+  # de un formato que además no era restaurable de una pieza.)
+  "$DOCKER" exec -i "$PG_CONTAINER" pg_restore -l <"$parcial" >"$toc" ||
+    morir "pg_restore -l no puede leer la copia: está corrupta o truncada"
+  n_public=$(grep -cE '^[0-9]+; [0-9]+ [0-9]+ TABLE public ' "$toc" || true)
+  n_jobhunt=$(grep -cE '^[0-9]+; [0-9]+ [0-9]+ TABLE jobhunt ' "$toc" || true)
   printf 'tablas en el volcado: public=%s jobhunt=%s\n' "$n_public" "$n_jobhunt"
   [ "$n_public" -gt 0 ] || morir "el volcado no trae tablas de public"
   # Si el rol no puede leer `jobhunt`, la copia no sirve para ESTA maniobra:
   # hay que repetirla con la credencial de .env.core.admin.prod.
   [ "$n_jobhunt" -gt 0 ] || morir "el volcado no trae tablas de jobhunt: repítelo con la credencial admin del core"
 
+  # sha256 con el contenedor de Postgres (Debian: `sha256sum` seguro; el NAS
+  # puede no tenerlo) — es el sello que `restaurar` comprueba antes de tocar nada.
+  suma=$("$DOCKER" exec -i "$PG_CONTAINER" sha256sum <"$parcial" | awk '{print $1}')
+  [ -n "$suma" ] || morir "no se pudo calcular el sha256 de la copia"
+
   mv "$parcial" "$final"   # el nombre definitivo solo lo gana un volcado verificado
+  rm -f "$toc"
+  {
+    printf 'DUMP_SHA256=%s\n' "$suma"
+    printf 'DUMP_TABLAS_PUBLIC=%s\n' "$n_public"
+    printf 'DUMP_TABLAS_JOBHUNT=%s\n' "$n_jobhunt"
+    printf 'DUMP_PG_DB=%s\n' "$PG_DB"
+  } >"$final.manifiesto"
   printf 'BACKUP=%s\n' "$final" >>"$ESTADO"
-  printf 'copia verificada: %s\n' "$final"
+  printf 'copia verificada: %s (sha256 %s)\n' "$final" "$suma"
+}
+
+# El manifiesto pre-corte se cierra con la medición ANTES: es contra estas
+# identidades contra lo que `restaurar` comprueba que la vuelta atrás VOLVIÓ.
+sellar_manifiesto() {
+  local final
+  # shellcheck disable=SC1090
+  . "$ESTADO"
+  final=${BACKUP:-}
+  [ -n "$final" ] || morir "no hay BACKUP en $ESTADO: el Paso 2 no dejó copia"
+  {
+    printf 'MEDIDA_SLOTS=%s\n' "$SLOTS_antes"
+    printf 'MEDIDA_JOBS=%s\n' "$JOBS_antes"
+    printf 'MEDIDA_PARES=%s\n' "$PARES_antes"
+    printf 'MEDIDA_JUICIOS=%s\n' "$JUICIOS_antes"
+    printf 'MEDIDA_RESUELVEN=%s\n' "$RESUELVEN_antes"
+  } >>"$final.manifiesto"
+  cp "$WORK_DIR/manifiesto.pares.antes" "$final.pares"
+  cp "$WORK_DIR/manifiesto.juicios.antes" "$final.juicios"
+  printf 'manifiesto pre-corte sellado junto a la copia: %s.manifiesto\n' "$final"
 }
 
 # --------------------------------------------------------------------------
@@ -481,7 +532,7 @@ paso4_copias() {
     [ "$(grep -c '^COMMIT;$' "$WORK_DIR/$base.commit.sql")" -eq 1 ] ||
       morir "$base.commit.sql no tiene exactamente un COMMIT;"
     psql_archivo "$WORK_DIR/$base.commit.sql" "$WORK_DIR/$base.firme.txt" ||
-      morir "$f falló EN FIRME. Si era la segunda copia, la primera ya está confirmada: RESTAURA el volcado del Paso 2 antes de arrancar nada"
+      morir "$f falló EN FIRME. Si era la segunda copia, la primera ya está confirmada: RESTAURA la copia del Paso 2 ($0 restaurar) antes de arrancar nada"
     informe "$WORK_DIR/$base.firme.txt" >"$WORK_DIR/$base.firme.informe"
     cat "$WORK_DIR/$base.firme.informe"
     [ "$(cat "$WORK_DIR/$base.dryrun.informe")" = "$(cat "$WORK_DIR/$base.firme.informe")" ] ||
@@ -530,13 +581,13 @@ paso5_canonical_refs() {
   seco=$(grep -v '"dry_run"' "$WORK_DIR/canonical_refs.dryrun.json")
   firme=$(grep -v '"dry_run"' "$WORK_DIR/canonical_refs.firme.json")
   [ "$seco" = "$firme" ] ||
-    morir "el JSON de canonical_refs en firme no cuadra con el del ensayo: revisa el Paso 1 y RESTAURA el volcado"
+    morir "el JSON de canonical_refs en firme no cuadra con el del ensayo: revisa el Paso 1 y RESTAURA la copia ($0 restaurar)"
 
   # Idempotencia declarada por el runbook: re-ejecutarlo devuelve ceros.
   core_run python -m "$modulo" --dry-run >"$WORK_DIR/canonical_refs.idem.json" ||
     morir "la re-ejecución en seco de canonical_refs falló"
   grep -q '"filas_canonizadas_en_legacy": 0' "$WORK_DIR/canonical_refs.idem.json" ||
-    morir "canonical_refs NO quedó idempotente (queda mapa por canonizar): RESTAURA el volcado del Paso 2"
+    morir "canonical_refs NO quedó idempotente (queda mapa por canonizar): RESTAURA la copia del Paso 2 ($0 restaurar)"
 }
 
 # --------------------------------------------------------------------------
@@ -599,9 +650,9 @@ verificar_identidad_de_vacantes() {
   printf 'identidad de vacantes: %s declaradas a desaparecer (%s siguen) · %s canónicas declaradas (%s faltan)\n' \
     "$n_desaparece" "$viejas" "$n_canonico" "$canonicas"
   [ "$viejas" -eq 0 ] ||
-    morir "(e) IDENTIDAD: $viejas hashes que los dry-runs declararon fusionados siguen en public.jobs. RESTAURA el volcado"
+    morir "(e) IDENTIDAD: $viejas hashes que los dry-runs declararon fusionados siguen en public.jobs. RESTAURA la copia ($0 restaurar)"
   [ "$canonicas" -eq 0 ] ||
-    morir "(f) IDENTIDAD: $canonicas hashes canónicos declarados por los dry-runs NO existen en public.jobs. RESTAURA el volcado"
+    morir "(f) IDENTIDAD: $canonicas hashes canónicos declarados por los dry-runs NO existen en public.jobs. RESTAURA la copia ($0 restaurar)"
 }
 
 paso6_verificar() {
@@ -639,6 +690,74 @@ paso6_verificar() {
   # (e) y (f): los hashes exactos que declararon los dry-runs.
   verificar_identidad_de_vacantes
   printf 'las cuatro invariantes del Paso 6 cuadran, y también las identidades.\n'
+}
+
+# --------------------------------------------------------------------------
+# Marcha atrás — la ÚNICA salida de emergencia, y tiene que funcionar
+#
+# Auditoría R4 P1-4. La restauración documentada (`gunzip | psql`) devolvía 0,
+# escupía «ya existe» y dejaba datos de los dos estados MEZCLADOS. Aquí:
+#   · se paran los CINCO escritores (no dos) y se comprueba que están parados;
+#   · se verifica el sello sha256 y que `pg_restore -l` lee la copia entera;
+#   · `--clean --if-exists --single-transaction`: o vuelve entera, o no vuelve;
+#   · y DESPUÉS se comprueba contra el manifiesto pre-corte que volvió.
+# --------------------------------------------------------------------------
+restaurar() { # [fichero .dump]
+  titulo "RESTAURAR — vuelta al estado previo al corte"
+  local dump=${1:-} suma toc n_public n_jobhunt
+  if [ -z "$dump" ] && [ -f "$ESTADO" ]; then
+    # shellcheck disable=SC1090
+    . "$ESTADO"
+    dump=${BACKUP:-}
+  fi
+  [ -n "$dump" ] || morir "no sé qué restaurar: pasa el .dump, o deja el $ESTADO del cutover"
+  [ -f "$dump" ] || morir "no existe la copia $dump"
+  [ -f "$dump.manifiesto" ] || morir "falta $dump.manifiesto: sin manifiesto pre-corte no se puede comprobar que la vuelta VOLVIÓ"
+  # shellcheck disable=SC1090
+  . "$dump.manifiesto"
+  [ "${DUMP_PG_DB:-}" = "$PG_DB" ] ||
+    morir "el manifiesto dice que la copia es de '${DUMP_PG_DB:-}' y PG_DB es '$PG_DB': no se restaura una base en otra"
+
+  suma=$("$DOCKER" exec -i "$PG_CONTAINER" sha256sum <"$dump" | awk '{print $1}')
+  [ "$suma" = "${DUMP_SHA256:-}" ] ||
+    morir "la copia NO cuadra con su sello: sha256 $suma, manifiesto ${DUMP_SHA256:-}"
+  toc="$WORK_DIR/restaurar.toc"
+  "$DOCKER" exec -i "$PG_CONTAINER" pg_restore -l <"$dump" >"$toc" ||
+    morir "pg_restore -l no puede leer $dump: la copia está corrupta y NO hay marcha atrás por aquí"
+  n_public=$(grep -cE '^[0-9]+; [0-9]+ [0-9]+ TABLE public ' "$toc" || true)
+  n_jobhunt=$(grep -cE '^[0-9]+; [0-9]+ [0-9]+ TABLE jobhunt ' "$toc" || true)
+  [ "$n_public" = "${DUMP_TABLAS_PUBLIC:-}" ] && [ "$n_jobhunt" = "${DUMP_TABLAS_JOBHUNT:-}" ] ||
+    morir "el índice de la copia no cuadra con el manifiesto: public $n_public/${DUMP_TABLAS_PUBLIC:-}, jobhunt $n_jobhunt/${DUMP_TABLAS_JOBHUNT:-}"
+
+  # Restaurar con escritores vivos deja el estado a medias en cuanto uno escriba.
+  parar_escritores
+
+  # `--single-transaction` implica `--exit-on-error`: o entra entera o no entra
+  # nada. `--clean --if-exists` sustituye los objetos del volcado en vez de
+  # apilarse sobre ellos, que era el defecto.
+  "$DOCKER" exec -i "$PG_CONTAINER" pg_restore -U "$PG_USER" -d "$PG_DB" \
+    --clean --if-exists --exit-on-error --single-transaction <"$dump" \
+    >"$WORK_DIR/restaurar.out" 2>"$WORK_DIR/restaurar.err" || {
+      cat "$WORK_DIR/restaurar.err" >&2
+      morir "pg_restore FALLÓ: la transacción no se confirmó y la base sigue como estaba. Revisa $WORK_DIR/restaurar.err"
+    }
+
+  titulo "RESTAURAR — comprobación contra el manifiesto pre-corte"
+  medir restaurado
+  local fallos=""
+  [ "$SLOTS_restaurado" = "${MEDIDA_SLOTS:-}" ] || fallos="$fallos slots($SLOTS_restaurado≠${MEDIDA_SLOTS:-})"
+  [ "$JOBS_restaurado" = "${MEDIDA_JOBS:-}" ] || fallos="$fallos jobs($JOBS_restaurado≠${MEDIDA_JOBS:-})"
+  [ "$PARES_restaurado" = "${MEDIDA_PARES:-}" ] || fallos="$fallos pares($PARES_restaurado≠${MEDIDA_PARES:-})"
+  [ "$JUICIOS_restaurado" = "${MEDIDA_JUICIOS:-}" ] || fallos="$fallos juicios($JUICIOS_restaurado≠${MEDIDA_JUICIOS:-})"
+  [ "$RESUELVEN_restaurado" = "${MEDIDA_RESUELVEN:-}" ] || fallos="$fallos resuelven($RESUELVEN_restaurado≠${MEDIDA_RESUELVEN:-})"
+  [ -z "$fallos" ] ||
+    morir "la restauración terminó pero el estado NO es el del manifiesto pre-corte:$fallos"
+  cmp -s "$dump.pares" "$WORK_DIR/manifiesto.pares.restaurado" ||
+    morir "los pares que resuelven tras restaurar NO son los del manifiesto pre-corte ($dump.pares)"
+  cmp -s "$dump.juicios" "$WORK_DIR/manifiesto.juicios.restaurado" ||
+    morir "los juicios que resuelven tras restaurar NO son los del manifiesto pre-corte ($dump.juicios)"
+  printf '\nrestauración VERIFICADA contra %s.manifiesto: cantidades e identidades coinciden.\n' "$dump"
+  printf 'Los escritores siguen PARADOS a propósito. Arráncalos con el Recreate de Container Station.\n'
 }
 
 # --------------------------------------------------------------------------
@@ -707,6 +826,7 @@ main() {
       paso2_backup
       paso3_imagenes
       medir antes          # la referencia del Paso 6 se MIDE aquí, no se copia
+      sellar_manifiesto    # …y viaja junto a la copia, para poder verificar la vuelta
       sonda_destino        # ANTES de la primera escritura: misma base para psql y para el core
       paso4_copias
       paso5_canonical_refs
@@ -715,7 +835,8 @@ main() {
       printf 'Pasos 1–6 OK. Ahora el Recreate de Container Station y después: %s smoke\n' "$0"
       ;;
     smoke) smoke ;;
-    *) morir "uso: $0 cutover|smoke" ;;
+    restaurar) restaurar "${2:-}" ;;
+    *) morir "uso: $0 cutover|smoke|restaurar [fichero.dump]" ;;
   esac
 }
 
