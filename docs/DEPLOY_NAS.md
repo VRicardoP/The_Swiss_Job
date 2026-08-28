@@ -982,16 +982,21 @@ documentaba §7 no lo hacía (R4 P1-4). Esta:
    que la copia sea de ESTA base (`DUMP_PG_DB`);
 2. recalcula el **sha256** y lo compara con el sello, y vuelve a leer el índice con
    `pg_restore -l` (número de tablas por esquema incluido);
-3. toma un **cerrojo** sobre un fichero durable junto a la copia — dos restauraciones a
-   la vez sobre la misma base es el escenario que no tiene marcha atrás;
-4. **para los CINCO escritores** y comprueba que están parados (restaurar con uno vivo
+3. comprueba el **sello del conjunto de sidecars** (`SIDECARS_SHA256`): son ellos los
+   que deciden qué significa «VERIFIED», así que van sellados como una unidad con la
+   copia y alterar uno no puede cambiar el criterio en silencio;
+4. toma un **cerrojo** sobre un fichero durable junto a la copia — dos restauraciones a
+   la vez sobre la misma base es el escenario que no tiene marcha atrás. El **cutover**
+   toma el suyo por el mismo motivo (`$BACKUP_DIR/nas_cutover.cerrojo`): dos a la vez
+   confirmarían las copias SQL dos veces;
+5. **para los CINCO escritores** y comprueba que están parados (restaurar con uno vivo
    deja el estado a medias en cuanto escriba);
-5. escribe un **checkpoint** durable y **después** aparta la base rota con
+6. escribe un **checkpoint** durable y **después** aparta la base rota con
    `ALTER DATABASE … RENAME TO <base>_previa_<sello>` —no la borra— y crea una nueva
    vacía con la misma codificación, colación y propietario;
-6. `pg_restore --exit-on-error --single-transaction` sobre esa base vacía: o entra entera
+7. `pg_restore --exit-on-error --single-transaction` sobre esa base vacía: o entra entera
    o no entra nada; y devuelve el límite de conexiones que tenía la base;
-7. y **después** vuelve a medir y compara con el manifiesto pre-corte: las cinco cifras,
+8. y **después** vuelve a medir y compara con el manifiesto pre-corte: las cinco cifras,
    `cmp` a `cmp` los cuatro manifiestos, los metadatos de la base y las **guardas de
    inmutabilidad**. Solo entonces marca `VERIFIED`. Si algo no cuadra, sale 1 y **no**
    marca nada.

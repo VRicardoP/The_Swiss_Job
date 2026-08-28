@@ -186,6 +186,7 @@ case "$1" in
     case "$1" in
       pg_dump)
         [ "$r" = paso2_pg_dump ] && { echo "pg_dump: error: connection to server failed" >&2; exit 1; }
+        [ "${LENTO_EN:-}" = pg_dump ] && { : >"$d/lento"; sleep 20; }
         printf 'PGDMP-SIMULADO-%s\n' "${PG_DB:-swissjobhunter}"
         exit 0 ;;
       pg_restore)
@@ -688,6 +689,50 @@ def test_la_restauracion_falla_cerrada(tmp_path, etapa):
     p = _ejecutar(tmp_path, "restaurar", etapa)
     assert p.returncode != 0, f"la restauración aceptó {etapa}:\n{p.stdout}"
     assert "PARAR" in p.stdout + p.stderr
+
+
+def test_restaurar_con_un_sidecar_alterado_no_toca_nada(tmp_path):
+    """Los sidecars deciden qué significa «VERIFIED», así que van sellados como UNA
+    unidad con la copia: alterar uno cambiaría el criterio de la marcha atrás en
+    silencio."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    copia = next((tmp_path / "backups").glob("pre_canonizacion_*.dump"))
+    sidecar = copia.parent / (copia.name + ".pares")
+    sidecar.write_text(sidecar.read_text() + "p-9|cohorte-1|distinct|x|y\n")
+    p = _ejecutar(tmp_path, "restaurar", None)
+    assert p.returncode != 0
+    assert "sidecars" in p.stdout + p.stderr
+    assert "APARTADO" not in p.stdout, "tocó la base antes de comprobar el sello"
+
+
+def test_dos_cutovers_a_la_vez_no_se_pisan(tmp_path):
+    """Dos cutovers simultáneos confirmarían las dos copias SQL dos veces y se pisarían
+    el WORK_DIR y el backup. El segundo aborta por el cerrojo."""
+    import threading
+    import time
+
+    resultados: dict[str, subprocess.CompletedProcess] = {}
+
+    def primero():
+        resultados["a"] = _ejecutar(tmp_path, "cutover", None, lento_en="pg_dump")
+
+    hilo = threading.Thread(target=primero)
+    hilo.start()
+    try:
+        testigo = tmp_path / "estado" / "lento"
+        for _ in range(200):
+            if testigo.exists():
+                break
+            time.sleep(0.1)
+        assert testigo.exists(), "el primer cutover no llegó a pg_dump"
+        segundo = _ejecutar(tmp_path, "cutover", None)
+        assert segundo.returncode != 0, segundo.stdout
+        assert "cerrojo" in segundo.stdout + segundo.stderr
+        assert "Paso 4c" not in segundo.stdout, segundo.stdout
+    finally:
+        hilo.join(timeout=180)
+    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+    assert len(list((tmp_path / "backups").glob("pre_canonizacion_*.dump"))) == 1
 
 
 def test_restaurar_sin_manifiesto_no_toca_nada(tmp_path):

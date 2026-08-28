@@ -429,6 +429,17 @@ paso2_backup() {
   printf 'copia verificada: %s (sha256 %s)\n' "$final" "$suma"
 }
 
+SIDECARS="pares juicios pares.resuelven juicios.resuelven guardas"
+
+# sha256 del CONJUNTO de sidecars, en orden fijo. `sha256sum` va dentro del
+# contenedor de Postgres, como el de la copia: el NAS puede no tenerlo.
+suma_sidecars() { # <copia>
+  local s
+  # shellcheck disable=SC2086
+  for s in $SIDECARS; do cat "$1.$s"; done |
+    "$DOCKER" exec -i "$PG_CONTAINER" sha256sum | awk '{print $1}'
+}
+
 # El manifiesto pre-corte se cierra con la medición ANTES: es contra estas
 # identidades contra lo que `restaurar` comprueba que la vuelta atrás VOLVIÓ.
 sellar_manifiesto() {
@@ -452,6 +463,11 @@ sellar_manifiesto() {
   # VERIFIED si la vuelta atrás trae los datos y los triggers degradados.
   psql_lineas "$SQL_GUARDAS" "$final.guardas" ||
     morir "no se pudieron medir las guardas de inmutabilidad para el manifiesto pre-corte"
+  # Los sidecars son lo que decide qué significa «VERIFIED», así que se sellan
+  # como UNA unidad junto a la copia: alterar uno a mano (o una escritura a
+  # medias) ya no cambia en silencio el criterio de la marcha atrás. Es
+  # integridad, no autenticidad: el sello vive en el mismo manifiesto.
+  printf 'SIDECARS_SHA256=%s\n' "$(suma_sidecars "$final")" >>"$final.manifiesto"
   printf 'manifiesto pre-corte sellado junto a la copia: %s.manifiesto (+ pares/juicios/resuelven/guardas)\n' "$final"
 }
 
@@ -1166,12 +1182,17 @@ verificar_copia() { # <dump>
   local dump=$1 toc n_public n_jobhunt sidecar
   [ -f "$dump" ] || morir "no existe la copia $dump"
   [ -f "$dump.manifiesto" ] || morir "falta $dump.manifiesto: sin manifiesto pre-corte no se puede comprobar que la vuelta VOLVIÓ"
-  for sidecar in pares juicios pares.resuelven juicios.resuelven guardas; do
+  # shellcheck disable=SC2086
+  for sidecar in $SIDECARS; do
     [ -f "$dump.$sidecar" ] ||
       morir "falta $dump.$sidecar: el manifiesto pre-corte está incompleto y la vuelta atrás no se podría certificar"
   done
   # shellcheck disable=SC1090
   . "$dump.manifiesto"
+  local suma_lateral
+  suma_lateral=$(suma_sidecars "$dump")
+  [ "$suma_lateral" = "${SIDECARS_SHA256:-}" ] ||
+    morir "los sidecars del manifiesto pre-corte NO cuadran con su sello (sha256 $suma_lateral, manifiesto ${SIDECARS_SHA256:-}): alguien los cambió, y son lo que decide qué significa que la vuelta atrás VOLVIÓ"
   [ "${DUMP_PG_DB:-}" = "$PG_DB" ] ||
     morir "el manifiesto dice que la copia es de '${DUMP_PG_DB:-}' y PG_DB es '$PG_DB': no se restaura una base en otra"
   SUMA_DUMP=$("$DOCKER" exec -i "$PG_CONTAINER" sha256sum <"$dump" | awk '{print $1}')
@@ -1547,6 +1568,11 @@ main() {
   case "${1:-}" in
     cutover)
       guarda_ensayo
+      # Dos cutovers a la vez confirmarían las copias SQL dos veces y se
+      # pisarían el WORK_DIR y el backup. El cerrojo va ANTES de tocar nada, y
+      # sobre un fichero DURABLE: /tmp no vale (ramdisk).
+      mkdir -p "$BACKUP_DIR"
+      tomar_cerrojo "$BACKUP_DIR/nas_cutover.cerrojo"
       : >"$ESTADO"
       paso1_parar
       paso2_backup
