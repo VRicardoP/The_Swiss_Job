@@ -170,9 +170,13 @@ case "$1" in
           exit 0
         fi
         cat >/dev/null                        # la restauración de verdad
+        matar_grupo en_restore
         [ "$r" = restaurar_pgrestore ] && { echo "pg_restore: error: relation does not exist" >&2; exit 1; }
+        [ "${LENTO_EN:-}" = pg_restore ] && { : >"$d/lento"; sleep 20; }
         # La base vuelve al estado ANTES: es lo que el doble de psql lee de `$d/firme`.
         [ "$r" = restaurar_verificacion ] || rm -f "$d/firme"
+        : >"$d/restaurado"
+        matar_grupo tras_restore
         exit 0 ;;
       sha256sum)
         # El REAL: el sello de la copia y su comprobación se ejercitan de verdad.
@@ -293,6 +297,24 @@ samples_outbox() {
   echo "$n"
 }
 
+matar_grupo() {
+  [ "${MATAR_EN:-}" = "$1" ] || return 0
+  printf '%s\n' "$1" >>"$d/muertes"
+  kill -9 -"$(awk '{print $5}' /proc/self/stat)"
+  sleep 30
+}
+
+# CATÁLOGO simulado de `pg_database`: sin él la marcha atrás reanudable no se
+# puede probar, porque su resolución de estado es «qué bases existen».
+catalogo="$d/bases"
+[ -f "$catalogo" ] || printf '%s\n' "${PG_DB:-swissjobhunter}" >"$catalogo"
+existe_base() { grep -qx -- "$1" "$catalogo"; }
+alta_base() { existe_base "$1" || printf '%s\n' "$1" >>"$catalogo"; }
+baja_base() { grep -vx -- "$1" "$catalogo" >"$catalogo.tmp" || true; mv "$catalogo.tmp" "$catalogo"; }
+plano() { printf '%s' "$1" | tr '\n' ' '; }
+nombre_de() { plano "$sql" | sed -n "s/.*$1 \"\([^\"]*\)\".*/\1/p"; }
+nombre_datname() { plano "$sql" | sed -n "s/.*datname = '\([^']*\)'.*/\1/p"; }
+
 sql=""
 esperando=0
 for a in "$@"; do
@@ -311,18 +333,30 @@ if [ -n "$sql" ]; then                      # consultas escalares y manifiestos
     *samples-outbox*)     samples_outbox; exit 0 ;;
   esac
   case "$sql" in
-    *pg_encoding_to_char*)                  # atributos de la base a recrear
-      echo "UTF8|en_US.utf8|en_US.utf8|swissjob" ;;
+    *atributos-base*)                       # atributos de la base a recrear
+      base=$(nombre_datname)
+      existe_base "$base" && echo "UTF8|en_US.utf8|en_US.utf8|swissjob|-1|" ;;
+    *existe-base*)
+      base=$(nombre_datname); existe_base "$base" && echo 1 ;;
+    *settings-base*)
+      [ "$r" = restaurar_settings ] && echo "0=search_path=jobhunt, public" ;;
     *hashes-no-reproducibles*)
       if [ "$r" = paso4_hashes_fantasma ]; then echo 3; else echo 0; fi ;;
     *pg_terminate_backend*) : ;;
     *"RENAME TO"*)
+      matar_grupo antes_rename
       [ "$r" = restaurar_rename ] && { echo "ERROR: database is being accessed by other users" >&2; exit 1; }
-      : ;;
+      viejo=$(nombre_de "ALTER DATABASE"); nuevo=$(nombre_de "RENAME TO")
+      baja_base "$viejo"; alta_base "$nuevo"
+      matar_grupo tras_rename ;;
+    *"DROP DATABASE"*)
+      baja_base "$(nombre_de "DROP DATABASE")" ;;
     *"CREATE DATABASE"*)
+      matar_grupo en_create
       [ "$r" = restaurar_create ] && { echo "ERROR: permission denied to create database" >&2; exit 1; }
-      : ;;
-    *max_parallel_maintenance_workers*) : ;;
+      alta_base "$(nombre_de "CREATE DATABASE")"
+      matar_grupo tras_create ;;
+    *max_parallel_maintenance_workers*|*"CONNECTION LIMIT"*) : ;;
     *pg_postmaster_start_time*)             # sonda de destino (R4 P1-1)
       echo "${PG_DB:-swissjobhunter}|16384|2026-08-28 00:00:00.000000" ;;
     *pg_replication_slots*)                 # sonda de progreso del CDC (R4 P1-5)
@@ -463,7 +497,13 @@ def _montar_nas(raiz: Path) -> dict[str, str]:
 
 
 def _ejecutar(
-    raiz: Path, subcomando: str, romper: str | None, *extra: str
+    raiz: Path,
+    subcomando: str,
+    romper: str | None,
+    *extra: str,
+    matar_en: str | None = None,
+    lento_en: str | None = None,
+    timeout: int = 120,
 ) -> subprocess.CompletedProcess:
     assert _SCRIPT.is_file(), (
         f"{_SCRIPT} no está montado: esta guarda NO puede saltarse. Ejecuta la suite con "
@@ -474,13 +514,17 @@ def _ejecutar(
     entorno.update(_montar_nas(raiz))
     entorno["PATH"] = f"{_plantar_dobles(raiz)}:{entorno['PATH']}"
     entorno["CORE_NET"] = "red-de-mentira"
-    if romper:
-        entorno["ROMPER"] = romper
-    else:
-        entorno.pop("ROMPER", None)
+    for clave, valor in (("ROMPER", romper), ("MATAR_EN", matar_en), ("LENTO_EN", lento_en)):
+        if valor:
+            entorno[clave] = valor
+        else:
+            entorno.pop(clave, None)
     return subprocess.run(
         ["bash", str(_SCRIPT), subcomando, *extra],
-        env=entorno, capture_output=True, text=True, timeout=120,
+        env=entorno, capture_output=True, text=True, timeout=timeout,
+        # SESIÓN PROPIA: los dobles matan el GRUPO de procesos para reproducir
+        # un `SIGKILL` (R5 P1-B). Sin esto se llevarían por delante a pytest.
+        start_new_session=True,
     )
 
 
@@ -586,7 +630,7 @@ def test_la_restauracion_verifica_sello_manifiesto_e_identidades(tmp_path):
     assert _ejecutar(tmp_path, "cutover", None).returncode == 0
     p = _ejecutar(tmp_path, "restaurar", None)
     assert p.returncode == 0, p.stdout + p.stderr
-    assert "restauración VERIFICADA" in p.stdout, p.stdout
+    assert "restauración VERIFIED" in p.stdout, p.stdout
     assert "escritores parados" in p.stdout, p.stdout
     # El estado roto se APARTA (rename), no se borra: si la restauración fallara,
     # no se habría perdido nada.
@@ -824,6 +868,155 @@ def test_el_manifiesto_semantico_rechaza(tmp_path, etapa, porque):
     p = _ejecutar(tmp_path, "cutover", etapa)
     assert p.returncode != 0, f"pasó {porque}:\n{p.stdout}"
     assert "PARAR" in p.stdout + p.stderr
+
+
+# --------------------------------------------------------------------------
+# R5 P1-B — la marcha atrás es una máquina de estados REANUDABLE
+#
+# La base rota se conservaba, pero el nombre de la base apartada vivía solo en
+# una variable del proceso: un `SIGKILL` entre el `RENAME` y el `CREATE
+# DATABASE` borraba a la vez el destino esperado y el conocimiento para
+# continuar, y la siguiente invocación abortaba con «no existe la base». Los
+# traps no valen: `SIGKILL` y un reinicio no los ejecutan.
+# --------------------------------------------------------------------------
+_BORDES = ["antes_rename", "tras_rename", "en_create", "tras_create",
+           "en_restore", "tras_restore"]
+
+
+def _dump_de(tmp_path: Path) -> str:
+    return str(next((tmp_path / "backups").glob("pre_canonizacion_*.dump")))
+
+
+@pytest.mark.parametrize("borde", _BORDES)
+def test_la_restauracion_reanuda_tras_un_sigkill_en_cada_borde(tmp_path, borde):
+    """Se mata el GRUPO de procesos en cada transición y se re-ejecuta EL MISMO
+    comando: tiene que llegar a `VERIFIED` sin una sola sentencia SQL a mano."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    muerto = _ejecutar(tmp_path, "restaurar", None, dump, matar_en=borde)
+    assert muerto.returncode != 0, f"el borde {borde} no mató nada:\n{muerto.stdout}"
+    assert (tmp_path / "estado" / "muertes").is_file(), muerto.stdout + muerto.stderr
+
+    reanudado = _ejecutar(tmp_path, "restaurar", None, dump)
+    assert reanudado.returncode == 0, (
+        f"tras morir en {borde} la marcha atrás NO se reanuda sola:\n"
+        + reanudado.stdout + reanudado.stderr
+    )
+    assert "VERIFIED" in reanudado.stdout, reanudado.stdout
+
+
+def test_la_restauracion_reanuda_aunque_se_pierda_el_directorio_de_trabajo(tmp_path):
+    """`WORK_DIR` está en `/tmp`, que en el NAS es un ramdisk: un reinicio lo vacía. El
+    checkpoint vive JUNTO a la copia, así que la reanudación no depende de él."""
+    import shutil
+
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    assert _ejecutar(tmp_path, "restaurar", None, dump, matar_en="tras_rename").returncode != 0
+    shutil.rmtree(tmp_path / "trabajo")
+    p = _ejecutar(tmp_path, "restaurar", None, dump)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "VERIFIED" in p.stdout
+
+
+def test_dos_restauraciones_a_la_vez_no_se_pisan(tmp_path):
+    """Exclusión mutua sobre un fichero DURABLE junto a la copia: la segunda invocación
+    aborta, no restaura sobre la primera."""
+    import threading
+    import time
+
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    resultados: dict[str, subprocess.CompletedProcess] = {}
+
+    def primera():
+        resultados["a"] = _ejecutar(tmp_path, "restaurar", None, dump, lento_en="pg_restore")
+
+    hilo = threading.Thread(target=primera)
+    hilo.start()
+    try:
+        # El doble avisa cuando la primera está DENTRO de `pg_restore`, con el
+        # cerrojo tomado: así la prueba no depende de ganar una carrera.
+        testigo = tmp_path / "estado" / "lento"
+        for _ in range(200):
+            if testigo.exists():
+                break
+            time.sleep(0.1)
+        assert testigo.exists(), "la primera restauración no llegó a pg_restore"
+        segunda = _ejecutar(tmp_path, "restaurar", None, dump)
+        assert segunda.returncode != 0, (
+            "la segunda restauración simultánea NO fue rechazada:\n" + segunda.stdout
+        )
+        assert "cerrojo" in segunda.stdout + segunda.stderr
+    finally:
+        hilo.join(timeout=120)
+    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+
+
+def test_el_cerrojo_tambien_funciona_sin_flock(tmp_path):
+    """Un QNAP mínimo puede no traer `flock`. El camino de repuesto —mutex por `mkdir`,
+    atómico en POSIX, con el PID del dueño— tiene que rechazar la segunda invocación
+    igual, y heredar el cerrojo si el dueño ya no vive (si no, un `SIGKILL` dejaría la
+    marcha atrás bloqueada para siempre, que es peor que el defecto original)."""
+    import threading
+    import time
+
+    entorno = {"FLOCK": "flock-que-no-existe-en-este-host"}
+    assert _con_entorno(tmp_path, entorno).returncode == 0
+    dump = _dump_de(tmp_path)
+    resultados: dict[str, subprocess.CompletedProcess] = {}
+
+    def primera():
+        resultados["a"] = _con_entorno(
+            tmp_path, entorno, subcomando="restaurar", extra=(dump,), lento_en="pg_restore"
+        )
+
+    hilo = threading.Thread(target=primera)
+    hilo.start()
+    try:
+        testigo = tmp_path / "estado" / "lento"
+        for _ in range(200):
+            if testigo.exists():
+                break
+            time.sleep(0.1)
+        segunda = _con_entorno(tmp_path, entorno, subcomando="restaurar", extra=(dump,))
+        assert segunda.returncode != 0, segunda.stdout
+        assert "cerrojo" in segunda.stdout + segunda.stderr
+    finally:
+        hilo.join(timeout=120)
+    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+    assert "mkdir+pid" in resultados["a"].stdout
+
+    # Y el cerrojo huérfano de un proceso muerto NO bloquea la reanudación.
+    huerfano = Path(dump + ".cerrojo.d")
+    huerfano.mkdir(exist_ok=True)
+    (huerfano / "pid").write_text("999999\n")
+    p = _con_entorno(tmp_path, entorno, subcomando="restaurar", extra=(dump,))
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_la_base_apartada_nunca_se_borra_sola(tmp_path):
+    """La salida de emergencia de la salida de emergencia: el estado roto se conserva
+    hasta que el operador lo borre a mano."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    p = _ejecutar(tmp_path, "restaurar", None, dump)
+    assert p.returncode == 0, p.stdout + p.stderr
+    bases = (tmp_path / "estado" / "bases").read_text().split()
+    previas = [b for b in bases if "_previa_" in b]
+    assert previas, bases
+    assert "swissjobhunter" in bases
+
+
+def test_la_vuelta_atras_verifica_tambien_las_guardas(tmp_path):
+    """`VERIFIED` solo después de manifiestos, metadatos Y guardas: una restauración que
+    trae los datos pero deja los triggers de inmutabilidad degradados no es una vuelta
+    atrás."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    p = _ejecutar(tmp_path, "restaurar", "restaurar_guarda_degradada", _dump_de(tmp_path))
+    assert p.returncode != 0, p.stdout
+    assert "guarda" in (p.stdout + p.stderr).lower()
+    assert "VERIFIED" not in p.stdout, p.stdout
 
 
 # --------------------------------------------------------------------------

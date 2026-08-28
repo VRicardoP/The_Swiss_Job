@@ -978,17 +978,61 @@ documentaba §7 no lo hacía (R4 P1-4). Esta:
 ./nas_cutover.sh restaurar /ruta/pre_…​.dump      # o el que se le pase
 ```
 
-1. exige el `…​.dump.manifiesto` y que la copia sea de ESTA base (`DUMP_PG_DB`);
+1. exige el `…​.dump.manifiesto` y sus sidecars (pares, juicios, resuelven y guardas), y
+   que la copia sea de ESTA base (`DUMP_PG_DB`);
 2. recalcula el **sha256** y lo compara con el sello, y vuelve a leer el índice con
    `pg_restore -l` (número de tablas por esquema incluido);
-3. **para los CINCO escritores** y comprueba que están parados (restaurar con uno vivo
+3. toma un **cerrojo** sobre un fichero durable junto a la copia — dos restauraciones a
+   la vez sobre la misma base es el escenario que no tiene marcha atrás;
+4. **para los CINCO escritores** y comprueba que están parados (restaurar con uno vivo
    deja el estado a medias en cuanto escriba);
-4. **aparta** la base rota con `ALTER DATABASE … RENAME TO <base>_previa_<sello>` —no la
-   borra— y crea una nueva vacía con la misma codificación, colación y propietario;
-5. `pg_restore --exit-on-error --single-transaction` sobre esa base vacía: o entra entera
-   o no entra nada;
-6. y **después** vuelve a medir y compara con el manifiesto pre-corte: las cinco cifras
-   y, `cmp` a `cmp`, los manifiestos de pares y juicios. Si algo no cuadra, sale 1.
+5. escribe un **checkpoint** durable y **después** aparta la base rota con
+   `ALTER DATABASE … RENAME TO <base>_previa_<sello>` —no la borra— y crea una nueva
+   vacía con la misma codificación, colación y propietario;
+6. `pg_restore --exit-on-error --single-transaction` sobre esa base vacía: o entra entera
+   o no entra nada; y devuelve el límite de conexiones que tenía la base;
+7. y **después** vuelve a medir y compara con el manifiesto pre-corte: las cinco cifras,
+   `cmp` a `cmp` los cuatro manifiestos, los metadatos de la base y las **guardas de
+   inmutabilidad**. Solo entonces marca `VERIFIED`. Si algo no cuadra, sale 1 y **no**
+   marca nada.
+
+**Por qué es una máquina de estados y no una secuencia** (auditoría externa R5 P1-B). La
+versión anterior conservaba la base rota —no había pérdida física— pero el **nombre** de
+la base apartada vivía solo en una variable del proceso. Un `SIGKILL` entre el `RENAME` y
+el `CREATE DATABASE` —corte de corriente, `docker kill`, OOM killer— borraba a la vez el
+destino esperado y el conocimiento para continuar: la siguiente invocación abortaba con
+«no existe la base». Reproducido: `EXIT_CODE=137` en la primera invocación y
+`EXIT_CODE=1` en la segunda. **Los traps no valen**: `SIGKILL` y un reinicio no los
+ejecutan.
+
+Lo que vale es que el estado esté **fuera** del proceso:
+
+- **cerrojo** `<dump>.cerrojo` con `flock` (el núcleo lo suelta aunque el proceso muera de
+  `SIGKILL`). Si el host no trae `flock` —un QNAP mínimo puede no traerlo— se cae a un
+  mutex por `mkdir`, atómico en POSIX, que guarda el PID del dueño y **hereda** el
+  cerrojo si ese proceso ya no vive: si no, un `SIGKILL` dejaría bloqueada para siempre
+  la única salida de emergencia. Se puede apuntar `FLOCK=` a otro binario para forzar el
+  camino de repuesto;
+- **checkpoint** `<dump>.restauracion`, escrito **atómicamente** (`.tmp` + `mv`, que es
+  `rename(2)`, más `sync`) **antes** del `RENAME`, con copia, sello, base destino, nombre
+  de la base previa, atributos y fase. Vive junto a la copia y **no** en `WORK_DIR`, que
+  está en `/tmp` — un ramdisk que un reinicio del NAS vacía;
+- **resolución por catálogo** al arrancar: solo destino ⇒ empezar; solo previa ⇒ seguir
+  creando y restaurando; **las dos** ⇒ el destino está a medias y se **recrea** antes de
+  repetir `pg_restore` (el estado bueno está entero en la previa, así que lo incompleto no
+  se conserva); ninguna ⇒ abortar sin adivinar;
+- la **fase** se escribe DESPUÉS de cada postcondición, nunca antes: el checkpoint no
+  promete lo que no pasó.
+
+Consecuencia operativa: **el mismo comando, repetido tantas veces como haga falta,
+termina en `VERIFIED` sin una sola sentencia SQL a mano.** Regresión: se mata el grupo de
+procesos en los seis bordes (antes y después del `RENAME`, en el `CREATE`, después del
+`CREATE`, durante y después del `pg_restore`) y se re-ejecuta hasta `VERIFIED`; se borra
+`WORK_DIR` entre medias; y se comprueban las dos implementaciones del cerrojo.
+
+La base `…_previa_<sello>` **no se borra sola**, ni siquiera tras `VERIFIED`. Y si el
+estado se volviera a romper después, una nueva invocación abre un ciclo NUEVO que
+**aparta** el destino dañado en vez de borrarlo: se conservan las dos bases.
 
 **Por qué se recrea la base y no se usa `--clean --if-exists`.** Probado el 2026-08-28
 restaurando un volcado del corpus REAL en una base desechable: sobre una base ya poblada
@@ -1204,8 +1248,10 @@ $p -c 'ALTER DATABASE swissjobhunter RESET max_parallel_maintenance_workers'
 `core-capture` aborta con «Estado registrado pero slot AUSENTE».
 
 ⚠ Durante el cutover no se teclea nada de esto: la marcha atrás es
-`./nas_cutover.sh restaurar` (§5.3), que hace los cuatro pasos y **además** verifica
-contra el manifiesto pre-corte que el estado restaurado es el de antes.
+`./nas_cutover.sh restaurar` (§5.3), que hace estos pasos con cerrojo y checkpoint
+durable —de modo que un `SIGKILL` a mitad se reanuda re-lanzando el MISMO comando— y
+**además** verifica contra el manifiesto pre-corte que el estado restaurado es el de
+antes, incluidas las guardas de inmutabilidad.
 
 ---
 

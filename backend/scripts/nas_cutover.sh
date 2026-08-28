@@ -132,6 +132,11 @@ set -Eeuo pipefail
 # Base de MANTENIMIENTO desde la que se renombra/crea la de producción: no se
 # puede hacer ninguna de las dos cosas estando conectado a ella.
 : "${PG_MAINT_DB:=postgres}"
+# El cerrojo de la marcha atrás (R5 P1-B). `flock` es lo que hay que usar —el
+# núcleo lo suelta aunque el proceso muera de `SIGKILL`—, pero un QNAP mínimo
+# puede no traerlo: apuntando esto a algo que no existe se cae al mutex por
+# `mkdir` de más abajo, que también es atómico.
+: "${FLOCK:=flock}"
 # Módulo que imprime la identidad de la base a la que el core se conecta DE
 # VERDAD (resolviendo el DSN igual que el one-shot del Paso 5).
 : "${MODULO_IDENTIDAD:=jobhunt_core.shadow.identidad_destino}"
@@ -999,25 +1004,170 @@ paso6_verificar() {
 # del corpus real aborta con «could not resize shared memory segment»; con 0,
 # entra entera en 13 s.
 # --------------------------------------------------------------------------
-restaurar() { # [fichero .dump]
-  titulo "RESTAURAR — vuelta al estado previo al corte"
-  local dump=${1:-} suma toc n_public n_jobhunt
+# --------------------------------------------------------------------------
+# Auditoría R5 P1-B — y por qué esto es una MÁQUINA DE ESTADOS.
+#
+# La versión anterior conservaba la base rota (bien: no había pérdida física),
+# pero el nombre de la base apartada vivía SOLO en una variable del proceso. Un
+# `SIGKILL` entre el `RENAME` y el `CREATE DATABASE` —un corte de corriente, un
+# `docker kill`, el OOM killer— borraba a la vez el destino esperado y el
+# conocimiento operativo para continuar: la siguiente invocación abortaba con
+# «no existe la base $PG_DB en el servidor» y la única salida de emergencia
+# quedaba fuera de servicio. Reproducido: `EXIT_CODE=137` en la primera
+# invocación, `EXIT_CODE=1` en la segunda.
+#
+# Los traps NO valen: `SIGKILL` y un reinicio no los ejecutan. Lo que vale es
+# que el estado esté FUERA del proceso y se pueda leer del catálogo:
+#
+#   1. exclusión mutua sobre un fichero DURABLE junto a la copia (no en /tmp,
+#      que en el NAS es un ramdisk que un reinicio vacía);
+#   2. checkpoint escrito ATÓMICAMENTE (`.tmp` + `mv`) ANTES del `RENAME`, con
+#      copia, sello, base destino, nombre de la base previa, atributos y fase;
+#   3. al arrancar, resolución POR CATÁLOGO: solo destino ⇒ empezar; solo
+#      previa ⇒ continuar creando y restaurando; las dos ⇒ el destino está a
+#      medias, se recrea antes de repetir `pg_restore`; ninguna ⇒ abortar;
+#   4. la fase se escribe DESPUÉS de cada postcondición, nunca antes;
+#   5. la base previa NO se borra sola, y `VERIFIED` solo se marca después de
+#      manifiestos, metadatos Y guardas.
+#
+# Con esto, el mismo comando repetido tantas veces como haga falta termina en
+# `VERIFIED` sin una sola sentencia SQL a mano.
+# --------------------------------------------------------------------------
+CK_DUMP=""; CK_SHA256=""; CK_DESTINO=""; CK_PREVIA=""; CK_SETTINGS=""
+CK_ENC=""; CK_COLL=""; CK_CTYPE=""; CK_OWNER=""; CK_CONNLIMIT=""; CK_ACL=""
+CK_FASE=INICIO
+CHECKPOINT=""
+SUMA_DUMP=""
+
+sql_atributos() { # <base>
+  printf "/* atributos-base */ SELECT pg_encoding_to_char(encoding) || '|' || datcollate
+   || '|' || datctype || '|' || pg_get_userbyid(datdba) || '|' || datconnlimit::text
+   || '|' || coalesce(array_to_string(datacl, ','), '')
+   FROM pg_database WHERE datname = '%s'" "$1"
+}
+
+sql_settings() { # <base>
+  printf "/* settings-base */ SELECT setrole::text || '=' || array_to_string(setconfig, ',')
+   FROM pg_db_role_setting
+   WHERE setdatabase = (SELECT oid FROM pg_database WHERE datname = '%s') ORDER BY 1" "$1"
+}
+
+base_existe() { # <base>
+  local v
+  v=$(psql_maint "/* existe-base */ SELECT 1 FROM pg_database WHERE datname = '$1'") ||
+    morir "no se pudo consultar el catálogo de bases del servidor: sin catálogo no se puede resolver el estado de la marcha atrás"
+  [ "$v" = 1 ]
+}
+
+atributos_de() { # <base> -> «enc|coll|ctype|owner|connlimit|acl»
+  local a
+  a=$(psql_maint "$(sql_atributos "$1")") ||
+    morir "no se pudieron leer los atributos de la base $1"
+  [ -n "$a" ] || morir "no existe la base $1 en el servidor"
+  printf '%s' "$a"
+}
+
+settings_de() { # <base> -> los `ALTER DATABASE … SET` en una línea
+  local s
+  s=$(psql_maint "$(sql_settings "$1")") ||
+    morir "no se pudieron leer los settings por base de $1"
+  printf '%s' "$s" | tr '\n' ';'
+}
+
+# El fichero de estado nunca se ve a medias: `mv` es `rename(2)`, atómico. Y el
+# `sync` es lo que separa «escrito» de «escrito y sobrevive al corte».
+checkpoint_escribir() { # <fase>
+  CK_FASE=$1
+  {
+    printf "CK_DUMP='%s'\n" "$CK_DUMP"
+    printf "CK_SHA256='%s'\n" "$CK_SHA256"
+    printf "CK_DESTINO='%s'\n" "$CK_DESTINO"
+    printf "CK_PREVIA='%s'\n" "$CK_PREVIA"
+    printf "CK_ENC='%s'\n" "$CK_ENC"
+    printf "CK_COLL='%s'\n" "$CK_COLL"
+    printf "CK_CTYPE='%s'\n" "$CK_CTYPE"
+    printf "CK_OWNER='%s'\n" "$CK_OWNER"
+    printf "CK_CONNLIMIT='%s'\n" "$CK_CONNLIMIT"
+    printf "CK_ACL='%s'\n" "$CK_ACL"
+    printf "CK_SETTINGS='%s'\n" "$CK_SETTINGS"
+    printf "CK_FASE='%s'\n" "$CK_FASE"
+  } >"$CHECKPOINT.tmp" || morir "no se pudo escribir el checkpoint $CHECKPOINT.tmp"
+  mv "$CHECKPOINT.tmp" "$CHECKPOINT" || morir "no se pudo publicar el checkpoint $CHECKPOINT"
+  sync 2>/dev/null || true
+  printf 'checkpoint %s → %s\n' "$CK_FASE" "$CHECKPOINT"
+}
+
+checkpoint_cargar() { # <dump> <sha256>
+  CHECKPOINT="$1.restauracion"
+  CK_DUMP=$1; CK_SHA256=$2; CK_DESTINO=$PG_DB
+  [ -f "$CHECKPOINT" ] || { printf 'sin checkpoint previo: la marcha atrás empieza de cero.\n'; return 0; }
+  # shellcheck disable=SC1090
+  . "$CHECKPOINT"
+  [ "${CK_DUMP:-}" = "$1" ] ||
+    morir "el checkpoint $CHECKPOINT es de otra copia (${CK_DUMP:-}): no se reanuda una restauración con un archivo distinto"
+  [ "${CK_SHA256:-}" = "$2" ] ||
+    morir "el checkpoint $CHECKPOINT sella otro contenido (${CK_SHA256:-}) que el de la copia ($2)"
+  [ "${CK_DESTINO:-}" = "$PG_DB" ] ||
+    morir "el checkpoint $CHECKPOINT restaura sobre '${CK_DESTINO:-}' y PG_DB es '$PG_DB': no se restaura una base en otra"
+  printf 'checkpoint encontrado: fase=%s · base previa=%s\n' "$CK_FASE" "${CK_PREVIA:-(ninguna)}"
+}
+
+# Exclusión mutua sobre un fichero DURABLE. Con `flock` no hay cerrojos
+# huérfanos: el núcleo lo suelta aunque el proceso muera de `SIGKILL`. Sin
+# `flock` (QNAP mínimo) se cae a un mutex por `mkdir` —atómico en POSIX— que
+# guarda el PID: si el dueño ya no vive, el cerrojo es basura y se hereda. Lo
+# que NO se hace es seguir sin cerrojo: dos restauraciones a la vez sobre la
+# misma base es justo el escenario que no tiene marcha atrás.
+tomar_cerrojo() { # <fichero>
+  local cerrojo=$1 dueno
+  if command -v "$FLOCK" >/dev/null 2>&1; then
+    exec 9>"$cerrojo" || morir "no se pudo abrir el cerrojo $cerrojo"
+    "$FLOCK" -n 9 ||
+      morir "otra restauración tiene el cerrojo $cerrojo: NO se lanzan dos a la vez sobre la misma copia"
+    printf 'cerrojo (flock): %s\n' "$cerrojo"
+    return 0
+  fi
+  while ! mkdir "$cerrojo.d" 2>/dev/null; do
+    dueno=$(cat "$cerrojo.d/pid" 2>/dev/null || true)
+    if [ -n "$dueno" ] && kill -0 "$dueno" 2>/dev/null; then
+      morir "otra restauración (pid $dueno) tiene el cerrojo $cerrojo.d: NO se lanzan dos a la vez sobre la misma copia"
+    fi
+    rm -rf "$cerrojo.d" || morir "no se pudo heredar el cerrojo huérfano $cerrojo.d"
+  done
+  printf '%s\n' "$$" >"$cerrojo.d/pid"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$cerrojo.d'" EXIT
+  printf 'cerrojo (mkdir+pid, sin flock en este host): %s.d\n' "$cerrojo.d"
+}
+
+localizar_dump() { # [fichero]
+  local dump=${1:-}
   if [ -z "$dump" ] && [ -f "$ESTADO" ]; then
     # shellcheck disable=SC1090
     . "$ESTADO"
     dump=${BACKUP:-}
   fi
   [ -n "$dump" ] || morir "no sé qué restaurar: pasa el .dump, o deja el $ESTADO del cutover"
+  printf '%s' "$dump"
+}
+
+# El sello y el índice de la copia, ANTES de tocar nada: una copia que no se
+# puede leer entera no es una marcha atrás. Deja $SUMA_DUMP y las MEDIDA_*.
+verificar_copia() { # <dump>
+  local dump=$1 toc n_public n_jobhunt sidecar
   [ -f "$dump" ] || morir "no existe la copia $dump"
   [ -f "$dump.manifiesto" ] || morir "falta $dump.manifiesto: sin manifiesto pre-corte no se puede comprobar que la vuelta VOLVIÓ"
+  for sidecar in pares juicios pares.resuelven juicios.resuelven guardas; do
+    [ -f "$dump.$sidecar" ] ||
+      morir "falta $dump.$sidecar: el manifiesto pre-corte está incompleto y la vuelta atrás no se podría certificar"
+  done
   # shellcheck disable=SC1090
   . "$dump.manifiesto"
   [ "${DUMP_PG_DB:-}" = "$PG_DB" ] ||
     morir "el manifiesto dice que la copia es de '${DUMP_PG_DB:-}' y PG_DB es '$PG_DB': no se restaura una base en otra"
-
-  suma=$("$DOCKER" exec -i "$PG_CONTAINER" sha256sum <"$dump" | awk '{print $1}')
-  [ "$suma" = "${DUMP_SHA256:-}" ] ||
-    morir "la copia NO cuadra con su sello: sha256 $suma, manifiesto ${DUMP_SHA256:-}"
+  SUMA_DUMP=$("$DOCKER" exec -i "$PG_CONTAINER" sha256sum <"$dump" | awk '{print $1}')
+  [ "$SUMA_DUMP" = "${DUMP_SHA256:-}" ] ||
+    morir "la copia NO cuadra con su sello: sha256 $SUMA_DUMP, manifiesto ${DUMP_SHA256:-}"
   toc="$WORK_DIR/restaurar.toc"
   "$DOCKER" exec -i "$PG_CONTAINER" pg_restore -l <"$dump" >"$toc" ||
     morir "pg_restore -l no puede leer $dump: la copia está corrupta y NO hay marcha atrás por aquí"
@@ -1025,63 +1175,111 @@ restaurar() { # [fichero .dump]
   n_jobhunt=$(grep -cE '^[0-9]+; [0-9]+ [0-9]+ TABLE jobhunt ' "$toc" || true)
   [ "$n_public" = "${DUMP_TABLAS_PUBLIC:-}" ] && [ "$n_jobhunt" = "${DUMP_TABLAS_JOBHUNT:-}" ] ||
     morir "el índice de la copia no cuadra con el manifiesto: public $n_public/${DUMP_TABLAS_PUBLIC:-}, jobhunt $n_jobhunt/${DUMP_TABLAS_JOBHUNT:-}"
+}
 
-  # Restaurar con escritores vivos deja el estado a medias en cuanto uno escriba.
-  parar_escritores
-
-  [ "$PG_DB" != "$PG_MAINT_DB" ] ||
-    morir "PG_DB y PG_MAINT_DB son la misma base ($PG_DB): no se puede renombrar la base a la que hay que conectarse"
-  local atributos enc coll ctype propietario previa
-  atributos=$(psql_maint "SELECT pg_encoding_to_char(encoding) || '|' || datcollate || '|' || datctype
-                          || '|' || pg_get_userbyid(datdba) FROM pg_database WHERE datname = '$PG_DB'")
-  [ -n "$atributos" ] || morir "no existe la base $PG_DB en el servidor"
-  enc=${atributos%%|*}; atributos=${atributos#*|}
-  coll=${atributos%%|*}; atributos=${atributos#*|}
-  ctype=${atributos%%|*}; propietario=${atributos#*|}
-  previa="${PG_DB}_previa_$(date +%Y%m%d%H%M%S)"
-
+# El RENAME, con el checkpoint escrito ANTES: si el proceso muere entre las dos
+# sentencias, el nombre de la base apartada NO se va con él.
+apartar_destino() {
+  local a
+  a=$(atributos_de "$PG_DB")
+  CK_ENC=${a%%|*}; a=${a#*|}
+  CK_COLL=${a%%|*}; a=${a#*|}
+  CK_CTYPE=${a%%|*}; a=${a#*|}
+  CK_OWNER=${a%%|*}; a=${a#*|}
+  CK_CONNLIMIT=${a%%|*}; CK_ACL=${a#*|}
+  entero "$CK_CONNLIMIT" "límite de conexiones de $PG_DB"
+  CK_SETTINGS=$(settings_de "$PG_DB")
+  CK_PREVIA="${PG_DB}_previa_$(date +%Y%m%d%H%M%S)"
+  checkpoint_escribir INICIO
   psql_maint "SELECT pg_terminate_backend(pid) FROM pg_stat_activity
               WHERE datname = '$PG_DB' AND pid <> pg_backend_pid()" >/dev/null ||
     morir "no se pudieron cortar las conexiones a $PG_DB"
-  psql_maint "ALTER DATABASE \"$PG_DB\" RENAME TO \"$previa\"" >/dev/null ||
+  psql_maint "ALTER DATABASE \"$PG_DB\" RENAME TO \"$CK_PREVIA\"" >/dev/null ||
     morir "no se pudo apartar $PG_DB (¿queda alguna conexión abierta?): NADA se ha tocado"
-  printf 'el estado roto queda APARTADO en la base %s (bórrala a mano cuando estés conforme)\n' "$previa"
-  psql_maint "CREATE DATABASE \"$PG_DB\" TEMPLATE template0 ENCODING '$enc'
-              LC_COLLATE '$coll' LC_CTYPE '$ctype' OWNER \"$propietario\"" >/dev/null ||
-    morir "no se pudo crear $PG_DB vacía. El estado anterior sigue ENTERO en $previa: devuélvelo con ALTER DATABASE \"$previa\" RENAME TO \"$PG_DB\""
-  # El índice HNSW en paralelo pide ~64 MB de memoria compartida y el /dev/shm
-  # por defecto de Docker mide justo 64 MB: la restauración del corpus real
-  # aborta con «could not resize shared memory segment». Sin paralelismo entra.
+  checkpoint_escribir APARTADA
+  printf 'el estado roto queda APARTADO en la base %s (no se borra sola)\n' "$CK_PREVIA"
+}
+
+# La base nueva lleva `max_parallel_maintenance_workers = 0` mientras dura la
+# restauración: el índice HNSW de `offer_embeddings` se construye en paralelo y
+# pide un segmento de memoria compartida de ~64 MB que NO cabe en el `/dev/shm`
+# por defecto de Docker (64 MB). Medido: con el valor por defecto la
+# restauración del corpus real aborta con «could not resize shared memory
+# segment»; con 0, entra entera en 13 s.
+recrear_destino() {
+  if base_existe "$PG_DB"; then
+    # Un destino sin certificar es basura de una invocación muerta: el estado
+    # bueno vive ENTERO en la base apartada, así que aquí no se pierde nada.
+    printf 'el destino %s existe pero NO está certificado (fase %s): se recrea vacío.\n' "$PG_DB" "$CK_FASE"
+    psql_maint "SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+                WHERE datname = '$PG_DB' AND pid <> pg_backend_pid()" >/dev/null ||
+      morir "no se pudieron cortar las conexiones a $PG_DB"
+    psql_maint "DROP DATABASE \"$PG_DB\"" >/dev/null ||
+      morir "no se pudo borrar el destino incompleto $PG_DB. El estado anterior sigue ENTERO en $CK_PREVIA"
+  fi
+  psql_maint "CREATE DATABASE \"$PG_DB\" TEMPLATE template0 ENCODING '$CK_ENC'
+              LC_COLLATE '$CK_COLL' LC_CTYPE '$CK_CTYPE' OWNER \"$CK_OWNER\"" >/dev/null ||
+    morir "no se pudo crear $PG_DB vacía. El estado anterior sigue ENTERO en $CK_PREVIA: vuelve a lanzar el MISMO comando (se reanuda solo) o devuélvelo con ALTER DATABASE \"$CK_PREVIA\" RENAME TO \"$PG_DB\""
+  checkpoint_escribir DESTINO_CREADO
   psql_maint "ALTER DATABASE \"$PG_DB\" SET max_parallel_maintenance_workers = 0" >/dev/null ||
     morir "no se pudo desactivar el paralelismo de mantenimiento en $PG_DB"
+}
 
-  # `--single-transaction` implica `--exit-on-error`: o entra entera o no entra
-  # nada. Sin `--clean`: la base está recién creada y vacía.
+# `--single-transaction` implica `--exit-on-error`: o entra entera o no entra
+# nada. Sin `--clean`: la base está recién creada y vacía.
+restaurar_dump() { # <dump>
   "$DOCKER" exec -i "$PG_CONTAINER" pg_restore -U "$PG_USER" -d "$PG_DB" \
-    --exit-on-error --single-transaction <"$dump" \
+    --exit-on-error --single-transaction <"$1" \
     >"$WORK_DIR/restaurar.out" 2>"$WORK_DIR/restaurar.err" || {
       cat "$WORK_DIR/restaurar.err" >&2
-      morir "pg_restore FALLÓ y la base $PG_DB quedó vacía. El estado anterior sigue ENTERO en $previa: devuélvelo con ALTER DATABASE \"$PG_DB\" ... DROP y ALTER DATABASE \"$previa\" RENAME TO \"$PG_DB\". Revisa $WORK_DIR/restaurar.err"
+      morir "pg_restore FALLÓ y la base $PG_DB quedó vacía. El estado anterior sigue ENTERO en $CK_PREVIA. Corrige la causa (espacio, locks, versión) y vuelve a lanzar el MISMO comando: se reanuda desde aquí. Revisa $WORK_DIR/restaurar.err"
     }
   psql_maint "ALTER DATABASE \"$PG_DB\" RESET max_parallel_maintenance_workers" >/dev/null ||
     morir "no se pudo devolver max_parallel_maintenance_workers a su valor por defecto en $PG_DB"
+  # Los metadatos por base NO viajan en el volcado: el límite de conexiones se
+  # devuelve aquí, y los `ALTER DATABASE … SET` se nombran para que el operador
+  # los reponga (la verificación de abajo no los da por buenos).
+  [ "$CK_CONNLIMIT" = "-1" ] ||
+    psql_maint "ALTER DATABASE \"$PG_DB\" CONNECTION LIMIT $CK_CONNLIMIT" >/dev/null ||
+    morir "no se pudo devolver el límite de conexiones ($CK_CONNLIMIT) a $PG_DB"
+  checkpoint_escribir RESTAURADO
+}
 
+# VERIFIED solo si cuadran las tres cosas: manifiestos, metadatos y guardas.
+# En modo `blando` devuelve 1 en vez de parar: lo usa la re-comprobación de una
+# restauración ya certificada.
+verificar_vuelta() { # <dump> <duro|blando>
+  local dump=$1 modo=$2 fallos="" atributos esperados settings
   titulo "RESTAURAR — comprobación contra el manifiesto pre-corte"
   medir restaurado
-  local fallos=""
   [ "$SLOTS_restaurado" = "${MEDIDA_SLOTS:-}" ] || fallos="$fallos slots($SLOTS_restaurado≠${MEDIDA_SLOTS:-})"
   [ "$JOBS_restaurado" = "${MEDIDA_JOBS:-}" ] || fallos="$fallos jobs($JOBS_restaurado≠${MEDIDA_JOBS:-})"
   [ "$PARES_restaurado" = "${MEDIDA_PARES:-}" ] || fallos="$fallos pares($PARES_restaurado≠${MEDIDA_PARES:-})"
   [ "$JUICIOS_restaurado" = "${MEDIDA_JUICIOS:-}" ] || fallos="$fallos juicios($JUICIOS_restaurado≠${MEDIDA_JUICIOS:-})"
   [ "$RESUELVEN_restaurado" = "${MEDIDA_RESUELVEN:-}" ] || fallos="$fallos resuelven($RESUELVEN_restaurado≠${MEDIDA_RESUELVEN:-})"
-  [ -z "$fallos" ] ||
-    morir "la restauración terminó pero el estado NO es el del manifiesto pre-corte:$fallos"
-  cmp -s "$dump.pares" "$WORK_DIR/manifiesto.pares.restaurado" ||
-    morir "los pares que resuelven tras restaurar NO son los del manifiesto pre-corte ($dump.pares)"
-  cmp -s "$dump.juicios" "$WORK_DIR/manifiesto.juicios.restaurado" ||
-    morir "los juicios que resuelven tras restaurar NO son los del manifiesto pre-corte ($dump.juicios)"
-  printf '\nrestauración VERIFICADA contra %s.manifiesto: cantidades e identidades coinciden.\n' "$dump"
-  printf 'El estado roto sigue APARTADO en %s: bórralo a mano cuando estés conforme.\n' "$previa"
+  cmp -s "$dump.pares" "$WORK_DIR/manifiesto.pares.restaurado" || fallos="$fallos pares(identidad)"
+  cmp -s "$dump.juicios" "$WORK_DIR/manifiesto.juicios.restaurado" || fallos="$fallos juicios(identidad)"
+  cmp -s "$dump.pares.resuelven" "$WORK_DIR/resuelven.pares.restaurado" || fallos="$fallos pares(resuelven)"
+  cmp -s "$dump.juicios.resuelven" "$WORK_DIR/resuelven.juicios.restaurado" || fallos="$fallos juicios(resuelven)"
+  atributos=$(atributos_de "$PG_DB")
+  esperados="$CK_ENC|$CK_COLL|$CK_CTYPE|$CK_OWNER|$CK_CONNLIMIT|$CK_ACL"
+  [ "$atributos" = "$esperados" ] || fallos="$fallos metadatos($atributos≠$esperados)"
+  settings=$(settings_de "$PG_DB")
+  [ "$settings" = "$CK_SETTINGS" ] ||
+    fallos="$fallos settings-por-base(hay '$settings' y el estado previo tenía '$CK_SETTINGS': reponlos con ALTER DATABASE … SET)"
+  psql_lineas "$SQL_GUARDAS" "$WORK_DIR/guardas.restaurado" ||
+    morir "no se pudieron medir las guardas de inmutabilidad tras restaurar"
+  cmp -s "$dump.guardas" "$WORK_DIR/guardas.restaurado" ||
+    fallos="$fallos guardas(los triggers de inmutabilidad no son los del manifiesto pre-corte)"
+  [ -n "$fallos" ] || { printf 'manifiestos, metadatos y guardas cuadran con %s.manifiesto\n' "$dump"; return 0; }
+  [ "$modo" != blando ] ||
+    { printf '⚠ la re-comprobación NO cuadra:%s\n' "$fallos"; return 1; }
+  morir "la restauración terminó pero el estado NO es el del manifiesto pre-corte:$fallos"
+}
+
+cierre_restauracion() { # <dump>
+  printf '\nrestauración VERIFIED contra %s.manifiesto: cantidades, identidades, metadatos y guardas coinciden.\n' "$1"
+  printf 'El estado roto sigue APARTADO en %s: NO se borra solo; bórralo a mano cuando estés conforme.\n' "$CK_PREVIA"
   # La base es NUEVA (otro OID), así que el slot lógico de la sombra se quedó con
   # la base apartada: `core-capture` arrancaría contra un `shadow_capture_state`
   # restaurado y un slot AUSENTE, y aborta con «continuidad WAL perdida». Es
@@ -1091,6 +1289,57 @@ restaurar() { # [fichero .dump]
   printf '+ re-crear slot + re-backfill) o core-capture abortará con «Estado registrado\n'
   printf 'pero slot AUSENTE».\n'
   printf 'Los escritores siguen PARADOS a propósito. Arráncalos con el Recreate de Container Station.\n'
+}
+
+restaurar() { # [fichero .dump]
+  titulo "RESTAURAR — vuelta al estado previo al corte (reanudable)"
+  local dump previa
+  dump=$(localizar_dump "${1:-}")
+  verificar_copia "$dump"
+  tomar_cerrojo "$dump.cerrojo"
+  checkpoint_cargar "$dump" "$SUMA_DUMP"
+  # Restaurar con escritores vivos deja el estado a medias en cuanto uno escriba.
+  parar_escritores
+  [ "$PG_DB" != "$PG_MAINT_DB" ] ||
+    morir "PG_DB y PG_MAINT_DB son la misma base ($PG_DB): no se puede renombrar la base a la que hay que conectarse"
+
+  previa=${CK_PREVIA:-}
+  if [ -n "$previa" ] && ! base_existe "$previa"; then
+    printf '⚠ el checkpoint nombra la base apartada %s y ya NO existe: se empieza de cero.\n' "$previa"
+    previa=""
+  fi
+
+  # Ya certificada: si el estado SIGUE cuadrando no hay nada que hacer; si se
+  # volvió a romper, empieza un ciclo NUEVO que apartará el destino actual (no
+  # lo borra: se conservan las dos bases).
+  if [ "$CK_FASE" = VERIFIED ] && [ -n "$previa" ] && base_existe "$PG_DB"; then
+    if verificar_vuelta "$dump" blando; then
+      printf '\nla marcha atrás ya estaba VERIFIED y el estado SIGUE cuadrando: nada que hacer.\n'
+      return 0
+    fi
+    printf '⚠ el estado volvió a romperse: ciclo NUEVO (la base %s se conserva).\n' "$previa"
+    previa=""; CK_FASE=INICIO
+  fi
+
+  # Resolución POR CATÁLOGO. Sin base previa, el estado roto sigue siendo el
+  # destino y hay que apartarlo; sin destino y sin previa no hay nada que hacer.
+  if [ -z "$previa" ]; then
+    base_existe "$PG_DB" ||
+      morir "ni existe la base $PG_DB ni queda una base apartada que reanudar: alguien la borró a mano. La copia $dump sigue siendo válida — crea la base ($0 no lo hace a ciegas) y vuelve a lanzar $0 restaurar $dump"
+    apartar_destino
+    previa=$CK_PREVIA
+  fi
+
+  if [ "$CK_FASE" = RESTAURADO ] && base_existe "$PG_DB"; then
+    printf 'el checkpoint dice que pg_restore ya entró entero: se pasa a verificar.\n'
+  else
+    recrear_destino
+    restaurar_dump "$dump"
+  fi
+
+  verificar_vuelta "$dump" duro
+  checkpoint_escribir VERIFIED
+  cierre_restauracion "$dump"
 }
 
 # --------------------------------------------------------------------------
