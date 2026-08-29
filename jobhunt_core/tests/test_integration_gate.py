@@ -490,6 +490,10 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     # congelada: holdout_frozen_at None).
     empty = _status(factory, now=GNOW)
     assert empty == {
+        "paradas_declaradas": [],
+        "max_paradas": 3,
+        "span_dias": None,
+        "max_span_dias": 14,
         "consecutive_ok": 0, "required": 7, "gate_passed": False,
         "last_cycle": G0.isoformat(), "holdout_frozen_at": None,
         "per_cycle": [],
@@ -518,7 +522,7 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     assert st["per_cycle"][3] == {
         "cycle": "2026-07-16", "computado": True, "recomputado": False,
         "ok": False, "gates_rojos": ["perdida"], "alertas": [],
-        "elegible": True,
+        "elegible": True, "parada_declarada": False,
     }
 
     # Las [alerta] NO resetean (§6): no_ingeribles > 0 y reenlace > 5% en G0
@@ -541,7 +545,7 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     assert st["per_cycle"][1] == {
         "cycle": "2026-07-18", "computado": False, "recomputado": False,
         "ok": False, "gates_rojos": [], "alertas": [],
-        "elegible": True,
+        "elegible": True, "parada_declarada": False,
     }
 
     # Una fila SOLO del muestreador (finished_at NULL, placeholder) NO es un
@@ -1181,3 +1185,92 @@ def test_consumer_down_30min_alert_and_lossless_recovery(capture, db, caplog):
     ok = _health(factory, slot)
     assert ok["ok"] is True and ok["active"] is True
     cap2.close()
+
+
+# --------------------------------------------------------------------------
+# core0036 — paradas DECLARADAS del anfitrión
+#
+# El contador metía en el mismo saco un ciclo ROJO (hay evidencia de que algo
+# falló) y uno AUSENTE (no hay evidencia de nada). Apagar el equipo una noche
+# reiniciaba la racha, así que «siete consecutivos» solo era medible en una
+# máquina que no se apaga nunca. Ahora la ausencia se SALTA si alguien la
+# declara — y la declaración sale en el informe, con tope y con ventana.
+# --------------------------------------------------------------------------
+def _declara_parada(factory, cycle_id, motivo="apagado del anfitrión"):
+    _exec(
+        factory,
+        "INSERT INTO shadow_declared_downtime (cycle_id, reason) VALUES (:c, :r) "
+        "ON CONFLICT (cycle_id) DO UPDATE SET reason = :r",
+        {"c": cycle_id, "r": motivo},
+    )
+
+
+def test_una_parada_declarada_no_rompe_la_racha(db):
+    """El caso que motivó el cambio: el anfitrión se apaga una noche. Sin
+    declararlo la racha vuelve a cero; declarándolo, el hueco se salta."""
+    factory = db
+    _freeze_holdout(factory, datetime(2026, 7, 1, tzinfo=metrics.CYCLE_TZ))
+    for i in (0, 1, 3, 4):                      # falta G0-2
+        _seed_green_cycle(factory, G0 - timedelta(days=i))
+
+    sin = _status(factory, now=GNOW)
+    assert sin["consecutive_ok"] == 2, (
+        "sin declarar, el hueco tiene que cortar la racha: " + repr(sin["consecutive_ok"])
+    )
+
+    _declara_parada(factory, G0 - timedelta(days=2))
+    con = _status(factory, now=GNOW)
+    assert con["consecutive_ok"] == 4, repr(con["consecutive_ok"])
+    # Y la parada se PUBLICA: nadie puede leer «4 verdes» sin ver el hueco.
+    assert len(con["paradas_declaradas"]) == 1, con["paradas_declaradas"]
+    assert con["paradas_declaradas"][0]["motivo"] == "apagado del anfitrión"
+    hueco = next(
+        e for e in con["per_cycle"]
+        if e["cycle"] == (G0 - timedelta(days=2)).isoformat()
+    )
+    assert hueco["parada_declarada"] is True and hueco["computado"] is False
+
+
+def test_una_declaracion_no_puede_tapar_un_ciclo_rojo(db):
+    """LA propiedad de seguridad del cambio. Si el ciclo se computó, mandan sus
+    métricas: la declaración solo cubre la ausencia TOTAL. Si no, declarar sería
+    una forma de borrar un día malo a posteriori."""
+    factory = db
+    _freeze_holdout(factory, datetime(2026, 7, 1, tzinfo=metrics.CYCLE_TZ))
+    _seed_green_cycle(factory, G0)
+    _seed_green_cycle(factory, G0 - timedelta(days=1))
+    _seed_metric(factory, G0 - timedelta(days=1), "perdida", "global", 1, {})
+    _seed_green_cycle(factory, G0 - timedelta(days=2))
+    _declara_parada(factory, G0 - timedelta(days=1), "intento de tapar un rojo")
+
+    r = _status(factory, now=GNOW)
+    assert r["consecutive_ok"] == 1, (
+        "una declaración tapó un ciclo ROJO computado: " + repr(r["consecutive_ok"])
+    )
+    rojo = next(
+        e for e in r["per_cycle"]
+        if e["cycle"] == (G0 - timedelta(days=1)).isoformat()
+    )
+    assert rojo["parada_declarada"] is False, rojo
+    assert rojo["computado"] is True
+
+
+def test_demasiadas_paradas_declaradas_cortan_igual(db):
+    """El tope existe para que «consecutivos» siga significando algo: con
+    ausencias ilimitadas, siete verdes podrían repartirse a lo largo de meses."""
+    from jobhunt_core.shadow.gate import GATE_MAX_DECLARED_GAPS
+
+    factory = db
+    _freeze_holdout(factory, datetime(2026, 6, 1, tzinfo=metrics.CYCLE_TZ))
+    verdes = [0, 2, 4, 6, 8]
+    for i in verdes:
+        _seed_green_cycle(factory, G0 - timedelta(days=i))
+    for i in (1, 3, 5, 7):                       # CUATRO paradas: una de más
+        _declara_parada(factory, G0 - timedelta(days=i))
+
+    r = _status(factory, now=GNOW)
+    assert len(r["paradas_declaradas"]) <= GATE_MAX_DECLARED_GAPS + 1
+    assert r["consecutive_ok"] < len(verdes), (
+        "las paradas se toleraron sin tope: " + repr(r)
+    )
+    assert r["gate_passed"] is False

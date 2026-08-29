@@ -106,6 +106,15 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------ umbrales RATIFICADOS (§6)
 
 GATE_CYCLES_REQUIRED = 7               # N ciclos diarios CONSECUTIVOS en verde
+# Paradas DECLARADAS que la racha tolera (core0036). Una ausencia declarada no
+# suma ni resta: se salta. El tope existe para que «consecutivos» siga
+# significando algo — con ausencias ilimitadas, siete verdes podrían repartirse
+# a lo largo de meses y no probarían continuidad ninguna.
+GATE_MAX_DECLARED_GAPS = 3
+# Y el mismo motivo por el otro lado: los N verdes deben caber en una ventana de
+# calendario acotada. Sin esto, tres paradas de un mes cada una seguirían
+# cumpliendo el tope de arriba.
+GATE_MAX_SPAN_DAYS = 14
 SLOT_WAL_RETENTION_MAX_BYTES = 2 * 1024**3  # retención WAL del slot > 2 GiB
 SLOT_STALLED_MAX_S = 30 * 60           # consumidor parado > 30 min
 
@@ -324,14 +333,26 @@ async def gate_status(
     # 2026-08-23 (media jornada con la imagen sin fixes, oráculo tocado en
     # ventana) queda inelegible por construcción, igual que todo lo anterior.
     frozen_at = await dedup_cohort_frozen_at(session, DEDUP_EVAL_COHORT)
+    declaradas = await _declared_downtime(session)
     per_cycle: list[dict] = []
     consecutive = 0
+    saltadas: list[dict] = []
     counting = True
     cid = last
+    primer_verde = None      # el ciclo verde MÁS RECIENTE de la racha
+    ultimo_verde = None      # el más ANTIGUO: entre los dos va la ventana
     while first is not None and cid >= first:
         entry = await _cycle_entry(session, cid)
         eligible = frozen_at is not None and cycle_bounds(cid)[0] >= frozen_at
         entry["elegible"] = eligible
+        # Una parada DECLARADA solo cubre la AUSENCIA total (core0036): si el
+        # ciclo se computó, mandan sus métricas y la declaración se ignora. Así
+        # una declaración no puede tapar un día rojo.
+        entry["parada_declarada"] = (
+            not entry["computado"] and cid in declaradas
+        )
+        if entry["parada_declarada"]:
+            entry["motivo_parada"] = declaradas[cid]
         if len(per_cycle) < required:
             per_cycle.append(entry)
         if counting:
@@ -339,6 +360,14 @@ async def gate_status(
                 counting = False
             elif entry["ok"]:
                 consecutive += 1
+                if primer_verde is None:
+                    primer_verde = cid
+                ultimo_verde = cid
+            elif entry["parada_declarada"]:
+                # Ni suma ni rompe: se salta, y queda escrito en el informe.
+                saltadas.append({"cycle": cid.isoformat(), "motivo": declaradas[cid]})
+                if len(saltadas) > GATE_MAX_DECLARED_GAPS:
+                    counting = False
             else:
                 counting = False
         # Corte anticipado (1ª rev. B-05): con la ventana del informe llena y
@@ -349,14 +378,42 @@ async def gate_status(
         if len(per_cycle) >= required and (not counting or consecutive >= required):
             break
         cid -= timedelta(days=1)
+    # La ventana: los N verdes tienen que caber en GATE_MAX_SPAN_DAYS días de
+    # calendario. Es lo que impide que «consecutivos» se estire indefinidamente
+    # a base de paradas declaradas.
+    span = None
+    if primer_verde is not None and ultimo_verde is not None:
+        span = (primer_verde - ultimo_verde).days + 1
+    dentro_de_ventana = span is None or span <= GATE_MAX_SPAN_DAYS
     return {
         "consecutive_ok": consecutive,
         "required": required,
-        "gate_passed": consecutive >= required,
+        "gate_passed": (
+            consecutive >= required
+            and len(saltadas) <= GATE_MAX_DECLARED_GAPS
+            and dentro_de_ventana
+        ),
         "last_cycle": last.isoformat(),
         "holdout_frozen_at": frozen_at.isoformat() if frozen_at else None,
+        # Se publican SIEMPRE: quien lea «7 verdes» tiene que ver también las
+        # paradas que hubo entre medias. Un informe que las omitiera estaría
+        # afirmando una continuidad que no hubo.
+        "paradas_declaradas": saltadas,
+        "max_paradas": GATE_MAX_DECLARED_GAPS,
+        "span_dias": span,
+        "max_span_dias": GATE_MAX_SPAN_DAYS,
         "per_cycle": per_cycle,
     }
+
+
+async def _declared_downtime(session: AsyncSession) -> dict:
+    """Paradas del anfitrión declaradas a mano (core0036) → {cycle_id: motivo}."""
+    rows = (
+        await session.execute(
+            sa.text("SELECT cycle_id, reason FROM shadow_declared_downtime")
+        )
+    ).all()
+    return {r.cycle_id: r.reason for r in rows}
 
 
 async def _cycle_entry(session: AsyncSession, cid: date) -> dict:
