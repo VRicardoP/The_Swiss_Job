@@ -1065,7 +1065,7 @@ def test_el_cerrojo_tambien_funciona_sin_flock(tmp_path):
     assert "mkdir+pid" in resultados["a"].stdout
 
     # Y el cerrojo huérfano de un proceso muerto NO bloquea la reanudación.
-    huerfano = Path(dump + ".cerrojo.d")
+    huerfano = Path(str(_cerrojo_de_la_base(tmp_path)) + ".d")
     huerfano.mkdir(exist_ok=True)
     (huerfano / "pid").write_text("999999\n")
     p = _con_entorno(tmp_path, entorno, subcomando="restaurar", extra=(dump,))
@@ -1208,3 +1208,159 @@ def test_la_sonda_de_destino_para_si_el_core_ve_otra_base(tmp_path):
     assert p.returncode != 0
     assert "Paso 4c" not in p.stdout, p.stdout
     assert "NO apunta a la base de psql" in p.stdout + p.stderr
+
+
+# --------------------------------------------------------------------------
+# R6 P1-1 — el cerrojo protege la BASE, no el fichero de copia
+#
+# `cutover` tomaba `$BACKUP_DIR/nas_cutover.cerrojo` y `restaurar` tomaba
+# `$dump.cerrojo`: dos restauraciones con copias DISTINTAS adquirían cerrojos
+# distintos, y un cutover y una restauración no se veían entre sí. Los tres
+# ejecutan `RENAME`, `DROP`, `CREATE` y `pg_restore` sobre el MISMO `PG_DB`, así
+# que el recurso a proteger nunca fue el archivo: es la base.
+# --------------------------------------------------------------------------
+_ESTADO_DOBLES = ("firme", "canon", "parados", "bases", "restaurado",
+                  "lento", "muertes")
+
+
+def _cerrojo_de_la_base(tmp_path: Path) -> Path:
+    """El cerrojo ÚNICO por servidor+base: ni por copia, ni por subcomando."""
+    return tmp_path / "backups" / "nas_cutover.swissjobhunter@swissjob-postgres.cerrojo"
+
+
+def _reiniciar_dobles(tmp_path: Path) -> None:
+    """Devuelve los dobles al estado ANTES para poder encadenar un cutover más."""
+    for nombre in _ESTADO_DOBLES:
+        (tmp_path / "estado" / nombre).unlink(missing_ok=True)
+
+
+def _mientras_retiene(tmp_path: Path, arranque, *, timeout=180):
+    """Lanza `arranque` en un hilo y espera al testigo que deja el doble cuando el
+    proceso está DENTRO de la etapa lenta, con el cerrojo ya tomado: así la prueba
+    no depende de ganar una carrera."""
+    import threading
+    import time
+
+    (tmp_path / "estado").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "estado" / "lento").unlink(missing_ok=True)
+    resultados: dict[str, subprocess.CompletedProcess] = {}
+
+    def correr():
+        resultados["a"] = arranque()
+
+    hilo = threading.Thread(target=correr)
+    hilo.start()
+    testigo = tmp_path / "estado" / "lento"
+    for _ in range(300):
+        if testigo.exists():
+            break
+        time.sleep(0.1)
+    assert testigo.exists(), "el primer proceso no llegó a la etapa lenta"
+    return hilo, resultados, timeout
+
+
+def test_dos_restauraciones_con_copias_distintas_no_se_pisan(tmp_path):
+    """LA reproducción del auditor: misma base, dos nombres de copia. Con el cerrojo
+    por copia las dos llegaban a VERIFIED tocando `swissjobhunter`, y las dos podían
+    generar el mismo `_previa_<segundo>`."""
+    import shutil
+
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    primera = Path(_dump_de(tmp_path))
+    segunda = primera.parent / "segunda_copia.dump"
+    shutil.copy(primera, segunda)
+    for sufijo in ("manifiesto", "pares", "juicios", "pares.resuelven",
+                   "juicios.resuelven", "guardas"):
+        shutil.copy(f"{primera}.{sufijo}", f"{segunda}.{sufijo}")
+
+    hilo, resultados, timeout = _mientras_retiene(
+        tmp_path,
+        lambda: _ejecutar(tmp_path, "restaurar", None, str(primera), lento_en="pg_restore"),
+    )
+    try:
+        b = _ejecutar(tmp_path, "restaurar", None, str(segunda))
+        assert b.returncode != 0, (
+            "la segunda restauración, con OTRA copia de la MISMA base, no fue "
+            "rechazada:\n" + b.stdout
+        )
+        assert "cerrojo" in b.stdout + b.stderr
+        assert "APARTADO" not in b.stdout, b.stdout
+    finally:
+        hilo.join(timeout=timeout)
+    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+
+
+def test_un_cutover_no_entra_mientras_hay_una_restauracion(tmp_path):
+    """El cutover empieza parando escritores y volcando la base que la restauración
+    está reescribiendo. Tiene que rebotar en el MISMO cerrojo."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+
+    hilo, resultados, timeout = _mientras_retiene(
+        tmp_path,
+        lambda: _ejecutar(tmp_path, "restaurar", None, dump, lento_en="pg_restore"),
+    )
+    try:
+        p = _ejecutar(tmp_path, "cutover", None)
+        assert p.returncode != 0, "el cutover entró con una restauración en curso:\n" + p.stdout
+        assert "cerrojo" in p.stdout + p.stderr
+        assert "Paso 2" not in p.stdout, p.stdout
+    finally:
+        hilo.join(timeout=timeout)
+    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+
+
+def test_una_restauracion_no_entra_mientras_hay_un_cutover(tmp_path):
+    """Y al revés: la marcha atrás no puede apartar la base que el cutover está
+    volcando y reescribiendo."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    _reiniciar_dobles(tmp_path)
+
+    hilo, resultados, timeout = _mientras_retiene(
+        tmp_path, lambda: _ejecutar(tmp_path, "cutover", None, lento_en="pg_dump")
+    )
+    try:
+        p = _ejecutar(tmp_path, "restaurar", None, dump)
+        assert p.returncode != 0, "la restauración entró con un cutover en curso:\n" + p.stdout
+        assert "cerrojo" in p.stdout + p.stderr
+        assert "APARTADO" not in p.stdout, p.stdout
+    finally:
+        hilo.join(timeout=timeout)
+    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+
+
+def test_el_cerrojo_sin_flock_no_se_lo_quita_a_un_proceso_vivo(tmp_path):
+    """La ventana del repuesto: entre el `mkdir` que GANA el cerrojo y la escritura
+    del PID no hay dueño identificable. R5 leía «sin PID» y hacía `rm -rf`, es decir
+    le quitaba el cerrojo a un proceso VIVO y dejaba dos dueños sobre la misma base.
+    Ahora se ESPERA a que el PID aparezca."""
+    entorno = {"FLOCK": "flock-que-no-existe-en-este-host", "CERROJO_GRACIA": "30"}
+    assert _con_entorno(tmp_path, entorno).returncode == 0
+    dump = _dump_de(tmp_path)
+
+    cerrojo = Path(str(_cerrojo_de_la_base(tmp_path)) + ".d")
+    cerrojo.mkdir(parents=True, exist_ok=True)   # `mkdir` ganado, PID aún no escrito
+    import threading
+    import time
+
+    resultados: dict[str, subprocess.CompletedProcess] = {}
+
+    def segunda():
+        resultados["b"] = _con_entorno(
+            tmp_path, entorno, subcomando="restaurar", extra=(dump,)
+        )
+
+    hilo = threading.Thread(target=segunda)
+    hilo.start()
+    try:
+        time.sleep(3)
+        assert cerrojo.is_dir(), "le quitó el cerrojo a un proceso vivo antes de mirarlo"
+        (cerrojo / "pid").write_text(f"{os.getpid()}\n")   # el dueño aparece, y VIVE
+    finally:
+        hilo.join(timeout=120)
+    p = resultados["b"]
+    assert p.returncode != 0, "restauró con el cerrojo de otro proceso vivo:\n" + p.stdout
+    assert "cerrojo" in p.stdout + p.stderr
+    assert cerrojo.is_dir(), "borró un cerrojo VIVO"
+    assert "APARTADO" not in p.stdout, p.stdout

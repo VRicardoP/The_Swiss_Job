@@ -67,6 +67,20 @@
 #         PLANIFICADOR de las nueve cadencias. Ahora hay postcondición
 #         FUNCIONAL del beat (Paso 7d).
 #
+# LO QUE CORRIGIÓ LA AUDITORÍA R6 (tres P1: el cerrojo, la durabilidad y una
+# señal de salud — las tres clases que deciden si esto se puede deshacer):
+#   P1-1  el cerrojo protegía el FICHERO DE COPIA y no el recurso destructivo.
+#         `cutover` tomaba `$BACKUP_DIR/nas_cutover.cerrojo` y `restaurar`
+#         tomaba `$dump.cerrojo`: dos restauraciones con nombres de copia
+#         distintos adquirían cerrojos distintos y las dos llegaban a
+#         `VERIFIED` sobre la MISMA base, calculando además el mismo nombre
+#         `_previa_<segundo>`. Ahora hay UN cerrojo por servidor + `PG_DB`,
+#         compartido por los dos subcomandos y tomado ANTES de cualquier
+#         acción operacional; los checkpoints siguen siendo por copia. En el
+#         repuesto sin `flock` se cerró además la ventana «`mkdir` con éxito →
+#         PID aún no escrito», donde el `rm -rf` le quitaba el cerrojo a un
+#         proceso VIVO.
+#
 # CIFRAS: este script NO lleva ninguna constante del corpus. Mide el estado
 # ANTES, lee las cifras de los informes en seco y aserta el estado DESPUÉS
 # contra lo que él mismo midió. Las del NAS serán otras que las locales.
@@ -141,11 +155,16 @@ set -Eeuo pipefail
 # Base de MANTENIMIENTO desde la que se renombra/crea la de producción: no se
 # puede hacer ninguna de las dos cosas estando conectado a ella.
 : "${PG_MAINT_DB:=postgres}"
-# El cerrojo de la marcha atrás (R5 P1-B). `flock` es lo que hay que usar —el
-# núcleo lo suelta aunque el proceso muera de `SIGKILL`—, pero un QNAP mínimo
-# puede no traerlo: apuntando esto a algo que no existe se cae al mutex por
-# `mkdir` de más abajo, que también es atómico.
+# El cerrojo de la maniobra (R5 P1-B, corregido en R6 P1-1: protege la BASE, no
+# el archivo de copia). `flock` es lo que hay que usar —el núcleo lo suelta
+# aunque el proceso muera de `SIGKILL`—, pero un QNAP mínimo puede no traerlo:
+# apuntando esto a algo que no existe se cae al mutex por `mkdir` de más abajo,
+# que también es atómico.
 : "${FLOCK:=flock}"
+# Segundos que el repuesto sin `flock` espera a que aparezca el PID de un
+# cerrojo recién creado antes de darlo por roto. Un dueño real lo escribe en el
+# instante siguiente al `mkdir`; borrarlo antes es quitárselo a un proceso VIVO.
+: "${CERROJO_GRACIA:=10}"
 # Módulo que imprime la identidad de la base a la que el core se conecta DE
 # VERDAD (resolviendo el DSN igual que el one-shot del Paso 5).
 : "${MODULO_IDENTIDAD:=jobhunt_core.shadow.identidad_destino}"
@@ -1137,32 +1156,61 @@ checkpoint_cargar() { # <dump> <sha256>
   printf 'checkpoint encontrado: fase=%s · base previa=%s\n' "$CK_FASE" "${CK_PREVIA:-(ninguna)}"
 }
 
+# El cerrojo protege el RECURSO DESTRUCTIVO, que es la BASE `$PG_DB` de ESTE
+# servidor — no el fichero de copia (auditoría R6 P1-1). `cutover` tomaba
+# `$BACKUP_DIR/nas_cutover.cerrojo` y `restaurar` tomaba `$dump.cerrojo`: dos
+# restauraciones con nombres de copia DISTINTOS adquirían cerrojos distintos, y
+# un cutover y una restauración no se veían entre sí, aunque los tres ejecutan
+# `RENAME`, `DROP`, `CREATE` y `pg_restore` sobre la MISMA base. Reproducido:
+# las dos restauraciones llegaron a `VERIFIED` y las dos calcularon el mismo
+# nombre `_previa_<segundo>`. Ahora hay UN cerrojo por servidor+base, que toman
+# los dos subcomandos ANTES de cualquier acción operacional; los checkpoints
+# siguen siendo por copia, que es lo que sí distingue una copia de otra.
+cerrojo_de_la_base() { # -> ruta del cerrojo ÚNICO por servidor + PG_DB
+  printf '%s/nas_cutover.%s.cerrojo' "$BACKUP_DIR" \
+    "$(printf '%s@%s' "$PG_DB" "$PG_CONTAINER" | tr -c 'A-Za-z0-9._@-' '_')"
+}
+
 # Exclusión mutua sobre un fichero DURABLE. Con `flock` no hay cerrojos
 # huérfanos: el núcleo lo suelta aunque el proceso muera de `SIGKILL`. Sin
 # `flock` (QNAP mínimo) se cae a un mutex por `mkdir` —atómico en POSIX— que
 # guarda el PID: si el dueño ya no vive, el cerrojo es basura y se hereda. Lo
-# que NO se hace es seguir sin cerrojo: dos restauraciones a la vez sobre la
-# misma base es justo el escenario que no tiene marcha atrás.
+# que NO se hace es seguir sin cerrojo: dos maniobras a la vez sobre la misma
+# base es justo el escenario que no tiene marcha atrás.
 tomar_cerrojo() { # <fichero>
-  local cerrojo=$1 dueno
+  local cerrojo=$1 dueno espera
   if command -v "$FLOCK" >/dev/null 2>&1; then
     exec 9>"$cerrojo" || morir "no se pudo abrir el cerrojo $cerrojo"
     "$FLOCK" -n 9 ||
-      morir "otra restauración tiene el cerrojo $cerrojo: NO se lanzan dos a la vez sobre la misma copia"
+      morir "otra maniobra tiene el cerrojo $cerrojo: NO se lanzan dos a la vez sobre la base $PG_DB (ni dos restauraciones con copias distintas, ni un cutover y una restauración)"
     printf 'cerrojo (flock): %s\n' "$cerrojo"
     return 0
   fi
   while ! mkdir "$cerrojo.d" 2>/dev/null; do
-    dueno=$(cat "$cerrojo.d/pid" 2>/dev/null || true)
-    if [ -n "$dueno" ] && kill -0 "$dueno" 2>/dev/null; then
-      morir "otra restauración (pid $dueno) tiene el cerrojo $cerrojo.d: NO se lanzan dos a la vez sobre la misma copia"
+    # Entre el `mkdir` que GANA el cerrojo y la escritura del PID hay una
+    # ventana en la que el dueño existe pero todavía no se puede nombrar. R5
+    # leía «sin PID» y hacía `rm -rf`: le quitaba el cerrojo a un proceso VIVO
+    # y dejaba dos dueños sobre la misma base (R6 P1-1). Aquí se ESPERA a que
+    # el PID aparezca, y un cerrojo que nunca lo declara PARA en vez de
+    # heredarse a ciegas: sobre datos irreemplazables, parar es lo barato.
+    dueno=""; espera=0
+    while [ -z "$dueno" ] && [ -d "$cerrojo.d" ] && [ "$espera" -lt "$CERROJO_GRACIA" ]; do
+      dueno=$(cat "$cerrojo.d/pid" 2>/dev/null || true)
+      [ -n "$dueno" ] || { sleep 1; espera=$((espera + 1)); }
+    done
+    [ -d "$cerrojo.d" ] || continue          # su dueño lo soltó: se reintenta
+    if [ -z "$dueno" ]; then
+      morir "el cerrojo $cerrojo.d lleva ${CERROJO_GRACIA}s sin declarar dueño (¿un proceso muerto entre el mkdir y el PID?): NO se hereda a ciegas un cerrojo sobre $PG_DB. Comprueba que no hay ninguna maniobra en curso y bórralo a mano"
+    fi
+    if kill -0 "$dueno" 2>/dev/null; then
+      morir "otra maniobra (pid $dueno) tiene el cerrojo $cerrojo.d: NO se lanzan dos a la vez sobre la base $PG_DB"
     fi
     rm -rf "$cerrojo.d" || morir "no se pudo heredar el cerrojo huérfano $cerrojo.d"
   done
   printf '%s\n' "$$" >"$cerrojo.d/pid"
   # shellcheck disable=SC2064
   trap "rm -rf '$cerrojo.d'" EXIT
-  printf 'cerrojo (mkdir+pid, sin flock en este host): %s.d\n' "$cerrojo.d"
+  printf 'cerrojo (mkdir+pid, sin flock en este host): %s\n' "$cerrojo.d"
 }
 
 localizar_dump() { # [fichero]
@@ -1324,9 +1372,13 @@ cierre_restauracion() { # <dump>
 restaurar() { # [fichero .dump]
   titulo "RESTAURAR — vuelta al estado previo al corte (reanudable)"
   local dump previa
+  # El cerrojo va ANTES de cualquier acción operacional y es el de la BASE, no
+  # el de la copia (R6 P1-1): dos restauraciones con copias distintas, o una
+  # restauración y un cutover, no pueden coexistir sobre $PG_DB.
+  mkdir -p "$BACKUP_DIR"
+  tomar_cerrojo "$(cerrojo_de_la_base)"
   dump=$(localizar_dump "${1:-}")
   verificar_copia "$dump"
-  tomar_cerrojo "$dump.cerrojo"
   checkpoint_cargar "$dump" "$SUMA_DUMP"
   # Restaurar con escritores vivos deja el estado a medias en cuanto uno escriba.
   parar_escritores
@@ -1507,6 +1559,11 @@ smoke_beat() {
   morir "el beat de $BEAT_CONTENEDOR no dio señales en ${BEAT_ESPERA}s: ningún «Sending due task» nuevo de ($BEAT_CADENCIAS) y samples de outbox_lag_p99 $samples0 → $samples1. El worker contesta al ping pero NADIE planifica las nueve cadencias (proyector, despacho, salud del slot, cierre de ciclo): NO se abre a nadie"
 }
 
+# `smoke` NO toma el cerrojo de la base a propósito: es el único subcomando que
+# no ejecuta ni una escritura —solo `SELECT`, `docker inspect/logs/exec` y una
+# petición a /v1/ready—, y retenerlo hasta once minutos bloquearía justo la
+# salida de emergencia. Todo lo que sí escribe (Pasos 1–6 y la marcha atrás)
+# entra por `cutover` o por `restaurar`, y los dos comparten ese cerrojo.
 smoke() {
   titulo "Paso 7 — smoke"
   [ -f "$ESTADO" ] || morir "no hay $ESTADO: el smoke necesita la release y los IDs de imagen medidos en el Paso 3"
@@ -1569,10 +1626,12 @@ main() {
     cutover)
       guarda_ensayo
       # Dos cutovers a la vez confirmarían las copias SQL dos veces y se
-      # pisarían el WORK_DIR y el backup. El cerrojo va ANTES de tocar nada, y
-      # sobre un fichero DURABLE: /tmp no vale (ramdisk).
+      # pisarían el WORK_DIR y el backup; y un cutover con una restauración en
+      # curso reescribe la base que la otra está reconstruyendo. Es el MISMO
+      # cerrojo que toma `restaurar` —el de la base—, va ANTES de tocar nada y
+      # vive en un fichero DURABLE: /tmp no vale (ramdisk).
       mkdir -p "$BACKUP_DIR"
-      tomar_cerrojo "$BACKUP_DIR/nas_cutover.cerrojo"
+      tomar_cerrojo "$(cerrojo_de_la_base)"
       : >"$ESTADO"
       paso1_parar
       paso2_backup
