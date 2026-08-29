@@ -139,7 +139,11 @@ def _ejecutar(args: argparse.Namespace) -> int:
     print(f"cerrojo (flock): {cerrojo}", flush=True)
     # El hijo hereda el descriptor: el cerrojo dura lo que dure la maniobra.
     os.set_inheritable(fd, True)
-    return subprocess.call(args.orden, close_fds=False)
+    # Y se le dice QUIÉN lo retiene. El script comprueba que ese PID es su padre
+    # real antes de darse por cubierto: una marca booleana heredada de una sesión
+    # anterior —o puesta a mano sin querer— habría saltado el cerrojo entero.
+    entorno = dict(os.environ, CUTOVER_CERROJO_PID=str(os.getpid()))
+    return subprocess.call(args.orden, close_fds=False, env=entorno)
 
 
 def _leer_fase(destino: Path) -> str | None:

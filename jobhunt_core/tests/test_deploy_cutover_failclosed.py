@@ -1775,3 +1775,29 @@ def test_el_cutover_y_la_marcha_atras_comparten_la_clave_canonica(tmp_path):
     r = _ejecutar(tmp_path, "restaurar", None, dump)
     assert r.returncode == 0, r.stdout + r.stderr
     assert _ruta_del_cerrojo_impresa(c.stdout) == _ruta_del_cerrojo_impresa(r.stdout)
+
+
+def test_una_marca_de_reentrada_heredada_no_salta_el_cerrojo(tmp_path):
+    """La costura Bash↔Python. El script se reejecuta bajo el coordinador y necesita
+    saber si ya está dentro; si esa respuesta fuera una marca booleana, heredarla de
+    una sesión anterior —o ponerla a mano sin querer— saltaría la exclusión mutua
+    entera. Se comprueba que quien dice retener el cerrojo sea el padre REAL: un
+    valor inventado no coincide con ningún PPID y la maniobra vuelve a tomarlo."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    hilo, resultados, timeout = _mientras_retiene(
+        tmp_path,
+        lambda: _ejecutar(tmp_path, "restaurar", None, dump, lento_en="pg_restore"),
+    )
+    try:
+        b = _ejecutar(tmp_path, "restaurar", None, dump,
+                      override={"CUTOVER_CERROJO_PID": "999999"})
+        salida = b.stdout + b.stderr
+        assert b.returncode != 0, (
+            "una marca de reentrada falsa saltó el cerrojo:\n" + b.stdout
+        )
+        assert "otra maniobra tiene el cerrojo" in salida, salida
+        assert "APARTADO" not in b.stdout, b.stdout
+    finally:
+        hilo.join(timeout=timeout)
+    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr

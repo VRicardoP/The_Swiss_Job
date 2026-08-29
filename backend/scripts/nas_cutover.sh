@@ -1206,7 +1206,12 @@ bajo_cerrojo() { # <subcomando> [args…] — no vuelve: re-ejecuta este script
   # (R6), `BACKUP_DIR` (R7) y `LOCK_DIR` más los permisos (R8). Ahora la ruta la
   # fija una constante del módulo y la clave sale de la identidad canónica del
   # servidor, que este script solo LEE.
-  [ -z "${CUTOVER_CERROJO_TOMADO:-}" ] || return 0
+  # ¿Ya estamos DENTRO del coordinador? La respuesta no puede ser una marca
+  # booleana: heredada de una sesión anterior, o puesta a mano sin querer,
+  # saltaría el cerrojo entero. Lo que se comprueba es que quien dice retenerlo
+  # sea nuestro padre REAL — y eso solo lo puede afirmar el proceso que de
+  # verdad nos lanzó.
+  [ "${CUTOVER_CERROJO_PID:-}" != "$PPID" ] || return 0
   command -v "$PYTHON" >/dev/null 2>&1 ||
     morir "este host no trae '$PYTHON' y la coordinación del cutover (cerrojo, identidad y checkpoint) vive en $COORDINADOR. NO hay repuesto: dos maniobras a la vez sobre $PG_DB corrompen la base sin marcha atrás. Instálalo, o apunta PYTHON= a su ruta"
   [ -f "$COORDINADOR" ] ||
@@ -1214,7 +1219,6 @@ bajo_cerrojo() { # <subcomando> [args…] — no vuelve: re-ejecuta este script
   local identidad
   identidad=$(psql_maint "$SQL_IDENTIDAD_SERVIDOR") ||
     morir "no se pudo leer la identidad del servidor (system_identifier): sin ella no se puede saber si otra maniobra habla del MISMO servidor"
-  export CUTOVER_CERROJO_TOMADO=1
   exec "$PYTHON" "$COORDINADOR" ejecutar \
     --identidad "$identidad" --db "$PG_DB" -- "$0" "$@"
 }

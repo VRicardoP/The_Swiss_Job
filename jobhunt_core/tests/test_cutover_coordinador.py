@@ -66,12 +66,24 @@ def test_sin_base_no_hay_cerrojo(tmp_path):
 def test_la_raiz_es_una_constante_del_modulo_y_no_se_lee_del_entorno(monkeypatch):
     """La vía de la TERCERA reapertura: mientras existiera un knob que moviera la
     raíz, dos operadores podían no verse. No debe haber ninguno."""
+    import inspect
+
+    # Se miran LAS DOS funciones que resuelven la ruta, no el fichero entero: el
+    # coordinador sí lee el entorno para otras cosas legítimas —construir el del
+    # proceso hijo, por ejemplo— y prohibirlo en todas partes daría un rojo falso
+    # cada vez que se toque algo no relacionado. Lo que no puede haber es un knob
+    # EN LA RESOLUCIÓN, que es donde estuvo la tercera reapertura.
+    for fn in (coord.ruta_del_cerrojo, coord.preparar_raiz):
+        cuerpo = inspect.getsource(fn)
+        for sospechoso in ("LOCK_DIR", "getenv", "environ", "sys.argv"):
+            assert sospechoso not in cuerpo, (
+                f"{fn.__name__} lee '{sospechoso}' para resolver la raíz: eso es un knob"
+            )
+    # Y la constante es literal: nada de componerla desde fuera.
     fuente = _RUTA.read_text(encoding="utf-8")
-    cuerpo = fuente.split('RAIZ_CERROJOS = Path("/var/lock/jobhunt-cutover")', 1)[1]
-    for sospechoso in ("LOCK_DIR", "getenv", "environ"):
-        assert sospechoso not in cuerpo, (
-            f"el coordinador lee '{sospechoso}' para resolver la raíz: eso es un knob"
-        )
+    assert 'RAIZ_CERROJOS = Path("/var/lock/jobhunt-cutover")' in fuente, (
+        "la raíz dejó de ser una constante literal del módulo"
+    )
     # Y tampoco por línea de comandos.
     ayuda = subprocess.run(
         [sys.executable, str(_RUTA), "ejecutar", "--help"],
