@@ -138,7 +138,8 @@ case "$1" in
         # NO el muestreador. Es el falso verde: el smoke miraba «alguna de las
         # cuatro» y una muestra que sube por su cuenta.
         case "$r" in
-          smoke_sin_beat|smoke_beat_muerto) ;;
+          # Ni una traza nueva: el planificador no despacha nada.
+          smoke_sin_beat|smoke_beat_muerto|muestra_sin_sampler) ;;
           beat_desacoplado)
             echo "[INFO/Beat] Scheduler: Sending due task shadow-project (jobhunt.shadow.project)" ;;
           *)
@@ -344,15 +345,38 @@ guardas() {
     printf 'jobhunt|labeled_dedup_pairs|trg_inmutable_%s|%s\n' "$n" "$estado"
   done
 }
-# Epoch de la muestra MÁS NUEVA de `outbox_lag_p99` (R6 P1-3). Sin beat no
-# entra ninguna, así que se queda en una de 2001; con el muestreador
-# despachado —o con una ejecución INDEPENDIENTE, que es el falso verde— entra
-# una de ahora mismo.
+# Epoch de la muestra MÁS NUEVA de `outbox_lag_p99` — el instrumento VIEJO
+# (R6 P1-3). Se conserva para que la mordida funcione: contra el script padre,
+# que preguntaba por el máximo, `muestra_futura` devuelve una fecha de 2100 y
+# el smoke daba VERDE. Contra el script corregido nadie hace esta pregunta.
 muestra_outbox() {
   case "$r" in
-    smoke_sin_beat|smoke_beat_muerto) echo 1000000000 ;;
+    smoke_sin_beat|smoke_beat_muerto|sampler_sin_muestra) echo 1000000000 ;;
+    muestra_pasada) echo 1000000000 ;;          # 2001: anterior al sondeo
+    muestra_futura) echo 4102444800 ;;          # 2100-01-01: siempre > t0
     *) date +%s ;;
   esac
+}
+# CUÁNTAS muestras hay posteriores al instante que pregunta el smoke (R7 P1-4).
+# La primera llamada es la LÍNEA BASE, en el propio `t0`; las siguientes ven lo
+# que haya entrado desde entonces.
+#   · sin beat / beat muerto: no entra ninguna, nunca ⇒ 0 siempre.
+#   · `muestra_futura`: hay UNA fechada en 2100 que ya estaba ahí. Cuenta en la
+#     línea base y no crece jamás ⇒ 1 siempre. Es el falso verde de R7 P1-4.
+#   · el resto: 0 en la base y 1 en cuanto el muestreador deja una nueva.
+muestras_posteriores() {
+  local n
+  case "$r" in
+    # Ninguna muestra nueva: sin beat, con el beat muerto, o con el muestreador
+    # despachado pero sin que su ejecución deje nada (`sampler_sin_muestra`), y
+    # el caso de una muestra ANTERIOR al sondeo, que tampoco prueba nada.
+    smoke_sin_beat|smoke_beat_muerto|sampler_sin_muestra|muestra_pasada) echo 0; return ;;
+    # UNA fechada en 2100 que ya estaba: cuenta en la línea base y no crece.
+    muestra_futura) echo 1; return ;;
+  esac
+  n=$(cat "$d/muestras" 2>/dev/null || echo 0)
+  echo "$n"
+  echo 1 >"$d/muestras"
 }
 
 sql=""
@@ -370,6 +394,7 @@ if [ -n "$sql" ]; then                      # consultas escalares y manifiestos
     *resuelven-juicios*)  resuelven_juicios "$fase"; exit 0 ;;
     *resuelven-pares*)    resuelven_pares "$fase"; exit 0 ;;
     *guardas-inmutabilidad*) guardas; exit 0 ;;
+    *muestras-outbox-posteriores*) muestras_posteriores; exit 0 ;;
     *muestra-outbox*)     muestra_outbox; exit 0 ;;
   esac
   case "$sql" in
@@ -498,10 +523,20 @@ exit 0
 
 
 _DOBLE_SYNC = r"""#!/usr/bin/env bash
-# DOBLE de `sync`. Con $ROMPER=sync_falla devuelve 1: es la reproducción de
-# R6 P1-2 —un almacén que no acepta la sincronización— justo antes del `RENAME`
-# destructivo. En cualquier otro caso no hace falta sincronizar un tmpdir.
+# DOBLE de `sync`. Dos modos:
+#   · $ROMPER=sync_falla — falla SIEMPRE (R6 P1-2, R7 P1-1).
+#   · $SYNC_FALLA_EN=N   — falla solo en la N-ésima barrera de esta invocación,
+#     que es lo que permite recorrer las barreras UNA A UNA en vez de probar
+#     solo la primera. El orden de las barreras es el del programa.
+# En cualquier otro caso no hace falta sincronizar un tmpdir.
+d=${DOBLES_DIR:-/tmp}
 [ "${ROMPER:-}" = sync_falla ] && { echo "sync: error writing: Input/output error" >&2; exit 1; }
+if [ -n "${SYNC_FALLA_EN:-}" ]; then
+  n=$(( $(cat "$d/sync_n" 2>/dev/null || echo 0) + 1 ))
+  echo "$n" >"$d/sync_n"
+  [ "$n" = "$SYNC_FALLA_EN" ] && {
+    echo "sync: error writing: No space left on device" >&2; exit 1; }
+fi
 exit 0
 """
 
@@ -541,6 +576,11 @@ def _montar_nas(raiz: Path) -> dict[str, str]:
         "WORK_DIR": str(raiz / "trabajo"),
         "COPIAS_SQL": "g3.sql g6.sql",
         "DOBLES_DIR": str(raiz / "estado"),
+        # El cerrojo NO se deriva de BACKUP_DIR (R7 P1-2). Aquí se fija a un
+        # directorio propio de la prueba por dos razones: para que dos suites
+        # a la vez en el mismo host no se bloqueen entre sí en /var/lock, y
+        # para poder mover BACKUP_DIR y comprobar que el cerrojo NO se mueve.
+        "LOCK_DIR": str(raiz / "cerrojos"),
         "SLOT_ESPERA": "0",          # la sonda de progreso no tiene que dormir en tests
         # La postcondición del beat espera DOS cadencias de cinco minutos en el
         # NAS; aquí el doble contesta al primer sondeo.
@@ -557,6 +597,7 @@ def _ejecutar(
     matar_en: str | None = None,
     lento_en: str | None = None,
     timeout: int = 120,
+    override: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     assert _SCRIPT.is_file(), (
         f"{_SCRIPT} no está montado: esta guarda NO puede saltarse. Ejecuta la suite con "
@@ -572,6 +613,11 @@ def _ejecutar(
             entorno[clave] = valor
         else:
             entorno.pop(clave, None)
+    # LO ÚLTIMO, a propósito: `_montar_nas` fija BACKUP_DIR/WORK_DIR/LOCK_DIR y
+    # machacaría cualquier valor que la prueba quisiera cambiar. Sin esto, el caso
+    # «mismo recurso, distinto BACKUP_DIR» se ejecutaba con el MISMO directorio y
+    # pasaba en el padre: la fixture anulaba el caso que decía probar.
+    entorno.update(override or {})
     return subprocess.run(
         ["bash", str(_SCRIPT), subcomando, *extra],
         env=entorno, capture_output=True, text=True, timeout=timeout,
@@ -1050,46 +1096,45 @@ def test_dos_restauraciones_a_la_vez_no_se_pisan(tmp_path):
     assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
 
 
-def test_el_cerrojo_tambien_funciona_sin_flock(tmp_path):
-    """Un QNAP mínimo puede no traer `flock`. El camino de repuesto —mutex por `mkdir`,
-    atómico en POSIX, con el PID del dueño— tiene que rechazar la segunda invocación
-    igual, y heredar el cerrojo si el dueño ya no vive (si no, un `SIGKILL` dejaría la
-    marcha atrás bloqueada para siempre, que es peor que el defecto original)."""
-    import threading
-    import time
-
+def test_sin_flock_la_maniobra_no_arranca(tmp_path):
+    """R7 P1-3. El repuesto por `mkdir`+PID se RETIRÓ. Ganar el cerrojo con `mkdir`
+    era atómico, pero LIMPIAR uno huérfano no lo era: dos procesos leían el mismo PID
+    muerto, hacían `rm -rf` uno detrás de otro y `mkdir` con éxito los dos, y ambos se
+    creían dueños de la misma base. Sin `flock` no hay exclusión mutua que valga, así
+    que la maniobra PARA — y para antes de tocar nada."""
     entorno = {"FLOCK": "flock-que-no-existe-en-este-host"}
-    assert _con_entorno(tmp_path, entorno).returncode == 0
+    p = _con_entorno(tmp_path, entorno)
+    salida = p.stdout + p.stderr
+    assert p.returncode != 0, "arrancó un cutover sin exclusión mutua:\n" + p.stdout
+    assert "flock" in salida
+    assert "Paso 1" not in p.stdout, p.stdout
+    assert "Paso 2" not in p.stdout, p.stdout
+
+
+def test_sin_flock_tampoco_arranca_la_marcha_atras(tmp_path):
+    """Y la restauración igual: es la que ejecuta `RENAME`, `DROP` y `CREATE`."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
     dump = _dump_de(tmp_path)
-    resultados: dict[str, subprocess.CompletedProcess] = {}
-
-    def primera():
-        resultados["a"] = _con_entorno(
-            tmp_path, entorno, subcomando="restaurar", extra=(dump,), lento_en="pg_restore"
-        )
-
-    hilo = threading.Thread(target=primera)
-    hilo.start()
-    try:
-        testigo = tmp_path / "estado" / "lento"
-        for _ in range(200):
-            if testigo.exists():
-                break
-            time.sleep(0.1)
-        segunda = _con_entorno(tmp_path, entorno, subcomando="restaurar", extra=(dump,))
-        assert segunda.returncode != 0, segunda.stdout
-        assert "cerrojo" in segunda.stdout + segunda.stderr
-    finally:
-        hilo.join(timeout=120)
-    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
-    assert "mkdir+pid" in resultados["a"].stdout
-
-    # Y el cerrojo huérfano de un proceso muerto NO bloquea la reanudación.
-    huerfano = Path(str(_cerrojo_de_la_base(tmp_path)) + ".d")
-    huerfano.mkdir(exist_ok=True)
-    (huerfano / "pid").write_text("999999\n")
+    entorno = {"FLOCK": "flock-que-no-existe-en-este-host"}
     p = _con_entorno(tmp_path, entorno, subcomando="restaurar", extra=(dump,))
-    assert p.returncode == 0, p.stdout + p.stderr
+    salida = p.stdout + p.stderr
+    assert p.returncode != 0, "restauró sin exclusión mutua:\n" + p.stdout
+    assert "flock" in salida
+    assert "APARTADO" not in p.stdout, p.stdout
+    bases = (tmp_path / "estado" / "bases").read_text().split()
+    assert bases == ["swissjobhunter"], f"tocó el catálogo sin cerrojo: {bases}"
+
+
+def test_un_cerrojo_huerfano_no_se_limpia_solo(tmp_path):
+    """El corolario de retirar el repuesto: ya no hay ninguna vía por la que el script
+    borre un cerrojo que no es suyo. La limpieza de un cerrojo obsoleto es MANUAL y
+    auditada — que es justo lo que impide la carrera de dos herederos."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    cerrojo = _cerrojo_de_la_base(tmp_path)
+    assert cerrojo.is_file(), "el cerrojo de flock no llegó a existir"
+    assert not Path(str(cerrojo) + ".d").exists(), (
+        "quedó el mutex por mkdir: el repuesto retirado sigue vivo"
+    )
 
 
 def test_la_base_apartada_nunca_se_borra_sola(tmp_path):
@@ -1240,12 +1285,13 @@ def test_la_sonda_de_destino_para_si_el_core_ve_otra_base(tmp_path):
 # que el recurso a proteger nunca fue el archivo: es la base.
 # --------------------------------------------------------------------------
 _ESTADO_DOBLES = ("firme", "canon", "parados", "bases", "restaurado",
-                  "lento", "muertes")
+                  "lento", "muertes", "muestras", "sync_n")
 
 
 def _cerrojo_de_la_base(tmp_path: Path) -> Path:
-    """El cerrojo ÚNICO por servidor+base: ni por copia, ni por subcomando."""
-    return tmp_path / "backups" / "nas_cutover.swissjobhunter@swissjob-postgres.cerrojo"
+    """El cerrojo ÚNICO por servidor+base: ni por copia, ni por subcomando, ni por
+    directorio de copias (R7 P1-2)."""
+    return tmp_path / "cerrojos" / "nas_cutover.swissjobhunter@swissjob-postgres.cerrojo"
 
 
 def _reiniciar_dobles(tmp_path: Path) -> None:
@@ -1303,7 +1349,7 @@ def test_dos_restauraciones_con_copias_distintas_no_se_pisan(tmp_path):
             "la segunda restauración, con OTRA copia de la MISMA base, no fue "
             "rechazada:\n" + b.stdout
         )
-        assert "cerrojo" in b.stdout + b.stderr
+        assert "otra maniobra tiene el cerrojo" in b.stdout + b.stderr, b.stdout
         assert "APARTADO" not in b.stdout, b.stdout
     finally:
         hilo.join(timeout=timeout)
@@ -1323,7 +1369,7 @@ def test_un_cutover_no_entra_mientras_hay_una_restauracion(tmp_path):
     try:
         p = _ejecutar(tmp_path, "cutover", None)
         assert p.returncode != 0, "el cutover entró con una restauración en curso:\n" + p.stdout
-        assert "cerrojo" in p.stdout + p.stderr
+        assert "otra maniobra tiene el cerrojo" in p.stdout + p.stderr, p.stdout
         assert "Paso 2" not in p.stdout, p.stdout
     finally:
         hilo.join(timeout=timeout)
@@ -1343,47 +1389,11 @@ def test_una_restauracion_no_entra_mientras_hay_un_cutover(tmp_path):
     try:
         p = _ejecutar(tmp_path, "restaurar", None, dump)
         assert p.returncode != 0, "la restauración entró con un cutover en curso:\n" + p.stdout
-        assert "cerrojo" in p.stdout + p.stderr
+        assert "otra maniobra tiene el cerrojo" in p.stdout + p.stderr, p.stdout
         assert "APARTADO" not in p.stdout, p.stdout
     finally:
         hilo.join(timeout=timeout)
     assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
-
-
-def test_el_cerrojo_sin_flock_no_se_lo_quita_a_un_proceso_vivo(tmp_path):
-    """La ventana del repuesto: entre el `mkdir` que GANA el cerrojo y la escritura
-    del PID no hay dueño identificable. R5 leía «sin PID» y hacía `rm -rf`, es decir
-    le quitaba el cerrojo a un proceso VIVO y dejaba dos dueños sobre la misma base.
-    Ahora se ESPERA a que el PID aparezca."""
-    entorno = {"FLOCK": "flock-que-no-existe-en-este-host", "CERROJO_GRACIA": "30"}
-    assert _con_entorno(tmp_path, entorno).returncode == 0
-    dump = _dump_de(tmp_path)
-
-    cerrojo = Path(str(_cerrojo_de_la_base(tmp_path)) + ".d")
-    cerrojo.mkdir(parents=True, exist_ok=True)   # `mkdir` ganado, PID aún no escrito
-    import threading
-    import time
-
-    resultados: dict[str, subprocess.CompletedProcess] = {}
-
-    def segunda():
-        resultados["b"] = _con_entorno(
-            tmp_path, entorno, subcomando="restaurar", extra=(dump,)
-        )
-
-    hilo = threading.Thread(target=segunda)
-    hilo.start()
-    try:
-        time.sleep(3)
-        assert cerrojo.is_dir(), "le quitó el cerrojo a un proceso vivo antes de mirarlo"
-        (cerrojo / "pid").write_text(f"{os.getpid()}\n")   # el dueño aparece, y VIVE
-    finally:
-        hilo.join(timeout=120)
-    p = resultados["b"]
-    assert p.returncode != 0, "restauró con el cerrojo de otro proceso vivo:\n" + p.stdout
-    assert "cerrojo" in p.stdout + p.stderr
-    assert cerrojo.is_dir(), "borró un cerrojo VIVO"
-    assert "APARTADO" not in p.stdout, p.stdout
 
 
 # --------------------------------------------------------------------------
@@ -1419,3 +1429,216 @@ def test_el_smoke_no_da_verde_si_beat_despacha_otra_cadencia(tmp_path, sonda):
     assert "Paso 7d" in salida, salida
     assert p.returncode != 0, "verde con el proyector despachado y una muestra ajena:\n" + p.stdout
     assert "shadow-sample-outbox-lag" in salida
+
+
+# --------------------------------------------------------------------------
+# R7 — la ronda 7 de auditoría externa
+# --------------------------------------------------------------------------
+def test_un_sync_que_falla_para_antes_del_paso_4c(tmp_path):
+    """R7 P1-1. La barrera de durabilidad estaba SOLO en el checkpoint de la marcha
+    atrás. La unidad de copia del cutover —volcado, manifiesto y los cinco sidecars—
+    no la tenía, y el Paso 4c es igual de irreversible que el `RENAME`: con `sync`
+    fallando, el cutover llegaba a 4c y salía con código 0 diciendo «Pasos 1–6 OK».
+    Una copia que no ha llegado al disco es la única marcha atrás que hay."""
+    p = _ejecutar(tmp_path, "cutover", "sync_falla")
+    salida = p.stdout + p.stderr
+    assert p.returncode != 0, "confirmó la canonización con la copia sin sincronizar:\n" + p.stdout
+    assert "sync" in salida
+    assert "Paso 4c" not in p.stdout, p.stdout
+    assert "Pasos 1–6 OK" not in p.stdout, p.stdout
+    assert not (tmp_path / "estado" / "firme").exists(), "hubo COMMIT con el sync roto"
+
+
+def test_el_cerrojo_no_cambia_al_cambiar_el_directorio_de_copias(tmp_path):
+    """R7 P1-2. El cerrojo vivía bajo `$BACKUP_DIR`: dos maniobras sobre la MISMA
+    base con directorios de copia distintos tomaban cerrojos distintos y no se veían.
+    Reproducido por el auditor con un restore detenido dentro de `pg_restore` y otro
+    con otro BACKUP_DIR, que llegó hasta VERIFIED."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+
+    hilo, resultados, timeout = _mientras_retiene(
+        tmp_path,
+        lambda: _ejecutar(tmp_path, "restaurar", None, dump, lento_en="pg_restore"),
+    )
+    try:
+        otro = tmp_path / "otras_copias"
+        otro.mkdir(exist_ok=True)
+        b = _ejecutar(
+            tmp_path, "restaurar", None, dump, override={"BACKUP_DIR": str(otro)}
+        )
+        assert b.returncode != 0, (
+            "la segunda maniobra, con OTRO BACKUP_DIR sobre la MISMA base, no fue "
+            "rechazada:\n" + b.stdout
+        )
+        # CAUSAL: no basta con que muera ni con que la palabra «cerrojo» aparezca
+        # —el padre tomaba su PROPIO cerrojo en el otro BACKUP_DIR y lo imprimía
+        # al arrancar—. Tiene que morir POR el cerrojo ajeno, y nombrando la base.
+        salida = b.stdout + b.stderr
+        assert "otra maniobra tiene el cerrojo" in salida, (
+            "murió por otra causa, no por el cerrojo compartido:\n" + salida
+        )
+        assert "swissjobhunter" in salida, salida
+        assert "APARTADO" not in b.stdout, b.stdout
+    finally:
+        hilo.join(timeout=timeout)
+    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+
+
+def test_el_smoke_no_da_verde_por_una_muestra_fechada_en_el_futuro(tmp_path, sonda):
+    """R7 P1-4. El smoke comparaba `max(ts)` con el inicio del sondeo, así que UNA
+    fila fechada en 2100 —reloj desviado, dato sembrado— cumplía la condición para
+    siempre y el beat podía estar muerto. Ahora se cuenta cuántas muestras posteriores
+    al sondeo hay AL EMPEZAR y se exige que esa cifra CREZCA: la del futuro entra en
+    la línea base y deja de probar nada."""
+    _preparar_smoke(tmp_path, "muestra_futura")
+    p = _ejecutar(tmp_path, "smoke", "muestra_futura")
+    salida = p.stdout + p.stderr
+    assert "Paso 7d" in salida, salida
+    assert p.returncode != 0, (
+        "verde con una muestra preexistente del futuro y ninguna nueva:\n" + p.stdout
+    )
+    assert "outbox_lag_p99" in salida
+
+
+def test_una_verificacion_fallida_se_anota_y_la_siguiente_restaura_de_nuevo(tmp_path):
+    """R7 P1-5. Si `pg_restore` entraba entero y la verificación NO cuadraba, el
+    checkpoint se quedaba en `RESTAURADO`: la siguiente ejecución se saltaba
+    `pg_restore` y volvía a verificar el MISMO destino defectuoso, para siempre. No
+    convergía ni fallaba cerrada — se quedaba dando vueltas."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+
+    primera = _ejecutar(tmp_path, "restaurar", "restaurar_verificacion", dump)
+    assert primera.returncode != 0, "certificó una vuelta que no cuadra:\n" + primera.stdout
+    checkpoint = Path(f"{dump}.restauracion").read_text(encoding="utf-8")
+    assert "VERIFICACION_FALLIDA" in checkpoint, (
+        "la verificación fallida no quedó anotada; el checkpoint dice:\n" + checkpoint
+    )
+
+    # Y la segunda, ya sin el fallo inducido, tiene que RESTAURAR otra vez —no
+    # limitarse a re-verificar— y llegar a VERIFIED.
+    segunda = _ejecutar(tmp_path, "restaurar", None, dump)
+    assert segunda.returncode == 0, segunda.stdout + segunda.stderr
+    assert "se restaura de nuevo" in segunda.stdout, segunda.stdout
+    assert "se pasa a verificar" not in segunda.stdout, (
+        "se saltó pg_restore y volvió a verificar el destino roto:\n" + segunda.stdout
+    )
+    assert "VERIFIED" in Path(f"{dump}.restauracion").read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# Clases de equivalencia de los cinco invariantes (§5.3 de docs/DEPLOY_NAS.md).
+# Los cinco P1 de la R7 se reprodujeron con un ejemplo cada uno; esto cubre la
+# CLASE, que es lo que impide que el mismo invariante se reabra por una variante.
+# --------------------------------------------------------------------------
+
+# --- Invariante 1: un solo cerrojo por recurso -----------------------------
+def test_el_cerrojo_se_suelta_solo_si_su_dueno_muere(tmp_path):
+    """Clase (f): dueño muerto. Es la contracara de exigir `flock` — si el cerrojo
+    sobreviviera al proceso, un `SIGKILL` dejaría bloqueada para siempre la única
+    salida de emergencia, y esa fue la razón por la que existía el repuesto que se
+    retiró. El núcleo lo suelta; no hace falta limpieza automática ninguna."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    muerta = _ejecutar(tmp_path, "restaurar", None, dump, matar_en="en_restore")
+    assert muerta.returncode != 0, "no murió donde se le pidió"
+    # Sin intervención manual y sin esperar: el rerun inmediato NO rebota.
+    p = _ejecutar(tmp_path, "restaurar", None, dump)
+    assert "otra maniobra tiene el cerrojo" not in p.stdout + p.stderr, (
+        "el cerrojo de un proceso MUERTO bloqueó la marcha atrás:\n" + p.stdout
+    )
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+# --- Invariante 2: durabilidad antes que irreversibilidad ------------------
+@pytest.mark.parametrize("barrera", [1, 2, 3, 4])
+def test_cada_barrera_de_persistencia_de_la_marcha_atras_para_lo_irreversible(tmp_path, barrera):
+    """Clase completa del invariante 2 en la marcha atrás: no basta con probar que la
+    PRIMERA barrera para. Se recorre una a una —`INICIO`, `APARTADA`,
+    `DESTINO_CREADO`, `RESTAURADO`— y en todas el fallo de `sync` tiene que detener la
+    maniobra sin dejar el estado en una fase que el checkpoint no conozca."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    p = _con_entorno(
+        tmp_path, {"SYNC_FALLA_EN": str(barrera)}, subcomando="restaurar", extra=(dump,)
+    )
+    salida = p.stdout + p.stderr
+    assert p.returncode != 0, f"la barrera {barrera} no detuvo nada:\n{p.stdout}"
+    assert "sync" in salida, salida
+    assert "VERIFIED" not in p.stdout, p.stdout
+    # Y lo que se haya hecho hasta ahí tiene que ser reanudable: el estado nunca
+    # queda en una base cuyo nombre la máquina de estados desconozca.
+    reanudada = _ejecutar(tmp_path, "restaurar", None, dump)
+    assert reanudada.returncode == 0, (
+        f"tras parar en la barrera {barrera} la marcha atrás no converge:\n"
+        + reanudada.stdout + reanudada.stderr
+    )
+
+
+def test_la_barrera_del_sellado_para_el_cutover_antes_del_4c(tmp_path):
+    """La otra frontera del invariante 2: la unidad de copia del cutover. Es la
+    primera barrera de esa invocación, y detrás va el Paso 4c."""
+    p = _con_entorno(tmp_path, {"SYNC_FALLA_EN": "1"}, subcomando="cutover")
+    salida = p.stdout + p.stderr
+    assert p.returncode != 0, "llegó al 4c con la copia sin sincronizar:\n" + p.stdout
+    assert "sync" in salida, salida
+    assert "Paso 4c" not in p.stdout, p.stdout
+    assert not (tmp_path / "estado" / "firme").exists(), "hubo COMMIT sin copia durable"
+
+
+# --- Invariante 3: reanudable desde todo estado ----------------------------
+def test_la_marcha_atras_converge_tras_reanudaciones_consecutivas(tmp_path):
+    """Clase «reanudación repetida hasta estado terminal». Una reanudación que funciona
+    una vez puede no componer: se encadenan cuatro muertes en bordes distintos, cada
+    una sobre el estado que dejó la anterior, y solo al final se deja converger."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    for borde in ("antes_rename", "tras_rename", "en_create", "en_restore"):
+        muerta = _ejecutar(tmp_path, "restaurar", None, dump, matar_en=borde)
+        assert muerta.returncode != 0, f"no murió en {borde}"
+    p = _ejecutar(tmp_path, "restaurar", None, dump)
+    assert p.returncode == 0, (
+        "tras cuatro muertes encadenadas la marcha atrás no converge:\n"
+        + p.stdout + p.stderr
+    )
+    assert "restauración VERIFIED" in p.stdout, p.stdout
+
+
+def test_una_muerte_tras_anotar_la_verificacion_fallida_sigue_convergiendo(tmp_path):
+    """La transición nueva también tiene su borde: morir DESPUÉS de anotar
+    `VERIFICACION_FALLIDA` no puede dejar el estado en un sitio del que no se salga."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    primera = _ejecutar(tmp_path, "restaurar", "restaurar_verificacion", dump)
+    assert primera.returncode != 0
+    assert "VERIFICACION_FALLIDA" in Path(f"{dump}.restauracion").read_text(encoding="utf-8")
+    segunda = _ejecutar(tmp_path, "restaurar", None, dump, matar_en="en_restore")
+    assert segunda.returncode != 0, "no murió donde se le pidió"
+    tercera = _ejecutar(tmp_path, "restaurar", None, dump)
+    assert tercera.returncode == 0, tercera.stdout + tercera.stderr
+    assert "restauración VERIFIED" in tercera.stdout, tercera.stdout
+
+
+# --- Invariante 4: evidencia causal y nueva del planificador ---------------
+@pytest.mark.parametrize(
+    ("clase", "porque"),
+    [
+        ("smoke_sin_beat", "beat ausente: ni siquiera arrancó"),
+        ("smoke_beat_muerto", "worker vivo, `beat: Starting` viejo y nada nuevo"),
+        ("beat_desacoplado", "otra cadencia despachada + muestra que sube sola"),
+        ("muestra_sin_sampler", "muestra independiente, sin ningún despacho"),
+        ("muestra_futura", "muestra preexistente fechada en el futuro"),
+        ("sampler_sin_muestra", "sampler despachado pero su ejecución no dejó muestra"),
+        ("muestra_pasada", "la única muestra es anterior al sondeo"),
+    ],
+)
+def test_el_beat_solo_da_verde_con_evidencia_causal_y_nueva(tmp_path, sonda, clase, porque):
+    """Las siete clases del invariante 4. Verde exige LAS DOS señales de la MISMA
+    capacidad: el despacho exacto del muestreador durante el sondeo y una muestra
+    nueva causada por él. Cualquier otra combinación es roja."""
+    _preparar_smoke(tmp_path, clase)
+    p = _ejecutar(tmp_path, "smoke", clase)
+    salida = p.stdout + p.stderr
+    assert p.returncode != 0, f"el smoke dio verde aunque {porque}:\n{p.stdout}"
+    assert "beat" in salida.lower(), salida

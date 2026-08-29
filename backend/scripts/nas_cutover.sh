@@ -172,15 +172,19 @@ set -Eeuo pipefail
 # puede hacer ninguna de las dos cosas estando conectado a ella.
 : "${PG_MAINT_DB:=postgres}"
 # El cerrojo de la maniobra (R5 P1-B, corregido en R6 P1-1: protege la BASE, no
-# el archivo de copia). `flock` es lo que hay que usar —el núcleo lo suelta
-# aunque el proceso muera de `SIGKILL`—, pero un QNAP mínimo puede no traerlo:
-# apuntando esto a algo que no existe se cae al mutex por `mkdir` de más abajo,
-# que también es atómico.
+# el archivo de copia). `flock` es OBLIGATORIO: el núcleo suelta el cerrojo
+# aunque el proceso muera de `SIGKILL`, así que no hay huérfanos que heredar ni
+# ventana entre ganar el cerrojo y poder nombrar al dueño. El repuesto por
+# `mkdir`+PID se RETIRÓ en R7 P1-3 (ver `tomar_cerrojo`).
 : "${FLOCK:=flock}"
-# Segundos que el repuesto sin `flock` espera a que aparezca el PID de un
-# cerrojo recién creado antes de darlo por roto. Un dueño real lo escribe en el
-# instante siguiente al `mkdir`; borrarlo antes es quitárselo a un proceso VIVO.
-: "${CERROJO_GRACIA:=10}"
+# Dónde vive el cerrojo. NO puede derivarse de `BACKUP_DIR` (R7 P1-2): dos
+# maniobras sobre la MISMA base con directorios de copia distintos tomaban
+# cerrojos distintos y no se veían. La escalera es FIJA y se evalúa igual en
+# todo proceso del host, que es lo que hace que dos invocaciones cualesquiera
+# resuelvan el MISMO fichero. La durabilidad da igual aquí: `flock` no deja
+# estado que sobreviva al proceso, y un cerrojo que se pierde en un reinicio es
+# justo lo correcto —tras el reinicio no hay ninguna maniobra en curso.
+: "${LOCK_DIR:=}"
 # Módulo que imprime la identidad de la base a la que el core se conecta DE
 # VERDAD (resolviendo el DSN igual que el one-shot del Paso 5).
 : "${MODULO_IDENTIDAD:=jobhunt_core.shadow.identidad_destino}"
@@ -195,6 +199,22 @@ ESTADO="$WORK_DIR/estado.env"
 # --------------------------------------------------------------------------
 morir() { printf '\n### PARAR — %s\n' "$*" >&2; exit 1; }
 titulo() { printf '\n=== %s ===\n' "$*"; }
+
+# La ÚNICA barrera entre «escrito» y «escrito y sobrevive al corte». Es
+# PRECONDICIÓN de todo paso irreversible, no cortesía.
+#
+# R6 P1-2 la puso en el checkpoint de la marcha atrás. R7 P1-1: la unidad de
+# copia del cutover —volcado, manifiesto y los cinco sidecars— NO la tenía, y
+# el Paso 4c es igual de irreversible que el `RENAME`. Reproducido: con un
+# `sync` que falla, el cutover llegaba a 4c e imprimía «Pasos 1–6 OK» con
+# código 0. Una copia que no ha llegado al disco no es una copia, y es la ÚNICA
+# marcha atrás que tiene esta maniobra.
+sincronizar_o_morir() { # <qué se está persistiendo> <dónde vive>
+  command -v sync >/dev/null 2>&1 ||
+    morir "este host no trae el comando 'sync': $1 no se puede persistir, y lo que viene detrás es IRREVERSIBLE. NO se continúa"
+  sync ||
+    morir "'sync' falló al persistir $1: puede no haber llegado al disco y lo que viene detrás es IRREVERSIBLE. Se PARA aquí a propósito, ANTES de esa acción: corrige el almacén de $2 (espacio, E/S) y vuelve a lanzar el MISMO comando"
+}
 trap 'printf "\n### PARAR — fallo no controlado en la línea %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
 # Ejecuta un fichero .sql y deja la salida en $2. SIN tubería: una tubería
@@ -503,7 +523,11 @@ sellar_manifiesto() {
   # medias) ya no cambia en silencio el criterio de la marcha atrás. Es
   # integridad, no autenticidad: el sello vive en el mismo manifiesto.
   printf 'SIDECARS_SHA256=%s\n' "$(suma_sidecars "$final")" >>"$final.manifiesto"
-  printf 'manifiesto pre-corte sellado junto a la copia: %s.manifiesto (+ pares/juicios/resuelven/guardas)\n' "$final"
+  # La copia entera —volcado, manifiesto y sidecars— tiene que estar EN EL
+  # DISCO antes del Paso 4c, que es irreversible (R7 P1-1). Si esto falla, la
+  # maniobra para aquí y todavía no ha tocado nada.
+  sincronizar_o_morir "la unidad de copia $final (volcado + manifiesto + sidecars)" "$BACKUP_DIR"
+  printf 'manifiesto pre-corte sellado y sincronizado junto a la copia: %s.manifiesto (+ pares/juicios/resuelven/guardas)\n' "$final"
 }
 
 # --------------------------------------------------------------------------
@@ -1157,10 +1181,7 @@ checkpoint_escribir() { # <fase>
     printf "CK_FASE='%s'\n" "$CK_FASE"
   } >"$CHECKPOINT.tmp" || morir "no se pudo escribir el checkpoint $CHECKPOINT.tmp"
   mv "$CHECKPOINT.tmp" "$CHECKPOINT" || morir "no se pudo publicar el checkpoint $CHECKPOINT"
-  command -v sync >/dev/null 2>&1 ||
-    morir "este host no trae el comando 'sync': un checkpoint que no se puede sincronizar no sobrevive a un corte de corriente, y lo que viene detrás es DESTRUCTIVO. NO se continúa"
-  sync ||
-    morir "'sync' falló al sincronizar el checkpoint $CHECKPOINT (fase $CK_FASE): puede no haber llegado al disco y lo que viene detrás es DESTRUCTIVO. Se PARA aquí a propósito, ANTES de esa acción: corrige el almacén de $BACKUP_DIR (espacio, E/S) y vuelve a lanzar el MISMO comando"
+  sincronizar_o_morir "el checkpoint $CHECKPOINT (fase $CK_FASE)" "$BACKUP_DIR"
   printf 'checkpoint %s → %s\n' "$CK_FASE" "$CHECKPOINT"
 }
 
@@ -1189,51 +1210,51 @@ checkpoint_cargar() { # <dump> <sha256>
 # nombre `_previa_<segundo>`. Ahora hay UN cerrojo por servidor+base, que toman
 # los dos subcomandos ANTES de cualquier acción operacional; los checkpoints
 # siguen siendo por copia, que es lo que sí distingue una copia de otra.
+# El directorio del cerrojo: el primero de una escalera FIJA que sea un
+# directorio escribible. Deliberadamente NO mira `BACKUP_DIR` ni ningún otro
+# artefacto de la maniobra (R7 P1-2). Si el operador fija `LOCK_DIR` a mano,
+# tiene que fijarlo IGUAL en las dos invocaciones — y se le avisa.
+directorio_del_cerrojo() {
+  local d
+  if [ -n "$LOCK_DIR" ]; then
+    mkdir -p "$LOCK_DIR" 2>/dev/null || true
+    [ -d "$LOCK_DIR" ] && [ -w "$LOCK_DIR" ] ||
+      morir "LOCK_DIR='$LOCK_DIR' no es un directorio escribible: sin cerrojo no se toca la base $PG_DB"
+    printf '⚠ LOCK_DIR viene del entorno (%s): TODA maniobra sobre %s debe usar el MISMO valor, o dos no se verán entre sí.\n' "$LOCK_DIR" "$PG_DB" >&2
+    printf '%s' "$LOCK_DIR"; return 0
+  fi
+  for d in /var/lock /var/tmp /tmp; do
+    [ -d "$d" ] && [ -w "$d" ] && { printf '%s' "$d"; return 0; }
+  done
+  morir "no hay ningún directorio escribible para el cerrojo (/var/lock, /var/tmp, /tmp): sin exclusión mutua no se toca la base $PG_DB"
+}
+
 cerrojo_de_la_base() { # -> ruta del cerrojo ÚNICO por servidor + PG_DB
-  printf '%s/nas_cutover.%s.cerrojo' "$BACKUP_DIR" \
+  printf '%s/nas_cutover.%s.cerrojo' "$(directorio_del_cerrojo)" \
     "$(printf '%s@%s' "$PG_DB" "$PG_CONTAINER" | tr -c 'A-Za-z0-9._@-' '_')"
 }
 
-# Exclusión mutua sobre un fichero DURABLE. Con `flock` no hay cerrojos
-# huérfanos: el núcleo lo suelta aunque el proceso muera de `SIGKILL`. Sin
-# `flock` (QNAP mínimo) se cae a un mutex por `mkdir` —atómico en POSIX— que
-# guarda el PID: si el dueño ya no vive, el cerrojo es basura y se hereda. Lo
-# que NO se hace es seguir sin cerrojo: dos maniobras a la vez sobre la misma
-# base es justo el escenario que no tiene marcha atrás.
+# Exclusión mutua sobre un fichero de ruta ESTABLE. `flock` es obligatorio y su
+# ausencia PARA la maniobra (R7 P1-3).
+#
+# El repuesto por `mkdir`+PID se retiró. Era atómico para ganar el cerrojo, pero
+# la LIMPIEZA de un cerrojo huérfano no lo es: dos procesos podían leer el mismo
+# PID muerto, hacer `rm -rf` uno detrás de otro y `mkdir` con éxito los dos, y
+# ambos se declaraban dueños de la misma base. Reproducido. Cualquier remiendo
+# —reintentar, comparar mtime, un segundo cerrojo— vuelve a apoyarse en «leer,
+# decidir y borrar» sin atomicidad, así que se quita la clase entera: sobre
+# datos irreemplazables, no arrancar es barato y dos maniobras a la vez no
+# tienen marcha atrás. Si un QNAP mínimo no trae `flock`, el procedimiento se
+# para y el operador comprueba A MANO que no hay maniobra en curso; la limpieza
+# de un cerrojo obsoleto es manual y auditada, nunca automática.
 tomar_cerrojo() { # <fichero>
-  local cerrojo=$1 dueno espera
-  if command -v "$FLOCK" >/dev/null 2>&1; then
-    exec 9>"$cerrojo" || morir "no se pudo abrir el cerrojo $cerrojo"
-    "$FLOCK" -n 9 ||
-      morir "otra maniobra tiene el cerrojo $cerrojo: NO se lanzan dos a la vez sobre la base $PG_DB (ni dos restauraciones con copias distintas, ni un cutover y una restauración)"
-    printf 'cerrojo (flock): %s\n' "$cerrojo"
-    return 0
-  fi
-  while ! mkdir "$cerrojo.d" 2>/dev/null; do
-    # Entre el `mkdir` que GANA el cerrojo y la escritura del PID hay una
-    # ventana en la que el dueño existe pero todavía no se puede nombrar. R5
-    # leía «sin PID» y hacía `rm -rf`: le quitaba el cerrojo a un proceso VIVO
-    # y dejaba dos dueños sobre la misma base (R6 P1-1). Aquí se ESPERA a que
-    # el PID aparezca, y un cerrojo que nunca lo declara PARA en vez de
-    # heredarse a ciegas: sobre datos irreemplazables, parar es lo barato.
-    dueno=""; espera=0
-    while [ -z "$dueno" ] && [ -d "$cerrojo.d" ] && [ "$espera" -lt "$CERROJO_GRACIA" ]; do
-      dueno=$(cat "$cerrojo.d/pid" 2>/dev/null || true)
-      [ -n "$dueno" ] || { sleep 1; espera=$((espera + 1)); }
-    done
-    [ -d "$cerrojo.d" ] || continue          # su dueño lo soltó: se reintenta
-    if [ -z "$dueno" ]; then
-      morir "el cerrojo $cerrojo.d lleva ${CERROJO_GRACIA}s sin declarar dueño (¿un proceso muerto entre el mkdir y el PID?): NO se hereda a ciegas un cerrojo sobre $PG_DB. Comprueba que no hay ninguna maniobra en curso y bórralo a mano"
-    fi
-    if kill -0 "$dueno" 2>/dev/null; then
-      morir "otra maniobra (pid $dueno) tiene el cerrojo $cerrojo.d: NO se lanzan dos a la vez sobre la base $PG_DB"
-    fi
-    rm -rf "$cerrojo.d" || morir "no se pudo heredar el cerrojo huérfano $cerrojo.d"
-  done
-  printf '%s\n' "$$" >"$cerrojo.d/pid"
-  # shellcheck disable=SC2064
-  trap "rm -rf '$cerrojo.d'" EXIT
-  printf 'cerrojo (mkdir+pid, sin flock en este host): %s\n' "$cerrojo.d"
+  local cerrojo=$1
+  command -v "$FLOCK" >/dev/null 2>&1 ||
+    morir "este host no trae '$FLOCK' y la exclusión mutua es OBLIGATORIA sobre $PG_DB: dos maniobras a la vez (dos restauraciones, o un cutover y una restauración) corrompen la base sin marcha atrás. Instala util-linux/busybox flock, o apunta FLOCK= a su ruta. NO se continúa sin cerrojo"
+  exec 9>"$cerrojo" || morir "no se pudo abrir el cerrojo $cerrojo"
+  "$FLOCK" -n 9 ||
+    morir "otra maniobra tiene el cerrojo $cerrojo: NO se lanzan dos a la vez sobre la base $PG_DB (ni dos restauraciones con copias distintas, ni un cutover y una restauración). Si estás seguro de que ninguna sigue viva, comprueba a mano qué proceso lo retiene antes de tocar nada"
+  printf 'cerrojo (flock): %s\n' "$cerrojo"
 }
 
 localizar_dump() { # [fichero]
@@ -1347,8 +1368,11 @@ restaurar_dump() { # <dump>
 }
 
 # VERIFIED solo si cuadran las tres cosas: manifiestos, metadatos y guardas.
-# En modo `blando` devuelve 1 en vez de parar: lo usa la re-comprobación de una
-# restauración ya certificada.
+# NINGÚN modo para aquí dentro: los dos devuelven 1 y dejan el detalle en
+# `FALLOS_VUELTA`. Quien llama es el que sabe qué significa el fallo —el modo
+# `duro` tiene que dejarlo ANOTADO en el checkpoint antes de parar (R7 P1-5),
+# y el `blando` solo re-comprueba una restauración ya certificada.
+FALLOS_VUELTA=""
 verificar_vuelta() { # <dump> <duro|blando>
   local dump=$1 modo=$2 fallos="" atributos esperados settings
   titulo "RESTAURAR — comprobación contra el manifiesto pre-corte"
@@ -1372,10 +1396,13 @@ verificar_vuelta() { # <dump> <duro|blando>
     morir "no se pudieron medir las guardas de inmutabilidad tras restaurar"
   cmp -s "$dump.guardas" "$WORK_DIR/guardas.restaurado" ||
     fallos="$fallos guardas(los triggers de inmutabilidad no son los del manifiesto pre-corte)"
+  FALLOS_VUELTA=""
   [ -n "$fallos" ] || { printf 'manifiestos, metadatos y guardas cuadran con %s.manifiesto\n' "$dump"; return 0; }
+  FALLOS_VUELTA=$fallos
   [ "$modo" != blando ] ||
     { printf '⚠ la re-comprobación NO cuadra:%s\n' "$fallos"; return 1; }
-  morir "la restauración terminó pero el estado NO es el del manifiesto pre-corte:$fallos"
+  printf '⚠ la restauración NO cuadra con el manifiesto pre-corte:%s\n' "$fallos"
+  return 1
 }
 
 cierre_restauracion() { # <dump>
@@ -1435,14 +1462,28 @@ restaurar() { # [fichero .dump]
     previa=$CK_PREVIA
   fi
 
+  # `RESTAURADO` es la única fase que permite saltarse `pg_restore`: dice que la
+  # copia entró ENTERA y que solo falta certificarla. `VERIFICACION_FALLIDA` NO
+  # la habilita a propósito (R7 P1-5): ese destino ya se comprobó y no cuadra,
+  # así que volver a verificarlo daría el mismo rojo para siempre. Cae al
+  # `else`, que recrea el destino y restaura otra vez — el estado bueno sigue
+  # ENTERO en la base apartada, que no se toca.
   if [ "$CK_FASE" = RESTAURADO ] && base_existe "$PG_DB"; then
     printf 'el checkpoint dice que pg_restore ya entró entero: se pasa a verificar.\n'
   else
+    [ "$CK_FASE" != VERIFICACION_FALLIDA ] ||
+      printf 'el checkpoint dice que la verificación anterior NO cuadró: se recrea el destino y se restaura de nuevo (la base apartada %s no se toca).\n' "$previa"
     recrear_destino
     restaurar_dump "$dump"
   fi
 
-  verificar_vuelta "$dump" duro
+  if ! verificar_vuelta "$dump" duro; then
+    # Se ANOTA antes de parar: sin esto el checkpoint se quedaba en
+    # `RESTAURADO`, la siguiente ejecución se saltaba `pg_restore` y volvía a
+    # verificar exactamente el mismo destino defectuoso. No convergía nunca.
+    checkpoint_escribir VERIFICACION_FALLIDA
+    morir "la restauración terminó pero el estado NO es el del manifiesto pre-corte:$FALLOS_VUELTA. Queda anotado en $CHECKPOINT: vuelve a lanzar el MISMO comando y se restaurará DE NUEVO desde la copia (no se re-verifica el destino roto). El estado anterior sigue ENTERO en $CK_PREVIA"
+  fi
   checkpoint_escribir VERIFIED
   cierre_restauracion "$dump"
 }
@@ -1548,18 +1589,30 @@ smoke_sondas_acotadas() {
 # siga vivo, así que se imprime y no decide nada. Y el smoke puede esperar:
 # abrir con el planificador muerto es peor que unos minutos más de mantenimiento.
 # --------------------------------------------------------------------------
-# Epoch de la muestra MÁS NUEVA de `outbox_lag_p99`. Cada muestra lleva su `ts`
-# (jobhunt_core/shadow/metrics.sample_outbox_lag), así que la marca de tiempo se
-# lee del propio dato y no hay que fiarse de un contador que cualquiera sube.
-SQL_MUESTRA_OUTBOX="/* muestra-outbox */
- SELECT coalesce(max(extract(epoch from (s->>'ts')::timestamptz)), 0)::bigint
+# CUÁNTAS muestras de `outbox_lag_p99` hay con marca de tiempo posterior a un
+# instante dado. No `max(ts)` (R7 P1-4): una fila fechada en el FUTURO —reloj
+# desviado, dato inyectado, sembrado de pruebas— cumple `max(ts) > t0` para
+# siempre, así que el smoke daba «beat VIVO» sin que entrara ni una muestra
+# nueva. Reproducido: la misma epoch de 2100 antes y después, verde. Contando
+# se compara contra la línea base tomada en el propio `t0`: la fila del futuro
+# ya está dentro de esa base y deja de probar nada, y solo una muestra NUEVA
+# hace crecer la cifra.
+#
+# Y se cuenta solo lo posterior a `t0` a propósito: la poda de `purge_staging`
+# retira samples de ciclos ya fuera de retención —todos anteriores a `t0`—, de
+# modo que no puede encoger este contador y provocar un rojo falso.
+sql_muestras_posteriores() { # <epoch>
+  printf "/* muestras-outbox-posteriores */
+ SELECT count(*)::bigint
  FROM jobhunt.shadow_cycle_metrics m,
       LATERAL jsonb_array_elements(coalesce(m.details->'samples', '[]'::jsonb)) s
- WHERE m.metric = 'outbox_lag_p99' AND m.scope = 'global'"
+ WHERE m.metric = 'outbox_lag_p99' AND m.scope = 'global'
+   AND (s->>'ts')::timestamptz > to_timestamp(%s)" "$1"
+}
 
 smoke_beat() {
   titulo "Paso 7d — Celery beat VIVO (el ping del worker NO lo prueba)"
-  local cmd muestra t0 ahora transcurrido
+  local cmd muestras base t0 ahora transcurrido
   cmd=$("$DOCKER" inspect -f '{{json .Config.Cmd}}' "$BEAT_CONTENEDOR" 2>/dev/null || true)
   case "$cmd" in
     *'"-B"'*) printf 'diagnóstico: %s arranca con -B (beat embebido, RUNBOOK §5)\n' "$BEAT_CONTENEDOR" ;;
@@ -1571,27 +1624,32 @@ smoke_beat() {
   grep -q 'beat: Starting' "$WORK_DIR/beat.log" ||
     morir "«beat: Starting» no aparece en las últimas $BEAT_LOG_LINEAS líneas de $BEAT_CONTENEDOR: el planificador de las nueve cadencias NO arrancó. El ping del worker NO lo prueba (R5 P1-C)"
 
-  # El instante en que empieza el sondeo: solo cuenta una muestra POSTERIOR a
-  # él. Una que ya estuviera ahí no prueba que el planificador siga vivo.
+  # El instante en que empieza el sondeo y la LÍNEA BASE en ese mismo instante:
+  # lo que ya hubiera ahí —incluida una muestra fechada en el futuro— entra en
+  # la base y no prueba nada. Solo cuenta el CRECIMIENTO (R7 P1-4).
   t0=$(date +%s)
-  muestra=$(psql_valor "$SQL_MUESTRA_OUTBOX"); entero "$muestra" "epoch de la última muestra de outbox_lag_p99"
-  printf 'esperando hasta %ss (dos cadencias de 5 min) a que el beat despache «%s» Y entre una muestra posterior a %s (la última es de %s)\n' \
-    "$BEAT_ESPERA" "$BEAT_CADENCIA" "$t0" "$muestra"
+  base=$(psql_valor "$(sql_muestras_posteriores "$t0")")
+  entero "$base" "muestras de outbox_lag_p99 posteriores al inicio del sondeo"
+  [ "$base" -eq 0 ] ||
+    printf '⚠ ya hay %s muestra(s) de outbox_lag_p99 fechadas DESPUÉS de %s (¿reloj desviado, o datos sembrados?). Entran en la línea base: harán falta %s para dar verde.\n' \
+      "$base" "$t0" "$((base + 1))"
+  printf 'esperando hasta %ss (dos cadencias de 5 min) a que el beat despache «%s» Y el número de muestras posteriores a %s pase de %s\n' \
+    "$BEAT_ESPERA" "$BEAT_CADENCIA" "$t0" "$base"
   while :; do
     sleep "$BEAT_SONDEO"
     ahora=$(date +%s); transcurrido=$((ahora - t0 + 2))
     "$DOCKER" logs --since "${transcurrido}s" "$BEAT_CONTENEDOR" >"$WORK_DIR/beat.nuevo.log" 2>&1 || true
-    muestra=$(psql_valor "$SQL_MUESTRA_OUTBOX") || muestra=0
-    entero "$muestra" "epoch de la última muestra de outbox_lag_p99"
+    muestras=$(psql_valor "$(sql_muestras_posteriores "$t0")") || muestras=$base
+    entero "$muestras" "muestras de outbox_lag_p99 posteriores al inicio del sondeo"
     if grep -qE "Sending due task \[?$BEAT_CADENCIA" "$WORK_DIR/beat.nuevo.log" &&
-       [ "$muestra" -gt "$t0" ]; then
-      printf 'beat VIVO: despachó «%s» y esa cadencia dejó una muestra de outbox_lag_p99 posterior al sondeo (%s > %s)\n' \
-        "$BEAT_CADENCIA" "$muestra" "$t0"
+       [ "$muestras" -gt "$base" ]; then
+      printf 'beat VIVO: despachó «%s» y esa cadencia dejó una muestra NUEVA de outbox_lag_p99 (%s > %s posteriores a %s)\n' \
+        "$BEAT_CADENCIA" "$muestras" "$base" "$t0"
       return 0
     fi
     [ $((ahora - t0)) -lt "$BEAT_ESPERA" ] || break
   done
-  morir "el beat de $BEAT_CONTENEDOR no probó la cadencia del muestreador en ${BEAT_ESPERA}s: hacen falta LAS DOS señales de la MISMA capacidad —un «Sending due task $BEAT_CADENCIA» nuevo Y una muestra de outbox_lag_p99 posterior a $t0 (la última es de $muestra)—. Otra cadencia en el log, o una muestra que entra por su cuenta, NO prueban que el planificador siga despachando (R6 P1-3): NO se abre a nadie"
+  morir "el beat de $BEAT_CONTENEDOR no probó la cadencia del muestreador en ${BEAT_ESPERA}s: hacen falta LAS DOS señales de la MISMA capacidad —un «Sending due task $BEAT_CADENCIA» nuevo Y una muestra de outbox_lag_p99 NUEVA (hay $muestras posteriores a $t0 y la línea base era $base)—. Otra cadencia en el log, una muestra que entra por su cuenta, o una fila fechada en el futuro, NO prueban que el planificador siga despachando (R6 P1-3, R7 P1-4): NO se abre a nadie"
 }
 
 # `smoke` NO toma el cerrojo de la base a propósito: es el único subcomando que
@@ -1664,7 +1722,7 @@ main() {
       # pisarían el WORK_DIR y el backup; y un cutover con una restauración en
       # curso reescribe la base que la otra está reconstruyendo. Es el MISMO
       # cerrojo que toma `restaurar` —el de la base—, va ANTES de tocar nada y
-      # vive en un fichero DURABLE: /tmp no vale (ramdisk).
+      # su ruta NO depende de BACKUP_DIR (R7 P1-2).
       mkdir -p "$BACKUP_DIR"
       tomar_cerrojo "$(cerrojo_de_la_base)"
       : >"$ESTADO"

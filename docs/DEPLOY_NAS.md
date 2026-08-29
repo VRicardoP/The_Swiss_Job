@@ -650,7 +650,36 @@ scp backend/scripts/nas_cutover.sh \
 ssh Ricardo@capsule 'chmod +x /share/Public/swissjob/scripts/nas_cutover.sh'
 ```
 
+
 ### 5.3 Secuencia única de mantenimiento (canonización + subida)
+
+#### Invariantes operativos — leer antes que los pasos
+
+Antes que los pasos, las **cinco propiedades** que la maniobra debe conservar. No son un
+resumen de lo que hace el script: son la especificación contra la que se le juzga, y el
+motivo por el que un arreglo se considera cerrado o no. Cuatro rondas de auditoría
+externa reabrieron los mismos cinco puntos porque el comportamiento correcto se venía
+descubriendo defecto a defecto; quedan fijados aquí, y **toda regresión nueva tiene que
+poder señalar el invariante que defiende**.
+
+| # | Invariante | Recurso protegido | Estados válidos | Frontera irreversible | Evidencia exigida | Ante fallo | Clases de equivalencia probadas |
+|---|---|---|---|---|---|---|---|
+| **1** | **Un solo cerrojo por recurso.** La identidad del cerrojo es *servidor PostgreSQL + `PG_DB`*, y **nada más**: ni la copia, ni `BACKUP_DIR`, ni `WORK_DIR`, ni el modo, ni el operador, ni la hora | la **base**, no el archivo de copia | tomado / libre | cualquier `RENAME`, `DROP`, `CREATE`, `pg_restore` | la ruta del cerrojo, impresa por el propio script | `flock` es obligatorio; sin él **no arranca**. Sin repuesto casero: ganar un cerrojo con `mkdir` es atómico, limpiarlo no | restore A × restore B con copias distintas · cutover × restore · restore × cutover · `BACKUP_DIR` distintos · sin `flock` · dueño muerto (el núcleo lo suelta) |
+| **2** | **Durabilidad antes que irreversibilidad.** Todo artefacto necesario para recuperar está sincronizado **antes** del primer paso sin vuelta atrás | la unidad de copia (volcado + manifiesto + 5 sidecars) y el checkpoint | — | Paso 4c y el `RENAME` de la marcha atrás | `sync` presente y con salida 0 | un solo helper `sincronizar_o_morir`; si falta o falla, se aborta **antes** de la mutación | fallo de `sync` en el sellado de la copia (⇒ no hay 4c) · fallo de `sync` en el checkpoint (⇒ no hay `RENAME`) |
+| **3** | **Restauración reanudable desde todo estado.** Desde cualquier fase no terminal, repetir el MISMO comando converge o falla cerrado con diagnóstico inequívoco | la base y su estado previo apartado | `INICIO` · `APARTADA` · `DESTINO_CREADO` · `RESTAURADO` · `VERIFICACION_FALLIDA` · `VERIFIED` | el `RENAME` que aparta la base | el checkpoint, junto a la copia y sincronizado | ninguna fase no terminal puede repetir para siempre el mismo trabajo fallido | muerte antes y después de cada transición · pérdida de `WORK_DIR` · verificación en rojo tras restore completo · reanudaciones **consecutivas** hasta el estado terminal |
+| **4** | **Evidencia causal y nueva del planificador.** El verde exige una evidencia **creada durante el sondeo** y **ligada al despacho observado** | la capacidad «beat despacha y el worker ejecuta» | — | abrir el servicio a los usuarios | un `Sending due task shadow-sample-outbox-lag` nuevo **y** una muestra nueva de `outbox_lag_p99` | nunca `max(ts) > t0`: se compara contra una línea base tomada en el propio `t0`. El ping y `beat: Starting` son **diagnóstico**, no prueba | beat ausente · worker vivo sin beat · otra cadencia despachada · muestra independiente · muestra **futura** preexistente · sampler sin muestra · sampler **con** muestra nueva |
+| **5** | **Runbook único.** El cuerpo contiene la regla vigente; no hay fe de erratas ni dos procedimientos | quien ejecuta la maniobra | — | — | el documento se lee **linealmente**, como una receta | el texto sustituido se **borra**, no se anota encima | revisión lineal desde el preflight hasta el rollback |
+
+Y una regla que atraviesa a las cinco: **fallo cerrado**. Cualquier ambigüedad,
+herramienta ausente o evidencia malformada detiene la maniobra. Sobre datos
+irreemplazables, no arrancar es barato.
+
+> **Lo que los dobles NO pueden demostrar.** La suite ejercita el programa de verdad,
+> pero con `docker` y `psql` simulados. Quedan para el rehearsal sobre la copia
+> desechable del NAS: que `flock` exista en ESE QNAP, que un `sync` falle de verdad por
+> E/S o espacio agotado, que la precondición del hash dé **0** sobre la copia fresca,
+> que el `pg_restore` del corpus real entre en la ventana, y que el beat despache en el
+> hardware real. La lista exacta está en `AUDITORIA_EXTERNA_R5_REHEARSAL_2026-08-28.md`.
 
 Una sola maniobra, siete pasos, en este orden. **Cada paso tiene una postcondición que
 es una condición de EJECUCIÓN, no una nota: si no cuadra, el procedimiento SALE distinto
@@ -985,14 +1014,18 @@ documentaba §7 no lo hacía (R4 P1-4). Esta:
 3. comprueba el **sello del conjunto de sidecars** (`SIDECARS_SHA256`): son ellos los
    que deciden qué significa «VERIFIED», así que van sellados como una unidad con la
    copia y alterar uno no puede cambiar el criterio en silencio;
-4. toma el **cerrojo de la base** — `$BACKUP_DIR/nas_cutover.<PG_DB>@<PG_CONTAINER>.cerrojo`,
-   durable, **el mismo** que toma el `cutover` y **antes** de cualquier acción
-   operacional. Lo que hay que proteger no es el archivo de copia sino el recurso
-   destructivo: `cutover` y `restaurar` ejecutan `RENAME`, `DROP`, `CREATE` y
-   `pg_restore` sobre la MISMA base. Con un cerrojo por copia (R6 P1-1) dos
-   restauraciones con nombres de dump distintos llegaban las dos a `VERIFIED` sobre
-   `swissjobhunter`, y un cutover y una restauración no se veían entre sí. Los
-   checkpoints siguen siendo **por copia**, que es lo que sí distingue una de otra;
+4. toma el **cerrojo de la base** — `$LOCK_DIR/nas_cutover.<PG_DB>@<PG_CONTAINER>.cerrojo`,
+   **el mismo** que toma el `cutover` y **antes** de cualquier acción operacional. Lo que
+   hay que proteger no es el archivo de copia sino el recurso destructivo: `cutover` y
+   `restaurar` ejecutan `RENAME`, `DROP`, `CREATE` y `pg_restore` sobre la MISMA base.
+   Con un cerrojo por copia (R6 P1-1) dos restauraciones con nombres de dump distintos
+   llegaban las dos a `VERIFIED` sobre `swissjobhunter`, y un cutover y una restauración
+   no se veían entre sí. Y con el cerrojo bajo `$BACKUP_DIR` (R7 P1-2) volvía a pasar lo
+   mismo sin más que cambiar el directorio de copias, así que su ruta **ya no se deriva
+   de ningún artefacto de la maniobra**: sale de una escalera fija —`/var/lock`,
+   `/var/tmp`, `/tmp`— o de `LOCK_DIR` si se fija a mano, en cuyo caso hay que fijarlo
+   **igual en todas las invocaciones** y el script lo avisa. Los checkpoints siguen
+   siendo **por copia**, que es lo que sí distingue una de otra;
 5. **para los CINCO escritores** y comprueba que están parados (restaurar con uno vivo
    deja el estado a medias en cuanto escriba);
 6. escribe un **checkpoint** durable y **después** aparta la base rota con
@@ -1016,21 +1049,35 @@ ejecutan.
 
 Lo que vale es que el estado esté **fuera** del proceso:
 
-- **cerrojo de la base** `$BACKUP_DIR/nas_cutover.<PG_DB>@<PG_CONTAINER>.cerrojo` con
-  `flock` (el núcleo lo suelta aunque el proceso muera de `SIGKILL`). Si el host no trae
-  `flock` —un QNAP mínimo puede no traerlo— se cae a un mutex por `mkdir`, atómico en
-  POSIX, que guarda el PID del dueño y **hereda** el cerrojo si ese proceso ya no vive:
-  si no, un `SIGKILL` dejaría bloqueada para siempre la única salida de emergencia.
-  Entre el `mkdir` que gana el cerrojo y la escritura del PID hay una ventana sin dueño
-  identificable: se **espera** `CERROJO_GRACIA` segundos (10 por defecto) a que aparezca
-  y, si nunca llega, se **para** — nunca se borra un cerrojo que puede estar vivo
-  (R6 P1-1). Se puede apuntar `FLOCK=` a otro binario para forzar el camino de repuesto;
+- **cerrojo de la base** `$LOCK_DIR/nas_cutover.<PG_DB>@<PG_CONTAINER>.cerrojo` con
+  `flock`, que es **obligatorio**: el núcleo lo suelta aunque el proceso muera de
+  `SIGKILL`, así que no hay huérfanos que heredar. **Si el host no lo trae, la maniobra
+  PARA** (R7 P1-3). Había un repuesto por `mkdir`+PID y se retiró: ganar el cerrojo con
+  `mkdir` es atómico, pero *limpiar* uno huérfano no lo es —dos procesos leen el mismo
+  PID muerto, borran uno detrás de otro y crean el directorio los dos—, y ningún remiendo
+  arregla eso sin atomicidad real. La limpieza de un cerrojo obsoleto es **manual y
+  auditada**. Comprueba `command -v flock` en el QNAP **antes** de la ventana de
+  mantenimiento: es un requisito, no un detalle;
 - **checkpoint** `<dump>.restauracion`, escrito **atómicamente** (`.tmp` + `mv`, que es
   `rename(2)`) **antes** del `RENAME`, con copia, sello, base destino, nombre de la base
   previa, atributos y fase. Vive junto a la copia y **no** en `WORK_DIR`, que está en
   `/tmp` — un ramdisk que un reinicio del NAS vacía. El `sync` posterior al `mv` es
   **precondición**, no cortesía: separa «publicado» de «sobrevive al corte», y si falta
   o falla se **aborta antes** del `RENAME` en vez de continuar (R6 P1-2);
+La **máquina de estados completa**, que es el invariante 3 hecho tabla. Cada fase se
+escribe DESPUÉS de su postcondición y ANTES de la mutación siguiente, y de ninguna fase
+no terminal se sale repitiendo el mismo trabajo fallido:
+
+| Fase | Qué garantiza | Qué hace el rerun | Siguiente |
+|---|---|---|---|
+| *(sin checkpoint)* | nada todavía | mide, aparta y empieza | `INICIO` |
+| `INICIO` | están leídos los atributos y **elegido** el nombre de la base apartada, aún sin renombrar | si el destino existe, lo aparta; si no, resuelve por catálogo | `APARTADA` |
+| `APARTADA` | el `RENAME` ocurrió: el estado previo está a salvo con nombre conocido | crea el destino vacío | `DESTINO_CREADO` |
+| `DESTINO_CREADO` | existe la base destino, vacía y con los atributos del original | ejecuta `pg_restore` | `RESTAURADO` |
+| `RESTAURADO` | la copia entró **entera** (`--single-transaction`) | **solo verifica** — es la única fase que puede saltarse `pg_restore` | `VERIFIED` o `VERIFICACION_FALLIDA` |
+| `VERIFICACION_FALLIDA` | el destino está completo pero **no** es el del manifiesto pre-corte | **recrea el destino y vuelve a restaurar** — nunca re-verifica lo mismo (R7 P1-5) | `VERIFIED` o de nuevo `VERIFICACION_FALLIDA` |
+| `VERIFIED` | manifiestos, metadatos y guardas cuadran | re-comprueba en modo blando; si el estado se rompió otra vez, abre un ciclo NUEVO conservando las dos bases | terminal |
+
 - **resolución por catálogo** al arrancar: solo destino ⇒ empezar; solo previa ⇒ seguir
   creando y restaurando; **las dos** ⇒ el destino está a medias y se **recrea** antes de
   repetir `pg_restore` (el estado bueno está entero en la previa, así que lo incompleto no
@@ -1042,10 +1089,13 @@ Consecuencia operativa: **el mismo comando, repetido tantas veces como haga falt
 termina en `VERIFIED` sin una sola sentencia SQL a mano.** Regresión: se mata el grupo de
 procesos en los seis bordes (antes y después del `RENAME`, en el `CREATE`, después del
 `CREATE`, durante y después del `pg_restore`) y se re-ejecuta hasta `VERIFIED`; se borra
-`WORK_DIR` entre medias; se comprueban las dos implementaciones del cerrojo, las tres
-concurrencias sobre la misma base (restauración×restauración con copias distintas,
-cutover×restauración y restauración×cutover) y la ventana `mkdir`→PID; y se comprueba
-que un `sync` que falla no deja ocurrir el `RENAME`.
+`WORK_DIR` entre medias; se comprueban las cuatro concurrencias sobre la misma base
+(restauración×restauración con copias distintas, cutover×restauración,
+restauración×cutover y las dos con `BACKUP_DIR` distintos), que sin `flock` no arranca
+ninguno de los dos subcomandos, que un `sync` que falla no deja ocurrir el `RENAME` **ni
+alcanzar el Paso 4c**, y que una verificación en rojo tras `RESTAURADO` queda anotada
+como `VERIFICACION_FALLIDA` y el rerun **restaura de nuevo** en vez de re-verificar el
+mismo destino roto (R7 P1-5).
 
 La base `…_previa_<sello>` **no se borra sola**, ni siquiera tras `VERIFIED`. Y si el
 estado se volviera a romper después, una nueva invocación abre un ciclo NUEVO que
