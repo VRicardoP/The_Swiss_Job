@@ -36,7 +36,14 @@ DEDUP_SEED_SOURCE = "seed_duplicate_of"
 # Cohorte que el GATE evalúa (auditoría Nº2 BLOQUEANTE 1): el holdout ciego
 # del protocolo (PROTOCOLO_HOLDOUT_DEDUP.md). Todo lo demás (seed, curado)
 # es DEVELOPMENT: sirve para ajustar el detector, JAMÁS para puntuar el gate.
-DEDUP_EVAL_COHORT = "holdout-dedup-2026-08-23"
+#
+# El holdout del 2026-08-23 se PERDIÓ (0 de sus 115 refs sobrevivieron a la
+# canonización) y esta constante siguió apuntándolo: el gate corregía un examen
+# inexistente y el reloj de los siete ciclos no podía arrancar, sin que ninguna
+# métrica lo dijera. Se re-muestreó el 2026-08-29 con el MISMO SQL y la MISMA
+# semilla del protocolo. La fecha del nombre es la del muestreo real — conservar
+# la vieja habría sido cómodo (cero cambios de código) y falso.
+DEDUP_EVAL_COHORT = "holdout-dedup-2026-08-29"
 
 # `legacy_schema` se interpola como identificador (no admite bind param):
 # misma validación que migrate.py antes de interpolar DDL.
