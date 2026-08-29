@@ -43,7 +43,13 @@ DEDUP_SEED_SOURCE = "seed_duplicate_of"
 # métrica lo dijera. Se re-muestreó el 2026-08-29 con el MISMO SQL y la MISMA
 # semilla del protocolo. La fecha del nombre es la del muestreo real — conservar
 # la vieja habría sido cómodo (cero cambios de código) y falso.
-DEDUP_EVAL_COHORT = "holdout-dedup-2026-08-29"
+#
+# La cohorte VINCULANTE es la del 2026-08-30: los mismos 56 pares, etiquetados
+# por un agente INDEPENDIENTE que no construyó el detector. La del 2026-08-29 la
+# etiquetó el asistente que sí trabajó el detector y sus umbrales, así que no
+# servía como oráculo; se conserva congelada solo como término de comparación.
+# Los dos etiquetados coinciden en los 56 pares.
+DEDUP_EVAL_COHORT = "holdout-dedup-2026-08-30"
 
 # `legacy_schema` se interpola como identificador (no admite bind param):
 # misma validación que migrate.py antes de interpolar DDL.
