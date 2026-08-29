@@ -1026,9 +1026,11 @@ Lo que vale es que el estado esté **fuera** del proceso:
   y, si nunca llega, se **para** — nunca se borra un cerrojo que puede estar vivo
   (R6 P1-1). Se puede apuntar `FLOCK=` a otro binario para forzar el camino de repuesto;
 - **checkpoint** `<dump>.restauracion`, escrito **atómicamente** (`.tmp` + `mv`, que es
-  `rename(2)`, más `sync`) **antes** del `RENAME`, con copia, sello, base destino, nombre
-  de la base previa, atributos y fase. Vive junto a la copia y **no** en `WORK_DIR`, que
-  está en `/tmp` — un ramdisk que un reinicio del NAS vacía;
+  `rename(2)`) **antes** del `RENAME`, con copia, sello, base destino, nombre de la base
+  previa, atributos y fase. Vive junto a la copia y **no** en `WORK_DIR`, que está en
+  `/tmp` — un ramdisk que un reinicio del NAS vacía. El `sync` posterior al `mv` es
+  **precondición**, no cortesía: separa «publicado» de «sobrevive al corte», y si falta
+  o falla se **aborta antes** del `RENAME` en vez de continuar (R6 P1-2);
 - **resolución por catálogo** al arrancar: solo destino ⇒ empezar; solo previa ⇒ seguir
   creando y restaurando; **las dos** ⇒ el destino está a medias y se **recrea** antes de
   repetir `pg_restore` (el estado bueno está entero en la previa, así que lo incompleto no
@@ -1042,7 +1044,8 @@ procesos en los seis bordes (antes y después del `RENAME`, en el `CREATE`, desp
 `CREATE`, durante y después del `pg_restore`) y se re-ejecuta hasta `VERIFIED`; se borra
 `WORK_DIR` entre medias; se comprueban las dos implementaciones del cerrojo, las tres
 concurrencias sobre la misma base (restauración×restauración con copias distintas,
-cutover×restauración y restauración×cutover) y la ventana `mkdir`→PID.
+cutover×restauración y restauración×cutover) y la ventana `mkdir`→PID; y se comprueba
+que un `sync` que falla no deja ocurrir el `RENAME`.
 
 La base `…_previa_<sello>` **no se borra sola**, ni siquiera tras `VERIFIED`. Y si el
 estado se volviera a romper después, una nueva invocación abre un ciclo NUEVO que

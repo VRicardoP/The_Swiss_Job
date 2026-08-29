@@ -486,6 +486,15 @@ exit 0
 """
 
 
+_DOBLE_SYNC = r"""#!/usr/bin/env bash
+# DOBLE de `sync`. Con $ROMPER=sync_falla devuelve 1: es la reproducción de
+# R6 P1-2 —un almacén que no acepta la sincronización— justo antes del `RENAME`
+# destructivo. En cualquier otro caso no hace falta sincronizar un tmpdir.
+[ "${ROMPER:-}" = sync_falla ] && { echo "sync: error writing: Input/output error" >&2; exit 1; }
+exit 0
+"""
+
+
 def _plantar_dobles(raiz: Path) -> Path:
     """Escribe los dos dobles y devuelve el directorio que va al frente del PATH."""
     binarios = raiz / "bin"
@@ -499,7 +508,7 @@ def _plantar_dobles(raiz: Path) -> Path:
         ("__JUICIOS_ANTES__", _ANTES["juicios"]), ("__JUICIOS_DESPUES__", _DESPUES["juicios"]),
     ):
         psql = psql.replace(clave, str(valor))
-    for nombre, cuerpo in (("docker", _DOBLE_DOCKER), ("psql", psql)):
+    for nombre, cuerpo in (("docker", _DOBLE_DOCKER), ("psql", psql), ("sync", _DOBLE_SYNC)):
         destino = binarios / nombre
         destino.write_text(cuerpo, encoding="utf-8")
         destino.chmod(0o755)
@@ -1364,3 +1373,22 @@ def test_el_cerrojo_sin_flock_no_se_lo_quita_a_un_proceso_vivo(tmp_path):
     assert "cerrojo" in p.stdout + p.stderr
     assert cerrojo.is_dir(), "borró un cerrojo VIVO"
     assert "APARTADO" not in p.stdout, p.stdout
+
+
+# --------------------------------------------------------------------------
+# R6 P1-2 — el checkpoint DURABLE no lo es si `sync` falla y se sigue igual
+# --------------------------------------------------------------------------
+def test_un_sync_que_falla_para_antes_del_rename(tmp_path):
+    """`sync` es la frontera entre «publicado» y «sobrevive al corte», y detrás va el
+    `RENAME` destructivo. Si no se puede sincronizar, no puede haber `RENAME`: el
+    estado físico previo quedaría en una base cuyo nombre la máquina de estados
+    desconoce, que es exactamente el defecto que R5 cerró."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    p = _ejecutar(tmp_path, "restaurar", "sync_falla", dump)
+    salida = p.stdout + p.stderr
+    assert p.returncode != 0, "siguió adelante con la sincronización rota:\n" + p.stdout
+    assert "sync" in salida
+    assert "APARTADA" not in p.stdout, p.stdout
+    bases = (tmp_path / "estado" / "bases").read_text().split()
+    assert bases == ["swissjobhunter"], f"hubo RENAME con el sync roto: {bases}"

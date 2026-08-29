@@ -80,6 +80,12 @@
 #         repuesto sin `flock` se cerró además la ventana «`mkdir` con éxito →
 #         PID aún no escrito», donde el `rm -rf` le quitaba el cerrojo a un
 #         proceso VIVO.
+#   P1-2  el checkpoint DECLARADO durable seguía adelante aunque `sync`
+#         fallase: `sync 2>/dev/null || true` descartaba justo su fallo y el
+#         `RENAME` destructivo ocurría igual, dejando el estado físico previo
+#         en una base cuyo nombre la máquina de estados desconoce. La
+#         sincronización es ahora PRECONDICIÓN: si `sync` no existe o no
+#         termina 0, se PARA antes del `RENAME`.
 #
 # CIFRAS: este script NO lleva ninguna constante del corpus. Mide el estado
 # ANTES, lee las cifras de los informes en seco y aserta el estado DESPUÉS
@@ -1119,7 +1125,11 @@ settings_de() { # <base> -> los `ALTER DATABASE … SET` en una línea
 }
 
 # El fichero de estado nunca se ve a medias: `mv` es `rename(2)`, atómico. Y el
-# `sync` es lo que separa «escrito» de «escrito y sobrevive al corte».
+# `sync` es lo que separa «escrito» de «escrito y sobrevive al corte» — por eso
+# es PRECONDICIÓN y no cortesía (auditoría R6 P1-2): `sync … || true` se tragaba
+# justo su fallo y el `RENAME` DESTRUCTIVO ocurría igual, de modo que un corte
+# dejaba el estado físico previo en una base cuyo nombre la máquina de estados
+# no conoce. Que es, exactamente, el defecto que R5 cerró.
 checkpoint_escribir() { # <fase>
   CK_FASE=$1
   {
@@ -1137,7 +1147,10 @@ checkpoint_escribir() { # <fase>
     printf "CK_FASE='%s'\n" "$CK_FASE"
   } >"$CHECKPOINT.tmp" || morir "no se pudo escribir el checkpoint $CHECKPOINT.tmp"
   mv "$CHECKPOINT.tmp" "$CHECKPOINT" || morir "no se pudo publicar el checkpoint $CHECKPOINT"
-  sync 2>/dev/null || true
+  command -v sync >/dev/null 2>&1 ||
+    morir "este host no trae el comando 'sync': un checkpoint que no se puede sincronizar no sobrevive a un corte de corriente, y lo que viene detrás es DESTRUCTIVO. NO se continúa"
+  sync ||
+    morir "'sync' falló al sincronizar el checkpoint $CHECKPOINT (fase $CK_FASE): puede no haber llegado al disco y lo que viene detrás es DESTRUCTIVO. Se PARA aquí a propósito, ANTES de esa acción: corrige el almacén de $BACKUP_DIR (espacio, E/S) y vuelve a lanzar el MISMO comando"
   printf 'checkpoint %s → %s\n' "$CK_FASE" "$CHECKPOINT"
 }
 
