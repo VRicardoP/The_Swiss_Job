@@ -992,6 +992,22 @@ async def _labels_ready_row(session: AsyncSession, measured_profiles: list) -> t
     mapped_pairs = sum(
         1 for p in pairs if p.job_ref_a in mapping and p.job_ref_b in mapping
     )
+    # ¿La cohorte que puntúa el gate EXISTE? `pares_dedup: 0` sin esta respuesta
+    # se lee como «aún llenándose» cuando puede significar «el examen que estoy
+    # corrigiendo no existe» — que es lo que pasó: `DEDUP_EVAL_COHORT` apuntaba a
+    # un holdout perdido y el reloj de los siete ciclos no podía arrancar, sin que
+    # ninguna métrica lo dijera. Un cero que no distingue «todavía no» de «nunca»
+    # deja esperando indefinidamente.
+    cohorte_existe = bool(
+        (
+            await session.execute(
+                sa.text(
+                    "SELECT 1 FROM labeled_dedup_cohorts WHERE source = :cohorte"
+                ),
+                {"cohorte": DEDUP_EVAL_COHORT},
+            )
+        ).scalar()
+    )
     ok = (
         perfiles_ok >= LABELS_MIN_FROZEN_SETS
         and len(pairs) >= LABELS_MIN_DEDUP_PAIRS
@@ -1002,6 +1018,10 @@ async def _labels_ready_row(session: AsyncSession, measured_profiles: list) -> t
         "sets_congelados_ok": frozen_ok,
         "perfiles_ok": perfiles_ok,
         "sets_excluidos_inactivos": excluded_inactive,
+        # La cohorte se NOMBRA siempre: quien lee la métrica tiene que poder ver
+        # contra qué se está puntuando, no solo cuánto falta.
+        "cohorte": DEDUP_EVAL_COHORT,
+        "cohorte_existe": cohorte_existe,
         "pares_dedup": len(pairs),
         "pares_mapeables": mapped_pairs,
         "umbrales": {
@@ -1011,6 +1031,14 @@ async def _labels_ready_row(session: AsyncSession, measured_profiles: list) -> t
             "min_pares_mapeables": LABELS_MIN_MAPPED_DEDUP_PAIRS,
         },
     }
+    if not cohorte_existe:
+        details["diagnostico"] = (
+            f"la cohorte de evaluación '{DEDUP_EVAL_COHORT}' NO existe: el gate no "
+            "puede arrancar por mucho que pasen los ciclos. No es que falten pares "
+            "por etiquetar — es que falta el conjunto entero. Cárgalo y congélalo "
+            "(PROTOCOLO_HOLDOUT_DEDUP.md), o corrige DEDUP_EVAL_COHORT si el "
+            "holdout vigente tiene otro nombre"
+        )
     return M_LABELS_READY, (1 if ok else 0), details, False
 
 

@@ -1145,3 +1145,68 @@ def test_el_vector_no_viaja_y_el_orden_kNN_sigue_siendo_una_constante(db):
     # El operando del <=> es un Param ($n), no una expresión correlacionada.
     assert re.search(r"<=> \$\d+", texto), texto
     assert "SubPlan" not in texto, texto
+
+
+def test_una_cohorte_de_evaluacion_ausente_se_dice_con_todas_las_letras(db):
+    """El gate publicaba `pares_dedup: 0` sin nombrar la cohorte, y ese cero se lee
+    como «aún llenándose» cuando puede significar «el examen que corrijo no existe».
+    Pasó de verdad: `DEDUP_EVAL_COHORT` apuntaba a un holdout perdido y el reloj de
+    los siete ciclos no podía arrancar, sin que ninguna métrica lo dijera. Un cero
+    que no distingue «todavía no» de «nunca» deja esperando indefinidamente."""
+    from jobhunt_core.shadow.labels import DEDUP_EVAL_COHORT
+    from jobhunt_core.shadow.metrics import _labels_ready_row
+
+    factory, _ = db
+
+    async def evalua():
+        async with factory() as s:
+            return await _labels_ready_row(s, [])
+
+    ready = asyncio.run(evalua())
+    detalles = ready[2]
+    # La cohorte se NOMBRA siempre: sin eso no se puede saber contra qué se puntúa.
+    assert detalles["cohorte"] == DEDUP_EVAL_COHORT
+    assert detalles["cohorte_existe"] is False
+    assert "NO existe" in detalles["diagnostico"]
+    assert "PROTOCOLO_HOLDOUT_DEDUP" in detalles["diagnostico"]
+    assert ready[1] == 0, "sin cohorte el gate no puede estar verde"
+
+
+def test_con_la_cohorte_cargada_el_diagnostico_desaparece(db):
+    """Y al revés: existiendo la cohorte, no se emite un diagnóstico que confunda.
+    Una guarda que grita siempre deja de leerse."""
+    from jobhunt_core.shadow.labels import DEDUP_EVAL_COHORT
+    from jobhunt_core.shadow.metrics import _labels_ready_row
+
+    factory, _ = db
+
+    async def prepara():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "INSERT INTO labeled_dedup_cohorts (source, manifest) "
+                    "VALUES (:src, '{}'::jsonb) ON CONFLICT (source) DO NOTHING"
+                ),
+                {"src": DEDUP_EVAL_COHORT},
+            )
+            await s.commit()
+
+    async def evalua():
+        async with factory() as s:
+            return await _labels_ready_row(s, [])
+
+    asyncio.run(prepara())
+    try:
+        detalles = asyncio.run(evalua())[2]
+        assert detalles["cohorte_existe"] is True
+        assert "diagnostico" not in detalles
+    finally:
+        async def limpia():
+            async with factory() as s:
+                await s.execute(
+                    sa.text("DELETE FROM labeled_dedup_cohorts WHERE source = :src"),
+                    {"src": DEDUP_EVAL_COHORT},
+                )
+                await s.commit()
+
+        asyncio.run(limpia())
