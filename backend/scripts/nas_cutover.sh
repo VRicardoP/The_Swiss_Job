@@ -86,6 +86,13 @@
 #         en una base cuyo nombre la máquina de estados desconoce. La
 #         sincronización es ahora PRECONDICIÓN: si `sync` no existe o no
 #         termina 0, se PARA antes del `RENAME`.
+#   P1-3  el smoke del beat combinaba dos señales DESACOPLADAS: aceptaba
+#         cualquiera de cuatro cadencias en el log y medía solo
+#         `outbox_lag_p99` detrás, así que un `shadow-project` despachado más
+#         una muestra entrada por su cuenta daba verde con el muestreador
+#         nunca planificado. Ahora las dos señales son de la MISMA capacidad:
+#         despacho NUEVO de `$BEAT_CADENCIA` Y muestra con marca de tiempo
+#         posterior al inicio del sondeo.
 #
 # CIFRAS: este script NO lleva ninguna constante del corpus. Mide el estado
 # ANTES, lee las cifras de los informes en seco y aserta el estado DESPUÉS
@@ -139,7 +146,10 @@ set -Eeuo pipefail
 # dirigido no lo nota. `BEAT_ESPERA` cubre DOS cadencias de cinco minutos: el
 # smoke puede esperar; abrir con el planificador muerto no.
 : "${BEAT_CONTENEDOR:=swissjob-core-worker}"
-: "${BEAT_CADENCIAS:=shadow-sample-outbox-lag|shadow-check-slot-health|shadow-project|delivery-dispatch-outbox}"
+# UNA cadencia, no cuatro (R6 P1-3): la que se mide detrás es la del muestreador
+# de `outbox_lag_p99`, así que es la que hay que exigir en el log. Aceptar
+# «cualquiera de las cuatro» desataba las dos señales.
+: "${BEAT_CADENCIA:=shadow-sample-outbox-lag}"
 : "${BEAT_ESPERA:=660}"
 : "${BEAT_SONDEO:=15}"
 : "${BEAT_LOG_LINEAS:=5000}"
@@ -1519,27 +1529,37 @@ smoke_sondas_acotadas() {
 # idempotencia y cierre de ciclo (RUNBOOK §5)—, que el propio runbook documenta
 # que pueden morir con el worker vivo.
 #
-# La postcondición es FUNCIONAL y reutiliza señales que ya existen:
-#   · `beat: Starting` en el log del worker —arrancó alguna vez—, y
-#   · dentro de DOS cadencias de cinco minutos, un `Sending due task` NUEVO de
-#     esas cadencias Y crecimiento del array `details.samples` de
-#     `outbox_lag_p99`. El muestreador es una de las cuatro cadencias de cinco
-#     minutos, así que las dos señales juntas prueban que el planificador MANDA
-#     y que el worker EJECUTA. `--since` mira solo lo nuevo: una traza de hace
-#     horas no vale como prueba de vida.
+# La postcondición es FUNCIONAL y las dos señales tienen que ser de la MISMA
+# capacidad (auditoría R6 P1-3). La versión anterior admitía CUALQUIERA de las
+# cuatro cadencias de cinco minutos en el log y medía SOLO `outbox_lag_p99`
+# detrás: un `Sending due task shadow-project` más una muestra entrada por una
+# ejecución independiente —una cola anterior, una mano, otro planificador—
+# daba VERDE aunque el beat actual no despachara el muestreador nunca.
+# Reproducido. Ahora se exige, dentro de DOS cadencias de cinco minutos:
+#   · `beat: Starting` en el log del worker —arrancó alguna vez—,
+#   · un `Sending due task` NUEVO de `$BEAT_CADENCIA` (el muestreador), y
+#   · una muestra de `outbox_lag_p99` con marca de tiempo POSTERIOR al inicio
+#     del sondeo, no un simple «hay más que antes».
+# El planificador MANDA esa cadencia y el worker la EJECUTA: es una capacidad,
+# no dos coincidencias. `--since` mira solo lo nuevo: una traza de hace horas no
+# vale como prueba de vida.
 #
 # Mirar si `Config.Cmd` trae `-B` mejora el DIAGNÓSTICO pero no prueba que beat
 # siga vivo, así que se imprime y no decide nada. Y el smoke puede esperar:
 # abrir con el planificador muerto es peor que unos minutos más de mantenimiento.
 # --------------------------------------------------------------------------
-SQL_SAMPLES_OUTBOX="/* samples-outbox */
- SELECT coalesce(sum(jsonb_array_length(details->'samples')), 0)::bigint
- FROM jobhunt.shadow_cycle_metrics
- WHERE metric = 'outbox_lag_p99' AND scope = 'global'"
+# Epoch de la muestra MÁS NUEVA de `outbox_lag_p99`. Cada muestra lleva su `ts`
+# (jobhunt_core/shadow/metrics.sample_outbox_lag), así que la marca de tiempo se
+# lee del propio dato y no hay que fiarse de un contador que cualquiera sube.
+SQL_MUESTRA_OUTBOX="/* muestra-outbox */
+ SELECT coalesce(max(extract(epoch from (s->>'ts')::timestamptz)), 0)::bigint
+ FROM jobhunt.shadow_cycle_metrics m,
+      LATERAL jsonb_array_elements(coalesce(m.details->'samples', '[]'::jsonb)) s
+ WHERE m.metric = 'outbox_lag_p99' AND m.scope = 'global'"
 
 smoke_beat() {
   titulo "Paso 7d — Celery beat VIVO (el ping del worker NO lo prueba)"
-  local cmd samples0 samples1 t0 ahora transcurrido
+  local cmd muestra t0 ahora transcurrido
   cmd=$("$DOCKER" inspect -f '{{json .Config.Cmd}}' "$BEAT_CONTENEDOR" 2>/dev/null || true)
   case "$cmd" in
     *'"-B"'*) printf 'diagnóstico: %s arranca con -B (beat embebido, RUNBOOK §5)\n' "$BEAT_CONTENEDOR" ;;
@@ -1551,25 +1571,27 @@ smoke_beat() {
   grep -q 'beat: Starting' "$WORK_DIR/beat.log" ||
     morir "«beat: Starting» no aparece en las últimas $BEAT_LOG_LINEAS líneas de $BEAT_CONTENEDOR: el planificador de las nueve cadencias NO arrancó. El ping del worker NO lo prueba (R5 P1-C)"
 
-  samples0=$(psql_valor "$SQL_SAMPLES_OUTBOX"); entero "$samples0" "samples de outbox_lag_p99"
-  printf 'esperando hasta %ss (dos cadencias de 5 min) a que el beat despache: samples=%s\n' \
-    "$BEAT_ESPERA" "$samples0"
-  t0=$(date +%s); samples1=$samples0
+  # El instante en que empieza el sondeo: solo cuenta una muestra POSTERIOR a
+  # él. Una que ya estuviera ahí no prueba que el planificador siga vivo.
+  t0=$(date +%s)
+  muestra=$(psql_valor "$SQL_MUESTRA_OUTBOX"); entero "$muestra" "epoch de la última muestra de outbox_lag_p99"
+  printf 'esperando hasta %ss (dos cadencias de 5 min) a que el beat despache «%s» Y entre una muestra posterior a %s (la última es de %s)\n' \
+    "$BEAT_ESPERA" "$BEAT_CADENCIA" "$t0" "$muestra"
   while :; do
     sleep "$BEAT_SONDEO"
     ahora=$(date +%s); transcurrido=$((ahora - t0 + 2))
     "$DOCKER" logs --since "${transcurrido}s" "$BEAT_CONTENEDOR" >"$WORK_DIR/beat.nuevo.log" 2>&1 || true
-    samples1=$(psql_valor "$SQL_SAMPLES_OUTBOX") || samples1=$samples0
-    entero "$samples1" "samples de outbox_lag_p99"
-    if grep -qE "Sending due task \[?($BEAT_CADENCIAS)" "$WORK_DIR/beat.nuevo.log" &&
-       [ "$samples1" -gt "$samples0" ]; then
-      printf 'beat VIVO: despachó una cadencia de 5 min y los samples de outbox_lag_p99 subieron %s → %s\n' \
-        "$samples0" "$samples1"
+    muestra=$(psql_valor "$SQL_MUESTRA_OUTBOX") || muestra=0
+    entero "$muestra" "epoch de la última muestra de outbox_lag_p99"
+    if grep -qE "Sending due task \[?$BEAT_CADENCIA" "$WORK_DIR/beat.nuevo.log" &&
+       [ "$muestra" -gt "$t0" ]; then
+      printf 'beat VIVO: despachó «%s» y esa cadencia dejó una muestra de outbox_lag_p99 posterior al sondeo (%s > %s)\n' \
+        "$BEAT_CADENCIA" "$muestra" "$t0"
       return 0
     fi
     [ $((ahora - t0)) -lt "$BEAT_ESPERA" ] || break
   done
-  morir "el beat de $BEAT_CONTENEDOR no dio señales en ${BEAT_ESPERA}s: ningún «Sending due task» nuevo de ($BEAT_CADENCIAS) y samples de outbox_lag_p99 $samples0 → $samples1. El worker contesta al ping pero NADIE planifica las nueve cadencias (proyector, despacho, salud del slot, cierre de ciclo): NO se abre a nadie"
+  morir "el beat de $BEAT_CONTENEDOR no probó la cadencia del muestreador en ${BEAT_ESPERA}s: hacen falta LAS DOS señales de la MISMA capacidad —un «Sending due task $BEAT_CADENCIA» nuevo Y una muestra de outbox_lag_p99 posterior a $t0 (la última es de $muestra)—. Otra cadencia en el log, o una muestra que entra por su cuenta, NO prueban que el planificador siga despachando (R6 P1-3): NO se abre a nadie"
 }
 
 # `smoke` NO toma el cerrojo de la base a propósito: es el único subcomando que

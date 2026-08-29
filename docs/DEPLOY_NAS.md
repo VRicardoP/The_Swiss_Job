@@ -1157,20 +1157,30 @@ salud del slot, proyector, despacho del outbox, purga de idempotencia y cierre d
 (`jobhunt_core/shadow/RUNBOOK.md` §5)—, que el propio runbook documenta que pueden morir
 con el worker vivo.
 
-La postcondición es **funcional** y reutiliza señales que ya existen:
+La postcondición es **funcional**, y sus dos señales tienen que ser de la **misma
+capacidad** (auditoría externa R6 P1-3). La primera versión admitía *cualquiera* de las
+cuatro cadencias de 5 min en el log y medía **solo** `outbox_lag_p99` detrás: un
+`Sending due task shadow-project` más una muestra entrada por una ejecución independiente
+—una cola anterior, una mano, otro planificador— daba **verde** aunque el beat actual no
+despachara el muestreador nunca. Reproducido. Lo que se exige ahora es:
 
-- `beat: Starting` en el log de `swissjob-core-worker` (arrancó alguna vez); y
+- `beat: Starting` en el log de `swissjob-core-worker` (arrancó alguna vez);
 - dentro de **dos cadencias de cinco minutos**, un `Sending due task` **nuevo**
-  (`docker logs --since`, no una traza de hace horas) de las cuatro cadencias de 5 min, y
-  **crecimiento** del array `details.samples` de `outbox_lag_p99` en
-  `jobhunt.shadow_cycle_metrics`. El muestreador es una de esas cuatro, así que las dos
-  señales juntas prueban que el planificador **manda** y que el worker **ejecuta**.
+  (`docker logs --since`, no una traza de hace horas) de **`shadow-sample-outbox-lag`**
+  (`BEAT_CADENCIA`), y
+- una muestra de `outbox_lag_p99` en `jobhunt.shadow_cycle_metrics` con **marca de tiempo
+  posterior al inicio del sondeo** — la `ts` que escribe el propio muestreador, no un
+  contador que cualquiera puede subir.
+
+Así el planificador **manda** esa cadencia y el worker la **ejecuta**: es una capacidad,
+no dos coincidencias.
 
 Que `Config.Cmd` traiga `-B` se imprime como **diagnóstico** —explica el rojo en un
 segundo— pero **no decide nada**: no prueba que beat siga vivo. El chequeo va el último de
 los cuatro porque es el único que espera: los rojos baratos salen antes. **El smoke puede
 esperar**; abrir con el planificador muerto es peor que unos minutos más de mantenimiento.
-Se ajusta con `BEAT_ESPERA` (660 s por defecto), `BEAT_SONDEO` y `BEAT_CONTENEDOR`.
+Se ajusta con `BEAT_ESPERA` (660 s por defecto), `BEAT_SONDEO`, `BEAT_CONTENEDOR` y
+`BEAT_CADENCIA`.
 
 Después imprime `docker logs --tail 50` de `swissjob-core-capture` y de
 `swissjob-worker`. Eso es **evidencia para el acta, no postcondición**: las

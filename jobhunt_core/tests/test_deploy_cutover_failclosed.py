@@ -134,9 +134,16 @@ case "$1" in
     [ "$nombre" = "$beat" ] || exit 0
     case "$*" in
       *--since*)
+        # R6 P1-3: `beat_desacoplado` despacha OTRA cadencia (el proyector) y
+        # NO el muestreador. Es el falso verde: el smoke miraba «alguna de las
+        # cuatro» y una muestra que sube por su cuenta.
         case "$r" in
           smoke_sin_beat|smoke_beat_muerto) ;;
-          *) echo "[INFO/Beat] Scheduler: Sending due task shadow-project (jobhunt.shadow.project)" ;;
+          beat_desacoplado)
+            echo "[INFO/Beat] Scheduler: Sending due task shadow-project (jobhunt.shadow.project)" ;;
+          *)
+            echo "[INFO/Beat] Scheduler: Sending due task shadow-sample-outbox-lag (jobhunt.shadow.sample_outbox_lag)"
+            echo "[INFO/Beat] Scheduler: Sending due task shadow-project (jobhunt.shadow.project)" ;;
         esac
         exit 0 ;;
     esac
@@ -337,11 +344,15 @@ guardas() {
     printf 'jobhunt|labeled_dedup_pairs|trg_inmutable_%s|%s\n' "$n" "$estado"
   done
 }
-samples_outbox() {
-  n=$(cat "$d/samples" 2>/dev/null || echo 0)
-  case "$r" in smoke_sin_beat|smoke_beat_muerto) ;; *) n=$((n + 1)) ;; esac
-  echo "$n" >"$d/samples"
-  echo "$n"
+# Epoch de la muestra MÁS NUEVA de `outbox_lag_p99` (R6 P1-3). Sin beat no
+# entra ninguna, así que se queda en una de 2001; con el muestreador
+# despachado —o con una ejecución INDEPENDIENTE, que es el falso verde— entra
+# una de ahora mismo.
+muestra_outbox() {
+  case "$r" in
+    smoke_sin_beat|smoke_beat_muerto) echo 1000000000 ;;
+    *) date +%s ;;
+  esac
 }
 
 sql=""
@@ -359,7 +370,7 @@ if [ -n "$sql" ]; then                      # consultas escalares y manifiestos
     *resuelven-juicios*)  resuelven_juicios "$fase"; exit 0 ;;
     *resuelven-pares*)    resuelven_pares "$fase"; exit 0 ;;
     *guardas-inmutabilidad*) guardas; exit 0 ;;
-    *samples-outbox*)     samples_outbox; exit 0 ;;
+    *muestra-outbox*)     muestra_outbox; exit 0 ;;
   esac
   case "$sql" in
     *atributos-base*)                       # atributos de la base a recrear
@@ -1123,12 +1134,12 @@ def test_el_smoke_no_da_verde_con_el_worker_vivo_y_el_beat_ausente(tmp_path, son
 
 def test_el_smoke_para_si_el_beat_arranco_y_esta_muerto(tmp_path, sonda):
     """El caso insidioso del runbook: `beat: Starting` está en el log de hace horas y el
-    planificador ya no despacha nada. La postcondición es FUNCIONAL —una cadencia nueva
-    y crecimiento de `details.samples`—, no la traza de arranque."""
+    planificador ya no despacha nada. La postcondición es FUNCIONAL —el despacho NUEVO
+    del muestreador y una muestra posterior al sondeo—, no la traza de arranque."""
     _preparar_smoke(tmp_path, "smoke_beat_muerto")
     p = _ejecutar(tmp_path, "smoke", "smoke_beat_muerto")
     assert p.returncode != 0, f"el smoke dio verde con el beat muerto:\n{p.stdout}"
-    assert "no dio señales" in p.stdout + p.stderr
+    assert "no probó la cadencia del muestreador" in p.stdout + p.stderr
 
 
 # --------------------------------------------------------------------------
@@ -1392,3 +1403,19 @@ def test_un_sync_que_falla_para_antes_del_rename(tmp_path):
     assert "APARTADA" not in p.stdout, p.stdout
     bases = (tmp_path / "estado" / "bases").read_text().split()
     assert bases == ["swissjobhunter"], f"hubo RENAME con el sync roto: {bases}"
+
+
+# --------------------------------------------------------------------------
+# R6 P1-3 — el smoke ataba dos señales que no prueban la misma capacidad
+# --------------------------------------------------------------------------
+def test_el_smoke_no_da_verde_si_beat_despacha_otra_cadencia(tmp_path, sonda):
+    """El log admitía CUALQUIERA de cuatro cadencias y la segunda señal medía SOLO
+    `outbox_lag_p99`: un `Sending due task shadow-project` más una muestra entrada por
+    una ejecución independiente (una cola anterior, una mano, otro planificador) daba
+    verde aunque el beat actual no despachara el muestreador nunca."""
+    _preparar_smoke(tmp_path, "beat_desacoplado")
+    p = _ejecutar(tmp_path, "smoke", "beat_desacoplado")
+    salida = p.stdout + p.stderr
+    assert "Paso 7d" in salida, salida
+    assert p.returncode != 0, "verde con el proyector despachado y una muestra ajena:\n" + p.stdout
+    assert "shadow-sample-outbox-lag" in salida
