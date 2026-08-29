@@ -641,14 +641,33 @@ scp /tmp/swissjob/swissjob-backend.tar  Ricardo@capsule:/share/Public/swissjob/
 scp /tmp/swissjob/swissjob-frontend.tar Ricardo@capsule:/share/Public/swissjob/
 scp /tmp/swissjob/swissjob-core.tar     Ricardo@capsule:/share/Public/swissjob/
 
-# El cuerpo ejecutable de §5.3 y las dos copias SQL: sin ellos no hay maniobra.
+# El cuerpo ejecutable de §5.3, su COORDINADOR y las dos copias SQL: sin los
+# tres no hay maniobra. `cutover_coordinador.py` viaja al MISMO directorio que
+# el script, que es donde este lo busca (§5.3, invariante 1).
 ssh Ricardo@capsule 'mkdir -p /share/Public/swissjob/scripts'
 scp backend/scripts/nas_cutover.sh \
+    backend/scripts/cutover_coordinador.py \
     backend/scripts/g3_canonizacion_identidad_arbeitnow_jobgether.sql \
     backend/scripts/g6_canonizacion_identidad_irishjobs.sql \
     Ricardo@capsule:/share/Public/swissjob/scripts/
 ssh Ricardo@capsule 'chmod +x /share/Public/swissjob/scripts/nas_cutover.sh'
 ```
+
+**Precondiciones del host, comprobables ANTES de la ventana de mantenimiento.**
+Las tres son fallo cerrado: si alguna no se cumple, la maniobra no arranca — y es
+mucho mejor saberlo ahora que con los servicios ya parados.
+
+```bash
+ssh Ricardo@capsule 'command -v python3'          # runtime del coordinador
+ssh Ricardo@capsule 'mkdir -p /var/lock/jobhunt-cutover && \
+                     test -w /var/lock/jobhunt-cutover && echo RAIZ-OK'
+ssh Ricardo@capsule 'ls -l /share/Public/swissjob/scripts/cutover_coordinador.py'
+```
+
+La raíz de cerrojos se instala **una vez** y no es configurable por invocación:
+es lo único que garantiza que dos operadores cualesquiera sobre la misma base
+resuelvan el mismo fichero. Si un operador no puede escribir ahí, se le arreglan
+los permisos — no se le da otra ruta.
 
 
 ### 5.3 Secuencia única de mantenimiento (canonización + subida)
@@ -664,7 +683,7 @@ poder señalar el invariante que defiende**.
 
 | # | Invariante | Recurso protegido | Estados válidos | Frontera irreversible | Evidencia exigida | Ante fallo | Clases de equivalencia probadas |
 |---|---|---|---|---|---|---|---|
-| **1** | **Un solo cerrojo por recurso.** La identidad del cerrojo es *servidor PostgreSQL + `PG_DB`*, y **nada más**: ni la copia, ni `BACKUP_DIR`, ni `WORK_DIR`, ni el modo, ni el operador, ni la hora | la **base**, no el archivo de copia | tomado / libre | cualquier `RENAME`, `DROP`, `CREATE`, `pg_restore` | la ruta del cerrojo, impresa por el propio script | `flock` es obligatorio; sin él **no arranca**. Sin repuesto casero: ganar un cerrojo con `mkdir` es atómico, limpiarlo no | restore A × restore B con copias distintas · cutover × restore · restore × cutover · `BACKUP_DIR` distintos · sin `flock` · dueño muerto (el núcleo lo suelta) |
+| **1** | **Un solo cerrojo por recurso.** La clave es el **`system_identifier` del servidor** (identidad canónica, no el alias con que se le nombre) más `PG_DB`, y **nada más**: ni la copia, ni `BACKUP_DIR`, ni `WORK_DIR`, ni `LOCK_DIR`, ni el contenedor, ni el modo, ni el operador, ni la hora. La **raíz** es una constante del coordinador, sin knob | la **base**, no el archivo de copia | tomado / libre | cualquier `RENAME`, `DROP`, `CREATE`, `pg_restore` | la ruta del cerrojo, impresa por el coordinador | sin runtime del coordinador **no arranca**; raíz inaccesible ⇒ **para**, nunca elige otra | restore A × restore B con copias distintas · cutover × restore · restore × cutover · `BACKUP_DIR`, `WORK_DIR`, `LOCK_DIR` y alias de contenedor distintos · sin runtime · raíz inaccesible · dueño muerto (el núcleo lo suelta) |
 | **2** | **Durabilidad antes que irreversibilidad.** Todo artefacto necesario para recuperar está sincronizado **antes** del primer paso sin vuelta atrás | la unidad de copia (volcado + manifiesto + 5 sidecars) y el checkpoint | — | Paso 4c y el `RENAME` de la marcha atrás | `sync` presente y con salida 0 | un solo helper `sincronizar_o_morir`; si falta o falla, se aborta **antes** de la mutación | fallo de `sync` en el sellado de la copia (⇒ no hay 4c) · fallo de `sync` en el checkpoint (⇒ no hay `RENAME`) |
 | **3** | **Restauración reanudable desde todo estado.** Desde cualquier fase no terminal, repetir el MISMO comando converge o falla cerrado con diagnóstico inequívoco | la base y su estado previo apartado | `INICIO` · `APARTADA` · `DESTINO_CREADO` · `RESTAURADO` · `VERIFICACION_FALLIDA` · `VERIFIED` | el `RENAME` que aparta la base | el checkpoint, junto a la copia y sincronizado | ninguna fase no terminal puede repetir para siempre el mismo trabajo fallido | muerte antes y después de cada transición · pérdida de `WORK_DIR` · verificación en rojo tras restore completo · reanudaciones **consecutivas** hasta el estado terminal |
 | **4** | **Evidencia causal y nueva del planificador.** El verde exige una evidencia **creada durante el sondeo** y **ligada al despacho observado** | la capacidad «beat despacha y el worker ejecuta» | — | abrir el servicio a los usuarios | un `Sending due task shadow-sample-outbox-lag` nuevo **y** una muestra nueva de `outbox_lag_p99` | nunca `max(ts) > t0`: se compara contra una línea base tomada en el propio `t0`. El ping y `beat: Starting` son **diagnóstico**, no prueba | beat ausente · worker vivo sin beat · otra cadencia despachada · muestra independiente · muestra **futura** preexistente · sampler sin muestra · sampler **con** muestra nueva |
@@ -1085,8 +1104,16 @@ no terminal se sale repitiendo el mismo trabajo fallido:
 - la **fase** se escribe DESPUÉS de cada postcondición, nunca antes: el checkpoint no
   promete lo que no pasó.
 
-Consecuencia operativa: **el mismo comando, repetido tantas veces como haga falta,
-termina en `VERIFIED` sin una sola sentencia SQL a mano.** Regresión: se mata el grupo de
+Consecuencia operativa: **el mismo comando, repetido, converge a `VERIFIED` sin una
+sola sentencia SQL a mano — o falla cerrado diciendo por qué.** Las dos mitades
+importan (R8 P2). Repetir arregla lo que era *transitorio*: un corte, un `SIGKILL`, un
+disco que se llenó, una conexión que quedó viva. **No arregla una incompatibilidad
+determinista**: si la copia o el manifiesto no cuadran con el estado que describen,
+cada intento volverá a restaurar y volverá a dar el mismo rojo, con el checkpoint en
+`VERIFICACION_FALLIDA`. Eso es correcto —es fail-closed, no un bucle silencioso— pero
+la acción no es relanzar: **si la misma divergencia aparece dos veces, para y
+diagnostica la copia y el manifiesto**, que es donde está el problema. El mensaje
+nombra exactamente qué no cuadra. Regresión: se mata el grupo de
 procesos en los seis bordes (antes y después del `RENAME`, en el `CREATE`, después del
 `CREATE`, durante y después del `pg_restore`) y se re-ejecuta hasta `VERIFIED`; se borra
 `WORK_DIR` entre medias; se comprueban las cuatro concurrencias sobre la misma base

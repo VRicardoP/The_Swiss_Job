@@ -171,20 +171,12 @@ set -Eeuo pipefail
 # Base de MANTENIMIENTO desde la que se renombra/crea la de producción: no se
 # puede hacer ninguna de las dos cosas estando conectado a ella.
 : "${PG_MAINT_DB:=postgres}"
-# El cerrojo de la maniobra (R5 P1-B, corregido en R6 P1-1: protege la BASE, no
-# el archivo de copia). `flock` es OBLIGATORIO: el núcleo suelta el cerrojo
-# aunque el proceso muera de `SIGKILL`, así que no hay huérfanos que heredar ni
-# ventana entre ganar el cerrojo y poder nombrar al dueño. El repuesto por
-# `mkdir`+PID se RETIRÓ en R7 P1-3 (ver `tomar_cerrojo`).
-: "${FLOCK:=flock}"
-# Dónde vive el cerrojo. NO puede derivarse de `BACKUP_DIR` (R7 P1-2): dos
-# maniobras sobre la MISMA base con directorios de copia distintos tomaban
-# cerrojos distintos y no se veían. La escalera es FIJA y se evalúa igual en
-# todo proceso del host, que es lo que hace que dos invocaciones cualesquiera
-# resuelvan el MISMO fichero. La durabilidad da igual aquí: `flock` no deja
-# estado que sobreviva al proceso, y un cerrojo que se pierde en un reinicio es
-# justo lo correcto —tras el reinicio no hay ninguna maniobra en curso.
-: "${LOCK_DIR:=}"
+# La coordinación crítica —identidad del recurso, cerrojo y publicación durable
+# de las fases— ya NO vive en este script (R8 P1). Tras tres reaperturas del
+# mismo invariante, está en `cutover_coordinador.py`, que se distribuye al lado.
+# Aquí solo queda su runtime, y su ausencia PARA la maniobra: no hay repuesto.
+: "${PYTHON:=python3}"
+: "${COORDINADOR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/cutover_coordinador.py}"
 # Módulo que imprime la identidad de la base a la que el core se conecta DE
 # VERDAD (resolviendo el DSN igual que el one-shot del Paso 5).
 : "${MODULO_IDENTIDAD:=jobhunt_core.shadow.identidad_destino}"
@@ -1166,23 +1158,23 @@ settings_de() { # <base> -> los `ALTER DATABASE … SET` en una línea
 # no conoce. Que es, exactamente, el defecto que R5 cerró.
 checkpoint_escribir() { # <fase>
   CK_FASE=$1
-  {
-    printf "CK_DUMP='%s'\n" "$CK_DUMP"
-    printf "CK_SHA256='%s'\n" "$CK_SHA256"
-    printf "CK_DESTINO='%s'\n" "$CK_DESTINO"
-    printf "CK_PREVIA='%s'\n" "$CK_PREVIA"
-    printf "CK_ENC='%s'\n" "$CK_ENC"
-    printf "CK_COLL='%s'\n" "$CK_COLL"
-    printf "CK_CTYPE='%s'\n" "$CK_CTYPE"
-    printf "CK_OWNER='%s'\n" "$CK_OWNER"
-    printf "CK_CONNLIMIT='%s'\n" "$CK_CONNLIMIT"
-    printf "CK_ACL='%s'\n" "$CK_ACL"
-    printf "CK_SETTINGS='%s'\n" "$CK_SETTINGS"
-    printf "CK_FASE='%s'\n" "$CK_FASE"
-  } >"$CHECKPOINT.tmp" || morir "no se pudo escribir el checkpoint $CHECKPOINT.tmp"
-  mv "$CHECKPOINT.tmp" "$CHECKPOINT" || morir "no se pudo publicar el checkpoint $CHECKPOINT"
-  sincronizar_o_morir "el checkpoint $CHECKPOINT (fase $CK_FASE)" "$BACKUP_DIR"
-  printf 'checkpoint %s → %s\n' "$CK_FASE" "$CHECKPOINT"
+  # Atómico, durable y con la transición VALIDADA: una fase que no puede seguir
+  # a la anterior describe un estado que no ocurrió, y de ahí no se reanuda
+  # nada. El coordinador escribe `.tmp`, hace `fsync` del fichero Y de su
+  # directorio, publica con `rename(2)` y exige que `sync` termine 0.
+  "$PYTHON" "$COORDINADOR" publicar --ruta "$CHECKPOINT" --fase "$CK_FASE" \
+    --dato "CK_DUMP=$CK_DUMP" \
+    --dato "CK_SHA256=$CK_SHA256" \
+    --dato "CK_DESTINO=$CK_DESTINO" \
+    --dato "CK_PREVIA=$CK_PREVIA" \
+    --dato "CK_ENC=$CK_ENC" \
+    --dato "CK_COLL=$CK_COLL" \
+    --dato "CK_CTYPE=$CK_CTYPE" \
+    --dato "CK_OWNER=$CK_OWNER" \
+    --dato "CK_CONNLIMIT=$CK_CONNLIMIT" \
+    --dato "CK_ACL=$CK_ACL" \
+    --dato "CK_SETTINGS=$CK_SETTINGS" ||
+    morir "no se pudo publicar el checkpoint $CHECKPOINT en la fase $CK_FASE, y lo que viene detrás es DESTRUCTIVO: se PARA aquí, ANTES de esa acción"
 }
 
 checkpoint_cargar() { # <dump> <sha256>
@@ -1200,61 +1192,31 @@ checkpoint_cargar() { # <dump> <sha256>
   printf 'checkpoint encontrado: fase=%s · base previa=%s\n' "$CK_FASE" "${CK_PREVIA:-(ninguna)}"
 }
 
-# El cerrojo protege el RECURSO DESTRUCTIVO, que es la BASE `$PG_DB` de ESTE
-# servidor — no el fichero de copia (auditoría R6 P1-1). `cutover` tomaba
-# `$BACKUP_DIR/nas_cutover.cerrojo` y `restaurar` tomaba `$dump.cerrojo`: dos
-# restauraciones con nombres de copia DISTINTOS adquirían cerrojos distintos, y
-# un cutover y una restauración no se veían entre sí, aunque los tres ejecutan
-# `RENAME`, `DROP`, `CREATE` y `pg_restore` sobre la MISMA base. Reproducido:
-# las dos restauraciones llegaron a `VERIFIED` y las dos calcularon el mismo
-# nombre `_previa_<segundo>`. Ahora hay UN cerrojo por servidor+base, que toman
-# los dos subcomandos ANTES de cualquier acción operacional; los checkpoints
-# siguen siendo por copia, que es lo que sí distingue una copia de otra.
-# El directorio del cerrojo: el primero de una escalera FIJA que sea un
-# directorio escribible. Deliberadamente NO mira `BACKUP_DIR` ni ningún otro
-# artefacto de la maniobra (R7 P1-2). Si el operador fija `LOCK_DIR` a mano,
-# tiene que fijarlo IGUAL en las dos invocaciones — y se le avisa.
-directorio_del_cerrojo() {
-  local d
-  if [ -n "$LOCK_DIR" ]; then
-    mkdir -p "$LOCK_DIR" 2>/dev/null || true
-    [ -d "$LOCK_DIR" ] && [ -w "$LOCK_DIR" ] ||
-      morir "LOCK_DIR='$LOCK_DIR' no es un directorio escribible: sin cerrojo no se toca la base $PG_DB"
-    printf '⚠ LOCK_DIR viene del entorno (%s): TODA maniobra sobre %s debe usar el MISMO valor, o dos no se verán entre sí.\n' "$LOCK_DIR" "$PG_DB" >&2
-    printf '%s' "$LOCK_DIR"; return 0
-  fi
-  for d in /var/lock /var/tmp /tmp; do
-    [ -d "$d" ] && [ -w "$d" ] && { printf '%s' "$d"; return 0; }
-  done
-  morir "no hay ningún directorio escribible para el cerrojo (/var/lock, /var/tmp, /tmp): sin exclusión mutua no se toca la base $PG_DB"
-}
+# La identidad CANÓNICA del servidor: `system_identifier` lo fija PostgreSQL al
+# inicializar el clúster, así que es el mismo se le nombre como se le nombre —por
+# el contenedor, por un alias o por otro host que apunte al mismo sitio—. El
+# nombre del contenedor NO sirve como identidad: dos alias del mismo servidor
+# habrían tomado dos cerrojos distintos (R8 P1).
+SQL_IDENTIDAD_SERVIDOR="/* identidad-servidor */ SELECT system_identifier FROM pg_control_system()"
 
-cerrojo_de_la_base() { # -> ruta del cerrojo ÚNICO por servidor + PG_DB
-  printf '%s/nas_cutover.%s.cerrojo' "$(directorio_del_cerrojo)" \
-    "$(printf '%s@%s' "$PG_DB" "$PG_CONTAINER" | tr -c 'A-Za-z0-9._@-' '_')"
-}
-
-# Exclusión mutua sobre un fichero de ruta ESTABLE. `flock` es obligatorio y su
-# ausencia PARA la maniobra (R7 P1-3).
-#
-# El repuesto por `mkdir`+PID se retiró. Era atómico para ganar el cerrojo, pero
-# la LIMPIEZA de un cerrojo huérfano no lo es: dos procesos podían leer el mismo
-# PID muerto, hacer `rm -rf` uno detrás de otro y `mkdir` con éxito los dos, y
-# ambos se declaraban dueños de la misma base. Reproducido. Cualquier remiendo
-# —reintentar, comparar mtime, un segundo cerrojo— vuelve a apoyarse en «leer,
-# decidir y borrar» sin atomicidad, así que se quita la clase entera: sobre
-# datos irreemplazables, no arrancar es barato y dos maniobras a la vez no
-# tienen marcha atrás. Si un QNAP mínimo no trae `flock`, el procedimiento se
-# para y el operador comprueba A MANO que no hay maniobra en curso; la limpieza
-# de un cerrojo obsoleto es manual y auditada, nunca automática.
-tomar_cerrojo() { # <fichero>
-  local cerrojo=$1
-  command -v "$FLOCK" >/dev/null 2>&1 ||
-    morir "este host no trae '$FLOCK' y la exclusión mutua es OBLIGATORIA sobre $PG_DB: dos maniobras a la vez (dos restauraciones, o un cutover y una restauración) corrompen la base sin marcha atrás. Instala util-linux/busybox flock, o apunta FLOCK= a su ruta. NO se continúa sin cerrojo"
-  exec 9>"$cerrojo" || morir "no se pudo abrir el cerrojo $cerrojo"
-  "$FLOCK" -n 9 ||
-    morir "otra maniobra tiene el cerrojo $cerrojo: NO se lanzan dos a la vez sobre la base $PG_DB (ni dos restauraciones con copias distintas, ni un cutover y una restauración). Si estás seguro de que ninguna sigue viva, comprueba a mano qué proceso lo retiene antes de tocar nada"
-  printf 'cerrojo (flock): %s\n' "$cerrojo"
+bajo_cerrojo() { # <subcomando> [args…] — no vuelve: re-ejecuta este script
+  # La exclusión mutua es del COORDINADOR, no de aquí. Tres rondas de auditoría
+  # demostraron que cada vez que este script decidía la ruta del cerrojo, la
+  # decisión dependía de algo que el operador podía cambiar: el fichero de copia
+  # (R6), `BACKUP_DIR` (R7) y `LOCK_DIR` más los permisos (R8). Ahora la ruta la
+  # fija una constante del módulo y la clave sale de la identidad canónica del
+  # servidor, que este script solo LEE.
+  [ -z "${CUTOVER_CERROJO_TOMADO:-}" ] || return 0
+  command -v "$PYTHON" >/dev/null 2>&1 ||
+    morir "este host no trae '$PYTHON' y la coordinación del cutover (cerrojo, identidad y checkpoint) vive en $COORDINADOR. NO hay repuesto: dos maniobras a la vez sobre $PG_DB corrompen la base sin marcha atrás. Instálalo, o apunta PYTHON= a su ruta"
+  [ -f "$COORDINADOR" ] ||
+    morir "falta $COORDINADOR: viaja junto a este script (§5.2) y sin él no hay exclusión mutua. NO se continúa"
+  local identidad
+  identidad=$(psql_maint "$SQL_IDENTIDAD_SERVIDOR") ||
+    morir "no se pudo leer la identidad del servidor (system_identifier): sin ella no se puede saber si otra maniobra habla del MISMO servidor"
+  export CUTOVER_CERROJO_TOMADO=1
+  exec "$PYTHON" "$COORDINADOR" ejecutar \
+    --identidad "$identidad" --db "$PG_DB" -- "$0" "$@"
 }
 
 localizar_dump() { # [fichero]
@@ -1425,8 +1387,6 @@ restaurar() { # [fichero .dump]
   # El cerrojo va ANTES de cualquier acción operacional y es el de la BASE, no
   # el de la copia (R6 P1-1): dos restauraciones con copias distintas, o una
   # restauración y un cutover, no pueden coexistir sobre $PG_DB.
-  mkdir -p "$BACKUP_DIR"
-  tomar_cerrojo "$(cerrojo_de_la_base)"
   dump=$(localizar_dump "${1:-}")
   verificar_copia "$dump"
   checkpoint_cargar "$dump" "$SUMA_DUMP"
@@ -1460,6 +1420,16 @@ restaurar() { # [fichero .dump]
       morir "ni existe la base $PG_DB ni queda una base apartada que reanudar: alguien la borró a mano. La copia $dump sigue siendo válida — crea la base ($0 no lo hace a ciegas) y vuelve a lanzar $0 restaurar $dump"
     apartar_destino
     previa=$CK_PREVIA
+  elif [ "$CK_FASE" = INICIO ]; then
+    # EL CATÁLOGO MANDA SOBRE EL CHECKPOINT. `INICIO` solo garantiza que el
+    # nombre de la base apartada está ELEGIDO, no que el `RENAME` ocurriera: un
+    # corte entre las dos sentencias deja exactamente este estado. Si la base
+    # previa existe, el `RENAME` sí ocurrió, así que la fase se RECONCILIA aquí
+    # —a `APARTADA`— en vez de saltar desde `INICIO` a crear el destino. Un
+    # checkpoint que describe un pasado que ya no es sirve para menos que
+    # ninguno, porque de él se reanuda mal.
+    printf 'el catálogo dice que %s ya está apartada: se reconcilia la fase antes de seguir.\n' "$previa"
+    checkpoint_escribir APARTADA
   fi
 
   # `RESTAURADO` es la única fase que permite saltarse `pg_restore`: dice que la
@@ -1715,6 +1685,15 @@ PY
 # --------------------------------------------------------------------------
 main() {
   mkdir -p "$WORK_DIR"
+  # ANTES de cualquier acción operacional y para los DOS subcomandos que
+  # escriben. `smoke` no entra a propósito: solo lee, y retenerlo hasta once
+  # minutos bloquearía la salida de emergencia.
+  case "${1:-}" in
+    # La guarda del ENSAYO va ANTES del cerrojo: un ensayo mal aislado no debe
+    # llegar ni a tomarlo. Se repite dentro del hijo, que es donde decide.
+    cutover)   guarda_ensayo; mkdir -p "$BACKUP_DIR"; bajo_cerrojo "$@" ;;
+    restaurar) mkdir -p "$BACKUP_DIR"; bajo_cerrojo "$@" ;;
+  esac
   case "${1:-}" in
     cutover)
       guarda_ensayo
@@ -1724,7 +1703,6 @@ main() {
       # cerrojo que toma `restaurar` —el de la base—, va ANTES de tocar nada y
       # su ruta NO depende de BACKUP_DIR (R7 P1-2).
       mkdir -p "$BACKUP_DIR"
-      tomar_cerrojo "$(cerrojo_de_la_base)"
       : >"$ESTADO"
       paso1_parar
       paso2_backup

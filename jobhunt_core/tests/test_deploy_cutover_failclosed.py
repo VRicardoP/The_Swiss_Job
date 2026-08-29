@@ -394,6 +394,9 @@ if [ -n "$sql" ]; then                      # consultas escalares y manifiestos
     *resuelven-juicios*)  resuelven_juicios "$fase"; exit 0 ;;
     *resuelven-pares*)    resuelven_pares "$fase"; exit 0 ;;
     *guardas-inmutabilidad*) guardas; exit 0 ;;
+    # La identidad canónica del servidor: la misma para todo alias con que se
+    # le nombre. Es la mitad de la clave del cerrojo (R8 P1).
+    *identidad-servidor*) echo "${IDENTIDAD_SERVIDOR:-7610559582315749414}"; exit 0 ;;
     *muestras-outbox-posteriores*) muestras_posteriores; exit 0 ;;
     *muestra-outbox*)     muestra_outbox; exit 0 ;;
   esac
@@ -561,6 +564,13 @@ def _plantar_dobles(raiz: Path) -> Path:
     return binarios
 
 
+def _identidad_de(raiz: Path) -> str:
+    """Un `system_identifier` estable y propio de cada prueba."""
+    import hashlib
+
+    return str(int(hashlib.sha256(str(raiz).encode()).hexdigest()[:15], 16))
+
+
 def _montar_nas(raiz: Path) -> dict[str, str]:
     """Un NAS de mentira: los tres tar, las dos copias SQL y los directorios."""
     base, scripts = raiz / "nas", raiz / "nas" / "scripts"
@@ -576,6 +586,11 @@ def _montar_nas(raiz: Path) -> dict[str, str]:
         "WORK_DIR": str(raiz / "trabajo"),
         "COPIAS_SQL": "g3.sql g6.sql",
         "DOBLES_DIR": str(raiz / "estado"),
+        # Identidad canónica del servidor de ESTA prueba. La raíz de cerrojos es
+        # fija y global —no hay knob que la mueva, que es justo el invariante—,
+        # así que el aislamiento entre pruebas viene de hablar con servidores
+        # distintos, que es lo que de verdad distingue un recurso de otro.
+        "IDENTIDAD_SERVIDOR": _identidad_de(raiz),
         # El cerrojo NO se deriva de BACKUP_DIR (R7 P1-2). Aquí se fija a un
         # directorio propio de la prueba por dos razones: para que dos suites
         # a la vez en el mismo host no se bloqueen entre sí en /var/lock, y
@@ -1096,30 +1111,30 @@ def test_dos_restauraciones_a_la_vez_no_se_pisan(tmp_path):
     assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
 
 
-def test_sin_flock_la_maniobra_no_arranca(tmp_path):
-    """R7 P1-3. El repuesto por `mkdir`+PID se RETIRÓ. Ganar el cerrojo con `mkdir`
-    era atómico, pero LIMPIAR uno huérfano no lo era: dos procesos leían el mismo PID
-    muerto, hacían `rm -rf` uno detrás de otro y `mkdir` con éxito los dos, y ambos se
-    creían dueños de la misma base. Sin `flock` no hay exclusión mutua que valga, así
-    que la maniobra PARA — y para antes de tocar nada."""
-    entorno = {"FLOCK": "flock-que-no-existe-en-este-host"}
-    p = _con_entorno(tmp_path, entorno)
+def test_sin_el_runtime_del_coordinador_la_maniobra_no_arranca(tmp_path):
+    """R7 P1-3 + R8 P1. El repuesto casero se retiró entero: ganar un cerrojo con
+    `mkdir` era atómico, pero LIMPIAR uno huérfano no lo era. Hoy la exclusión mutua
+    la da el coordinador, y su runtime es una PRECONDICIÓN: sin él la maniobra para
+    antes de tocar nada, en vez de inventarse otro cerrojo."""
+    p = _ejecutar(tmp_path, "cutover", None,
+                  override={"PYTHON": "python-que-no-existe-en-este-host"})
     salida = p.stdout + p.stderr
     assert p.returncode != 0, "arrancó un cutover sin exclusión mutua:\n" + p.stdout
-    assert "flock" in salida
+    assert "python-que-no-existe-en-este-host" in salida, salida
     assert "Paso 1" not in p.stdout, p.stdout
     assert "Paso 2" not in p.stdout, p.stdout
 
 
-def test_sin_flock_tampoco_arranca_la_marcha_atras(tmp_path):
-    """Y la restauración igual: es la que ejecuta `RENAME`, `DROP` y `CREATE`."""
+def test_sin_el_coordinador_tampoco_arranca_la_marcha_atras(tmp_path):
+    """Y la restauración igual: es la que ejecuta `RENAME`, `DROP` y `CREATE`. Aquí
+    falta el fichero del coordinador, no su intérprete."""
     assert _ejecutar(tmp_path, "cutover", None).returncode == 0
     dump = _dump_de(tmp_path)
-    entorno = {"FLOCK": "flock-que-no-existe-en-este-host"}
-    p = _con_entorno(tmp_path, entorno, subcomando="restaurar", extra=(dump,))
+    p = _ejecutar(tmp_path, "restaurar", None, dump,
+                  override={"COORDINADOR": str(tmp_path / "no-existe.py")})
     salida = p.stdout + p.stderr
     assert p.returncode != 0, "restauró sin exclusión mutua:\n" + p.stdout
-    assert "flock" in salida
+    assert "no-existe.py" in salida, salida
     assert "APARTADO" not in p.stdout, p.stdout
     bases = (tmp_path / "estado" / "bases").read_text().split()
     assert bases == ["swissjobhunter"], f"tocó el catálogo sin cerrojo: {bases}"
@@ -1131,7 +1146,7 @@ def test_un_cerrojo_huerfano_no_se_limpia_solo(tmp_path):
     auditada — que es justo lo que impide la carrera de dos herederos."""
     assert _ejecutar(tmp_path, "cutover", None).returncode == 0
     cerrojo = _cerrojo_de_la_base(tmp_path)
-    assert cerrojo.is_file(), "el cerrojo de flock no llegó a existir"
+    assert cerrojo.is_file(), f"el cerrojo de flock no llegó a existir en {cerrojo}"
     assert not Path(str(cerrojo) + ".d").exists(), (
         "quedó el mutex por mkdir: el repuesto retirado sigue vivo"
     )
@@ -1289,9 +1304,11 @@ _ESTADO_DOBLES = ("firme", "canon", "parados", "bases", "restaurado",
 
 
 def _cerrojo_de_la_base(tmp_path: Path) -> Path:
-    """El cerrojo ÚNICO por servidor+base: ni por copia, ni por subcomando, ni por
-    directorio de copias (R7 P1-2)."""
-    return tmp_path / "cerrojos" / "nas_cutover.swissjobhunter@swissjob-postgres.cerrojo"
+    """El cerrojo ÚNICO del recurso. Su raíz es una constante del coordinador y su
+    clave sale de la identidad canónica del servidor más el nombre de la base: ni
+    la copia, ni el subcomando, ni el directorio de copias, ni el alias del
+    contenedor entran aquí (R6 P1-1, R7 P1-2, R8 P1)."""
+    return Path("/var/lock/jobhunt-cutover") / f"{_identidad_de(tmp_path)}.swissjobhunter.cerrojo"
 
 
 def _reiniciar_dobles(tmp_path: Path) -> None:
@@ -1642,3 +1659,119 @@ def test_el_beat_solo_da_verde_con_evidencia_causal_y_nueva(tmp_path, sonda, cla
     salida = p.stdout + p.stderr
     assert p.returncode != 0, f"el smoke dio verde aunque {porque}:\n{p.stdout}"
     assert "beat" in salida.lower(), salida
+
+
+# --------------------------------------------------------------------------
+# R8 P1 — la identidad del cerrojo no puede depender del operador
+#
+# Tercera reapertura del invariante 1. Ya no basta con «no derivarlo de la
+# copia» (R6) ni «no derivarlo de BACKUP_DIR» (R7): mientras exista UN knob que
+# mueva la ruta, dos operadores sobre la misma base pueden adquirir dos cerrojos
+# distintos y restaurar a la vez. Estas pruebas fijan la propiedad, no el
+# ejemplo: **ninguna variable del entorno cambia la ruta del cerrojo**.
+# --------------------------------------------------------------------------
+def _ruta_del_cerrojo_impresa(salida: str) -> str:
+    for linea in salida.splitlines():
+        if linea.startswith("cerrojo (flock):"):
+            return linea.split(":", 1)[1].strip()
+    raise AssertionError("el script no publicó la ruta del cerrojo:\n" + salida)
+
+
+def test_dos_lock_dir_distintos_no_pueden_restaurar_a_la_vez(tmp_path):
+    """LA reproducción de la R8: A retiene el cerrojo dentro de `pg_restore` con un
+    `LOCK_DIR`, y B llega con otro y alcanza `VERIFIED` sobre la MISMA base. Una
+    advertencia impresa no es exclusión mutua."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    hilo, resultados, timeout = _mientras_retiene(
+        tmp_path,
+        lambda: _ejecutar(
+            tmp_path, "restaurar", None, dump, lento_en="pg_restore",
+            override={"LOCK_DIR": str(tmp_path / "locks-a")},
+        ),
+    )
+    try:
+        b = _ejecutar(
+            tmp_path, "restaurar", None, dump,
+            override={"LOCK_DIR": str(tmp_path / "locks-b")},
+        )
+        salida = b.stdout + b.stderr
+        assert b.returncode != 0, (
+            "la segunda restauración, con otro LOCK_DIR sobre la MISMA base, "
+            "llegó hasta el final:\n" + b.stdout
+        )
+        assert "otra maniobra tiene el cerrojo" in salida, (
+            "murió por otra causa, no por la exclusión mutua:\n" + salida
+        )
+        assert "VERIFIED" not in b.stdout, b.stdout
+    finally:
+        hilo.join(timeout=timeout)
+    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+
+
+def test_el_mismo_servidor_por_otro_nombre_toma_el_mismo_cerrojo(tmp_path):
+    """La clave es la identidad CANÓNICA del servidor, no el texto con que se le
+    nombra: `swissjob-postgres` y un alias del mismo servidor son el mismo recurso.
+    Con el nombre del contenedor dentro de la clave, cambiar de alias abría una
+    segunda maniobra sobre la misma base."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    hilo, resultados, timeout = _mientras_retiene(
+        tmp_path,
+        lambda: _ejecutar(tmp_path, "restaurar", None, dump, lento_en="pg_restore"),
+    )
+    try:
+        b = _ejecutar(
+            tmp_path, "restaurar", None, dump,
+            override={"PG_CONTAINER": "swissjob-postgres-alias"},
+        )
+        salida = b.stdout + b.stderr
+        assert b.returncode != 0, (
+            "el mismo servidor con otro nombre de contenedor abrió una segunda "
+            "maniobra:\n" + b.stdout
+        )
+        assert "otra maniobra tiene el cerrojo" in salida, salida
+    finally:
+        hilo.join(timeout=timeout)
+    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+
+
+def test_la_ruta_del_cerrojo_no_la_mueve_ninguna_variable_del_entorno(tmp_path):
+    """La propiedad, dicha entera: se varían a la vez las cinco cosas que en algún
+    momento formaron parte de la ruta —el directorio de copias, el de trabajo, el
+    `LOCK_DIR`, el nombre del contenedor y el fichero de copia— y la ruta tiene que
+    salir IDÉNTICA. Es la prueba que impide una cuarta reapertura."""
+    assert _ejecutar(tmp_path, "cutover", None).returncode == 0
+    dump = _dump_de(tmp_path)
+    base = _ejecutar(tmp_path, "restaurar", None, dump)
+    assert base.returncode == 0, base.stdout + base.stderr
+    referencia = _ruta_del_cerrojo_impresa(base.stdout)
+
+    for etiqueta, override in (
+        ("BACKUP_DIR", {"BACKUP_DIR": str(tmp_path / "copias-2")}),
+        ("WORK_DIR", {"WORK_DIR": str(tmp_path / "trabajo-2")}),
+        ("LOCK_DIR", {"LOCK_DIR": str(tmp_path / "locks-2")}),
+        ("PG_CONTAINER", {"PG_CONTAINER": "otro-alias-del-mismo-servidor"}),
+    ):
+        for destino in override.values():
+            if destino.startswith(str(tmp_path)):
+                Path(destino).mkdir(parents=True, exist_ok=True)
+        p = _ejecutar(tmp_path, "restaurar", None, dump, override=override)
+        assert p.returncode == 0, f"{etiqueta}: {p.stdout}{p.stderr}"
+        assert _ruta_del_cerrojo_impresa(p.stdout) == referencia, (
+            f"cambiar {etiqueta} movió la ruta del cerrojo:\n"
+            f"  esperada: {referencia}\n"
+            f"  obtenida: {_ruta_del_cerrojo_impresa(p.stdout)}"
+        )
+
+
+def test_el_cutover_y_la_marcha_atras_comparten_la_clave_canonica(tmp_path):
+    """Cutover y restore tienen que resolver EXACTAMENTE la misma ruta: es la única
+    forma de que no coexistan. Se comprueba sobre la ruta publicada, no sobre el
+    rechazo —que ya puede darse por otras causas."""
+    c = _ejecutar(tmp_path, "cutover", None)
+    assert c.returncode == 0, c.stdout + c.stderr
+    dump = _dump_de(tmp_path)
+    r = _ejecutar(tmp_path, "restaurar", None, dump)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _ruta_del_cerrojo_impresa(c.stdout) == _ruta_del_cerrojo_impresa(r.stdout)
