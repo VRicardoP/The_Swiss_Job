@@ -121,3 +121,14 @@ def test_v2_registra_su_propio_algoritmo_en_los_pesos():
     assert matching.HYBRID2_POLICY_WEIGHTS == {"algorithm": "hybrid_rrf_v2"}
     # y la v1 no cambió
     assert matching.HYBRID_POLICY_WEIGHTS == {"algorithm": "hybrid_rrf_v1"}
+
+
+def test_v2_tiene_su_propio_peso_lexico_y_v1_conserva_el_suyo():
+    """El ajuste de la ablación (0.25) vive SOLO en v2. Compartir la constante
+    habría hecho que ajustar v2 mutara v1 — y el SQL derivado se comprueba al
+    importar: si el peso de v1 siguiera dentro, el módulo no carga."""
+    assert matching.HYBRID2_LEXICAL_WEIGHT == 0.25
+    assert matching._LEXICAL_WEIGHT == 1.15
+    assert str(matching.HYBRID2_LEXICAL_WEIGHT) in matching.HYBRID2_CANDIDATES_SQL
+    assert str(matching._LEXICAL_WEIGHT) not in matching.HYBRID2_CANDIDATES_SQL
+    assert str(matching._LEXICAL_WEIGHT) in matching.HYBRID_CANDIDATES_SQL

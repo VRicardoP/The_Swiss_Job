@@ -70,6 +70,15 @@ HYBRID_POLICY_WEIGHTS = {"algorithm": "hybrid_rrf_v1"}
 # determinista, no el de serialización. v1 no se toca: otra versión, otra fila.
 HYBRID2_POLICY_VERSION = "v2"
 HYBRID2_POLICY_WEIGHTS = {"algorithm": "hybrid_rrf_v2"}
+# Peso léxico de v2, PROPIO — el 1.15 de arriba es de v1 y no se toca. El valor
+# sale de la comparación predeclarada A/B sobre las evaluaciones persistidas
+# (2026-09-02): con 1.15 y la consulta ancha de v2, una oferta mediocre en los
+# DOS brazos (sr=30+lr=20) sumaba más RRF que un sr=1 sin señal léxica, y la
+# marea de dobles-brazo expulsaba del top-10 un orden semántico casi perfecto
+# (nDCG dev 0.0). Con 0.25 el léxico RESCATA cobertura (los 4 relevantes-2
+# siguen dentro del feed) sin mandar en el orden: nDCG dev 0.557/0.617. Fue la
+# alternativa ganadora frente a «semántico primero, léxico anexado» (0.545/0.617).
+HYBRID2_LEXICAL_WEIGHT = 0.25
 _RRF_K = 60
 _LEXICAL_WEIGHT = 1.15
 
@@ -127,6 +136,24 @@ FULL OUTER JOIN lexical l
 ORDER BY rank_score DESC, COALESCE(a.vacancy_id, l.vacancy_id)
 LIMIT :k
 """
+
+
+# El SQL de v2: idéntico en forma al de v1 pero con SU peso léxico. Compartir
+# la constante habría significado que ajustar v2 MUTA v1 — la clase de
+# acoplamiento que el golden de inmutabilidad existe para impedir.
+HYBRID2_CANDIDATES_SQL = HYBRID_CANDIDATES_SQL.replace(
+    f"+ {_LEXICAL_WEIGHT} *", "+ %s *" % HYBRID2_LEXICAL_WEIGHT
+).replace(
+    f"(1.0 + {_LEXICAL_WEIGHT})", "(1.0 + %s)" % HYBRID2_LEXICAL_WEIGHT
+)
+if (HYBRID2_CANDIDATES_SQL == HYBRID_CANDIDATES_SQL
+        or str(_LEXICAL_WEIGHT) in HYBRID2_CANDIDATES_SQL):
+    # La derivación por replace no falla sola cuando el patrón cambia (misma
+    # lección que _EXACT_INTRA_HISTORY_SQL en dedup): se comprueba al importar.
+    raise RuntimeError(
+        "HYBRID2_CANDIDATES_SQL no pudo derivarse: el peso de v1 "
+        f"({_LEXICAL_WEIGHT}) sigue dentro, y v2 estaría corriendo con él"
+    )
 
 
 def _semantic_arm_filled(filas, target: int, hybrid: bool) -> bool:
@@ -377,7 +404,12 @@ async def evaluate_profile(
     else:
         lex_query = ""
     hybrid = bool(lex_query)
-    candidate_sql = HYBRID_CANDIDATES_SQL if hybrid else CANDIDATES_SQL
+    if algorithm == "hybrid_rrf_v2":
+        candidate_sql = HYBRID2_CANDIDATES_SQL
+    elif hybrid:
+        candidate_sql = HYBRID_CANDIDATES_SQL
+    else:
+        candidate_sql = CANDIDATES_SQL
     params = {
         "vec": prof.vec, "mid": model_id, "k": limit, "lex_query": lex_query,
     }
