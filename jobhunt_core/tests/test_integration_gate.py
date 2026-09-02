@@ -116,6 +116,13 @@ def gate_db():
                     "CREATE TABLE public.user_profiles ("
                     "id uuid PRIMARY KEY, user_id uuid, title varchar(200), "
                     "cv_text text, skills jsonb NOT NULL DEFAULT '[]'::jsonb, "
+                    # Preferencias (Fase 2 v5): required en la whitelist de la
+                    # captura — sin ellas el readiness espera con backoff y la
+                    # suite entera se cuelga (visto: 2h clavada aquí).
+                    "languages jsonb NOT NULL DEFAULT '[]'::jsonb, "
+                    "locations jsonb NOT NULL DEFAULT '[]'::jsonb, "
+                    "experience_years int, salary_min int, salary_max int, "
+                    "remote_pref varchar(50) NOT NULL DEFAULT 'any', "
                     "updated_at timestamptz NOT NULL DEFAULT now())"
                 )
             )
