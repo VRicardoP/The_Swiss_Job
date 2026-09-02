@@ -1,21 +1,12 @@
 """Procedencia EXACTA de la importación del portfolio (§4, parte 2; adelantada en LOCAL,
 ejecución sobre datos reales gated al NAS).
 
-`_captured_identities` (scaffold C-4) es un INVENTARIO SCOPEADO, NO procedencia: en un re-run
-reaparecen las filas del run previo, y un offer_revision REUTILIZADO (preexistente de otra
-fuente que C-4 solo enganchó) aparece aunque C-4 no lo creara. Aquí se produce la PROCEDENCIA
-EXACTA — las filas que insertó ESTE run — vía SNAPSHOT ANTES/DESPUÉS de los PK-sets.
-
-ALCANCE Y LÍMITE DE CONCURRENCIA (honesto): la fuente portfolio-import es single-writer (scope
-deshabilitado) → las tablas OWNED son race-free. Las REUSABLE (vacancies/offer_revisions/
-dedup_candidates) se snapshotean FULL-id, y el CORE COMPARTIDO SIGUE COSECHANDO durante el
-cutover (el freeze congela el BFF del portfolio, no el harvest del core — RUNBOOK §0): una
-vacante AJENA insertada por el core entre `antes` y `después` se COLARÍA en `después − antes`.
-Esto NO es un borrado silencioso: (a) el ensayo §4 y los tests corren sobre una COPIA DESECHABLE
-del core (sin harvest → single-writer real), y (b) toda sobre-captura la DETECTA el cross-check
-del verificador (parte 3: created del ledger ≠ procedencia de vacancies → discrepant), jamás en
-silencio. El artefacto INMUNE a concurrencia (procedencia por RETURNING en cada INSERT) es el
-entregable del §4-REAL (gated NAS, RUNBOOK §4); este snapshot-diff es el ADELANTO en LOCAL.
+La procedencia se captura en el punto de escritura: core0039 instala triggers
+AFTER INSERT que solo actúan cuando esta transacción habilita la marca C-4.
+Los IDs van a una tabla TEMPORAL de la propia sesión; escrituras concurrentes
+de otras sesiones no pueden aparecer y un rollback/savepoint elimina también
+sus identidades. Es equivalente a RETURNING por INSERT sin acoplar los catorce
+puntos de escritura ni el RawListingSink compartido.
 
 SCOPING por tabla (clave para la exactitud):
 - OWNED portfolio-import (scoped): source_listings/incarnations/revisions/offer_revision_sources/
@@ -47,10 +38,73 @@ import logging
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .portfolio_provenance_contract import PROVENANCE_TABLES
+
 logger = logging.getLogger(__name__)
 
 # Corpus alcanzable desde la fuente portfolio-import (el join base de las tablas OWNED).
 _CORPUS_JOIN = "FROM source_listings sl JOIN sources s ON s.id = sl.source_id AND s.name = :src "
+
+async def begin_exact_capture(session: AsyncSession) -> None:
+    """Activa la captura para la transacción/sesión actual."""
+    await session.execute(
+        sa.text(
+            "CREATE TEMP TABLE IF NOT EXISTS portfolio_provenance_log ("
+            " table_name text NOT NULL, row_key text NOT NULL,"
+            " PRIMARY KEY (table_name, row_key)"
+            ") ON COMMIT DROP"
+        )
+    )
+    # Admite un segundo run idempotente dentro de la misma transacción.
+    await session.execute(
+        sa.text("TRUNCATE pg_temp.portfolio_provenance_log")
+    )
+    await session.execute(
+        sa.text(
+            "SELECT set_config("
+            "'jobhunt.portfolio_provenance_run', :run, true)"
+        ),
+        {"run": "active"},
+    )
+
+
+async def captured_provenance(session: AsyncSession) -> dict[str, list[str]]:
+    """Devuelve solo INSERTs de esta transacción, con contrato completo."""
+    rows = (
+        await session.execute(
+            sa.text(
+                "SELECT table_name, row_key FROM "
+                "pg_temp.portfolio_provenance_log "
+                "ORDER BY table_name, row_key"
+            )
+        )
+    ).all()
+    result = {table: [] for table in sorted(PROVENANCE_TABLES)}
+    for row in rows:
+        if row.table_name not in result:
+            raise RuntimeError(
+                f"tabla de procedencia no soportada: {row.table_name}"
+            )
+        result[row.table_name].append(row.row_key)
+    await session.execute(
+        sa.text(
+            "SELECT set_config("
+            "'jobhunt.portfolio_provenance_run', '', true)"
+        )
+    )
+    return result
+
+
+async def preexisting_profile_vacancy_state_ids(
+    session: AsyncSession, consumer_name: str
+) -> set[str]:
+    return await _ids(
+        session,
+        "SELECT (pvs.profile_id::text || ':' || pvs.vacancy_id::text) k "
+        "FROM profile_vacancy_state pvs JOIN profiles p ON p.id = pvs.profile_id "
+        "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons",
+        {"cons": consumer_name},
+    )
 
 
 async def _ids(session: AsyncSession, sql: str, params: dict) -> set[str]:

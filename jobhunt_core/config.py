@@ -56,6 +56,9 @@ class CoreSettings(BaseSettings):
     # de celery_app.py (corre en el core-worker LOCAL, ver shadow/RUNBOOK.md).
     CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S: int = 300   # sample_outbox_lag (§5)
     CORE_SHADOW_SLOT_HEALTH_EVERY_S: int = 300     # check_slot_health (§6)
+    CORE_SHADOW_PRE_GATE_EVERY_S: int = Field(default=3600, ge=300)
+    CORE_SHADOW_CYCLE_START_HOUR: int = Field(default=6, ge=0, le=23)
+    CORE_SHADOW_CYCLE_START_MINUTE: int = Field(default=0, ge=0, le=59)
     CORE_SHADOW_RUN_CYCLE_HOUR: int = 6            # run_cycle diario 06:05
     CORE_SHADOW_RUN_CYCLE_MINUTE: int = 5          # (Europe/Zurich, tras el
     #                                              cierre del ciclo a las 06:00)
@@ -65,6 +68,12 @@ class CoreSettings(BaseSettings):
     # matemáticamente imposibles.
     CORE_SHADOW_PROJECT_EVERY_S: int = 300         # jobhunt.shadow.project
     CORE_DELIVERY_DISPATCH_EVERY_S: int = 300      # jobhunt.delivery.dispatch_outbox
+    # Fase C: destino HTTP por consumer. Vacío conserva el inbox sombra. Si
+    # existe al menos un destino, el token es obligatorio y los destinos no
+    # mapeados fallan (nunca se marcan delivered por un fallback accidental).
+    CORE_DELIVERY_HTTP_DESTINATIONS: dict[str, str] = Field(default_factory=dict)
+    CORE_DELIVERY_HTTP_TOKEN: str = ""
+    CORE_DELIVERY_HTTP_TIMEOUT_S: float = Field(default=10.0, gt=0, le=120)
     # C-API-W 2º análisis: barrido de idempotency_records caducados (acota la
     # retención del cv_text guardado en response al TTL de 24h).
     CORE_IDEMPOTENCY_PURGE_EVERY_S: int = 3600
@@ -178,6 +187,13 @@ class CoreSettings(BaseSettings):
             raise ValueError(
                 "CORE_BROKER_URL y CORE_RESULT_BACKEND deben llevar la MISMA "
                 "contraseña de redis-core (requirepass es único por instancia)"
+            )
+        if self.CORE_DELIVERY_HTTP_DESTINATIONS and _bad_secret(
+            self.CORE_DELIVERY_HTTP_TOKEN
+        ):
+            raise ValueError(
+                "CORE_DELIVERY_HTTP_TOKEN es obligatorio y no puede ser un "
+                "placeholder cuando hay destinos HTTP"
             )
         return self
 

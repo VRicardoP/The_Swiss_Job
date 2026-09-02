@@ -11,8 +11,8 @@
   por (consumer_id, event_id) — contrato de transporte at-least-once +
   consumo idempotente. El TRANSPORTE es una costura inyectable:
   `set_transport(fn)` con fn(destination, event_dict) síncrono que lanza si
-  falla; la implementación real (HTTP al inbox del BFF) llega con el cutover
-  de Fase C — sin transporte configurado los pendientes se conservan SIN
+  falla. Fase C dispone del transporte HTTP por consumer, activado solo con
+  configuración completa; sin transporte los pendientes se conservan SIN
   consumir intentos. En Fase B el worker registra al arrancar el transporte
   SOMBRA (shadow/inbox.py → jobhunt.shadow_inbox, P1-1b) SOLO si nadie
   inyectó otro: entrega real y continua sin efectos visibles (§8 del
@@ -253,7 +253,7 @@ async def renew_lease(session, rows, lease_token) -> tuple[object, int]:
 _FENCE = "AND d.state = 'inflight' AND d.lease = :lease"
 
 
-async def _persist_attempts(session, fails: list) -> None:
+async def _persist_attempts(session, fails: list) -> list[dict]:
     """Persiste el intento EJECUTADO y su error FUERA del fence del lease.
 
     G3-P2-2: al mover el consumo de `attempts` del claim al RESULTADO
@@ -267,13 +267,14 @@ async def _persist_attempts(session, fails: list) -> None:
     El fence protege la TRANSICIÓN DE ESTADO (no resucitar un terminal, no
     pisar al nuevo dueño); el contador es MONÓTONO y cuenta transportes
     REALMENTE ejecutados, así que se escribe sin lease — pero solo sobre filas
-    aún 'inflight': una delivered/dead ajena jamás se toca."""
+    aún pendientes o en vuelo: una delivered/dead ajena jamás se toca."""
     if not fails:
-        return
-    await session.execute(
-        sa.text(
+        return []
+    rows = (
+        await session.execute(
+            sa.text(
             "UPDATE integration_outbox_deliveries d "
-            "SET attempts = GREATEST(d.attempts, t.attempts), "
+            "SET attempts = d.attempts + 1, "
             "    last_error = t.error, "
             # G3-H-1: hubo RESULTADO (el transporte se ejecutó y falló) — el
             # contador de veneno vuelve a 0 aunque el fence descarte la
@@ -281,18 +282,27 @@ async def _persist_attempts(session, fails: list) -> None:
             # que mata al proceso.
             "    claims = 0 "
             "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[]), "
-            "            CAST(:errors AS text[]), CAST(:tries AS int[])) "
-            "  AS t(eid, dest, error, attempts) "
+            "            CAST(:errors AS text[])) "
+            "  AS t(eid, dest, error) "
             "WHERE d.event_id = t.eid AND d.destination = t.dest "
-            "AND d.state = 'inflight'"
+            "AND d.state IN ('pending', 'inflight') "
+            "RETURNING d.event_id, d.destination, d.attempts"
         ),
         {
             "eids": [str(f["eid"]) for f in fails],
             "dests": [f["dest"] for f in fails],
             "errors": [f["error"] for f in fails],
-            "tries": [int(f["attempts"]) for f in fails],
         },
-    )
+        )
+    ).all()
+    original = {(str(f["eid"]), f["dest"]): f for f in fails}
+    return [
+        {
+            **original[(str(row.event_id), row.destination)],
+            "attempts": int(row.attempts),
+        }
+        for row in rows
+    ]
 
 
 async def retire_exhausted(session) -> int:
@@ -657,9 +667,10 @@ async def mark_delivered(session, marks: list, lease_token=None) -> int:
 
 
 async def mark_failed(session, fails: list, lease_token) -> dict:
-    """fails = [{'eid', 'dest', 'attempts', 'error'}] — `attempts` es el NÚMERO
-    del intento que el dispatcher ACABA de ejecutar (r.attempts + 1), y este
-    mark es quien lo persiste (G2-P3-4: el claim ya no lo consume). Con fencing: un mark TARDÍO de un claim
+    """fails = [{'eid', 'dest', 'error'}] (se tolera el campo legacy
+    attempts, pero la BD asigna el ordinal real con un incremento atómico).
+    Este mark persiste cada transporte fallido (G2-P3-4: el claim no consume
+    intentos). Con fencing: un mark TARDÍO de un claim
     superado no toca nada (ni resucita delivered/dead) Y TAMPOCO alerta ni
     cuenta (2ª rev. A-10: la ALERTA de dead-letter se emite SOLO para filas
     realmente transicionadas por el UPDATE — jamás una página falsa por un
@@ -671,9 +682,9 @@ async def mark_failed(session, fails: list, lease_token) -> dict:
     # un mark descartado por el fence perdía ambos y el dead-letter no se
     # alcanzaba jamás. Los UPDATE fenceados de abajo reescriben el MISMO
     # valor cuando el claim sigue siendo nuestro.
-    await _persist_attempts(session, fails)
-    dead = [f for f in fails if f["attempts"] >= MAX_ATTEMPTS]
-    retry = [f for f in fails if f["attempts"] < MAX_ATTEMPTS]
+    persisted = await _persist_attempts(session, fails)
+    dead = [f for f in persisted if f["attempts"] >= MAX_ATTEMPTS]
+    retry = [f for f in persisted if f["attempts"] < MAX_ATTEMPTS]
     dead_done = []
     if dead:
         dead_done = (

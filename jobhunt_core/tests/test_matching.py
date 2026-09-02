@@ -1,10 +1,12 @@
 """Matching (A-08): unit sin BD."""
 
+import inspect
 import uuid
 
 import jobhunt_core.tasks.matching  # noqa: F401 — registra la tarea en la app
 from jobhunt_core import matching
 from jobhunt_core.celery_app import celery_app
+from jobhunt_core.shadow import projector
 
 
 def test_eval_key_deterministic_and_component_sensitive():
@@ -24,3 +26,10 @@ def test_eval_key_deterministic_and_component_sensitive():
 def test_matching_task_registered_on_core_queue():
     assert "jobhunt.matching.run_profile" in celery_app.tasks
     assert celery_app.conf.task_routes["jobhunt.matching.*"] == {"queue": "core.matching"}
+
+
+def test_matching_task_and_projector_share_canonical_limit():
+    task = celery_app.tasks["jobhunt.matching.run_profile"]
+    default = inspect.signature(task.run).parameters["limit"].default
+    assert default == matching.CANONICAL_EVAL_LIMIT
+    assert projector.EVAL_LIMIT == matching.CANONICAL_EVAL_LIMIT

@@ -159,6 +159,7 @@ print(rollback_replay(
     capture_dsn=os.environ.get('CAPTURE_DSN',
         'postgresql://jobhunt_capture:jobhunt_capture_dev@postgres:5432/swissjobhunter'),
     core_dsn=os.environ['CORE_DATABASE_URL'],
+    operator=os.environ['GATE_OPERATOR'],
     confirm=True,
 ))"
 
@@ -168,6 +169,39 @@ docker compose start core-capture  # 6) reanuda desde last_applied_lsn (= snapsh
 La función registra cada paso en el log y devuelve el resumen (slot dropeado,
 encarnaciones cerradas, vacantes archivadas, filas truncadas, `snapshot_lsn` y
 filas del re-backfill). Tras re-arrancar, verificar §1 y que el conteo del
+El ensayo persiste automáticamente una atestación inmutable ligada a la
+release horneada. Si RELEASE_SHA=unknown o falta GATE_OPERATOR, aborta
+antes de destruir nada.
+
+## 3.1 Ratificación de umbrales
+
+La racha no autoriza el cierre sin la huella del acta ratificada. Tras
+versionar el acta, exportar su SHA-256 y registrar una sola vez:
+
+```bash
+docker compose run --rm \
+  -e GATE_OPERATOR -e THRESHOLD_EVIDENCE_SHA256 core-migrate python -c "
+import asyncio, os
+from jobhunt_core.database import task_session_factory
+from jobhunt_core.shadow.gate import attest_thresholds, gate_status
+async def main():
+    async with task_session_factory() as factory:
+        async with factory() as session:
+            status = await gate_status(session)
+            await attest_thresholds(
+                session,
+                status['streak_release_sha'],
+                status['streak_oracle_fingerprint'],
+                os.environ['GATE_OPERATOR'],
+                os.environ['THRESHOLD_EVIDENCE_SHA256'],
+            )
+            await session.commit()
+asyncio.run(main())"
+```
+
+gate_passed solo es verdadero con 7/7, el ensayo de la misma release y la
+ratificación de la misma pareja release+oráculo.
+
 re-backfill == conteo legacy activo.
 
 ## 4. Drop-slot de EMERGENCIA (§8)
@@ -232,7 +266,7 @@ reconstruirla, ejecutar el rollback/replay completo (§3) cuando haya margen —
 
 ## 5. Cadencias (beat EMBEBIDO en core-worker)
 
-El `beat_schedule` vive en `celery_app.py`. Son **9 cadencias** (verificado
+El `beat_schedule` vive en `celery_app.py`. Son **11 cadencias** (verificado
 enumerando `celery_app.conf.beat_schedule` en el contenedor vivo). SOLO colas `core.*`.
 
 | Cadencia | Tarea | Cuándo | Setting |
@@ -241,6 +275,7 @@ enumerando `celery_app.conf.beat_schedule` en el contenedor vivo). SOLO colas `c
 | 5 min | `jobhunt.shadow.check_slot_health` | — | `CORE_SHADOW_SLOT_HEALTH_EVERY_S=300` |
 | 5 min | `jobhunt.shadow.project` | P1-1: sin cadencia, la proyección solo al cierre del ciclo acumulaba ~20 h de latencia | `CORE_SHADOW_PROJECT_EVERY_S=300` |
 | 5 min | `jobhunt.delivery.dispatch_outbox` | — | `CORE_DELIVERY_DISPATCH_EVERY_S=300` |
+| **1 h** | `jobhunt.shadow.preview_cycle` | Pre-gate del ciclo abierto; revierte su transacción y **no** sella ni altera el 7/7 | `CORE_SHADOW_PRE_GATE_EVERY_S=3600` |
 | **1 h** | `jobhunt.idempotency.purge_expired` | **NO son 5 min** — el valor es 3600 s | `CORE_IDEMPOTENCY_PURGE_EVERY_S=3600` |
 | diaria | `jobhunt.maintenance.dedup_scan` | **05:20** — antes del barrido (un candidato sobre vacante recién archivada no estorba) | crontab fijo |
 | diaria | `jobhunt.maintenance.archive_sweep` | **05:35** — ANTES del cierre de ciclo, para que las métricas del gate midan el corpus podado (F-2/ADR-07) | crontab fijo |
@@ -255,7 +290,10 @@ cambia lo que mide el gate.
 `shadow/inbox.py` — INSERT síncrono e idempotente en `jobhunt.shadow_inbox`
 (core0009; PK consumer_id+event_id, ON CONFLICT DO NOTHING) — SOLO si nadie
 inyectó otro transporte. El transporte **real HTTP al inbox del BFF llega en
-Fase C** y sustituye a este por la misma costura (`delivery.set_transport`).
+Fase C** y ya está implementado: se activa con
+`CORE_DELIVERY_HTTP_DESTINATIONS` + `CORE_DELIVERY_HTTP_TOKEN`; solo
+`swissjob-shadow` conserva fallback local y cualquier consumer real sin URL
+falla cerrado.
 Verificación: `SELECT consumer_id, count(*) FROM jobhunt.shadow_inbox GROUP BY 1;`
 crece con cada despacho con eventos pendientes; re-entregas no duplican filas.
 

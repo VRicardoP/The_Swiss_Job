@@ -339,8 +339,12 @@ async def main():
             # legacy_v1 conservada INACTIVA (paridad con dev: rollback de receta)
             await embeddings.register_model(
                 s, NAME, SHA, recipe_version=LEGACY_V1, active=False)
+            await matching.ensure_policy(
+                s, name='cosine-baseline', prompt_version='v1', active=False)
             pid = await matching.ensure_policy(
-                s, name='cosine-baseline', prompt_version='v1', active=True)
+                s, matching.HYBRID_POLICY_NAME,
+                matching.HYBRID_POLICY_VERSION,
+                weights=matching.HYBRID_POLICY_WEIGHTS, active=True)
             await s.commit()
             print('model_id:', mid, '| policy_id:', pid)
 asyncio.run(main())
@@ -353,7 +357,8 @@ Verificar:
 docker exec swissjob-postgres psql -U swissjob -d swissjobhunter -c "
 SELECT name, version, recipe_version, dim, active FROM jobhunt.embedding_models;
 SELECT name, prompt_version, active FROM jobhunt.scoring_policies;"
-# role_composite_v2 activo (t), legacy_v1 inactivo (f), cosine-baseline/v1 activo
+# role_composite_v2 activo; hybrid-rrf/v1 activo; legacy_v1 y
+# cosine-baseline/v1 inactivos (rollback conservado)
 ```
 
 Idempotente: re-ejecutarlo no crea filas nuevas (ON CONFLICT + relectura bajo

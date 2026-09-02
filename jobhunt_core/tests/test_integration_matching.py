@@ -827,4 +827,95 @@ def test_matching_task_end_to_end_and_not_found(db):
 
     r2 = run_profile_task.apply(args=[str(uuid.uuid4())])
     assert r2.successful()
+
+
     assert r2.result["status"] == "not_found"  # permanente, sin retry
+
+
+def test_hybrid_policy_recovers_lexical_candidate_outside_ann_top_k(db):
+    """El híbrido recupera una oferta explícita que el top-K ANN deja fuera."""
+    factory, created = db
+    pid, mid, cosine_id, vacs = _setup(
+        factory, created,
+        ["warehouse accountant", "kubernetes platform engineer"],
+        profile_content={
+            "title": "kubernetes engineer", "skills": ["kubernetes"],
+        },
+    )
+
+    async def configure():
+        async with factory() as s:
+            hybrid_id = await matching.ensure_policy(
+                s, matching.HYBRID_POLICY_NAME, matching.HYBRID_POLICY_VERSION,
+                weights=matching.HYBRID_POLICY_WEIGHTS,
+            )
+            created["policies"].append(hybrid_id)
+            profile_vec = [1.0, 0.0] + [0.0] * (embeddings.EMBED_DIM - 2)
+            lexical_vec = [0.0, 1.0] + [0.0] * (embeddings.EMBED_DIM - 2)
+            await s.execute(
+                sa.text(
+                    "UPDATE profile_embeddings SET vector = CAST(:v AS vector) "
+                    "WHERE profile_id = :p AND model_id = :m"
+                ),
+                {"v": str(profile_vec), "p": pid, "m": mid},
+            )
+            hashes = {
+                row.title: row.text_hash
+                for row in (
+                    await s.execute(
+                        sa.text(
+                            "SELECT content->>\047title\047 AS title, text_hash "
+                            "FROM offer_revisions WHERE vacancy_id = ANY(:ids)"
+                        ),
+                        {"ids": list(vacs.values())},
+                    )
+                ).all()
+            }
+            for title, vector in (
+                ("warehouse accountant", profile_vec),
+                ("kubernetes platform engineer", lexical_vec),
+            ):
+                await s.execute(
+                    sa.text(
+                        "UPDATE offer_embeddings SET vector = CAST(:v AS vector) "
+                        "WHERE text_hash = :h AND model_id = :m"
+                    ),
+                    {"v": str(vector), "h": hashes[title], "m": mid},
+                )
+            await s.commit()
+            return hybrid_id
+
+    hybrid_id = asyncio.run(configure())
+    assert _evaluate(factory, pid, mid, cosine_id, limit=1)["evaluated"] == 1
+    cosine_vacancy = _rows(
+        factory,
+        "SELECT vacancy_id FROM match_evaluations "
+        "WHERE profile_id = :p AND scoring_policy_id = :sp",
+        p=pid, sp=cosine_id,
+    )[0].vacancy_id
+    assert cosine_vacancy == vacs["warehouse accountant"]
+
+    assert _evaluate(factory, pid, mid, hybrid_id, limit=1)["evaluated"] == 1
+    rows, _ = _feed(factory, pid, limit=1)
+    assert rows[0].vacancy_id == vacs["kubernetes platform engineer"]
+    assert rows[0].scores["algorithm"] == "hybrid_rrf_v1"
+    assert rows[0].scores["lexical_rank"] == 1
+
+
+def test_policy_version_rejects_different_weights(db):
+    """Una versión publicada no puede cambiar de algoritmo silenciosamente."""
+    factory, created = db
+
+    async def conflict():
+        async with factory() as s:
+            policy_id = await matching.ensure_policy(
+                s, "immutable-policy", "v1", weights={"algorithm": "cosine"}
+            )
+            created["policies"].append(policy_id)
+            await s.commit()
+            with pytest.raises(ValueError, match="weights distintos"):
+                await matching.ensure_policy(
+                    s, "immutable-policy", "v1", weights={"algorithm": "other"}
+                )
+
+    asyncio.run(conflict())

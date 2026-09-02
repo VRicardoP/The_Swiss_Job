@@ -1,0 +1,233 @@
+# Pila desechable del rehearsal R5 en QNAP.
+#
+# No crea PostgreSQL: usa el clúster existente exclusivamente para la base
+# swissjobhunter_r5_rehearsal. Los env se generan en el NAS y el despliegue
+# falla antes de arrancar si alguno apunta a la base de producción.
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: swissjob-redis-r5
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      legacy-net:
+        aliases: [redis]
+
+  backend:
+    image: ${R5_LEGACY_IMAGE:-swissjob-backend:prod}
+    container_name: swissjob-backend-r5
+    restart: unless-stopped
+    env_file:
+      - /share/Public/swissjob/rehearsal-r5/.env.legacy.r5
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - hfcache:/home/app/.cache/huggingface
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 360s
+      retries: 5
+    networks:
+      legacy-net:
+        aliases: [backend]
+      prod-db-net: {}
+
+  worker:
+    image: ${R5_LEGACY_IMAGE:-swissjob-backend:prod}
+    container_name: swissjob-worker-r5
+    restart: unless-stopped
+    env_file:
+      - /share/Public/swissjob/rehearsal-r5/.env.legacy.r5
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - hfcache:/home/app/.cache/huggingface
+    entrypoint: []
+    command:
+      - celery
+      - -A
+      - celery_app
+      - worker
+      - -Q
+      - default,scraping,ai
+      - --concurrency=2
+      - --loglevel=info
+    networks:
+      - legacy-net
+      - prod-db-net
+
+  # ÚNICO disparador autónomo de cosecha del rehearsal. El scheduler general
+  # del backend permanece apagado para no ejecutar emails, búsquedas ni otros
+  # side effects; esta cola solo recibe la tarea real de providers cada 6 h.
+  harvest-trigger:
+    image: ${R5_LEGACY_IMAGE:-swissjob-backend:prod}
+    container_name: swissjob-harvest-trigger-r5
+    restart: unless-stopped
+    env_file:
+      - /share/Public/swissjob/rehearsal-r5/.env.legacy.r5
+    entrypoint: []
+    command:
+      - sh
+      - -c
+      - >-
+        while true; do
+          celery -A celery_app call tasks.fetch_providers;
+          sleep 21600;
+        done
+    depends_on:
+      redis:
+        condition: service_healthy
+      worker:
+        condition: service_started
+    networks:
+      - legacy-net
+
+  redis-core:
+    image: redis:7-alpine
+    container_name: swissjob-redis-core-r5
+    restart: unless-stopped
+    env_file:
+      - /share/Public/swissjob/rehearsal-r5/.env.core.redis.r5
+    command:
+      - sh
+      - -c
+      - >-
+        redis-server --maxmemory 256mb --maxmemory-policy noeviction
+        --appendonly yes --appendfsync everysec
+        --requirepass "$$CORE_REDIS_PASSWORD"
+    volumes:
+      - redis-core-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$CORE_REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      core-net:
+        aliases: [redis-core]
+
+  core-migrate:
+    image: ${R5_CORE_IMAGE:-swissjob-core:r5-cycle}
+    container_name: swissjob-core-migrate-r5
+    command: python -m jobhunt_core.migrate
+    env_file:
+      - /share/Public/swissjob/rehearsal-r5/.env.core.r5
+      - /share/Public/swissjob/rehearsal-r5/.env.core.admin.r5
+    environment:
+      CORE_ENV: prod
+    restart: "no"
+    networks:
+      - core-net
+      - prod-db-net
+
+  core-api:
+    image: ${R5_CORE_IMAGE:-swissjob-core:r5-cycle}
+    container_name: swissjob-core-api-r5
+    restart: unless-stopped
+    command: uvicorn jobhunt_core.api.main:app --host 0.0.0.0 --port 8000
+    env_file:
+      - /share/Public/swissjob/rehearsal-r5/.env.core.r5
+    environment:
+      CORE_ENV: prod
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/ready', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      redis-core:
+        condition: service_healthy
+      core-migrate:
+        condition: service_completed_successfully
+    networks:
+      - core-net
+      - prod-db-net
+
+  core-worker:
+    image: ${R5_CORE_IMAGE:-swissjob-core:r5-cycle}
+    container_name: swissjob-core-worker-r5
+    restart: unless-stopped
+    command: celery -A jobhunt_core.celery_app worker -l info -Q core.default,core.harvest,core.embedding,core.matching,core.notifications --concurrency=2 -B -s /tmp/celerybeat-schedule
+    env_file:
+      - /share/Public/swissjob/rehearsal-r5/.env.core.r5
+    environment:
+      CORE_ENV: prod
+    volumes:
+      - core-hf-cache:/tmp/hf-cache
+    depends_on:
+      redis-core:
+        condition: service_healthy
+      core-migrate:
+        condition: service_completed_successfully
+    networks:
+      - core-net
+      - prod-db-net
+
+  core-capture:
+    image: ${R5_CORE_IMAGE:-swissjob-core:r5-cycle}
+    container_name: swissjob-core-capture-r5
+    restart: unless-stopped
+    command: python -m jobhunt_core.shadow.capture
+    env_file:
+      - /share/Public/swissjob/rehearsal-r5/.env.core.r5
+      - /share/Public/swissjob/rehearsal-r5/.env.core.capture.r5
+    environment:
+      CORE_ENV: prod
+    healthcheck:
+      test: ["CMD", "python", "-m", "jobhunt_core.shadow.capture", "--health"]
+      interval: 120s
+      timeout: 60s
+      retries: 3
+      start_period: 600s
+    depends_on:
+      core-migrate:
+        condition: service_completed_successfully
+    networks:
+      - prod-db-net
+
+  frontend:
+    image: ${R5_FRONTEND_IMAGE:-swissjob-frontend:prod}
+    container_name: swissjob-frontend-r5
+    restart: unless-stopped
+    ports:
+      - "4010:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/nginx-health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - legacy-net
+
+networks:
+  legacy-net:
+    external: true
+    name: swissjob-r5_legacy-net
+  core-net:
+    external: true
+    name: swissjob-r5_core-net
+  prod-db-net:
+    external: true
+    name: swissjob_swissjob-net
+
+volumes:
+  redisdata:
+  hfcache:
+  redis-core-data:
+  core-hf-cache:

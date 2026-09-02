@@ -8,6 +8,7 @@ procedencia VACÍA. Postgres desechable; ejecutar vía core-migrate.
 
 import asyncio
 import os
+import uuid
 from datetime import datetime, timezone
 
 import pytest
@@ -35,6 +36,40 @@ def _user(url: str, ref: int = 1) -> dict:
         ],
         "saved_searches": [],
     }
+
+
+def test_exact_capture_excludes_concurrent_insert_from_other_session():
+    """Una fila creada entre begin/captured por otra sesión no es C-4."""
+
+    async def _run(factory):
+        own = uuid.uuid4()
+        foreign = uuid.uuid4()
+        async with factory() as c4:
+            await prov.begin_exact_capture(c4)
+            async with factory() as concurrent:
+                await concurrent.execute(
+                    sa.text(
+                        "INSERT INTO sources (id, name, tier) "
+                        "VALUES (:id, :name, 0)"
+                    ),
+                    {"id": foreign, "name": f"concurrent-{foreign}"},
+                )
+                await concurrent.commit()
+            await c4.execute(
+                sa.text(
+                    "INSERT INTO sources (id, name, tier) "
+                    "VALUES (:id, :name, 0)"
+                ),
+                {"id": own, "name": f"c4-{own}"},
+            )
+            captured = await prov.captured_provenance(c4)
+            assert captured["sources"] == [str(own)]
+            assert str(foreign) not in {
+                item for ids in captured.values() for item in ids
+            }
+            await c4.rollback()
+
+    asyncio.run(_on_disposable_db(_run))
 
 
 def test_provenance_created_covers_vacancy_and_durables():

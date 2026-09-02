@@ -33,14 +33,26 @@ from jobhunt_core.shadow.projector import DEFAULT_BATCH_SIZE, project_pending
 
 logger = logging.getLogger(__name__)
 
+# La tarea de beat comparte el límite blando global de 30 min. Acotarla evita
+# que un backlog grande consuma todo ese presupuesto antes de la recuperación
+# post-lote; las siguientes cadencias continúan el drenado idempotente.
+PROJECT_BATCHES_PER_TASK = 20
+PROJECT_EMBEDDING_ROUNDS_PER_TASK = 4
+
 
 @celery_app.task(name="jobhunt.shadow.project", bind=True, max_retries=1)
 def project_task(
-    self, batch_size: int = DEFAULT_BATCH_SIZE, max_batches: int | None = None
+    self,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    max_batches: int | None = PROJECT_BATCHES_PER_TASK,
 ) -> dict[str, Any]:
     try:
         return asyncio.run(
-            project_pending(batch_size=batch_size, max_batches=max_batches)
+            project_pending(
+                batch_size=batch_size,
+                max_batches=max_batches,
+                max_embedding_rounds=PROJECT_EMBEDDING_ROUNDS_PER_TASK,
+            )
         )
     except Exception as exc:
         # Transitorios (BD): retry único — el lote es atómico e idempotente
@@ -102,6 +114,32 @@ def purge_staging_task(self, legacy_schema: str = "public") -> dict[str, Any]:
         )
     except Exception as exc:
         logger.error("shadow.purge_staging falló: %s", exc)
+        raise self.retry(exc=exc, countdown=120)
+
+
+@celery_app.task(name="jobhunt.shadow.preview_cycle", bind=True, max_retries=1)
+def preview_cycle_task(
+    self, legacy_schema: str = "public"
+) -> dict[str, Any]:
+    """Pre-gate del ciclo abierto, solo provisional y sin persistencia."""
+    try:
+        result = asyncio.run(
+            gate.preview_current_cycle(legacy_schema=legacy_schema)
+        )
+        if result["preview_ok"]:
+            logger.info(
+                "shadow.preview_cycle %s provisionalmente APTO",
+                result["cycle_id"],
+            )
+        else:
+            logger.warning(
+                "shadow.preview_cycle %s NO APTO (provisional): %s",
+                result["cycle_id"],
+                ", ".join(result.get("gates_failed", [])) or result["status"],
+            )
+        return result
+    except Exception as exc:
+        logger.error("shadow.preview_cycle falló: %s", exc)
         raise self.retry(exc=exc, countdown=120)
 
 

@@ -112,6 +112,7 @@ SOLO se hace SELECT sobre legacy — el core jamás escribe en `public`.
 """
 
 import json
+import hashlib
 import logging
 import math
 from datetime import date, datetime, time, timedelta, timezone
@@ -120,7 +121,9 @@ from zoneinfo import ZoneInfo
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import jobhunt_core
 from jobhunt_core import matching
+from jobhunt_core.config import settings
 from jobhunt_core.delivery import stats as delivery_stats
 from jobhunt_core.harvest.sink import MAX_URL_LEN, normalize_url
 from jobhunt_core.shadow.labels import (
@@ -136,7 +139,8 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------- ciclo (§5)
 
 CYCLE_TZ = ZoneInfo("Europe/Zurich")
-CYCLE_START_HOUR = 6  # [06:00, 06:00 +1d) hora suiza
+CYCLE_START_HOUR = settings.CORE_SHADOW_CYCLE_START_HOUR
+CYCLE_START_MINUTE = settings.CORE_SHADOW_CYCLE_START_MINUTE
 
 # ------------------------------------------------- métricas y umbrales (§6)
 
@@ -202,7 +206,6 @@ SHADOW_CONSUMER = "swissjob-shadow"
 LABELS_MIN_FROZEN_SETS = 2         # >= 2 PERFILES sombra con set congelado válido (DoD B-03)…
 LABELS_MIN_JUDGMENTS_PER_SET = 30  # …con >= 30 juicios cada uno (DoD B-03)
 LABELS_MIN_DEDUP_PAIRS = 50        # >= 50 pares dedup etiquetados
-LABELS_MIN_MAPPED_DEDUP_PAIRS = 20  # >= N pares MAPEABLES a vacantes core
 
 # value NUMERIC NOT NULL (core0008a inmutable): centinela del "NULL con
 # details" del contrato. Los gates leen details.no_data, NUNCA este número.
@@ -247,9 +250,10 @@ ATTACH_METHOD = "url_normalized"
 
 def cycle_bounds(cycle_id: date) -> tuple[datetime, datetime]:
     """[inicio, fin) de la ventana del ciclo `cycle_id` en CYCLE_TZ."""
-    start = datetime.combine(cycle_id, time(CYCLE_START_HOUR), tzinfo=CYCLE_TZ)
+    boundary = time(CYCLE_START_HOUR, CYCLE_START_MINUTE)
+    start = datetime.combine(cycle_id, boundary, tzinfo=CYCLE_TZ)
     end = datetime.combine(
-        cycle_id + timedelta(days=1), time(CYCLE_START_HOUR), tzinfo=CYCLE_TZ
+        cycle_id + timedelta(days=1), boundary, tzinfo=CYCLE_TZ
     )
     return start, end
 
@@ -258,7 +262,11 @@ def current_cycle_id(now: datetime | None = None) -> date:
     """Ciclo ABIERTO al que pertenece `now` (por defecto, ahora real)."""
     local = (now or datetime.now(timezone.utc)).astimezone(CYCLE_TZ)
     day = local.date()
-    return day - timedelta(days=1) if local.hour < CYCLE_START_HOUR else day
+    before_boundary = (local.hour, local.minute) < (
+        CYCLE_START_HOUR,
+        CYCLE_START_MINUTE,
+    )
+    return day - timedelta(days=1) if before_boundary else day
 
 
 def latest_closed_cycle_id(now: datetime | None = None) -> date:
@@ -361,6 +369,7 @@ async def compute_cycle(
     legacy_schema: str = "public",
     now: datetime | None = None,
     force: bool = False,
+    allow_open_preview: bool = False,
 ) -> dict:
     """Computa y PERSISTE las métricas de §5 del ciclo CERRADO más reciente
     (o el `cycle_id` indicado — replay/backfill).
@@ -397,10 +406,24 @@ async def compute_cycle(
             "profiles_measured": 0,
             "metrics": {},
         }
-    if end > moment:
-        logger.warning(
-            "metrics: ciclo %s aún ABIERTO (fin %s > ahora) — cómputo parcial",
-            cid, end.isoformat(),
+    if end > moment and not allow_open_preview:
+        raise ValueError(
+            f"el ciclo {cid} sigue abierto hasta {end.isoformat()}; "
+            "solo preview_current_cycle puede evaluarlo provisionalmente"
+        )
+    recomputed_at = None
+    if sealed:
+        # Invalida el ciclo ANTES de reescribir o borrar una sola fila. La
+        # guarda física de core0037 permite mutar una fila sellada únicamente
+        # cuando el ciclo ya lleva esta marca fail-closed.
+        recomputed_at = moment.astimezone(timezone.utc).isoformat()
+        await session.execute(
+            sa.text(
+                "UPDATE shadow_cycle_metrics SET details = details || "
+                "jsonb_build_object('recomputed_at', CAST(:ts AS text)) "
+                "WHERE cycle_id = :c"
+            ),
+            {"ts": recomputed_at, "c": cid},
         )
     computed: dict[str, float | int | None] = {}
     profiles = await _measured_profiles(session)
@@ -431,8 +454,10 @@ async def compute_cycle(
     # G1 H-8: los umbrales VIGENTES quedan registrados CON el ciclo — un
     # cambio posterior de las constantes no recolorea este veredicto (la
     # fila no es un gate: evaluate_gates la extrae, el informe no la lista).
+    identity = await _cycle_identity(session, profiles)
     await _upsert_metric(
-        session, cid, M_UMBRALES, SCOPE_GLOBAL, 0, _current_thresholds()
+        session, cid, M_UMBRALES, SCOPE_GLOBAL, 0,
+        _current_thresholds() | identity,
     )
     computed |= await _persist_cohort_info_rows(session, cid)
     summary = {
@@ -445,19 +470,18 @@ async def compute_cycle(
         # Recomputo FORZADO de un ciclo sellado (P1-4): trazado en TODAS las
         # filas del ciclo (también las preservadas sin upsert, p.ej. un p99
         # post-purga) — la racha de §6 lo tratará como no computable.
-        ts = moment.astimezone(timezone.utc).isoformat()
         await session.execute(
             sa.text(
                 "UPDATE shadow_cycle_metrics "
                 "SET details = details || jsonb_build_object('recomputed_at', "
                 "CAST(:ts AS text)) WHERE cycle_id = :c"
             ),
-            {"ts": ts, "c": cid},
+            {"ts": recomputed_at, "c": cid},
         )
-        summary["recomputed_at"] = ts
+        summary["recomputed_at"] = recomputed_at
         logger.warning(
             "metrics: ciclo %s RECOMPUTADO con force=True — recomputed_at=%s "
-            "(no computable para la racha de §6)", cid, ts,
+            "(no computable para la racha de §6)", cid, recomputed_at,
         )
     return summary
 
@@ -494,7 +518,7 @@ async def _measured_profiles(session: AsyncSession) -> list:
         await session.execute(
             sa.text(
                 "SELECT DISTINCT ON (p.id) p.id, p.external_ref, "
-                "  ls.id AS set_id, ls.name AS set_name, "
+                "  ls.id AS set_id, ls.name AS set_name, ls.frozen_at, "
                 "  (SELECT count(*) FROM labeled_judgments j WHERE j.set_id = ls.id) "
                 "    AS n_juicios "
                 "FROM profiles p "
@@ -508,6 +532,45 @@ async def _measured_profiles(session: AsyncSession) -> list:
     ).all()
     inactive = await inactive_user_refs(session, [r.external_ref for r in rows])
     return [r for r in rows if r.external_ref not in inactive]
+
+async def _cycle_identity(session: AsyncSession, profiles: list) -> dict:
+    """Identidad inmutable del código y del oráculo que produjo el ciclo."""
+    cohort = (
+        await session.execute(
+            sa.text(
+                "SELECT frozen_at, manifest FROM labeled_dedup_cohorts "
+                "WHERE source = :source"
+            ),
+            {"source": DEDUP_EVAL_COHORT},
+        )
+    ).one_or_none()
+    oracle = {
+        "profiles": [
+            {
+                "profile_id": str(p.id),
+                "set_id": str(p.set_id),
+                "frozen_at": p.frozen_at.isoformat(),
+                "judgments": int(p.n_juicios),
+            }
+            for p in sorted(profiles, key=lambda row: str(row.id))
+        ],
+        "dedup": {
+            "source": DEDUP_EVAL_COHORT,
+            "frozen_at": (
+                cohort.frozen_at.isoformat()
+                if cohort and cohort.frozen_at else None
+            ),
+            "manifest": cohort.manifest if cohort else None,
+        },
+    }
+    payload = json.dumps(
+        oracle, sort_keys=True, separators=(",", ":"), default=str
+    ).encode()
+    return {
+        "release_sha": jobhunt_core.__release_sha__,
+        "oracle_fingerprint": hashlib.sha256(payload).hexdigest(),
+    }
+
 
 
 # ---------------------------------------------------- métricas por perfil
@@ -781,7 +844,7 @@ async def _global_metric_rows(
     rows.append(await _labels_ready_row(session, measured_profiles))
     rows += await _dedup_rows(session)
     rows += await _perdida_rows(session, legacy_schema, moment)
-    lag_row = await _outbox_lag_row(session, cid)
+    lag_row = await _outbox_lag_row(session, cid, start, end, moment)
     if lag_row is not None:
         rows.append(lag_row)
     rows.append(await _outbox_dead_row(session, cid, start, end))
@@ -922,9 +985,9 @@ async def _persist_cohort_info_rows(session: AsyncSession, cid: date) -> dict:
 async def _labels_ready_row(session: AsyncSession, measured_profiles: list) -> tuple:
     """Gate `labels_ready` (P1-2): precondición del ORÁCULO según el DoD de
     B-03/§4 — >= LABELS_MIN_FROZEN_SETS sets CONGELADOS con >=
-    LABELS_MIN_JUDGMENTS_PER_SET juicios cada uno, >= LABELS_MIN_DEDUP_PAIRS
-    pares dedup etiquetados y >= LABELS_MIN_MAPPED_DEDUP_PAIRS pares con
-    AMBOS refs mapeables a vacantes core (sin mapeo, dedup no es evaluable).
+    LABELS_MIN_JUDGMENTS_PER_SET juicios cada uno y >= LABELS_MIN_DEDUP_PAIRS
+    pares dedup etiquetados, TODOS con ambos refs mapeables a vacantes core.
+    Un examen fijo parcialmente puntuable no demuestra precision/recall.
     value 1 = precondición cumplida; 0 = gate ROJO (el ciclo no puede sumar
     al contador de §6 con un oráculo que no da para medir).
 
@@ -1009,9 +1072,10 @@ async def _labels_ready_row(session: AsyncSession, measured_profiles: list) -> t
         ).scalar()
     )
     ok = (
-        perfiles_ok >= LABELS_MIN_FROZEN_SETS
+        cohorte_existe
+        and perfiles_ok >= LABELS_MIN_FROZEN_SETS
         and len(pairs) >= LABELS_MIN_DEDUP_PAIRS
-        and mapped_pairs >= LABELS_MIN_MAPPED_DEDUP_PAIRS
+        and mapped_pairs == len(pairs)
     )
     details = {
         "sets_congelados": frozen_total,
@@ -1024,11 +1088,12 @@ async def _labels_ready_row(session: AsyncSession, measured_profiles: list) -> t
         "cohorte_existe": cohorte_existe,
         "pares_dedup": len(pairs),
         "pares_mapeables": mapped_pairs,
+        "pares_sin_mapeo": len(pairs) - mapped_pairs,
         "umbrales": {
             "min_sets_congelados": LABELS_MIN_FROZEN_SETS,
             "min_juicios_por_set": LABELS_MIN_JUDGMENTS_PER_SET,
             "min_pares_dedup": LABELS_MIN_DEDUP_PAIRS,
-            "min_pares_mapeables": LABELS_MIN_MAPPED_DEDUP_PAIRS,
+            "mapeo_requerido": "todos",
         },
     }
     if not cohorte_existe:
@@ -1374,7 +1439,13 @@ async def _perdida_rows(
     ]
 
 
-async def _outbox_lag_row(session: AsyncSession, cid: date) -> tuple | None:
+async def _outbox_lag_row(
+    session: AsyncSession,
+    cid: date,
+    start: datetime,
+    end: datetime,
+    moment: datetime,
+) -> tuple | None:
     """p99 (percentile_cont) de los samples del muestreador guardados en la
     fila del ciclo. merge_details=True: el upsert FUSIONA sobre los samples
     existentes en vez de pisarlos. Sin samples ⇒ centinela + no_data, SALVO
@@ -1387,10 +1458,15 @@ async def _outbox_lag_row(session: AsyncSession, cid: date) -> tuple | None:
             sa.text(
                 "SELECT percentile_cont(0.99) WITHIN GROUP "
                 "  (ORDER BY (s->>'oldest_pending_s')::float8) AS p99, "
-                "count(*) AS n "
+                "count(*) AS n, "
+                "min((s->>'ts')::timestamptz) AS first_sample, "
+                "max((s->>'ts')::timestamptz) AS last_sample, "
+                "max((s->>'ts')::timestamptz - prev_ts) AS max_gap "
                 "FROM shadow_cycle_metrics m "
                 "CROSS JOIN LATERAL "
-                "  jsonb_array_elements(m.details->'samples') AS s "
+                "  (SELECT s, lag((s->>'ts')::timestamptz) OVER "
+                "     (ORDER BY (s->>'ts')::timestamptz) AS prev_ts "
+                "   FROM jsonb_array_elements(m.details->'samples') AS s) q "
                 "WHERE m.cycle_id = :c AND m.metric = :m AND m.scope = :s"
             ),
             {"c": cid, "m": M_OUTBOX_LAG, "s": SCOPE_GLOBAL},
@@ -1422,13 +1498,46 @@ async def _outbox_lag_row(session: AsyncSession, cid: date) -> tuple | None:
             "nota": "sin samples del muestreador en el ciclo",
         }
         return M_OUTBOX_LAG, NO_DATA_VALUE, details, True
+    expected_end = min(end, moment)
+    tolerance = timedelta(
+        seconds=2 * settings.CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S
+    )
+    coverage_ok = bool(
+        row.first_sample is not None
+        and row.last_sample is not None
+        and row.first_sample <= start + tolerance
+        and row.last_sample >= expected_end - tolerance
+        and (row.max_gap is None or row.max_gap <= tolerance)
+    )
+    if not coverage_ok:
+        details = {
+            "no_data": True,
+            "samples_count": int(row.n),
+            "first_sample": (
+                row.first_sample.isoformat() if row.first_sample else None
+            ),
+            "last_sample": (
+                row.last_sample.isoformat() if row.last_sample else None
+            ),
+            "max_gap_s": (
+                row.max_gap.total_seconds() if row.max_gap else None
+            ),
+            "coverage_start": start.isoformat(),
+            "coverage_end": expected_end.isoformat(),
+            "max_gap_allowed_s": int(tolerance.total_seconds()),
+            "nota": "cobertura temporal insuficiente del muestreador",
+        }
+        return M_OUTBOX_LAG, NO_DATA_VALUE, details, True
     value = round(float(row.p99), 6)
     # no_data/nota se SOBREESCRIBEN explícitamente: el upsert fusiona details
     # (para conservar samples) y un no_data=true de un cómputo previo sin
     # samples no debe sobrevivir a un recomputo con datos.
     details = {
         "samples_count": int(row.n), "no_data": False,
-        "nota": "p99 sobre los samples del muestreador",
+        "first_sample": row.first_sample.isoformat(),
+        "last_sample": row.last_sample.isoformat(),
+        "max_gap_s": row.max_gap.total_seconds() if row.max_gap else 0.0,
+        "nota": "p99 sobre una ventana cubierta por el muestreador",
     }
     return M_OUTBOX_LAG, value, details, True
 

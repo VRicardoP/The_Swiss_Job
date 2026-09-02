@@ -49,9 +49,9 @@ from jobhunt_core.import_portfolio_durables import (
 )
 from jobhunt_core.import_portfolio_migrate import migrate_portfolio, table_checksums
 from jobhunt_core.import_portfolio_provenance import (
-    exact_provenance,
-    scope_dedup_provenance,
-    snapshot_row_ids,
+    begin_exact_capture,
+    captured_provenance,
+    preexisting_profile_vacancy_state_ids,
 )
 from jobhunt_core.import_portfolio_verify import verify_migration
 
@@ -639,15 +639,17 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
     SINGLE-CALL: el cutover migra TODOS los durables en UNA llamada; la reconciliación
     compara el destino COMPLETO (scope portfolio) contra TODO `users`. No es para
     migración incremental multi-tanda (una 2ª tanda vería la 1ª como 'extra')."""
-    # Snapshot ANTES de migrar: base de la procedencia EXACTA (después−antes = lo insertado
-    # por ESTE run; distingue re-run y offer_revisions reutilizados, que el inventario
-    # scopeado no puede — §4 parte 2). DEBE tomarse antes de migrate_portfolio.
-    before = await snapshot_row_ids(session, PORTFOLIO_IMPORT_SOURCE, PORTFOLIO_CONSUMER)
+    # La captura exacta se activa ANTES de cualquier escritura C-4. Los
+    # triggers core0039 registran únicamente INSERTs de esta transacción.
+    preexisting_pvs = await preexisting_profile_vacancy_state_ids(
+        session, PORTFOLIO_CONSUMER
+    )
+    await begin_exact_capture(session)
     # Los profile_vacancy_state PREEXISTENTES (antes del cutover) se pasan como preflight: un
     # bookmark que apunte a uno lo mutaría sin poder deshacerlo → abort fail-closed (P1 rev.
     # externa integral). En un cutover fresco este set está vacío (nada que abortar).
     report = await migrate_portfolio(
-        session, users, preexisting_pvs=before["profile_vacancy_state"]
+        session, users, preexisting_pvs=preexisting_pvs
     )
     manifest = await reconcile(session, users, report)
     manifest["report"] = {
@@ -658,14 +660,8 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
     # Ledger del sink (§4): disposición verificable por url de la síntesis (created/reused/
     # quarantine+razón+vacancy_id). Base del verificador independiente (§4, parte 3).
     manifest["ledger"] = report["ledger"]
-    # Procedencia EXACTA (§4 parte 2): filas insertadas por ESTE run (después−antes). El
-    # inventario scopeado (`identities`) se conserva como CROSS-CHECK.
-    after = await snapshot_row_ids(session, PORTFOLIO_IMPORT_SOURCE, PORTFOLIO_CONSUMER)
-    # G1 H-2: los dedup_candidates CONCURRENTES ajenos (pipeline async del core
-    # durante el cutover) se excluyen — el rollback los borraría en silencio.
-    manifest["provenance"] = await scope_dedup_provenance(
-        session, exact_provenance(before, after)
-    )
+    # Procedencia exacta de los INSERTs que sobrevivieron a los savepoints.
+    manifest["provenance"] = await captured_provenance(session)
     # Verificación estructural INDEPENDIENTE (§4 parte 3): usa el ledger como contrato y lee el
     # estado final con queries PROPIAS — distingue un listing PERDIDO de una cuarentena legítima
     # y cruza los oráculos (created del ledger == procedencia de vacancies). Solo lectura.

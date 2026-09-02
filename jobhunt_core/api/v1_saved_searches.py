@@ -27,18 +27,18 @@ from jobhunt_core.api.deps import (
     get_session,
     require_scope,
 )
-from jobhunt_core.api.idempotency import run_idempotent
-from jobhunt_core.api.v1 import (
-    MAX_PAGE_LIMIT,
-    _with_etag,
-    decode_vacancy_cursor,
-    encode_vacancy_cursor,
-)
-from jobhunt_core.api.v1_applications import (
-    _WRITE_RESPONSES,
+from jobhunt_core.api.http_contract import (
+    WRITE_RESPONSES,
     check_if_match,
     json_response,
     request_hash,
+    with_etag,
+)
+from jobhunt_core.api.idempotency import run_idempotent
+from jobhunt_core.api.v1 import (
+    MAX_PAGE_LIMIT,
+    decode_vacancy_cursor,
+    encode_vacancy_cursor,
 )
 
 router = APIRouter(
@@ -101,12 +101,12 @@ async def list_saved_searches(
         items=[schemas.SavedSearchDTO(**i) for i in items],
         next_cursor=encode_vacancy_cursor(*next_cur) if next_cur else None,
     )
-    return _with_etag(request, page.model_dump(mode="json"))
+    return with_etag(request, page.model_dump(mode="json"))
 
 
 @router.post(
     "/saved-searches", status_code=201, response_model=schemas.SavedSearchDTO,
-    responses=_WRITE_RESPONSES,
+    responses=WRITE_RESPONSES,
 )
 async def create_saved_search(
     request: Request,
@@ -153,7 +153,7 @@ async def create_saved_search(
 
 @router.put(
     "/saved-searches/{search_id}", response_model=schemas.SavedSearchDTO,
-    responses=_WRITE_RESPONSES,
+    responses=WRITE_RESPONSES,
 )
 async def update_saved_search(
     search_id: uuid.UUID,
@@ -197,7 +197,7 @@ async def update_saved_search(
 
 
 @router.delete(
-    "/saved-searches/{search_id}", status_code=204, responses=_WRITE_RESPONSES,
+    "/saved-searches/{search_id}", status_code=204, responses=WRITE_RESPONSES,
 )
 async def delete_saved_search(
     search_id: uuid.UUID,

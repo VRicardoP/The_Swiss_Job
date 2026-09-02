@@ -50,6 +50,12 @@ import uuid
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .portfolio_provenance_contract import (
+    COMPOSITE_PK_COLUMNS,
+    PROVENANCE_TABLES,
+    SINGLE_PK_DELETE_ORDER,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,35 +66,10 @@ def _is_uuid(value: str) -> bool:
     except (ValueError, AttributeError, TypeError):
         return False
 
-# Orden de borrado child→parent (single-PK). Los compuestos y el abort-check se intercalan
-# en rollback_migration en su posición correcta.
-_SINGLE_PK_TABLES = (
-    "application_status_events",  # hijo de applications (CASCADE, pero explícito)
-    "applications",  # referencia vacancies/profiles
-    "saved_searches",  # referencia profiles
-    "link_evidence",  # referencia source_listings/vacancies
-    "dedup_candidates",  # referencia vacancies
-    "source_listing_revisions",  # hijo de incarnations
-    "source_listing_incarnations",  # hijo de source_listings; referencia vacancies
-    "offer_revisions",  # referencia vacancies (NO ACTION)
-    "source_listings",  # referencia sources
-    "vacancies",  # tras TODOS sus hijos
-    "harvest_scopes",  # referencia sources
-    "sources",  # raíz
-)
-
-# Tablas de PK COMPUESTA (id = 'a:b'); sus ids deben contener el separador ':'.
-_COMPOSITE_TABLES = ("profile_vacancy_state", "offer_revision_sources")
-
-# Conjunto EXACTO de tablas que la procedencia de un manifiesto válido DEBE cubrir (las que el
-# rollback borra). `snapshot_row_ids`/`exact_provenance` snapshotean estas 14 SIEMPRE (incluso un
-# rerun idempotente → todas con lista vacía), así que un manifiesto legítimo las trae todas.
-_ALL_ROLLBACK_TABLES = frozenset(_SINGLE_PK_TABLES) | frozenset(_COMPOSITE_TABLES)
-
 
 async def _del_single(session: AsyncSession, table: str, ids: list[str]) -> int:
     """DELETE ... WHERE id IN ids (por texto, sin importar el tipo de la PK). `table` viene
-    de la lista fija _SINGLE_PK_TABLES (no es input externo — sin inyección)."""
+    del contrato fijo (no es input externo — sin inyección)."""
     if not ids:
         return 0
     result = await session.execute(
@@ -230,7 +211,7 @@ async def _validate_manifest(
     # con los demás conteos cuadrando (P1 rev. externa integral). Un rerun idempotente almacena
     # TODAS las claves con listas vacías (nunca {} ni parcial), así que un manifiesto legítimo pasa.
     # (Las tablas EXTRA/desconocidas las caza el bucle siguiente, fail-closed con su propio mensaje.)
-    missing = _ALL_ROLLBACK_TABLES - set(provenance)
+    missing = PROVENANCE_TABLES - set(provenance)
     if missing:
         return (
             f"manifest {manifest_id}: procedencia INCOMPLETA (faltan {sorted(missing)}) — "
@@ -243,7 +224,7 @@ async def _validate_manifest(
     # marcaría rolled_back sin borrar (P1 rev. externa 5/6). La completitud del borrado se
     # re-verifica tras borrar (savepoint), por si un UUID VÁLIDO no existe (stale/inconsistente).
     for table, ids in provenance.items():
-        if table not in _SINGLE_PK_TABLES and table not in _COMPOSITE_TABLES:
+        if table not in PROVENANCE_TABLES:
             # Una tabla que el rollback NO borra (deriva de esquema: una migración futura la
             # inserta y registra en la procedencia sin actualizar las listas de borrado; o
             # tamper) → dejaría residuo bajo un manifiesto marcado rolled_back. Fail-closed
@@ -259,7 +240,7 @@ async def _validate_manifest(
                 f"manifest {manifest_id}: procedencia['{table}'] no es list[str] — fallo cerrado",
                 None,
             )
-        if table in _COMPOSITE_TABLES:
+        if table in COMPOSITE_PK_COLUMNS:
             ok = all(
                 len(parts := x.split(":")) == 2 and _is_uuid(parts[0]) and _is_uuid(parts[1])
                 for x in ids
@@ -363,15 +344,15 @@ async def rollback_migration(session: AsyncSession, manifest_id: str) -> dict:
     # bajo un manifiesto que dice estar deshecho (P1 rev. externa 6).
     deleted: dict[str, int] = {}
     nested = await session.begin_nested()
-    deleted["profile_vacancy_state"] = await _del_composite(
-        session, "profile_vacancy_state", "profile_id", "vacancy_id",
-        provenance.get("profile_vacancy_state", []),
-    )
-    deleted["offer_revision_sources"] = await _del_composite(
-        session, "offer_revision_sources", "offer_revision_id", "source_listing_revision_id",
-        provenance.get("offer_revision_sources", []),
-    )
-    for table in _SINGLE_PK_TABLES:
+    for table, (column_a, column_b) in COMPOSITE_PK_COLUMNS.items():
+        deleted[table] = await _del_composite(
+            session,
+            table,
+            column_a,
+            column_b,
+            provenance.get(table, []),
+        )
+    for table in SINGLE_PK_DELETE_ORDER:
         deleted[table] = await _del_single(session, table, provenance.get(table, []))
     incomplete = {
         t: {"borrado": n, "esperado": len(provenance.get(t, []))}

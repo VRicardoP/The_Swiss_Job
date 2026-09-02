@@ -13,9 +13,9 @@ Convención del repo: `def` + asyncio.run(_impl()).
 import asyncio
 import logging
 
-from jobhunt_core.api.idempotency import purge_expired
 from jobhunt_core.celery_app import celery_app
 from jobhunt_core.database import task_session_factory
+from jobhunt_core.idempotency import purge_expired
 
 logger = logging.getLogger(__name__)
 

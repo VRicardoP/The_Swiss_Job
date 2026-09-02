@@ -109,6 +109,7 @@ def db(met_db, monkeypatch):
     Celery crean su engine desde settings). Limpieza: TRUNCATE — la BD es de
     usar y tirar."""
     monkeypatch.setattr(settings, "CORE_DATABASE_URL", met_db)
+    monkeypatch.setattr(metrics.jobhunt_core, "__release_sha__", "test-release-a")
     engine = create_async_engine(
         met_db,
         poolclass=sa.pool.NullPool,
@@ -398,6 +399,14 @@ def _compute(factory, cycle_id=None, now=AFTER, force=False):
     return _run(go())
 
 
+def _register_holdout(factory):
+    _exec(
+        factory,
+        "INSERT INTO labeled_dedup_cohorts (source) VALUES (:source)",
+        {"source": labels.DEDUP_EVAL_COHORT},
+    )
+
+
 def _metric_row(factory, metric, scope="global", cycle=CYCLE):
     rows = _rows(
         factory,
@@ -425,7 +434,9 @@ def test_cycle_bounds_and_ids_are_deterministic():
     assert start.isoformat() == "2026-07-20T06:00:00+02:00"
     assert end.isoformat() == "2026-07-21T06:00:00+02:00"
     # 05:59 local pertenece al ciclo ANTERIOR; 06:00 abre el del día.
-    assert metrics.current_cycle_id(start - timedelta(minutes=1)) == CYCLE - timedelta(days=1)
+    assert metrics.current_cycle_id(start - timedelta(minutes=1)) == (
+        CYCLE - timedelta(days=1)
+    )
     assert metrics.current_cycle_id(start) == CYCLE
     assert metrics.current_cycle_id(start + timedelta(hours=23)) == CYCLE
     # Inyectable en UTC: 2026-07-21T03:59Z = 05:59 CEST → sigue en CYCLE.
@@ -433,6 +444,32 @@ def test_cycle_bounds_and_ids_are_deterministic():
         datetime(2026, 7, 21, 3, 59, tzinfo=timezone.utc)
     ) == CYCLE
     assert metrics.latest_closed_cycle_id(AFTER) == CYCLE
+
+
+def test_cycle_boundary_supports_configured_minute(monkeypatch):
+    monkeypatch.setattr(metrics, "CYCLE_START_HOUR", 11)
+    monkeypatch.setattr(metrics, "CYCLE_START_MINUTE", 30)
+    start, end = metrics.cycle_bounds(CYCLE)
+    assert start.isoformat() == "2026-07-20T11:30:00+02:00"
+    assert end.isoformat() == "2026-07-21T11:30:00+02:00"
+    assert metrics.current_cycle_id(start - timedelta(minutes=1)) == CYCLE - timedelta(days=1)
+    assert metrics.current_cycle_id(start) == CYCLE
+
+
+def test_persistent_compute_rejects_open_cycle(db):
+    """Un ciclo abierto solo puede evaluarse por el preview con savepoint."""
+    factory = db
+    with pytest.raises(ValueError, match="sigue abierto"):
+        _compute(
+            factory,
+            cycle_id=CYCLE,
+            now=CSTART + timedelta(hours=1),
+        )
+    assert _scalar(
+        factory,
+        "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
+        c=CYCLE,
+    ) == 0
 
 
 # ------------------------------------------- ndcg@10 / legacy / overlap (§5)
@@ -827,6 +864,7 @@ def test_labels_ready_green_with_dod_oracle(db):
     juicios cada uno, >= 50 pares dedup, >= 20 MAPEABLES a vacantes core)
     labels_ready pasa a VERDE y dedup se computa con valores reales."""
     factory = db
+    _register_holdout(factory)
     src = _mk_source(factory, "legacy:lrfx")
     p = uuid.uuid4().hex[:6]
     pid1 = _mk_profile(factory, str(uuid.uuid4()))
@@ -835,9 +873,8 @@ def test_labels_ready_green_with_dod_oracle(db):
     _mk_frozen_set(
         factory, pid2, {f"{p}-b{i:02d}": i % 4 for i in range(30)}, name="ronda-2"
     )
-    # 25 pares MAPEADOS (ambos refs con slot y MISMA vacante ⇒ TP) + 25 sin
-    # slot core (no mapeables): 50 pares >= 50, 25 mapeables >= 20.
-    for i in range(25):
+    # 50 pares MAPEADOS: el holdout fijo solo es válido si se puntúa entero.
+    for i in range(50):
         ra, rb = f"{p}-m{i:02d}a", f"{p}-m{i:02d}b"
         vid, _, _ = _mk_slot(factory, src, ra)
         _mk_slot(factory, src, rb, active=False, vacancy_id=vid)
@@ -847,14 +884,6 @@ def test_labels_ready_green_with_dod_oracle(db):
             "source) VALUES (:a, :b, 'duplicate', '"
             + labels.DEDUP_EVAL_COHORT + "')",
             {"a": ra, "b": rb},
-        )
-    for i in range(25):
-        _exec(
-            factory,
-            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', '"
-            + labels.DEDUP_EVAL_COHORT + "')",
-            {"a": f"{p}-u{i:02d}a", "b": f"{p}-u{i:02d}b"},
         )
 
     _compute(factory)
@@ -863,10 +892,11 @@ def test_labels_ready_green_with_dod_oracle(db):
     assert lr.details["sets_congelados"] == 2
     assert lr.details["sets_congelados_ok"] == 2
     assert lr.details["pares_dedup"] == 50
-    assert lr.details["pares_mapeables"] == 25
+    assert lr.details["pares_mapeables"] == 50
+    assert lr.details["pares_sin_mapeo"] == 0
     gates = _gates(factory)
     assert gates["labels_ready"]["ok"] is True
-    # dedup con oráculo real: 25 TP / 0 FP / 0 FN ⇒ precision = recall = 1.0
+    # dedup con oráculo real: 50 TP / 0 FP / 0 FN ⇒ precision = recall = 1.0
     # (esta vez un 1.0 DEMOSTRADO, no vacuo).
     assert float(_metric_row(factory, "dedup_precision").value) == 1.0
     assert float(_metric_row(factory, "dedup_recall").value) == 1.0
@@ -874,11 +904,47 @@ def test_labels_ready_green_with_dod_oracle(db):
     assert gates["dedup_recall"]["ok"] is True
 
 
+
+def test_labels_ready_red_when_one_holdout_pair_is_unmappable(db):
+    """El holdout fijo no puede aprobarse puntuando solo 49 de sus 50 pares."""
+    factory = db
+    _register_holdout(factory)
+    src = _mk_source(factory, "legacy:lrpartial")
+    p = uuid.uuid4().hex[:6]
+    pid1 = _mk_profile(factory, str(uuid.uuid4()))
+    pid2 = _mk_profile(factory, str(uuid.uuid4()))
+    _mk_frozen_set(factory, pid1, {f"{p}-a{i:02d}": i % 4 for i in range(30)})
+    _mk_frozen_set(
+        factory, pid2, {f"{p}-b{i:02d}": i % 4 for i in range(30)}, name="ronda-2"
+    )
+    for i in range(50):
+        ra, rb = f"{p}-m{i:02d}a", f"{p}-m{i:02d}b"
+        if i < 49:
+            vid, _, _ = _mk_slot(factory, src, ra)
+            _mk_slot(factory, src, rb, active=False, vacancy_id=vid)
+        _exec(
+            factory,
+            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
+            "source) VALUES (:a, :b, 'duplicate', '"
+            + labels.DEDUP_EVAL_COHORT + "')",
+            {"a": ra, "b": rb},
+        )
+
+    _compute(factory)
+    row = _metric_row(factory, "labels_ready")
+    assert float(row.value) == 0
+    assert row.details["pares_dedup"] == 50
+    assert row.details["pares_mapeables"] == 49
+    assert row.details["pares_sin_mapeo"] == 1
+    assert _gates(factory)["labels_ready"]["ok"] is False
+
+
 def test_labels_ready_red_with_two_sets_one_profile(db):
     """REGRESIÓN P1 rev. externa integral: dos sets congelados del MISMO perfil (cada uno >= 30
     juicios) NO satisfacen el DoD B-03 (">= 2 PERFILES reales"). labels_ready debe quedar ROJO: el
     gate cuenta PERFILES distintos (perfiles_ok=1), no sets (sets_congelados_ok=2)."""
     factory = db
+    _register_holdout(factory)
     src = _mk_source(factory, "legacy:lr1p")
     p = uuid.uuid4().hex[:6]
     pid = _mk_profile(factory, str(uuid.uuid4()))  # UN solo perfil, DOS sets
@@ -886,8 +952,8 @@ def test_labels_ready_red_with_two_sets_one_profile(db):
     _mk_frozen_set(
         factory, pid, {f"{p}-b{i:02d}": i % 4 for i in range(30)}, name="ronda-2"
     )
-    # Pares dedup suficientes (>=50, >=20 mapeables): el ROJO viene SOLO del conteo de perfiles.
-    for i in range(25):
+    # Holdout completo: el ROJO viene SOLO del conteo de perfiles.
+    for i in range(50):
         ra, rb = f"{p}-m{i:02d}a", f"{p}-m{i:02d}b"
         vid, _, _ = _mk_slot(factory, src, ra)
         _mk_slot(factory, src, rb, active=False, vacancy_id=vid)
@@ -897,14 +963,6 @@ def test_labels_ready_red_with_two_sets_one_profile(db):
             "source) VALUES (:a, :b, 'duplicate', '"
             + labels.DEDUP_EVAL_COHORT + "')",
             {"a": ra, "b": rb},
-        )
-    for i in range(25):
-        _exec(
-            factory,
-            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', '"
-            + labels.DEDUP_EVAL_COHORT + "')",
-            {"a": f"{p}-u{i:02d}a", "b": f"{p}-u{i:02d}b"},
         )
     _compute(factory)
     lr = _metric_row(factory, "labels_ready")
@@ -922,6 +980,7 @@ def test_labels_ready_red_when_effective_set_is_small(db):
     (se mide sobre el set de 1 juicio → oráculo insuficiente, nDCG=1/recall=1 vacuos), aunque
     exista un set viejo válido."""
     factory = db
+    _register_holdout(factory)
     src = _mk_source(factory, "legacy:lreff")
     p = uuid.uuid4().hex[:6]
     for who in ("a", "b"):
@@ -931,8 +990,8 @@ def test_labels_ready_red_when_effective_set_is_small(db):
         )
         # Set NUEVO (más reciente) de UN solo juicio → es el EFECTIVO que se mide.
         _mk_frozen_set(factory, pid, {f"{p}-{who}new": 3}, name="ronda-2")
-    # Pares dedup suficientes (>=50, >=20 mapeables): el ROJO viene SOLO del set efectivo pequeño.
-    for i in range(25):
+    # Holdout completo: el ROJO viene SOLO del set efectivo pequeño.
+    for i in range(50):
         ra, rb = f"{p}-m{i:02d}a", f"{p}-m{i:02d}b"
         vid, _, _ = _mk_slot(factory, src, ra)
         _mk_slot(factory, src, rb, active=False, vacancy_id=vid)
@@ -942,14 +1001,6 @@ def test_labels_ready_red_when_effective_set_is_small(db):
             "source) VALUES (:a, :b, 'duplicate', '"
             + labels.DEDUP_EVAL_COHORT + "')",
             {"a": ra, "b": rb},
-        )
-    for i in range(25):
-        _exec(
-            factory,
-            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', '"
-            + labels.DEDUP_EVAL_COHORT + "')",
-            {"a": f"{p}-u{i:02d}a", "b": f"{p}-u{i:02d}b"},
         )
     _compute(factory)
     lr = _metric_row(factory, "labels_ready")
@@ -1000,6 +1051,7 @@ def test_inactive_profile_excluded_from_metrics_and_labels_ready(db):
     re-congelar nada. Escenario del revisor: usuario de captura inactivo
     con set congelado inflando el requisito de >= 2 sets."""
     factory = db
+    _register_holdout(factory)
     src = _mk_source(factory, "legacy:inafx")
     p = uuid.uuid4().hex[:6]
     u1, u2 = uuid.uuid4(), uuid.uuid4()
@@ -1009,9 +1061,8 @@ def test_inactive_profile_excluded_from_metrics_and_labels_ready(db):
     _mk_frozen_set(
         factory, pid2, {f"{p}-b{i:02d}": i % 4 for i in range(30)}, name="ronda-2"
     )
-    # Oráculo dedup al DoD (50 pares, 25 mapeables): labels_ready depende
-    # SOLO del conteo de sets contables.
-    for i in range(25):
+    # Holdout completo: labels_ready depende SOLO del conteo de sets.
+    for i in range(50):
         ra, rb = f"{p}-m{i:02d}a", f"{p}-m{i:02d}b"
         vid, _, _ = _mk_slot(factory, src, ra)
         _mk_slot(factory, src, rb, active=False, vacancy_id=vid)
@@ -1021,14 +1072,6 @@ def test_inactive_profile_excluded_from_metrics_and_labels_ready(db):
             "source) VALUES (:a, :b, 'duplicate', '"
             + labels.DEDUP_EVAL_COHORT + "')",
             {"a": ra, "b": rb},
-        )
-    for i in range(25):
-        _exec(
-            factory,
-            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', '"
-            + labels.DEDUP_EVAL_COHORT + "')",
-            {"a": f"{p}-u{i:02d}a", "b": f"{p}-u{i:02d}b"},
         )
     # u1 ACTIVO, u2 INACTIVO (último estado users por pk del staging aplicado).
     _stage_users(factory, [
@@ -1045,7 +1088,7 @@ def test_inactive_profile_excluded_from_metrics_and_labels_ready(db):
     assert lr.details["sets_congelados_ok"] == 1
     assert lr.details["sets_excluidos_inactivos"] == 1
     assert lr.details["pares_dedup"] == 50
-    assert lr.details["pares_mapeables"] == 25
+    assert lr.details["pares_mapeables"] == 50
     gates = _gates(factory)
     assert gates["labels_ready"]["ok"] is False
     assert f"ndcg@10::profile:{pid2}" not in gates  # sin fila = sin gate suyo
@@ -1140,6 +1183,30 @@ def test_sealed_cycle_immutable_and_force_recompute_resets_streak(db):
 
 
 # --------------------------------------------------- falsos_negativos (§5/§6)
+
+
+
+def test_sealed_metrics_reject_direct_rewrite_and_delete(db):
+    """core0037: un DML directo no puede recolorear un ciclo sellado."""
+    factory = db
+    _compute(factory)
+
+    with pytest.raises(sa.exc.DBAPIError, match="métrica sellada"):
+        _exec(
+            factory,
+            "UPDATE shadow_cycle_metrics SET value = 0 "
+            "WHERE cycle_id = :c AND metric = 'labels_ready' "
+            "AND scope = 'global'",
+            {"c": CYCLE},
+        )
+    with pytest.raises(sa.exc.DBAPIError, match="métrica sellada"):
+        _exec(
+            factory,
+            "DELETE FROM shadow_cycle_metrics WHERE cycle_id = :c "
+            "AND metric = 'labels_ready' AND scope = 'global'",
+            {"c": CYCLE},
+        )
+    assert _metric_row(factory, "labels_ready") is not None
 
 
 def test_falsos_negativos_strict_mode_zero_allowed(db):
@@ -1370,24 +1437,29 @@ def test_sampler_appends_and_p99_exact(db):
     assert row.details["samples"][0]["ts"].startswith("2026-07-20T")
     assert row.details["samples"][0]["dead_total"] == 0
 
-    # p99 EXACTO (percentile_cont): samples deterministas [300, 600, 900, 1200]
-    # → 0.99·3 = 2.97 → 900 + 0.97·300 = 1191.0 (>900, umbral 2026-08-22).
+    # Ventana completa cada cinco minutos. El patrón de lag deja el p99 en
+    # 1200 (>900) y demuestra que el valor solo puntúa con cobertura.
+    samples = [
+        {
+            "ts": (CSTART + timedelta(minutes=5 * i)).isoformat(),
+            "oldest_pending_s": (300, 600, 900, 1200)[i % 4],
+        }
+        for i in range(289)
+    ]
     _exec(
         factory,
         "UPDATE shadow_cycle_metrics SET details = jsonb_set(details, "
         "'{samples}', CAST(:j AS jsonb)) WHERE cycle_id = :c AND metric = :m",
         {
-            "j": json.dumps(
-                [{"ts": "t", "oldest_pending_s": v} for v in (300, 600, 900, 1200)]
-            ),
+            "j": json.dumps(samples),
             "c": CYCLE, "m": "outbox_lag_p99",
         },
     )
     _compute(factory)
     row = _metric_row(factory, "outbox_lag_p99")
-    assert float(row.value) == pytest.approx(1191.0)
-    assert row.details["samples_count"] == 4
-    assert len(row.details["samples"]) == 4  # merge: los samples SOBREVIVEN
+    assert float(row.value) == pytest.approx(1200.0)
+    assert row.details["samples_count"] == 289
+    assert len(row.details["samples"]) == 289
     g = _gates(factory)["outbox_lag_p99"]
     assert g["ok"] is False  # 1191 > 900
 
@@ -1404,6 +1476,34 @@ def test_outbox_lag_without_samples_is_no_data_and_gate_fails(db):
     dead = _metric_row(factory, "outbox_dead")
     assert float(dead.value) == 0
     assert _gates(factory)["outbox_dead"]["ok"] is True
+
+def test_outbox_lag_with_only_early_sample_is_no_data(db):
+    """Una muestra verde temprana no representa las 24 h del ciclo."""
+    factory = db
+    sample = [{
+        "ts": (CSTART + timedelta(minutes=5)).isoformat(),
+        "oldest_pending_s": 0,
+        "dead_total": 0,
+    }]
+    _exec(
+        factory,
+        "INSERT INTO shadow_cycle_metrics (cycle_id, metric, scope, value, "
+        "details) VALUES (:c, 'outbox_lag_p99', 'global', :v, "
+        "CAST(:d AS jsonb))",
+        {
+            "c": CYCLE,
+            "v": metrics.NO_DATA_VALUE,
+            "d": json.dumps({"samples": sample}),
+        },
+    )
+    _compute(factory)
+    row = _metric_row(factory, "outbox_lag_p99")
+    assert float(row.value) == metrics.NO_DATA_VALUE
+    assert row.details["no_data"] is True
+    assert row.details["samples_count"] == 1
+    assert row.details["nota"] == "cobertura temporal insuficiente del muestreador"
+    assert _gates(factory)["outbox_lag_p99"]["ok"] is False
+
 
 
 # ------------------------------------------------------- outbox_dead (P2-6)
@@ -1491,9 +1591,14 @@ def test_recompute_after_purge_preserves_sealed_p99(db):
         "INSERT INTO shadow_cycle_metrics (cycle_id, metric, scope, value, "
         "details) VALUES (:c, 'outbox_lag_p99', 'global', -1, "
         "CAST(:j AS jsonb))",
-        {"c": CYCLE, "j": json.dumps(
-            {"samples": [{"ts": "t", "oldest_pending_s": 250.0}] * 4}
-        )},
+        {
+            "c": CYCLE,
+            "j": json.dumps({"samples": [
+                {"ts": (CSTART + timedelta(minutes=5 * i)).isoformat(),
+                 "oldest_pending_s": 250.0}
+                for i in range(289)
+            ]}),
+        },
     )
     _compute(factory)
     row = _metric_row(factory, "outbox_lag_p99")
@@ -1511,7 +1616,7 @@ def test_recompute_after_purge_preserves_sealed_p99(db):
     assert _run(purge())["sample_rows_pruned"] == 1
     row = _metric_row(factory, "outbox_lag_p99")
     assert "samples" not in row.details
-    assert row.details["samples_pruned"] == 4
+    assert row.details["samples_pruned"] == 289
     sealed_at = row.finished_at
 
     # Recompute FORZADO del ciclo purgado: se PRESERVA el valor (no hay
@@ -1520,7 +1625,7 @@ def test_recompute_after_purge_preserves_sealed_p99(db):
     assert "outbox_lag_p99" not in result["metrics"]
     row = _metric_row(factory, "outbox_lag_p99")
     assert float(row.value) == pytest.approx(250.0)
-    assert row.details["samples_pruned"] == 4
+    assert row.details["samples_pruned"] == 289
     assert row.finished_at == sealed_at  # ni re-sellado: intacta
     assert row.details["recomputed_at"]  # el force queda TRAZADO (P1-4)
     assert _gates(factory)["outbox_lag_p99"]["ok"] is True  # 250 <= 900 (umbral recalibrado 2026-08-22)
@@ -2243,16 +2348,29 @@ def test_umbral_del_ciclo_queda_persistido_y_no_se_recolorea(db):
     assert thr_row is not None
     assert thr_row.details["dedup_recall_min"] == metrics.DEDUP_RECALL_MIN
 
-    # dedup_recall sellado en 0.5 — con el umbral persistido (0.40) es verde.
+    # Construye con DDL de owner un ciclo histórico con recall 0.5. El DML
+    # de producción no puede reescribirlo desde core0037.
     _exec(
         factory,
-        "UPDATE shadow_cycle_metrics SET value = 0.5, details = '{}'::jsonb "
-        "WHERE cycle_id = :c AND metric = 'dedup_recall' AND scope = 'global'",
-        {"c": CYCLE},
+        "ALTER TABLE shadow_cycle_metrics "
+        "DISABLE TRIGGER shadow_cycle_metrics_sealed_guard",
     )
+    try:
+        _exec(
+            factory,
+            "UPDATE shadow_cycle_metrics SET value = 0.5, details = '{}'::jsonb "
+            "WHERE cycle_id = :c AND metric = 'dedup_recall' "
+            "AND scope = 'global'",
+            {"c": CYCLE},
+        )
+    finally:
+        _exec(
+            factory,
+            "ALTER TABLE shadow_cycle_metrics "
+            "ENABLE ALWAYS TRIGGER shadow_cycle_metrics_sealed_guard",
+        )
     with um.patch.object(metrics, "DEDUP_RECALL_MIN", 0.9):
         g = _gates(factory)["dedup_recall"]
-        # ANTES: la constante vigente (0.9) recoloreaba el ciclo a rojo.
         assert g["umbral"] == thr_row.details["dedup_recall_min"]
         assert g["ok"] is True
     # La fila de umbrales NO aparece como gate ni en el informe.
@@ -2314,13 +2432,18 @@ def test_purge_deletes_old_applied_preserving_last_users_and_unapplied(db):
         )
     # Samples de ciclos FUERA de retención se podan SOLO si el p99 quedó
     # SELLADO (guard value <> centinela — P3); los del ciclo actual, nunca.
-    for cid, n in ((date(2026, 7, 10), 3), (date(2026, 7, 25), 2)):
+    for cid, n in ((date(2026, 7, 10), 289), (date(2026, 7, 25), 2)):
+        sample_start = metrics.cycle_bounds(cid)[0]
         _exec(
             factory,
             "INSERT INTO shadow_cycle_metrics (cycle_id, metric, scope, value, "
             "details) VALUES (:c, 'outbox_lag_p99', 'global', -1, "
             "CAST(:j AS jsonb))",
-            {"c": cid, "j": json.dumps({"samples": [{"oldest_pending_s": i} for i in range(n)]})},
+            {"c": cid, "j": json.dumps({"samples": [
+                {"ts": (sample_start + timedelta(minutes=5 * i)).isoformat(),
+                 "oldest_pending_s": i}
+                for i in range(n)
+            ]})},
         )
     # Sella el p99 del ciclo viejo: sin sellar, el guard lo dejaría intacto.
     _compute(factory, cycle_id=date(2026, 7, 10))
@@ -2347,7 +2470,7 @@ def test_purge_deletes_old_applied_preserving_last_users_and_unapplied(db):
     # Poda de samples: el ciclo viejo queda con el rastro, el actual intacto.
     old_row = _metric_row(factory, "outbox_lag_p99", cycle=date(2026, 7, 10))
     assert "samples" not in old_row.details
-    assert old_row.details["samples_pruned"] == 3
+    assert old_row.details["samples_pruned"] == 289
     cur_row = _metric_row(factory, "outbox_lag_p99", cycle=date(2026, 7, 25))
     assert len(cur_row.details["samples"]) == 2
 
@@ -2373,7 +2496,9 @@ def test_purge_keeps_unsealed_samples_until_compute_seals_them(db):
         "CAST(:j AS jsonb))",
         {"c": CYCLE, "nodata": metrics.NO_DATA_VALUE, "j": json.dumps(
             {"samples": [
-                {"ts": "t", "oldest_pending_s": v} for v in (100, 150, 200, 250)
+                {"ts": (CSTART + timedelta(minutes=5 * i)).isoformat(),
+                 "oldest_pending_s": (100, 150, 200, 250)[i % 4]}
+                for i in range(289)
             ]}
         )},
     )
@@ -2390,23 +2515,23 @@ def test_purge_keeps_unsealed_samples_until_compute_seals_them(db):
     assert _run(purge())["sample_rows_pruned"] == 0  # no sellada: no se poda
     row = _metric_row(factory, "outbox_lag_p99")
     assert float(row.value) == metrics.NO_DATA_VALUE
-    assert len(row.details["samples"]) == 4  # samples INTACTOS
+    assert len(row.details["samples"]) == 289  # samples INTACTOS
 
     # compute_cycle posterior (backfill) sella el p99 desde esos samples.
-    # A MANO: p99 de [100,150,200,250] = 200 + 0.97·50 = 248.5.
+    # Con el patrón repetido durante toda la ventana, p99 = 250.
     _compute(factory, cycle_id=CYCLE, now=purge_now)
     row = _metric_row(factory, "outbox_lag_p99")
-    assert float(row.value) == pytest.approx(248.5)
+    assert float(row.value) == pytest.approx(250.0)
     assert row.details["no_data"] is False
     g = _gates(factory)["outbox_lag_p99"]
-    assert g["ok"] is True  # 248.5 <= 300: gate en VERDE, no no_data eterno
+    assert g["ok"] is True  # 250 <= 900: gate verde, no no_data eterno
 
     # Ya SELLADA: la siguiente purga poda los samples y el p99 sobrevive.
     assert _run(purge())["sample_rows_pruned"] == 1
     row = _metric_row(factory, "outbox_lag_p99")
     assert "samples" not in row.details
-    assert row.details["samples_pruned"] == 4
-    assert float(row.value) == pytest.approx(248.5)
+    assert row.details["samples_pruned"] == 289
+    assert float(row.value) == pytest.approx(250.0)
     assert _gates(factory)["outbox_lag_p99"]["ok"] is True
 
 

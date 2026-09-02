@@ -755,6 +755,76 @@ def test_g3_lease_vencido_no_pierde_el_intento_ni_el_dead_letter(db, monkeypatch
     assert r.last_error == "timeout real del transporte"
 
 
+def test_dos_fallos_solapados_consumen_dos_intentos_reales(db, monkeypatch):
+    """Dos transportes que parten del mismo attempts=0 no colapsan en uno.
+
+    A supera el lease; B reclama la misma entrega. Ambos fallan. El incremento
+    se serializa en PostgreSQL y B decide DEAD con el ordinal persistido 2,
+    no con el snapshot obsoleto que ambos recibieron al reclamar.
+    """
+    factory, created = db
+    pid, _ = _setup_evaluated(factory, created, titles=("backend python",))
+    _dejar_pendientes(factory, pid, 1)
+    monkeypatch.setattr(delivery, "MAX_ATTEMPTS", 2)
+
+    async def claim():
+        async with factory() as s:
+            rows, lease = await delivery.claim_deliveries(s, limit=1)
+            await s.commit()
+            return rows, lease
+
+    rows_a, lease_a = asyncio.run(claim())
+    assert rows_a[0].attempts == 0
+    async def expire_a():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "UPDATE integration_outbox_deliveries SET lease = "
+                    "clock_timestamp() - interval '1 second' "
+                    "WHERE event_id = :eid AND destination = :dest"
+                ),
+                {"eid": rows_a[0].event_id, "dest": rows_a[0].destination},
+            )
+            await s.commit()
+
+    asyncio.run(expire_a())
+    rows_b, lease_b = asyncio.run(claim())
+    assert rows_b[0].attempts == 0
+
+    async def fail(row, lease, error):
+        async with factory() as s:
+            result = await delivery.mark_failed(
+                s,
+                [{
+                    "eid": row.event_id,
+                    "dest": row.destination,
+                    "attempts": row.attempts + 1,
+                    "error": error,
+                }],
+                lease,
+            )
+            await s.commit()
+            return result
+
+    # A cuenta su transporte pero no transiciona: B posee el fence.
+    assert asyncio.run(fail(rows_a[0], lease_a, "fallo A")) == {
+        "dead": 0, "retried": 0,
+    }
+    # B suma el segundo resultado y usa el contador devuelto por el UPDATE.
+    assert asyncio.run(fail(rows_b[0], lease_b, "fallo B")) == {
+        "dead": 1, "retried": 0,
+    }
+    row = _rows(
+        factory,
+        "SELECT state, attempts, last_error FROM "
+        "integration_outbox_deliveries WHERE event_id = :eid "
+        "AND destination = :dest",
+        eid=rows_a[0].event_id,
+        dest=rows_a[0].destination,
+    )[0]
+    assert (row.state, row.attempts, row.last_error) == ("dead", 2, "fallo B")
+
+
 def test_g3_retire_exhausted_respeta_al_dueno_vigente_y_los_terminales(db, monkeypatch):
     """El rescate de G3-P2-2 solo toca lo que NADIE posee: una entrega
     inflight con lease VIGENTE (otro dispatcher está entregando ahora mismo)

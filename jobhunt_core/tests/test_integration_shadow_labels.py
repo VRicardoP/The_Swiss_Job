@@ -42,10 +42,9 @@ def db():
 
     async def cleanup():
         async with factory() as s:
-            # Sets/pares ANTES que el grafo de consumers (los juicios caen por
-            # CASCADE del set; el set caería por CASCADE del perfil, pero el
-            # borrado explícito no depende de ese detalle).
-            await dbcleanup.purge_shadow(s, created["sets"], created["dedup_refs"])
+            # Los sets congelados solo se eliminan por la cascada legítima de
+            # borrado del perfil/consumer (GDPR), no mediante DELETE directo.
+            await dbcleanup.purge_shadow(s, [], created["dedup_refs"])
             await dbcleanup.purge_consumer_graph(s, created["consumers"])
             await dbcleanup.purge_source_graph(s, created["sources"], created["scopes"])
             await s.commit()
@@ -328,6 +327,62 @@ def test_frozen_set_rejects_judgments_without_inserting(db, legacy_fx):
         _run(freeze_missing())
 
 
+def test_frozen_set_is_immutable_for_direct_dml(db):
+    """core0037: el DML directo tampoco puede mover el oráculo congelado."""
+    factory, created = db
+    pid = _mk_profile(factory, created, str(uuid.uuid4()))
+    sid = _mk_set(factory, created, pid)
+
+    async def prepare():
+        async with factory() as s:
+            await labels.add_judgment(s, sid, "job-a", 2)
+            await labels.freeze_set(s, sid)
+            await s.commit()
+
+    _run(prepare())
+
+    async def direct(sql, params=None):
+        async with factory() as s:
+            await s.execute(sa.text(sql), params or {})
+            await s.commit()
+
+    attempts = (
+        (
+            "UPDATE labeled_judgments SET relevance = 3 "
+            "WHERE set_id = :sid AND job_ref = 'job-a'",
+            {"sid": sid},
+        ),
+        (
+            "INSERT INTO labeled_judgments "
+            "(set_id, job_ref, relevance, source) "
+            "VALUES (:sid, 'job-b', 1, 'manual')",
+            {"sid": sid},
+        ),
+        (
+            "DELETE FROM labeled_judgments "
+            "WHERE set_id = :sid AND job_ref = 'job-a'",
+            {"sid": sid},
+        ),
+        (
+            "UPDATE labeled_sets SET frozen_at = NULL WHERE id = :sid",
+            {"sid": sid},
+        ),
+        ("DELETE FROM labeled_sets WHERE id = :sid", {"sid": sid}),
+    )
+    for sql, params in attempts:
+        with pytest.raises(DBAPIError, match="congelado"):
+            _run(direct(sql, params))
+
+    row = _rows(
+        factory,
+        "SELECT relevance FROM labeled_judgments "
+        "WHERE set_id = :sid AND job_ref = 'job-a'",
+        sid=sid,
+    )
+    assert [r.relevance for r in row] == [2]
+
+
+
 def test_judgment_checks_relevance_and_source(db):
     factory, created = db
     pid = _mk_profile(factory, created, str(uuid.uuid4()))
@@ -470,30 +525,40 @@ def test_map_job_refs_resolves_closed_incarnations_deterministically(db):
     por encarnación CERRADA también, y con varias gana la de mayor seq."""
     factory, created = db
     p = uuid.uuid4().hex[:8]
-    ref_closed, ref_multi, ref_ajena = f"{p}-closed", f"{p}-multi", f"{p}-ajena"
-    src_legacy, src_ajena = uuid.uuid4(), uuid.uuid4()
-    created["sources"] += [src_legacy, src_ajena]
-    v1, v2a, v2b, v3 = (uuid.uuid4() for _ in range(4))
+    ref_closed, ref_multi = f"{p}-closed", f"{p}-multi"
+    ref_eval, ref_ajena = f"{p}-eval", f"{p}-ajena"
+    src_legacy, src_eval, src_ajena = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    created["sources"] += [src_legacy, src_eval, src_ajena]
+    v1, v2a, v2b, v2winner, veval, v3 = (uuid.uuid4() for _ in range(6))
 
     async def build():
         async with factory() as s:
             for sid_, name in (
-                (src_legacy, f"legacy:fx{p}"), (src_ajena, f"plainfx{p}"),
+                (src_legacy, f"legacy:fx{p}"),
+                (src_eval, f"evaluation:fx{p}"),
+                (src_ajena, f"plainfx{p}"),
             ):
                 await s.execute(
                     sa.text("INSERT INTO sources (id, name, tier) VALUES (:i, :n, 0)"),
                     {"i": sid_, "n": name},
                 )
-            for vid in (v1, v2a, v2b, v3):
+            for vid in (v1, v2a, v2b, v2winner, veval, v3):
                 await s.execute(
                     sa.text("INSERT INTO vacancies (id) VALUES (:i)"), {"i": vid}
                 )
+            await s.execute(
+                sa.text("UPDATE vacancies SET merged_into = :w WHERE id = :v"),
+                {"w": v2winner, "v": v2b},
+            )
             slots = (
                 # (listing, source, external_id, [(vacancy, seq, cerrada)])
                 (uuid.uuid4(), src_legacy, ref_closed, [(v1, 1, True)]),
                 # Slot reciclado: DOS encarnaciones CERRADAS → mayor seq (v2b).
                 (uuid.uuid4(), src_legacy, ref_multi, [(v2a, 1, True), (v2b, 2, True)]),
                 # Fuente NO legacy: JAMÁS resuelve, ni con encarnación activa.
+                # Alias persistente del oráculo: permitido, pero no es una
+                # fuente de cosecha ni sintetiza otra vacante.
+                (uuid.uuid4(), src_eval, ref_eval, [(veval, 1, False)]),
                 (uuid.uuid4(), src_ajena, ref_ajena, [(v3, 1, False)]),
             )
             for lid, sid_, ext, incs in slots:
@@ -525,11 +590,11 @@ def test_map_job_refs_resolves_closed_incarnations_deterministically(db):
     async def resolve():
         async with factory() as s:
             return await labels.map_job_refs_to_vacancies(
-                s, [ref_closed, ref_multi, ref_ajena, f"{p}-fantasma"]
+                s, [ref_closed, ref_multi, ref_eval, ref_ajena, f"{p}-fantasma"]
             )
 
     mapping = _run(resolve())
-    assert mapping == {ref_closed: v1, ref_multi: v2b}
+    assert mapping == {ref_closed: v1, ref_multi: v2winner, ref_eval: veval}
 
     async def resolve_empty():
         async with factory() as s:
@@ -606,7 +671,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                     )
                 ).scalar_one()
 
-        assert asyncio.run(seed_and_version()) == "core0036"
+        assert asyncio.run(seed_and_version()) == "core0040"
 
         run_alembic(temp_url, "downgrade", "core0007")
 
@@ -640,7 +705,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                         sa.text("SELECT version_num FROM alembic_version")
                     )
                 ).scalar_one()
-                assert version == "core0036"
+                assert version == "core0040"
                 # El esquema re-creado FUNCIONA y con sus guardas: smoke real.
                 cid = await profiles.ensure_consumer(s, "b03-post")
                 pid = await profiles.upsert_profile(s, cid, "user-post")
@@ -1075,10 +1140,15 @@ def test_p1_el_sello_no_precede_al_drenaje_del_escritor(db):
                 {"a": ja, "b": jb, "src": src},
             )
 
+            pid_ready = asyncio.Event()
+            sealer_pid: list[int] = []
+
             async def sella_dml():
                 # la sentencia arranca YA (statement_timestamp fijado) y se
                 # bloquea dentro del trigger esperando al escritor
                 async with factory() as sb:
+                    sealer_pid.append((await sb.execute(sa.text("SELECT pg_backend_pid()"))).scalar_one())
+                    pid_ready.set()
                     f = (
                         await sb.execute(
                             sa.text(
@@ -1095,9 +1165,23 @@ def test_p1_el_sello_no_precede_al_drenaje_del_escritor(db):
                     return f
 
             tarea = asyncio.create_task(sella_dml())
-            await asyncio.sleep(0.25)  # bloqueada en el lock del trigger
-            assert not tarea.done()
+            await asyncio.wait_for(pid_ready.wait(), timeout=1)
             async with factory() as sc:
+                for _ in range(100):
+                    waiting = (
+                        await sc.execute(
+                            sa.text(
+                                "SELECT wait_event_type = 'Lock' "
+                                "FROM pg_stat_activity WHERE pid = :pid"
+                            ),
+                            {"pid": sealer_pid[0]},
+                        )
+                    ).scalar_one()
+                    if waiting:
+                        break
+                    await asyncio.sleep(0.01)
+                else:
+                    pytest.fail("el sellador no llegó al lock del trigger")
                 boundary = (
                     await sc.execute(sa.text("SELECT clock_timestamp()"))
                 ).scalar_one()

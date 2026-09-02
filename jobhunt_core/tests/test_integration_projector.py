@@ -1127,10 +1127,10 @@ def test_replay_recovers_after_batch_crash(db, monkeypatch):
         state = {"boom": True}
         orig = projector._after_batch
 
-        async def maybe_boom(session_factory, result):
+        async def maybe_boom(session_factory, result, max_embedding_rounds=50):
             if state["boom"]:
                 raise RuntimeError("crash simulado en _after_batch")
-            return await orig(session_factory, result)
+            return await orig(session_factory, result, max_embedding_rounds)
 
         monkeypatch.setattr(projector, "_after_batch", maybe_boom)
         _seed(factory, [
@@ -1172,12 +1172,13 @@ def test_no_crash_no_recovery_and_marks_exclude_replay_time(db, monkeypatch):
         replay_started = {}
         orig_replay = projector._replay_after_batch
 
-        async def spying_replay(session_factory, evaluated):
+        async def spying_replay(session_factory, evaluated, **kwargs):
             async with session_factory() as s:
                 replay_started["at"] = (
                     await s.execute(sa.text("SELECT clock_timestamp()"))
                 ).scalar_one()
-            return await orig_replay(session_factory, evaluated)
+            replay_started["drain_embeddings"] = kwargs.get("drain_embeddings")
+            return await orig_replay(session_factory, evaluated, **kwargs)
 
         monkeypatch.setattr(projector, "_replay_after_batch", spying_replay)
         _seed(factory, [
@@ -1190,6 +1191,7 @@ def test_no_crash_no_recovery_and_marks_exclude_replay_time(db, monkeypatch):
         # lo repite aunque su señal siguiera encendida.
         assert t1["profiles_evaluated"] == 1
         assert t1["recovery_evaluated"] == 0
+        assert replay_started["drain_embeddings"] is False
 
         # ORDEN TEMPORAL: todas las marcas de lote se escribieron ANTES del
         # inicio del replay — el tiempo del replay no entra en ninguna marca.
@@ -1244,10 +1246,10 @@ def test_recovery_detection_is_one_query_not_one_per_profile(db, monkeypatch):
     _seed_corpus(factory)  # sin corpus, ningún combo genera señal (va antes del monkeypatch)
     users = [uuid.uuid4() for _ in range(3)]
 
-    async def no_after_batch(session_factory, result):
+    async def no_after_batch(session_factory, result, *_args, **_kwargs):
         return []  # simula el crash post-lote: nada evaluado ni drenado
 
-    async def no_replay(session_factory, evaluated):
+    async def no_replay(session_factory, evaluated, *_args, **_kwargs):
         return 0  # la recuperación se mide aparte, sobre sesión contada
 
     monkeypatch.setattr(projector, "_after_batch", no_after_batch)
@@ -2016,10 +2018,10 @@ def test_max_batches_limits_the_drain(db):
 # ------------------------------------------------ (i) tarea Celery registrada
 
 
-def test_task_registered_routed_and_runs(db):
+def test_task_registered_routed_and_runs(db, monkeypatch):
     from jobhunt_core.celery_app import celery_app
     from jobhunt_core.config import settings as core_settings
-    from jobhunt_core.tasks.shadow import project_task
+    from jobhunt_core.tasks import shadow as shadow_tasks
 
     assert "jobhunt.shadow.project" in celery_app.tasks
     assert celery_app.conf.task_routes["jobhunt.shadow.project"] == {
@@ -2036,9 +2038,21 @@ def test_task_registered_routed_and_runs(db):
         core_settings.CORE_SHADOW_PROJECT_EVERY_S
     )
 
-    result = project_task.apply()  # staging vacío en la BD desechable
+    received = {}
+
+    async def fake_project_pending(**kwargs):
+        received.update(kwargs)
+        return {"batches": 0, "changes": 0}
+
+    monkeypatch.setattr(shadow_tasks, "project_pending", fake_project_pending)
+    result = shadow_tasks.project_task.apply()
     assert result.successful()
     assert result.result["batches"] == 0 and result.result["changes"] == 0
+    assert received == {
+        "batch_size": shadow_tasks.DEFAULT_BATCH_SIZE,
+        "max_batches": shadow_tasks.PROJECT_BATCHES_PER_TASK,
+        "max_embedding_rounds": shadow_tasks.PROJECT_EMBEDDING_ROUNDS_PER_TASK,
+    }
 
 
 def test_r6_apply_url_viaja_del_staging_a_la_encarnacion(db):

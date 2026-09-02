@@ -319,14 +319,33 @@ def test_exacto_intra_respeta_multi_ciudad(db):
                 (_l("l-a", "Zurich"), _l("l-b", "Zurich"),
                  _l("l-c", "Berna")),
             )
+            await s.execute(sa.text(
+                "UPDATE vacancies SET archived_at=now() WHERE id=("
+                "SELECT i.vacancy_id FROM source_listings l "
+                "JOIN source_listing_incarnations i ON i.source_listing_id=l.id "
+                "WHERE l.source_id=:src AND l.external_id='l-b')"
+            ), {"src": src})
             await s.commit()
 
     asyncio.run(go())
-    r = _scan(factory)
-    # (l-a,l-b) misma location ⇒ candidato exacto; (·,l-c) Berna ⇒ NO por
-    # exacto... aunque el ANN puede añadirlos si comparten vector — por eso
-    # se comprueba el DESGLOSE del exacto, no el total.
-    assert r["candidatos_exactos_intra"] == 1
+    current = _scan(factory)
+    assert current["candidatos_exactos_intra"] == 0
+
+    from jobhunt_core.dedup import exact_intra_backfill
+
+    async def backfill():
+        async with factory() as s:
+            first = await exact_intra_backfill(s)
+            await s.commit()
+            second = await exact_intra_backfill(s)
+            await s.commit()
+            return first, second
+
+    first, second = asyncio.run(backfill())
+    # Recupera (l-a,l-b) aunque l-b ya esté archivada; la pareja
+    # multi-ciudad con l-c sigue fuera.
+    assert first == 1
+    assert second == 0
 
 
 def test_gate_puntua_solo_la_cohorte_holdout(db):
@@ -1210,3 +1229,31 @@ def test_con_la_cohorte_cargada_el_diagnostico_desaparece(db):
                 await s.commit()
 
         asyncio.run(limpia())
+
+
+def test_la_variante_historica_no_puede_quedar_igual_que_la_diaria():
+    """La histórica se DERIVA de la diaria por sustitución para que no diverjan a
+    la primera corrección. Pero `str.replace` no falla cuando no encuentra su
+    patrón: devuelve la cadena intacta. Si alguien reescribe el WHERE de
+    `_EXACT_INTRA_SQL`, la histórica pasaría a ser active-only —igual que la
+    diaria— y el backfill dejaría de recuperar archivadas EN SILENCIO, con todo
+    en verde. Esto es lo que impide ese verde falso."""
+    from jobhunt_core.dedup import _EXACT_INTRA_HISTORY_SQL, _EXACT_INTRA_SQL
+
+    assert _EXACT_INTRA_HISTORY_SQL != _EXACT_INTRA_SQL, (
+        "la derivación no sustituyó nada: la variante histórica es la diaria"
+    )
+    # La histórica NO filtra archivadas…
+    assert "archived_at" not in _EXACT_INTRA_HISTORY_SQL
+    # …pero conserva el resto de invariantes de identidad.
+    for invariante in (
+        "v.merged_into IS NULL",
+        "a.text_hash = b.text_hash",
+        "a.source_id = b.source_id",
+        "a.loc = b.loc",
+        "a.id < b.id",
+        "ON CONFLICT",
+    ):
+        assert invariante in _EXACT_INTRA_HISTORY_SQL, invariante
+    # Y la diaria SIGUE siendo active-only: el barrido de producción no cambia.
+    assert "v.archived_at IS NULL" in _EXACT_INTRA_SQL

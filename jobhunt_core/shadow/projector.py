@@ -139,7 +139,7 @@ DEFAULT_BATCH_SIZE = 500
 # Benchmark congelado 2026-07-28: la receta role_composite_v2 necesita 1496
 # candidatos para cubrir todos los relevantes; 1800 deja margen sin barrer
 # el corpus completo.
-EVAL_LIMIT = 1800
+EVAL_LIMIT = matching.CANONICAL_EVAL_LIMIT
 
 # COTA por pasada de la recuperación de salida (residual pre-Fase D, por delegación): la
 # recuperación cubre perfiles de CUALQUIER consumer y `corpus_max` enciende la señal de TODOS los
@@ -222,7 +222,9 @@ class _BatchResult:
 
 
 async def project_pending(
-    batch_size: int = DEFAULT_BATCH_SIZE, max_batches: int | None = None
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    max_batches: int | None = None,
+    max_embedding_rounds: int = 50,
 ) -> dict:
     """Drena `shadow_change_log` por lotes y dispara el flujo normal del core.
 
@@ -271,7 +273,11 @@ async def project_pending(
 
             try:
                 await _project_all(
-                    totals, batch_size, max_batches, still_leader=_still_leader
+                    totals,
+                    batch_size,
+                    max_batches,
+                    still_leader=_still_leader,
+                    max_embedding_rounds=max_embedding_rounds,
                 )
             finally:
                 try:
@@ -294,7 +300,13 @@ async def project_pending(
     return totals
 
 
-async def _project_all(totals, batch_size, max_batches, still_leader=None) -> None:
+async def _project_all(
+    totals,
+    batch_size,
+    max_batches,
+    still_leader=None,
+    max_embedding_rounds=50,
+) -> None:
     """Cuerpo de la proyección (YA bajo el single-flight): drenado del
     staging por lotes + recuperación del flujo post-lote a la SALIDA (tras
     las marcas de lote — ver _replay_after_batch).
@@ -343,10 +355,20 @@ async def _project_all(totals, batch_size, max_batches, still_leader=None) -> No
             corpus_changed=agg_corpus_changed,
             affected_profiles=agg_affected,
         )
-        evaluated = set(await _after_batch(session_factory, aggregate))
+        has_aggregate_work = bool(
+            aggregate.revisions_new
+            or aggregate.corpus_changed
+            or aggregate.affected_profiles
+        )
+        evaluated = set(
+            await _after_batch(session_factory, aggregate, max_embedding_rounds)
+        )
         totals["profiles_evaluated"] += len(evaluated)
         totals["recovery_evaluated"] = await _replay_after_batch(
-            session_factory, evaluated
+            session_factory,
+            evaluated,
+            drain_embeddings=not has_aggregate_work,
+            max_embedding_rounds=max_embedding_rounds,
         )
 
 
@@ -1488,7 +1510,13 @@ SET corpus_generation = EXCLUDED.corpus_generation, attempted_at = EXCLUDED.atte
 """
 
 
-async def _replay_after_batch(session_factory, evaluated: set) -> int:
+async def _replay_after_batch(
+    session_factory,
+    evaluated: set,
+    *,
+    drain_embeddings: bool = True,
+    max_embedding_rounds: int = 50,
+) -> int:
     """Re-garantiza el disparo post-lote a la SALIDA (bajo el single-flight,
     DESPUÉS del while de drenado): un crash tras el commit de un lote pero
     antes o a mitad de _after_batch deja embeddings sin drenar o
@@ -1509,7 +1537,8 @@ async def _replay_after_batch(session_factory, evaluated: set) -> int:
     distinta de la de ese intento. La evaluación de recuperación
     sigue siendo dedup por eval_key (jamás duplica).
     Devuelve los perfiles evaluados en la recuperación."""
-    await _drain_embeddings(session_factory)
+    if drain_embeddings:
+        await _drain_embeddings(session_factory, max_rounds=max_embedding_rounds)
     async with session_factory() as session:
         targets = await _recovery_targets(session, evaluated)
     for pid in targets:
@@ -1587,7 +1616,9 @@ async def _recovery_targets(session, evaluated: set) -> list:
     return sorted((r.id for r in rows), key=str)
 
 
-async def _after_batch(session_factory, result: _BatchResult) -> list:
+async def _after_batch(
+    session_factory, result: _BatchResult, max_embedding_rounds: int = 50
+) -> list:
     """Embeddings pendientes + evaluate_profile del flujo NORMAL del core.
     Eficiencia (§3): solo perfiles afectados — o todos los activos del
     consumer sombra si hubo corpus nuevo. Corre FUERA de la tx del lote.
@@ -1597,11 +1628,11 @@ async def _after_batch(session_factory, result: _BatchResult) -> list:
         result.revisions_new or result.corpus_changed or result.affected_profiles
     ):
         return []
-    await _drain_embeddings(session_factory)
+    await _drain_embeddings(session_factory, max_rounds=max_embedding_rounds)
     async with session_factory() as session:
         targets = await _eval_targets(session, result)
     for pid in targets:
-        # Mismo top-K por defecto que la tarea jobhunt.matching.run_profile. El intento se registra
+        # Mismo top-K canónico que la tarea jobhunt.matching.run_profile. El intento se registra
         # también aquí: si no, la recuperación de salida volvería a coger cada perfil ya evaluado
         # por el flujo normal solo para descubrir que no hay nada que hacer.
         await _evaluate_and_record(session_factory, pid)

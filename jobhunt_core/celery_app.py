@@ -55,6 +55,7 @@ celery_app.conf.update(
         # ninguna de estas tareas toca los locks del sink.
         "jobhunt.shadow.sample_outbox_lag": {"queue": "core.default"},
         "jobhunt.shadow.compute_cycle": {"queue": "core.default"},
+        "jobhunt.shadow.preview_cycle": {"queue": "core.default"},
         "jobhunt.shadow.purge_staging": {"queue": "core.default"},
         "jobhunt.idempotency.purge_expired": {"queue": "core.default"},
         # Harness GATE-SOMBRA (B-05): el ciclo orquestado es ingesta (drena
@@ -114,6 +115,12 @@ celery_app.conf.update(
         "shadow-check-slot-health": {
             "task": "jobhunt.shadow.check_slot_health",
             "schedule": float(settings.CORE_SHADOW_SLOT_HEALTH_EVERY_S),
+        },
+        # Diagnóstico temprano del ciclo ABIERTO. Reutiliza el cómputo real
+        # dentro de una transacción revertida: no sella ni toca la racha 7/7.
+        "shadow-preview-cycle": {
+            "task": "jobhunt.shadow.preview_cycle",
+            "schedule": float(settings.CORE_SHADOW_PRE_GATE_EVERY_S),
         },
         "shadow-run-cycle": {
             "task": "jobhunt.shadow.run_cycle",

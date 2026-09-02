@@ -71,7 +71,10 @@ DECISIONES (documentadas, no obvias):
 """
 
 import asyncio
+import hashlib
+import json
 import logging
+import re
 import time as time_mod
 from datetime import date, datetime, timedelta, timezone
 
@@ -80,6 +83,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.pool import NullPool
 
+from jobhunt_core import UNKNOWN_RELEASE, __release_sha__
 from jobhunt_core.config import settings
 from jobhunt_core.database import create_core_engine, task_session_factory
 from jobhunt_core.shadow.capture import (
@@ -92,7 +96,9 @@ from jobhunt_core.shadow.capture import (
 from jobhunt_core.shadow.metrics import (
     KIND_ALERTA,
     KIND_GATE,
+    M_UMBRALES,
     compute_cycle,
+    current_cycle_id,
     cycle_bounds,
     evaluate_gates,
     latest_closed_cycle_id,
@@ -128,6 +134,73 @@ _RUN_CYCLE_LOCK = "jobhunt:shadow-run-cycle"
 # staging sigue sin drenar, el ciclo NO se computa (status='project_busy').
 PROJECT_DRAIN_RETRIES = 3      # intentos TOTALES de project_pending
 PROJECT_DRAIN_BACKOFF_S = 5.0  # espera entre intentos (acotada: 2×5 s)
+
+
+# ------------------------------------------------------- pre-gate provisional
+
+
+async def preview_current_cycle(
+    legacy_schema: str = "public",
+    now: datetime | None = None,
+) -> dict:
+    """Evalúa el ciclo ABIERTO sin persistir ni alterar la racha oficial.
+
+    `compute_cycle` es la única implementación de las métricas. Se ejecuta
+    dentro de un savepoint y se revierte después de leer los gates, de modo
+    que el preview no duplica reglas ni sella `shadow_cycle_metrics`.
+    """
+    moment = now or datetime.now(timezone.utc)
+    cid = current_cycle_id(moment)
+    async with task_session_factory() as factory:
+        async with factory() as session:
+            preview_tx = await session.begin_nested()
+            try:
+                summary = await compute_cycle(
+                    session,
+                    cycle_id=cid,
+                    legacy_schema=legacy_schema,
+                    now=moment,
+                    allow_open_preview=True,
+                )
+                if summary.get("skipped_sealed"):
+                    # Un ciclo abierto sellado viola la separación entre el
+                    # preview y el cierre oficial: no reutilizar ese verde.
+                    return {
+                        "status": "sealed_open_cycle",
+                        "preview_ok": False,
+                        "cycle_id": cid.isoformat(),
+                        "counts_toward_streak": False,
+                    }
+                gates = await evaluate_gates(session, cid)
+                frozen_at = await dedup_cohort_frozen_at(
+                    session, DEDUP_EVAL_COHORT
+                )
+            finally:
+                await preview_tx.rollback()
+
+    failed = sorted(
+        key
+        for key, criterion in gates.items()
+        if criterion["kind"] == KIND_GATE and not criterion["ok"]
+    )
+    alerts = sorted(
+        key
+        for key, criterion in gates.items()
+        if criterion["kind"] == KIND_ALERTA and not criterion["ok"]
+    )
+    eligible = frozen_at is not None and cycle_bounds(cid)[0] >= frozen_at
+    return {
+        "status": "ok",
+        "cycle_id": cid.isoformat(),
+        "window": summary["window"],
+        "observed_until": moment.astimezone(timezone.utc).isoformat(),
+        "preview_ok": not failed and eligible,
+        "cycle_eligible": eligible,
+        "gates_failed": failed,
+        "alertas": alerts,
+        "profiles_measured": summary["profiles_measured"],
+        "counts_toward_streak": False,
+    }
 
 
 # ------------------------------------------------------- ciclo orquestado
@@ -341,6 +414,7 @@ async def gate_status(
     cid = last
     primer_verde = None      # el ciclo verde MÁS RECIENTE de la racha
     ultimo_verde = None      # el más ANTIGUO: entre los dos va la ventana
+    streak_identity = None
     while first is not None and cid >= first:
         entry = await _cycle_entry(session, cid)
         eligible = frozen_at is not None and cycle_bounds(cid)[0] >= frozen_at
@@ -352,7 +426,19 @@ async def gate_status(
             not entry["computado"] and cid in declaradas
         )
         if entry["parada_declarada"]:
-            entry["motivo_parada"] = declaradas[cid]
+            declaration = declaradas[cid]
+            entry["motivo_parada"] = declaration["motivo"]
+            entry["declarada_por"] = declaration["declarada_por"]
+            entry["evidencia_parada"] = declaration["evidencia_sha256"]
+        identity = entry.pop("_identity", None)
+        if counting and entry["ok"]:
+            if streak_identity is None:
+                streak_identity = identity
+            elif identity != streak_identity:
+                entry["ok"] = False
+                entry["gates_rojos"] = sorted(
+                    entry["gates_rojos"] + ["identidad_release_oraculo"]
+                )
         if len(per_cycle) < required:
             per_cycle.append(entry)
         if counting:
@@ -365,7 +451,7 @@ async def gate_status(
                 ultimo_verde = cid
             elif entry["parada_declarada"]:
                 # Ni suma ni rompe: se salta, y queda escrito en el informe.
-                saltadas.append({"cycle": cid.isoformat(), "motivo": declaradas[cid]})
+                saltadas.append({"cycle": cid.isoformat(), **declaradas[cid]})
                 if len(saltadas) > GATE_MAX_DECLARED_GAPS:
                     counting = False
             else:
@@ -385,18 +471,28 @@ async def gate_status(
     if primer_verde is not None and ultimo_verde is not None:
         span = (primer_verde - ultimo_verde).days + 1
     dentro_de_ventana = span is None or span <= GATE_MAX_SPAN_DAYS
+    streak_passed = (
+        consecutive >= required
+        and len(saltadas) <= GATE_MAX_DECLARED_GAPS
+        and dentro_de_ventana
+    )
+    prerequisites = await _gate_prerequisites(session, streak_identity)
     return {
         "consecutive_ok": consecutive,
         "required": required,
-        "gate_passed": (
-            consecutive >= required
-            and len(saltadas) <= GATE_MAX_DECLARED_GAPS
-            and dentro_de_ventana
-        ),
+        "streak_passed": streak_passed,
+        "gate_passed": streak_passed and all(prerequisites.values()),
+        "prerequisites": prerequisites,
         "last_cycle": last.isoformat(),
         "holdout_frozen_at": frozen_at.isoformat() if frozen_at else None,
         # Se publican SIEMPRE: quien lea «7 verdes» tiene que ver también las
         # paradas que hubo entre medias. Un informe que las omitiera estaría
+        "streak_release_sha": (
+            streak_identity[0] if streak_identity is not None else None
+        ),
+        "streak_oracle_fingerprint": (
+            streak_identity[1] if streak_identity is not None else None
+        ),
         # afirmando una continuidad que no hubo.
         "paradas_declaradas": saltadas,
         "max_paradas": GATE_MAX_DECLARED_GAPS,
@@ -407,13 +503,121 @@ async def gate_status(
 
 
 async def _declared_downtime(session: AsyncSession) -> dict:
-    """Paradas del anfitrión declaradas a mano (core0036) → {cycle_id: motivo}."""
+    """Paradas auditables; las filas legacy sin evidencia no pueden saltar ciclos."""
     rows = (
         await session.execute(
-            sa.text("SELECT cycle_id, reason FROM shadow_declared_downtime")
+            sa.text(
+                "SELECT cycle_id, reason, declared_by, evidence_sha256 "
+                "FROM shadow_declared_downtime "
+                "WHERE declared_by <> 'legacy-unverified' "
+                "AND evidence_sha256 <> repeat('0', 64)"
+            )
         )
     ).all()
-    return {r.cycle_id: r.reason for r in rows}
+    return {
+        r.cycle_id: {
+            "motivo": r.reason,
+            "declarada_por": r.declared_by,
+            "evidencia_sha256": r.evidence_sha256,
+        }
+        for r in rows
+    }
+
+
+async def declare_downtime(
+    session: AsyncSession,
+    cycle_id: date,
+    reason: str,
+    operator: str,
+    evidence_sha256: str,
+) -> None:
+    """Declara una ausencia una sola vez, con identidad y evidencia verificable."""
+    _require_nonempty("motivo", reason)
+    _require_nonempty("operador", operator)
+    _require_sha256("evidencia", evidence_sha256)
+    await session.execute(
+        sa.text(
+            "INSERT INTO shadow_declared_downtime "
+            "(cycle_id, reason, declared_by, evidence_sha256) "
+            "VALUES (:cycle, :reason, :operator, :evidence)"
+        ),
+        {
+            "cycle": cycle_id,
+            "reason": reason,
+            "operator": operator,
+            "evidence": evidence_sha256,
+        },
+    )
+
+
+async def attest_thresholds(
+    session: AsyncSession,
+    release_sha: str,
+    oracle_fingerprint: str,
+    operator: str,
+    evidence_sha256: str,
+) -> None:
+    """Registra la ratificación humana de los umbrales para release+oráculo."""
+    _require_release(release_sha)
+    _require_sha256("oráculo", oracle_fingerprint)
+    _require_nonempty("operador", operator)
+    _require_sha256("evidencia", evidence_sha256)
+    await session.execute(
+        sa.text(
+            "INSERT INTO shadow_gate_attestations "
+            "(kind, release_sha, oracle_fingerprint, evidence_sha256, "
+            " attested_by) "
+            "VALUES ('thresholds_ratified', :release, :oracle, :evidence, "
+            "        :operator) ON CONFLICT DO NOTHING"
+        ),
+        {
+            "release": release_sha,
+            "oracle": oracle_fingerprint,
+            "operator": operator,
+            "evidence": evidence_sha256,
+        },
+    )
+
+
+async def _gate_prerequisites(
+    session: AsyncSession, identity: tuple[str, str] | None
+) -> dict[str, bool]:
+    if identity is None:
+        return {"rollback_replay": False, "thresholds_ratified": False}
+    release, oracle = identity
+    rows = (
+        await session.execute(
+            sa.text(
+                "SELECT kind FROM shadow_gate_attestations "
+                "WHERE release_sha = :release AND ("
+                "  (kind = 'rollback_replay' AND oracle_fingerprint = '') OR "
+                "  (kind = 'thresholds_ratified' "
+                "   AND oracle_fingerprint = :oracle))"
+            ),
+            {"release": release, "oracle": oracle},
+        )
+    ).scalars().all()
+    present = set(rows)
+    return {
+        "rollback_replay": "rollback_replay" in present,
+        "thresholds_ratified": "thresholds_ratified" in present,
+    }
+
+
+def _require_nonempty(name: str, value: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} vacío")
+
+
+def _require_sha256(name: str, value: str) -> None:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise ValueError(f"{name} debe ser SHA-256 hexadecimal")
+
+
+def _require_release(value: str) -> None:
+    _require_nonempty("release", value)
+    if value == UNKNOWN_RELEASE:
+        raise ValueError("release desconocida")
 
 
 async def _cycle_entry(session: AsyncSession, cid: date) -> dict:
@@ -459,11 +663,42 @@ async def _cycle_entry(session: AsyncSession, cid: date) -> dict:
     alerts = sorted(
         k for k, g in gates.items() if g["kind"] == KIND_ALERTA and not g["ok"]
     )
+    identity = await _persisted_cycle_identity(session, cid)
+    if identity is None:
+        failed.append("identidad_release_oraculo")
+        failed.sort()
     return {
         "cycle": cid.isoformat(), "computado": True, "recomputado": recomputed,
-        "ok": not failed and not recomputed,
+        "ok": not failed and not recomputed, "_identity": identity,
         "gates_rojos": failed, "alertas": alerts,
     }
+
+
+async def _persisted_cycle_identity(
+    session: AsyncSession, cid: date
+) -> tuple[str, str] | None:
+    details = (
+        await session.execute(
+            sa.text(
+                "SELECT details FROM shadow_cycle_metrics "
+                "WHERE cycle_id = :c AND metric = :m AND scope = 'global'"
+            ),
+            {"c": cid, "m": M_UMBRALES},
+        )
+    ).scalar_one_or_none()
+    if not isinstance(details, dict):
+        return None
+    release = details.get("release_sha")
+    oracle = details.get("oracle_fingerprint")
+    if (
+        not isinstance(release, str)
+        or not release.strip()
+        or release == UNKNOWN_RELEASE
+        or not isinstance(oracle, str)
+        or re.fullmatch(r"[0-9a-f]{64}", oracle) is None
+    ):
+        return None
+    return release, oracle
 
 
 async def render_gate_report(
@@ -473,15 +708,24 @@ async def render_gate_report(
 ) -> str:
     """Informe LEGIBLE del estado del GATE-SOMBRA (contador + últimos ciclos)."""
     st = await gate_status(session, now=now, required=required)
-    verdict = (
-        "GATE-SOMBRA SUPERADO"
-        if st["gate_passed"]
-        else f"EN CURSO (faltan {st['required'] - st['consecutive_ok']})"
-    )
+    missing = [
+        name for name, ready in st["prerequisites"].items() if not ready
+    ]
+    if st["gate_passed"]:
+        verdict = "GATE-SOMBRA SUPERADO"
+    elif st["streak_passed"]:
+        verdict = "BLOQUEADO (faltan prerrequisitos: " + ", ".join(missing) + ")"
+    else:
+        verdict = f"EN CURSO (faltan {st['required'] - st['consecutive_ok']})"
     lines = [
         "GATE-SOMBRA — contador de ciclos consecutivos en verde (§6)",
         f"Último ciclo cerrado: {st['last_cycle']} · consecutivos OK: "
         f"{st['consecutive_ok']}/{st['required']} · estado: {verdict}",
+        "Prerrequisitos: "
+        + ", ".join(
+            f"{name}={'OK' if ready else 'FALTA'}"
+            for name, ready in st["prerequisites"].items()
+        ),
         "",
         f"{'ciclo':<12} {'computado':<10} {'estado':<8} detalle",
         "-" * 72,
@@ -639,6 +883,7 @@ def rollback_replay(
     schema: str | None = None,
     confirm: bool = False,
     slot_release_timeout_s: float = 30.0,
+    operator: str | None = None,
     # G1 H-13: cota de espera del readiness del legacy en el paso 5 — sin
     # ella, con la sombra YA destruida (fuentes off, staging truncado), un
     # legacy que no responde colgaba la herramienta indefinidamente. ~2 min
@@ -665,6 +910,8 @@ def rollback_replay(
             "rollback_replay DESTRUYE el slot y el staging de la sombra: "
             "exige confirm=True explícito (ver shadow/RUNBOOK.md)"
         )
+    _require_nonempty("operador", operator)
+    _require_release(__release_sha__)
     schema = schema or settings.CORE_DB_SCHEMA
     if not _IDENT_RE.match(schema) or schema == "public":
         raise RuntimeError(
@@ -726,6 +973,18 @@ def rollback_replay(
             summary["state_rows_deleted"] = cur.fetchone()[0]
             cur.execute("TRUNCATE shadow_change_log, shadow_capture_state")
         core.commit()
+        # El cierre masivo cambia por completo la selectividad de los índices
+        # parciales de encarnaciones/vacantes activas. Sin estadísticas
+        # frescas, el primer drenado puede repetir durante minutos el join
+        # cross-source de `_url_drift_pairs` para cada lote.
+        refreshed = (
+            "source_listings", "source_listing_incarnations", "vacancies"
+        )
+        with core.cursor() as cur:
+            cur.execute("ANALYZE " + ", ".join(refreshed))
+        core.commit()
+        summary["statistics_refreshed"] = list(refreshed)
+
         logger.info(
             "rollback_replay: paso 3-4 — fuentes legacy desactivadas "
             "(%d encarnaciones cerradas, %d vacantes archivadas) y staging "
@@ -757,15 +1016,31 @@ def rollback_replay(
                 (snapshot_lsn,),
             )
             backfill_rows = cur.fetchone()[0]
+            summary |= {
+                "slot_recreated": True,
+                "snapshot_lsn": int(snapshot_lsn),
+                "last_applied_lsn": int(last_applied),
+                "backfill_rows": int(backfill_rows),
+            }
+            evidence = hashlib.sha256(
+                json.dumps(summary, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            cur.execute(
+                "INSERT INTO shadow_gate_attestations "
+                "(kind, release_sha, oracle_fingerprint, evidence_sha256, "
+                " attested_by, details) "
+                "VALUES ('rollback_replay', %s, '', %s, %s, %s::jsonb) "
+                "ON CONFLICT DO NOTHING",
+                (__release_sha__, evidence, operator, json.dumps(summary)),
+            )
+            summary["attestation"] = {
+                "release_sha": __release_sha__,
+                "evidence_sha256": evidence,
+                "attested_by": operator,
+            }
         core.commit()
     finally:
         core.close()
-    summary |= {
-        "slot_recreated": True,
-        "snapshot_lsn": int(snapshot_lsn),
-        "last_applied_lsn": int(last_applied),
-        "backfill_rows": int(backfill_rows),
-    }
     logger.info(
         "rollback_replay: paso 5 — slot %s re-creado (snapshot_lsn=%d, "
         "%d filas de re-backfill); re-arrancar core-capture",

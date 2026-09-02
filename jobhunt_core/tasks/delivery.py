@@ -48,12 +48,16 @@ logger = logging.getLogger(__name__)
 
 @worker_process_init.connect
 def register_shadow_inbox_transport(**_kwargs) -> None:
-    """Arranque del worker: transporte sombra por defecto (P1-1b, §8).
+    """Arranque: HTTP por destino en Fase C; inbox sombra en Fase B.
 
-    `register_if_unset` respeta cualquier transporte YA inyectado (tests,
-    o el HTTP real que llega en Fase C)."""
+    Ambos respetan cualquier transporte ya inyectado por tests."""
+    from jobhunt_core import http_delivery
     from jobhunt_core.shadow import inbox
 
+    if http_delivery.register_if_configured(
+        fallback=inbox.shadow_inbox_transport
+    ):
+        return
     inbox.register_if_unset()
 
 

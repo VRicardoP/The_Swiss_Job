@@ -11,12 +11,10 @@ DELETE direccionan {id} DUAL: application.id o bookmark puro (=vacancy_id),
 con promoción a application en la misma tx (Decisión 4).
 """
 
-import hashlib
-import json
 import uuid
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request
 
 from jobhunt_core import applications as apps
 from jobhunt_core import matching
@@ -29,12 +27,16 @@ from jobhunt_core.api.deps import (
     get_session,
     require_scope,
 )
+from jobhunt_core.api.http_contract import (
+    WRITE_RESPONSES,
+    check_if_match,
+    json_response,
+    request_hash,
+    with_etag,
+)
 from jobhunt_core.api.idempotency import run_idempotent
 from jobhunt_core.api.v1 import (
     MAX_PAGE_LIMIT,
-    _etag_of,
-    _if_match_matches,
-    _with_etag,
     decode_vacancy_cursor,
     encode_vacancy_cursor,
 )
@@ -48,34 +50,6 @@ router = APIRouter(
         404: {"model": schemas.ErrorDTO},
     },
 )
-
-_WRITE_RESPONSES = {
-    409: {"model": schemas.ErrorDTO},
-    412: {"model": schemas.ErrorDTO},
-}
-
-
-def request_hash(payload: dict) -> str:
-    """sha256 del JSON canónico (sort_keys — mismo contrato que C-3)."""
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
-    ).hexdigest()
-
-
-def json_response(status: int, payload) -> Response:
-    """Respuesta con ETag de la representación; 204 sin cuerpo. Serialización
-    CANÓNICA (sort_keys): el replay idempotente relee el payload de un JSONB
-    (que NO conserva el orden de claves) — sin canonicalizar, el replay no
-    sería byte a byte (Decisión 1)."""
-    if payload is None:
-        return Response(status_code=status)
-    return Response(
-        content=json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str),
-        media_type="application/json",
-        status_code=status,
-        headers={"ETag": _etag_of(payload)},
-    )
-
 
 def _check_storable(body) -> None:
     """G7-P3-1 en este router, con UNA excepción CONDICIONADA: la `url`.
@@ -108,17 +82,6 @@ def _check_storable(body) -> None:
         if item.get("vacancy_id") is None:
             item.pop("url", None)
     ensure_json_storable(cuerpo)
-
-
-def check_if_match(request: Request, payload: dict) -> None:
-    """Precondición If-Match (comparación FUERTE) contra el ETag ACTUAL de la
-    representación — se llama BAJO el FOR UPDATE del recurso (Decisión 2)."""
-    if_match = request.headers.get("if-match")
-    if if_match is not None and not _if_match_matches(if_match, _etag_of(payload)):
-        raise ApiError(
-            412, "precondition_failed",
-            "If-Match no coincide con el ETag actual del recurso",
-        )
 
 
 def _dto_json(item: dict) -> dict:
@@ -252,12 +215,12 @@ async def list_applications(
         items=[schemas.ApplicationDTO(**i) for i in items],
         next_cursor=encode_vacancy_cursor(*next_cur) if next_cur else None,
     )
-    return _with_etag(request, page.model_dump(mode="json"))
+    return with_etag(request, page.model_dump(mode="json"))
 
 
 @router.post(
     "/applications", status_code=201, response_model=schemas.ApplicationDTO,
-    responses=_WRITE_RESPONSES,
+    responses=WRITE_RESPONSES,
 )
 async def create_application(
     request: Request,
@@ -375,7 +338,7 @@ async def _promote_bookmark(session, row, body, provided) -> dict:
 
 @router.patch(
     "/applications/{item_id}", response_model=schemas.ApplicationDTO,
-    responses=_WRITE_RESPONSES,
+    responses=WRITE_RESPONSES,
 )
 async def patch_application(
     item_id: uuid.UUID,
@@ -410,7 +373,7 @@ async def patch_application(
 
 
 @router.delete(
-    "/applications/{item_id}", status_code=204, responses=_WRITE_RESPONSES,
+    "/applications/{item_id}", status_code=204, responses=WRITE_RESPONSES,
 )
 async def delete_application(
     item_id: uuid.UUID,
@@ -457,7 +420,7 @@ async def delete_application(
 @router.put(
     "/profiles/{profile_id}/bookmarks",
     response_model=schemas.BookmarksSyncResultDTO,
-    responses=_WRITE_RESPONSES,
+    responses=WRITE_RESPONSES,
 )
 async def sync_bookmarks(
     profile_id: uuid.UUID,

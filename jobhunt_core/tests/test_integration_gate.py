@@ -144,6 +144,8 @@ def db(gate_db, monkeypatch):
     """Factory async sobre la BD desechable + settings parcheados (el gate,
     el proyector y las tareas crean sus engines desde settings)."""
     monkeypatch.setattr(settings, "CORE_DATABASE_URL", gate_db["async_url"])
+    monkeypatch.setattr(metrics.jobhunt_core, "__release_sha__", "test-release-a")
+    monkeypatch.setattr(gate, "__release_sha__", "test-release-a")
     engine = create_async_engine(
         gate_db["async_url"],
         poolclass=sa.pool.NullPool,
@@ -169,6 +171,15 @@ def db(gate_db, monkeypatch):
                     "labeled_dedup_cohorts, shadow_capture_state"
                 )
             )
+            for table in ("shadow_declared_downtime", "shadow_gate_attestations"):
+                await c.execute(sa.text(
+                    f"ALTER TABLE {table} DISABLE TRIGGER "
+                    f"{table}_immutable"
+                ))
+                await c.execute(sa.text(f"TRUNCATE {table}"))
+                await c.execute(sa.text(
+                    f"ALTER TABLE {table} ENABLE ALWAYS TRIGGER {table}_immutable"
+                ))
             for tabla in ("labeled_dedup_pairs", "labeled_dedup_cohorts"):
                 await c.execute(
                     sa.text(f"ALTER TABLE {tabla} ENABLE ALWAYS TRIGGER {tabla}_truncate_guard")
@@ -422,15 +433,27 @@ G0 = date(2026, 7, 19)
 def _seed_metric(factory, cycle, metric, scope, value, details=None, sealed=True):
     _exec(
         factory,
-        "INSERT INTO shadow_cycle_metrics (cycle_id, metric, scope, value, "
-        "details, finished_at) VALUES (:c, :m, :s, :v, CAST(:d AS jsonb), "
-        "CASE WHEN :f THEN now() END) "
-        "ON CONFLICT (cycle_id, metric, scope) DO UPDATE SET "
-        "value = EXCLUDED.value, details = EXCLUDED.details, "
-        "finished_at = EXCLUDED.finished_at",
-        {"c": cycle, "m": metric, "s": scope, "v": value,
-         "d": json.dumps(details or {}), "f": sealed},
+        "ALTER TABLE shadow_cycle_metrics "
+        "DISABLE TRIGGER shadow_cycle_metrics_sealed_guard",
     )
+    try:
+        _exec(
+            factory,
+            "INSERT INTO shadow_cycle_metrics (cycle_id, metric, scope, value, "
+            "details, finished_at) VALUES (:c, :m, :s, :v, CAST(:d AS jsonb), "
+            "CASE WHEN :f THEN now() END) "
+            "ON CONFLICT (cycle_id, metric, scope) DO UPDATE SET "
+            "value = EXCLUDED.value, details = EXCLUDED.details, "
+            "finished_at = EXCLUDED.finished_at",
+            {"c": cycle, "m": metric, "s": scope, "v": value,
+             "d": json.dumps(details or {}), "f": sealed},
+        )
+    finally:
+        _exec(
+            factory,
+            "ALTER TABLE shadow_cycle_metrics "
+            "ENABLE ALWAYS TRIGGER shadow_cycle_metrics_sealed_guard",
+        )
 
 
 def _freeze_holdout(factory, when):
@@ -479,9 +502,28 @@ def _seed_green_cycle(factory, cycle, scope="profile:aaaa"):
         ("latencia_p95", "global", 20.0, {"lotes": 3}),
         ("coste", "global", 5.0, {}),
         ("reenlace_pct", "global", 0.0, {}),
+        (
+            "gate_umbrales", "global", 0,
+            {
+                "release_sha": "test-release-a",
+                "oracle_fingerprint": "a" * 64,
+            },
+        ),
     ]
     for m, sc, v, d in rows:
         _seed_metric(factory, cycle, m, sc, v, d)
+
+
+def _seed_gate_attestations(factory, release="test-release-a", oracle="a" * 64):
+    _exec(
+        factory,
+        "INSERT INTO shadow_gate_attestations "
+        "(kind, release_sha, oracle_fingerprint, evidence_sha256, attested_by) "
+        "VALUES "
+        "('rollback_replay', :release, '', :evidence, 'test-operator'), "
+        "('thresholds_ratified', :release, :oracle, :evidence, 'test-operator')",
+        {"release": release, "oracle": oracle, "evidence": "e" * 64},
+    )
 
 
 def test_gate_counter_sequences_green_red_and_reset(db):
@@ -495,6 +537,12 @@ def test_gate_counter_sequences_green_red_and_reset(db):
         "span_dias": None,
         "max_span_dias": 14,
         "consecutive_ok": 0, "required": 7, "gate_passed": False,
+        "streak_release_sha": None,
+        "streak_oracle_fingerprint": None,
+        "streak_passed": False,
+        "prerequisites": {
+            "rollback_replay": False, "thresholds_ratified": False,
+        },
         "last_cycle": G0.isoformat(), "holdout_frozen_at": None,
         "per_cycle": [],
     }
@@ -504,6 +552,7 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     # 7 ciclos CONSECUTIVOS en verde (G0-6 .. G0) ⇒ GATE superado.
     for i in range(7):
         _seed_green_cycle(factory, G0 - timedelta(days=i))
+    _seed_gate_attestations(factory)
     st = _status(factory, now=GNOW)
     assert st["consecutive_ok"] == 7 and st["gate_passed"] is True
     assert st["last_cycle"] == "2026-07-19"
@@ -537,8 +586,18 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     # Un ciclo SIN COMPUTAR también resetea: G0-1 se vacía ⇒ solo G0 cuenta.
     _exec(
         factory,
+        "ALTER TABLE shadow_cycle_metrics "
+        "DISABLE TRIGGER shadow_cycle_metrics_sealed_guard",
+    )
+    _exec(
+        factory,
         "DELETE FROM shadow_cycle_metrics WHERE cycle_id = :c",
         {"c": G0 - timedelta(days=1)},
+    )
+    _exec(
+        factory,
+        "ALTER TABLE shadow_cycle_metrics "
+        "ENABLE ALWAYS TRIGGER shadow_cycle_metrics_sealed_guard",
     )
     st = _status(factory, now=GNOW)
     assert st["consecutive_ok"] == 1
@@ -564,6 +623,37 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     assert "SIN COMPUTAR" in text
     assert "gates: perdida" in text
     assert "alertas: no_ingeribles, reenlace_pct" in text
+
+
+
+def test_gate_counter_restarts_when_release_or_oracle_changes(db):
+    """Siete verdes deben pertenecer a una única release y un único oráculo."""
+    factory = db
+    _freeze_holdout(
+        factory, datetime(2026, 7, 1, tzinfo=metrics.CYCLE_TZ)
+    )
+    for i in range(7):
+        _seed_green_cycle(factory, G0 - timedelta(days=i))
+    _seed_metric(
+        factory,
+        G0 - timedelta(days=3),
+        "gate_umbrales",
+        "global",
+        0,
+        {
+            "release_sha": "test-release-b",
+            "oracle_fingerprint": "a" * 64,
+        },
+    )
+
+    status = _status(factory, now=GNOW)
+    assert status["consecutive_ok"] == 3
+    assert status["gate_passed"] is False
+    assert status["streak_release_sha"] == "test-release-a"
+    assert status["per_cycle"][3]["ok"] is False
+    assert status["per_cycle"][3]["gates_rojos"] == [
+        "identidad_release_oraculo"
+    ]
 
 
 def test_gate_counter_ignores_recomputed_cycle(db):
@@ -725,6 +815,7 @@ def test_tasks_registered_beat_cadences_and_core_queues(db):
     from jobhunt_core.tasks.shadow import check_slot_health_task
 
     assert "jobhunt.shadow.run_cycle" in celery_app.tasks
+    assert "jobhunt.shadow.preview_cycle" in celery_app.tasks
     assert "jobhunt.shadow.check_slot_health" in celery_app.tasks
     # run_cycle es ingesta (drena el staging): core.harvest, serializa con
     # el proyector; la vigilancia del slot es ligera: core.default.
@@ -732,6 +823,9 @@ def test_tasks_registered_beat_cadences_and_core_queues(db):
         "queue": "core.harvest"
     }
     assert celery_app.conf.task_routes["jobhunt.shadow.check_slot_health"] == {
+        "queue": "core.default"
+    }
+    assert celery_app.conf.task_routes["jobhunt.shadow.preview_cycle"] == {
         "queue": "core.default"
     }
 
@@ -744,6 +838,9 @@ def test_tasks_registered_beat_cadences_and_core_queues(db):
     }
     assert by_task["jobhunt.shadow.sample_outbox_lag"]["schedule"] == 300.0
     assert by_task["jobhunt.shadow.check_slot_health"]["schedule"] == 300.0
+    assert by_task["jobhunt.shadow.preview_cycle"]["schedule"] == float(
+        settings.CORE_SHADOW_PRE_GATE_EVERY_S
+    )
     assert by_task["jobhunt.shadow.project"]["schedule"] == 300.0
     assert by_task["jobhunt.delivery.dispatch_outbox"]["schedule"] == 300.0
     cron = by_task["jobhunt.shadow.run_cycle"]["schedule"]
@@ -758,6 +855,22 @@ def test_tasks_registered_beat_cadences_and_core_queues(db):
     assert result.successful()
     assert result.result["ok"] is True
     assert result.result["slot_exists"] is False
+
+
+def test_preview_current_cycle_does_not_persist_or_count(db, gate_db):
+    """El pre-gate usa las reglas reales, pero su savepoint no deja filas."""
+    moment = metrics.cycle_bounds(G0)[0] + timedelta(hours=1)
+    result = _run(gate.preview_current_cycle(legacy_schema="public", now=moment))
+
+    assert result["status"] == "ok"
+    assert result["cycle_id"] == G0.isoformat()
+    assert result["counts_toward_streak"] is False
+    assert result["gates_failed"]
+    assert _scalar(
+        db,
+        "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
+        c=G0,
+    ) == 0
 
 
 # ------------------------------------------------- run_cycle end-to-end (§7)
@@ -1034,11 +1147,12 @@ def test_rollback_replay_full_executed_against_disposable_db(capture, db, gate_d
     with pytest.raises(RuntimeError, match="public"):
         gate.rollback_replay(
             gate_db["capture_dsn"], gate_db["core_dsn"], slot=slot,
-            schema="public", confirm=True,
+            schema="public", confirm=True, operator="test-operator",
         )
 
     summary = gate.rollback_replay(
-        gate_db["capture_dsn"], gate_db["core_dsn"], slot=slot, confirm=True
+        gate_db["capture_dsn"], gate_db["core_dsn"], slot=slot, confirm=True,
+        operator="test-operator",
     )
     # Secuencia completa reportada, calculable a mano.
     assert summary["slot_dropped"] is True
@@ -1049,7 +1163,17 @@ def test_rollback_replay_full_executed_against_disposable_db(capture, db, gate_d
     assert summary["state_rows_deleted"] == 1
     assert summary["slot_recreated"] is True
     assert summary["backfill_rows"] == 5  # == legacy (3 jobs + 1 user + 1 perfil)
+    assert summary["statistics_refreshed"] == [
+        "source_listings",
+        "source_listing_incarnations",
+        "vacancies",
+    ]
     assert summary["snapshot_lsn"] > old_state.snapshot_lsn
+    assert summary["attestation"]["release_sha"] == "test-release-a"
+    assert _scalar(
+        factory, "SELECT count(*) FROM shadow_gate_attestations "
+        "WHERE kind = 'rollback_replay' AND release_sha = 'test-release-a'"
+    ) == 1
 
     # Fuentes desactivadas y vacantes archivadas (cero encarnaciones vivas).
     assert _scalar(
@@ -1199,9 +1323,10 @@ def test_consumer_down_30min_alert_and_lossless_recovery(capture, db, caplog):
 def _declara_parada(factory, cycle_id, motivo="apagado del anfitrión"):
     _exec(
         factory,
-        "INSERT INTO shadow_declared_downtime (cycle_id, reason) VALUES (:c, :r) "
-        "ON CONFLICT (cycle_id) DO UPDATE SET reason = :r",
-        {"c": cycle_id, "r": motivo},
+        "INSERT INTO shadow_declared_downtime "
+        "(cycle_id, reason, declared_by, evidence_sha256) "
+        "VALUES (:c, :r, 'test-operator', :e)",
+        {"c": cycle_id, "r": motivo, "e": "d" * 64},
     )
 
 
@@ -1224,6 +1349,8 @@ def test_una_parada_declarada_no_rompe_la_racha(db):
     # Y la parada se PUBLICA: nadie puede leer «4 verdes» sin ver el hueco.
     assert len(con["paradas_declaradas"]) == 1, con["paradas_declaradas"]
     assert con["paradas_declaradas"][0]["motivo"] == "apagado del anfitrión"
+    assert con["paradas_declaradas"][0]["declarada_por"] == "test-operator"
+    assert con["paradas_declaradas"][0]["evidencia_sha256"] == "d" * 64
     hueco = next(
         e for e in con["per_cycle"]
         if e["cycle"] == (G0 - timedelta(days=2)).isoformat()
@@ -1274,3 +1401,30 @@ def test_demasiadas_paradas_declaradas_cortan_igual(db):
         "las paradas se toleraron sin tope: " + repr(r)
     )
     assert r["gate_passed"] is False
+
+
+def test_gate_necesita_ensayo_y_ratifacion_para_superarse(db):
+    factory = db
+    _freeze_holdout(factory, datetime(2026, 7, 1, tzinfo=metrics.CYCLE_TZ))
+    for i in range(7):
+        _seed_green_cycle(factory, G0 - timedelta(days=i))
+    status = _status(factory, now=GNOW)
+    assert status["streak_passed"] is True
+    assert status["gate_passed"] is False
+    assert status["prerequisites"] == {
+        "rollback_replay": False, "thresholds_ratified": False,
+    }
+
+
+def test_evidencia_de_gate_y_parada_es_inmutable(db):
+    factory = db
+    _seed_gate_attestations(factory)
+    _declara_parada(factory, G0)
+    for sql in (
+        "UPDATE shadow_gate_attestations SET attested_by = 'otro'",
+        "DELETE FROM shadow_gate_attestations",
+        "UPDATE shadow_declared_downtime SET reason = 'otro'",
+        "DELETE FROM shadow_declared_downtime",
+    ):
+        with pytest.raises(Exception, match="evidencia inmutable"):
+            _exec(factory, sql)

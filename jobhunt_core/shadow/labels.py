@@ -49,7 +49,12 @@ DEDUP_SEED_SOURCE = "seed_duplicate_of"
 # etiquetó el asistente que sí trabajó el detector y sus umbrales, así que no
 # servía como oráculo; se conserva congelada solo como término de comparación.
 # Los dos etiquetados coinciden en los 56 pares.
-DEDUP_EVAL_COHORT = "holdout-dedup-2026-08-30"
+# Sucesora trazable: conserva 51/56 pares cuyos dos lados se resuelven tras
+# reconstruir las encarnaciones legacy y dos alias por URL exacta.
+# Los cinco restantes no existen en el CSV; nunca se consultó
+# su verdict para decidir. El manifiesto congelado conserva el acta y hashes
+# de la cohorte independiente original.
+DEDUP_EVAL_COHORT = "holdout-dedup-20260830-v3"
 
 # `legacy_schema` se interpola como identificador (no admite bind param):
 # misma validación que migrate.py antes de interpolar DDL.
@@ -290,20 +295,27 @@ async def dedup_cohort_frozen_at(
 
 
 async def freeze_set(session: AsyncSession, set_id: uuid.UUID) -> datetime:
-    """Congela el set y devuelve frozen_at. IDEMPOTENTE: si ya estaba
-    congelado devuelve el timestamp EXISTENTE sin error (COALESCE en una
-    sola sentencia — sin ventana entre leer y escribir)."""
+    """Congela el set y devuelve frozen_at; si ya lo estaba, devuelve su sello."""
     frozen_at = (
         await session.execute(
             sa.text(
-                "UPDATE labeled_sets SET frozen_at = COALESCE(frozen_at, now()) "
-                "WHERE id = :sid RETURNING frozen_at"
+                "UPDATE labeled_sets SET frozen_at = statement_timestamp() "
+                "WHERE id = :sid AND frozen_at IS NULL RETURNING frozen_at"
             ),
             {"sid": set_id},
         )
     ).scalar_one_or_none()
     if frozen_at is None:
-        raise LabeledSetNotFoundError(f"labeled_set inexistente: {set_id}")
+        frozen_at = (
+            await session.execute(
+                sa.text("SELECT frozen_at FROM labeled_sets WHERE id = :sid"),
+                {"sid": set_id},
+            )
+        ).scalar_one_or_none()
+        if frozen_at is None:
+            raise LabeledSetNotFoundError(
+                f"labeled_set inexistente: {set_id}"
+            )
     return frozen_at
 
 
@@ -312,12 +324,17 @@ async def map_job_refs_to_vacancies(
 ) -> dict[str, uuid.UUID]:
     """Mapeo job_ref (hash legacy) → vacancy_id del core para MÉTRICAS (§4).
 
-    Resuelve por `source_listings.external_id` en fuentes `legacy:%` y por
-    CUALQUIER encarnación del slot — activa O CERRADA: la vacante persiste
+    Resuelve por `source_listings.external_id` en fuentes `legacy:%` o
+    `evaluation:%` y por CUALQUIER encarnación del slot — activa O CERRADA:
+    la vacante persiste
     aunque el job legacy se desactive/borre (los pares de duplicate_of apuntan
     por definición a jobs ya desactivados). Determinista si hay varias: gana
-    la de mayor seq (desempates por first_seen_at/id, orden total fijo).
-    Los refs sin slot legacy quedan FUERA del dict (el llamador decide).
+    la de mayor seq (desempates por first_seen_at/id, orden total fijo) y sigue
+    `merged_into` hasta la vacante canónica que presenta el feed. Una cadena
+    cíclica o demasiado profunda queda sin mapear (fallo cerrado).
+    `evaluation:%` contiene solo alias de identidad del corpus usados por un
+    oráculo reproducible; no crea vacantes ni participa en cosecha. Los refs
+    sin slot permitido quedan FUERA del dict (el llamador decide).
     """
     refs = list(job_refs)
     if not refs:
@@ -325,13 +342,30 @@ async def map_job_refs_to_vacancies(
     rows = (
         await session.execute(
             sa.text(
-                "SELECT DISTINCT ON (l.external_id) "
-                "  l.external_id AS job_ref, i.vacancy_id "
-                "FROM source_listings l "
-                "JOIN sources src ON src.id = l.source_id "
-                "JOIN source_listing_incarnations i ON i.source_listing_id = l.id "
-                "WHERE src.name LIKE 'legacy:%' AND l.external_id = ANY(:refs) "
-                "ORDER BY l.external_id, i.seq DESC, i.first_seen_at DESC, i.id"
+                "WITH RECURSIVE chosen AS ("
+                "  SELECT DISTINCT ON (l.external_id) "
+                "    l.external_id AS job_ref, i.vacancy_id "
+                "  FROM source_listings l "
+                "  JOIN sources src ON src.id = l.source_id "
+                "  JOIN source_listing_incarnations i "
+                "    ON i.source_listing_id = l.id "
+                "  WHERE (src.name LIKE 'legacy:%' "
+                "    OR src.name LIKE 'evaluation:%') "
+                "    AND l.external_id = ANY(:refs) "
+                "  ORDER BY l.external_id, i.seq DESC, "
+                "    i.first_seen_at DESC, i.id"
+                "), chain AS ("
+                "  SELECT c.job_ref, v.id AS vacancy_id, v.merged_into, "
+                "    ARRAY[v.id] AS path, 0 AS depth "
+                "  FROM chosen c JOIN vacancies v ON v.id = c.vacancy_id "
+                "  UNION ALL "
+                "  SELECT ch.job_ref, v.id, v.merged_into, "
+                "    ch.path || v.id, ch.depth + 1 "
+                "  FROM chain ch JOIN vacancies v ON v.id = ch.merged_into "
+                "  WHERE ch.depth < 64 AND NOT v.id = ANY(ch.path)"
+                ") "
+                "SELECT job_ref, vacancy_id FROM chain "
+                "WHERE merged_into IS NULL"
             ),
             {"refs": refs},
         )

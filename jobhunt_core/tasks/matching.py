@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task(name="jobhunt.matching.run_profile", bind=True, max_retries=1)
-def run_profile_task(self, profile_id: str, limit: int = 100) -> dict[str, Any]:
+def run_profile_task(
+    self, profile_id: str, limit: int = matching.CANONICAL_EVAL_LIMIT
+) -> dict[str, Any]:
     try:
         return asyncio.run(_run_profile_impl(profile_id, limit))
     except Exception as exc:

@@ -102,6 +102,27 @@ def _counts(factory, source_id):
     return asyncio.run(go())
 
 
+async def _orphan_ids(session) -> set[uuid.UUID]:
+    """Vacantes sin incarnación en el instante actual."""
+    rows = await session.execute(
+        sa.text(
+            "SELECT id FROM vacancies WHERE primary_incarnation_id IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM source_listing_incarnations i "
+            "WHERE i.vacancy_id = vacancies.id)"
+        )
+    )
+    return {row.id for row in rows}
+
+
+def _orphan_snapshot(factory) -> set[uuid.UUID]:
+    """Baseline atribuible: evita contar fixtures ajenos por una ventana temporal."""
+    async def go():
+        async with factory() as session:
+            return await _orphan_ids(session)
+
+    return asyncio.run(go())
+
+
 def _listing(ext, payload=None, url=None):
     return RawListing(
         external_id=ext,
@@ -205,6 +226,7 @@ def test_concurrent_scopes_same_source_no_duplicates(db):
     factory, created = db
     scope_a = _seed_scope(factory, created)
     scope_b = _seed_second_scope(factory, created)
+    orphan_baseline = _orphan_snapshot(factory)
 
     # Slot 'recycled' pre-existente con su incarnación CERRADA (rama seq>1).
     _sink_batch(factory, scope_a, [_listing("recycled")])
@@ -255,16 +277,7 @@ def test_concurrent_scopes_same_source_no_duplicates(db):
             for r in rows:
                 assert (r.slots, r.activas) == (1, 1), r
             # Sin vacantes huérfanas: cada vacante creada tiene su incarnación.
-            orphans = (
-                await s.execute(
-                    sa.text(
-                        "SELECT count(*) FROM vacancies v "
-                        "WHERE v.id NOT IN (SELECT vacancy_id FROM source_listing_incarnations) "
-                        "AND v.primary_incarnation_id IS NULL AND v.created_at > now() - interval '5 minutes'"
-                    )
-                )
-            ).scalar()
-            assert orphans == 0
+            assert await _orphan_ids(s) - orphan_baseline == set()
             # El slot reciclado reabrió con seq=2.
             seq = (
                 await s.execute(
@@ -289,6 +302,7 @@ def test_concurrent_cross_key_lock_order_no_deadlock(db):
     factory, created = db
     scope_a = _seed_scope(factory, created)
     scope_b = _seed_second_scope(factory, created)
+    orphan_baseline = _orphan_snapshot(factory)
 
     async def worker(scope_id, listings):
         async with factory() as s:
@@ -330,17 +344,7 @@ def test_concurrent_cross_key_lock_order_no_deadlock(db):
             ).one()
             # 2 URLs por ronda x 5 rondas; cada slot con SU incarnación activa.
             assert (c.slots, c.activas) == (10, 10)
-            orphans = (
-                await s.execute(
-                    sa.text(
-                        "SELECT count(*) FROM vacancies v "
-                        "WHERE v.id NOT IN (SELECT vacancy_id FROM source_listing_incarnations) "
-                        "AND v.primary_incarnation_id IS NULL "
-                        "AND v.created_at > now() - interval '5 minutes'"
-                    )
-                )
-            ).scalar()
-            assert orphans == 0
+            assert await _orphan_ids(s) - orphan_baseline == set()
 
     asyncio.run(invariants())
 

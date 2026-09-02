@@ -19,11 +19,17 @@
 import hashlib
 import json
 import logging
+import re
 import uuid
 
 import sqlalchemy as sa
-
 logger = logging.getLogger(__name__)
+
+
+# Único tamaño del conjunto canónico. El feed no puede depender de si la
+# evaluación la inició Celery o la recuperación del proyector.
+CANONICAL_EVAL_LIMIT = 1800
+
 
 # Tope de tuplas del scan ITERATIVO del HNSW (rev. A-08 #2): strict_order
 # sigue escaneando hasta llenar el LIMIT tras el filtro, acotado por esto.
@@ -50,6 +56,79 @@ CANDIDATES_SQL = (
     "ORDER BY oe.vector <=> CAST(:vec AS vector) "
     "LIMIT :k"
 )
+
+
+HYBRID_POLICY_NAME = "hybrid-rrf"
+HYBRID_POLICY_VERSION = "v1"
+HYBRID_POLICY_WEIGHTS = {"algorithm": "hybrid_rrf_v1"}
+_RRF_K = 60
+_LEXICAL_WEIGHT = 1.15
+
+# Unión de recuperación semántica y léxica. Ambas ramas recorren exactamente
+# el corpus elegible del modelo; la búsqueda léxica no adelanta ofertas que
+# aún no tienen embedding. RRF evita comparar escalas incompatibles y el peso
+# léxico, apenas superior, desempata a favor de coincidencias explícitas de
+# título/skills cuando solo una rama recupera la oferta.
+HYBRID_CANDIDATES_SQL = f"""
+WITH ann AS MATERIALIZED (
+    SELECT v.id AS vacancy_id,
+           v.current_offer_revision_id AS offer_revision_id,
+           1 - (oe.vector <=> CAST(:vec AS vector)) AS sim,
+           row_number() OVER (
+               ORDER BY oe.vector <=> CAST(:vec AS vector)
+           ) AS semantic_rank
+    FROM vacancies v
+    JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id
+    JOIN offer_embeddings oe
+      ON oe.text_hash = orv.text_hash AND oe.model_id = :mid
+    WHERE v.archived_at IS NULL AND v.merged_into IS NULL
+    ORDER BY oe.vector <=> CAST(:vec AS vector)
+    LIMIT :k
+), lexical AS MATERIALIZED (
+    SELECT v.id AS vacancy_id,
+           v.current_offer_revision_id AS offer_revision_id,
+           ts_rank_cd(orv.search_document, q.query, 32) AS lexical_score,
+           row_number() OVER (
+               ORDER BY ts_rank_cd(orv.search_document, q.query, 32) DESC,
+                        v.id
+           ) AS lexical_rank
+    FROM vacancies v
+    JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id
+    JOIN offer_embeddings oe
+      ON oe.text_hash = orv.text_hash AND oe.model_id = :mid
+    CROSS JOIN websearch_to_tsquery('simple', :lex_query) AS q(query)
+    WHERE v.archived_at IS NULL AND v.merged_into IS NULL
+      AND orv.search_document @@ q.query
+    ORDER BY lexical_score DESC, v.id
+    LIMIT :k
+)
+SELECT COALESCE(a.vacancy_id, l.vacancy_id) AS vacancy_id,
+       COALESCE(a.offer_revision_id, l.offer_revision_id) AS offer_revision_id,
+       a.sim, a.semantic_rank, l.lexical_rank, l.lexical_score,
+       (
+         COALESCE(1.0 / ({_RRF_K} + a.semantic_rank), 0.0)
+         + {_LEXICAL_WEIGHT} *
+           COALESCE(1.0 / ({_RRF_K} + l.lexical_rank), 0.0)
+       ) * (100.0 * ({_RRF_K} + 1) / (1.0 + {_LEXICAL_WEIGHT}))
+         AS rank_score
+FROM ann a
+FULL OUTER JOIN lexical l
+  ON l.vacancy_id = a.vacancy_id
+ AND l.offer_revision_id = a.offer_revision_id
+ORDER BY rank_score DESC, COALESCE(a.vacancy_id, l.vacancy_id)
+LIMIT :k
+"""
+
+
+def _lexical_query(content: dict) -> str:
+    """Consulta OR acotada a señales explícitas del perfil, nunca al CV entero."""
+    raw = " ".join(
+        [str(content.get("title") or "")]
+        + [str(skill) for skill in content.get("skills") or []]
+    ).casefold()
+    raw = raw.replace("c++", "cplusplus").replace("c#", "csharp")
+    tokens = list(dict.fromkeys(re.findall(r"[^\W\d_]\w{2,}", raw)))[:32]
+    return " OR ".join(tokens)
 
 
 def eval_key(offer_revision_id, profile_revision_id, model_id, policy_id) -> str:
@@ -81,12 +160,17 @@ async def ensure_policy(
     row = (
         await session.execute(
             sa.text(
-                "SELECT id, active FROM scoring_policies "
+                "SELECT id, active, weights FROM scoring_policies "
                 "WHERE name = :name AND prompt_version = :ver FOR UPDATE"
             ),
             {"name": name, "ver": prompt_version},
         )
     ).one()
+    requested_weights = weights or {}
+    if row.weights != requested_weights:
+        raise ValueError(
+            f"policy {name}@{prompt_version}: weights distintos para la misma versión"
+        )
     if row.active != active:
         await session.execute(
             sa.text("UPDATE scoring_policies SET active = :a WHERE id = :id"),
@@ -114,8 +198,8 @@ async def evaluate_profile(
     move_current: bool = True,
     with_corpus_generation: bool = False,
 ) -> dict:
-    """Evalúa el perfil (revisión VIGENTE + su vector) contra las ofertas
-    ACTIVAS con vector del mismo modelo, por coseno (HNSW).
+    """Evalúa el perfil vigente contra el corpus embebido con la política
+    versionada indicada (coseno o recuperación híbrida).
 
     - LOCK por perfil (FOR UPDATE — mismo protocolo que save_profile_revision;
       auditoría A-08): evaluaciones del mismo perfil se SERIALIZAN, y la que
@@ -143,13 +227,27 @@ async def evaluate_profile(
             "status": "not_found", "evaluated": 0, "new_evals": 0,
             "moved_current": False,
         }
+    policy_weights = (
+        await session.execute(
+            sa.text("SELECT weights FROM scoring_policies WHERE id = :id"),
+            {"id": policy_id},
+        )
+    ).scalar_one_or_none()
+    if not isinstance(policy_weights, dict):
+        raise ValueError(f"política inexistente o weights inválidos: {policy_id}")
+    algorithm = policy_weights.get("algorithm", "cosine")
+    if algorithm not in {"cosine", "hybrid_rrf_v1"}:
+        raise ValueError(f"algoritmo de matching no soportado: {algorithm}")
+
     prof = (
         await session.execute(
             sa.text(
-                "SELECT cur.revision_id, pe.vector::text AS vec "
+                "SELECT cur.revision_id, pr.content, pe.vector::text AS vec "
                 "FROM (SELECT DISTINCT ON (profile_id) profile_id, revision_id "
                 "      FROM profile_revision_activations WHERE profile_id = :pid "
                 "      ORDER BY profile_id, seq DESC) cur "
+                "JOIN profile_revisions pr ON pr.id = cur.revision_id "
+                "  AND pr.profile_id = cur.profile_id "
                 "JOIN profile_embeddings pe "
                 "  ON pe.profile_revision_id = cur.revision_id AND pe.model_id = :mid"
             ),
@@ -201,19 +299,24 @@ async def evaluate_profile(
             "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
             "profile_revision_id": prof.revision_id, "corpus_generation": corpus_gen,
         }
-    params = {"vec": prof.vec, "mid": model_id, "k": limit}
+    lex_query = _lexical_query(prof.content) if algorithm == "hybrid_rrf_v1" else ""
+    hybrid = bool(lex_query)
+    candidate_sql = HYBRID_CANDIDATES_SQL if hybrid else CANDIDATES_SQL
+    params = {
+        "vec": prof.vec, "mid": model_id, "k": limit, "lex_query": lex_query,
+    }
     ef_search = min(max(limit, 40), 1000)
     await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(ef_search)}"))
     await session.execute(sa.text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
     await session.execute(
         sa.text(f"SET LOCAL hnsw.max_scan_tuples = {int(MAX_SCAN_TUPLES)}")
     )
-    candidates = (await session.execute(sa.text(CANDIDATES_SQL), params)).all()
+    candidates = (await session.execute(sa.text(candidate_sql), params)).all()
     if len(candidates) < target:
         # Inanición REAL del scan acotado: el exacto responde siempre bien.
         await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
         await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
-        candidates = (await session.execute(sa.text(CANDIDATES_SQL), params)).all()
+        candidates = (await session.execute(sa.text(candidate_sql), params)).all()
         await session.execute(sa.text("SET LOCAL enable_indexscan = on"))
         await session.execute(sa.text("SET LOCAL enable_bitmapscan = on"))
     if not candidates:
@@ -225,15 +328,29 @@ async def evaluate_profile(
     eval_rows = []
     for c in candidates:
         key = eval_key(c.offer_revision_id, prof.revision_id, model_id, policy_id)
-        # Coseno en [-1, 1] → score 0..100 (2 decimales, NUMERIC(6,2)).
-        score = round(max(0.0, float(c.sim)) * 100, 2)
+        if hybrid:
+            similarity = round(float(c.sim), 6) if c.sim is not None else None
+            score = round(min(100.0, max(0.0, float(c.rank_score))), 2)
+            score_parts = {
+                "algorithm": "hybrid_rrf_v1",
+                "similarity": similarity,
+                "semantic_rank": c.semantic_rank,
+                "lexical_rank": c.lexical_rank,
+                "lexical_score": (
+                    round(float(c.lexical_score), 6)
+                    if c.lexical_score is not None else None
+                ),
+            }
+        else:
+            score = round(max(0.0, float(c.sim)) * 100, 2)
+            score_parts = {"similarity": round(float(c.sim), 6)}
         eval_rows.append(
             {
                 "id": uuid.uuid4(), "pid": profile_id, "vid": c.vacancy_id,
                 "orid": c.offer_revision_id, "prid": prof.revision_id,
                 "mid": model_id, "spid": policy_id, "key": key,
                 "score": score,
-                "scores": json.dumps({"similarity": round(float(c.sim), 6)}),
+                "scores": json.dumps(score_parts),
             }
         )
     eval_rows.sort(key=lambda r: str(r["vid"]))  # orden determinista

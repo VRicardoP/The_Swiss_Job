@@ -199,18 +199,3 @@ async def run_idempotent(session, principal, route, request_hash, key, handler):
             {"key": key},
         )
     return row.response["status"], row.response["body"]
-
-
-async def purge_expired(session) -> int:
-    """Purga de reservas caducadas (barrido por ix_idem_expires_at). CABLEADA
-    en el beat del core-worker vía `jobhunt.idempotency.purge_expired`
-    (celery_app.py, cadencia CORE_IDEMPOTENCY_PURGE_EVERY_S) — 2º análisis de
-    C-API-W: la deferral a C-2 era huérfana (su DoD son arpones del piloto).
-    Además acota la retención del cv_text guardado en `response` al TTL."""
-    return (
-        await session.execute(
-            sa.text(
-                "DELETE FROM idempotency_records WHERE expires_at < now()"
-            )
-        )
-    ).rowcount

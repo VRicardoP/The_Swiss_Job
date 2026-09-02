@@ -30,6 +30,12 @@ from jobhunt_core.api.deps import (
     get_session,
     require_scope,
 )
+from jobhunt_core.api.http_contract import (
+    etag_of as _etag_of,
+    if_match_matches as _if_match_matches,
+    if_none_match_matches as _if_none_match_matches,
+    with_etag as _with_etag,
+)
 from jobhunt_core.api.idempotency import run_idempotent
 
 # Los errores del contrato quedan DOCUMENTADOS en OpenAPI (auditoría A-09:
@@ -163,57 +169,6 @@ def _location_conditions(where: list[str], params: dict, **values: str | None) -
                 "in lower(coalesce(o.content->>'location', ''))) > 0"
             )
             params[pname] = value.strip()
-
-
-def _etag_of(payload: dict) -> str:
-    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
-    return '"' + hashlib.sha256(canonical.encode()).hexdigest()[:32] + '"'
-
-
-def _if_match_matches(header: str, etag: str) -> bool:
-    """Semántica HTTP real de If-Match (RFC 9110 §13.1.1): comparación FUERTE
-    — `*` casa cualquier entidad existente; un validador DÉBIL (W/) JAMÁS
-    satisface la precondición (a diferencia de If-None-Match, que sí admite la
-    comparación débil). Se usa en la escritura optimista del PUT."""
-    header = header.strip()
-    if header == "*":
-        return True
-    for part in header.split(","):
-        cand = part.strip()
-        if cand.startswith("W/"):
-            continue  # validador débil: no equivale bajo comparación fuerte
-        if cand == etag:
-            return True
-    return False
-
-
-def _if_none_match_matches(header: str, etag: str) -> bool:
-    """Semántica HTTP real de If-None-Match (rev. A-09 #5): lista de
-    entidades, comodín `*` y comparación DÉBIL (W/ se ignora para GET)."""
-    header = header.strip()
-    if header == "*":
-        return True
-    current = etag.strip('"')
-    for part in header.split(","):
-        cand = part.strip()
-        if cand.startswith("W/"):
-            cand = cand[2:].strip()
-        if cand.strip('"') == current:
-            return True
-    return False
-
-
-def _with_etag(request: Request, payload: dict) -> Response:
-    """304 si la representación no cambió (If-None-Match); ETag siempre."""
-    etag = _etag_of(payload)
-    inm = request.headers.get("if-none-match")
-    if inm and _if_none_match_matches(inm, etag):
-        return Response(status_code=304, headers={"ETag": etag})
-    return Response(
-        content=json.dumps(payload, ensure_ascii=False, default=str),
-        media_type="application/json",
-        headers={"ETag": etag},
-    )
 
 
 async def _vacancy_dtos(session, vacancy_ids) -> dict:

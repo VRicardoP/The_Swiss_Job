@@ -286,6 +286,29 @@ _EXACT_INTRA_SQL = (
     "  AND a.loc = b.loc AND a.id < b.id "
     + _ON_CONFLICT
 )
+# Variante HISTÓRICA del mismo generador: idéntica salvo que NO excluye las
+# archivadas. `merged_into IS NULL` se conserva —un loser fusionado no vuelve a
+# ser candidato— y también la identidad (text_hash + fuente + ubicación).
+#
+# Se deriva por sustitución para que no puedan divergir: una segunda copia del
+# SQL se desincroniza a la primera corrección. Pero `str.replace` NO falla
+# cuando no encuentra su patrón: devuelve la cadena intacta. Si alguien reescribe
+# el WHERE de `_EXACT_INTRA_SQL`, esta variante pasaría a ser IDÉNTICA a la
+# diaria —active-only— y el backfill histórico dejaría de encontrar nada, en
+# silencio y con los tests en verde. Por eso se comprueba aquí, al importar.
+_HISTORY_FILTRO_ORIGEN = "v.archived_at IS NULL AND v.merged_into IS NULL"
+_EXACT_INTRA_HISTORY_SQL = _EXACT_INTRA_SQL.replace(
+    _HISTORY_FILTRO_ORIGEN,
+    "v.merged_into IS NULL",
+    1,
+)
+if _EXACT_INTRA_HISTORY_SQL == _EXACT_INTRA_SQL:  # pragma: no cover - guarda de import
+    raise RuntimeError(
+        "_EXACT_INTRA_HISTORY_SQL no pudo derivarse: el filtro "
+        f"{_HISTORY_FILTRO_ORIGEN!r} ya no aparece en _EXACT_INTRA_SQL. La "
+        "variante histórica habría quedado igual que la diaria (active-only) y "
+        "el backfill no recuperaría ningún candidato archivado"
+    )
 
 
 # Generador LÉXICO cross-portal (TRACK R.2b, 2026-08-24). El examen del
@@ -472,6 +495,16 @@ async def lexical_backfill(session: AsyncSession) -> int:
     ).rowcount
 
 
+async def exact_intra_backfill(session: AsyncSession) -> int:
+    """Restaura candidatos exactos históricos sobre TODO el corpus.
+
+    Incluye archivadas: sus candidatos se conservaban antes del rollback y
+    un holdout congelado puede seguir apuntándolas. El barrido diario sigue
+    limitado al corpus activo.
+    """
+    return (await session.execute(sa.text(_EXACT_INTRA_HISTORY_SQL))).rowcount
+
+
 async def scan_semantic_candidates(
     session: AsyncSession, window_hours: int | None = None
 ) -> dict:
@@ -569,7 +602,9 @@ async def scan_semantic_candidates(
 
     # Exactos intra-fuente: pase completo siempre (barato: un join indexado;
     # la idempotencia la da uq_dedup_pair).
-    exactos = (await session.execute(sa.text(_EXACT_INTRA_SQL))).rowcount
+    exactos = (
+        await session.execute(sa.text(_EXACT_INTRA_SQL))
+    ).rowcount
 
     # Léxico cross-portal (R.2b): misma ventana incremental que el ANN.
     lex_params = {
