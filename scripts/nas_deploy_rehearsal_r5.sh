@@ -229,14 +229,24 @@ async def main():
                 s, matching.HYBRID_POLICY_NAME,
                 matching.HYBRID_POLICY_VERSION,
                 weights=matching.HYBRID_POLICY_WEIGHTS, active=False)
-            v2_id = await matching.ensure_policy(
+            # v2 se registró con peso 1.15 y sus 1800 evaluaciones ya
+            # persistidas NO se recalculan al cambiar el peso: eval_key no
+            # lleva los parámetros del algoritmo, y mezclar dos regímenes de
+            # puntuación bajo el mismo policy_id produjo un ranking basura
+            # (feed_n 2380 = 1800 viejas + ~580 nuevas). El contrato del
+            # proyecto ya lo decía: una política versionada NO muta — otra
+            # versión, otra fila. El peso 0.25 es la versión v3.
+            await matching.ensure_policy(
                 s, matching.HYBRID_POLICY_NAME,
                 matching.HYBRID2_POLICY_VERSION,
+                weights=matching.HYBRID2_POLICY_WEIGHTS, active=False)
+            v3_id = await matching.ensure_policy(
+                s, matching.HYBRID_POLICY_NAME, 'v3',
                 weights=matching.HYBRID2_POLICY_WEIGHTS, active=True)
             active = set((await s.execute(sa.text(
                 'SELECT id FROM scoring_policies WHERE active'
             ))).scalars())
-            if active != {canonical_id, v2_id}:
+            if active != {canonical_id, v3_id}:
                 raise RuntimeError(f'políticas activas inesperadas: {active}')
 
             exact_backfill = await exact_intra_backfill(s)
@@ -249,7 +259,7 @@ async def main():
             if second['n']:
                 raise RuntimeError('revalidación dedup no fue idempotente')
             await s.commit()
-            print({'hybrid_policy_id': str(hybrid_id),
+            print({'v3_policy_id': str(v3_id),
                    'exact_intra_backfill': exact_backfill,
                    'lexical_backfill': lexical,
                    'revalidation': applied})
