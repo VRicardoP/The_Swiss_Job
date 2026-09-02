@@ -177,7 +177,13 @@ JOB_PAYLOAD_MAP: dict[str, str] = {
 }
 
 # Contenido EXACTO del perfil sombra (§3, PF.5 — vectores comparables).
-PROFILE_FIELDS = ("title", "cv_text", "skills")
+# Fase 2 del cierre v5: las preferencias viajan con el perfil. El fail-safe de
+# _complete_profile_content ya preserva genéricamente cualquier campo omitido
+# desde la revisión vigente — un UPDATE parcial jamás vacía una preferencia.
+PROFILE_FIELDS = (
+    "title", "cv_text", "skills", "languages", "locations",
+    "experience_years", "salary_min", "salary_max", "remote_pref",
+)
 
 # Orden FK-safe del ERASE (el de tests/dbcleanup.purge_consumer_graph, en
 # código de producción): estado ANTES que evaluaciones (FK RESTRICT del
@@ -1293,21 +1299,34 @@ async def _upsert_profile_pks(session, cid, folds) -> dict[str, uuid.UUID]:
     return pid_by_pk
 
 
+# Campos SIN los cuales no puede nacer un perfil (contrato de embeddings):
+# su ausencia sin revisión previa salta con alerta. Las PREFERENCIAS ausentes
+# (Fase 2 v5) se preservan si hay vigente y degradan a su default si no la
+# hay — un perfil nuevo de una captura vieja (sin columnas de preferencias)
+# sigue naciendo, pero jamás una revisión con el CV vacío.
+_PROFILE_TEXT_CRITICAL = ("title", "cv_text", "skills")
+
+
 async def _complete_profile_content(session, pid, pk, fold) -> dict | None:
-    """Content EXACTO {title, cv_text, skills}; los campos omitidos (fail-safe
-    `_omitted` sin `_backfilled`) se PRESERVAN desde la revisión vigente —
-    sin vigente, None con alerta (jamás una revisión con CV vacío)."""
+    """Content canónico del perfil; los campos omitidos (fail-safe `_omitted`
+    sin `_backfilled`, o payload que no trae la columna) se PRESERVAN desde la
+    revisión vigente — un UPDATE parcial jamás vacía una preferencia conocida.
+    Sin vigente: crítico ausente ⇒ None con alerta; preferencia ausente ⇒
+    default de normalize_profile."""
     content = {k: fold.fields[k] for k in PROFILE_FIELDS if k in fold.fields}
     missing = [k for k in PROFILE_FIELDS if k not in content]
     if not missing:
         return content
     cur = await core_profiles.current_revision(session, pid)
     if cur is None:
-        logger.error(
-            "projector: ALERTA — user_profiles pk=%s con %s omitidos y "
-            "SIN revisión previa que preserve: se salta", pk, missing,
-        )
-        return None
+        criticos = [k for k in missing if k in _PROFILE_TEXT_CRITICAL]
+        if criticos:
+            logger.error(
+                "projector: ALERTA — user_profiles pk=%s con %s omitidos y "
+                "SIN revisión previa que preserve: se salta", pk, criticos,
+            )
+            return None
+        return content
     for k in missing:
         content[k] = cur.content.get(k)
     return content

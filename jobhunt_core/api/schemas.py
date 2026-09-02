@@ -116,11 +116,15 @@ class ProfileDTO(BaseModel):
 
 
 class ProfileWriteDTO(BaseModel):
-    """Cuerpo del PUT /v1/profiles/{pid} (C-3 CV push, contenido PF.5): el
-    subconjunto EMBEBIBLE del perfil (title + cv_text + skills). El resto de
-    CONTENT_FIELDS (idiomas/ubicaciones/salario…) NO viaja en el CV push —
-    normalize_profile los deja en su default. save_profile_revision es
-    idempotente por content_hash (re-PUT del mismo CV no crea revisión)."""
+    """Cuerpo del PUT /v1/profiles/{pid} (C-3 CV push + preferencias, PF.5).
+
+    Fase 2 del cierre v5: además del subconjunto EMBEBIBLE (title + cv_text +
+    skills), acepta las preferencias de CONTENT_FIELDS como campos OPCIONALES.
+    Semántica de omisión (mismo invariante que la defensa TOAST del CDC): un
+    campo NO enviado se PRESERVA desde la revisión vigente — lo que no envías
+    no lo borras. El C-3 actual, que solo manda title/cv_text/skills, sigue
+    siendo válido tal cual. save_profile_revision es idempotente por
+    content_hash (re-PUT del mismo contenido no crea revisión)."""
 
     # Cotas de tamaño en la FRONTERA (1ª rev.): el CV push viene del BFF; un
     # cv_text sin tope inflaría la revisión y su embedding. Holgados pero
@@ -128,6 +132,12 @@ class ProfileWriteDTO(BaseModel):
     title: str | None = Field(None, max_length=500)
     cv_text: str | None = Field(None, max_length=100_000)
     skills: list[str] = Field(default=[], max_length=200)
+    languages: list[str] = Field(default=[], max_length=50)
+    locations: list[str] = Field(default=[], max_length=50)
+    experience_years: int | None = Field(None, ge=0, le=80)
+    salary_min: int | None = Field(None, ge=0)
+    salary_max: int | None = Field(None, ge=0)
+    remote_pref: str | None = Field(None, max_length=50)
 
 
 # ---------------------------------------------------------------- C-4 (v2.1)

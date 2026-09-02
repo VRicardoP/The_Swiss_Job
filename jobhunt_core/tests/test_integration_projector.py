@@ -2464,3 +2464,161 @@ def test_project_all_skips_aggregate_work_after_losing_leadership(db, monkeypatc
     assert totals["status"] == "lock_lost"
     assert totals["batches"] == 1  # el lote CON liderazgo sí se drenó
     assert calls == {"after": 0, "replay": 0}  # antes: 1 y 1, sin liderazgo
+
+
+# ------------------------------------------- Fase 2 (v5): preferencias CDC
+
+
+def _profile_full(user_id, **over):
+    """Payload user_profiles con TODAS las columnas de la whitelist ampliada
+    (Fase 2): como las envía la captura tras el cambio."""
+    payload = {
+        "user_id": str(user_id), "title": "python developer",
+        "cv_text": "cv con python y fastapi", "skills": ["python"],
+        "languages": ["English", "Spanish"],
+        "locations": ["Remote", "Valencia"],
+        "experience_years": 7, "salary_min": 45000, "salary_max": 85000,
+        "remote_pref": "remote_only",
+        "updated_at": "2026-09-02T10:00:00+00:00",
+    }
+    payload.update(over)
+    return payload
+
+
+def _vigente(factory, external_ref):
+    return _rows(
+        factory,
+        "SELECT pr.id, pr.content, pr.text_hash "
+        "FROM profile_revision_activations a "
+        "JOIN profile_revisions pr ON pr.id = a.revision_id "
+        "JOIN profiles p ON p.id = a.profile_id "
+        "WHERE p.external_ref = :r ORDER BY a.seq DESC LIMIT 1",
+        r=str(external_ref),
+    )[0]
+
+
+def test_preferencias_viajan_y_un_update_parcial_no_las_vacia(db):
+    """Fase 2 (v5): las preferencias del legacy llegan al content del core; un
+    U que no las trae las PRESERVA (mismo invariante que la defensa TOAST);
+    un valor EXPLÍCITO —incluso vacío o basura coercionable— sí manda."""
+    factory = db
+    u = uuid.uuid4()
+    _seed(factory, [("user_profiles", "I", "prof-p", _profile_full(u))])
+    _project()
+    v0 = _vigente(factory, u)
+    assert v0.content["languages"] == ["English", "Spanish"]
+    assert v0.content["locations"] == ["Remote", "Valencia"]
+    assert v0.content["experience_years"] == 7
+    assert v0.content["salary_min"] == 45000
+    assert v0.content["remote_pref"] == "remote_only"
+
+    # U parcial (solo título): preferencias y CV preservados; texto cambia.
+    _seed(factory, [("user_profiles", "U", "prof-p",
+                     {"user_id": str(u), "title": "senior python developer"})])
+    _project()
+    v1 = _vigente(factory, u)
+    assert v1.content["title"] == "senior python developer"
+    assert v1.content["languages"] == ["English", "Spanish"]
+    assert v1.content["remote_pref"] == "remote_only"
+    assert v1.content["cv_text"] == v0.content["cv_text"]
+
+    # U solo-preferencias: revisión nueva, MISMO text_hash (no re-embebe).
+    _seed(factory, [("user_profiles", "U", "prof-p",
+                     {"user_id": str(u), "languages": ["English"]})])
+    _project()
+    v2 = _vigente(factory, u)
+    assert v2.content["languages"] == ["English"]  # explícito manda
+    assert v2.id != v1.id and v2.text_hash == v1.text_hash
+
+    # Valores raros EXPLÍCITOS: null vacía (≠ omitido), lista mixta coerciona.
+    _seed(factory, [("user_profiles", "U", "prof-p",
+                     {"user_id": str(u), "languages": None,
+                      "skills": [1, {"x": 1}, "ok"],
+                      "experience_years": "nueve"})])
+    _project()
+    v3 = _vigente(factory, u)
+    assert v3.content["languages"] == []
+    assert v3.content["skills"] == ["ok"]  # _str_list DESCARTA no-strings
+    assert v3.content["experience_years"] is None
+
+
+def test_perfil_nuevo_sin_columnas_de_preferencias_nace_con_defaults(db):
+    """Un I de una captura VIEJA (sin columnas de preferencias) no se salta:
+    solo title/cv_text/skills son críticos; las preferencias degradan a su
+    default. El caso crítico-ausente (cv_text) lo cubre
+    test_profile_omitted_cv_preserved_or_skipped_with_alert."""
+    factory = db
+    u = uuid.uuid4()
+    _seed(factory, [("user_profiles", "I", "prof-old", _profile(u))])
+    t = _project()
+    assert t["revisions_new"] == 1
+    v = _vigente(factory, u)
+    assert v.content["cv_text"] == "cv con python y fastapi"
+    assert v.content["languages"] == [] and v.content["remote_pref"] is None
+
+
+def test_resync_desde_la_tabla_autoritativa_es_idempotente(db):
+    """One-shot de resincronización (Fase 2): lee la tabla autoritativa por el
+    SELECT normal, vuelca op='U' al staging y el proyector materializa las
+    preferencias. Segunda ejecución = CERO revisiones nuevas y la revisión
+    vigente no cambia. Una tabla sin columna requerida ABORTA."""
+    from jobhunt_core.shadow import resync as shadow_resync
+    factory = db
+    u = uuid.uuid4()
+    # Perfil ya proyectado por una captura vieja (sin preferencias).
+    _seed(factory, [("user_profiles", "I", "prof-rs", _profile(u))])
+    _project()
+
+    # Mini tabla autoritativa con TODAS las columnas requeridas.
+    _exec(factory, """
+        CREATE TABLE IF NOT EXISTS public.user_profiles (
+            id varchar(64) PRIMARY KEY, user_id uuid NOT NULL,
+            title varchar(200), cv_text text, skills jsonb NOT NULL,
+            languages jsonb NOT NULL, locations jsonb NOT NULL,
+            experience_years int, salary_min int, salary_max int,
+            remote_pref varchar(50) NOT NULL, updated_at timestamptz)
+    """)
+    _exec(factory,
+          "INSERT INTO public.user_profiles VALUES ('prof-rs', :u, "
+          "'python developer', 'cv con python y fastapi', "
+          "CAST('[\"python\"]' AS jsonb), "
+          "CAST('[\"English\",\"Japanese\"]' AS jsonb), "
+          "CAST('[\"Remote\",\"Zurich\"]' AS jsonb), "
+          "9, 50000, 90000, 'remote_only', now()) "
+          "ON CONFLICT (id) DO NOTHING", u=u)
+
+    async def do_resync():
+        async with factory() as s:
+            r = await shadow_resync.resync_profiles(s, legacy_schema="public")
+            await s.commit()
+            return r
+
+    assert _run(do_resync())["staged"] == 1
+    t1 = _project()
+    assert t1["revisions_new"] == 1
+    v1 = _vigente(factory, u)
+    assert v1.content["languages"] == ["English", "Japanese"]
+    assert v1.content["locations"] == ["Remote", "Zurich"]
+    assert v1.content["salary_min"] == 50000
+    assert v1.content["cv_text"] == "cv con python y fastapi"  # no se perdió
+
+    # Idempotencia: segunda pasada, cero cambios de revisión.
+    assert _run(do_resync())["staged"] == 1
+    t2 = _project()
+    assert t2["revisions_new"] == 0
+    assert _vigente(factory, u).id == v1.id
+
+    # Fallo cerrado: esquema cuya tabla no tiene una requerida.
+    _exec(factory, "CREATE SCHEMA IF NOT EXISTS leg2")
+    _exec(factory, """
+        CREATE TABLE IF NOT EXISTS leg2.user_profiles (
+            id varchar(64) PRIMARY KEY, user_id uuid, title varchar(200),
+            cv_text text, skills jsonb)
+    """)
+
+    async def broken():
+        async with factory() as s:
+            await shadow_resync.resync_profiles(s, legacy_schema="leg2")
+
+    with pytest.raises(RuntimeError, match="requerida"):
+        _run(broken())

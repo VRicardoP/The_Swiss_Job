@@ -477,8 +477,19 @@ async def put_profile(
                 412, "precondition_failed",
                 "If-Match no coincide con el ETag actual del perfil",
             )
+        # Preservar-si-omitido (Fase 2, mismo invariante que la defensa
+        # TOAST del proyector): los campos que el cliente NO envió se
+        # completan desde la revisión vigente en vez de degradar a su
+        # default — un PUT parcial jamás vacía una preferencia conocida.
+        # Bajo el MISMO FOR UPDATE de arriba: sin carrera con otro escritor.
+        contenido = body.model_dump()
+        vigente = await profiles.current_revision(session, profile_id)
+        if vigente is not None:
+            for campo in profiles.CONTENT_FIELDS:
+                if campo not in body.model_fields_set:
+                    contenido[campo] = vigente.content.get(campo)
         rid = await profiles.save_profile_revision(
-            session, profile_id, body.model_dump()
+            session, profile_id, contenido
         )
         if rid is None:
             raise ApiError(

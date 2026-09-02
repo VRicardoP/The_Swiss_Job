@@ -176,6 +176,12 @@ def capture_db():
                     "CREATE TABLE public.user_profiles ("
                     "id uuid PRIMARY KEY, user_id uuid, title varchar(200), "
                     "cv_text text, skills jsonb NOT NULL DEFAULT '[]'::jsonb, "
+                    # Preferencias (Fase 2 v5): required en la whitelist — el
+                    # fixture refleja la tabla autoritativa real.
+                    "languages jsonb NOT NULL DEFAULT '[]'::jsonb, "
+                    "locations jsonb NOT NULL DEFAULT '[]'::jsonb, "
+                    "experience_years int, salary_min int, salary_max int, "
+                    "remote_pref varchar(50) NOT NULL DEFAULT 'any', "
                     "updated_at timestamptz NOT NULL DEFAULT now(), "
                     "cv_embedding vector(3))"
                 )

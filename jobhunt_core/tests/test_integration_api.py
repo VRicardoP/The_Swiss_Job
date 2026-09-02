@@ -879,6 +879,45 @@ def test_put_profile_creates_revision_and_returns_etag(db):
     assert g.headers["etag"] == r.headers["etag"]  # la escritura ES la vigente
 
 
+def test_put_parcial_preserva_preferencias_y_c3_sigue_valido(db):
+    """Fase 2 (v5): preservar-si-omitido en la frontera de la API — el mismo
+    invariante que la defensa TOAST del CDC. Un PUT con preferencias las
+    escribe; el C-3 actual (solo title/cv_text/skills) sigue siendo válido y
+    NO las vacía; un valor explícito —incluso vacío— sí manda."""
+    factory, created = db
+    pid, _vacs, token = _seed_writable(factory, created)
+    url = f"/v1/profiles/{pid}"
+
+    r = _api(factory, url, token=token, method="PUT", json_body={
+        "title": "python dev", "cv_text": "cv", "skills": ["python"],
+        "languages": ["English", "Spanish"], "locations": ["Remote"],
+        "remote_pref": "remote_only", "salary_min": 45000,
+    })
+    assert r.status_code == 200
+    c = r.json()["current_revision"]["content"]
+    assert c["languages"] == ["English", "Spanish"]
+    assert c["remote_pref"] == "remote_only" and c["salary_min"] == 45000
+
+    # C-3: PUT clásico de solo-CV — preferencias PRESERVADAS.
+    r = _api(factory, url, token=token, method="PUT", json_body={
+        "title": "senior python dev", "cv_text": "cv v2", "skills": ["python"],
+    })
+    assert r.status_code == 200
+    c = r.json()["current_revision"]["content"]
+    assert c["title"] == "senior python dev" and c["cv_text"] == "cv v2"
+    assert c["languages"] == ["English", "Spanish"]
+    assert c["remote_pref"] == "remote_only" and c["salary_min"] == 45000
+
+    # Explícito manda: languages=[] borra de verdad.
+    r = _api(factory, url, token=token, method="PUT", json_body={
+        "languages": [],
+    })
+    assert r.status_code == 200
+    c = r.json()["current_revision"]["content"]
+    assert c["languages"] == []
+    assert c["title"] == "senior python dev"  # lo no enviado se preserva
+
+
 def test_put_profile_cross_tenant_and_absent_404(db):
     """Ownership por tenant: el perfil de A escrito por B → 404 INDISTINGUIBLE
     de un perfil ausente (no revela existencia, como el GET)."""

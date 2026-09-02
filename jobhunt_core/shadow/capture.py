@@ -109,11 +109,29 @@ TABLE_WHITELIST: dict[str, dict] = {
     },
     "user_profiles": {
         "pk": "id",
-        "columns": frozenset({"user_id", "title", "cv_text", "skills", "updated_at"}),
+        "columns": frozenset({
+            "user_id", "title", "cv_text", "skills", "updated_at",
+            # Preferencias (Fase 2 del cierre v5): el core ya las admite en
+            # profiles.CONTENT_FIELDS pero la captura no las traía y P1/P2
+            # llegaron a R5 con languages=[]/locations=[]/remote_pref=null
+            # mientras el legacy autoritativo los tenía. NO entran al texto
+            # embebible (TEXT_FIELDS no cambia): un cambio solo de
+            # preferencias reutiliza el vector por text_hash.
+            "languages", "locations", "experience_years",
+            "salary_min", "salary_max", "remote_pref",
+        }),
         # `user_id` resuelve el perfil (sin ella → "sin user_id resoluble: descartado"); title/
         # cv_text/skills son el CONTENIDO del perfil sombra (PROFILE_FIELDS → embeddings). NO
         # `updated_at` (el proyector no la consume). Calibrado por lo que consume el proyector.
-        "required": frozenset({"user_id", "title", "cv_text", "skills"}),
+        # Las preferencias son REQUIRED para un slot nuevo (decisión Fase 2):
+        # la tabla legacy autoritativa las tiene todas; si faltaran, el
+        # snapshot se confirmaría sin ellas y v5 puntuaría con preferencias
+        # vacías — un verde falso. Mejor fallar ruidoso al crear el slot.
+        "required": frozenset({
+            "user_id", "title", "cv_text", "skills",
+            "languages", "locations", "experience_years",
+            "salary_min", "salary_max", "remote_pref",
+        }),
         # TOAST (§2/§8): cv_text es contractual para canónica/embeddings — si
         # wal2json lo omite (UPDATE que no lo toca), se COMPLETA re-leyendo
         # por PK con la conexión normal (SELECT RO de §1). jobs NO lleva esta
