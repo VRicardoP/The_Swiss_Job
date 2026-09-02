@@ -182,10 +182,267 @@ def _hybrid_candidates_sql(lexical_weight: float) -> str:
 HYBRID2_CANDIDATES_SQL = _hybrid_candidates_sql(HYBRID2_LEXICAL_WEIGHT)
 
 
+# ---------------------------------------------------------------- v5 rerank
+# Señales deterministas de intención/compatibilidad (cierre v5, predeclaración
+# 567daf7/6992d40). Léxicos ACOTADOS y VERSIONADOS: la receta los nombra y el
+# evaluador valida que el binario los implementa. Dato fuera de léxico =
+# NEUTRAL, jamás exclusión. Remote/Anywhere/Worldwide expresan modalidad o
+# deseo, no permiso legal: no expanden el conjunto compatible.
+_US_STATES = frozenset({
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine",
+    "maryland", "massachusetts", "michigan", "minnesota", "mississippi",
+    "missouri", "montana", "nebraska", "nevada", "new hampshire",
+    "new jersey", "new mexico", "new york", "north carolina", "north dakota",
+    "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island",
+    "south carolina", "south dakota", "tennessee", "texas", "utah", "vermont",
+    "virginia", "washington", "west virginia", "wisconsin", "wyoming",
+})
+_EUROPE = frozenset({
+    "switzerland", "spain", "france", "germany", "italy", "austria",
+    "portugal", "greece", "netherlands", "belgium", "poland", "ireland",
+    "united kingdom", "uk", "norway", "sweden", "denmark", "finland",
+    "czech republic", "hungary", "romania", "bulgaria", "croatia",
+    "slovakia", "slovenia", "estonia", "latvia", "lithuania", "luxembourg",
+    "malta", "cyprus", "iceland", "ukraine", "serbia",
+    "bosnia and herzegovina", "andorra", "monaco", "liechtenstein",
+    "san marino", "albania", "north macedonia", "montenegro", "moldova",
+    "kosovo", "belarus",
+})
+_COUNTRIES = _EUROPE | frozenset({
+    "usa", "united states", "canada", "mexico", "brazil", "argentina",
+    "colombia", "chile", "peru", "india", "philippines", "japan", "china",
+    "australia", "new zealand", "turkey", "egypt", "kenya", "nigeria",
+    "south africa", "israel", "singapore", "south korea", "vietnam",
+    "indonesia", "thailand", "el salvador", "guatemala", "honduras",
+    "costa rica", "panama", "ecuador", "uruguay", "paraguay", "bolivia",
+    "venezuela", "dominican republic",
+})
+_GLOBAL_MARKERS = frozenset({
+    "anywhere in the world", "international", "worldwide", "global",
+    "anywhere", "remote",
+})
+# Ciudades → país SOLO para tokens del PERFIL (léxico acotado a las plazas
+# que los perfiles reales declaran; una ciudad de oferta no parseada = neutral).
+_CITY_TO_COUNTRY = {
+    "geneva": "switzerland", "zurich": "switzerland", "basel": "switzerland",
+    "bern": "switzerland", "lausanne": "switzerland",
+    "valencia": "spain", "madrid": "spain", "barcelona": "spain",
+}
+_MODALITY_TOKENS = frozenset({"remote", "anywhere", "worldwide", "hybrid", "onsite"})
+_TITLE_LANGS = frozenset({
+    "english", "french", "german", "spanish", "portuguese", "italian",
+    "dutch", "japanese", "chinese", "mandarin", "cantonese", "korean",
+    "arabic", "russian", "polish", "turkish", "hebrew", "greek", "swedish",
+    "norwegian", "danish", "finnish", "czech", "hungarian", "romanian",
+    "ukrainian", "vietnamese", "thai", "indonesian", "hindi",
+})
+_GEO_LEXICONS = {"v1": True}
+_LANG_LEXICONS = {"v1": True}
+
+
+def _compatible_countries(locations) -> frozenset:
+    """Países compatibles declarados por el perfil. Tokens de modalidad no
+    cuentan; «Europe» expande al léxico europeo; ciudad del léxico → su país;
+    lo demás se ignora (no restringe)."""
+    out = set()
+    for tok in locations or ():
+        t = str(tok).strip().lower()
+        if t in _MODALITY_TOKENS:
+            continue
+        if t == "europe":
+            out |= _EUROPE
+        elif t in _COUNTRIES:
+            out.add("usa" if t == "united states" else t)
+        elif t in _CITY_TO_COUNTRY:
+            out.add(_CITY_TO_COUNTRY[t])
+    return frozenset(out)
+
+
+def _offer_country(location) -> str | None:
+    """País de una restricción geográfica EXPLÍCITA de la oferta; None =
+    neutral (marcador global, vacío, o texto no parseado por el léxico)."""
+    if not location:
+        return None
+    loc = str(location).strip().lower()
+    if loc in _GLOBAL_MARKERS:
+        return None
+    if "(usa)" in loc or re.search(r"\busa\b|\bunited states\b", loc):
+        return "usa"
+    partes = [p.strip() for p in re.split(r"[,/]", loc)] + [loc]
+    for parte in partes:
+        if parte in _US_STATES:
+            return "usa"
+        if parte in _COUNTRIES:
+            return "usa" if parte == "united states" else parte
+    return None
+
+
+def _title_languages(titulo) -> frozenset:
+    """Idiomas NOMBRADOS en el título (léxico acotado). Solo el título: una
+    mención en la descripción es incidental, no un requisito."""
+    palabras = set(re.findall(r"[a-zà-ÿ]+", (titulo or "").lower()))
+    req = set(palabras & _TITLE_LANGS)
+    if req & {"mandarin", "cantonese"}:
+        req -= {"mandarin", "cantonese"}
+        req.add("chinese")
+    return frozenset(req)
+
+
+def _rerank_score(base, role_sim, titulo, location, remote, prefs, receta):
+    """Puntuación v5 de UN candidato (pura y determinista).
+
+    base = rank_score RRF; señales según la receta (0 = señal apagada).
+    Dato ausente/ambiguo ⇒ neutral. Devuelve (score, componentes)."""
+    sim = float(role_sim or 0.0)
+    theta = receta["role_theta"]
+    exceso = max(0.0, sim - theta)
+    s = float(base)
+    comp = {"base_rrf": round(float(base), 4), "role_sim": round(sim, 4)}
+    if receta["role_w"]:
+        s *= 1 + receta["role_w"] * exceso
+    inc_loc = False
+    if receta["p_loc"]:
+        remote_only = (prefs.get("remote_pref") == "remote_only")
+        if remote_only and remote is False:
+            inc_loc = True
+        elif remote is True:
+            pais = _offer_country(location)
+            compat = prefs.get("_compat") or frozenset()
+            # sin países declarados en el perfil ⇒ neutral (dato ausente)
+            if pais is not None and compat and pais not in compat:
+                inc_loc = True
+        if inc_loc:
+            s *= 1 - receta["p_loc"]
+    faltan_idiomas: frozenset = frozenset()
+    if receta["p_lang"]:
+        req = _title_languages(titulo)
+        propios = {str(x).strip().lower() for x in prefs.get("languages") or ()}
+        if req and propios and not req <= propios:
+            faltan_idiomas = req - frozenset(propios)
+            s *= 1 - receta["p_lang"]
+    if receta["role_a"]:
+        s += 100.0 * receta["role_a"] * exceso
+    comp |= {"loc_incompatible": inc_loc,
+             "lang_missing": sorted(faltan_idiomas)}
+    return s, comp
+
+
+def _rerank_scale(receta) -> float:
+    """Máximo teórico de la puntuación v5 — el score persistido se normaliza
+    con él a 0..100 (contrato NUMERIC(6,2)); escala monotónica: no cambia el
+    orden. Sin él, la familia aditiva saturaría el clamp en 100 y empataría
+    los primeros puestos en silencio."""
+    return (100.0 * (1 + receta["role_w"] * (1 - receta["role_theta"]))
+            + 100.0 * receta["role_a"] * (1 - receta["role_theta"]))
+
+
 # Versiones de consulta léxica que una receta v4+ puede nombrar. La receta
 # VALIDA contra la implementación: nombrar una versión que el binario no
 # implementa es error, no silencio.
 _LEXICAL_QUERY_BUILDERS = {"v2": None}  # se rellena tras definir las funciones
+
+
+_RERANK_SIGNALS_SQL = (
+    "SELECT o.id AS orid, o.content->>'title' AS titulo, "
+    "o.content->>'location' AS location, o.content->>'remote' AS remote, "
+    "(SELECT max(similarity(lower(coalesce(o.content->>'title','')), t.t)) "
+    " FROM unnest(CAST(:targets AS text[])) AS t(t)) AS role_sim "
+    "FROM offer_revisions o WHERE o.id = ANY(CAST(:orids AS uuid[]))"
+)
+
+
+def _validated_rerank_recipe(policy_weights: dict) -> dict:
+    """Receta de una política ``hybrid_rrf_rerank`` (v5+): TODOS los
+    parámetros que cambian el resultado viven en la fila. Señal con valor 0 =
+    apagada; léxicos nombrados y validados contra el binario."""
+    esperadas = {
+        "algorithm", "lexical_query", "lexical_weight", "rrf_k", "rerank",
+        "role_theta", "role_w", "role_a", "p_loc", "p_lang",
+        "geo_lexicon", "lang_lexicon",
+    }
+    claves = set(policy_weights)
+    if claves != esperadas:
+        raise ValueError(
+            f"receta hybrid_rrf_rerank inválida: claves {sorted(claves)}, "
+            f"esperadas {sorted(esperadas)}"
+        )
+    base = _validated_recipe(
+        {k: policy_weights[k]
+         for k in ("lexical_query", "lexical_weight", "rrf_k")}
+        | {"algorithm": "hybrid_rrf"}
+    )
+    if policy_weights["rerank"] != "v1":
+        raise ValueError(
+            f"receta: rerank {policy_weights['rerank']!r} no implementado")
+    if policy_weights["geo_lexicon"] not in _GEO_LEXICONS:
+        raise ValueError(
+            f"receta: geo_lexicon {policy_weights['geo_lexicon']!r} desconocido")
+    if policy_weights["lang_lexicon"] not in _LANG_LEXICONS:
+        raise ValueError(
+            f"receta: lang_lexicon {policy_weights['lang_lexicon']!r} desconocido")
+    for campo, lo, hi in (("role_theta", 0.0, 1.0), ("role_w", 0.0, 100.0),
+                          ("role_a", 0.0, 100.0), ("p_loc", 0.0, 0.999),
+                          ("p_lang", 0.0, 0.999)):
+        v = policy_weights[campo]
+        if not isinstance(v, (int, float)) or isinstance(v, bool) \
+                or not math.isfinite(v) or not lo <= v <= hi:
+            raise ValueError(
+                f"receta: {campo}={v!r} fuera de rango [{lo}, {hi}]")
+    return dict(policy_weights, algorithm="hybrid_rrf_rerank",
+                lexical_weight=base["lexical_weight"])
+
+
+async def _rerank_candidates(session, candidates, content, receta):
+    """Aplica el rerank v5 sobre el conjunto YA recuperado: UNA consulta de
+    señales para todo el lote (sin N+1) + puntuación pura por candidato.
+    Devuelve filas ordenadas (score DESC, vacancy ASC) con sus componentes."""
+    targets = [
+        t.strip().lower()
+        for t in [content.get("title") or ""] + list(content.get("skills") or ())
+        if t and t.strip()
+    ]
+    if not targets:
+        targets = [""]
+    orids = [str(c.offer_revision_id) for c in candidates]
+    señales = {
+        r.orid: r
+        for r in (
+            await session.execute(
+                sa.text(_RERANK_SIGNALS_SQL),
+                {"targets": targets, "orids": orids},
+            )
+        ).all()
+    }
+    prefs = {
+        "languages": content.get("languages"),
+        "remote_pref": content.get("remote_pref"),
+        "_compat": _compatible_countries(content.get("locations")),
+    }
+    escala = _rerank_scale(receta)
+    out = []
+    for c in candidates:
+        sig = señales.get(c.offer_revision_id)
+        if sig is None:
+            raise ValueError(
+                f"rerank sin señales para offer_revision {c.offer_revision_id}"
+            )
+        remoto = {"true": True, "false": False}.get(sig.remote)
+        bruto, comp = _rerank_score(
+            c.rank_score, sig.role_sim, sig.titulo, sig.location, remoto,
+            prefs, receta,
+        )
+        out.append({
+            "vacancy_id": c.vacancy_id,
+            "offer_revision_id": c.offer_revision_id,
+            "sim": c.sim, "semantic_rank": c.semantic_rank,
+            "lexical_rank": c.lexical_rank, "lexical_score": c.lexical_score,
+            "score": round(min(100.0, max(0.0, bruto / escala * 100.0)), 2),
+            "rerank": comp,
+        })
+    out.sort(key=lambda r: (-r["score"], str(r["vacancy_id"])))
+    return out
 
 
 def _validated_recipe(policy_weights: dict) -> dict:
@@ -479,6 +736,9 @@ async def evaluate_profile(
     if algorithm == "hybrid_rrf":
         # v4+ (P1-A): la receta persistida manda; se valida ANTES de tocar nada.
         receta = _validated_recipe(policy_weights)
+    elif algorithm == "hybrid_rrf_rerank":
+        # v5: candidatos de v4 + rerank determinista por señales de la receta.
+        receta = _validated_rerank_recipe(policy_weights)
     elif algorithm in {"cosine", "hybrid_rrf_v1", "hybrid_rrf_v2"}:
         # Legacy congelado: el comportamiento de estas filas vive en el binario
         # (v1→1.15, v2/v3→0.25) y los goldens lo fijan. No se crean filas nuevas
@@ -584,6 +844,14 @@ async def evaluate_profile(
         candidates = (await session.execute(sa.text(candidate_sql), params)).all()
         await session.execute(sa.text("SET LOCAL enable_indexscan = on"))
         await session.execute(sa.text("SET LOCAL enable_bitmapscan = on"))
+    reranked = None
+    if receta is not None and receta.get("rerank"):
+        # Rerank v5 SOBRE el conjunto ya recuperado (una consulta de señales
+        # para el lote entero; sin N+1). El orden y el score persistidos son
+        # los del rerank; los componentes van a score_parts.
+        reranked = await _rerank_candidates(
+            session, candidates, prof.content, receta
+        )
     if not candidates:
         return {
             "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
@@ -591,7 +859,33 @@ async def evaluate_profile(
         }
 
     eval_rows = []
-    for c in candidates:
+    if reranked is not None:
+        for r in reranked:
+            key = eval_key(
+                r["offer_revision_id"], prof.revision_id, model_id, policy_id
+            )
+            score_parts = {
+                "algorithm": algorithm,
+                "recipe": receta,
+                "similarity": (
+                    round(float(r["sim"]), 6) if r["sim"] is not None else None
+                ),
+                "semantic_rank": r["semantic_rank"],
+                "lexical_rank": r["lexical_rank"],
+                "lexical_score": (
+                    round(float(r["lexical_score"]), 6)
+                    if r["lexical_score"] is not None else None
+                ),
+                # componentes del rerank: suficientes para explicar el orden
+                **r["rerank"],
+            }
+            eval_rows.append({
+                "id": uuid.uuid4(), "pid": profile_id, "vid": r["vacancy_id"],
+                "orid": r["offer_revision_id"], "prid": prof.revision_id,
+                "mid": model_id, "spid": policy_id, "key": key,
+                "score": r["score"], "scores": json.dumps(score_parts),
+            })
+    for c in ([] if reranked is not None else candidates):
         key = eval_key(c.offer_revision_id, prof.revision_id, model_id, policy_id)
         if hybrid:
             similarity = round(float(c.sim), 6) if c.sim is not None else None
