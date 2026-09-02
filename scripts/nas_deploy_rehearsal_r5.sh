@@ -213,8 +213,8 @@ async def main():
             # (el runbook del NAS reactivaba hybrid-rrf/v1, medida
             # 0.098/0.000). Ahora: bootstrap_policy_catalog asegura las FILAS
             # del catálogo sin tocar la activación, y el conjunto activo solo
-            # lo cambia el operador con `python -m jobhunt_core.policy_ctl
-            # declare <name:version ...>` (promoción/rollback explícitos y
+            # lo cambia el operador con «python -m jobhunt_core.policy_ctl
+            # declare name:version ...» (promoción/rollback explícitos y
             # atómicos). Trampa anti-regresión: v1/v2/v3 jamás pueden estar
             # activas tras un deploy.
             ids = await matching.bootstrap_policy_catalog(s)
