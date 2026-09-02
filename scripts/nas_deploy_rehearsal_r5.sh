@@ -221,14 +221,22 @@ async def main():
             # experimental corre en SOMBRA, append-only.
             canonical_id = await matching.ensure_policy(
                 s, 'cosine-baseline', 'v1', active=True)
-            hybrid_id = await matching.ensure_policy(
+            # v1 queda INACTIVA: su desarrollo midió nDCG 0.098/0.000 y no
+            # vuelve al feed ni en sombra — mantenerla evaluando solo duplica
+            # coste. v2 corre en SOMBRA: la canónica sigue siendo la primera
+            # por nombre (cosine-baseline) hasta la promoción explícita.
+            await matching.ensure_policy(
                 s, matching.HYBRID_POLICY_NAME,
                 matching.HYBRID_POLICY_VERSION,
-                weights=matching.HYBRID_POLICY_WEIGHTS, active=True)
+                weights=matching.HYBRID_POLICY_WEIGHTS, active=False)
+            v2_id = await matching.ensure_policy(
+                s, matching.HYBRID_POLICY_NAME,
+                matching.HYBRID2_POLICY_VERSION,
+                weights=matching.HYBRID2_POLICY_WEIGHTS, active=True)
             active = set((await s.execute(sa.text(
                 'SELECT id FROM scoring_policies WHERE active'
             ))).scalars())
-            if active != {canonical_id, hybrid_id}:
+            if active != {canonical_id, v2_id}:
                 raise RuntimeError(f'políticas activas inesperadas: {active}')
 
             exact_backfill = await exact_intra_backfill(s)

@@ -61,6 +61,15 @@ CANDIDATES_SQL = (
 HYBRID_POLICY_NAME = "hybrid-rrf"
 HYBRID_POLICY_VERSION = "v1"
 HYBRID_POLICY_WEIGHTS = {"algorithm": "hybrid_rrf_v1"}
+# v2 (2026-09-02): misma fusión RRF, DISTINTA construcción de la consulta
+# léxica. v1 tomaba «los primeros 32 tokens únicos de title+skills», así que el
+# orden accidental del JSON decidía qué señales entraban: el CV de la persona 1
+# acaba en 'ipgce' y expulsa 'teacher', y toda oferta docente sin descripción
+# pierde su única señal léxica. v2 selecciona POR PESO (título y skills siempre;
+# después términos de rol REPETIDOS del cv_text) y con orden interno
+# determinista, no el de serialización. v1 no se toca: otra versión, otra fila.
+HYBRID2_POLICY_VERSION = "v2"
+HYBRID2_POLICY_WEIGHTS = {"algorithm": "hybrid_rrf_v2"}
 _RRF_K = 60
 _LEXICAL_WEIGHT = 1.15
 
@@ -120,6 +129,20 @@ LIMIT :k
 """
 
 
+def _semantic_arm_filled(filas, target: int, hybrid: bool) -> bool:
+    """Suficiencia del brazo SEMÁNTICO por separado (auditoría R8 §2.2.4).
+
+    En modo híbrido, `len(filas) >= target` puede cumplirse con el FTS llenando
+    la unión mientras el ANN volvió medio vacío por el scan acotado — y ese
+    underfill semántico es EXACTAMENTE el que pierde a los relevantes sin señal
+    léxica (ofertas sin descripción, términos fuera de la consulta). El brazo
+    ANN está lleno solo si aporta por sí mismo tantas filas como el objetivo."""
+    if not hybrid:
+        return True
+    semanticas = sum(1 for c in filas if c.semantic_rank is not None)
+    return semanticas >= target
+
+
 def _lexical_query(content: dict) -> str:
     """Consulta OR acotada a señales explícitas del perfil, nunca al CV entero."""
     raw = " ".join(
@@ -129,6 +152,54 @@ def _lexical_query(content: dict) -> str:
     raw = raw.replace("c++", "cplusplus").replace("c#", "csharp")
     tokens = list(dict.fromkeys(re.findall(r"[^\W\d_]\w{2,}", raw)))[:32]
     return " OR ".join(tokens)
+
+
+# Palabras que aparecen repetidas en CUALQUIER CV y no nombran ningún rol.
+# Lista corta y PROBADA (test_matching): añadir aquí sin su test es reabrir la
+# puerta a que un término genérico expulse a uno informativo.
+_CV_STOP = frozenset("""
+    experience experiences work working years management support team teams
+    strong excellent skills knowledge professional company companies role
+    roles responsibilities con para las los del una this that with from
+    and the have has been also able about
+""".split())
+_LEX_CAP = 48  # tope de términos de la tsquery: coste acotado y probado
+
+
+def _lexical_query_v2(content: dict) -> str:
+    """Señales léxicas POR PESO, no por orden de serialización (v2).
+
+    1. Título y skills entran SIEMPRE y primero — son la declaración explícita
+       de la persona. Los skills se ordenan alfabéticamente a propósito: el
+       orden del array JSON no es una señal y no debe decidir empates.
+    2. Después, términos de ROL del cv_text completo: palabras repetidas
+       (frecuencia >= 2), no genéricas, que no estén ya arriba — la vía por la
+       que «teacher» existe aunque no esté en title/skills. Orden determinista
+       por (frecuencia desc, palabra asc).
+    3. El tope _LEX_CAP recorta SOLO la cola de menor peso.
+    """
+    def toks(texto: str) -> list[str]:
+        # >= 2 letras (no los 3 de v1): 'QA' o 'UX' son señales EXPLÍCITAS del
+        # usuario cuando vienen de título/skills. Los términos minados del CV
+        # mantienen el mínimo de 3 en su propio filtro, más abajo.
+        t = texto.casefold().replace("c++", "cplusplus").replace("c#", "csharp")
+        return re.findall(r"[^\W\d_]\w{1,}", t)
+
+    titulo = toks(str(content.get("title") or ""))
+    skills = sorted(
+        {w for sk in (content.get("skills") or []) for w in toks(str(sk))}
+    )
+    prioritarios = list(dict.fromkeys(titulo + skills))
+    ya = set(prioritarios)
+
+    frec: dict[str, int] = {}
+    for w in toks(str(content.get("cv_text") or "")):
+        if len(w) >= 3 and w not in ya and w not in _CV_STOP:
+            frec[w] = frec.get(w, 0) + 1
+    del_cv = [w for w, n in sorted(frec.items(), key=lambda kv: (-kv[1], kv[0]))
+              if n >= 2]
+
+    return " OR ".join((prioritarios + del_cv)[:_LEX_CAP])
 
 
 def eval_key(offer_revision_id, profile_revision_id, model_id, policy_id) -> str:
@@ -236,7 +307,7 @@ async def evaluate_profile(
     if not isinstance(policy_weights, dict):
         raise ValueError(f"política inexistente o weights inválidos: {policy_id}")
     algorithm = policy_weights.get("algorithm", "cosine")
-    if algorithm not in {"cosine", "hybrid_rrf_v1"}:
+    if algorithm not in {"cosine", "hybrid_rrf_v1", "hybrid_rrf_v2"}:
         raise ValueError(f"algoritmo de matching no soportado: {algorithm}")
 
     prof = (
@@ -299,7 +370,12 @@ async def evaluate_profile(
             "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
             "profile_revision_id": prof.revision_id, "corpus_generation": corpus_gen,
         }
-    lex_query = _lexical_query(prof.content) if algorithm == "hybrid_rrf_v1" else ""
+    if algorithm == "hybrid_rrf_v2":
+        lex_query = _lexical_query_v2(prof.content)
+    elif algorithm == "hybrid_rrf_v1":
+        lex_query = _lexical_query(prof.content)
+    else:
+        lex_query = ""
     hybrid = bool(lex_query)
     candidate_sql = HYBRID_CANDIDATES_SQL if hybrid else CANDIDATES_SQL
     params = {
@@ -312,7 +388,10 @@ async def evaluate_profile(
         sa.text(f"SET LOCAL hnsw.max_scan_tuples = {int(MAX_SCAN_TUPLES)}")
     )
     candidates = (await session.execute(sa.text(candidate_sql), params)).all()
-    if len(candidates) < target:
+
+    if len(candidates) < target or not _semantic_arm_filled(
+        candidates, target, hybrid
+    ):
         # Inanición REAL del scan acotado: el exacto responde siempre bien.
         await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
         await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
@@ -332,7 +411,7 @@ async def evaluate_profile(
             similarity = round(float(c.sim), 6) if c.sim is not None else None
             score = round(min(100.0, max(0.0, float(c.rank_score))), 2)
             score_parts = {
-                "algorithm": "hybrid_rrf_v1",
+                "algorithm": algorithm,
                 "similarity": similarity,
                 "semantic_rank": c.semantic_rank,
                 "lexical_rank": c.lexical_rank,
