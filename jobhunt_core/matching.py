@@ -776,6 +776,66 @@ async def evaluate_profile(
     }
 
 
+# Feed RECONSTRUIDO de una política sombra (Fase 1 del cierre v5): las
+# políticas sombra no tienen current_eval_id, así que su feed se deriva de las
+# evaluaciones bajo la revisión VIGENTE del perfil, la revisión canónica
+# VIGENTE de cada vacante y el modelo indicado — misma semántica de vigencia
+# que el feed del gate (vacante activa, no fusionada). eval_key garantiza una
+# fila por vacante bajo esos componentes; el guard de duplicados es defensa.
+SHADOW_FEED_SQL = (
+    "SELECT e.vacancy_id, e.score_final, e.scores, e.offer_revision_id "
+    "FROM match_evaluations e "
+    "JOIN vacancies v ON v.id = e.vacancy_id "
+    "WHERE e.profile_id = :pid "
+    "  AND e.scoring_policy_id = :spid "
+    "  AND e.model_id = :mid "
+    "  AND e.profile_revision_id = :prid "
+    "  AND e.offer_revision_id = v.current_offer_revision_id "
+    "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
+    "ORDER BY e.score_final DESC, e.vacancy_id"
+)
+
+
+async def shadow_feed(session, profile_id, policy_id, model_id):
+    """Feed completo de una política SOMBRA para el perfil, ordenado como el
+    feed canónico (score DESC, vacancy ASC). Falla cerrado: sin revisión
+    vigente del perfil, o con una vacante duplicada en el resultado (mezcla
+    de componentes que eval_key debía impedir), es error — jamás un feed
+    silenciosamente ambiguo."""
+    cur = await current_profile_revision_id(session, profile_id)
+    if cur is None:
+        raise ValueError(f"perfil {profile_id} sin revisión vigente")
+    filas = (
+        await session.execute(
+            sa.text(SHADOW_FEED_SQL),
+            {"pid": profile_id, "spid": policy_id, "mid": model_id, "prid": cur},
+        )
+    ).all()
+    vistos = set()
+    for f in filas:
+        if f.vacancy_id in vistos:
+            raise ValueError(
+                f"feed sombra ambiguo: vacante {f.vacancy_id} duplicada "
+                f"bajo policy={policy_id}"
+            )
+        vistos.add(f.vacancy_id)
+    return filas, cur
+
+
+async def current_profile_revision_id(session, profile_id):
+    """Revisión VIGENTE del perfil (max seq de activations) — la misma
+    definición que usa evaluate_profile."""
+    return (
+        await session.execute(
+            sa.text(
+                "SELECT revision_id FROM profile_revision_activations "
+                "WHERE profile_id = :pid ORDER BY seq DESC LIMIT 1"
+            ),
+            {"pid": profile_id},
+        )
+    ).scalar_one_or_none()
+
+
 async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=None):
     """Feed del perfil (DoD A-08): evaluación VIGENTE + no-dismissed + vacante
     ACTIVA, keyset por (score_final DESC, vacancy_id ASC).
