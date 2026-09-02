@@ -2,7 +2,7 @@
 
 ## Veredicto
 
-**NO-GO: pendiente de etiquetado independiente.**
+**NO-GO: pendiente de etiquetado independiente** (dos paquetes ciegos listos: dedup-seniority y ranking).
 
 No se abre la racha de siete ciclos. El bloqueo exacto es **la precisión de dedup**,
 y **no puede resolverse con la evidencia disponible sin contaminar el examen**.
@@ -185,6 +185,65 @@ congelado de v3; **el primer ciclo elegible es el que abre el 2026-09-02 a las 1
 > solo porque su turno de backoff es de los últimos. No se «arregló» un orden que
 > no estaba roto — pero la inanición ES posible si las llegadas saturan el lote
 > (100/5min) con backlog fechado: queda anotada como riesgo a vigilar, no como bug.
+
+## 4sexies. Hallazgo técnico sobre el candidate set (relevante para el matching)
+
+Al muestrear el paquete de ranking, el estrato «ANN medio» (OFFSET 200) salió
+vacío. La causa NO es de datos: **HNSW solo recupera hasta `ef_search` vecinos, y
+su máximo es 1000** (`InvalidParameterValueError: … valid range 1..1000`). Con el
+`ef_search` por defecto (40), cualquier `OFFSET` mayor cae fuera de lo que el
+índice devuelve, silenciosamente.
+
+Esto refuerza el diagnóstico del relevo sobre el matching y lo hace más preciso:
+el feed canónico de 1800 (`CANONICAL_EVAL_LIMIT`) **no puede materializarse solo
+con el recall ANN por defecto** — más allá del top-`ef_search`, el ANN no aporta
+candidatos. Las ofertas relevantes «hundidas» (Translator rank 461, etc.) están
+por debajo de ese horizonte. Cualquier arreglo de matching (Fase 3) tiene que
+garantizar **recuperación suficiente antes del ranking** —subir `ef_search`, o
+recall léxico/FTS complementario— no solo reordenar lo que ya llega.
+
+> Nota de método: el wrapper del muestreador devolvía `rc=0` pese a que la
+> consulta lanzaba la excepción, porque el error iba a stdout y no cambiaba el
+> código de salida. Se detectó al ver `RB rellenado: 0` y **sondear directamente**
+> en vez de confiar en el `rc`. Un `rc=0` no es prueba de éxito cuando el trabajo
+> real corre dentro de una tarea cuyo fallo no se propaga.
+
+## 4septies. Paquete de desarrollo de RANKING listo para etiquetar
+
+`/home/lothar/Public/DEV_RANKING_2026-09-02/` — **79 ítems** (40 P1 · 39 P2) sobre
+los dos perfiles con set congelado. Muestreo determinista (sin `random()`), estratos:
+
+| Estrato | Qué aporta |
+|---|---|
+| RA | ANN alto (top-10 por perfil) |
+| RB | ANN medio (OFFSET 200, `ef_search=1000`) |
+| RC | FTS por title+skills |
+| RD | **FTS por términos SOLO del CV** (roles que no están en title/skills) |
+| RE | ofertas **sin descripción** cuyo título casa con el CV |
+| RF | negativo duro (ANN lejano) |
+
+- **Independencia verificada contra la base** —no solo el `NOT EXISTS` del
+  muestreo—: la primera comprobación halló **2 vacantes contaminadas** (1 en un set
+  de ranking congelado, 1 en cohorte de dedup) que el `NOT EXISTS` dejó pasar. Se
+  **purgaron** y la re-verificación da **0 y 0**.
+- **Ceguera verificada por estructura**: ofertas solo con
+  `titulo/empresa/lugar/portal/salario/desc`; los perfiles llevan CV completo pero
+  **ningún score ni rango**. Barajado estable por hash.
+- La clave (mapa ítem→vacante y términos de CV) vive **fuera del paquete**, en
+  `holdout_artefactos_2026-08-23/rank_dev_clave_2026-09-02.txt`.
+- sha256: hoja `d3aaff87d601b282`.
+
+## 4octies. Veredicto y estado de las tres causas raíz
+
+| Causa raíz | Estado | Desbloqueo |
+|---|---|---|
+| **Precisión dedup** (FP AuroraSolar, 0,875 < 0,95) | diagnosticada, sin tocar el detector | etiquetar `DEV_SENIORITY_2026-09-02/` (60 pares) |
+| **Calidad de matching** (`cosine-baseline`: ndcg 0, FN) | experimental fuera del canónico; recall ANN acotado a `ef_search` (§4sexies) | etiquetar `DEV_RANKING_2026-09-02/` (79 ítems) → Fase 3 |
+| **FN histórico** | **CERRADO** (§4bis): FN=0 medido | — |
+
+**Ningún gate de calidad puede ponerse verde sin etiquetado independiente**, y
+fabricarlo desde los sets ya observados o desde el verdict del holdout sería
+contaminar el examen. Por eso el veredicto es NO-GO, con los dos paquetes listos.
 
 ## 5. Bloqueos restantes, por orden
 
