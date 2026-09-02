@@ -8,6 +8,7 @@ from providers.adzuna import AdzunaProvider
 from providers.arbeitnow import ArbeitnowProvider
 from providers.careerjet import CareerjetProvider
 from providers.euremotejobs import EURemoteJobsProvider
+from providers.jobicy import JobicyProvider
 from providers.jobspresso import JobspressoProvider
 from providers.jooble import JoobleProvider
 from providers.jsearch import JSearchProvider
@@ -83,9 +84,13 @@ _PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {
     "indeed_partner": IndeedPartnerProvider,
     "glassdoor_partner": GlassdoorPartnerProvider,
     "xing_partner": XingPartnerProvider,
-    # Desactivados temporalmente (tech-only, bajo valor para el perfil actual)
+    # jobicy REACTIVADO 2026-09-02: ya no es tech-only (sonda: 13/50 del
+    # nicho de los perfiles reales) y su API respondió 200 con los campos del
+    # parser. himalayas sigue fuera (Cloudflare 403 «Just a moment» — solo
+    # viable con browser CDP de pago) y remoteok también (su feed actual es
+    # spam presencial: JANITOR/Carpenter con tags aleatorios).
+    "jobicy": JobicyProvider,
     # "himalayas": HimalayasProvider,
-    # "jobicy": JobicyProvider,
     # "remoteok": RemoteOKProvider,
     # "ictjobs": ICTJobsProvider,
     # "swisstechjobs": SwissTechJobsProvider,

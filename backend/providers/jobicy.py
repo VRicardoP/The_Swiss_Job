@@ -17,26 +17,40 @@ class JobicyProvider(BaseJobProvider):
 
     SOURCE_NAME = "jobicy"
     API_URL = "https://jobicy.com/api/v2/remote-jobs"
+    # Sin query (la cosecha llama con ""), además del feed genérico se piden
+    # estos tags: el registry lo tenía desactivado como «tech-only» y ya no lo
+    # es — la sonda 2026-09-02 dio 13/50 ofertas del nicho de los perfiles
+    # reales (customer success/contenido/localización). Lista corta a
+    # propósito: cada tag es UNA petición por run.
+    DEFAULT_TAGS = ("customer-success", "copywriting", "technical-writing",
+                    "translation")
 
     async def fetch_jobs(self, query: str, location: str = "Switzerland") -> list[dict]:
         """Fetch remote jobs from Jobicy filtered by tag."""
-        params: dict[str, str | int] = {"count": 50}
-        if query:
-            params["tag"] = query
-        if location and location.lower() != "switzerland":
-            params["geo"] = location
+        tags: tuple[str | None, ...] = (query,) if query else (None,) + self.DEFAULT_TAGS
+        geo = location if location and location.lower() != "switzerland" else None
 
-        async with httpx.AsyncClient() as client:
-            data = await self._circuit.call(
-                lambda: fetch_with_retry(client, self.API_URL, params=params)
-            )
-
-        if not data:
-            return []
-
-        raw_jobs = data.get("jobs", [])
+        vistos: set[str] = set()
         results: list[dict] = []
-        results.extend(self._process_raw_jobs(raw_jobs))
+        async with httpx.AsyncClient() as client:
+            for tag in tags:
+                params: dict[str, str | int] = {"count": 50}
+                if tag:
+                    params["tag"] = tag
+                if geo:
+                    params["geo"] = geo
+                data = await self._circuit.call(
+                    lambda p=params: fetch_with_retry(client, self.API_URL, params=p)
+                )
+                if not data:
+                    continue
+                # dedupe entre tags por URL (la misma oferta sale en varios)
+                nuevos = [
+                    r for r in data.get("jobs", [])
+                    if (r.get("url") or "") not in vistos
+                ]
+                vistos.update((r.get("url") or "") for r in nuevos)
+                results.extend(self._process_raw_jobs(nuevos))
 
         return self._finalize_fetch(results)
 
