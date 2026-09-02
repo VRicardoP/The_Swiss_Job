@@ -3,6 +3,8 @@
 import inspect
 import uuid
 
+import pytest
+
 import jobhunt_core.tasks.matching  # noqa: F401 — registra la tarea en la app
 from jobhunt_core import matching
 from jobhunt_core.celery_app import celery_app
@@ -132,3 +134,34 @@ def test_v2_tiene_su_propio_peso_lexico_y_v1_conserva_el_suyo():
     assert str(matching.HYBRID2_LEXICAL_WEIGHT) in matching.HYBRID2_CANDIDATES_SQL
     assert str(matching._LEXICAL_WEIGHT) not in matching.HYBRID2_CANDIDATES_SQL
     assert str(matching._LEXICAL_WEIGHT) in matching.HYBRID_CANDIDATES_SQL
+
+
+def test_la_receta_v4_reconstruye_el_comportamiento_solo_desde_datos():
+    """P1-A: los goldens legacy quedan intactos y v4 deriva TODO de su fila."""
+    # goldens legacy: las filas históricas no cambian de significado
+    assert matching.HYBRID_POLICY_WEIGHTS == {"algorithm": "hybrid_rrf_v1"}
+    assert matching.HYBRID2_POLICY_WEIGHTS == {"algorithm": "hybrid_rrf_v2"}
+    receta = matching._validated_recipe(matching.HYBRID4_POLICY_WEIGHTS)
+    # el SQL que ejecutará v4 es byte a byte el de v3, derivado del peso persistido
+    assert matching._hybrid_candidates_sql(receta["lexical_weight"]) \
+        == matching.HYBRID2_CANDIDATES_SQL
+    assert matching._LEXICAL_QUERY_BUILDERS[receta["lexical_query"]] \
+        is matching._lexical_query_v2
+
+
+@pytest.mark.parametrize("mala", [
+    {"algorithm": "hybrid_rrf"},                                   # incompleta
+    {"algorithm": "hybrid_rrf", "lexical_query": "v9",
+     "lexical_weight": 0.25, "rrf_k": 60},                          # query inexistente
+    {"algorithm": "hybrid_rrf", "lexical_query": "v2",
+     "lexical_weight": 0.25, "rrf_k": 61},                          # rrf_k no soportado
+    {"algorithm": "hybrid_rrf", "lexical_query": "v2",
+     "lexical_weight": -1, "rrf_k": 60},                            # peso no positivo
+    {"algorithm": "hybrid_rrf", "lexical_query": "v2",
+     "lexical_weight": True, "rrf_k": 60},                          # bool no es peso
+    {"algorithm": "hybrid_rrf", "lexical_query": "v2",
+     "lexical_weight": 0.25, "rrf_k": 60, "extra": 1},              # clave extra
+])
+def test_recetas_invalidas_no_pasan_la_validacion(mala):
+    with pytest.raises(ValueError):
+        matching._validated_recipe(mala)

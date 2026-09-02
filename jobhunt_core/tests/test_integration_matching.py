@@ -850,6 +850,11 @@ def test_hybrid_policy_recovers_lexical_candidate_outside_ann_top_k(db):
                 weights=matching.HYBRID_POLICY_WEIGHTS,
             )
             created["policies"].append(hybrid_id)
+            # La valla de canonicidad (P1-C) solo deja mover el feed a la
+            # política canónica: para que el híbrido lo mueva, el coseno del
+            # _setup deja de estar activo (el eval de coseno de más abajo se
+            # registra igual — solo no mueve el feed, que es lo que se afirma).
+            await matching.ensure_policy(s, "cosine", "v1", active=False)
             profile_vec = [1.0, 0.0] + [0.0] * (embeddings.EMBED_DIM - 2)
             lexical_vec = [0.0, 1.0] + [0.0] * (embeddings.EMBED_DIM - 2)
             await s.execute(
@@ -919,3 +924,193 @@ def test_policy_version_rejects_different_weights(db):
                 )
 
     asyncio.run(conflict())
+
+
+def test_v4_reproduce_exactamente_a_v3_y_su_receta_es_reconstruible(db):
+    """P1-A (revisión externa 2026-09-02): v2 y v3 persisten el MISMO JSON
+    ({"algorithm": "hybrid_rrf_v2"}) — el peso 0.25 solo existía en el binario
+    y la diferencia 1.15→0.25 no era reconstruible desde datos. v4 lleva la
+    receta completa en la fila, el evaluador la valida y deriva de ella el
+    comportamiento, y con el mismo peso produce EXACTAMENTE el mismo orden y
+    las mismas puntuaciones que v3."""
+    factory, created = db
+    pid, mid, _, vacs = _setup(
+        factory, created,
+        ["python backend developer", "senior python engineer",
+         "data engineer python sql", "warehouse operative",
+         "kubernetes platform engineer", "frontend react developer"],
+        profile_content={"title": "python developer", "skills": ["python", "sql"]},
+    )
+    # El defecto documentado: la fila de v2/v3 no contiene el peso…
+    assert "lexical_weight" not in matching.HYBRID2_POLICY_WEIGHTS
+    # …y la de v4 sí: receta completa, reconstruible desde datos.
+    assert matching.HYBRID4_POLICY_WEIGHTS == {
+        "algorithm": "hybrid_rrf", "lexical_query": "v2",
+        "lexical_weight": 0.25, "rrf_k": 60,
+    }
+
+    async def policies():
+        async with factory() as s:
+            v3 = await matching.ensure_policy(
+                s, matching.HYBRID_POLICY_NAME, "v3",
+                weights=matching.HYBRID2_POLICY_WEIGHTS)
+            v4 = await matching.ensure_policy(
+                s, matching.HYBRID_POLICY_NAME, matching.HYBRID4_POLICY_VERSION,
+                weights=matching.HYBRID4_POLICY_WEIGHTS)
+            created["policies"] += [v3, v4]
+            await s.commit()
+            return v3, v4
+
+    v3_id, v4_id = asyncio.run(policies())
+    n3 = _evaluate(factory, pid, mid, v3_id)["evaluated"]
+    n4 = _evaluate(factory, pid, mid, v4_id)["evaluated"]
+    assert n3 == n4 > 0
+
+    def ranking(spid):
+        return _rows(
+            factory,
+            "SELECT vacancy_id, score_final, scores FROM match_evaluations "
+            "WHERE profile_id = :p AND scoring_policy_id = :sp "
+            "ORDER BY score_final DESC, vacancy_id", p=pid, sp=spid)
+
+    r3, r4 = ranking(v3_id), ranking(v4_id)
+    assert [(r.vacancy_id, r.score_final) for r in r3] == \
+        [(r.vacancy_id, r.score_final) for r in r4]
+    # v4 deja constancia de su receta en CADA fila; v3 no puede (ese es el bug).
+    assert all(
+        r.scores.get("recipe") == matching.HYBRID4_POLICY_WEIGHTS for r in r4
+    )
+    assert all("recipe" not in r.scores for r in r3)
+
+
+def test_una_receta_no_soportada_no_evalua_nada(db):
+    """Una fila hybrid_rrf cuya receta el binario no implementa (aquí un rrf_k
+    distinto) es un error nombrable ANTES de evaluar, no una evaluación bajo
+    régimen mezclado como la del feed_n=2380."""
+    factory, created = db
+    pid, mid, _, _ = _setup(factory, created, ["python developer"])
+
+    async def go():
+        async with factory() as s:
+            mala = dict(matching.HYBRID4_POLICY_WEIGHTS, rrf_k=61)
+            polid = await matching.ensure_policy(
+                s, matching.HYBRID_POLICY_NAME, "v99", weights=mala)
+            created["policies"].append(polid)
+            await s.commit()
+            with pytest.raises(ValueError, match="rrf_k"):
+                await matching.evaluate_profile(s, pid, mid, polid)
+            n = (await s.execute(sa.text(
+                "SELECT count(*) FROM match_evaluations "
+                "WHERE scoring_policy_id = :sp"), {"sp": polid})).scalar_one()
+            assert n == 0
+
+    asyncio.run(go())
+
+
+def test_un_worker_pre_flip_no_puede_restaurar_el_feed_antiguo(db):
+    """P1-C (revisión externa 2026-09-02): un worker que leyó «coseno es
+    canónico» en una transacción YA CERRADA, se pausó, y retoma DESPUÉS de la
+    promoción, evaluaba coseno con move_current=True y devolvía el feed al
+    régimen antiguo. La valla de canonicidad comprueba y escribe en la MISMA
+    transacción (FOR SHARE sobre la canónica), y el flip
+    (declare_active_policies) actualiza todas las filas, serializándose con
+    ella: el movimiento caducado se aborta, la evaluación queda registrada."""
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(
+        factory, created, ["python developer", "warehouse operative"])
+    # Worker A leyó las políticas: coseno canónico. Feed inicial bajo coseno.
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+
+    # Operador: alta de v4 en sombra y flip atómico al conjunto exacto {v4}.
+    async def promote():
+        async with factory() as s:
+            v4 = await matching.ensure_policy(
+                s, matching.HYBRID_POLICY_NAME,
+                matching.HYBRID4_POLICY_VERSION,
+                weights=matching.HYBRID4_POLICY_WEIGHTS, active=False)
+            created["policies"].append(v4)
+            await matching.declare_active_policies(s, [v4])
+            await s.commit()
+            return v4
+
+    v4_id = asyncio.run(promote())
+    # Worker B rematerializa el feed bajo v4 (ahora canónica).
+    assert _evaluate(factory, pid, mid, v4_id)["moved_current"] is True
+
+    # Worker A retoma con su decisión caducada: la valla lo para.
+    r = _evaluate(factory, pid, mid, cosine_id)
+    assert r["status"] == "ok" and r["evaluated"] > 0
+    assert r["moved_current"] is False
+    refs = _rows(
+        factory,
+        "SELECT DISTINCT e.scoring_policy_id AS spid "
+        "FROM profile_vacancy_state s "
+        "JOIN match_evaluations e ON e.id = s.current_eval_id "
+        "WHERE s.profile_id = :p AND s.current_eval_id IS NOT NULL", p=pid)
+    assert [str(x.spid) for x in refs] == [str(v4_id)]
+
+
+def test_declarar_un_conjunto_activo_invalido_aborta(db):
+    """P1-D: declarar ids inexistentes (o un conjunto vacío) es error — el
+    conjunto activo cometido debe coincidir EXACTAMENTE con lo declarado."""
+    factory, created = db
+
+    async def go():
+        async with factory() as s:
+            polid = await matching.ensure_policy(s, "cosine", "v1")
+            created["policies"].append(polid)
+            await s.commit()
+            with pytest.raises(ValueError, match="no satisfecha"):
+                await matching.declare_active_policies(s, [polid, uuid.uuid4()])
+            await s.rollback()
+            with pytest.raises(ValueError, match="vac\u00edo"):
+                await matching.declare_active_policies(s, [])
+            # tras los abortos, el conjunto activo declarado sigue funcionando
+            await matching.declare_active_policies(s, [polid])
+            await s.commit()
+
+    asyncio.run(go())
+
+
+def test_el_redeploy_no_cambia_la_canonicidad(db):
+    """P1-D (revisión externa 2026-09-02): el runbook del NAS desactivaba
+    coseno y reactivaba hybrid-rrf/v1 (0.098/0.000 medidos) en cada
+    despliegue — doble autoridad sobre la canonicidad. El bootstrap asegura
+    FILAS del catálogo sin tocar la activación; solo declare_active_policies
+    la mueve. Redeploy pre-promoción preserva {cosine, v4-sombra};
+    post-promoción, {v4}; tras rollback, {cosine}; y NINGÚN redeploy puede
+    reactivar v1/v2/v3."""
+    factory, created = db
+
+    async def go():
+        async with factory() as s:
+            ids = await matching.bootstrap_policy_catalog(s)
+            created["policies"] += list(ids.values())
+            cos = ids[("cosine-baseline", "v1")]
+            v4 = ids[
+                (matching.HYBRID_POLICY_NAME, matching.HYBRID4_POLICY_VERSION)
+            ]
+            legacy = {
+                str(ids[(matching.HYBRID_POLICY_NAME, v)])
+                for v in ("v1", "v2", "v3")
+            }
+
+            async def activas():
+                return {
+                    str(r[0]) for r in (await s.execute(
+                        sa.text(
+                            "SELECT id FROM scoring_policies WHERE active "
+                            "AND id = ANY(CAST(:c AS uuid[]))"),
+                        {"c": [str(x) for x in ids.values()]},
+                    )).all()
+                }
+
+            # Tres estados operativos; el redeploy (bootstrap) preserva cada uno.
+            for conjunto in ([cos, v4], [v4], [cos]):
+                await matching.declare_active_policies(s, conjunto)
+                await matching.bootstrap_policy_catalog(s)  # ← redeploy
+                assert await activas() == {str(x) for x in conjunto}
+                assert not (await activas()) & legacy
+            await s.commit()
+
+    asyncio.run(go())

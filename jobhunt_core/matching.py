@@ -19,6 +19,7 @@
 import hashlib
 import json
 import logging
+import math
 import re
 import uuid
 
@@ -78,8 +79,23 @@ HYBRID2_POLICY_WEIGHTS = {"algorithm": "hybrid_rrf_v2"}
 # (nDCG dev 0.0). Con 0.25 el léxico RESCATA cobertura (los 4 relevantes-2
 # siguen dentro del feed) sin mandar en el orden: nDCG dev 0.557/0.617. Fue la
 # alternativa ganadora frente a «semántico primero, léxico anexado» (0.545/0.617).
-HYBRID2_LEXICAL_WEIGHT = 0.25
 _RRF_K = 60
+HYBRID2_LEXICAL_WEIGHT = 0.25
+# v4 (P1-A de la revisión externa 2026-09-02): la RECETA COMPLETA vive en la
+# fila de la política, no en el binario. v2 y v3 compartían el mismo JSON
+# persistido ({"algorithm": "hybrid_rrf_v2"}) y el peso 0.25 solo existía como
+# constante: una fila v2 histórica se ejecutaría hoy con 0.25 aunque nació con
+# 1.15, y v2/v3 eran indistinguibles por sus datos — la misma mezcla de
+# regímenes que produjo el feed_n=2380. El evaluador VALIDA la receta contra la
+# implementación (rrf_k y versión de consulta soportados) y DERIVA de ella el
+# peso léxico; una receta incompleta o no soportada no evalúa nada.
+HYBRID4_POLICY_VERSION = "v4"
+HYBRID4_POLICY_WEIGHTS = {
+    "algorithm": "hybrid_rrf",
+    "lexical_query": "v2",
+    "lexical_weight": HYBRID2_LEXICAL_WEIGHT,
+    "rrf_k": _RRF_K,
+}
 _LEXICAL_WEIGHT = 1.15
 
 # Unión de recuperación semántica y léxica. Ambas ramas recorren exactamente
@@ -138,22 +154,72 @@ LIMIT :k
 """
 
 
-# El SQL de v2: idéntico en forma al de v1 pero con SU peso léxico. Compartir
+def _hybrid_candidates_sql(lexical_weight: float) -> str:
+    """SQL híbrido con el peso léxico indicado, derivado del de v1.
+
+    Camino ÚNICO de construcción: v3 (legacy, peso en constante) y v4 (peso en
+    la receta persistida) lo comparten, con lo que la equivalencia v4↔v3 con el
+    mismo peso es byte a byte por construcción, no por confianza. La derivación
+    por replace no falla sola cuando el patrón cambia (misma lección que
+    _EXACT_INTRA_HISTORY_SQL en dedup): se cuenta cada patrón antes de tocarlo.
+    """
+    patron_suma = f"+ {_LEXICAL_WEIGHT} *"
+    patron_norm = f"(1.0 + {_LEXICAL_WEIGHT})"
+    if (HYBRID_CANDIDATES_SQL.count(patron_suma) != 1
+            or HYBRID_CANDIDATES_SQL.count(patron_norm) != 1):
+        raise RuntimeError(
+            "el SQL de v1 ya no contiene los patrones de peso esperados: "
+            "la derivación produciría un SQL con el peso equivocado"
+        )
+    return HYBRID_CANDIDATES_SQL.replace(
+        patron_suma, "+ %s *" % lexical_weight
+    ).replace(patron_norm, "(1.0 + %s)" % lexical_weight)
+
+
+# El SQL de v2/v3: idéntico en forma al de v1 pero con SU peso léxico. Compartir
 # la constante habría significado que ajustar v2 MUTA v1 — la clase de
 # acoplamiento que el golden de inmutabilidad existe para impedir.
-HYBRID2_CANDIDATES_SQL = HYBRID_CANDIDATES_SQL.replace(
-    f"+ {_LEXICAL_WEIGHT} *", "+ %s *" % HYBRID2_LEXICAL_WEIGHT
-).replace(
-    f"(1.0 + {_LEXICAL_WEIGHT})", "(1.0 + %s)" % HYBRID2_LEXICAL_WEIGHT
-)
-if (HYBRID2_CANDIDATES_SQL == HYBRID_CANDIDATES_SQL
-        or str(_LEXICAL_WEIGHT) in HYBRID2_CANDIDATES_SQL):
-    # La derivación por replace no falla sola cuando el patrón cambia (misma
-    # lección que _EXACT_INTRA_HISTORY_SQL en dedup): se comprueba al importar.
-    raise RuntimeError(
-        "HYBRID2_CANDIDATES_SQL no pudo derivarse: el peso de v1 "
-        f"({_LEXICAL_WEIGHT}) sigue dentro, y v2 estaría corriendo con él"
-    )
+HYBRID2_CANDIDATES_SQL = _hybrid_candidates_sql(HYBRID2_LEXICAL_WEIGHT)
+
+
+# Versiones de consulta léxica que una receta v4+ puede nombrar. La receta
+# VALIDA contra la implementación: nombrar una versión que el binario no
+# implementa es error, no silencio.
+_LEXICAL_QUERY_BUILDERS = {"v2": None}  # se rellena tras definir las funciones
+
+
+def _validated_recipe(policy_weights: dict) -> dict:
+    """Valida la receta persistida de una política ``hybrid_rrf`` (v4+).
+
+    P1-A: el comportamiento se deriva de la fila, no del binario. Una receta
+    incompleta, con campos extra o con valores que esta implementación no
+    soporta no evalúa nada — mejor un error nombrable que un régimen mezclado.
+    """
+    esperadas = {"algorithm", "lexical_query", "lexical_weight", "rrf_k"}
+    claves = set(policy_weights)
+    if claves != esperadas:
+        raise ValueError(
+            f"receta hybrid_rrf inválida: claves {sorted(claves)}, "
+            f"esperadas {sorted(esperadas)}"
+        )
+    if policy_weights["lexical_query"] not in _LEXICAL_QUERY_BUILDERS:
+        raise ValueError(
+            "receta hybrid_rrf: lexical_query "
+            f"{policy_weights['lexical_query']!r} no implementada "
+            f"(soportadas: {sorted(_LEXICAL_QUERY_BUILDERS)})"
+        )
+    if policy_weights["rrf_k"] != _RRF_K:
+        raise ValueError(
+            f"receta hybrid_rrf: rrf_k={policy_weights['rrf_k']!r} no "
+            f"soportado por esta implementación (rrf_k={_RRF_K})"
+        )
+    peso = policy_weights["lexical_weight"]
+    if not isinstance(peso, (int, float)) or isinstance(peso, bool)             or not math.isfinite(peso) or peso <= 0:
+        raise ValueError(
+            f"receta hybrid_rrf: lexical_weight={peso!r} debe ser un "
+            "número finito y positivo"
+        )
+    return dict(policy_weights)
 
 
 def _semantic_arm_filled(filas, target: int, hybrid: bool) -> bool:
@@ -229,6 +295,11 @@ def _lexical_query_v2(content: dict) -> str:
     return " OR ".join((prioritarios + del_cv)[:_LEX_CAP])
 
 
+# Registro real de builders: se rellena aquí (tras definir las funciones) y no
+# arriba, para que nombrar una versión inexistente falle al validar la receta.
+_LEXICAL_QUERY_BUILDERS["v2"] = _lexical_query_v2
+
+
 def eval_key(offer_revision_id, profile_revision_id, model_id, policy_id) -> str:
     """Clave DETERMINISTA de la evaluación: mismos componentes ⇒ misma clave
     ⇒ una sola fila append-only (idempotencia por contrato)."""
@@ -238,12 +309,17 @@ def eval_key(offer_revision_id, profile_revision_id, model_id, policy_id) -> str
 
 async def ensure_policy(
     session, name: str, prompt_version: str, weights: dict | None = None,
-    active: bool = True,
+    active: bool | None = True,
 ) -> uuid.UUID:
     """Alta idempotente de la política (UNIQUE(name, prompt_version)). Como
     register_model: la fila existente se relee bajo lock y `active` se
     ACTUALIZA al re-declarar (declaración operativa); weights solo al crear
-    (una política versionada no muta — otra versión = otra fila)."""
+    (una política versionada no muta — otra versión = otra fila).
+
+    `active=None` (P1-D): asegura la FILA sin tocar la activación — si se
+    crea, nace inactiva. Es el modo del bootstrap de despliegue: un redeploy
+    no puede cambiar la canonicidad en silencio; la activación solo la mueve
+    declare_active_policies, explícita y atómicamente."""
     await session.execute(
         sa.text(
             "INSERT INTO scoring_policies (id, name, prompt_version, weights, active) "
@@ -252,7 +328,8 @@ async def ensure_policy(
         ),
         {
             "id": uuid.uuid4(), "name": name, "ver": prompt_version,
-            "w": json.dumps(weights or {}), "active": active,
+            "w": json.dumps(weights or {}),
+            "active": bool(active),
         },
     )
     row = (
@@ -269,12 +346,77 @@ async def ensure_policy(
         raise ValueError(
             f"policy {name}@{prompt_version}: weights distintos para la misma versión"
         )
-    if row.active != active:
+    if active is not None and row.active != active:
         await session.execute(
             sa.text("UPDATE scoring_policies SET active = :a WHERE id = :id"),
             {"a": active, "id": row.id},
         )
     return row.id
+
+
+# Catálogo de políticas conocidas (P1-D): las FILAS que todo entorno debe
+# tener, con sus recetas canónicas. El bootstrap las asegura sin tocar la
+# activación; qué está activo lo decide SOLO declare_active_policies.
+POLICY_CATALOG = (
+    ("cosine-baseline", "v1", {}),
+    (HYBRID_POLICY_NAME, HYBRID_POLICY_VERSION, HYBRID_POLICY_WEIGHTS),
+    (HYBRID_POLICY_NAME, HYBRID2_POLICY_VERSION, HYBRID2_POLICY_WEIGHTS),
+    (HYBRID_POLICY_NAME, "v3", HYBRID2_POLICY_WEIGHTS),
+    (HYBRID_POLICY_NAME, HYBRID4_POLICY_VERSION, HYBRID4_POLICY_WEIGHTS),
+)
+
+
+async def bootstrap_policy_catalog(session) -> dict:
+    """Asegura las filas del catálogo SIN tocar la activación (P1-D).
+
+    Es lo único que un despliegue normal puede hacer con las políticas:
+    re-ejecutarlo N veces preserva el conjunto activo que hubiera (pre o post
+    promoción, o tras rollback). Devuelve {(name, version): id}."""
+    ids = {}
+    for name, ver, w in POLICY_CATALOG:
+        ids[(name, ver)] = await ensure_policy(
+            session, name, ver, weights=w, active=None
+        )
+    return ids
+
+
+async def declare_active_policies(session, policy_ids) -> None:
+    """Declara el conjunto EXACTO de políticas activas (P1-D, revisión externa
+    2026-09-02): autoridad ÚNICA sobre la canonicidad.
+
+    El bootstrap define filas inmutables; ESTA función —y solo esta— cambia la
+    activación. Un despliegue normal no la invoca y por tanto no puede cambiar
+    la canonicidad en silencio; promoción y rollback la invocan explícitamente
+    con el conjunto completo deseado.
+
+    Un solo UPDATE sobre TODAS las filas: (a) el flip es atómico — no existe
+    ningún estado intermedio con el conjunto a medias; (b) toma lock de fila
+    sobre la canónica saliente, con lo que se serializa contra la valla
+    FOR SHARE de evaluate_profile (P1-C): o el movimiento de feed en vuelo
+    termina antes del flip, o ve el canónico nuevo y se aborta.
+
+    Declarar un id inexistente es error (y aborta la transacción): un conjunto
+    activo que no coincide EXACTAMENTE con lo declarado no debe cometerse.
+    """
+    ids = sorted({str(x) for x in policy_ids})
+    if not ids:
+        raise ValueError("el conjunto activo declarado no puede ser vacío")
+    filas = (
+        await session.execute(
+            sa.text(
+                "UPDATE scoring_policies "
+                "SET active = (id = ANY(CAST(:ids AS uuid[]))) "
+                "RETURNING id, active"
+            ),
+            {"ids": ids},
+        )
+    ).all()
+    activas = sorted(str(r.id) for r in filas if r.active)
+    if activas != ids:
+        raise ValueError(
+            "declaración de políticas activas no satisfecha: "
+            f"pedidas {ids}, activas {activas} — ids inexistentes o duplicados"
+        )
 
 
 # Corpus ELEGIBLE de un modelo: vacantes vivas cuya revisión canónica está embebida para él. El
@@ -334,7 +476,15 @@ async def evaluate_profile(
     if not isinstance(policy_weights, dict):
         raise ValueError(f"política inexistente o weights inválidos: {policy_id}")
     algorithm = policy_weights.get("algorithm", "cosine")
-    if algorithm not in {"cosine", "hybrid_rrf_v1", "hybrid_rrf_v2"}:
+    if algorithm == "hybrid_rrf":
+        # v4+ (P1-A): la receta persistida manda; se valida ANTES de tocar nada.
+        receta = _validated_recipe(policy_weights)
+    elif algorithm in {"cosine", "hybrid_rrf_v1", "hybrid_rrf_v2"}:
+        # Legacy congelado: el comportamiento de estas filas vive en el binario
+        # (v1→1.15, v2/v3→0.25) y los goldens lo fijan. No se crean filas nuevas
+        # con estos algoritmos: toda política híbrida nueva lleva receta.
+        receta = None
+    else:
         raise ValueError(f"algoritmo de matching no soportado: {algorithm}")
 
     prof = (
@@ -397,14 +547,18 @@ async def evaluate_profile(
             "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
             "profile_revision_id": prof.revision_id, "corpus_generation": corpus_gen,
         }
-    if algorithm == "hybrid_rrf_v2":
+    if receta is not None:
+        lex_query = _LEXICAL_QUERY_BUILDERS[receta["lexical_query"]](prof.content)
+    elif algorithm == "hybrid_rrf_v2":
         lex_query = _lexical_query_v2(prof.content)
     elif algorithm == "hybrid_rrf_v1":
         lex_query = _lexical_query(prof.content)
     else:
         lex_query = ""
     hybrid = bool(lex_query)
-    if algorithm == "hybrid_rrf_v2":
+    if receta is not None:
+        candidate_sql = _hybrid_candidates_sql(receta["lexical_weight"])
+    elif algorithm == "hybrid_rrf_v2":
         candidate_sql = HYBRID2_CANDIDATES_SQL
     elif hybrid:
         candidate_sql = HYBRID_CANDIDATES_SQL
@@ -444,6 +598,9 @@ async def evaluate_profile(
             score = round(min(100.0, max(0.0, float(c.rank_score))), 2)
             score_parts = {
                 "algorithm": algorithm,
+                # Receta bajo la que se calculó ESTA fila: con ella una eval es
+                # auditable sin reconstruir qué constante regía en el binario.
+                **({"recipe": receta} if receta is not None else {}),
                 "similarity": similarity,
                 "semantic_rank": c.semantic_rank,
                 "lexical_rank": c.lexical_rank,
@@ -541,6 +698,33 @@ async def evaluate_profile(
             [{"eid": e["eid"], "dest": locked.consumer_name} for e in events],
         )
     moved = False
+    if move_current:
+        # VALLA DE CANONICIDAD (P1-C, revisión externa 2026-09-02): la decisión
+        # «soy el canónico» se tomó FUERA de esta transacción (la tarea lee las
+        # políticas activas, cierra esa sesión y evalúa en transacciones
+        # nuevas) y puede haber caducado: un worker pre-flip que retome aquí
+        # tras una promoción restauraría el feed antiguo. Se reverifica en la
+        # MISMA transacción que la escritura, con FOR SHARE sobre la fila
+        # canónica: el flip actualiza TODAS las filas de scoring_policies en un
+        # solo UPDATE (declare_active_policies), así que o bien espera a que
+        # este movimiento termine, o bien ya cometió y esta lectura ve el
+        # canónico nuevo y el movimiento se aborta. Un SELECT sin lock dejaría
+        # el mismo TOCTOU con la ventana más corta.
+        canonica = (
+            await session.execute(
+                sa.text(
+                    "SELECT id FROM scoring_policies WHERE active "
+                    "ORDER BY name, prompt_version LIMIT 1 FOR SHARE"
+                )
+            )
+        ).scalar_one_or_none()
+        if canonica is None or str(canonica) != str(policy_id):
+            logger.warning(
+                "matching: la política %s ya no es canónica (ahora %s) — la "
+                "evaluación queda registrada pero el feed NO se mueve",
+                policy_id, canonica,
+            )
+            move_current = False
     if move_current:
         state_rows = [
             {"pid": profile_id, "vid": r["vid"], "eid": winners[(r["vid"], r["key"])]}

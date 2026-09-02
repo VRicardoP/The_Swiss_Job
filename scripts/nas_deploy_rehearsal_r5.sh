@@ -206,48 +206,38 @@ async def main():
                 s, NAME, SHA, recipe_version=ROLE_COMPOSITE_V2, active=True)
             await embeddings.register_model(
                 s, NAME, SHA, recipe_version=LEGACY_V1, active=False)
-            # `hybrid-rrf` NO gobierna el feed mientras no esté validada contra
-            # un conjunto de desarrollo independiente (Fase 3 del relevo). Antes
-            # este bloque la dejaba como ÚNICA activa y lo exigía con un assert,
-            # de modo que cada deploy devolvía la política sin validar al camino
-            # canónico — el mismo patrón que perdió `wal_level` en producción:
-            # una decisión de seguridad que vive solo en un artefacto que otro
-            # paso reescribe.
-            #
-            # Las dos quedan activas. La CANÓNICA es la primera por nombre
-            # (`tasks/matching.py`: `WHERE active ORDER BY name, prompt_version`,
-            # y solo la primera mueve `current_eval_id`), y 'cosine-baseline'
-            # precede alfabéticamente a 'hybrid-rrf': la validada manda y la
-            # experimental corre en SOMBRA, append-only.
-            canonical_id = await matching.ensure_policy(
-                s, 'cosine-baseline', 'v1', active=True)
-            # v1 queda INACTIVA: su desarrollo midió nDCG 0.098/0.000 y no
-            # vuelve al feed ni en sombra — mantenerla evaluando solo duplica
-            # coste. v2 corre en SOMBRA: la canónica sigue siendo la primera
-            # por nombre (cosine-baseline) hasta la promoción explícita.
-            await matching.ensure_policy(
-                s, matching.HYBRID_POLICY_NAME,
-                matching.HYBRID_POLICY_VERSION,
-                weights=matching.HYBRID_POLICY_WEIGHTS, active=False)
-            # v2 se registró con peso 1.15 y sus 1800 evaluaciones ya
-            # persistidas NO se recalculan al cambiar el peso: eval_key no
-            # lleva los parámetros del algoritmo, y mezclar dos regímenes de
-            # puntuación bajo el mismo policy_id produjo un ranking basura
-            # (feed_n 2380 = 1800 viejas + ~580 nuevas). El contrato del
-            # proyecto ya lo decía: una política versionada NO muta — otra
-            # versión, otra fila. El peso 0.25 es la versión v3.
-            await matching.ensure_policy(
-                s, matching.HYBRID_POLICY_NAME,
-                matching.HYBRID2_POLICY_VERSION,
-                weights=matching.HYBRID2_POLICY_WEIGHTS, active=False)
-            v3_id = await matching.ensure_policy(
-                s, matching.HYBRID_POLICY_NAME, 'v3',
-                weights=matching.HYBRID2_POLICY_WEIGHTS, active=True)
-            active = set((await s.execute(sa.text(
-                'SELECT id FROM scoring_policies WHERE active'
-            ))).scalars())
-            if active != {canonical_id, v3_id}:
-                raise RuntimeError(f'políticas activas inesperadas: {active}')
+            # P1-D (revisión externa 2026-09-02): el despliegue NO es
+            # autoridad sobre la canonicidad. Antes este bloque forzaba
+            # active=True/False por política en cada corrida — un redeploy
+            # podía deshacer una promoción o resucitar una política suspendida
+            # (el runbook del NAS reactivaba hybrid-rrf/v1, medida
+            # 0.098/0.000). Ahora: bootstrap_policy_catalog asegura las FILAS
+            # del catálogo sin tocar la activación, y el conjunto activo solo
+            # lo cambia el operador con `python -m jobhunt_core.policy_ctl
+            # declare <name:version ...>` (promoción/rollback explícitos y
+            # atómicos). Trampa anti-regresión: v1/v2/v3 jamás pueden estar
+            # activas tras un deploy.
+            ids = await matching.bootstrap_policy_catalog(s)
+            filas = (await s.execute(sa.text(
+                'SELECT name, prompt_version, active FROM scoring_policies '
+                'ORDER BY name, prompt_version'))).all()
+            activas = {(f.name, f.prompt_version) for f in filas if f.active}
+            prohibidas = activas & {('hybrid-rrf', 'v1'), ('hybrid-rrf', 'v2')}
+            if prohibidas:
+                raise RuntimeError(
+                    f'política suspendida ACTIVA tras el deploy: {prohibidas} '
+                    '— la activación solo se cambia vía policy_ctl declare')
+            if ('hybrid-rrf', 'v3') in activas:
+                # v3 activa es estado legado tolerado (sombra previa a v4); el
+                # deploy NO la toca — la transición a v4 es un declare explícito:
+                print('AVISO: hybrid-rrf/v3 sigue activa (sombra legada). '
+                      'Sucesora con receta: policy_ctl declare '
+                      'cosine-baseline:v1 hybrid-rrf:v4')
+            if not activas:
+                # Primer bootstrap de un entorno vacío: línea base segura.
+                await matching.declare_active_policies(
+                    s, [ids[('cosine-baseline', 'v1')]])
+                activas = {('cosine-baseline', 'v1')}
 
             exact_backfill = await exact_intra_backfill(s)
             lexical = await lexical_backfill(s)
@@ -259,7 +249,7 @@ async def main():
             if second['n']:
                 raise RuntimeError('revalidación dedup no fue idempotente')
             await s.commit()
-            print({'v3_policy_id': str(v3_id),
+            print({'politicas_activas': sorted(map(str, activas)),
                    'exact_intra_backfill': exact_backfill,
                    'lexical_backfill': lexical,
                    'revalidation': applied})

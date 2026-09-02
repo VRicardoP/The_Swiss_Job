@@ -339,14 +339,16 @@ async def main():
             # legacy_v1 conservada INACTIVA (paridad con dev: rollback de receta)
             await embeddings.register_model(
                 s, NAME, SHA, recipe_version=LEGACY_V1, active=False)
-            await matching.ensure_policy(
-                s, name='cosine-baseline', prompt_version='v1', active=False)
-            pid = await matching.ensure_policy(
-                s, matching.HYBRID_POLICY_NAME,
-                matching.HYBRID_POLICY_VERSION,
-                weights=matching.HYBRID_POLICY_WEIGHTS, active=True)
+            # P1-D (revisión externa 2026-09-02): el bootstrap asegura las
+            # FILAS del catálogo de políticas SIN tocar la activación. La
+            # versión anterior de este runbook desactivaba cosine-baseline y
+            # activaba hybrid-rrf/v1 (medida en desarrollo: nDCG 0.098/0.000)
+            # en cada despliegue — un redeploy podía resucitar una política
+            # suspendida o deshacer una promoción. La activación se cambia
+            # SOLO con policy_ctl declare (paso aparte, explícito).
+            ids = await matching.bootstrap_policy_catalog(s)
             await s.commit()
-            print('model_id:', mid, '| policy_id:', pid)
+            print('model_id:', mid, '| policy_ids:', ids)
 asyncio.run(main())
 "
 ```
@@ -357,9 +359,30 @@ Verificar:
 docker exec swissjob-postgres psql -U swissjob -d swissjobhunter -c "
 SELECT name, version, recipe_version, dim, active FROM jobhunt.embedding_models;
 SELECT name, prompt_version, active FROM jobhunt.scoring_policies;"
-# role_composite_v2 activo; hybrid-rrf/v1 activo; legacy_v1 y
-# cosine-baseline/v1 inactivos (rollback conservado)
+# role_composite_v2 activo; legacy_v1 inactivo. Políticas: el bootstrap NO
+# activa ninguna — el conjunto activo lo declara el operador (paso siguiente)
+# y un redeploy lo preserva tal cual estaba.
 ```
+
+### 7.1 Declarar el conjunto de políticas activas (autoridad ÚNICA)
+
+Solo en el PRIMER bootstrap de un entorno vacío, o en una promoción/rollback
+explícita. Atómico (un UPDATE sobre todas las filas) y validado: declarar un
+conjunto que no exista aborta sin efectos.
+
+```bash
+core_run python -m jobhunt_core.policy_ctl status
+# Primer bootstrap (línea base segura):
+core_run python -m jobhunt_core.policy_ctl declare cosine-baseline:v1
+# Promoción (ejemplo, SOLO tras el protocolo de promoción):
+#   core_run python -m jobhunt_core.policy_ctl declare hybrid-rrf:v4
+# Rollback:
+#   core_run python -m jobhunt_core.policy_ctl declare cosine-baseline:v1
+```
+
+`hybrid-rrf` v1/v2/v3 quedan como HISTORIA (filas inmutables, inactivas):
+v1 midió nDCG 0.098/0.000 y v2/v3 no llevan receta persistida completa —
+ninguna vuelve al feed; la sucesora con receta auditable es v4.
 
 Idempotente: re-ejecutarlo no crea filas nuevas (ON CONFLICT + relectura bajo
 lock). El orden importa poco — si el proyector corre antes del bootstrap, las

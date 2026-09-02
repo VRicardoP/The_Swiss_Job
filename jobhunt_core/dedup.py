@@ -98,7 +98,9 @@ _TZ_STRIP = "(cet|cest|utc|gmt|timezone|timezones|hours?|stunden?|heures?|zeit)"
 # holdout). Evidencia: 60 pares etiquetados a ciegas por un agente independiente;
 # el estrato S1 —misma empresa, calificador de seniority asimétrico, título
 # parecido— salió 20/20 `distinct`, y la variante por CONTENCIÓN de bases dispara
-# en 4/60, los 4 `distinct`, sin tocar ninguno de los 5 `duplicate` de control.
+# en 3/60, los 3 `distinct`, sin tocar ninguno de los 5 `duplicate` de control
+# (la cifra 4/60 de una redacción anterior contaba una variante previa de la
+# tokenización; el test parametrizado y el informe DEV fijan 3/60).
 #
 # La regla: dos títulos son NIVEL-INCOMPATIBLES si sus conjuntos de niveles
 # canónicos difieren Y el título base de uno (tokens sin nivel) CONTIENE al del

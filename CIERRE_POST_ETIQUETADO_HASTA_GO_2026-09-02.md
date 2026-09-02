@@ -100,8 +100,11 @@ archivados del flujo operativo conservando la evidencia.
   commit; **nunca `:prod`** para R5 — el `:prod` del NAS sigue en `2c19837`.
 - sha256 origen=destino en cada transferencia; release verificada EJECUTANDO la
   imagen; los 3 servicios R5 con el mismo image ID.
-- Deploy declara y EXIGE `{cosine-baseline, hybrid-rrf/v2}` activas (v1 fuera);
-  canónica = cosine por orden de selección verificado, v2 en SOMBRA.
+- Deploy de esta sesión dejó `{cosine-baseline, hybrid-rrf/v3}` activas (v1 y
+  v2 inactivas); canónica = cosine por orden de selección verificado, v3 en
+  SOMBRA. [Corregido 2026-09-02: la redacción original decía «v2» — v2 quedó
+  inactiva al detectarse el régimen mezclado y el peso 0.25 es la fila v3.
+  Desde P1-D el deploy ya NO declara activaciones: solo policy_ctl.]
 
 ## 6. Medición final de desarrollo — v3 (peso 0.25)
 
@@ -140,8 +143,10 @@ los perfiles medidos.
 
 ## 8. Rollback
 
-- Política: reactivar `cosine-baseline` (ya es la canónica; v2 solo sombra).
+- Política: `cosine-baseline` sigue siendo la canónica (la sombra es v3, no
+  v2 como decía la redacción original; corregido 2026-09-02). Rollback de
+  activación: `python -m jobhunt_core.policy_ctl declare cosine-baseline:v1`.
 - Imagen R5: `docker tag swissjob-core:353fab6 swissjob-core:r5-cycle` +
-  Recreate (el examen de dedup verde corresponde a `353fab6`; `54564bf` solo
-  añade el peso de v2).
+  Recreate (el examen de dedup verde corresponde a `353fab6`; `54564bf` añade
+  el peso 0.25 como fila v3 — no un peso «de v2»).
 - Cohortes/labels/identidades: **cero** tocadas en toda la sesión.
