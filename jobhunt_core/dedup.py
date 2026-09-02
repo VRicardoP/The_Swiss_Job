@@ -58,6 +58,7 @@ logger = logging.getLogger(__name__)
 # transporte.
 _CORPUS_SQL = (
     "SELECT v.id, sl.source_id, "
+    "       coalesce(orv.content->>'title', '') AS title, "
     "       coalesce(orv.content->>'location', '') AS loc "
     "FROM vacancies v "
     "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
@@ -91,6 +92,65 @@ _TZ_TOKENS = "('cet','cest','utc','gmt','timezone','timezones')"
 # los despliegues actuales); con ctype=C el cirílico dejaría de contar como
 # letra y este guard se degradaría en silencio.
 _TZ_STRIP = "(cet|cest|utc|gmt|timezone|timezones|hours?|stunden?|heures?|zeit)"
+
+
+# Veto de NIVEL (dev-seniority 2026-09-02, regla congelada ANTES de mirar el
+# holdout). Evidencia: 60 pares etiquetados a ciegas por un agente independiente;
+# el estrato S1 —misma empresa, calificador de seniority asimétrico, título
+# parecido— salió 20/20 `distinct`, y la variante por CONTENCIÓN de bases dispara
+# en 4/60, los 4 `distinct`, sin tocar ninguno de los 5 `duplicate` de control.
+#
+# La regla: dos títulos son NIVEL-INCOMPATIBLES si sus conjuntos de niveles
+# canónicos difieren Y el título base de uno (tokens sin nivel) CONTIENE al del
+# otro, ambos no vacíos. Tokenización por FRONTERA de palabra sobre el título ya
+# normalizado por _title_norm_sql: `intern` no casa dentro de `international` ni
+# `lead` dentro de `leader`, porque se compara el token entero, no un substring.
+# Simétrica por construcción (niveles con <>, bases con <@ en ambos sentidos).
+#
+# UNA sola implementación para los tres consumidores (ANN + su conteo espejo,
+# léxico, revalidación): mismo patrón que _loc_compat_sql. El exacto por
+# text_hash no la necesita: texto idéntico ⇒ título idéntico ⇒ niveles iguales.
+_NIVEL_CANON = (
+    "CASE w WHEN 'sr' THEN 'senior' WHEN 'jr' THEN 'junior' "
+    "WHEN 'intern' THEN 'trainee' WHEN 'graduate' THEN 'trainee' "
+    # 'leader' se canoniza a 'lead' A PROPÓSITO: «Team Lead» y «Team Leader»
+    # son la misma plaza escrita distinto, y sin la canonización el veto los
+    # separaría (niveles {lead} vs {} con base contenida). Canonizar los deja
+    # con niveles IGUALES ⇒ el veto no dispara ⇒ conservador hacia el recall.
+    "WHEN 'leader' THEN 'lead' ELSE w END"
+)
+_NIVEL_TOKENS = ("('senior','sr','junior','jr','lead','leader','principal',"
+                 "'staff','trainee','intern','graduate','associate','head')")
+
+
+def _niveles_de_sql(x_norm: str) -> str:
+    """Array ORDENADO de niveles canónicos del título NORMALIZADO `x_norm`."""
+    return (
+        "coalesce((SELECT array_agg(DISTINCT " + _NIVEL_CANON + " ORDER BY "
+        + _NIVEL_CANON + ") "
+        f"FROM unnest(regexp_split_to_array({x_norm}, '[^a-zà-ÿ0-9]+')) w "
+        f"WHERE w IN {_NIVEL_TOKENS}), ARRAY[]::text[])"
+    )
+
+
+def _base_de_sql(x_norm: str) -> str:
+    """Array ORDENADO de tokens del título base (sin niveles, sin vacíos)."""
+    return (
+        "coalesce((SELECT array_agg(DISTINCT w ORDER BY w) "
+        f"FROM unnest(regexp_split_to_array({x_norm}, '[^a-zà-ÿ0-9]+')) w "
+        f"WHERE w <> '' AND w NOT IN {_NIVEL_TOKENS}), ARRAY[]::text[])"
+    )
+
+
+def _nivel_incompatible_sql(a_norm: str, b_norm: str) -> str:
+    """TRUE ⇔ los títulos normalizados `a_norm`/`b_norm` son nivel-incompatibles."""
+    na, nb = _niveles_de_sql(a_norm), _niveles_de_sql(b_norm)
+    ba, bb = _base_de_sql(a_norm), _base_de_sql(b_norm)
+    return (
+        f"({na} <> {nb} "
+        f" AND cardinality({ba}) > 0 AND cardinality({bb}) > 0 "
+        f" AND ({ba} <@ {bb} OR {bb} <@ {ba}))"
+    )
 
 
 def _title_norm_sql(x: str) -> str:
@@ -221,6 +281,13 @@ _KNN_SQL = (
     "  AND " + _loc_compat_sql(
         "CAST(:loc AS text)", "coalesce(orv.content->>'location', '')"
     ) + " "
+    # Veto de NIVEL antes del LIMIT: filtrarlo después regalaría plazas del k
+    # a vecinos que jamás pueden ser candidatos (mismo motivo que el guard de
+    # ubicación de arriba).
+    "  AND NOT " + _nivel_incompatible_sql(
+        _title_norm_sql("CAST(:titulo AS text)"),
+        _title_norm_sql("coalesce(orv.content->>'title','')"),
+    ) + " "
     "ORDER BY oe.vector <=> " + _VEC_SUBQ + " "
     "LIMIT :k"
 )
@@ -241,6 +308,10 @@ _KNN_COUNT_SQL = (
     "  AND v.id <> :vid AND sl.source_id <> :src "
     "  AND " + _loc_compat_sql(
         "CAST(:loc AS text)", "coalesce(orv.content->>'location', '')"
+    ) + " "
+    "  AND NOT " + _nivel_incompatible_sql(
+        _title_norm_sql("CAST(:titulo AS text)"),
+        _title_norm_sql("coalesce(orv.content->>'title','')"),
     ) + " LIMIT :k) t"
 )
 
@@ -407,6 +478,9 @@ def _lex_sql(window: bool) -> str:
         "      CASE WHEN p.via = 'i' THEN CAST(:trgm_intra AS float4) "
         "           ELSE CAST(:trgm AS float4) END "
         f"  AND {loc_ok} "
+        # Veto de NIVEL (misma expresión que el ANN): tn_n/tn_c ya vienen
+        # normalizados por _title_norm_sql en el CTE corpus.
+        f"  AND NOT {_nivel_incompatible_sql(tn_n, tn_c)} "
         + _ON_CONFLICT
     )
 
@@ -414,7 +488,10 @@ def _lex_sql(window: bool) -> str:
 # ⚠ BUMP OBLIGATORIO en el MISMO commit que cambie _loc_compat_sql o los
 # tokens de remoto (auditoría C1 P3-2): la procedencia debe identificar QUÉ
 # versión de la regla resolvió cada candidato.
-_REVALIDATE_RULE = "rule:track-r-location-v2"
+# v2+nivel-v1 (2026-09-02): la revalidación aplica ADEMÁS el veto de nivel a
+# los pendientes — los generadores nuevos ya no los crean, pero los creados
+# ANTES del veto seguirían contando como «dice duplicado» en el gate.
+_REVALIDATE_RULE = "rule:track-r-location-v2+nivel-v1"
 
 
 async def revalidate_pending_candidates(
@@ -432,6 +509,10 @@ async def revalidate_pending_candidates(
         "coalesce(oa.content->>'location','')",
         "coalesce(ob.content->>'location','')",
     )
+    nivel_incomp = _nivel_incompatible_sql(
+        _title_norm_sql("coalesce(oa.content->>'title','')"),
+        _title_norm_sql("coalesce(ob.content->>'title','')"),
+    )
     base = (
         "FROM vacancies va, offer_revisions oa, vacancies vb, "
         "     offer_revisions ob "
@@ -440,7 +521,7 @@ async def revalidate_pending_candidates(
         "  AND oa.id = va.current_offer_revision_id "
         "  AND vb.id = dc.vacancy_b "
         "  AND ob.id = vb.current_offer_revision_id "
-        f"  AND NOT {loc_ok}"
+        f"  AND (NOT {loc_ok} OR {nivel_incomp})"
     )
     if apply:
         ids = [
@@ -547,8 +628,9 @@ async def scan_semantic_candidates(
 
     inserted = 0
     for row in nuevos:
-        knn_params = {"mid": model_id, "k": k,
-                      "vid": row.id, "src": row.source_id, "loc": row.loc}
+        knn_params = {"mid": model_id, "k": k, "vid": row.id,
+                      "src": row.source_id, "loc": row.loc,
+                      "titulo": row.title}
         vecinos = (
             await session.execute(sa.text(_KNN_SQL), knn_params)
         ).all()

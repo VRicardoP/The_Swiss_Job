@@ -737,7 +737,7 @@ def test_fase2_intra_normalizado_y_revalidacion_por_regla(db):
     revalidate_pending_candidates aplica la regla de ubicación UNIFORME a
     los pendientes: rechaza el que la viola, no toca al compatible ni al
     ya resuelto."""
-    from jobhunt_core.dedup import revalidate_pending_candidates
+    from jobhunt_core.dedup import _REVALIDATE_RULE, revalidate_pending_candidates
 
     factory, created = db
     _setup(
@@ -793,7 +793,8 @@ def test_fase2_intra_normalizado_y_revalidacion_por_regla(db):
     assert seg["n"] == 0
     # procedencia registrada en la misma sentencia
     assert meta and all(
-        m.resolved_by == "rule:track-r-location-v2" and m.resolved_at
+        # la versión exacta la fija el test del veto; aquí importa el sello
+        m.resolved_by == _REVALIDATE_RULE and m.resolved_at
         for m in meta
     )
     pares = sorted(_pairs(factory, created), key=lambda p: float(p.similarity))
@@ -1045,14 +1046,17 @@ def test_opt2_conteo_omitido_con_k_vecinos_llenos(db):
     _setup(
         factory, created,
         [
-            [("python lead", "Basel", "Empresa Uno AG")],
+            # 'python base' y no 'python lead': 'lead' está en el léxico del veto de
+            # nivel y vaciaría los k vecinos — esta prueba mide el SALTO DEL
+            # CONTEO, no el veto (que tiene sus propias mordidas más abajo).
+            [("python base", "Basel", "Empresa Uno AG")],
             [(f"python dev {i}", "Basel", "Empresa Dos AG") for i in range(k)],
         ],
     )
 
     async def go():
         async with factory() as s:
-            # La fuente 1 sale de la ventana: solo 'python lead' se escanea,
+            # La fuente 1 sale de la ventana: solo 'python base' se escanea,
             # y sus k vecinos cross-source llenan el kNN exacto.
             await s.execute(sa.text(
                 "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
@@ -1086,7 +1090,7 @@ def test_opt2_conteo_se_ejecuta_con_underfill(db):
     _setup(
         factory, created,
         [
-            [("java lead", "Basel", "Firma Tres AG")],
+            [("java base", "Basel", "Firma Tres AG")],
             [(f"java dev {i}", "Basel", "Firma Cuatro AG") for i in range(2)],
         ],
     )
@@ -1153,6 +1157,7 @@ def test_el_vector_no_viaja_y_el_orden_kNN_sigue_siendo_una_constante(db):
                     {
                         "mid": uuid.uuid4(), "k": 5, "vid": uuid.uuid4(),
                         "src": uuid.uuid4(), "loc": "Zürich",
+                        "titulo": "Data Engineer",
                     },
                 )
             ).scalars().all()
@@ -1257,3 +1262,222 @@ def test_la_variante_historica_no_puede_quedar_igual_que_la_diaria():
         assert invariante in _EXACT_INTRA_HISTORY_SQL, invariante
     # Y la diaria SIGUE siendo active-only: el barrido de producción no cambia.
     assert "v.archived_at IS NULL" in _EXACT_INTRA_SQL
+
+
+# --------------------------------------------------------------------------
+# Veto de NIVEL (dev-seniority 2026-09-02). Regla congelada contra 60 pares
+# etiquetados a ciegas: niveles canónicos distintos + título base contenido
+# ⇒ no es candidato. En desarrollo dispara 3/60 (los 3 `distinct`) y no toca
+# ninguno de los 5 `duplicate` de control.
+# --------------------------------------------------------------------------
+def _titles_by_id(factory, created):
+    """vacancy_id -> título, para las fuentes de ESTA prueba."""
+    async def go():
+        async with factory() as s:
+            rows = (
+                await s.execute(
+                    sa.text(
+                        "SELECT v.id, orv.content->>'title' AS t "
+                        "FROM vacancies v "
+                        "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
+                        "JOIN source_listing_incarnations pi ON pi.id = v.primary_incarnation_id "
+                        "JOIN source_listings sl ON sl.id = pi.source_listing_id "
+                        "WHERE sl.source_id = ANY(:srcs)"
+                    ),
+                    {"srcs": created["sources"]},
+                )
+            ).all()
+            # Indexación POSICIONAL a propósito: en este arnés el acceso por
+            # atributo devolvió el Row entero como clave (tuplas en el dict) y
+            # vació en silencio las consultas que dependían de estas claves.
+            return {row[0]: row[1] for row in rows}
+
+    return asyncio.run(go())
+
+
+def _ids_by_title(factory, created):
+    return {t: v for v, t in _titles_by_id(factory, created).items()}
+
+
+def _veto_expr(factory, ta, tb):
+    """Evalúa la expresión REAL del veto (la misma que usan los generadores)
+    sobre dos títulos literales."""
+    from jobhunt_core.dedup import _nivel_incompatible_sql, _title_norm_sql
+
+    async def go():
+        async with factory() as s:
+            expr = _nivel_incompatible_sql(
+                _title_norm_sql("CAST(:ta AS text)"),
+                _title_norm_sql("CAST(:tb AS text)"),
+            )
+            return (
+                await s.execute(sa.text(f"SELECT {expr}"), {"ta": ta, "tb": tb})
+            ).scalar_one()
+
+    return asyncio.run(go())
+
+
+@pytest.mark.parametrize(
+    ("ta", "tb", "espera", "porque"),
+    [
+        # Los DISPAROS del desarrollo (3/60, todos distinct)
+        ("Senior Project Manager", "Project Manager", True, "D59: el arquetipo"),
+        ("Senior IT Operations Specialist (m/w/d)",
+         "(Senior / Staff) IT Operations Specialist (m/w/d)", True,
+         "D10: conjuntos de nivel distintos, base idéntica"),
+        # Los 5 duplicate de control: JAMÁS
+        ("Werkstudent*in (m/w/d) Lager-und Logistik",
+         "Werkstudent*in (m/w/d) Lager-und Logistik", False, "D23: idénticos"),
+        ("(Senior / Staff) IT Operations Specialist (m/w/d)",
+         "(Senior / Staff) IT Operations Specialist (m/w/d)", False,
+         "D43: niveles iguales"),
+        # Trampas de SUBSTRING: el token entero manda
+        ("International Sales Manager", "Sales Manager", False,
+         "'intern' NO puede casar dentro de 'international'"),
+        ("Team Leader Marketing", "Team Lead Marketing", False,
+         "leader→lead se canoniza: niveles IGUALES, no veta"),
+        ("Leadership Coach", "Coach", False,
+         "'lead' NO puede casar dentro de 'leadership'"),
+        # Bases NO contenidas: el veto no aplica aunque el nivel difiera
+        ("Senior Contracts Manager Rail", "Risk Manager Rail", False,
+         "D02: base distinta — decide el resto del detector, no el veto"),
+        # Género y porcentajes
+        ("Senior Pflegefachperson (m/w/d) 80-100%",
+         "Pflegefachperson (m/w/d) 80-100%", True,
+         "el marcador de género no rompe la base; el pensum igual tampoco"),
+        ("Senior Pflegefachperson 80-100%", "Pflegefachperson 40-60%", False,
+         "pensums DISTINTOS ⇒ bases distintas ⇒ no veta (IPOS-03)"),
+    ],
+)
+def test_el_veto_de_nivel_decide_como_el_desarrollo(db, ta, tb, espera, porque):
+    factory, _ = db
+    assert _veto_expr(factory, ta, tb) is espera, porque
+    # SIMETRÍA: por construcción, pero se comprueba — un veto asimétrico
+    # dependería del orden LEAST/GREATEST del par.
+    assert _veto_expr(factory, tb, ta) is espera, "asimetría en " + porque
+
+
+def test_el_veto_filtra_el_candidato_lexico_pero_no_el_control(db):
+    """La mordida del generador: misma empresa, dos portales, títulos que solo
+    difieren en el calificador de nivel y trgm POR ENCIMA del umbral (se
+    asserta la precondición para que el test no pueda pasar en vacío). El
+    padre creaba el candidato; con el veto, no. Y el par de control con
+    niveles iguales SIGUE saliendo."""
+    from jobhunt_core.config import settings
+
+    factory, created = db
+    base_t = "Enterprise Business Development Representative"
+    _setup(
+        factory, created,
+        # El control NO puede ser el mismo título exacto: el sink colapsa
+        # contenido idéntico en una sola vacante y no habría par que probar.
+        # Singular/plural mantiene text_hash distinto y trgm altísimo, con el
+        # MISMO conjunto de niveles ({senior}) a ambos lados.
+        [[f"Senior {base_t}", "Senior Growth Partnerships Director"],
+         [base_t, "Senior Growth Partnership Director"]],
+        name_prefix="veto-lex",
+    )
+    # Precondición: sin ella el test afirmaría en vacío si el trgm no llega.
+    async def trgm():
+        async with factory() as s:
+            return (
+                await s.execute(
+                    sa.text("SELECT similarity(lower(:a), lower(:b))"),
+                    {"a": f"Senior {base_t}", "b": base_t},
+                )
+            ).scalar_one()
+
+    assert asyncio.run(trgm()) >= float(settings.CORE_DEDUP_LEX_TRGM_MIN), (
+        "el par elegido no supera el umbral léxico: la mordida sería vacua"
+    )
+    _scan(factory)
+    titulos = _titles_by_id(factory, created)
+
+    async def pares_con_titulos():
+        async with factory() as s:
+            rows = (
+                await s.execute(
+                    sa.text(
+                        "SELECT vacancy_a, vacancy_b FROM dedup_candidates "
+                        "WHERE vacancy_a = ANY(:ids) OR vacancy_b = ANY(:ids)"
+                    ),
+                    {"ids": list(titulos)},
+                )
+            ).all()
+            return [(titulos.get(r.vacancy_a), titulos.get(r.vacancy_b)) for r in rows]
+
+    pares = asyncio.run(pares_con_titulos())
+    con_senior = [p for p in pares if set(p) == {f"Senior {base_t}", base_t}]
+    assert not con_senior, (
+        "el generador léxico propuso el par nivel-incompatible: " + repr(con_senior)
+    )
+    control = [
+        p for p in pares
+        if set(p) == {"Senior Growth Partnerships Director",
+                      "Senior Growth Partnership Director"}
+    ]
+    assert control, "el veto se llevó por delante el par de control con niveles iguales"
+
+
+def test_la_revalidacion_rechaza_pendientes_nivel_incompatibles(db):
+    """Los generadores nuevos ya no crean estos candidatos, pero los creados
+    ANTES del veto siguen contando como «dice duplicado». La revalidación los
+    retira con procedencia versionada: preview con n+hash, apply idéntico,
+    segunda pasada 0, y los resueltos no se tocan."""
+    from jobhunt_core.dedup import _REVALIDATE_RULE, revalidate_pending_candidates
+
+    assert _REVALIDATE_RULE == "rule:track-r-location-v2+nivel-v1", (
+        "el bump de la versión de regla debe ir en el MISMO commit que el veto"
+    )
+    factory, created = db
+    _setup(
+        factory, created,
+        [["Senior Account Manager"], ["Account Manager"]],
+        name_prefix="veto-reval",
+    )
+    por_titulo = _ids_by_title(factory, created)
+    assert "Senior Account Manager" in por_titulo and "Account Manager" in por_titulo, (
+        "el arnés no materializó las vacantes esperadas; hay: " + repr(sorted(por_titulo))
+    )
+    a, b = por_titulo["Senior Account Manager"], por_titulo["Account Manager"]
+
+    async def siembra():
+        async with factory() as s:
+            await s.execute(
+                sa.text(
+                    "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
+                    "VALUES (:i, :a, :b, 0.850)"
+                ),
+                {"i": uuid.uuid4(), "a": a, "b": b},
+            )
+            await s.commit()
+
+    asyncio.run(siembra())
+
+    async def reval(apply):
+        async with factory() as s:
+            r = await revalidate_pending_candidates(s, apply=apply)
+            await s.commit()
+            return r
+
+    preview = asyncio.run(reval(False))
+    assert preview["n"] == 1, preview
+    aplicado = asyncio.run(reval(True))
+    assert aplicado["n"] == 1 and aplicado["hash_ids"] == preview["hash_ids"], (
+        "preview y apply deben retirar EXACTAMENTE el mismo conjunto"
+    )
+    assert asyncio.run(reval(True))["n"] == 0, "no fue idempotente"
+
+    async def estado():
+        async with factory() as s:
+            return (
+                await s.execute(
+                    sa.text(
+                        "SELECT state, resolved_by FROM dedup_candidates "
+                        "WHERE similarity = 0.850"
+                    )
+                )
+            ).one()
+
+    st = asyncio.run(estado())
+    assert st.state == "rejected" and st.resolved_by == _REVALIDATE_RULE, st
