@@ -11,12 +11,17 @@ def test_normalize_profile_coerces_defensively():
             "skills": ["python", 7, " sql ", None], "languages": "de",
             "locations": ["Zurich"], "experience_years": True,  # bool NO es int
             "salary_min": 80000, "salary_max": "mucho", "remote_pref": ["any"],
+            # target_roles (Fase 2): basura coercionada, cota de longitud y de
+            # cantidad aplicadas centralmente
+            "target_roles": [7, "  QA Lead  ", None, "x" * 999] + ["r"] * 20,
         }
     )
     assert c == {
         "title": "Backend Dev", "cv_text": None, "skills": ["python", "sql"],
         "languages": [], "locations": ["Zurich"], "experience_years": None,
         "salary_min": 80000, "salary_max": None, "remote_pref": None,
+        "target_roles": ["QA Lead", "x" * profiles._TARGET_ROLE_LEN]
+        + ["r"] * (profiles._TARGET_ROLES_MAX - 2),
     }
     assert profiles.normalize_profile("no-dict") is None
     # Sin texto embebible (ni title, ni cv_text, ni skills) → None.
