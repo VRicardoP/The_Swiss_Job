@@ -97,3 +97,43 @@ def test_e2e_con_stub_produce_artefacto_sellado(tmp_path):
                              man["model_fingerprint"])
     assert json.load(open(f"{man['artifact_dir']}/TRAIN_MANIFEST.json"))[
         "model_fingerprint"] == man["model_fingerprint"]
+
+def test_parejas_ranknet_solo_dentro_del_mismo_grupo_consulta():
+    """P6: parejas (i,j) SOLO dentro del mismo (perfil, consulta) y solo si
+    y_i > y_j; deterministas (mismo orden en dos llamadas)."""
+    filas = [
+        {"q": "qA", "d": "d1", "y": 1.0, "vac": "v1", "grupo": 1},
+        {"q": "qA", "d": "d2", "y": 0.0, "vac": "v2", "grupo": 1},
+        {"q": "qA", "d": "d3", "y": 0.5, "vac": "v3", "grupo": 1},
+        {"q": "qB", "d": "d4", "y": 1.0, "vac": "v4", "grupo": 1},
+        {"q": "qB", "d": "d5", "y": 1.0, "vac": "v5", "grupo": 1},
+    ]
+    pares = tce.build_ranknet_pairs(filas)
+    assert pares == tce.build_ranknet_pairs(filas)
+    # qA: 1.0>0.0, 1.0>0.5, 0.5>0.0 = 3 parejas; qB: empatadas = 0
+    assert len(pares) == 3
+    assert all(p[0]["y"] > p[1]["y"] and p[0]["q"] == p[1]["q"]
+               for p in pares)
+    # jamás cruza consultas
+    assert not any(p[0]["q"] != p[1]["q"] for p in pares)
+
+
+def test_concordancia_por_parejas_en_validacion():
+    """Métrica de selección para ranknet: fracción de parejas de la
+    validación bien ordenadas por el modelo."""
+    val = [
+        {"q": "qA", "d": "d1", "y": 1.0, "vac": "v1", "grupo": 0},
+        {"q": "qA", "d": "d2", "y": 0.0, "vac": "v2", "grupo": 0},
+        {"q": "qA", "d": "d3", "y": 0.5, "vac": "v3", "grupo": 0},
+    ]
+
+    class _Perfecto:
+        def predict(self, pares):
+            return [{"d1": 3.0, "d2": 1.0, "d3": 2.0}[d] for _, d in pares]
+
+    class _Invertido:
+        def predict(self, pares):
+            return [{"d1": 1.0, "d2": 3.0, "d3": 2.0}[d] for _, d in pares]
+
+    assert tce._val_pair_acc(_Perfecto(), val) == 1.0
+    assert tce._val_pair_acc(_Invertido(), val) == 0.0

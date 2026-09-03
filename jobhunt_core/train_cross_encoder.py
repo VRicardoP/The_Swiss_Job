@@ -34,6 +34,12 @@ WARMUP = 10
 MAX_LEN = 512
 EPOCAS_CANDIDATAS = (1, 2, 3)
 VAL_MOD = 5
+LOSSES = ("bce", "ranknet")
+# Tope de parejas por época para ranknet, fijado ANTES de entrenar desde un
+# presupuesto medido (sonda 2026-09-03: 21 s/paso de batch 8 en 2 CPUs; sin
+# tope, una época de n≈279 serían ~5 h). Submuestreo determinista (semilla
+# fija, re-barajado por época); consta en el manifiesto.
+RANKNET_PAIR_CAP = 800
 
 _trainer_factory = None
 
@@ -95,6 +101,36 @@ def split_by_group(filas: list[dict]) -> tuple[list, list]:
     return train, val
 
 
+def build_ranknet_pairs(filas: list[dict]) -> list[tuple[dict, dict]]:
+    """Parejas RankNet (P6 predeclarado): (i, j) SOLO dentro del mismo
+    (perfil, consulta) y solo si y_i > y_j. Orden determinista (el de las
+    filas canónicas)."""
+    por_consulta: dict[str, list[dict]] = {}
+    for f in filas:
+        por_consulta.setdefault(f["q"], []).append(f)
+    pares = []
+    for grupo in por_consulta.values():
+        for a in grupo:
+            for b in grupo:
+                if a["y"] > b["y"]:
+                    pares.append((a, b))
+    return pares
+
+
+def _val_pair_acc(modelo, val) -> float:
+    """Concordancia por parejas en la validación: fracción de parejas
+    (y_i > y_j) que el modelo ordena bien. Libre de calibración — comparable
+    entre BCE y RankNet."""
+    logits = modelo.predict([(f["q"], f["d"]) for f in val])
+    puntuacion = {id(f): float(s) for f, s in zip(val, logits)}
+    pares = build_ranknet_pairs(val)
+    if not pares:
+        return 0.0
+    aciertos = sum(
+        1 for a, b in pares if puntuacion[id(a)] > puntuacion[id(b)])
+    return aciertos / len(pares)
+
+
 def _seed_all():
     import numpy as np
     import torch
@@ -134,6 +170,60 @@ def _real_trainer(base: str, revision: str):
     return _T()
 
 
+def _ranknet_trainer(base: str, revision: str):
+    """RankNet mínimo en torch (ST 3.4.1 no trae pérdidas de ranking para
+    CrossEncoder): BCEWithLogits(logit_i − logit_j → 1) sobre las parejas de
+    build_ranknet_pairs. Mismos seed/batch/lr/warmup/max_length que BCE."""
+    from sentence_transformers import CrossEncoder
+    import torch
+
+    class _T:
+        def __init__(self):
+            self.m = CrossEncoder(base, revision=revision, device="cpu",
+                                  max_length=MAX_LEN, num_labels=1)
+
+        def _logits(self, filas):
+            tok = self.m.tokenizer
+            enc = tok([f["q"] for f in filas], [f["d"] for f in filas],
+                      padding=True, truncation=True, max_length=MAX_LEN,
+                      return_tensors="pt")
+            return self.m.model(**enc).logits.squeeze(-1)
+
+        def fit(self, train, epochs):
+            pares = build_ranknet_pairs(train)
+            modelo = self.m.model
+            modelo.train()
+            opt = torch.optim.AdamW(modelo.parameters(), lr=LR)
+            perdida = torch.nn.BCEWithLogitsLoss()
+            rng = random.Random(SEED)
+            paso = 0
+            for _ in range(epochs):
+                orden = list(pares)
+                rng.shuffle(orden)
+                orden = orden[:RANKNET_PAIR_CAP]
+                for k in range(0, len(orden), BATCH):
+                    lote = orden[k : k + BATCH]
+                    paso += 1
+                    # warmup lineal idéntico al de la receta BCE
+                    for g in opt.param_groups:
+                        g["lr"] = LR * min(1.0, paso / WARMUP)
+                    li = self._logits([a for a, _ in lote])
+                    lj = self._logits([b for _, b in lote])
+                    loss = perdida(li - lj, torch.ones_like(li))
+                    opt.zero_grad()
+                    loss.backward()
+                    opt.step()
+            modelo.eval()
+
+        def predict(self, pares):
+            return list(self.m.predict(pares, batch_size=16))
+
+        def save_pretrained(self, ruta):
+            self.m.save_pretrained(ruta)
+
+    return _T()
+
+
 def _val_mse(modelo, val) -> float:
     import math
 
@@ -147,9 +237,11 @@ def _val_mse(modelo, val) -> float:
 
 def run_training(judgments_path: str, profiles_content_path: str,
                  docs_path: str, base: str, revision: str, out_dir: str,
-                 epocas=EPOCAS_CANDIDATAS) -> dict:
+                 epocas=EPOCAS_CANDIDATAS, loss: str = "bce") -> dict:
     from jobhunt_core import cross_encoder as ce
 
+    if loss not in LOSSES:
+        raise ValueError(f"loss desconocida: {loss!r} (válidas: {LOSSES})")
     with io.open(profiles_content_path, encoding="utf-8") as fh:
         perfiles = json.load(fh)
     filas = build_dataset(judgments_path, perfiles, docs_path)
@@ -157,15 +249,26 @@ def run_training(judgments_path: str, profiles_content_path: str,
     train, val = split_by_group(filas)
 
     resultados = {}
+    concordancias = {}
     mejor = None
     tmp = os.path.join(out_dir, "_candidato")
+    entrenador_real = _real_trainer if loss == "bce" else _ranknet_trainer
     for n_epocas in epocas:
         _seed_all()
-        modelo = (_trainer_factory or _real_trainer)(base, revision)
+        modelo = (_trainer_factory or entrenador_real)(base, revision)
         modelo.fit(train, n_epocas)
         mse = _val_mse(modelo, val)
         resultados[n_epocas] = round(mse, 6)
-        if mejor is None or mse < resultados[mejor]:
+        concordancias[n_epocas] = round(_val_pair_acc(modelo, val), 6)
+        # Selección por grupos: BCE por MSE (receta P1-4); RankNet por
+        # concordancia de parejas (sus logits no están calibrados a rel/2).
+        gana = (
+            mejor is None
+            or (loss == "bce" and mse < resultados[mejor])
+            or (loss == "ranknet"
+                and concordancias[n_epocas] > concordancias[mejor])
+        )
+        if gana:
             mejor = n_epocas
             os.makedirs(tmp, exist_ok=True)
             modelo.save_pretrained(tmp)
@@ -179,10 +282,13 @@ def run_training(judgments_path: str, profiles_content_path: str,
     manifiesto = {
         "base": base, "base_revision": revision,
         "seed": SEED, "batch": BATCH, "lr": LR, "warmup": WARMUP,
-        "max_length": MAX_LEN, "loss": "bce-with-logits",
+        "max_length": MAX_LEN,
+        "loss": "bce-with-logits" if loss == "bce" else "ranknet-pairwise",
+        "seleccion": "val_mse" if loss == "bce" else "val_pair_acc",
         "objetivo": "rel/2", "val_grupo": f"sha1(vac) % {VAL_MOD} == 0",
         "epocas_candidatas": list(epocas), "epocas_elegidas": mejor,
-        "val_mse": resultados,
+        "val_mse": resultados, "val_pair_acc": concordancias,
+        "ranknet_pair_cap": RANKNET_PAIR_CAP if loss == "ranknet" else None,
         "n_total": len(filas), "n_train": len(train), "n_val": len(val),
         "dataset_sha256": _sha256_bytes(dataset_canon.encode()),
         "judgments_sha256": _sha256_bytes(
@@ -221,9 +327,10 @@ def _main(argv) -> None:
     ap.add_argument("--base", required=True)
     ap.add_argument("--revision", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--loss", choices=LOSSES, default="bce")
     args = ap.parse_args(argv)
     man = run_training(args.judgments, args.profiles_content, args.docs,
-                       args.base, args.revision, args.out)
+                       args.base, args.revision, args.out, loss=args.loss)
     print(json.dumps(man, ensure_ascii=False, sort_keys=True))
 
 
