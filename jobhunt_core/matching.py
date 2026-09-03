@@ -690,40 +690,27 @@ ELIGIBLE_CORPUS_FROM = (
 CORPUS_GENERATION_SQL = "SELECT generation FROM corpus_generation WHERE id = 1"
 
 
-async def evaluate_profile(
-    session, profile_id, model_id, policy_id, limit: int = 100,
-    move_current: bool = True,
-    with_corpus_generation: bool = False,
+async def compute_policy_feed(
+    session, profile_id, model_id, policy_id, limit: int = CANONICAL_EVAL_LIMIT,
+    exclude_dismissed: bool = False, with_corpus_generation: bool = False,
 ) -> dict:
-    """Evalúa el perfil vigente contra el corpus embebido con la política
-    versionada indicada (coseno o recuperación híbrida).
+    """Feed ACTUAL de una política: el ranking que produciría una ejecución
+    completa AHORA, calculado y devuelto SIN persistir nada ni mover estado.
 
-    - LOCK por perfil (FOR UPDATE — mismo protocolo que save_profile_revision;
-      auditoría A-08): evaluaciones del mismo perfil se SERIALIZAN, y la que
-      corre después lee la revisión vigente MÁS NUEVA — current_eval_id nunca
-      retrocede a una revisión vieja por una carrera.
-    - `move_current`: solo el evaluador CANÓNICO (primer (modelo, política)
-      activo en orden determinista — lo decide la tarea) mueve
-      current_eval_id; el resto corre en SOMBRA (append-only, sin tocar el
-      estado) — con varios modelos el feed es determinista (auditoría A-08).
-    Todo por lotes: 1 SELECT de candidatos + 1 INSERT append-only + 1
-    re-select de ganadores + 1 UPSERT de estado (solo current_eval_id y
-    updated_at)."""
-    locked = (
-        await session.execute(
-            sa.text(
-                "SELECT p.id, c.name AS consumer_name FROM profiles p "
-                "JOIN consumers c ON c.id = p.consumer_id "
-                "WHERE p.id = :pid FOR UPDATE OF p"
-            ),
-            {"pid": profile_id},
-        )
-    ).one_or_none()
-    if locked is None:
-        return {
-            "status": "not_found", "evaluated": 0, "new_evals": 0,
-            "moved_current": False,
-        }
+    P1 de la revisión externa 2026-09-03: eval_key no lleva generación del
+    corpus y los algoritmos RRF/rerank persisten rangos RELATIVOS al corpus —
+    tras una cosecha, el almacén append-only conserva scores viejos
+    (ON CONFLICT DO NOTHING) y su unión histórica es un ranking que ninguna
+    ejecución produjo (feed 1800→1814 observado). Este cálculo es la ÚNICA
+    fuente de verdad del feed de una política: la evaluación productiva
+    persiste su resultado y la medición de desarrollo lo mide directamente.
+
+    - `exclude_dismissed`: aplica la MISMA semántica que el feed canónico
+      (una vacante con dismissed_at no cuenta; una sin fila de estado sí).
+    - Orden devuelto = el del feed: (score DESC, vacancy_id ASC) sobre el
+      score final REDONDEADO — no el orden bruto del SQL.
+    Devuelve {"status", "rows", "profile_revision_id", "corpus_generation"}.
+    """
     policy_weights = (
         await session.execute(
             sa.text("SELECT weights FROM scoring_policies WHERE id = :id"),
@@ -765,10 +752,8 @@ async def evaluate_profile(
     if prof is None:
         # Sin revisión vigente o sin vector para este modelo: nada que evaluar
         # (el worker de embeddings aún no pasó) — no es un error.
-        return {
-            "status": "sin_vector", "evaluated": 0, "new_evals": 0,
-            "moved_current": False,
-        }
+        return {"status": "sin_vector", "rows": [],
+                "profile_revision_id": None, "corpus_generation": None}
 
     # ANN ROBUSTO (auditoría + rev. A-08 #2 + 2ª P2s): el filtro posterior
     # (revisión vigente + vacante activa) puede dejar el scan HNSW SIN
@@ -803,10 +788,9 @@ async def evaluate_profile(
     ).scalar_one()
     target = min(limit, int(eligible))
     if target == 0:
-        return {
-            "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
-            "profile_revision_id": prof.revision_id, "corpus_generation": corpus_gen,
-        }
+        return {"status": "ok", "rows": [],
+                "profile_revision_id": prof.revision_id,
+                "corpus_generation": corpus_gen}
     if receta is not None:
         lex_query = _LEXICAL_QUERY_BUILDERS[receta["lexical_query"]](prof.content)
     elif algorithm == "hybrid_rrf_v2":
@@ -852,18 +836,9 @@ async def evaluate_profile(
         reranked = await _rerank_candidates(
             session, candidates, prof.content, receta
         )
-    if not candidates:
-        return {
-            "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
-            "profile_revision_id": prof.revision_id, "corpus_generation": corpus_gen,
-        }
-
-    eval_rows = []
+    rows = []
     if reranked is not None:
         for r in reranked:
-            key = eval_key(
-                r["offer_revision_id"], prof.revision_id, model_id, policy_id
-            )
             score_parts = {
                 "algorithm": algorithm,
                 "recipe": receta,
@@ -879,14 +854,12 @@ async def evaluate_profile(
                 # componentes del rerank: suficientes para explicar el orden
                 **r["rerank"],
             }
-            eval_rows.append({
-                "id": uuid.uuid4(), "pid": profile_id, "vid": r["vacancy_id"],
-                "orid": r["offer_revision_id"], "prid": prof.revision_id,
-                "mid": model_id, "spid": policy_id, "key": key,
-                "score": r["score"], "scores": json.dumps(score_parts),
+            rows.append({
+                "vacancy_id": r["vacancy_id"],
+                "offer_revision_id": r["offer_revision_id"],
+                "score": r["score"], "score_parts": score_parts,
             })
     for c in ([] if reranked is not None else candidates):
-        key = eval_key(c.offer_revision_id, prof.revision_id, model_id, policy_id)
         if hybrid:
             similarity = round(float(c.sim), 6) if c.sim is not None else None
             score = round(min(100.0, max(0.0, float(c.rank_score))), 2)
@@ -906,15 +879,94 @@ async def evaluate_profile(
         else:
             score = round(max(0.0, float(c.sim)) * 100, 2)
             score_parts = {"similarity": round(float(c.sim), 6)}
-        eval_rows.append(
-            {
-                "id": uuid.uuid4(), "pid": profile_id, "vid": c.vacancy_id,
-                "orid": c.offer_revision_id, "prid": prof.revision_id,
-                "mid": model_id, "spid": policy_id, "key": key,
-                "score": score,
-                "scores": json.dumps(score_parts),
-            }
+        rows.append({
+            "vacancy_id": c.vacancy_id, "offer_revision_id": c.offer_revision_id,
+            "score": score, "score_parts": score_parts,
+        })
+    # Orden del FEED (no el bruto del SQL): score final redondeado DESC,
+    # vacante ASC — la misma clave con la que sirve el feed canónico.
+    rows.sort(key=lambda r: (-r["score"], str(r["vacancy_id"])))
+    if exclude_dismissed and rows:
+        # Semántica del feed canónico: dismissed_at no nulo excluye; una
+        # vacante SIN fila de estado sigue visible.
+        descartadas = {
+            r[0] for r in (
+                await session.execute(
+                    sa.text(
+                        "SELECT vacancy_id FROM profile_vacancy_state "
+                        "WHERE profile_id = :pid AND dismissed_at IS NOT NULL"
+                    ),
+                    {"pid": profile_id},
+                )
+            ).all()
+        }
+        rows = [r for r in rows if r["vacancy_id"] not in descartadas]
+    return {"status": "ok", "rows": rows,
+            "profile_revision_id": prof.revision_id,
+            "corpus_generation": corpus_gen}
+
+
+async def evaluate_profile(
+    session, profile_id, model_id, policy_id, limit: int = 100,
+    move_current: bool = True,
+    with_corpus_generation: bool = False,
+) -> dict:
+    """Evalúa el perfil vigente contra el corpus embebido con la política
+    versionada indicada (coseno o recuperación híbrida).
+
+    - LOCK por perfil (FOR UPDATE — mismo protocolo que save_profile_revision;
+      auditoría A-08): evaluaciones del mismo perfil se SERIALIZAN, y la que
+      corre después lee la revisión vigente MÁS NUEVA — current_eval_id nunca
+      retrocede a una revisión vieja por una carrera.
+    - `move_current`: solo el evaluador CANÓNICO (primer (modelo, política)
+      activo en orden determinista — lo decide la tarea) mueve
+      current_eval_id; el resto corre en SOMBRA (append-only, sin tocar el
+      estado) — con varios modelos el feed es determinista (auditoría A-08).
+    Todo por lotes: 1 SELECT de candidatos + 1 INSERT append-only + 1
+    re-select de ganadores + 1 UPSERT de estado (solo current_eval_id y
+    updated_at)."""
+    locked = (
+        await session.execute(
+            sa.text(
+                "SELECT p.id, c.name AS consumer_name FROM profiles p "
+                "JOIN consumers c ON c.id = p.consumer_id "
+                "WHERE p.id = :pid FOR UPDATE OF p"
+            ),
+            {"pid": profile_id},
         )
+    ).one_or_none()
+    if locked is None:
+        return {
+            "status": "not_found", "evaluated": 0, "new_evals": 0,
+            "moved_current": False,
+        }
+    computed = await compute_policy_feed(
+        session, profile_id, model_id, policy_id, limit=limit,
+        exclude_dismissed=False, with_corpus_generation=with_corpus_generation,
+    )
+    corpus_gen = computed["corpus_generation"]
+    if computed["status"] == "sin_vector":
+        return {
+            "status": "sin_vector", "evaluated": 0, "new_evals": 0,
+            "moved_current": False,
+        }
+    if not computed["rows"]:
+        return {
+            "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
+            "profile_revision_id": computed["profile_revision_id"],
+            "corpus_generation": corpus_gen,
+        }
+    prid = computed["profile_revision_id"]
+    eval_rows = [
+        {
+            "id": uuid.uuid4(), "pid": profile_id, "vid": r["vacancy_id"],
+            "orid": r["offer_revision_id"], "prid": prid,
+            "mid": model_id, "spid": policy_id,
+            "key": eval_key(r["offer_revision_id"], prid, model_id, policy_id),
+            "score": r["score"], "scores": json.dumps(r["score_parts"]),
+        }
+        for r in computed["rows"]
+    ]
     eval_rows.sort(key=lambda r: str(r["vid"]))  # orden determinista
     await session.execute(
         sa.text(
@@ -1065,69 +1117,9 @@ async def evaluate_profile(
         "moved_current": moved,
         # La revisión REALMENTE evaluada (la que se leyó bajo el lock del perfil): quien registre
         # el intento debe usar ESTA, no re-consultar la vigente (podría haber cambiado ya).
-        "profile_revision_id": prof.revision_id,
+        "profile_revision_id": prid,
         "corpus_generation": corpus_gen,
     }
-
-
-# Feed RECONSTRUIDO de una política sombra (Fase 1 del cierre v5): las
-# políticas sombra no tienen current_eval_id, así que su feed se deriva de las
-# evaluaciones bajo la revisión VIGENTE del perfil, la revisión canónica
-# VIGENTE de cada vacante y el modelo indicado — misma semántica de vigencia
-# que el feed del gate (vacante activa, no fusionada). eval_key garantiza una
-# fila por vacante bajo esos componentes; el guard de duplicados es defensa.
-SHADOW_FEED_SQL = (
-    "SELECT e.vacancy_id, e.score_final, e.scores, e.offer_revision_id "
-    "FROM match_evaluations e "
-    "JOIN vacancies v ON v.id = e.vacancy_id "
-    "WHERE e.profile_id = :pid "
-    "  AND e.scoring_policy_id = :spid "
-    "  AND e.model_id = :mid "
-    "  AND e.profile_revision_id = :prid "
-    "  AND e.offer_revision_id = v.current_offer_revision_id "
-    "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
-    "ORDER BY e.score_final DESC, e.vacancy_id"
-)
-
-
-async def shadow_feed(session, profile_id, policy_id, model_id):
-    """Feed completo de una política SOMBRA para el perfil, ordenado como el
-    feed canónico (score DESC, vacancy ASC). Falla cerrado: sin revisión
-    vigente del perfil, o con una vacante duplicada en el resultado (mezcla
-    de componentes que eval_key debía impedir), es error — jamás un feed
-    silenciosamente ambiguo."""
-    cur = await current_profile_revision_id(session, profile_id)
-    if cur is None:
-        raise ValueError(f"perfil {profile_id} sin revisión vigente")
-    filas = (
-        await session.execute(
-            sa.text(SHADOW_FEED_SQL),
-            {"pid": profile_id, "spid": policy_id, "mid": model_id, "prid": cur},
-        )
-    ).all()
-    vistos = set()
-    for f in filas:
-        if f.vacancy_id in vistos:
-            raise ValueError(
-                f"feed sombra ambiguo: vacante {f.vacancy_id} duplicada "
-                f"bajo policy={policy_id}"
-            )
-        vistos.add(f.vacancy_id)
-    return filas, cur
-
-
-async def current_profile_revision_id(session, profile_id):
-    """Revisión VIGENTE del perfil (max seq de activations) — la misma
-    definición que usa evaluate_profile."""
-    return (
-        await session.execute(
-            sa.text(
-                "SELECT revision_id FROM profile_revision_activations "
-                "WHERE profile_id = :pid ORDER BY seq DESC LIMIT 1"
-            ),
-            {"pid": profile_id},
-        )
-    ).scalar_one_or_none()
 
 
 async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=None):

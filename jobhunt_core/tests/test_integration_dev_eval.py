@@ -1,9 +1,12 @@
-"""Evaluador canónico de desarrollo (Fase 1 del cierre v5) contra Postgres.
+"""Evaluador canónico de desarrollo — feed COHERENTE de una sola ejecución.
 
-La desviación de fórmula (lineal vs la del gate) produjo un falso avance
-(0.557/0.617 vs 0.440/0.538 reales): estas regresiones fijan que la única
-métrica de desarrollo es la de shadow.metrics y que el evaluador falla
-CERRADO ante mezclas y ambigüedades. Ejecutar vía core-migrate.
+Revisión externa 2026-09-03 (P1): eval_key no lleva generación del corpus,
+RRF/rerank persisten rangos relativos, ON CONFLICT DO NOTHING conserva scores
+viejos ⇒ el almacén append-only es una UNIÓN de generaciones que ninguna
+ejecución produjo (feed 1800→1814). Estas regresiones fijan que la medición
+usa compute_policy_feed (cálculo directo, sin persistir) con la semántica del
+feed canónico (dismissed incluido) y manifiesto reproducible. Ejecutar vía
+core-migrate.
 """
 
 import asyncio
@@ -11,12 +14,15 @@ import json
 import math
 import os
 import tempfile
+import uuid
 
 import pytest
+import sqlalchemy as sa
 
-from jobhunt_core import dev_eval, matching
+from jobhunt_core import dev_eval, embeddings, matching
+from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.tests.test_integration_matching import (  # noqa: F401
-    _evaluate, _rows, _setup, db,
+    DirectionalBackend, _evaluate, _listing, _rows, _setup, db,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -57,159 +63,276 @@ def _run_eval(factory, polid_spec, profiles, judgments, unsure=None):
     async def go():
         async with factory() as s:
             return await dev_eval.evaluate_dev(
-                s, polid_spec, profiles, judgments, unsure_path=unsure)
+                s, polid_spec, profiles, judgments, unsure_path=unsure,
+                allow_unknown_release=True)
 
     return asyncio.run(go())
 
 
-def test_el_evaluador_usa_la_formula_del_gate_no_la_lineal(db):
-    """La métrica de desarrollo es EXACTAMENTE la de shadow.metrics (ganancia
-    graduada). Con rel-2 arriba, la fórmula lineal da OTRO número: el test
-    calcula ambos a mano y exige el del gate."""
+def _compute(factory, pid, mid, polid, limit=matching.CANONICAL_EVAL_LIMIT,
+             exclude_dismissed=True):
+    async def go():
+        async with factory() as s:
+            return await matching.compute_policy_feed(
+                s, pid, mid, polid, limit=limit,
+                exclude_dismissed=exclude_dismissed)
+
+    return asyncio.run(go())
+
+
+# ------------------------------------------------- P1: una sola ejecución
+
+
+def test_el_feed_de_medicion_es_de_una_sola_ejecucion(db):
+    """El almacén conserva la unión histórica (limit+1 filas, rangos de G1);
+    la medición NO puede leerlo: compute_policy_feed devuelve exactamente la
+    ejecución de AHORA — tamaño objetivo, rangos actuales, determinista."""
     factory, created = db
     pid, mid, _, vacs = _setup(
         factory, created, TITULOS,
         profile_content={"title": "python developer", "skills": ["python"]})
     polid = _shadow_policy(factory, created)
-    assert _evaluate(factory, pid, mid, polid)["evaluated"] > 0
-    feed = _rows(
+    K = len(TITULOS)
+
+    # G1: ejecución completa persistida.
+    assert _evaluate(factory, pid, mid, polid, limit=K)["evaluated"] == K
+    g1 = _rows(
         factory,
-        "SELECT vacancy_id FROM match_evaluations "
-        "WHERE profile_id = :p AND scoring_policy_id = :sp "
-        "ORDER BY score_final DESC, vacancy_id", p=pid, sp=polid)
-    # rel-2 al primero, rel-1 al segundo, rel-0 al tercero: las dos fórmulas
-    # divergen (graduada: (2^rel-1)/log2(pos+1); lineal: rel/log2(pos+1)).
-    j = [
-        f"P1,{feed[0].vacancy_id},2",
-        f"P1,{feed[1].vacancy_id},1",
-        f"P1,{feed[2].vacancy_id},0",
-    ]
-    out = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, _judgments_file(j))
-    r = out["profiles"]["P1"]
-    dcg_gate = 3 / math.log2(2) + 1 / math.log2(3)
-    idcg_gate = dcg_gate  # el ideal ordena 2,1,0 igual
-    assert r["dcg"] == round(dcg_gate, 6)
-    assert r["ndcg10"] == round(dcg_gate / idcg_gate, 6) == 1.0
-    # la lineal habría dado dcg distinto — si alguien la reintroduce, muerde
-    dcg_lineal = 2 / math.log2(2) + 1 / math.log2(3)
-    assert round(dcg_lineal, 6) != r["dcg"]
-    assert out["manifest"]["recipe"] == matching.HYBRID4_POLICY_WEIGHTS
-    assert out["manifest"]["corpus_generation"] is not None
+        "SELECT vacancy_id, (scores->>'semantic_rank')::int AS sr "
+        "FROM match_evaluations WHERE profile_id = :p AND "
+        "scoring_policy_id = :sp", p=pid, sp=polid)
+    top1_g1 = next(r.vacancy_id for r in g1 if r.sr == 1)
 
-
-def test_el_feed_sombra_no_mezcla_revisiones_ni_politicas(db):
-    """Filas de otra política, de una revisión de perfil anterior o de una
-    offer_revision obsoleta NO entran; una vacante archivada tampoco."""
-    factory, created = db
-    pid, mid, cosine_id, vacs = _setup(
-        factory, created, TITULOS,
-        profile_content={"title": "python developer", "skills": ["python"]})
-    polid = _shadow_policy(factory, created)
-    # evaluación bajo la PRIMERA revisión del perfil
-    assert _evaluate(factory, pid, mid, polid)["evaluated"] > 0
-    # también bajo cosine (otra política): no debe contaminar
-    assert _evaluate(factory, pid, mid, cosine_id)["evaluated"] > 0
-
-    async def mutate():
+    # Cambio de corpus: una oferta NUEVA pegada al vector del perfil.
+    async def sink_offer():
         async with factory() as s:
-            from jobhunt_core import profiles as core_profiles
-            # nueva revisión vigente (cambio SOLO de preferencias: mismo
-            # texto embebible ⇒ mismo text_hash ⇒ el vector se reutiliza y la
-            # reevaluación de abajo funciona sin re-embeder) → las evals
-            # viejas quedan atadas a la revisión anterior
-            await core_profiles.save_profile_revision(
-                s, pid, {"title": "python developer", "skills": ["python"],
-                         "languages": ["English"]})
-            # y una vacante se archiva
-            import sqlalchemy as sa
-            await s.execute(sa.text(
-                "UPDATE vacancies SET archived_at = now() WHERE id = :v"),
-                {"v": vacs["warehouse operative"]})
+            scope_id = created["scopes"][0]
+            await RawListingSink().handle(
+                s, str(scope_id), (_listing("j-nuevo", "python developer"),))
             await s.commit()
 
-    asyncio.run(mutate())
-
-    async def go():
+    async def pin_vector():
         async with factory() as s:
-            filas, prid = await matching.shadow_feed(s, pid, polid, mid)
-            return filas
+            # el vector del perfil, clavado: la nueva pasa a rango semántico 1
+            vec = (await s.execute(sa.text(
+                "SELECT pe.vector::text FROM profile_embeddings pe "
+                "WHERE pe.model_id = :m ORDER BY pe.profile_revision_id "
+                "LIMIT 1"), {"m": mid})).scalar_one()
+            await s.execute(sa.text(
+                "UPDATE offer_embeddings SET vector = CAST(:v AS vector) "
+                "WHERE text_hash IN (SELECT o.text_hash FROM offer_revisions o "
+                " JOIN vacancies va ON va.current_offer_revision_id = o.id "
+                " WHERE o.content->>'title' = 'python developer') "
+                "AND model_id = :m"), {"v": vec, "m": mid})
+            await s.commit()
 
-    filas = asyncio.run(go())
-    # la revisión vigente cambió y no hay evals bajo ella ⇒ feed vacío;
-    # nada de la revisión anterior ni de cosine se cuela
-    assert filas == []
-
-    # El worker de embeddings COPIA el vector por text_hash (revisión nueva,
-    # mismo texto): el backend envenenado prueba que NO hay forward pass.
-    from jobhunt_core import embeddings
-    from jobhunt_core.tasks.embedding import run_pending_task
-
-    class _Poison:
-        def encode_batch(self, texts):
-            raise AssertionError(
-                "forward pass redundante: el cambio era solo de preferencias")
-
-    embeddings.set_backend_factory(lambda name, version: _Poison())
+    asyncio.run(sink_offer())
+    # La tarea Celery hace su propio asyncio.run: se aplica FUERA del loop.
+    embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
     try:
+        from jobhunt_core.tasks.embedding import run_pending_task
         r = run_pending_task.apply(kwargs={"limit": 100})
-        assert r.successful()
+        assert r.successful(), r.traceback
     finally:
         embeddings.set_backend_factory(None)
+    asyncio.run(pin_vector())
 
-    # re-evaluar bajo la revisión nueva: el feed reaparece SIN la archivada
-    assert _evaluate(factory, pid, mid, polid)["evaluated"] > 0
-    filas = asyncio.run(go())
-    assert filas, "sin feed tras reevaluar bajo la revisión vigente"
-    assert vacs["warehouse operative"] not in {f.vacancy_id for f in filas}
+    # G2: reevaluación persistida — el almacén queda con la UNIÓN.
+    assert _evaluate(factory, pid, mid, polid, limit=K)["evaluated"] == K
+    union = _rows(
+        factory,
+        "SELECT vacancy_id, (scores->>'semantic_rank')::int AS sr "
+        "FROM match_evaluations WHERE profile_id = :p AND "
+        "scoring_policy_id = :sp", p=pid, sp=polid)
+    # El DEFECTO del almacén, documentado: limit+1 filas vigentes y el rango
+    # de G1 conservado para el viejo top-1 (ON CONFLICT DO NOTHING).
+    assert len(union) == K + 1
+    assert next(r.sr for r in union if r.vacancy_id == top1_g1) == 1
+
+    # La MEDICIÓN: cálculo directo — tamaño objetivo, rangos de G2.
+    r = _compute(factory, pid, mid, polid, limit=K)
+    assert r["status"] == "ok" and len(r["rows"]) == K
+    por_vac = {f["vacancy_id"]: f for f in r["rows"]}
+    assert top1_g1 in por_vac, "el viejo top-1 sigue en el corpus"
+    assert por_vac[top1_g1]["score_parts"]["semantic_rank"] == 2, (
+        "el cálculo directo debe reflejar el rango ACTUAL, no el de G1")
+    # determinista: dos ejecuciones, mismas filas
+    assert _compute(factory, pid, mid, polid, limit=K)["rows"] == r["rows"]
+
+
+def test_descartada_no_aparece_y_sin_estado_si(db):
+    """Semántica del feed canónico en la medición: dismissed_at excluye; una
+    vacante sin fila de estado sigue visible; y el cálculo coincide fila a
+    fila con feed() cuando la política es la canónica."""
+    factory, created = db
+    pid, mid, cosine_id, vacs = _setup(factory, created, TITULOS)
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+
+    def canonico():
+        async def go():
+            async with factory() as s:
+                filas, _cur = await matching.feed(s, pid, limit=50)
+                return [(f.vacancy_id, str(f.score_final)) for f in filas]
+
+        return asyncio.run(go())
+
+    def calculo():
+        r = _compute(factory, pid, mid, cosine_id)
+        assert r["status"] == "ok"
+        return [(f["vacancy_id"], f"{f['score']:.2f}") for f in r["rows"]]
+
+    assert calculo() == canonico()
+
+    # descarte de la primera vacante → desaparece de ambos
+    primera = canonico()[0][0]
+
+    async def dismiss():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "UPDATE profile_vacancy_state SET dismissed_at = now() "
+                "WHERE profile_id = :p AND vacancy_id = :v"),
+                {"p": pid, "v": primera})
+            await s.commit()
+
+    asyncio.run(dismiss())
+    assert primera not in [v for v, _ in canonico()]
+    assert primera not in [v for v, _ in calculo()]
+    assert calculo() == canonico()
+    # las demás (con fila de estado NO descartada) y cualquier vacante sin
+    # fila siguen visibles: el resto del feed no se encogió
+    assert len(calculo()) == len(TITULOS) - 1
+
+
+def test_promover_y_rollback_conservan_el_feed(db):
+    """El mismo conjunto y orden que mide el desarrollo es el que sirve el
+    feed al promover; el rollback restaura exactamente el anterior."""
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(factory, created, TITULOS)
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+
+    def feed_actual():
+        async def go():
+            async with factory() as s:
+                filas, _ = await matching.feed(s, pid, limit=50)
+                return [(f.vacancy_id, str(f.score_final)) for f in filas]
+
+        return asyncio.run(go())
+
+    feed_cosine = feed_actual()
+    polid = _shadow_policy(factory, created)
+    medido = [(f["vacancy_id"], f"{f['score']:.2f}")
+              for f in _compute(factory, pid, mid, polid)["rows"]]
+
+    async def declare(ids):
+        async with factory() as s:
+            await matching.declare_active_policies(s, ids)
+            await s.commit()
+
+    # promoción: declarar {v4} y materializar
+    asyncio.run(declare([polid]))
+    assert _evaluate(factory, pid, mid, polid)["moved_current"] is True
+    assert feed_actual() == medido, (
+        "lo medido en desarrollo debe ser EXACTAMENTE lo servido al promover")
+
+    # rollback: declarar {cosine} y rematerializar
+    asyncio.run(declare([cosine_id]))
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+    assert feed_actual() == feed_cosine
+
+
+# ------------------------------------------------- fórmula y fail-closed
+
+
+def test_el_evaluador_usa_la_formula_del_gate_no_la_lineal(db):
+    factory, created = db
+    pid, mid, _, vacs = _setup(
+        factory, created, TITULOS,
+        profile_content={"title": "python developer", "skills": ["python"]})
+    _shadow_policy(factory, created)
+    # primera pasada para conocer el orden actual (determinista)
+    sonda = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
+                      _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+    top = [f["vacancy_id"] for f in sonda["payload"]["profiles"]["P1"]["top10"]]
+    j = [f"P1,{top[0]},2", f"P1,{top[1]},1", f"P1,{top[2]},0"]
+    out = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, _judgments_file(j))
+    r = out["payload"]["profiles"]["P1"]
+    dcg_gate = 3 / math.log2(2) + 1 / math.log2(3)
+    assert r["dcg"] == round(dcg_gate, 6)
+    assert r["ndcg10"] == 1.0
+    dcg_lineal = 2 / math.log2(2) + 1 / math.log2(3)
+    assert round(dcg_lineal, 6) != r["dcg"]
+    assert out["payload"]["recipe"] == matching.HYBRID4_POLICY_WEIGHTS
+    assert out["payload"]["corpus_generation"] is not None
 
 
 def test_idcg_cero_es_no_medible_jamas_verde(db):
     factory, created = db
     pid, mid, _, vacs = _setup(factory, created, TITULOS[:2])
-    polid = _shadow_policy(factory, created)
-    assert _evaluate(factory, pid, mid, polid)["evaluated"] > 0
+    _shadow_policy(factory, created)
     j = [f"P1,{v},0" for v in list(vacs.values())[:2]]
     out = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, _judgments_file(j))
-    r = out["profiles"]["P1"]
+    r = out["payload"]["profiles"]["P1"]
     assert r["no_medible"] is True and r["ndcg10"] == 0.0
     assert r["causa_no_medible"]
 
 
-def test_juicios_ambiguos_o_rotos_abortan(db):
+def test_fallos_cerrados_del_evaluador(db):
     factory, created = db
     pid, mid, _, vacs = _setup(factory, created, TITULOS[:2])
-    polid = _shadow_policy(factory, created)
-    assert _evaluate(factory, pid, mid, polid)["evaluated"] > 0
+    _shadow_policy(factory, created)
     v = str(list(vacs.values())[0])
-    # mismo par con rel distinta ⇒ ambiguo
     with pytest.raises(ValueError, match="ambiguo"):
         _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
                   _judgments_file([f"P1,{v},2", f"P1,{v},1"]))
-    # vacante inexistente ⇒ typo que no puede degradar en silencio
     with pytest.raises(ValueError, match="inexistentes"):
         _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
                   _judgments_file(
                       [f"P1,00000000-0000-0000-0000-000000000000,1"]))
-    # unsure que también aparece juzgado ⇒ ambiguo
-    f = tempfile.NamedTemporaryFile(
-        "w", suffix=".json", delete=False, encoding="utf-8")
-    json.dump({"P1": [v]}, f); f.close()
-    with pytest.raises(ValueError, match="ambiguo"):
-        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
-                  _judgments_file([f"P1,{v},1"]), unsure=f.name)
-    # política inexistente ⇒ error nombrable
     with pytest.raises(ValueError, match="inexistente"):
         _run_eval(factory, "hybrid-rrf:v99x", {"P1": pid},
                   _judgments_file([f"P1,{v},1"]))
+    # perfil sin vector → no medible, jamás un feed vacío en silencio
+    with pytest.raises(ValueError, match="no medible"):
+        _run_eval(factory, "hybrid-rrf:v4", {"PX": str(uuid.uuid4())},
+                  _judgments_file([]))
+    # unsure malformado: raíz lista, valor no-lista, elemento escalar, solape
+    for contenido in (["a"], {"P1": "no-lista"}, {"P1": [123]},
+                      {"P1": [v]}):
+        f = tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, encoding="utf-8")
+        json.dump(contenido, f); f.close()
+        with pytest.raises(ValueError):
+            _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
+                      _judgments_file([f"P1,{v},1"]), unsure=f.name)
 
 
-def test_la_salida_es_determinista(db):
+def test_release_desconocida_es_error_en_operacion(db):
+    factory, created = db
+    pid, mid, _, vacs = _setup(factory, created, TITULOS[:2])
+    _shadow_policy(factory, created)
+
+    async def go():
+        async with factory() as s:
+            with pytest.raises(ValueError, match="RELEASE_SHA"):
+                await dev_eval.evaluate_dev(
+                    s, "hybrid-rrf:v4", {"P1": pid},
+                    _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+
+    if os.environ.get("RELEASE_SHA", "unknown") == "unknown":
+        asyncio.run(go())
+    else:
+        pytest.skip("RELEASE_SHA identificable en este entorno")
+
+
+def test_el_payload_es_determinista_y_sellado(db):
+    """El payload reproducible es idéntico entre corridas (sin quitar campos)
+    y su hash lo sella; lo volátil (generated_at) vive FUERA del payload."""
     factory, created = db
     pid, mid, _, vacs = _setup(factory, created, TITULOS[:3])
-    polid = _shadow_policy(factory, created)
-    assert _evaluate(factory, pid, mid, polid)["evaluated"] > 0
+    _shadow_policy(factory, created)
     j = _judgments_file([f"P1,{list(vacs.values())[0]},2"])
     a = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, j)
     b = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, j)
-    a["manifest"].pop("generated_at"); b["manifest"].pop("generated_at")
-    assert a == b
+    assert a["payload"] == b["payload"]
+    assert a["payload_sha256"] == b["payload_sha256"]
+    assert "generated_at" not in a["payload"]

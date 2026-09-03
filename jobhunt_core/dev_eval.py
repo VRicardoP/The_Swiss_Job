@@ -1,26 +1,32 @@
-"""Evaluador CANÓNICO de desarrollo para políticas sombra (Fase 1, cierre v5).
+"""Evaluador CANÓNICO de desarrollo para políticas sombra.
 
-Una sola métrica de desarrollo, reproducible desde el repo:
+Corrección P1 (revisión externa 2026-09-03): la primera versión reconstruía el
+feed desde el almacén append-only, que tras una cosecha es la UNIÓN de
+generaciones del corpus (eval_key no lleva generación; RRF persiste rangos
+relativos; ON CONFLICT conserva scores viejos — feed 1800→1814 observado): un
+ranking que ninguna ejecución produjo. Esta versión mide DIRECTAMENTE
+matching.compute_policy_feed — el mismo cálculo que persiste la evaluación
+productiva — dentro de una fotografía transaccional REPEATABLE READ de solo
+lectura; el corpus_generation del manifiesto pertenece a esa misma fotografía.
 
     python -m jobhunt_core.dev_eval --policy hybrid-rrf:v4 \
         --judgments /tmp/juicios.csv [--unsure /tmp/unsure.json] \
         [--model <uuid>] --profile P1=<uuid> --profile P2=<uuid>
 
-- La fórmula es LA DEL GATE, importada de shadow.metrics (_dcg, NDCG_K): la
-  desviación lineal 0.557/0.617 vs 0.440/0.538 ya produjo un falso avance —
-  este módulo existe para que no pueda repetirse.
-- El feed sombra se reconstruye con matching.shadow_feed (única definición:
-  revisión vigente del perfil, revisión canónica vigente de cada vacante,
-  vacante activa, modelo indicado).
+- Fórmula del gate importada de shadow.metrics (_dcg, NDCG_K) — jamás copiada.
+- Semántica del feed canónico (exclude_dismissed): una vacante descartada no
+  cuenta; una sin fila de estado sí.
 - Falla CERRADO: política/perfil/modelo irresolubles, juicios duplicados o
-  malformados, vacante juzgada inexistente, o varios modelos activos sin
-  --model, abortan con error nombrable. IDCG<=0 ⇒ `no_medible`, jamás verde.
-- `unsure` se excluye de forma EXPLÍCITA (fichero aparte) y se reporta.
-- La salida es determinista (claves ordenadas); el manifiesto lleva release,
-  política+receta, modelo, revisiones, corpus_generation y hashes de insumos.
+  malformados, vacante juzgada inexistente, varios modelos activos sin
+  --model, perfil sin vector, RELEASE_SHA no identificable (salvo
+  allow_unknown_release explícito, solo para tests). IDCG<=0 ⇒ `no_medible`.
+- `unsure` es exactamente dict[perfil, lista de UUID]; extras/escalares/UUID
+  inválidos abortan.
+- Salida = {"payload": <reproducible>, "payload_sha256", "generated_at"}: el
+  payload es determinista y su hash lo sella; los metadatos volátiles viven
+  fuera.
 
-Formato de juicios: CSV `perfil,vacancy_uuid,rel` con rel ∈ {0,1,2}; el
-fichero unsure es JSON {perfil: [vacancy_uuid, ...]}.
+Formato de juicios: CSV `perfil,vacancy_uuid,rel` con rel ∈ {0,1,2}.
 """
 import argparse
 import asyncio
@@ -37,7 +43,7 @@ from jobhunt_core import matching
 from jobhunt_core.database import task_session_factory
 from jobhunt_core.shadow.metrics import NDCG_K, _dcg
 
-EVALUATOR_VERSION = "dev-eval-v1"
+EVALUATOR_VERSION = "dev-eval-v2"
 
 
 def _sha256_file(path: str) -> str:
@@ -73,6 +79,38 @@ def load_judgments(path: str, profiles: dict) -> dict:
                     f"{previo}, ahora {rel} — juicio ambiguo"
                 )
             out[perfil][vac] = int(rel)
+    return out
+
+
+def load_unsure(path: str | None, profiles: dict, juicios: dict) -> dict:
+    """`unsure` = EXACTAMENTE dict[perfil, list[UUID]]; extras, escalares o
+    solapes con juicios abortan."""
+    if not path:
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        crudo = json.load(fh)
+    if not isinstance(crudo, dict):
+        raise ValueError(f"unsure: debe ser un objeto, no {type(crudo).__name__}")
+    out: dict[str, list] = {}
+    for perfil, vacs in crudo.items():
+        if perfil not in profiles:
+            raise ValueError(f"unsure: perfil desconocido {perfil!r}")
+        if not isinstance(vacs, list):
+            raise ValueError(
+                f"unsure[{perfil}]: debe ser una lista, no "
+                f"{type(vacs).__name__}"
+            )
+        for v in vacs:
+            if not isinstance(v, str):
+                raise ValueError(f"unsure[{perfil}]: elemento no textual {v!r}")
+            uuid_mod.UUID(v)  # valida o revienta
+        solapa = set(vacs) & set(juicios.get(perfil, ()))
+        if solapa:
+            raise ValueError(
+                f"unsure: {perfil}/{sorted(solapa)} también juzgado con rel "
+                "— juicio ambiguo"
+            )
+        out[perfil] = sorted(vacs)
     return out
 
 
@@ -139,52 +177,68 @@ async def _verify_judged_vacancies(session, juicios: dict) -> None:
 async def evaluate_dev(
     session, policy_spec: str, profiles: dict, judgments_path: str,
     unsure_path: str | None = None, model_id: str | None = None,
+    limit: int = matching.CANONICAL_EVAL_LIMIT,
+    allow_unknown_release: bool = False,
 ) -> dict:
-    """Métricas de desarrollo de UNA política sombra con la fórmula del gate.
+    """Métricas de desarrollo de UNA política con la fórmula del gate, sobre
+    el feed COHERENTE de una ejecución actual (compute_policy_feed) bajo una
+    fotografía REPEATABLE READ de solo lectura.
 
-    `profiles` = {nombre: profile_uuid}. Devuelve un dict determinista con
-    manifiesto + métricas por perfil.
+    `profiles` = {nombre: profile_uuid}. La sesión debe llegar SIN transacción
+    empezada (el SET TRANSACTION debe ser la primera sentencia).
     """
+    release = os.environ.get("RELEASE_SHA", "unknown")
+    if release == "unknown" and not allow_unknown_release:
+        raise ValueError(
+            "RELEASE_SHA=unknown: una medición sin release identificable no "
+            "es auditable (allow_unknown_release solo para tests)"
+        )
+    # Fotografía transaccional: todo lo que sigue —candidatos, generación,
+    # juicios verificados— se lee del MISMO snapshot.
+    await session.execute(
+        sa.text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+    )
     policy_id, weights = await _resolve_policy(session, policy_spec)
     mid = await _resolve_model(session, model_id)
     juicios = load_judgments(judgments_path, profiles)
-    unsure: dict[str, list] = {}
-    if unsure_path:
-        with open(unsure_path, encoding="utf-8") as fh:
-            unsure = json.load(fh)
-        for perfil, vacs in unsure.items():
-            if perfil not in profiles:
-                raise ValueError(f"unsure: perfil desconocido {perfil!r}")
-            solapa = set(vacs) & set(juicios.get(perfil, ()))
-            if solapa:
-                raise ValueError(
-                    f"unsure: {perfil}/{sorted(solapa)} también juzgado con "
-                    "rel — juicio ambiguo"
-                )
+    unsure = load_unsure(unsure_path, profiles, juicios)
     await _verify_judged_vacancies(session, juicios)
-    corpus_gen = (
-        await session.execute(sa.text(matching.CORPUS_GENERATION_SQL))
-    ).scalar_one_or_none()
-    if corpus_gen is None:
-        raise ValueError("corpus_generation ausente: corpus no identificable")
 
     por_perfil = {}
     revisiones = {}
+    corpus_gen = None
     for nombre in sorted(profiles):
         pid = profiles[nombre]
-        filas, prid = await matching.shadow_feed(session, pid, policy_id, mid)
-        revisiones[nombre] = str(prid)
+        computed = await matching.compute_policy_feed(
+            session, pid, mid, policy_id, limit=limit,
+            exclude_dismissed=True, with_corpus_generation=True,
+        )
+        if computed["status"] != "ok":
+            raise ValueError(
+                f"perfil {nombre} no medible: status={computed['status']!r}"
+            )
+        if corpus_gen is None:
+            corpus_gen = computed["corpus_generation"]
+        elif corpus_gen != computed["corpus_generation"]:
+            raise ValueError(
+                "corpus_generation cambió dentro de la fotografía: "
+                f"{corpus_gen} → {computed['corpus_generation']}"
+            )
+        revisiones[nombre] = str(computed["profile_revision_id"])
+        filas = computed["rows"]
         vac_rel = juicios[nombre]
-        rels_top = [vac_rel.get(str(f.vacancy_id), 0) for f in filas[:NDCG_K]]
+        rels_top = [
+            vac_rel.get(str(f["vacancy_id"]), 0) for f in filas[:NDCG_K]
+        ]
         dcg = _dcg(rels_top)
         idcg = _dcg(sorted(vac_rel.values(), reverse=True)[:NDCG_K])
-        en_feed = {str(f.vacancy_id) for f in filas}
+        en_feed = {str(f["vacancy_id"]) for f in filas}
         por_perfil[nombre] = {
             "feed_n": len(filas),
             "top10": [
                 {
-                    "rank": i + 1, "vacancy_id": str(f.vacancy_id),
-                    "score": str(f.score_final), "rel": rel,
+                    "rank": i + 1, "vacancy_id": str(f["vacancy_id"]),
+                    "score": str(f["score"]), "rel": rel,
                 }
                 for i, (f, rel) in enumerate(zip(filas[:NDCG_K], rels_top))
             ],
@@ -196,27 +250,33 @@ async def evaluate_dev(
                 "IDCG=0: sin juicios con relevancia positiva" if idcg <= 0 else None
             ),
             "juicios_usados": len(vac_rel),
-            "excluidos_unsure": sorted(unsure.get(nombre, [])),
+            "excluidos_unsure": unsure.get(nombre, []),
             "rel2_fuera_del_feed": sorted(
                 v for v, rel in vac_rel.items() if rel == 2 and v not in en_feed
             ),
         }
+    if corpus_gen is None:
+        raise ValueError("corpus_generation ausente: corpus no identificable")
 
-    return {
-        "manifest": {
-            "evaluator": EVALUATOR_VERSION,
-            "release": os.environ.get("RELEASE_SHA", "unknown"),
-            "policy": policy_spec,
-            "policy_id": str(policy_id),
-            "recipe": weights,
-            "model_id": str(mid),
-            "profile_revisions": revisiones,
-            "corpus_generation": corpus_gen,
-            "judgments_sha256": _sha256_file(judgments_path),
-            "unsure_sha256": _sha256_file(unsure_path) if unsure_path else None,
-            "generated_at": datetime.datetime.now(datetime.UTC).isoformat(),
-        },
+    payload = {
+        "evaluator": EVALUATOR_VERSION,
+        "release": release,
+        "policy": policy_spec,
+        "policy_id": str(policy_id),
+        "recipe": weights,
+        "model_id": str(mid),
+        "limit": limit,
+        "profile_revisions": revisiones,
+        "corpus_generation": corpus_gen,
+        "judgments_sha256": _sha256_file(judgments_path),
+        "unsure_sha256": _sha256_file(unsure_path) if unsure_path else None,
         "profiles": por_perfil,
+    }
+    canónico = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return {
+        "payload": payload,
+        "payload_sha256": hashlib.sha256(canónico.encode()).hexdigest(),
+        "generated_at": datetime.datetime.now(datetime.UTC).isoformat(),
     }
 
 
