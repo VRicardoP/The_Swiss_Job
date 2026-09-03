@@ -43,7 +43,7 @@ from jobhunt_core import matching
 from jobhunt_core.database import task_session_factory
 from jobhunt_core.shadow.metrics import NDCG_K, _dcg
 
-EVALUATOR_VERSION = "dev-eval-v2"
+EVALUATOR_VERSION = "dev-eval-v3"
 
 
 def _sha256_file(path: str) -> str:
@@ -174,11 +174,119 @@ async def _verify_judged_vacancies(session, juicios: dict) -> None:
         raise ValueError(f"vacantes juzgadas inexistentes en la BD: {perdidas}")
 
 
+async def build_universe_manifest(
+    session, profiles: dict, model_id: str | None = None,
+    allow_unknown_release: bool = False,
+) -> dict:
+    """Manifiesto INMUTABLE del universo de un examen (Fase 4): cada pareja
+    elegible (vacancy_id, offer_revision_id, text_hash) del corpus en esta
+    fotografía, más modelo, revisiones de perfil, corpus_generation y release.
+    El sha256 del manifiesto lo sella; un examen posterior queda LIGADO a él
+    o se declara inelegible — jamás varía en silencio."""
+    release = os.environ.get("RELEASE_SHA", "unknown")
+    if release == "unknown" and not allow_unknown_release:
+        raise ValueError("RELEASE_SHA=unknown: universo no auditable")
+    await session.execute(
+        sa.text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+    )
+    mid = await _resolve_model(session, model_id)
+    corpus_gen = (
+        await session.execute(sa.text(matching.CORPUS_GENERATION_SQL))
+    ).scalar_one_or_none()
+    if corpus_gen is None:
+        raise ValueError("corpus_generation ausente")
+    pares = [
+        {"vacancy_id": str(r.vid), "offer_revision_id": str(r.orid),
+         "text_hash": r.th}
+        for r in (
+            await session.execute(
+                sa.text(
+                    "SELECT v.id AS vid, orv.id AS orid, orv.text_hash AS th "
+                    + matching.ELIGIBLE_CORPUS_FROM.format(model=":mid")
+                    + " ORDER BY v.id"
+                ),
+                {"mid": mid},
+            )
+        ).all()
+    ]
+    revisiones = {}
+    for nombre in sorted(profiles):
+        rid = (
+            await session.execute(
+                sa.text(
+                    "SELECT revision_id FROM profile_revision_activations "
+                    "WHERE profile_id = :p ORDER BY seq DESC LIMIT 1"
+                ),
+                {"p": profiles[nombre]},
+            )
+        ).scalar_one_or_none()
+        if rid is None:
+            raise ValueError(f"perfil {nombre} sin revisión vigente")
+        revisiones[nombre] = str(rid)
+    cuerpo = {
+        "release": release, "model_id": str(mid),
+        "corpus_generation": corpus_gen,
+        "profile_revisions": revisiones, "pairs": pares,
+    }
+    canon = json.dumps(cuerpo, ensure_ascii=False, sort_keys=True)
+    return {"universe": cuerpo,
+            "universe_sha256": hashlib.sha256(canon.encode()).hexdigest()}
+
+
+async def build_blind_pool(
+    session, profiles: dict, baseline_spec: str, candidate_spec: str,
+    judgments_path: str | None = None, k: int = 20,
+    model_id: str | None = None,
+) -> dict:
+    """Pool CIEGO del examen (Fase 4): unión de los top-K de la baseline y de
+    la candidata por perfil, deduplicada de forma determinista, con los
+    juicios previos aplicables separados de lo pendiente de etiquetar."""
+    await session.execute(
+        sa.text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+    )
+    mid = await _resolve_model(session, model_id)
+    base_id, _ = await _resolve_policy(session, baseline_spec)
+    cand_id, _ = await _resolve_policy(session, candidate_spec)
+    juicios = (
+        load_judgments(judgments_path, profiles) if judgments_path
+        else {n: {} for n in profiles}
+    )
+    pool = {}
+    for nombre in sorted(profiles):
+        pid = profiles[nombre]
+        union: dict[str, dict] = {}
+        for spid in (base_id, cand_id):
+            computed = await matching.compute_policy_feed(
+                session, pid, mid, spid,
+                limit=matching.CANONICAL_EVAL_LIMIT, exclude_dismissed=True,
+            )
+            if computed["status"] != "ok":
+                raise ValueError(f"pool: perfil {nombre} no computable")
+            for f in computed["rows"][:k]:
+                union.setdefault(str(f["vacancy_id"]), {
+                    "vacancy_id": str(f["vacancy_id"]),
+                    "offer_revision_id": str(f["offer_revision_id"]),
+                })
+        ya = juicios.get(nombre, {})
+        pool[nombre] = {
+            "pendientes": sorted(
+                (v for v in union.values() if v["vacancy_id"] not in ya),
+                key=lambda x: x["vacancy_id"],
+            ),
+            "juzgados_aplicables": sorted(
+                v for v in union if v in ya
+            ),
+        }
+    return pool
+
+
 async def evaluate_dev(
     session, policy_spec: str, profiles: dict, judgments_path: str,
     unsure_path: str | None = None, model_id: str | None = None,
     limit: int = matching.CANONICAL_EVAL_LIMIT,
     allow_unknown_release: bool = False,
+    allow_uncovered: bool = False,
+    universe: dict | None = None,
 ) -> dict:
     """Métricas de desarrollo de UNA política con la fórmula del gate, sobre
     el feed COHERENTE de una ejecución actual (compute_policy_feed) bajo una
@@ -204,6 +312,12 @@ async def evaluate_dev(
     unsure = load_unsure(unsure_path, profiles, juicios)
     await _verify_judged_vacancies(session, juicios)
 
+    pares_universo = None
+    if universe is not None:
+        pares_universo = {
+            (p["vacancy_id"], p["offer_revision_id"])
+            for p in universe["pairs"]
+        }
     por_perfil = {}
     revisiones = {}
     corpus_gen = None
@@ -233,7 +347,29 @@ async def evaluate_dev(
         dcg = _dcg(rels_top)
         idcg = _dcg(sorted(vac_rel.values(), reverse=True)[:NDCG_K])
         en_feed = {str(f["vacancy_id"]) for f in filas}
+        # Fase 4 — contrato estable: (a) el examen queda LIGADO a su universo
+        # (una pareja del top fuera del manifiesto ⇒ INELEGIBLE, jamás variar
+        # en silencio); (b) cobertura 100% del top-10 (un no-juzgado NO es
+        # relevancia 0 ⇒ INELEGIBLE con la lista de lo que falta).
+        fuera_de_universo = []
+        if pares_universo is not None:
+            fuera_de_universo = sorted(
+                str(f["vacancy_id"]) for f in filas[:NDCG_K]
+                if (str(f["vacancy_id"]), str(f["offer_revision_id"]))
+                not in pares_universo
+            )
+        sin_juzgar = sorted(
+            str(f["vacancy_id"]) for f in filas[:NDCG_K]
+            if str(f["vacancy_id"]) not in vac_rel
+            and str(f["vacancy_id"]) not in set(unsure.get(nombre, ()))
+        )
+        inelegible = bool(fuera_de_universo) or (
+            bool(sin_juzgar) and not allow_uncovered
+        )
         por_perfil[nombre] = {
+            "elegible": not inelegible,
+            "fuera_de_universo": fuera_de_universo,
+            "sin_juzgar_en_top10": sin_juzgar,
             "feed_n": len(filas),
             "top10": [
                 {
@@ -244,7 +380,10 @@ async def evaluate_dev(
             ],
             "dcg": round(dcg, 6),
             "idcg": round(idcg, 6),
-            "ndcg10": round(dcg / idcg, 6) if idcg > 0 else 0.0,
+            "ndcg10": (
+                None if inelegible
+                else (round(dcg / idcg, 6) if idcg > 0 else 0.0)
+            ),
             "no_medible": idcg <= 0,
             "causa_no_medible": (
                 "IDCG=0: sin juicios con relevancia positiva" if idcg <= 0 else None

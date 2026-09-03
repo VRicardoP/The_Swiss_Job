@@ -59,12 +59,17 @@ def _shadow_policy(factory, created, version="v4"):
     return asyncio.run(go())
 
 
-def _run_eval(factory, polid_spec, profiles, judgments, unsure=None):
+def _run_eval(factory, polid_spec, profiles, judgments, unsure=None,
+              allow_uncovered=True, universe=None):
+    """allow_uncovered=True por defecto SOLO en estos tests exploratorios
+    (juzgan 3 de 10 a propósito); el contrato de examen es estricto y sus
+    regresiones lo llaman con False."""
     async def go():
         async with factory() as s:
             return await dev_eval.evaluate_dev(
                 s, polid_spec, profiles, judgments, unsure_path=unsure,
-                allow_unknown_release=True)
+                allow_unknown_release=True, allow_uncovered=allow_uncovered,
+                universe=universe)
 
     return asyncio.run(go())
 
@@ -470,3 +475,120 @@ def test_el_payload_es_determinista_y_sellado(db):
     assert a["payload"] == b["payload"]
     assert a["payload_sha256"] == b["payload_sha256"]
     assert "generated_at" not in a["payload"]
+
+
+# ------------------------------------------- Fase 4: contrato estable
+
+
+def test_top10_sin_cobertura_es_inelegible_no_relevancia_cero(db):
+    """Un no-juzgado en el top-10 NO es relevancia 0: el resultado es
+    INELEGIBLE con la lista de lo que falta; con cobertura completa, elegible
+    y con nDCG."""
+    factory, created = db
+    pid, mid, _, vacs = _setup(factory, created, TITULOS)
+    _shadow_policy(factory, created)
+    sonda = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
+                      _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+    top = [f["vacancy_id"] for f in sonda["payload"]["profiles"]["P1"]["top10"]]
+
+    # cobertura parcial + contrato estricto ⇒ INELEGIBLE, ndcg None
+    out = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
+                    _judgments_file([f"P1,{top[0]},2"]),
+                    allow_uncovered=False)
+    r = out["payload"]["profiles"]["P1"]
+    assert r["elegible"] is False and r["ndcg10"] is None
+    assert set(r["sin_juzgar_en_top10"]) == set(top[1:])
+
+    # cobertura completa ⇒ elegible con nDCG
+    out2 = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
+                     _judgments_file([f"P1,{v},1" for v in top]),
+                     allow_uncovered=False)
+    r2 = out2["payload"]["profiles"]["P1"]
+    assert r2["elegible"] is True and r2["ndcg10"] is not None
+
+
+def test_el_examen_queda_ligado_a_su_universo(db):
+    """Prueba mandada por la Fase 4: una oferta nueva no juzgada de score
+    alto NO puede variar el examen en silencio — con el universo sellado
+    antes del cambio, el resultado se declara INELEGIBLE (fuera_de_universo)."""
+    factory, created = db
+    pid, mid, _, vacs = _setup(
+        factory, created, TITULOS,
+        profile_content={"title": "python developer", "skills": ["python"]})
+    _shadow_policy(factory, created)
+
+    async def sellar():
+        async with factory() as s:
+            return await dev_eval.build_universe_manifest(
+                s, {"P1": pid}, allow_unknown_release=True)
+
+    manifiesto = asyncio.run(sellar())
+    assert manifiesto["universe_sha256"]
+
+    sonda = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
+                      _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+    top = [f["vacancy_id"] for f in sonda["payload"]["profiles"]["P1"]["top10"]]
+    juicios = _judgments_file([f"P1,{v},1" for v in top])
+
+    # examen ligado al universo, sin deriva: elegible
+    out = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
+                    allow_uncovered=False, universe=manifiesto["universe"])
+    assert out["payload"]["profiles"]["P1"]["elegible"] is True
+
+    # deriva: oferta NUEVA que asalta el top (vector clavado al del perfil)
+    async def sink_offer():
+        async with factory() as s:
+            await RawListingSink().handle(
+                s, str(created["scopes"][0]),
+                (_listing("j-univ", "python developer"),))
+            await s.commit()
+
+    asyncio.run(sink_offer())
+    embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
+    try:
+        from jobhunt_core.tasks.embedding import run_pending_task
+        r = run_pending_task.apply(kwargs={"limit": 100})
+        assert r.successful(), r.traceback
+    finally:
+        embeddings.set_backend_factory(None)
+
+    async def clavar():
+        async with factory() as s:
+            vec = (await s.execute(sa.text(
+                "SELECT pe.vector::text FROM profile_embeddings pe "
+                "WHERE pe.model_id = :m ORDER BY pe.profile_revision_id "
+                "LIMIT 1"), {"m": mid})).scalar_one()
+            await s.execute(sa.text(
+                "UPDATE offer_embeddings SET vector = CAST(:v AS vector) "
+                "WHERE text_hash IN (SELECT o.text_hash FROM offer_revisions o "
+                " JOIN vacancies va ON va.current_offer_revision_id = o.id "
+                " WHERE o.content->>'title' = 'python developer') "
+                "AND model_id = :m"), {"v": vec, "m": mid})
+            await s.commit()
+
+    asyncio.run(clavar())
+    out2 = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
+                     allow_uncovered=False, universe=manifiesto["universe"])
+    r2 = out2["payload"]["profiles"]["P1"]
+    assert r2["elegible"] is False
+    assert r2["fuera_de_universo"], "la intrusa debe declararse, no puntuar 0"
+
+
+def test_pool_ciego_es_union_determinista_de_topk(db):
+    factory, created = db
+    pid, mid, cosine_id, vacs = _setup(factory, created, TITULOS)
+    _shadow_policy(factory, created)
+
+    async def go():
+        async with factory() as s:
+            return await dev_eval.build_blind_pool(
+                s, {"P1": pid}, "cosine:v1", "hybrid-rrf:v4",
+                judgments_path=_judgments_file(
+                    [f"P1,{list(vacs.values())[0]},1"]), k=3)
+
+    pool = asyncio.run(go())
+    p1 = pool["P1"]
+    assert p1["juzgados_aplicables"] == [str(list(vacs.values())[0])]
+    ids = [x["vacancy_id"] for x in p1["pendientes"]]
+    assert ids == sorted(ids) and len(ids) == len(set(ids))
+    assert 2 <= len(ids) <= 6  # unión de dos top-3 sin el ya juzgado
