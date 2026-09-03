@@ -967,6 +967,41 @@ def test_put_valida_enum_remoto_y_rango_salarial_combinado(db):
     assert r.json()["current_revision"]["content"]["remote_pref"] == "remote_only"
 
 
+def test_target_roles_round_trip_y_preservacion(db):
+    """Fase 2 cierre definitivo: target_roles viaja por la API, se preserva
+    si se omite (C-3 intacto) y NO cambia el texto embebible."""
+    factory, created = db
+    pid, _vacs, token = _seed_writable(factory, created)
+    url = f"/v1/profiles/{pid}"
+    r = _api(factory, url, token=token, method="PUT", json_body={
+        "title": "dev", "cv_text": "cv",
+        "target_roles": ["Localization QA", "Content Reviewer"]})
+    assert r.status_code == 200
+    c = r.json()["current_revision"]["content"]
+    assert c["target_roles"] == ["Localization QA", "Content Reviewer"]
+    hash_texto = r.json()["current_revision"]["text_hash"]
+
+    # C-3 (solo CV): los roles se PRESERVAN
+    r = _api(factory, url, token=token, method="PUT", json_body={
+        "title": "dev", "cv_text": "cv"})
+    assert r.status_code == 200
+    c = r.json()["current_revision"]["content"]
+    assert c["target_roles"] == ["Localization QA", "Content Reviewer"]
+
+    # cambiar SOLO roles: revisión nueva, MISMO text_hash (no re-embebe)
+    r = _api(factory, url, token=token, method="PUT",
+             json_body={"target_roles": ["QA Lead"]})
+    assert r.status_code == 200
+    rev = r.json()["current_revision"]
+    assert rev["content"]["target_roles"] == ["QA Lead"]
+    assert rev["text_hash"] == hash_texto
+
+    # cota de cantidad en la frontera
+    r = _api(factory, url, token=token, method="PUT",
+             json_body={"target_roles": ["r"] * 11})
+    assert r.status_code == 400  # contrato A-09: validación malformada = 400
+
+
 def test_put_profile_cross_tenant_and_absent_404(db):
     """Ownership por tenant: el perfil de A escrito por B → 404 INDISTINGUIBLE
     de un perfil ausente (no revela existencia, como el GET)."""
