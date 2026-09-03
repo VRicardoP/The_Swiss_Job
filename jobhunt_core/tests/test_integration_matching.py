@@ -124,13 +124,18 @@ def _setup(factory, created, titles, profile_content=None,
                 for r in (
                     await s.execute(
                         sa.text(
+                            # ORDER BY: sin él, el orden del dict seguía el
+                            # orden físico del heap (compartido entre tests) y
+                            # list(vacs.values())[0] cambiaba según qué test
+                            # corriera antes — rojo solo en suite completa.
                             "SELECT o.content->>'title' AS title, v.id AS vid "
                             "FROM vacancies v JOIN offer_revisions o "
                             "ON o.id = v.current_offer_revision_id "
-                            "WHERE v.id IN (SELECT i.vacancy_id "
-                            "FROM source_listing_incarnations i "
+                            "JOIN source_listing_incarnations i "
+                            "ON i.vacancy_id = v.id "
                             "JOIN source_listings l ON l.id = i.source_listing_id "
-                            "WHERE l.source_id = :src)"
+                            "WHERE l.source_id = :src "
+                            "ORDER BY l.external_id"
                         ),
                         {"src": source_id},
                     )

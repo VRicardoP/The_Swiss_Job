@@ -581,12 +581,13 @@ def test_pool_ciego_es_union_determinista_de_topk(db):
             return await dev_eval.build_blind_pool(
                 s, {"P1": pid}, "cosine:v1", "hybrid-rrf:v4",
                 judgments_path=_judgments_file(
-                    [f"P1,{list(vacs.values())[0]},1"]), k=3,
+                    [f"P1,{vacs['python backend developer']},1"]), k=3,
                 allow_unknown_release=True)
 
     pool = asyncio.run(go())
     p1 = pool["P1"]
-    assert p1["juzgados_aplicables"] == [str(list(vacs.values())[0])]
+    assert p1["juzgados_aplicables"] == [
+        str(vacs["python backend developer"])]
     ids = [x["vacancy_id"] for x in p1["pendientes"]]
     assert ids == sorted(ids) and len(ids) == len(set(ids))
     assert 2 <= len(ids) <= 6  # unión de dos top-3 sin el ya juzgado
