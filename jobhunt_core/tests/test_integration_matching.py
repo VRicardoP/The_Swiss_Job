@@ -150,10 +150,11 @@ def _setup(factory, created, titles, profile_content=None,
     return result
 
 
-def _evaluate(factory, pid, mid, polid, limit=100):
+def _evaluate(factory, pid, mid, polid, limit=100, move=True):
     async def go():
         async with factory() as s:
-            r = await matching.evaluate_profile(s, pid, mid, polid, limit=limit)
+            r = await matching.evaluate_profile(
+                s, pid, mid, polid, limit=limit, move_current=move)
             await s.commit()
             return r
 
@@ -900,11 +901,20 @@ def test_hybrid_policy_recovers_lexical_candidate_outside_ann_top_k(db):
     )[0].vacancy_id
     assert cosine_vacancy == vacs["warehouse accountant"]
 
-    assert _evaluate(factory, pid, mid, hybrid_id, limit=1)["evaluated"] == 1
-    rows, _ = _feed(factory, pid, limit=1)
-    assert rows[0].vacancy_id == vacs["kubernetes platform engineer"]
-    assert rows[0].scores["algorithm"] == "hybrid_rrf_v1"
-    assert rows[0].scores["lexical_rank"] == 1
+    # Una RELATIVA ya no puede mover el feed (valla pair_absolute, Fase 1
+    # cierre definitivo): el rescate léxico se afirma sobre el cálculo directo.
+    assert _evaluate(
+        factory, pid, mid, hybrid_id, limit=1, move=False)["evaluated"] == 1
+
+    async def calculo():
+        async with factory() as s:
+            return await matching.compute_policy_feed(
+                s, pid, mid, hybrid_id, limit=1)
+
+    filas = asyncio.run(calculo())["rows"]
+    assert filas[0]["vacancy_id"] == vacs["kubernetes platform engineer"]
+    assert filas[0]["score_parts"]["algorithm"] == "hybrid_rrf_v1"
+    assert filas[0]["score_parts"]["lexical_rank"] == 1
 
 
 def test_policy_version_rejects_different_weights(db):
@@ -962,8 +972,8 @@ def test_v4_reproduce_exactamente_a_v3_y_su_receta_es_reconstruible(db):
             return v3, v4
 
     v3_id, v4_id = asyncio.run(policies())
-    n3 = _evaluate(factory, pid, mid, v3_id)["evaluated"]
-    n4 = _evaluate(factory, pid, mid, v4_id)["evaluated"]
+    n3 = _evaluate(factory, pid, mid, v3_id, move=False)["evaluated"]
+    n4 = _evaluate(factory, pid, mid, v4_id, move=False)["evaluated"]
     assert n3 == n4 > 0
 
     def ranking(spid):
@@ -998,7 +1008,8 @@ def test_una_receta_no_soportada_no_evalua_nada(db):
             created["policies"].append(polid)
             await s.commit()
             with pytest.raises(ValueError, match="rrf_k"):
-                await matching.evaluate_profile(s, pid, mid, polid)
+                await matching.evaluate_profile(
+                    s, pid, mid, polid, move_current=False)
             n = (await s.execute(sa.text(
                 "SELECT count(*) FROM match_evaluations "
                 "WHERE scoring_policy_id = :sp"), {"sp": polid})).scalar_one()
@@ -1021,20 +1032,20 @@ def test_un_worker_pre_flip_no_puede_restaurar_el_feed_antiguo(db):
     # Worker A leyó las políticas: coseno canónico. Feed inicial bajo coseno.
     assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
 
-    # Operador: alta de v4 en sombra y flip atómico al conjunto exacto {v4}.
+    # Operador: alta de la candidata ABSOLUTA y flip atómico al conjunto
+    # exacto {candidata} (una relativa ya no puede ser canónica).
     async def promote():
         async with factory() as s:
-            v4 = await matching.ensure_policy(
-                s, matching.HYBRID_POLICY_NAME,
-                matching.HYBRID4_POLICY_VERSION,
-                weights=matching.HYBRID4_POLICY_WEIGHTS, active=False)
-            created["policies"].append(v4)
-            await matching.declare_active_policies(s, [v4])
+            cand = await matching.ensure_policy(
+                s, "cosine-nueva", "v1", weights={"algorithm": "cosine"},
+                active=False)
+            created["policies"].append(cand)
+            await matching.declare_active_policies(s, [cand])
             await s.commit()
-            return v4
+            return cand
 
     v4_id = asyncio.run(promote())
-    # Worker B rematerializa el feed bajo v4 (ahora canónica).
+    # Worker B rematerializa el feed bajo la candidata (ahora canónica).
     assert _evaluate(factory, pid, mid, v4_id)["moved_current"] is True
 
     # Worker A retoma con su decisión caducada: la valla lo para.
@@ -1105,12 +1116,16 @@ def test_el_redeploy_no_cambia_la_canonicidad(db):
                     )).all()
                 }
 
-            # Tres estados operativos; el redeploy (bootstrap) preserva cada uno.
-            for conjunto in ([cos, v4], [v4], [cos]):
+            # Estados operativos LEGALES (canónica absoluta); el redeploy
+            # (bootstrap) preserva cada uno. {v4} en solitario ya no es un
+            # estado legal: la valla pair_absolute lo rechaza.
+            for conjunto in ([cos, v4], [cos]):
                 await matching.declare_active_policies(s, conjunto)
                 await matching.bootstrap_policy_catalog(s)  # ← redeploy
                 assert await activas() == {str(x) for x in conjunto}
                 assert not (await activas()) & legacy
-            await s.commit()
+            with pytest.raises(ValueError, match="RELATIVO"):
+                await matching.declare_active_policies(s, [v4])
+            await s.rollback()
 
     asyncio.run(go())

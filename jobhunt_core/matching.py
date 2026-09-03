@@ -655,6 +655,36 @@ async def ensure_policy(
     return row.id
 
 
+# Fuente ÚNICA de metadatos por algoritmo (Fase 1 del cierre definitivo
+# 2026-09-03): un score es ABSOLUTO POR PAREJA si depende solo de (revisión de
+# perfil, revisión de oferta, modelo, receta) — jamás del resto del lote o del
+# corpus. Los relativos (rangos RRF, normalizaciones por máximo del lote) NO
+# pueden ser canónicos con la identidad append-only actual: tras un cambio de
+# corpus, eval_key conserva el score viejo (ON CONFLICT DO NOTHING) y winners
+# publicaría en el feed una mezcla de generaciones que ninguna ejecución
+# produjo. En SOMBRA siguen permitidos (medición, historia). La propiedad vive
+# AQUÍ, en código, por algoritmo — no es un booleano libre de la receta.
+_ALGORITHM_PAIR_ABSOLUTE = {
+    "cosine": True,
+    "hybrid_rrf_v1": False,
+    "hybrid_rrf_v2": False,
+    "hybrid_rrf": False,
+    "hybrid_rrf_rerank": False,
+}
+
+
+def _algorithm_of(policy_weights: dict) -> str:
+    return policy_weights.get("algorithm", "cosine")
+
+
+def _is_pair_absolute(policy_weights: dict) -> bool:
+    algo = _algorithm_of(policy_weights)
+    if algo not in _ALGORITHM_PAIR_ABSOLUTE:
+        # algoritmo desconocido = NO promovible (fail closed)
+        return False
+    return _ALGORITHM_PAIR_ABSOLUTE[algo]
+
+
 # Catálogo de políticas conocidas (P1-D): las FILAS que todo entorno debe
 # tener, con sus recetas canónicas. El bootstrap las asegura sin tocar la
 # activación; qué está activo lo decide SOLO declare_active_policies.
@@ -717,6 +747,27 @@ async def declare_active_policies(session, policy_ids) -> None:
         raise ValueError(
             "declaración de políticas activas no satisfecha: "
             f"pedidas {ids}, activas {activas} — ids inexistentes o duplicados"
+        )
+    # Valla de canonicidad ABSOLUTA (Fase 1 cierre definitivo): la política
+    # que resultaría canónica según el ORDEN PRODUCTIVO (la primera por
+    # (name, prompt_version) — el mismo ORDER BY de tasks/matching) no puede
+    # tener score relativo al lote. Las relativas solo como sombra detrás de
+    # una canónica absoluta.
+    canonica = (
+        await session.execute(
+            sa.text(
+                "SELECT name, prompt_version, weights FROM scoring_policies "
+                "WHERE active ORDER BY name, prompt_version LIMIT 1"
+            )
+        )
+    ).one()
+    if not _is_pair_absolute(canonica.weights):
+        raise ValueError(
+            f"la canónica resultante {canonica.name}:{canonica.prompt_version} "
+            f"tiene score RELATIVO al lote "
+            f"(algorithm={_algorithm_of(canonica.weights)!r}): tras un cambio "
+            "de corpus el feed serviría una mezcla de generaciones — "
+            "las relativas solo pueden ser sombra"
         )
 
 
@@ -984,6 +1035,24 @@ async def evaluate_profile(
             "status": "not_found", "evaluated": 0, "new_evals": 0,
             "moved_current": False,
         }
+    if move_current:
+        # Valla FINAL pair_absolute (Fase 1 cierre definitivo): aunque un
+        # bypass haya activado una relativa en solitario, mover el feed con
+        # ella falla CERRADO aquí, antes de tocar nada — el último feed bueno
+        # queda intacto y el error es observable. La sombra
+        # (move_current=False) sigue permitida.
+        pesos_valla = (
+            await session.execute(
+                sa.text("SELECT weights FROM scoring_policies WHERE id = :id"),
+                {"id": policy_id},
+            )
+        ).scalar_one_or_none()
+        if isinstance(pesos_valla, dict) and not _is_pair_absolute(pesos_valla):
+            raise ValueError(
+                f"política {policy_id} con score RELATIVO al lote "
+                f"(algorithm={_algorithm_of(pesos_valla)!r}) no puede mover "
+                "el feed: materializaría una mezcla de generaciones"
+            )
     computed = await compute_policy_feed(
         session, profile_id, model_id, policy_id, limit=limit,
         exclude_dismissed=False, with_corpus_generation=with_corpus_generation,

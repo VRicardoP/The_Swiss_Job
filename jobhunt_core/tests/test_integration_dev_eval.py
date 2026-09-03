@@ -69,6 +69,17 @@ def _run_eval(factory, polid_spec, profiles, judgments, unsure=None):
     return asyncio.run(go())
 
 
+def _evaluate_shadow(factory, pid, mid, polid, limit=100):
+    async def go():
+        async with factory() as s:
+            r = await matching.evaluate_profile(
+                s, pid, mid, polid, limit=limit, move_current=False)
+            await s.commit()
+            return r
+
+    return asyncio.run(go())
+
+
 def _compute(factory, pid, mid, polid, limit=matching.CANONICAL_EVAL_LIMIT,
              exclude_dismissed=True):
     async def go():
@@ -94,8 +105,9 @@ def test_el_feed_de_medicion_es_de_una_sola_ejecucion(db):
     polid = _shadow_policy(factory, created)
     K = len(TITULOS)
 
-    # G1: ejecución completa persistida.
-    assert _evaluate(factory, pid, mid, polid, limit=K)["evaluated"] == K
+    # G1: ejecución completa persistida (SOMBRA: una relativa ya no puede
+    # mover el feed — valla Fase 1 del cierre definitivo).
+    assert _evaluate_shadow(factory, pid, mid, polid, limit=K)["evaluated"] == K
     g1 = _rows(
         factory,
         "SELECT vacancy_id, (scores->>'semantic_rank')::int AS sr "
@@ -138,7 +150,7 @@ def test_el_feed_de_medicion_es_de_una_sola_ejecucion(db):
     asyncio.run(pin_vector())
 
     # G2: reevaluación persistida — el almacén queda con la UNIÓN.
-    assert _evaluate(factory, pid, mid, polid, limit=K)["evaluated"] == K
+    assert _evaluate_shadow(factory, pid, mid, polid, limit=K)["evaluated"] == K
     union = _rows(
         factory,
         "SELECT vacancy_id, (scores->>'semantic_rank')::int AS sr "
@@ -203,23 +215,38 @@ def test_descartada_no_aparece_y_sin_estado_si(db):
     assert len(calculo()) == len(TITULOS) - 1
 
 
+def _feed_actual(factory, pid):
+    async def go():
+        async with factory() as s:
+            filas, _ = await matching.feed(s, pid, limit=50)
+            return [(f.vacancy_id, str(f.score_final)) for f in filas]
+
+    return asyncio.run(go())
+
+
+def _cosine2_policy(factory, created):
+    async def go():
+        async with factory() as s:
+            polid = await matching.ensure_policy(
+                s, "cosine-nueva", "v1", weights={"algorithm": "cosine"},
+                active=False)
+            created["policies"].append(polid)
+            await s.commit()
+            return polid
+
+    return asyncio.run(go())
+
+
 def test_promover_y_rollback_conservan_el_feed(db):
     """El mismo conjunto y orden que mide el desarrollo es el que sirve el
-    feed al promover; el rollback restaura exactamente el anterior."""
+    feed al promover; el rollback restaura exactamente el anterior. La
+    candidata es ABSOLUTA (una relativa ya no puede ser canónica)."""
     factory, created = db
     pid, mid, cosine_id, _ = _setup(factory, created, TITULOS)
     assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
 
-    def feed_actual():
-        async def go():
-            async with factory() as s:
-                filas, _ = await matching.feed(s, pid, limit=50)
-                return [(f.vacancy_id, str(f.score_final)) for f in filas]
-
-        return asyncio.run(go())
-
-    feed_cosine = feed_actual()
-    polid = _shadow_policy(factory, created)
+    feed_cosine = _feed_actual(factory, pid)
+    polid = _cosine2_policy(factory, created)
     medido = [(f["vacancy_id"], f"{f['score']:.2f}")
               for f in _compute(factory, pid, mid, polid)["rows"]]
 
@@ -228,16 +255,123 @@ def test_promover_y_rollback_conservan_el_feed(db):
             await matching.declare_active_policies(s, ids)
             await s.commit()
 
-    # promoción: declarar {v4} y materializar
     asyncio.run(declare([polid]))
     assert _evaluate(factory, pid, mid, polid)["moved_current"] is True
-    assert feed_actual() == medido, (
+    assert _feed_actual(factory, pid) == medido, (
         "lo medido en desarrollo debe ser EXACTAMENTE lo servido al promover")
 
-    # rollback: declarar {cosine} y rematerializar
     asyncio.run(declare([cosine_id]))
     assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
-    assert feed_actual() == feed_cosine
+    assert _feed_actual(factory, pid) == feed_cosine
+
+
+# --------------------------------- Fase 1 cierre definitivo: pair_absolute
+
+
+def test_una_politica_relativa_no_puede_ser_canonica(db):
+    """G1→corpus nuevo→G2 deja en el almacén una mezcla que la materialización
+    de una política RELATIVA (RRF) serviría (winners recupera filas con rangos
+    de G1). El sistema debe RECHAZAR la canonicidad de una relativa — en la
+    declaración y sin importar el estado previo."""
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(factory, created, TITULOS)
+    polid = _shadow_policy(factory, created)  # hybrid-rrf v4: RELATIVA
+
+    async def go():
+        async with factory() as s:
+            # canónica relativa en solitario: rechazada
+            with pytest.raises(ValueError, match="RELATIVO"):
+                await matching.declare_active_policies(s, [polid])
+            await s.rollback()
+            # relativa DETRÁS de una absoluta canónica: permitida (sombra)
+            await matching.declare_active_policies(s, [cosine_id, polid])
+            await s.commit()
+
+    asyncio.run(go())
+
+
+def test_valla_final_rechaza_mover_feed_con_relativa(db):
+    """Aun si un bypass activa una relativa en solitario (SQL directo, sin la
+    autoridad), evaluate_profile(move_current=True) falla CERRADO antes de
+    tocar profile_vacancy_state."""
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(factory, created, TITULOS)
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+    antes = _feed_actual(factory, pid)
+    polid = _shadow_policy(factory, created)
+
+    async def bypass_y_evaluar():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "UPDATE scoring_policies SET active = (id = :v)"),
+                {"v": polid})
+            await s.commit()
+        async with factory() as s:
+            with pytest.raises(ValueError, match="RELATIVO"):
+                await matching.evaluate_profile(
+                    s, pid, mid, polid, move_current=True)
+            await s.rollback()
+        async with factory() as s:  # restaurar activación para el teardown
+            await matching.declare_active_policies(s, [cosine_id])
+            await s.commit()
+
+    asyncio.run(bypass_y_evaluar())
+    assert _feed_actual(factory, pid) == antes  # el feed no se tocó
+
+
+def test_la_sombra_relativa_sigue_permitida(db):
+    """RRF puede seguir calculándose y midiéndose en sombra sin mover feed."""
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(factory, created, TITULOS)
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+    antes = _feed_actual(factory, pid)
+    polid = _shadow_policy(factory, created)
+    r = _evaluate_shadow(factory, pid, mid, polid)
+    assert r["status"] == "ok" and r["evaluated"] > 0
+    assert r["moved_current"] is False
+    assert _compute(factory, pid, mid, polid)["rows"]
+    assert _feed_actual(factory, pid) == antes
+
+
+def test_absoluta_estable_tras_cambio_de_corpus(db):
+    """Una política ABSOLUTA tras G1→corpus nuevo→G2 sirve exactamente las
+    filas del cálculo G2 y una pareja vieja conserva su score."""
+    factory, created = db
+    pid, mid, cosine_id, vacs = _setup(factory, created, TITULOS)
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+    v0 = list(vacs.values())[0]
+    score_g1 = _rows(
+        factory,
+        "SELECT score_final FROM match_evaluations WHERE profile_id = :p "
+        "AND scoring_policy_id = :sp AND vacancy_id = :v",
+        p=pid, sp=cosine_id, v=v0)[0].score_final
+
+    async def sink_offer():
+        async with factory() as s:
+            await RawListingSink().handle(
+                s, str(created["scopes"][0]),
+                (_listing("j-g2", "python developer expert"),))
+            await s.commit()
+
+    asyncio.run(sink_offer())
+    embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
+    try:
+        from jobhunt_core.tasks.embedding import run_pending_task
+        r = run_pending_task.apply(kwargs={"limit": 100})
+        assert r.successful(), r.traceback
+    finally:
+        embeddings.set_backend_factory(None)
+
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+    medido = [(f["vacancy_id"], f"{f['score']:.2f}")
+              for f in _compute(factory, pid, mid, cosine_id)["rows"]]
+    assert _feed_actual(factory, pid) == medido
+    score_g2 = _rows(
+        factory,
+        "SELECT score_final FROM match_evaluations WHERE profile_id = :p "
+        "AND scoring_policy_id = :sp AND vacancy_id = :v",
+        p=pid, sp=cosine_id, v=v0)[0].score_final
+    assert score_g2 == score_g1  # la pareja vieja conserva su score
 
 
 # ------------------------------------------------- fórmula y fail-closed
