@@ -467,7 +467,7 @@ def _validated_cross_encoder_recipe(policy_weights: dict) -> dict:
             f"receta: input {policy_weights['input']!r} no implementado "
             f"(binario: {ce.INPUT_VERSION})"
         )
-    if policy_weights["activation"] != ce.ACTIVATION:
+    if policy_weights["activation"] not in ce.ACTIVATIONS:
         raise ValueError(
             f"receta: activation {policy_weights['activation']!r} no soportada")
     if policy_weights["backend"] != ce.BACKEND:
@@ -549,7 +549,7 @@ async def _cross_encoder_rows(
             )
         probs = ce.score_documents(
             receta_ce["model"], receta_ce["model_revision"],
-            consultas, documentos,
+            consultas, documentos, activation=receta_ce["activation"],
         )
         for c, prob in zip(misses, probs):
             frescos[c.offer_revision_id] = prob
@@ -810,6 +810,10 @@ async def ensure_policy(
 # La huella es sha256 del listado canónico «hash  fichero» de los artefactos
 # que carga el runtime (config, safetensors, sentencepiece, tokenizer*).
 XENC_POLICY_NAME = "xenc-mmarco"
+# v2 (2026-09-03): misma receta que v1 salvo activation=sigmoid_t4 — la plana
+# empataba el top de consultas anchas en 99.99 bajo NUMERIC(6,2) y el feed
+# habría ordenado por vacancy_id. Monótona: el ranking del modelo es idéntico;
+# v1 queda como historia inactiva.
 XENC_POLICY_VERSION = "v1"
 XENC_POLICY_WEIGHTS = {
     "algorithm": "cross_encoder",
@@ -833,6 +837,9 @@ XENC_POLICY_WEIGHTS = {
 # publicaría en el feed una mezcla de generaciones que ninguna ejecución
 # produjo. En SOMBRA siguen permitidos (medición, historia). La propiedad vive
 # AQUÍ, en código, por algoritmo — no es un booleano libre de la receta.
+XENC2_POLICY_VERSION = "v2"
+XENC2_POLICY_WEIGHTS = dict(XENC_POLICY_WEIGHTS, activation="sigmoid_t4")
+
 _ALGORITHM_PAIR_ABSOLUTE = {
     "cosine": True,
     "hybrid_rrf_v1": False,
@@ -867,6 +874,7 @@ POLICY_CATALOG = (
     (HYBRID_POLICY_NAME, "v3", HYBRID2_POLICY_WEIGHTS),
     (HYBRID_POLICY_NAME, HYBRID4_POLICY_VERSION, HYBRID4_POLICY_WEIGHTS),
     (XENC_POLICY_NAME, XENC_POLICY_VERSION, XENC_POLICY_WEIGHTS),
+    (XENC_POLICY_NAME, XENC2_POLICY_VERSION, XENC2_POLICY_WEIGHTS),
 )
 
 

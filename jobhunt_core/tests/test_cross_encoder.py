@@ -115,3 +115,37 @@ def test_el_motor_se_carga_una_vez_por_modelo(stub):
     ce.score_documents("m", "r", ["q"], ["d1"])
     ce.score_documents("m", "r", ["q"], ["d2"])
     assert stub.calls == 2  # dos predict, un solo motor (el mismo stub)
+
+
+def test_el_contrato_de_2_decimales_no_destruye_el_orden_del_top():
+    """Defecto real medido (P2): con consultas anchas los logits del top
+    rondan 9-13, la sigmoide plana los aplasta en 0.9999+ y el score
+    persistido NUMERIC(6,2) los empata en 99.99 — el feed ordenaría por
+    vacancy_id. La activación sigmoid_t4 (σ(logit/4), fija y monótona)
+    conserva el orden del modelo tras el redondeo del contrato."""
+
+    class _LogitsAltos:
+        def predict(self, pares, batch_size=16):
+            # dos documentos con logits 12 y 10: el modelo SÍ los distingue
+            return [12.0 if "mejor" in d else 10.0 for _, d in pares]
+
+    ce.set_engine_factory(lambda m, r: _LogitsAltos())
+    try:
+        a, b = ce.score_documents(
+            "m", "r", ["q"], ["doc mejor", "doc bueno"],
+            activation="sigmoid_t4")
+        assert round(a * 100, 2) > round(b * 100, 2), (
+            "t4 debe separar el top tras redondear a 2 decimales")
+        # y la plana los empata: esa es la causa del defecto
+        a0, b0 = ce.score_documents("m", "r", ["q"],
+                                    ["doc mejor", "doc bueno"])
+        assert round(a0 * 100, 2) == round(b0 * 100, 2)  # empatados (100.0)
+        # monótona: mismo ORDEN que la plana (solo cambia la escala)
+        assert (a > b) == (a0 > b0)
+    finally:
+        ce.set_engine_factory(None)
+
+
+def test_activacion_desconocida_falla_cerrado():
+    with pytest.raises(ValueError, match="activaci"):
+        ce.score_documents("m", "r", ["q"], ["d"], activation="softmax")

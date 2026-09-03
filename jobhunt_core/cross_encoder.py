@@ -18,8 +18,18 @@ import threading
 logger = logging.getLogger(__name__)
 
 INPUT_VERSION = "v1"
-ACTIVATION = "sigmoid"
 BACKEND = "torch-cpu"
+
+# Activaciones FIJAS y MONÓTONAS (el orden del modelo se conserva siempre;
+# solo cambia la escala del score persistido). sigmoid_t4 = σ(logit/4) existe
+# porque el contrato NUMERIC(6,2) redondea a 2 decimales y la sigmoide plana
+# aplasta los logits 9-13 de consultas anchas en 99.99 empatados — el feed
+# habría ordenado por vacancy_id (defecto medido en P2, 10/10 empatados).
+ACTIVATIONS = {
+    "sigmoid": lambda logit: 1.0 / (1.0 + math.exp(-logit)),
+    "sigmoid_t4": lambda logit: 1.0 / (1.0 + math.exp(-logit / 4.0)),
+}
+ACTIVATION = "sigmoid"  # compat: la de v1
 
 # Cotas de la entrada v1 (deterministas; parte del contrato de la receta).
 _Q_ROLE_LEN = 120
@@ -100,11 +110,16 @@ def build_document(titulo, location, descripcion) -> str:
 
 def score_documents(
     model: str, revision: str, queries: list[str], documents: list[str],
-    batch_size: int = 16,
+    batch_size: int = 16, activation: str = "sigmoid",
 ) -> list[float]:
-    """Probabilidad (sigmoide del logit) por documento = MÁXIMO sobre las
+    """Score por documento = activación fija del MÁXIMO logit sobre las
     consultas de rol. Absoluto por pareja: ni min/max ni percentiles ni
     normalización del lote. El batch solo afecta al coste, no al score."""
+    fn = ACTIVATIONS.get(activation)
+    if fn is None:
+        raise ValueError(
+            f"activación {activation!r} desconocida "
+            f"(soportadas: {sorted(ACTIVATIONS)})")
     if not documents:
         return []
     motor = _get_engine(model, revision)
@@ -122,5 +137,5 @@ def score_documents(
         logit = max(float(x) for x in mejores)
         if not math.isfinite(logit):
             raise ValueError(f"cross-encoder devolvió un logit no finito: {logit!r}")
-        out.append(1.0 / (1.0 + math.exp(-logit)))
+        out.append(fn(logit))
     return out
