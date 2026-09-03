@@ -488,6 +488,16 @@ async def put_profile(
             for campo in profiles.CONTENT_FIELDS:
                 if campo not in body.model_fields_set:
                     contenido[campo] = vigente.content.get(campo)
+        # P2 revisión 2026-09-03: el rango salarial se valida sobre el
+        # contenido FINAL COMBINADO — un PUT parcial que solo trae salary_max
+        # puede formar un rango inválido con el salary_min preservado.
+        smin, smax = contenido.get("salary_min"), contenido.get("salary_max")
+        if smin is not None and smax is not None and smin > smax:
+            raise ApiError(
+                400, "invalid_salary_range",
+                f"salary_min ({smin}) > salary_max ({smax}) en el contenido "
+                "resultante",
+            )
         rid = await profiles.save_profile_revision(
             session, profile_id, contenido
         )

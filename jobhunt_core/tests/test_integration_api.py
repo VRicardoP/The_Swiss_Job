@@ -918,6 +918,55 @@ def test_put_parcial_preserva_preferencias_y_c3_sigue_valido(db):
     assert c["title"] == "senior python dev"  # lo no enviado se preserva
 
 
+def test_put_valida_enum_remoto_y_rango_salarial_combinado(db):
+    """P2 revisión 2026-09-03: remote_pref aceptaba cualquier cadena y el
+    rango salarial no se validaba — y un PUT PARCIAL debe validarse contra el
+    contenido FINAL combinado (mínimo preservado + máximo nuevo), no contra
+    los campos aislados del request."""
+    factory, created = db
+    pid, _vacs, token = _seed_writable(factory, created)
+    url = f"/v1/profiles/{pid}"
+
+    # enum: "banana" no crea revisión (el contrato A-09 sirve la validación
+    # malformada como 400 con code=invalid_request, no el 422 de FastAPI)
+    r = _api(factory, url, token=token, method="PUT", json_body={
+        "title": "dev", "cv_text": "cv", "remote_pref": "banana"})
+    assert r.status_code == 400
+    assert r.json()["code"] == "invalid_request"
+
+    # rango inválido en el MISMO request
+    r = _api(factory, url, token=token, method="PUT", json_body={
+        "title": "dev", "cv_text": "cv",
+        "salary_min": 100000, "salary_max": 1})
+    assert r.status_code == 400
+    assert r.json()["code"] == "invalid_salary_range"
+
+    # base válida con mínimo alto…
+    r = _api(factory, url, token=token, method="PUT", json_body={
+        "title": "dev", "cv_text": "cv", "salary_min": 100000})
+    assert r.status_code == 200
+
+    # …y un PUT parcial cuyo máximo forma rango inválido con el mínimo
+    # PRESERVADO: rechazado contra el contenido combinado
+    r = _api(factory, url, token=token, method="PUT",
+             json_body={"salary_max": 50000})
+    assert r.status_code == 400
+    assert r.json()["code"] == "invalid_salary_range"
+
+    # inverso legítimo: máximo por encima del mínimo preservado
+    r = _api(factory, url, token=token, method="PUT",
+             json_body={"salary_max": 200000})
+    assert r.status_code == 200
+    c = r.json()["current_revision"]["content"]
+    assert c["salary_min"] == 100000 and c["salary_max"] == 200000
+
+    # enum válido pasa
+    r = _api(factory, url, token=token, method="PUT",
+             json_body={"remote_pref": "remote_only"})
+    assert r.status_code == 200
+    assert r.json()["current_revision"]["content"]["remote_pref"] == "remote_only"
+
+
 def test_put_profile_cross_tenant_and_absent_404(db):
     """Ownership por tenant: el perfil de A escrito por B → 404 INDISTINGUIBLE
     de un perfil ausente (no revela existencia, como el GET)."""

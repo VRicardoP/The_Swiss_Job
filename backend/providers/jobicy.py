@@ -42,12 +42,32 @@ class JobicyProvider(BaseJobProvider):
                 data = await self._circuit.call(
                     lambda p=params: fetch_with_retry(client, self.API_URL, params=p)
                 )
-                if not data:
+                # P2 revisión 2026-09-03: la forma externa se valida ANTES
+                # del dedupe — una raíz lista, jobs=null o un elemento escalar
+                # tumbaba las cinco consultas de la fuente con un AttributeError.
+                if not isinstance(data, dict):
+                    if data:
+                        logger.warning(
+                            "jobicy: raíz inesperada %s — lote descartado",
+                            type(data).__name__)
                     continue
+                raw_jobs = data.get("jobs")
+                if not isinstance(raw_jobs, list):
+                    logger.warning(
+                        "jobicy: 'jobs' no es lista (%s) — lote descartado",
+                        type(raw_jobs).__name__)
+                    continue
+                validos = []
+                for r in raw_jobs:
+                    if not isinstance(r, dict):
+                        logger.warning(
+                            "jobicy: elemento no-objeto descartado: %r",
+                            r if not isinstance(r, (bytes, str)) else str(r)[:60])
+                        continue
+                    validos.append(r)
                 # dedupe entre tags por URL (la misma oferta sale en varios)
                 nuevos = [
-                    r for r in data.get("jobs", [])
-                    if (r.get("url") or "") not in vistos
+                    r for r in validos if (r.get("url") or "") not in vistos
                 ]
                 vistos.update((r.get("url") or "") for r in nuevos)
                 results.extend(self._process_raw_jobs(nuevos))

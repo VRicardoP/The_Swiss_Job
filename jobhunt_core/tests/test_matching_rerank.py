@@ -32,13 +32,14 @@ def _score(base, sim=0.0, titulo="Specialist", location=None, remote=True,
 # --- familia 3: remote=true con país/estado concreto NO es global
 
 
-@pytest.mark.parametrize("location,pais", [
-    ("Texas (USA)", "usa"), ("Nevada (USA), Oregon (USA)", "usa"),
-    ("Canada", "canada"), ("California (USA)", "usa"),
-    ("Colombia, Mexico", "colombia"), ("Brazil", "brazil"),
+@pytest.mark.parametrize("location,paises", [
+    ("Texas (USA)", {"usa"}), ("Nevada (USA), Oregon (USA)", {"usa"}),
+    ("Canada", {"canada"}), ("California (USA)", {"usa"}),
+    ("Colombia, Mexico", {"colombia", "mexico"}), ("Brazil", {"brazil"}),
 ])
-def test_una_oferta_remota_anclada_a_un_pais_se_penaliza(location, pais):
-    assert matching._offer_country(location) == pais
+def test_una_oferta_remota_anclada_a_paises_incompatibles_se_penaliza(
+        location, paises):
+    assert matching._offer_countries(location) == frozenset(paises)
     s_anclada, comp = _score(70.0, location=location)
     s_global, _ = _score(70.0, location="Anywhere in the World")
     assert comp["loc_incompatible"] is True
@@ -48,11 +49,34 @@ def test_una_oferta_remota_anclada_a_un_pais_se_penaliza(location, pais):
 @pytest.mark.parametrize("location", [
     "Anywhere in the World", "International", "Global", "Remote", "", None,
     "Rathcoole",  # ciudad fuera de léxico ⇒ neutral, no exclusión (familia 5)
+    "Indiana Occidental",  # «india» NO dispara dentro de «indiana»… pero
 ])
 def test_global_o_no_parseado_es_neutral(location):
-    assert matching._offer_country(location) is None
+    if location == "Indiana Occidental":
+        # …«indiana» SÍ es estado USA: el caso prueba la frontera de palabra
+        assert matching._offer_countries(location) == frozenset({"usa"})
+        return
+    assert matching._offer_countries(location) == frozenset()
     _, comp = _score(70.0, location=location)
     assert comp["loc_incompatible"] is False
+
+
+@pytest.mark.parametrize("location", [
+    "Germany / Switzerland",          # compatible al final
+    "Switzerland, Canada",            # compatible al principio
+    "Canada, Spain, Brazil",          # compatible entre dos incompatibles
+    "Bosnia and Herzegovina, Switzerland",  # multi-palabra + compatible
+])
+def test_multipais_con_interseccion_es_compatible(location):
+    """P2 revisión 2026-09-03: quedarse con el PRIMER país convertía
+    «Germany / Switzerland» en incompatible para un perfil suizo."""
+    _, comp = _score(70.0, location=location)  # PREFS compat={switzerland, spain}
+    assert comp["loc_incompatible"] is False
+
+
+def test_multipais_sin_interseccion_sigue_siendo_incompatible():
+    _, comp = _score(70.0, location="Germany / Canada")
+    assert comp["loc_incompatible"] is True
 
 
 def test_remote_only_contra_oferta_presencial_es_incompatibilidad():
@@ -79,6 +103,30 @@ def test_idioma_del_titulo_no_cubierto_penaliza():
     s_es, comp2 = _score(70.0, titulo="Bilingual-Spanish Support Specialist")
     assert comp2["lang_missing"] == []  # Spanish está en el perfil
     assert s_fr < s_es
+
+
+def test_idiomas_disyuntivos_no_exigen_ambos():
+    """P2 revisión 2026-09-03: «English or Spanish» penalizaba a quien
+    declara inglés porque se interpretaba como conjunción."""
+    # el perfil (English, Spanish) cubre la disyunción: neutral
+    _, comp = _score(70.0, titulo="English or Spanish Support Agent")
+    assert comp["lang_missing"] == []
+    # perfil sin NINGUNA de las alternativas: sí penaliza
+    prefs = dict(PREFS, languages=["Japanese"])
+    _, comp2 = _score(70.0, titulo="English or French Support Agent",
+                      prefs=prefs)
+    assert sorted(comp2["lang_missing"]) == ["english", "french"]
+    # conjunción explícita: el perfil debe cubrir TODAS
+    _, comp3 = _score(70.0, titulo="English and French Support Agent")
+    assert comp3["lang_missing"] == ["french"]
+
+
+def test_idiomas_con_barra_o_mezcla_son_neutrales():
+    _, comp = _score(70.0, titulo="English/French Customer Advisor")
+    assert comp["lang_missing"] == []
+    _, comp2 = _score(
+        70.0, titulo="German and English or French Support")  # mezcla
+    assert comp2["lang_missing"] == []
 
 
 def test_perfil_sin_idiomas_declarados_es_neutral():

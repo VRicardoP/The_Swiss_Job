@@ -260,34 +260,73 @@ def _compatible_countries(locations) -> frozenset:
     return frozenset(out)
 
 
-def _offer_country(location) -> str | None:
-    """País de una restricción geográfica EXPLÍCITA de la oferta; None =
-    neutral (marcador global, vacío, o texto no parseado por el léxico)."""
+# Regex por entrada del léxico con frontera de palabra: «india» no dispara en
+# «Indiana», y las entradas multi-palabra («bosnia and herzegovina») matchean
+# en cualquier posición del texto. Compilado una vez al importar.
+_PAISES_RE = {
+    pais: re.compile(r"\b" + re.escape(pais) + r"\b")
+    for pais in _COUNTRIES | _US_STATES
+}
+_USA_RE = re.compile(r"\(usa\)|\busa\b|\bunited states\b")
+
+
+def _offer_countries(location) -> frozenset:
+    """TODOS los países reconocidos en la restricción geográfica de la oferta
+    (P2 revisión 2026-09-03: quedarse con el primero convertía
+    «Germany / Switzerland» en incompatible para un perfil suizo). Conjunto
+    vacío = neutral (marcador global, vacío o texto fuera de léxico)."""
     if not location:
-        return None
+        return frozenset()
     loc = str(location).strip().lower()
-    if loc in _GLOBAL_MARKERS:
-        return None
-    if "(usa)" in loc or re.search(r"\busa\b|\bunited states\b", loc):
-        return "usa"
-    partes = [p.strip() for p in re.split(r"[,/]", loc)] + [loc]
-    for parte in partes:
-        if parte in _US_STATES:
-            return "usa"
-        if parte in _COUNTRIES:
-            return "usa" if parte == "united states" else parte
-    return None
+    out = set()
+    if _USA_RE.search(loc):
+        out.add("usa")
+    for pais, patron in _PAISES_RE.items():
+        if patron.search(loc):
+            if pais in _US_STATES or pais == "united states":
+                out.add("usa")
+            else:
+                out.add(pais)
+    return frozenset(out)
 
 
-def _title_languages(titulo) -> frozenset:
-    """Idiomas NOMBRADOS en el título (léxico acotado). Solo el título: una
-    mención en la descripción es incidental, no un requisito."""
-    palabras = set(re.findall(r"[a-zà-ÿ]+", (titulo or "").lower()))
-    req = set(palabras & _TITLE_LANGS)
-    if req & {"mandarin", "cantonese"}:
-        req -= {"mandarin", "cantonese"}
-        req.add("chinese")
-    return frozenset(req)
+def _title_language_requirement(titulo) -> tuple[str | None, frozenset]:
+    """Requisito de idiomas del TÍTULO: (modo, idiomas) con modo ∈
+    {"all", "any", None}.
+
+    P2 revisión 2026-09-03: «English or Spanish» NO es un requisito de ambos.
+    Solo se sostienen las formas explícitas: conectados por «or» ⇒ cualquiera
+    («any»); por «&»/«and»/coma ⇒ todos («all»); un solo idioma ⇒ ese idioma;
+    barra («English/French») o conectores mezclados ⇒ ambiguo ⇒ neutral
+    (None). Solo el título: una mención en la descripción es incidental."""
+    texto = (titulo or "").lower()
+    hallados = []  # (posición, idioma) en orden de aparición
+    for m in re.finditer(r"[a-zà-ÿ]+", texto):
+        if m.group(0) in _TITLE_LANGS:
+            idioma = m.group(0)
+            if idioma in {"mandarin", "cantonese"}:
+                idioma = "chinese"
+            hallados.append((m.start(), m.end(), idioma))
+    idiomas = frozenset(i for _, _, i in hallados)
+    if not idiomas:
+        return None, frozenset()
+    if len(idiomas) == 1:
+        return "all", idiomas
+    # conectores ENTRE menciones consecutivas
+    conectores = set()
+    for (_, fin_a, _), (ini_b, _, _) in zip(hallados, hallados[1:]):
+        entre = texto[fin_a:ini_b]
+        if "/" in entre:
+            conectores.add("/")
+        elif re.search(r"\bor\b", entre):
+            conectores.add("or")
+        else:
+            conectores.add("and")
+    if conectores == {"or"}:
+        return "any", idiomas
+    if conectores == {"and"}:
+        return "all", idiomas
+    return None, idiomas  # barra o mezcla ⇒ ambiguo ⇒ neutral
 
 
 def _rerank_score(base, role_sim, titulo, location, remote, prefs, receta):
@@ -308,20 +347,25 @@ def _rerank_score(base, role_sim, titulo, location, remote, prefs, receta):
         if remote_only and remote is False:
             inc_loc = True
         elif remote is True:
-            pais = _offer_country(location)
+            paises = _offer_countries(location)
             compat = prefs.get("_compat") or frozenset()
-            # sin países declarados en el perfil ⇒ neutral (dato ausente)
-            if pais is not None and compat and pais not in compat:
+            # incompatible SOLO si ambos conjuntos son conocidos y disjuntos:
+            # «Germany / Switzerland» es compatible con un perfil suizo.
+            if paises and compat and not (paises & compat):
                 inc_loc = True
         if inc_loc:
             s *= 1 - receta["p_loc"]
     faltan_idiomas: frozenset = frozenset()
     if receta["p_lang"]:
-        req = _title_languages(titulo)
+        modo, req = _title_language_requirement(titulo)
         propios = {str(x).strip().lower() for x in prefs.get("languages") or ()}
-        if req and propios and not req <= propios:
-            faltan_idiomas = req - frozenset(propios)
-            s *= 1 - receta["p_lang"]
+        if req and propios and modo is not None:
+            if modo == "all" and not req <= propios:
+                faltan_idiomas = req - frozenset(propios)
+            elif modo == "any" and not (req & propios):
+                faltan_idiomas = req
+            if faltan_idiomas:
+                s *= 1 - receta["p_lang"]
     if receta["role_a"]:
         s += 100.0 * receta["role_a"] * exceso
     comp |= {"loc_incompatible": inc_loc,

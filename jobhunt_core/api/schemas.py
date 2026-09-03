@@ -137,7 +137,10 @@ class ProfileWriteDTO(BaseModel):
     experience_years: int | None = Field(None, ge=0, le=80)
     salary_min: int | None = Field(None, ge=0)
     salary_max: int | None = Field(None, ge=0)
-    remote_pref: str | None = Field(None, max_length=50)
+    # P2 revisión 2026-09-03: la frontera autoritativa (legacy
+    # RemotePreference) solo admite estos valores — "banana" creaba una
+    # revisión válida que el rerank interpretaba como neutral en silencio.
+    remote_pref: Literal["remote_only", "hybrid", "onsite", "any"] | None = None
 
 
 # ---------------------------------------------------------------- C-4 (v2.1)
