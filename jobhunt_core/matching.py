@@ -450,11 +450,28 @@ def _validated_cross_encoder_recipe(policy_weights: dict) -> dict:
         "lexical_query", "lexical_weight", "rrf_k",
     }
     claves = set(policy_weights)
+    # Un modelo FINE-TUNED (v3+) añade la procedencia del entrenamiento; el
+    # resto de la receta es idéntico. Sin esa clave, el modelo debe ser de hub.
+    finetuned = "train_data_sha256" in claves
+    if finetuned:
+        esperadas = esperadas | {"train_data_sha256"}
     if claves != esperadas:
         raise ValueError(
             f"receta cross_encoder inválida: claves {sorted(claves)}, "
             f"esperadas {sorted(esperadas)}"
         )
+    if finetuned:
+        tds = policy_weights["train_data_sha256"]
+        if not (isinstance(tds, str) and re.fullmatch(r"[0-9a-f]{64}", tds)):
+            raise ValueError(
+                f"receta: train_data_sha256 {tds!r} debe ser sha256")
+        if not str(policy_weights["model"]).startswith("/"):
+            raise ValueError(
+                "receta fine-tuned: model debe ser la RUTA del artefacto "
+                "local sellado por model_fingerprint")
+    elif str(policy_weights["model"]).startswith("/"):
+        raise ValueError(
+            "receta: un modelo local exige train_data_sha256 (procedencia)")
     _validated_recipe(
         {k: policy_weights[k]
          for k in ("lexical_query", "lexical_weight", "rrf_k")}

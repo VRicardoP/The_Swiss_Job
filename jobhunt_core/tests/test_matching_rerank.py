@@ -201,3 +201,26 @@ def test_todas_las_senales_apagadas_reproduce_el_orden_v4():
     scores = [_score(b, sim=0.9, titulo="French Agent", location="Texas (USA)",
                      receta=apagada)[0] for b in bases]
     assert scores == bases  # sin señales, la puntuación ES la base
+
+
+# --- receta cross_encoder v3 (fine-tuned): procedencia obligatoria
+
+
+def test_receta_finetuned_exige_procedencia_y_ruta_local():
+    base = dict(matching.XENC_POLICY_WEIGHTS)
+    # local sin procedencia ⇒ rechazo
+    with pytest.raises(ValueError, match="train_data_sha256"):
+        matching._validated_cross_encoder_recipe(dict(base, model="/modelos/x"))
+    # procedencia con modelo de hub ⇒ rechazo (debe ser el artefacto sellado)
+    with pytest.raises(ValueError, match="RUTA"):
+        matching._validated_cross_encoder_recipe(
+            dict(base, train_data_sha256="a" * 64))
+    # v3 bien formada ⇒ pasa
+    ok = matching._validated_cross_encoder_recipe(
+        dict(base, model="/modelos/x", model_fingerprint="b" * 64,
+             train_data_sha256="a" * 64))
+    assert ok["train_data_sha256"] == "a" * 64
+    # sha inválido ⇒ rechazo
+    with pytest.raises(ValueError, match="sha256"):
+        matching._validated_cross_encoder_recipe(
+            dict(base, model="/modelos/x", train_data_sha256="zz"))

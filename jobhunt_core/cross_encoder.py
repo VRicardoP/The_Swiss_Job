@@ -64,12 +64,17 @@ def _get_engine(model: str, revision: str):
             else:
                 # Carga real: una vez por proceso. La revisión CLAVADA es
                 # parte de la receta; sin red si el artefacto ya está en la
-                # caché HF de la imagen/volumen.
+                # caché HF de la imagen/volumen. Un modelo FINE-TUNED es un
+                # directorio local (la huella de la receta lo sella): sin
+                # revisión de hub.
                 from sentence_transformers import CrossEncoder
 
-                motor = CrossEncoder(
-                    model, revision=revision, device="cpu", max_length=512,
-                )
+                if model.startswith("/"):
+                    motor = CrossEncoder(model, device="cpu", max_length=512)
+                else:
+                    motor = CrossEncoder(
+                        model, revision=revision, device="cpu", max_length=512,
+                    )
             _engines[clave] = motor
         return motor
 
