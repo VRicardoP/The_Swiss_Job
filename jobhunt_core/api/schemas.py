@@ -141,6 +141,9 @@ class ProfileWriteDTO(BaseModel):
     # RemotePreference) solo admite estos valores — "banana" creaba una
     # revisión válida que el rerank interpretaba como neutral en silencio.
     remote_pref: Literal["remote_only", "hybrid", "onsite", "any"] | None = None
+    # Intención laboral explícita (Fase 2): roles objetivo del usuario, cada
+    # uno acotado; el push C-3 que no lo envía lo PRESERVA (omisión conserva).
+    target_roles: list[str] = Field(default=[], max_length=10)
 
 
 # ---------------------------------------------------------------- C-4 (v2.1)

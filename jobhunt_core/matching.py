@@ -438,6 +438,155 @@ def _validated_rerank_recipe(policy_weights: dict) -> dict:
                 lexical_weight=base["lexical_weight"])
 
 
+def _validated_cross_encoder_recipe(policy_weights: dict) -> dict:
+    """Receta de una política ``cross_encoder`` (Fase 2 cierre definitivo):
+    modelo, revisión CLAVADA, huella de artefactos, versión de entrada,
+    activación y backend forman parte de la receta — un cambio es otra
+    versión. La recuperación de candidatos reutiliza la del híbrido v4
+    (lexical_query/lexical_weight/rrf_k), validada contra el binario."""
+    esperadas = {
+        "algorithm", "model", "model_revision", "model_fingerprint",
+        "input", "activation", "backend",
+        "lexical_query", "lexical_weight", "rrf_k",
+    }
+    claves = set(policy_weights)
+    if claves != esperadas:
+        raise ValueError(
+            f"receta cross_encoder inválida: claves {sorted(claves)}, "
+            f"esperadas {sorted(esperadas)}"
+        )
+    _validated_recipe(
+        {k: policy_weights[k]
+         for k in ("lexical_query", "lexical_weight", "rrf_k")}
+        | {"algorithm": "hybrid_rrf"}
+    )
+    from jobhunt_core import cross_encoder as ce
+
+    if policy_weights["input"] != ce.INPUT_VERSION:
+        raise ValueError(
+            f"receta: input {policy_weights['input']!r} no implementado "
+            f"(binario: {ce.INPUT_VERSION})"
+        )
+    if policy_weights["activation"] != ce.ACTIVATION:
+        raise ValueError(
+            f"receta: activation {policy_weights['activation']!r} no soportada")
+    if policy_weights["backend"] != ce.BACKEND:
+        raise ValueError(
+            f"receta: backend {policy_weights['backend']!r} no soportado")
+    modelo = policy_weights["model"]
+    if not isinstance(modelo, str) or not modelo.strip():
+        raise ValueError("receta: model vacío")
+    rev = policy_weights["model_revision"]
+    if not (isinstance(rev, str) and re.fullmatch(r"[0-9a-f]{40}", rev)):
+        raise ValueError(
+            f"receta: model_revision {rev!r} debe ser un SHA de 40 hex")
+    huella = policy_weights["model_fingerprint"]
+    if not (isinstance(huella, str) and re.fullmatch(r"[0-9a-f]{64}", huella)):
+        raise ValueError(
+            f"receta: model_fingerprint {huella!r} debe ser sha256 (64 hex)")
+    return dict(policy_weights)
+
+
+_CE_DOCS_SQL = (
+    "SELECT o.id AS orid, o.content->>'title' AS titulo, "
+    "o.content->>'location' AS location, "
+    "o.content->>'description' AS descripcion "
+    "FROM offer_revisions o WHERE o.id = ANY(CAST(:orids AS uuid[]))"
+)
+
+_CE_CACHE_SQL = (
+    "SELECT offer_revision_id, score_final, scores FROM match_evaluations "
+    "WHERE profile_id = :pid AND scoring_policy_id = :spid "
+    "  AND profile_revision_id = :prid AND model_id = :mid "
+    "  AND offer_revision_id = ANY(CAST(:orids AS uuid[]))"
+)
+
+
+async def _cross_encoder_rows(
+    session, candidates, prof, profile_id, model_id, policy_id, receta_ce,
+):
+    """Filas del feed cross-encoder: cache primero (el score es ABSOLUTO por
+    pareja ⇒ las evaluaciones existentes de la misma identidad son
+    reutilizables), inferencia SOLO de los misses, en batches y sin N+1. Un
+    fallo del modelo propaga: la transacción aborta y el último feed bueno
+    queda intacto."""
+    from jobhunt_core import cross_encoder as ce
+
+    orids = [str(c.offer_revision_id) for c in candidates]
+    cache = {
+        r.offer_revision_id: r
+        for r in (
+            await session.execute(
+                sa.text(_CE_CACHE_SQL),
+                {"pid": profile_id, "spid": policy_id,
+                 "prid": prof.revision_id, "mid": model_id, "orids": orids},
+            )
+        ).all()
+    }
+    misses = [c for c in candidates if c.offer_revision_id not in cache]
+    frescos: dict = {}
+    if misses:
+        docs_meta = {
+            r.orid: r
+            for r in (
+                await session.execute(
+                    sa.text(_CE_DOCS_SQL),
+                    {"orids": [str(c.offer_revision_id) for c in misses]},
+                )
+            ).all()
+        }
+        consultas = ce.build_queries(prof.content)
+        documentos = []
+        for c in misses:
+            m = docs_meta.get(c.offer_revision_id)
+            if m is None:
+                raise ValueError(
+                    f"cross-encoder sin documento para offer_revision "
+                    f"{c.offer_revision_id}"
+                )
+            documentos.append(
+                ce.build_document(m.titulo, m.location, m.descripcion)
+            )
+        probs = ce.score_documents(
+            receta_ce["model"], receta_ce["model_revision"],
+            consultas, documentos,
+        )
+        for c, prob in zip(misses, probs):
+            frescos[c.offer_revision_id] = prob
+
+    rows = []
+    for c in candidates:
+        cacheada = cache.get(c.offer_revision_id)
+        if cacheada is not None:
+            # Verbatim: mismo score y mismos componentes que ya sirvió/serviría
+            # el feed — cache hit sin invocar el modelo.
+            rows.append({
+                "vacancy_id": c.vacancy_id,
+                "offer_revision_id": c.offer_revision_id,
+                "score": float(cacheada.score_final),
+                "score_parts": cacheada.scores,
+            })
+            continue
+        prob = frescos[c.offer_revision_id]
+        rows.append({
+            "vacancy_id": c.vacancy_id,
+            "offer_revision_id": c.offer_revision_id,
+            "score": round(prob * 100.0, 2),
+            "score_parts": {
+                "algorithm": "cross_encoder",
+                "recipe": receta_ce,
+                "ce_prob": round(prob, 6),
+                "similarity": (
+                    round(float(c.sim), 6) if c.sim is not None else None
+                ),
+                "semantic_rank": c.semantic_rank,
+                "lexical_rank": c.lexical_rank,
+            },
+        })
+    rows.sort(key=lambda r: (-r["score"], str(r["vacancy_id"])))
+    return rows
+
+
 async def _rerank_candidates(session, candidates, content, receta):
     """Aplica el rerank v5 sobre el conjunto YA recuperado: UNA consulta de
     señales para todo el lote (sin N+1) + puntuación pura por candidato.
@@ -655,6 +804,26 @@ async def ensure_policy(
     return row.id
 
 
+# Política cross-encoder (Fase 2 cierre definitivo). El NOMBRE ordena
+# después de cosine-baseline y hybrid-rrf a propósito: activarla junto a la
+# canónica la deja en SOMBRA (el orden productivo es (name, prompt_version)).
+# La huella es sha256 del listado canónico «hash  fichero» de los artefactos
+# que carga el runtime (config, safetensors, sentencepiece, tokenizer*).
+XENC_POLICY_NAME = "xenc-mmarco"
+XENC_POLICY_VERSION = "v1"
+XENC_POLICY_WEIGHTS = {
+    "algorithm": "cross_encoder",
+    "model": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+    "model_revision": "1427fd652930e4ba29e8149678df786c240d8825",
+    "model_fingerprint": "0ef69f89417a9e60658765c534fb128b5e36cf1dde1243d1270b46f60ecc20a0",
+    "input": "v1",
+    "activation": "sigmoid",
+    "backend": "torch-cpu",
+    "lexical_query": "v2",
+    "lexical_weight": 0.25,
+    "rrf_k": 60,
+}
+
 # Fuente ÚNICA de metadatos por algoritmo (Fase 1 del cierre definitivo
 # 2026-09-03): un score es ABSOLUTO POR PAREJA si depende solo de (revisión de
 # perfil, revisión de oferta, modelo, receta) — jamás del resto del lote o del
@@ -670,6 +839,9 @@ _ALGORITHM_PAIR_ABSOLUTE = {
     "hybrid_rrf_v2": False,
     "hybrid_rrf": False,
     "hybrid_rrf_rerank": False,
+    # cross_encoder (Fase 2): probabilidad sigmoide por pareja — depende solo
+    # de (consulta del perfil, documento de la oferta, modelo, receta).
+    "cross_encoder": True,
 }
 
 
@@ -694,6 +866,7 @@ POLICY_CATALOG = (
     (HYBRID_POLICY_NAME, HYBRID2_POLICY_VERSION, HYBRID2_POLICY_WEIGHTS),
     (HYBRID_POLICY_NAME, "v3", HYBRID2_POLICY_WEIGHTS),
     (HYBRID_POLICY_NAME, HYBRID4_POLICY_VERSION, HYBRID4_POLICY_WEIGHTS),
+    (XENC_POLICY_NAME, XENC_POLICY_VERSION, XENC_POLICY_WEIGHTS),
 )
 
 
@@ -815,12 +988,18 @@ async def compute_policy_feed(
     if not isinstance(policy_weights, dict):
         raise ValueError(f"política inexistente o weights inválidos: {policy_id}")
     algorithm = policy_weights.get("algorithm", "cosine")
+    receta_ce = None
     if algorithm == "hybrid_rrf":
         # v4+ (P1-A): la receta persistida manda; se valida ANTES de tocar nada.
         receta = _validated_recipe(policy_weights)
     elif algorithm == "hybrid_rrf_rerank":
         # v5: candidatos de v4 + rerank determinista por señales de la receta.
         receta = _validated_rerank_recipe(policy_weights)
+    elif algorithm == "cross_encoder":
+        # Fase 2 cierre definitivo: recuperación híbrida + score ABSOLUTO por
+        # pareja del cross-encoder local (receta con modelo/revisión/huella).
+        receta_ce = _validated_cross_encoder_recipe(policy_weights)
+        receta = None
     elif algorithm in {"cosine", "hybrid_rrf_v1", "hybrid_rrf_v2"}:
         # Legacy congelado: el comportamiento de estas filas vive en el binario
         # (v1→1.15, v2/v3→0.25) y los goldens lo fijan. No se crean filas nuevas
@@ -886,8 +1065,10 @@ async def compute_policy_feed(
         return {"status": "ok", "rows": [],
                 "profile_revision_id": prof.revision_id,
                 "corpus_generation": corpus_gen}
-    if receta is not None:
-        lex_query = _LEXICAL_QUERY_BUILDERS[receta["lexical_query"]](prof.content)
+    recuperacion = receta_ce if receta_ce is not None else receta
+    if recuperacion is not None:
+        lex_query = _LEXICAL_QUERY_BUILDERS[recuperacion["lexical_query"]](
+            prof.content)
     elif algorithm == "hybrid_rrf_v2":
         lex_query = _lexical_query_v2(prof.content)
     elif algorithm == "hybrid_rrf_v1":
@@ -895,8 +1076,8 @@ async def compute_policy_feed(
     else:
         lex_query = ""
     hybrid = bool(lex_query)
-    if receta is not None:
-        candidate_sql = _hybrid_candidates_sql(receta["lexical_weight"])
+    if recuperacion is not None:
+        candidate_sql = _hybrid_candidates_sql(recuperacion["lexical_weight"])
     elif algorithm == "hybrid_rrf_v2":
         candidate_sql = HYBRID2_CANDIDATES_SQL
     elif hybrid:
@@ -931,6 +1112,27 @@ async def compute_policy_feed(
         reranked = await _rerank_candidates(
             session, candidates, prof.content, receta
         )
+    if receta_ce is not None and candidates:
+        rows = await _cross_encoder_rows(
+            session, candidates, prof, profile_id, model_id, policy_id,
+            receta_ce,
+        )
+        if exclude_dismissed and rows:
+            descartadas = {
+                r[0] for r in (
+                    await session.execute(
+                        sa.text(
+                            "SELECT vacancy_id FROM profile_vacancy_state "
+                            "WHERE profile_id = :pid AND dismissed_at IS NOT NULL"
+                        ),
+                        {"pid": profile_id},
+                    )
+                ).all()
+            }
+            rows = [r for r in rows if r["vacancy_id"] not in descartadas]
+        return {"status": "ok", "rows": rows,
+                "profile_revision_id": prof.revision_id,
+                "corpus_generation": corpus_gen}
     rows = []
     if reranked is not None:
         for r in reranked:

@@ -30,7 +30,15 @@ logger = logging.getLogger(__name__)
 CONTENT_FIELDS = (
     "title", "cv_text", "skills", "languages", "locations",
     "experience_years", "salary_min", "salary_max", "remote_pref",
+    # Intención laboral EXPLÍCITA (Fase 2 cierre definitivo): roles objetivo
+    # declarados por el usuario. Vacío ⇒ el consumidor usa [title]. NO entra
+    # en TEXT_FIELDS: cambiarlo crea revisión (content_hash) sin re-embeber.
+    "target_roles",
 )
+
+# Cotas del campo target_roles (validación central, no solo de frontera).
+_TARGET_ROLES_MAX = 10
+_TARGET_ROLE_LEN = 120
 # Campos que componen el TEXTO embebible (legacy profile_tasks:151):
 # salario/idiomas/ubicaciones NO re-embeben.
 TEXT_FIELDS = ("title", "cv_text", "skills")
@@ -51,6 +59,10 @@ def normalize_profile(content) -> dict | None:
         "salary_min": _int(content.get("salary_min")),
         "salary_max": _int(content.get("salary_max")),
         "remote_pref": _text(content.get("remote_pref")),
+        "target_roles": [
+            r[:_TARGET_ROLE_LEN]
+            for r in _str_list(content.get("target_roles"))[:_TARGET_ROLES_MAX]
+        ],
     }
     if not build_profile_text(out):
         logger.warning("profiles: contenido sin texto embebible — sin revisión")

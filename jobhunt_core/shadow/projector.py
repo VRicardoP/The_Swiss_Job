@@ -183,6 +183,11 @@ JOB_PAYLOAD_MAP: dict[str, str] = {
 PROFILE_FIELDS = (
     "title", "cv_text", "skills", "languages", "locations",
     "experience_years", "salary_min", "salary_max", "remote_pref",
+    # target_roles es CORE-NATIVO (no existe en la tabla legacy): jamás viene
+    # en el payload del CDC ⇒ el fail-safe lo PRESERVA siempre desde la
+    # revisión vigente — un UPDATE legacy no puede borrar la intención
+    # declarada vía API.
+    "target_roles",
 )
 
 # Orden FK-safe del ERASE (el de tests/dbcleanup.purge_consumer_graph, en
