@@ -233,18 +233,101 @@ async def build_universe_manifest(
             "universe_sha256": hashlib.sha256(canon.encode()).hexdigest()}
 
 
+def _universe_body_sha(body: dict) -> str:
+    canon = json.dumps(body, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(canon.encode()).hexdigest()
+
+
+async def _validate_universe_seal(
+    session, wrapper: dict, profiles: dict, model_id, release: str,
+) -> dict:
+    """Validación ÚNICA del sello (P1-2, usada por evaluación y pool):
+    esquema, SHA, release, modelo, TODAS las revisiones de perfil y el
+    conjunto EXACTO de parejas elegibles (vacancy, offer_revision, text_hash).
+    Cualquier deriva invalida el examen COMPLETO — jamás nDCG parcial."""
+    if not isinstance(wrapper, dict) or set(wrapper) < {
+            "universe", "universe_sha256"}:
+        raise ValueError(
+            "sello de universo malformado: se espera "
+            "{universe, universe_sha256}")
+    body = wrapper["universe"]
+    esperadas = {"release", "model_id", "corpus_generation",
+                 "profile_revisions", "pairs"}
+    if not isinstance(body, dict) or set(body) != esperadas:
+        raise ValueError(
+            f"universo malformado: claves {sorted(body) if isinstance(body, dict) else type(body).__name__}")
+    if _universe_body_sha(body) != wrapper["universe_sha256"]:
+        raise ValueError(
+            "SHA del universo no coincide con su cuerpo — sello adulterado")
+    if body["release"] != release:
+        raise ValueError(
+            f"universo sellado en release {body['release']!r}, "
+            f"evaluando en {release!r}")
+    if str(body["model_id"]) != str(model_id):
+        raise ValueError(
+            f"universo sellado para modelo {body['model_id']}, "
+            f"evaluando con {model_id}")
+    for nombre in sorted(profiles):
+        actual = (
+            await session.execute(
+                sa.text(
+                    "SELECT revision_id FROM profile_revision_activations "
+                    "WHERE profile_id = :p ORDER BY seq DESC LIMIT 1"
+                ),
+                {"p": profiles[nombre]},
+            )
+        ).scalar_one_or_none()
+        sellada = body["profile_revisions"].get(nombre)
+        if sellada is None or str(actual) != sellada:
+            raise ValueError(
+                f"la revisión del perfil {nombre} derivó: sellada "
+                f"{sellada}, vigente {actual}"
+            )
+    actuales = {
+        (str(r.vid), str(r.orid), r.th)
+        for r in (
+            await session.execute(
+                sa.text(
+                    "SELECT v.id AS vid, orv.id AS orid, orv.text_hash AS th "
+                    + matching.ELIGIBLE_CORPUS_FROM.format(model=":mid")
+                ),
+                {"mid": model_id},
+            )
+        ).all()
+    }
+    selladas = {
+        (p["vacancy_id"], p["offer_revision_id"], p["text_hash"])
+        for p in body["pairs"]
+    }
+    if actuales != selladas:
+        retiradas = len(selladas - actuales)
+        nuevas = len(actuales - selladas)
+        raise ValueError(
+            f"el universo derivó del sello: {retiradas} pareja(s) "
+            f"retirada(s), {nuevas} nueva(s) — examen INELEGIBLE completo"
+        )
+    return body
+
+
 async def build_blind_pool(
     session, profiles: dict, baseline_spec: str, candidate_spec: str,
     judgments_path: str | None = None, k: int = 20,
-    model_id: str | None = None,
+    model_id: str | None = None, universe: dict | None = None,
+    allow_unknown_release: bool = False,
 ) -> dict:
     """Pool CIEGO del examen (Fase 4): unión de los top-K de la baseline y de
     la candidata por perfil, deduplicada de forma determinista, con los
     juicios previos aplicables separados de lo pendiente de etiquetar."""
+    release = os.environ.get("RELEASE_SHA", "unknown")
+    if release == "unknown" and not allow_unknown_release:
+        raise ValueError("RELEASE_SHA=unknown: pool no auditable")
     await session.execute(
         sa.text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
     )
     mid = await _resolve_model(session, model_id)
+    if universe is not None:
+        # El pool queda LIGADO al mismo sello que el examen (P1-2).
+        await _validate_universe_seal(session, universe, profiles, mid, release)
     base_id, _ = await _resolve_policy(session, baseline_spec)
     cand_id, _ = await _resolve_policy(session, candidate_spec)
     juicios = (
@@ -314,9 +397,11 @@ async def evaluate_dev(
 
     pares_universo = None
     if universe is not None:
+        cuerpo = await _validate_universe_seal(
+            session, universe, profiles, mid, release)
         pares_universo = {
             (p["vacancy_id"], p["offer_revision_id"])
-            for p in universe["pairs"]
+            for p in cuerpo["pairs"]
         }
     por_perfil = {}
     revisiones = {}
@@ -419,30 +504,92 @@ async def evaluate_dev(
     }
 
 
-async def _main(argv) -> None:
-    ap = argparse.ArgumentParser(prog="jobhunt_core.dev_eval")
-    ap.add_argument("--policy", required=True, help="name:version")
-    ap.add_argument("--judgments", required=True)
-    ap.add_argument("--unsure", default=None)
-    ap.add_argument("--model", default=None)
-    ap.add_argument(
-        "--profile", action="append", required=True,
-        help="nombre=uuid (repetible)",
-    )
-    args = ap.parse_args(argv)
+def _parse_profiles(specs) -> dict:
     profiles = {}
-    for spec in args.profile:
+    for spec in specs:
         nombre, _, pid = spec.partition("=")
         if not pid:
             raise SystemExit(f"--profile debe ser nombre=uuid, no {spec!r}")
         profiles[nombre] = pid
+    return profiles
+
+
+def _write_atomic(path: str, data: dict) -> str:
+    """Escritura atómica (tmp + rename) con el sha256 del contenido visible."""
+    cuerpo = json.dumps(data, ensure_ascii=False, sort_keys=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(cuerpo)
+    os.replace(tmp, path)
+    return hashlib.sha256(cuerpo.encode()).hexdigest()
+
+
+def _load_universe(path: str) -> dict:
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+async def _main(argv) -> None:
+    """CLI OPERATIVO del examen (P1-2): estricto — sin allow_unknown_release
+    ni allow_uncovered. seal-universe / build-pool / evaluate comparten el
+    mismo sello."""
+    ap = argparse.ArgumentParser(prog="jobhunt_core.dev_eval")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p_seal = sub.add_parser("seal-universe")
+    p_seal.add_argument("--profile", action="append", required=True)
+    p_seal.add_argument("--model", default=None)
+    p_seal.add_argument("--out", required=True)
+
+    p_pool = sub.add_parser("build-pool")
+    p_pool.add_argument("--profile", action="append", required=True)
+    p_pool.add_argument("--baseline", required=True)
+    p_pool.add_argument("--candidate", required=True)
+    p_pool.add_argument("--universe", required=True)
+    p_pool.add_argument("--judgments", default=None)
+    p_pool.add_argument("--k", type=int, default=20)
+    p_pool.add_argument("--model", default=None)
+    p_pool.add_argument("--out", required=True)
+
+    p_eval = sub.add_parser("evaluate")
+    p_eval.add_argument("--policy", required=True, help="name:version")
+    p_eval.add_argument("--judgments", required=True)
+    p_eval.add_argument("--unsure", default=None)
+    p_eval.add_argument("--model", default=None)
+    p_eval.add_argument("--universe", default=None)
+    p_eval.add_argument("--profile", action="append", required=True)
+
+    args = ap.parse_args(argv)
+    profiles = _parse_profiles(args.profile)
     async with task_session_factory() as factory:
         async with factory() as s:
-            out = await evaluate_dev(
-                s, args.policy, profiles, args.judgments,
-                unsure_path=args.unsure, model_id=args.model,
-            )
-    print(json.dumps(out, ensure_ascii=False, sort_keys=True))
+            if args.cmd == "seal-universe":
+                sello = await build_universe_manifest(
+                    s, profiles, model_id=args.model)
+                sha = _write_atomic(args.out, sello)
+                print(json.dumps({
+                    "out": args.out, "file_sha256": sha,
+                    "universe_sha256": sello["universe_sha256"],
+                    "pairs": len(sello["universe"]["pairs"]),
+                }, sort_keys=True))
+            elif args.cmd == "build-pool":
+                pool = await build_blind_pool(
+                    s, profiles, args.baseline, args.candidate,
+                    judgments_path=args.judgments, k=args.k,
+                    model_id=args.model,
+                    universe=_load_universe(args.universe),
+                )
+                sha = _write_atomic(args.out, pool)
+                print(json.dumps({"out": args.out, "file_sha256": sha},
+                                 sort_keys=True))
+            else:
+                out = await evaluate_dev(
+                    s, args.policy, profiles, args.judgments,
+                    unsure_path=args.unsure, model_id=args.model,
+                    universe=(_load_universe(args.universe)
+                              if args.universe else None),
+                )
+                print(json.dumps(out, ensure_ascii=False, sort_keys=True))
 
 
 if __name__ == "__main__":

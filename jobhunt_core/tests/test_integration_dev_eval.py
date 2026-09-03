@@ -61,6 +61,7 @@ def _shadow_policy(factory, created, version="v4"):
 
 def _run_eval(factory, polid_spec, profiles, judgments, unsure=None,
               allow_uncovered=True, universe=None):
+    # `universe` es el ENVOLTORIO {universe, universe_sha256} (P1-2).
     """allow_uncovered=True por defecto SOLO en estos tests exploratorios
     (juzgan 3 de 10 a propósito); el contrato de examen es estricto y sus
     regresiones lo llaman con False."""
@@ -530,9 +531,9 @@ def test_el_examen_queda_ligado_a_su_universo(db):
     top = [f["vacancy_id"] for f in sonda["payload"]["profiles"]["P1"]["top10"]]
     juicios = _judgments_file([f"P1,{v},1" for v in top])
 
-    # examen ligado al universo, sin deriva: elegible
+    # examen ligado al universo, sin deriva: elegible (envoltorio COMPLETO)
     out = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
-                    allow_uncovered=False, universe=manifiesto["universe"])
+                    allow_uncovered=False, universe=manifiesto)
     assert out["payload"]["profiles"]["P1"]["elegible"] is True
 
     # deriva: oferta NUEVA que asalta el top (vector clavado al del perfil)
@@ -567,11 +568,12 @@ def test_el_examen_queda_ligado_a_su_universo(db):
             await s.commit()
 
     asyncio.run(clavar())
-    out2 = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
-                     allow_uncovered=False, universe=manifiesto["universe"])
-    r2 = out2["payload"]["profiles"]["P1"]
-    assert r2["elegible"] is False
-    assert r2["fuera_de_universo"], "la intrusa debe declararse, no puntuar 0"
+    # P1-2: el sello valida el CONJUNTO EXACTO de parejas elegibles — la
+    # intrusa deriva el universo y el examen COMPLETO es inelegible (error),
+    # jamás un nDCG parcial ni un 0 silencioso.
+    with pytest.raises(ValueError, match="deriv"):
+        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
+                  allow_uncovered=False, universe=manifiesto)
 
 
 def test_pool_ciego_es_union_determinista_de_topk(db):
@@ -584,7 +586,8 @@ def test_pool_ciego_es_union_determinista_de_topk(db):
             return await dev_eval.build_blind_pool(
                 s, {"P1": pid}, "cosine:v1", "hybrid-rrf:v4",
                 judgments_path=_judgments_file(
-                    [f"P1,{list(vacs.values())[0]},1"]), k=3)
+                    [f"P1,{list(vacs.values())[0]},1"]), k=3,
+                allow_unknown_release=True)
 
     pool = asyncio.run(go())
     p1 = pool["P1"]
@@ -592,3 +595,157 @@ def test_pool_ciego_es_union_determinista_de_topk(db):
     ids = [x["vacancy_id"] for x in p1["pendientes"]]
     assert ids == sorted(ids) and len(ids) == len(set(ids))
     assert 2 <= len(ids) <= 6  # unión de dos top-3 sin el ya juzgado
+
+
+# --------------------------- P1-2 revisión 2026-09-03: sello REAL del universo
+
+
+def _sellar(factory, profiles):
+    async def go():
+        async with factory() as s:
+            return await dev_eval.build_universe_manifest(
+                s, profiles, allow_unknown_release=True)
+
+    return asyncio.run(go())
+
+
+def test_el_universo_detecta_retirada_revision_y_adulteracion(db):
+    """(a) archivar una pareja sellada ⇒ INELEGIBLE/error GLOBAL aunque el
+    top-10 siga dentro de parejas viejas; (b) revisión nueva del perfil ⇒
+    error; (c) cuerpo adulterado o SHA falsa ⇒ error. Nada de nDCG parcial."""
+    factory, created = db
+    # 12 ofertas: quedan parejas selladas FUERA del top-10
+    pid, mid, _, vacs = _setup(
+        factory, created, TITULOS + [t + " ii" for t in TITULOS])
+    _shadow_policy(factory, created)
+    sonda = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
+                      _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+    top = [f["vacancy_id"] for f in sonda["payload"]["profiles"]["P1"]["top10"]]
+    juicios = _judgments_file([f"P1,{v},1" for v in top])
+    sello = _sellar(factory, {"P1": pid})
+
+    # sano: elegible
+    out = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
+                    allow_uncovered=False, universe=sello)
+    assert out["payload"]["profiles"]["P1"]["elegible"] is True
+
+    # (a) retirada del corpus: archivar una pareja sellada que NO está en el
+    # top — el top sigue compuesto por parejas viejas y aun así es inelegible
+    fuera_del_top = next(
+        p["vacancy_id"] for p in sello["universe"]["pairs"]
+        if p["vacancy_id"] not in top)
+
+    async def archivar():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "UPDATE vacancies SET archived_at = now() WHERE id = :v"),
+                {"v": fuera_del_top})
+            await s.commit()
+
+    asyncio.run(archivar())
+    with pytest.raises(ValueError, match="universo"):
+        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
+                  allow_uncovered=False, universe=sello)
+
+    async def desarchivar():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "UPDATE vacancies SET archived_at = NULL WHERE id = :v"),
+                {"v": fuera_del_top})
+            await s.commit()
+
+    asyncio.run(desarchivar())
+
+    # (b) revisión nueva del perfil (solo preferencias: mismas parejas):
+    async def revisar():
+        async with factory() as s:
+            from jobhunt_core import profiles as core_profiles
+            cur = await core_profiles.current_revision(s, pid)
+            await core_profiles.save_profile_revision(
+                s, pid, dict(cur.content, languages=["English"]))
+            await s.commit()
+
+    asyncio.run(revisar())
+    from jobhunt_core.tasks.embedding import run_pending_task
+    embeddings.set_backend_factory(lambda n, v: DirectionalBackend())
+    try:
+        r = run_pending_task.apply(kwargs={"limit": 100})
+        assert r.successful(), r.traceback
+    finally:
+        embeddings.set_backend_factory(None)
+    with pytest.raises(ValueError, match="revisi"):
+        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
+                  allow_uncovered=False, universe=sello)
+
+    # (c) adulteración: cuerpo cambiado o SHA falsa
+    roto = json.loads(json.dumps(sello))
+    roto["universe"]["pairs"] = roto["universe"]["pairs"][:-1]
+    with pytest.raises(ValueError, match="sha|SHA"):
+        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
+                  allow_uncovered=False, universe=roto)
+    falso = dict(sello, universe_sha256="0" * 64)
+    with pytest.raises(ValueError, match="sha|SHA"):
+        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
+                  allow_uncovered=False, universe=falso)
+
+
+def test_el_pool_ciego_rechaza_deriva_del_sello(db):
+    factory, created = db
+    pid, mid, cosine_id, vacs = _setup(factory, created, TITULOS)
+    _shadow_policy(factory, created)
+    sello = _sellar(factory, {"P1": pid})
+
+    async def pool(universe):
+        async with factory() as s:
+            return await dev_eval.build_blind_pool(
+                s, {"P1": pid}, "cosine:v1", "hybrid-rrf:v4",
+                universe=universe, k=3, allow_unknown_release=True)
+
+    assert asyncio.run(pool(sello))["P1"]["pendientes"]
+
+    async def archivar_uno():
+        async with factory() as s:
+            v = sello["universe"]["pairs"][0]["vacancy_id"]
+            await s.execute(sa.text(
+                "UPDATE vacancies SET archived_at = now() WHERE id = :v"),
+                {"v": v})
+            await s.commit()
+
+    asyncio.run(archivar_uno())
+    with pytest.raises(ValueError, match="universo"):
+        asyncio.run(pool(sello))
+
+
+def test_cli_extremo_a_extremo_con_el_mismo_sello(db, tmp_path, monkeypatch,
+                                                  capsys):
+    """P0-5: seal-universe → build-pool → evaluate, ejecutables con el MISMO
+    sello, salidas atómicas con sha visible, modo estricto (sin allows)."""
+    monkeypatch.setenv("RELEASE_SHA", "e2etest")
+    factory, created = db
+    pid, mid, _, vacs = _setup(factory, created, TITULOS)
+    _shadow_policy(factory, created)
+    uni = str(tmp_path / "universo.json")
+    pool = str(tmp_path / "pool.json")
+
+    asyncio.run(dev_eval._main([
+        "seal-universe", "--profile", f"P1={pid}", "--out", uni]))
+    sellado = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert sellado["pairs"] == len(TITULOS) and sellado["file_sha256"]
+
+    asyncio.run(dev_eval._main([
+        "build-pool", "--profile", f"P1={pid}",
+        "--baseline", "cosine:v1", "--candidate", "hybrid-rrf:v4",
+        "--universe", uni, "--k", "3", "--out", pool]))
+    assert json.load(open(pool, encoding="utf-8"))["P1"]["pendientes"]
+
+    # cobertura completa del top y evaluación LIGADA al sello
+    sonda = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
+                      _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+    top = [f["vacancy_id"] for f in sonda["payload"]["profiles"]["P1"]["top10"]]
+    juicios = _judgments_file([f"P1,{v},1" for v in top])
+    asyncio.run(dev_eval._main([
+        "evaluate", "--policy", "hybrid-rrf:v4", "--judgments", juicios,
+        "--universe", uni, "--profile", f"P1={pid}"]))
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["payload"]["profiles"]["P1"]["elegible"] is True
+    assert out["payload"]["release"] == "e2etest"
