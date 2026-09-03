@@ -293,3 +293,75 @@ def test_escritura_progresa_durante_inferencia_y_lo_rancio_no_se_publica(db):
         "SELECT count(*) AS n FROM match_evaluations "
         "WHERE scoring_policy_id = :sp", sp=polid)[0].n == 0
     assert _feed_actual(factory, pid) == antes
+
+
+def test_tier_ordena_viables_antes_que_incompatibles_demostradas(db):
+    """P2-1 revisión 2026-09-03: el CE puro ordena por afinidad temática — una
+    oferta restringida a EE. UU. con mayor logit va primero aunque el código
+    YA sabe detectar la incompatibilidad. cross_encoder_tier: primero
+    viable/desconocida, después incompatible_demostrada; dentro de cada nivel
+    manda ce_prob. Absoluto por pareja ⇒ promovible."""
+    factory, created = db
+    pid, mid, cosine_id, vacs = _setup(
+        factory, created,
+        ["bilingual content specialist", "bilingual content expert"],
+        profile_content={
+            "title": "bilingual content specialist", "skills": ["content"],
+            "languages": ["English", "Spanish"],
+            "locations": ["Remote", "Spain"], "remote_pref": "remote_only",
+        })
+
+    # la oferta 'expert' se ancla a EE. UU. (remota restringida)
+    async def anclar():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "UPDATE offer_revisions SET content = content || "
+                "CAST('{\"location\": \"Texas (USA)\", \"remote\": true}' AS jsonb) "
+                "WHERE content->>'title' = 'bilingual content expert'"))
+            await s.execute(sa.text(
+                "UPDATE offer_revisions SET content = content || "
+                "CAST('{\"location\": \"Remote\", \"remote\": true}' AS jsonb) "
+                "WHERE content->>'title' = 'bilingual content specialist'"))
+            await s.commit()
+
+    asyncio.run(anclar())
+
+    class _Tematico:
+        def predict(self, pares, batch_size=16):
+            # la ANCLADA es temáticamente "mejor" para el modelo
+            return [3.0 if "expert" in d else 1.0 for _, d in pares]
+
+    ce.set_engine_factory(lambda m, r: _Tematico())
+    try:
+        async def go():
+            async with factory() as s:
+                puro = await matching.ensure_policy(
+                    s, matching.XENC_POLICY_NAME, "v2",
+                    weights=matching.XENC2_POLICY_WEIGHTS, active=False)
+                tier = await matching.ensure_policy(
+                    s, matching.XENC_TIER_POLICY_NAME,
+                    matching.XENC_TIER_POLICY_VERSION,
+                    weights=matching.XENC_TIER_POLICY_WEIGHTS, active=False)
+                created["policies"] += [puro, tier]
+                await s.commit()
+            async with factory() as s:
+                fp = await matching.compute_policy_feed(s, pid, mid, puro)
+                ft = await matching.compute_policy_feed(s, pid, mid, tier)
+                return fp["rows"], ft["rows"]
+
+        rows_puro, rows_tier = asyncio.run(go())
+    finally:
+        ce.set_engine_factory(None)
+
+    anclada = vacs["bilingual content expert"]
+    viable = vacs["bilingual content specialist"]
+    # el CE puro pone primero la anclada (defecto que motiva P2-1)…
+    assert rows_puro[0]["vacancy_id"] == anclada
+    # …y el tier pone primero la VIABLE, con la anclada degradada al nivel 0
+    assert rows_tier[0]["vacancy_id"] == viable
+    assert rows_tier[0]["score"] > 50 > rows_tier[1]["score"]
+    assert rows_tier[0]["score_parts"]["tier"] == 1
+    assert rows_tier[1]["score_parts"]["tier"] == 0
+    assert rows_tier[1]["score_parts"]["compat"]["inc_loc"] is True
+    # dentro del nivel manda ce_prob; desconocido/ambiguo NO castiga
+    assert matching._is_pair_absolute(matching.XENC_TIER_POLICY_WEIGHTS)

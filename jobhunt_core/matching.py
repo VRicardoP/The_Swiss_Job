@@ -329,6 +329,34 @@ def _title_language_requirement(titulo) -> tuple[str | None, frozenset]:
     return None, idiomas  # barra o mezcla ⇒ ambiguo ⇒ neutral
 
 
+def _pair_compatibility(titulo, location, remote, prefs) -> dict:
+    """Compatibilidad DEMOSTRADA de una pareja (perfil, oferta) — fuente
+    ÚNICA (P2-1): la usan el rerank v5 y el tier del cross-encoder.
+    Desconocido/ambiguo = neutral; solo una incompatibilidad demostrable
+    (remoto-only vs presencial, países conocidos y disjuntos, idioma exigido
+    del título no acreditado) marca la pareja."""
+    inc_loc = False
+    remote_only = (prefs.get("remote_pref") == "remote_only")
+    if remote_only and remote is False:
+        inc_loc = True
+    elif remote is True:
+        paises = _offer_countries(location)
+        compat = prefs.get("_compat")
+        if compat is None:
+            compat = _compatible_countries(prefs.get("locations"))
+        if paises and compat and not (paises & compat):
+            inc_loc = True
+    faltan_idiomas: frozenset = frozenset()
+    modo, req = _title_language_requirement(titulo)
+    propios = {str(x).strip().lower() for x in prefs.get("languages") or ()}
+    if req and propios and modo is not None:
+        if modo == "all" and not req <= propios:
+            faltan_idiomas = req - frozenset(propios)
+        elif modo == "any" and not (req & propios):
+            faltan_idiomas = req
+    return {"inc_loc": inc_loc, "lang_missing": sorted(faltan_idiomas)}
+
+
 def _rerank_score(base, role_sim, titulo, location, remote, prefs, receta):
     """Puntuación v5 de UN candidato (pura y determinista).
 
@@ -341,35 +369,17 @@ def _rerank_score(base, role_sim, titulo, location, remote, prefs, receta):
     comp = {"base_rrf": round(float(base), 4), "role_sim": round(sim, 4)}
     if receta["role_w"]:
         s *= 1 + receta["role_w"] * exceso
-    inc_loc = False
-    if receta["p_loc"]:
-        remote_only = (prefs.get("remote_pref") == "remote_only")
-        if remote_only and remote is False:
-            inc_loc = True
-        elif remote is True:
-            paises = _offer_countries(location)
-            compat = prefs.get("_compat") or frozenset()
-            # incompatible SOLO si ambos conjuntos son conocidos y disjuntos:
-            # «Germany / Switzerland» es compatible con un perfil suizo.
-            if paises and compat and not (paises & compat):
-                inc_loc = True
-        if inc_loc:
-            s *= 1 - receta["p_loc"]
-    faltan_idiomas: frozenset = frozenset()
-    if receta["p_lang"]:
-        modo, req = _title_language_requirement(titulo)
-        propios = {str(x).strip().lower() for x in prefs.get("languages") or ()}
-        if req and propios and modo is not None:
-            if modo == "all" and not req <= propios:
-                faltan_idiomas = req - frozenset(propios)
-            elif modo == "any" and not (req & propios):
-                faltan_idiomas = req
-            if faltan_idiomas:
-                s *= 1 - receta["p_lang"]
+    compat = _pair_compatibility(titulo, location, remote, prefs)
+    inc_loc = compat["inc_loc"] if receta["p_loc"] else False
+    if inc_loc:
+        s *= 1 - receta["p_loc"]
+    faltan_idiomas = compat["lang_missing"] if receta["p_lang"] else []
+    if faltan_idiomas:
+        s *= 1 - receta["p_lang"]
     if receta["role_a"]:
         s += 100.0 * receta["role_a"] * exceso
     comp |= {"loc_incompatible": inc_loc,
-             "lang_missing": sorted(faltan_idiomas)}
+             "lang_missing": list(faltan_idiomas)}
     return s, comp
 
 
@@ -450,6 +460,13 @@ def _validated_cross_encoder_recipe(policy_weights: dict) -> dict:
         "lexical_query", "lexical_weight", "rrf_k",
     }
     claves = set(policy_weights)
+    if policy_weights.get("algorithm") == "cross_encoder_tier":
+        # P2-1: el tier añade la regla de compatibilidad a la receta.
+        esperadas = esperadas | {"compat_rule"}
+        if policy_weights.get("compat_rule") != "tier-v1":
+            raise ValueError(
+                f"receta: compat_rule {policy_weights.get('compat_rule')!r} "
+                "no implementada (soportada: tier-v1)")
     # Un modelo FINE-TUNED (v3+) añade la procedencia del entrenamiento; el
     # resto de la receta es idéntico. Sin esa clave, el modelo debe ser de hub.
     finetuned = "train_data_sha256" in claves
@@ -507,6 +524,7 @@ def _validated_cross_encoder_recipe(policy_weights: dict) -> dict:
 _CE_DOCS_SQL = (
     "SELECT o.id AS orid, o.content->>'title' AS titulo, "
     "o.content->>'location' AS location, "
+    "o.content->>'remote' AS remote, "
     "o.content->>'description' AS descripcion "
     "FROM offer_revisions o WHERE o.id = ANY(CAST(:orids AS uuid[]))"
 )
@@ -540,6 +558,7 @@ async def _ce_prepare(
     }
     misses = [c for c in candidates if c.offer_revision_id not in cache]
     documentos = []
+    docs_meta = {}
     if misses:
         docs_meta = {
             r.orid: r
@@ -563,8 +582,16 @@ async def _ce_prepare(
     return {
         "candidates": candidates, "cache": cache, "misses": misses,
         "documentos": documentos,
+        "docs_meta": docs_meta if misses else {},
         "consultas": ce.build_queries(prof.content),
         "receta_ce": receta_ce,
+        # prefs para la compatibilidad del TIER (parte de la identidad de la
+        # pareja: viven en la revisión del perfil)
+        "prefs": {
+            "languages": prof.content.get("languages"),
+            "locations": prof.content.get("locations"),
+            "remote_pref": prof.content.get("remote_pref"),
+        },
     }
 
 
@@ -607,20 +634,34 @@ def _ce_assemble(prep, frescos) -> list:
             })
             continue
         prob = frescos[c.offer_revision_id]
+        algoritmo = receta_ce["algorithm"]
+        parts = {
+            "algorithm": algoritmo,
+            "recipe": receta_ce,
+            "ce_prob": round(prob, 6),
+            "similarity": (
+                round(float(c.sim), 6) if c.sim is not None else None
+            ),
+            "semantic_rank": c.semantic_rank,
+            "lexical_rank": c.lexical_rank,
+        }
+        if algoritmo == "cross_encoder_tier":
+            m = prep["docs_meta"][c.offer_revision_id]
+            compat = _pair_compatibility(
+                m.titulo, m.location,
+                {"true": True, "false": False}.get(m.remote),
+                prep["prefs"],
+            )
+            tier = 0 if (compat["inc_loc"] or compat["lang_missing"]) else 1
+            score = round(50.0 * tier + 49.99 * prob, 2)
+            parts |= {"tier": tier, "compat": compat}
+        else:
+            score = round(prob * 100.0, 2)
         rows.append({
             "vacancy_id": c.vacancy_id,
             "offer_revision_id": c.offer_revision_id,
-            "score": round(prob * 100.0, 2),
-            "score_parts": {
-                "algorithm": "cross_encoder",
-                "recipe": receta_ce,
-                "ce_prob": round(prob, 6),
-                "similarity": (
-                    round(float(c.sim), 6) if c.sim is not None else None
-                ),
-                "semantic_rank": c.semantic_rank,
-                "lexical_rank": c.lexical_rank,
-            },
+            "score": score,
+            "score_parts": parts,
         })
     rows.sort(key=lambda r: (-r["score"], str(r["vacancy_id"])))
     return rows
@@ -889,6 +930,20 @@ XENC_POLICY_WEIGHTS = {
 XENC2_POLICY_VERSION = "v2"
 XENC2_POLICY_WEIGHTS = dict(XENC_POLICY_WEIGHTS, activation="sigmoid_t4")
 
+# P2-1 (revisión 2026-09-03): el CE puro ordena por afinidad temática e
+# ignora restricciones que el código YA detecta (el etiquetado ciego CE2 lo
+# atribuyó a EE. UU./Canadá e idiomas no acreditados). El TIER es la regla
+# PREDECLARADA, sin rejilla: nivel 1 = viable o desconocida, nivel 0 =
+# incompatible DEMOSTRADA (_pair_compatibility, fuente única); dentro de cada
+# nivel manda ce_prob. score = 50·tier + 49.99·ce_prob — absoluto por pareja
+# (perfil-revisión + oferta-revisión + receta), estable ante el lote.
+XENC_TIER_POLICY_NAME = "xtier-mmarco"
+XENC_TIER_POLICY_VERSION = "v1"
+XENC_TIER_POLICY_WEIGHTS = dict(
+    XENC2_POLICY_WEIGHTS, algorithm="cross_encoder_tier",
+    compat_rule="tier-v1",
+)
+
 _ALGORITHM_PAIR_ABSOLUTE = {
     "cosine": True,
     "hybrid_rrf_v1": False,
@@ -898,6 +953,8 @@ _ALGORITHM_PAIR_ABSOLUTE = {
     # cross_encoder (Fase 2): probabilidad sigmoide por pareja — depende solo
     # de (consulta del perfil, documento de la oferta, modelo, receta).
     "cross_encoder": True,
+    # tier = CE (absoluto) + compatibilidad por pareja (absoluta): promovible.
+    "cross_encoder_tier": True,
 }
 
 
@@ -924,6 +981,8 @@ POLICY_CATALOG = (
     (HYBRID_POLICY_NAME, HYBRID4_POLICY_VERSION, HYBRID4_POLICY_WEIGHTS),
     (XENC_POLICY_NAME, XENC_POLICY_VERSION, XENC_POLICY_WEIGHTS),
     (XENC_POLICY_NAME, XENC2_POLICY_VERSION, XENC2_POLICY_WEIGHTS),
+    (XENC_TIER_POLICY_NAME, XENC_TIER_POLICY_VERSION,
+     XENC_TIER_POLICY_WEIGHTS),
 )
 
 
@@ -1053,9 +1112,10 @@ async def compute_policy_feed(
     elif algorithm == "hybrid_rrf_rerank":
         # v5: candidatos de v4 + rerank determinista por señales de la receta.
         receta = _validated_rerank_recipe(policy_weights)
-    elif algorithm == "cross_encoder":
+    elif algorithm in {"cross_encoder", "cross_encoder_tier"}:
         # Fase 2 cierre definitivo: recuperación híbrida + score ABSOLUTO por
         # pareja del cross-encoder local (receta con modelo/revisión/huella).
+        # El tier (P2-1) añade la compatibilidad demostrada por pareja.
         receta_ce = _validated_cross_encoder_recipe(policy_weights)
         receta = None
     elif algorithm in {"cosine", "hybrid_rrf_v1", "hybrid_rrf_v2"}:
