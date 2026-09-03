@@ -77,11 +77,8 @@ def _run_eval(factory, polid_spec, profiles, judgments, unsure=None,
 
 def _evaluate_shadow(factory, pid, mid, polid, limit=100):
     async def go():
-        async with factory() as s:
-            r = await matching.evaluate_profile(
-                s, pid, mid, polid, limit=limit, move_current=False)
-            await s.commit()
-            return r
+        return await matching.evaluate_profile(
+            factory, pid, mid, polid, limit=limit, move_current=False)
 
     return asyncio.run(go())
 
@@ -312,11 +309,9 @@ def test_valla_final_rechaza_mover_feed_con_relativa(db):
                 "UPDATE scoring_policies SET active = (id = :v)"),
                 {"v": polid})
             await s.commit()
-        async with factory() as s:
-            with pytest.raises(ValueError, match="RELATIVO"):
-                await matching.evaluate_profile(
-                    s, pid, mid, polid, move_current=True)
-            await s.rollback()
+        with pytest.raises(ValueError, match="RELATIVO"):
+            await matching.evaluate_profile(
+                factory, pid, mid, polid, move_current=True)
         async with factory() as s:  # restaurar activación para el teardown
             await matching.declare_active_policies(s, [cosine_id])
             await s.commit()

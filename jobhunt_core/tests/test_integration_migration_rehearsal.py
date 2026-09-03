@@ -131,7 +131,7 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                       "vector": [1.0] + [0.0] * 383}],
                 )
                 await s.commit()
-                r = await matching.evaluate_profile(s, pid, mid, polid)
+                r = await matching.evaluate_profile(factory, pid, mid, polid)
                 await s.commit()
                 assert r["evaluated"] == 1 and r["new_evals"] == 1
                 # C-ESQ (core0011): dato real también en las 4 tablas de

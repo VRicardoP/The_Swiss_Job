@@ -519,14 +519,12 @@ _CE_CACHE_SQL = (
 )
 
 
-async def _cross_encoder_rows(
+async def _ce_prepare(
     session, candidates, prof, profile_id, model_id, policy_id, receta_ce,
 ):
-    """Filas del feed cross-encoder: cache primero (el score es ABSOLUTO por
-    pareja ⇒ las evaluaciones existentes de la misma identidad son
-    reutilizables), inferencia SOLO de los misses, en batches y sin N+1. Un
-    fallo del modelo propaga: la transacción aborta y el último feed bueno
-    queda intacto."""
+    """FASE de preparación del cross-encoder (P1-3): TODAS las lecturas de BD
+    (cache por identidad absoluta + documentos de los misses + consultas),
+    SIN inferencia. El resultado es autosuficiente para puntuar sin BD."""
     from jobhunt_core import cross_encoder as ce
 
     orids = [str(c.offer_revision_id) for c in candidates]
@@ -541,7 +539,7 @@ async def _cross_encoder_rows(
         ).all()
     }
     misses = [c for c in candidates if c.offer_revision_id not in cache]
-    frescos: dict = {}
+    documentos = []
     if misses:
         docs_meta = {
             r.orid: r
@@ -552,8 +550,6 @@ async def _cross_encoder_rows(
                 )
             ).all()
         }
-        consultas = ce.build_queries(prof.content)
-        documentos = []
         for c in misses:
             m = docs_meta.get(c.offer_revision_id)
             if m is None:
@@ -564,20 +560,41 @@ async def _cross_encoder_rows(
             documentos.append(
                 ce.build_document(m.titulo, m.location, m.descripcion)
             )
-        probs = ce.score_documents(
-            receta_ce["model"], receta_ce["model_revision"],
-            consultas, documentos, activation=receta_ce["activation"],
-            # Identidad EFECTIVA (P1-1): la huella de la receta se verifica
-            # contra los archivos cargados, una vez por motor. El batch es el
-            # OPERATIVO del benchmark (P3-1), no un hiperparámetro del score.
-            fingerprint=receta_ce["model_fingerprint"],
-            batch_size=ce.CE_BATCH_SIZE,
-        )
-        for c, prob in zip(misses, probs):
-            frescos[c.offer_revision_id] = prob
+    return {
+        "candidates": candidates, "cache": cache, "misses": misses,
+        "documentos": documentos,
+        "consultas": ce.build_queries(prof.content),
+        "receta_ce": receta_ce,
+    }
 
+
+def _ce_score_misses(prep) -> dict:
+    """FASE de inferencia (P1-3): CPU pura, SIN sesión de BD ni transacción —
+    ejecutable fuera del event loop. Un fallo propaga y nada se persiste."""
+    from jobhunt_core import cross_encoder as ce
+
+    receta_ce = prep["receta_ce"]
+    if not prep["misses"]:
+        return {}
+    probs = ce.score_documents(
+        receta_ce["model"], receta_ce["model_revision"],
+        prep["consultas"], prep["documentos"],
+        activation=receta_ce["activation"],
+        # Identidad EFECTIVA (P1-1): huella verificada al cargar; batch
+        # OPERATIVO del benchmark (P3-1).
+        fingerprint=receta_ce["model_fingerprint"],
+        batch_size=ce.CE_BATCH_SIZE,
+    )
+    return {c.offer_revision_id: p for c, p in zip(prep["misses"], probs)}
+
+
+def _ce_assemble(prep, frescos) -> list:
+    """FASE de ensamblado: filas del feed desde caché + inferencias, en orden
+    de feed. Pura."""
+    receta_ce = prep["receta_ce"]
+    cache = prep["cache"]
     rows = []
-    for c in candidates:
+    for c in prep["candidates"]:
         cacheada = cache.get(c.offer_revision_id)
         if cacheada is not None:
             # Verbatim: mismo score y mismos componentes que ya sirvió/serviría
@@ -607,6 +624,16 @@ async def _cross_encoder_rows(
         })
     rows.sort(key=lambda r: (-r["score"], str(r["vacancy_id"])))
     return rows
+
+
+async def _cross_encoder_rows(
+    session, candidates, prof, profile_id, model_id, policy_id, receta_ce,
+):
+    """Camino de UNA fase (medición/dev): preparar + puntuar + ensamblar en la
+    misma sesión. La evaluación productiva usa las fases por separado."""
+    prep = await _ce_prepare(
+        session, candidates, prof, profile_id, model_id, policy_id, receta_ce)
+    return _ce_assemble(prep, _ce_score_misses(prep))
 
 
 async def _rerank_candidates(session, candidates, content, receta):
@@ -991,6 +1018,7 @@ CORPUS_GENERATION_SQL = "SELECT generation FROM corpus_generation WHERE id = 1"
 async def compute_policy_feed(
     session, profile_id, model_id, policy_id, limit: int = CANONICAL_EVAL_LIMIT,
     exclude_dismissed: bool = False, with_corpus_generation: bool = False,
+    ce_inference: bool = True,
 ) -> dict:
     """Feed ACTUAL de una política: el ranking que produciría una ejecución
     completa AHORA, calculado y devuelto SIN persistir nada ni mover estado.
@@ -1143,6 +1171,17 @@ async def compute_policy_feed(
             session, candidates, prof.content, receta
         )
     if receta_ce is not None and candidates:
+        if not ce_inference:
+            # P1-3: la evaluación productiva PREPARA aquí (todas las lecturas
+            # de BD) y puntúa FUERA de la transacción; el ensamblado llega en
+            # la fase de persistencia.
+            prep = await _ce_prepare(
+                session, candidates, prof, profile_id, model_id, policy_id,
+                receta_ce,
+            )
+            return {"status": "ok_prep", "rows": [], "prep": prep,
+                    "profile_revision_id": prof.revision_id,
+                    "corpus_generation": corpus_gen}
         rows = await _cross_encoder_rows(
             session, candidates, prof, profile_id, model_id, policy_id,
             receta_ce,
@@ -1234,237 +1273,301 @@ async def compute_policy_feed(
 
 
 async def evaluate_profile(
-    session, profile_id, model_id, policy_id, limit: int = 100,
+    session_factory, profile_id, model_id, policy_id, limit: int = 100,
     move_current: bool = True,
     with_corpus_generation: bool = False,
+    on_evaluated=None,
 ) -> dict:
-    """Evalúa el perfil vigente contra el corpus embebido con la política
-    versionada indicada (coseno o recuperación híbrida).
+    """Evalúa el perfil vigente contra el corpus embebido — TRIFÁSICO (P1-3
+    revisión 2026-09-03): la inferencia del cross-encoder tarda HORAS en el
+    NAS y corría con la transacción y el FOR UPDATE del perfil abiertos.
 
-    - LOCK por perfil (FOR UPDATE — mismo protocolo que save_profile_revision;
-      auditoría A-08): evaluaciones del mismo perfil se SERIALIZAN, y la que
-      corre después lee la revisión vigente MÁS NUEVA — current_eval_id nunca
-      retrocede a una revisión vieja por una carrera.
-    - `move_current`: solo el evaluador CANÓNICO (primer (modelo, política)
-      activo en orden determinista — lo decide la tarea) mueve
-      current_eval_id; el resto corre en SOMBRA (append-only, sin tocar el
-      estado) — con varios modelos el feed es determinista (auditoría A-08).
-    Todo por lotes: 1 SELECT de candidatos + 1 INSERT append-only + 1
-    re-select de ganadores + 1 UPSERT de estado (solo current_eval_id y
-    updated_at)."""
-    locked = (
-        await session.execute(
-            sa.text(
-                "SELECT p.id, c.name AS consumer_name FROM profiles p "
-                "JOIN consumers c ON c.id = p.consumer_id "
-                "WHERE p.id = :pid FOR UPDATE OF p"
-            ),
-            {"pid": profile_id},
-        )
-    ).one_or_none()
-    if locked is None:
-        return {
-            "status": "not_found", "evaluated": 0, "new_evals": 0,
-            "moved_current": False,
-        }
-    if move_current:
-        # Valla FINAL pair_absolute (Fase 1 cierre definitivo): aunque un
-        # bypass haya activado una relativa en solitario, mover el feed con
-        # ella falla CERRADO aquí, antes de tocar nada — el último feed bueno
-        # queda intacto y el error es observable. La sombra
-        # (move_current=False) sigue permitida.
-        pesos_valla = (
+    - FASE 1 (transacción corta, SIN lock): vallas, snapshot de identidades y
+      TODAS las lecturas (candidatos, documentos, caché).
+    - FASE 2 (sin BD): inferencia CPU fuera del event loop.
+    - FASE 3 (transacción corta): FOR UPDATE del perfil, REVALIDACIÓN de
+      identidades (revisión vigente y receta de la política); si derivaron,
+      se DESCARTA sin publicar nada («descartado_por_deriva» — el ciclo
+      siguiente reevalúa); si no, inserción idempotente, outbox, valla
+      canónica y movimiento del feed. `on_evaluated` corre DENTRO de esta
+      transacción (atómico con la persistencia). El commit es propio.
+    """
+    # ---------- FASE 1: preparación en transacción corta, sin lock
+    async with session_factory() as session:
+        existe = (
+            await session.execute(
+                sa.text("SELECT 1 FROM profiles WHERE id = :pid"),
+                {"pid": profile_id},
+            )
+        ).scalar_one_or_none()
+        if existe is None:
+            return {
+                "status": "not_found", "evaluated": 0, "new_evals": 0,
+                "moved_current": False,
+            }
+        pesos_snapshot = (
             await session.execute(
                 sa.text("SELECT weights FROM scoring_policies WHERE id = :id"),
                 {"id": policy_id},
             )
         ).scalar_one_or_none()
-        if isinstance(pesos_valla, dict) and not _is_pair_absolute(pesos_valla):
+        if move_current and isinstance(pesos_snapshot, dict) \
+                and not _is_pair_absolute(pesos_snapshot):
+            # Valla pair_absolute: falla CERRADO antes de cualquier trabajo.
             raise ValueError(
                 f"política {policy_id} con score RELATIVO al lote "
-                f"(algorithm={_algorithm_of(pesos_valla)!r}) no puede mover "
+                f"(algorithm={_algorithm_of(pesos_snapshot)!r}) no puede mover "
                 "el feed: materializaría una mezcla de generaciones"
             )
-    computed = await compute_policy_feed(
-        session, profile_id, model_id, policy_id, limit=limit,
-        exclude_dismissed=False, with_corpus_generation=with_corpus_generation,
-    )
+        computed = await compute_policy_feed(
+            session, profile_id, model_id, policy_id, limit=limit,
+            exclude_dismissed=False,
+            with_corpus_generation=with_corpus_generation,
+            ce_inference=False,
+        )
     corpus_gen = computed["corpus_generation"]
     if computed["status"] == "sin_vector":
         return {
             "status": "sin_vector", "evaluated": 0, "new_evals": 0,
             "moved_current": False,
         }
-    if not computed["rows"]:
+    prid = computed["profile_revision_id"]
+
+    # ---------- FASE 2: inferencia sin BD, fuera del event loop
+    if computed["status"] == "ok_prep":
+        import asyncio as _asyncio
+
+        frescos = await _asyncio.to_thread(_ce_score_misses, computed["prep"])
+        rows = _ce_assemble(computed["prep"], frescos)
+    else:
+        rows = computed["rows"]
+    if not rows:
         return {
             "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
-            "profile_revision_id": computed["profile_revision_id"],
+            "profile_revision_id": prid,
             "corpus_generation": corpus_gen,
         }
-    prid = computed["profile_revision_id"]
-    eval_rows = [
-        {
-            "id": uuid.uuid4(), "pid": profile_id, "vid": r["vacancy_id"],
-            "orid": r["offer_revision_id"], "prid": prid,
-            "mid": model_id, "spid": policy_id,
-            "key": eval_key(r["offer_revision_id"], prid, model_id, policy_id),
-            "score": r["score"], "scores": json.dumps(r["score_parts"]),
-        }
-        for r in computed["rows"]
-    ]
-    eval_rows.sort(key=lambda r: str(r["vid"]))  # orden determinista
-    await session.execute(
-        sa.text(
-            "INSERT INTO match_evaluations "
-            "(id, profile_id, vacancy_id, offer_revision_id, profile_revision_id, "
-            " model_id, scoring_policy_id, eval_key, score_final, scores) "
-            "VALUES (:id, :pid, :vid, :orid, :prid, :mid, :spid, :key, :score, "
-            "CAST(:scores AS jsonb)) "
-            "ON CONFLICT (profile_id, vacancy_id, eval_key) DO NOTHING"
-        ),
-        eval_rows,
-    )
-    # Ganadores REALES (idempotencia/carreras: la fila puede ser previa).
-    winners = {
-        (r.vacancy_id, r.eval_key): r.id
-        for r in (
+    computed = {"rows": rows}
+
+    # ---------- FASE 3: lock corto, revalidación y persistencia atómica
+    async with session_factory() as session:
+        locked = (
             await session.execute(
                 sa.text(
-                    "SELECT e.id, e.vacancy_id, e.eval_key FROM match_evaluations e "
-                    "JOIN unnest(CAST(:vids AS uuid[]), CAST(:keys AS text[])) "
-                    "  AS t(vid, k) ON e.vacancy_id = t.vid AND e.eval_key = t.k "
-                    "WHERE e.profile_id = :pid"
+                    "SELECT p.id, c.name AS consumer_name FROM profiles p "
+                    "JOIN consumers c ON c.id = p.consumer_id "
+                    "WHERE p.id = :pid FOR UPDATE OF p"
                 ),
-                {
-                    "pid": profile_id,
-                    "vids": [str(r["vid"]) for r in eval_rows],
-                    "keys": [r["key"] for r in eval_rows],
-                },
+                {"pid": profile_id},
             )
-        ).all()
-    }
-    fresh = [r for r in eval_rows if winners.get((r["vid"], r["key"])) == r["id"]]
-    new_evals = len(fresh)
-    if fresh:
-        # OUTBOX en la MISMA transacción que la escritura (A-10, ADR-05):
-        # event_id determinista por eval_key + DO NOTHING = re-emisión
-        # imposible; el estado de entrega va POR destino (ADR-06) — el BFF del
-        # consumidor del perfil (§3). Payload = SOLO IDs (el consumidor
-        # resuelve por /v1).
-        events = sorted(
-            (
-                {
-                    "eid": event_id_for("match.evaluated", r["key"]),
-                    "agg": r["key"], "pid": profile_id,
-                    "payload": json.dumps(
-                        {
-                            "eval_key": r["key"],
-                            "profile_id": str(profile_id),
-                            "vacancy_id": str(r["vid"]),
-                        }
-                    ),
-                }
-                for r in fresh
-            ),
-            key=lambda e: str(e["eid"]),
-        )
-        await session.execute(
-            sa.text(
-                "INSERT INTO integration_outbox "
-                "(event_id, aggregate, aggregate_id, subject_profile_id, "
-                " version, type, payload) "
-                "VALUES (:eid, 'match_evaluation', :agg, :pid, 1, "
-                "'match.evaluated', CAST(:payload AS jsonb)) "
-                "ON CONFLICT (event_id) DO NOTHING"
-            ),
-            events,
-        )
-        await session.execute(
-            sa.text(
-                "INSERT INTO integration_outbox_deliveries "
-                "(event_id, destination, next_attempt_at) "
-                "VALUES (:eid, :dest, clock_timestamp()) "
-                "ON CONFLICT (event_id, destination) DO NOTHING"
-            ),
-            [{"eid": e["eid"], "dest": locked.consumer_name} for e in events],
-        )
-    moved = False
-    if move_current:
-        # VALLA DE CANONICIDAD (P1-C, revisión externa 2026-09-02): la decisión
-        # «soy el canónico» se tomó FUERA de esta transacción (la tarea lee las
-        # políticas activas, cierra esa sesión y evalúa en transacciones
-        # nuevas) y puede haber caducado: un worker pre-flip que retome aquí
-        # tras una promoción restauraría el feed antiguo. Se reverifica en la
-        # MISMA transacción que la escritura, con FOR SHARE sobre la fila
-        # canónica: el flip actualiza TODAS las filas de scoring_policies en un
-        # solo UPDATE (declare_active_policies), así que o bien espera a que
-        # este movimiento termine, o bien ya cometió y esta lectura ve el
-        # canónico nuevo y el movimiento se aborta. Un SELECT sin lock dejaría
-        # el mismo TOCTOU con la ventana más corta.
-        canonica = (
+        ).one_or_none()
+        if locked is None:
+            return {
+                "status": "not_found", "evaluated": 0, "new_evals": 0,
+                "moved_current": False,
+            }
+        # REVALIDACIÓN (P1-3): lo preparado en la fase 1 puede haber caducado
+        # durante una inferencia larga. La revisión del perfil o la receta de
+        # la política derivadas ⇒ descartar SIN publicar (el feed bueno queda
+        # intacto; el siguiente ciclo reevalúa con lo vigente). La deriva del
+        # corpus NO invalida un score absoluto por pareja: esas filas siguen
+        # siendo válidas (esa es la razón de ser de pair_absolute).
+        vigente = (
             await session.execute(
                 sa.text(
-                    "SELECT id FROM scoring_policies WHERE active "
-                    "ORDER BY name, prompt_version LIMIT 1 FOR SHARE"
-                )
+                    "SELECT revision_id FROM profile_revision_activations "
+                    "WHERE profile_id = :pid ORDER BY seq DESC LIMIT 1"
+                ),
+                {"pid": profile_id},
             )
         ).scalar_one_or_none()
-        if canonica is None or str(canonica) != str(policy_id):
+        pesos_ahora = (
+            await session.execute(
+                sa.text("SELECT weights FROM scoring_policies WHERE id = :id"),
+                {"id": policy_id},
+            )
+        ).scalar_one_or_none()
+        if str(vigente) != str(prid) or pesos_ahora != pesos_snapshot:
             logger.warning(
-                "matching: la política %s ya no es canónica (ahora %s) — la "
-                "evaluación queda registrada pero el feed NO se mueve",
-                policy_id, canonica,
+                "matching: identidades derivadas durante la evaluación de %s "
+                "(revisión %s→%s) — resultado descartado sin publicar",
+                profile_id, prid, vigente,
             )
-            move_current = False
-    if move_current:
-        state_rows = [
-            {"pid": profile_id, "vid": r["vid"], "eid": winners[(r["vid"], r["key"])]}
-            for r in eval_rows
-            if (r["vid"], r["key"]) in winners
+            return {
+                "status": "descartado_por_deriva", "evaluated": 0,
+                "new_evals": 0, "moved_current": False,
+                "profile_revision_id": prid,
+                "corpus_generation": corpus_gen,
+            }
+        eval_rows = [
+            {
+                "id": uuid.uuid4(), "pid": profile_id, "vid": r["vacancy_id"],
+                "orid": r["offer_revision_id"], "prid": prid,
+                "mid": model_id, "spid": policy_id,
+                "key": eval_key(r["offer_revision_id"], prid, model_id, policy_id),
+                "score": r["score"], "scores": json.dumps(r["score_parts"]),
+            }
+            for r in computed["rows"]
         ]
-        if state_rows:
-            # El feed representa el conjunto CANÓNICO de esta ejecución, no
-            # la unión histórica de antiguos top-K. La interacción estable se
-            # conserva en su fila; solo se retira el puntero de evaluación.
+        eval_rows.sort(key=lambda r: str(r["vid"]))  # orden determinista
+        await session.execute(
+            sa.text(
+                "INSERT INTO match_evaluations "
+                "(id, profile_id, vacancy_id, offer_revision_id, profile_revision_id, "
+                " model_id, scoring_policy_id, eval_key, score_final, scores) "
+                "VALUES (:id, :pid, :vid, :orid, :prid, :mid, :spid, :key, :score, "
+                "CAST(:scores AS jsonb)) "
+                "ON CONFLICT (profile_id, vacancy_id, eval_key) DO NOTHING"
+            ),
+            eval_rows,
+        )
+        # Ganadores REALES (idempotencia/carreras: la fila puede ser previa).
+        winners = {
+            (r.vacancy_id, r.eval_key): r.id
+            for r in (
+                await session.execute(
+                    sa.text(
+                        "SELECT e.id, e.vacancy_id, e.eval_key FROM match_evaluations e "
+                        "JOIN unnest(CAST(:vids AS uuid[]), CAST(:keys AS text[])) "
+                        "  AS t(vid, k) ON e.vacancy_id = t.vid AND e.eval_key = t.k "
+                        "WHERE e.profile_id = :pid"
+                    ),
+                    {
+                        "pid": profile_id,
+                        "vids": [str(r["vid"]) for r in eval_rows],
+                        "keys": [r["key"] for r in eval_rows],
+                    },
+                )
+            ).all()
+        }
+        fresh = [r for r in eval_rows if winners.get((r["vid"], r["key"])) == r["id"]]
+        new_evals = len(fresh)
+        if fresh:
+            # OUTBOX en la MISMA transacción que la escritura (A-10, ADR-05):
+            # event_id determinista por eval_key + DO NOTHING = re-emisión
+            # imposible; el estado de entrega va POR destino (ADR-06) — el BFF del
+            # consumidor del perfil (§3). Payload = SOLO IDs (el consumidor
+            # resuelve por /v1).
+            events = sorted(
+                (
+                    {
+                        "eid": event_id_for("match.evaluated", r["key"]),
+                        "agg": r["key"], "pid": profile_id,
+                        "payload": json.dumps(
+                            {
+                                "eval_key": r["key"],
+                                "profile_id": str(profile_id),
+                                "vacancy_id": str(r["vid"]),
+                            }
+                        ),
+                    }
+                    for r in fresh
+                ),
+                key=lambda e: str(e["eid"]),
+            )
             await session.execute(
                 sa.text(
-                    "UPDATE profile_vacancy_state "
-                    "SET current_eval_id = NULL, "
-                    "updated_at = GREATEST(updated_at, clock_timestamp()) "
-                    "WHERE profile_id = :pid AND current_eval_id IS NOT NULL "
-                    "AND NOT (vacancy_id = ANY(CAST(:vids AS uuid[])))"
+                    "INSERT INTO integration_outbox "
+                    "(event_id, aggregate, aggregate_id, subject_profile_id, "
+                    " version, type, payload) "
+                    "VALUES (:eid, 'match_evaluation', :agg, :pid, 1, "
+                    "'match.evaluated', CAST(:payload AS jsonb)) "
+                    "ON CONFLICT (event_id) DO NOTHING"
                 ),
-                {
-                    "pid": profile_id,
-                    "vids": [str(row["vid"]) for row in state_rows],
-                },
+                events,
             )
-            # Estado: SOLO current_eval_id/updated_at — feedback/dismissed/
-            # saved/notes se preservan SIEMPRE (ADR-03: estado estable).
-            # clock_timestamp() + GREATEST (rev. A-08 #3): now() es la HORA DE
-            # INICIO de la transacción — una tx vieja que escribe tarde jamás
-            # debe hacer retroceder updated_at.
             await session.execute(
                 sa.text(
-                    "INSERT INTO profile_vacancy_state "
-                    "(profile_id, vacancy_id, current_eval_id, updated_at) "
-                    "VALUES (:pid, :vid, :eid, clock_timestamp()) "
-                    "ON CONFLICT (profile_id, vacancy_id) DO UPDATE "
-                    "SET current_eval_id = EXCLUDED.current_eval_id, "
-                    "updated_at = GREATEST(profile_vacancy_state.updated_at, "
-                    "clock_timestamp())"
+                    "INSERT INTO integration_outbox_deliveries "
+                    "(event_id, destination, next_attempt_at) "
+                    "VALUES (:eid, :dest, clock_timestamp()) "
+                    "ON CONFLICT (event_id, destination) DO NOTHING"
                 ),
-                state_rows,
+                [{"eid": e["eid"], "dest": locked.consumer_name} for e in events],
             )
-            moved = True
-    return {
-        "status": "ok", "evaluated": len(eval_rows), "new_evals": new_evals,
-        "moved_current": moved,
-        # La revisión REALMENTE evaluada (la que se leyó bajo el lock del perfil): quien registre
-        # el intento debe usar ESTA, no re-consultar la vigente (podría haber cambiado ya).
-        "profile_revision_id": prid,
-        "corpus_generation": corpus_gen,
-    }
+        moved = False
+        if move_current:
+            # VALLA DE CANONICIDAD (P1-C, revisión externa 2026-09-02): la decisión
+            # «soy el canónico» se tomó FUERA de esta transacción (la tarea lee las
+            # políticas activas, cierra esa sesión y evalúa en transacciones
+            # nuevas) y puede haber caducado: un worker pre-flip que retome aquí
+            # tras una promoción restauraría el feed antiguo. Se reverifica en la
+            # MISMA transacción que la escritura, con FOR SHARE sobre la fila
+            # canónica: el flip actualiza TODAS las filas de scoring_policies en un
+            # solo UPDATE (declare_active_policies), así que o bien espera a que
+            # este movimiento termine, o bien ya cometió y esta lectura ve el
+            # canónico nuevo y el movimiento se aborta. Un SELECT sin lock dejaría
+            # el mismo TOCTOU con la ventana más corta.
+            canonica = (
+                await session.execute(
+                    sa.text(
+                        "SELECT id FROM scoring_policies WHERE active "
+                        "ORDER BY name, prompt_version LIMIT 1 FOR SHARE"
+                    )
+                )
+            ).scalar_one_or_none()
+            if canonica is None or str(canonica) != str(policy_id):
+                logger.warning(
+                    "matching: la política %s ya no es canónica (ahora %s) — la "
+                    "evaluación queda registrada pero el feed NO se mueve",
+                    policy_id, canonica,
+                )
+                move_current = False
+        if move_current:
+            state_rows = [
+                {"pid": profile_id, "vid": r["vid"], "eid": winners[(r["vid"], r["key"])]}
+                for r in eval_rows
+                if (r["vid"], r["key"]) in winners
+            ]
+            if state_rows:
+                # El feed representa el conjunto CANÓNICO de esta ejecución, no
+                # la unión histórica de antiguos top-K. La interacción estable se
+                # conserva en su fila; solo se retira el puntero de evaluación.
+                await session.execute(
+                    sa.text(
+                        "UPDATE profile_vacancy_state "
+                        "SET current_eval_id = NULL, "
+                        "updated_at = GREATEST(updated_at, clock_timestamp()) "
+                        "WHERE profile_id = :pid AND current_eval_id IS NOT NULL "
+                        "AND NOT (vacancy_id = ANY(CAST(:vids AS uuid[])))"
+                    ),
+                    {
+                        "pid": profile_id,
+                        "vids": [str(row["vid"]) for row in state_rows],
+                    },
+                )
+                # Estado: SOLO current_eval_id/updated_at — feedback/dismissed/
+                # saved/notes se preservan SIEMPRE (ADR-03: estado estable).
+                # clock_timestamp() + GREATEST (rev. A-08 #3): now() es la HORA DE
+                # INICIO de la transacción — una tx vieja que escribe tarde jamás
+                # debe hacer retroceder updated_at.
+                await session.execute(
+                    sa.text(
+                        "INSERT INTO profile_vacancy_state "
+                        "(profile_id, vacancy_id, current_eval_id, updated_at) "
+                        "VALUES (:pid, :vid, :eid, clock_timestamp()) "
+                        "ON CONFLICT (profile_id, vacancy_id) DO UPDATE "
+                        "SET current_eval_id = EXCLUDED.current_eval_id, "
+                        "updated_at = GREATEST(profile_vacancy_state.updated_at, "
+                        "clock_timestamp())"
+                    ),
+                    state_rows,
+                )
+                moved = True
+        resultado = {
+            "status": "ok", "evaluated": len(eval_rows), "new_evals": new_evals,
+            "moved_current": moved,
+            # La revisión REALMENTE evaluada (la de la fase 1, REVALIDADA bajo
+            # el lock): quien registre el intento debe usar ESTA.
+            "profile_revision_id": prid,
+            "corpus_generation": corpus_gen,
+        }
+        if on_evaluated is not None and resultado["evaluated"]:
+            # MISMA transacción que la persistencia final: o se registran
+            # ambas o ninguna (atómico, como exige P1-3).
+            await on_evaluated(session, resultado, model_id, policy_id)
+        await session.commit()
+        return resultado
 
 
 async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=None):

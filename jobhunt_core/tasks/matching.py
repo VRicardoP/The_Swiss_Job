@@ -88,18 +88,18 @@ async def _run_profile_with(
             )
             continue
         for policy in policies:
-            async with session_factory() as session:
-                r = await matching.evaluate_profile(
-                    session, profile_id, model.id, policy.id, limit=limit,
-                    move_current=canonical_pending,
-                    with_corpus_generation=on_evaluated is not None,
-                )
-                # MISMA transacción que la evaluación: o se registran ambas o ninguna. Solo cuenta
-                # como intento si de verdad se evaluó algo: un combo sin corpus sale por 'ok' con
-                # evaluated=0 y registrarlo apagaría una señal que nadie atendió (P1 rev. ronda 4).
-                if on_evaluated is not None and r.get("status") == "ok" and r["evaluated"]:
-                    await on_evaluated(session, r, model.id, policy.id)
-                await session.commit()
+            # P1-3: evaluate_profile es TRIFÁSICO (prepara/inflere/persiste
+            # con transacciones cortas propias); on_evaluated corre dentro de
+            # su fase de persistencia — misma transacción, o ambas o ninguna.
+            # Solo cuenta como intento si de verdad se evaluó algo (P1 rev.
+            # ronda 4): el propio evaluate lo garantiza invocándolo solo con
+            # evaluated > 0.
+            r = await matching.evaluate_profile(
+                session_factory, profile_id, model.id, policy.id, limit=limit,
+                move_current=canonical_pending,
+                with_corpus_generation=on_evaluated is not None,
+                on_evaluated=on_evaluated,
+            )
             if r.get("moved_current"):
                 # El canónico es el primer combo que DE VERDAD movió el
                 # estado (rev. A-08 #1): un 'ok' con 0 vacantes evaluadas

@@ -151,12 +151,10 @@ def _setup(factory, created, titles, profile_content=None,
 
 
 def _evaluate(factory, pid, mid, polid, limit=100, move=True):
+    # P1-3: evaluate_profile toma la FACTORY (trifásico, commit propio).
     async def go():
-        async with factory() as s:
-            r = await matching.evaluate_profile(
-                s, pid, mid, polid, limit=limit, move_current=move)
-            await s.commit()
-            return r
+        return await matching.evaluate_profile(
+            factory, pid, mid, polid, limit=limit, move_current=move)
 
     return asyncio.run(go())
 
@@ -455,9 +453,7 @@ def test_profile_without_vector_is_noop(db):
             polid = await matching.ensure_policy(s, "cosine", "v1")
             created["policies"].append(polid)
             await s.commit()
-            r = await matching.evaluate_profile(s, pid, mid, polid)
-            await s.commit()
-            return r
+        return await matching.evaluate_profile(factory, pid, mid, polid)
 
     r = asyncio.run(go())
     assert r == {
@@ -753,10 +749,8 @@ def test_small_corpus_single_ann_pass_and_fallback_counted(db, monkeypatch):
 
     def run_eval():
         async def go():
-            async with factory2() as s:
-                r = await matching.evaluate_profile(s, pid, mid, polid, limit=100)
-                await s.commit()
-                return r
+            return await matching.evaluate_profile(
+                factory2, pid, mid, polid, limit=100)
 
         return asyncio.run(go())
 
@@ -1007,9 +1001,10 @@ def test_una_receta_no_soportada_no_evalua_nada(db):
                 s, matching.HYBRID_POLICY_NAME, "v99", weights=mala)
             created["policies"].append(polid)
             await s.commit()
-            with pytest.raises(ValueError, match="rrf_k"):
-                await matching.evaluate_profile(
-                    s, pid, mid, polid, move_current=False)
+        with pytest.raises(ValueError, match="rrf_k"):
+            await matching.evaluate_profile(
+                factory, pid, mid, polid, move_current=False)
+        async with factory() as s:
             n = (await s.execute(sa.text(
                 "SELECT count(*) FROM match_evaluations "
                 "WHERE scoring_policy_id = :sp"), {"sp": polid})).scalar_one()

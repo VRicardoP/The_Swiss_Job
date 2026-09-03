@@ -190,16 +190,19 @@ def test_fallo_del_modelo_deja_el_feed_intacto(db):
         async def go():
             async with factory() as s:
                 await matching.declare_active_policies(s, [polid])
-                with pytest.raises(RuntimeError, match="OOM"):
-                    await matching.evaluate_profile(
-                        s, pid, mid, polid, move_current=True)
-                await s.rollback()
+                await s.commit()
+            with pytest.raises(RuntimeError, match="OOM"):
+                await matching.evaluate_profile(
+                    factory, pid, mid, polid, move_current=True)
+            async with factory() as s:  # rollback de activación explícito
+                await matching.declare_active_policies(s, [cosine_id])
+                await s.commit()
 
         asyncio.run(go())
     finally:
         ce.set_engine_factory(None)
-    # el rollback también deshizo el declare: cosine sigue canónica y el feed
-    # bueno intacto — y ninguna evaluación CE se persistió
+    # el fallo del modelo (fase 2, sin BD) no persistió NADA: cosine vuelve a
+    # ser canónica y el feed bueno sigue intacto
     assert _feed_actual(factory, pid) == antes
     assert _rows(
         factory,
@@ -219,8 +222,74 @@ def test_receta_ce_manipulada_no_evalua(db, stub):
                 active=False)
             created["policies"].append(polid)
             await s.commit()
-            with pytest.raises(ValueError, match="input"):
-                await matching.evaluate_profile(
-                    s, pid, mid, polid, move_current=False)
+        with pytest.raises(ValueError, match="input"):
+            await matching.evaluate_profile(
+                factory, pid, mid, polid, move_current=False)
 
     asyncio.run(go())
+
+
+def test_escritura_progresa_durante_inferencia_y_lo_rancio_no_se_publica(db):
+    """P1-3 revisión 2026-09-03: la inferencia (horas en el NAS) corría con la
+    transacción abierta y el perfil FOR UPDATE — una edición del perfil
+    esperaba horas. Trifásico: preparar (txn corta) → inferir SIN BD →
+    revalidar+persistir (txn corta). Durante la inferencia una escritura de
+    perfil PROGRESA; al reanudar, el resultado RANCIO (revisión derivada) se
+    descarta sin publicar nada."""
+    import threading
+
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(factory, created, TITULOS[:3])
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+    antes = _feed_actual(factory, pid)
+    polid = _xenc_policy(factory, created)
+
+    dentro = threading.Event()
+    barrera = threading.Event()
+
+    class _Lento:
+        def predict(self, pares, batch_size=16):
+            dentro.set()
+            assert barrera.wait(timeout=60), "la barrera no se liberó"
+            return [0.0] * len(pares)
+
+    ce.set_engine_factory(lambda m, r: _Lento())
+    resultado = {}
+
+    def evaluar():
+        async def run():
+            return await matching.evaluate_profile(
+                factory, pid, mid, polid, move_current=False)
+
+        resultado["r"] = asyncio.run(run())
+
+    try:
+        hilo = threading.Thread(target=evaluar)
+        hilo.start()
+        assert dentro.wait(timeout=60), "la inferencia no arrancó"
+
+        # Con la inferencia EN CURSO, una escritura del perfil progresa
+        # (lock_timeout corto: en el padre moría esperando el FOR UPDATE).
+        async def escribir():
+            async with factory() as s:
+                await s.execute(sa.text("SET LOCAL lock_timeout = '2s'"))
+                from jobhunt_core import profiles as core_profiles
+                cur = await core_profiles.current_revision(s, pid)
+                rid = await core_profiles.save_profile_revision(
+                    s, pid, dict(cur.content, target_roles=["QA Lead"]))
+                await s.commit()
+                return rid
+
+        assert asyncio.run(escribir()) is not None
+    finally:
+        barrera.set()
+        hilo.join(timeout=120)
+        ce.set_engine_factory(None)
+
+    # lo RANCIO no se publica: la revisión derivó durante la inferencia
+    assert resultado["r"]["status"] == "descartado_por_deriva"
+    assert _rows(
+        factory,
+        "SELECT count(*) AS n FROM match_evaluations "
+        "WHERE scoring_policy_id = :sp", sp=polid)[0].n == 0
+    assert _feed_actual(factory, pid) == antes
