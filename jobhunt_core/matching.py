@@ -567,6 +567,11 @@ async def _cross_encoder_rows(
         probs = ce.score_documents(
             receta_ce["model"], receta_ce["model_revision"],
             consultas, documentos, activation=receta_ce["activation"],
+            # Identidad EFECTIVA (P1-1): la huella de la receta se verifica
+            # contra los archivos cargados, una vez por motor. El batch es el
+            # OPERATIVO del benchmark (P3-1), no un hiperparámetro del score.
+            fingerprint=receta_ce["model_fingerprint"],
+            batch_size=ce.CE_BATCH_SIZE,
         )
         for c, prob in zip(misses, probs):
             frescos[c.offer_revision_id] = prob

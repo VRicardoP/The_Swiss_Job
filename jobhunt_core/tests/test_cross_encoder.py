@@ -149,3 +149,50 @@ def test_el_contrato_de_2_decimales_no_destruye_el_orden_del_top():
 def test_activacion_desconocida_falla_cerrado():
     with pytest.raises(ValueError, match="activaci"):
         ce.score_documents("m", "r", ["q"], ["d"], activation="softmax")
+
+
+# --- P1-1 revisión 2026-09-03: identidad EFECTIVA del modelo
+
+
+def test_sustituir_un_archivo_del_artefacto_falla_antes_de_puntuar(tmp_path):
+    """La huella de la receta debe compararse con los archivos REALMENTE
+    cargados: sustituir los pesos bajo la misma ruta/receta cambia el modelo
+    efectivo sin cambiar policy_id/eval_key — dos regímenes bajo una política.
+    La carga falla CERRADO antes de construir el motor."""
+    d = tmp_path / "modelo"
+    d.mkdir()
+    (d / "config.json").write_text('{"architectures": ["Fake"]}')
+    (d / "model.safetensors").write_bytes(b"PESOS-A")
+    (d / "tokenizer.json").write_text("{}")
+    huella = ce.model_fingerprint(str(d))
+    # con la huella correcta, la verificación pasa
+    ce.verify_model_identity(str(d), None, huella)
+    # sustitución de pesos bajo la MISMA ruta ⇒ fallo cerrado
+    (d / "model.safetensors").write_bytes(b"PESOS-B")
+    with pytest.raises(ValueError, match="huella|fingerprint"):
+        ce.verify_model_identity(str(d), None, huella)
+    # y la CARGA REAL con receta (fingerprint) muerde ANTES de construir el
+    # motor (jamás llega a abrir el modelo falso)
+    with pytest.raises(ValueError, match="huella|fingerprint"):
+        ce.score_documents(str(d), None, ["q"], ["doc"], fingerprint=huella)
+    # un archivo de runtime AÑADIDO también rompe la identidad
+    (d / "model.safetensors").write_bytes(b"PESOS-A")
+    (d / "vocab.txt").write_text("extra")
+    with pytest.raises(ValueError, match="huella|fingerprint"):
+        ce.verify_model_identity(str(d), None, huella)
+
+
+def test_la_huella_es_manifiesto_canonico_documentado(tmp_path):
+    """Formato exacto: sha256 agregada de líneas «sha256  nombre\n» ordenadas
+    de los archivos de runtime (allowlist), generable por comando."""
+    import hashlib
+    d = tmp_path / "m"
+    d.mkdir()
+    (d / "config.json").write_text("c")
+    (d / "model.safetensors").write_bytes(b"w")
+    (d / "README.md").write_text("no-runtime: fuera del manifiesto")
+    man = ce.model_manifest(str(d))
+    assert sorted(man) == ["config.json", "model.safetensors"]
+    canon = "".join(f"{h}  {n}\n" for n, h in sorted(man.items()))
+    assert ce.model_fingerprint(str(d)) == hashlib.sha256(
+        canon.encode()).hexdigest()

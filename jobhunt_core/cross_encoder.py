@@ -11,8 +11,10 @@
 - El motor se carga UNA vez por proceso y por (modelo, revisión); los tests
   inyectan un stub con set_engine_factory (mismo patrón que embeddings).
 """
+import hashlib
 import logging
 import math
+import os
 import threading
 
 logger = logging.getLogger(__name__)
@@ -40,12 +42,76 @@ _DOC_TITLE_LEN = 200
 _DOC_LOC_LEN = 100
 _DOC_DESC_LEN = 1200
 
+# Batch OPERATIVO del camino productivo (elegido por benchmark: 240s vs 252s
+# a batch 16 en 1800 docs). No es parte de la receta: la invariancia del score
+# al batch está probada por regresión.
+CE_BATCH_SIZE = 8
+
+# Archivos de RUNTIME que componen la identidad efectiva del modelo (P1-1
+# revisión 2026-09-03): allowlist determinista de lo que CrossEncoder carga.
+RUNTIME_FILES = (
+    "added_tokens.json", "config.json", "merges.txt", "model.safetensors",
+    "sentencepiece.bpe.model", "special_tokens_map.json", "tokenizer.json",
+    "tokenizer_config.json", "vocab.txt",
+)
+
 _lock = threading.Lock()
 _engines: dict = {}
 _engine_factory = None
 
 
-def set_engine_factory(factory) -> None:
+def _resolve_model_dir(model: str, revision) -> str:
+    """Directorio REAL de los artefactos: la ruta local tal cual, o el
+    snapshot clavado resuelto OFFLINE para un modelo de hub."""
+    if model.startswith("/"):
+        if not os.path.isdir(model):
+            raise ValueError(f"modelo local inexistente: {model}")
+        return model
+    from huggingface_hub import snapshot_download
+
+    return snapshot_download(model, revision=revision, local_files_only=True)
+
+
+def model_manifest(model: str, revision=None) -> dict:
+    """{nombre: sha256} de los archivos de runtime PRESENTES (allowlist)."""
+    d = _resolve_model_dir(model, revision)
+    out = {}
+    for nombre in RUNTIME_FILES:
+        ruta = os.path.join(d, nombre)
+        if os.path.isfile(ruta):
+            h = hashlib.sha256()
+            with open(ruta, "rb") as fh:
+                for bloque in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(bloque)
+            out[nombre] = h.hexdigest()
+    if not out:
+        raise ValueError(f"sin archivos de runtime en {d}")
+    return out
+
+
+def model_fingerprint(model: str, revision=None) -> str:
+    """Huella agregada CANÓNICA: sha256 de las líneas «sha256  nombre\n»
+    ordenadas del manifiesto de runtime. Generable por comando:
+    python -m jobhunt_core.cross_encoder fingerprint <modelo> [revision]."""
+    man = model_manifest(model, revision)
+    canon = "".join(f"{h}  {n}\n" for n, h in sorted(man.items()))
+    return hashlib.sha256(canon.encode()).hexdigest()
+
+
+def verify_model_identity(model: str, revision, fingerprint: str) -> None:
+    """Falla CERRADO si la huella de los archivos realmente presentes no es la
+    de la receta — antes de construir motor alguno y antes de reutilizar o
+    crear evaluaciones bajo esa identidad."""
+    real = model_fingerprint(model, revision)
+    if real != fingerprint:
+        raise ValueError(
+            f"huella del modelo NO coincide: receta {fingerprint[:12]}…, "
+            f"artefactos {real[:12]}… en {model} — el artefacto cambió bajo "
+            "la misma identidad"
+        )
+
+
+def set_engine_factory(factory) -> None:  # noqa: D401
     """Inyección para tests (None restaura el motor real). El stub debe
     exponer predict(list[tuple[str, str]]) -> list[float] (logits)."""
     global _engine_factory
@@ -54,14 +120,22 @@ def set_engine_factory(factory) -> None:
         _engines.clear()
 
 
-def _get_engine(model: str, revision: str):
+def _get_engine(model: str, revision, fingerprint=None):
     with _lock:
-        clave = (model, revision)
+        # Clave COMPLETA de identidad (P1-1): modelo+revisión+huella+backend.
+        clave = (model, revision, fingerprint, BACKEND)
         motor = _engines.get(clave)
         if motor is None:
             if _engine_factory is not None:
+                # Los tests inyectan el motor y asumen la identidad; la
+                # verificación pertenece a las cargas REALES.
                 motor = _engine_factory(model, revision)
             else:
+                if fingerprint is not None:
+                    # Verificación ÚNICA al cargar (no por documento): la
+                    # huella de la receta contra los archivos reales, ANTES
+                    # de construir el motor.
+                    verify_model_identity(model, revision, fingerprint)
                 # Carga real: una vez por proceso. La revisión CLAVADA es
                 # parte de la receta; sin red si el artefacto ya está en la
                 # caché HF de la imagen/volumen. Un modelo FINE-TUNED es un
@@ -114,8 +188,9 @@ def build_document(titulo, location, descripcion) -> str:
 
 
 def score_documents(
-    model: str, revision: str, queries: list[str], documents: list[str],
-    batch_size: int = 16, activation: str = "sigmoid",
+    model: str, revision, queries: list[str], documents: list[str],
+    batch_size: int = CE_BATCH_SIZE, activation: str = "sigmoid",
+    fingerprint: str | None = None,
 ) -> list[float]:
     """Score por documento = activación fija del MÁXIMO logit sobre las
     consultas de rol. Absoluto por pareja: ni min/max ni percentiles ni
@@ -127,7 +202,7 @@ def score_documents(
             f"(soportadas: {sorted(ACTIVATIONS)})")
     if not documents:
         return []
-    motor = _get_engine(model, revision)
+    motor = _get_engine(model, revision, fingerprint)
     pares = [(q, d) for d in documents for q in queries]
     logits = list(motor.predict(pares, batch_size=batch_size))
     if len(logits) != len(pares):
@@ -144,3 +219,19 @@ def score_documents(
             raise ValueError(f"cross-encoder devolvió un logit no finito: {logit!r}")
         out.append(fn(logit))
     return out
+
+
+if __name__ == "__main__":  # comando de manifiesto/huella (P1-1)
+    import json as _json
+    import sys as _sys
+
+    if len(_sys.argv) < 3 or _sys.argv[1] != "fingerprint":
+        raise SystemExit(
+            "uso: python -m jobhunt_core.cross_encoder fingerprint "
+            "<modelo|ruta> [revision]")
+    _modelo = _sys.argv[2]
+    _rev = _sys.argv[3] if len(_sys.argv) > 3 else None
+    print(_json.dumps({
+        "manifest": model_manifest(_modelo, _rev),
+        "fingerprint": model_fingerprint(_modelo, _rev),
+    }, ensure_ascii=False, sort_keys=True))
