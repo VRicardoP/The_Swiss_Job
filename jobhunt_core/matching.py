@@ -1462,23 +1462,34 @@ async def materialize_misses(
             )
             return {"scored": total_scored, "remaining": len(misses),
                     "agotado": True, "status": "backlog"}
-        lote = misses[:batch_pairs]
-        prep_lote = dict(
-            prep, misses=lote, documentos=prep["documentos"][:len(lote)],
-            candidates=lote, cache={},
-        )
+        # Una PASADA completa sobre los misses de esta fotografía, por
+        # lotes, SIN recomputar la recuperación entre lotes (en el J1800 la
+        # recuperación cuesta ~135 s y recomputarla por lote consumía la
+        # mitad del presupuesto — medido en el pico del 2026-09-04). La
+        # frescura no se pierde: el bucle exterior recomputa tras la pasada
+        # y la publicación final la garantiza la valla F3 de evaluate.
         import asyncio as _asyncio
+        import time as _t2
 
-        frescos = await _asyncio.to_thread(_ce_score_misses, prep_lote)
-        filas = _ce_assemble(prep_lote, frescos)
-        async with session_factory() as session:
-            await _persist_eval_rows(
-                session, profile_id, filas,
-                computed["profile_revision_id"], model_id, policy_id,
-                consumer_name,
+        for k in range(0, len(misses), batch_pairs):
+            if _time.monotonic() - t0 >= budget_seconds:
+                break
+            lote = misses[k:k + batch_pairs]
+            prep_lote = dict(
+                prep, misses=lote,
+                documentos=prep["documentos"][k:k + len(lote)],
+                candidates=lote, cache={},
             )
-            await session.commit()
-        total_scored += len(filas)
+            frescos = await _asyncio.to_thread(_ce_score_misses, prep_lote)
+            filas = _ce_assemble(prep_lote, frescos)
+            async with session_factory() as session:
+                await _persist_eval_rows(
+                    session, profile_id, filas,
+                    computed["profile_revision_id"], model_id, policy_id,
+                    consumer_name,
+                )
+                await session.commit()
+            total_scored += len(filas)
 
 
 async def _persist_eval_rows(
