@@ -196,3 +196,23 @@ def test_la_huella_es_manifiesto_canonico_documentado(tmp_path):
     canon = "".join(f"{h}  {n}\n" for n, h in sorted(man.items()))
     assert ce.model_fingerprint(str(d)) == hashlib.sha256(
         canon.encode()).hexdigest()
+
+
+def test_receta_ranknet_backend_falla_cerrado_bajo_binario_torch(monkeypatch):
+    """P7-b: la receta declara backend onnx-cpu; un runtime torch NO puede
+    evaluarla en silencio con otro motor — la validación falla cerrado. Bajo
+    el binario correcto, valida."""
+    import pytest
+
+    from jobhunt_core import cross_encoder as ce
+    from jobhunt_core import matching
+
+    monkeypatch.setattr(ce, "BACKEND", "torch-cpu")
+    with pytest.raises(ValueError, match="backend"):
+        matching._validated_cross_encoder_recipe(
+            matching.XENC_RANKNET_POLICY_WEIGHTS)
+    monkeypatch.setattr(ce, "BACKEND", "onnx-cpu")
+    receta = matching._validated_cross_encoder_recipe(
+        matching.XENC_RANKNET_POLICY_WEIGHTS)
+    assert receta["backend"] == "onnx-cpu"
+    assert receta["model"].startswith("/models/")

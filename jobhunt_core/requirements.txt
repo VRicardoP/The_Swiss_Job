@@ -16,6 +16,10 @@ pydantic-settings>=2.2,<3
 # Embeddings (A-06): import PEREZOSO — la imagen puede omitirlo (p.ej. tests
 # con backend fake) y todo lo demás sigue funcionando.
 sentence-transformers>=3.3,<4.0
+# Backend onnx-cpu del cross-encoder (P7-b): único backend viable en el NAS
+# (torch-cpu descartado con evidencia; paridad ONNX 6e-06 sellada). Import
+# perezoso: solo se paga si CE_BACKEND=onnx-cpu.
+onnxruntime>=1.29,<2
 # tests (la imagen dev los ejecuta; podar en una imagen prod slim si hace falta)
 pytest>=8.0,<9
 httpx>=0.27,<1

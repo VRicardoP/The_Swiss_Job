@@ -944,6 +944,25 @@ XENC_TIER_POLICY_WEIGHTS = dict(
     compat_rule="tier-v1",
 )
 
+# P7-b (predeclaración 3d21bb4): candidata a examen — RankNet n=436
+# (dev 0.9872/0.8604 con cobertura 100 %, ronda 3) exportada a ONNX con
+# paridad 6e-06 verificada por el camino real. El backend onnx-cpu es parte
+# de la receta (P1-1: clave del motor) y es el MISMO en bootstrap externo,
+# examen y NAS — scores idénticos por construcción. El artefacto vive en la
+# ruta canónica del contenedor y su huella lo sella; la materialización va
+# por watermark (materialize_misses) con presupuesto predeclarado.
+XENC_RANKNET_POLICY_NAME = "xenc-ranknet"
+XENC_RANKNET_POLICY_VERSION = "v1"
+XENC_RANKNET_POLICY_WEIGHTS = dict(
+    XENC2_POLICY_WEIGHTS,
+    model="/models/xenc-ranknet-n436",
+    model_fingerprint=(
+        "58483c94c6f579a6219c3b5fbeef992ed85542f2d8c457bf1e5b7fc83e9eae01"),
+    backend="onnx-cpu",
+    train_data_sha256=(
+        "25cdd3a9037c13014188ec23ad19a1d7f6929920522875c54a3b3c57e526e01b"),
+)
+
 _ALGORITHM_PAIR_ABSOLUTE = {
     "cosine": True,
     "hybrid_rrf_v1": False,
@@ -983,6 +1002,8 @@ POLICY_CATALOG = (
     (XENC_POLICY_NAME, XENC2_POLICY_VERSION, XENC2_POLICY_WEIGHTS),
     (XENC_TIER_POLICY_NAME, XENC_TIER_POLICY_VERSION,
      XENC_TIER_POLICY_WEIGHTS),
+    (XENC_RANKNET_POLICY_NAME, XENC_RANKNET_POLICY_VERSION,
+     XENC_RANKNET_POLICY_WEIGHTS),
 )
 
 
