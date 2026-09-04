@@ -81,3 +81,47 @@ async def _con_factory(factory, profile_id, policy_id, budget_seconds):
             k: ev.get(k) for k in ("status", "evaluated", "moved_current")
         }
     return resultado
+
+
+@celery_app.task(name="jobhunt.matching.materialize_all", bind=True,
+                 max_retries=0)
+def materialize_all_task(self) -> dict[str, Any]:
+    """Cadencia diaria (beat): materializa por watermark TODOS los perfiles
+    contra cada política ACTIVA de cross-encoder. Sin políticas CE activas es
+    un no-op barato (pre-promoción, la candidata inactiva no entra: su caché
+    la mantiene el circuito del examen, no el beat)."""
+    return asyncio.run(_all_impl())
+
+
+async def _all_impl(session_factory=None) -> dict[str, Any]:
+    if session_factory is None:
+        async with task_session_factory() as factory:
+            return await _all_con_factory(factory)
+    return await _all_con_factory(session_factory)
+
+
+async def _all_con_factory(factory) -> dict[str, Any]:
+    async with factory() as session:
+        politicas = (
+            await session.execute(sa.text(
+                "SELECT id, name, prompt_version, weights FROM scoring_policies "
+                "WHERE active ORDER BY name, prompt_version"
+            ))
+        ).all()
+        perfiles = (
+            await session.execute(sa.text("SELECT id FROM profiles"))
+        ).scalars().all()
+    ce_activas = [
+        p for p in politicas
+        if str((p.weights or {}).get("algorithm", "")).startswith("cross_encoder")
+    ]
+    resultados: dict[str, Any] = {}
+    for pol in ce_activas:
+        for pid in perfiles:
+            r = await _con_factory(factory, pid, pol.id,
+                                   MATERIALIZE_BUDGET_SECONDS)
+            resultados[f"{pol.name}:{pol.prompt_version}/{pid}"] = {
+                k: r.get(k) for k in ("status", "scored", "remaining")
+            }
+    return {"status": "ok", "politicas_ce": len(ce_activas),
+            "perfiles": len(perfiles), "resultados": resultados}

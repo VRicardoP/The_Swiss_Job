@@ -29,6 +29,10 @@ celery_app.conf.update(
         "jobhunt.harvest.*": {"queue": "core.harvest"},
         "jobhunt.embedding.*": {"queue": "core.embedding"},
         "jobhunt.matching.*": {"queue": "core.matching"},
+        # P7-b: entrada por nombre EXACTO además del comodín — va en el beat
+        # y el invariante «todo lo del beat rutea a core.*» se verifica por
+        # nombre (mismo patrón que dispatch_outbox).
+        "jobhunt.matching.materialize_all": {"queue": "core.matching"},
         "jobhunt.notifications.*": {"queue": "core.notifications"},
         # Despacho del outbox (A-10): cola general del core. La entrada
         # EXPLÍCITA de dispatch_outbox existe porque la tarea va en el beat
@@ -169,6 +173,15 @@ celery_app.conf.update(
             "task": "jobhunt.maintenance.purge_retention",
             "schedule": crontab(hour=6, minute=40),
         },
+        # P7-b: materialización incremental por watermark de las políticas CE
+        # ACTIVAS (post-promoción; sin CE activas es no-op). A las 06:15 —
+        # tras el archive-sweep (05:35) para no puntuar ofertas a punto de
+        # retirarse, y con el presupuesto (≤60 min) terminando antes de la
+        # purga sin conflicto (la purga no toca evaluaciones vigentes).
+        "matching-materialize-ce": {
+            "task": "jobhunt.matching.materialize_all",
+            "schedule": crontab(hour=6, minute=15),
+        },
     },
 )
 
@@ -178,6 +191,7 @@ celery_app.conf.include = [
     "jobhunt_core.tasks.harvest",
     "jobhunt_core.tasks.embedding",
     "jobhunt_core.tasks.matching",
+    "jobhunt_core.tasks.materialize",
     "jobhunt_core.tasks.delivery",
     "jobhunt_core.tasks.idempotency",
     "jobhunt_core.tasks.shadow",

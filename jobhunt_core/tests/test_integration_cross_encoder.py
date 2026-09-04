@@ -751,3 +751,34 @@ def test_materializacion_en_sombra_no_mueve_ni_descarta(db):
     n = _rows(factory, "SELECT count(*) AS n FROM match_evaluations "
               "WHERE scoring_policy_id = :sp", sp=polid)[0].n
     assert n == len(TITULOS[:3])  # sombra registrada append-only
+
+
+def test_materialize_all_solo_actua_sobre_ce_activas(db):
+    """Beat P7-b: sin políticas CE activas = no-op; con la CE canónica activa
+    materializa y publica para los perfiles existentes."""
+    from jobhunt_core.tasks.materialize import _all_impl
+
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(factory, created, TITULOS[:2])
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+
+    # Solo cosine activa ⇒ no-op
+    r0 = asyncio.run(_all_impl(session_factory=factory))
+    assert r0["politicas_ce"] == 0
+
+    polid = _xenc_policy(factory, created)
+
+    async def declare():
+        async with factory() as s:
+            await matching.declare_active_policies(s, [polid])
+            await s.commit()
+
+    asyncio.run(declare())
+    ce.set_engine_factory(lambda m, r: _StubEngine())
+    try:
+        r1 = asyncio.run(_all_impl(session_factory=factory))
+    finally:
+        ce.set_engine_factory(None)
+    assert r1["politicas_ce"] == 1
+    clave = [k for k in r1["resultados"] if str(pid) in k]
+    assert clave and r1["resultados"][clave[0]]["status"] == "ok"
