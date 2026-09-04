@@ -508,3 +508,156 @@ def test_modelo_desactivado_durante_la_inferencia_no_publica(db):
         factory,
         "SELECT count(*) AS n FROM match_evaluations "
         "WHERE scoring_policy_id = :sp", sp=polid)[0].n == 0
+
+
+def test_generacion_protegida_hasta_el_commit(db):
+    """Revisión 2026-09-04 1A: A revalida en F3 (lee la generación FINAL) y
+    se pausa ANTES de escribir; B intenta una mutación de elegibilidad
+    (UPDATE de offer_embeddings ⇒ trigger sobre la fila única de
+    corpus_generation). Con un SELECT ordinario B cometía G2 y A publicaba
+    candidatos de G1 debajo; con FOR SHARE mantenido hasta el commit, B
+    ESPERA (lock_timeout muerde) y solo procede tras la publicación de A."""
+    import threading
+
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(factory, created, TITULOS[:2])
+
+    dentro = threading.Event()
+    barrera = threading.Event()
+
+    async def hook():
+        dentro.set()
+        await asyncio.to_thread(barrera.wait, 60)
+
+    matching.set_after_revalidation_hook(hook)
+    resultado = {}
+
+    def evaluar():
+        async def run():
+            return await matching.evaluate_profile(
+                factory, pid, mid, cosine_id)
+
+        resultado["r"] = asyncio.run(run())
+
+    bloqueado = {}
+    try:
+        hilo = threading.Thread(target=evaluar)
+        hilo.start()
+        assert dentro.wait(timeout=60), "A no llegó a la revalidación"
+
+        # B: mutación de elegibilidad con lock_timeout corto — DEBE esperar
+        # a A (el trigger actualiza la fila que A tiene FOR SHARE).
+        async def mutar():
+            async with factory() as s:
+                await s.execute(sa.text("SET LOCAL lock_timeout = '2s'"))
+                try:
+                    # UPDATE válido que dispara el trigger de sentencia
+                    await s.execute(sa.text(
+                        "UPDATE offer_embeddings SET vector = vector "
+                        "WHERE model_id = :m"), {"m": mid})
+                    await s.commit()
+                    return "cometio"
+                except Exception as e:
+                    await s.rollback()
+                    orig = getattr(e, "orig", e)
+                    return f"{type(e).__name__}:{type(orig).__name__}:{orig}"
+
+        bloqueado["b"] = asyncio.run(mutar())
+    finally:
+        barrera.set()
+        hilo.join(timeout=120)
+        matching.set_after_revalidation_hook(None)
+
+    # B fue BLOQUEADO por el LOCK (no por otro error) mientras A publicaba:
+    # jamás corpus G2 + feed G1 sin señal pendiente.
+    assert "LockNotAvailable" in bloqueado["b"], bloqueado
+    assert resultado["r"]["status"] == "ok"
+    assert resultado["r"]["moved_current"] is True
+
+
+def test_activar_un_modelo_anterior_durante_la_inferencia_descarta(db):
+    """Revisión 2026-09-04 1B: A infiere con el modelo Z (canónico); durante
+    la inferencia la autoridad activa un modelo ANTERIOR en el orden, ya
+    embebido. Z sigue ACTIVO — la comprobación booleana dejaba publicar a A
+    aunque ya no fuera el canónico. La valla compara el id EXACTO
+    (canonical_model_id) y descarta; el feed previo queda byte-equivalente."""
+    import threading
+
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(factory, created, TITULOS[:2])
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+    antes = _feed_actual(factory, pid)
+    polid = _xenc_policy(factory, created)
+
+    async def declare():
+        async with factory() as s:
+            await matching.declare_active_policies(s, [polid])
+            await s.commit()
+
+    asyncio.run(declare())
+
+    # Modelo "aa-…" (anterior en el orden name,version) YA EMBEBIDO pero
+    # inactivo: copia de vectores del modelo vigente (identidad directa).
+    async def preparar_anterior():
+        async with factory() as s:
+            m2 = await embeddings.register_model(
+                s, "aa-modelo-anterior", "a" * 40, active=False)
+            created["models"].append(m2)
+            await s.commit()
+            await s.execute(sa.text(
+                "INSERT INTO offer_embeddings (text_hash, model_id, vector) "
+                "SELECT text_hash, :m2, vector FROM offer_embeddings "
+                "WHERE model_id = :m1"), {"m2": m2, "m1": mid})
+            await s.execute(sa.text(
+                "INSERT INTO profile_embeddings "
+                "(profile_id, profile_revision_id, model_id, vector) "
+                "SELECT profile_id, profile_revision_id, :m2, vector "
+                "FROM profile_embeddings WHERE model_id = :m1"),
+                {"m2": m2, "m1": mid})
+            await s.commit()
+            return m2
+
+    m2 = asyncio.run(preparar_anterior())
+
+    dentro = threading.Event()
+    barrera = threading.Event()
+
+    class _Lento:
+        def predict(self, pares, batch_size=16):
+            dentro.set()
+            assert barrera.wait(timeout=60), "la barrera no se liberó"
+            return [0.0] * len(pares)
+
+    ce.set_engine_factory(lambda m, r: _Lento())
+    resultado = {}
+
+    def evaluar():
+        async def run():
+            return await matching.evaluate_profile(
+                factory, pid, mid, polid)
+
+        resultado["r"] = asyncio.run(run())
+
+    try:
+        hilo = threading.Thread(target=evaluar)
+        hilo.start()
+        assert dentro.wait(timeout=60), "la inferencia no arrancó"
+
+        # AUTORIDAD: activa el anterior (Z SIGUE activo) durante la inferencia
+        async def activar_anterior():
+            async with factory() as s:
+                await embeddings.declare_active_models(s, [m2, mid])
+                await s.commit()
+
+        asyncio.run(activar_anterior())
+    finally:
+        barrera.set()
+        hilo.join(timeout=120)
+        ce.set_engine_factory(None)
+
+    assert resultado["r"]["status"] == "descartado_por_deriva"
+    assert _feed_actual(factory, pid) == antes  # byte-equivalente
+    assert _rows(
+        factory,
+        "SELECT count(*) AS n FROM match_evaluations "
+        "WHERE scoring_policy_id = :sp", sp=polid)[0].n == 0

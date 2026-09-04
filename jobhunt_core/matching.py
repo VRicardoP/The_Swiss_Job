@@ -1073,6 +1073,57 @@ ELIGIBLE_CORPUS_FROM = (
 # snapshot). Lectura O(1) por PK; se compara por DESIGUALDAD.
 CORPUS_GENERATION_SQL = "SELECT generation FROM corpus_generation WHERE id = 1"
 
+# Seam de tests para interleavings de publicación (None en producción):
+# corrutina invocada en F3 entre la revalidación (locks tomados) y la
+# escritura. Se inyecta con set_after_revalidation_hook.
+_after_revalidation = None
+
+
+def set_after_revalidation_hook(hook) -> None:
+    global _after_revalidation
+    _after_revalidation = hook
+
+
+async def canonical_model_id(session, profile_id):
+    """Definición ÚNICA del modelo CANÓNICO efectivo para publicar el feed de
+    un perfil (revisión 2026-09-04 1B): el primer modelo ACTIVO en el orden
+    productivo determinista (active_models) con dimensión compatible, la
+    revisión VIGENTE del perfil embebida y corpus elegible no vacío. La tarea
+    decide con esta función quién publica y la valla final de
+    evaluate_profile la recomputa bajo el lock y compara el id EXACTO — «el
+    modelo sigue activo» no basta: activar uno anterior en el orden cambia el
+    canónico aunque el usado siga activo."""
+    from jobhunt_core import embeddings as _emb
+
+    rev = (
+        await session.execute(
+            sa.text(
+                "SELECT revision_id FROM profile_revision_activations "
+                "WHERE profile_id = :pid ORDER BY seq DESC LIMIT 1"
+            ),
+            {"pid": profile_id},
+        )
+    ).scalar_one_or_none()
+    if rev is None:
+        return None
+    for m in await _emb.active_models(session):
+        if m.dim != _emb.EMBED_DIM:
+            continue
+        elegible = (
+            await session.execute(
+                sa.text(
+                    "SELECT EXISTS (SELECT 1 FROM profile_embeddings "
+                    " WHERE model_id = :m AND profile_revision_id = :r) "
+                    "AND EXISTS (SELECT 1 FROM offer_embeddings "
+                    " WHERE model_id = :m)"
+                ),
+                {"m": m.id, "r": rev},
+            )
+        ).scalar_one()
+        if elegible:
+            return m.id
+    return None
+
 
 async def compute_policy_feed(
     session, profile_id, model_id, policy_id, limit: int = CANONICAL_EVAL_LIMIT,
@@ -1461,8 +1512,21 @@ async def evaluate_profile(
                 {"id": policy_id},
             )
         ).scalar_one_or_none()
+        # FOR SHARE mantenido hasta el commit (revisión 2026-09-04 1A): el
+        # trigger bump_corpus_generation() hace UPDATE de ESTA fila única en
+        # cada camino que cambia elegibilidad (embeddings y vacancies, por
+        # sentencia), así que cualquier mutación concurrente ESPERA a que
+        # esta publicación cometa — jamás puede quedar corpus G2 + feed G1
+        # sin señal pendiente. Orden de locks: perfil (FOR UPDATE) →
+        # generación (FOR SHARE) → modelo (FOR SHARE) → política (FOR SHARE)
+        # → escrituras; ningún camino de cosecha/archivo/embedding toma locks
+        # de perfil ni de políticas antes de tocar la generación, y
+        # declare_active_policies no toca la generación: no existe orden
+        # inverso que pueda producir deadlock.
         gen_ahora = (
-            await session.execute(sa.text(CORPUS_GENERATION_SQL))
+            await session.execute(
+                sa.text(CORPUS_GENERATION_SQL + " FOR SHARE")
+            )
         ).scalar_one()
         deriva = (
             str(vigente) != str(prid)
@@ -1470,15 +1534,15 @@ async def evaluate_profile(
             or int(gen_ahora) != int(gen_snapshot)
         )
         if not deriva and move_current:
-            # Modelo aún ACTIVO (FOR SHARE sobre SU fila: serializa con la
-            # desactivación mid-flight — la carrera revisada). La canonicidad
-            # ENTRE modelos activos la decide la tarea con su orden
-            # determinista y su skip de modelos sin embeddings; aquí no se
-            # re-deriva (cota aceptada: el alta de modelos es operación de
-            # operador y la deriva de generación ya guarda la frescura).
-            # Política canónica con FOR SHARE: el flip
-            # (declare_active_policies) actualiza TODAS las filas y se
-            # serializa con esta lectura.
+            # Modelo aún ACTIVO (FOR SHARE sobre SU fila) y además CANÓNICO
+            # EXACTO (revisión 2026-09-04 1B): canonical_model_id recomputada
+            # bajo el lock — activar un modelo ANTERIOR en el orden cambia el
+            # canónico aunque el usado siga activo. Todo cambio de activación
+            # (declare_active_models o register_model declarativo) toca TODAS
+            # las filas, así que conflicta con este FOR SHARE y se serializa:
+            # también cubre alta+activación de OTRA fila. Política canónica
+            # con FOR SHARE: el flip (declare_active_policies) actualiza
+            # TODAS las filas y se serializa con esta lectura.
             modelo_activo = (
                 await session.execute(
                     sa.text(
@@ -1488,6 +1552,7 @@ async def evaluate_profile(
                     {"m": model_id},
                 )
             ).scalar_one_or_none()
+            canon_modelo = await canonical_model_id(session, profile_id)
             canonica = (
                 await session.execute(
                     sa.text(
@@ -1498,9 +1563,15 @@ async def evaluate_profile(
             ).scalar_one_or_none()
             deriva = (
                 not modelo_activo
+                or str(canon_modelo) != str(model_id)
                 or canonica is None
                 or str(canonica) != str(policy_id)
             )
+        if _after_revalidation is not None:
+            # Seam SOLO para tests (como set_engine_factory): permite colocar
+            # una barrera EXACTAMENTE entre la revalidación (locks tomados) y
+            # la escritura, para reproducir interleavings de publicación.
+            await _after_revalidation()
         if deriva:
             logger.warning(
                 "matching: la tupla revalidada derivó durante la evaluación "

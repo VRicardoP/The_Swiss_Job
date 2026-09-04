@@ -90,13 +90,22 @@ def set_backend_factory(factory) -> None:
 
 
 async def register_model(
-    session, name: str, version: str, dim: int = EMBED_DIM, active: bool = True,
+    session, name: str, version: str, dim: int = EMBED_DIM,
+    active: bool | None = True,
     recipe_version: str = embedding_recipes.LEGACY_V1,
 ) -> uuid.UUID:
     """Alta idempotente del modelo + SU partición de offer_embeddings.
 
     dim != 384 se rechaza explícito: la columna es vector(384) — otra
-    dimensión exige expand/contract (ADR-02), nunca una partición aquí."""
+    dimensión exige expand/contract (ADR-02), nunca una partición aquí.
+
+    `active=None` (revisión 2026-09-04 1B, como ensure_policy): asegura la
+    FILA sin tocar la activación — el modo del BOOTSTRAP de despliegue; si se
+    crea, nace inactiva. Un redeploy no puede cambiar la canonicidad de
+    modelos en silencio: eso solo lo hace declare_active_models. Con
+    active=True/False (declaración operativa, tests/operador) el cambio de
+    activación se serializa con la valla de publicación tocando TODAS las
+    filas, igual que la autoridad."""
     if dim != EMBED_DIM:
         raise ValueError(
             f"dim={dim}: la columna de Fase A es vector({EMBED_DIM}); otra "
@@ -118,7 +127,8 @@ async def register_model(
         ),
         {
             "id": uuid.uuid4(), "name": name, "version": version,
-            "recipe": recipe_version, "dim": dim, "active": active,
+            "recipe": recipe_version, "dim": dim,
+            "active": bool(active) if active is not None else False,
         },
     )
     # Validar la fila REAL bajo lock (rev. A-06 #4): tras el DO NOTHING la
@@ -138,11 +148,15 @@ async def register_model(
             f"modelo {name}/{version} ya registrado con dim={row.dim} != {dim}: "
             "la dimensión de un modelo registrado es INMUTABLE (expand/contract)"
         )
-    # `active` SÍ se actualiza: el registro es una declaración operativa
-    # idempotente (activar/desactivar re-declarando).
-    if row.active != active:
+    # `active` se actualiza SOLO si se declaró explícitamente (no None); el
+    # cambio toca TODAS las filas para serializarse con la valla FOR SHARE de
+    # evaluate_profile (mismo protocolo que declare_active_models).
+    if active is not None and row.active != active:
         await session.execute(
-            sa.text("UPDATE embedding_models SET active = :a WHERE id = :id"),
+            sa.text(
+                "UPDATE embedding_models "
+                "SET active = CASE WHEN id = :id THEN :a ELSE active END"
+            ),
             {"a": active, "id": row.id},
         )
     model_id = row.id
@@ -168,6 +182,34 @@ async def register_model(
         )
     )
     return model_id
+
+
+async def declare_active_models(session, model_ids) -> None:
+    """Declara el conjunto EXACTO de modelos activos (revisión 2026-09-04 1B):
+    autoridad ÚNICA sobre la activación de modelos, análoga a
+    declare_active_policies. Un solo UPDATE sobre TODAS las filas: el flip es
+    atómico y toma lock de fila sobre cualquier modelo en uso, con lo que se
+    serializa contra la valla FOR SHARE de evaluate_profile — o la
+    publicación en vuelo termina antes del flip, o ve el canónico nuevo y se
+    descarta. Declarar un id inexistente es error."""
+    ids = sorted({str(x) for x in model_ids})
+    if not ids:
+        raise ValueError("el conjunto activo declarado no puede ser vacío")
+    filas = (
+        await session.execute(
+            sa.text(
+                "UPDATE embedding_models "
+                "SET active = (id = ANY(CAST(:ids AS uuid[]))) "
+                "RETURNING id, active"
+            ),
+            {"ids": ids},
+        )
+    ).all()
+    activas = {str(f.id) for f in filas if f.active}
+    if activas != set(ids):
+        raise ValueError(
+            f"declaración no satisfecha: pedidos {ids}, activos {sorted(activas)}"
+        )
 
 
 async def active_models(session) -> list:

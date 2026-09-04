@@ -75,11 +75,13 @@ async def _run_profile_with(
                 )
             )
         ).all()
-    # Evaluador CANÓNICO (auditoría A-08): el PRIMER (modelo, política)
-    # válido en el orden determinista es el único que mueve
-    # current_eval_id — el resto corre en SOMBRA (append-only). Con varios
-    # modelos activos el score del feed es siempre el mismo.
-    canonical_pending = True
+        # Evaluador CANÓNICO (A-08 + revisión 2026-09-04 1B): el modelo lo
+        # fija canonical_model_id — LA MISMA definición que revalida la valla
+        # final de evaluate_profile con el id exacto —, y la política es la
+        # primera activa del orden determinista. El resto corre en SOMBRA
+        # (append-only). La decisión de aquí puede caducar durante una
+        # inferencia larga: la valla la recomputa bajo el lock.
+        canon_modelo = await matching.canonical_model_id(session, profile_id)
     for model in models:
         if model.dim != embeddings.EMBED_DIM:
             logger.error(
@@ -94,9 +96,14 @@ async def _run_profile_with(
             # Solo cuenta como intento si de verdad se evaluó algo (P1 rev.
             # ronda 4): el propio evaluate lo garantiza invocándolo solo con
             # evaluated > 0.
+            es_canonico = (
+                canon_modelo is not None
+                and str(model.id) == str(canon_modelo)
+                and str(policy.id) == str(policies[0].id)
+            )
             r = await matching.evaluate_profile(
                 session_factory, profile_id, model.id, policy.id, limit=limit,
-                move_current=canonical_pending,
+                move_current=es_canonico,
                 with_corpus_generation=on_evaluated is not None,
                 on_evaluated=on_evaluated,
             )
@@ -110,18 +117,22 @@ async def _run_profile_with(
                     "— reintento único desde la fase 1",
                     profile_id, model.name, policy.name,
                 )
+                # «Desde la fase 1» incluye la decisión de canonicidad: se
+                # recomputa con lo VIGENTE antes de reintentar.
+                async with session_factory() as s2:
+                    canon_modelo = await matching.canonical_model_id(
+                        s2, profile_id)
+                es_canonico = (
+                    canon_modelo is not None
+                    and str(model.id) == str(canon_modelo)
+                    and str(policy.id) == str(policies[0].id)
+                )
                 r = await matching.evaluate_profile(
                     session_factory, profile_id, model.id, policy.id,
-                    limit=limit, move_current=canonical_pending,
+                    limit=limit, move_current=es_canonico,
                     with_corpus_generation=on_evaluated is not None,
                     on_evaluated=on_evaluated,
                 )
-            if r.get("moved_current"):
-                # El canónico es el primer combo que DE VERDAD movió el
-                # estado (rev. A-08 #1): un 'ok' con 0 vacantes evaluadas
-                # (modelo sin embeddings de ofertas) NO lo consume — el
-                # siguiente modelo puede poblar el feed.
-                canonical_pending = False
             recipe = (
                 "" if model.recipe_version == "legacy_v1"
                 else f"#{model.recipe_version}"
