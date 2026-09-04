@@ -21,6 +21,12 @@
 > §9.1 cuenta el caso en que un arreglo mío cerró un falso rojo y abrió el falso verde
 > opuesto — el ejemplo canónico de §0.
 
+> **Actualización 2026-09-04.** Este fichero sigue siendo la autoridad de las cotas aceptadas,
+> pero §9 ya no es la fotografía operativa vigente. Para estado y camino crítico manda
+> `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` §21; para deuda abierta manda
+> `/home/lothar/Public/DEUDA_TECNICA.md` §0. No conviertas una cota aceptada en trabajo ni cites un
+> pendiente de §9 sin revalidarlo.
+
 ---
 
 ## 0. La regla de oro del proyecto

@@ -1,5 +1,14 @@
 # CIERRE — matching GO verificado (2026-09-04)
 
+> **Actualización posterior (`809e24a`, revisión externa del mismo día).** Las tres
+> reproducciones añadidas por ese commit pasan 3/3 sobre el árbol actual, pero el cierre de
+> publicación todavía tiene dos P1 antes de una promoción: (1) la lectura final de
+> `corpus_generation` debe mantener el lock hasta el commit para impedir que una mutación se cuele
+> entre la comprobación y la escritura; (2) debe comprobarse el modelo canónico exacto bajo el
+> mismo protocolo que su activación, no solamente que el modelo empleado continúe activo.
+> Entrenamiento v10 (~436 juicios) y benchmark OpenVINO fueron comunicados como en curso. El plan
+> vigente completo está en `PROMPT_CIERRE_TOTAL_UNIFICACION_2026-09-04.md`.
+
 Ejecución del PROMPT_CORRECCION_CIERRE_DEFINITIVO (revisión 2026-09-03).
 Entorno: SOLO R5; `:prod` intacta. Partida `2619618`; HEAD `be6634d`.
 
@@ -169,15 +178,15 @@ persistente (`trabajo_v8/`), no en `/tmp`.
 | Suites en serie contra BD compartida | ✓ |
 | Paquetes sellados con sha256 ANTES de etiquetar; claves fuera del alcance del etiquetador | ✓ |
 
-## Fases condicionales que NO proceden (por diseño)
+## Fases condicionales que no procedían al emitir este cierre
 
-Desarrollo rojo ⇒ P7 (benchmark NAS ONNX/OpenVINO con paridad declarada) y P8
+En el momento de esta medición, desarrollo rojo ⇒ P7 (benchmark NAS ONNX/OpenVINO con paridad declarada) y P8
 (examen único → promoción → racha 7/7) no se abren: siguen condicionados a que
 una variante pase 0.60/0.60 en desarrollo. El holdout sigue VIRGEN; el
 contador de racha sigue en 0/7 sin abrir; `current_eval_id` no se movió
 (feed 5400 punteros cosine, intacto).
 
-## Deuda residual (propietario y condición)
+## Deuda residual en el momento de esta medición
 
 1. **Etiquetado incremental** (producto) — siguiente punto de la curva
    (n≈400-450) con este mismo circuito sellado; la pendiente medida
