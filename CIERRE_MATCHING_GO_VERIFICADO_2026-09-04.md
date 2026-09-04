@@ -8,6 +8,13 @@
 > mismo protocolo que su activación, no solamente que el modelo empleado continúe activo.
 > Entrenamiento v10 (~436 juicios) y benchmark OpenVINO fueron comunicados como en curso. El plan
 > vigente completo está en `PROMPT_CIERRE_TOTAL_UNIFICACION_2026-09-04.md`.
+>
+> **Cierre de esa nota (mismo día, noche):** los dos P1 quedaron CERRADOS en `fda0843`
+> (FOR SHARE de la generación hasta el commit + `canonical_model_id` exacto con autoridad
+> única `declare_active_models`), con mordidas verificadas y suite 1038/1038 (1044/1044 al
+> final del día, HEAD `e8043fa`). El v10 midió 0.9872/0.8604 (Public `72171c8`) y el
+> benchmark NAS se resolvió por la vía incremental P7-b: **APTA** (Public `2fbad1e`).
+> Estado vigente: `ESTADO_Y_HOJA_DE_RUTA.md` **§22**.
 
 Ejecución del PROMPT_CORRECCION_CIERRE_DEFINITIVO (revisión 2026-09-03).
 Entorno: SOLO R5; `:prod` intacta. Partida `2619618`; HEAD `be6634d`.
