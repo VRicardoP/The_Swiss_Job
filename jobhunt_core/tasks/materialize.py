@@ -59,11 +59,22 @@ async def _con_factory(factory, profile_id, policy_id, budget_seconds):
     )
     resultado: dict[str, Any] = {"profile_id": str(profile_id), **r}
     if r["status"] == "ok":
-        # Al día: la evaluación canónica publica la fotografía completa (o
-        # la descarta su valla). move_current solo si la política es la
-        # canónica — la propia valla lo revalida bajo el lock.
+        # Al día: la evaluación publica la fotografía completa (o la
+        # descarta su valla). move_current SOLO si esta política es la
+        # canónica AHORA — con el contrato 2026-09-04, un move_current sobre
+        # política no canónica se DESCARTA entero; en sombra (pre-promoción)
+        # lo correcto es registrar append-only sin mover el feed. La valla
+        # F3 revalida la canonicidad bajo el lock de todas formas.
+        async with factory() as session:
+            canonica = (
+                await session.execute(sa.text(
+                    "SELECT id FROM scoring_policies WHERE active "
+                    "ORDER BY name, prompt_version LIMIT 1"
+                ))
+            ).scalar_one_or_none()
         ev = await matching.evaluate_profile(
             factory, profile_id, model_id, policy_id,
+            move_current=str(canonica) == str(policy_id),
         )
         resultado["evaluacion"] = {
             k: ev.get(k) for k in ("status", "evaluated", "moved_current")

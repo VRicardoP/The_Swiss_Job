@@ -723,3 +723,31 @@ def test_materializacion_por_watermark_presupuesto_y_publicacion(db):
         assert eventos.n == eventos.d  # un evento por eval_key, sin duplicar
     finally:
         ce.set_engine_factory(None)
+
+
+def test_materializacion_en_sombra_no_mueve_ni_descarta(db):
+    """P7-b: con la política CE INACTIVA (pre-promoción), la tarea materializa
+    y evalúa EN SOMBRA — filas append-only registradas, feed intacto, y jamás
+    un descarte por la valla de canonicidad."""
+    from jobhunt_core.tasks.materialize import _impl as materializar
+
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(factory, created, TITULOS[:3])
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+    antes = _feed_actual(factory, pid)
+    polid = _xenc_policy(factory, created, active=False)  # SOMBRA
+
+    ce.set_engine_factory(lambda m, r: _StubEngine())
+    try:
+        r = asyncio.run(materializar(
+            str(pid), str(polid), 60.0, session_factory=factory))
+    finally:
+        ce.set_engine_factory(None)
+
+    assert r["status"] == "ok"
+    assert r["evaluacion"]["status"] == "ok"          # ni descartado
+    assert r["evaluacion"]["moved_current"] is False  # ni movido
+    assert _feed_actual(factory, pid) == antes
+    n = _rows(factory, "SELECT count(*) AS n FROM match_evaluations "
+              "WHERE scoring_policy_id = :sp", sp=polid)[0].n
+    assert n == len(TITULOS[:3])  # sombra registrada append-only
