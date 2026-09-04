@@ -852,8 +852,9 @@ def test_hybrid_policy_recovers_lexical_candidate_outside_ann_top_k(db):
             created["policies"].append(hybrid_id)
             # La valla de canonicidad (P1-C) solo deja mover el feed a la
             # política canónica: para que el híbrido lo mueva, el coseno del
-            # _setup deja de estar activo (el eval de coseno de más abajo se
-            # registra igual — solo no mueve el feed, que es lo que se afirma).
+            # _setup deja de estar activo. Desde el contrato 2026-09-04 una
+            # política no canónica con move_current se DESCARTA entera, así
+            # que el eval de coseno de abajo va en SOMBRA explícita.
             await matching.ensure_policy(s, "cosine", "v1", active=False)
             profile_vec = [1.0, 0.0] + [0.0] * (embeddings.EMBED_DIM - 2)
             lexical_vec = [0.0, 1.0] + [0.0] * (embeddings.EMBED_DIM - 2)
@@ -891,7 +892,8 @@ def test_hybrid_policy_recovers_lexical_candidate_outside_ann_top_k(db):
             return hybrid_id
 
     hybrid_id = asyncio.run(configure())
-    assert _evaluate(factory, pid, mid, cosine_id, limit=1)["evaluated"] == 1
+    assert _evaluate(
+        factory, pid, mid, cosine_id, limit=1, move=False)["evaluated"] == 1
     cosine_vacancy = _rows(
         factory,
         "SELECT vacancy_id FROM match_evaluations "
@@ -1025,7 +1027,9 @@ def test_un_worker_pre_flip_no_puede_restaurar_el_feed_antiguo(db):
     régimen antiguo. La valla de canonicidad comprueba y escribe en la MISMA
     transacción (FOR SHARE sobre la canónica), y el flip
     (declare_active_policies) actualiza todas las filas, serializándose con
-    ella: el movimiento caducado se aborta, la evaluación queda registrada."""
+    ella. Desde la revisión 2026-09-04 la valla vive en la revalidación
+    ATÓMICA de la tupla y su deriva DESCARTA el resultado completo (sin
+    escribir nada), en vez de degradar a «registrada sin mover»."""
     factory, created = db
     pid, mid, cosine_id, _ = _setup(
         factory, created, ["python developer", "warehouse operative"])
@@ -1048,9 +1052,10 @@ def test_un_worker_pre_flip_no_puede_restaurar_el_feed_antiguo(db):
     # Worker B rematerializa el feed bajo la candidata (ahora canónica).
     assert _evaluate(factory, pid, mid, v4_id)["moved_current"] is True
 
-    # Worker A retoma con su decisión caducada: la valla lo para.
+    # Worker A retoma con su decisión caducada: la revalidación lo descarta
+    # ENTERO (sin escribir ni mover — contrato 2026-09-04).
     r = _evaluate(factory, pid, mid, cosine_id)
-    assert r["status"] == "ok" and r["evaluated"] > 0
+    assert r["status"] == "descartado_por_deriva"
     assert r["moved_current"] is False
     refs = _rows(
         factory,

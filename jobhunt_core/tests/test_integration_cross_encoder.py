@@ -365,3 +365,146 @@ def test_tier_ordena_viables_antes_que_incompatibles_demostradas(db):
     assert rows_tier[1]["score_parts"]["compat"]["inc_loc"] is True
     # dentro del nivel manda ce_prob; desconocido/ambiguo NO castiga
     assert matching._is_pair_absolute(matching.XENC_TIER_POLICY_WEIGHTS)
+
+
+def test_worker_lento_no_restaura_un_feed_mas_nuevo(db):
+    """Revisión 2026-09-04 P1: A prepara sobre la generación G1 y se queda en
+    inferencia; el corpus avanza (G2) y B evalúa y publica el feed nuevo; A
+    termina DESPUÉS. Sin revalidar corpus_generation, A borraba el puntero de
+    la vacante nueva (UPDATE ... current_eval_id = NULL para lo que no está
+    en SU conjunto) y restauraba el feed viejo. A debe descartarse."""
+    import threading
+
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(factory, created, TITULOS[:3])
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+    polid = _xenc_policy(factory, created)
+
+    async def declare():
+        async with factory() as s:
+            await matching.declare_active_policies(s, [polid])
+            await s.commit()
+
+    asyncio.run(declare())
+
+    dentro = threading.Event()
+    barrera = threading.Event()
+    primera = threading.Event()
+
+    class _Motor:
+        def predict(self, pares, batch_size=16):
+            if not primera.is_set():  # SOLO la primera inferencia se bloquea
+                primera.set()
+                dentro.set()
+                assert barrera.wait(timeout=60), "la barrera no se liberó"
+            return [((hash(q + "|" + d) % 1000) - 500) / 100.0
+                    for q, d in pares]
+
+    ce.set_engine_factory(lambda m, r: _Motor())
+    resultado = {}
+
+    def evaluar_a():
+        async def run():
+            return await matching.evaluate_profile(factory, pid, mid, polid)
+
+        resultado["A"] = asyncio.run(run())
+
+    try:
+        hilo = threading.Thread(target=evaluar_a)
+        hilo.start()
+        assert dentro.wait(timeout=60), "la inferencia de A no arrancó"
+
+        # El corpus AVANZA durante la inferencia de A (G1 → G2).
+        async def sink_offer():
+            async with factory() as s:
+                await RawListingSink().handle(
+                    s, str(created["scopes"][0]),
+                    (_listing("j-race-g2", "python developer"),))
+                await s.commit()
+
+        asyncio.run(sink_offer())
+        embeddings.set_backend_factory(
+            lambda name, version: DirectionalBackend())
+        try:
+            from jobhunt_core.tasks.embedding import run_pending_task
+            r = run_pending_task.apply(kwargs={"limit": 100})
+            assert r.successful(), r.traceback
+        finally:
+            embeddings.set_backend_factory(None)
+
+        # B evalúa el corpus NUEVO y publica el feed de G2.
+        resultado["B"] = _evaluate(factory, pid, mid, polid)
+        assert resultado["B"]["moved_current"] is True
+        feed_b = _feed_actual(factory, pid)
+        assert len(feed_b) == len(TITULOS[:3]) + 1
+    finally:
+        barrera.set()
+        hilo.join(timeout=120)
+        ce.set_engine_factory(None)
+
+    # El lento se descarta y el feed de B queda EXACTAMENTE intacto.
+    assert resultado["A"]["status"] == "descartado_por_deriva"
+    assert _feed_actual(factory, pid) == feed_b
+
+
+def test_modelo_desactivado_durante_la_inferencia_no_publica(db):
+    """Revisión 2026-09-04 P1: la fase final protegía la política canónica
+    pero NO el modelo — un modelo desactivado durante una inferencia lenta
+    aún podía mover el feed. Debe descartarse sin escribir nada."""
+    import threading
+
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(factory, created, TITULOS[:2])
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+    antes = _feed_actual(factory, pid)
+    polid = _xenc_policy(factory, created)
+
+    async def declare():
+        async with factory() as s:
+            await matching.declare_active_policies(s, [polid])
+            await s.commit()
+
+    asyncio.run(declare())
+
+    dentro = threading.Event()
+    barrera = threading.Event()
+
+    class _Lento:
+        def predict(self, pares, batch_size=16):
+            dentro.set()
+            assert barrera.wait(timeout=60), "la barrera no se liberó"
+            return [0.0] * len(pares)
+
+    ce.set_engine_factory(lambda m, r: _Lento())
+    resultado = {}
+
+    def evaluar():
+        async def run():
+            return await matching.evaluate_profile(factory, pid, mid, polid)
+
+        resultado["r"] = asyncio.run(run())
+
+    try:
+        hilo = threading.Thread(target=evaluar)
+        hilo.start()
+        assert dentro.wait(timeout=60), "la inferencia no arrancó"
+
+        async def desactivar():
+            async with factory() as s:
+                await s.execute(sa.text(
+                    "UPDATE embedding_models SET active = false "
+                    "WHERE id = :m"), {"m": mid})
+                await s.commit()
+
+        asyncio.run(desactivar())
+    finally:
+        barrera.set()
+        hilo.join(timeout=120)
+        ce.set_engine_factory(None)
+
+    assert resultado["r"]["status"] == "descartado_por_deriva"
+    assert _feed_actual(factory, pid) == antes
+    assert _rows(
+        factory,
+        "SELECT count(*) AS n FROM match_evaluations "
+        "WHERE scoring_policy_id = :sp", sp=polid)[0].n == 0

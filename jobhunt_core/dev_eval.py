@@ -306,6 +306,18 @@ async def _validate_universe_seal(
             f"el universo derivó del sello: {retiradas} pareja(s) "
             f"retirada(s), {nuevas} nueva(s) — examen INELEGIBLE completo"
         )
+    # Revisión 2026-09-04 P1 — ÚLTIMA comprobación (los errores específicos
+    # de identidad son más diagnósticos): los vectores pueden cambiar
+    # (re-embed) sin alterar ninguna identidad, el conjunto de parejas queda
+    # idéntico y el examen YA NO sería la fotografía sellada. La generación
+    # es parte del sello y se contrasta como el resto.
+    gen_actual = (
+        await session.execute(sa.text(matching.CORPUS_GENERATION_SQL))
+    ).scalar_one()
+    if int(body["corpus_generation"]) != int(gen_actual):
+        raise ValueError(
+            f"la generación del corpus derivó: sellada "
+            f"{body['corpus_generation']}, vigente {gen_actual}")
     return body
 
 

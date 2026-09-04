@@ -1379,13 +1379,24 @@ async def evaluate_profile(
                 f"(algorithm={_algorithm_of(pesos_snapshot)!r}) no puede mover "
                 "el feed: materializaría una mezcla de generaciones"
             )
+        # Generación ANTES de leer candidatos (revisión 2026-09-04 P1): si el
+        # corpus muta entre esta lectura y la de candidatos, la generación
+        # fotografiada queda POR DEBAJO y la revalidación final descarta —
+        # falso positivo inocuo; el orden inverso permitiría publicar
+        # candidatos viejos bajo una generación nueva.
+        gen_snapshot = (
+            await session.execute(sa.text(CORPUS_GENERATION_SQL))
+        ).scalar_one()
         computed = await compute_policy_feed(
             session, profile_id, model_id, policy_id, limit=limit,
             exclude_dismissed=False,
             with_corpus_generation=with_corpus_generation,
             ce_inference=False,
         )
-    corpus_gen = computed["corpus_generation"]
+    corpus_gen = (
+        computed["corpus_generation"] if with_corpus_generation
+        else gen_snapshot
+    )
     if computed["status"] == "sin_vector":
         return {
             "status": "sin_vector", "evaluated": 0, "new_evals": 0,
@@ -1426,12 +1437,15 @@ async def evaluate_profile(
                 "status": "not_found", "evaluated": 0, "new_evals": 0,
                 "moved_current": False,
             }
-        # REVALIDACIÓN (P1-3): lo preparado en la fase 1 puede haber caducado
-        # durante una inferencia larga. La revisión del perfil o la receta de
-        # la política derivadas ⇒ descartar SIN publicar (el feed bueno queda
-        # intacto; el siguiente ciclo reevalúa con lo vigente). La deriva del
-        # corpus NO invalida un score absoluto por pareja: esas filas siguen
-        # siendo válidas (esa es la razón de ser de pair_absolute).
+        # REVALIDACIÓN ATÓMICA de la tupla completa (P1-3 + revisión
+        # 2026-09-04): revisión del perfil + generación del corpus + (si
+        # publica) modelo canónico + política canónica, TODO bajo el mismo
+        # lock y en la misma transacción que la escritura. Cualquier deriva ⇒
+        # descartar SIN escribir nada ni mover el feed («descartado_por_
+        # deriva»); quien encoló reintenta desde la fase 1 con lo vigente.
+        # Los scores por pareja siguen siendo hechos válidos (pair_absolute),
+        # pero un conjunto preparado sobre una generación anterior NO puede
+        # retirar punteros de un feed más nuevo.
         vigente = (
             await session.execute(
                 sa.text(
@@ -1447,11 +1461,52 @@ async def evaluate_profile(
                 {"id": policy_id},
             )
         ).scalar_one_or_none()
-        if str(vigente) != str(prid) or pesos_ahora != pesos_snapshot:
+        gen_ahora = (
+            await session.execute(sa.text(CORPUS_GENERATION_SQL))
+        ).scalar_one()
+        deriva = (
+            str(vigente) != str(prid)
+            or pesos_ahora != pesos_snapshot
+            or int(gen_ahora) != int(gen_snapshot)
+        )
+        if not deriva and move_current:
+            # Modelo aún ACTIVO (FOR SHARE sobre SU fila: serializa con la
+            # desactivación mid-flight — la carrera revisada). La canonicidad
+            # ENTRE modelos activos la decide la tarea con su orden
+            # determinista y su skip de modelos sin embeddings; aquí no se
+            # re-deriva (cota aceptada: el alta de modelos es operación de
+            # operador y la deriva de generación ya guarda la frescura).
+            # Política canónica con FOR SHARE: el flip
+            # (declare_active_policies) actualiza TODAS las filas y se
+            # serializa con esta lectura.
+            modelo_activo = (
+                await session.execute(
+                    sa.text(
+                        "SELECT active FROM embedding_models "
+                        "WHERE id = :m FOR SHARE"
+                    ),
+                    {"m": model_id},
+                )
+            ).scalar_one_or_none()
+            canonica = (
+                await session.execute(
+                    sa.text(
+                        "SELECT id FROM scoring_policies WHERE active "
+                        "ORDER BY name, prompt_version LIMIT 1 FOR SHARE"
+                    )
+                )
+            ).scalar_one_or_none()
+            deriva = (
+                not modelo_activo
+                or canonica is None
+                or str(canonica) != str(policy_id)
+            )
+        if deriva:
             logger.warning(
-                "matching: identidades derivadas durante la evaluación de %s "
-                "(revisión %s→%s) — resultado descartado sin publicar",
-                profile_id, prid, vigente,
+                "matching: la tupla revalidada derivó durante la evaluación "
+                "de %s (revisión %s→%s, generación %s→%s) — resultado "
+                "descartado sin publicar",
+                profile_id, prid, vigente, gen_snapshot, gen_ahora,
             )
             return {
                 "status": "descartado_por_deriva", "evaluated": 0,
@@ -1546,33 +1601,11 @@ async def evaluate_profile(
                 [{"eid": e["eid"], "dest": locked.consumer_name} for e in events],
             )
         moved = False
-        if move_current:
-            # VALLA DE CANONICIDAD (P1-C, revisión externa 2026-09-02): la decisión
-            # «soy el canónico» se tomó FUERA de esta transacción (la tarea lee las
-            # políticas activas, cierra esa sesión y evalúa en transacciones
-            # nuevas) y puede haber caducado: un worker pre-flip que retome aquí
-            # tras una promoción restauraría el feed antiguo. Se reverifica en la
-            # MISMA transacción que la escritura, con FOR SHARE sobre la fila
-            # canónica: el flip actualiza TODAS las filas de scoring_policies en un
-            # solo UPDATE (declare_active_policies), así que o bien espera a que
-            # este movimiento termine, o bien ya cometió y esta lectura ve el
-            # canónico nuevo y el movimiento se aborta. Un SELECT sin lock dejaría
-            # el mismo TOCTOU con la ventana más corta.
-            canonica = (
-                await session.execute(
-                    sa.text(
-                        "SELECT id FROM scoring_policies WHERE active "
-                        "ORDER BY name, prompt_version LIMIT 1 FOR SHARE"
-                    )
-                )
-            ).scalar_one_or_none()
-            if canonica is None or str(canonica) != str(policy_id):
-                logger.warning(
-                    "matching: la política %s ya no es canónica (ahora %s) — la "
-                    "evaluación queda registrada pero el feed NO se mueve",
-                    policy_id, canonica,
-                )
-                move_current = False
+        # La valla de canonicidad P1-C (revisión 2026-09-02) vive ahora DENTRO
+        # de la revalidación atómica de arriba (revisión 2026-09-04): política
+        # y modelo canónicos se comprueban con FOR SHARE ANTES de escribir
+        # nada, y su deriva descarta el resultado completo en vez de degradar
+        # a «registrada sin mover».
         if move_current:
             state_rows = [
                 {"pid": profile_id, "vid": r["vid"], "eid": winners[(r["vid"], r["key"])]}

@@ -745,3 +745,36 @@ def test_cli_extremo_a_extremo_con_el_mismo_sello(db, tmp_path, monkeypatch,
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert out["payload"]["profiles"]["P1"]["elegible"] is True
     assert out["payload"]["release"] == "e2etest"
+
+
+def test_el_sello_detecta_deriva_de_generacion_sin_cambio_de_identidades(db):
+    """Revisión 2026-09-04 P1: los vectores pueden cambiar (re-embed) sin
+    alterar vacancy/offer_revision/text_hash — el conjunto de parejas queda
+    idéntico pero la evaluación YA NO es la fotografía sellada. El sello debe
+    contrastar corpus_generation, no solo identidades."""
+    factory, created = db
+    pid, mid, _, vacs = _setup(factory, created, TITULOS)
+    _shadow_policy(factory, created)
+    sonda = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
+                      _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+    top = [f["vacancy_id"] for f in sonda["payload"]["profiles"]["P1"]["top10"]]
+    juicios = _judgments_file([f"P1,{v},1" for v in top])
+    sello = _sellar(factory, {"P1": pid})
+
+    # sano: elegible
+    out = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
+                    allow_uncovered=False, universe=sello)
+    assert out["payload"]["profiles"]["P1"]["elegible"] is True
+
+    # deriva de generación SIN tocar identidades (equivale a un re-embed)
+    async def avanzar_generacion():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "UPDATE corpus_generation SET generation = generation + 1 "
+                "WHERE id = 1"))
+            await s.commit()
+
+    asyncio.run(avanzar_generacion())
+    with pytest.raises(ValueError, match="generaci"):
+        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
+                  allow_uncovered=False, universe=sello)

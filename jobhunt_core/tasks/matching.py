@@ -100,6 +100,22 @@ async def _run_profile_with(
                 with_corpus_generation=on_evaluated is not None,
                 on_evaluated=on_evaluated,
             )
+            if r.get("status") == "descartado_por_deriva":
+                # Revisión 2026-09-04: la tupla revalidada derivó durante la
+                # evaluación — se reintenta UNA vez desde la fase 1 con lo
+                # vigente. Si vuelve a derivar (corpus en mutación continua),
+                # se deja para el ciclo siguiente: jamás publicar lo rancio.
+                logger.warning(
+                    "matching: deriva durante la evaluación de %s con %s/%s "
+                    "— reintento único desde la fase 1",
+                    profile_id, model.name, policy.name,
+                )
+                r = await matching.evaluate_profile(
+                    session_factory, profile_id, model.id, policy.id,
+                    limit=limit, move_current=canonical_pending,
+                    with_corpus_generation=on_evaluated is not None,
+                    on_evaluated=on_evaluated,
+                )
             if r.get("moved_current"):
                 # El canónico es el primer combo que DE VERDAD movió el
                 # estado (rev. A-08 #1): un 'ok' con 0 vacantes evaluadas
