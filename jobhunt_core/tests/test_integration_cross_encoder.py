@@ -661,3 +661,65 @@ def test_activar_un_modelo_anterior_durante_la_inferencia_descarta(db):
         factory,
         "SELECT count(*) AS n FROM match_evaluations "
         "WHERE scoring_policy_id = :sp", sp=polid)[0].n == 0
+
+
+def test_materializacion_por_watermark_presupuesto_y_publicacion(db):
+    """P7-b: la materialización puntúa por lotes REANUDABLES dentro del
+    presupuesto; con backlog NO publica (feed intacto, señal); al quedar al
+    día la evaluación publica la fotografía completa con CERO inferencias
+    nuevas y los eventos del outbox se emiten UNA sola vez por eval_key."""
+    from jobhunt_core.tasks.materialize import _impl as materializar
+
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(factory, created, TITULOS)
+    assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
+    antes = _feed_actual(factory, pid)
+    polid = _xenc_policy(factory, created)
+
+    async def declare():
+        async with factory() as s:
+            await matching.declare_active_policies(s, [polid])
+            await s.commit()
+
+    asyncio.run(declare())
+
+    contador = {"docs": 0}
+
+    class _Motor:
+        def predict(self, pares, batch_size=16):
+            contador["docs"] += len(pares)
+            return [((hash(q + "|" + d) % 1000) - 500) / 100.0
+                    for q, d in pares]
+
+    ce.set_engine_factory(lambda m, r: _Motor())
+    try:
+        # Presupuesto 0: primer ciclo entra ya agotado ⇒ backlog, 0 publicado
+        r0 = asyncio.run(materializar(
+            str(pid), str(polid), 0.0, session_factory=factory))
+        assert r0["status"] == "backlog" and r0["remaining"] == len(TITULOS)
+        assert "evaluacion" not in r0
+        assert _feed_actual(factory, pid) == antes  # fotografía previa intacta
+
+        # Presupuesto holgado: materializa TODO, publica y el feed cambia
+        r1 = asyncio.run(materializar(
+            str(pid), str(polid), 60.0, session_factory=factory))
+        assert r1["status"] == "ok" and r1["scored"] == len(TITULOS)
+        assert r1["evaluacion"]["moved_current"] is True
+        docs_materializados = contador["docs"]
+        assert docs_materializados == len(TITULOS)
+        feed_ce = _feed_actual(factory, pid)
+        assert feed_ce != antes and len(feed_ce) == len(TITULOS)
+
+        # Reanudable/idempotente: repetir NO re-puntúa ni duplica eventos
+        r2 = asyncio.run(materializar(
+            str(pid), str(polid), 60.0, session_factory=factory))
+        assert r2["status"] == "ok" and r2["scored"] == 0
+        assert contador["docs"] == docs_materializados  # CERO inferencias
+        eventos = _rows(
+            factory,
+            "SELECT count(*) AS n, count(DISTINCT event_id) AS d "
+            "FROM integration_outbox WHERE type = 'match.evaluated' "
+            "AND subject_profile_id = :p", p=pid)[0]
+        assert eventos.n == eventos.d  # un evento por eval_key, sin duplicar
+    finally:
+        ce.set_engine_factory(None)

@@ -20,7 +20,11 @@ import threading
 logger = logging.getLogger(__name__)
 
 INPUT_VERSION = "v1"
-BACKEND = "torch-cpu"
+# Backend de inferencia (P7-b): parte de la CLAVE del motor (P1-1) y de la
+# receta versionada. "torch-cpu" (por defecto) o "onnx-cpu" (NAS: paridad
+# 6e-06 probada en DEV_P7_BENCH_NAS_2026-09-04; requiere onnxruntime en la
+# imagen y un artefacto exportado con model.onnx[.data]).
+BACKEND = os.environ.get("CE_BACKEND", "torch-cpu")
 
 # Activaciones FIJAS y MONÓTONAS (el orden del modelo se conserva siempre;
 # solo cambia la escala del score persistido). sigmoid_t4 = σ(logit/4) existe
@@ -51,6 +55,10 @@ CE_BATCH_SIZE = 8
 # revisión 2026-09-03): allowlist determinista de lo que CrossEncoder carga.
 RUNTIME_FILES = (
     "added_tokens.json", "config.json", "merges.txt", "model.safetensors",
+    # Export ONNX (P7-b): el artefacto del backend NAS lleva el grafo y sus
+    # pesos externos en vez de safetensors; la MISMA huella agregada los
+    # sella (allowlist ∩ archivos presentes).
+    "model.onnx", "model.onnx.data",
     "sentencepiece.bpe.model", "special_tokens_map.json", "tokenizer.json",
     "tokenizer_config.json", "vocab.txt",
 )
@@ -111,6 +119,41 @@ def verify_model_identity(model: str, revision, fingerprint: str) -> None:
         )
 
 
+class _OnnxEngine:
+    """Motor ONNX Runtime (CPU) con el MISMO contrato que CrossEncoder:
+    predict(list[(query, doc)]) -> logits. Paridad con torch probada en el
+    benchmark P7 (Δmax 6e-06)."""
+
+    def __init__(self, ruta: str):
+        import onnxruntime as ort
+        from transformers import AutoTokenizer
+
+        self._tok = AutoTokenizer.from_pretrained(ruta)
+        self._sess = ort.InferenceSession(
+            os.path.join(ruta, "model.onnx"),
+            providers=["CPUExecutionProvider"],
+        )
+
+    def predict(self, pares, batch_size: int = 8):
+        import numpy as np
+
+        out: list[float] = []
+        for k in range(0, len(pares), batch_size):
+            lote = pares[k:k + batch_size]
+            enc = self._tok(
+                [q for q, _ in lote], [d for _, d in lote],
+                padding=True, truncation=True, max_length=512,
+                return_tensors="np",
+            )
+            logits = self._sess.run(
+                ["logits"],
+                {"input_ids": enc["input_ids"].astype(np.int64),
+                 "attention_mask": enc["attention_mask"].astype(np.int64)},
+            )[0].reshape(-1)
+            out.extend(float(x) for x in logits)
+        return out
+
+
 def set_engine_factory(factory) -> None:  # noqa: D401
     """Inyección para tests (None restaura el motor real). El stub debe
     exponer predict(list[tuple[str, str]]) -> list[float] (logits)."""
@@ -141,14 +184,26 @@ def _get_engine(model: str, revision, fingerprint=None):
                 # caché HF de la imagen/volumen. Un modelo FINE-TUNED es un
                 # directorio local (la huella de la receta lo sella): sin
                 # revisión de hub.
-                from sentence_transformers import CrossEncoder
-
-                if model.startswith("/"):
-                    motor = CrossEncoder(model, device="cpu", max_length=512)
+                if BACKEND == "onnx-cpu":
+                    # Solo artefactos LOCALES exportados (la receta del
+                    # backend NAS sella su propia huella ONNX).
+                    if not model.startswith("/"):
+                        raise ValueError(
+                            "backend onnx-cpu exige un artefacto local "
+                            f"exportado, no un modelo de hub: {model!r}"
+                        )
+                    motor = _OnnxEngine(model)
                 else:
-                    motor = CrossEncoder(
-                        model, revision=revision, device="cpu", max_length=512,
-                    )
+                    from sentence_transformers import CrossEncoder
+
+                    if model.startswith("/"):
+                        motor = CrossEncoder(
+                            model, device="cpu", max_length=512)
+                    else:
+                        motor = CrossEncoder(
+                            model, revision=revision, device="cpu",
+                            max_length=512,
+                        )
             _engines[clave] = motor
         return motor
 

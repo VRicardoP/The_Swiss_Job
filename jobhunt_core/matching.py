@@ -1383,6 +1383,180 @@ async def compute_policy_feed(
             "corpus_generation": corpus_gen}
 
 
+async def materialize_misses(
+    session_factory, profile_id, model_id, policy_id,
+    budget_seconds: float = 3600.0, batch_pairs: int = 64,
+) -> dict:
+    """Materialización INCREMENTAL por watermark (P7-b, predeclaración
+    3d21bb4): puntúa los misses del corpus VIGENTE por lotes reanudables e
+    idempotentes dentro de un presupuesto de tiempo, SIN publicar nada.
+
+    Cada lote comete sus filas (scores absolutos append-only = la caché) en
+    su propia transacción corta por la MISMA frontera que evaluate_profile
+    (_persist_eval_rows: filas + outbox). Un reinicio continúa donde quedó
+    (los hits ya no son misses). Un pico que agota el presupuesto devuelve
+    `status: "backlog"` con lo pendiente — el feed vigente queda intacto y
+    la última fotografía completa se sigue sirviendo (señal visible, jamás
+    feed parcial). Con remaining == 0 el llamador invoca evaluate_profile:
+    su valla F3 (FOR SHARE de la generación hasta el commit) garantiza que
+    lo publicado es una fotografía COMPLETA de UNA generación, o descarta.
+    """
+    import time as _time
+
+    t0 = _time.monotonic()
+    total_scored = 0
+    while True:
+        async with session_factory() as session:
+            computed = await compute_policy_feed(
+                session, profile_id, model_id, policy_id,
+                limit=CANONICAL_EVAL_LIMIT, exclude_dismissed=False,
+                ce_inference=False,
+            )
+            if computed["status"] == "ok_prep":
+                consumer_name = (
+                    await session.execute(
+                        sa.text(
+                            "SELECT c.name FROM profiles p "
+                            "JOIN consumers c ON c.id = p.consumer_id "
+                            "WHERE p.id = :pid"
+                        ),
+                        {"pid": profile_id},
+                    )
+                ).scalar_one()
+        if computed["status"] != "ok_prep":
+            # Política sin inferencia CE pendiente (p.ej. coseno) o sin
+            # vector: nada que materializar aquí.
+            return {"scored": total_scored, "remaining": 0, "agotado": False,
+                    "status": computed["status"]}
+        prep = computed["prep"]
+        misses = prep["misses"]
+        if not misses:
+            return {"scored": total_scored, "remaining": 0, "agotado": False,
+                    "status": "ok"}
+        if _time.monotonic() - t0 >= budget_seconds:
+            logger.warning(
+                "materialize: presupuesto agotado con %d misses pendientes "
+                "para %s — la última fotografía completa sigue sirviéndose",
+                len(misses), profile_id,
+            )
+            return {"scored": total_scored, "remaining": len(misses),
+                    "agotado": True, "status": "backlog"}
+        lote = misses[:batch_pairs]
+        prep_lote = dict(
+            prep, misses=lote, documentos=prep["documentos"][:len(lote)],
+            candidates=lote, cache={},
+        )
+        import asyncio as _asyncio
+
+        frescos = await _asyncio.to_thread(_ce_score_misses, prep_lote)
+        filas = _ce_assemble(prep_lote, frescos)
+        async with session_factory() as session:
+            await _persist_eval_rows(
+                session, profile_id, filas,
+                computed["profile_revision_id"], model_id, policy_id,
+                consumer_name,
+            )
+            await session.commit()
+        total_scored += len(filas)
+
+
+async def _persist_eval_rows(
+    session, profile_id, rows, prid, model_id, policy_id, consumer_name,
+):
+    """Persistencia CANÓNICA de evaluaciones (única frontera): filas
+    idempotentes por eval_key + outbox de match.evaluated para las frescas,
+    en la MISMA transacción del llamador. La usan evaluate_profile (F3) y el
+    materializador incremental por watermark (P7-b) — jamás un segundo
+    mecanismo de escritura. Devuelve (eval_rows, winners, new_evals)."""
+    eval_rows = [
+        {
+            "id": uuid.uuid4(), "pid": profile_id, "vid": r["vacancy_id"],
+            "orid": r["offer_revision_id"], "prid": prid,
+            "mid": model_id, "spid": policy_id,
+            "key": eval_key(r["offer_revision_id"], prid, model_id, policy_id),
+            "score": r["score"], "scores": json.dumps(r["score_parts"]),
+        }
+        for r in rows
+    ]
+    eval_rows.sort(key=lambda r: str(r["vid"]))  # orden determinista
+    await session.execute(
+        sa.text(
+            "INSERT INTO match_evaluations "
+            "(id, profile_id, vacancy_id, offer_revision_id, profile_revision_id, "
+            " model_id, scoring_policy_id, eval_key, score_final, scores) "
+            "VALUES (:id, :pid, :vid, :orid, :prid, :mid, :spid, :key, :score, "
+            "CAST(:scores AS jsonb)) "
+            "ON CONFLICT (profile_id, vacancy_id, eval_key) DO NOTHING"
+        ),
+        eval_rows,
+    )
+    # Ganadores REALES (idempotencia/carreras: la fila puede ser previa).
+    winners = {
+        (r.vacancy_id, r.eval_key): r.id
+        for r in (
+            await session.execute(
+                sa.text(
+                    "SELECT e.id, e.vacancy_id, e.eval_key FROM match_evaluations e "
+                    "JOIN unnest(CAST(:vids AS uuid[]), CAST(:keys AS text[])) "
+                    "  AS t(vid, k) ON e.vacancy_id = t.vid AND e.eval_key = t.k "
+                    "WHERE e.profile_id = :pid"
+                ),
+                {
+                    "pid": profile_id,
+                    "vids": [str(r["vid"]) for r in eval_rows],
+                    "keys": [r["key"] for r in eval_rows],
+                },
+            )
+        ).all()
+    }
+    fresh = [r for r in eval_rows if winners.get((r["vid"], r["key"])) == r["id"]]
+    new_evals = len(fresh)
+    if fresh:
+        # OUTBOX en la MISMA transacción que la escritura (A-10, ADR-05):
+        # event_id determinista por eval_key + DO NOTHING = re-emisión
+        # imposible; el estado de entrega va POR destino (ADR-06) — el BFF del
+        # consumidor del perfil (§3). Payload = SOLO IDs (el consumidor
+        # resuelve por /v1).
+        events = sorted(
+            (
+                {
+                    "eid": event_id_for("match.evaluated", r["key"]),
+                    "agg": r["key"], "pid": profile_id,
+                    "payload": json.dumps(
+                        {
+                            "eval_key": r["key"],
+                            "profile_id": str(profile_id),
+                            "vacancy_id": str(r["vid"]),
+                        }
+                    ),
+                }
+                for r in fresh
+            ),
+            key=lambda e: str(e["eid"]),
+        )
+        await session.execute(
+            sa.text(
+                "INSERT INTO integration_outbox "
+                "(event_id, aggregate, aggregate_id, subject_profile_id, "
+                " version, type, payload) "
+                "VALUES (:eid, 'match_evaluation', :agg, :pid, 1, "
+                "'match.evaluated', CAST(:payload AS jsonb)) "
+                "ON CONFLICT (event_id) DO NOTHING"
+            ),
+            events,
+        )
+        await session.execute(
+            sa.text(
+                "INSERT INTO integration_outbox_deliveries "
+                "(event_id, destination, next_attempt_at) "
+                "VALUES (:eid, :dest, clock_timestamp()) "
+                "ON CONFLICT (event_id, destination) DO NOTHING"
+            ),
+            [{"eid": e["eid"], "dest": consumer_name} for e in events],
+        )
+    return eval_rows, winners, new_evals
+
+
 async def evaluate_profile(
     session_factory, profile_id, model_id, policy_id, limit: int = 100,
     move_current: bool = True,
@@ -1585,92 +1759,10 @@ async def evaluate_profile(
                 "profile_revision_id": prid,
                 "corpus_generation": corpus_gen,
             }
-        eval_rows = [
-            {
-                "id": uuid.uuid4(), "pid": profile_id, "vid": r["vacancy_id"],
-                "orid": r["offer_revision_id"], "prid": prid,
-                "mid": model_id, "spid": policy_id,
-                "key": eval_key(r["offer_revision_id"], prid, model_id, policy_id),
-                "score": r["score"], "scores": json.dumps(r["score_parts"]),
-            }
-            for r in computed["rows"]
-        ]
-        eval_rows.sort(key=lambda r: str(r["vid"]))  # orden determinista
-        await session.execute(
-            sa.text(
-                "INSERT INTO match_evaluations "
-                "(id, profile_id, vacancy_id, offer_revision_id, profile_revision_id, "
-                " model_id, scoring_policy_id, eval_key, score_final, scores) "
-                "VALUES (:id, :pid, :vid, :orid, :prid, :mid, :spid, :key, :score, "
-                "CAST(:scores AS jsonb)) "
-                "ON CONFLICT (profile_id, vacancy_id, eval_key) DO NOTHING"
-            ),
-            eval_rows,
+        eval_rows, winners, new_evals = await _persist_eval_rows(
+            session, profile_id, computed["rows"], prid, model_id,
+            policy_id, locked.consumer_name,
         )
-        # Ganadores REALES (idempotencia/carreras: la fila puede ser previa).
-        winners = {
-            (r.vacancy_id, r.eval_key): r.id
-            for r in (
-                await session.execute(
-                    sa.text(
-                        "SELECT e.id, e.vacancy_id, e.eval_key FROM match_evaluations e "
-                        "JOIN unnest(CAST(:vids AS uuid[]), CAST(:keys AS text[])) "
-                        "  AS t(vid, k) ON e.vacancy_id = t.vid AND e.eval_key = t.k "
-                        "WHERE e.profile_id = :pid"
-                    ),
-                    {
-                        "pid": profile_id,
-                        "vids": [str(r["vid"]) for r in eval_rows],
-                        "keys": [r["key"] for r in eval_rows],
-                    },
-                )
-            ).all()
-        }
-        fresh = [r for r in eval_rows if winners.get((r["vid"], r["key"])) == r["id"]]
-        new_evals = len(fresh)
-        if fresh:
-            # OUTBOX en la MISMA transacción que la escritura (A-10, ADR-05):
-            # event_id determinista por eval_key + DO NOTHING = re-emisión
-            # imposible; el estado de entrega va POR destino (ADR-06) — el BFF del
-            # consumidor del perfil (§3). Payload = SOLO IDs (el consumidor
-            # resuelve por /v1).
-            events = sorted(
-                (
-                    {
-                        "eid": event_id_for("match.evaluated", r["key"]),
-                        "agg": r["key"], "pid": profile_id,
-                        "payload": json.dumps(
-                            {
-                                "eval_key": r["key"],
-                                "profile_id": str(profile_id),
-                                "vacancy_id": str(r["vid"]),
-                            }
-                        ),
-                    }
-                    for r in fresh
-                ),
-                key=lambda e: str(e["eid"]),
-            )
-            await session.execute(
-                sa.text(
-                    "INSERT INTO integration_outbox "
-                    "(event_id, aggregate, aggregate_id, subject_profile_id, "
-                    " version, type, payload) "
-                    "VALUES (:eid, 'match_evaluation', :agg, :pid, 1, "
-                    "'match.evaluated', CAST(:payload AS jsonb)) "
-                    "ON CONFLICT (event_id) DO NOTHING"
-                ),
-                events,
-            )
-            await session.execute(
-                sa.text(
-                    "INSERT INTO integration_outbox_deliveries "
-                    "(event_id, destination, next_attempt_at) "
-                    "VALUES (:eid, :dest, clock_timestamp()) "
-                    "ON CONFLICT (event_id, destination) DO NOTHING"
-                ),
-                [{"eid": e["eid"], "dest": locked.consumer_name} for e in events],
-            )
         moved = False
         # La valla de canonicidad P1-C (revisión 2026-09-02) vive ahora DENTRO
         # de la revalidación atómica de arriba (revisión 2026-09-04): política
