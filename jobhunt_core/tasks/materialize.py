@@ -74,6 +74,7 @@ async def _con_factory(factory, profile_id, policy_id, budget_seconds):
             ).scalar_one_or_none()
         ev = await matching.evaluate_profile(
             factory, profile_id, model_id, policy_id,
+            limit=matching.CANONICAL_EVAL_LIMIT,
             move_current=str(canonica) == str(policy_id),
         )
         resultado["evaluacion"] = {
