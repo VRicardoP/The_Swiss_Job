@@ -14,7 +14,15 @@
 > única `declare_active_models`), con mordidas verificadas y suite 1038/1038 (1044/1044 al
 > final del día, HEAD `e8043fa`). El v10 midió 0.9872/0.8604 (Public `72171c8`) y el
 > benchmark NAS se resolvió por la vía incremental P7-b: **APTA** (Public `2fbad1e`).
-> Estado vigente: `ESTADO_Y_HOJA_DE_RUTA.md` **§22**.
+> Estado vigente: `ESTADO_Y_HOJA_DE_RUTA.md` **§24**.
+>
+> **Desenlace (2026-09-06).** La ronda 3 (0.9872/0.8604) resultó INFLADA por
+> memorización: su top-10 tenía 9/10 pares vistos en entrenamiento. El examen
+> único sobre pares NO VISTOS dio **0.5856 (P1) / 0.7438 (P2)** frente a
+> baseline 0.4662/0.3502 ⇒ **NO-GO DE CALIDAD** con el holdout CONSUMIDO
+> (`EXAMEN_HOLDOUT_2026-09-06/`, veredicto `b848e71`). La candidata generaliza
+> mejor que la baseline pero no alcanza el umbral absoluto. NO citar como
+> calidad ningún número de desarrollo de esta campaña.
 
 Ejecución del PROMPT_CORRECCION_CIERRE_DEFINITIVO (revisión 2026-09-03).
 Entorno: SOLO R5; `:prod` intacta. Partida `2619618`; HEAD `be6634d`.
