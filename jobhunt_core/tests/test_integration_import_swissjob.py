@@ -339,3 +339,54 @@ def test_declare_exclusiones_proyecta_altas_Y_BAJAS(db):
     # falla CERRADO ante regla malformada (no la silencia)
     with pytest.raises(ValueError, match="exclusión inválida"):
         asyncio.run(declarar([{"kind": "regex", "pattern": "x"}]))
+
+
+def test_rollback_restaura_una_fila_que_YA_tenia_dismissed_at(db):
+    """Ensayo fiel 2026-09-07: el rollback pasaba `dismissed_at_antes` como
+    CADENA ISO a un parámetro timestamptz y asyncpg lo rechazaba. Solo se
+    dispara si la fila previa YA tenía dismissed_at — el caso de los 14
+    thumbs_down de producción, que ninguna fixture cubría."""
+    from datetime import datetime, timezone
+
+    factory, created = db
+    pid, mid, polid, vacs = _setup(factory, created, TITULOS)
+    urls = _urls(factory, created)
+    objetivo = vacs[TITULOS[0]]
+    previo = datetime(2026, 6, 2, 7, 48, 15, tzinfo=timezone.utc)
+
+    async def fila_previa():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "INSERT INTO profile_vacancy_state "
+                "(profile_id, vacancy_id, dismissed_at, notes) "
+                "VALUES (:p, :v, :d, 'previa')"),
+                {"p": pid, "v": objetivo, "d": previo})
+            await s.commit()
+
+    asyncio.run(fila_previa())
+
+    plan = {
+        "profiles": {"u1": str(pid)},
+        "feedback": {"u1": [{"url": urls[TITULOS[0]],
+                             "feedback": "thumbs_down",
+                             "created_at": "2026-08-01T10:00:00+00:00"}]},
+        "saved_searches": {"u1": []}, "exclusions": {"u1": []},
+    }
+
+    async def ida_y_vuelta():
+        async with factory() as s:
+            man = await isd.run_import(s, plan)
+            await s.commit()
+        async with factory() as s:
+            await isd.rollback_import(s, man)   # aquí reventaba
+            await s.commit()
+        async with factory() as s:
+            return (await s.execute(sa.text(
+                "SELECT feedback, dismissed_at, notes FROM "
+                "profile_vacancy_state WHERE profile_id = :p AND "
+                "vacancy_id = :v"), {"p": pid, "v": objetivo})).one()
+
+    fila = asyncio.run(ida_y_vuelta())
+    assert fila.feedback is None
+    assert fila.dismissed_at == previo   # la marca previa, intacta
+    assert fila.notes == "previa"

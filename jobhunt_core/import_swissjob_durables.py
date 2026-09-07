@@ -364,14 +364,24 @@ async def rollback_import(session: AsyncSession, manifest: dict) -> dict:
             if borrada is not None:
                 counts["pvs_deleted"] += 1
                 continue
+        # La marca previa viaja por el manifiesto como CADENA ISO (JSON no
+        # tiene timestamps): asyncpg valida el TIPO del parámetro antes de
+        # cualquier CAST, así que hay que devolverla a datetime. Solo se
+        # notaba si la fila previa YA tenía dismissed_at — el caso real de
+        # los thumbs_down migrados (ensayo fiel 2026-09-07).
+        previo = e["dismissed_at_antes"]
+        if isinstance(previo, str):
+            from datetime import datetime
+
+            previo = datetime.fromisoformat(previo)
         await session.execute(
             sa.text(
                 "UPDATE profile_vacancy_state "
-                "SET feedback = :f, dismissed_at = CAST(:d AS timestamptz) "
+                "SET feedback = :f, dismissed_at = :d "
                 "WHERE profile_id = :p AND vacancy_id = :v"
             ),
             {
-                "f": e["feedback_antes"], "d": e["dismissed_at_antes"],
+                "f": e["feedback_antes"], "d": previo,
                 "p": e["profile_id"], "v": e["vacancy_id"],
             },
         )
