@@ -544,46 +544,54 @@ async def put_profile_exclusions(
     session=Depends(get_session),
     principal: Principal = Depends(require_scope("profiles:write")),
 ):
-    """Declara el conjunto COMPLETO de exclusiones del perfil (revisión
-    externa 2026-09-07, hallazgo B).
+    """Versioned full snapshot: stale delivery cannot restore an older rule.
 
-    El core sirve el feed, así que es el escritor efectivo de la
-    configuración que lo determina; el BFF empuja aquí sus altas y BAJAS. Al
-    ser declarativo, una baja no puede perderse por el camino —que es
-    exactamente lo que ocurría cuando el BFF escribía en su tabla legacy y
-    solo un importador de altas llegaba al core—. Ownership por tenant bajo
-    el LOCK del perfil, como el PUT del CV.
+    Profile lock covers ownership, version check, rules and ACK snapshot.
+    Duplicate versions must describe exactly the same normalized rules.
     """
-    consumer_id = (
-        await session.execute(
-            sa.text(
-                "SELECT consumer_id FROM profiles WHERE id = :pid FOR UPDATE"
-            ),
-            {"pid": profile_id},
-        )
-    ).scalar_one_or_none()
-    if consumer_id is None or str(consumer_id) != str(principal.consumer_id):
+    owner = (await session.execute(
+        sa.text("SELECT consumer_id, exclusions_version FROM profiles "
+                "WHERE id = :pid FOR UPDATE"),
+        {"pid": profile_id},
+    )).one_or_none()
+    if owner is None or str(owner.consumer_id) != str(principal.consumer_id):
         raise ApiError(404, "not_found", "perfil no encontrado")
-    try:
-        await matching.declare_profile_exclusions(
-            session, profile_id,
-            [e.model_dump() for e in body.exclusions],
-        )
-    except ValueError as exc:
-        raise ApiError(400, "invalid_exclusion", str(exc)) from exc
+    version = owner.exclusions_version
+    if body.version >= version:
+        requested = sorted(set((e.kind, e.pattern.strip()) for e in body.exclusions))
+        if body.version == version:
+            current = (await session.execute(
+                sa.text("SELECT kind, pattern FROM profile_exclusions "
+                        "WHERE profile_id = :p ORDER BY kind, pattern"),
+                {"p": profile_id},
+            )).all()
+            if requested != [(r.kind, r.pattern) for r in current]:
+                raise ApiError(409, "exclusion_version_conflict",
+                               "misma version con contenido diferente")
+        else:
+            try:
+                await matching.declare_profile_exclusions(
+                    session, profile_id,
+                    [{"kind": k, "pattern": p} for k, p in requested],
+                )
+            except ValueError as exc:
+                raise ApiError(400, "invalid_exclusion", str(exc)) from exc
+            await session.execute(
+                sa.text("UPDATE profiles SET exclusions_version = :v WHERE id = :p"),
+                {"v": body.version, "p": profile_id},
+            )
+            version = body.version
+    rows = (await session.execute(
+        sa.text("SELECT kind, pattern FROM profile_exclusions "
+                "WHERE profile_id = :p ORDER BY kind, pattern"),
+        {"p": profile_id},
+    )).all()
+    result = schemas.ExclusionsDTO(
+        version=version,
+        exclusions=[schemas.ExclusionDTO(kind=r.kind, pattern=r.pattern) for r in rows],
+    )
     await session.commit()
-    filas = (
-        await session.execute(
-            sa.text(
-                "SELECT kind, pattern FROM profile_exclusions "
-                "WHERE profile_id = :p ORDER BY kind, pattern"
-            ),
-            {"p": profile_id},
-        )
-    ).all()
-    return schemas.ExclusionsDTO(
-        exclusions=[schemas.ExclusionDTO(kind=f.kind, pattern=f.pattern)
-                    for f in filas])
+    return result
 
 
 @router.get("/profiles/{profile_id}/matches", response_model=schemas.MatchesPageDTO,

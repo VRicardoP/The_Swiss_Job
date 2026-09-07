@@ -62,6 +62,21 @@ async def _impl(profile_id: str, policy_id: str, budget_seconds: float,
 
 
 async def _con_factory(factory, profile_id, policy_id, budget_seconds):
+    """One deadline includes model lookup, preparation and final publication."""
+    work_budget = max(0.0, budget_seconds - matching._margen_cierre(budget_seconds))
+    if not work_budget:
+        return {"profile_id": str(profile_id), "status": "backlog",
+                "scored": 0, "remaining": None, "agotado": True}
+    try:
+        async with asyncio.timeout(work_budget):
+            return await _con_factory_within_budget(factory, profile_id, policy_id, work_budget)
+    except TimeoutError:
+        logger.warning("materialize: end-to-end deadline expired for %s", profile_id)
+        return {"profile_id": str(profile_id), "status": "backlog",
+                "scored": None, "remaining": None, "agotado": True}
+
+
+async def _con_factory_within_budget(factory, profile_id, policy_id, budget_seconds):
     async with factory() as session:
         model_id = await matching.canonical_model_id(session, profile_id)
     if model_id is None:

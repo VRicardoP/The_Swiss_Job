@@ -23,7 +23,9 @@ from schemas.analytics import (
 )
 from services.pattern_analysis_service import PatternAnalysisService
 
-from services.exclusions_sync import sync_exclusions_to_core
+from services.exclusions_sync import (
+    exclusion_sync_status, lock_filter_writer, queue_exclusions, sync_exclusions_to_core,
+)
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 
@@ -96,6 +98,7 @@ async def review_suggestion(
 
     Si se aprueba, crea un JobFilter activo con el patrón sugerido.
     """
+    await lock_filter_writer(db, current_user.id)
     result = await db.execute(
         select(PatternSuggestion).where(
             PatternSuggestion.id == suggestion_id,
@@ -142,6 +145,8 @@ async def review_suggestion(
         await db.flush()
         filter_id = new_filter.id
 
+    if body.action == "approve":
+        await queue_exclusions(db, current_user.id)
     await db.commit()
     if body.action == "approve":
         # La aprobación crea una regla efectiva: mismo camino declarativo.
@@ -186,7 +191,8 @@ async def list_filters(
     )
     total = (await db.execute(total_stmt)).scalar_one()
 
-    return JobFiltersResponse(data=list(filters), total=total)
+    return JobFiltersResponse(data=list(filters), total=total,
+                              sync_status=await exclusion_sync_status(db, current_user.id))
 
 
 @router.post(
@@ -209,7 +215,9 @@ async def create_filter(
         source="manual",
         approved_at=now,
     )
+    await lock_filter_writer(db, current_user.id)
     db.add(new_filter)
+    await queue_exclusions(db, current_user.id)
     await db.commit()
     await db.refresh(new_filter)
     # El core sirve el feed y aplica estas reglas: se le empuja el conjunto
@@ -226,6 +234,7 @@ async def delete_filter(
     db: AsyncSession = Depends(get_db),
 ):
     """Elimina (desactiva) un filtro de exclusión."""
+    await lock_filter_writer(db, current_user.id)
     result = await db.execute(
         select(JobFilter).where(
             JobFilter.id == filter_id,
@@ -239,6 +248,7 @@ async def delete_filter(
         )
 
     job_filter.is_active = False
+    await queue_exclusions(db, current_user.id)
     await db.commit()
     # BAJA: la proyección declarativa la lleva al core; sin esto la regla
     # seguía excluyendo allí para siempre (hallazgo B).

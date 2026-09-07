@@ -132,12 +132,14 @@ class ExclusionsWriteDTO(BaseModel):
     """
 
     exclusions: list[ExclusionDTO]
+    version: int = Field(ge=1, le=9223372036854775807)
 
 
 class ExclusionsDTO(BaseModel):
     """Representación de las exclusiones vigentes."""
 
     exclusions: list[ExclusionDTO]
+    version: int
 
 
 class ProfileWriteDTO(BaseModel):

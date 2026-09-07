@@ -312,7 +312,6 @@ SOURCES_DECIDED_IN_ADVANCE: frozenset[str] = frozenset(
         # WINDOW con fecha confirmada, deshabilitadas hoy
         "reliefweb",
         "himalayas",
-        "jobicy",
         "remoteok",
         "ictjobs",
         "swisstechjobs",

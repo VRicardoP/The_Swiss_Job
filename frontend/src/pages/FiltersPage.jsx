@@ -298,6 +298,15 @@ export default function FiltersPage() {
         }
       />
 
+      {filtersData?.sync_status?.pending && (
+        <div role="status" className="mt-4 rounded-lg border border-border p-3 text-sm text-text-secondary">
+          Changes saved. Synchronization with matching is pending; retries are automatic.
+          {filtersData.sync_status.last_error === "core_version_ahead" && (
+            <p>Version conflict detected. An administrator must reconcile the restored state.</p>
+          )}
+        </div>
+      )}
+
       {/* Tabs segmented */}
       <div className="mt-6 inline-flex rounded-lg border border-border bg-surface-secondary p-0.5">
         {TABS.map((t) => (

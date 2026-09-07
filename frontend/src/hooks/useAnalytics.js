@@ -35,6 +35,7 @@ export function useFilters() {
     queryKey: ['analytics-filters'],
     queryFn: () => analyticsApi.listFilters(),
     staleTime: 30_000,
+    refetchInterval: (query) => query.state.data?.sync_status?.pending ? 5_000 : false,
   })
 }
 

@@ -1189,6 +1189,21 @@ async def declare_profile_exclusions(session, profile_id, reglas) -> dict:
                 f"exclusión inválida {r!r}: kind ∈ {VALID_EXCLUSION_KINDS} y "
                 "pattern no vacío")
         normalizadas.append({"kind": kind, "pattern": patron})
+    # Same lock order as publication: profile -> generation -> writes.
+    owner = (await session.execute(
+        sa.text("SELECT id FROM profiles WHERE id = :p FOR UPDATE"),
+        {"p": profile_id},
+    )).scalar_one_or_none()
+    if owner is None:
+        raise ValueError("perfil no encontrado")
+    actuales = (await session.execute(
+        sa.text("SELECT kind, pattern FROM profile_exclusions WHERE profile_id = :p"),
+        {"p": profile_id},
+    )).all()
+    if {(r.kind, r.pattern) for r in actuales} == {
+        (r["kind"], r["pattern"]) for r in normalizadas
+    }:
+        return {"declaradas": len(normalizadas)}
     await session.execute(
         sa.text("DELETE FROM profile_exclusions WHERE profile_id = :p"),
         {"p": profile_id},
@@ -1359,7 +1374,7 @@ async def compute_policy_feed(
     if target == 0:
         return {"status": "ok", "rows": [],
                 "profile_revision_id": prof.revision_id,
-                "corpus_generation": corpus_gen}
+                "corpus_generation": None}
     recuperacion = receta_ce if receta_ce is not None else receta
     if recuperacion is not None:
         lex_query = _LEXICAL_QUERY_BUILDERS[recuperacion["lexical_query"]](
@@ -1503,109 +1518,12 @@ def _margen_cierre(budget_seconds: float) -> float:
 
 async def materialize_misses(
     session_factory, profile_id, model_id, policy_id,
-    budget_seconds: float = 3600.0, batch_pairs: int = 64,
+    budget_seconds: float = 3600.0, batch_pairs: int = 8,
 ) -> dict:
-    """Materialización INCREMENTAL por watermark (P7-b, predeclaración
-    3d21bb4) con presupuesto que se respeta HASTA EL FINAL.
-
-    Revisión externa 2026-09-07 (hallazgo A): comprobar el reloj solo al
-    ENTRAR en cada tanda admitía empezar una tanda completa faltando segundos
-    para el límite y terminarla muy por encima (repro: 1.159 s → arrancaba
-    otra de 64 documentos). Ahora, antes de cada tanda y antes de volver a
-    preparar, se exige que el coste CONSERVADOR estimado —costes de
-    recuperación e inferencia OBSERVADOS, más el margen de cierre— quepa en
-    lo que resta. Si no cabe, se devuelve `backlog` reanudable: el feed
-    vigente queda intacto y la señal es visible.
-
-    Cada tanda comete sus filas (scores absolutos append-only = la caché) por
-    la MISMA frontera que evaluate_profile. Un reinicio continúa donde quedó.
-    Con `remaining == 0` el llamador publica: su valla F3 (con la generación
-    bloqueada hasta el commit) garantiza fotografía completa de UNA
-    generación, o descarta.
-    """
-    import asyncio as _asyncio
-    import time as _time
-
-    t0 = _time.monotonic()
-    total_scored = 0
-    coste_doc = 0.0    # segundos por documento, MÁXIMO observado
-    coste_prep = 0.0   # segundos de recuperación, MÁXIMO observado
-
-    margen = _margen_cierre(budget_seconds)
-
-    def restante() -> float:
-        return budget_seconds - (_time.monotonic() - t0)
-
-    while True:
-        if coste_prep and restante() <= coste_prep + margen:
-            # Ni siquiera cabe volver a mirar el corpus.
-            logger.warning(
-                "materialize: sin presupuesto para otra recuperación de %s — "
-                "backlog reanudable", profile_id)
-            return {"scored": total_scored, "remaining": None,
-                    "agotado": True, "status": "backlog"}
-        t_prep = _time.monotonic()
-        async with session_factory() as session:
-            computed = await compute_policy_feed(
-                session, profile_id, model_id, policy_id,
-                limit=CANONICAL_EVAL_LIMIT, exclude_dismissed=False,
-                ce_inference=False,
-            )
-            if computed["status"] == "ok_prep":
-                consumer_name = (
-                    await session.execute(
-                        sa.text(
-                            "SELECT c.name FROM profiles p "
-                            "JOIN consumers c ON c.id = p.consumer_id "
-                            "WHERE p.id = :pid"
-                        ),
-                        {"pid": profile_id},
-                    )
-                ).scalar_one()
-        coste_prep = max(coste_prep, _time.monotonic() - t_prep)
-        if computed["status"] != "ok_prep":
-            return {"scored": total_scored, "remaining": 0, "agotado": False,
-                    "status": computed["status"]}
-        prep = computed["prep"]
-        misses = prep["misses"]
-        if not misses:
-            return {"scored": total_scored, "remaining": 0, "agotado": False,
-                    "status": "ok"}
-
-        for k in range(0, len(misses), batch_pairs):
-            lote = misses[k:k + batch_pairs]
-            # Reserva CONSERVADORA: lo que costará esta tanda más su cierre.
-            # El margen se exige SIEMPRE, tenga o no estimación de coste: con
-            # el presupuesto ya agotado no se empieza ni la primera tanda
-            # (antes, sin `coste_doc` observado, se colaba una entera).
-            estimado = len(lote) * coste_doc + margen
-            if restante() <= margen or (coste_doc and estimado > restante()):
-                pendientes = len(misses) - k
-                logger.warning(
-                    "materialize: la tanda de %d documentos no cabe en los "
-                    "%.0f s restantes para %s (%d pendientes) — la última "
-                    "fotografía completa sigue sirviéndose",
-                    len(lote), restante(), profile_id, pendientes)
-                return {"scored": total_scored, "remaining": pendientes,
-                        "agotado": True, "status": "backlog"}
-            prep_lote = dict(
-                prep, misses=lote,
-                documentos=prep["documentos"][k:k + len(lote)],
-                candidates=lote, cache={},
-            )
-            t_lote = _time.monotonic()
-            frescos = await _asyncio.to_thread(_ce_score_misses, prep_lote)
-            filas = _ce_assemble(prep_lote, frescos)
-            coste_doc = max(coste_doc,
-                            (_time.monotonic() - t_lote) / max(len(lote), 1))
-            async with session_factory() as session:
-                await _persist_eval_rows(
-                    session, profile_id, filas,
-                    computed["profile_revision_id"], model_id, policy_id,
-                    consumer_name,
-                )
-                await session.commit()
-            total_scored += len(filas)
+    """Budgeted execution; evaluation and persistence remain in this module."""
+    from jobhunt_core.materialization import materialize_misses as run
+    return await run(session_factory, profile_id, model_id, policy_id,
+                     budget_seconds=budget_seconds, batch_pairs=batch_pairs)
 
 
 async def _persist_eval_rows(
@@ -2001,7 +1919,7 @@ async def evaluate_profile(
             "profile_revision_id": prid,
             "corpus_generation": corpus_gen,
         }
-        if on_evaluated is not None and resultado["evaluated"]:
+        if on_evaluated is not None:
             # MISMA transacción que la persistencia final: o se registran
             # ambas o ninguna (atómico, como exige P1-3).
             await on_evaluated(session, resultado, model_id, policy_id)

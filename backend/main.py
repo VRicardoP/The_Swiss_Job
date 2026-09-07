@@ -13,6 +13,7 @@ from core.rate_limit import limiter
 from logging_setup import configure_logging
 from providers import log_provider_status
 from services.scheduler import run_scheduler_with_leader_lock
+from services.exclusions_sync import run_exclusion_delivery
 from services.sse_manager import SSEManager
 from routers.analytics import router as analytics_router
 from routers.applications import router as applications_router
@@ -94,12 +95,18 @@ async def lifespan(app: FastAPI):
     # El scheduler corre en UN SOLO proceso (leader-lock en Redis) para evitar
     # el doble disparo con varios workers de gunicorn.
     scheduler_task = asyncio.create_task(run_scheduler_with_leader_lock())
+    exclusion_delivery_task = asyncio.create_task(run_exclusion_delivery())
 
     yield
 
     # Shutdown
     if warmup_task is not None and not warmup_task.done():
         warmup_task.cancel()
+    exclusion_delivery_task.cancel()
+    try:
+        await exclusion_delivery_task
+    except asyncio.CancelledError:
+        pass
     scheduler_task.cancel()
     try:
         await scheduler_task

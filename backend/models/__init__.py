@@ -8,6 +8,7 @@ from models.enums import (
     Seniority,
     UserPlan,
 )
+from models.exclusion_sync_state import ExclusionSyncState
 from models.generated_document import GeneratedDocument
 from models.job import Job
 from models.job_application import JobApplication
@@ -27,6 +28,7 @@ __all__ = [
     "ApplicationStatus",
     "ContractType",
     "GeneratedDocument",
+    "ExclusionSyncState",
     "Job",
     "JobApplication",
     "JobFilter",

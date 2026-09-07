@@ -54,6 +54,7 @@ class JobFilterResponse(BaseModel):
 class JobFiltersResponse(BaseModel):
     data: list[JobFilterResponse]
     total: int
+    sync_status: dict | None = None
 
 
 class CreateFilterRequest(BaseModel):

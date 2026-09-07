@@ -1,0 +1,74 @@
+*** Begin Patch
+*** Update File: /home/lothar/Public/SwissJob/jobhunt_core/matching.py
+@@
+-        if on_evaluated is not None and resultado["evaluated"]:
++        if on_evaluated is not None:
+*** Update File: /home/lothar/Public/SwissJob/jobhunt_core/tasks/matching.py
+@@
+-            # Solo cuenta como intento si de verdad se evaluó algo (P1 rev.
+-            # ronda 4): el propio evaluate lo garantiza invocándolo solo con
+-            # evaluated > 0.
++            # Un resultado vacío también es un intento válido tras revalidar
++            # la generación y publicar el feed vacío. Los caminos sin vector,
++            # no encontrados o descartados retornan antes de esta costura.
+*** Update File: /home/lothar/Public/SwissJob/jobhunt_core/tests/test_integration_migration_rehearsal.py
+@@
+-                assert version == "core0041"
++                assert version == "core0042"
+*** Update File: /home/lothar/Public/SwissJob/jobhunt_core/tests/test_integration_shadow_labels.py
+@@
+-        assert asyncio.run(seed_and_version()) == "core0041"
++        assert asyncio.run(seed_and_version()) == "core0042"
+@@
+-                assert version == "core0041"
++                assert version == "core0042"
+*** Update File: /home/lothar/Public/SwissJob/jobhunt_core/tests/test_integration_capture.py
+@@
+-                == "core0041"
++                == "core0042"
+@@
+-                == "core0041"
++                == "core0042"
+*** Update File: /home/lothar/Public/SwissJob/backend/tests/test_exclusions_sync.py
+@@
+-from database import async_sessionmaker
+*** Update File: /home/lothar/Public/SwissJob/backend/services/exclusions_sync.py
+@@
+         if ack > sent_version:
+-            # Never acknowledge stale local state after a DB restore either.
+-            return {"status": "superseded", "version": sent_version}
++            # A newer local snapshot is untouched by the conditional error write.
++            # After a DB restore, expose the mismatch instead of retrying silently.
++            raise ValueError("core_version_ahead")
+@@
+     except Exception as exc:
+-        await db.rollback()
+         # Do not persist/log exception text (HTTP failures can contain credentials).
+         error = str(exc) if isinstance(exc, ValueError) and str(exc) in {
+-            "sin_vinculo", "invalid_ack",
++            "sin_vinculo", "invalid_ack", "core_version_ahead",
+         } else type(exc).__name__
+-        if sent_version is not None:
+-            await db.execute(update(ExclusionSyncState).where(
+-                ExclusionSyncState.user_id == user_id,
+-                ExclusionSyncState.version == sent_version,
+-            ).values(last_error=error, last_attempt_at=func.now()))
+-            await db.commit()
++        try:
++            await db.rollback()
++            if sent_version is not None:
++                await db.execute(update(ExclusionSyncState).where(
++                    ExclusionSyncState.user_id == user_id,
++                    ExclusionSyncState.version == sent_version,
++                ).values(last_error=error, last_attempt_at=func.now()))
++                await db.commit()
++        except Exception:
++            # The original mutation and pending row are already committed.
++            # An unavailable diagnostics DB must not turn that success into HTTP 500.
++            try:
++                await db.rollback()
++            except Exception:
++                pass
++            logger.warning("exclusions_sync: could not persist delivery diagnostics")
+         logger.warning("exclusions_sync: pending delivery (%s)", error)
+*** End Patch

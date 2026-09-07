@@ -429,17 +429,14 @@ def test_gate_puntua_solo_la_cohorte_holdout(db):
         asyncio.run(limpia())
 
 
-def test_hnsw_underfill_cae_al_scan_exacto(db):
-    """Regresión auditoría Nº2 IMPORTANTE 1, versión de la RONDA 2 de la
-    revisión: mi afirmación de que el underfill real era irreproducible en
-    tests quedó REFUTADA — el revisor lo reprodujo estable con 350 vectores
-    intra [1,0,…] + 5 cross [0.99,0.1,…] (ef_search=40, strict_order,
-    max_scan_tuples=1, seq scan vetado ⇒ 0/5 vecinos). Esta es esa
-    geometría, de verdad: el aproximado se queda a cero, el fallback exacto
-    (espía SOLO-observador: enable_indexscan = off ejecutado) recupera los
-    5 pares a ~0.995. Barato: solo UNA revisión queda "nueva" en la ventana
-    (las 354 distracciones se envejecen), así que el scan procesa una única
-    consulta kNN sobre un HNSW que contiene toda la geometría."""
+def test_hnsw_underfill_cae_al_scan_exacto(db, monkeypatch):
+    """Ejercita el fallback exacto con corpus real y disparador controlado.
+
+    La geometría es 350 intra + 5 cross, pero NO se afirma que el ANN
+    entregue siempre 0/5: puede llenar su cupo. k=6 supera los 5 elegibles,
+    garantiza que se consulte el conteo y el objetivo inyectado fuerza
+    la rama exacta. El espía observa sus toggles sin sustituir los resultados.
+    """
     import jobhunt_core.dedup as dedup_mod
 
     factory, created = db
@@ -473,6 +470,7 @@ def test_hnsw_underfill_cae_al_scan_exacto(db):
     ejecutadas: list[str] = []
     original = dedup_mod.MAX_SCAN_TUPLES
     original_count = dedup_mod._KNN_COUNT_SQL
+    monkeypatch.setattr(dedup_mod.settings, "CORE_DEDUP_KNN", 6)
     dedup_mod.MAX_SCAN_TUPLES = 1  # el presupuesto del repro del revisor
     # Underfill DETERMINISTA (revisión externa 2026-09-07, P2): forzarlo solo
     # con los vetos del planner dependía del estado del índice HNSW, que la
@@ -507,13 +505,9 @@ def test_hnsw_underfill_cae_al_scan_exacto(db):
                     return res
 
                 s.execute = espia  # SOLO observa y gestiona los vetos
-                # Underfill DETERMINISTA (revisión externa 2026-09-07, P2):
-                # forzarlo por el planner dependía del estado del índice HNSW,
-                # compartido con el resto de la suite — verde en aislamiento y
-                # rojo según el orden. Aquí se veta además el propio índice en
-                # la pasada aproximada, con lo que el scan acotado se queda
-                # corto SIEMPRE y la rama exacta se ejercita de verdad. La
-                # prueba del HNSW real vive en su test de integración aparte.
+                # Los vetos mantienen la geometría histórica de la sonda.
+                # La activación obligatoria del fallback la fijan k=6 y el
+                # objetivo inyectado, no una suposición sobre el planner.
                 await s.execute(sa.text("SET LOCAL enable_seqscan = off"))
                 await s.execute(sa.text("SET LOCAL enable_sort = off"))
                 r = await scan_semantic_candidates(s, window_hours=1)
@@ -526,7 +520,7 @@ def test_hnsw_underfill_cae_al_scan_exacto(db):
         dedup_mod._KNN_COUNT_SQL = original_count
 
     assert r["status"] == "ok" and r["escaneadas"] == 1
-    # la rama exacta SE EJECUTÓ (el aproximado devolvió 0/5 reales)
+    # La rama exacta SE EJECUTÓ; no se presupone la cardinalidad del ANN.
     assert any("enable_indexscan = off" in q for q in ejecutadas)
     pares = _pairs(factory, created)
     assert len(pares) == 5

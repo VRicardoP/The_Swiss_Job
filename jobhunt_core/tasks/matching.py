@@ -94,9 +94,9 @@ async def _run_profile_with(
             # P1-3: evaluate_profile es TRIFÁSICO (prepara/inflere/persiste
             # con transacciones cortas propias); on_evaluated corre dentro de
             # su fase de persistencia — misma transacción, o ambas o ninguna.
-            # Solo cuenta como intento si de verdad se evaluó algo (P1 rev.
-            # ronda 4): el propio evaluate lo garantiza invocándolo solo con
-            # evaluated > 0.
+            # Un resultado vacío también es un intento válido tras revalidar
+            # la generación y publicar el feed vacío. Los caminos sin vector,
+            # no encontrados o descartados retornan antes de esta costura.
             if str((policy.weights or {}).get("algorithm", "")).startswith(
                     "cross_encoder"):
                 # P1-3 (revisión externa 2026-09-07): la inferencia del

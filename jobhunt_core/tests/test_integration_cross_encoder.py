@@ -696,7 +696,7 @@ def test_materializacion_por_watermark_presupuesto_y_publicacion(db):
         # Presupuesto 0: primer ciclo entra ya agotado ⇒ backlog, 0 publicado
         r0 = asyncio.run(materializar(
             str(pid), str(polid), 0.0, session_factory=factory))
-        assert r0["status"] == "backlog" and r0["remaining"] == len(TITULOS)
+        assert r0["status"] == "backlog" and r0["remaining"] is None  # zero budget: do not spend time counting misses
         assert "evaluacion" not in r0
         assert _feed_actual(factory, pid) == antes  # fotografía previa intacta
 

@@ -135,3 +135,23 @@ def _barrido_al_ralenti(monkeypatch):
     from jobhunt_core.harvest.providers import arbeitnow
 
     monkeypatch.setattr(arbeitnow, "PAGE_PAUSE_S", 0.001)
+
+
+@pytest.fixture(autouse=True)
+def _materialization_test_engine(monkeypatch):
+    """SQL fixtures use their injected CE engine, not a real model subprocess.
+
+    Process timeout/reaping/protocol are exercised separately by test_ce_runtime.
+    This preserves the existing engine and clock seams of the adversarial tests.
+    """
+    import asyncio
+    from jobhunt_core import matching, materialization
+
+    class TestScorer:
+        async def score(self, prep, timeout):
+            return await asyncio.to_thread(matching._ce_score_misses, prep)
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(materialization, "scorer_factory", TestScorer)

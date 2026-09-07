@@ -1,0 +1,8 @@
+*** Begin Patch
+*** Update File: /home/lothar/Public/SwissJob/backend/services/harvest_window.py
+@@
+         "reliefweb",
+         "himalayas",
+-        "jobicy",
+         "remoteok",
+*** End Patch
