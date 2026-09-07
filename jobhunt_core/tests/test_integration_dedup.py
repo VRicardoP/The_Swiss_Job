@@ -472,7 +472,16 @@ def test_hnsw_underfill_cae_al_scan_exacto(db):
 
     ejecutadas: list[str] = []
     original = dedup_mod.MAX_SCAN_TUPLES
+    original_count = dedup_mod._KNN_COUNT_SQL
     dedup_mod.MAX_SCAN_TUPLES = 1  # el presupuesto del repro del revisor
+    # Underfill DETERMINISTA (revisión externa 2026-09-07, P2): forzarlo solo
+    # con los vetos del planner dependía del estado del índice HNSW, que la
+    # suite comparte — verde en aislamiento y rojo según el orden. La rama se
+    # dispara por `len(vecinos) < objetivo`, así que se inyecta un objetivo
+    # inalcanzable: la condición se cumple SIEMPRE y lo que se prueba es la
+    # rama exacta, no el humor del planner. El HNSW real se prueba en sus
+    # propios tests de integración.
+    dedup_mod._KNN_COUNT_SQL = "SELECT 999"
     try:
         async def go():
             async with factory() as s:
@@ -498,9 +507,13 @@ def test_hnsw_underfill_cae_al_scan_exacto(db):
                     return res
 
                 s.execute = espia  # SOLO observa y gestiona los vetos
-                # sin seq scan ni sort el ORDER BY vectorial solo puede
-                # resolverse por el índice HNSW (a esta escala el planner
-                # preferiría nested loops + Sort y jamás habría underfill)
+                # Underfill DETERMINISTA (revisión externa 2026-09-07, P2):
+                # forzarlo por el planner dependía del estado del índice HNSW,
+                # compartido con el resto de la suite — verde en aislamiento y
+                # rojo según el orden. Aquí se veta además el propio índice en
+                # la pasada aproximada, con lo que el scan acotado se queda
+                # corto SIEMPRE y la rama exacta se ejercita de verdad. La
+                # prueba del HNSW real vive en su test de integración aparte.
                 await s.execute(sa.text("SET LOCAL enable_seqscan = off"))
                 await s.execute(sa.text("SET LOCAL enable_sort = off"))
                 r = await scan_semantic_candidates(s, window_hours=1)
@@ -510,6 +523,7 @@ def test_hnsw_underfill_cae_al_scan_exacto(db):
         r = asyncio.run(go())
     finally:
         dedup_mod.MAX_SCAN_TUPLES = original
+        dedup_mod._KNN_COUNT_SQL = original_count
 
     assert r["status"] == "ok" and r["escaneadas"] == 1
     # la rama exacta SE EJECUTÓ (el aproximado devolvió 0/5 reales)
