@@ -774,14 +774,25 @@ def test_materialize_all_solo_actua_sobre_ce_activas(db):
             await s.commit()
 
     asyncio.run(declare())
-    ce.set_engine_factory(lambda m, r: _StubEngine())
+    # Contrato de COORDINADOR (revisión externa 2026-09-07, P1-2): encola un
+    # trabajo por (perfil, política) y NO materializa en línea — así ningún
+    # ciclo concede presupuestos encadenados bajo el reloj de Celery.
+    encoladas = []
+    from jobhunt_core.tasks import materialize as _mat
+
+    class _Espia:
+        def apply_async(self, *a, **k):
+            encoladas.append((a, k))
+
+    orig = _mat.materialize_ce_task
+    _mat.materialize_ce_task = _Espia()
     try:
         r1 = asyncio.run(_all_impl(session_factory=factory))
     finally:
-        ce.set_engine_factory(None)
+        _mat.materialize_ce_task = orig
     assert r1["politicas_ce"] == 1
-    clave = [k for k in r1["resultados"] if str(pid) in k]
-    assert clave and r1["resultados"][clave[0]]["status"] == "ok"
+    assert any(str(pid) in str((a, k)) for a, k in encoladas)
+    assert all(k.get("queue") == "core.matching" for _, k in encoladas)
 
 
 def test_exclusion_dismissed_tambien_en_el_camino_CE(db, stub):

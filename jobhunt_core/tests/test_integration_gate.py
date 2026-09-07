@@ -1435,3 +1435,21 @@ def test_evidencia_de_gate_y_parada_es_inmutable(db):
     ):
         with pytest.raises(Exception, match="evidencia inmutable"):
             _exec(factory, sql)
+
+
+def test_presupuesto_de_materializacion_cabe_en_el_limite_de_celery():
+    """Revisión externa 2026-09-07 (P1-2): el fragmento de materialización
+    debe TERMINAR dentro del límite BLANDO de Celery, con margen. Un
+    presupuesto mayor que el límite garantiza SoftTimeLimitExceeded antes de
+    agotarlo — la tarea nunca podría cumplir su contrato."""
+    from jobhunt_core.celery_app import celery_app
+    from jobhunt_core.tasks import materialize
+
+    blando = celery_app.conf.task_soft_time_limit
+    duro = celery_app.conf.task_time_limit
+    frag = materialize.MATERIALIZE_FRAGMENT_SECONDS
+    assert frag < blando, (
+        f"fragmento {frag}s >= límite blando {blando}s: la tarea muere antes")
+    # margen para cerrar el lote en curso y comprometer
+    assert frag <= blando - 300, f"fragmento {frag}s sin margen bajo {blando}s"
+    assert blando < duro <= 3600, "límites fuera del visibility_timeout"

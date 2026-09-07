@@ -1,7 +1,9 @@
 """Materialización incremental del cross-encoder por watermark (P7-b).
 
-Cadencia diaria en el NAS: puntúa los misses del corpus vigente dentro del
-presupuesto predeclarado (≤60 min/ciclo) y, SOLO si queda al día
+Cadencia diaria en el NAS: un COORDINADOR (`materialize_all`) encola un
+trabajo por (perfil, política CE activa) y retorna enseguida; cada trabajo
+puntúa los misses del corpus vigente dentro de un FRAGMENTO acotado que cabe
+en el límite blando de Celery y, SOLO si queda al día
 (remaining == 0), dispara la evaluación canónica — cuya valla F3 publica una
 fotografía completa de una única generación o descarta. Con backlog, el feed
 vigente sigue intacto y se emite la señal (log WARNING + resultado con
@@ -22,14 +24,25 @@ from jobhunt_core.database import task_session_factory
 
 logger = logging.getLogger(__name__)
 
-# Presupuesto OPERATIVO por ciclo (predeclaración P7-b sellada 3d21bb4).
+# FRAGMENTO de materialización (revisión externa 2026-09-07, P1-2): el
+# presupuesto de la predeclaración (3600 s/ciclo) NO cabía en el límite blando
+# de Celery (1800 s) — la tarea moría por SoftTimeLimitExceeded antes de
+# agotarlo, así que el contrato «trabajo acotado + corte + señal» no podía
+# cumplirse en producción. Ahora el trabajo se parte en FRAGMENTOS que
+# terminan holgadamente dentro del límite blando; el backlog continúa en el
+# fragmento o ciclo siguiente. Los límites de Celery NO se suben: están atados
+# al visibility_timeout del canal.
+MATERIALIZE_FRAGMENT_SECONDS = 1200.0
+# Presupuesto de CICLO predeclarado (3d21bb4): techo de la suma de fragmentos
+# de un mismo (perfil, política) dentro de una jornada. Es contable, no un
+# time-limit: cada fragmento se acota por MATERIALIZE_FRAGMENT_SECONDS.
 MATERIALIZE_BUDGET_SECONDS = 3600.0
 
 
 @celery_app.task(name="jobhunt.matching.materialize_ce", bind=True,
                  max_retries=1)
 def materialize_ce_task(self, profile_id: str, policy_id: str,
-                        budget_seconds: float = MATERIALIZE_BUDGET_SECONDS
+                        budget_seconds: float = MATERIALIZE_FRAGMENT_SECONDS
                         ) -> dict[str, Any]:
     try:
         return asyncio.run(_impl(profile_id, policy_id, budget_seconds))
@@ -115,13 +128,16 @@ async def _all_con_factory(factory) -> dict[str, Any]:
         p for p in politicas
         if str((p.weights or {}).get("algorithm", "")).startswith("cross_encoder")
     ]
-    resultados: dict[str, Any] = {}
+    # COORDINADOR rápido (P1-2): encola UN trabajo por (perfil, política) y
+    # retorna. Iterar aquí concedía un presupuesto completo a cada perfil sin
+    # cota global y con el reloj de Celery corriendo sobre el conjunto.
+    encolados = []
     for pol in ce_activas:
         for pid in perfiles:
-            r = await _con_factory(factory, pid, pol.id,
-                                   MATERIALIZE_BUDGET_SECONDS)
-            resultados[f"{pol.name}:{pol.prompt_version}/{pid}"] = {
-                k: r.get(k) for k in ("status", "scored", "remaining")
-            }
+            materialize_ce_task.apply_async(
+                args=[str(pid), str(pol.id)],
+                queue="core.matching",
+            )
+            encolados.append(f"{pol.name}:{pol.prompt_version}/{pid}")
     return {"status": "ok", "politicas_ce": len(ce_activas),
-            "perfiles": len(perfiles), "resultados": resultados}
+            "perfiles": len(perfiles), "encolados": encolados}
