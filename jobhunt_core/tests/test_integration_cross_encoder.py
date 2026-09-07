@@ -827,3 +827,37 @@ def test_exclusion_dismissed_tambien_en_el_camino_CE(db, stub):
     assert str(descartada) not in candidatos, (
         "la descartada llegó a la preparación del CE")
     assert len(candidatos) == len(TITULOS[:3]) - 1
+
+
+def test_el_ciclo_de_matching_NO_infiere_CE_sin_presupuesto(db):
+    """Revisión externa 2026-09-07 (P1-3): el proyector y la tarea diaria
+    llamaban a `_run_profile_impl`, que evalúa TODAS las políticas activas —
+    incluida una de cross-encoder — con inferencia completa y SIN el
+    presupuesto de P7-b. Toda ejecución CE productiva debe pasar por el
+    materializador presupuestado; aquí no puede puntuarse ni un documento."""
+    from jobhunt_core.tasks.matching import _run_profile_impl
+
+    factory, created = db
+    pid, mid, cosine_id, _ = _setup(factory, created, TITULOS[:3])
+    polid = _xenc_policy(factory, created)
+
+    async def declare():
+        async with factory() as s:
+            await matching.declare_active_policies(s, [cosine_id, polid])
+            await s.commit()
+
+    asyncio.run(declare())
+
+    motor = _StubEngine()
+    ce.set_engine_factory(lambda m, r: motor)
+    try:
+        r = asyncio.run(_run_profile_impl(
+            str(pid), 100, session_factory=factory))
+    finally:
+        ce.set_engine_factory(None)
+
+    assert motor.docs_scored == 0, (
+        f"el ciclo infirió {motor.docs_scored} documentos CE sin presupuesto")
+    clave_ce = [k for k in r["results"] if "xenc" in k]
+    assert clave_ce, "la política CE debería aparecer, delegada"
+    assert r["results"][clave_ce[0]]["status"] == "delegado_a_materializacion"

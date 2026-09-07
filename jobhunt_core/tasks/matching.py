@@ -70,7 +70,8 @@ async def _run_profile_with(
         policies = (
             await session.execute(
                 sa.text(
-                    "SELECT id, name, prompt_version FROM scoring_policies "
+                    "SELECT id, name, prompt_version, weights "
+                    "FROM scoring_policies "
                     "WHERE active ORDER BY name, prompt_version"
                 )
             )
@@ -96,6 +97,24 @@ async def _run_profile_with(
             # Solo cuenta como intento si de verdad se evaluó algo (P1 rev.
             # ronda 4): el propio evaluate lo garantiza invocándolo solo con
             # evaluated > 0.
+            if str((policy.weights or {}).get("algorithm", "")).startswith(
+                    "cross_encoder"):
+                # P1-3 (revisión externa 2026-09-07): la inferencia del
+                # cross-encoder cuesta horas y TIENE un camino presupuestado
+                # (jobhunt.matching.materialize_ce). Evaluarla aquí —desde el
+                # ciclo diario o desde el proyector— la ejecutaba entera y sin
+                # cota, saltándose el contrato de P7-b. El ciclo evalúa los
+                # algoritmos baratos; el CE se delega a su materializador, que
+                # publica cuando queda al día.
+                key_ce = (
+                    f"{model.name}@{model.version}/"
+                    f"{policy.name}@{policy.prompt_version}"
+                )
+                results[key_ce] = {
+                    "status": "delegado_a_materializacion",
+                    "evaluated": 0, "new_evals": 0, "moved_current": False,
+                }
+                continue
             es_canonico = (
                 canon_modelo is not None
                 and str(model.id) == str(canon_modelo)
