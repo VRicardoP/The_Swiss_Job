@@ -177,6 +177,7 @@ async def _verify_judged_vacancies(session, juicios: dict) -> None:
 async def build_universe_manifest(
     session, profiles: dict, model_id: str | None = None,
     allow_unknown_release: bool = False,
+    exclude_vacancy_ids: list | None = None,
 ) -> dict:
     """Manifiesto INMUTABLE del universo de un examen (Fase 4): cada pareja
     elegible (vacancy_id, offer_revision_id, text_hash) del corpus en esta
@@ -223,9 +224,31 @@ async def build_universe_manifest(
         if rid is None:
             raise ValueError(f"perfil {nombre} sin revisión vigente")
         revisiones[nombre] = str(rid)
+    # Configuración de filtros que determina la elegibilidad POR PERFIL: si
+    # cambia, el universo cambia aunque las identidades no se muevan.
+    exclusiones_perfil = {}
+    for nombre in sorted(profiles):
+        exclusiones_perfil[nombre] = sorted(
+            f"{r.kind}:{r.pattern}" for r in (
+                await session.execute(
+                    sa.text(
+                        "SELECT kind, pattern FROM profile_exclusions "
+                        "WHERE profile_id = :p"
+                    ),
+                    {"p": profiles[nombre]},
+                )
+            ).all()
+        )
     cuerpo = {
         "release": release, "model_id": str(mid),
         "corpus_generation": corpus_gen,
+        # Restricción EFECTIVA del examen (revisión externa 2026-09-07,
+        # hallazgo C): sin ella, el mismo sello podía declarar elegibles dos
+        # universos distintos (nDCG 1.0 y 0.613147 reproducidos). Va en el
+        # cuerpo sellado, así que su sha la cubre.
+        "exclude_vacancy_ids": sorted(
+            str(x) for x in (exclude_vacancy_ids or [])),
+        "profile_exclusions": exclusiones_perfil,
         "profile_revisions": revisiones, "pairs": pares,
     }
     canon = json.dumps(cuerpo, ensure_ascii=False, sort_keys=True)
@@ -240,6 +263,7 @@ def _universe_body_sha(body: dict) -> str:
 
 async def _validate_universe_seal(
     session, wrapper: dict, profiles: dict, model_id, release: str,
+    exclude_vacancy_ids: list | None = None,
 ) -> dict:
     """Validación ÚNICA del sello (P1-2, usada por evaluación y pool):
     esquema, SHA, release, modelo, TODAS las revisiones de perfil y el
@@ -252,7 +276,8 @@ async def _validate_universe_seal(
             "{universe, universe_sha256}")
     body = wrapper["universe"]
     esperadas = {"release", "model_id", "corpus_generation",
-                 "profile_revisions", "pairs"}
+                 "profile_revisions", "pairs",
+                 "exclude_vacancy_ids", "profile_exclusions"}
     if not isinstance(body, dict) or set(body) != esperadas:
         raise ValueError(
             f"universo malformado: claves {sorted(body) if isinstance(body, dict) else type(body).__name__}")
@@ -306,6 +331,36 @@ async def _validate_universe_seal(
             f"el universo derivó del sello: {retiradas} pareja(s) "
             f"retirada(s), {nuevas} nueva(s) — examen INELEGIBLE completo"
         )
+    # Revisión externa 2026-09-07 (hallazgo C): la RESTRICCIÓN efectiva es
+    # parte de la identidad del examen. Sin esto, el mismo sello declaraba
+    # elegibles dos universos distintos (nDCG 1.0 y 0.613147). Falla CERRADO
+    # ante cualquier discrepancia, en ambos sentidos.
+    pedidas = sorted(str(x) for x in (exclude_vacancy_ids or []))
+    if pedidas != list(body["exclude_vacancy_ids"]):
+        raise ValueError(
+            "la restricción del examen no coincide con el sello: sellada "
+            f"{len(body['exclude_vacancy_ids'])} exclusión(es), pedida(s) "
+            f"{len(pedidas)} — el universo evaluado sería otro"
+        )
+    for nombre in sorted(profiles):
+        vigentes = sorted(
+            f"{r.kind}:{r.pattern}" for r in (
+                await session.execute(
+                    sa.text(
+                        "SELECT kind, pattern FROM profile_exclusions "
+                        "WHERE profile_id = :p"
+                    ),
+                    {"p": profiles[nombre]},
+                )
+            ).all()
+        )
+        selladas = list(body["profile_exclusions"].get(nombre, []))
+        if vigentes != selladas:
+            raise ValueError(
+                f"las exclusiones del perfil {nombre} derivaron del sello: "
+                f"selladas {selladas}, vigentes {vigentes}"
+            )
+
     # Revisión 2026-09-04 P1 — ÚLTIMA comprobación (los errores específicos
     # de identidad son más diagnósticos): los vectores pueden cambiar
     # (re-embed) sin alterar ninguna identidad, el conjunto de parejas queda
@@ -347,7 +402,9 @@ async def build_blind_pool(
     mid = await _resolve_model(session, model_id)
     if universe is not None:
         # El pool queda LIGADO al mismo sello que el examen (P1-2).
-        await _validate_universe_seal(session, universe, profiles, mid, release)
+        await _validate_universe_seal(
+            session, universe, profiles, mid, release,
+            exclude_vacancy_ids=exclude_vacancy_ids)
     base_id, _ = await _resolve_policy(session, baseline_spec)
     cand_id, _ = await _resolve_policy(session, candidate_spec)
     juicios = (
@@ -420,7 +477,8 @@ async def evaluate_dev(
     pares_universo = None
     if universe is not None:
         cuerpo = await _validate_universe_seal(
-            session, universe, profiles, mid, release)
+            session, universe, profiles, mid, release,
+            exclude_vacancy_ids=exclude_vacancy_ids)
         pares_universo = {
             (p["vacancy_id"], p["offer_revision_id"])
             for p in cuerpo["pairs"]
@@ -563,6 +621,11 @@ async def _main(argv) -> None:
     p_seal.add_argument("--profile", action="append", required=True)
     p_seal.add_argument("--model", default=None)
     p_seal.add_argument("--out", required=True)
+    # La restricción del examen se SELLA aquí (revisión externa 2026-09-07):
+    # pool y evaluación la DERIVAN del sello, nunca de un argumento suelto.
+    p_seal.add_argument(
+        "--exclude-vacancies", default=None,
+        help="fichero con un vacancy_id por línea (universo restringido)")
 
     p_pool = sub.add_parser("build-pool")
     p_pool.add_argument("--profile", action="append", required=True)
@@ -587,30 +650,50 @@ async def _main(argv) -> None:
     async with task_session_factory() as factory:
         async with factory() as s:
             if args.cmd == "seal-universe":
+                excluidas = []
+                if args.exclude_vacancies:
+                    excluidas = [
+                        x.strip() for x in
+                        open(args.exclude_vacancies, encoding="utf-8")
+                        if x.strip()
+                    ]
                 sello = await build_universe_manifest(
-                    s, profiles, model_id=args.model)
+                    s, profiles, model_id=args.model,
+                    exclude_vacancy_ids=excluidas)
                 sha = _write_atomic(args.out, sello)
                 print(json.dumps({
                     "out": args.out, "file_sha256": sha,
                     "universe_sha256": sello["universe_sha256"],
                     "pairs": len(sello["universe"]["pairs"]),
+                    "exclude_vacancy_ids": len(
+                        sello["universe"]["exclude_vacancy_ids"]),
+                    "profile_exclusions": sello["universe"]["profile_exclusions"],
                 }, sort_keys=True))
             elif args.cmd == "build-pool":
+                sello_pool = _load_universe(args.universe)
                 pool = await build_blind_pool(
                     s, profiles, args.baseline, args.candidate,
                     judgments_path=args.judgments, k=args.k,
                     model_id=args.model,
-                    universe=_load_universe(args.universe),
+                    universe=sello_pool,
+                    # DERIVADA del sello: un argumento contradictorio no
+                    # existe porque no hay argumento.
+                    exclude_vacancy_ids=sello_pool["universe"][
+                        "exclude_vacancy_ids"],
                 )
                 sha = _write_atomic(args.out, pool)
                 print(json.dumps({"out": args.out, "file_sha256": sha},
                                  sort_keys=True))
             else:
+                sello_ev = (_load_universe(args.universe)
+                            if args.universe else None)
                 out = await evaluate_dev(
                     s, args.policy, profiles, args.judgments,
                     unsure_path=args.unsure, model_id=args.model,
-                    universe=(_load_universe(args.universe)
-                              if args.universe else None),
+                    universe=sello_ev,
+                    exclude_vacancy_ids=(
+                        sello_ev["universe"]["exclude_vacancy_ids"]
+                        if sello_ev else None),
                 )
                 print(json.dumps(out, ensure_ascii=False, sort_keys=True))
 

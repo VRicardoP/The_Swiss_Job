@@ -1447,29 +1447,63 @@ async def compute_policy_feed(
             "corpus_generation": corpus_gen}
 
 
+# Margen para cerrar el lote en curso: SQL de persistencia, outbox, commit y
+# cierre de sesión. Se reserva ANTES de empezar una tanda. Proporcional al
+# presupuesto y acotado: con un fragmento de 1.200 s reserva 60 s; con
+# presupuestos pequeños (tests, sondas) no se come el fragmento entero.
+MATERIALIZE_CLOSE_MARGIN_S = 60.0
+MATERIALIZE_CLOSE_MARGIN_RATIO = 0.05
+
+
+def _margen_cierre(budget_seconds: float) -> float:
+    return min(MATERIALIZE_CLOSE_MARGIN_S,
+               max(1.0, budget_seconds * MATERIALIZE_CLOSE_MARGIN_RATIO))
+
+
 async def materialize_misses(
     session_factory, profile_id, model_id, policy_id,
     budget_seconds: float = 3600.0, batch_pairs: int = 64,
 ) -> dict:
     """Materialización INCREMENTAL por watermark (P7-b, predeclaración
-    3d21bb4): puntúa los misses del corpus VIGENTE por lotes reanudables e
-    idempotentes dentro de un presupuesto de tiempo, SIN publicar nada.
+    3d21bb4) con presupuesto que se respeta HASTA EL FINAL.
 
-    Cada lote comete sus filas (scores absolutos append-only = la caché) en
-    su propia transacción corta por la MISMA frontera que evaluate_profile
-    (_persist_eval_rows: filas + outbox). Un reinicio continúa donde quedó
-    (los hits ya no son misses). Un pico que agota el presupuesto devuelve
-    `status: "backlog"` con lo pendiente — el feed vigente queda intacto y
-    la última fotografía completa se sigue sirviendo (señal visible, jamás
-    feed parcial). Con remaining == 0 el llamador invoca evaluate_profile:
-    su valla F3 (FOR SHARE de la generación hasta el commit) garantiza que
-    lo publicado es una fotografía COMPLETA de UNA generación, o descarta.
+    Revisión externa 2026-09-07 (hallazgo A): comprobar el reloj solo al
+    ENTRAR en cada tanda admitía empezar una tanda completa faltando segundos
+    para el límite y terminarla muy por encima (repro: 1.159 s → arrancaba
+    otra de 64 documentos). Ahora, antes de cada tanda y antes de volver a
+    preparar, se exige que el coste CONSERVADOR estimado —costes de
+    recuperación e inferencia OBSERVADOS, más el margen de cierre— quepa en
+    lo que resta. Si no cabe, se devuelve `backlog` reanudable: el feed
+    vigente queda intacto y la señal es visible.
+
+    Cada tanda comete sus filas (scores absolutos append-only = la caché) por
+    la MISMA frontera que evaluate_profile. Un reinicio continúa donde quedó.
+    Con `remaining == 0` el llamador publica: su valla F3 (con la generación
+    bloqueada hasta el commit) garantiza fotografía completa de UNA
+    generación, o descarta.
     """
+    import asyncio as _asyncio
     import time as _time
 
     t0 = _time.monotonic()
     total_scored = 0
+    coste_doc = 0.0    # segundos por documento, MÁXIMO observado
+    coste_prep = 0.0   # segundos de recuperación, MÁXIMO observado
+
+    margen = _margen_cierre(budget_seconds)
+
+    def restante() -> float:
+        return budget_seconds - (_time.monotonic() - t0)
+
     while True:
+        if coste_prep and restante() <= coste_prep + margen:
+            # Ni siquiera cabe volver a mirar el corpus.
+            logger.warning(
+                "materialize: sin presupuesto para otra recuperación de %s — "
+                "backlog reanudable", profile_id)
+            return {"scored": total_scored, "remaining": None,
+                    "agotado": True, "status": "backlog"}
+        t_prep = _time.monotonic()
         async with session_factory() as session:
             computed = await compute_policy_feed(
                 session, profile_id, model_id, policy_id,
@@ -1487,9 +1521,8 @@ async def materialize_misses(
                         {"pid": profile_id},
                     )
                 ).scalar_one()
+        coste_prep = max(coste_prep, _time.monotonic() - t_prep)
         if computed["status"] != "ok_prep":
-            # Política sin inferencia CE pendiente (p.ej. coseno) o sin
-            # vector: nada que materializar aquí.
             return {"scored": total_scored, "remaining": 0, "agotado": False,
                     "status": computed["status"]}
         prep = computed["prep"]
@@ -1497,34 +1530,30 @@ async def materialize_misses(
         if not misses:
             return {"scored": total_scored, "remaining": 0, "agotado": False,
                     "status": "ok"}
-        if _time.monotonic() - t0 >= budget_seconds:
-            logger.warning(
-                "materialize: presupuesto agotado con %d misses pendientes "
-                "para %s — la última fotografía completa sigue sirviéndose",
-                len(misses), profile_id,
-            )
-            return {"scored": total_scored, "remaining": len(misses),
-                    "agotado": True, "status": "backlog"}
-        # Una PASADA completa sobre los misses de esta fotografía, por
-        # lotes, SIN recomputar la recuperación entre lotes (en el J1800 la
-        # recuperación cuesta ~135 s y recomputarla por lote consumía la
-        # mitad del presupuesto — medido en el pico del 2026-09-04). La
-        # frescura no se pierde: el bucle exterior recomputa tras la pasada
-        # y la publicación final la garantiza la valla F3 de evaluate.
-        import asyncio as _asyncio
-        import time as _t2
 
         for k in range(0, len(misses), batch_pairs):
-            if _time.monotonic() - t0 >= budget_seconds:
-                break
             lote = misses[k:k + batch_pairs]
+            # Reserva CONSERVADORA: lo que costará esta tanda más su cierre.
+            estimado = len(lote) * coste_doc + margen
+            if coste_doc and estimado > restante():
+                pendientes = len(misses) - k
+                logger.warning(
+                    "materialize: la tanda de %d documentos no cabe en los "
+                    "%.0f s restantes para %s (%d pendientes) — la última "
+                    "fotografía completa sigue sirviéndose",
+                    len(lote), restante(), profile_id, pendientes)
+                return {"scored": total_scored, "remaining": pendientes,
+                        "agotado": True, "status": "backlog"}
             prep_lote = dict(
                 prep, misses=lote,
                 documentos=prep["documentos"][k:k + len(lote)],
                 candidates=lote, cache={},
             )
+            t_lote = _time.monotonic()
             frescos = await _asyncio.to_thread(_ce_score_misses, prep_lote)
             filas = _ce_assemble(prep_lote, frescos)
+            coste_doc = max(coste_doc,
+                            (_time.monotonic() - t_lote) / max(len(lote), 1))
             async with session_factory() as session:
                 await _persist_eval_rows(
                     session, profile_id, filas,
@@ -1554,6 +1583,11 @@ async def _persist_eval_rows(
         for r in rows
     ]
     eval_rows.sort(key=lambda r: str(r["vid"]))  # orden determinista
+    if not eval_rows:
+        # Fotografía VACÍA legítima (revisión externa 2026-09-07, B): no hay
+        # nada que insertar ni ningún evento que emitir; el llamador retira
+        # los punteros del feed bajo la misma valla.
+        return [], {}, 0
     await session.execute(
         sa.text(
             "INSERT INTO match_evaluations "
@@ -1637,6 +1671,7 @@ async def evaluate_profile(
     move_current: bool = True,
     with_corpus_generation: bool = False,
     on_evaluated=None,
+    require_cache_only: bool = False,
 ) -> dict:
     """Evalúa el perfil vigente contra el corpus embebido — TRIFÁSICO (P1-3
     revisión 2026-09-03): la inferencia del cross-encoder tarda HORAS en el
@@ -1708,16 +1743,31 @@ async def evaluate_profile(
     if computed["status"] == "ok_prep":
         import asyncio as _asyncio
 
+        if require_cache_only and computed["prep"]["misses"]:
+            # Publicación CACHE-ONLY (revisión externa 2026-09-07, hallazgo
+            # A): entre la materialización y la publicación pudo cambiar la
+            # revisión del perfil o el corpus, y la preparación nueva trae
+            # misses. Inferirlos aquí sería trabajo FUERA del presupuesto —
+            # justo lo que P7-b existe para impedir. Se devuelve el control
+            # al materializador, que los puntúa dentro de su fragmento.
+            return {
+                "status": "misses_pendientes", "evaluated": 0, "new_evals": 0,
+                "moved_current": False,
+                "misses": len(computed["prep"]["misses"]),
+                "profile_revision_id": prid,
+                "corpus_generation": corpus_gen,
+            }
         frescos = await _asyncio.to_thread(_ce_score_misses, computed["prep"])
         rows = _ce_assemble(computed["prep"], frescos)
     else:
         rows = computed["rows"]
-    if not rows:
-        return {
-            "status": "ok", "evaluated": 0, "new_evals": 0, "moved_current": False,
-            "profile_revision_id": prid,
-            "corpus_generation": corpus_gen,
-        }
+    # Un conjunto elegible legítimamente VACÍO (p. ej. tras añadir exclusiones
+    # que descartan todo) es una FOTOGRAFÍA PUBLICABLE, no un no-op: si se
+    # retornara aquí, el feed seguiría sirviendo los punteros anteriores —
+    # ofertas que el usuario acaba de excluir (revisión externa 2026-09-07,
+    # hallazgo B). Sigue a la fase 3, pasa la MISMA valla y limpia punteros.
+    # Los caminos de error no llegan hasta aquí: `sin_vector` retorna antes y
+    # un fallo de BD/modelo propaga sin publicar nada.
     computed = {"rows": rows}
 
     # ---------- FASE 3: lock corto, revalidación y persistencia atómica
@@ -1850,6 +1900,20 @@ async def evaluate_profile(
                 for r in eval_rows
                 if (r["vid"], r["key"]) in winners
             ]
+            if not eval_rows:
+                # Fotografía vacía: se retiran TODOS los punteros del feed. El
+                # estado estable (feedback/dismissed/saved/notes) se conserva
+                # — solo se suelta la evaluación vigente.
+                await session.execute(
+                    sa.text(
+                        "UPDATE profile_vacancy_state "
+                        "SET current_eval_id = NULL, "
+                        "updated_at = GREATEST(updated_at, clock_timestamp()) "
+                        "WHERE profile_id = :pid AND current_eval_id IS NOT NULL"
+                    ),
+                    {"pid": profile_id},
+                )
+                moved = True
             if state_rows:
                 # El feed representa el conjunto CANÓNICO de esta ejecución, no
                 # la unión histórica de antiguos top-K. La interacción estable se

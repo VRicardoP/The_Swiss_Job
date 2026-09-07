@@ -89,10 +89,22 @@ async def _con_factory(factory, profile_id, policy_id, budget_seconds):
             factory, profile_id, model_id, policy_id,
             limit=matching.CANONICAL_EVAL_LIMIT,
             move_current=str(canonica) == str(policy_id),
+            # La publicación NO puede inferir: si entre la materialización y
+            # este punto cambió la revisión del perfil o el corpus, los misses
+            # nuevos vuelven al materializador (revisión externa 2026-09-07).
+            require_cache_only=True,
         )
         resultado["evaluacion"] = {
             k: ev.get(k) for k in ("status", "evaluated", "moved_current")
         }
+        if ev["status"] == "misses_pendientes":
+            resultado["status"] = "backlog"
+            resultado["remaining"] = ev.get("misses")
+            logger.warning(
+                "materialize: %s tiene %s misses nuevos tras materializar "
+                "(cambio de revisión o de corpus) — se publicará en el ciclo "
+                "siguiente, sin inferir fuera de presupuesto",
+                profile_id, ev.get("misses"))
     return resultado
 
 

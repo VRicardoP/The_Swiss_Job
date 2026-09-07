@@ -1450,6 +1450,14 @@ SELECT m.id AS model_id, sp.id AS policy_id,
   FROM embedding_models m
   CROSS JOIN scoring_policies sp
  WHERE m.active AND m.dim = :dim AND sp.active
+   -- Solo el trabajo del que el PROYECTOR es responsable (revisión externa
+   -- 2026-09-07, hallazgo D): las políticas de cross-encoder se delegan al
+   -- materializador presupuestado, que no usa esta costura de intentos. Si
+   -- siguieran enumeradas aquí, el perfil quedaría encendido para siempre en
+   -- la señal de recuperación —el intento nunca se registra— y el proyector
+   -- repetiría indefinidamente el trabajo barato. Su señal de pendiente es
+   -- el `backlog` del materializador, no esta.
+   AND COALESCE(sp.weights->>'algorithm', '') NOT LIKE 'cross_encoder%'
 """
 
 # Señal de RECUPERACIÓN (2º análisis B-02, P2): UNA sola consulta por invocación para TODOS los
