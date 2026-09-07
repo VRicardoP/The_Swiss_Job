@@ -1575,8 +1575,11 @@ async def materialize_misses(
         for k in range(0, len(misses), batch_pairs):
             lote = misses[k:k + batch_pairs]
             # Reserva CONSERVADORA: lo que costará esta tanda más su cierre.
+            # El margen se exige SIEMPRE, tenga o no estimación de coste: con
+            # el presupuesto ya agotado no se empieza ni la primera tanda
+            # (antes, sin `coste_doc` observado, se colaba una entera).
             estimado = len(lote) * coste_doc + margen
-            if coste_doc and estimado > restante():
+            if restante() <= margen or (coste_doc and estimado > restante()):
                 pendientes = len(misses) - k
                 logger.warning(
                     "materialize: la tanda de %d documentos no cabe en los "
