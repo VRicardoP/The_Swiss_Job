@@ -110,6 +110,7 @@ async def sync_exclusions_to_core(db: AsyncSession, user_id: uuid.UUID, client_f
                 await db.execute(update(ExclusionSyncState).where(
                     ExclusionSyncState.user_id == user_id,
                     ExclusionSyncState.version == sent_version,
+                    ExclusionSyncState.delivered_version < sent_version,
                 ).values(last_error=error, last_attempt_at=func.now()))
                 await db.commit()
         except Exception:

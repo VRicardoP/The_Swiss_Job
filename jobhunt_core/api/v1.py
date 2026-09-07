@@ -565,7 +565,8 @@ async def put_profile_exclusions(
                         "WHERE profile_id = :p ORDER BY kind, pattern"),
                 {"p": profile_id},
             )).all()
-            if requested != [(r.kind, r.pattern) for r in current]:
+            # Database collation need not match Python ordering: rules form a set.
+            if set(requested) != {(r.kind, r.pattern) for r in current}:
                 raise ApiError(409, "exclusion_version_conflict",
                                "misma version con contenido diferente")
         else:
