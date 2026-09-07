@@ -55,7 +55,8 @@ def _plan(pid, urls, extra_search=None):
              "created_at": None},
         ]},
         "saved_searches": {"u1": searches},
-        "exclusions": {"u1": ["Director", "VP"]},
+        "exclusions": {"u1": [{"kind": "title_contains", "pattern": "Director"},
+                              {"kind": "tag_contains", "pattern": "VP"}]},
     }
 
 
@@ -77,7 +78,7 @@ def test_migracion_idempotente_y_semantica_de_feedback(db):
                              "unresolved": 1, "invalid_feedback": 0}
     assert c["saved_searches"]["migrated"] == 1
     assert c["notify"]["fixed"] == 1  # weekly/False != defaults daily/true
-    assert c["exclusions"]["searches_updated"] == 1
+    assert c["exclusions"]["insertadas"] == 2
     assert len(man1["saved_search_ids"]) == 1
 
     filas = _rows(
@@ -93,15 +94,19 @@ def test_migracion_idempotente_y_semantica_de_feedback(db):
     ]
     ss = _rows(
         factory,
-        "SELECT filters, notify_frequency::text AS f, notify_push "
+        "SELECT notify_frequency::text AS f, notify_push "
         "FROM saved_searches WHERE profile_id = :p", p=pid)[0]
-    assert ss.filters["exclude_title_contains"] == ["Director", "VP"]
     assert (ss.f, ss.notify_push) == ("weekly", False)
+    # P1-4: configuración AUTORITATIVA del perfil, no un JSONB inerte
+    ex = _rows(factory, "SELECT kind, pattern FROM profile_exclusions "
+               "WHERE profile_id = :p ORDER BY kind", p=pid)
+    assert [(x.kind, x.pattern) for x in ex] == [
+        ("tag_contains", "VP"), ("title_contains", "Director")]
 
     # IDEMPOTENCIA: mismos conteos de clasificación, cero duplicados
     man2 = asyncio.run(go(plan))
     assert man2["counts"]["u1"]["saved_searches"]["existing"] == 1
-    assert man2["counts"]["u1"]["exclusions"]["already_present"] == 1
+    assert man2["counts"]["u1"]["exclusions"]["ya_presentes"] == 2
     assert man2["saved_search_ids"] == []
     assert man2["counts"]["u1"]["feedback"]["kept_existing"] == 2
     n = _rows(factory, "SELECT count(*) AS n FROM saved_searches "
@@ -160,7 +165,12 @@ def test_rollback_restaura_el_estado_exacto(db):
                 "SELECT name, filters, notify_frequency::text, notify_push "
                 "FROM saved_searches WHERE profile_id = :p ORDER BY name"),
                 {"p": pid})).all()
-            return [tuple(r) for r in pvs], [tuple(r) for r in ss]
+            ex = (await s.execute(sa.text(
+                "SELECT kind, pattern FROM profile_exclusions "
+                "WHERE profile_id = :p ORDER BY kind, pattern"),
+                {"p": pid})).all()
+            return ([tuple(r) for r in pvs], [tuple(r) for r in ss],
+                    [tuple(r) for r in ex])
 
     antes = asyncio.run(foto())
 
@@ -177,3 +187,55 @@ def test_rollback_restaura_el_estado_exacto(db):
     assert counts["pvs_deleted"] == 2
     assert counts["searches_deleted"] == 1
     assert asyncio.run(foto()) == antes  # byte-equivalente al estado previo
+
+
+def test_rollback_exacto_con_dos_entradas_que_convergen(db):
+    """Revisión externa 2026-09-07 (P1-5): dos entradas legacy que resuelven a
+    la MISMA vacante generaban dos imágenes previas en el manifiesto; la
+    segunda capturaba el valor que la PRIMERA acababa de escribir, y el
+    rollback en orden directo lo restauraba. Debe consolidarse por clave
+    natural: una sola imagen previa, restaurada una vez."""
+    factory, created = db
+    pid, mid, polid, vacs = _setup(factory, created, TITULOS)
+    urls = _urls(factory, created)
+    objetivo = vacs[TITULOS[0]]
+
+    async def fila_previa():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "INSERT INTO profile_vacancy_state "
+                "(profile_id, vacancy_id, notes) VALUES (:p, :v, 'previa')"),
+                {"p": pid, "v": objetivo})
+            await s.commit()
+
+    asyncio.run(fila_previa())
+
+    plan = {
+        "profiles": {"u1": str(pid)},
+        # DOS entradas para la MISMA url ⇒ misma vacante
+        "feedback": {"u1": [
+            {"url": urls[TITULOS[0]], "feedback": "thumbs_up",
+             "created_at": None},
+            {"url": urls[TITULOS[0]], "feedback": "thumbs_down",
+             "created_at": "2026-08-01T10:00:00+00:00"},
+        ]},
+        "saved_searches": {"u1": []}, "exclusions": {"u1": []},
+    }
+
+    async def migrar_y_rollback():
+        async with factory() as s:
+            man = await isd.run_import(s, plan)
+            await s.commit()
+        async with factory() as s:
+            await isd.rollback_import(s, man)
+            await s.commit()
+        async with factory() as s:
+            return (await s.execute(sa.text(
+                "SELECT feedback, dismissed_at, notes FROM "
+                "profile_vacancy_state WHERE profile_id = :p AND "
+                "vacancy_id = :v"), {"p": pid, "v": objetivo})).one_or_none()
+
+    fila = asyncio.run(migrar_y_rollback())
+    assert fila is not None, "la fila preexistente NO debía borrarse"
+    assert (fila.feedback, fila.dismissed_at, fila.notes) == (
+        None, None, "previa"), f"rollback dejó {fila}"

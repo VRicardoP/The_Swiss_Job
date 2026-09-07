@@ -1239,3 +1239,55 @@ def test_modelo_con_corpus_solo_archivado_no_es_canonico(db):
     asyncio.run(archivar_todo())
     # sin corpus servible NINGÚN modelo es canónico (no basta con tener filas)
     assert asyncio.run(canonico()) is None
+
+
+def test_exclusiones_del_perfil_se_aplican_en_la_recuperacion(db):
+    """Revisión externa 2026-09-07 (P1-4): el legacy aplicaba title_contains y
+    tag_contains DURANTE el matching; Fase D las migró a una clave JSONB que
+    nadie lee, así que el flip perdió comportamiento en silencio. Ahora son
+    configuración del perfil (core0041) y se aplican en la recuperación, con
+    la MISMA semántica: título = subcadena literal case-insensitive; tag =
+    igualdad case-insensitive de algún elemento."""
+    factory, created = db
+    pid, mid, polid, vacs = _setup(
+        factory, created,
+        ["Director of Engineering", "Backend Engineer", "Data Analyst"])
+
+    async def excluir(kind, pattern):
+        async with factory() as s:
+            await s.execute(sa.text(
+                "INSERT INTO profile_exclusions (profile_id, kind, pattern) "
+                "VALUES (:p, :k, :pat) ON CONFLICT DO NOTHING"),
+                {"p": pid, "k": kind, "pat": pattern})
+            await s.commit()
+
+    async def calcular():
+        async with factory() as s:
+            r = await matching.compute_policy_feed(s, pid, mid, polid,
+                                                   limit=100)
+            return {str(f["vacancy_id"]) for f in r["rows"]}
+
+    # sin exclusiones: las tres
+    assert len(asyncio.run(calcular())) == 3
+
+    # title_contains, case-insensitive y como SUBCADENA
+    asyncio.run(excluir("title_contains", "director"))
+    ids = asyncio.run(calcular())
+    assert str(vacs["Director of Engineering"]) not in ids
+    assert len(ids) == 2
+
+    # tag_contains: el sink guarda tags ["t"] — igualdad exacta del elemento
+    asyncio.run(excluir("tag_contains", "T"))
+    assert asyncio.run(calcular()) == set()
+
+    # un patrón que NO casa como elemento completo no excluye
+    async def limpiar():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "DELETE FROM profile_exclusions WHERE profile_id = :p"),
+                {"p": pid})
+            await s.commit()
+
+    asyncio.run(limpiar())
+    asyncio.run(excluir("tag_contains", "t-parcial"))
+    assert len(asyncio.run(calcular())) == 3

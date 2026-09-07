@@ -1096,7 +1096,8 @@ _CANDIDATE_ELIGIBILITY = "WHERE v.archived_at IS NULL AND v.merged_into IS NULL"
 
 
 def _with_candidate_exclusions(sql: str, *, exclude_dismissed: bool,
-                               exclude_ids: bool) -> str:
+                               exclude_ids: bool,
+                               apply_profile_exclusions: bool = True) -> str:
     """Frontera ÚNICA de exclusión de candidatos (revisión externa
     2026-09-07): los predicados se inyectan en el WHERE de elegibilidad —
     ANTES de los LIMIT de TODOS los brazos (ANN y léxico) y de la preparación
@@ -1120,6 +1121,25 @@ def _with_candidate_exclusions(sql: str, *, exclude_dismissed: bool,
         )
     if exclude_ids:
         extra += " AND NOT (v.id = ANY(CAST(:excl_ids AS uuid[])))"
+    if apply_profile_exclusions:
+        # Exclusiones del PERFIL (core0041). Semántica idéntica a la del
+        # legacy: título = subcadena LITERAL case-insensitive (los comodines
+        # del patrón se escapan); tag = igualdad case-insensitive con algún
+        # elemento del array (sin tags NO excluye).
+        extra += (
+            " AND NOT EXISTS (SELECT 1 FROM profile_exclusions pex "
+            "WHERE pex.profile_id = :pid AND ("
+            "  (pex.kind = 'title_contains' AND COALESCE(orv.content->>'title','') "
+            "     ILIKE '%' || replace(replace(replace(pex.pattern, '\\', '\\\\'),"
+            "                                  '%', '\\%'), '_', '\\_') || '%' "
+            "     ESCAPE '\\')"
+            "  OR (pex.kind = 'tag_contains' AND EXISTS ("
+            "        SELECT 1 FROM jsonb_array_elements_text("
+            "          CASE WHEN jsonb_typeof(orv.content->'tags') = 'array' "
+            "               THEN orv.content->'tags' ELSE '[]'::jsonb END) tg "
+            "        WHERE lower(tg) = lower(pex.pattern)))"
+            "))"
+        )
     if not extra:
         return sql
     if sql.count(_CANDIDATE_ELIGIBILITY) == 0:
