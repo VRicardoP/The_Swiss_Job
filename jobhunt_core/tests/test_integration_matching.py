@@ -770,10 +770,15 @@ def test_small_corpus_single_ann_pass_and_fallback_counted(db, monkeypatch):
     # control de flujo real (la inanición FÍSICA a escala la validó la
     # revisión externa con 20k huérfanos y 1k activas).
     counter["n"] = 0
+    # La mutación PRESERVA el ancla de elegibilidad: desde la frontera única
+    # de exclusiones (2026-09-07) el SQL sin ancla falla cerrado a propósito
+    # —así se detecta un camino donde la exclusión no se aplicaría—, así que
+    # el vaciado se añade DETRÁS del ancla en vez de romperla.
     monkeypatch.setattr(
         matching, "CANDIDATES_SQL",
         matching.CANDIDATES_SQL.replace(
-            "WHERE v.archived_at", "WHERE false AND v.archived_at"
+            matching._CANDIDATE_ELIGIBILITY,
+            matching._CANDIDATE_ELIGIBILITY + " AND false",
         ),
     )
     r = run_eval()
