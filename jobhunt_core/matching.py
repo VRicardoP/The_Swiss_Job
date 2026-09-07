@@ -1164,6 +1164,47 @@ def set_after_revalidation_hook(hook) -> None:
     _after_revalidation = hook
 
 
+VALID_EXCLUSION_KINDS = ("title_contains", "tag_contains")
+
+
+async def declare_profile_exclusions(session, profile_id, reglas) -> dict:
+    """Declara el conjunto EXACTO de exclusiones de un perfil: autoridad
+    ÚNICA de esa configuración (revisión externa 2026-09-07, hallazgo B).
+
+    Declarativa como `declare_active_policies`: recibe el conjunto completo,
+    de modo que ALTAS y BAJAS viajan por el mismo camino — un importador que
+    solo inserta jamás puede proyectar una baja. Idempotente y atómica: el
+    borrado y la inserción van en la misma transacción del llamador.
+
+    `reglas`: iterable de {kind, pattern}. kind fuera del contrato o patrón
+    vacío ⇒ error (falla cerrado: una regla malformada silenciada dejaría de
+    excluir sin que nadie se entere).
+    """
+    normalizadas = []
+    for r in reglas or []:
+        kind = (r or {}).get("kind")
+        patron = ((r or {}).get("pattern") or "").strip()
+        if kind not in VALID_EXCLUSION_KINDS or not patron:
+            raise ValueError(
+                f"exclusión inválida {r!r}: kind ∈ {VALID_EXCLUSION_KINDS} y "
+                "pattern no vacío")
+        normalizadas.append({"kind": kind, "pattern": patron})
+    await session.execute(
+        sa.text("DELETE FROM profile_exclusions WHERE profile_id = :p"),
+        {"p": profile_id},
+    )
+    if normalizadas:
+        await session.execute(
+            sa.text(
+                "INSERT INTO profile_exclusions (profile_id, kind, pattern) "
+                "VALUES (:p, :k, :pat) ON CONFLICT DO NOTHING"
+            ),
+            [{"p": profile_id, "k": r["kind"], "pat": r["pattern"]}
+             for r in normalizadas],
+        )
+    return {"declaradas": len(normalizadas)}
+
+
 async def canonical_model_id(session, profile_id):
     """Definición ÚNICA del modelo CANÓNICO efectivo para publicar el feed de
     un perfil (revisión 2026-09-04 1B): el primer modelo ACTIVO en el orden

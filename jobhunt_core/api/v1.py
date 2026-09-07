@@ -536,6 +536,56 @@ async def put_profile(
 # (ensayada sobre copia del NAS), no vía este /v1. Si C-4 decidiera necesitar la
 # escritura HTTP de candidaturas, se añade aquí reutilizando run_idempotent
 # (mismo candado) + scope nuevo `applications:write`. Diferido a C-4.
+@router.put("/profiles/{profile_id}/exclusions",
+            response_model=schemas.ExclusionsDTO)
+async def put_profile_exclusions(
+    profile_id: uuid.UUID,
+    body: schemas.ExclusionsWriteDTO,
+    session=Depends(get_session),
+    principal: Principal = Depends(require_scope("profiles:write")),
+):
+    """Declara el conjunto COMPLETO de exclusiones del perfil (revisión
+    externa 2026-09-07, hallazgo B).
+
+    El core sirve el feed, así que es el escritor efectivo de la
+    configuración que lo determina; el BFF empuja aquí sus altas y BAJAS. Al
+    ser declarativo, una baja no puede perderse por el camino —que es
+    exactamente lo que ocurría cuando el BFF escribía en su tabla legacy y
+    solo un importador de altas llegaba al core—. Ownership por tenant bajo
+    el LOCK del perfil, como el PUT del CV.
+    """
+    consumer_id = (
+        await session.execute(
+            sa.text(
+                "SELECT consumer_id FROM profiles WHERE id = :pid FOR UPDATE"
+            ),
+            {"pid": profile_id},
+        )
+    ).scalar_one_or_none()
+    if consumer_id is None or str(consumer_id) != str(principal.consumer_id):
+        raise ApiError(404, "not_found", "perfil no encontrado")
+    try:
+        await matching.declare_profile_exclusions(
+            session, profile_id,
+            [e.model_dump() for e in body.exclusions],
+        )
+    except ValueError as exc:
+        raise ApiError(400, "invalid_exclusion", str(exc)) from exc
+    await session.commit()
+    filas = (
+        await session.execute(
+            sa.text(
+                "SELECT kind, pattern FROM profile_exclusions "
+                "WHERE profile_id = :p ORDER BY kind, pattern"
+            ),
+            {"p": profile_id},
+        )
+    ).all()
+    return schemas.ExclusionsDTO(
+        exclusions=[schemas.ExclusionDTO(kind=f.kind, pattern=f.pattern)
+                    for f in filas])
+
+
 @router.get("/profiles/{profile_id}/matches", response_model=schemas.MatchesPageDTO,
             responses={304: {"description": "Not Modified"}})
 async def get_matches(

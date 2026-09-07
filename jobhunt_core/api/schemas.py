@@ -115,6 +115,31 @@ class ProfileDTO(BaseModel):
     current_revision: ProfileRevisionDTO | None = None
 
 
+class ExclusionDTO(BaseModel):
+    """Una regla de exclusión de candidatos del perfil."""
+
+    kind: str
+    pattern: str
+
+
+class ExclusionsWriteDTO(BaseModel):
+    """Cuerpo del PUT /v1/profiles/{pid}/exclusions — conjunto COMPLETO.
+
+    Declarativo a propósito (revisión externa 2026-09-07): altas y bajas
+    viajan por el mismo camino, así que una baja no puede perderse. El core
+    es el único escritor efectivo de esta configuración porque es quien
+    sirve el feed que ella determina.
+    """
+
+    exclusions: list[ExclusionDTO]
+
+
+class ExclusionsDTO(BaseModel):
+    """Representación de las exclusiones vigentes."""
+
+    exclusions: list[ExclusionDTO]
+
+
 class ProfileWriteDTO(BaseModel):
     """Cuerpo del PUT /v1/profiles/{pid} (C-3 CV push + preferencias, PF.5).
 

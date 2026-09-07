@@ -23,6 +23,8 @@ from schemas.analytics import (
 )
 from services.pattern_analysis_service import PatternAnalysisService
 
+from services.exclusions_sync import sync_exclusions_to_core
+
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 
 
@@ -141,6 +143,9 @@ async def review_suggestion(
         filter_id = new_filter.id
 
     await db.commit()
+    if body.action == "approve":
+        # La aprobación crea una regla efectiva: mismo camino declarativo.
+        await sync_exclusions_to_core(db, current_user.id)
 
     return ReviewSuggestionResponse(
         status="success",
@@ -207,6 +212,10 @@ async def create_filter(
     db.add(new_filter)
     await db.commit()
     await db.refresh(new_filter)
+    # El core sirve el feed y aplica estas reglas: se le empuja el conjunto
+    # COMPLETO (declarativo) para que altas y bajas no puedan perderse
+    # (revisión externa 2026-09-07, hallazgo B).
+    await sync_exclusions_to_core(db, current_user.id)
     return new_filter
 
 
@@ -231,3 +240,6 @@ async def delete_filter(
 
     job_filter.is_active = False
     await db.commit()
+    # BAJA: la proyección declarativa la lleva al core; sin esto la regla
+    # seguía excluyendo allí para siempre (hallazgo B).
+    await sync_exclusions_to_core(db, current_user.id)

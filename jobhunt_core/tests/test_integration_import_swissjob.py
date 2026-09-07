@@ -300,3 +300,42 @@ def test_url_con_varias_vacantes_aplica_el_feedback_a_TODAS(db):
         "WHERE profile_id = :p AND feedback = 'thumbs_down'", p=pid)
     assert {str(f.vacancy_id) for f in filas} == {
         str(vacs[TITULOS[0]]), str(otra)}
+
+
+def test_declare_exclusiones_proyecta_altas_Y_BAJAS(db):
+    """Revisión externa 2026-09-07 (hallazgo B): el importador solo INSERTA,
+    así que una baja hecha en el BFF nunca llegaba al core y la regla seguía
+    excluyendo. El escritor autoritativo es DECLARATIVO: recibe el conjunto
+    completo, de modo que altas y bajas viajan por el mismo camino."""
+    from jobhunt_core import matching as m
+
+    factory, created = db
+    pid, mid, polid, vacs = _setup(factory, created, TITULOS)
+
+    async def declarar(reglas):
+        async with factory() as s:
+            r = await m.declare_profile_exclusions(s, pid, reglas)
+            await s.commit()
+            return r
+
+    def vigentes():
+        return [(f.kind, f.pattern) for f in _rows(
+            factory, "SELECT kind, pattern FROM profile_exclusions "
+            "WHERE profile_id = :p ORDER BY kind, pattern", p=pid)]
+
+    asyncio.run(declarar([{"kind": "title_contains", "pattern": "Director"},
+                          {"kind": "tag_contains", "pattern": "VP"}]))
+    assert vigentes() == [("tag_contains", "VP"),
+                          ("title_contains", "Director")]
+
+    # BAJA: el conjunto nuevo NO la contiene ⇒ desaparece
+    asyncio.run(declarar([{"kind": "title_contains", "pattern": "Director"}]))
+    assert vigentes() == [("title_contains", "Director")]
+
+    # vaciado completo
+    asyncio.run(declarar([]))
+    assert vigentes() == []
+
+    # falla CERRADO ante regla malformada (no la silencia)
+    with pytest.raises(ValueError, match="exclusión inválida"):
+        asyncio.run(declarar([{"kind": "regex", "pattern": "x"}]))
