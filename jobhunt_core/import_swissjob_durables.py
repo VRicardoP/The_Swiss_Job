@@ -39,10 +39,10 @@ VALID_FEEDBACK = {"thumbs_up", "thumbs_down"}
 _MAX_MERGE_HOPS = 5
 
 
-async def resolve_vacancy_by_incarnation_url(
+async def resolve_vacancies_by_incarnation_url(
     session: AsyncSession, url: str
-) -> uuid.UUID | None:
-    """vacancy_id GANADORA para una URL de oferta legacy, o None.
+) -> list:
+    """TODAS las vacantes ganadoras para una URL de oferta legacy.
 
     Revisión externa 2026-09-07 (P1-5): antes tomaba UNA encarnación
     (`ORDER BY seq DESC LIMIT 1`) y seguía fusiones con un bucle acotado que
@@ -51,8 +51,14 @@ async def resolve_vacancy_by_incarnation_url(
     - se consideran TODAS las encarnaciones con esa url (cualquier fuente);
     - cada una se resuelve a su ganadora final por CTE recursivo, con
       detección de ciclo (`merged_into` circular no cuelga ni miente);
-    - solo se acepta si TODAS convergen en una única vacante. Si divergen,
-      devuelve None: preferimos NO enlazar a enlazar arbitrariamente.
+    - se devuelven TODAS las ganadoras distintas.
+
+    Por qué todas y no una: la deriva de identidad (documentada en la salud de
+    la cosecha) hace que una misma oferta re-listada entre como CLON, así que
+    una url legacy resuelve a varias vacantes vivas — hasta 4 en el ensayo del
+    2026-09-07. Enlazar a una arbitraria (lo que hacía la versión original)
+    pierde la intención del usuario en las demás; rechazar la pierde entera.
+    Son la MISMA oferta: el feedback se aplica a todas ellas.
     """
     filas = (
         await session.execute(
@@ -76,13 +82,12 @@ async def resolve_vacancy_by_incarnation_url(
             {"u": url},
         )
     ).scalars().all()
-    if len(filas) != 1:
-        if filas:
-            logger.warning(
-                "import_swissjob: la url %.80s resuelve a %d vacantes "
-                "distintas — NO se enlaza", url, len(filas))
-        return None
-    return filas[0]
+    if len(filas) > 1:
+        logger.info(
+            "import_swissjob: la url %.80s resuelve a %d vacantes (clones de "
+            "la misma oferta) — el feedback se aplica a todas",
+            url, len(filas))
+    return list(filas)
 
 
 async def migrate_feedback(
@@ -107,66 +112,72 @@ async def migrate_feedback(
             counts["invalid_feedback"] += 1
             logger.warning("import_swissjob: feedback inválido %r — OMITIDO", fb)
             continue
-        vid = await resolve_vacancy_by_incarnation_url(session, row["url"])
-        if vid is None:
+        vids = await resolve_vacancies_by_incarnation_url(session, row["url"])
+        if not vids:
             counts["unresolved"] += 1
             logger.warning(
                 "import_swissjob: URL sin vacante core — OMITIDA: %.80s",
                 row.get("url"),
             )
             continue
-        antes = (
-            await session.execute(
-                sa.text(
-                    "SELECT feedback, dismissed_at FROM profile_vacancy_state "
-                    "WHERE profile_id = :p AND vacancy_id = :v FOR UPDATE"
-                ),
-                {"p": profile_id, "v": vid},
-            )
-        ).one_or_none()
-        dismissed = row.get("created_at") if fb == "thumbs_down" else None
-        if isinstance(dismissed, str):
-            from datetime import datetime
+        for vid in vids:
+            await _aplicar_feedback(
+                session, profile_id, vid, row, fb, manifest, capturadas,
+                counts)
+    return counts
 
-            dismissed = datetime.fromisoformat(dismissed)
-        clave = (str(profile_id), str(vid))
-        if clave in capturadas:
-            # ya hay imagen previa de esta fila: no se duplica
-            if antes is not None and antes.feedback is not None:
-                counts["kept_existing"] += 1
-                continue
-        else:
-            capturadas.add(clave)
-            manifest["pvs"].append({
-                "profile_id": str(profile_id), "vacancy_id": str(vid),
-                "existed": antes is not None,
-                "feedback_antes": antes.feedback if antes else None,
-                "dismissed_at_antes": (
-                    antes.dismissed_at.isoformat()
-                    if antes and antes.dismissed_at else None
-                ),
-                "feedback_escrito": fb,
-            })
-        if antes is not None and antes.feedback is not None:
-            counts["kept_existing"] += 1  # ADR-03: jamás pisar estado
-            continue
+
+async def _aplicar_feedback(
+    session, profile_id, vid, row, fb, manifest, capturadas, counts
+) -> None:
+    """Escribe el feedback en UNA pareja (perfil, vacante): preserva el estado
+    existente (ADR-03) y captura UNA sola imagen previa por clave natural."""
+    antes = (
         await session.execute(
             sa.text(
-                "INSERT INTO profile_vacancy_state "
-                "(profile_id, vacancy_id, feedback, dismissed_at, updated_at) "
-                "VALUES (:p, :v, :f, :d, clock_timestamp()) "
-                "ON CONFLICT (profile_id, vacancy_id) DO UPDATE SET "
-                "feedback = COALESCE(profile_vacancy_state.feedback, "
-                "                    EXCLUDED.feedback), "
-                "dismissed_at = COALESCE(profile_vacancy_state.dismissed_at, "
-                "                        EXCLUDED.dismissed_at), "
-                "updated_at = GREATEST(profile_vacancy_state.updated_at, "
-                "                      clock_timestamp())"
+                "SELECT feedback, dismissed_at FROM profile_vacancy_state "
+                "WHERE profile_id = :p AND vacancy_id = :v FOR UPDATE"
             ),
-            {"p": profile_id, "v": vid, "f": fb, "d": dismissed},
+            {"p": profile_id, "v": vid},
         )
-        counts["migrated"] += 1
-    return counts
+    ).one_or_none()
+    dismissed = row.get("created_at") if fb == "thumbs_down" else None
+    if isinstance(dismissed, str):
+        from datetime import datetime
+
+        dismissed = datetime.fromisoformat(dismissed)
+    clave = (str(profile_id), str(vid))
+    if clave not in capturadas:
+        capturadas.add(clave)
+        manifest["pvs"].append({
+            "profile_id": str(profile_id), "vacancy_id": str(vid),
+            "existed": antes is not None,
+            "feedback_antes": antes.feedback if antes else None,
+            "dismissed_at_antes": (
+                antes.dismissed_at.isoformat()
+                if antes and antes.dismissed_at else None
+            ),
+            "feedback_escrito": fb,
+        })
+    if antes is not None and antes.feedback is not None:
+        counts["kept_existing"] += 1  # ADR-03: jamás pisar estado
+        return
+    await session.execute(
+        sa.text(
+            "INSERT INTO profile_vacancy_state "
+            "(profile_id, vacancy_id, feedback, dismissed_at, updated_at) "
+            "VALUES (:p, :v, :f, :d, clock_timestamp()) "
+            "ON CONFLICT (profile_id, vacancy_id) DO UPDATE SET "
+            "feedback = COALESCE(profile_vacancy_state.feedback, "
+            "                    EXCLUDED.feedback), "
+            "dismissed_at = COALESCE(profile_vacancy_state.dismissed_at, "
+            "                        EXCLUDED.dismissed_at), "
+            "updated_at = GREATEST(profile_vacancy_state.updated_at, "
+            "                      clock_timestamp())"
+        ),
+        {"p": profile_id, "v": vid, "f": fb, "d": dismissed},
+    )
+    counts["migrated"] += 1
 
 
 async def attach_exclusion_filters(

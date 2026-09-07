@@ -239,3 +239,64 @@ def test_rollback_exacto_con_dos_entradas_que_convergen(db):
     assert fila is not None, "la fila preexistente NO debía borrarse"
     assert (fila.feedback, fila.dismissed_at, fila.notes) == (
         None, None, "previa"), f"rollback dejó {fila}"
+
+
+def test_url_con_varias_vacantes_aplica_el_feedback_a_TODAS(db):
+    """Ensayo del 2026-09-07: la deriva de identidad hace que la MISMA oferta
+    re-listada entre como clon, así que una url legacy resuelve a varias
+    vacantes vivas. Enlazar a una arbitraria (lo que hacía el código
+    original) pierde la intención del usuario en las demás; rechazar la
+    pierde entera. Son la MISMA oferta: el feedback se aplica a todas."""
+    factory, created = db
+    pid, mid, polid, vacs = _setup(factory, created, TITULOS)
+    urls = _urls(factory, created)
+    url = urls[TITULOS[0]]
+
+    async def clonar():
+        """Otra FUENTE lista la MISMA url sobre otra vacante (clon real: la
+        url es única POR FUENTE, así que el clon llega de otro portal o de
+        una re-inserción con fuente distinta)."""
+        async with factory() as s:
+            otra = vacs[TITULOS[1]]
+            src2 = uuid.uuid4()
+            created["sources"].append(src2)
+            await s.execute(sa.text(
+                "INSERT INTO sources (id, name, tier) "
+                "VALUES (:i, 'jobicy', 0)"), {"i": src2})
+            listing = uuid.uuid4()
+            await s.execute(sa.text(
+                "INSERT INTO source_listings (id, source_id, external_id, "
+                "url_normalized) VALUES (:i, :src, :ext, :u)"),
+                {"i": listing, "src": src2, "ext": "clon-1", "u": url})
+            await s.execute(sa.text(
+                "INSERT INTO source_listing_incarnations "
+                "(id, source_listing_id, vacancy_id, seq, url) "
+                "VALUES (:i, :sl, :v, 1, :u)"),
+                {"i": uuid.uuid4(), "sl": listing, "v": otra, "u": url})
+            await s.commit()
+            return otra
+
+    otra = asyncio.run(clonar())
+
+    plan = {
+        "profiles": {"u1": str(pid)},
+        "feedback": {"u1": [{"url": url, "feedback": "thumbs_down",
+                             "created_at": None}]},
+        "saved_searches": {"u1": []}, "exclusions": {"u1": []},
+    }
+
+    async def go():
+        async with factory() as s:
+            man = await isd.run_import(s, plan)
+            await s.commit()
+            return man
+
+    man = asyncio.run(go())
+    assert man["counts"]["u1"]["feedback"]["migrated"] == 2, (
+        "el feedback debe alcanzar a TODAS las vacantes de esa url")
+    filas = _rows(
+        factory,
+        "SELECT vacancy_id FROM profile_vacancy_state "
+        "WHERE profile_id = :p AND feedback = 'thumbs_down'", p=pid)
+    assert {str(f.vacancy_id) for f in filas} == {
+        str(vacs[TITULOS[0]]), str(otra)}
