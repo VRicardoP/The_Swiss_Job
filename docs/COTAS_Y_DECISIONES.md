@@ -23,11 +23,27 @@
 
 > **Actualización 2026-09-04.** Este fichero sigue siendo la autoridad de las cotas aceptadas,
 > pero §9 ya no es la fotografía operativa vigente. Para estado y camino crítico manda
-> `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` §21; para deuda abierta manda
+> `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` §24 (2026-09-06); para deuda abierta manda
 > `/home/lothar/Public/DEUDA_TECNICA.md` §0. No conviertas una cota aceptada en trabajo ni cites un
 > pendiente de §9 sin revalidarlo.
 
 ---
+
+## 0bis. Cota metodológica ganada el 2026-09-06 — el número de desarrollo MIENTE si el
+## conjunto de evaluación solapa el de entrenamiento
+
+Medido, no argumentado: la candidata `xenc-ranknet:v1` daba **0.9872/0.8604** en desarrollo
+y **0.5856/0.7438** en el examen sobre pares NO VISTOS. La diferencia (≈0.40 en P1) era
+MEMORIZACIÓN: 9 de cada 10 ofertas de su top-10 eran vacantes cuyos juicios habían entrado
+en el entrenamiento (el muestreo de las rondas dev toma del top de los rankings, así que el
+solape crece solo). La baseline mostraba 8-9/10 del mismo solape: no es un defecto del
+modelo, es del INSTRUMENTO.
+
+**Regla que queda:** antes de cualquier examen, medir el solape del top-K con el conjunto de
+entrenamiento y, si es ≥3/10, evaluar sobre el universo restringido a NO VISTOS —
+para todos los sistemas por igual. La regla se sella ANTES de mirar el diagnóstico
+(`FREEZE_EXAMEN_2026-09-06.md`, commit b080559), nunca después. Corolario: ningún número de
+desarrollo de la campaña 2026-09 debe citarse como calidad.
 
 ## 0. La regla de oro del proyecto
 
