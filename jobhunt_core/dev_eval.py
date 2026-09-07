@@ -326,10 +326,18 @@ async def build_blind_pool(
     judgments_path: str | None = None, k: int = 20,
     model_id: str | None = None, universe: dict | None = None,
     allow_unknown_release: bool = False,
+    exclude_vacancy_ids: list | None = None,
 ) -> dict:
     """Pool CIEGO del examen (Fase 4): unión de los top-K de la baseline y de
     la candidata por perfil, deduplicada de forma determinista, con los
-    juicios previos aplicables separados de lo pendiente de etiquetar."""
+    juicios previos aplicables separados de lo pendiente de etiquetar.
+
+    `exclude_vacancy_ids` (revisión externa 2026-09-07): universo RESTRINGIDO
+    — típicamente las vacantes vistas en entrenamiento, para medir
+    generalización y no memorización. La exclusión viaja a la frontera de
+    recuperación y se aplica en SQL ANTES de los LIMIT: si se filtrara
+    después, el excluido consumiría una plaza del top-K y el universo medido
+    no sería el declarado. Se aplica IGUAL a los dos sistemas.""" 
     release = os.environ.get("RELEASE_SHA", "unknown")
     if release == "unknown" and not allow_unknown_release:
         raise ValueError("RELEASE_SHA=unknown: pool no auditable")
@@ -354,6 +362,7 @@ async def build_blind_pool(
             computed = await matching.compute_policy_feed(
                 session, pid, mid, spid,
                 limit=matching.CANONICAL_EVAL_LIMIT, exclude_dismissed=True,
+                exclude_vacancy_ids=exclude_vacancy_ids,
             )
             if computed["status"] != "ok":
                 raise ValueError(f"pool: perfil {nombre} no computable")
@@ -382,6 +391,7 @@ async def evaluate_dev(
     allow_unknown_release: bool = False,
     allow_uncovered: bool = False,
     universe: dict | None = None,
+    exclude_vacancy_ids: list | None = None,
 ) -> dict:
     """Métricas de desarrollo de UNA política con la fórmula del gate, sobre
     el feed COHERENTE de una ejecución actual (compute_policy_feed) bajo una
@@ -423,6 +433,7 @@ async def evaluate_dev(
         computed = await matching.compute_policy_feed(
             session, pid, mid, policy_id, limit=limit,
             exclude_dismissed=True, with_corpus_generation=True,
+            exclude_vacancy_ids=exclude_vacancy_ids,
         )
         if computed["status"] != "ok":
             raise ValueError(

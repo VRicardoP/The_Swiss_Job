@@ -778,3 +778,28 @@ def test_el_sello_detecta_deriva_de_generacion_sin_cambio_de_identidades(db):
     with pytest.raises(ValueError, match="generaci"):
         _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
                   allow_uncovered=False, universe=sello)
+
+
+def test_pool_con_universo_restringido_rellena_el_top_k(db):
+    """Revisión externa 2026-09-07 (P1-1): el examen del 06-09 filtró las
+    vacantes vistas en entrenamiento DESPUÉS de recuperar, así que cada
+    excluida se comía una plaza del top-K. Con la exclusión en la frontera,
+    el top-K se RELLENA con candidatos elegibles."""
+    factory, created = db
+    pid, mid, cosine_id, vacs = _setup(factory, created, TITULOS)
+    _shadow_policy(factory, created)
+    excluidas = [str(v) for v in list(vacs.values())[:2]]
+
+    async def go(excl):
+        async with factory() as s:
+            return await dev_eval.build_blind_pool(
+                s, {"P1": pid}, "cosine:v1", "hybrid-rrf:v4", k=3,
+                allow_unknown_release=True, exclude_vacancy_ids=excl)
+
+    sin_excluir = asyncio.run(go(None))["P1"]["pendientes"]
+    con_excluir = asyncio.run(go(excluidas))["P1"]["pendientes"]
+    ids_excl = {x["vacancy_id"] for x in con_excluir}
+    assert not (ids_excl & set(excluidas)), "una excluida entró en el pool"
+    # el pool NO encoge: las plazas liberadas las ocupan otras elegibles
+    assert len(con_excluir) >= min(len(sin_excluir), 3), (
+        f"el top-K encogió: {len(con_excluir)} vs {len(sin_excluir)}")
