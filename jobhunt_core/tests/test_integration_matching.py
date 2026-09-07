@@ -1134,3 +1134,108 @@ def test_el_redeploy_no_cambia_la_canonicidad(db):
             await s.rollback()
 
     asyncio.run(go())
+
+
+def test_exclusion_se_aplica_ANTES_del_limite_de_recuperacion(db):
+    """Revisión externa 2026-09-07 (P1-1): excluir DESPUÉS de recuperar hace
+    que el excluido consuma una plaza del top-K y que un candidato elegible
+    NUNCA se recupere — el universo medido deja de ser el declarado.
+
+    Montaje: 3 vacantes; la mejor por ANN está descartada (dismissed) y el
+    límite de recuperación es 2. Con la exclusión en SQL deben volver DOS
+    filas (las dos elegibles); filtrando después vuelve UNA."""
+    factory, created = db
+    pid, mid, polid, vacs = _setup(
+        factory, created, ["alpha excluida", "beta buena", "gamma buena"])
+
+    async def preparar():
+        async with factory() as s:
+            # Orden ANN determinista: alpha > beta > gamma
+            vec_perfil = [1.0, 0.0] + [0.0] * (embeddings.EMBED_DIM - 2)
+            await s.execute(sa.text(
+                "UPDATE profile_embeddings SET vector = CAST(:v AS vector) "
+                "WHERE profile_id = :p AND model_id = :m"),
+                {"v": str(vec_perfil), "p": pid, "m": mid})
+            for titulo, ang in (("alpha excluida", 0.0),
+                                ("beta buena", 0.30), ("gamma buena", 0.60)):
+                v = [math.cos(ang), math.sin(ang)] + [0.0] * (
+                    embeddings.EMBED_DIM - 2)
+                await s.execute(sa.text(
+                    "UPDATE offer_embeddings SET vector = CAST(:v AS vector) "
+                    "WHERE model_id = :m AND text_hash IN ("
+                    " SELECT o.text_hash FROM offer_revisions o "
+                    " JOIN vacancies va ON va.current_offer_revision_id = o.id "
+                    " WHERE o.content->>'title' = :t)"),
+                    {"v": str(v), "m": mid, "t": titulo})
+            # alpha queda DESCARTADA
+            await s.execute(sa.text(
+                "INSERT INTO profile_vacancy_state "
+                "(profile_id, vacancy_id, dismissed_at) "
+                "VALUES (:p, :v, now())"),
+                {"p": pid, "v": vacs["alpha excluida"]})
+            await s.commit()
+
+    asyncio.run(preparar())
+
+    async def calcular():
+        async with factory() as s:
+            return await matching.compute_policy_feed(
+                s, pid, mid, polid, limit=2, exclude_dismissed=True)
+
+    r = asyncio.run(calcular())
+    ids = [str(f["vacancy_id"]) for f in r["rows"]]
+    assert str(vacs["alpha excluida"]) not in ids
+    # DOS filas: la exclusión no puede robar una plaza del top-K
+    assert len(ids) == 2, (
+        f"la exclusión se aplicó después del LIMIT: {len(ids)} candidatos")
+    assert set(ids) == {str(vacs["beta buena"]), str(vacs["gamma buena"])}
+
+
+def test_modelo_con_corpus_solo_archivado_no_es_canonico(db):
+    """Revisión externa 2026-09-07 (P2): `canonical_model_id` prometía
+    «corpus elegible» pero solo comprobaba que existiera algún embedding del
+    modelo. Un modelo cuyas vacantes están TODAS archivadas no tiene corpus
+    servible y no puede ser el canónico."""
+    factory, created = db
+    pid, mid, polid, vacs = _setup(factory, created, ["uno", "dos"])
+
+    async def preparar():
+        async with factory() as s:
+            # modelo 'aa-…' anterior en el orden, con embeddings COPIADOS…
+            m2 = await embeddings.register_model(
+                s, "aa-solo-archivado", "a" * 40, active=False)
+            created["models"].append(m2)
+            await s.commit()
+            await s.execute(sa.text(
+                "INSERT INTO offer_embeddings (text_hash, model_id, vector) "
+                "SELECT text_hash, :m2, vector FROM offer_embeddings "
+                "WHERE model_id = :m1"), {"m2": m2, "m1": mid})
+            await s.execute(sa.text(
+                "INSERT INTO profile_embeddings "
+                "(profile_id, profile_revision_id, model_id, vector) "
+                "SELECT profile_id, profile_revision_id, :m2, vector "
+                "FROM profile_embeddings WHERE model_id = :m1"),
+                {"m2": m2, "m1": mid})
+            await embeddings.declare_active_models(s, [m2, mid])
+            await s.commit()
+            return m2
+
+    m2 = asyncio.run(preparar())
+
+    async def canonico():
+        async with factory() as s:
+            return await matching.canonical_model_id(s, pid)
+
+    # con corpus vivo, el anterior del orden ES el canónico
+    assert str(asyncio.run(canonico())) == str(m2)
+
+    async def archivar_todo():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "UPDATE vacancies SET archived_at = now() WHERE id = ANY(:ids)"),
+                {"ids": list(vacs.values())})
+            await s.commit()
+
+    asyncio.run(archivar_todo())
+    # sin corpus servible NINGÚN modelo es canónico (no basta con tener filas)
+    assert asyncio.run(canonico()) is None

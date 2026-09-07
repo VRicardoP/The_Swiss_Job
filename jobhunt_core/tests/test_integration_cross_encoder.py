@@ -782,3 +782,37 @@ def test_materialize_all_solo_actua_sobre_ce_activas(db):
     assert r1["politicas_ce"] == 1
     clave = [k for k in r1["resultados"] if str(pid) in k]
     assert clave and r1["resultados"][clave[0]]["status"] == "ok"
+
+
+def test_exclusion_dismissed_tambien_en_el_camino_CE(db, stub):
+    """Revisión externa 2026-09-07 (P1-1, 2ª parte): el camino CE retornaba
+    `ok_prep` ANTES del filtro de descartadas, así que una vacante descartada
+    con score cacheado entraba igualmente en el cálculo. Con la frontera en
+    SQL, la descartada no se recupera siquiera."""
+    factory, created = db
+    pid, mid, _, vacs = _setup(factory, created, TITULOS[:3])
+    polid = _xenc_policy(factory, created)
+    descartada = vacs[TITULOS[0]]
+
+    async def descartar():
+        async with factory() as s:
+            await s.execute(sa.text(
+                "INSERT INTO profile_vacancy_state "
+                "(profile_id, vacancy_id, dismissed_at) VALUES (:p, :v, now())"),
+                {"p": pid, "v": descartada})
+            await s.commit()
+
+    asyncio.run(descartar())
+
+    async def calcular():
+        async with factory() as s:
+            return await matching.compute_policy_feed(
+                s, pid, mid, polid, limit=100, exclude_dismissed=True,
+                ce_inference=False)
+
+    r = asyncio.run(calcular())
+    assert r["status"] == "ok_prep"
+    candidatos = {str(c.vacancy_id) for c in r["prep"]["candidates"]}
+    assert str(descartada) not in candidatos, (
+        "la descartada llegó a la preparación del CE")
+    assert len(candidatos) == len(TITULOS[:3]) - 1

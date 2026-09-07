@@ -1092,6 +1092,45 @@ ELIGIBLE_CORPUS_FROM = (
 # VERSIÓN del corpus: contador monotónico global que los triggers de core0022 incrementan en cada
 # transición de elegibilidad. Sustituye a la huella hash (colisionable, cara y dependiente del
 # snapshot). Lectura O(1) por PK; se compara por DESIGUALDAD.
+_CANDIDATE_ELIGIBILITY = "WHERE v.archived_at IS NULL AND v.merged_into IS NULL"
+
+
+def _with_candidate_exclusions(sql: str, *, exclude_dismissed: bool,
+                               exclude_ids: bool) -> str:
+    """Frontera ÚNICA de exclusión de candidatos (revisión externa
+    2026-09-07): los predicados se inyectan en el WHERE de elegibilidad —
+    ANTES de los LIMIT de TODOS los brazos (ANN y léxico) y de la preparación
+    del cross-encoder.
+
+    Por qué en SQL y no después: filtrando DESPUÉS de recuperar, el excluido
+    consume una plaza del top-K y un candidato elegible NUNCA se recupera; el
+    universo medido deja de ser el declarado. Ese fue el defecto del examen
+    del 2026-09-06. Además el camino CE retornaba en `ok_prep` sin llegar
+    siquiera al filtro posterior: la exclusión se ignoraba en silencio.
+
+    Se cuenta el ancla antes de tocarla (misma disciplina que
+    `_hybrid_candidates_sql`): una derivación que deja de casar no puede
+    fallar en silencio."""
+    extra = ""
+    if exclude_dismissed:
+        extra += (
+            " AND NOT EXISTS (SELECT 1 FROM profile_vacancy_state pvsx "
+            "WHERE pvsx.profile_id = :pid AND pvsx.vacancy_id = v.id "
+            "AND pvsx.dismissed_at IS NOT NULL)"
+        )
+    if exclude_ids:
+        extra += " AND NOT (v.id = ANY(CAST(:excl_ids AS uuid[])))"
+    if not extra:
+        return sql
+    if sql.count(_CANDIDATE_ELIGIBILITY) == 0:
+        raise RuntimeError(
+            "SQL de candidatos sin ancla de elegibilidad: la exclusión NO se "
+            "aplicaría y el universo recuperado sería otro"
+        )
+    return sql.replace(_CANDIDATE_ELIGIBILITY,
+                       _CANDIDATE_ELIGIBILITY + extra)
+
+
 CORPUS_GENERATION_SQL = "SELECT generation FROM corpus_generation WHERE id = 1"
 
 # Seam de tests para interleavings de publicación (None en producción):
@@ -1130,13 +1169,17 @@ async def canonical_model_id(session, profile_id):
     for m in await _emb.active_models(session):
         if m.dim != _emb.EMBED_DIM:
             continue
+        # Corpus ELEGIBLE de verdad (revisión externa 2026-09-07, P2): un
+        # `EXISTS` sobre offer_embeddings contaba embeddings de vacantes
+        # archivadas o fusionadas — podía elegir un modelo sin corpus servible
+        # y dejar en sombra al que sí lo tiene. Se reutiliza la fuente única.
         elegible = (
             await session.execute(
                 sa.text(
                     "SELECT EXISTS (SELECT 1 FROM profile_embeddings "
                     " WHERE model_id = :m AND profile_revision_id = :r) "
-                    "AND EXISTS (SELECT 1 FROM offer_embeddings "
-                    " WHERE model_id = :m)"
+                    "AND EXISTS (SELECT 1 "
+                    + ELIGIBLE_CORPUS_FROM.format(model=":m") + ")"
                 ),
                 {"m": m.id, "r": rev},
             )
@@ -1149,6 +1192,7 @@ async def canonical_model_id(session, profile_id):
 async def compute_policy_feed(
     session, profile_id, model_id, policy_id, limit: int = CANONICAL_EVAL_LIMIT,
     exclude_dismissed: bool = False, with_corpus_generation: bool = False,
+    exclude_vacancy_ids: list | None = None,
     ce_inference: bool = True,
 ) -> dict:
     """Feed ACTUAL de una política: el ranking que produciría una ejecución
@@ -1274,8 +1318,15 @@ async def compute_policy_feed(
         candidate_sql = HYBRID_CANDIDATES_SQL
     else:
         candidate_sql = CANDIDATES_SQL
+    # Frontera ÚNICA: la exclusión entra en el SQL, antes de todos los LIMIT.
+    excl_ids = [str(x) for x in (exclude_vacancy_ids or [])]
+    candidate_sql = _with_candidate_exclusions(
+        candidate_sql, exclude_dismissed=exclude_dismissed,
+        exclude_ids=bool(excl_ids),
+    )
     params = {
         "vec": prof.vec, "mid": model_id, "k": limit, "lex_query": lex_query,
+        "pid": profile_id, "excl_ids": excl_ids,
     }
     ef_search = min(max(limit, 40), 1000)
     await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(ef_search)}"))
@@ -1318,19 +1369,6 @@ async def compute_policy_feed(
             session, candidates, prof, profile_id, model_id, policy_id,
             receta_ce,
         )
-        if exclude_dismissed and rows:
-            descartadas = {
-                r[0] for r in (
-                    await session.execute(
-                        sa.text(
-                            "SELECT vacancy_id FROM profile_vacancy_state "
-                            "WHERE profile_id = :pid AND dismissed_at IS NOT NULL"
-                        ),
-                        {"pid": profile_id},
-                    )
-                ).all()
-            }
-            rows = [r for r in rows if r["vacancy_id"] not in descartadas]
         return {"status": "ok", "rows": rows,
                 "profile_revision_id": prof.revision_id,
                 "corpus_generation": corpus_gen}
@@ -1384,21 +1422,6 @@ async def compute_policy_feed(
     # Orden del FEED (no el bruto del SQL): score final redondeado DESC,
     # vacante ASC — la misma clave con la que sirve el feed canónico.
     rows.sort(key=lambda r: (-r["score"], str(r["vacancy_id"])))
-    if exclude_dismissed and rows:
-        # Semántica del feed canónico: dismissed_at no nulo excluye; una
-        # vacante SIN fila de estado sigue visible.
-        descartadas = {
-            r[0] for r in (
-                await session.execute(
-                    sa.text(
-                        "SELECT vacancy_id FROM profile_vacancy_state "
-                        "WHERE profile_id = :pid AND dismissed_at IS NOT NULL"
-                    ),
-                    {"pid": profile_id},
-                )
-            ).all()
-        }
-        rows = [r for r in rows if r["vacancy_id"] not in descartadas]
     return {"status": "ok", "rows": rows,
             "profile_revision_id": prof.revision_id,
             "corpus_generation": corpus_gen}
