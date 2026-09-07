@@ -1,5 +1,8 @@
 # Correcciones y unificación — estado comprobado 2026-09-07
 
+> **Estado vigente:** [correcciones desplegadas y confirmadas el 08-09](CIERRE_DESPLEGADO_2026-09-08_CODEX.md).
+> Lo que sigue es historial; no reaplicar los parches pendientes descritos aquí.
+
 > Actualización posterior: parches aplicados y suites locales verdes.
 > El estado vigente está en [CIERRE_LOCAL_FIXES_2026-09-07_CODEX.md](CIERRE_LOCAL_FIXES_2026-09-07_CODEX.md).
 > Este documento conserva la situación anterior como historial.

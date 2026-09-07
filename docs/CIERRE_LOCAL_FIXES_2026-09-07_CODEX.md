@@ -1,5 +1,8 @@
 # Cierre local de correcciones — 2026-09-07
 
+> **Fotografía histórica, superada por el despliegue.** Estado vigente y evidencias:
+> [CIERRE_DESPLEGADO_2026-09-08_CODEX.md](CIERRE_DESPLEGADO_2026-09-08_CODEX.md).
+
 ## Estado vigente
 
 **Correcciones implementadas y verificadas localmente. NO DESPLEGADAS.**
