@@ -183,7 +183,129 @@ print("journal phase passed:", os.environ["DOCUMENT_JOURNAL_PHASE"])
 '''
 
 
-@pytest.mark.parametrize("client_name,root", [("swissjob", "/bff"), ("portfolio", "/portfolio"), ("portfolio_delivery", "/portfolio")])
+
+_WORKFLOW_CLIENT = r'''
+import asyncio, os, sys, uuid
+from types import SimpleNamespace
+sys.path.append(os.environ["DOCUMENT_TEST_EXTRA_PACKAGES"])
+import httpx
+from fastapi import FastAPI
+from sqlalchemy import select, text, delete
+from sqlalchemy.engine import make_url
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from config import settings
+from database import Base, get_async_db
+from models.user import User
+from models.job_application import JobApplication
+from models.generated_document import GeneratedDocument
+from models.jobhunt_routing import JobhuntRouting, PROFILE_WILDCARD
+from models.document_delivery import DocumentDelivery
+from routers import cv_generation as router
+from routers.auth import get_current_active_user
+from services.cv_generation_service import get_cv_generation_service
+from services.cv_profile_service import get_cv_profile_service
+from services.documents_core import CoreDocuments, CoreDocumentError
+from services import document_store as authority
+
+url = os.environ["DOCUMENT_JOURNAL_DSN"]
+assert make_url(url).database == os.environ["DOCUMENT_JOURNAL_DATABASE"]
+assert make_url(url).database.startswith("jobhunt_suite_")
+schema = os.environ["DOCUMENT_JOURNAL_SCHEMA"]
+assert schema.startswith("document_delivery_") and schema.replace("_", "").isalnum()
+engine = create_async_engine(url, connect_args={"server_settings": {"search_path": schema}})
+sessions = async_sessionmaker(engine, expire_on_commit=False)
+pid = uuid.UUID(os.environ["DOCUMENT_TEST_PROFILE"])
+settings.CORE_PROFILE_ID, settings.CORE_DOCUMENT_OWNER_USER_ID = str(pid), 123
+settings.writes_frozen = False
+router.limiter.enabled = False
+app = FastAPI()
+app.include_router(router.router, prefix="/api/v1/cv-generation")
+async def db():
+    async with sessions() as session:
+        yield session
+app.dependency_overrides[get_async_db] = db
+app.dependency_overrides[get_current_active_user] = lambda: SimpleNamespace(id=123)
+class Profiles:
+    async def get_cv_text(self, db): return "Synthetic profile"
+    async def get_structured_data(self, db, language): return None
+class LLM:
+    calls = 0
+    async def generate_cv(self, **kwargs):
+        self.calls += 1
+        return {"content": {"summary": "Synthetic résumé"}, "generation_time_ms": 2}
+    async def generate_cover_letter(self, **kwargs):
+        self.calls += 1
+        return {"content": {"greeting": "Synthetic"}, "generation_time_ms": 2}
+llm = LLM()
+app.dependency_overrides[get_cv_generation_service] = lambda: llm
+app.dependency_overrides[get_cv_profile_service] = Profiles
+
+class LoseAck(CoreDocuments):
+    first = True
+    async def create_batch(self, *args, **kwargs):
+        result = await super().create_batch(*args, **kwargs)
+        if LoseAck.first:
+            LoseAck.first = False
+            raise CoreDocumentError("synthetic loss AFTER real commit")
+        return result
+authority.CoreDocuments = LoseAck
+
+async def run():
+    try:
+        async with engine.begin() as c:
+            await c.execute(text(f'CREATE SCHEMA "{schema}"'))
+            await c.run_sync(lambda c: Base.metadata.create_all(c, tables=[
+                User.__table__, JobApplication.__table__, GeneratedDocument.__table__,
+                JobhuntRouting.__table__, DocumentDelivery.__table__,
+            ]))
+        async with sessions() as s:
+            s.add(User(id=123, username="synthetic", hashed_password="synthetic"))
+            await s.flush()
+            application = JobApplication(user_id=123, title="Engineer", company="Synthetic")
+            s.add(application)
+            s.add(JobhuntRouting(consumer_id="portfolio", profile_id=PROFILE_WILDCARD,
+                                capability="documents", mode="core_primary"))
+            await s.commit()
+            aid = application.id
+        op = uuid.uuid4()
+        body = {"application_id": str(aid), "operation_id": str(op)}
+        base = "/api/v1/cv-generation"
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url="http://bff.test") as client:
+            first = await client.post(base + "/generate", json=body)
+            assert first.status_code == 202, first.text
+            assert llm.calls == 2
+            async with sessions() as s:
+                row = await s.get(DocumentDelivery, op)
+                assert row.documents is not None and row.delivered_at is None
+                assert not (await s.execute(select(GeneratedDocument))).scalars().all()
+                await s.execute(delete(JobApplication).where(JobApplication.id == aid))
+                await s.commit()
+            pending = await client.get(base + "/operations/")
+            assert len(pending.json()) == 1
+            second = await client.post(base + "/generate", json=body)
+            assert second.status_code == 200, second.text
+            assert llm.calls == 2
+            listed = await client.get(base + "/")
+            docs = listed.json()
+            assert len(docs) == 2
+            for doc in docs:
+                assert doc["application_snapshot"]["title"] == "Engineer"
+                got = await client.get(base + "/" + doc["id"])
+                assert got.status_code == 200 and got.json()["content"] == doc["content"]
+            third = await client.post(base + "/operations/" + str(op) + "/retry")
+            assert third.status_code == 200 and llm.calls == 2
+            assert (await client.get(base + "/operations/")).json() == []
+            assert (await client.delete(base + "/" + docs[0]["id"])).status_code == 204
+            assert (await client.post(base + "/generate", json=body)).status_code == 410
+            assert len((await client.get(base + "/")).json()) == 1 and llm.calls == 2
+        print("BFF HTTP + PostgreSQL + real core API: ACK loss/replay/delete/application deletion passed")
+    finally:
+        await engine.dispose()
+asyncio.run(run())
+'''
+
+@pytest.mark.parametrize("client_name,root", [("swissjob", "/bff"), ("portfolio", "/portfolio"), ("portfolio_delivery", "/portfolio"), ("portfolio_workflow", "/portfolio")])
 def test_document_adapter_over_http(db, client_name, root):
     assert os.path.isfile(root + "/config.py"), "mount the BFF source read-only"
     from sqlalchemy.engine import make_url
@@ -234,14 +356,14 @@ def test_document_adapter_over_http(db, client_name, root):
             for phase in phases:
                 env["DOCUMENT_JOURNAL_PHASE"] = phase
                 result = subprocess.run(
-                    [sys.executable, "-c", _JOURNAL_CLIENT if phase != "client" else _CLIENT],
+                    [sys.executable, "-c", _WORKFLOW_CLIENT if client_name == "portfolio_workflow" else (_JOURNAL_CLIENT if phase != "client" else _CLIENT)],
                     cwd="/tmp", env=env, text=True, capture_output=True, timeout=60,
                 )
                 diagnostic = (result.stdout + result.stderr).replace(token, "<redacted>").replace(
                     other_token, "<redacted>").replace(journal_url, "<test-database>")
                 assert result.returncode == 0, diagnostic
         finally:
-            if client_name == "portfolio_delivery":
+            if client_name in ("portfolio_delivery", "portfolio_workflow"):
                 import asyncio
                 import sqlalchemy as sa
                 from sqlalchemy.ext.asyncio import create_async_engine
