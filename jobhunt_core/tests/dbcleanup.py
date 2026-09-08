@@ -53,6 +53,7 @@ async def purge_consumer_graph(
         {"c": cons},
     )
     for tbl, col in (
+        ("generated_documents", "profile_id"),
         ("profile_vacancy_state", "profile_id"),
         ("match_evaluations", "profile_id"),
         ("profile_recovery_state", "profile_id"),  # core0019

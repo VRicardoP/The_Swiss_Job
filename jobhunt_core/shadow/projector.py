@@ -194,6 +194,7 @@ PROFILE_FIELDS = (
 # código de producción): estado ANTES que evaluaciones (FK RESTRICT del
 # current_eval); el outbox va aparte (sus deliveries caen por CASCADE).
 _ERASE_TABLES = (
+    "generated_documents",  # E.1: contenido personal, antes de borrar el perfil
     "profile_vacancy_state",
     "profile_vacancy_events",
     "match_evaluations",
@@ -1421,6 +1422,16 @@ async def erase_shadow_profile(
     # borrar el grafo hijo sin serializar con quien evalúa o embebe.
     await session.execute(
         sa.text("SELECT id FROM profiles WHERE id = :p FOR UPDATE"), {"p": pid}
+    )
+    # Document receipts contain IDs, never CV text; erase their subject metadata too.
+    await session.execute(
+        sa.text(
+            "DELETE FROM idempotency_records WHERE consumer_id = "
+            "(SELECT consumer_id FROM profiles WHERE id=:p) "
+            "AND (route=:post OR route LIKE :deletes)"
+        ),
+        {"p": pid, "post": f"POST /v1/profiles/{pid}/documents",
+         "deletes": f"DELETE /v1/profiles/{pid}/documents/%"},
     )
     # Outbox del perfil (las deliveries caen por ON DELETE CASCADE).
     await session.execute(
