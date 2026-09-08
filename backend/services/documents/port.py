@@ -7,21 +7,19 @@ y borrarlo. La ORQUESTACION de la generacion (Gemini/Groq, cache Redis,
 carga de perfil/oferta/match como insumos) NO es estado de esta capacidad y
 sigue en el router.
 
-VARIANTE LIGERA de la costura: el /v1 del core NO expone documentos
-(jobhunt_core/api/v1.py solo sirve vacancies/profiles/matches en Fase A) —
-`CoreDocuments` levanta DocumentsUnsupportedError en TODAS las operaciones.
-Es la cota del contrato vigente, fijada por los contract tests (patron
-search/stats de catalogo).
+La API E.1 ya expone documentos. El resolver mantiene `CoreDocuments` SIN
+vincular (Unsupported) hasta ensayar la migracion y el corte E; el adaptador
+HTTP vinculado se verifica aparte y no activa un escritor core por si solo.
 
 CRITERIO UNIFICADOR (heredado de A.SEAM matching): el UNICO escritor de
-`generated_documents` es LOCAL hasta Fase C => escrituras Y lecturas se
+`generated_documents` es LOCAL hasta el corte E => escrituras Y lecturas se
 sirven de local en TODOS los modos, incluida core_primary — nunca 501/503
 por routing (services/documents/seam.py).
 
 Dos implementaciones detras del mismo puerto:
 - `LocalDocuments` (services/documents/local.py): almacen actual, movido
   verbatim del router.
-- `CoreDocuments` (services/documents/core_client.py): cota /v1.
+- `CoreDocuments` (services/documents/core_client.py): adaptador HTTP E.2.
 La eleccion la decide `jobhunt_routing` (services/documents/seam.py).
 """
 
@@ -36,15 +34,11 @@ class DocumentsError(Exception):
 
 
 class CoreUnavailableError(DocumentsError):
-    """El core no responde, fallo o no hay credencial de consumer.
-
-    Hoy SIN emisor (CoreDocuments no emite red: cota Unsupported total). Se
-    conserva por simetria con el resto de capacidades y para la separacion
-    de severidades del canary (seam.FallbackDocuments)."""
+    """Core inaccesible, respuesta incompatible o vinculacion incompleta."""
 
 
 class DocumentsUnsupportedError(DocumentsError):
-    """La operacion no existe (aun) en el contrato /v1 del core."""
+    """Operacion no habilitada: el adaptador sigue sin vincular al core."""
 
 
 class DocumentsPort(Protocol):

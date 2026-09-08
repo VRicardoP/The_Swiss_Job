@@ -1,12 +1,11 @@
 """CONTRACT TESTS de la capacidad DOCUMENTOS — A.SEAM (plan §15bis).
 
-Variante LIGERA de la costura: el /v1 del core (jobhunt_core/api/v1.py) NO
-expone documentos generados en Fase A — la cota contractual es
-DocumentsUnsupportedError en TODAS las operaciones del puerto, fijada aqui
-(patron search/stats de catalogo).
+Contrato operativo pre-corte E: CoreDocuments SIN vincular debe devolver
+DocumentsUnsupportedError y no abrir HTTP. La API E.1 y el adaptador vinculado
+se prueban aparte; su existencia no migra el estado local.
 
 CRITERIO UNIFICADOR (heredado de A.SEAM matching): el UNICO escritor de
-`generated_documents` es LOCAL hasta Fase C => el estado es accesible en
+`generated_documents` es LOCAL hasta el corte E => el estado es accesible en
 TODOS los modos de routing, incluida core_primary — nunca 501/503 por
 routing. Fijado aqui a nivel de resolver y de HTTP.
 """
