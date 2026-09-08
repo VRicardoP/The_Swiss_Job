@@ -174,3 +174,20 @@ Esto no declara averiado el CDC: demuestra que no puede retirarse el productor
 legacy suponiendo que el core ya cosecha esas fuentes directamente. F exige
 portar/activar y medir cada sustituto, o conservar explícitamente el adaptador
 productor; apagarlo antes reduciría la entrada de ofertas.
+
+## Regresión completa adicional del core
+
+**1109 passed, 1 skipped, 2 warnings**, 799,75 s, suite completa en serie tras
+Portfolio/frontend. No se modificó código core ni se relajó un test. La primera
+invocación se detuvo en colección porque faltaba el montaje de scripts de cutover;
+se corrigió el entorno, y la segunda terminó íntegra:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.core-local.yml run --rm --no-deps \
+  -v /home/lothar/Public/SwissJob/jobhunt_core:/app/jobhunt_core:ro \
+  -v /home/lothar/Public/SwissJob/backend/scripts:/app/backend/scripts:ro \
+  core-migrate python -m pytest jobhunt_core/tests -q --tb=short \
+  --show-capture=no -o cache_dir=/tmp/pytest-cache
+```
+
+Comprobación posterior NAS: contenedor running, **0 reinicios** desde la release.
