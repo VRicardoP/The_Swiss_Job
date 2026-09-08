@@ -139,3 +139,22 @@ venv/bin/python -m pytest tests/ -q --tb=short --show-capture=no
 npx vitest run
 npm run build
 ```
+
+## Runtime local alineado y backup
+
+El backend local usa uvicorn con recarga automática. Para no dejar código nuevo
+con esquema viejo, se detuvo únicamente ese contenedor, se obtuvo pg_dump y se
+aplicó la cadena real c4d8e2f60a17 → d5e9f3071b28 → e6fa04182c39.
+Después se arrancó de nuevo: health 200/healthy, /health/documents writes=enabled
+y Alembic en e6fa04182c39. El NAS no se modificó.
+
+Backup privado: /tmp/swiss-documents-upgrade.16Vaye/legacy.dump (directorio 0700,
+archivo 0600), SHA-256
+d562474ff02bec0dcdc1fc0d974675d605cfacdba7eb79572f7d950eeebb85a2.
+pg_restore --list termina correctamente (444 líneas de TOC). Esto acredita
+legibilidad del archivo, no un nuevo ensayo de restauración completa sobre NAS.
+
+La última ejecución del navegador (incluida la consulta nueva de pendientes)
+también pasó recuperación, biblioteca, PDF, móvil y borrado, con cero pageerror.
+La previsualización temporal del puerto 4178 se detuvo al terminar; no se tocó
+la aplicación ajena del puerto 8080.
