@@ -1,5 +1,9 @@
 # Correcciones desplegadas y verificadas — 2026-09-08
 
+Continuación local posterior: [Fase E.1, documentos](FASE_E_DOCUMENTOS_2026-09-08.md).
+El nuevo almacén/API no se ha desplegado; no modifica la fotografía operativa
+de este acta ni da por terminada E/F.
+
 ## Estado vigente
 
 **Correcciones desplegadas y confirmadas mediante canary en el NAS.**
