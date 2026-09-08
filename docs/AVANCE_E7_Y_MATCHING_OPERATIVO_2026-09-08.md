@@ -163,3 +163,14 @@ Orden de continuación, sin repetir trabajos cerrados:
 
 YAGNI guió la reutilización de routing, journal, adaptador y suite existentes;
 no se añadió otra cola, motor de PDF, dependencia ni framework de almacenamiento.
+
+## Preflight adicional de retirada F
+
+Consulta de solo lectura en `swissjob-core-api-r5` (sources + harvest_scopes +
+source_scope_state): **ningún scope de cosecha directa habilitado**. Los scopes
+presentes son `legacy:*`, disabled, sin last_complete de fetch propio. Incluyen
+portales y colegios; los registros de evaluación no son fuentes productivas.
+Esto no declara averiado el CDC: demuestra que no puede retirarse el productor
+legacy suponiendo que el core ya cosecha esas fuentes directamente. F exige
+portar/activar y medir cada sustituto, o conservar explícitamente el adaptador
+productor; apagarlo antes reduciría la entrada de ofertas.
