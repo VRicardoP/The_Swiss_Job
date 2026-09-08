@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 DocType = Literal["cv", "cover_letter"]
 
@@ -34,3 +34,19 @@ class DocumentDTO(DocumentCreateDTO):
 class DocumentsPageDTO(BaseModel):
     items: list[DocumentDTO]
     next_cursor: str | None = None
+
+
+class DocumentBatchCreateDTO(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[DocumentCreateDTO] = Field(min_length=1, max_length=2)
+
+    @model_validator(mode="after")
+    def distinct_types(self):
+        if len({item.doc_type for item in self.items}) != len(self.items):
+            raise ValueError("one document per type in a generation")
+        return self
+
+
+class DocumentBatchDTO(BaseModel):
+    items: list[DocumentDTO]

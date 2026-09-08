@@ -70,6 +70,26 @@ async def go():
         pass  # deleted receipt must not resurrect the CV
     else:
         raise AssertionError("deleted generation replayed")
+    if os.environ["DOCUMENT_TEST_CLIENT"] == "portfolio":
+        batch_key = uuid.uuid4()
+        batch_ref = uuid.uuid4()
+        finished = [{"doc_type": kind, "content": content, "language": "fr",
+                     "model_used": "synthetic-model", "generation_time_ms": 21}
+                    for kind in ("cv", "cover_letter")]
+        pair = await core.create_batch(owner, batch_ref, finished, operation_id=batch_key)
+        replay = await core.create_batch(owner, batch_ref, finished, operation_id=batch_key)
+        assert [d.id for d in pair] == [d.id for d in replay]
+        assert [d.doc_type for d in pair] == ["cv", "cover_letter"]
+        assert len(await core.list(owner, batch_ref)) == 2
+        assert await core.delete(owner, pair[0].id)
+        try:
+            await core.create_batch(owner, batch_ref, finished, operation_id=batch_key)
+        except ExpectedError:
+            pass
+        else:
+            raise AssertionError("partial generation replayed or resurrected")
+        remaining = await core.list(owner, batch_ref)
+        assert [d.id for d in remaining] == [pair[1].id]
     # Correctly scoped auth is real; a foreign consumer must not see this profile.
     settings.CORE_CONSUMER_KEY = os.environ["DOCUMENT_TEST_OTHER_TOKEN"]
     try:

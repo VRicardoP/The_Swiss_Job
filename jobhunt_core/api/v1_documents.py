@@ -25,12 +25,8 @@ def _dto(row):
     return schemas.DocumentDTO(**row).model_dump(mode="json")
 
 
-@router.post("", status_code=201, response_model=schemas.DocumentDTO)
-async def create_document(profile_id: uuid.UUID, body: schemas.DocumentCreateDTO, request: Request,
-                          session=Depends(get_session), principal=Depends(require_scope("documents:write"))):
-    key = request.headers.get("idempotency-key")
-    if key is None:
-        raise ApiError(400, "idempotency_key_required", "el alta de documento exige Idempotency-Key")
+async def _validated_values(session, body):
+    """Single byte/JSONB boundary for individual and atomic multi-document writes."""
     values = body.model_dump()
     ensure_json_storable(values)
     # Byte limits mirror PostgreSQL; character counts alone miss multibyte text.
@@ -42,6 +38,17 @@ async def create_document(profile_id: uuid.UUID, body: schemas.DocumentCreateDTO
     ), {"context": json.dumps(body.context, ensure_ascii=False)})).scalar_one()
     if context_size > 65536:
         raise ApiError(400, "document_too_large", "contexto JSONB excede la cota de almacenamiento")
+
+    return values
+
+
+@router.post("", status_code=201, response_model=schemas.DocumentDTO)
+async def create_document(profile_id: uuid.UUID, body: schemas.DocumentCreateDTO, request: Request,
+                          session=Depends(get_session), principal=Depends(require_scope("documents:write"))):
+    key = request.headers.get("idempotency-key")
+    if key is None:
+        raise ApiError(400, "idempotency_key_required", "el alta de documento exige Idempotency-Key")
+    values = await _validated_values(session, body)
 
     destination = await documents.owner(session, profile_id, principal.consumer_id, write=True)
     if destination is None:
@@ -62,6 +69,47 @@ async def create_document(profile_id: uuid.UUID, body: schemas.DocumentCreateDTO
     if row is None:
         raise error_404("documento")
     return json_response(status, _dto(row))
+
+
+
+@router.post("/batch", status_code=201, response_model=schemas.DocumentBatchDTO)
+async def create_document_batch(profile_id: uuid.UUID, body: schemas.DocumentBatchCreateDTO,
+                                request: Request, session=Depends(get_session),
+                                principal=Depends(require_scope("documents:write"))):
+    """One generation: CV and/or letter, receipt and events commit together.
+
+    Input contains finished documents only: never hold DB locks while calling LLMs.
+    The ordered receipt stores only IDs. A replay after deleting any member fails
+    closed (404), rather than recreating it or returning an incomplete generation.
+    """
+    key = request.headers.get("idempotency-key")
+    if key is None:
+        raise ApiError(400, "idempotency_key_required", "el lote exige Idempotency-Key")
+    values = [await _validated_values(session, item) for item in body.items]
+    destination = await documents.owner(session, profile_id, principal.consumer_id, write=True)
+    if destination is None:
+        raise error_404("perfil")
+
+    async def handler():
+        ids = []
+        for value in values:
+            did = await documents.create(session, profile_id, value, destination)
+            if did is None:
+                raise error_404("revisión de oferta")
+            ids.append(str(did))
+        return 201, {"ids": ids}
+
+    status, receipt = await run_idempotent(
+        session, principal, f"POST /v1/profiles/{profile_id}/documents/batch",
+        request_hash(body.model_dump(mode="json")), key, handler,
+    )
+    items = []
+    for did in receipt["ids"]:
+        row = await documents.fetch(session, profile_id, uuid.UUID(did), principal.consumer_id)
+        if row is None:
+            raise error_404("documento del lote")
+        items.append(_dto(row))
+    return json_response(status, {"items": items})
 
 
 @router.get("", response_model=schemas.DocumentsPageDTO)

@@ -1428,9 +1428,10 @@ async def erase_shadow_profile(
         sa.text(
             "DELETE FROM idempotency_records WHERE consumer_id = "
             "(SELECT consumer_id FROM profiles WHERE id=:p) "
-            "AND (route=:post OR route LIKE :deletes)"
+            "AND (route=:post OR route=:batch OR route LIKE :deletes)"
         ),
         {"p": pid, "post": f"POST /v1/profiles/{pid}/documents",
+         "batch": f"POST /v1/profiles/{pid}/documents/batch",
          "deletes": f"DELETE /v1/profiles/{pid}/documents/%"},
     )
     # Outbox del perfil (las deliveries caen por ON DELETE CASCADE).
