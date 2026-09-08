@@ -1,7 +1,7 @@
 """Opt-in real PostgreSQL check of the Portfolio generation transaction.
 
 Requires -p jobhunt_core.tests.conftest and /portfolio mounted read-only. Creates
-only three synthetic tables in a private schema of the plugin's disposable DB.
+only four synthetic tables in a private schema of the plugin's disposable DB.
 No real LLM, credentials, users, NAS or production database are involved.
 """
 
@@ -26,6 +26,7 @@ from database import Base
 from models.user import User
 from models.job_application import JobApplication
 from models.generated_document import GeneratedDocument
+from models.jobhunt_routing import JobhuntRouting
 from schemas.generated_document import GenerateDocumentRequest
 from routers.cv_generation import generate_documents
 
@@ -47,6 +48,7 @@ async def run():
             await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
             await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=[
                 User.__table__, JobApplication.__table__, GeneratedDocument.__table__,
+                JobhuntRouting.__table__,
             ]))
         async with sessions() as s:
             user = User(username="synthetic", hashed_password="not-a-password")
@@ -114,8 +116,13 @@ async def run():
                 if case == "pair":
                     await check.execute(delete(JobApplication).where(JobApplication.id == aid))
                     await check.commit()
-                    assert await check.scalar(select(func.count()).select_from(GeneratedDocument)) == 0
-        print("PG: no transaction during LLM; atomic pair; parent lock; deletion; FK CASCADE passed")
+                    documents = (await check.execute(select(GeneratedDocument))).scalars().all()
+                    assert len(documents) == 2, "application deletion removed documents"
+                    assert all(d.application_id == aid for d in documents)
+                    assert all(d.application_snapshot["title"] == "Engineer" for d in documents)
+                    await check.execute(delete(GeneratedDocument))
+                    await check.commit()
+        print("PG: no transaction during LLM; atomic pair; parent lock; retained documents passed")
     finally:
         async with engine.begin() as conn:
             await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))

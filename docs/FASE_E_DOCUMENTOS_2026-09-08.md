@@ -4,10 +4,11 @@ Resultados, commits e incidencia local:
 [acta E.1](CIERRE_LOCAL_E1_2026-09-08.md) y
 [continuación E.2/local](CIERRE_LOCAL_E2_2026-09-08.md) y
 [alta atómica E.3](CIERRE_LOCAL_E3_2026-09-08.md) y
-[avance E.4](AVANCE_E4_2026-09-08.md).
-E.4 corrige localmente caché y transacciones durante LLM; antes del corte falta
-ratificar conservación/borrado de documentos al eliminar una candidatura y
-cubrir el flujo de generación con candidatura que SOLO exista en core.
+[avance E.4](AVANCE_E4_2026-09-08.md) y
+[conservación E.5](AVANCE_E5_2026-09-08.md).
+Decisión ratificada: conservar CV/carta al borrar la candidatura, hasta borrado
+explícito o retención. E.5 implementa referencia/snapshot, autoridad de candidaturas
+y biblioteca visible; sigue siendo código local, no un flip documental al core.
 
 ## Estado y autoridad
 
@@ -147,8 +148,9 @@ procedimiento del corte E; nunca restaurar toda la base core compartida.
   destrucción criptográfica en backups de `DEUDA_TECNICA.md` §2.10 siguen abiertos;
   el borrado SQL y de recibos no los implementa. Resolver su requisito operativo
   antes del cierre E/GDPR, sin afirmar que backups ya están saneados.
-- Preservar cambios ajenos no committeados en Portfolio y
-  `school_job_monitor_architecture.md`; no empaquetarlos en un deploy.
+- El inbox Portfolio preexistente quedó integrado en checkpoint separado 26a3374;
+  no está activado en NAS. Preservar el cambio ajeno de
+  `school_job_monitor_architecture.md`; no empaquetarlo en un deploy.
 - Incidencia **local** anterior a E.1: runtime ya alineado a d908ea2/core0042
   después de backup/restore estricto; API/capture healthy, worker responde,
   3.000 cambios drenados y staging pendiente 0. Quedan cuatro ofertas activas
