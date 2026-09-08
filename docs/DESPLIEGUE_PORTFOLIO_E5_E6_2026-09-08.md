@@ -13,6 +13,10 @@ SwissJob/core/modelos/holdout no se modificaron. E/F NO se declaran completas.
   un canary de generación LLM ni de PDF con documentos reales.
 - Base y Redis: healthy. FK de documento hacia candidatura: **0**; se conserva
   el vínculo de propietario. Binding explícito user 1 ↔ perfil enrolado comprobado.
+- Huellas post-despliegue de `cv_profiles`, `schools`, `school_jobs` y
+  `saved_searches`: **idénticas** a la copia inicial. Usuarios: sigue 1;
+  documentos y journal: 0. Comparación por hashes/conteos sin publicar contenido.
+  No se deduce de ello que no puedan existir cambios futuros legítimos.
 - Proxy: `unsafe=[]`, `rejected=[]`, limitación por cliente y entrypoint vigente.
 - Túnel público `/health`: **200 / healthy** tras la corrección y tras el relevo.
 - Frontend **`8836254`** publicado en GitHub por fast-forward desde `97092ae`;
