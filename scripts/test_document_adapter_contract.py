@@ -104,7 +104,86 @@ print("create/replay/new-generation/pagination/ETag-delete/ownership: passed")
 '''
 
 
-@pytest.mark.parametrize("client_name,root", [("swissjob", "/bff"), ("portfolio", "/portfolio")])
+
+_JOURNAL_CLIENT = r'''
+import asyncio, os, sys, uuid
+sys.path.append(os.environ["DOCUMENT_TEST_EXTRA_PACKAGES"])
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.engine import make_url
+from config import settings
+from database import Base
+from models.user import User
+from models.document_delivery import DocumentDelivery
+from services.documents_core import CoreDocuments, CoreDocumentError
+from services.document_delivery import enqueue_generation, deliver_generation
+
+url = os.environ["DOCUMENT_JOURNAL_DSN"]
+assert make_url(url).database == os.environ["DOCUMENT_JOURNAL_DATABASE"]
+assert make_url(url).database.startswith("jobhunt_suite_")
+schema = os.environ["DOCUMENT_JOURNAL_SCHEMA"]
+assert schema.startswith("document_delivery_") and schema.replace("_", "").isalnum()
+engine = create_async_engine(url, connect_args={"server_settings": {"search_path": schema}})
+sessions = async_sessionmaker(engine, expire_on_commit=False)
+pid = uuid.UUID(os.environ["DOCUMENT_TEST_PROFILE"])
+operation = uuid.UUID(os.environ["DOCUMENT_JOURNAL_OPERATION"])
+app_id = uuid.UUID(os.environ["DOCUMENT_JOURNAL_APPLICATION"])
+settings.CORE_PROFILE_ID = str(pid)
+settings.CORE_DOCUMENT_OWNER_USER_ID = 123
+snapshot = {"origin": "core", "title": "Synthetic", "description": "Exact UTF-8 é"}
+finished = [{"doc_type": kind, "content": '{"name":"Synthetic"}', "language": "en",
+             "model_used": "synthetic", "generation_time_ms": 12}
+            for kind in ("cv", "cover_letter")]
+
+async def go():
+    try:
+        if os.environ["DOCUMENT_JOURNAL_PHASE"] == "prepare":
+            async with engine.begin() as c:
+                await c.execute(text(f'CREATE SCHEMA "{schema}"'))
+                await c.run_sync(lambda sync: Base.metadata.create_all(sync, tables=[
+                    User.__table__, DocumentDelivery.__table__]))
+            async with sessions() as db:
+                db.add(User(id=123, username="synthetic", hashed_password="synthetic"))
+                await db.flush()
+                await enqueue_generation(db, operation_id=operation, user_id=123, profile_id=pid,
+                    application_id=app_id, request_hash="a"*64, documents=finished,
+                    application_snapshot=snapshot)
+                await db.commit()
+            class LoseAck(CoreDocuments):
+                async def create_batch(self, *args, **kwargs):
+                    await super().create_batch(*args, **kwargs)  # real core COMMIT
+                    raise CoreDocumentError("synthetic lost ACK")
+            result = await deliver_generation(sessions, operation, 123, sender_factory=LoseAck)
+            assert result["status"] == "pending"
+            async with sessions() as db:
+                row = await db.get(DocumentDelivery, operation)
+                assert row.documents == finished and row.document_ids is None
+                assert row.first_attempt_at is not None
+        else:
+            if os.environ["DOCUMENT_JOURNAL_PHASE"] == "verify":
+                def forbidden(*args): raise AssertionError("confirmed operation emitted HTTP")
+                result = await deliver_generation(sessions, operation, 123, sender_factory=forbidden)
+            else:
+                result = await deliver_generation(sessions, operation, 123)
+            assert result["status"] == "delivered", result
+            core = CoreDocuments(pid, 123)
+            docs = await core.list(123, app_id)
+            assert len(docs) == 2
+            assert set(map(str, (d.id for d in docs))) == set(result["document_ids"])
+            assert all(d.application_snapshot == snapshot for d in docs)
+            async with sessions() as db:
+                row = await db.get(DocumentDelivery, operation)
+                assert row.documents is None and row.application_snapshot is None
+                assert row.last_error is None
+    finally:
+        await engine.dispose()
+
+asyncio.run(go())
+print("journal phase passed:", os.environ["DOCUMENT_JOURNAL_PHASE"])
+'''
+
+
+@pytest.mark.parametrize("client_name,root", [("swissjob", "/bff"), ("portfolio", "/portfolio"), ("portfolio_delivery", "/portfolio")])
 def test_document_adapter_over_http(db, client_name, root):
     assert os.path.isfile(root + "/config.py"), "mount the BFF source read-only"
     from sqlalchemy.engine import make_url
@@ -143,10 +222,37 @@ def test_document_adapter_over_http(db, client_name, root):
                "DATABASE_URL": "postgresql+asyncpg://test:test@127.0.0.1:1/unused",
                "DATABASE_URL_ASYNC": "postgresql+asyncpg://test:test@127.0.0.1:1/unused"}
         # Never load either project's private .env in this synthetic test.
-        result = subprocess.run([sys.executable, "-c", _CLIENT], cwd="/tmp", env=env,
-                                text=True, capture_output=True, timeout=60)
-        diagnostic = (result.stdout + result.stderr).replace(token, "<redacted>").replace(other_token, "<redacted>")
-        assert result.returncode == 0, diagnostic
+        journal_url = make_url(_suite["admin_url"]).set(
+            drivername="postgresql+asyncpg", database=_suite["dbname"],
+        ).render_as_string(hide_password=False)
+        schema = "document_delivery_" + __import__("uuid").uuid4().hex
+        phases = ("prepare", "resume", "verify") if client_name == "portfolio_delivery" else ("client",)
+        env.update(DOCUMENT_JOURNAL_DSN=journal_url, DOCUMENT_JOURNAL_DATABASE=_suite["dbname"],
+                   DOCUMENT_JOURNAL_SCHEMA=schema, DOCUMENT_JOURNAL_OPERATION=str(__import__("uuid").uuid4()),
+                   DOCUMENT_JOURNAL_APPLICATION=str(__import__("uuid").uuid4()))
+        try:
+            for phase in phases:
+                env["DOCUMENT_JOURNAL_PHASE"] = phase
+                result = subprocess.run(
+                    [sys.executable, "-c", _JOURNAL_CLIENT if phase != "client" else _CLIENT],
+                    cwd="/tmp", env=env, text=True, capture_output=True, timeout=60,
+                )
+                diagnostic = (result.stdout + result.stderr).replace(token, "<redacted>").replace(
+                    other_token, "<redacted>").replace(journal_url, "<test-database>")
+                assert result.returncode == 0, diagnostic
+        finally:
+            if client_name == "portfolio_delivery":
+                import asyncio
+                import sqlalchemy as sa
+                from sqlalchemy.ext.asyncio import create_async_engine
+                async def cleanup_journal():
+                    engine = create_async_engine(journal_url)
+                    try:
+                        async with engine.begin() as c:
+                            await c.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+                    finally:
+                        await engine.dispose()
+                asyncio.run(cleanup_journal())
     finally:
         server.should_exit = True
         thread.join(timeout=10)
