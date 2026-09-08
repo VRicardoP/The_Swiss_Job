@@ -8,6 +8,7 @@ falla. Genera CVs y cartas de presentación en Markdown.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 
 from config import settings
@@ -226,8 +227,33 @@ class DocumentGeneratorService:
         }.get(code, "English")
 
     @staticmethod
-    def cache_key(user_id: str, job_hash: str, doc_type: str, language: str) -> str:
-        """Generate Redis cache key for generated documents."""
-        raw = f"{user_id}:{job_hash}:{doc_type}:{language}"
-        h = hashlib.md5(raw.encode()).hexdigest()
-        return f"gendoc:{h}"
+    def cache_key(
+        user_id: str,
+        job_hash: str,
+        doc_type: str,
+        language: str,
+        *,
+        inputs: dict | None = None,
+    ) -> str:
+        """Version the hint by the exact input snapshot and generation recipe.
+
+        v2 stores only an ID; old full-content entries expire naturally and are
+        never read. No CV or offer text is present in the Redis key or value.
+        """
+        raw = json.dumps(
+            {
+                "owner": user_id,
+                "job": job_hash,
+                "type": doc_type,
+                "language": language,
+                "inputs": inputs,
+                "prompts": [CV_SYSTEM_PROMPT, COVER_LETTER_SYSTEM_PROMPT],
+                "models": [settings.GEMINI_MODEL, settings.GROQ_MODEL],
+                "temperature": settings.GROQ_DOC_TEMPERATURE,
+                "max_tokens": settings.GROQ_DOC_MAX_TOKENS,
+            },
+            sort_keys=True,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+        return f"gendoc:v2:{hashlib.sha256(raw.encode()).hexdigest()}"

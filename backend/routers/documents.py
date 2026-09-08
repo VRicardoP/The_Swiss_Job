@@ -5,14 +5,13 @@ capacidad DOCUMENTOS a traves de la costura (services/documents) — la
 implementacion la decide `jobhunt_routing` por perfil+capacidad, con default
 'local'. Con routing 'local' el comportamiento es byte-identico al previo
 (la logica de almacen vive movida verbatim en services/documents/local.py).
-El /v1 del core NO expone esta capacidad (cota fijada por contract test) y
-su UNICO escritor es LOCAL: por el criterio unificador se sirve de local en
-TODOS los modos, incluida core_primary — aqui no hay 501/503 por routing.
+La API documental core existe (E.1–E.3), pero el estado no ha migrado:
+el UNICO escritor sigue siendo LOCAL hasta el corte E. El adaptador canary
+continua sin vincular; no se activa el core por cambiar esta cache.
 La orquestacion de la generacion (Gemini/Groq, cache Redis, insumos de
 perfil/oferta/match) sigue en el router: no es estado de esta capacidad.
 """
 
-import json
 import logging
 import uuid
 
@@ -88,20 +87,6 @@ async def generate_document(
             detail="Job not found.",
         )
 
-    # Check Redis cache
-    redis = getattr(request.app.state, "redis_client", None)
-    cache_key = DocumentGeneratorService.cache_key(
-        str(current_user.id), body.job_hash, body.doc_type.value, body.language
-    )
-    if redis:
-        try:
-            cached = await redis.get(cache_key)
-            if cached:
-                cached_data = json.loads(cached)
-                return GeneratedDocumentResponse(**cached_data)
-        except Exception:
-            logger.debug("Redis cache read failed for %s", cache_key)
-
     # Load match data if available (for matching/missing skills)
     match_result = (
         await db.execute(
@@ -115,43 +100,74 @@ async def generate_document(
     matching_skills = match_result.matching_skills if match_result else None
     missing_skills = match_result.missing_skills if match_result else None
 
-    # Generate document (Gemini primario, Groq fallback)
-    generator = DocumentGeneratorService(groq, gemini)
-    if body.doc_type == DocType.cv:
-        content = await generator.generate_cv(
-            cv_text=profile.cv_text,
-            skills=profile.skills or [],
-            job_title=job.title,
-            job_company=job.company,
-            job_description=job.description or "",
-            job_tags=job.tags or [],
-            matching_skills=matching_skills,
-            missing_skills=missing_skills,
-            language=body.language,
-        )
-    else:
-        content = await generator.generate_cover_letter(
-            cv_text=profile.cv_text,
-            skills=profile.skills or [],
-            job_title=job.title,
-            job_company=job.company,
-            job_description=job.description or "",
-            job_tags=job.tags or [],
-            matching_skills=matching_skills,
-            missing_skills=missing_skills,
-            language=body.language,
-        )
-
-    # Save to DB (escritor local, via costura de la capacidad DOCUMENTOS)
+    # One snapshot drives both the cache identity and the actual LLM call.
+    inputs = dict(
+        cv_text=profile.cv_text,
+        skills=list(profile.skills or []),
+        job_title=job.title,
+        job_company=job.company,
+        job_description=job.description or "",
+        job_tags=list(job.tags or []),
+        matching_skills=list(matching_skills) if matching_skills is not None else None,
+        missing_skills=list(missing_skills) if missing_skills is not None else None,
+        language=body.language,
+    )
+    redis = getattr(request.app.state, "redis_client", None)
+    cache_key = DocumentGeneratorService.cache_key(
+        str(current_user.id),
+        body.job_hash,
+        body.doc_type.value,
+        body.language,
+        inputs={
+            **inputs,
+            "providers_available": [gemini.is_available, groq.is_available],
+        },
+    )
     documents = await resolve_documents(db, current_user.id)
+    cached_id = None
+    if redis:
+        try:
+            cached = await redis.get(cache_key)
+            if cached:
+                cached_id = uuid.UUID(
+                    cached.decode() if isinstance(cached, bytes) else cached
+                )
+        except Exception:
+            logger.debug("Redis document hint unavailable or invalid")
+    if cached_id is not None:
+        # Reuse the scoped port: a late Redis SET after deletion cannot resurrect
+        # a document. Storage failures must propagate, not trigger a second writer.
+        stored = await documents.list(
+            current_user.id,
+            body.job_hash,
+            doc_type=body.doc_type.value,
+        )
+        for doc in stored.data:
+            if (
+                doc.id == cached_id
+                and doc.job_hash == body.job_hash
+                and doc.doc_type == body.doc_type
+                and doc.language == body.language
+            ):
+                return doc
+
+    generator = DocumentGeneratorService(groq, gemini)
+    generate = (
+        generator.generate_cv
+        if body.doc_type == DocType.cv
+        else generator.generate_cover_letter
+    )
+    content = await generate(**inputs)
+
+    # Save through the same authority used to validate the cache hint.
     response = await documents.create(
         current_user.id,
         body.job_hash,
         body.doc_type.value,
         content,
         body.language,
-        job_title=job.title,
-        job_company=job.company,
+        job_title=inputs["job_title"],
+        job_company=inputs["job_company"],
     )
 
     # Cache in Redis
@@ -160,7 +176,7 @@ async def generate_document(
             ttl = settings.GROQ_DOC_CACHE_TTL_HOURS * 3600
             await redis.set(
                 cache_key,
-                json.dumps(response.model_dump(), default=str),
+                str(response.id),
                 ex=ttl,
             )
         except Exception:
