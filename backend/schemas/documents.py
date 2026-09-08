@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +18,7 @@ class DocType(str, Enum):
 class GenerateDocumentRequest(BaseModel):
     """Request body for POST /api/v1/documents/generate."""
 
+    operation_id: uuid.UUID | None = None
     job_hash: str = Field(..., max_length=32)
     doc_type: DocType
     language: str = Field("en", max_length=5, pattern=r"^(en|de|fr|it)$")
@@ -40,3 +42,15 @@ class DocumentListResponse(BaseModel):
 
     data: list[GeneratedDocumentResponse]
     total: int
+
+
+class DocumentOperationResponse(BaseModel):
+    operation_id: uuid.UUID
+    status: Literal["pending", "delivered"]
+    document_id: uuid.UUID | None = None
+    error: str | None = None
+
+
+class DocumentPageResponse(BaseModel):
+    data: list[GeneratedDocumentResponse]
+    next_cursor: str | None = None

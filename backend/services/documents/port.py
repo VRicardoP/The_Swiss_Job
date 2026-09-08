@@ -1,32 +1,13 @@
-"""Puerto de la capacidad DOCUMENTOS — A.SEAM (plan §15bis).
+"""Document storage port shared by local and core authorities.
 
-Subinterfaz POR CAPACIDAD (no fachada unica `JobHunting`). Las operaciones
-son las de ALMACEN de `generated_documents` que hoy consume
-`routers/documents.py`: persistir el documento generado, listarlo por oferta
-y borrarlo. La ORQUESTACION de la generacion (Gemini/Groq, cache Redis,
-carga de perfil/oferta/match como insumos) NO es estado de esta capacidad y
-sigue en el router.
-
-La API E.1 ya expone documentos. El resolver mantiene `CoreDocuments` SIN
-vincular (Unsupported) hasta ensayar la migracion y el corte E; el adaptador
-HTTP vinculado se verifica aparte y no activa un escritor core por si solo.
-
-CRITERIO UNIFICADOR (heredado de A.SEAM matching): el UNICO escritor de
-`generated_documents` es LOCAL hasta el corte E => escrituras Y lecturas se
-sirven de local en TODOS los modos, incluida core_primary — nunca 501/503
-por routing (services/documents/seam.py).
-
-Dos implementaciones detras del mismo puerto:
-- `LocalDocuments` (services/documents/local.py): almacen actual, movido
-  verbatim del router.
-- `CoreDocuments` (services/documents/core_client.py): adaptador HTTP E.2.
-La eleccion la decide `jobhunt_routing` (services/documents/seam.py).
+Generation and prepared delivery are orchestrated outside this storage interface.
+Routing selects one writer; core failures never cause a second local write.
 """
 
 import uuid
 from typing import Protocol
 
-from schemas.documents import DocumentListResponse, GeneratedDocumentResponse
+from schemas.documents import DocumentListResponse, GeneratedDocumentResponse, DocumentPageResponse
 
 
 class DocumentsError(Exception):

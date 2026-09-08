@@ -29,6 +29,7 @@ export default function JobDetailPage() {
   const { hash } = useParams();
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
 
   const { data: job, isLoading, isError, error } = useQuery({
     queryKey: ["job", hash],
@@ -188,8 +189,9 @@ export default function JobDetailPage() {
         )}
 
         {/* AI Document Generator (authenticated users only) */}
-        {token && (
+        {token && user && (
           <DocumentGenerator
+            key={`${user.id}:${hash}`}
             jobHash={hash}
             jobTitle={job.title}
             jobCompany={job.company}

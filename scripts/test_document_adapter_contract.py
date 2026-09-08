@@ -62,6 +62,13 @@ async def go():
     items = listed.data if hasattr(listed, "data") else listed
     assert len(items) == 21 and len({d.id for d in items}) == 21
     assert all(d.content == content for d in items)
+    if os.environ["DOCUMENT_TEST_CLIENT"] == "swissjob":
+        assert (await core.get(owner, first.id)).content == content
+        page1 = await core.page(owner)
+        assert len(page1.data) == 20 and page1.next_cursor
+        page2 = await core.page(owner, page1.next_cursor)
+        assert len(page2.data) == 1 and page2.next_cursor is None
+        assert {d.id for d in page1.data + page2.data} == {d.id for d in items}
     assert await core.delete(owner, first.id)
     assert not await core.delete(owner, first.id)
     try:

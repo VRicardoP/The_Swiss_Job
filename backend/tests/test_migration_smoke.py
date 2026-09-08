@@ -36,6 +36,8 @@ _SMOKE_URL = f"{_BASE_URL}/{_SMOKE_DB}"
 SEAM_TABLES = {
     "jobhunt_routing": "pk_jobhunt_routing",
     "jobhunt_profile_map": "pk_jobhunt_profile_map",
+    "generated_documents": "generated_documents_pkey",
+    "document_deliveries": "document_deliveries_pkey",
 }
 
 
@@ -94,6 +96,9 @@ def _snapshot(sync_conn) -> dict:
             "checks": {
                 ck["name"]: ck["sqltext"] for ck in insp.get_check_constraints(table)
             },
+            "foreign_keys": sorted((tuple(fk["constrained_columns"]), fk["referred_table"],
+                                     tuple(fk["referred_columns"]), fk["options"].get("ondelete"))
+                                    for fk in insp.get_foreign_keys(table)),
             "indexes": {
                 ix["name"]: {"columns": ix["column_names"], "unique": ix["unique"]}
                 for ix in insp.get_indexes(table)

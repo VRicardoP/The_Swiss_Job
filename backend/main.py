@@ -4,6 +4,9 @@ from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from services.documents.port import DocumentsError
+from services.documents.delivery import DocumentDeliveryError
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -146,6 +149,22 @@ app.include_router(notifications_router)
 app.include_router(profile_router)
 app.include_router(searches_router)
 app.include_router(watchlist_router)
+
+
+@app.exception_handler(DocumentsError)
+async def document_unavailable_handler(request, exc):
+    return JSONResponse(status_code=503, content={"detail": "Document storage temporarily unavailable"})
+
+
+@app.exception_handler(DocumentDeliveryError)
+async def document_delivery_error_handler(request, exc):
+    code = 409 if str(exc) == "operation_conflict" else 503
+    return JSONResponse(status_code=code, content={"detail": str(exc)})
+
+
+@app.get("/health/documents")
+async def document_health():
+    return {"writes": "frozen" if settings.DOCUMENT_WRITES_FROZEN else "enabled"}
 
 
 @app.get("/health")

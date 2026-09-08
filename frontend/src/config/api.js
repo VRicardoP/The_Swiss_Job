@@ -29,6 +29,7 @@ async function request(path, options = {}) {
     err.status = res.status;
     throw err;
   }
+  if (res.status === 204) return undefined;
   return raw ? res.text() : res.json();
 }
 
@@ -208,11 +209,26 @@ export const notificationsApi = {
 };
 
 export const documentsApi = {
-  generate(jobHash, docType, language = "en") {
+  pending() {
+    return authRequest("/documents/operations");
+  },
+
+  retry(operationId) {
+    return authRequest(`/documents/operations/${operationId}/retry`, { method: "POST" });
+  },
+  get(documentId) {
+    return authRequest(`/documents/item/${documentId}`);
+  },
+
+  page(cursor = null) {
+    return authRequest(`/documents${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
+  },
+  generate(jobHash, docType, language = "en", operationId = null) {
     return authRequest("/documents/generate", {
       method: "POST",
       body: JSON.stringify({
         job_hash: jobHash,
+        operation_id: operationId,
         doc_type: docType,
         language,
       }),

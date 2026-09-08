@@ -6,6 +6,7 @@ import Navbar from './components/Navbar'
 import ProtectedRoute from './components/ProtectedRoute'
 import { cn } from './components/ui'
 
+const DocumentsPage = lazy(() => import('./pages/DocumentsPage'))
 const SearchPage = lazy(() => import('./pages/SearchPage'))
 const JobDetailPage = lazy(() => import('./pages/JobDetailPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
@@ -57,6 +58,7 @@ function App() {
           <Routes>
             <Route path="/" element={<SearchPage />} />
             <Route path="/job/:hash" element={<JobDetailPage />} />
+            <Route path="/documents" element={<ProtectedRoute><DocumentsPage /></ProtectedRoute>} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route

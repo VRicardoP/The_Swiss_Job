@@ -9,11 +9,15 @@ import {
 } from "lucide-react";
 import {
   useGenerateDocument,
+  useDocumentLibrary,
+  usePendingDocuments,
+  useRetryDocument,
   useDocumentsForJob,
   useDeleteDocument,
 } from "../hooks/useDocuments";
 import { Button, IconButton, cn } from "./ui";
 import { sanitizeHtml } from "../utils/sanitizeHtml";
+import useAuthStore from "../stores/authStore";
 
 const LANGUAGES = [
   { code: "en", label: "EN" },
@@ -55,19 +59,43 @@ function MarkdownRenderer({ content }) {
   );
 }
 
-function DocumentGenerator({ jobHash, jobTitle, jobCompany }) {
+function DocumentGenerator({ jobHash, jobTitle, jobCompany, library = false }) {
   const [language, setLanguage] = useState("en");
   const [activeDoc, setActiveDoc] = useState(null);
+  const [cursors, setCursors] = useState([null]);
+  const userId = useAuthStore((s) => s.user?.id);
+  const operationKey = `document-operation:${userId}:${jobHash}`;
+  const [pending, setPending] = useState(() => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(operationKey));
+      return saved && typeof saved.operationId === "string"
+        && ["cv", "cover_letter"].includes(saved.docType)
+        && LANGUAGES.some((l) => l.code === saved.language) ? saved : null;
+    } catch { return null; }
+  });
   const printRef = useRef(null);
 
   const generateDoc = useGenerateDocument();
-  const { data: existingDocs } = useDocumentsForJob(jobHash);
+  const jobQuery = useDocumentsForJob(jobHash);
+  const libraryQuery = useDocumentLibrary(cursors.at(-1), library);
+  const query = library ? libraryQuery : jobQuery;
+  const existingDocs = query.data;
   const deleteDoc = useDeleteDocument();
+  const pendingQuery = usePendingDocuments(library);
+  const retrySaved = useRetryDocument();
 
   function handleGenerate(docType) {
+    const operation = pending || { docType, language, operationId: crypto.randomUUID() };
+    setPending(operation);
+    try { sessionStorage.setItem(operationKey, JSON.stringify(operation)); } catch { /* in-memory retry remains */ }
     generateDoc.mutate(
-      { jobHash, docType, language },
-      { onSuccess: (data) => setActiveDoc(data) },
+      { jobHash, ...operation },
+      { onSuccess: (data) => {
+        if (data.status === "pending") return;
+        setActiveDoc(data);
+        setPending(null);
+        try { sessionStorage.removeItem(operationKey); } catch { /* no sensitive output is stored */ }
+      } },
     );
   }
 
@@ -76,7 +104,7 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany }) {
     const html2pdf = (await import("html2pdf.js")).default;
     const element = printRef.current;
     const docLabel = activeDoc.doc_type === "cv" ? "CV" : "Cover_Letter";
-    const filename = `${docLabel}_${jobCompany || "Company"}_${jobTitle || "Position"}.pdf`
+    const filename = `${docLabel}_${activeDoc.job_company || jobCompany || "Company"}_${activeDoc.job_title || jobTitle || "Position"}.pdf`
       .replace(/\s+/g, "_")
       .replace(/[^a-zA-Z0-9_.-]/g, "");
 
@@ -105,16 +133,16 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany }) {
           </span>
           <div>
             <h3 className="text-base font-semibold tracking-tight text-text-primary">
-              AI Document Generator
+              {library ? "My documents" : "AI Document Generator"}
             </h3>
             <p className="text-sm text-text-secondary">
-              Generate a tailored CV or cover letter for this position.
+              {library ? "Saved CVs and cover letters remain available after a job is removed." : "Generate a tailored CV or cover letter for this position."}
             </p>
           </div>
         </div>
       </header>
 
-      {/* Selector de idioma — segmented */}
+      {!library && <>\n      {/* Selector de idioma — segmented */}
       <div className="mt-4 flex items-center gap-3">
         <span className="text-xs font-medium uppercase tracking-wider text-text-tertiary">
           Language
@@ -145,7 +173,7 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany }) {
           variant="primary"
           leftIcon={<FileText className="h-4 w-4" />}
           loading={isGenerating && generatingType === "cv"}
-          disabled={isGenerating}
+          disabled={isGenerating || !!pending}
           fullWidth
           onClick={() => handleGenerate("cv")}
         >
@@ -163,6 +191,20 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany }) {
         </Button>
       </div>
 
+      {pending && (
+        <div className="mt-3" role="status">
+          <p>A document operation is pending. Retry the same operation; do not start another generation.</p>
+          <Button disabled={isGenerating} onClick={() => handleGenerate(pending.docType)}>
+            Retry document operation
+          </Button>
+          {generateDoc.data?.error && <p>{generateDoc.data.error}</p>}
+        </div>
+      )}
+      </>}
+
+      {query.isLoading && <p role="status">Loading documents…</p>}
+      {query.isError && <p role="alert">{query.error.message}</p>}
+      {library && !query.isLoading && !query.isError && !existingDocs?.data?.length && <p>No saved documents.</p>}
       {/* Error */}
       {generateDoc.isError && (
         <div className="mt-3 rounded-lg border border-error-border bg-error-light p-3 text-sm text-error">
@@ -223,6 +265,7 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany }) {
                   ) : (
                     <Mail className="h-4 w-4 text-text-tertiary" aria-hidden="true" />
                   )}
+                  {library && <span>{doc.job_title || "Position"} — {doc.job_company || "Company"}</span>}
                   <span className="font-medium">
                     {doc.doc_type === "cv" ? "CV" : "Cover letter"}
                   </span>
@@ -239,13 +282,43 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany }) {
                   aria-label="Delete document"
                   variant="danger"
                   size="sm"
-                  onClick={() => deleteDoc.mutate(doc.id)}
+                  onClick={() => deleteDoc.mutate(doc.id, { onSuccess: () => {
+                    if (activeDoc?.id === doc.id) setActiveDoc(null);
+                  } })}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </IconButton>
               </li>
             ))}
           </ul>
+        </div>
+      )}
+      {library && pendingQuery.data?.total > 0 && (
+        <div className="mt-4" role="status">
+          <h4>Pending document deliveries ({pendingQuery.data.total})</h4>
+          <p>Showing up to 20 operations. Completed deliveries leave this list automatically.</p>
+          {pendingQuery.data.data.map((operation) => (
+            <div key={operation.operation_id} className="mt-2">
+              <span>{operation.operation_id.slice(0, 8)} — {operation.error || "Awaiting delivery"} </span>
+              <Button disabled={retrySaved.isPending} onClick={() => retrySaved.mutate(operation.operation_id)}>
+                Retry saved delivery
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      {library && pendingQuery.isError && <p role="alert">{pendingQuery.error.message}</p>}
+      {retrySaved.isError && <p role="alert">{retrySaved.error.message}</p>}
+      {retrySaved.data?.status === "pending" && <p role="status">{retrySaved.data.error || "Delivery pending"}</p>}
+      {deleteDoc.isError && <p role="alert">{deleteDoc.error.message}</p>}
+      {library && (
+        <div className="mt-4 flex gap-2">
+          <Button disabled={cursors.length === 1 || query.isFetching} onClick={() => {
+            setCursors((old) => old.slice(0, -1)); setActiveDoc(null);
+          }}>Previous</Button>
+          <Button disabled={!existingDocs?.next_cursor || query.isFetching} onClick={() => {
+            setCursors((old) => [...old, existingDocs.next_cursor]); setActiveDoc(null);
+          }}>Next</Button>
         </div>
       )}
     </section>

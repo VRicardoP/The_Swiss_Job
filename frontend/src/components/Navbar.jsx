@@ -12,6 +12,7 @@ import {
   SlidersHorizontal,
   ChevronDown,
   GraduationCap,
+  FileText,
 } from "lucide-react";
 import useAuthStore from "../stores/authStore";
 import { useLogout } from "../hooks/useAuth";
@@ -28,6 +29,7 @@ const PRIMARY_NAV = [
 
 // Rutas secundarias (menú móvil + acciones desktop)
 const SECONDARY_NAV = [
+  { to: "/documents", label: "Documents", icon: FileText },
   { to: "/searches",  label: "Alerts",    icon: Bell },
   { to: "/watchlist", label: "Watchlist", icon: GraduationCap },
   { to: "/filters",   label: "Filters",   icon: SlidersHorizontal },

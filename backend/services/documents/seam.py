@@ -1,31 +1,22 @@
-"""Costura de la capacidad documentos — A.SEAM (plan §15bis).
+"""Document authority after the E cutover contract.
 
-Resuelve QUE implementacion sirve cada peticion segun `jobhunt_routing`
-(default 'local'). Mapeo modo -> implementacion, derivado de la matriz de
-escritor por estado del plan §15bis Y del criterio unificador (heredado de
-A.SEAM matching: ningun estado local puede ser inaccesible por el routing):
-
-- local / shadow           -> LocalDocuments (el legacy es el motor)
-- core_read                -> FallbackDocuments: escrituras SOLO locales;
-                              lecturas con fallback. El adaptador queda sin
-                              vincular hasta migrar el estado (Unsupported).
-- core_primary / rollback_pending -> LocalDocuments. CRITERIO UNIFICADOR: el
-                              UNICO escritor de `generated_documents` es
-                              LOCAL hasta el corte E; la API E.1 existe
-                              pero aun no se migro el estado — el estado del escritor local es
-                              SIEMPRE accesible; enrutar al core seria 501
-                              para estado que solo existe aqui.
-
-Como en matching/profiles, la resolucion es POR PERFIL:
-`jobhunt_routing.profile_id` para SwissJob es `users.id`.
+local/shadow/core_read keep the local writer. core_primary/rollback_pending use
+only core, with no fallback. The flip requires migration, freeze and drain first.
+Every resolution reads fresh routing; writes fence even an absent wildcard.
+No table lock may span HTTP or generation. Callers commit prepared output first.
 """
 
 import logging
 import uuid
 
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.routing import CAPABILITY_DOCUMENTS, MODE_CORE_READ, resolve_mode
+from models.jobhunt_routing import JobhuntRouting, CONSUMER_SWISSJOB, PROFILE_WILDCARD
+from services.matching.identity import resolve_core_profile_id
+from .freeze import assert_document_writes_enabled
+
 
 from .core_client import CoreDocuments
 from .local import LocalDocuments
@@ -70,6 +61,17 @@ class FallbackDocuments:
             self._warn("list", exc)
             return await self._fallback.list(user_id, job_hash, doc_type=doc_type)
 
+    async def page(self, user_id, cursor=None):
+        # Cross-authority cursors must never be replayed against another store.
+        return await self._fallback.page(user_id, cursor=cursor)
+
+    async def get(self, user_id, document_id):
+        try:
+            return await self._primary.get(user_id, document_id)
+        except (CoreUnavailableError, DocumentsUnsupportedError) as exc:
+            self._warn("get", exc)
+            return await self._fallback.get(user_id, document_id)
+
     async def delete(self, user_id, document_id):
         return await self._fallback.delete(user_id, document_id)
 
@@ -88,13 +90,29 @@ class FallbackDocuments:
 
 
 async def resolve_documents(
-    db: AsyncSession, user_id: uuid.UUID | None = None
+    db: AsyncSession, user_id: uuid.UUID | None = None, *, write=False,
 ) -> DocumentsPort:
-    """Puerto de documentos para esta peticion segun el routing por perfil."""
-    mode = await resolve_mode(db, CAPABILITY_DOCUMENTS, user_id)
-    if mode == MODE_CORE_READ:
-        return FallbackDocuments(CoreDocuments(), LocalDocuments(db))
-    # local / shadow: el legacy es el motor. core_primary / rollback_pending:
-    # criterio unificador — el escritor de este estado es local UNICO y el
-    # estado aun no migrado => local, nunca 501/503 (docstring modulo).
-    return LocalDocuments(db)
+    """Resolve the sole authority; never guess from cache on a routing error."""
+    if write:
+        assert_document_writes_enabled()
+    pid = user_id or PROFILE_WILDCARD
+    try:
+        if write:
+            await db.execute(text("LOCK TABLE jobhunt_routing IN SHARE MODE"))
+        rows = (await db.execute(select(JobhuntRouting.profile_id, JobhuntRouting.mode).where(
+            JobhuntRouting.consumer_id == CONSUMER_SWISSJOB,
+            JobhuntRouting.capability == "documents",
+            JobhuntRouting.profile_id.in_([pid, PROFILE_WILDCARD]),
+        ))).all()
+        modes = dict(rows)
+        mode = modes.get(pid, modes.get(PROFILE_WILDCARD, "local"))
+        if mode in {"local", "shadow", "core_read"}:
+            return LocalDocuments(db)
+        if mode not in {"core_primary", "rollback_pending"} or user_id is None:
+            raise CoreUnavailableError("document routing or owner unavailable")
+        profile_id = await resolve_core_profile_id(db, user_id)
+        if profile_id is None:
+            raise CoreUnavailableError("document owner is not bound")
+        return CoreDocuments(profile_id=profile_id, user_id=user_id)
+    except SQLAlchemyError:
+        raise CoreUnavailableError("document routing unavailable") from None

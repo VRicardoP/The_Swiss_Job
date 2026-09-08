@@ -10,6 +10,7 @@ from models.enums import (
 )
 from models.exclusion_sync_state import ExclusionSyncState
 from models.generated_document import GeneratedDocument
+from models.document_delivery import DocumentDelivery
 from models.job import Job
 from models.job_application import JobApplication
 from models.job_filter import JobFilter, PatternSuggestion
@@ -28,6 +29,7 @@ __all__ = [
     "ApplicationStatus",
     "ContractType",
     "GeneratedDocument",
+    "DocumentDelivery",
     "ExclusionSyncState",
     "Job",
     "JobApplication",

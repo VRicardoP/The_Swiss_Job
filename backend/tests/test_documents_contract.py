@@ -1,13 +1,7 @@
-"""CONTRACT TESTS de la capacidad DOCUMENTOS — A.SEAM (plan §15bis).
+"""Document storage contract after E: local canary, exclusive core primary.
 
-Contrato operativo pre-corte E: CoreDocuments SIN vincular debe devolver
-DocumentsUnsupportedError y no abrir HTTP. La API E.1 y el adaptador vinculado
-se prueban aparte; su existencia no migra el estado local.
-
-CRITERIO UNIFICADOR (heredado de A.SEAM matching): el UNICO escritor de
-`generated_documents` es LOCAL hasta el corte E => el estado es accesible en
-TODOS los modos de routing, incluida core_primary — nunca 501/503 por
-routing. Fijado aqui a nivel de resolver y de HTTP.
+The old all-local matrix was pre-migration. Core routes now fail closed when a
+binding is missing, rather than silently writing/serving an obsolete local copy.
 """
 
 import logging
@@ -79,6 +73,8 @@ CORE_OPS = {
     "create": lambda c, u: c.create(u, JOB_HASH, "cv", "content", "en"),
     "list": lambda c, u: c.list(u, JOB_HASH),
     "delete": lambda c, u: c.delete(u, uuid.uuid4()),
+    "get": lambda c, u: c.get(u, uuid.uuid4()),
+    "page": lambda c, u: c.page(u),
 }
 
 
@@ -154,12 +150,10 @@ async def test_local_delete_semantics(db_session):
 
 
 @pytest.mark.parametrize(
-    "mode", [None, "local", "shadow", "core_primary", "rollback_pending"]
+    "mode", [None, "local", "shadow", "core_read"]
 )
 async def test_resolve_documents_serves_local_writer(db_session, mode):
-    """Todo modo salvo core_read resuelve a LOCAL — incluida core_primary:
-    criterio unificador, el unico escritor del estado es local y el /v1 no
-    expone la capacidad => nunca 501/503 por routing."""
+    """Before the document flip, reads and writes remain with the local writer."""
     user_id = uuid.uuid4()
     if mode is not None:
         await set_routing(db_session, CAPABILITY_DOCUMENTS, mode, profile_id=user_id)
@@ -167,11 +161,11 @@ async def test_resolve_documents_serves_local_writer(db_session, mode):
     assert isinstance(port, LocalDocuments)
 
 
-async def test_resolve_documents_core_read_is_fallback(db_session):
+async def test_resolve_documents_core_read_keeps_local_authority(db_session):
     user_id = uuid.uuid4()
     await set_routing(db_session, CAPABILITY_DOCUMENTS, "core_read", profile_id=user_id)
     port = await resolve_documents(db_session, user_id)
-    assert isinstance(port, FallbackDocuments)
+    assert isinstance(port, LocalDocuments)
 
 
 async def test_resolve_documents_profile_row_beats_wildcard(db_session):
@@ -180,7 +174,7 @@ async def test_resolve_documents_profile_row_beats_wildcard(db_session):
     await set_routing(db_session, CAPABILITY_DOCUMENTS, "local", profile_id=user_id)
     assert isinstance(await resolve_documents(db_session, user_id), LocalDocuments)
     assert isinstance(
-        await resolve_documents(db_session, uuid.uuid4()), FallbackDocuments
+        await resolve_documents(db_session, uuid.uuid4()), LocalDocuments
     )
 
 
@@ -256,12 +250,10 @@ async def _set_cv_text(db: AsyncSession, user_id: uuid.UUID) -> None:
 
 
 @pytest.mark.parametrize(
-    "mode", ["local", "shadow", "core_read", "core_primary", "rollback_pending"]
+    "mode", ["local", "shadow", "core_read"]
 )
-async def test_router_local_state_accessible_in_all_modes(client, db_session, mode):
-    """Generar (escritura), listar (lectura) y borrar documentos sirve en
-    los 5 modos de routing — incluida core_primary (criterio unificador):
-    jamas un 501/503 para estado cuyo unico escritor es local."""
+async def test_router_local_state_accessible_in_local_writer_modes(client, db_session, mode):
+    """Local/shadow/core_read retain local state until the explicit cutover."""
     user_id, headers = await _register(client)
     await seed_job(db_session)
     await db_session.commit()
@@ -292,3 +284,13 @@ async def test_router_local_state_accessible_in_all_modes(client, db_session, mo
 
     resp = await client.delete(f"/api/v1/documents/{doc_id}", headers=headers)
     assert resp.status_code == 204
+
+
+@pytest.mark.parametrize("mode", ["core_primary", "rollback_pending"])
+async def test_core_writer_modes_require_binding_and_never_fallback(client, db_session, mode):
+    user_id, headers = await _register(client)
+    await set_routing(db_session, CAPABILITY_DOCUMENTS, mode, profile_id=user_id)
+    with pytest.raises(CoreUnavailableError, match="not bound"):
+        await resolve_documents(db_session, user_id)
+    response = await client.get(f"/api/v1/documents/{JOB_HASH}", headers=headers)
+    assert response.status_code == 503

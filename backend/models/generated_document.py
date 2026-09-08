@@ -26,9 +26,11 @@ class GeneratedDocument(Base):
     )
     job_hash: Mapped[str] = mapped_column(
         String(32),
-        ForeignKey("jobs.hash", ondelete="CASCADE"),
         nullable=False,
     )
+    # Immutable generation context; source_ref survives deletion of its job.
+    job_title: Mapped[str | None] = mapped_column(String(500))
+    job_company: Mapped[str | None] = mapped_column(String(300))
     doc_type: Mapped[str] = mapped_column(
         String(20),
         nullable=False,  # "cv" or "cover_letter"

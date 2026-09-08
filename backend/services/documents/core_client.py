@@ -16,7 +16,7 @@ import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from config import settings
-from schemas.documents import DocumentListResponse, GeneratedDocumentResponse
+from schemas.documents import DocumentListResponse, GeneratedDocumentResponse, DocumentPageResponse
 from services.matching.identity import resolve_core_profile_id
 from .port import CoreUnavailableError, DocumentsUnsupportedError
 
@@ -70,11 +70,19 @@ def _view(doc, pid, job_hash=None):
 
 
 class CoreDocuments:
-    def __init__(self, db=None, client_factory=None):
+    def __init__(self, db=None, client_factory=None, *, profile_id=None, user_id=None):
+        if (profile_id is None) != (user_id is None):
+            raise ValueError("profile_id and user_id must be bound together")
+        self.profile_id = profile_id
+        self._user_id = user_id
         self._db = db
         self._client_factory = client_factory or default_client_factory
 
     async def _profile(self, user_id):
+        if self.profile_id is not None:
+            if user_id != self._user_id or not settings.CORE_CONSUMER_KEY:
+                raise CoreUnavailableError("propietario o credencial core incompatible")
+            return self.profile_id
         if self._db is None:
             raise DocumentsUnsupportedError("documentos: vinculación E pendiente del corte")
         if not settings.CORE_CONSUMER_KEY:
@@ -140,6 +148,36 @@ class CoreDocuments:
                 seen_cursors.add(page.next_cursor)
                 params["cursor"] = page.next_cursor
         raise CoreUnavailableError("listado de documentos excede la cota; no se devuelve truncado")
+
+    async def page(self, user_id, cursor=None):
+        pid = await self._profile(user_id)
+        params = {"limit": 20}
+        if cursor:
+            params["cursor"] = cursor
+        async with self._client() as client:
+            response = await client.get(f"/profiles/{pid}/documents", params=params)
+            if response.status_code != 200:
+                raise CoreUnavailableError(f"biblioteca de documentos core: HTTP {response.status_code}")
+            page = _Page.model_validate(response.json())
+            if (len(page.items) > 20 or len({d.id for d in page.items}) != len(page.items)
+                    or (page.next_cursor is not None and
+                        (not page.items or not page.next_cursor or page.next_cursor == cursor))):
+                raise CoreUnavailableError("pagina core sin progreso o incompatible")
+            return DocumentPageResponse(data=[_view(doc, pid) for doc in page.items],
+                                        next_cursor=page.next_cursor)
+
+    async def get(self, user_id, document_id):
+        pid = await self._profile(user_id)
+        async with self._client() as client:
+            response = await client.get(f"/profiles/{pid}/documents/{document_id}")
+            if response.status_code == 404:
+                return None
+            if response.status_code != 200:
+                raise CoreUnavailableError(f"lectura de documento core: HTTP {response.status_code}")
+            doc = _Document.model_validate(response.json())
+            if doc.id != document_id:
+                raise CoreUnavailableError("identidad de documento incompatible")
+            return _view(doc, pid)
 
     async def delete(self, user_id, document_id):
         pid = await self._profile(user_id)
