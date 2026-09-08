@@ -1,7 +1,8 @@
 # Fase E — documentos: contrato y ejecución incremental
 
 Resultados, commits e incidencia local:
-[acta E.1](CIERRE_LOCAL_E1_2026-09-08.md).
+[acta E.1](CIERRE_LOCAL_E1_2026-09-08.md) y
+[continuación E.2/local](CIERRE_LOCAL_E2_2026-09-08.md).
 
 ## Estado y autoridad
 
@@ -24,7 +25,7 @@ Portfolio NO autoriza retirar generación/PDF ni cambiar su comportamiento futur
 
 Referencias rectoras: `CONTRATOS_FASE_A.md` §1 (FK de documento a oferta SET NULL),
 `PLAN_UNIFICACION_JOBHUNTING.md` §5.4 (JSON/PDF), ADR §04/§07 (inmutabilidad/erase).
-No se reescriben migraciones publicadas core0001–core0042.
+No se reescriben migraciones publicadas core0001–core0043.
 
 ## E.1: contrato implementado
 
@@ -94,13 +95,15 @@ procedimiento del corte E; nunca restaurar toda la base core compartida.
 
 ## E.2–E.4: siguientes pasos bloqueantes del flip
 
-1. **Adaptadores y contrato BFF.** Implementar clientes reales sin importar
+1. **Adaptadores y contrato BFF.** Clientes E.2 implementados y probados con HTTP
+   real, aún SIN vincular al routing vivo; ver acta E.2. No importar
    `jobhunt_core` desde legacy. Resolver el perfil por consumer+identidad local;
    mantener fuente/referencia local y snapshot de oferta sin depender de una FK
    legacy en core. SwissJob usa job_hash; Portfolio application_id y user_id entero:
    no son el UUID del perfil core ni identidades intercambiables.
-2. **Un único escritor por estado.** No activar `CoreDocuments` en el fallback
-   actual de SwissJob sin corregir la matriz: ese fallback incluye create/delete.
+2. **Un único escritor por estado.** E.2 corrigió el canary SwissJob:
+   create/delete son exclusivamente locales. No activar el adaptador vinculado
+   antes de migrar el estado y ensayar el corte.
    Un timeout tras commit core NUNCA permite escribir también local. En canary,
    escrituras locales; tras corte confirmado, escrituras core sin fallback local.
    Probar cada modo, indisponibilidad tras commit y consulta de documentos históricos.
@@ -128,7 +131,7 @@ procedimiento del corte E; nunca restaurar toda la base core compartida.
 
 ## Deuda y límites explícitos
 
-- Pendientes de E: adaptadores, inbox, generación/PDF, limpieza por retención,
+- Pendientes de E: vinculación operativa de adaptadores, inbox, generación/PDF, limpieza por retención,
   migrador y reversión con datos reales, escuelas y cutover. Ninguno se cierra
   con una tabla o con una suite verde del almacén.
 - El contexto admite datos personales: no loguearlo. El cifrado por perfil y la
@@ -137,10 +140,11 @@ procedimiento del corte E; nunca restaurar toda la base core compartida.
   antes del cierre E/GDPR, sin afirmar que backups ya están saneados.
 - Preservar cambios ajenos no committeados en Portfolio y
   `school_job_monitor_architecture.md`; no empaquetarlos en un deploy.
-- Incidencia **local** anterior a E.1: broker detenido sin rearranque y worker
-  `b98833d`/core0035 frente a BD core0041. Redis recuperado con volumen intacto;
-  worker detenido expresamente por incompatibilidad. El drenaje local sigue
-  pendiente de alinear imagen/esquema; ver el acta E.1. No es un fallo del NAS.
+- Incidencia **local** anterior a E.1: runtime ya alineado a d908ea2/core0042
+  después de backup/restore estricto; API/capture healthy, worker responde,
+  3.000 cambios drenados y staging pendiente 0. Quedan cuatro ofertas activas
+  locales sin listing core (TOAST omitido sin imagen previa): reconciliación
+  dirigida pendiente, claves/evidencia en acta E.2. No es un fallo del NAS.
 - GO de calidad independiente pendiente de examen nuevo; E.1 no cambia modelos,
   umbrales, holdouts ni la racha. Una racha exigida de siete días necesita 168 horas
   reales después de cumplir sus precondiciones, no empieza por desplegar esta API.
