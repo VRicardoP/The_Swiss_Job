@@ -2,7 +2,8 @@
 
 Resultados, commits e incidencia local:
 [acta E.1](CIERRE_LOCAL_E1_2026-09-08.md) y
-[continuación E.2/local](CIERRE_LOCAL_E2_2026-09-08.md).
+[continuación E.2/local](CIERRE_LOCAL_E2_2026-09-08.md) y
+[alta atómica E.3](CIERRE_LOCAL_E3_2026-09-08.md).
 
 ## Estado y autoridad
 
@@ -46,6 +47,7 @@ Base de las rutas: `/v1/profiles/{profile_id}/documents`.
 | Operación | Contrato |
 | --- | --- |
 | POST colección | `documents:write`, Idempotency-Key obligatoria; 201 o replay; body distinto con misma key → 409 |
+| POST `/batch` (E.3) | `documents:write`, key obligatoria; 1–2 documentos, tipos distintos; alta/eventos/recibo atómicos, 201 o replay completo; miembro borrado → 404 sin resucitar |
 | GET colección | `documents:read`; keyset `(created_at,id)` descendente, máximo 20, filtro tipo/referencia local |
 | GET `/{id}` | `documents:read`, ownership en JOIN, ETag/304 |
 | DELETE `/{id}` | `documents:write`, If-Match si se suministra, idempotencia opcional, 204 |
@@ -107,9 +109,11 @@ procedimiento del corte E; nunca restaurar toda la base core compartida.
    Un timeout tras commit core NUNCA permite escribir también local. En canary,
    escrituras locales; tras corte confirmado, escrituras core sin fallback local.
    Probar cada modo, indisponibilidad tras commit y consulta de documentos históricos.
-3. **Comportamiento completo.** Preservar CV+carta, idioma y campos de ambas APIs;
-   probar creación de ambos documentos como operación recuperable (Portfolio hoy
-   confirma ambos localmente en una tx). Mantener generación fuera de locks.
+3. **Comportamiento completo.** E.3 añade alta atómica de CV+carta y método de
+   lote Portfolio, verificados en PG y HTTP reales, todavía sin cablear al router.
+   Falta conservar el UUID de operación y el body generado de forma recuperable
+   antes del envío; no repetir el LLM como retry. Preservar idioma/campos y
+   mantener generación fuera de locks.
    Fijar goldens de JSON/PDF y descarga; migrar también cleanup de retención, no
    solo routers HTTP. Invalidar/versionar la caché Redis de generación de SwissJob
    para que no devuelva documentos locales borrados después del flip.
