@@ -3,7 +3,11 @@
 Resultados, commits e incidencia local:
 [acta E.1](CIERRE_LOCAL_E1_2026-09-08.md) y
 [continuación E.2/local](CIERRE_LOCAL_E2_2026-09-08.md) y
-[alta atómica E.3](CIERRE_LOCAL_E3_2026-09-08.md).
+[alta atómica E.3](CIERRE_LOCAL_E3_2026-09-08.md) y
+[avance E.4](AVANCE_E4_2026-09-08.md).
+E.4 corrige localmente caché y transacciones durante LLM; antes del corte falta
+ratificar conservación/borrado de documentos al eliminar una candidatura y
+cubrir el flujo de generación con candidatura que SOLO exista en core.
 
 ## Estado y autoridad
 
@@ -115,8 +119,9 @@ procedimiento del corte E; nunca restaurar toda la base core compartida.
    antes del envío; no repetir el LLM como retry. Preservar idioma/campos y
    mantener generación fuera de locks.
    Fijar goldens de JSON/PDF y descarga; migrar también cleanup de retención, no
-   solo routers HTTP. Invalidar/versionar la caché Redis de generación de SwissJob
-   para que no devuelva documentos locales borrados después del flip.
+   solo routers HTTP. La caché Redis ya se versiona por inputs y confirma el UUID
+   en el almacén (E.4, aún no desplegado); probarla de nuevo durante el corte con
+   la autoridad core y la política de conservación ratificada.
 4. **Migración ensayada sobre copia fiel.** Restore con exit-on-error y cotejo de
    constraints/índices/triggers; freeze y drenaje de TODOS los escritores de esta
    capacidad. Manifestar PK origen/destino, ownership, fecha original, idioma,
