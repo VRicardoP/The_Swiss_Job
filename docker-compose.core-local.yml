@@ -1,0 +1,16 @@
+# Runtime LOCAL coordinado; no se usa para NAS ni para tests con código montado.
+# docker compose -f docker-compose.yml -f docker-compose.core-local.yml ...
+# Release ya probada: d908ea2 / core0042. E.1 permanece fuera de este runtime.
+# No usar --build: el árbol actual puede tener un head de esquema posterior.
+services:
+  core-migrate:
+    image: swissjob-core:d908ea2
+  core-api:
+    image: swissjob-core:d908ea2
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:${HOST_CORE_API_PORT:-8003}:8000"
+  core-worker:
+    image: swissjob-core:d908ea2
+  core-capture:
+    image: swissjob-core:d908ea2
