@@ -50,6 +50,27 @@ def test_offset_filters_empty_total_and_etag(db):
     assert changed.status_code == 200 and changed.json()['total'] == 2
 
 
+def test_remote_filter_remains_indexable_with_generic_prepared_plans(db):
+    # A boolean parameter prevents generic plans from proving the partial
+    # index predicate. HTTP validation already narrows the input to bool.
+    import asyncio
+    import sqlalchemy as sa
+    from jobhunt_core.api.v1 import _catalog_filter_sql
+    factory, _ = db
+    for value in (True, False):
+        _, where, params = _catalog_filter_sql(None, None, value, None, None)
+        assert "remote" not in params
+        assert "(o.content->>'remote')::boolean = " + str(value).lower() in where
+    async def check():
+        async with factory() as session:
+            result = await session.scalar(sa.text(
+                "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid "
+                "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE c.relname='ix_offer_revisions_catalog_remote' AND n.nspname=current_schema()"))
+            assert result is True
+    asyncio.run(check())
+
+
 def test_offset_rejects_mixed_cursor_and_negative_offset(db):
     factory, created = db
     term, _, token = api._seed_catalog(factory, created, n=3)

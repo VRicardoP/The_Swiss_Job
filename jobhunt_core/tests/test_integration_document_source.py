@@ -64,7 +64,7 @@ def source_tables(schema, origin, *, constraint=True):
     ]
     if origin == "swissjob":
         columns += [
-            sa.Column("job_hash", sa.String(32), nullable=False),
+            sa.Column("job_hash", sa.String(36), nullable=False),
             sa.Column("job_title", sa.String(500)),
             sa.Column("job_company", sa.String(300)),
         ]
@@ -114,6 +114,8 @@ def test_source_drift_pending_and_reverse_whole_collection(db, origin):
     schema = "doc_source_" + uuid.uuid4().hex
     meta, users, table, journal = source_tables(schema, origin)
     old, other = source(origin, owner), source(origin, foreign)
+    if origin == "swissjob":
+        old["job_hash"] = str(uuid.uuid4())
 
     async def run():
         async with factory() as s:
@@ -183,6 +185,8 @@ def test_source_drift_pending_and_reverse_whole_collection(db, origin):
                     values.pop(key)
                 values["context"].pop("_migration")
                 values["content"] = "new document after cutover"
+                if origin == "swissjob":
+                    values["source_ref"] = str(uuid.uuid4())
                 new_id = await documents.create(s, pid, values, consumer)
                 await s.commit()
                 current = (
@@ -207,6 +211,8 @@ def test_source_drift_pending_and_reverse_whole_collection(db, origin):
                     local[0]["id"] == new_id
                     and local[0]["content"] == values["content"]
                 )
+                if origin == "swissjob":
+                    assert local[0]["job_hash"] == values["source_ref"]
                 assert digest(await source_rows(s, table, [foreign])) == digest([other])
                 replay = await reverse_sync(
                     s, current, origin=origin, bindings=bindings, schema=schema

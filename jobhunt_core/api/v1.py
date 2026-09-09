@@ -130,8 +130,8 @@ def _catalog_filter_sql(
     content solo tiene `salary` texto libre y no modela employment_type;
     filtrar números contra texto libre sería inventarse el resultado.
 
-    Misma disciplina de coste que `q`: sin índice propio — filtro por fila
-    sobre el index scan ordenado del keyset (O(activas), corpus pequeño)."""
+    Remote=true usa el índice parcial core0044. Los filtros textuales
+    conservan su coste por fila; no se declara indexación que no existe."""
     join = ""
     where: list[str] = []
     params: dict = {}
@@ -153,8 +153,9 @@ def _catalog_filter_sql(
     if remote is not None:
         # ->> da 'true'/'false' o NULL; el cast a boolean respeta la igualdad
         # estricta (NULL jamás casa — tres estados honestos, no dos).
-        where.append("(o.content->>'remote')::boolean = :remote")
-        params["remote"] = remote
+        # Literales de un bool ya validado, nunca texto del usuario. Así el
+        # plan genérico también puede probar el predicado del índice parcial.
+        where.append("(o.content->>'remote')::boolean = " + ("true" if remote else "false"))
     _location_conditions(where, params, country=country, city=city)
     return join, where, params
 
