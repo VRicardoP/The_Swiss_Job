@@ -18,8 +18,9 @@ CoreProfile — criterio unificador: ningun estado local puede ser
 inaccesible), y la respuesta del PUT es el recibo del escritor local, nunca
 pasa por la costura.
 
-GDPR (export / delete-all) TAMPOCO pasa por la costura: exporta y borra lo
-que ESTE sistema almacena — el almacen del escritor local.
+Export/delete de cuenta y perfil no pasan por esta costura. E.9 exporta ademas
+los documentos desde su autoridad; erase remoto/backups requiere confirmacion
+separada, nunca se infiere del DELETE local.
 
 Dos implementaciones detras del mismo puerto:
 - `LocalProfile` (services/profiles/local.py): lectura actual, sin cambios.

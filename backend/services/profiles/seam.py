@@ -30,8 +30,9 @@ ningun estado local puede ser inaccesible. Consecuencias en esta capacidad:
   (overlay en CoreProfile) — nunca huecos inventados.
 - Sin fila local no se sirve perfil alguno (None -> 404): un perfil visible
   solo-core no admitiria PUT (404 del escritor) — no-accionable.
-- GDPR export/delete operan SIEMPRE sobre el almacen local, fuera de la
-  costura (exportan/borran lo que este sistema almacena).
+- Export/delete de cuenta y perfil no pasan por esta costura. E.9 exporta
+  tambien documentos desde su propia autoridad; erase remoto/backups requiere
+  confirmacion separada, nunca se infiere del DELETE local.
 """
 
 import logging

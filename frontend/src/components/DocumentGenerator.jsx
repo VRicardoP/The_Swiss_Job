@@ -62,6 +62,7 @@ function MarkdownRenderer({ content }) {
 function DocumentGenerator({ jobHash, jobTitle, jobCompany, library = false }) {
   const [language, setLanguage] = useState("en");
   const [activeDoc, setActiveDoc] = useState(null);
+  const [operationNotice, setOperationNotice] = useState(null);
   const [cursors, setCursors] = useState([null]);
   const userId = useAuthStore((s) => s.user?.id);
   const operationKey = `document-operation:${userId}:${jobHash}`;
@@ -85,6 +86,7 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany, library = false }) {
   const retrySaved = useRetryDocument();
 
   function handleGenerate(docType) {
+    setOperationNotice(null);
     const operation = pending || { docType, language, operationId: crypto.randomUUID() };
     setPending(operation);
     try { sessionStorage.setItem(operationKey, JSON.stringify(operation)); } catch { /* in-memory retry remains */ }
@@ -92,7 +94,8 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany, library = false }) {
       { jobHash, ...operation },
       { onSuccess: (data) => {
         if (data.status === "pending") return;
-        setActiveDoc(data);
+        setActiveDoc(data.status === "removed" ? null : data);
+        setOperationNotice(data.status === "removed" ? "This operation finished, but its document has been deleted. You can start a new generation." : null);
         setPending(null);
         try { sessionStorage.removeItem(operationKey); } catch { /* no sensitive output is stored */ }
       } },
@@ -191,6 +194,7 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany, library = false }) {
         </Button>
       </div>
 
+      {operationNotice && <p role="status">{operationNotice}</p>}
       {pending && (
         <div className="mt-3" role="status">
           <p>A document operation is pending. Retry the same operation; do not start another generation.</p>

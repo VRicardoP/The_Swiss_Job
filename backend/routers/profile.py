@@ -12,20 +12,24 @@ local — cota registrada: la matriz de escritor del plan §15bis mantiene al
 legacy como escritor autoritativo de `user_profiles` hasta el cutover; el
 cambio de escritor llega en Fase C como escritura sincrona contra el
 escritor activo + idempotency key. GDPR export/delete-all operan SIEMPRE
-sobre el almacen local, fuera de la costura (exportan/borran lo que este
-sistema almacena).
+sobre el almacen local para cuenta/perfil. E.9 exporta documentos desde su autoridad y conserva
+el output local; el borrado remoto y de backups no se declara confirmado.
 """
 
 import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from core.security import get_current_user, verify_password
 from database import get_db
 from models.user import User
+from services.documents.export import export_documents
+from services.documents.freeze import assert_document_writes_enabled
+from services.matching.identity import resolve_core_profile_id
 from schemas.profile import (
     CVDeleteResponse,
     CVUploadResponse,
@@ -249,7 +253,7 @@ async def delete_cv(
     return CVDeleteResponse(message="CV data deleted successfully")
 
 
-# --- GDPR endpoints (unchanged) ---
+# --- Account portability and explicit erasure scope ---
 
 
 @router.get("/export", response_model=UserExport)
@@ -257,14 +261,14 @@ async def export_user_data(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """GDPR data portability: export all user data as JSON."""
+    """Export account/profile and document data; explicit scope in the response."""
     await db.refresh(current_user, ["profile"])
 
     profile_data = None
     if current_user.profile:
         profile_data = ProfileData.model_validate(current_user.profile)
 
-    return UserExport(
+    exported = UserExport(
         id=current_user.id,
         email=current_user.email,
         is_active=current_user.is_active,
@@ -279,8 +283,15 @@ async def export_user_data(
         exported_at=datetime.now(timezone.utc),
     )
 
+    documents = await export_documents(db, current_user.id)
+    return UserExport.model_validate({**exported.model_dump(), **documents})
 
-@router.delete("/delete-all", response_model=DeleteConfirmation)
+
+@router.delete(
+    "/delete-all",
+    response_model=DeleteConfirmation,
+    dependencies=[Depends(assert_document_writes_enabled)],
+)
 async def delete_all_user_data(
     body: DeleteAccountRequest,
     current_user: User = Depends(get_current_user),
@@ -296,14 +307,23 @@ async def delete_all_user_data(
             detail="Incorrect password",
         )
 
+    assert_document_writes_enabled()
     user_id = current_user.id
+    # Same root lock as generation/delivery; do not delete children first.
+    await db.execute(select(User.id).where(User.id == user_id).with_for_update())
+    core_profile_id = await resolve_core_profile_id(db, user_id)
     now = datetime.now(timezone.utc)
 
     await db.delete(current_user)
     await db.commit()
 
     return DeleteConfirmation(
-        message="All user data has been permanently deleted",
+        message=(
+            "Local account data deleted; core erasure awaits confirmation"
+            if core_profile_id
+            else "Local account data deleted"
+        ),
+        core_erasure="pending_confirmation" if core_profile_id else "not_linked",
         user_id=user_id,
         deleted_at=now,
     )

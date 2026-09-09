@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 import uvicorn
@@ -312,7 +313,7 @@ async def run():
 asyncio.run(run())
 '''
 
-@pytest.mark.parametrize("client_name,root", [("swissjob", "/bff"), ("portfolio", "/portfolio"), ("portfolio_delivery", "/portfolio"), ("portfolio_workflow", "/portfolio")])
+@pytest.mark.parametrize("client_name,root", [("swissjob_export", "/bff"), ("swissjob", "/bff"), ("portfolio", "/portfolio"), ("portfolio_delivery", "/portfolio"), ("portfolio_workflow", "/portfolio")])
 def test_document_adapter_over_http(db, client_name, root):
     assert os.path.isfile(root + "/config.py"), "mount the BFF source read-only"
     from sqlalchemy.engine import make_url
@@ -362,15 +363,23 @@ def test_document_adapter_over_http(db, client_name, root):
         try:
             for phase in phases:
                 env["DOCUMENT_JOURNAL_PHASE"] = phase
+                if client_name == "swissjob_export":
+                    code = Path(__file__).with_name("swiss_document_export_contract_client.py").read_text()
+                elif client_name == "portfolio_workflow":
+                    code = _WORKFLOW_CLIENT
+                elif phase != "client":
+                    code = _JOURNAL_CLIENT
+                else:
+                    code = _CLIENT
                 result = subprocess.run(
-                    [sys.executable, "-c", _WORKFLOW_CLIENT if client_name == "portfolio_workflow" else (_JOURNAL_CLIENT if phase != "client" else _CLIENT)],
+                    [sys.executable, "-c", code],
                     cwd="/tmp", env=env, text=True, capture_output=True, timeout=60,
                 )
                 diagnostic = (result.stdout + result.stderr).replace(token, "<redacted>").replace(
                     other_token, "<redacted>").replace(journal_url, "<test-database>")
                 assert result.returncode == 0, diagnostic
         finally:
-            if client_name in ("portfolio_delivery", "portfolio_workflow"):
+            if client_name in ("swissjob_export", "portfolio_delivery", "portfolio_workflow"):
                 import asyncio
                 import sqlalchemy as sa
                 from sqlalchemy.ext.asyncio import create_async_engine

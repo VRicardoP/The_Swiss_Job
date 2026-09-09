@@ -209,6 +209,19 @@ export const notificationsApi = {
 };
 
 export const documentsApi = {
+  async generateAndFetch(jobHash, docType, language, operationId) {
+    const result = await documentsApi.generate(jobHash, docType, language, operationId);
+    if (result.status !== "delivered") return result;
+    try {
+      return await documentsApi.get(result.document_id);
+    } catch (error) {
+      // A receipt remains valid after deletion. Close this operation without
+      // silently generating another document; other errors remain retryable.
+      if (error.status === 404) return { ...result, status: "removed" };
+      throw error;
+    }
+  },
+
   pending() {
     return authRequest("/documents/operations");
   },

@@ -5,10 +5,8 @@ import useAuthStore from "../stores/authStore";
 export function useGenerateDocument() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ jobHash, docType, language, operationId }) => {
-      const result = await documentsApi.generate(jobHash, docType, language, operationId);
-      return result.status === "delivered" ? documentsApi.get(result.document_id) : result;
-    },
+    mutationFn: ({ jobHash, docType, language, operationId }) =>
+      documentsApi.generateAndFetch(jobHash, docType, language, operationId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["documents"] });
     },

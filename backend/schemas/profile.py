@@ -1,9 +1,12 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from models.enums import RemotePreference
+
+from schemas.documents import GeneratedDocumentResponse, DocumentDeliveryExport
 
 
 def _empty_list_if_null(v):
@@ -129,7 +132,7 @@ class CVDeleteResponse(BaseModel):
 
 
 class UserExport(BaseModel):
-    """Full user data export for GDPR portability."""
+    """Account, profile and document portability; not a complete cross-service backup."""
 
     id: uuid.UUID
     email: str
@@ -141,6 +144,13 @@ class UserExport(BaseModel):
     gdpr_consent_at: datetime | None
     profile: ProfileData | None
     exported_at: datetime
+    documents: list[GeneratedDocumentResponse] = Field(default_factory=list)
+    retained_local_documents: list[GeneratedDocumentResponse] = Field(
+        default_factory=list
+    )
+    document_deliveries: list[DocumentDeliveryExport] = Field(default_factory=list)
+    documents_authority: Literal["local", "core"] = "local"
+    export_scope: str = "account, profile, documents and document deliveries"
 
 
 class DeleteAccountRequest(BaseModel):
@@ -153,3 +163,6 @@ class DeleteConfirmation(BaseModel):
     message: str
     user_id: uuid.UUID
     deleted_at: datetime
+    core_erasure: Literal["not_linked", "pending_confirmation"] = "not_linked"
+    erasure_scope: Literal["local_live_database"] = "local_live_database"
+    backup_erasure: Literal["not_confirmed"] = "not_confirmed"

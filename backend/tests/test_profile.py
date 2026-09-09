@@ -63,7 +63,10 @@ class TestProfileDeleteAll:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["message"] == "All user data has been permanently deleted"
+        assert data["message"] == "Local account data deleted"
+        assert data["erasure_scope"] == "local_live_database"
+        assert data["backup_erasure"] == "not_confirmed"
+        assert data["core_erasure"] == "not_linked"
         assert "deleted_at" in data
 
         # Verify user is gone from DB

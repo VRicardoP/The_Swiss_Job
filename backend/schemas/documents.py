@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DocType(str, Enum):
@@ -54,3 +54,18 @@ class DocumentOperationResponse(BaseModel):
 class DocumentPageResponse(BaseModel):
     data: list[GeneratedDocumentResponse]
     next_cursor: str | None = None
+
+
+class DocumentDeliveryExport(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    operation_id: uuid.UUID
+    profile_id: uuid.UUID
+    payload: dict | None
+    payload_hash: str
+    request_hash: str
+    document_id: uuid.UUID | None
+    created_at: datetime
+    first_attempt_at: datetime | None
+    delivered_at: datetime | None
+    last_error: str | None
