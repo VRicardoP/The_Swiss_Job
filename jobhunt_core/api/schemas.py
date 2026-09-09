@@ -54,10 +54,11 @@ class VacancyDTO(BaseModel):
 
 class VacanciesPageDTO(BaseModel):
     """Página del feed de catálogo (C-API-R): VacancyDTO reutilizado + cursor
-    keyset OPACO. Misma forma de página que MatchesPageDTO."""
+    keyset OPACO. Con offset explícito incluye el total para el BFF existente."""
 
     items: list[VacancyDTO]
     next_cursor: str | None = None
+    total: int | None = Field(default=None, ge=0)
 
 
 class ModelRefDTO(BaseModel):

@@ -264,6 +264,7 @@ async def list_vacancies(
     principal: Principal = Depends(require_scope("vacancies:read")),
     limit: int = Query(20, ge=1, le=MAX_PAGE_LIMIT),
     cursor: str | None = Query(None),
+    offset: int | None = Query(None, ge=0, le=9223372036854775807),
     q: str | None = Query(None, max_length=200),
     source: str | None = Query(None, max_length=200),
     remote: bool | None = Query(None),
@@ -276,7 +277,9 @@ async def list_vacancies(
     vigente). Orden DETERMINISTA (created_at DESC, id DESC) para keyset opaco
     base64(created_at|vacancy_id), apoyado en ix_vacancies_feed_keyset
     (core0012). ETag de la página; los límites de `limit` los declara Query
-    (ge/le → OpenAPI).
+    (ge/le → OpenAPI). Con offset explícito se devuelve también total:
+    página de IDs y recuento usan la misma sentencia; solo la página se hidrata.
+    Cursor y offset son excluyentes. Sin offset se conserva el keyset anterior.
 
     `q` = búsqueda MÍNIMA y HONESTA: substring case-insensitive (position, sin
     comodines LIKE que escapar) sobre title/company del content canónico.
@@ -296,6 +299,8 @@ async def list_vacancies(
     location). El keyset (created_at, id) es independiente de los filtros: el
     WHERE solo estrecha filas y el orden no cambia, así que el cursor sigue
     siendo estable bajo el MISMO juego de filtros página a página."""
+    if offset is not None and cursor is not None:
+        raise ApiError(400, "invalid_pagination", "offset y cursor son excluyentes")
     cur = decode_vacancy_cursor(cursor) if cursor else None
     join_sql, where, params = _catalog_filter_sql(q, source, remote, country, city)
     where = ["v.archived_at IS NULL", "v.merged_into IS NULL"] + where
@@ -309,18 +314,31 @@ async def list_vacancies(
             "(v.created_at < :cts OR (v.created_at = :cts AND v.id < :cid))"
         )
         params["cts"], params["cid"] = cur
-    rows = (
-        await session.execute(
-            sa.text(
-                "SELECT v.id, v.created_at FROM vacancies v "
-                "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
-                + join_sql
-                + "WHERE " + " AND ".join(where) + " "
-                "ORDER BY v.created_at DESC, v.id DESC LIMIT :lim"
-            ),
-            params,
-        )
-    ).all()
+    filtered_sql = (
+        "SELECT v.id, v.created_at FROM vacancies v "
+        "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
+        + join_sql + "WHERE " + " AND ".join(where)
+    )
+    total = None
+    if offset is not None:
+        # El BFF ya exige total + offset. IDs y recuento comparten UNA sentencia
+        # (mismo snapshot); no descargar/hidratar el corpus para contarlo.
+        # LEFT JOIN conserva total incluso si offset >= total o no hay resultados.
+        params["off"] = offset
+        rows = (await session.execute(sa.text(
+            "WITH filtered AS MATERIALIZED (" + filtered_sql + "), "
+            "page AS (SELECT id, created_at FROM filtered "
+            "ORDER BY created_at DESC, id DESC LIMIT :lim OFFSET :off) "
+            "SELECT page.id, page.created_at, totals.total "
+            "FROM (SELECT count(*) AS total FROM filtered) totals "
+            "LEFT JOIN page ON true ORDER BY page.created_at DESC, page.id DESC"
+        ), params)).all()
+        total = rows[0].total
+        rows = [row for row in rows if row.id is not None]
+    else:
+        rows = (await session.execute(sa.text(
+            filtered_sql + " ORDER BY v.created_at DESC, v.id DESC LIMIT :lim"
+        ), params)).all()
     # Solo las primeras `limit` filas son la página; la (limit+1)-ésima —si
     # existe— únicamente prueba que hay más, y NO se serializa.
     has_more = len(rows) > limit
@@ -336,8 +354,13 @@ async def list_vacancies(
     page = schemas.VacanciesPageDTO(
         items=items,
         next_cursor=encode_vacancy_cursor(*next_cur) if next_cur else None,
+        total=total,
     )
-    return _with_etag(request, page.model_dump(mode="json"))
+    # El keyset conserva su representación anterior para clientes ya desplegados.
+    body = page.model_dump(mode="json")
+    if offset is None:
+        body.pop("total")
+    return _with_etag(request, body)
 
 
 @router.get("/vacancies/{vacancy_id}", response_model=schemas.VacancyDTO,

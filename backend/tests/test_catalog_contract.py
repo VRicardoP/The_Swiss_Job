@@ -164,6 +164,8 @@ def _feed_page_response(params: dict) -> httpx.Response:
     """GET /v1/vacancies del fake: filtros + keyset opaco (nombre del caso),
     next_cursor solo si quedan filas mas alla de la pagina (contrato)."""
     matched = [n for n in FEED_ORDER if _feed_case_matches(n, params)]
+    total = len(matched)
+    matched = matched[int(params.get("offset", 0)):]
     cursor = params.get("cursor")
     if cursor:
         idx = matched.index(cursor) + 1 if cursor in matched else len(matched)
@@ -174,6 +176,7 @@ def _feed_page_response(params: dict) -> httpx.Response:
         200,
         json={
             "items": [_vacancy_dto(n) for n in page],
+            "total": total,
             "next_cursor": page[-1] if rest else None,
         },
     )
@@ -608,7 +611,7 @@ async def test_core_search_source_filter_expands_legacy_prefix():
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.update(dict(request.url.params))
-        return httpx.Response(200, json={"items": [], "next_cursor": None})
+        return httpx.Response(200, json={"items": [], "next_cursor": None, "total": 0})
 
     catalog = make_core_catalog(transport=httpx.MockTransport(handler))
     await catalog.search(CatalogSearchParams(source="adzuna, jobroom"))
@@ -623,7 +626,7 @@ async def test_core_search_presents_original_source_for_shadow_listing():
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/vacancies":
-            return httpx.Response(200, json={"items": [dto], "next_cursor": None})
+            return httpx.Response(200, json={"items": [dto], "next_cursor": None, "total": 1})
         return httpx.Response(200, json=dto)
 
     catalog = make_core_catalog(transport=httpx.MockTransport(handler))
@@ -661,57 +664,44 @@ def _synthetic_feed(count: int) -> tuple[list[str], dict[str, dict]]:
     return names, dtos
 
 
-async def test_core_search_walks_cursor_pages_and_slices_offset():
-    """PAGINACION/TOTAL: el cliente recorre el feed keyset COMPLETO (varias
-    paginas), calcula el total exacto y pagina por offset localmente —
-    mismo criterio que el cliente del feed de matching."""
+async def test_core_search_sends_offset_and_preserves_total():
+    """Mismo resultado público; una página interna en vez de todo el feed."""
     names, dtos = _synthetic_feed(5)
-    page_size = 2  # el fake ignora `limit`: fuerza el recorrido por cursor
-    requests: list[str] = []
+    calls = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(str(request.url))
+    def handler(request):
         params = dict(request.url.params)
-        cursor = params.get("cursor")
-        start = names.index(cursor) + 1 if cursor in names else 0
-        page = names[start : start + page_size]
-        rest = names[start + page_size :]
-        return httpx.Response(
-            200,
-            json={
-                "items": [dtos[n] for n in page],
-                "next_cursor": page[-1] if rest else None,
-            },
-        )
+        calls.append(params)
+        start, size = int(params["offset"]), int(params["limit"])
+        return httpx.Response(200, json={
+            "items": [dtos[n] for n in names[start:start+size]],
+            "next_cursor": None, "total": len(names),
+        })
 
-    catalog = make_core_catalog(transport=httpx.MockTransport(handler))
-    result = await catalog.search(CatalogSearchParams(limit=2, offset=3))
-    assert result.total == 5
-    assert [b.title for b in result.data] == names[3:5]
-    assert result.has_more is False
-    assert len(requests) == 3  # 5 items en paginas de 2 => 3 peticiones
+    result = await make_core_catalog(transport=httpx.MockTransport(handler)).search(
+        CatalogSearchParams(limit=2, offset=3),
+    )
+    assert result.total == 5 and not result.has_more
+    assert [item.title for item in result.data] == names[3:5]
+    assert calls == [{"limit": "2", "offset": "3"}]
 
 
-async def test_core_search_repeated_cursor_is_unavailable():
-    """Un cursor repetido es un feed anomalo (bucle): CoreUnavailableError,
-    nunca un recorrido infinito."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"items": [], "next_cursor": "loop"})
-
-    catalog = make_core_catalog(transport=httpx.MockTransport(handler))
-    with pytest.raises(CoreUnavailableError, match="cursor repetido"):
+@pytest.mark.parametrize("total", [None, -1, True, 1.5, "2", [], {}])
+async def test_core_search_invalid_total_is_unavailable(total):
+    """Core viejo/roto sin total exacto falla cerrado; nunca recuento parcial."""
+    response = httpx.Response(200, json={"items": [], "next_cursor": None, "total": total})
+    catalog = make_core_catalog(transport=httpx.MockTransport(lambda request: response))
+    with pytest.raises(CoreUnavailableError):
         await catalog.search(CatalogSearchParams())
-
 
 @pytest.mark.parametrize(
     "body",
     [
         [1, 2, 3],  # pagina no-objeto
         {"items": "no-lista"},  # items con tipo roto (ValidationError)
-        {"items": [[1, 2]], "next_cursor": None},  # item no-dict
-        {"items": [{"title": "sin id"}], "next_cursor": None},  # falta id
-        {"items": [], "next_cursor": 42},  # next_cursor no-str
+        {"items": [[1, 2]], "next_cursor": None, "total": 1},  # item no-dict
+        {"items": [{"title": "sin id"}], "next_cursor": None, "total": 1},  # falta id
+        {"items": [], "next_cursor": 42, "total": 0},  # next_cursor no-str
     ],
 )
 async def test_core_search_invalid_feed_payload_is_unavailable(body):
@@ -720,6 +710,45 @@ async def test_core_search_invalid_feed_payload_is_unavailable(body):
     catalog = make_core_catalog(transport=_transport_returning(b"", json_body=body))
     with pytest.raises(CoreUnavailableError):
         await catalog.search(CatalogSearchParams())
+
+
+async def test_core_search_large_total_cost_is_one_request():
+    """20k results must not mean 200 HTTP calls or hydrate unrelated rows."""
+    names, dtos = _synthetic_feed(2)
+    calls = []
+
+    def handler(request):
+        calls.append(dict(request.url.params))
+        return httpx.Response(200, json={
+            "items": [dtos[n] for n in names], "total": 20000,
+            "next_cursor": "opaque-next",
+        })
+
+    result = await make_core_catalog(transport=httpx.MockTransport(handler)).search(
+        CatalogSearchParams(limit=2, offset=12500),
+    )
+    assert result.total == 20000 and result.has_more
+    assert [b.title for b in result.data] == names
+    assert calls == [{"limit": "2", "offset": "12500"}]
+
+
+async def test_core_search_cache_is_scoped_to_offset_and_limit():
+    names, dtos = _synthetic_feed(2)
+    calls = []
+
+    def handler(request):
+        params = dict(request.url.params)
+        calls.append((params, request.headers.get("if-none-match")))
+        offset = int(params["offset"])
+        return httpx.Response(200, json={
+            "items": [dtos[names[offset]]], "total": 2, "next_cursor": None,
+        }, headers={"ETag": f'"offset-{offset}"'})
+
+    catalog = make_core_catalog(transport=httpx.MockTransport(handler))
+    first = await catalog.search(CatalogSearchParams(limit=1, offset=0))
+    second = await catalog.search(CatalogSearchParams(limit=1, offset=1))
+    assert first.data[0].title != second.data[0].title
+    assert [inm for _, inm in calls] == [None, None]
 
 
 async def test_core_search_reuses_etag_cached_pages():
@@ -734,7 +763,7 @@ async def test_core_search_reuses_etag_cached_pages():
             return httpx.Response(304)
         return httpx.Response(
             200,
-            json={"items": [_vacancy_dto("python_zurich")], "next_cursor": None},
+            json={"items": [_vacancy_dto("python_zurich")], "next_cursor": None, "total": 1},
             headers={"ETag": '"v1"'},
         )
 

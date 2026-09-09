@@ -39,12 +39,11 @@ fuente del primary listing: cada fuente pedida se envia en AMBAS formas
 proyectadas. En la PRESENTACION el prefijo interno se retira (misma regla
 que el cliente de matching: se muestra la fuente original, no la sombra).
 
-PAGINACION/TOTAL (mismo criterio que services/matching/core_client.py). El
-contrato legacy exige `total` exacto y pagina por offset; el /v1 pagina por
-keyset sin recuento => se recorre el feed FILTRADO completo (paginas de
-FEED_PAGE_LIMIT=100 — MAX_PAGE_LIMIT del /v1 —, cota MAX_FEED_PAGES contra
-bucles de cursor) y se pagina localmente. El cache de paginas por ETag hace
-barato el refresco (304 sin cuerpo).
+PAGINACION/TOTAL. El contrato legacy exige total exacto y offset. Una sola
+petición /v1/vacancies con offset explícito devuelve ambos desde el core;
+se hidrata solo la página solicitada, no todo el corpus. El cache por ETag
+incluye filtros, limit y offset. Desplegar core compatible antes del BFF:
+sin total válido se falla cerrado, nunca se inventa un recuento parcial.
 
 IDENTIDAD. Los items del feed se presentan con la identidad de ESTA
 capacidad: el UUID canonico de la vacante — la misma que sirve `get`, con
@@ -67,7 +66,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 import httpx
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,10 +83,6 @@ from .port import (
 logger = logging.getLogger(__name__)
 
 _UNSUPPORTED_MSG = "el /v1 del core no expone esta operacion de catalogo"
-
-# Cotas del recorrido del feed (contrato /v1: MAX_PAGE_LIMIT=100 por pagina).
-FEED_PAGE_LIMIT = 100
-MAX_FEED_PAGES = 100  # 10k items; por encima => cursor en bucle o feed anomalo
 
 # Limite de longitud de los Query params del /v1 (Query(max_length=200)).
 _CORE_QUERY_MAX_LEN = 200
@@ -134,8 +129,9 @@ class _VacanciesPageDTO(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    items: list | None = None
+    items: list
     next_cursor: str | None = None
+    total: int = Field(ge=0, strict=True)
 
 
 def default_client_factory() -> httpx.AsyncClient:
@@ -254,7 +250,7 @@ def unsupported_search_reason(params: CatalogSearchParams) -> str | None:
 
 def _feed_query(params: CatalogSearchParams) -> dict:
     """Query params del GET /v1/vacancies para una busqueda expresable."""
-    query: dict = {"limit": FEED_PAGE_LIMIT}
+    query: dict = {"limit": params.limit, "offset": params.offset}
     if params.q:
         query["q"] = params.q
     if params.source:
@@ -418,9 +414,13 @@ class CoreCatalog:
             # 501 en core_primary — y CERO peticiones al core.
             raise CatalogUnsupportedError(reason)
         self._guard_credential()
-        vacancies = await self._fetch_filtered_feed(_feed_query(params))
+        async with self._client_factory() as client:
+            body = await self._fetch_page(client, _feed_query(params))
         try:
-            briefs = [vacancy_to_job_brief(v) for v in vacancies]
+            page = _VacanciesPageDTO.model_validate(body)
+            if len(page.items) > min(params.limit, max(page.total - params.offset, 0)):
+                raise ValueError("pagina incompatible con limit/offset/total")
+            briefs = [vacancy_to_job_brief(v) for v in page.items]
         except _PAYLOAD_ERRORS as exc:
             raise CoreUnavailableError(
                 f"payload invalido del feed de catalogo del core: "
@@ -436,9 +436,9 @@ class CoreCatalog:
         for brief in briefs:
             if brief.url in by_url:
                 brief.hash = by_url[brief.url]
-        total = len(briefs)
+        total = page.total
         return JobSearchResponse(
-            data=briefs[params.offset : params.offset + params.limit],
+            data=briefs,
             total=total,
             limit=params.limit,
             offset=params.offset,
@@ -453,49 +453,13 @@ class CoreCatalog:
 
     # ------------------------------------------------------------------ feed
 
-    async def _fetch_filtered_feed(self, query: dict) -> list[dict]:
-        """Recorre el feed filtrado completo por keyset (PAGINACION/TOTAL);
-        cache de paginas por ETag."""
-        items: list[dict] = []
-        cursor: str | None = None
-        seen_cursors: set[str] = set()
-        async with self._client_factory() as client:
-            for _ in range(MAX_FEED_PAGES):
-                page = await self._fetch_page(client, query, cursor)
-                # Validacion de FORMA con el DTO privado ANTES de consumir la
-                # pagina (P2): tipos rotos => CoreUnavailableError, nunca un
-                # TypeError/ValidationError fuera del fallback.
-                try:
-                    page_dto = _VacanciesPageDTO.model_validate(page)
-                except _PAYLOAD_ERRORS as exc:
-                    raise CoreUnavailableError(
-                        f"payload invalido del feed de catalogo del core: "
-                        f"{type(exc).__name__}: {exc}"
-                    ) from exc
-                items.extend(page_dto.items or [])
-                cursor = page_dto.next_cursor
-                if cursor is None:
-                    return items
-                if cursor in seen_cursors:
-                    raise CoreUnavailableError(
-                        f"feed de catalogo del core con cursor repetido: {cursor[:64]}"
-                    )
-                seen_cursors.add(cursor)
-        raise CoreUnavailableError(
-            f"feed de catalogo del core excede {MAX_FEED_PAGES} paginas "
-            "(cota anti-bucle)"
-        )
-
     async def _fetch_page(
-        self, client: httpx.AsyncClient, query: dict, cursor: str | None
+        self, client: httpx.AsyncClient, query: dict
     ) -> dict:
-        cache_key = (tuple(sorted(query.items())), cursor or "")
+        cache_key = tuple(sorted(query.items()))
         cached = _etag_cache.get(cache_key)
         headers = {"If-None-Match": cached[0]} if cached else {}
-        params = dict(query)
-        if cursor is not None:
-            params["cursor"] = cursor
-        resp = await _request_page(client, params, headers)
+        resp = await _request_page(client, query, headers)
         if resp.status_code == 304:
             if cached is None:  # defensivo: 304 sin haber mandado If-None-Match
                 raise CoreUnavailableError("core /v1 devolvio 304 sin cache previa")
