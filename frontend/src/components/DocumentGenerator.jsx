@@ -145,7 +145,8 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany, library = false }) {
         </div>
       </header>
 
-      {!library && <>\n      {/* Selector de idioma — segmented */}
+      {!library && <>
+      {/* Selector de idioma — segmented */}
       <div className="mt-4 flex items-center gap-3">
         <span className="text-xs font-medium uppercase tracking-wider text-text-tertiary">
           Language
