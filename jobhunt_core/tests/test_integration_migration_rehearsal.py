@@ -13,6 +13,8 @@ import asyncio
 import os
 import uuid
 
+from jobhunt_core.api.main import _read_expected_head
+
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -244,7 +246,7 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                 version = (
                     await s.execute(sa.text("SELECT version_num FROM alembic_version"))
                 ).scalar_one()
-                assert version == "core0043"
+                assert version == _read_expected_head()
                 # El esquema re-creado FUNCIONA: smoke de escritura real.
                 await s.execute(
                     sa.text("INSERT INTO consumers (id, name) VALUES (:i, 'post-cycle')"),

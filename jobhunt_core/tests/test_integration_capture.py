@@ -22,6 +22,8 @@ import logging
 import os
 import time
 import uuid
+
+from jobhunt_core.api.main import _read_expected_head
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
@@ -1066,7 +1068,7 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
                 c.execute(
                     sa.text(f"SELECT version_num FROM {S}.alembic_version")
                 ).scalar()
-                == "core0043"
+                == _read_expected_head()
             )
             c.execute(
                 sa.text(
@@ -1180,7 +1182,7 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
                 c.execute(
                     sa.text(f"SELECT version_num FROM {S}.alembic_version")
                 ).scalar()
-                == "core0043"
+                == _read_expected_head()
             )
             idx = c.execute(
                 sa.text(
