@@ -63,7 +63,7 @@ async def create_document(profile_id: uuid.UUID, body: schemas.DocumentCreateDTO
     # FastAPI accepts upper-case/compact UUIDs; receipts and erase use canonical IDs.
     status, receipt = await run_idempotent(
         session, principal, f"POST /v1/profiles/{profile_id}/documents",
-        request_hash(body.model_dump(mode="json")), key, handler,
+        request_hash(body.model_dump(mode="json")), key, handler, profile_id=profile_id,
     )
     row = await documents.fetch(session, profile_id, uuid.UUID(receipt["id"]), principal.consumer_id)
     if row is None:
@@ -101,7 +101,7 @@ async def create_document_batch(profile_id: uuid.UUID, body: schemas.DocumentBat
 
     status, receipt = await run_idempotent(
         session, principal, f"POST /v1/profiles/{profile_id}/documents/batch",
-        request_hash(body.model_dump(mode="json")), key, handler,
+        request_hash(body.model_dump(mode="json")), key, handler, profile_id=profile_id,
     )
     items = []
     for did in receipt["ids"]:
@@ -156,6 +156,6 @@ async def delete_document(profile_id: uuid.UUID, document_id: uuid.UUID, request
 
     status, payload = await run_idempotent(
         session, principal, f"DELETE /v1/profiles/{profile_id}/documents/{document_id}",
-        request_hash({}), request.headers.get("idempotency-key"), handler,
+        request_hash({}), request.headers.get("idempotency-key"), handler, profile_id=profile_id,
     )
     return json_response(status, payload)

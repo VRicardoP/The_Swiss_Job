@@ -510,7 +510,7 @@ async def put_profile(
         return 200, new.model_dump(mode="json")
 
     status, payload = await run_idempotent(
-        session, principal, route, req_hash, idem_key, handler
+        session, principal, route, req_hash, idem_key, handler, profile_id=profile_id
     )
     return Response(
         # G7-P3-2: `sort_keys` — era el ÚNICO endpoint que no canonicalizaba.

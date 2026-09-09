@@ -35,6 +35,7 @@ from jobhunt_core.api.http_contract import (
     with_etag,
 )
 from jobhunt_core.api.idempotency import run_idempotent
+from jobhunt_core.api.receipt_scope import resource_subject
 from jobhunt_core.api.v1 import (
     MAX_PAGE_LIMIT,
     decode_vacancy_cursor,
@@ -146,7 +147,8 @@ async def create_saved_search(
         return 201, _dto_json(searches.compose(row))
 
     status, payload = await run_idempotent(
-        session, principal, route, req_hash, idem_key, handler
+        session, principal, route, req_hash, idem_key, handler,
+        profile_id=body.profile_id,
     )
     return json_response(status, payload)
 
@@ -179,19 +181,24 @@ async def update_saved_search(
         provided = provided - {"filters"}
     values = _client_values(body, provided)
 
+    subject_id = await resource_subject(session, principal, route, idem_key, "saved_searches", search_id)
+
     async def handler():
         row = await searches.fetch_owned(
             session, search_id, principal.consumer_id, for_update=True
         )
         if row is None:
             raise error_404("búsqueda guardada")
+        if subject_id is None or row.profile_id != subject_id:
+            raise ApiError(409, "owner_changed", "propietario cambiado; reintenta")
         check_if_match(request, _dto_json(searches.compose(row)))
         await searches.update(session, row, values, row.consumer_name)
         fresh = await searches.fetch_owned(session, search_id, principal.consumer_id)
         return 200, _dto_json(searches.compose(fresh))
 
     status, payload = await run_idempotent(
-        session, principal, route, req_hash, idem_key, handler
+        session, principal, route, req_hash, idem_key, handler,
+        profile_id=subject_id,
     )
     return json_response(status, payload)
 
@@ -211,12 +218,16 @@ async def delete_saved_search(
     idem_key = request.headers.get("idempotency-key")
     route = f"DELETE {request.url.path}"
 
+    subject_id = await resource_subject(session, principal, route, idem_key, "saved_searches", search_id)
+
     async def handler():
         row = await searches.fetch_owned(
             session, search_id, principal.consumer_id, for_update=True
         )
         if row is None:
             raise error_404("búsqueda guardada")
+        if subject_id is None or row.profile_id != subject_id:
+            raise ApiError(409, "owner_changed", "propietario cambiado; reintenta")
         check_if_match(request, _dto_json(searches.compose(row)))
         await searches.emit_changed(
             session, search_id=row.id, profile_id=row.profile_id,
@@ -229,6 +240,7 @@ async def delete_saved_search(
         return 204, None
 
     status, payload = await run_idempotent(
-        session, principal, route, request_hash({}), idem_key, handler
+        session, principal, route, request_hash({}), idem_key, handler,
+        profile_id=subject_id,
     )
     return json_response(status, payload)

@@ -1423,16 +1423,26 @@ async def erase_shadow_profile(
     await session.execute(
         sa.text("SELECT id FROM profiles WHERE id = :p FOR UPDATE"), {"p": pid}
     )
-    # Document receipts contain IDs, never CV text; erase their subject metadata too.
+    # Same profile -> receipt -> child order as every durable API writer.
+    # New receipts name their subject even for DELETE. Legacy full responses
+    # carry profile_id; profile paths also cover bookmarks and UUID spellings.
     await session.execute(
         sa.text(
             "DELETE FROM idempotency_records WHERE consumer_id = "
-            "(SELECT consumer_id FROM profiles WHERE id=:p) "
-            "AND (route=:post OR route=:batch OR route LIKE :deletes)"
+            "(SELECT consumer_id FROM profiles WHERE id=:p) AND ("
+            "response->>'subject_profile_id' = CAST(:p AS text) OR "
+            "response->'body'->>'profile_id' = CAST(:p AS text) OR "
+            "(split_part(route, '/', 3) = 'profiles' AND "
+            "translate(replace(replace(lower(split_part(route, '/', 4)), "
+            "'urn:', ''), 'uuid:', ''), '-{}', '') = :compact) OR "
+            "(split_part(route, '/', 3) = 'applications' AND "
+            "replace(lower(split_part(route, '/', 4)), '-', '') IN "
+            "(SELECT replace(id::text, '-', '') FROM applications WHERE profile_id=:p)) OR "
+            "(split_part(route, '/', 3) = 'saved-searches' AND "
+            "replace(lower(split_part(route, '/', 4)), '-', '') IN "
+            "(SELECT replace(id::text, '-', '') FROM saved_searches WHERE profile_id=:p)))"
         ),
-        {"p": pid, "post": f"POST /v1/profiles/{pid}/documents",
-         "batch": f"POST /v1/profiles/{pid}/documents/batch",
-         "deletes": f"DELETE /v1/profiles/{pid}/documents/%"},
+        {"p": pid, "compact": pid.hex},
     )
     # Outbox del perfil (las deliveries caen por ON DELETE CASCADE).
     await session.execute(

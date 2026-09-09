@@ -38,6 +38,7 @@ SEAM_TABLES = {
     "jobhunt_profile_map": "pk_jobhunt_profile_map",
     "generated_documents": "generated_documents_pkey",
     "document_deliveries": "document_deliveries_pkey",
+    "integration_inbox": "integration_inbox_pkey",
 }
 
 

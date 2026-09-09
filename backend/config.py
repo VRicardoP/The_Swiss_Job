@@ -234,6 +234,7 @@ class Settings(BaseSettings):
     # Vacia => toda ruta a core falla como CoreUnavailable (y core_read cae
     # a local); no se hace ni una peticion sin credencial.
     CORE_CONSUMER_KEY: str = ""
+    CORE_INBOX_TOKEN: str = ""
     CORE_HTTP_TIMEOUT_SECONDS: float = 5.0
     # TTL de la cache en proceso del routing: acota la staleness entre
     # procesos/workers (la invalidacion transaccional cubre el proceso local).

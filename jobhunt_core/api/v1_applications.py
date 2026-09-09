@@ -35,6 +35,7 @@ from jobhunt_core.api.http_contract import (
     with_etag,
 )
 from jobhunt_core.api.idempotency import run_idempotent
+from jobhunt_core.api.receipt_scope import resource_subject
 from jobhunt_core.api.v1 import (
     MAX_PAGE_LIMIT,
     decode_vacancy_cursor,
@@ -262,7 +263,8 @@ async def create_application(
         return 201, _dto_json(await apps.application_item(session, aid))
 
     status, payload = await run_idempotent(
-        session, principal, route, req_hash, idem_key, handler
+        session, principal, route, req_hash, idem_key, handler,
+        profile_id=body.profile_id,
     )
     return json_response(status, payload)
 
@@ -356,18 +358,23 @@ async def patch_application(
     req_hash = request_hash(body.model_dump(mode="json", exclude_unset=True))
     provided = body.model_fields_set
 
+    subject_id = await resource_subject(session, principal, route, idem_key, "applications", item_id)
+
     async def handler():
         target = await _lock_target(session, item_id, principal.consumer_id)
         if target is None:
             raise error_404("candidatura")
         kind, row = target
+        if subject_id is None or row.profile_id != subject_id:
+            raise ApiError(409, "owner_changed", "propietario cambiado; reintenta")
         check_if_match(request, await _current_payload(session, kind, row))
         if kind == "application":
             return 200, await _apply_patch(session, row, body, provided)
         return 200, await _promote_bookmark(session, row, body, provided)
 
     status, payload = await run_idempotent(
-        session, principal, route, req_hash, idem_key, handler
+        session, principal, route, req_hash, idem_key, handler,
+        profile_id=subject_id,
     )
     return json_response(status, payload)
 
@@ -386,11 +393,15 @@ async def delete_application(
     idem_key = request.headers.get("idempotency-key")
     route = f"DELETE {request.url.path}"
 
+    subject_id = await resource_subject(session, principal, route, idem_key, "applications", item_id)
+
     async def handler():
         target = await _lock_target(session, item_id, principal.consumer_id)
         if target is None:
             raise error_404("candidatura")
         kind, row = target
+        if subject_id is None or row.profile_id != subject_id:
+            raise ApiError(409, "owner_changed", "propietario cambiado; reintenta")
         check_if_match(request, await _current_payload(session, kind, row))
         if kind == "application":
             # G3-A-P2-2: el alta SIN `status` vale 'saved' y escribe DOS filas
@@ -412,7 +423,8 @@ async def delete_application(
         return 204, None
 
     status, payload = await run_idempotent(
-        session, principal, route, request_hash({}), idem_key, handler
+        session, principal, route, request_hash({}), idem_key, handler,
+        profile_id=subject_id,
     )
     return json_response(status, payload)
 
@@ -491,6 +503,7 @@ async def sync_bookmarks(
         return 200, result.model_dump(mode="json")
 
     status, payload = await run_idempotent(
-        session, principal, route, req_hash, idem_key, handler
+        session, principal, route, req_hash, idem_key, handler,
+        profile_id=profile_id,
     )
     return json_response(status, payload)

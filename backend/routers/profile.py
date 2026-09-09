@@ -20,13 +20,14 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from core.security import get_current_user, verify_password
 from database import get_db
 from models.user import User
+from models.integration_inbox import IntegrationInbox
 from services.documents.export import export_documents
 from services.documents.freeze import assert_document_writes_enabled
 from services.matching.identity import resolve_core_profile_id
@@ -314,6 +315,9 @@ async def delete_all_user_data(
     core_profile_id = await resolve_core_profile_id(db, user_id)
     now = datetime.now(timezone.utc)
 
+    if core_profile_id is not None:
+        await db.execute(delete(IntegrationInbox).where(
+            IntegrationInbox.subject_profile_id == core_profile_id))
     await db.delete(current_user)
     await db.commit()
 

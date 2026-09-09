@@ -94,31 +94,60 @@ async def _reserve_or_read(session, keys, request_hash, expires):
     return None, row
 
 
-async def run_idempotent(session, principal, route, request_hash, key, handler):
+async def run_idempotent(
+    session, principal, route, request_hash, key, handler, *, profile_id=None
+):
     """Ejecuta `handler` con idempotencia si `key` no es None.
 
     handler: coroutine SIN args que hace la escritura EN `session` y devuelve
     (status_code:int, payload:dict). run_idempotent es dueño del COMMIT.
     """
+    if key is not None:
+        key = key.strip()
+        if not key or len(key) > KEY_MAX_LEN:
+            raise ApiError(
+                400,
+                "invalid_idempotency_key",
+                f"Idempotency-Key vacía o mayor de {KEY_MAX_LEN}",
+            )
+        # G8-N-4: la cabecera va CRUDA a `idempotency_records.key` (columna
+        # `text`), que es el mismo sink que el resto del cuerpo — misma clase,
+        # misma regla, con el código de error que esta frontera ya tiene. Lo que
+        # hoy para un NUL ahí es el parser HTTP (`h11` responde 400 antes del
+        # ASGI porque la imagen no lleva `httptools`), y eso es una propiedad de
+        # la IMAGEN, no del código: si un día entra httptools, el 500 aparece sin
+        # que nadie toque una línea.
+        ensure_text_storable(key, "Idempotency-Key", code="invalid_idempotency_key")
+    if profile_id is not None:
+        # The profile lock MUST precede the receipt lock, also on cached replay.
+        await session.execute(
+            sa.text("SELECT set_config('lock_timeout', :ms, true)"),
+            {"ms": str(settings.CORE_IDEMPOTENCY_LOCK_TIMEOUT_MS)},
+        )
+        try:
+            owned_profile = await session.scalar(
+                sa.text(
+                    "SELECT id FROM profiles WHERE id=:pid AND consumer_id=:cid FOR UPDATE"
+                ),
+                {"pid": profile_id, "cid": principal.consumer_id},
+            )
+        except DBAPIError as exc:
+            if not _is_lock_timeout(exc):
+                raise
+            await session.rollback()
+            raise ApiError(
+                409,
+                "idempotency_in_progress",
+                "otra operación del perfil sigue en curso",
+            ) from exc
+        if owned_profile is None:
+            raise ApiError(404, "not_found", "perfil inexistente")
+        await session.execute(sa.text("SELECT set_config('lock_timeout', '0', true)"))
     if key is None:
         status, payload = await handler()
         await session.commit()
         return status, payload
 
-    key = key.strip()
-    if not key or len(key) > KEY_MAX_LEN:
-        raise ApiError(
-            400, "invalid_idempotency_key",
-            f"Idempotency-Key vacía o mayor de {KEY_MAX_LEN}",
-        )
-    # G8-N-4: la cabecera va CRUDA a `idempotency_records.key` (columna
-    # `text`), que es el mismo sink que el resto del cuerpo — misma clase,
-    # misma regla, con el código de error que esta frontera ya tiene. Lo que
-    # hoy para un NUL ahí es el parser HTTP (`h11` responde 400 antes del
-    # ASGI porque la imagen no lleva `httptools`), y eso es una propiedad de
-    # la IMAGEN, no del código: si un día entra httptools, el 500 aparece sin
-    # que nadie toque una línea.
-    ensure_text_storable(key, "Idempotency-Key", code="invalid_idempotency_key")
     expires = datetime.now(timezone.utc) + IDEM_TTL
     keys = {"cid": principal.consumer_id, "k": key, "r": route}
 
@@ -151,7 +180,8 @@ async def run_idempotent(session, principal, route, request_hash, key, handler):
         # cliente, no una doble ejecución). Libera el worker de inmediato.
         await session.rollback()
         raise ApiError(
-            409, "idempotency_in_progress",
+            409,
+            "idempotency_in_progress",
             "otra petición con la misma Idempotency-Key sigue en curso "
             "(espera de reserva agotada)",
             {"key": key},
@@ -164,12 +194,15 @@ async def run_idempotent(session, principal, route, request_hash, key, handler):
         await session.execute(sa.text("SELECT set_config('lock_timeout', '0', true)"))
         # Reserva NUESTRA: ejecuta y persiste la respuesta en el MISMO commit.
         status, payload = await handler()
+        response = {"status": status, "body": payload}
+        if profile_id is not None:
+            response["subject_profile_id"] = str(profile_id)
         await session.execute(
             sa.text(
                 "UPDATE idempotency_records SET response = CAST(:resp AS jsonb) "
                 "WHERE consumer_id = :cid AND key = :k AND route = :r"
             ),
-            {**keys, "resp": json.dumps({"status": status, "body": payload})},
+            {**keys, "resp": json.dumps(response)},
         )
         await session.commit()
         return status, payload
@@ -179,14 +212,16 @@ async def run_idempotent(session, principal, route, request_hash, key, handler):
         # Dos carreras seguidas con la purga (ventana de milisegundos): 409
         # reintentable, jamás un 500 ni una doble ejecución.
         raise ApiError(
-            409, "idempotency_in_progress",
+            409,
+            "idempotency_in_progress",
             "la reserva de esta Idempotency-Key se purgó a mitad de la "
             "petición — reintenta",
             {"key": key},
         )
     if row.request_hash != request_hash:
         raise ApiError(
-            409, "idempotency_conflict",
+            409,
+            "idempotency_conflict",
             "Idempotency-Key reutilizada con un cuerpo distinto",
             {"key": key},
         )
@@ -194,7 +229,8 @@ async def run_idempotent(session, principal, route, request_hash, key, handler):
         # Inalcanzable por construcción (no commiteamos reservas desnudas);
         # defensivo: en vuelo ⇒ 409, nunca re-ejecutar.
         raise ApiError(
-            409, "idempotency_in_progress",
+            409,
+            "idempotency_in_progress",
             "petición con la misma Idempotency-Key aún en curso",
             {"key": key},
         )
