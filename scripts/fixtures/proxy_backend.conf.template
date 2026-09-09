@@ -1,0 +1,6 @@
+server {
+    listen 8000;
+    location /api/ {
+        return 200 "${PROXY_TEST_MARKER}";
+    }
+}

@@ -201,6 +201,8 @@ services:
   frontend:
     image: ${R5_FRONTEND_IMAGE:-swissjob-frontend:prod}
     container_name: swissjob-frontend-r5
+    environment:
+      SWISSJOB_BACKEND_HOST: swissjob-backend-r5
     restart: unless-stopped
     ports:
       - "4010:80"
