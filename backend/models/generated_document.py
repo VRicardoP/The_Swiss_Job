@@ -25,7 +25,7 @@ class GeneratedDocument(Base):
         index=True,
     )
     job_hash: Mapped[str] = mapped_column(
-        String(32),
+        String(36),
         nullable=False,
     )
     # Immutable generation context; source_ref survives deletion of its job.

@@ -29,6 +29,7 @@ from schemas.documents import (
     GenerateDocumentRequest,
     GeneratedDocumentResponse,
 )
+from services.catalog import resolve_catalog, CoreUnavailableError as CatalogUnavailableError, CatalogUnsupportedError
 from services.document_generator import DocumentGeneratorService
 from services.documents import CoreDocuments, resolve_documents
 from services.documents.delivery import deliver, enqueue, operation_status, request_hash
@@ -93,10 +94,21 @@ async def generate_document(
             detail="Upload your CV first before generating documents.",
         )
 
-    # Load job
-    job = (
-        await db.execute(select(Job).where(Job.hash == body.job_hash))
-    ).scalar_one_or_none()
+    # The catalog can serve core UUIDs with no local Job. Preserve that
+    # reference; generation must not create a second copy of the corpus.
+    if len(body.job_hash) > 32:
+        catalog = await resolve_catalog(db)
+        await db.commit()  # release the profile read transaction before HTTP
+        try:
+            job = await catalog.get(body.job_hash)
+        except CatalogUnavailableError:
+            raise HTTPException(status_code=503, detail="Catalog temporarily unavailable.") from None
+        except CatalogUnsupportedError:
+            raise HTTPException(status_code=501, detail="Offer unavailable on the active catalog.") from None
+    else:
+        job = (
+            await db.execute(select(Job).where(Job.hash == body.job_hash))
+        ).scalar_one_or_none()
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

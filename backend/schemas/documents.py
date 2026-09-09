@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class DocType(str, Enum):
@@ -19,9 +19,18 @@ class GenerateDocumentRequest(BaseModel):
     """Request body for POST /api/v1/documents/generate."""
 
     operation_id: uuid.UUID | None = None
-    job_hash: str = Field(..., max_length=32)
+    job_hash: str = Field(..., max_length=36)
     doc_type: DocType
     language: str = Field("en", max_length=5, pattern=r"^(en|de|fr|it)$")
+
+    @field_validator("job_hash")
+    @classmethod
+    def canonical_job_reference(cls, value):
+        # Existing local references retain their contract. Longer references
+        # must be canonical core UUIDs, not alternate spellings or aliases.
+        if len(value) > 32 and str(uuid.UUID(value)) != value:
+            raise ValueError("Expected a canonical core vacancy UUID")
+        return value
 
 
 class GeneratedDocumentResponse(BaseModel):
