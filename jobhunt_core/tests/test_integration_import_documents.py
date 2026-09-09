@@ -42,12 +42,14 @@ def source(origin, owner):
     return row
 
 
-@pytest.mark.parametrize("origin", ["swissjob", "portfolio"])
-def test_import_preserves_history_and_replays_after_lost_ack(db, origin):
+@pytest.mark.parametrize("origin,core_reference", [("swissjob", False), ("swissjob", True), ("portfolio", False)])
+def test_import_preserves_history_and_replays_after_lost_ack(db, origin, core_reference):
     factory, created = db
     _, consumer, pid = _seed_profile(factory, created)
     owner = uuid.uuid4() if origin == "swissjob" else 11
     row = source(origin, owner)
+    if core_reference:
+        row["job_hash"] = str(uuid.uuid4())
     batch = prepare_batch(
         batch_id=uuid.uuid4(),
         origin=origin,

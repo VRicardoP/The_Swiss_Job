@@ -101,9 +101,10 @@ def prepare_batch(*, batch_id, origin, consumer, bindings, rows):
                 row["user_id"] = uuid.UUID(owner)
                 if (
                     not isinstance(row["job_hash"], str)
-                    or not 1 <= len(row["job_hash"]) <= 32
+                    or not 1 <= len(row["job_hash"]) <= 36
+                    or (len(row["job_hash"]) > 32 and str(uuid.UUID(row["job_hash"])) != row["job_hash"])
                 ):
-                    raise DocumentMigrationError("invalid legacy job reference")
+                    raise DocumentMigrationError("invalid document job reference")
                 for key, limit in (("job_title", 500), ("job_company", 300)):
                     if row[key] is not None and (
                         not isinstance(row[key], str) or len(row[key]) > limit
