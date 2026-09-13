@@ -130,17 +130,20 @@ def _catalog_filter_sql(
     content solo tiene `salary` texto libre y no modela employment_type;
     filtrar números contra texto libre sería inventarse el resultado.
 
-    Remote=true usa el índice parcial core0044. Los filtros textuales
-    conservan su coste por fila; no se declara indexación que no existe."""
+    Remote=true usa el índice parcial core0044; título/empresa, los trigram
+    core0045. Location conserva su coste por fila."""
     join = ""
     where: list[str] = []
     params: dict = {}
     if q is not None and q.strip():
+        # LIKE is indexable by pg_trgm; escape its metacharacters to retain
+        # the existing literal substring contract. Lowering stays in Postgres.
         where.append(
-            "(position(lower(:q) in lower(coalesce(o.content->>'title', ''))) > 0 "
-            "OR position(lower(:q) in lower(coalesce(o.content->>'company', ''))) > 0)"
+            "(lower(coalesce(o.content->>'title', '')) LIKE lower(:q_pattern) "
+            "OR lower(coalesce(o.content->>'company', '')) LIKE lower(:q_pattern))"
         )
-        params["q"] = q.strip()
+        literal = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        params["q_pattern"] = "%" + literal + "%"
     names = [s.strip().lower() for s in (source or "").split(",") if s.strip()]
     if names:
         join = (
@@ -282,17 +285,15 @@ async def list_vacancies(
     página de IDs y recuento usan la misma sentencia; solo la página se hidrata.
     Cursor y offset son excluyentes. Sin offset se conserva el keyset anterior.
 
-    `q` = búsqueda MÍNIMA y HONESTA: substring case-insensitive (position, sin
-    comodines LIKE que escapar) sobre title/company del content canónico.
+    `q` = búsqueda MÍNIMA y HONESTA: substring case-insensitive sobre
+    title/company del content canónico; %/_/barra son literales, no comodines.
     yagni: el ranking SEMÁNTICO no entra aquí — vive en /profiles/{id}/matches
     (cota registrada en CONTRATOS_FASE_C C-API-R).
 
-    COTA de `q` (1ª rev. C-API-R): NO está indexado — el keyset barre
-    ix_vacancies_feed_keyset en orden y `position` filtra por fila, de modo
-    que una `q` poco selectiva recorre el índice PARCIAL de activas completo
-    hasta llenar la página (O(activas), NO seq scan del corpus; sigue siendo
-    index scan ordenado). Un GIN trigram es trabajo futuro solo si el volumen
-    lo exige — hoy el corpus es pequeño y `q` es el filtro mínimo, no ranking.
+    COTA de `q`: core0045 indexa title/company mediante pg_trgm, sin incluir
+    descripciones ni alterar la búsqueda literal. Consultas muy cortas o muy
+    frecuentes pueden seguir requiriendo un barrido: no se promete coste
+    constante ni ranking semántico. El plan de la consulta manda.
 
     FILTROS ESTRUCTURADOS (cierre de cota C-API-R — semántica y cotas
     restantes en `_catalog_filter_sql`): `source` (CSV ci, primary listing),
