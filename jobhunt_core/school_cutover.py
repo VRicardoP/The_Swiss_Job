@@ -46,7 +46,10 @@ async def require_freeze(origin):
     )
     if state.get("writes") != "frozen":
         raise SchoolMigrationError("school source writer is not frozen")
-    if origin == "portfolio" and state.get("background_schedulers_enabled") is not False:
+    if (
+        origin == "portfolio"
+        and state.get("background_schedulers_enabled") is not False
+    ):
         raise SchoolMigrationError("Portfolio schedulers must be quiesced for cutover")
 
 
@@ -79,6 +82,39 @@ def _derived(envelope):
         catalog=envelope["catalog"],
         catalog_stamp=envelope["catalog_stamp"],
     )
+
+
+def _check_source(envelope, raw, command):
+    original = envelope["source"]
+    if command != "reverse" or envelope["origin"] != "swissjob":
+        if digest(raw) != digest(original):
+            raise SchoolMigrationError(
+                "local school data changed after the source freeze"
+            )
+        return
+    # The Swiss public catalogue keeps harvesting after the school-state flip.
+    # Rollback owns only the school status/draft and preference fields. Never
+    # mistake fresh public job metadata for an unauthorized durable writer.
+    for table, key in (("match_results", "id"), ("user_profiles", "user_id")):
+        expected = {str(row[key]): row for row in original[table]}
+        current = {str(row[key]): row for row in raw[table]}
+        if any(
+            identity not in current or digest(row) != digest(current[identity])
+            for identity, row in expected.items()
+        ):
+            raise SchoolMigrationError(
+                "local school durable changed after the source freeze"
+            )
+        extras = [row for identity, row in current.items() if identity not in expected]
+        if any(
+            table != "match_results"
+            or row["application_status"] != "detected"
+            or row["draft_letter"]
+            for row in extras
+        ):
+            raise SchoolMigrationError(
+                "unexpected local school durable after the source freeze"
+            )
 
 
 async def run(args):
@@ -147,10 +183,7 @@ async def run(args):
                         "seal": envelope["seal"],
                         "rows": {name: len(rows) for name, rows in raw.items()},
                     }
-                if digest(raw) != digest(envelope["source"]):
-                    raise SchoolMigrationError(
-                        "local school data changed after the source freeze"
-                    )
+                _check_source(envelope, raw, args.command)
                 core_engine = create_core_engine(poolclass=NullPool)
                 async with async_sessionmaker(core_engine)() as core:
                     async with core.begin():
