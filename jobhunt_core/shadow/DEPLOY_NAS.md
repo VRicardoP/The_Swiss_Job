@@ -1,5 +1,16 @@
 # DEPLOY_NAS — Sombra (Fase B) en producción QNAP
 
+> **Vigencia operativa 2026-09-13:** este paquete conserva las instrucciones
+> históricas de Fase B; ya no describe por sí solo el runtime que sirve ambos BFF.
+> Estado y recuperación actuales: [E.12 desplegado](../../docs/DESPLIEGUE_E12_2026-09-13.md).
+> No reactivar políticas ni restaurar bases siguiendo una foto histórica.
+>
+> **Control de rendimiento tras restore/índices:** comprobar el EXPLAIN de la
+> sentencia real, estadísticas y relallvisible. En E.12, un índice válido seguía
+> sin usarse en NAS; VACUUM (ANALYZE) acotado a offer_revisions pasó de 8,65 s a
+> 159 ms, sin FULL ni ajustes globales. Verificar el canary después del mantenimiento,
+> no extrapolar el plan de una copia. Conservar autovacuum; no forzar scans en producción.
+
 > Runbook de DESPLIEGUE de la sombra en el NAS (Container Station). Autorización
 > del propietario registrada **2026-07-28**: la sombra pasa a producción porque el
 > equipo local no está 24h. El contrato **§0 sigue vigente**: CERO efectos
