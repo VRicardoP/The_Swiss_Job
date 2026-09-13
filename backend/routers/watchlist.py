@@ -6,14 +6,10 @@ Cubre:
 - Exportación de eventos de calendario (.ics) (GET /calendar.ics)
 - Listado de colegios vigilados con metadata (GET /schools)
 
-A.SEAM (plan §15bis): el state machine de candidatura (status/draft sobre
-MatchResult) consume la capacidad CANDIDATURAS (services/applications) y el
-listado la capacidad COLEGIOS (services/schools), ambas a traves de su
-costura. El /v1 del core NO expone ninguna de las dos (cota fijada por
-contract test) y su UNICO escritor es LOCAL: por el criterio unificador se
-sirven de local en TODOS los modos, incluida core_primary — aquí no hay
-501/503 por routing. La generación LLM del borrador y la presentación .ics
-siguen en el router (orquestación, no estado).
+E.15: catálogo, preferencias y estado de la watchlist pertenecen a COLEGIOS.
+Local antes del corte; core exclusivo en core_primary/rollback_pending.
+No se mezcla con las candidaturas ordinarias. La generación LLM y el
+calendario permanecen en el BFF; se revalida el escritor tras la inferencia.
 """
 
 import logging
@@ -32,15 +28,16 @@ from schemas.match import (
     GenerateDraftRequest,
     GenerateDraftResponse,
 )
-from scrapers.swiss_schools_config import resolve_school_from_job
-from services.applications import resolve_applications
+from services.schools.presentation import school_for_job
+from services.schools.state import resolve_school_state, block_school_writes
 from services.groq_service import GroqService
 from services.letter_generator import generate_draft_letter
 from services.schools import resolve_schools
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/watchlist", tags=["watchlist"])
+router = APIRouter(prefix="/api/v1/watchlist", tags=["watchlist"],
+                   dependencies=[Depends(block_school_writes)])
 
 
 def _get_groq(request: Request) -> GroqService:
@@ -72,7 +69,7 @@ async def update_application_status(
     db: AsyncSession = Depends(get_db),
 ):
     """Actualiza el estado de la candidatura en el state machine."""
-    applications = await resolve_applications(db, current_user.id)
+    applications = await resolve_school_state(db, current_user.id, write=True)
     updated = await applications.set_match_status(
         current_user.id, job_hash, body.application_status
     )
@@ -104,10 +101,10 @@ async def generate_draft(
     """Genera borrador de carta de presentación usando plantilla del colegio.
 
     Si el job no pertenece a un colegio de la watchlist devuelve 400.
-    El borrador se persiste en MatchResult.draft_letter.
+    El borrador se persiste en la autoridad escolar vigente.
     """
     # Cargar match + job (estado de candidatura, via costura)
-    applications = await resolve_applications(db, current_user.id)
+    applications = await resolve_school_state(db, current_user.id)
     row = await applications.get_match(current_user.id, job_hash)
     if row is None:
         raise HTTPException(
@@ -117,7 +114,7 @@ async def generate_draft(
     _match, job = row
 
     # Identificar colegio
-    school = resolve_school_from_job(job)
+    school = await school_for_job(db, current_user.id, job)
     if school is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -139,7 +136,8 @@ async def generate_draft(
         template_id=template_id,
     )
 
-    # Persistir borrador + avance detected/reviewed -> drafted (escritor local)
+    # Re-read authority after the LLM: a cutover may have happened meanwhile.
+    applications = await resolve_school_state(db, current_user.id, write=True)
     saved = await applications.save_draft(current_user.id, job_hash, draft)
     if not saved:
         raise HTTPException(
@@ -161,7 +159,7 @@ async def get_draft(
     db: AsyncSession = Depends(get_db),
 ):
     """Devuelve el borrador guardado (texto plano)."""
-    applications = await resolve_applications(db, current_user.id)
+    applications = await resolve_school_state(db, current_user.id)
     draft = await applications.get_draft(current_user.id, job_hash)
     if not draft:
         raise HTTPException(
@@ -188,13 +186,13 @@ async def export_calendar(
     nunca se implementó — la promesa se ajusta a la realidad; extraer el
     deadline del texto libre queda fuera de alcance.)
     """
-    applications = await resolve_applications(db, current_user.id)
+    applications = await resolve_school_state(db, current_user.id)
     row = await applications.get_match(current_user.id, job_hash)
     if row is None:
         raise HTTPException(status_code=404, detail="Match result not found")
     match, job = row
 
-    school = resolve_school_from_job(job)
+    school = await school_for_job(db, current_user.id, job)
     school_name = school.name if school else (job.company or "Job")
 
     base = match.created_at or datetime.now(timezone.utc)

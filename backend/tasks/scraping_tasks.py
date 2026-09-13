@@ -180,6 +180,8 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
 
     async with task_session() as db:
         repo = JobRepository(db)
+        from services.schools.producer import SchoolProducer
+        school_producer = SchoolProducer(db)
 
         for scraper in scrapers:
             source = scraper.get_source_name()
@@ -201,6 +203,9 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
             # el except externo distingue ambos casos.
             attempted_count: int | None = None
             try:
+                if not await school_producer.prepare(scraper):
+                    summary["skipped"] += 1
+                    continue
                 if store is not None:
                     cursor = await store.load(db, source)
                     # B-4 — con el bootstrap PENDIENTE no se inyecta el
@@ -289,6 +294,7 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 # guardado lo envenenaría para siempre (el early-stop daría
                 # esas URLs por conocidas y la fuente quedaría muda).
                 stored_identities: list[str] = []
+                stored_school_hashes: set[str] = set()
                 # K3 — EXCEPCIÓN acotada y deliberada a VD.2: las descartadas
                 # por FECHA fuera de ventana SÍ entran en el cursor (destino
                 # resuelto por política, determinista y monótono — ver
@@ -393,6 +399,7 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                         # El savepoint se completó sin excepción: SOLO ahora la
                         # identidad puede entrar en el cursor (VD.2).
                         stored_identities.append(identity)
+                        stored_school_hashes.add(job["hash"])
                         stored_count += 1
 
                     except SoftTimeLimitExceeded:
@@ -513,6 +520,10 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                     ):
                         cursor.bootstrap_complete = False
 
+                # Do not acknowledge the source cursor until the school
+                # observation reached core. Core dedup makes a replay safe if
+                # the final local commit fails after its remote acknowledgement.
+                await school_producer.reconcile(scraper, live_hashes=stored_school_hashes)
                 await db.commit()
 
                 # G4/P1-1 — la deriva de identidad sube a INCIDENCIA de run:

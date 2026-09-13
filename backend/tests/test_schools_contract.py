@@ -93,7 +93,7 @@ async def test_local_list_serves_config_metadata():
 
 
 @pytest.mark.parametrize(
-    "mode", [None, "local", "shadow", "core_primary", "rollback_pending"]
+    "mode", [None, "local", "shadow"]
 )
 async def test_resolve_schools_serves_local_writer(db_session, mode):
     """Todo modo salvo core_read resuelve a LOCAL — incluida core_primary:
@@ -176,7 +176,7 @@ async def _register(client) -> tuple[uuid.UUID, dict]:
 
 
 @pytest.mark.parametrize(
-    "mode", ["local", "shadow", "core_read", "core_primary", "rollback_pending"]
+    "mode", ["local", "shadow", "core_read"]
 )
 async def test_router_schools_listing_in_all_modes(client, db_session, mode):
     """GET /watchlist/schools sirve la config local en los 5 modos de

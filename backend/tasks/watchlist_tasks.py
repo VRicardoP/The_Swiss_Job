@@ -166,15 +166,8 @@ async def _check_health_async() -> dict[str, Any]:
         notified = 0
         if fresh_issues:
             # 2) Notificar a los usuarios con la watchlist activa
-            users_stmt = (
-                select(User)
-                .join(UserProfile, UserProfile.user_id == User.id)
-                .where(
-                    User.is_active.is_(True),
-                    UserProfile.watchlist_schools_enabled.is_(True),
-                )
-            )
-            users = (await db.execute(users_stmt)).scalars().all()
+            from services.schools.preferences import enabled_users
+            users = await enabled_users(db)
             notified = await _notify_users(db, users, fresh_issues)
             for issue in fresh_issues:
                 r.set(
@@ -279,21 +272,11 @@ async def _send_digest_async() -> dict[str, Any]:
 
     try:
         async with task_session() as db:
-            users_stmt = (
-                select(User)
-                .join(UserProfile, UserProfile.user_id == User.id)
-                .where(
-                    User.is_active.is_(True),
-                    UserProfile.watchlist_schools_enabled.is_(True),
-                    # Gate anti-doble-motor D.1 (§15bis), EN SQL: este digest se
-                    # construye desde `match_results` LEGACY igual que el diario.
-                    # Para un perfil migrado esos matches YA NO se actualizan (el
-                    # gate de run_all_matches lo omite), así que seguir enviándolo
-                    # sería correo con recomendaciones viejas para siempre.
-                    legacy_owned_sql(User.id, CAPABILITY_MATCHING),
-                )
-            )
-            users = (await db.execute(users_stmt)).scalars().all()
+            from services.schools.preferences import enabled_users
+            # Preserve the anti-double-matcher gate; school preferences have
+            # their own authority, independent of local/core matching.
+            users = await enabled_users(
+                db, extra_condition=legacy_owned_sql(User.id, CAPABILITY_MATCHING))
 
             notified = 0
             marked: set[str] = set()

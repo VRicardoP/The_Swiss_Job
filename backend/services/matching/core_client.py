@@ -399,6 +399,30 @@ class CoreMatching:
             raise CoreUnavailableError(
                 f"payload invalido del feed del core: {type(exc).__name__}: {exc}"
             ) from exc
+        # E.15 school producers do not manufacture a legacy CDC listing.
+        # Their scoped extension supplies the original actionable local hash.
+        if any(not candidates for candidates in candidates_per_item):
+            from services.schools.presentation import school_job_refs
+            from services.schools.port import CoreUnavailableError as SchoolUnavailable
+
+            try:
+                school_refs = await school_job_refs(
+                    self._db,
+                    user_id,
+                    [
+                        it["vacancy"]["id"]
+                        for it, candidates in zip(items, candidates_per_item)
+                        if not candidates
+                    ],
+                )
+                candidates_per_item = [
+                    candidates or school_refs.get(str(it["vacancy"]["id"]), [])
+                    for it, candidates in zip(items, candidates_per_item)
+                ]
+            except SchoolUnavailable as exc:
+                raise CoreUnavailableError(
+                    "school corpus identity unavailable"
+                ) from exc
         legacy_refs = [ref for cands in candidates_per_item for ref, _source in cands]
         local_by_hash: dict[str, MatchResult] = {}
         actionable_hashes: set[str] = set()
@@ -455,7 +479,7 @@ class CoreMatching:
                     continue
                 # Presentar la fuente ORIGINAL del listing resuelto, no el
                 # prefijo interno sombra.
-                source = ref_source[len(_LEGACY_SOURCE_PREFIX) :] or None
+                source = ref_source.removeprefix(_LEGACY_SOURCE_PREFIX) or None
                 results.append(
                     {
                         "match": _match_view(item, job_ref, local),

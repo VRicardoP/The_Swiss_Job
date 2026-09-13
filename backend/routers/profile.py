@@ -6,8 +6,10 @@ implementacion (local|core) la decide `jobhunt_routing` POR PERFIL
 (users.id), con default 'local' (comportamiento byte-identico al previo:
 LocalProfile es la lectura del router movida verbatim).
 
-Las ESCRITURAS (PUT preferencias/weights, CV upload/delete, autofill) quedan
-SIEMPRE en local en esta etapa y su respuesta es el recibo del escritor
+E.15: `watchlist_schools_enabled` pertenece a la autoridad de colegios; con
+schools=core_primary/rollback_pending se lee y escribe exclusivamente en core.
+Las DEMÁS ESCRITURAS (PUT preferencias/weights, CV upload/delete, autofill) quedan
+en local en esta etapa y su respuesta es el recibo del escritor
 local — cota registrada: la matriz de escritor del plan §15bis mantiene al
 legacy como escritor autoritativo de `user_profiles` hasta el cutover; el
 cambio de escritor llega en Fase C como escritura sincrona contra el
@@ -29,6 +31,8 @@ from database import get_db
 from models.user import User
 from models.integration_inbox import IntegrationInbox
 from services.documents.export import export_documents
+from services.schools.preferences import preference as school_preference
+from services.schools.state import state_on_core
 from services.documents.freeze import assert_document_writes_enabled
 from services.matching.identity import resolve_core_profile_id
 from schemas.profile import (
@@ -93,6 +97,8 @@ async def get_profile(
         )
     resp = ProfileResponse.model_validate(profile)
     resp.has_cv_embedding = profile.cv_embedding is not None
+    resp.watchlist_schools_enabled = await school_preference(
+        db, current_user.id, profile.watchlist_schools_enabled)
     return resp
 
 
@@ -127,6 +133,14 @@ async def update_profile(
         for field, value in body.model_dump(exclude_unset=True).items()
         if value is not None or field in NULLABLE_PROFILE_FIELDS
     }
+    school_enabled = update_data.get("watchlist_schools_enabled")
+    if school_enabled is not None and await state_on_core(db, current_user.id, write=True):
+        # The school authority is the sole writer. Other profile fields remain
+        # local; an RPC failure aborts before their commit. Repeating this PUT
+        # after a local commit failure is safe (the preference is a desired bool).
+        await school_preference(db, current_user.id, profile.watchlist_schools_enabled,
+                                enabled=school_enabled)
+        update_data.pop("watchlist_schools_enabled")
     for field, value in update_data.items():
         setattr(profile, field, value)
 
@@ -135,6 +149,8 @@ async def update_profile(
 
     resp = ProfileResponse.model_validate(profile)
     resp.has_cv_embedding = profile.cv_embedding is not None
+    resp.watchlist_schools_enabled = await school_preference(
+        db, current_user.id, profile.watchlist_schools_enabled)
     return resp
 
 

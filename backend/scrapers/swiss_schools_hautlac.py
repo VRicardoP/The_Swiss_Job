@@ -33,7 +33,7 @@ class SwissSchoolsHautLacScraper(SwissSchoolBaseScraper):
         self._school = get_school("hautlac_stlegier")
 
     def build_listing_url(self, page: int, query: str) -> str:
-        return HAUTLAC_URL
+        return self.LISTING_URL
 
     def parse_listing_page(self, soup: BeautifulSoup) -> list[dict]:
         if not self._school:

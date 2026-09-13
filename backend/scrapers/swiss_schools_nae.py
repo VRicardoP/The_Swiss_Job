@@ -88,6 +88,8 @@ class SwissSchoolsNAEScraper(SwissSchoolBaseScraper):
     # ------------------------------------------------------------------
 
     def build_listing_url(self, page: int, query: str) -> str:
+        if getattr(self, "_core_school_configuration", False):
+            return self._current_school.careers_url
         keyword = (self._current_school.params or {}).get("keyword", "")
         return f"{NAE_BASE}/search/?q={quote_plus(keyword)}"
 

@@ -160,6 +160,7 @@ class Settings(BaseSettings):
     GROQ_DOC_MAX_TOKENS: int = 4096
     GROQ_DOC_CACHE_TTL_HOURS: int = 24
     DOCUMENT_WRITES_FROZEN: bool = False
+    SCHOOL_WRITES_FROZEN: bool = False
     # Proveedor PRIMARIO de documentos: Google Gemini (free tier de Google).
     # gemini-2.5-flash genera CVs de calidad (~9s); gpt-oss-120b en Groq free tier
     # topa a 8k tokens/min y falla en documentos largos → Gemini lo evita. Si la key

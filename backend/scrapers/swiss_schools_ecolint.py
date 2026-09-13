@@ -35,7 +35,11 @@ class SwissSchoolsEcolintScraper(SwissSchoolBaseScraper):
 
     def build_listing_url(self, page: int, query: str) -> str:
         # Drupal usa page=0 para la primera
-        return f"{ECOLINT_LISTING}?page={page - 1}"
+        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+        url = urlsplit(self.LISTING_URL)
+        query = dict(parse_qsl(url.query))
+        query["page"] = str(page - 1)
+        return urlunsplit((url.scheme, url.netloc, url.path, urlencode(query), url.fragment))
 
     def parse_listing_page(self, soup: BeautifulSoup) -> list[dict]:
         if not self._school:

@@ -160,6 +160,19 @@ app.include_router(searches_router)
 app.include_router(watchlist_router)
 
 
+from services.schools.port import CoreUnavailableError as SchoolCoreUnavailableError
+
+
+@app.exception_handler(SchoolCoreUnavailableError)
+async def school_unavailable_handler(request, exc):
+    return JSONResponse(status_code=503, content={"detail": "School storage temporarily unavailable"})
+
+
+@app.get("/health/schools")
+async def school_health():
+    return {"writes": "frozen" if settings.SCHOOL_WRITES_FROZEN else "enabled"}
+
+
 @app.exception_handler(DocumentsError)
 async def document_unavailable_handler(request, exc):
     return JSONResponse(status_code=503, content={"detail": "Document storage temporarily unavailable"})

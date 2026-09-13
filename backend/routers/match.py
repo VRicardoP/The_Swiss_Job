@@ -38,6 +38,7 @@ from schemas.match import (
     MatchScoreBreakdown,
 )
 from scrapers.swiss_schools_config import get_school
+from services.schools.presentation import overlay_school_results
 from services.gemini_service import GeminiService
 from services.groq_service import GroqService
 from services.job_matcher import DEFAULT_WEIGHTS
@@ -160,11 +161,12 @@ def _to_match_response(item: dict, translations: dict[str, str]) -> MatchResultR
         job_language = TranslationService._detect_language(original_title) or None
 
     # Resolver school metadata si el job es de la watchlist (tag = school.id)
-    school = None
-    for tag in job.tags or []:
-        school = get_school(tag)
-        if school:
-            break
+    school = item.get("school")
+    if "school" not in item:  # Local authority only; never fall back after the school cutover.
+        for tag in job.tags or []:
+            school = get_school(tag)
+            if school:
+                break
 
     return MatchResultResponse(
         id=match.id,
@@ -259,6 +261,7 @@ async def get_match_results(
         else DEFAULT_WEIGHTS
     )
 
+    results = await overlay_school_results(db, current_user.id, results)
     groq = _get_groq(request) if translate else None
     return await _build_results_response(results, total, weights, groq)
 
@@ -293,6 +296,7 @@ async def get_match_history(
         else DEFAULT_WEIGHTS
     )
 
+    results = await overlay_school_results(db, current_user.id, results)
     groq = _get_groq(request)
     return await _build_results_response(results, total, weights, groq)
 

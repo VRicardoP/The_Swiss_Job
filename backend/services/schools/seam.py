@@ -1,24 +1,9 @@
-"""Costura de la capacidad colegios — A.SEAM (plan §15bis).
+"""School routing, E.15: fresh per-profile override > wildcard > local.
 
-Resuelve QUE implementacion sirve cada peticion segun `jobhunt_routing`
-(default 'local'). Mapeo modo -> implementacion, derivado de la matriz de
-escritor por estado del plan §15bis Y del criterio unificador (heredado de
-A.SEAM matching: ningun estado local puede ser inaccesible por el routing):
-
-- local / shadow           -> LocalSchools (config estatica del BFF)
-- core_read                -> FallbackSchools (canary: intenta el core y cae
-                              a local; hoy TODA operacion cae — la cota /v1
-                              es Unsupported total y se registra a DEBUG,
-                              severidades del canary heredadas)
-- core_primary / rollback_pending -> LocalSchools. CRITERIO UNIFICADOR: el
-                              unico escritor del estado (la config de
-                              colegios del propio BFF) es LOCAL y el /v1 no
-                              expone la capacidad — el estado del escritor
-                              local es SIEMPRE accesible; enrutar al core
-                              seria 501 para estado que solo existe aqui.
-
-La resolucion es POR PERFIL (el listado exige usuario autenticado):
-`jobhunt_routing.profile_id` para SwissJob es `users.id`.
+local/shadow read static BFF configuration; core_read is a read canary
+with observable fallback. core_primary/rollback_pending read only core
+monitors. School state/preferences use the same authority in state.py.
+Swiss routing profile_id is users.id, not the core profile UUID.
 """
 
 import logging
@@ -26,7 +11,8 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.routing import CAPABILITY_SCHOOLS, MODE_CORE_READ, resolve_mode
+from services.routing import MODE_CORE_READ
+from .state import read_school_mode
 
 from .core_client import CoreSchools
 from .local import LocalSchools
@@ -36,12 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class FallbackSchools:
-    """Canary (core_read): intenta el core y cae al local.
-
-    Hoy la cota /v1 es Unsupported TOTAL: toda operacion cae a local a ritmo
-    de trafico (DEBUG, esperado por contrato). Se conserva la estructura del
-    canary para que, cuando el core publique su endpoint de colegios, la
-    unica senal WARNING siga siendo CoreUnavailableError (core caido)."""
+    """Read canary: actual core HTTP, observable fallback on unavailability."""
 
     def __init__(self, primary: SchoolsPort, fallback: SchoolsPort):
         self._primary = primary
@@ -70,10 +51,10 @@ async def resolve_schools(
     db: AsyncSession, user_id: uuid.UUID | None = None
 ) -> SchoolsPort:
     """Puerto de colegios para esta peticion segun el routing por perfil."""
-    mode = await resolve_mode(db, CAPABILITY_SCHOOLS, user_id)
+    mode = await read_school_mode(db, user_id)
     if mode == MODE_CORE_READ:
-        return FallbackSchools(CoreSchools(), LocalSchools())
-    # local / shadow: config del BFF. core_primary / rollback_pending:
-    # criterio unificador — el escritor del estado es local UNICO y el /v1
-    # no expone la capacidad => local, nunca 501/503 (docstring modulo).
+        return FallbackSchools(CoreSchools(enabled=True), LocalSchools())
+    # No local fallback once the migrated school authority is core.
+    if mode in ("core_primary", "rollback_pending"):
+        return CoreSchools(enabled=True)
     return LocalSchools()
