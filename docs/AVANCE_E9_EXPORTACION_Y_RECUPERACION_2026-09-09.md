@@ -1,5 +1,10 @@
 # E.9 — portabilidad documental, freeze de propietario y recuperación
 
+**Rectificación de alcance (2026-09-13):** este informe conserva la foto de E.9.
+La propuesta de una API nueva de exportación integral fue descartada después por
+el propietario; sus menciones como pendiente en este historial no son instrucciones
+vigentes. Se mantienen las exportaciones existentes y la corrección de erase/copias.
+
 ## Estado real
 
 Continuación LOCAL de E.8. No se ha desplegado ninguna imagen, cambiado routing,
