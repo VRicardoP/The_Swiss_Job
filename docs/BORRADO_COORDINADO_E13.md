@@ -1,6 +1,9 @@
 # Punto 1 — borrado coordinado y restauraciones
 
-Fecha: 2026-09-13. Estado: implementación y verificación en curso; NO cierre de backups.
+Fecha: 2026-09-13. Estado vigente: borrado desplegado y confirmado; NO cierre de backups.
+La evidencia posterior y los bloqueos de permisos están en
+[Despliegue E.13](DESPLIEGUE_E13_2026-09-13.md). Las pruebas locales siguientes
+preceden a ese despliegue.
 
 ## Qué protege el código
 
@@ -50,8 +53,13 @@ no marcarla entregada para forzar un verde ni descartar sus datos.
 
 No habilitar este reconciliador en Portfolio: no comparte la identidad UUID de
 cuenta de SwissJob. El DELETE core por perfil es multi-consumer, pero no acredita
-haber borrado una copia local de Portfolio. Ese borrado requiere su procedimiento
-propio y no se da por resuelto mediante un ack de SwissJob.
+haber borrado una copia local de Portfolio.
+
+**Alcance confirmado por el propietario, 2026-09-13:** Portfolio es personal y
+su cuenta propietaria no se eliminará. No se implementa un flujo de eliminación
+de esa cuenta ni de retirada de su CV público/chatbot; no son requisitos pendientes
+ni bloqueantes. Se conservan las protecciones existentes del core y de SwissJob,
+y la política de backups y restauración sigue aplicándose a los datos personales.
 
 Las confirmaciones están en `jobhunt.profile_erasure_acks`. La ausencia de una
 confirmación se considera pendiente, nunca éxito global. Los recibos y peticiones
@@ -108,8 +116,8 @@ se afirma que un backup histórico legible esté borrado.
   automatizadas y verificadas antes de declarar implantada esta política.
 
 Pendiente de verificación operativa: inventario completo NAS/ordenador, calendario,
-caducidades, retirada comprobada y restauración. También se requiere el procedimiento
-propio de borrado local de Portfolio; sus identidades no son las de SwissJob.
+caducidades, retirada comprobada y restauración. El borrado de la cuenta propietaria
+de Portfolio queda fuera de alcance por decisión expresa, no pendiente de desarrollo.
 
 `backup_erasure=not_confirmed` permanece deliberadamente visible. No se presenta
 un borrado local o dos acks como certificación del borrado de backups.
@@ -134,12 +142,12 @@ un borrado local o dos acks como certificación del borrado de backups.
   conserva b46e1230a901. No se falsea su entrega ni se elimina para pasar la prueba.
 - NAS, comprobación de identidades sin publicar datos personales: dos perfiles
   swissjob-shadow; ninguno sin cuenta en la aplicación pública ni en el origen CDC.
-- La retirada periódica de backups y el procedimiento local de Portfolio NO están
-  confirmados. El CV/chatbot de Portfolio son globales: falta fijar si el borrado
-  de la cuenta propietaria los retira o preserva. No inferir autorización para
-  retirar una publicación pública al borrar datos privados.
-- NO se ha desplegado core0046 ni el nuevo BFF/reconciliador de borrados. El punto
-  completo sigue abierto; los tests verdes no sustituyen ese despliegue/ensayo.
+- La retirada periódica de backups NO está confirmada. La cuenta propietaria de
+  Portfolio se conserva por decisión expresa; su eliminación y la retirada del
+  CV público/chatbot quedan fuera de alcance, no como bloqueos pendientes.
+- En esta comprobación local aún no estaban desplegados core0046 ni el nuevo BFF.
+  El despliegue y canary posteriores están confirmados en el acta E.13 enlazada
+  arriba. El punto completo sigue abierto por retención/programación y copias.
 
 ## Incidencia operativa encontrada durante el preflight
 

@@ -1342,9 +1342,14 @@ el reemplazo, preservar el último recuperable y declarar retención incumplida.
 
 **Implantación operativa pendiente de verificación:** no asumir que una tarea QNAP
 existe por estar descrita aquí. Comprobar identidad de ejecución, última copia
-válida, vencidos, código de salida y alarma. El usuario SSH actual no puede cargar
-el crontab administrativo; no modificar a ciegas el del sistema ni elevar privilegios
-mediante otro contenedor. No se ha retirado ninguna copia real durante este cambio.
+válida, vencidos, código de salida y alarma. Están preparados y probados los caminos
+de éxito/fallo de `scripts/nas_backup_daily.sh`; `nas_install_backup_cron.sh` requiere
+administrador autenticado y conserva los demás trabajos. NO está instalado.
+El usuario SSH actual no puede cargar el crontab administrativo; no modificar a
+ciegas el del sistema ni elevar privilegios mediante otro contenedor. La retirada
+de siete archivos vencidos fue rechazada por la revisión de permisos y está
+solicitada expresamente. Ninguna copia real se ha eliminado. Detalle y verificación
+del borrado ya desplegado: [E.13](DESPLIEGUE_E13_2026-09-13.md).
 
 El inventario vigente de supresiones se custodia fuera del dump antiguo. Véase
 [Borrado coordinado y restauraciones](BORRADO_COORDINADO_E13.md). Mientras exista una
