@@ -1,7 +1,10 @@
 # E.15 — punto 3: colegios
 
-Estado (14-09): implementación y ensayo privado completados; validación final y
-despliegue pendientes. No se ha cambiado el routing ni ningún productor vivo.
+Estado vigente (14-09): **PUNTO 3 CERRADO Y DESPLEGADO**, ambos BFF en
+`schools=core_primary`, escritores abiertos y productores escolares adaptados.
+Acta operativa: [E.15](DESPLIEGUE_E15_2026-09-14.md).
+Lo que sigue conserva el inventario y las verificaciones previas al corte;
+no debe interpretarse como estado vigente de la autoridad local.
 
 ## Evidencia previa al despliegue
 
@@ -23,7 +26,7 @@ despliegue pendientes. No se ha cambiado el routing ni ningún productor vivo.
 - Credenciales/copias/recibos de ensayo quedan exclusivamente en el directorio
   privado; no se incorporan al repositorio. No se envían correos reales en pruebas.
 
-## Alcance comprobado
+## Inventario anterior al corte
 
 - SwissJob: 18 entradas de monitor para 17 colegios (Beau Soleil tiene dos
   endpoints); listado, vigilancia por perfil, borradores,
