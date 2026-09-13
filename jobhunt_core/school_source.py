@@ -2,7 +2,7 @@
 
 import hashlib
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import sqlalchemy as sa
 
@@ -333,7 +333,9 @@ def to_batch(
                     "created_at": row["created_at"],
                     "updated_at": row["application_status_at"],
                     "context": {
-                        "detected_at": str(row["created_at"]),
+                        "detected_at": datetime.fromisoformat(str(row["created_at"]))
+                        .astimezone(timezone.utc)
+                        .isoformat(),
                         "job_title": job["title"],
                         "job_company": job["company"],
                         "job_url": job["url"],

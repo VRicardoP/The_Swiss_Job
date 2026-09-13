@@ -104,6 +104,74 @@ def test_reverse_types_restore_datetime_date_and_uuid_not_iso_strings():
         _typed(table, {"new_unmapped_private_field": "must not disappear"})
 
 
+def test_swiss_seal_survives_source_json_roundtrip():
+    import json
+    from datetime import timedelta
+    from jobhunt_core.import_schools import digest
+
+    now = datetime(2026, 9, 14, 2, tzinfo=timezone(timedelta(hours=2)))
+    uid, pid = uuid.uuid4(), uuid.uuid4()
+    catalog = [
+        {
+            "id": "school",
+            "name": "School",
+            "city": "Zurich",
+            "strategy": "manual",
+            "params": None,
+            "careers_url": "https://school.test",
+            "template_id": "A",
+            "application_url": None,
+            "group_tier": "A",
+            "policy": "portal_only",
+        }
+    ]
+    source = {
+        "jobs": [
+            {
+                "hash": "a" * 32,
+                "source": "swiss_schools_test",
+                "title": "IT",
+                "company": "School",
+                "description": "Details",
+                "url": "https://school.test/job",
+                "tags": ["school"],
+                "first_seen_at": now,
+                "last_seen_at": now,
+                "published_at": None,
+                "is_active": True,
+            }
+        ],
+        "match_results": [
+            {
+                "id": uuid.uuid4(),
+                "user_id": uid,
+                "job_hash": "a" * 32,
+                "application_status": "drafted",
+                "draft_letter": "Private",
+                "created_at": now,
+                "application_status_at": now,
+            }
+        ],
+        "user_profiles": [{"user_id": uid, "watchlist_schools_enabled": True}],
+    }
+    envelope = dict(
+        batch_id=uuid.uuid4(),
+        origin="swissjob",
+        consumer="swissjob-shadow",
+        bindings={str(uid): str(pid)},
+        source=source,
+        catalog=catalog,
+        catalog_stamp=now,
+    )
+    before = to_batch(**envelope)
+    after = to_batch(**json.loads(canonical(envelope)))
+    assert digest(before) == digest(after)
+    assert (
+        before["applications"][0]["context"]["detected_at"]
+        == "2026-09-14T00:00:00+00:00"
+    )
+
+
 def test_swiss_source_without_explicit_catalog_fails_closed():
     with pytest.raises(SchoolMigrationError, match="configuration snapshot"):
         to_batch(
