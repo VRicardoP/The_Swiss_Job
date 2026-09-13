@@ -561,6 +561,81 @@ async def put_profile(
 # (ensayada sobre copia del NAS), no vía este /v1. Si C-4 decidiera necesitar la
 # escritura HTTP de candidaturas, se añade aquí reutilizando run_idempotent
 # (mismo candado) + scope nuevo `applications:write`. Diferido a C-4.
+@router.delete("/profile-erasures/by-user/{user_id}")
+async def erase_unlinked_swissjob_user(
+    user_id: uuid.UUID,
+    session=Depends(get_session),
+    principal: Principal = Depends(require_scope("profiles:write")),
+):
+    # This external-reference convention belongs ONLY to SwissJob, not Portfolio.
+    consumer = await session.scalar(sa.text("SELECT name FROM consumers WHERE id=:cid"),
+                                    {"cid": principal.consumer_id})
+    if consumer != "swissjob-shadow":
+        raise error_404("perfil")
+    from jobhunt_core.erasure import erase_external_identity
+    receipt = await erase_external_identity(session, principal.consumer_id, str(user_id))
+    await session.commit()
+    return {**receipt, "status": "erased", "scope": "core_live_database",
+            "backup_erasure": "not_confirmed"}
+
+
+@router.get("/profile-erasures")
+async def list_profile_erasures(
+    after: uuid.UUID | None = None,
+    session=Depends(get_session),
+    principal: Principal = Depends(require_scope("profiles:write")),
+):
+    """Owned minimal receipts for BFF copies and restore reconciliation."""
+    rows = (await session.execute(sa.text(
+        "SELECT profile_id, external_ref, erased_at FROM profile_erasure_receipts "
+        "WHERE consumer_id=:cid AND (CAST(:after AS uuid) IS NULL OR profile_id>CAST(:after AS uuid)) "
+        "ORDER BY profile_id LIMIT 100"
+    ), {"cid": principal.consumer_id, "after": after})).mappings().all()
+    consumer = await session.scalar(sa.text("SELECT name FROM consumers WHERE id=:cid"),
+                                    {"cid": principal.consumer_id})
+    return {"consumer": consumer, "items": [dict(r) for r in rows],
+            "next_cursor": str(rows[-1]["profile_id"]) if len(rows) == 100 else None}
+
+
+@router.post("/profile-erasures/{profile_id}/acks/{replica_id}", status_code=204)
+async def acknowledge_profile_erasure(
+    profile_id: uuid.UUID,
+    replica_id: str,
+    session=Depends(get_session),
+    principal: Principal = Depends(require_scope("profiles:write")),
+):
+    if replica_id not in {"swissjob-live", "swissjob-cdc"}:
+        raise ApiError(400, "invalid_replica", "réplica desconocida")
+    receipt = await session.scalar(sa.text(
+        "SELECT 1 FROM profile_erasure_receipts r JOIN consumers c ON c.id=r.consumer_id "
+        "WHERE r.consumer_id=:cid AND r.profile_id=:pid AND c.name='swissjob-shadow'"
+    ), {"cid": principal.consumer_id, "pid": profile_id})
+    if not receipt:
+        raise error_404("recibo")
+    await session.execute(sa.text(
+        "INSERT INTO profile_erasure_acks(profile_id,replica_id) VALUES(:pid,:replica) "
+        "ON CONFLICT DO NOTHING"
+    ), {"pid": profile_id, "replica": replica_id})
+    await session.commit()
+    return Response(status_code=204)
+
+
+@router.delete("/profiles/{profile_id}")
+async def erase_profile(
+    profile_id: uuid.UUID,
+    session=Depends(get_session),
+    principal: Principal = Depends(require_scope("profiles:write")),
+):
+    """Idempotent live erasure; only a durable owned receipt confirms it."""
+    from jobhunt_core.erasure import erase_owned_profile
+    receipt = await erase_owned_profile(session, principal.consumer_id, profile_id)
+    if receipt is None:
+        raise error_404("perfil")
+    await session.commit()
+    return {**receipt, "status": "erased", "scope": "core_live_database",
+            "backup_erasure": "not_confirmed"}
+
+
 @router.put("/profiles/{profile_id}/exclusions",
             response_model=schemas.ExclusionsDTO)
 async def put_profile_exclusions(

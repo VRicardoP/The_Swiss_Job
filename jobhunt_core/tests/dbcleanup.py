@@ -83,6 +83,7 @@ async def purge_consumer_graph(
         sa.text("DELETE FROM idempotency_records WHERE consumer_id = ANY(:c)"),
         {"c": cons},
     )
+    await s.execute(sa.text("DELETE FROM profile_erasure_receipts WHERE consumer_id = ANY(:c)"), {"c": cons})
     await s.execute(sa.text("DELETE FROM consumers WHERE id = ANY(:c)"), {"c": cons})
 
 

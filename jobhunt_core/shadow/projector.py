@@ -1301,7 +1301,12 @@ async def _upsert_profile_pks(session, cid, folds) -> dict[str, uuid.UUID]:
                 "resoluble: descartado", pk,
             )
             continue
-        pid_by_pk[pk] = await core_profiles.upsert_profile(session, cid, str(user_id))
+        from jobhunt_core.erasure import ProfileErasedError
+        try:
+            pid_by_pk[pk] = await core_profiles.upsert_profile(session, cid, str(user_id))
+        except ProfileErasedError:
+            # A committed erasure wins over delayed CDC/replays.
+            continue
     return pid_by_pk
 
 
@@ -1399,6 +1404,24 @@ async def _apply_users(session, rows) -> set:
 
 
 async def erase_shadow_profile(
+    session, external_ref: str, consumer_name: str = SHADOW_CONSUMER
+) -> uuid.UUID | None:
+    """CDC erasure shares the same durable fence as explicit API erasure."""
+    from jobhunt_core.erasure import erase_external_identity
+    cid = await session.scalar(sa.text(
+        "SELECT id FROM consumers WHERE name=:cn"
+    ), {"cn": consumer_name})
+    if cid is None:
+        return None
+    pid = await session.scalar(sa.text(
+        "SELECT id FROM profiles WHERE consumer_id=:cid AND external_ref=:ref"
+    ), {"cid": cid, "ref": external_ref})
+    # Even DELETE before the first profile event must suppress a late replay.
+    await erase_external_identity(session, cid, external_ref)
+    return pid
+
+
+async def _erase_profile_graph(
     session, external_ref: str, consumer_name: str = SHADOW_CONSUMER
 ) -> uuid.UUID | None:
     """ERASE completo y reutilizable del perfil sombra (GDPR §3): revisiones,

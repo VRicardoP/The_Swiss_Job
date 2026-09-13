@@ -103,9 +103,25 @@ _ETAG_CACHE_MAX = 512
 _etag_cache: dict[tuple[str, str], tuple[str, dict]] = {}
 
 
-def clear_feed_cache() -> None:
-    """Vacia la cache de paginas del feed (tests / operacion)."""
-    _etag_cache.clear()
+_cache_generation = 0
+_profile_generations: dict[str, int] = {}
+
+
+def clear_feed_cache(profile_id=None) -> None:
+    """Invalidate a deleted subject without evicting other users' pages."""
+    global _cache_generation
+    if profile_id is None:
+        _cache_generation += 1
+        _profile_generations.clear()
+        _etag_cache.clear()
+        return
+    pid = str(profile_id)
+    if pid not in _profile_generations and len(_profile_generations) >= _ETAG_CACHE_MAX:
+        clear_feed_cache()  # bounded state; global epoch fences older in-flight requests
+    _profile_generations[pid] = _profile_generations.get(pid, 0) + 1
+    for key in list(_etag_cache):
+        if key[0] == pid:
+            _etag_cache.pop(key, None)
 
 
 # ------------------------------------------------------------- DTOs privados
@@ -542,6 +558,7 @@ class CoreMatching:
         self, client: httpx.AsyncClient, core_profile_id: uuid.UUID, cursor: str | None
     ) -> dict:
         cache_key = (str(core_profile_id), cursor or "")
+        generation = (_cache_generation, _profile_generations.get(cache_key[0], 0))
         cached = _etag_cache.get(cache_key)
         headers = {"If-None-Match": cached[0]} if cached else {}
         params: dict = {"limit": FEED_PAGE_LIMIT}
@@ -555,6 +572,8 @@ class CoreMatching:
             )
         except httpx.HTTPError as exc:
             raise CoreUnavailableError(f"core /v1 inaccesible: {exc}") from exc
+        if generation != (_cache_generation, _profile_generations.get(cache_key[0], 0)):
+            raise CoreUnavailableError("core representation invalidated during request")
         if resp.status_code == 304:
             if cached is None:  # defensivo: 304 sin haber mandado If-None-Match
                 raise CoreUnavailableError("core /v1 devolvio 304 sin cache previa")

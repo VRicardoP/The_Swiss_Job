@@ -313,6 +313,8 @@ async def delete_all_user_data(
     # Same root lock as generation/delivery; do not delete children first.
     await db.execute(select(User.id).where(User.id == user_id).with_for_update())
     core_profile_id = await resolve_core_profile_id(db, user_id)
+    from services.profile_erasure import queue_erasure
+    await queue_erasure(db, user_id, core_profile_id)
     now = datetime.now(timezone.utc)
 
     if core_profile_id is not None:
@@ -320,6 +322,8 @@ async def delete_all_user_data(
             IntegrationInbox.subject_profile_id == core_profile_id))
     await db.delete(current_user)
     await db.commit()
+    from services.profile_erasure import clear_erased_caches
+    clear_erased_caches(core_profile_id)
 
     return DeleteConfirmation(
         message=(

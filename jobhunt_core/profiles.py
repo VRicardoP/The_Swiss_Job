@@ -112,6 +112,8 @@ async def ensure_consumer(session, name: str, active: bool = True) -> uuid.UUID:
 
 async def upsert_profile(session, consumer_id, external_ref: str) -> uuid.UUID:
     """Alta idempotente del perfil por (consumer, external_ref)."""
+    from jobhunt_core.erasure import assert_not_erased
+    await assert_not_erased(session, consumer_id, external_ref)
     await session.execute(
         sa.text(
             "INSERT INTO profiles (id, consumer_id, external_ref) "

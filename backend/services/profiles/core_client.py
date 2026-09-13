@@ -100,9 +100,23 @@ _ETAG_CACHE_MAX = 512
 _etag_cache: dict[str, tuple[str, dict]] = {}
 
 
-def clear_profile_cache() -> None:
-    """Vacia la cache de representaciones del perfil (tests / operacion)."""
-    _etag_cache.clear()
+_cache_generation = 0
+_profile_generations: dict[str, int] = {}
+
+
+def clear_profile_cache(profile_id=None) -> None:
+    """Invalidate a deleted subject (or all cached representations)."""
+    global _cache_generation
+    if profile_id is None:
+        _cache_generation += 1
+        _profile_generations.clear()
+        _etag_cache.clear()
+        return
+    pid = str(profile_id)
+    if pid not in _profile_generations and len(_profile_generations) >= _ETAG_CACHE_MAX:
+        clear_profile_cache()  # bounded state; global epoch fences older in-flight requests
+    _profile_generations[pid] = _profile_generations.get(pid, 0) + 1
+    _etag_cache.pop(pid, None)
 
 
 def default_client_factory() -> httpx.AsyncClient:
@@ -232,6 +246,7 @@ class CoreProfile:
 
     async def _fetch_profile(self, core_profile_id: uuid.UUID) -> dict:
         cache_key = str(core_profile_id)
+        generation = (_cache_generation, _profile_generations.get(cache_key, 0))
         cached = _etag_cache.get(cache_key)
         headers = {"If-None-Match": cached[0]} if cached else {}
         try:
@@ -239,6 +254,8 @@ class CoreProfile:
                 resp = await client.get(f"/profiles/{core_profile_id}", headers=headers)
         except httpx.HTTPError as exc:
             raise CoreUnavailableError(f"core /v1 inaccesible: {exc}") from exc
+        if generation != (_cache_generation, _profile_generations.get(cache_key, 0)):
+            raise CoreUnavailableError("core representation invalidated during request")
         if resp.status_code == 304:
             if cached is None:  # defensivo: 304 sin haber mandado If-None-Match
                 raise CoreUnavailableError("core /v1 devolvio 304 sin cache previa")

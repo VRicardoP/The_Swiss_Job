@@ -1326,16 +1326,29 @@ un `DROP SCHEMA public` que la extensión bloquea. Si el rol `swissjob` no puede
 `jobhunt`, el índice no traerá sus tablas y hay que repetirla con la credencial de
 `.env.core.admin.prod`.
 
-### Backup automático (semanal)
+### Retención y programación — decisión vigente 2026-09-13
 
-QNAP Control Panel → Tareas Programadas → Crear "User defined script" semanal con el
-bloque de arriba **dentro de un script con `set -euo pipefail`** (si no, el `||` no basta:
-una tarea programada que ignora el estado de salida es una copia que nadie sabe que no
-existe). Conserva las últimas N copias con:
+ADR-07 sustituye la receta semanal/90 días: backups diarios para el objetivo RPO
+de 24 h, retención máxima de **7 días**, temporales **48 horas** y excepciones de
+rollback individualizadas con vencimiento (máximo 7 días). Directorios 0700 y
+archivos 0600; no registrar credenciales ni contenido personal en logs/Git.
 
-```bash
-find /share/Public/backups/swissjob -name 'db-*.dump*' -mtime +90 -delete
-```
+NO usar búsquedas recursivas con `-delete`. El mecanismo local
+`scripts/backup_retention.py` opera sobre un inventario explícito de rutas,
+fechas originales, tamaños y huellas, en ensayo por defecto. Registrar cada
+backup completo/verificado; re-registrarlo no puede ampliar su caducidad.
+Antes de retirar uno antiguo comprobar la integridad de su sustituto. Si falla
+el reemplazo, preservar el último recuperable y declarar retención incumplida.
+
+**Implantación operativa pendiente de verificación:** no asumir que una tarea QNAP
+existe por estar descrita aquí. Comprobar identidad de ejecución, última copia
+válida, vencidos, código de salida y alarma. El usuario SSH actual no puede cargar
+el crontab administrativo; no modificar a ciegas el del sistema ni elevar privilegios
+mediante otro contenedor. No se ha retirado ninguna copia real durante este cambio.
+
+El inventario vigente de supresiones se custodia fuera del dump antiguo. Véase
+[Borrado coordinado y restauraciones](BORRADO_COORDINADO_E13.md). Mientras exista una
+copia afectada, el borrado de backups sigue pendiente, aunque el borrado vivo termine.
 
 ### Restore
 
@@ -1366,8 +1379,13 @@ docker exec -i swissjob-postgres pg_restore -U swissjob -d swissjobhunter \
   --exit-on-error --single-transaction < "$f"
 $p -c 'ALTER DATABASE swissjobhunter RESET max_parallel_maintenance_workers'
 
-# 5. Re-bootstrap de la sombra (RUNBOOK.md §3) y arranque (Container Station → Recreate).
-#    Cuando todo esté conforme: DROP DATABASE swissjobhunter_previa.
+# 5. NO arrancar todavía. Con el esquema de borrado coordinado desplegado,
+#    re-aplicar el inventario VIGENTE de supresiones (fuera del dump restaurado),
+#    sanear core + BFF + origen CDC y verificar las confirmaciones.
+#    BORRADO_COORDINADO_E13.md contiene el procedimiento y su estado de implantación.
+#    Sin inventario válido o procedimiento probado: conservar aislamiento.
+# 6. Solo después: re-bootstrap controlado y arranque. La base apartada es otra
+#    copia personal: registrar su vencimiento/propósito antes de conservarla.
 ```
 
 ⚠ `max_parallel_maintenance_workers = 0` no es cosmético: el índice HNSW en paralelo pide
