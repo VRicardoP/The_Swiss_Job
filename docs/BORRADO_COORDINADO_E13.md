@@ -1,7 +1,8 @@
 # Punto 1 — borrado coordinado y restauraciones
 
-Fecha: 2026-09-13. Estado vigente: borrado desplegado y confirmado; NO cierre de backups.
-La evidencia posterior y los bloqueos de permisos están en
+Fecha: 2026-09-13. Estado vigente: punto 1 cerrado en el alcance acordado;
+retirada manual confirmada y cron diferido por el propietario al cierre final.
+La evidencia posterior, el alcance y los límites están en
 [Despliegue E.13](DESPLIEGUE_E13_2026-09-13.md). Las pruebas locales siguientes
 preceden a ese despliegue.
 
@@ -147,7 +148,8 @@ un borrado local o dos acks como certificación del borrado de backups.
   CV público/chatbot quedan fuera de alcance, no como bloqueos pendientes.
 - En esta comprobación local aún no estaban desplegados core0046 ni el nuevo BFF.
   El despliegue y canary posteriores están confirmados en el acta E.13 enlazada
-  arriba. El punto completo sigue abierto por retención/programación y copias.
+  arriba. La retirada manual posterior está cerrada; programación y primera
+  ejecución/alarma se difieren expresamente al cierre final del proyecto.
 
 ## Incidencia operativa encontrada durante el preflight
 

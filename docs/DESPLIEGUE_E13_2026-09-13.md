@@ -1,4 +1,4 @@
-# E.13 — borrado coordinado desplegado; retención pendiente de autorización
+# E.13 — punto 1 cerrado en el alcance acordado; cron diferido
 
 ## Estado vigente
 
@@ -51,7 +51,7 @@ perfiles **200**, 20 ofertas; **10,939 s / 11,445 s**, totales **1533 / 1524**.
 Muestra limitada, no certificación de p95 ni de arranque bajo toda carga. El
 reconciliador dedicado usa aproximadamente 60 MiB y 0 % CPU entre pasadas.
 
-## Backups: lo comprobado y lo NO autorizado todavía
+## Backups: retirada autorizada y ejecutada
 
 Se han creado copias privadas actuales de las tres bases y comprobado su lectura
 mediante `pg_restore --list`; eso no se presenta como restore completo de cada
@@ -63,9 +63,15 @@ el preview NO ha retirado todavía los vencidos, no que el sustituto esté corru
 Ocho archivos antiguos que estaban fuera de custodia privada se trasladaron
 a `e13-erasure/legacy-*` y quedaron con permisos 0600 bajo directorio 0700.
 Sus nombres originales, fechas y destinos están en el inventario privado.
-**Ningún backup ha sido eliminado**: la revisión automática de permisos rechazó
-`--apply`, pidiendo autorización explícita para esos siete archivos. La solicitud
-está presentada al propietario; no se ha intentado eludir el rechazo.
+La autorización explícita posterior del propietario resolvió el bloqueo anterior.
+Retirada NAS ejecutada: **7 elegibles, 7 eliminados, 0 vencidos bloqueados**;
+`retention_met=true`, limitado a los archivos registrados. Se conservan las
+**9 copias vigentes**. Los archivos eliminados no son recuperables directamente;
+las copias actuales de recuperación permanecen bajo custodia privada.
+Segunda pasada real: **0 elegibles, 0 eliminados, 0 vencidos bloqueados**,
+`retention_met=true`. Tras la retirada: core API/captura/BFF healthy; worker,
+reconciliador y Portfolio running; todos con cero reinicios. No se modificó código
+funcional durante esta retirada; las suites anteriores no se presentan como nuevas.
 
 Preparados, NO instalados como tarea programada:
 
@@ -80,9 +86,12 @@ La sesión SSH actual no dispone de `sudo -n`. No se modifica el cron administra
 sin autenticar ni se utiliza un contenedor privilegiado para evitarlo. El instalador
 está disponible en el directorio privado NAS `e13-erasure`.
 
-También permanece pendiente la retirada autorizada de las copias temporales
-locales inventariadas y las bases desechables del contenedor privado de restore;
-no se confunde registro de backups NAS con inventario/caducidad global cumplidos.
+Retirada local ejecutada: **9 dumps temporales vencidos**, 2.492.020.922 bytes.
+También se retiró el contenedor aislado `swissjob-restore-20260907` y su directorio
+PGDATA completo, incluidos WAL y las cinco bases restauradas de ensayo. Antes de
+retirarlo: red `none`, único bind privado validado y cero conexiones a las bases.
+Se conserva el inventario mínimo de supresiones separado de esos dumps.
+No se borraron cuentas reales ni bases de producción.
 
 ## Recuperación y límites
 
@@ -91,9 +100,13 @@ protección anti-resurrección. Conservar esquema, solicitudes, recibos y acks y
 corregir hacia delante. Las imágenes previas se conservan para diagnóstico, no
 como autorización de volver a un proyector que ignore las supresiones.
 
-El punto 1 NO está cerrado mientras falten retirada autorizada, programación,
-su comprobación y el cierre de copias temporales. La cuenta propietaria de
-Portfolio no se elimina y no es una tarea pendiente.
+**Punto 1 cerrado en el alcance acordado el 13-09-2026:** borrado coordinado,
+anti-resurrección, restore saneado y retirada manual de copias vencidas verificados.
+El propietario difiere expresamente el cron al cierre final del proyecto. No está
+instalado: quedan allí su primera ejecución y prueba de alarma. Hasta entonces,
+la retención requiere ejecución manual; no se acredita RPO diario automático.
+La decisión no cambia los límites de 7 días/48 horas ni declara el proyecto completo.
+La cuenta propietaria de Portfolio no se elimina y no es una tarea pendiente.
 
 Evidencia operativa privada: `unification-e10.XXkEjw88/e13-erasure` en el NAS.
 No incorporar a Git sus env, inspecciones Docker, inventarios de sujetos ni dumps.

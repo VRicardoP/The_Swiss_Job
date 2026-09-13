@@ -1345,11 +1345,12 @@ existe por estar descrita aquí. Comprobar identidad de ejecución, última copi
 válida, vencidos, código de salida y alarma. Están preparados y probados los caminos
 de éxito/fallo de `scripts/nas_backup_daily.sh`; `nas_install_backup_cron.sh` requiere
 administrador autenticado y conserva los demás trabajos. NO está instalado.
-El usuario SSH actual no puede cargar el crontab administrativo; no modificar a
-ciegas el del sistema ni elevar privilegios mediante otro contenedor. La retirada
-de siete archivos vencidos fue rechazada por la revisión de permisos y está
-solicitada expresamente. Ninguna copia real se ha eliminado. Detalle y verificación
-del borrado ya desplegado: [E.13](DESPLIEGUE_E13_2026-09-13.md).
+El propietario difiere expresamente el cron al cierre final (13-09-2026), incluida
+su primera ejecución y alarma. No modificar el cron ahora. Hasta entonces hay
+retención manual, no garantía de RPO diario automatizado. La autorización posterior
+permitió retirar 7 backups NAS vencidos, 9 dumps locales y el clúster desechable de
+restore; las copias NAS vigentes se conservan. Detalle, evidencia y límites:
+[E.13](DESPLIEGUE_E13_2026-09-13.md).
 
 El inventario vigente de supresiones se custodia fuera del dump antiguo. Véase
 [Borrado coordinado y restauraciones](BORRADO_COORDINADO_E13.md). Mientras exista una
