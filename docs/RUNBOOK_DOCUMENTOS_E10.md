@@ -1,7 +1,9 @@
 # Corte documental E.10 — procedimiento reversible
 
-Este documento describe el procedimiento implementado; no certifica un corte
-ejecutado. No modifica el catálogo/matching, los modelos ni el gate de calidad.
+Este documento describe el procedimiento implementado; la evidencia del corte
+13-09-2026 y su pendiente de canary real están en
+[el acta E.14](DESPLIEGUE_E14_2026-09-13.md). No modifica catálogo/matching,
+modelos ni el gate de calidad.
 
 ## Precondiciones
 
@@ -84,6 +86,13 @@ solo la capacidad `documents` del perfil/consumer verificado mediante el mecanis
 transaccional de routing existente. Revalidar lector/escritor core sin fallback.
 Solo después abrir escritores y ejecutar alta/listado/descarga/baja sintéticos
 por HTTP con limpieza de esas identidades, sin enviar candidaturas ni correos reales.
+Verificar CV y carta por separado y como pareja: una carta exitosa no demuestra
+que quepa el presupuesto del CV. Portfolio traduce una respuesta inválida del
+proveedor, tras un único reintento, a 502 sin guardar la pareja parcialmente.
+Revisar cuota y consumo del proveedor; no resolverlo aumentando tokens sin medir.
+No imprimir prompts, respuestas personales ni claves. Las pruebas adicionales con
+CV real en un proveedor externo requieren autorización; una prueba sintética
+debe declararse como tal, no como canary real del propietario.
 
 ## Reversión después de escrituras nuevas
 
