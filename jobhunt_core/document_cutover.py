@@ -76,8 +76,10 @@ def private_write(path, value):
 
 async def require_freeze(origin):
     url = os.environ["DOCUMENT_FREEZE_URL"]
+    token = os.environ.get("DOCUMENT_FREEZE_TOKEN")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
-        response = await client.get(url)
+        response = await client.get(url, headers=headers)
         response.raise_for_status()
         payload = response.json()
     state = (

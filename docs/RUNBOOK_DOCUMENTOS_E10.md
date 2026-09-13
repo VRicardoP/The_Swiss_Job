@@ -33,6 +33,10 @@ en el entorno privado, nunca en argumentos:
 - `SOURCE_DATABASE_URL`: conexión asyncpg a la base del BFF, schema `public`.
 - `CORE_DATABASE_URL`: conexión core con su rol/configuración habitual.
 - `DOCUMENT_FREEZE_URL`: `/health/documents` SwissJob o `/health/deep` Portfolio.
+- `DOCUMENT_FREEZE_TOKEN`: token administrativo vigente para la sonda privada de
+  Portfolio; solo entorno privado, nunca argv/logs. No abrir `/health/deep` ni
+  sustituirla por una sonda sin estado de freeze. Un 401/403 aborta el corte.
+  Renovar el token si caduca antes de la comprobación final de la transacción.
 - Portfolio además: `SOURCE_DOCUMENT_OWNER_ID` y `SOURCE_CORE_PROFILE_ID`, copiados
   de la configuración efectiva del BFF, no adivinados desde una candidatura.
 
