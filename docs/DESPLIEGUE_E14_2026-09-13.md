@@ -7,11 +7,11 @@ historial conservado y escritores abiertos. Alcance: CV/cartas, sin cambiar
 catálogo, matching, modelos, calidad, colegios ni productores. No hay API nueva.
 Cron de backups sigue diferido por el propietario al cierre final.
 
-**No declarar todavía el punto 2 totalmente cerrado:** falta repetir el canary
-HTTP conjunto CV+carta de Portfolio con el presupuesto final y el CV real.
-La comprobación adicional requiere autorización de envío a Groq, solicitada
-durante la sesión; no se sustituye por un éxito sintético. El intento pendiente
-conserva su operation_id y no dejó journal ni documentos parciales.
+**PUNTO 2 CERRADO.** Tras la autorización explícita del propietario para Groq,
+se repitió la operación original con el CV real y ecf1c0a: generación conjunta,
+lectura, ambos PDF, replay con los mismos IDs y baja exacta aprobados.
+Los cuatro eventos nuevos llegaron a su inbox; cero journals pendientes,
+históricos intactos y escritor único confirmados. No se enviaron candidaturas.
 
 Versiones efectivas:
 
@@ -50,7 +50,7 @@ Los mismos hashes materiales antes/después, comprobados por HTTP:
 - `b03b71c1472b9e553614295be0dc64e587c91794db6f7caae5d8fb2b695bdb43`
 
 Los almacenes locales siguen con 2/0 documentos, sin nuevas escrituras.
-Cero journals pendientes; 6 eventos SwissJob y 2 Portfolio entregados y recibidos
+Cero journals pendientes; 6 eventos SwissJob y 6 Portfolio entregados y recibidos
 (incluyen importación, altas y bajas). Lectura cruzada entre consumers: 404.
 
 ## Defectos encontrados y correcciones
@@ -88,7 +88,7 @@ largas: CV 2,79 s / carta 1,57 s, JSON completo y finish=stop.
 Esto no acredita por sí solo la pareja HTTP con el CV real.
 
 Imagen final construida desde archivos comiteados, dos COPY sobre la base vigente.
-Mismo entorno (comparado como mapa, no por orden), volúmenes y operación pendiente.
+Mismo entorno (comparado como mapa, no por orden), volúmenes y operación original.
 
 ## Evidencia y rendimiento acotado
 
@@ -138,13 +138,33 @@ Las tres copias locales y el clúster restaurado completo se retiraron tras comp
 cero sesiones y bind/red exactos. También se retiraron los sellos de ensayo locales,
 el PDF temporal y la copia aislada usada para la mordida. Backups NAS vigentes y
 sellos operativos se conservan. Las 28 copias privadas de configuración/diagnóstico
-que permiten terminar la comprobación quedan registradas localmente por 48 horas,
+utilizadas durante la comprobación quedan registradas localmente por 48 horas,
 con fechas originales, en `/tmp/unification-e14.OxUv3DAU/retention.json`.
 No se instaló cron: la retención sigue operándose manualmente.
 
-Pendiente concreto: autorización de prueba adicional con datos reales en Groq;
-luego repetir **la misma** operación de pareja conservada en
-`/tmp/e14-pair-canary.json` dentro de Portfolio. Verificar CV+carta, PDF de ambos,
-replay con mismos IDs, baja solo de esos IDs, GET 404, journals vacíos, entrega de
-sus cuatro eventos e históricos intactos. No crear otro operation_id ni relajar
-la validación para obtener verde. Actualizar esta acta y ESTADO cuando pase.
+## Confirmación final tras autorización — punto 2 cerrado
+
+Misma operación original, CV real, Groq configurado y versión ecf1c0a, sin
+sustituir entradas ni parámetros. Recorrido completo: **28,16 s**.
+
+- Generación conjunta y lecturas: **HTTP 200**.
+- PDF CV: **15.619 bytes**; carta: **10.287 bytes**, ambos con firma PDF válida.
+- Replay: los dos IDs idénticos; no se duplicaron documentos.
+- Bajas de canarios: **204**, seguidas de lectura **404**:
+  `1dbabab0-7942-46d6-9da8-be03292b3fa8` y
+  `68f9df55-0b12-4ab6-aade-2ba005529dc4`.
+- Sus cuatro eventos (alta/baja por documento) entregados y presentes en el
+  inbox de Portfolio: seis recibos Portfolio en total y seis SwissJob.
+  La pasada adicional del dispatcher reclamó cero porque ya estaban entregados;
+  la evidencia es el cotejo outbox↔inbox por event_id, no ese contador cero.
+- Core conserva solo los dos históricos; las bibliotecas devuelven los hashes
+  originales y Portfolio queda vacío como antes. Locales 2/0 sin nuevas filas,
+  journals pendientes 0/0 y routing exclusivamente core_primary.
+- Lectura cruzada entre consumers: 404; servicios sanos/running y cero reinicios.
+- Archivo temporal con el contenido de esta pareja retirado tras validar
+  deleted=true e IDs exactos. Los recibos de auditoría permanecen.
+
+Esta continuación no modifica código funcional ni imágenes: valida la versión
+que ya pasó las suites indicadas, sin presentarlas como reejecutadas.
+La autorización pendiente quedó resuelta; no queda trabajo abierto del punto 2.
+Cron diferido, colegios/productores y calidad mantienen sus alcances separados.

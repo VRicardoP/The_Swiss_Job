@@ -1,7 +1,7 @@
 # Corte documental E.10 — procedimiento reversible
 
 Este documento describe el procedimiento implementado; la evidencia del corte
-13-09-2026 y su pendiente de canary real están en
+13-09-2026 y su cierre verificado con canary real están en
 [el acta E.14](DESPLIEGUE_E14_2026-09-13.md). No modifica catálogo/matching,
 modelos ni el gate de calidad.
 
