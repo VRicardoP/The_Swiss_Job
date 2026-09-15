@@ -162,13 +162,19 @@ class Settings(BaseSettings):
     DOCUMENT_WRITES_FROZEN: bool = False
     SCHOOL_WRITES_FROZEN: bool = False
     # Proveedor PRIMARIO de documentos: Google Gemini (free tier de Google).
-    # gemini-2.5-flash genera CVs de calidad (~9s); gpt-oss-120b en Groq free tier
-    # topa a 8k tokens/min y falla en documentos largos → Gemini lo evita. Si la key
-    # falta o Gemini falla/satura, DocumentGeneratorService cae a Groq (GROQ_MODEL).
-    # Nota: los modelos gemma-4-* dan mala salida para esta tarea (repiten el prompt)
-    # y ~30s de latencia; por eso el default es gemini-2.5-flash, no Gemma.
+    # gpt-oss-120b en Groq free tier topa a 8k tokens/min y falla en documentos
+    # largos → Gemini lo evita. Si la key falta o Gemini falla/satura,
+    # DocumentGeneratorService cae a Groq (GROQ_MODEL).
+    # Nota: los modelos gemma-4-* dan mala salida para esta tarea (repiten el
+    # prompt) y ~30s de latencia; por eso el default es Gemini Flash, no Gemma.
+    #
+    # 2026-09-15: de gemini-2.5-flash a gemini-3.6-flash. Comprobado EN VIVO con
+    # la API key gratuita del proyecto (ListModels + generación real): 3.6-flash
+    # redacta una carta de 236 palabras en ~8 s, mientras 2.5-flash devuelve
+    # 429 RESOURCE_EXHAUSTED de forma intermitente en ese mismo tier. Existen
+    # además 3.7 y 3.8 flash, también operativos con esta key.
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-3.6-flash"
     GEMINI_TIMEOUT_SECONDS: float = 60.0
 
     # Email (SMTP) para avisos. Vacío = envío desactivado. Gmail: host
