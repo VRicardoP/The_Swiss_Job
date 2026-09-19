@@ -56,8 +56,10 @@ Traduccion de identidad en `get`: el legacy identifica por hash MD5 (32
 hex); el core por UUID de vacante. OJO: un MD5 de 32 hex tambien PARSEA
 como UUID sin guiones, asi que parsear no basta — `get()` solo trata como
 identidad del core la forma canonica con guiones (round-trip
-`str(UUID(ref)) == ref.lower()`). Cualquier otra referencia — MD5 legacy
-incluido — devuelve None sin emitir ni una peticion al core.
+`str(UUID(ref)) == ref.lower()`). Los MD5 se resuelven por el respaldo local
+antes del corte. Con CORE_FEEDBACK_ENABLED se resuelven exclusivamente por
+/listing-references: 404 si ausentes, error cerrado si ambiguos; nunca se
+consulta el corpus local. El resto de referencias devuelve None sin HTTP.
 """
 
 import logging
@@ -328,6 +330,26 @@ class CoreCatalog:
         detalle de un item del feed (que ahora viaja con MD5 accionable)
         moriria en 404. Sin sesion local se conserva el comportamiento
         previo (None)."""
+        if settings.CORE_FEEDBACK_ENABLED:
+            # Final cutover: old bookmarks resolve through persisted core
+            # listing identities, never through the retired local catalogue.
+            if len(job_ref) != 32 or any(c not in "0123456789abcdefABCDEF" for c in job_ref):
+                return None
+            self._guard_credential()
+            try:
+                async with self._client_factory() as client:
+                    response = await client.get("/listing-references", params={"external_id": job_ref})
+            except httpx.HTTPError as exc:
+                raise CoreUnavailableError("core reference lookup unavailable") from exc
+            if response.status_code == 404:
+                return None
+            if response.status_code != 200:
+                raise CoreUnavailableError("core reference lookup failed or ambiguous")
+            try:
+                vacancy_id = str(uuid.UUID(response.json()["vacancy_id"]))
+            except _PAYLOAD_ERRORS as exc:
+                raise CoreUnavailableError("invalid core reference response") from exc
+            return await self.get(vacancy_id)
         if self._db is None:
             return None
         from .local import LocalCatalog
@@ -343,7 +365,7 @@ class CoreCatalog:
         item del feed inabrible. Mismo criterio que `local.py`.
         """
         clean = [u for u in urls if u]
-        if self._db is None or not clean:
+        if settings.CORE_FEEDBACK_ENABLED or self._db is None or not clean:
             return {}
         rows = (
             await self._db.execute(

@@ -1114,10 +1114,11 @@ def _with_candidate_exclusions(sql: str, *, exclude_dismissed: bool,
     fallar en silencio."""
     extra = ""
     if exclude_dismissed:
+        from jobhunt_core.feedback import effective_feedback_sql
+
         extra += (
-            " AND NOT EXISTS (SELECT 1 FROM profile_vacancy_state pvsx "
-            "WHERE pvsx.profile_id = :pid AND pvsx.vacancy_id = v.id "
-            "AND pvsx.dismissed_at IS NOT NULL)"
+            " AND COALESCE((" + effective_feedback_sql("v.id", ":pid")
+            + "),'') NOT IN ('thumbs_down','dismissed')"
         )
     if exclude_ids:
         extra += " AND NOT (v.id = ANY(CAST(:excl_ids AS uuid[])))"
@@ -1935,6 +1936,9 @@ async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=No
     (filas, next_cursor) con next_cursor None al agotar. `consumer_id`
     (rev. A-09 #1): el OWNERSHIP multi-tenant se filtra EN LA QUERY (§2) —
     una reasignación de tenant a mitad de request jamás puede filtrar filas."""
+    from jobhunt_core.feedback import effective_feedback_sql
+
+    feedback_sql = effective_feedback_sql("s.vacancy_id", "s.profile_id")
     where_cursor = ""
     tenant_join = ""
     params = {"pid": profile_id, "lim": limit}
@@ -1955,14 +1959,15 @@ async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=No
         await session.execute(
             sa.text(
                 "SELECT e.vacancy_id, e.score_final, e.id AS eval_id, e.scores, "
-                "e.offer_revision_id, s.saved_at, s.feedback, s.notes "
+                f"e.offer_revision_id, s.saved_at, ({feedback_sql}) AS feedback, s.notes "
                 "FROM profile_vacancy_state s "
                 f"{tenant_join}"
                 "JOIN match_evaluations e ON e.id = s.current_eval_id "
                 "  AND e.profile_id = s.profile_id AND e.vacancy_id = s.vacancy_id "
                 "JOIN vacancies v ON v.id = s.vacancy_id "
                 "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
-                "WHERE s.profile_id = :pid AND s.dismissed_at IS NULL "
+                "WHERE s.profile_id = :pid "
+                f"AND COALESCE(({feedback_sql}),'') NOT IN ('thumbs_down','dismissed') "
                 f"{where_cursor}"
                 "ORDER BY e.score_final DESC, e.vacancy_id ASC "
                 "LIMIT :lim"
@@ -1986,11 +1991,12 @@ async def set_dismissed(session, profile_id, vacancy_id, dismissed: bool) -> Non
     await session.execute(
         sa.text(
             "INSERT INTO profile_vacancy_state "
-            "(profile_id, vacancy_id, dismissed_at, updated_at) "
+            "(profile_id, vacancy_id, dismissed_at, updated_at, feedback_recorded_at) "
             "VALUES (:pid, :vid, CASE WHEN :d THEN clock_timestamp() END, "
-            "clock_timestamp()) "
+            "clock_timestamp(), clock_timestamp()) "
             "ON CONFLICT (profile_id, vacancy_id) DO UPDATE "
             "SET dismissed_at = CASE WHEN :d THEN clock_timestamp() END, "
+            "feedback_recorded_at=clock_timestamp(), "
             "updated_at = GREATEST(profile_vacancy_state.updated_at, clock_timestamp())"
         ),
         {"pid": profile_id, "vid": vacancy_id, "d": dismissed},

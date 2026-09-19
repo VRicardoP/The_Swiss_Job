@@ -2,9 +2,11 @@
 
 from types import SimpleNamespace
 from datetime import datetime
+import uuid
 
 from sqlalchemy import select
 
+from config import settings
 from models.job import Job
 from models.match_result import MatchResult
 from services.matching.identity import resolve_core_profile_id
@@ -24,14 +26,47 @@ class CoreWatchlist:
         return pid
 
     async def get_match(self, user_id, job_hash):
-        job = (
-            await self._db.execute(select(Job).where(Job.hash == job_hash))
-        ).scalar_one_or_none()
+        job = None
+        if not settings.CORE_FEEDBACK_ENABLED:
+            job = (
+                await self._db.execute(select(Job).where(Job.hash == job_hash))
+            ).scalar_one_or_none()
         pid = await self._profile(user_id)
         rows = await self._client.states(pid, job_hash)
-        if job is None:
-            if not rows:
+        if job is None and not rows:
+            response = await self._client.request(
+                "GET", "/school-jobs", params={"dedup_key": job_hash, "limit": 2}
+            )
+            if response.status_code == 404:
                 return None
+            try:
+                page = response.json()
+                if not isinstance(page["items"], list) or page.get("next_cursor") is not None or len(page["items"]) > 1:
+                    raise ValueError("ambiguous school reference")
+                if not page["items"]:
+                    return None
+                observation = page["items"][0]
+                if observation["source_ref"] != job_hash:
+                    raise ValueError("unexpected school reference")
+                jid, mid = uuid.UUID(observation["id"]), uuid.UUID(observation["monitor_id"])
+                monitor = next((m for m in await self._client.monitors() if m.id == mid), None)
+                if monitor is None:
+                    raise ValueError("missing school monitor")
+                metadata = observation["metadata"]
+                title, url = metadata["title"], metadata.get("url")
+                if not isinstance(title, str) or not title or (url is not None and not isinstance(url, str)):
+                    raise ValueError("invalid school presentation")
+                detected = datetime.fromisoformat(metadata.get("date_detected") or observation["created_at"])
+                if detected.tzinfo is None:
+                    raise ValueError("naive school timestamp")
+                job = SimpleNamespace(
+                    title=title, company=monitor.settings.get("name"), url=url,
+                    location=None, language=None, tags=[monitor.external_ref],
+                    first_seen_at=detected, school_job_id=jid,
+                )
+            except (ValueError, TypeError, KeyError, AttributeError):
+                raise CoreUnavailableError("invalid native school observation") from None
+        elif job is None:
             state = rows[0]
             monitor = next(
                 (m for m in await self._client.monitors() if m.id == state.monitor_id),
@@ -46,6 +81,7 @@ class CoreWatchlist:
                 location=None,
                 language=None,
                 tags=[monitor.external_ref],
+                school_job_id=state.school_job_id,
             )
         if rows:
             row = rows[0]
@@ -66,13 +102,15 @@ class CoreWatchlist:
                 created_at=created_at,
             )
         else:
-            local = (
-                await self._db.execute(
-                    select(MatchResult).where(
-                        MatchResult.user_id == user_id, MatchResult.job_hash == job_hash
+            local = None
+            if not settings.CORE_FEEDBACK_ENABLED:
+                local = (
+                    await self._db.execute(
+                        select(MatchResult).where(
+                            MatchResult.user_id == user_id, MatchResult.job_hash == job_hash
+                        )
                     )
-                )
-            ).scalar_one_or_none()
+                ).scalar_one_or_none()
             # Status/draft NEVER fall back to local after the cutover. The old
             # detection time is presentation only and is preserved on first write.
             match = SimpleNamespace(
@@ -98,6 +136,7 @@ class CoreWatchlist:
             job_hash,
             monitor.id,
             changes,
+            school_job_id=getattr(job, "school_job_id", None),
             context={
                 "detected_at": match.created_at.isoformat(),
                 "job_title": job.title,

@@ -375,6 +375,15 @@ async def reverse_sync(
     session, tables, origin, bindings, current, *, original_monitors=None
 ):
     """Caller holds source locks and a frozen core snapshot; never deletes core data."""
+    # E.15's reverse migrator only owns school status/drafts, not feedback.
+    # Once F owns marks (including a deliberate clear), use its coordinated
+    # reverse migration and freeze. Never silently discard this new authority.
+    if any(row.get("feedback_recorded_at") is not None
+           or row.get("feedback") is not None or row.get("feedback_implicit")
+           for row in current["school_applications"]):
+        raise SchoolMigrationError(
+            "core feedback authority requires coordinated feedback rollback"
+        )
     owners = {str(pid): _uid(origin, uid) for uid, pid in bindings.items()}
     if any(
         str(row["profile_id"]) not in owners

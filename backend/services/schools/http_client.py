@@ -26,6 +26,7 @@ class SchoolState(BaseModel):
     id: uuid.UUID
     profile_id: uuid.UUID
     monitor_id: uuid.UUID
+    school_job_id: uuid.UUID | None = None
     source_ref: str
     status: str
     draft_content: str | None
@@ -129,7 +130,7 @@ class SchoolClient:
             raise CoreUnavailableError("invalid school state") from None
 
     async def write_state(
-        self, profile_id, source_ref, monitor_id, changes, context=None
+        self, profile_id, source_ref, monitor_id, changes, context=None, school_job_id=None
     ):
         path = f"/profiles/{profile_id}/school-applications"
         existing = await self.states(profile_id, source_ref)
@@ -148,6 +149,8 @@ class SchoolClient:
                 "context": context or {},
                 **changes,
             }
+            if school_job_id is not None:
+                body["school_job_id"] = str(school_job_id)
             if changes.get("draft_content") and "status" not in changes:
                 body["status"] = "drafted"
             response = await self.request("POST", path, json=body, headers=headers)

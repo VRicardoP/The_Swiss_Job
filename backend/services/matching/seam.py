@@ -1,5 +1,10 @@
 """Costura de la capacidad matching — A.SEAM (plan §15bis).
 
+F: con CORE_FEEDBACK_ENABLED el escritor y guardados son core. No hay fallback
+local, ni overlay de marcas antiguas: cada operación exige routing autoritativo.
+El flag arranca desactivado; su activación es un corte de datos, no un efecto
+lateral del despliegue. La matriz histórica de abajo describe el flag apagado.
+
 Resuelve QUE implementacion sirve cada peticion segun `jobhunt_routing`
 (default 'local'). Mapeo modo -> lector, derivado de la matriz de escritor
 por estado del plan §15bis (identico al de catalogo):
@@ -48,6 +53,7 @@ preferible al doble motor).
 """
 
 import logging
+from config import settings
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -110,6 +116,10 @@ async def resolve_matching(
 ) -> MatchingPort:
     """Puerto de matching para esta peticion segun el routing por perfil."""
     mode = await resolve_mode(db, CAPABILITY_MATCHING, user_id)
+    if settings.CORE_FEEDBACK_ENABLED:
+        # The authoritative writer must never expose an obsolete local saved feed.
+        # CoreMatching validates the routing inside the operation/error boundary.
+        return CoreMatching(db)
     if mode in (MODE_LOCAL, MODE_SHADOW):
         return LocalMatching(db)
     if mode == MODE_CORE_READ:

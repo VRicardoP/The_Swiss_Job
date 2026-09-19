@@ -250,6 +250,10 @@ class Settings(BaseSettings):
     CORE_CONSUMER_KEY: str = ""
     CORE_INBOX_TOKEN: str = ""
     CORE_HTTP_TIMEOUT_SECONDS: float = 5.0
+    # F writer cutover: enable ONLY after frozen feedback migration/reconciliation.
+    # Once enabled there is no fallback to a local feedback writer or saved feed.
+    CORE_FEEDBACK_ENABLED: bool = False
+    FEEDBACK_WRITES_FROZEN: bool = False
     # TTL de la cache en proceso del routing: acota la staleness entre
     # procesos/workers (la invalidacion transaccional cubre el proceso local).
     ROUTING_CACHE_TTL_SECONDS: float = 5.0

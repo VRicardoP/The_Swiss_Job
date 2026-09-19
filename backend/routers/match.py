@@ -10,11 +10,10 @@ El DISPARO DEL PIPELINE (/analyze) respeta el routing desde Fase D (gate
 anti-doble-motor D.2, complemento interactivo del D.1 de los schedulers):
 con el matching del perfil gobernado por el core
 (core_read/core_primary/rollback_pending) responde 409 SIN instanciar
-servicios LLM ni tocar el motor local. El feedback explicito/implicito
-sigue SIEMPRE en local: el legacy es su escritor autoritativo en TODOS los
-modos (criterio unificador de la costura; el feed del core lo superpone
-como overlay) hasta el flip de escritor de Fase C (escritura sincrona
-contra el escritor activo + idempotency key).
+servicios LLM ni tocar el motor local. Antes del corte F, feedback y guardados
+siguen en local. CORE_FEEDBACK_ENABLED cambia ambos al core, con escritura
+síncrona e idempotencia, sin fallback local. No habilitarlo hasta reconciliar
+la migración bajo FEEDBACK_WRITES_FROZEN y comprobar el routing autoritativo.
 """
 
 import logging
@@ -42,7 +41,7 @@ from services.schools.presentation import overlay_school_results
 from services.gemini_service import GeminiService
 from services.groq_service import GroqService
 from services.job_matcher import DEFAULT_WEIGHTS
-from services.match_result_service import MatchResultService
+from services.matching.feedback import feedback_writer
 from services.match_service import MatchService
 from services.matching import (
     CoreUnavailableError,
@@ -309,12 +308,14 @@ async def submit_feedback(
     db: AsyncSession = Depends(get_db),
 ):
     """Submit explicit feedback (thumbs_up/thumbs_down/applied/dismissed)."""
-    service = MatchResultService(db)
-    result = await service.submit_feedback(
-        user_id=current_user.id,
-        job_hash=job_hash,
-        feedback=body.feedback,
-    )
+    try:
+        result = await feedback_writer(db).submit_feedback(
+            user_id=current_user.id,
+            job_hash=job_hash,
+            feedback=body.feedback,
+        )
+    except MatchingError as exc:
+        raise _matching_http_error(exc) from exc
 
     if result is None:
         raise HTTPException(
@@ -336,11 +337,13 @@ async def clear_feedback(
     db: AsyncSession = Depends(get_db),
 ):
     """Elimina el feedback explícito de un resultado (deselección)."""
-    service = MatchResultService(db)
-    result = await service.clear_feedback(
-        user_id=current_user.id,
-        job_hash=job_hash,
-    )
+    try:
+        result = await feedback_writer(db).clear_feedback(
+            user_id=current_user.id,
+            job_hash=job_hash,
+        )
+    except MatchingError as exc:
+        raise _matching_http_error(exc) from exc
 
     if result is None:
         raise HTTPException(
@@ -393,13 +396,15 @@ async def submit_implicit_feedback(
     db: AsyncSession = Depends(get_db),
 ):
     """Record implicit feedback signal (opened, view_time, saved, applied, dismissed, skipped)."""
-    service = MatchResultService(db)
-    result = await service.record_implicit_feedback(
-        user_id=current_user.id,
-        job_hash=job_hash,
-        action=body.action,
-        duration_ms=body.duration_ms,
-    )
+    try:
+        result = await feedback_writer(db).record_implicit_feedback(
+            user_id=current_user.id,
+            job_hash=job_hash,
+            action=body.action,
+            duration_ms=body.duration_ms,
+        )
+    except MatchingError as exc:
+        raise _matching_http_error(exc) from exc
 
     if result is None:
         raise HTTPException(

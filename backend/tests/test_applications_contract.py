@@ -12,7 +12,7 @@ cliente HTTP real. Estos tests fijan:
   jobhunt_profile_map (NO comodin) — sin vinculo o sin credencial, CERO
   peticiones.
 - IDENTIDAD de vacante: round-trip del job_hash por la url del Job local;
-  fallback determinista compute_hash(title|company|url) del snapshot.
+  sin respaldo local se conserva el vacancy_id nativo del core.
 - COTAS honestas: state machine de match_results y applied_url →
   ApplicationsUnsupportedError; bookmarks puros excluidos; follow_up_date
   date-vs-datetime; applied_at no representable (None).
@@ -46,7 +46,6 @@ from services.applications import (
     LocalApplications,
     resolve_applications,
 )
-from services.job_service import BaseJobProvider
 from services.matching.identity import set_profile_link
 from services.routing import (
     CAPABILITY_APPLICATIONS,
@@ -512,12 +511,11 @@ async def test_core_writes_carry_idempotency_key(db_session, seeded):
     assert len(set(keys)) == 3  # una key NUEVA por escritura
 
 
-async def test_job_hash_fallback_recomputes_snapshot_identity(db_session, seeded):
-    """Item sin Job local de respaldo (podado o ajeno): job_hash determinista
-    con compute_hash(title|company|url) — la funcion de identidad del pipeline
-    de ingesta — y job_* del snapshot (location None, cota del DTO)."""
+async def test_job_hash_without_local_row_uses_canonical_identity(db_session, seeded):
+    """Sin Job local, el hash derivado no era accionable: usar vacancy_id
+    y mantener los campos visibles del snapshot (location sigue ausente)."""
     user_id, fake, core = seeded
-    fake.add_item(
+    stored = fake.add_item(
         kind="application",
         title="Orphan Job",
         company="Ghost AG",
@@ -527,9 +525,7 @@ async def test_job_hash_fallback_recomputes_snapshot_identity(db_session, seeded
     listed = await core.list(user_id)
     assert listed.total == 1
     item = listed.data[0]
-    assert item.job_hash == BaseJobProvider.compute_hash(
-        "Orphan Job", "Ghost AG", "https://gone.example.com/job/1"
-    )
+    assert item.job_hash == stored["vacancy_id"]
     assert item.job_title == "Orphan Job"
     assert item.job_location is None
     assert item.job_source == "ghost_source"

@@ -372,6 +372,9 @@ class CoreMatching:
     async def results(
         self, user_id: uuid.UUID, limit: int = 20, offset: int = 0
     ) -> tuple[list[dict], int]:
+        if settings.CORE_FEEDBACK_ENABLED:
+            from .feedback import require_core_feedback_route
+            await require_core_feedback_route(self._db, user_id)
         core_profile_id = await resolve_core_profile_id(self._db, user_id)
         if core_profile_id is None:
             # Enrutado a core sin enrolar el vinculo de identidad: error de
@@ -388,7 +391,6 @@ class CoreMatching:
             raise CoreUnavailableError("CORE_CONSUMER_KEY no configurada")
 
         items = await self._fetch_full_feed(core_profile_id)
-
         # Identidad por item (candidatos DETERMINISTAS: cualquier listing
         # `legacy:*`, no solo el primary) + respaldo accionable + overlay
         # local en lotes. Los errores de FORMA del payload se traducen a
@@ -424,6 +426,27 @@ class CoreMatching:
                     "school corpus identity unavailable"
                 ) from exc
         legacy_refs = [ref for cands in candidates_per_item for ref, _source in cands]
+        if settings.CORE_FEEDBACK_ENABLED:
+            # School commands still address their own stable source_ref; keep
+            # that identity. Ordinary items use the UUID we already know: an
+            # upstream alias can name multiple historical clones, so resolving
+            # it again would make an otherwise actionable item ambiguous.
+            try:
+                results = []
+                for item, candidates in zip(items, candidates_per_item):
+                    primary = item["vacancy"].get("primary_listing") or {}
+                    school = next((candidate for candidate in candidates
+                                   if candidate[1].removeprefix("legacy:").startswith("swiss_schools_")), None)
+                    ref, source = school if school else (
+                        str(uuid.UUID(item["vacancy"]["id"])), primary.get("source") or "core",
+                    )
+                    results.append({
+                        "match": _match_view(item, ref, None),
+                        "job": _job_view(item["vacancy"], source.removeprefix("legacy:")),
+                    })
+            except _PAYLOAD_ERRORS as exc:
+                raise CoreUnavailableError("identidad core inválida en matching") from exc
+            return results[offset:offset + limit], len(results)
         local_by_hash: dict[str, MatchResult] = {}
         actionable_hashes: set[str] = set()
         if legacy_refs:
@@ -530,6 +553,11 @@ class CoreMatching:
         self, user_id: uuid.UUID, limit: int = 100, offset: int = 0
     ) -> tuple[list[dict], int]:
         # Proyeccion PURA del estado del escritor LOCAL (feedback positivo):
+        if settings.CORE_FEEDBACK_ENABLED:
+            from .feedback import CoreFeedback
+            return await CoreFeedback(self._db, self._client_factory).saved(
+                user_id, limit=limit, offset=offset,
+            )
         # se sirve de local en TODOS los modos (criterio unificador — ningun
         # estado local puede ser inaccesible por el routing). Sin red: no
         # depende de que el core este arriba.

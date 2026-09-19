@@ -25,6 +25,9 @@ from jobhunt_core.api.v1_documents import router as documents_router
 from jobhunt_core.api.v1_schools import router as schools_router
 from jobhunt_core.api.v1_school_applications import router as school_applications_router
 from jobhunt_core.api.v1_school_jobs import router as school_jobs_router
+from jobhunt_core.api.v1_feedback import router as feedback_router
+from jobhunt_core.api.v1_school_feedback import router as school_feedback_router
+from jobhunt_core.api.v1_listing_references import router as listing_references_router
 from jobhunt_core.database import engine
 
 logger = logging.getLogger(__name__)
@@ -43,6 +46,9 @@ app.include_router(documents_router)
 app.include_router(schools_router)
 app.include_router(school_applications_router)
 app.include_router(school_jobs_router)
+app.include_router(feedback_router)
+app.include_router(school_feedback_router)
+app.include_router(listing_references_router)
 
 
 @app.exception_handler(ApiError)

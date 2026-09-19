@@ -11,7 +11,7 @@ from models.enums import ApplicationStatus
 class ApplicationCreate(BaseModel):
     """Request body for POST /api/v1/applications."""
 
-    job_hash: str = Field(..., max_length=32)
+    job_hash: str = Field(..., max_length=36)
     notes: str | None = Field(None, max_length=2000)
 
 

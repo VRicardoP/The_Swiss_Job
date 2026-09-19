@@ -7,7 +7,7 @@ privados, sin importar jobhunt_core: frontera estricta, plan §21):
 - GET  /v1/applications?profile=&limit=&cursor=  (scope applications:read):
   feed COMPUESTO applications + bookmarks puros, keyset (ts DESC, id DESC).
 - POST /v1/applications (scope applications:write): vincula la vacante en la
-  misma tx (cascada Decision 3, aqui siempre por URL del Job local); status
+  misma tx (URL legacy o UUID nativo, con snapshot del catálogo); status
   ausente → saved; 409 application_exists si el par (perfil, vacante) existe.
 - PATCH/DELETE /v1/applications/{id}: direccionamiento DUAL (application.id o
   bookmark puro =vacancy_id, con promocion idempotente) — este cliente solo
@@ -19,14 +19,11 @@ usuario legacy -> perfil core es POR USUARIO via la tabla LOCAL
 consumen matching y perfiles; NO comodin de config). Sin vinculo o sin
 credencial: CoreUnavailableError SIN emitir peticiones.
 
-IDENTIDAD DE VACANTE (leccion del MD5, heredada de matching): el contrato
-legacy presenta `job_hash` (MD5) y el DTO C-4 no lo transporta. Resolucion
-DETERMINISTA por item: (1) el Job local cuya `url` (UNIQUE en `jobs`) coincide
-con la url del snapshot — toda alta de ESTE cliente viaja con la url del Job
-local, asi que el round-trip recupera el hash exacto; (2) en su defecto (Job
-podado o item no escrito por este BFF), `BaseJobProvider.compute_hash` sobre
-el snapshot (title|company|url) — la MISMA funcion de identidad del pipeline
-de ingesta, nunca una forma inventada.
+IDENTIDAD DE VACANTE: se conserva el MD5 cuando existe respaldo local por URL.
+Sin respaldo se presenta el vacancy_id del contrato core, no un hash ficticio
+que ninguna oferta puede resolver. Las altas con UUID usan el catálogo core
+para su snapshot y enlazan por vacancy_id. Las referencias MD5 inexistentes
+siguen fallando sin red; no se interpretan como UUID sin guiones.
 
 ENUM DE STATUS: los 8 estados del core (core0011) son EXACTAMENTE los 8 de
 `models.enums.ApplicationStatus` → identidad en ambas direcciones (sin
@@ -75,6 +72,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
+from services.catalog.core_client import CoreCatalog
+from services.catalog.port import CoreUnavailableError as CatalogUnavailableError
 from models.enums import ApplicationStatus
 from models.job import Job
 from schemas.applications import (
@@ -83,7 +82,6 @@ from schemas.applications import (
     ApplicationStatsResponse,
     ApplicationUpdate,
 )
-from services.job_service import BaseJobProvider
 from services.matching.identity import resolve_core_profile_id
 
 from .port import (
@@ -127,6 +125,7 @@ class _ApplicationDTO(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: uuid.UUID
+    vacancy_id: uuid.UUID
     kind: Literal["application", "bookmark"]
     status: _CoreStatus
     notes: str | None = None
@@ -329,6 +328,8 @@ class CoreApplications:
     async def _jobs_by_url(self, dtos: list[_ApplicationDTO]) -> dict[str, Job]:
         """Jobs locales de respaldo, en lote, por la url del snapshot (UNIQUE
         en `jobs`) — la resolucion determinista de identidad del modulo."""
+        if settings.CORE_FEEDBACK_ENABLED:
+            return {}
         urls = {dto.url for dto in dtos if dto.url}
         if not urls:
             return {}
@@ -357,14 +358,11 @@ class CoreApplications:
 
     @staticmethod
     def _job_hash_for(dto: _ApplicationDTO, by_url: dict[str, Job]) -> str:
-        """(1) hash del Job local por url; (2) compute_hash del snapshot —
-        la MISMA funcion de identidad del pipeline de ingesta."""
+        """Preserve historical MD5 links; otherwise use the real core UUID."""
         job = by_url.get(dto.url) if dto.url else None
         if job is not None:
             return job.hash
-        return BaseJobProvider.compute_hash(
-            dto.title or "", dto.company or "", dto.url or ""
-        )
+        return str(dto.vacancy_id)
 
     # ------------------------------------------------------------ operaciones
 
@@ -405,16 +403,32 @@ class CoreApplications:
     async def create(
         self, user_id: uuid.UUID, job_hash: str, notes: str | None = None
     ) -> ApplicationResponse:
-        """Alta contra el POST /v1: la oferta se resuelve PRIMERO en local
-        (misma precedencia que el motor local: sin Job → 404 SIN red); el
-        snapshot viaja con los campos del Job local (url incluida — el
-        round-trip de identidad del docstring). Status omitido → saved."""
-        job = (
-            await self._db.execute(select(Job).where(Job.hash == job_hash))
-        ).scalar_one_or_none()
+        """Legacy MD5 uses its local snapshot; a native UUID uses the core
+        catalog and is linked directly, never synthesized by URL. A missing
+        legacy reference is resolved in core only after the F cutover."""
+        job = None
+        if not settings.CORE_FEEDBACK_ENABLED:
+            job = (
+                await self._db.execute(select(Job).where(Job.hash == job_hash))
+            ).scalar_one_or_none()
+        native_id = None
         if job is None:
-            raise ApplicationJobNotFoundError("Job not found")
+            try:
+                candidate = uuid.UUID(job_hash)
+            except ValueError:
+                raise ApplicationJobNotFoundError("Job not found") from None
+            if str(candidate) != job_hash.lower() and not settings.CORE_FEEDBACK_ENABLED:
+                raise ApplicationJobNotFoundError("Job not found")
+            native_id = job_hash
         core_profile_id = await self._require_profile(user_id)
+        if native_id is not None:
+            try:
+                job = await CoreCatalog(client_factory=self._client_factory).get(native_id)
+            except CatalogUnavailableError as exc:
+                raise CoreUnavailableError(str(exc)) from exc
+            if job is None:
+                raise ApplicationJobNotFoundError("Job not found")
+            native_id = str(uuid.UUID(job.hash))
         body = {
             "profile_id": str(core_profile_id),
             "url": job.url,
@@ -422,10 +436,12 @@ class CoreApplications:
             "company": job.company,
             # Snapshot = "lo que el usuario vio": el snippet legacy de 500
             # (la description completa podria exceder la cota 100k del /v1).
-            "description": job.description_snippet,
+            "description": (job.description or "")[:500] if native_id else job.description_snippet,
             "source": job.source,
             "notes": notes,
         }
+        if native_id is not None:
+            body["vacancy_id"] = native_id
         resp = await self._request("POST", "/applications", json_body=body, write=True)
         if resp.status_code == 409:
             # Candado UNIQUE(perfil, vacante) del core — el mismo contrato que
@@ -438,7 +454,7 @@ class CoreApplications:
         if resp.status_code != 201:
             raise self._unexpected(resp, "el alta de candidatura")
         dto = self._parse_item(resp, "alta de candidatura")
-        return _to_response(dto, user_id, job_hash, job)
+        return _to_response(dto, user_id, native_id or job_hash, job)
 
     async def stats(self, user_id: uuid.UUID) -> ApplicationStatsResponse:
         """Sin endpoint /v1 de agregados: se derivan del MISMO feed drenado

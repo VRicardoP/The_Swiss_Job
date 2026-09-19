@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
 from services.documents.port import DocumentsError
 from services.documents.delivery import DocumentDeliveryError
@@ -153,7 +153,9 @@ app.include_router(auth_router)
 app.include_router(documents_router)
 app.include_router(integration_inbox_router)
 app.include_router(jobs_router)
-app.include_router(match_router)
+from services.matching.feedback import block_feedback_writes
+
+app.include_router(match_router, dependencies=[Depends(block_feedback_writes)])
 app.include_router(notifications_router)
 app.include_router(profile_router)
 app.include_router(searches_router)
@@ -187,6 +189,12 @@ async def document_delivery_error_handler(request, exc):
 @app.get("/health/documents")
 async def document_health():
     return {"writes": "frozen" if settings.DOCUMENT_WRITES_FROZEN else "enabled"}
+
+
+@app.get("/health/feedback")
+async def feedback_health():
+    return {"writes": "frozen" if settings.FEEDBACK_WRITES_FROZEN else "enabled",
+            "writer": "core" if settings.CORE_FEEDBACK_ENABLED else "local"}
 
 
 @app.get("/health")
