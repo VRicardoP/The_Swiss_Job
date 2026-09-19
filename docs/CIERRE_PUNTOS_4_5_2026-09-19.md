@@ -4,6 +4,20 @@ Autorización: petición del propietario del 19-09-2026. Orden obligatorio:
 productores/retirada → rendimiento → cron/alarma → aceptación integral → entrega.
 No confundir avances locales con cierre desplegado. No se cambia el gate de calidad.
 
+### Estado vigente al continuar el 20-09
+
+Punto 4 EN CURSO; punto 5, cron, aceptación y entrega NO CERRADOS. La versión
+productiva sigue E.15/core0047 y no se han activado nuevos productores/escritores.
+Los apartados de avance son históricos; este resumen y la evidencia posterior
+superseden sus pendientes de restauración. La exportación de SwissJob al PC no
+se realizó: el ensayo se resolvió dentro del NAS.
+
+HEAD verificado antes del lote actual: `5cded2b`, **1.355 passed en 948,22 s**,
+un aviso previo Starlette/httpx; árbol de código inmóvil durante la suite.
+La costura BFF no cambió desde sus **2.422 passed, 3 skipped, 4 xfail**.
+Las nuevas pruebas CH Media/PublicJobs aún requieren suite completa del lote.
+
+
 ## Preflight confirmado
 
 - Base SwissJob `d9c8a0a`; cambios/documentos retirados anteriores preservados.
@@ -127,7 +141,8 @@ No sumar contadores solapados ni presentar esas cifras como aceptación integral
   autorización explícita anterior nombraba `proyecto`. Solicitada autorización
   específica para datos personales/hashes, uso privado aislado y retirada en
   48 h. No se ha intentado eludir el bloqueo ni se ha obtenido ese dump.
-  El ensayo entre origen y destino reales sigue PENDIENTE de esa autorización.
+  El ensayo se resolvió después mediante copias aisladas DENTRO del NAS,
+  sin exportar datos SwissJob; resultado y límites detallados más abajo.
 - El dump core está registrado como temporal (48 h); el clúster privado debe
   retirarse también al concluir el ensayo. No se ha aplicado core0048 en
   producción ni cambiado ningún flag de escritor.
@@ -166,7 +181,7 @@ No sumar contadores solapados ni presentar esas cifras como aceptación integral
   Productores, perfiles/CDC, búsquedas/avisos y retorno de
   feedback POST-activación siguen pendientes. Punto 4 NO cerrado.
 
-### Alternativa de ensayo sin exportación de SwissJob (19-09, en curso)
+### Alternativa de ensayo sin exportación de SwissJob (19-09, completada)
 
 La autorización de exportación de `swissjobhunter` al ordenador sigue sin
 concederse y NO se ha realizado. Se abrió una alternativa de menor exposición:
@@ -176,7 +191,9 @@ privado `swissjob-f-rehearsal.goIBte` bajo Public del NAS, plazo máximo 48 h.
 El dump public de SwissJob quedó en ese directorio con modo 0600 y hash verificado
 tras traslado. Se retiró el intermedio `/tmp/unused` del contenedor postgres.
 Ese primer dump terminó con código 0 pero su stderr se suprimió por error:
-NO se deduce validez de ello; faltan restore estricto y paridad estructural.
+NO se dedujo validez de ello: posteriormente se completaron restore estricto y
+paridad estructural, con la diferencia semánticamente equivalente del CHECK
+explicada abajo.
 El ensayo no sustituye el backup operativo ni autoriza aún ningún flip.
 Retirar también el PGDATA aislado, no sólo los dumps, al concluir.
 
@@ -203,9 +220,65 @@ Retirar también el PGDATA aislado, no sólo los dumps, al concluir.
   array varchar convertido a text[] frente a cada elemento convertido a text.
   Mismos cinco literales y tabla de verdad comprobada (cinco válidos, vacío y
   futuro rechazados, NULL desconocido). No se oculta la diferencia de hash.
-  La copia core sigue restaurando índices; migración/roundtrip aún pendientes.
+  La copia core terminó después con paridad exacta: 201 constraints, 126 índices,
+  38 triggers, 378 columnas, 0 sin validar. core0048 sólo en esa copia.
+
+### Ida/vuelta preactivación confirmada dentro del NAS
+
+`docs/audits/FEEDBACK_PREACTIVATION_NAS_2026-09-19.json`: 2 perfiles, 2.159
+filas origen; plan de 112 cambios, apply=112, replay=0, revert=112 y
+revert-replay=0. Hashes de FILAS CANÓNICAS iguales antes/después en las tablas
+auditadas; origen inalterado. No se trata de igualdad física de archivos PG.
+506,168 s con 0,5 CPU/384 MB: ensayo de corrección, no benchmark de producción.
+No acredita freeze HTTP, cambios posteriores del usuario ni rollback post-corte.
+El plan privado nunca salió del NAS; sólo se exportó evidencia agregada sin PII.
+Dumps y plan registrados temporalmente durante 48 h; retirar TAMBIÉN los dos
+clústeres de ensayo y sus PGDATA al acabar (el local ya es redundante).
+
+### CH Media y PublicJobs nativos (LOCAL, tercer lote)
+
+- Ostjob/Zentraljob: normalización/raw, identidad, errores parciales, límites
+  de páginas/bytes/tiempo y fechas de admisión. Sin activación.
+- Detectado truncamiento heredado: `size` es ignorado; la API usa `pageSize`.
+  Completar exige metadata `pages`, no inferir fin por página corta. Ocho
+  regresiones rojas antes del fix; límite absoluto de petición con otra roja.
+- Lectura pública completa: Ostjob 6.453 filas/65 páginas/61,867 s;
+  Zentraljob 1.949/20/18,595 s. El comparador legacy sólo llega a sus primeros
+  100. Campos canónicos coinciden en la intersección; NO es paridad de cobertura.
+- Dos URLs CH históricas cambiaban por percent-encoding: siete regresiones
+  rojas y verdes tras preservar paths válidos y rechazar cambios de semántica.
+  Las URLs repetidas (125/34) se investigan por identidad antes de cualquier corte;
+  no presentar el conteo de fetch como número de ofertas realmente persistidas.
+- PublicJobs: SvelteKit validado (incluidos índices negativos y bool), identidad
+  por path, raw decodificado conservado, error distinto de vacío. 23 rojas antes,
+  23 verdes después. Misma respuesta pública: 24/24, sin diferencias canónicas
+  ni URLs repetidas; evidencia `NATIVE_PUBLICJOBS_PARITY_2026-09-19.json`.
+- 60 pruebas verdes combinadas con cuatro cadenas reales provider→admisión→sink;
+  después, 7 nuevas de identidad CH verdes. Contadores solapados: no sumarlos
+  como suites completas. No despliegue ni canary productivo todavía.
 
 ### Incidencia operativa descubierta en el preflight
+
+**Actualización CH Media, 20-09 (supersede el contrato de URL provisional):**
+la investigación completa encontró 23/2 grupos con `externalId` repetido y
+54/10 grupos con URL compartida; 51/8 tenían contenidos distintos. `externalId`
+es un código del ATS de la empresa, NO el id del portal. Preservar ese contrato
+antiguo habría perdido ofertas. Las dos reproducciones fueron rojas.
+
+El adaptador definitivo usa `id` numérico del portal y `/stelle/<id>` (redirect
+público comprobado a la página de detalle); `apply_url` conserva el enlace de
+candidatura separado. No se inventa identidad si falta el id. La fixture positiva
+usa ids >0; ids inválidos siguen teniendo regresión negativa. No se modifica
+el sink compartido. Nueva comparación por id sobre los mismos raw completos:
+6.427/1.946 filas, igual número de ids/URLs únicos, cero diferencias canónicas;
+64,687/18,935 s. Los conteos públicos cambiaron entre sondeos, no son un snapshot
+del NAS. Evidencia `NATIVE_CHMEDIA_PORTAL_IDENTITY_2026-09-20.json`.
+
+69 pruebas dirigidas verdes más una integración de dos plazas con ATS/URL
+compartidos (replay idempotente). **Antes del corte sigue siendo obligatorio
+reconciliar enlaces/historial de URLs legacy hacia estas identidades**, sin
+elegir arbitrariamente entre plazas que compartían URL. Fuente aún deshabilitada.
+
 
 `swissjob-backend-r5`: 1.169 reinicios observados, imagen 8c82ff5ca175 sin la
 migración publicada b46e1230a901 que su BD ya tiene. No llegaba a servir HTTP.

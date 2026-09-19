@@ -25,7 +25,7 @@ def _altas_exact_match() -> dict:
     las únicas fuentes exact-match del core (el resto son `legacy:*`, que
     comparten el handler genérico de la sombra). Imports LOCALES."""
     from jobhunt_core import import_portfolio, school_ingest
-    from jobhunt_core.harvest.providers import arbeitnow, native_json, native_rss
+    from jobhunt_core.harvest.providers import arbeitnow, native_json, native_rss, native_chmedia, native_publicjobs
 
     return {
         arbeitnow.SOURCE_NAME: arbeitnow.register_handlers,
@@ -33,6 +33,8 @@ def _altas_exact_match() -> dict:
         school_ingest.SOURCE_NAME: school_ingest.register_handlers,
         **{name: native_json.register_handlers for name in native_json.ENDPOINTS},
         **{name: native_rss.register_handlers for name in native_rss.ENDPOINTS},
+        **{name: native_chmedia.register_handlers for name in native_chmedia.DOMAINS},
+        native_publicjobs.SOURCE_NAME: native_publicjobs.register_handlers,
     }
 
 

@@ -1,0 +1,34 @@
+{
+  "date": "2026-09-20",
+  "scope": "Read-only public feed; same raw records normalized in both implementations. Not deployed; historical URL handover remains required.",
+  "reports": [
+    {
+      "complete": true,
+      "error": null,
+      "pages": 65,
+      "seconds": 64.687,
+      "raw_sha256": "72aefd6f61de797ad0c973d93fbb71165938f5dac9e02414f01d579ec31723e6",
+      "source": "ostjob",
+      "rows": 6427,
+      "canonical_differences": {},
+      "unique_identities": 6427,
+      "unique_detail_urls": 6427,
+      "apply_links": 4541,
+      "url_contract": "portal /stelle/<id>; original application retained separately; handover mapping required"
+    },
+    {
+      "complete": true,
+      "error": null,
+      "pages": 20,
+      "seconds": 18.935,
+      "raw_sha256": "c68157a1390977eb79ddbc3bae201174afde3b7ddf21a84c467b82c18ec7e8d2",
+      "source": "zentraljob",
+      "rows": 1946,
+      "canonical_differences": {},
+      "unique_identities": 1946,
+      "unique_detail_urls": 1946,
+      "apply_links": 1481,
+      "url_contract": "portal /stelle/<id>; original application retained separately; handover mapping required"
+    }
+  ]
+}

@@ -25,6 +25,9 @@ DATE_FIELDS = {
     "jobspresso": "pubDate",
     "globaljobs": "pubDate",
     "zebis": "pubDate",
+    "ostjob": "dateFirstPublished",
+    "zentraljob": "dateFirstPublished",
+    "publicjobs": "publicFrom",
 }
 
 

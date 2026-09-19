@@ -1,0 +1,16 @@
+{
+  "date": "2026-09-19",
+  "scope": "One public HTTP body replayed through native and legacy; no database writes or activation",
+  "source": "publicjobs",
+  "sha256": "4652b085458e46aacd0870b8c0c44651d4f777b249ace8a4ccbd33fbde2fb8ff",
+  "bytes": 230111,
+  "seconds": 0.6802057190216146,
+  "complete": true,
+  "error": null,
+  "legacy_rows": 24,
+  "native_rows": 24,
+  "missing": 0,
+  "extra": 0,
+  "differences": {},
+  "duplicate_urls": 0
+}

@@ -1,0 +1,91 @@
+{
+  "applied": {
+    "changed": 112,
+    "replayed": false,
+    "verdict": "verified"
+  },
+  "core_byte_equivalent": true,
+  "core_counts_hashes": {
+    "applications": [
+      1,
+      "71995cb75e25c91b0348537b9037e66589bff8b7ee6434daef77f5f7ba2031fb"
+    ],
+    "generated_documents": [
+      2,
+      "5236bf9bfe1c5fc0b252158211a7a3cb127bfbd549dae61498c5694ad0953c39"
+    ],
+    "profile_vacancy_events": [
+      0,
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    ],
+    "profile_vacancy_state": [
+      34319,
+      "96f7ff70a07438312d5ea47c5722bc3aaa1f71725687812408bf2a7b1da93033"
+    ],
+    "saved_searches": [
+      10,
+      "b846992970239ac72a259332a4b66a14ae0e915db1bc4752c0987158a629fb6e"
+    ],
+    "school_applications": [
+      54,
+      "b90c3c6cbb88e3c4a979cb3d52553a7b4418ddf2450799a669bca9cc7e8f7b0f"
+    ],
+    "school_job_details": [
+      147,
+      "8376ccf294b48347bd2e860c1d083b27fdf9b8a4fa9b1fd4d1145d61e674223c"
+    ],
+    "school_monitors": [
+      24,
+      "3f124afff77780d7f65140c1e3fbc044df73f29f72bb43d54f172e1650e7b379"
+    ],
+    "source_listings": [
+      44744,
+      "fc4561dac761e8186b1e1fd87094e0ffe8fc202a5df5f25ba7194e0fb6ab0dba"
+    ],
+    "vacancies": [
+      124939,
+      "18ebb50ebd96521afbd61091f1c7911a4ecd435fa19fa920dda15288b314dae8"
+    ]
+  },
+  "limits": "isolated copies; no HTTP freeze probe, no new postactivation edits, no production flip",
+  "plan_changes": 112,
+  "profiles": 2,
+  "replay": {
+    "changed": 0,
+    "replayed": true,
+    "verdict": "verified"
+  },
+  "reverse": {
+    "changed": 112,
+    "replayed": false,
+    "verdict": "verified"
+  },
+  "reverse_replay": {
+    "changed": 0,
+    "replayed": true,
+    "verdict": "verified"
+  },
+  "seconds": 506.168,
+  "source_counts_hashes": {
+    "jobs": [
+      29262,
+      "07987c9fa1c0c6fc670e89dca27aa4b255c8c6f83cd41238e77c1387d1d66824"
+    ],
+    "match_results": [
+      2159,
+      "546f5ad84121ecd40c27f33067e1bb45ff59124c92b0ca024a61aca5569f59c5"
+    ],
+    "user_profiles": [
+      2,
+      "7d736a896618980431a63bfb73788196db7ddaa21d156b57892314f5ed7b820b"
+    ],
+    "users": [
+      2,
+      "42df310a07e958e597b34f945d0603635ac88d10b0dc30847feb4af7ce1a9fcd"
+    ]
+  },
+  "source_rows": 2159,
+  "source_unchanged": true,
+  "verdict": "preactivation_roundtrip_verified",
+  "scope": "Isolated NAS copies; canonical row SHA256 hashes, not physical PostgreSQL bytes. No production cutover."
+}
