@@ -15,6 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
+# Runner-owned, semantic scope policy; not an upstream provider parameter.
+ADMISSION_WINDOW_PARAM = "admission_window_days"
+
 
 class ProviderConfigError(ValueError):
     """Configuración del scope inválida (p.ej. hard_max_pages=0) — error
@@ -58,6 +61,8 @@ class BaseProvider(ABC):
     def params_fingerprint(self, params: dict) -> str:
         """Hash canónico del subconjunto semántico de params."""
         semantic = {k: params.get(k) for k in self.SEMANTIC_PARAMS}
+        if ADMISSION_WINDOW_PARAM in params:
+            semantic[ADMISSION_WINDOW_PARAM] = params[ADMISSION_WINDOW_PARAM]
         raw = json.dumps(semantic, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(raw.encode()).hexdigest()
 

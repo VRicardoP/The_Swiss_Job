@@ -1,0 +1,144 @@
+"""Legacy RSS text/tag extraction, ported unchanged for source parity in F.
+
+No BFF imports. Remove the duplicate in backend only when its producers retire.
+"""
+
+import re
+
+JOB_TAGS: list[str] = [
+    # Idiomas (diferenciador clave del perfil)
+    "bilingual",
+    "multilingual",
+    "native english",
+    "english",
+    "spanish",
+    "japanese",
+    "french",
+    # Certificaciones educativas y lingüísticas
+    "celta",
+    "tefl",
+    "tesol",
+    "ipgce",
+    "jlpt",
+    "cambridge",
+    "pearson",
+    "google educator",
+    # Contenido, editorial y localización
+    "content editor",
+    "content writer",
+    "copy editor",
+    "proofreader",
+    "copywriter",
+    "localization specialist",
+    "localisation specialist",
+    "linguistic quality assurance",
+    "lqa",
+    "mtpe",
+    "post-editing",
+    "technical writer",
+    "documentation specialist",
+    "educational content",
+    # IA — evaluación y anotación de datos
+    "rlhf",
+    "ai trainer",
+    "ai evaluator",
+    "content evaluator",
+    "data annotation",
+    "data annotator",
+    "search quality rater",
+    "quality rater",
+    "prompt engineer",
+    # RRHH, L&D y People Operations
+    "instructional design",
+    "instructional designer",
+    "elearning",
+    "e-learning",
+    "learning and development",
+    "l&d",
+    "talent acquisition",
+    "hr coordinator",
+    "hr administrator",
+    "onboarding",
+    "training coordinator",
+    "people operations",
+    "payroll",
+    "workday",
+    "bamboohr",
+    "hris",
+    # Administración y operaciones
+    "virtual assistant",
+    "executive assistant",
+    "administrative coordinator",
+    "operations coordinator",
+    "project coordinator",
+    "office manager",
+    "event coordinator",
+    # Plataformas EdTech y herramientas de autoría
+    "google classroom",
+    "moodle",
+    "articulate rise",
+    "articulate storyline",
+    "lms",
+    "education perfect",
+    "sdl trados",
+    "cat tool",
+    # Customer Success y relaciones con clientes
+    "customer success",
+    "customer support",
+    "client relations",
+    "customer experience",
+    "guest experience",
+    # Herramientas de productividad y negocio
+    "google workspace",
+    "microsoft office",
+    "hubspot",
+    "crm",
+    "asana",
+    "trello",
+    "notion",
+    "clickup",
+    # Hostelería
+    "hotel management",
+    "hospitality",
+    "opera pms",
+    "front office",
+    # Organismos internacionales y ONGs
+    "united nations",
+    "unesco",
+    "unicef",
+    "ilo",
+    "oecd",
+    "ngo",
+    "programme assistant",
+    "documentation assistant",
+    # Metodologías de gestión
+    "project management",
+    "pmp",
+    "capm",
+    "agile",
+    "scrum",
+]
+
+def strip_html_tags(text: str) -> str:
+    """Remove HTML tags and normalize whitespace."""
+    if not text:
+        return ""
+    cleaned = re.sub(r"<[^>]+>", " ", text)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+
+def extract_job_skills(title: str, description: str) -> list[str]:
+    """Extract relevant skills mentioned in job title and description.
+
+    Returns at most 15 unique skills.
+    """
+    found: list[str] = []
+    combined = f"{title} {description}".lower()
+    for tag in JOB_TAGS:
+        if tag.lower() in combined and tag not in found:
+            found.append(tag)
+    return found[:15]
+
+
+

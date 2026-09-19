@@ -80,7 +80,7 @@ No sumar contadores solapados ni presentar esas cifras como aceptación integral
   corpus y 16 en cuarentena sin vacancy_id; estas últimas incluyen 2 positivas.
   Todas conservan observación escolar en core. No se pueden omitir ni inventar
   vacantes para migrarlas.
-- Preparada core0048 (NO publicada/desplegada): feedback e implícitos pertenecen
+- Preparada core0048 (versionada en 3db1bec, NO desplegada): feedback e implícitos pertenecen
   al estado escolar existente. Conserva borrador/contexto/status; idempotencia y
   ownership bajo lock de perfil. Guardados incluyen cuarentenas con su identidad
   escolar, no UUID de vacante ficticio. Los rechazos siguen filtrándose si la
@@ -131,6 +131,54 @@ No sumar contadores solapados ni presentar esas cifras como aceptación integral
 - El dump core está registrado como temporal (48 h); el clúster privado debe
   retirarse también al concluir el ensayo. No se ha aplicado core0048 en
   producción ni cambiado ningún flag de escritor.
+
+### Admisión y cuatro RSS nativos (LOCAL, 19-09)
+
+- Portado el parser de fechas ADR-10 sin dependencia del backend. Parámetro de
+  scope `admission_window_days` explícito y semántico: cambiarlo reinicia cursor;
+  nunca se envía al portal. En el corte se debe declarar 7 para estas fuentes.
+  Ausencia conserva el comportamiento anterior de los scopes ya existentes;
+  no es una autorización para activar nuevas fuentes sin su política.
+- La ventana sólo rechaza ALTAS. Refresca identidades nativas conocidas y URLs
+  EXACTAS de la misma fuente legacy: ni otra fuente ni un fragmento parecido
+  dan por conocida una oferta. Fecha ausente/corrupta no se inventa. Un feed
+  no vacío sin ninguna fecha válida queda `partial/admission_missing_dates`,
+  incluso si permite refrescar conocidas. Contadores y cursor son atómicos
+  con la persistencia y quedan fuera del cursor entregado al provider.
+- Regresiones iniciales: 9 rojas antes de implementar. Después: **69 verdes**
+  incluyendo fechas, runner previo, fuente/URL exacta, cambio concurrente de
+  política, cutoff inclusivo, configuración inválida y rollback del sink.
+- WWR/EU Remote Jobs/Jobspresso/GlobalJobs: RSS nativo con identidad GUID/URL
+  estable, respuesta acotada, DTD rechazado también en UTF-16, errores visibles,
+  preservación del XML del item (contenido, no formato byte a byte) y filtros/
+  extracción portados del legacy. Sin nueva dependencia ni activación.
+- **20 regresiones rojas antes** del adaptador; **26 verdes después**, incluidas
+  4 cadenas reales provider→admisión→sink→canónica y repetición sin duplicados.
+- Paridad sobre UNA respuesta pública real por fuente, sin escrituras en BD:
+  WWR 84/84, EU Remote 15/15, Jobspresso 16/16, GlobalJobs 207/207; 0 ausentes,
+  0 adicionales, 0 discrepancias de campos canónicos, 0 URLs repetidas. Evidencia:
+  `docs/audits/NATIVE_RSS_PARITY_2026-09-19.json`. No equivale a canary NAS.
+- Coste preliminar de reconocimiento por URL en la copia core: EXPLAIN ANALYZE
+  142 ms para 100 URLs, 20.163 slots examinados; máquina local, caché fría, NO
+  presupuesto NAS. Registrar para punto 5; no añadir índices por conjetura.
+- Suite completa final de este lote: **1.335 verdes, 931,62 s**, un aviso previo
+  de deprecación Starlette/httpx. Código inmóvil mientras corrió la suite.
+  Productores, perfiles/CDC, búsquedas/avisos y retorno de
+  feedback POST-activación siguen pendientes. Punto 4 NO cerrado.
+
+### Alternativa de ensayo sin exportación de SwissJob (19-09, en curso)
+
+La autorización de exportación de `swissjobhunter` al ordenador sigue sin
+concederse y NO se ha realizado. Se abrió una alternativa de menor exposición:
+copia y restauración íntegramente DENTRO del NAS, sin red/puertos publicados.
+Contenedor `swissjob-f-rehearsal-20260919`, memoria 384 MB, CPU 0,5; directorio
+privado `swissjob-f-rehearsal.goIBte` bajo Public del NAS, plazo máximo 48 h.
+El dump public de SwissJob quedó en ese directorio con modo 0600 y hash verificado
+tras traslado. Se retiró el intermedio `/tmp/unused` del contenedor postgres.
+Ese primer dump terminó con código 0 pero su stderr se suprimió por error:
+NO se deduce validez de ello; faltan restore estricto y paridad estructural.
+El ensayo no sustituye el backup operativo ni autoriza aún ningún flip.
+Retirar también el PGDATA aislado, no sólo los dumps, al concluir.
 
 ### Incidencia operativa descubierta en el preflight
 

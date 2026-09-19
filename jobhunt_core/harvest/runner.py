@@ -24,7 +24,10 @@ import httpx
 import sqlalchemy as sa
 
 from jobhunt_core.database import SessionLocal
-from jobhunt_core.harvest.provider import BaseProvider, ListingSink, ProviderConfigError
+from jobhunt_core.harvest.admission import ADMISSION_CURSOR_KEY, admission_window, admit_listings
+from jobhunt_core.harvest.provider import (
+    ADMISSION_WINDOW_PARAM, BaseProvider, ListingSink, ProviderConfigError,
+)
 from jobhunt_core.harvest.types import ScopeRunResult
 
 logger = logging.getLogger(__name__)
@@ -104,8 +107,10 @@ async def run_scope(
         provider_cursor = _provider_cursor(snapshot, fingerprint, scope_id)
         await session.rollback()  # cierra la tx de lectura: el fetch va fuera de tx
 
+        window = admission_window(provider.name, params)
+        fetch_params = {k: v for k, v in params.items() if k != ADMISSION_WINDOW_PARAM}
         try:
-            result = await provider.fetch_new(params, provider_cursor, http)
+            result = await provider.fetch_new(fetch_params, provider_cursor, http)
         except ProviderConfigError:
             # Config PERMANENTE inválida (rev. 2ª #3): NO es fallo de la
             # fuente (sin backoff) — sube a la tarea, que falla sin retry.
@@ -169,6 +174,7 @@ async def run_scope(
                 )
                 return ScopeRunResult(scope_id=scope_id, status="stale")
 
+            result = await admit_listings(session, provider.name, result, window)
             await sink.handle(session, scope_id, result.listings)
             new_cursor = {**result.next_cursor, FINGERPRINT_KEY: fingerprint}
             # Un barrido INCOMPLETO se persiste (sus listings son válidos) pero
@@ -220,6 +226,7 @@ async def run_scope(
             scope_id=scope_id, status=status,
             listings=len(result.listings), pages=result.pages_fetched,
             error=result.error[:200] if result.error else None,
+            detail=result.next_cursor.get(ADMISSION_CURSOR_KEY, {}),
         )
 
 
@@ -233,7 +240,9 @@ def _provider_cursor(stored: dict | None, fingerprint: str, scope_id: str) -> di
             "scope %s: parámetros semánticos cambiaron, cursor reiniciado", scope_id
         )
         return None
-    cursor = {k: v for k, v in stored.items() if k != FINGERPRINT_KEY}
+    cursor = {
+        k: v for k, v in stored.items() if k not in {FINGERPRINT_KEY, ADMISSION_CURSOR_KEY}
+    }
     return cursor or None
 
 

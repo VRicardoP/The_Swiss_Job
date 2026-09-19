@@ -3,10 +3,12 @@
 from jobhunt_core.harvest.provider import BaseProvider
 from jobhunt_core.harvest.providers.arbeitnow import ArbeitnowProvider
 from jobhunt_core.harvest.providers.native_json import ENDPOINTS, NativeJSONProvider
+from jobhunt_core.harvest.providers.native_rss import ENDPOINTS as RSS_ENDPOINTS, NativeRSSProvider
 
 _PROVIDERS: dict[str, BaseProvider] = {
     ArbeitnowProvider.name: ArbeitnowProvider(),
     **{name: NativeJSONProvider(name) for name in ENDPOINTS},
+    **{name: NativeRSSProvider(name) for name in RSS_ENDPOINTS},
 }
 
 

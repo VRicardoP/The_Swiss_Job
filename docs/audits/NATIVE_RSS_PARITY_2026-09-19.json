@@ -1,0 +1,13 @@
+{
+  "date": "2026-09-19",
+  "scope": "one public feed fetch per source, same response replayed through native and legacy adapters; no DB writes, no scheduler activation",
+  "environment": "local swissjob-core:dev with mounted working tree; local swissjob-worker for legacy parsing",
+  "compared_fields": ["title", "company", "description", "location", "remote", "tags", "salary"],
+  "sources": [
+    {"source":"weworkremotely","sha256":"7b434872f005cd4b9078666522caa0d0c497a03c96635ab9f918a728775220f5","bytes":847372,"seconds":0.581,"complete":true,"legacy_rows":84,"native_rows":84,"missing":0,"extra":0,"field_differences":{},"duplicate_urls":0},
+    {"source":"euremotejobs","sha256":"26b88d4865fce7c0676cff4a5d05a265c7a2d958a5cd3cb4b480493f70968f61","bytes":182379,"seconds":0.248,"complete":true,"legacy_rows":15,"native_rows":15,"missing":0,"extra":0,"field_differences":{},"duplicate_urls":0},
+    {"source":"jobspresso","sha256":"5717626ea3f41b49b9f02db1dbe5305a19b39e5329f9d3ca6abe49c898f9d2ae","bytes":192101,"seconds":0.122,"complete":true,"legacy_rows":16,"native_rows":16,"missing":0,"extra":0,"field_differences":{},"duplicate_urls":0},
+    {"source":"globaljobs","sha256":"7ffc1c5c01ae0b44078ae25679c8a14accf95b1af00eea3030fd828d0eb50e9f","bytes":174597,"seconds":0.746,"complete":true,"legacy_rows":207,"native_rows":207,"missing":0,"extra":0,"field_differences":{},"duplicate_urls":0}
+  ],
+  "limits": ["live feeds change: this is dated evidence, not a frozen quality oracle", "no NAS canary or writer flip", "no admission or enrichment end-to-end parity claimed for the other providers", "request timings are local, not NAS performance acceptance"]
+}
