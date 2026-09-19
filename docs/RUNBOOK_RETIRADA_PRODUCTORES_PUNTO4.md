@@ -85,8 +85,9 @@ feedback no es un rollback POST-activación.
 
 ## Evidencia disponible y límites
 
-Core `65150ec`: **1.462 pruebas verdes**, incluidas NAV/TheHub. BFF nuevo: 147
-pruebas dirigidas verdes, suite completa en curso. CH Media, PublicJobs, JSON y RSS tienen
+Core `65150ec`: **1.462 pruebas verdes**, incluidas NAV/TheHub. BFF `b19c865`:
+**2.440 passed, 3 skipped, 4 xfailed**, tras 147 dirigidas. Suites en serie.
+CH Media, PublicJobs, JSON y RSS tienen
 evidencias locales en `docs/audits/NATIVE_*`. No equivalen al canary NAS.
 TheHub: 42/42, tres páginas, cero diferencias en dos verificaciones públicas.
 NAV: paridad de las 978 recibidas, híbrido incompleto y 429 confirmado; la

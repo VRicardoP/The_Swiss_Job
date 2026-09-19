@@ -20,8 +20,8 @@ se realizó: el ensayo se resolvió dentro del NAS.
 Core `65150ec`: **1.462 passed en 941,12 s**, un aviso previo Starlette/httpx.
 Código core inmóvil durante la suite. Incluye NAV/TheHub; CH Media/PublicJobs
 también estaban en la suite anterior `e304100` (1.425 verdes).
-BFF anterior: **2.422 passed, 3 skipped, 4 xfail**. Lote de retirada por fuente y
-protección del CV: **147 pruebas dirigidas verdes**; suite completa en curso.
+BFF `b19c865`: **2.440 passed, 3 skipped, 4 xfailed**, 357,77 s y cinco avisos
+preexistentes. Suite completa tras 147 dirigidas; ambas en serie con el core.
 
 ### Lote local del 20-09 (sin activación productiva)
 
