@@ -28,7 +28,19 @@ DATE_FIELDS = {
     "ostjob": "dateFirstPublished",
     "zentraljob": "dateFirstPublished",
     "publicjobs": "publicFrom",
+    "nav_arbeidsplassen": ("_source", "published"),
+    "thehub": "createdAt",
 }
+
+def publication_date(source, payload):
+    """Read only the declared portal date, including NAV's raw ES envelope."""
+    path = DATE_FIELDS[source]
+    path = (path,) if isinstance(path, str) else path
+    value = payload
+    for key in path:
+        value = value.get(key) if isinstance(value, dict) else None
+    return parse_published_at(value)
+
 
 
 def admission_window(source, params):
@@ -56,7 +68,7 @@ async def admit_listings(session, source, result, window, *, now=None):
     if window is None:
         return result
     cutoff = (now or datetime.now(timezone.utc)) - window
-    dates = [parse_published_at(row.payload.get(DATE_FIELDS[source])) for row in result.listings]
+    dates = [publication_date(source, row.payload) for row in result.listings]
     outside = [row for row, date in zip(result.listings, dates) if date is None or date < cutoff]
     known_ids, known_urls = set(), set()
     if outside:

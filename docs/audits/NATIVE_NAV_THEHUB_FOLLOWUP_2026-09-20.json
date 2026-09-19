@@ -1,0 +1,25 @@
+{
+  "date": "2026-09-20",
+  "scope": "Public HTTP only, no source activation and no production writes",
+  "nav": {
+    "initial_hybrid_result": "partial after 900 rows",
+    "separate_probe_at_offset_900": 429,
+    "retry_after_header": null,
+    "change": "10 second inter-page pause bounded by remaining 600 second sweep; 429 is not retried within sweep",
+    "second_sweep": "HTTPStatusError on first request; no complete coverage demonstrated",
+    "activation_ready": false
+  },
+  "thehub": {
+    "complete": true,
+    "pages": 3,
+    "rows": 42,
+    "seconds": 41.779,
+    "raw_sha256": "370eb8b3568f5b60e87a3eae97ae18d7daf9a0a62e50912c160db44bdcda36c7",
+    "missing": 0,
+    "extra": 0,
+    "canonical_differences": {},
+    "duplicate_urls": 0,
+    "activation_ready": false,
+    "activation_requires": "coordinated legacy drain, state/identity handover and served-feed acceptance"
+  }
+}

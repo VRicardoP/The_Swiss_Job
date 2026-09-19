@@ -26,6 +26,7 @@ def _altas_exact_match() -> dict:
     comparten el handler genérico de la sombra). Imports LOCALES."""
     from jobhunt_core import import_portfolio, school_ingest
     from jobhunt_core.harvest.providers import arbeitnow, native_json, native_rss, native_chmedia, native_publicjobs
+    from jobhunt_core.harvest.providers import native_nav, native_thehub
 
     return {
         arbeitnow.SOURCE_NAME: arbeitnow.register_handlers,
@@ -35,6 +36,8 @@ def _altas_exact_match() -> dict:
         **{name: native_rss.register_handlers for name in native_rss.ENDPOINTS},
         **{name: native_chmedia.register_handlers for name in native_chmedia.DOMAINS},
         native_publicjobs.SOURCE_NAME: native_publicjobs.register_handlers,
+        native_nav.SOURCE_NAME: native_nav.register_handlers,
+        native_thehub.SOURCE_NAME: native_thehub.register_handlers,
     }
 
 

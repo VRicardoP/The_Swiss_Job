@@ -6,6 +6,8 @@ from jobhunt_core.harvest.providers.native_json import ENDPOINTS, NativeJSONProv
 from jobhunt_core.harvest.providers.native_rss import ENDPOINTS as RSS_ENDPOINTS, NativeRSSProvider
 from jobhunt_core.harvest.providers.native_chmedia import DOMAINS as CHMEDIA_DOMAINS, CHMediaProvider
 from jobhunt_core.harvest.providers.native_publicjobs import PublicJobsProvider
+from jobhunt_core.harvest.providers.native_nav import NavProvider
+from jobhunt_core.harvest.providers.native_thehub import TheHubProvider
 
 _PROVIDERS: dict[str, BaseProvider] = {
     ArbeitnowProvider.name: ArbeitnowProvider(),
@@ -13,6 +15,8 @@ _PROVIDERS: dict[str, BaseProvider] = {
     **{name: NativeRSSProvider(name) for name in RSS_ENDPOINTS},
     **{name: CHMediaProvider(name) for name in CHMEDIA_DOMAINS},
     PublicJobsProvider.name: PublicJobsProvider(),
+    NavProvider.name: NavProvider(),
+    TheHubProvider.name: TheHubProvider(),
 }
 
 
