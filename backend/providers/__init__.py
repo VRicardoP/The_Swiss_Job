@@ -4,6 +4,7 @@ import logging
 
 from config import settings
 from services.job_service import BaseJobProvider
+from services.legacy_sources import disabled_sources
 from providers.adzuna import AdzunaProvider
 from providers.arbeitnow import ArbeitnowProvider
 from providers.careerjet import CareerjetProvider
@@ -123,8 +124,11 @@ def _has_required_key(name: str) -> bool:
 def get_provider(name: str) -> BaseJobProvider | None:
     """Get a single provider instance by source name.
 
-    Returns None if the provider is unknown or its API key is missing.
+    Returns None if unknown, handed to core, or missing its API key.
     """
+    disabled = disabled_sources(settings.LEGACY_DISABLED_PROVIDERS, _PROVIDER_CLASSES)
+    if name in disabled:
+        return None
     cls = _PROVIDER_CLASSES.get(name)
     if cls is None:
         return None
@@ -134,8 +138,12 @@ def get_provider(name: str) -> BaseJobProvider | None:
 
 
 def get_all_providers() -> list[BaseJobProvider]:
-    """Return instances of all enabled providers (skips those missing API keys)."""
-    return [cls() for name, cls in _PROVIDER_CLASSES.items() if _has_required_key(name)]
+    """Construct only enabled sources, including the per-source handover guard."""
+    disabled = disabled_sources(settings.LEGACY_DISABLED_PROVIDERS, _PROVIDER_CLASSES)
+    return [
+        cls() for name, cls in _PROVIDER_CLASSES.items()
+        if name not in disabled and _has_required_key(name)
+    ]
 
 
 def get_provider_names() -> list[str]:
@@ -146,9 +154,14 @@ def get_provider_names() -> list[str]:
 def log_provider_status() -> dict[str, str]:
     """Log which providers are enabled/disabled and why. Returns status dict."""
     status: dict[str, str] = {}
+    disabled_sources_set = disabled_sources(
+        settings.LEGACY_DISABLED_PROVIDERS, _PROVIDER_CLASSES
+    )
     for name in _PROVIDER_CLASSES:
         key_attr = _KEY_REQUIREMENTS.get(name)
-        if key_attr is None:
+        if name in disabled_sources_set:
+            status[name] = "disabled (core handover)"
+        elif key_attr is None:
             status[name] = "enabled"
         elif bool(getattr(settings, key_attr, "")):
             status[name] = "enabled"

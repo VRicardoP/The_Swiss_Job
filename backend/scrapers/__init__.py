@@ -1,5 +1,7 @@
 """Scraper registry: discover and instantiate all HTML-scraping providers."""
 
+from config import settings
+from services.legacy_sources import disabled_sources
 from scrapers.financejobs import FinancejobsScraper
 from scrapers.gastrojob import GastrojobScraper
 from scrapers.irishjobs import IrishJobsScraper
@@ -52,13 +54,17 @@ _SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
 
 
 def get_all_scrapers() -> list[BaseJobProvider]:
-    """Return instances of all registered scrapers."""
-    return [cls() for cls in _SCRAPER_CLASSES.values()]
+    """Construct only scrapers not handed over to the core."""
+    disabled = disabled_sources(settings.LEGACY_DISABLED_SCRAPERS, _SCRAPER_CLASSES)
+    return [cls() for name, cls in _SCRAPER_CLASSES.items() if name not in disabled]
 
 
 def get_scraper(name: str) -> BaseJobProvider | None:
     """Return a single scraper instance by name, or None."""
     cls = _SCRAPER_CLASSES.get(name)
+    disabled = disabled_sources(settings.LEGACY_DISABLED_SCRAPERS, _SCRAPER_CLASSES)
+    if name in disabled:
+        return None
     return cls() if cls else None
 
 

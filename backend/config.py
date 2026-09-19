@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     SCHEDULER_ENABLED: bool = True
     SCHEDULER_FETCH_INTERVAL_MINUTES: int = 30
 
+    # Per-source core handover (JSON arrays of exact registry names).
+    # Empty preserves current operation. Requires worker drain/restart BEFORE
+    # core activation; startup flags cannot revoke a task already in flight.
+    LEGACY_DISABLED_PROVIDERS: list[str] = Field(default_factory=list)
+    LEGACY_DISABLED_SCRAPERS: list[str] = Field(default_factory=list)
+
     # Cosecha diaria autónoma: encadena fetch → embeddings → dedup → matching
     # UNA vez al día a hora VARIABLE (patrón circadiano; evita intervalos de
     # reloj, ver a.txt §5/§10). Cuando está activa, sustituye al fetch por

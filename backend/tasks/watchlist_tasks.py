@@ -33,8 +33,16 @@ def _get_watchlist_sources() -> tuple[str, ...]:
     la lista hardcoded cuando se añadían nuevos scrapers (Fase 2-3).
     """
     from scrapers import _SCRAPER_CLASSES
+    from config import settings
+    from services.legacy_sources import disabled_sources
 
-    return tuple(k for k in _SCRAPER_CLASSES if k.startswith("swiss_schools_"))
+    # Handed-over sources no longer update legacy compliance timestamps. Their
+    # health belongs to core; alerting here would invent a silent-scraper fault.
+    disabled = disabled_sources(settings.LEGACY_DISABLED_SCRAPERS, _SCRAPER_CLASSES)
+    return tuple(
+        k for k in _SCRAPER_CLASSES
+        if k.startswith("swiss_schools_") and k not in disabled
+    )
 
 
 # Umbral de "scraper silencioso": si lleva más de N horas sin éxito

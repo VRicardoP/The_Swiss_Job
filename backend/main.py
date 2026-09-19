@@ -81,6 +81,12 @@ async def _warm_embedding_model() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _validate_security_config()
+    # Validate handover BEFORE SSE, warmup, or scheduler tasks are armed.
+    from scrapers import get_scraper_names
+    from services.legacy_sources import disabled_sources
+    disabled_sources(settings.LEGACY_DISABLED_SCRAPERS, get_scraper_names())
+    log_provider_status()
+
     # Startup — SSE Manager (Redis pub/sub)
     redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=False)
     sse = SSEManager(redis_client, queue_maxsize=settings.SSE_QUEUE_MAXSIZE)
@@ -95,7 +101,6 @@ async def lifespan(app: FastAPI):
         else None
     )
 
-    log_provider_status()
     # El scheduler corre en UN SOLO proceso (leader-lock en Redis) para evitar
     # el doble disparo con varios workers de gunicorn.
     scheduler_task = asyncio.create_task(run_scheduler_with_leader_lock())

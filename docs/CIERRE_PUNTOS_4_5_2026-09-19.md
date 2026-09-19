@@ -1,6 +1,11 @@
 # Cierre de puntos 4 y 5 — ejecución en curso
 
 Autorización: petición del propietario del 19-09-2026. Orden obligatorio:
+Actualización de alcance del propietario (20-09): el objetivo activo queda
+restringido a **punto 4: productores y retirada legacy**. Punto 5, cron y entrega
+final quedan fuera de esta ejecución salvo sus precondiciones de seguridad
+necesarias para el corte. La lista posterior conserva el plan anterior como contexto.
+
 productores/retirada → rendimiento → cron/alarma → aceptación integral → entrega.
 No confundir avances locales con cierre desplegado. No se cambia el gate de calidad.
 
@@ -12,10 +17,35 @@ Los apartados de avance son históricos; este resumen y la evidencia posterior
 superseden sus pendientes de restauración. La exportación de SwissJob al PC no
 se realizó: el ensayo se resolvió dentro del NAS.
 
-HEAD verificado antes del lote actual: `5cded2b`, **1.355 passed en 948,22 s**,
-un aviso previo Starlette/httpx; árbol de código inmóvil durante la suite.
-La costura BFF no cambió desde sus **2.422 passed, 3 skipped, 4 xfail**.
-Las nuevas pruebas CH Media/PublicJobs aún requieren suite completa del lote.
+Core `65150ec`: **1.462 passed en 941,12 s**, un aviso previo Starlette/httpx.
+Código core inmóvil durante la suite. Incluye NAV/TheHub; CH Media/PublicJobs
+también estaban en la suite anterior `e304100` (1.425 verdes).
+BFF anterior: **2.422 passed, 3 skipped, 4 xfail**. Lote de retirada por fuente y
+protección del CV: **147 pruebas dirigidas verdes**; suite completa en curso.
+
+### Lote local del 20-09 (sin activación productiva)
+
+- NAV: dos scopes de remoto, raw ES conservado, paginación por filas recibidas,
+  fechas anidadas y techo temporal. La comprobación pública devolvió 78 completas
+  y 900 parciales (429 confirmado después). Segunda descarga falló al inicio.
+  Pausa conservadora 10 s/página, sin reintento inmediato al 429; no se afirma
+  una cuota oficial ni cobertura completa. **No listo para activar**.
+- TheHub: detalle validado por identidad; si falla, no publica un listado sin
+  descripción que destruya la canónica previa. Dos verificaciones: 42/42, tres
+  páginas, cero diferencias de contenido. Pendiente canary/traspaso, no habilitado.
+- Retirada por fuente: listas de arranque para providers/scrapers; nombres
+  desconocidos fallan antes de construir productores. Igual guard en acceso
+  individual y colectivo. Se valida antes de armar tareas del BFF. Catálogo e
+  historial conservados, monitor legacy excluye scrapers transferidos. **No
+  cancela instancias en vuelo**: drenar/recrear antes de activar el core.
+- CV: siete regresiones rojas sobre tareas anteriores; análisis viejo ya no pisa
+  edición/borrado posterior ni publica un vector de entradas anteriores. Relectura
+  bajo lock corto, inferencia fuera de transacción, aviso SSE después de soltar
+  el lock. Esto no cierra todavía la entrega del perfil público al core.
+- Retirada de copia redundante LOCAL completada: contenedor
+  `swissjob-f-restore-20260919`, PGDATA y core.dump de su directorio privado /tmp.
+  La copia aislada NAS sigue disponible y registrada; producción no se tocó.
+- Secuencia de corte y límites: `docs/RUNBOOK_RETIRADA_PRODUCTORES_PUNTO4.md`.
 
 
 ## Preflight confirmado

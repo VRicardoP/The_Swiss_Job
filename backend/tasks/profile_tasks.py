@@ -78,6 +78,7 @@ async def _analyze_and_autofill_async(user_id: str) -> dict[str, Any]:
     from services.gemini_service import GeminiService
     from services.groq_service import GroqService
     from services.job_matcher import JobMatcher
+    from services.profile_inputs import autofill_snapshot, embedding_snapshot
 
     uid = uuid_mod.UUID(user_id)
     r = aioredis.from_url(settings.REDIS_URL)
@@ -113,6 +114,7 @@ async def _analyze_and_autofill_async(user_id: str) -> dict[str, Any]:
                 await progress("error", 100, "No CV found to analyze")
                 return {"status": "no_cv"}
             cv_text = p.cv_text
+            original = autofill_snapshot(p)
 
         # --- Extracción con LLM (la parte lenta) ---
         await progress("analyzing", 25, "Analyzing your CV with AI…")
@@ -125,8 +127,13 @@ async def _analyze_and_autofill_async(user_id: str) -> dict[str, Any]:
             p = (
                 await db.execute(
                     select(UserProfile).where(UserProfile.user_id == uid)
+                    .with_for_update().execution_options(populate_existing=True)
                 )
-            ).scalar_one()
+            ).scalar_one_or_none()
+            if p is None or autofill_snapshot(p) != original:
+                await db.rollback()  # release the row before best-effort SSE I/O
+                await progress("done", 100, "Newer profile kept; old analysis discarded")
+                return {"status": "discarded_profile_changed"}
             if fields.get("title"):
                 p.title = fields["title"]
             if fields.get("skills"):
@@ -142,6 +149,7 @@ async def _analyze_and_autofill_async(user_id: str) -> dict[str, Any]:
                 p.remote_pref = RemotePreference(fields["remote_pref"])
             title_for_emb = p.title or ""
             skills_for_emb = list(p.skills or [])
+            vector_input = embedding_snapshot(p)
             await db.commit()
 
         # --- Embedding FUERA de transacción (evita idle_in_transaction si tarda) ---
@@ -155,8 +163,13 @@ async def _analyze_and_autofill_async(user_id: str) -> dict[str, Any]:
             p = (
                 await db.execute(
                     select(UserProfile).where(UserProfile.user_id == uid)
+                    .with_for_update().execution_options(populate_existing=True)
                 )
-            ).scalar_one()
+            ).scalar_one_or_none()
+            if p is None or embedding_snapshot(p) != vector_input:
+                await db.rollback()
+                await progress("done", 100, "Newer profile kept; old indexing discarded")
+                return {"status": "discarded_profile_changed"}
             p.cv_embedding = emb.tolist()
             await db.commit()
 

@@ -26,7 +26,7 @@ def generate_profile_embedding(self, user_id: str) -> dict[str, Any]:
 
 
 async def _generate_profile_embedding_async(user_id: str) -> dict[str, Any]:
-    """Async implementation: load cv_text, encode, store cv_embedding."""
+    """Snapshot, encode outside a DB transaction, publish only if still current."""
     import uuid as uuid_mod
 
     from sqlalchemy import select
@@ -34,6 +34,7 @@ async def _generate_profile_embedding_async(user_id: str) -> dict[str, Any]:
     from database import task_session
     from models.user_profile import UserProfile
     from services.job_matcher import JobMatcher
+    from services.profile_inputs import embedding_snapshot
 
     uid = uuid_mod.UUID(user_id)
     matcher = JobMatcher()
@@ -58,7 +59,17 @@ async def _generate_profile_embedding_async(user_id: str) -> dict[str, Any]:
             parts.append(" ".join(profile.skills))
         combined_text = " ".join(parts)
 
-        embedding = await asyncio.to_thread(matcher.encode, combined_text)
+        vector_input = embedding_snapshot(profile)
+        await db.commit()
+
+    embedding = await asyncio.to_thread(matcher.encode, combined_text)
+    async with task_session() as db:
+        profile = (await db.execute(
+            select(UserProfile).where(UserProfile.user_id == uid)
+            .with_for_update().execution_options(populate_existing=True)
+        )).scalar_one_or_none()
+        if profile is None or embedding_snapshot(profile) != vector_input:
+            return {"status": "discarded_profile_changed"}
         profile.cv_embedding = embedding.tolist()
         await db.commit()
 
