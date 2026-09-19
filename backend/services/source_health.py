@@ -37,7 +37,9 @@ async def oldest_attempt_first(db: AsyncSession, names: list[str]) -> list[str]:
                             .where(SourceHealth.source_key.in_(names)))
     attempts = dict(rows.all())
     earliest = datetime.min.replace(tzinfo=timezone.utc)
-    return sorted(names, key=lambda name: (attempts.get(name) or earliest, name))
+    # Python's stable sort preserves registry order for equal/unseen attempts.
+    # Only evidence of a more recent attempt should move a source behind another.
+    return sorted(names, key=lambda name: attempts.get(name) or earliest)
 
 
 async def record_attempt(db: AsyncSession, source_key: str) -> None:
