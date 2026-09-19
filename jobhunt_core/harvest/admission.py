@@ -30,6 +30,7 @@ DATE_FIELDS = {
     "publicjobs": "publicFrom",
     "nav_arbeidsplassen": ("_source", "published"),
     "thehub": "createdAt",
+    "jobgether": "createdAt",
 }
 
 def publication_date(source, payload):
