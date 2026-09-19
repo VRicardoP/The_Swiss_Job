@@ -50,7 +50,8 @@ def test_raw_preserved_identity_does_not_depend_on_title(name, key, title, compa
     assert listing.payload == original
     assert raw == original
     assert result.complete
-    assert normalize_offer(name, listing.payload)["description"] == "First & second"
+    # Keep the established legacy source text, not a newly decoded variant.
+    assert normalize_offer(name, listing.payload)["description"] == "First &amp; second"
     changed = {**raw, title: "Senior Editor", "url": "https://jobs.example/renamed-123"}
     second, _ = fetch(name, {key: [changed]} if key else [changed])
     assert second.listings[0].external_id == listing.external_id

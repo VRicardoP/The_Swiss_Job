@@ -1,4 +1,4 @@
-"""Native RSS providers, ported from the four existing BFF adapters for F.
+"""Native RSS providers, ported from the existing BFF adapters for F.
 
 Fixed public endpoints, bounded responses, no legacy imports, no source activation.
 Raw payload is the serialized XML item (all fields/attributes retained, not
@@ -9,6 +9,7 @@ visible failures, never a healthy disappearance of offers.
 """
 
 import hashlib
+import re
 import xml.etree.ElementTree as ET
 from urllib.parse import urlsplit
 
@@ -23,6 +24,7 @@ ENDPOINTS = {
     "euremotejobs": "https://euremotejobs.com/feed/",
     "jobspresso": "https://jobspresso.co/feed/?post_type=job_listing",
     "globaljobs": "https://www.globaljobs.org/jobs/feed.rss",
+    "zebis": "https://www.zebis.ch/stellen/stelleninserate/rss",
 }
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 # Copied unchanged from the corresponding legacy providers for cutover parity.
@@ -103,12 +105,38 @@ def _xml(raw):
         raise ProviderResponseError("unreadable RSS XML") from exc
 
 
+def _zebis_url(raw):
+    """Same host repair as legacy: take only a valid /stellen/<slug> path.
+
+    Zebis published a broken 0.0.0.0:3000 base. Never follow that authority;
+    repair to the fixed public host. Keep the original XML for audit.
+    """
+    if not raw or "\\" in raw:
+        return None
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        return None
+    if (parts.scheme not in {"http", "https"} or parts.username is not None or
+            not re.fullmatch(r"/stellen/[^/?#\x00-\x1f\x7f]+", parts.path)):
+        return None
+    return "https://www.zebis.ch" + parts.path
+
+
+def _zebis_employer(description):
+    match = re.search(r"<(?:p|div)>\s*<strong>([^<]+)</strong>", description)
+    name = match.group(1).strip() if match else ""
+    return name if len(name) > 3 and not name[0].isdigit() else "Unknown"
+
+
 def _content(source, raw):
     item = _xml(raw["item_xml"])
     title = (item.findtext("title") or "").strip()
     description = strip_html_tags(item.findtext("description") or "")
     company = ""
-    if source == "weworkremotely":
+    if source == "zebis":
+        company = _zebis_employer(item.findtext("description") or "")
+    elif source == "weworkremotely":
         if ": " in title:
             company, title = title.split(": ", 1)
     elif " at " in title:
@@ -122,7 +150,9 @@ def _content(source, raw):
                 break
     title, company = title.strip(), company.strip()
     location = "Remote / Worldwide"
-    if source == "weworkremotely":
+    if source == "zebis":
+        location = "Switzerland"
+    elif source == "weworkremotely":
         location = (item.findtext("region") or "").strip() or location
     elif source == "euremotejobs":
         location = "Remote / Europe"
@@ -137,7 +167,7 @@ def _content(source, raw):
             location = next((city for city in _INTL_CITIES if city.lower() in text[:500]), "International")
     tags = extract_job_skills(title, description)
     category = (item.findtext("category") or "").strip()
-    if source != "weworkremotely" and category and category.lower() not in [tag.lower() for tag in tags]:
+    if source not in {"weworkremotely", "zebis"} and category and category.lower() not in [tag.lower() for tag in tags]:
         tags = [category] + tags
     remote = source in {"weworkremotely", "euremotejobs"} or "remote" in location.lower() or "home-based" in location.lower()
     return {"title": title, "company": company, "description": description,
@@ -153,9 +183,14 @@ def register_handlers():
         register_extractor(name, extract)
 
 
-def _listing(item):
+def _listing(item, source):
     guid = (item.findtext("guid") or "").strip()
     url = (item.findtext("link") or "").strip() or guid
+    if source == "zebis":
+        url = _zebis_url(url) or _zebis_url(guid) or ""
+        # Its GUID is also a URL with the broken host. Use the repaired URL
+        # so the portal fixing its own host cannot create a second identity.
+        guid = ""
     try:
         parts = urlsplit(url)
         if parts.scheme not in {"https", "http"} or not parts.hostname or parts.username or parts.password:
@@ -201,13 +236,13 @@ class NativeRSSProvider(BaseProvider):
         excludes = (EU_TECH_EXCLUDE if self.name == "euremotejobs" else
                     JOBSPRESSO_TECH_EXCLUDE if self.name == "jobspresso" else ())
         for item in items:
-            listing = _listing(item)
+            listing = _listing(item, self.name)
             if listing is None:
                 invalid += 1
                 continue
             content = _content(self.name, listing.payload)
             query_text = content["title"] + " " + content["description"]
-            if self.name == "weworkremotely":
+            if self.name in {"weworkremotely", "zebis"}:
                 query_text += " " + content["company"]
             if any(word in content["title"].lower() for word in excludes) or query not in query_text.lower():
                 filtered += 1

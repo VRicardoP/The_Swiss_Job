@@ -180,6 +180,31 @@ NO se deduce validez de ello; faltan restore estricto y paridad estructural.
 El ensayo no sustituye el backup operativo ni autoriza aún ningún flip.
 Retirar también el PGDATA aislado, no sólo los dumps, al concluir.
 
+### Zebis y paridad JSON (LOCAL, segundo lote)
+
+- Zebis nativo conserva reparación de host roto, identidad estable por URL
+  reparada, empleador, ubicación, skills y filtro. Diez regresiones rojas antes
+  y verdes después. Una respuesta real: 50/50 ofertas, sin diferencias canónicas.
+- La paridad JSON descubrió omisiones del primer adaptador: skills extraídas,
+  categoría y filtro técnico/query de Working Nomads, y error parcial cuando
+  hay elementos inválidos. Cinco reproducciones rojas antes del fix.
+- Otra reproducción roja detectó cambio de texto por decodificar entidades y
+  fusionar palabras entre tags inline. Corregido para preservar embeddings;
+  se conserva la supresión defensiva de script/style, diferencia explícita.
+  Remotive: 17/17; Working Nomads: 44/44; cero diferencias tras corregir.
+  Jobicy: ConnectTimeout, paridad viva NO verificada, no se habilita.
+- 82 pruebas verdes del lote ampliado (4,96 s), incluidas 3 cadenas JSON con
+  PostgreSQL real y replay sin duplicados. La suite 1.335 anterior NO incluye
+  estas adiciones; no presentarla como aceptación del nuevo HEAD.
+  Evidencia: `docs/audits/NATIVE_PARITY_EXTRA_2026-09-19.json`.
+- Restore SwissJob dentro del NAS: `--exit-on-error` termina en 0; coinciden
+  52 índices, 1 trigger y 222 columnas; 40 restricciones y ninguna sin validar.
+  Un CHECK de routing tiene distinta representación de casts tras reparseo:
+  array varchar convertido a text[] frente a cada elemento convertido a text.
+  Mismos cinco literales y tabla de verdad comprobada (cinco válidos, vacío y
+  futuro rechazados, NULL desconocido). No se oculta la diferencia de hash.
+  La copia core sigue restaurando índices; migración/roundtrip aún pendientes.
+
 ### Incidencia operativa descubierta en el preflight
 
 `swissjob-backend-r5`: 1.169 reinicios observados, imagen 8c82ff5ca175 sin la

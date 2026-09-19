@@ -1,0 +1,41 @@
+{
+  "scope": "Read-only public-feed replay through native and legacy adapters; no database writes or source activation",
+  "zebis": {
+    "sha256": "f0a3ccf3c250edd23938b1065c946e241ddd30155e82d503b9784d2d9b7772fc",
+    "bytes": 40556,
+    "legacy_rows": 50,
+    "native_rows": 50,
+    "missing": 0,
+    "extra": 0,
+    "field_differences": {},
+    "duplicate_urls": 0
+  },
+  "remotive": {
+    "sha256": "0cd7acba69236d6c16354a39512d05cb1522e234c4b28d4bcd17413027a49061",
+    "bytes": 155621,
+    "legacy_rows": 17,
+    "native_rows": 17,
+    "missing": 0,
+    "extra": 0,
+    "field_differences": {},
+    "duplicate_urls": 0
+  },
+  "workingnomads": {
+    "sha256": "6172cfb4c99e326be6b22bd97e4156b288de2862b0d79d9c51eb90b2650857fe",
+    "bytes": 241956,
+    "legacy_rows": 44,
+    "native_rows": 44,
+    "missing": 0,
+    "extra": 0,
+    "field_differences": {},
+    "duplicate_urls": 0
+  },
+  "jobicy": {"status": "NOT_VERIFIED", "error": "ConnectTimeout"},
+  "fields_compared": ["title", "company", "description", "location", "remote", "tags", "salary"],
+  "limits": [
+    "Single public response per source; not a production canary or historical completeness proof",
+    "No claim about downstream enrichment fields outside canonical content",
+    "Jobicy generic response unavailable; its five tag scopes still need live parity before activation",
+    "JSON script/style text is suppressed intentionally, unlike the historical regex; source raw remains intact"
+  ]
+}

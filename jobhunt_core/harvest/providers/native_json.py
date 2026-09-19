@@ -20,6 +20,7 @@ import httpx
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
+from jobhunt_core.harvest.providers.rss_text import extract_job_skills
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 logger = logging.getLogger(__name__)
@@ -31,24 +32,42 @@ ENDPOINTS = {
 }
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 
+# Same title-only exclusions as the previous Working Nomads producer.
+WORKINGNOMADS_TECH_EXCLUDE = (
+    "software engineer", "backend engineer", "frontend engineer", "full stack",
+    "fullstack", "devops", "sre", "site reliability", "ml engineer",
+    "data engineer", "cloud engineer", "platform engineer", "mobile developer",
+    "ios developer", "android developer", "blockchain", "cybersecurity",
+    "security engineer", "embedded", "firmware", "hardware engineer",
+    "network engineer", "infrastructure",
+)
+
 
 class _PlainText(HTMLParser):
     def __init__(self):
-        super().__init__(convert_charrefs=True)
+        # Legacy keeps entities encoded and separates inline tags; retain
+        # that text so changing producer does not silently change embeddings.
+        super().__init__(convert_charrefs=False)
         self.parts = []
         self.hidden = 0
 
     def handle_starttag(self, tag, attrs):
         if tag in {"script", "style"}:
             self.hidden += 1
-        elif tag in {"p", "div", "br", "li", "tr", "h1", "h2", "h3"}:
+        if not self.hidden:
             self.parts.append(" ")
 
     def handle_endtag(self, tag):
         if tag in {"script", "style"}:
             self.hidden = max(0, self.hidden - 1)
-        elif tag in {"p", "div", "li", "tr", "h1", "h2", "h3"}:
+        if not self.hidden:
             self.parts.append(" ")
+
+    def handle_entityref(self, name):
+        self.handle_data("&" + name + ";")
+
+    def handle_charref(self, name):
+        self.handle_data("&#" + name + ";")
 
     def handle_data(self, data):
         if not self.hidden:
@@ -66,20 +85,39 @@ def _plain(value):
 
 def _content(name, raw):
     jobicy = name == "jobicy"
+    title = raw.get("jobTitle" if jobicy else "title")
+    description = _plain(raw.get("jobDescription" if jobicy else "description"))
     tags = raw.get("tags")
     if name == "workingnomads" and isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
+    tags = tags if isinstance(tags, list) and not jobicy else []
+    category = raw.get("category_name") if name == "workingnomads" else None
+    if isinstance(category, str) and category.strip():
+        tags = [category.strip(), *tags]
+    extracted = extract_job_skills(title if isinstance(title, str) else "", description or "")
+    merged, seen = [], set()
+    for tag in [*tags, *extracted]:
+        if not isinstance(tag, (str, int, float)) or isinstance(tag, bool):
+            continue
+        tag = str(tag).strip()
+        if tag and tag.lower() not in seen:
+            seen.add(tag.lower())
+            merged.append(tag)
+    location = (raw.get("jobGeo") or raw.get("country")) if jobicy else raw.get(
+        "candidate_required_location" if name == "remotive" else "location"
+    )
+    if name == "workingnomads" and (not isinstance(location, str) or not location.strip()):
+        location = "Remote / Worldwide"
     return {
-        "title": raw.get("jobTitle" if jobicy else "title"),
+        "title": title,
         "company": raw.get("companyName" if jobicy else "company_name"),
-        "description": _plain(raw.get("jobDescription" if jobicy else "description")),
-        "location": (raw.get("jobGeo") or raw.get("country")) if jobicy else raw.get(
-            "candidate_required_location" if name == "remotive" else "location"
-        ),
-        "tags": tags,
+        "description": description,
+        "location": location,
+        "tags": merged[:15],
         "remote": True,
-        # No invented salary or currency conversion: the original stays in raw.
-        "salary": raw.get("salary") if name == "remotive" else None,
+        # Preserve the existing canonical boundary; portal salary stays in raw
+        # until a validated enrichment step maps its amount/currency/period.
+        "salary": None,
     }
 
 
@@ -121,7 +159,7 @@ class NativeJSONProvider(BaseProvider):
         register_handlers()
 
     async def fetch_new(self, params, cursor, http):
-        allowed = {"query"} if self.name == "remotive" else {"tag", "geo"} if self.name == "jobicy" else set()
+        allowed = {"query"} if self.name != "jobicy" else {"tag", "geo"}
         if not isinstance(params, dict) or set(params) - allowed:
             raise ProviderConfigError(f"Invalid parameters for {self.name}")
         if any(not isinstance(value, str) or len(value) > 200 for value in params.values()):
@@ -152,6 +190,24 @@ class NativeJSONProvider(BaseProvider):
         listings = tuple(item for row in rows if (item := _listing(row)) is not None)
         if rows and not listings:
             raise ProviderResponseError(f"{self.name}: nonempty feed has no usable identities")
-        if len(rows) != len(listings):
-            logger.warning("%s: %d items without usable identity/URL", self.name, len(rows) - len(listings))
-        return FetchResult(listings=listings, next_cursor={"items_seen": len(rows)}, pages_fetched=1)
+        invalid = len(rows) - len(listings)
+        if invalid:
+            logger.warning("%s: %d items without usable identity/URL", self.name, invalid)
+        filtered = 0
+        if self.name == "workingnomads":
+            accepted = []
+            query = params.get("query", "").lower()
+            for listing in listings:
+                content = _content(self.name, listing.payload)
+                title = content["title"] if isinstance(content["title"], str) else ""
+                query_text = (title + " " + (content["description"] or "")).lower()
+                if (
+                    any(word in title.lower() for word in WORKINGNOMADS_TECH_EXCLUDE)
+                    or query not in query_text
+                ):
+                    filtered += 1
+                else:
+                    accepted.append(listing)
+            listings = tuple(accepted)
+        return FetchResult(listings, {"items_seen": len(rows), "filtered": filtered},
+                           complete=not invalid, error="invalid_json_items" if invalid else None)

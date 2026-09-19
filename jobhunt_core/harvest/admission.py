@@ -24,6 +24,7 @@ DATE_FIELDS = {
     "euremotejobs": "pubDate",
     "jobspresso": "pubDate",
     "globaljobs": "pubDate",
+    "zebis": "pubDate",
 }
 
 
