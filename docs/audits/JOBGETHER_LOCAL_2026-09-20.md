@@ -18,5 +18,5 @@
 ha reintentado eludiendo el bloqueo ni se ha activado/desplegado esta fuente.
 No existe evidencia de paridad viva completa para Jobgether. El ensayo local
 con respuestas simuladas no autoriza retirar todavía su productor anterior.
-La suite completa anterior (1.462) no incluye este delta; no sumarla al resultado
-dirigido como si fuera una nueva ejecución integral.
+Suite completa de `cf1be3b`: **1.482 passed**, 890,75 s; un aviso de deprecación
+Starlette/httpx ya conocido. Esta ejecución sí incluye el delta de Jobgether.

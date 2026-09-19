@@ -183,7 +183,12 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
         from services.schools.producer import SchoolProducer
         school_producer = SchoolProducer(db)
 
-        for scraper in scrapers:
+        by_name = {scraper.get_source_name(): scraper for scraper in scrapers}
+        ordered = await source_health.oldest_attempt_first(db, list(by_name))
+        # Registry order starved the schools whenever an earlier source used
+        # the task budget. A persisted start also rotates interrupted fetches.
+        for name in ordered:
+            scraper = by_name[name]
             source = scraper.get_source_name()
             cursor = None
             # `None` hasta que la descarga responde: el except externo lo usa
@@ -247,6 +252,7 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                     )
 
                 diag.begin()
+                await source_health.record_attempt(db, source)
                 jobs = await scraper.fetch_jobs("", "Switzerland")
 
                 # V.0 — veredicto explícito: un 404/403 ya NO se confunde con

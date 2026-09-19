@@ -298,7 +298,13 @@ async def _fetch_providers_async() -> dict[str, Any]:
     async with task_session() as db:
         repo = JobRepository(db)
 
-        for source, jobs, outcome, collected in fetch_results:
+        # HTTP results remain in memory, but persistence can exhaust the task
+        # budget. Prioritize sources not reached by preceding sweeps instead
+        # of repeatedly committing the same registry prefix.
+        by_name = {result[0]: result for result in fetch_results}
+        ordered = await source_health.oldest_attempt_first(db, list(by_name))
+        for name in ordered:
+            source, jobs, outcome, collected = by_name[name]
             # La salud se registra SIEMPRE, incluso si la descarga falló: es
             # justamente el caso que antes no dejaba rastro.
             motivo = await source_health.record_and_alert(

@@ -10,7 +10,8 @@ NO decide permisos (eso es `ComplianceEngine`) ni reintenta nada.
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -26,6 +27,33 @@ logger = logging.getLogger(__name__)
 
 # Longitud de la columna: recortamos aquí para no depender del error de la BD.
 _DETAIL_MAX = 500
+
+
+async def oldest_attempt_first(db: AsyncSession, names: list[str]) -> list[str]:
+    """Fair order across interrupted sweeps; never infer success from an attempt."""
+    if not names:
+        return []
+    rows = await db.execute(select(SourceHealth.source_key, SourceHealth.last_attempt_at)
+                            .where(SourceHealth.source_key.in_(names)))
+    attempts = dict(rows.all())
+    earliest = datetime.min.replace(tzinfo=timezone.utc)
+    return sorted(names, key=lambda name: (attempts.get(name) or earliest, name))
+
+
+async def record_attempt(db: AsyncSession, source_key: str) -> None:
+    """Commit BEFORE HTTP, so even a killed fetch moves behind untouched sources.
+
+    Does not acknowledge a cursor, clear failure counters or claim successful
+    download/storage. None outcome means this attempt has not returned yet.
+    Caller must not have uncommitted offer/cursor progress in this session.
+    """
+    stmt = insert(SourceHealth).values(source_key=source_key,
+                                      last_attempt_at=func.clock_timestamp())
+    await db.execute(stmt.on_conflict_do_update(
+        index_elements=[SourceHealth.source_key],
+        set_={"last_attempt_at": stmt.excluded.last_attempt_at, "last_outcome": None},
+    ))
+    await db.commit()
 
 
 def _summarize(collected: list[FetchIssue]) -> str:
