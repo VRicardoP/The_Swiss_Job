@@ -1,13 +1,18 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
-Checkpoint 20-09 02:11: worker público `d89b6ee` desplegado para evitar inanición
+Checkpoint vigente 20-09 04:42: core API/worker/capture y BFF en bac5e78,
+core0049; entrega de perfiles habilitada y confirmada 2/2, feed recuperado y servido.
+[Acta](audits/PROFILE_DEPLOYMENT_NAS_2026-09-20.md).
+Feedback sigue local y ninguna fuente se ha transferido. **Punto 4 abierto**.
+
+Checkpoint histórico 20-09 02:11: worker público `d89b6ee` desplegado para evitar inanición
 entre barridos; configuración y autoridades sin cambios. Core local 1.482 verdes,
 BFF 2.444 verdes (3 skipped, 4 xfailed). **El traspaso por fuente sigue sin ejecutar**.
 Ver [evidencia y reversión](audits/WORKER_PREPARACION_PUNTO4_NAS_2026-09-20.md).
 Las cifras inferiores conservan el historial, no la última validación.
 
-Estado 20-09-2026: **preparación, no ejecutado**. Este documento no autoriza un
-flip que incumpla las precondiciones. Producción sigue E.15/core0047. El objetivo
+Estado 20-09-2026: **traspaso por fuentes no ejecutado**. Este documento no autoriza un
+flip que incumpla las precondiciones. Perfiles ya transferidos según el acta; el objetivo
 vigente del propietario es sólo cerrar este punto, no un nuevo examen de calidad.
 
 ## Condiciones antes de activar una fuente
@@ -75,9 +80,10 @@ feedback no es un rollback POST-activación.
 
 ## Dependencias para retirar procesos completos
 
-- Perfiles: el BFF público escribe `swissjobhunter`, pero la captura R5 lee otra
-  base. Igualdad puntual de perfiles NO acredita sincronización de una edición.
-  Resolver entrega duradera y autoridad antes de apagar CDC.
+- Perfiles: entrega duradera resuelta con outbox transaccional en `swissjobhunter`
+  y snapshots versionados en core0049. Los dos perfiles están bajo esa autoridad;
+  CDC no puede sobrescribirlos. No depende de la base leída por la captura R5.
+  No revertir a binarios anteriores al fencing. Esto NO permite apagar CDC de ofertas.
 - CV: autocompletado y extracción siguen siendo necesarios; no retirar su worker
   por asociación con cosecha. Los resultados lentos deben revalidar sus entradas.
 - Búsquedas, avisos y digest: conservar historial y demostrar quién los ejecuta

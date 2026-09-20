@@ -1,6 +1,18 @@
 # Cierre de puntos 4 y 5 — ejecución en curso
 
-## Último checkpoint: 20-09, 02:11 Europe/Madrid
+## Último checkpoint: 20-09, 04:42 Europe/Madrid
+
+**Canal de perfiles cerrado y desplegado**, punto 4 todavía abierto. Core
+API/worker/capture y BFF SwissJob en bac5e78, core0049; worker público d89b6ee.
+Entrega habilitada: 2/2 ACK, contenido y ownership verificados; recuperación natural
+con cero punteros a revisiones antiguas, feed BFF 20/20 por usuario. Feedback sigue
+local; ningún scope nativo activado ni productor antiguo retirado.
+[Acta y recuperación](audits/PROFILE_DEPLOYMENT_NAS_2026-09-20.md).
+Suites finales en serie: core 1.499 passed; BFF 2.459 passed, 3 skipped, 4 xfailed.
+Punto 5, cron y entrega siguen pendientes. Este resumen supersede los checkpoints
+históricos inferiores sobre imágenes, esquemas y entrega de perfiles.
+
+## Checkpoint anterior: 20-09, 02:11 Europe/Madrid
 
 Punto 4 sigue abierto. Sólo el worker público se actualizó a `d89b6ee`:
 equidad entre barridos interrumpidos y fencing de tareas CV. Core/BFF/Portfolio

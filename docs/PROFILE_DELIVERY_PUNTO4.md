@@ -67,7 +67,12 @@ los campos reales. Contadores solapados: no sumarlos.
 Migraciones y entrega/reintento/vaciado/recuperación ensayados sobre las dos
 copias privadas del NAS; ver [evidencia y límites](audits/PROFILE_DELIVERY_NAS_2026-09-20.md).
 
-## Secuencia operativa (primeros dos pasos ensayados)
+## Secuencia operativa (desplegada y comprobada el 20-09)
+
+Estado vivo y evidencia: [acta de despliegue](audits/PROFILE_DEPLOYMENT_NAS_2026-09-20.md).
+Entrega 2/2, contenido/versión/ownership coincidentes; recuperación natural del feed
+con cero punteros antiguos y canary BFF de 20 ofertas por perfil. Esto sólo cierra
+el canal de perfiles, no la retirada de los demás productores.
 
 1. Hecho: ambas suites, revisión de deltas, commits e imágenes limpios.
 2. Hecho en copia privada NAS: restore estricto/equivalencia, upgrade de ambos esquemas,
@@ -88,7 +93,8 @@ copias privadas del NAS; ver [evidencia y límites](audits/PROFILE_DELIVERY_NAS_
    este contrato, preservando autoridad, versiones y todos los cambios posteriores.
    NO restaurar E.15 ni borrar columnas/outbox para forzar un downgrade. Ambos
    downgrades fallan cerrados si queda autoridad/estado que conciliar. El ensayo
-   y el procedimiento de recuperación POST-activación siguen pendientes.
+   con vaciado y restauración mediante una versión nueva está verificado en copia;
+   los dos downgrades se negaron a descartar el estado. Véase el acta del ensayo.
 
 No hay permiso implícito para modificar políticas, el holdout ni enviar correos
 o candidaturas reales. La retirada de productores de ofertas/colegios, búsquedas,
