@@ -1,5 +1,14 @@
 # Cierre de puntos 4 y 5 — ejecución en curso
 
+## Último checkpoint: 20-09, 08:16 Europe/Madrid
+
+Core API/worker/capture `6ba912e`, core0049; BFF `39579d7`. Exclusión global y
+planificador por scope desplegados tras **1.522 pruebas verdes**, drenaje y
+aceptación de feeds/guardados. [Acta](audits/NATIVE_SCHEDULER_DEPLOYMENT_2026-09-20.md).
+Cero scopes nativos habilitados; feedback/perfiles siguen en core. Ensayo de
+identidad Remotive válido, pero filtro de admisión pendiente: 5 altas que legacy
+excluye. **Punto 4 abierto**; no se ha empezado el punto 5 ni la entrega final.
+
 ## Último checkpoint: 20-09, 07:12 Europe/Madrid
 
 **Feedback cerrado y habilitado en core**, 112 cambios verificados; freeze

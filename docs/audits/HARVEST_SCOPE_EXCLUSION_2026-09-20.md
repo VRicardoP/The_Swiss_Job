@@ -1,5 +1,8 @@
 # Punto 4: exclusión global de cosecha por scope
 
+Actualización 08:16: desplegado en `6ba912e` con el planificador;
+[acta vigente](NATIVE_SCHEDULER_DEPLOYMENT_2026-09-20.md). Abajo, ensayo local previo.
+
 Estado: implementación local verificada; **no desplegada**, ninguna fuente
 nativa habilitada. No cierra la retirada de productores.
 

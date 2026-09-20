@@ -1,5 +1,14 @@
 # Remotive — ensayo de identidad en copia NAS
 
+Actualización 20-09 08:08: **paridad de admisión NO cerrada**. De las 11 admitidas,
+las 5 nuevas son rechazadas por `_is_tech_job` del pipeline legacy (regla de altas,
+no de refrescos). El adaptador replica los campos, pero falta preservar este
+filtro del pipeline en el corte. No activar el scope hasta añadir la regla
+explícita de admisión y su regresión; no basta el ensayo de identidad inferior.
+Comprobado con el MISMO cuerpo público en copia `core_copy`, lectura sin cambios,
+y el predicado real del worker NAS; `/tmp/point4-remotive-title-parity-result.json`:
+`admitted=11, new=5, new_legacy_would_exclude=5`. No hubo ingesta productiva.
+
 **Resultado: ensayo de sink aprobado; fuente NO activada en producción.**
 No equivale a cierre del punto 4 ni a aceptación del feed servido.
 

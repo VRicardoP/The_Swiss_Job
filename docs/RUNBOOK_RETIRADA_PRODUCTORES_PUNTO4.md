@@ -1,8 +1,11 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
-En preparación local: [exclusión global por scope](audits/HARVEST_SCOPE_EXCLUSION_2026-09-20.md),
-incluida la entrada manual. Ninguna fuente nativa activada; no confundir las
-pruebas locales con retirada productiva.
+Checkpoint 20-09 08:16: **exclusión y planificador nativos desplegados** en core
+`6ba912e`; suite 1.522 verdes, drenaje comprobado y lecturas BFF verificadas.
+[Acta vigente](audits/NATIVE_SCHEDULER_DEPLOYMENT_2026-09-20.md).
+Cero scopes nativos activos; fuentes legacy todavía no retiradas. Remotive
+requiere preservar el filtro de títulos del pipeline antes del corte.
+Los checkpoints inferiores son históricos.
 
 Checkpoint vigente 20-09 07:12: **feedback CORE habilitado y confirmado**,
 112 cambios migrados y verificados, freeze liberado; perfiles mantienen autoridad

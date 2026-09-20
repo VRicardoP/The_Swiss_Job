@@ -1,5 +1,9 @@
 # Punto 4: planificador nativo por fuente
 
+Actualización 08:16: **desplegado y verificado**, suite completa 1.522 verdes;
+[aceptación y límites](NATIVE_SCHEDULER_DEPLOYMENT_2026-09-20.md). Ningún scope
+nativo habilitado. El resto conserva la evidencia de preparación anterior.
+
 Estado: **local, no activado en NAS**. Este cambio no provisiona ni habilita
 fuentes y no retira ningún productor legacy.
 
