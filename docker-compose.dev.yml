@@ -33,6 +33,8 @@ services:
       # podría correr, que es justo como el defecto sobrevivió a dos revisiones. Los
       # perfiles prod/qnap NO lo llevan: allí el script viaja por `scp` (§5.2).
       - ./backend/scripts:/app/backend/scripts:ro
+      # Retention and rehearsal regression tests import the maintained scripts.
+      - ./scripts:/app/scripts:ro
 
   core-api:
     environment:
