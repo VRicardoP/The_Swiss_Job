@@ -491,6 +491,9 @@ async def put_profile(
         if owner is None or owner != principal.consumer_id:
             raise error_404("perfil")
         current = await _profile_dto(session, profile_id, principal.consumer_id)
+        if await session.scalar(sa.text("SELECT projection_version FROM profiles WHERE id=:p"), {"p": profile_id}):
+            # A delayed legacy API writer cannot replace the versioned source.
+            raise ApiError(409, "profile_source_authority", "perfil gestionado por snapshots versionados")
         if_match = request.headers.get("if-match")
         if if_match is not None and not _if_match_matches(
             if_match, _etag_of(current.model_dump(mode="json"))

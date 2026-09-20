@@ -19,7 +19,7 @@ import uuid
 
 import sqlalchemy as sa
 
-from jobhunt_core import embedding_recipes
+from jobhunt_core import embedding_recipes, profiles
 from jobhunt_core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -259,12 +259,14 @@ async def pending_profile_revisions(session, model_id, limit: int = 200) -> list
                 "      FROM profile_revision_activations "
                 "      ORDER BY profile_id, seq DESC) cur "
                 "JOIN profile_revisions pr ON pr.id = cur.revision_id "
+                "JOIN profiles p ON p.id=pr.profile_id AND p.projection_active "
                 "LEFT JOIN profile_embeddings pe "
                 "  ON pe.profile_revision_id = pr.id AND pe.model_id = :mid "
                 "WHERE pe.profile_revision_id IS NULL "
+                "AND pr.text_hash <> :empty_hash "
                 "ORDER BY pr.id LIMIT :lim"
             ),
-            {"mid": model_id, "lim": limit},
+            {"mid": model_id, "lim": limit, "empty_hash": profiles.profile_text_hash({})},
         )
     ).all()
 

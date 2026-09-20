@@ -44,9 +44,12 @@ _TARGET_ROLE_LEN = 120
 TEXT_FIELDS = ("title", "cv_text", "skills")
 
 
-def normalize_profile(content) -> dict | None:
-    """Contenido canónico del perfil; None si no queda TEXTO embebible
-    (un perfil sin texto no puede participar en el matching)."""
+def normalize_profile(content, *, allow_empty=False) -> dict | None:
+    """Contenido canónico; por defecto exige texto embebible.
+
+    El snapshot versionado admite el vaciado explícito (allow_empty); el
+    llamador retira su feed y el drenado no embebe el hash vacío. Los demás
+    escritores conservan el contrato anterior."""
     if not isinstance(content, dict):
         return None
     out = {
@@ -64,7 +67,7 @@ def normalize_profile(content) -> dict | None:
             for r in _str_list(content.get("target_roles"))[:_TARGET_ROLES_MAX]
         ],
     }
-    if not build_profile_text(out):
+    if not allow_empty and not build_profile_text(out):
         logger.warning("profiles: contenido sin texto embebible — sin revisión")
         return None
     return out
@@ -133,15 +136,15 @@ async def upsert_profile(session, consumer_id, external_ref: str) -> uuid.UUID:
     ).scalar_one()
 
 
-async def save_profile_revision(session, profile_id, content) -> uuid.UUID | None:
+async def save_profile_revision(session, profile_id, content, *, allow_empty=False) -> uuid.UUID | None:
     """Revisión INMUTABLE + ACTIVACIÓN monotónica (rev. A-07 #1).
 
     Idempotente por (profile_id, content_hash): el mismo contenido reutiliza
     su revisión — y si no era la vigente, la RE-ACTIVA (reversión A→B→A deja
     A vigente). Bajo LOCK del perfil (FOR UPDATE, protocolo compartido con el
     guard de embeddings — rev. #3): seq sin huecos de carrera ni empates.
-    None si el contenido no es normalizable."""
-    norm = normalize_profile(content)
+    None si no es normalizable; allow_empty se reserva al snapshot explícito."""
+    norm = normalize_profile(content, allow_empty=allow_empty)
     if norm is None:
         return None
     chash = profile_content_hash(norm)

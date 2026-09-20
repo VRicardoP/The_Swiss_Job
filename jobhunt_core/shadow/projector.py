@@ -1273,6 +1273,12 @@ async def _apply_profiles(session, rows) -> tuple[set, int]:
     # desempate por pk conserva "la última del lote deja la revisión vigente".
     for pk in sorted(pid_by_pk, key=lambda pk: (str(pid_by_pk[pk]), pk)):
         pid = pid_by_pk[pk]
+        # Lock BEFORE checking authority: serialize with first API snapshot.
+        version = await session.scalar(sa.text(
+            "SELECT projection_version FROM profiles WHERE id=:p FOR UPDATE"
+        ), {"p": pid})
+        if version:
+            continue
         content = await _complete_profile_content(session, pid, pk, folds[pk])
         if content is None:
             continue
@@ -1393,6 +1399,14 @@ async def _apply_users(session, rows) -> set:
     erased: set = set()
     # Sin perfil (str vacío) primero: no toman lock y el orden les da igual.
     for pk in sorted(dead, key=lambda pk: (str(pid_by_ref.get(pk, "")), pk)):
+        if pk in pid_by_ref:
+            version = await session.scalar(sa.text(
+                "SELECT projection_version FROM profiles WHERE id=:p FOR UPDATE"
+            ), {"p": pid_by_ref[pk]})
+            if version:
+                # This CDC replica no longer owns the live BFF account.
+                # Explicit coordinated erasure remains available via the API.
+                continue
         pid = await erase_shadow_profile(session, pk)
         if pid is not None:
             erased.add(pid)
@@ -1538,6 +1552,7 @@ candidatos AS (
              LIMIT 1
            ) cur ON true
      WHERE p.id NOT IN :excluded
+       AND p.projection_active
        AND p.id NOT IN :evaluated
        AND EXISTS (
             SELECT 1
@@ -1798,28 +1813,28 @@ async def _filter_inactive(session, rows) -> list:
 
 
 async def inactive_user_refs(session, refs) -> set[str]:
-    """Set de user_ids inactivos desde el ÚLTIMO estado users por pk del
-    staging YA APLICADO (mecanismo de exclusión documentado en cabecera).
+    """Activity authority shared by projection and shadow metrics.
 
-    HELPER COMPARTIDO (público a propósito): es EL mecanismo de exclusión de
-    usuarios inactivos de la sombra — lo usa este proyector (objetivos de
-    evaluación) y B-04 (shadow/metrics: perfiles medidos y `labels_ready`,
-    decisión delegada 2026-07-28, cierre del NO-GO 2). Cambiarlo aquí cambia
-    la exclusión en TODOS los consumidores: jamás duplicar esta consulta."""
+    Before transfer use the latest applied CDC users row. After transfer only
+    the live BFF snapshot is authoritative, even if the rehearsal CDC says the
+    opposite. One SQL snapshot and one query, independent of profile count.
+    """
     if not refs:
         return set()
-    rows = (
-        await session.execute(
-            sa.text(
-                "SELECT pk FROM ("
-                "  SELECT DISTINCT ON (pk) pk, payload->>'is_active' AS act "
-                "  FROM shadow_change_log "
-                "  WHERE src_table = 'users' AND op IN ('I', 'U') "
-                "    AND applied_at IS NOT NULL AND pk = ANY(:refs) "
-                "  ORDER BY pk, lsn DESC, seq_in_tx DESC) last "
-                "WHERE last.act = 'false'"
-            ),
-            {"refs": sorted(refs)},
-        )
-    ).scalars().all()
+    rows = (await session.execute(sa.text(
+        "WITH last_cdc AS ("
+        " SELECT DISTINCT ON (pk) pk, payload->>'is_active' AS act "
+        " FROM shadow_change_log "
+        " WHERE src_table='users' AND op IN ('I','U') "
+        " AND applied_at IS NOT NULL AND pk=ANY(:refs) "
+        " ORDER BY pk,lsn DESC,seq_in_tx DESC), "
+        "projected AS ("
+        " SELECT p.external_ref,p.projection_active FROM profiles p "
+        " JOIN consumers c ON c.id=p.consumer_id "
+        " WHERE c.name=:consumer AND p.external_ref=ANY(:refs) "
+        " AND p.projection_version>0) "
+        "SELECT pk FROM last_cdc WHERE act='false' "
+        "AND NOT EXISTS (SELECT 1 FROM projected WHERE external_ref=last_cdc.pk) "
+        "UNION ALL SELECT external_ref FROM projected WHERE NOT projection_active"
+    ), {"refs": sorted(refs), "consumer": SHADOW_CONSUMER})).scalars().all()
     return set(rows)

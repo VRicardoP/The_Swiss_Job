@@ -1654,7 +1654,7 @@ async def evaluate_profile(
     async with session_factory() as session:
         existe = (
             await session.execute(
-                sa.text("SELECT 1 FROM profiles WHERE id = :pid"),
+                sa.text("SELECT 1 FROM profiles WHERE id = :pid AND projection_active"),
                 {"pid": profile_id},
             )
         ).scalar_one_or_none()
@@ -1738,7 +1738,7 @@ async def evaluate_profile(
         locked = (
             await session.execute(
                 sa.text(
-                    "SELECT p.id, c.name AS consumer_name FROM profiles p "
+                    "SELECT p.id, p.projection_active, c.name AS consumer_name FROM profiles p "
                     "JOIN consumers c ON c.id = p.consumer_id "
                     "WHERE p.id = :pid FOR UPDATE OF p"
                 ),
@@ -1791,7 +1791,8 @@ async def evaluate_profile(
             )
         ).scalar_one()
         deriva = (
-            str(vigente) != str(prid)
+            not locked.projection_active
+            or str(vigente) != str(prid)
             or pesos_ahora != pesos_snapshot
             or int(gen_ahora) != int(gen_snapshot)
         )
