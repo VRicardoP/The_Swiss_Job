@@ -102,3 +102,14 @@ dependencias frente a las bases E.15 exactas. Build local al NAS, sin red ni pus
   `sha256:a6b36ae595d2eb7a03c17199182726a48c37abf23f29b1cd82a0b24e78baed48`.
   Usuario `app`; etiqueta de revisión coincidente.
 
+## Transporte entre las imágenes finales
+
+API temporal de la imagen nueva en loopback del namespace aislado, sin publicar
+puertos. Readiness HTTP **200 / ready**. Cliente ejecutado desde la imagen BFF
+nueva, contra `source_copy`, sin lifespan/schedulers/worker de correo.
+Credencial temporal emitida sólo en `core_copy`, sin imprimir el secreto:
+**2 perfiles confirmados por HTTP, segunda pasada = 0 pendientes**.
+La credencial se revocó al terminar. La API temporal se detuvo y retiró; la copia
+PostgreSQL se conserva para los siguientes ensayos hasta su caducidad. No se
+ha cambiado la configuración productiva ni habilitado la entrega allí.
+Estos pasos completan el ensayo de transporte; queda el canary del entorno vivo.

@@ -67,10 +67,10 @@ los campos reales. Contadores solapados: no sumarlos.
 Migraciones y entrega/reintento/vaciado/recuperación ensayados sobre las dos
 copias privadas del NAS; ver [evidencia y límites](audits/PROFILE_DELIVERY_NAS_2026-09-20.md).
 
-## Secuencia operativa aún pendiente
+## Secuencia operativa (primeros dos pasos ensayados)
 
-1. Terminar ambas suites y revisar deltas; sellar commits e imágenes limpios.
-2. En copia privada NAS: restore estricto/equivalencia, upgrade de ambos esquemas,
+1. Hecho: ambas suites, revisión de deltas, commits e imágenes limpios.
+2. Hecho en copia privada NAS: restore estricto/equivalencia, upgrade de ambos esquemas,
    seed de perfiles preexistentes, entrega, edición/reintento/reordenación y vaciado
    sintéticos. Comparar contenido completo y retención del estado asociado; no
    editar el CV real del propietario para simular pruebas.
