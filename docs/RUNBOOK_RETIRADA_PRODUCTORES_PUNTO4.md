@@ -1,5 +1,11 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
+Checkpoint vigente 20-09 07:12: **feedback CORE habilitado y confirmado**,
+112 cambios migrados y verificados, freeze liberado; perfiles mantienen autoridad
+core. [Acta, canary e imágenes](audits/FEEDBACK_DEPLOYMENT_NAS_2026-09-20.md).
+No reactivar escritor local ni usar revert pre-corte. Productores siguen sin
+transferir: **punto 4 abierto**. Los checkpoints inferiores son históricos.
+
 Checkpoint vigente 20-09 06:40: lectores de feedback desplegados en `39579d7`;
 feedback sigue LOCAL y habilitado. Preparación de migración cancelada sin aplicar
 por coste de consultas y bloqueo de lectores. Fix local en verificación;

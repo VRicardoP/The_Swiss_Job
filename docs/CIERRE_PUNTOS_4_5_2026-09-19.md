@@ -1,5 +1,14 @@
 # Cierre de puntos 4 y 5 — ejecución en curso
 
+## Último checkpoint: 20-09, 07:12 Europe/Madrid
+
+**Feedback cerrado y habilitado en core**, 112 cambios verificados; freeze
+liberado, feeds y guardados comprobados. Perfiles siguen transferidos.
+[Acta](audits/FEEDBACK_DEPLOYMENT_NAS_2026-09-20.md). Servicios `39579d7`,
+migrador `7724037`, core0049; suite core 1.508, BFF 2.470 + 4 xfail.
+PostgreSQL protegido con init. Productores NO retirados; punto 4 todavía abierto.
+Punto 5, cron y aceptación final pendientes. Los checkpoints inferiores son históricos.
+
 ## Último checkpoint: 20-09, 04:42 Europe/Madrid
 
 **Canal de perfiles cerrado y desplegado**, punto 4 todavía abierto. Core
