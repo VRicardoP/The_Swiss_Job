@@ -6,6 +6,9 @@ services:
     build:
       context: ./docker/postgres-core
     image: swissjob-postgres-core:pg16
+    # PostgreSQL must not adopt failed orphaned healthcheck/exec processes as
+    # database children: an unrelated exit can otherwise trigger crash recovery.
+    init: true
     container_name: swissjob-postgres
     command: -c wal_level=logical -c max_replication_slots=4 -c max_wal_senders=4
     environment:
@@ -18,7 +21,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./docker/postgres/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-swissjob} -d ${POSTGRES_DB:-swissjobhunter}"]
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-swissjob}", "-d", "${POSTGRES_DB:-swissjobhunter}"]
       interval: 5s
       timeout: 5s
       retries: 5

@@ -70,5 +70,17 @@ conexión 5 s. No cambian los timeouts del feed ni de las escrituras. Al agotarl
 se falla explícitamente sin borrar propuestas. No es una medición p95 productiva.
 
 Antes de esa optimización: suite BFF 2.466 passed, 4 xfailed; core 1.505 passed.
-Después: 22 pruebas dirigidas core y 14 BFF pasan. Suites finales y ensayo HTTP
-de la imagen optimizada pendientes al escribir este checkpoint.
+Después: 22 pruebas dirigidas core y 14 BFF pasan. Suites finales en serie:
+**BFF 2.470 passed, 4 xfailed** (308 s), **core 1.505 passed** (881 s).
+Quedan advertencias de tests; no se afirma una ejecución sin warnings.
+
+La imagen limpia `39579d7` supera el ensayo HTTP completo en la copia NAS:
+12.023 y 12.222 elementos, respectivamente 0 y 50 rechazos efectivos;
+análisis existente operativo, fallo del core preserva propuestas, feedback local
+sin cambios. Credencial temporal revocada y API temporal retirada después.
+No se hicieron escrituras de feedback en producción.
+
+Hubo un timeout SQL bajo carga concurrente durante un primer intento: el límite
+se aplica y el BFF falla cerrado. La repetición completa pasa; estas mediciones
+no equivalen a SLA/p95 ni autorizan ocultar fallos de disponibilidad. La incidencia
+separada de PostgreSQL se registra en `POSTGRES_INIT_NAS_2026-09-20.md`.
