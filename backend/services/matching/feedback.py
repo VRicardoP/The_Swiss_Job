@@ -62,6 +62,18 @@ class _SavedPage(BaseModel):
     total: int = Field(ge=0, strict=True)
 
 
+class _ContextItem(BaseModel):
+    identity: str
+    title: str
+    company: str
+    tags: list[str]
+    feedback: Literal["thumbs_up", "applied", "thumbs_down", "dismissed"] | None
+
+
+class _FeedbackContext(BaseModel):
+    items: list[_ContextItem] = Field(max_length=50000)
+
+
 class CoreFeedback:
     def __init__(self, db, client_factory=None):
         self._db = db
@@ -159,6 +171,26 @@ class CoreFeedback:
         if duration_ms is not None:
             body["duration_ms"] = duration_ms
         return await self._write(user_id, job_hash, "implicit", body)
+
+    async def context(self, user_id):
+        """Complete, tenant-scoped evidence for the existing pattern analyzer."""
+        pid = await self._profile(user_id)
+        response = await self._request("GET", f"/profiles/{pid}/feedback-context")
+        if response.status_code == 404:
+            raise CoreUnavailableError("perfil core no disponible")
+        try:
+            context = _FeedbackContext.model_validate(response.json())
+            seen = set()
+            for item in context.items:
+                kind, identifier = item.identity.split(":", 1)
+                if kind not in {"vacancy", "school"} or str(uuid.UUID(identifier)) != identifier:
+                    raise ValueError("invalid context identity")
+                if item.identity in seen:
+                    raise ValueError("duplicate context identity")
+                seen.add(item.identity)
+            return [item.model_dump(exclude={"identity"}) for item in context.items]
+        except (ValueError, TypeError, KeyError, ValidationError) as exc:
+            raise CoreUnavailableError("payload core inválido para análisis") from exc
 
     async def saved(self, user_id, limit=100, offset=0):
         pid = await self._profile(user_id)

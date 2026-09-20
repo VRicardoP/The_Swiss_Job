@@ -22,6 +22,7 @@ from schemas.analytics import (
     ReviewSuggestionResponse,
 )
 from services.pattern_analysis_service import PatternAnalysisService
+from services.matching.port import CoreUnavailableError
 
 from services.exclusions_sync import (
     exclusion_sync_status, lock_filter_writer, queue_exclusions, sync_exclusions_to_core,
@@ -47,11 +48,16 @@ async def analyze_rejected_jobs(
     Las sugerencias aprobadas o rechazadas no se tocan.
     """
     service = PatternAnalysisService(db)
-    rejected_count = await service.get_rejected_count(current_user.id)
-    generated = await service.analyze_and_generate(
-        user_id=current_user.id,
-        min_rejected=body.min_rejected,
-    )
+    try:
+        context = await service.load_jobs(current_user.id)
+        rejected_count = len(context[0])
+        generated = await service.analyze_and_generate(
+            user_id=current_user.id,
+            min_rejected=body.min_rejected,
+            job_context=context,
+        )
+    except CoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="Historial de feedback no disponible") from exc
     return AnalyzeRejectedResponse(
         status="success",
         suggestions_generated=generated,

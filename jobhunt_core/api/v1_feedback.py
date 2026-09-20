@@ -21,6 +21,7 @@ from jobhunt_core.api.http_contract import WRITE_RESPONSES, json_response, reque
 from jobhunt_core.api.idempotency import run_idempotent
 
 router = APIRouter(prefix="/v1")
+MAX_FEEDBACK_CONTEXT = 50000
 
 
 class FeedbackWrite(BaseModel):
@@ -148,3 +149,42 @@ async def list_positive_feedback(
         " FROM page p),'[]'::jsonb) AS items"
     ), {"pid": profile_id, "cid": principal.consumer_id, "lim": limit, "off": offset})).one()
     return {"items": row.items, "total": row.total}
+
+
+@router.get("/profiles/{profile_id}/feedback-context")
+async def feedback_context(
+    profile_id: uuid.UUID,
+    session=Depends(get_session), principal: Principal = Depends(require_scope("matches:read")),
+):
+    """Single-snapshot evidence for the BFF's existing rejection-pattern analysis.
+
+    One item per corpus vacancy, plus unlinked school observations. Include
+    unmarked history (the rejection-rate denominator) and archived vacancies.
+    Never return a truncated sample disguised as the whole collection. Only
+    title/company/tags/feedback cross this boundary, not raw listings or CVs.
+    """
+    if await applications.profile_owner(session, profile_id, principal.consumer_id) is None:
+        raise error_404("perfil")
+    effective = effective_feedback_sql("v.id", ":pid")
+    rows = (await session.execute(sa.text(
+        "WITH owned AS MATERIALIZED (SELECT id FROM profiles WHERE id=:pid AND consumer_id=:cid),"
+        " targets AS (SELECT s.vacancy_id FROM profile_vacancy_state s JOIN owned p ON p.id=s.profile_id"
+        " UNION SELECT j.vacancy_id FROM school_applications a JOIN owned p ON p.id=a.profile_id"
+        " JOIN school_job_details j ON j.id=a.school_job_id WHERE j.vacancy_id IS NOT NULL),"
+        " context AS (SELECT 'vacancy:'||v.id::text AS identity,"
+        " COALESCE(o.content->>'title','') AS title,COALESCE(o.content->>'company','') AS company,"
+        " COALESCE(o.content->'tags','[]'::jsonb) AS tags,"
+        f" ({effective}) AS feedback FROM targets t JOIN vacancies v ON v.id=t.vacancy_id"
+        " LEFT JOIN offer_revisions o ON o.id=v.current_offer_revision_id WHERE v.merged_into IS NULL"
+        " UNION ALL SELECT 'school:'||j.id::text,COALESCE(j.metadata->>'title',''),"
+        " COALESCE(sch.name,''),jsonb_build_array(m.external_ref),a.feedback"
+        " FROM school_applications a JOIN owned p ON p.id=a.profile_id"
+        " JOIN school_job_details j ON j.id=a.school_job_id"
+        " JOIN school_monitors m ON m.id=a.monitor_id JOIN schools sch ON sch.id=m.school_id"
+        " WHERE j.vacancy_id IS NULL)"
+        " SELECT * FROM context ORDER BY identity LIMIT :cap"
+    ), {"pid":profile_id, "cid":principal.consumer_id, "cap": MAX_FEEDBACK_CONTEXT + 1})).mappings().all()
+    if len(rows) > MAX_FEEDBACK_CONTEXT:
+        from jobhunt_core.api.deps import ApiError
+        raise ApiError(503, "feedback_context_too_large", "El análisis requiere un contexto completo más pequeño")
+    return {"items":[dict(row) for row in rows]}

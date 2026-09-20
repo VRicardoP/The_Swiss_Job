@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from models.job import Job
 from models.job_filter import PatternSuggestion
 from models.match_result import NEGATIVE_FEEDBACK, MatchResult
@@ -181,12 +182,17 @@ class PatternAnalysisService:
         self,
         user_id: uuid.UUID,
         min_rejected: int = _MIN_REJECTED_OCCURRENCES,
+        job_context: tuple[list[dict], list[dict]] | None = None,
     ) -> int:
         """Analiza jobs rechazados y guarda PatternSuggestion pendientes.
 
         Elimina sugerencias pendientes anteriores antes de generar nuevas.
         Devuelve el número de sugerencias generadas.
         """
+        # Obtain complete authoritative evidence before changing suggestions.
+        rejected_jobs, all_jobs = (
+            job_context if job_context is not None else await self.load_jobs(user_id)
+        )
         # Borrar sugerencias pendientes anteriores (las aprobadas/rechazadas se conservan)
         await self._db.execute(
             delete(PatternSuggestion).where(
@@ -194,8 +200,6 @@ class PatternAnalysisService:
                 PatternSuggestion.status == "pending",
             )
         )
-
-        rejected_jobs, all_jobs = await self._load_jobs(user_id)
 
         if len(rejected_jobs) < min_rejected:
             await self._db.commit()
@@ -233,6 +237,9 @@ class PatternAnalysisService:
 
     async def get_rejected_count(self, user_id: uuid.UUID) -> int:
         """Devuelve el número de jobs con feedback negativo para el usuario."""
+        if settings.CORE_FEEDBACK_ENABLED:
+            rejected, _ = await self.load_jobs(user_id)
+            return len(rejected)
         stmt = (
             select(func.count())
             .select_from(MatchResult)
@@ -245,8 +252,12 @@ class PatternAnalysisService:
 
     # --- Métodos internos ---
 
-    async def _load_jobs(self, user_id: uuid.UUID) -> tuple[list[dict], list[dict]]:
+    async def load_jobs(self, user_id: uuid.UUID) -> tuple[list[dict], list[dict]]:
         """Carga jobs rechazados y todos los jobs del usuario como dicts."""
+        if settings.CORE_FEEDBACK_ENABLED:
+            from services.matching.feedback import CoreFeedback
+            jobs = await CoreFeedback(self._db).context(user_id)
+            return [j for j in jobs if j["feedback"] in NEGATIVE_FEEDBACK], jobs
         stmt_all = (
             select(MatchResult, Job)
             .join(Job, MatchResult.job_hash == Job.hash)
