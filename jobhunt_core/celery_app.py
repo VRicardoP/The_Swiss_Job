@@ -27,6 +27,9 @@ celery_app.conf.update(
     task_default_queue="core.default",
     task_routes={
         "jobhunt.harvest.*": {"queue": "core.harvest"},
+        # Dispatch is lightweight; each fetch has its own task/time budget.
+        # Exact route precedes wildcard at routing resolution (as check_health).
+        "jobhunt.harvest.dispatch_native": {"queue": "core.default"},
         "jobhunt.embedding.*": {"queue": "core.embedding"},
         "jobhunt.matching.*": {"queue": "core.matching"},
         # P7-b: entrada por nombre EXACTO además del comodín — va en el beat
@@ -105,6 +108,12 @@ celery_app.conf.update(
     # por settings CORE_SHADOW_*; el crontab usa timezone Europe/Zurich (la
     # de este app): 06:05 = justo tras el cierre del ciclo (06:00, §5).
     beat_schedule={
+        "harvest-dispatch-native": {
+            "task": "jobhunt.harvest.dispatch_native",
+            # Existing R5 cadence, not an increase in portal traffic. All
+            # native scopes remain disabled until their individual handover.
+            "schedule": crontab(hour="0,6,12,18", minute=10),
+        },
         "shadow-sample-outbox-lag": {
             "task": "jobhunt.shadow.sample_outbox_lag",
             "schedule": float(settings.CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S),

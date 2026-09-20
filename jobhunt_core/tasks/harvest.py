@@ -7,6 +7,7 @@ estado del scope avanzaría sin persistir. Convención del repo: tareas con
 
 import asyncio
 from contextlib import nullcontext
+from datetime import datetime, timezone
 import logging
 import uuid
 from typing import Any
@@ -26,9 +27,12 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task(name="jobhunt.harvest.run_scope", bind=True, max_retries=1)
-def run_scope_task(self, scope_id: str) -> dict[str, Any]:
+def run_scope_task(self, scope_id: str, run_key: str | None = None) -> dict[str, Any]:
     try:
-        result = asyncio.run(_run_scope_impl(scope_id))
+        result = asyncio.run(
+            _run_scope_impl(scope_id) if run_key is None
+            else _run_scope_impl(scope_id, run_key=run_key)
+        )
     except (UnknownProviderError, ProviderConfigError) as exc:
         # Config PERMANENTE (provider desconocido / params inválidos, rev. 2ª
         # #3): excepciones CONCRETAS — un KeyError interno cualquiera no debe
@@ -162,7 +166,54 @@ def _describe_scope_failure(exc: Exception) -> str:
     return str(exc)
 
 
-async def _run_scope_impl(scope_id: str, claim_token=None) -> ScopeRunResult:
+@celery_app.task(name="jobhunt.harvest.dispatch_native", bind=True, max_retries=2)
+def dispatch_native_task(self, window: str | None = None) -> dict[str, Any]:
+    """Dispatch bounded work per enabled scope, preserving the six-hour cadence.
+
+    The dispatcher performs no external fetch. A broker failure can re-send
+    earlier scopes: stable per-window/per-scope run keys absorb completed work.
+    Retries retain the ORIGINAL window even across its boundary. Scope enabled
+    is rechecked by the worker; deploying this task does not enable any source.
+    """
+    if window is None:
+        now = datetime.now(timezone.utc)
+        window = now.replace(
+            hour=(now.hour // 6) * 6, minute=0, second=0, microsecond=0
+        ).isoformat()
+    try:
+        scope_ids = asyncio.run(_enabled_native_scope_ids())
+        for scope_id in scope_ids:
+            run_scope_task.apply_async(
+                kwargs={"scope_id": scope_id, "run_key": f"native:{window}:{scope_id}"},
+                expires=21600,
+            )
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=120, kwargs={"window": window})
+    return {"window": window, "dispatched": len(scope_ids)}
+
+
+async def _enabled_native_scope_ids() -> list[str]:
+    async with task_session_factory() as factory:
+        async with factory() as session:
+            # Do not silently filter unregistered sources: they must produce
+            # their explicit configuration error, visible to health monitoring.
+            return [
+                str(sid)
+                for sid in (
+                    await session.execute(
+                        sa.text(
+                            "SELECT id FROM harvest_scopes WHERE enabled ORDER BY id"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            ]
+
+
+async def _run_scope_impl(
+    scope_id: str, claim_token=None, *, run_key=None
+) -> ScopeRunResult:
     from jobhunt_core import runs
 
     # Engine DESECHABLE por invocación (rev. 2ª #1): cada asyncio.run crea un
@@ -192,17 +243,20 @@ async def _run_scope_impl(scope_id: str, claim_token=None) -> ScopeRunResult:
         provider = get_provider(scope.name)
         # run_all supplies and renews its token. Standalone/manual tasks need
         # the SAME scope-wide exclusion, not a second locking mechanism.
-        manual_run = None
+        owned_run = None
         if claim_token is None:
             async with session_factory() as session:
-                manual_run = await runs.start_run(
-                    session, f"manual:{scope_id}:{uuid.uuid4()}"
+                owned_run = await runs.start_run(
+                    session,
+                    f"scope:{scope_id}:{run_key}"
+                    if run_key is not None
+                    else f"manual:{scope_id}:{uuid.uuid4()}",
                 )
                 await session.commit()
-                claim_token = await runs.claim_scope_run(session, manual_run, scope_id)
+                claim_token = await runs.claim_scope_run(session, owned_run, scope_id)
                 await session.commit()
                 if claim_token is None:
-                    await runs.finish_run(session, manual_run)
+                    await runs.finish_run(session, owned_run)
                     await session.commit()
                     return ScopeRunResult(
                         scope_id=scope_id,
@@ -210,8 +264,8 @@ async def _run_scope_impl(scope_id: str, claim_token=None) -> ScopeRunResult:
                         detail={"reason": "scope already claimed or removed"},
                     )
         heartbeat = (
-            runs.scope_heartbeat(session_factory, manual_run, scope_id, claim_token)
-            if manual_run is not None
+            runs.scope_heartbeat(session_factory, owned_run, scope_id, claim_token)
+            if owned_run is not None
             else nullcontext()
         )
         try:
@@ -226,25 +280,25 @@ async def _run_scope_impl(scope_id: str, claim_token=None) -> ScopeRunResult:
                         claim_token=claim_token,
                     )
         except Exception:
-            if manual_run is not None:
+            if owned_run is not None:
                 try:
                     async with session_factory() as session:
                         await runs.finish_scope_run(
-                            session, manual_run, scope_id, "error", claim_token
+                            session, owned_run, scope_id, "error", claim_token
                         )
-                        await runs.finish_run(session, manual_run)
+                        await runs.finish_run(session, owned_run)
                         await session.commit()
                 except Exception:
                     # Preserve the fetch/config error; an unavailable database
                     # leaves an expiring claim, never an unguarded retry.
                     logger.exception("could not close standalone harvest run")
             raise
-        if manual_run is not None:
+        if owned_run is not None:
             async with session_factory() as session:
                 closed = await runs.finish_scope_run(
-                    session, manual_run, scope_id, result.status, claim_token
+                    session, owned_run, scope_id, result.status, claim_token
                 )
-                await runs.finish_run(session, manual_run)
+                await runs.finish_run(session, owned_run)
                 await session.commit()
             if not closed and result.status != "not_found":
                 result.status = "stale"
