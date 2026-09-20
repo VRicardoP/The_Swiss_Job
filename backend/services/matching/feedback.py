@@ -175,7 +175,10 @@ class CoreFeedback:
     async def context(self, user_id):
         """Complete, tenant-scoped evidence for the existing pattern analyzer."""
         pid = await self._profile(user_id)
-        response = await self._request("GET", f"/profiles/{pid}/feedback-context")
+        # Unlike a feed page this reads the complete history (12k measured on NAS).
+        # Core bounds its SQL to 40 s; do not extend timeouts of interactive writes.
+        response = await self._request("GET", f"/profiles/{pid}/feedback-context",
+                                       timeout=httpx.Timeout(45.0, connect=5.0))
         if response.status_code == 404:
             raise CoreUnavailableError("perfil core no disponible")
         try:

@@ -15,8 +15,8 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from jobhunt_core import applications
-from jobhunt_core.feedback import effective_feedback_sql, set_vacancy_feedback
-from jobhunt_core.api.deps import Principal, error_404, get_session, require_scope
+from jobhunt_core.feedback import effective_feedback_sql, effective_feedback_batch_sql, set_vacancy_feedback
+from jobhunt_core.api.deps import ApiError, Principal, error_404, get_session, require_scope
 from jobhunt_core.api.http_contract import WRITE_RESPONSES, json_response, request_hash
 from jobhunt_core.api.idempotency import run_idempotent
 
@@ -165,16 +165,20 @@ async def feedback_context(
     """
     if await applications.profile_owner(session, profile_id, principal.consumer_id) is None:
         raise error_404("perfil")
-    effective = effective_feedback_sql("v.id", ":pid")
+    # Manual whole-history analysis has a bounded budget distinct from feed reads.
+    await session.execute(sa.text("SET LOCAL statement_timeout='40s'"))
+    effective = effective_feedback_batch_sql(":pid")
     rows = (await session.execute(sa.text(
         "WITH owned AS MATERIALIZED (SELECT id FROM profiles WHERE id=:pid AND consumer_id=:cid),"
         " targets AS (SELECT s.vacancy_id FROM profile_vacancy_state s JOIN owned p ON p.id=s.profile_id"
         " UNION SELECT j.vacancy_id FROM school_applications a JOIN owned p ON p.id=a.profile_id"
         " JOIN school_job_details j ON j.id=a.school_job_id WHERE j.vacancy_id IS NOT NULL),"
+        f" latest AS MATERIALIZED ({effective}),"
         " context AS (SELECT 'vacancy:'||v.id::text AS identity,"
         " COALESCE(o.content->>'title','') AS title,COALESCE(o.content->>'company','') AS company,"
         " COALESCE(o.content->'tags','[]'::jsonb) AS tags,"
-        f" ({effective}) AS feedback FROM targets t JOIN vacancies v ON v.id=t.vacancy_id"
+        " latest.feedback FROM targets t JOIN vacancies v ON v.id=t.vacancy_id"
+        " LEFT JOIN latest ON latest.vacancy_id=v.id"
         " LEFT JOIN offer_revisions o ON o.id=v.current_offer_revision_id WHERE v.merged_into IS NULL"
         " UNION ALL SELECT 'school:'||j.id::text,COALESCE(j.metadata->>'title',''),"
         " COALESCE(sch.name,''),jsonb_build_array(m.external_ref),a.feedback"
@@ -185,6 +189,5 @@ async def feedback_context(
         " SELECT * FROM context ORDER BY identity LIMIT :cap"
     ), {"pid":profile_id, "cid":principal.consumer_id, "cap": MAX_FEEDBACK_CONTEXT + 1})).mappings().all()
     if len(rows) > MAX_FEEDBACK_CONTEXT:
-        from jobhunt_core.api.deps import ApiError
         raise ApiError(503, "feedback_context_too_large", "El análisis requiere un contexto completo más pequeño")
     return {"items":[dict(row) for row in rows]}
