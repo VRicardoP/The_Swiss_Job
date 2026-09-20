@@ -39,9 +39,36 @@ VALID_FEEDBACK = {"thumbs_up", "thumbs_down"}
 _MAX_MERGE_HOPS = 5
 
 
-async def resolve_vacancies_by_incarnation_url(
-    session: AsyncSession, url: str
-) -> list:
+async def resolve_vacancies_by_incarnation_urls(session: AsyncSession, urls) -> dict:
+    """Same clone/merge resolution in one corpus scan, grouped by exact URL."""
+    result = {url: [] for url in urls}
+    if not result:
+        return result
+    rows = (
+        await session.execute(
+            sa.text(
+                "WITH RECURSIVE origen AS ("
+                " SELECT DISTINCT i.url, i.vacancy_id AS vid FROM source_listing_incarnations i"
+                " WHERE i.url = ANY(CAST(:urls AS text[]))"
+                "), cadena AS ("
+                " SELECT o.url, o.vid AS actual, ARRAY[o.vid] AS visitados FROM origen o"
+                " UNION ALL"
+                " SELECT c.url, v.merged_into, c.visitados || v.merged_into"
+                " FROM cadena c JOIN vacancies v ON v.id=c.actual"
+                " WHERE v.merged_into IS NOT NULL AND NOT(v.merged_into=ANY(c.visitados))"
+                ") SELECT DISTINCT c.url,c.actual FROM cadena c"
+                " JOIN vacancies v ON v.id=c.actual WHERE v.merged_into IS NULL"
+                " ORDER BY c.url,c.actual"
+            ),
+            {"urls": list(result)},
+        )
+    ).all()
+    for url, vid in rows:
+        result[url].append(vid)
+    return result
+
+
+async def resolve_vacancies_by_incarnation_url(session: AsyncSession, url: str) -> list:
     """TODAS las vacantes ganadoras para una URL de oferta legacy.
 
     Revisión externa 2026-09-07 (P1-5): antes tomaba UNA encarnación
@@ -60,33 +87,14 @@ async def resolve_vacancies_by_incarnation_url(
     pierde la intención del usuario en las demás; rechazar la pierde entera.
     Son la MISMA oferta: el feedback se aplica a todas ellas.
     """
-    filas = (
-        await session.execute(
-            sa.text(
-                "WITH RECURSIVE origen AS ("
-                "  SELECT DISTINCT i.vacancy_id AS vid FROM "
-                "  source_listing_incarnations i WHERE i.url = :u"
-                "), cadena AS ("
-                "  SELECT o.vid AS raiz, o.vid AS actual,"
-                "         ARRAY[o.vid] AS visitados FROM origen o"
-                "  UNION ALL"
-                "  SELECT c.raiz, v.merged_into, c.visitados || v.merged_into"
-                "  FROM cadena c JOIN vacancies v ON v.id = c.actual"
-                "  WHERE v.merged_into IS NOT NULL"
-                "    AND NOT (v.merged_into = ANY(c.visitados))"
-                ") "
-                "SELECT DISTINCT c.actual AS ganadora FROM cadena c "
-                "JOIN vacancies v ON v.id = c.actual "
-                "WHERE v.merged_into IS NULL"
-            ),
-            {"u": url},
-        )
-    ).scalars().all()
+    filas = (await resolve_vacancies_by_incarnation_urls(session, [url]))[url]
     if len(filas) > 1:
         logger.info(
             "import_swissjob: la url %.80s resuelve a %d vacantes (clones de "
             "la misma oferta) — el feedback se aplica a todas",
-            url, len(filas))
+            url,
+            len(filas),
+        )
     return list(filas)
 
 

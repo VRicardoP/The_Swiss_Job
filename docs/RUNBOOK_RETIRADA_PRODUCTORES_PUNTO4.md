@@ -1,5 +1,12 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
+Checkpoint vigente 20-09 06:40: lectores de feedback desplegados en `39579d7`;
+feedback sigue LOCAL y habilitado. Preparación de migración cancelada sin aplicar
+por coste de consultas y bloqueo de lectores. Fix local en verificación;
+[evidencia y continuación](audits/FEEDBACK_PLAN_LOCKS_2026-09-20.md).
+PostgreSQL protegido con init, mismo volumen/imagen. No se retiró ninguna fuente.
+El checkpoint inferior describe el despliegue previo, no las imágenes actuales.
+
 Checkpoint vigente 20-09 04:42: core API/worker/capture y BFF en bac5e78,
 core0049; entrega de perfiles habilitada y confirmada 2/2, feed recuperado y servido.
 [Acta](audits/PROFILE_DEPLOYMENT_NAS_2026-09-20.md).

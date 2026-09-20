@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 import sqlalchemy as sa
 
 from jobhunt_core.import_schools import canonical, digest
-from jobhunt_core.import_swissjob_durables import resolve_vacancies_by_incarnation_url
+from jobhunt_core.import_swissjob_durables import resolve_vacancies_by_incarnation_urls
 
 
 class FeedbackMigrationError(ValueError):
@@ -27,10 +27,12 @@ _TABLES = {
         ("feedback", "dismissed_at", "feedback_recorded_at"),
     ),
     "school_applications": (
-        ("id",), ("feedback", "feedback_recorded_at", "feedback_implicit"),
+        ("id",),
+        ("feedback", "feedback_recorded_at", "feedback_implicit"),
     ),
     "profile_vacancy_events": (
-        ("id",), ("profile_id", "vacancy_id", "kind", "data", "created_at"),
+        ("id",),
+        ("profile_id", "vacancy_id", "kind", "data", "created_at"),
     ),
 }
 _JSON = {"feedback_implicit", "data"}
@@ -73,6 +75,40 @@ async def _read(session, table, identity):
     return _wire(dict(result)) if result is not None else None
 
 
+async def _read_requested(session, requested):
+    """Lock/read exact preimages in at most one statement per feedback table."""
+    before = {}
+    for table, (keys, fields) in _TABLES.items():
+        identities = [
+            identity for (name, _), (identity, _) in requested.items() if name == table
+        ]
+        if not identities:
+            continue
+        columns = ",".join("t." + key for key in (*keys, *fields))
+        declaration = ",".join(key + " uuid" for key in keys)
+        join = " AND ".join("t." + key + "=wanted." + key for key in keys)
+        result = (
+            (
+                await session.execute(
+                    sa.text(
+                        f"SELECT {columns} FROM {table} t JOIN "
+                        f"jsonb_to_recordset(CAST(:identities AS jsonb)) AS wanted({declaration}) "
+                        f"ON {join} ORDER BY "
+                        + ",".join("t." + key for key in keys)
+                        + " FOR UPDATE OF t"
+                    ),
+                    {"identities": json.dumps(identities)},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        for row in result:
+            identity = tuple(str(row[key]) for key in keys)
+            before[(table, identity)] = _wire({key: row[key] for key in fields})
+    return before
+
+
 async def prepare_plan(session, *, consumer, bindings, rows, recorded_at):
     """rows are the COMPLETE frozen MatchResult collection, joined to job URL.
 
@@ -89,7 +125,8 @@ async def prepare_plan(session, *, consumer, bindings, rows, recorded_at):
     if not bindings or len(set(bindings.values())) != len(bindings):
         raise FeedbackMigrationError("invalid profile bindings")
     await _lock_profiles(session, consumer, bindings.values())
-    requested, source_ids, source_keys, by_url = {}, set(), set(), {}
+    requested, source_ids, source_keys = {}, set(), set()
+    validated = []
 
     def expect(table, identity, after):
         key = (table, tuple(identity.values()))
@@ -107,61 +144,122 @@ async def prepare_plan(session, *, consumer, bindings, rows, recorded_at):
         source_keys.add(key)
         feedback = row["feedback"]
         implicit = [] if row["feedback_implicit"] is None else row["feedback_implicit"]
-        if feedback not in {None, "thumbs_up", "thumbs_down", "applied", "dismissed"} or not isinstance(implicit, list):
+        if feedback not in {
+            None,
+            "thumbs_up",
+            "thumbs_down",
+            "applied",
+            "dismissed",
+        } or not isinstance(implicit, list):
             raise FeedbackMigrationError("invalid source feedback")
         if any(not isinstance(event, dict) for event in implicit):
             raise FeedbackMigrationError("invalid implicit event")
+        validated.append((row, rid, uid, feedback, implicit))
+
+    by_url = await resolve_vacancies_by_incarnation_urls(
+        session, (row["url"] for row in rows)
+    )
+    school_rows = (
+        await session.execute(
+            sa.text(
+                "SELECT a.profile_id::text,j.source_ref,a.id FROM school_applications a "
+                "JOIN school_job_details j ON j.id=a.school_job_id "
+                "WHERE a.profile_id=ANY(:pids) AND j.source_ref=ANY(CAST(:refs AS text[]))"
+            ),
+            {
+                "pids": [uuid.UUID(p) for p in bindings.values()],
+                "refs": list({row["job_hash"] for row in rows}),
+            },
+        )
+    ).all()
+    by_school = {}
+    for profile, ref, sid in school_rows:
+        by_school.setdefault((profile, ref), []).append(sid)
+
+    for row, rid, uid, feedback, implicit in validated:
         pid = bindings[uid]
-        if row["url"] not in by_url:
-            by_url[row["url"]] = await resolve_vacancies_by_incarnation_url(session, row["url"])
         vids = by_url[row["url"]]
-        schools = (await session.execute(sa.text(
-            "SELECT a.id FROM school_applications a JOIN school_job_details j "
-            "ON j.id=a.school_job_id WHERE a.profile_id=:p AND j.source_ref=:ref"
-        ), {"p": uuid.UUID(pid), "ref": row["job_hash"]})).scalars().all()
+        schools = by_school.get((pid, row["job_hash"]), [])
         if len(schools) > 1:
             raise FeedbackMigrationError("ambiguous school source identity")
         if not vids and not schools and (feedback is not None or implicit):
             raise FeedbackMigrationError("marked source row has no core identity")
         for sid in schools:
-            expect("school_applications", {"id": str(sid)}, {
-                "feedback": feedback, "feedback_recorded_at": stamp,
-                "feedback_implicit": implicit,
-            })
+            expect(
+                "school_applications",
+                {"id": str(sid)},
+                {
+                    "feedback": feedback,
+                    "feedback_recorded_at": stamp,
+                    "feedback_implicit": implicit,
+                },
+            )
         for vid in vids:
             vid = str(vid)
-            expect("profile_vacancy_state", {"profile_id": pid, "vacancy_id": vid}, {
-                "feedback": feedback,
-                "dismissed_at": stamp if feedback in {"thumbs_down", "dismissed"} else None,
-                "feedback_recorded_at": stamp,
-            })
+            expect(
+                "profile_vacancy_state",
+                {"profile_id": pid, "vacancy_id": vid},
+                {
+                    "feedback": feedback,
+                    "dismissed_at": stamp
+                    if feedback in {"thumbs_down", "dismissed"}
+                    else None,
+                    "feedback_recorded_at": stamp,
+                },
+            )
             if not schools:
                 for index, event in enumerate(implicit):
                     eid = uuid.uuid5(rid, f"core-feedback:{vid}:{index}")
-                    expect("profile_vacancy_events", {"id": str(eid)}, {
-                        "profile_id": pid, "vacancy_id": vid, "kind": "implicit",
-                        "data": event, "created_at": stamp,
-                    })
-    existing = (await session.execute(sa.text(
-        "SELECT profile_id::text,vacancy_id::text FROM profile_vacancy_state "
-        "WHERE profile_id=ANY(:pids) AND (feedback IS NOT NULL OR dismissed_at IS NOT NULL)"
-    ), {"pids": [uuid.UUID(p) for p in bindings.values()]})).all()
-    if any(("profile_vacancy_state", (pid, vid)) not in requested for pid, vid in existing):
+                    expect(
+                        "profile_vacancy_events",
+                        {"id": str(eid)},
+                        {
+                            "profile_id": pid,
+                            "vacancy_id": vid,
+                            "kind": "implicit",
+                            "data": event,
+                            "created_at": stamp,
+                        },
+                    )
+    existing = (
+        await session.execute(
+            sa.text(
+                "SELECT profile_id::text,vacancy_id::text FROM profile_vacancy_state "
+                "WHERE profile_id=ANY(:pids) AND (feedback IS NOT NULL OR dismissed_at IS NOT NULL)"
+            ),
+            {"pids": [uuid.UUID(p) for p in bindings.values()]},
+        )
+    ).all()
+    if any(
+        ("profile_vacancy_state", (pid, vid)) not in requested for pid, vid in existing
+    ):
         raise FeedbackMigrationError("core mark absent from complete source snapshot")
     changes = []
-    for (table, _), (identity, after) in sorted(requested.items()):
-        before = await _read(session, table, identity)
+    preimages = await _read_requested(session, requested)
+    for (table, key), (identity, after) in sorted(requested.items()):
+        before = preimages.get((table, key))
         # Unmarked matches are not themselves durable feedback. Only material
         # existing marks need clearing; do not manufacture thousands of states.
-        if table == "profile_vacancy_state" and after["feedback"] is None and (
-            before is None or (before["feedback"] is None and before["dismissed_at"] is None)
+        if (
+            table == "profile_vacancy_state"
+            and after["feedback"] is None
+            and (
+                before is None
+                or (before["feedback"] is None and before["dismissed_at"] is None)
+            )
         ):
             continue
         if table == "school_applications" and before is None:
             raise FeedbackMigrationError("school state must be migrated first")
-        changes.append({"table": table, "identity": identity, "before": before, "after": after})
-    plan = {"consumer": consumer, "bindings": bindings, "source_sha256": digest(rows),
-            "changes": changes}
+        changes.append(
+            {"table": table, "identity": identity, "before": before, "after": after}
+        )
+    plan = {
+        "consumer": consumer,
+        "bindings": bindings,
+        "source_sha256": digest(rows),
+        "changes": changes,
+    }
     return {**plan, "seal": digest(plan)}
 
 

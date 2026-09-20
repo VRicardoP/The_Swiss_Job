@@ -90,7 +90,10 @@ async def lock_source(session, origin, bindings, *, authority, schema="public"):
                 sa.select(users.c.id)
                 .where(users.c.id.in_(owners))
                 .order_by(users.c.id)
-                .with_for_update()
+                # Protect identity against edits/deletion without excluding
+                # authenticated BFF readers, which also acquire FOR SHARE.
+                # Source durable writers are frozen and table-locked below.
+                .with_for_update(read=True)
             )
         )
         .scalars()
