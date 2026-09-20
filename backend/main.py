@@ -105,6 +105,11 @@ async def lifespan(app: FastAPI):
     # el doble disparo con varios workers de gunicorn.
     scheduler_task = asyncio.create_task(run_scheduler_with_leader_lock())
     exclusion_delivery_task = asyncio.create_task(run_exclusion_delivery())
+    from services.profile_sync import run_profile_delivery
+    profile_delivery_task = (
+        asyncio.create_task(run_profile_delivery())
+        if settings.CORE_PROFILE_SYNC_ENABLED else None
+    )
     from services.profile_erasure import run_erasure_delivery
     erasure_delivery_task = asyncio.create_task(run_erasure_delivery())
 
@@ -114,6 +119,12 @@ async def lifespan(app: FastAPI):
     if warmup_task is not None and not warmup_task.done():
         warmup_task.cancel()
     erasure_delivery_task.cancel()
+    if profile_delivery_task is not None:
+        profile_delivery_task.cancel()
+        try:
+            await profile_delivery_task
+        except asyncio.CancelledError:
+            pass
     try:
         await erasure_delivery_task
     except asyncio.CancelledError:

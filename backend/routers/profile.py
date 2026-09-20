@@ -79,6 +79,16 @@ def _profile_http_error(exc: ProfileError) -> HTTPException:
     raise exc  # error de programacion: no enmascarar como HTTP
 
 
+@router.get("/sync-status")
+async def get_profile_sync_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delivery status for this authenticated owner; no CV or credentials."""
+    from services.profile_sync import profile_sync_status
+    return await profile_sync_status(db, current_user.id)
+
+
 @router.get("", response_model=ProfileResponse)
 async def get_profile(
     current_user: User = Depends(get_current_user),

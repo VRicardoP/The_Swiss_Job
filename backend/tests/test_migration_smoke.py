@@ -39,6 +39,7 @@ SEAM_TABLES = {
     "generated_documents": "generated_documents_pkey",
     "document_deliveries": "document_deliveries_pkey",
     "integration_inbox": "integration_inbox_pkey",
+    "profile_sync_state": "profile_sync_state_pkey",
 }
 
 

@@ -259,6 +259,9 @@ class Settings(BaseSettings):
     # F writer cutover: enable ONLY after frozen feedback migration/reconciliation.
     # Once enabled there is no fallback to a local feedback writer or saved feed.
     CORE_FEEDBACK_ENABLED: bool = False
+    # Activate only after core0049 + enrollment + frozen source reconciliation.
+    # False still captures edits transactionally, but never transfers authority.
+    CORE_PROFILE_SYNC_ENABLED: bool = False
     FEEDBACK_WRITES_FROZEN: bool = False
     # TTL de la cache en proceso del routing: acota la staleness entre
     # procesos/workers (la invalidacion transaccional cubre el proceso local).

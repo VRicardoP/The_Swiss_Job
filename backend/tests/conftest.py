@@ -1,4 +1,6 @@
 import uuid
+import runpy
+from pathlib import Path
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -37,6 +39,8 @@ _EXTRA_DDL = (
     "ON jobs FOR EACH ROW EXECUTE FUNCTION "
     "tsvector_update_trigger("
     "search_vector, 'pg_catalog.simple', title, description, company)",
+    *runpy.run_path(str(Path(__file__).resolve().parents[1]
+        / "alembic/versions/c57f2341b012_profile_delivery.py"))["TRIGGER_DDL"],
 )
 
 # Orden inverso de dependencias — el mismo que usaba el TRUNCATE tabla a tabla.

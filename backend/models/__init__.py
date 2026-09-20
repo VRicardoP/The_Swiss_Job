@@ -9,6 +9,7 @@ from models.enums import (
     UserPlan,
 )
 from models.exclusion_sync_state import ExclusionSyncState
+from models.profile_sync_state import ProfileSyncState
 from models.profile_erasure import ProfileErasure
 from models.generated_document import GeneratedDocument
 from models.document_delivery import DocumentDelivery
@@ -34,6 +35,7 @@ __all__ = [
     "DocumentDelivery",
     "IntegrationInbox",
     "ExclusionSyncState",
+    "ProfileSyncState",
     "Job",
     "JobApplication",
     "JobFilter",
