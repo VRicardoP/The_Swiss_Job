@@ -1,5 +1,10 @@
 # Barridos truncados: evidencia operativa previa al corte
 
+Actualización: corrección desplegada en el worker público el 20-09 a las 02:07
+Europe/Madrid. Suite final BFF: 2.444 verdes; arranque, configuración y orden
+efectivo verificados. [Checkpoint](WORKER_PREPARACION_PUNTO4_NAS_2026-09-20.md).
+La ejecución efectiva del próximo barrido sigue pendiente de observación.
+
 Lecturas del NAS: 2026-09-19 23:30 UTC (20-09 en Europe/Madrid).
 Sólo consultas de lectura y logs filtrados; sin contactos, perfiles ni secretos.
 

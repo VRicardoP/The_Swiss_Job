@@ -1,5 +1,11 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
+Checkpoint 20-09 02:11: worker público `d89b6ee` desplegado para evitar inanición
+entre barridos; configuración y autoridades sin cambios. Core local 1.482 verdes,
+BFF 2.444 verdes (3 skipped, 4 xfailed). **El traspaso por fuente sigue sin ejecutar**.
+Ver [evidencia y reversión](audits/WORKER_PREPARACION_PUNTO4_NAS_2026-09-20.md).
+Las cifras inferiores conservan el historial, no la última validación.
+
 Estado 20-09-2026: **preparación, no ejecutado**. Este documento no autoriza un
 flip que incumpla las precondiciones. Producción sigue E.15/core0047. El objetivo
 vigente del propietario es sólo cerrar este punto, no un nuevo examen de calidad.

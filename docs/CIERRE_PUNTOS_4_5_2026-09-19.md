@@ -1,5 +1,15 @@
 # Cierre de puntos 4 y 5 — ejecución en curso
 
+## Último checkpoint: 20-09, 02:11 Europe/Madrid
+
+Punto 4 sigue abierto. Sólo el worker público se actualizó a `d89b6ee`:
+equidad entre barridos interrumpidos y fencing de tareas CV. Core/BFF/Portfolio
+mantienen E.15; no se activaron fuentes nativas ni el escritor core de feedback.
+Core local: 1.482 pruebas verdes. BFF desplegado: 2.444 passed, 3 skipped,
+4 xfailed. Evidencia y reversión: [checkpoint NAS](audits/WORKER_PREPARACION_PUNTO4_NAS_2026-09-20.md).
+Los párrafos siguientes son el historial de preparación; este checkpoint
+supersede sus afirmaciones de que ningún cambio del worker estaba desplegado.
+
 Autorización: petición del propietario del 19-09-2026. Orden obligatorio:
 Actualización de alcance del propietario (20-09): el objetivo activo queda
 restringido a **punto 4: productores y retirada legacy**. Punto 5, cron y entrega
