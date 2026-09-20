@@ -69,7 +69,61 @@ async def claim_scope_run(session, run_id, scope_id) -> uuid.UUID | None:
     - Fila nueva: el propio INSERT es el claim exclusivo (fija el token).
     - Terminada con éxito/decisión: nadie la gana (no duplicar).
     - 'error' terminado o colgada con LEASE vencido: se re-arma en el MISMO UPDATE condicional con
-      un token NUEVO — dos workers solapados no pueden ganarla ambos."""
+      un token NUEVO — dos workers solapados no pueden ganarla ambos.
+    La exclusión comprende TODOS los run_key del scope, incluida la tarea manual."""
+    # A run key is not a scope lock: the scheduler and a manual run can use
+    # different keys. Serialize claims on the permanent scope, in the same
+    # order as persistence/failure accounting: scope -> claim -> scope state.
+    found = await session.scalar(
+        sa.text("SELECT id FROM harvest_scopes WHERE id=:sid FOR UPDATE"),
+        {"sid": scope_id},
+    )
+    if found is None:
+        return None
+    own = (
+        await session.execute(
+            sa.text(
+                "SELECT status, finished_at FROM source_harvest_runs "
+                "WHERE run_id=:rid AND scope_id=:sid FOR UPDATE"
+            ),
+            {"rid": run_id, "sid": scope_id},
+        )
+    ).one_or_none()
+    # Retrying a completed operation cannot acquire a new claim, and must
+    # not revoke another run's expired token as a side effect. Error runs
+    # remain retryable under the existing contract.
+    if own is not None and own.finished_at is not None and own.status != "error":
+        return None
+    # Lock live rows before testing their heartbeat; a concurrent renewal
+    # must finish before we decide whether its claim can be superseded.
+    await session.execute(
+        sa.text(
+            "SELECT run_id FROM source_harvest_runs WHERE scope_id=:sid "
+            "AND status='running' AND finished_at IS NULL ORDER BY run_id FOR UPDATE"
+        ),
+        {"sid": scope_id},
+    )
+    busy = await session.scalar(
+        sa.text(
+            "SELECT EXISTS (SELECT 1 FROM source_harvest_runs WHERE scope_id=:sid "
+            "AND status='running' AND finished_at IS NULL AND "
+            f"{_alive_at()} >= clock_timestamp()-make_interval(secs => :lease))"
+        ),
+        {"sid": scope_id, "lease": SCOPE_LEASE_S},
+    )
+    if busy:
+        return None
+    # An expired claim from ANOTHER run must lose its write/heartbeat authority
+    # too, not merely let the new run insert a second authoritative token.
+    await session.execute(
+        sa.text(
+            "UPDATE source_harvest_runs SET status='error', finished_at=clock_timestamp() "
+            "WHERE scope_id=:sid AND run_id<>:rid AND status='running' "
+            "AND finished_at IS NULL AND "
+            f"{_alive_at()} < clock_timestamp()-make_interval(secs => :lease)"
+        ),
+        {"sid": scope_id, "rid": run_id, "lease": SCOPE_LEASE_S},
+    )
     token = uuid.uuid4()
     inserted = (
         await session.execute(

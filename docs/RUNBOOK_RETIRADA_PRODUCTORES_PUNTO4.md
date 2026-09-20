@@ -1,5 +1,9 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
+En preparación local: [exclusión global por scope](audits/HARVEST_SCOPE_EXCLUSION_2026-09-20.md),
+incluida la entrada manual. Ninguna fuente nativa activada; no confundir las
+pruebas locales con retirada productiva.
+
 Checkpoint vigente 20-09 07:12: **feedback CORE habilitado y confirmado**,
 112 cambios migrados y verificados, freeze liberado; perfiles mantienen autoridad
 core. [Acta, canary e imágenes](audits/FEEDBACK_DEPLOYMENT_NAS_2026-09-20.md).
@@ -42,9 +46,9 @@ vigente del propietario es sólo cerrar este punto, no un nuevo examen de calida
    comparten entre posiciones. El nativo usa `id:<id de portal>` y `/stelle/<id>`.
    No escoger un histórico ambiguo por orden ni fusionar plazas por URL compartida.
 4. Demostrar que las ofertas exclusivamente nativas se pueden consultar, guardar,
-   rechazar y usar en candidaturas/documentos. El nuevo feedback no está activado;
-   su ensayo de ida/vuelta actual es PRE-activación, no conserva por sí solo
-   nuevas decisiones del usuario tras el corte. Resolver esa reversión antes.
+   rechazar y usar en candidaturas/documentos. El feedback core ya está activado
+   (acta 20-09). Su recuperación POST-activación debe preservar las nuevas
+   decisiones: NO usar el `revert` de la importación previa al corte.
 5. Tener backup y restore estricto, esquema equivalente y ensayo con datos reales
    aislados. No exportar datos privados a un lugar sin autorización específica.
    El ensayo SwissJob realizado dentro del NAS no autoriza su copia al ordenador.

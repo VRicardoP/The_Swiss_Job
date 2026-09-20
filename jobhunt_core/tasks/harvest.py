@@ -6,7 +6,9 @@ estado del scope avanzaría sin persistir. Convención del repo: tareas con
 """
 
 import asyncio
+from contextlib import nullcontext
 import logging
+import uuid
 from typing import Any
 
 import httpx
@@ -161,30 +163,89 @@ def _describe_scope_failure(exc: Exception) -> str:
 
 
 async def _run_scope_impl(scope_id: str, claim_token=None) -> ScopeRunResult:
+    from jobhunt_core import runs
+
     # Engine DESECHABLE por invocación (rev. 2ª #1): cada asyncio.run crea un
     # loop nuevo — el engine global quedaría ligado al primero y la segunda
     # tarea del proceso worker moriría ('Future attached to a different loop').
     async with task_session_factory() as session_factory:
         async with session_factory() as session:
-            source_name = (
+            scope = (
                 await session.execute(
                     sa.text(
-                        "SELECT s.name FROM harvest_scopes hs "
+                        "SELECT s.name,hs.enabled FROM harvest_scopes hs "
                         "JOIN sources s ON s.id = hs.source_id WHERE hs.id = :sid"
                     ),
                     {"sid": scope_id},
                 )
-            ).scalar_one_or_none()
-        if source_name is None:
+            ).one_or_none()
+        if scope is None:
             # Scope eliminado tras encolar la tarea: caso NORMAL y permanente
             # (rev. A-04 #5) — no es error de fuente y no debe consumir retry.
             return ScopeRunResult(
-                scope_id=scope_id, status="not_found",
+                scope_id=scope_id,
+                status="not_found",
                 detail={"reason": "scope inexistente"},
             )
-        provider = get_provider(source_name)
-        async with httpx.AsyncClient() as http:
-            return await run_scope(
-                scope_id, provider, RawListingSink(), http,
-                session_factory=session_factory, claim_token=claim_token,
-            )
+        if not scope.enabled:
+            return ScopeRunResult(scope_id=scope_id, status="skipped")
+        provider = get_provider(scope.name)
+        # run_all supplies and renews its token. Standalone/manual tasks need
+        # the SAME scope-wide exclusion, not a second locking mechanism.
+        manual_run = None
+        if claim_token is None:
+            async with session_factory() as session:
+                manual_run = await runs.start_run(
+                    session, f"manual:{scope_id}:{uuid.uuid4()}"
+                )
+                await session.commit()
+                claim_token = await runs.claim_scope_run(session, manual_run, scope_id)
+                await session.commit()
+                if claim_token is None:
+                    await runs.finish_run(session, manual_run)
+                    await session.commit()
+                    return ScopeRunResult(
+                        scope_id=scope_id,
+                        status="skipped",
+                        detail={"reason": "scope already claimed or removed"},
+                    )
+        heartbeat = (
+            runs.scope_heartbeat(session_factory, manual_run, scope_id, claim_token)
+            if manual_run is not None
+            else nullcontext()
+        )
+        try:
+            async with heartbeat:
+                async with httpx.AsyncClient() as http:
+                    result = await run_scope(
+                        scope_id,
+                        provider,
+                        RawListingSink(),
+                        http,
+                        session_factory=session_factory,
+                        claim_token=claim_token,
+                    )
+        except Exception:
+            if manual_run is not None:
+                try:
+                    async with session_factory() as session:
+                        await runs.finish_scope_run(
+                            session, manual_run, scope_id, "error", claim_token
+                        )
+                        await runs.finish_run(session, manual_run)
+                        await session.commit()
+                except Exception:
+                    # Preserve the fetch/config error; an unavailable database
+                    # leaves an expiring claim, never an unguarded retry.
+                    logger.exception("could not close standalone harvest run")
+            raise
+        if manual_run is not None:
+            async with session_factory() as session:
+                closed = await runs.finish_scope_run(
+                    session, manual_run, scope_id, result.status, claim_token
+                )
+                await runs.finish_run(session, manual_run)
+                await session.commit()
+            if not closed and result.status != "not_found":
+                result.status = "stale"
+        return result

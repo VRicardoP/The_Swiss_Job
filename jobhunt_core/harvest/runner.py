@@ -252,8 +252,8 @@ _NO_SNAPSHOT = object()  # centinela: distingue "sin snapshot" (legacy) de "snap
 async def _still_authoritative(session, scope_id: str, token, state_snapshot) -> bool:
     """True si este run sigue siendo AUTORITATIVO sobre el scope para mutar su estado:
     - CON token (vía run_all): el claim sigue vigente (_still_claim_owner, FOR UPDATE).
-    - SIN token pero CON state_snapshot=(cursor, last_complete_at) (vía run_scope_task individual,
-      que NO reclama): el ESTADO del scope NO ha cambiado desde antes del fetch. La clave es
+    - SIN token pero CON state_snapshot=(cursor, last_complete_at) (llamadas directas al runner;
+      la tarea individual YA reclama): el ESTADO no cambió desde el fetch. La clave es
       `last_complete_at`: recibe un now() FRESCO (≠ el previo) en cada cosecha COMPLETA — que es
       EXACTAMENTE cuando run_all resetea consecutive_failures=0; si cambió, otro run cosechó y este
       quedó OBSOLETO → no debe pisar su estado. El VALOR del cursor NO basta (un feed estacionario
@@ -261,9 +261,7 @@ async def _still_authoritative(session, scope_id: str, token, state_snapshot) ->
       INVARIANTE del que depende: `runner.py` es el ÚNICO escritor de source_scope_state; si un
       futuro endpoint reseteara consecutive_failures sin tocar last_complete_at, el clobber volvería.
     - Sin ninguno (llamada directa legacy): autoritativo (comportamiento previo)."""
-    if token is not None:
-        return await _still_claim_owner(session, scope_id, token)
-    if state_snapshot is _NO_SNAPSHOT:
+    if token is None and state_snapshot is _NO_SNAPSHOT:
         return True
     # Se BLOQUEA primero la fila PERMANENTE del scope (harvest_scopes), NO la de source_scope_state:
     # en el PRIMER run esa fila AÚN NO EXISTE y FOR UPDATE no bloquea el "hueco" de una fila
@@ -271,10 +269,14 @@ async def _still_authoritative(session, scope_id: str, token, state_snapshot) ->
     # integral ronda 4). El lock de hs coincide con el orden del camino de ÉXITO (FOR UPDATE OF hs →
     # source_scope_state): serializa ambos (si este run gana, registra y el vigente resetea después;
     # si gana el vigente, este observa el estado nuevo y descarta) y no abre deadlock.
-    await session.execute(
+    exists = await session.scalar(
         sa.text("SELECT 1 FROM harvest_scopes WHERE id = :sid FOR UPDATE"),
         {"sid": scope_id},
     )
+    if exists is None:
+        return False
+    if token is not None:
+        return await _still_claim_owner(session, scope_id, token)
     row = (
         await session.execute(
             sa.text(
@@ -294,7 +296,7 @@ async def _record_failure_safe(
 
     FENCING (P1/P2 rev. externa integral ronda 2/3): solo cuenta el fallo si este run sigue siendo
     AUTORITATIVO sobre el scope (_still_authoritative) — por claim vigente (run_all) o por estado
-    (cursor, last_complete_at) inalterado (run_scope_task sin claim). Un run obsoleto (lease vencido
+    (cursor, last_complete_at) inalterado (runner directo sin claim). Un run obsoleto (lease vencido
     y re-armado, o superado por otro que ya cosechó con consecutive_failures=0) NO debe incrementar
     el contador ni disparar un backoff espurio sobre el estado del vigente.
 
