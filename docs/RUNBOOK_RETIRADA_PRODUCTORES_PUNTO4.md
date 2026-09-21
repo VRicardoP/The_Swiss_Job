@@ -1,5 +1,12 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
+Checkpoint 21-09, posterior al despliegue: WorkingNomads ensayado (39 admitidas,
+35 históricas reutilizadas, idempotencia y rollback), 99/99 R5 y 85/85 públicas
+resueltas. **Corte NO aplicado:** las 10 búsquedas activas todavía consultan jobs
+legacy. Primero transferir búsquedas/avisos, después cosecha; no perder alertas
+nativas por dar por suficiente el feed. [Evidencia y orden](audits/WORKINGNOMADS_PREFLIGHT_2026-09-21.md).
+Guarda selectiva Portfolio probada y cometida, todavía no desplegada.
+
 Checkpoint 21-09: pausa anulada; core `346fd36` desplegado, suite **1.535 passed**.
 Filtro de títulos preservado y ensayado en copia NAS. Worker R5 preparado con
 guard por fuente, sin añadir Jobicy; feeds de ambos perfiles y 18 guardados de P2

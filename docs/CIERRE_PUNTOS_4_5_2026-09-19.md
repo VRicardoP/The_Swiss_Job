@@ -1,5 +1,13 @@
 # Cierre de puntos 4 y 5 — ejecución en curso
 
+## Orden vigente al continuar el 21-09
+
+Primero **búsquedas/avisos**: las 10 búsquedas activas consultan aún jobs legacy;
+apagar sus productores antes perdería novedades nativas. WorkingNomads ya tiene
+ensayo de identidad, canónica e idempotencia aprobado y paridad de histórico
+verificada, sin corte. [Checkpoint operativo](audits/WORKINGNOMADS_PREFLIGHT_2026-09-21.md).
+Portfolio: guarda selectiva local `0f7ac3f`, no desplegada. No hay colas pausadas.
+
 ## Último checkpoint: 21-09, pausa anulada
 
 Core API/worker/capture `346fd36`, esquema core0049, suite **1.535 passed**.
