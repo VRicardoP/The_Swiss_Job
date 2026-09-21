@@ -1,9 +1,10 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
-Checkpoint 21-09 15:10 UTC: **a0fb403 + core0050 desplegados**, saludables,
-ambos feeds servidos verificados; diez búsquedas intactas. Recuperación tras
-activación ensayada sin duplicados. **Autoridad local, ejecución core apagada**.
-Siguiente: captura congelada fresca y traspaso, no otra auditoría general.
+Checkpoint 21-09 15:56 UTC: **diez búsquedas transferidas y ejecución core
+habilitada**, IDs/valores servidos exactos; 277 pendientes conservados y 92
+ofertas recuperadas. Legacy rechaza las diez por autoridad core. Dos barridos
+naturales correctos, todavía ninguna búsqueda vencida: entrega real pendiente.
+Release a0fb403/core0050. Siguiente: WorkingNomads; no otra auditoría general.
 [Acta y procedimiento único](audits/SEARCH_CUTOVER_OPERATOR_2026-09-21.md).
 No repetir suites sobre código intacto ni abrir mejoras fuera del punto 4.
 
@@ -14,11 +15,9 @@ matching ni adelanto del punto 5. Reutilizar evidencias sobre código sin cambio
 pruebas dirigidas por ajuste, suites completas EN SERIE por release candidata.
 No agrupar cortes si difieren cobertura, identidades o recuperación.
 
-1. Búsquedas/avisos: el migrador ya conserva las diez identidades públicas y
-   valores; aplicación, replay y reversión exacta PASARON en copia NAS (291,31 s).
-   Cinco regresiones locales pasan. Falta conciliar pendientes contra la consulta
-   legacy congelada y marcadores Redis, ensayar la recuperación tras activación
-   y efectuar el corte servido. NO confundir este ensayo con migración productiva.
+1. Búsquedas/avisos: corte servido aplicado, pendientes conciliados y
+   recuperación ensayada. Comprobar la entrega natural al vencer, sin detener
+   el traspaso de fuentes ni enviar avisos artificiales.
 2. Completar WorkingNomads de principio a fin reutilizando lo ya probado:
    metadatos nativos, drenaje, escritor único, lote real, replay y acciones servidas.
 3. Transferir las demás fuentes por grupos compatibles; las diferencias de

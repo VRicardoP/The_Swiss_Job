@@ -1,5 +1,36 @@
 # Punto 4: operador de traspaso de las diez búsquedas
 
+## Corte aplicado y verificado — 21-09, 15:56 UTC
+
+**Autoridad core, diez búsquedas habilitadas; freeze retirado.** Release
+a0fb403/core0050. Lectura del router BFF desplegado: 1 + 9 búsquedas,
+todos los IDs y valores iguales al snapshot sellado, fuente sin modificar.
+Ejecutor manual legacy: las diez llamadas rechazadas por `core_authority`,
+con freeze desactivado y tripwire antes de cualquier consulta/envío local.
+
+Captura real después del drenaje: 277 pendientes conservados, 92 ofertas
+faltantes recuperadas mediante el sink; corpus de referencia 40.214 y
+401.863 observaciones (10 × 40.214 − 277). Plan aplicado y replay=0 antes de
+habilitar; configuración de diez ejecuciones y recuperación hacia delante.
+Fuente/snapshot/plan/recibos permanecen privados en NAS,
+`unification-e15-20260914/search-cutover.a0fb403/`.
+Sello del snapshot `f275805d5ddd77392c200c5512d445b9bcea010c6de862c11cceb2680ac1c552`;
+plan `d534781c3f0569f16b48376c0bf7c9efe3bd072093e0a432bcd0606f624f4e95`.
+
+Beat real: barridos 15:45/15:50 UTC correctos (1,18/2,17 s), cero fallos y
+cero búsquedas vencidas. NO se ha probado una entrega natural todavía:
+primer vencimiento estimado 22-09 ~07:10 UTC, sujeto a edición del usuario.
+No forzar avisos reales para validar. La prueba de inbox fue un sobre
+inválido (422 sin insert); la recuperación con outbox fue en copia aislada.
+Los workers/core capture están activos y las escrituras BFF habilitadas.
+Una primera captura abortó por statement_timeout; el reintento conservando
+las guardas pasó. No se amplió el timeout ni se ignoró el error.
+
+**No usar revert preactivación ahora.** Ante problema: deshabilitar/drenar
+ejecución core, conservar observaciones/outbox/contadores y reparar hacia
+delante; no reactivar el escritor anterior ni pisar actividad posterior.
+Próximo trabajo: productores nativos. No esperar al aviso natural para ello.
+
 ## Desplegado — 21-09 15:10 UTC; autoridad todavía local
 
 Core API/worker/capture, BFF y worker público ejecutan **a0fb403**, sin
