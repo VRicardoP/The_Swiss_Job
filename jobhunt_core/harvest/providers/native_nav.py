@@ -14,6 +14,8 @@ from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
+from jobhunt_core.harvest.providers.browser_headers import (
+    BROWSER_HEADERS, MAX_PAGES_PARAM, page_budget)
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 SOURCE_NAME = "nav_arbeidsplassen"
@@ -96,7 +98,7 @@ async def _page(http, facet, offset, timeout):
         async with http.stream("GET", API_URL,
                                params={"from": offset, "size": PAGE_SIZE, "remote": facet},
                                timeout=25, follow_redirects=True,
-                               headers={"User-Agent": "SwissJobHunter/1.0"}) as response:
+                               headers=BROWSER_HEADERS) as response:
             response.raise_for_status()
             chunks, size = [], 0
             async for chunk in response.aiter_bytes():
@@ -134,12 +136,17 @@ class NavProvider(BaseProvider):
         register_handlers()
 
     async def fetch_new(self, params, cursor, http):
-        if not isinstance(params, dict) or set(params) != {"remote"} or params["remote"] not in REMOTE_FACETS:
+        if (not isinstance(params, dict) or set(params) - {MAX_PAGES_PARAM} != {"remote"}
+                or params["remote"] not in REMOTE_FACETS):
             raise ProviderConfigError("NAV requires one supported remote facet per scope")
+        # The retiring producer reads three pages (nav_arbeidsplassen.py:56).
+        # Declaring that same budget keeps parity AND keeps the sweep honest:
+        # finishing it is complete, not truncated.
+        budget = page_budget(params, MAX_PAGES) or MAX_PAGES
         started = time.monotonic()
         listings, pages, offset, invalid = [], 0, 0, 0
         exhausted, error = False, None
-        for page in range(MAX_PAGES):
+        for page in range(budget):
             remaining = SWEEP_BUDGET_S - (time.monotonic() - started)
             if remaining <= 0:
                 break
@@ -162,7 +169,7 @@ class NavProvider(BaseProvider):
                     listings.append(listing)
             if exhausted:
                 break
-            if page + 1 < MAX_PAGES:
+            if page + 1 < budget:
                 remaining = SWEEP_BUDGET_S - (time.monotonic() - started)
                 if remaining <= 0:
                     break
@@ -170,5 +177,6 @@ class NavProvider(BaseProvider):
         if offset and not listings:
             raise ProviderResponseError("NAV nonempty feed has no usable identities")
         error = error or ("invalid_nav_items" if invalid else None)
+        swept = exhausted or (MAX_PAGES_PARAM in params and pages >= budget)
         return FetchResult(tuple(listings), {"items_seen": offset, "pages": pages},
-                           pages_fetched=pages, complete=exhausted and error is None, error=error)
+                           pages_fetched=pages, complete=swept and error is None, error=error)

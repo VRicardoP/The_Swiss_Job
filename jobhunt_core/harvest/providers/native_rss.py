@@ -17,6 +17,7 @@ from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
+from jobhunt_core.harvest.providers.search_metadata import swiss_canton
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 ENDPOINTS = {
@@ -170,8 +171,14 @@ def _content(source, raw):
     if source not in {"weworkremotely", "zebis"} and category and category.lower() not in [tag.lower() for tag in tags]:
         tags = [category] + tags
     remote = source in {"weworkremotely", "euremotejobs"} or "remote" in location.lower() or "home-based" in location.lower()
-    return {"title": title, "company": company, "description": description,
-            "location": location, "remote": remote, "tags": tags[:15]}
+    content = {"title": title, "company": company, "description": description,
+               "location": location, "remote": remote, "tags": tags[:15]}
+    if source == "zebis":
+        # Its location is the constant "Switzerland", so the retiring writer
+        # reads the canton off the description instead (zebis.py:194). Saved
+        # searches filter on this field; the other RSS feeds are not Swiss.
+        content["canton"] = swiss_canton(description)
+    return content
 
 
 def register_handlers():

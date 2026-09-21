@@ -1,0 +1,84 @@
+{
+ "differences": {
+  "https://www.financejobs.ch/de/job/14749498": {
+   "description": {
+    "legacy": "",
+    "native": null
+   }
+  },
+  "https://www.financejobs.ch/de/job/14749499": {
+   "description": {
+    "legacy": "",
+    "native": null
+   }
+  },
+  "https://www.financejobs.ch/de/job/14749500": {
+   "description": {
+    "legacy": "",
+    "native": null
+   }
+  },
+  "https://www.financejobs.ch/de/job/14749519": {
+   "description": {
+    "legacy": "",
+    "native": null
+   }
+  },
+  "https://www.financejobs.ch/de/job/14749526": {
+   "description": {
+    "legacy": "",
+    "native": null
+   }
+  },
+  "https://www.financejobs.ch/de/job/14749679": {
+   "description": {
+    "legacy": "",
+    "native": null
+   }
+  },
+  "https://www.financejobs.ch/de/job/1831909315": {
+   "description": {
+    "legacy": "",
+    "native": null
+   }
+  },
+  "https://www.financejobs.ch/de/job/1896169872": {
+   "description": {
+    "legacy": "",
+    "native": null
+   }
+  },
+  "https://www.financejobs.ch/de/job/2039643263": {
+   "description": {
+    "legacy": "",
+    "native": null
+   }
+  },
+  "https://www.financejobs.ch/de/job/2076808798": {
+   "description": {
+    "legacy": "",
+    "native": null
+   }
+  }
+ },
+ "extra": [],
+ "fetched_at": "2026-09-21T21:52:30.227541+00:00",
+ "fields_compared": [
+  "title",
+  "company",
+  "location",
+  "canton",
+  "remote",
+  "tags",
+  "description"
+ ],
+ "legacy_rows": 10,
+ "missing": [],
+ "native_complete": true,
+ "native_error": null,
+ "native_rows": 10,
+ "note": "Las 10 URLs y los 6 campos restantes coinciden exactamente. La unica diferencia es de representacion: el portal no publica descripcion en el listado; el escritor legacy guarda \"\" y el nativo omite la clave. El sink del core representa \"\" como NULL (normalize._text), asi que ambas rutas producen el MISMO valor canonico. No se fabrica descripcion en ninguno.",
+ "page": "https://www.financejobs.ch/de/jobs?page=1",
+ "semantic_differences": 0,
+ "source": "financejobs"
+}

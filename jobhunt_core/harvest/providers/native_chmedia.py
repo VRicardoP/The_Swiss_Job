@@ -16,6 +16,7 @@ from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
+from jobhunt_core.harvest.providers.search_metadata import swiss_canton
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 DOMAINS = {"ostjob": "ostjob.ch", "zentraljob": "zentraljob.ch"}
@@ -72,7 +73,11 @@ def _content(raw):
     keywords = [k.strip() for k in _text(raw.get("keywords")).split(",") if k.strip()]
     tags = list(dict.fromkeys(keywords + extract_job_skills(title, description)))[:15]
     return {"title": title, "company": company, "location": location,
-            "description": description, "tags": tags, "remote": raw.get("homeOffice", False)}
+            "description": description, "tags": tags, "remote": raw.get("homeOffice", False),
+            # Same rule as the retiring writer (base_chmedia.py:74): the portal
+            # code when it already ships one, otherwise resolved from the
+            # composed location. Saved searches filter on this field.
+            "canton": canton if len(canton) == 2 else swiss_canton(location)}
 
 
 def register_handlers():

@@ -14,6 +14,7 @@ from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills
+from jobhunt_core.harvest.providers.search_metadata import swiss_canton
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 SOURCE_NAME = "publicjobs"
@@ -76,10 +77,16 @@ def _listing(raw):
 
 def _content(raw):
     title = _text(raw.get("title"))
+    region = _text(raw.get("workingAddressRegion"))
     return {"title": title, "company": _text(raw.get("contactCompany")) or "Unknown",
             "description": "", "location": _text(raw.get("workingAddressCity"))
-                or _text(raw.get("workingAddressRegion")) or "Switzerland",
-            "remote": False, "tags": extract_job_skills(title, "")[:15]}
+                or region or "Switzerland",
+            "remote": False, "tags": extract_job_skills(title, "")[:15],
+            # Same rule as the retiring writer (publicjobs.py:151): this portal
+            # ships the canton code in `workingAddressRegion` when it has one.
+            # A longer name is a region, not a code, and is left unresolved —
+            # matching the writer this handover must not change.
+            "canton": region if len(region) == 2 else None}
 
 
 def register_handlers():

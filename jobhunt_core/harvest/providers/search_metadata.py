@@ -59,14 +59,26 @@ def _first_match(text, patterns):
     return next((value for value, words in patterns if any(word in text for word in words)), None)
 
 
+def swiss_canton(text):
+    """Canton code of a free-text location, or None. Mirrors `utils.text.extract_canton`.
+
+    Whole-string match first, then substring on names longer than two characters
+    — a bare 'be' or 'ag' inside a word must never invent a canton. Returning
+    None is the honest answer: the retiring writers leave the column NULL.
+    """
+    text = text.lower().strip() if isinstance(text, str) else ""
+    if not text:
+        return None
+    return SWISS_CANTONS.get(text) or next(
+        (code for name, code in SWISS_CANTONS.items()
+         if len(name) > 2 and name in text), None)
+
+
 def workingnomads_metadata(title, description, location):
     title = title.lower() if isinstance(title, str) else ""
     description = description[:200].lower() if isinstance(description, str) else ""
     location = location.lower().strip() if isinstance(location, str) else ""
-    canton = SWISS_CANTONS.get(location)
-    if canton is None:
-        canton = next((code for name, code in SWISS_CANTONS.items()
-                       if len(name) > 2 and name in location), None)
+    canton = swiss_canton(location)
     return {"canton": canton, "language": "en",
             "seniority": _first_match(title, SENIORITY_PATTERNS),
             "contract_type": _first_match(" " + title + " " + description, CONTRACT_PATTERNS)}

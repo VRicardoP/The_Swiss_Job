@@ -37,6 +37,8 @@ DATE_FIELDS = {
     "nav_arbeidsplassen": ("_source", "published"),
     "thehub": "createdAt",
     "jobgether": "createdAt",
+    "financejobs": "datePosted",
+    "irishjobs": "datePosted",
 }
 
 

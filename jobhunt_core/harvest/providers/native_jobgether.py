@@ -18,6 +18,8 @@ from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills
+from jobhunt_core.harvest.providers.browser_headers import (
+    BROWSER_HEADERS, MAX_PAGES_PARAM, page_budget)
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 SOURCE_NAME = "jobgether"
@@ -102,7 +104,7 @@ def _listing(raw):
 async def _page(http, query, page, timeout):
     async with asyncio.timeout(timeout):
         async with http.stream("GET", API_URL, params={"keyword": query, "page": page},
-                               headers={"User-Agent": "SwissJobHunter/1.0"},
+                               headers=BROWSER_HEADERS,
                                timeout=25, follow_redirects=True) as response:
             response.raise_for_status()
             chunks, size = [], 0
@@ -136,15 +138,17 @@ class JobgetherProvider(BaseProvider):
         register_handlers()
 
     async def fetch_new(self, params, cursor, http):
-        if not isinstance(params, dict) or set(params) - {"query"}:
+        if not isinstance(params, dict) or set(params) - {"query", MAX_PAGES_PARAM}:
             raise ProviderConfigError("Jobgether accepts only query")
         query = params.get("query", "")
         if not isinstance(query, str) or len(query) > 200:
             raise ProviderConfigError("Jobgether query must be a bounded string")
+        # Same three-page budget the retiring producer uses (jobgether.py:57).
+        budget = page_budget(params, MAX_PAGES) or MAX_PAGES
         started = time.monotonic()
         listings, invalid, pages, seen = [], 0, 0, 0
         error, exhausted = None, False
-        for page in range(1, MAX_PAGES + 1):
+        for page in range(1, budget + 1):
             remaining = SWEEP_BUDGET_S - (time.monotonic() - started)
             if remaining <= 0:
                 error = "time_budget"
@@ -167,7 +171,7 @@ class JobgetherProvider(BaseProvider):
                     listings.append(listing)
             if exhausted:
                 break
-            if page < MAX_PAGES:
+            if page < budget:
                 remaining = SWEEP_BUDGET_S - (time.monotonic() - started)
                 if remaining > 0:
                     await asyncio.sleep(min(PAGE_PAUSE_S, remaining))
@@ -176,12 +180,22 @@ class JobgetherProvider(BaseProvider):
             urls_by_id.setdefault(listing.external_id, set()).add(listing.url)
         ambiguous = {key for key, urls in urls_by_id.items() if len(urls) > 1}
         if ambiguous:
+            # The portal republishes one opening as several postings sharing
+            # title, company and canonical slug. Refusing to pick a winner is
+            # the contract and stays. But it happens on EVERY sweep (live probe
+            # 2026-09-21: 3 of 139 identities, 8 of 150 listings), and the
+            # retiring producer loses the very same rows to ix_jobs_url. Calling
+            # it a failed harvest would keep `last_complete_at` NULL forever and
+            # turn `cosecha_sin_completar` into permanent noise (G9 P2-C). The
+            # count travels in the cursor instead, readable without lying.
             listings = [listing for listing in listings if listing.external_id not in ambiguous]
-            error = error or "ambiguous_identity"
         if seen and not listings:
             raise ProviderResponseError("Jobgether nonempty feed has no usable identities")
         error = error or ("invalid_jobgether_items" if invalid else None)
-        if not exhausted:
+        if not exhausted and MAX_PAGES_PARAM not in params:
+            # Undeclared: hitting the internal safety cap is still partial.
             error = error or "page_budget"
-        return FetchResult(tuple(listings), {"pages": pages, "items_seen": seen},
+        exhausted = exhausted or (MAX_PAGES_PARAM in params and pages >= budget)
+        return FetchResult(tuple(listings),
+                           {"pages": pages, "items_seen": seen, "ambiguous": len(ambiguous)},
                            pages_fetched=pages, complete=exhausted and error is None, error=error)

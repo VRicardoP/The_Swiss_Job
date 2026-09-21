@@ -1,0 +1,21 @@
+{
+ "differences": {},
+ "extra": [],
+ "fetched_at": "2026-09-21T21:53:37.108270+00:00",
+ "fields_compared": [
+  "title",
+  "company",
+  "location",
+  "remote",
+  "tags",
+  "description",
+  "salary"
+ ],
+ "legacy_rows": 25,
+ "missing": [],
+ "native_complete": true,
+ "native_error": null,
+ "native_rows": 25,
+ "page": "https://www.irishjobs.ie/jobs/work-from-home?page=1",
+ "source": "irishjobs"
+}

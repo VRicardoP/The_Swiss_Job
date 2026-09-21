@@ -33,6 +33,13 @@ class SearchContract(unittest.TestCase):
         self.assertEqual(list(literal(core, 'SWISS_CANTONS').items()),
                          list(literal('backend/utils/text.py', 'SWISS_CANTONS').items()))
 
+    def test_browser_headers_match_the_retiring_producers(self):
+        """Jobgether answers 403 without these; a drift would kill the source."""
+        core = 'jobhunt_core/harvest/providers/browser_headers.py'
+        legacy = 'backend/services/scraper_stealth.py'
+        for name in ('DEFAULT_USER_AGENT', 'DEFAULT_ACCEPT_LANGUAGE', '_CHROME_MAJOR'):
+            self.assertEqual(literal(core, name), literal(legacy, name))
+
     def test_source_fingerprint_is_identical_on_both_sides(self):
         self.assertEqual(literal('backend/services/search_handover.py','JOBS_FINGERPRINT_SQL'),
                          literal('jobhunt_core/search_cutover.py','JOBS_FINGERPRINT_SQL'))

@@ -92,7 +92,12 @@ def test_ambiguous_relisting_group_is_not_arbitrated_by_order(monkeypatch):
     rows = [raw(), raw("7a2ba788135f3346537f4f73-english-teacher"), raw("other-teacher")]
     result, _ = fetch([{"data": rows, "maxPages": 1}], monkeypatch)
     assert [r.url for r in result.listings] == ["https://jobgether.com/offer/other-teacher"]
-    assert not result.complete and result.error == "ambiguous_identity"
+    # Dropping the group is still the contract; what changed at handover is its
+    # CLASSIFICATION. The portal republishes one opening as several postings on
+    # every sweep, so reporting a failed harvest would keep `last_complete_at`
+    # NULL forever. The count moved to the cursor — see
+    # test_native_page_budget.py::test_portal_duplicate_postings_are_dropped_*
+    assert result.next_cursor["ambiguous"] == 1
 
 
 def test_oversized_page_number_preserves_valid_prefix(monkeypatch):
