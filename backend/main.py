@@ -213,6 +213,11 @@ async def feedback_health():
             "writer": "core" if settings.CORE_FEEDBACK_ENABLED else "local"}
 
 
+@app.get("/health/searches")
+async def search_health():
+    return {"writes": "frozen" if settings.SAVED_SEARCH_WRITES_FROZEN else "enabled"}
+
+
 @app.get("/health")
 async def health():
     return {"status": "healthy"}

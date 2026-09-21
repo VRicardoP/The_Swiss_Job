@@ -117,17 +117,13 @@ async def _run_saved_searches_async() -> dict[str, Any]:
     }
 
 
-async def _execute_single_search(db, search, settings) -> int:
-    """Execute a single saved search and create notifications if matches found."""
-    from datetime import datetime, timedelta, timezone
-
-    import redis
+def candidate_query(search, settings, now):
+    """Exact legacy selection, also used read-only by the frozen handover."""
     from models.job import Job
     from sqlalchemy import String, cast, select, text
 
-    from tasks.watermarks import filter_unsent, unmark_sent, watermark_lag
+    from tasks.watermarks import watermark_lag
 
-    now = datetime.now(timezone.utc)
     filters = search.filters or {}
 
     # Build query from filters
@@ -207,11 +203,21 @@ async def _execute_single_search(db, search, settings) -> int:
     # fixes hermanos de G1/P2-15 en alert_tasks y el digest de watchlist.
     conditions.append(Job.first_seen_at <= now)
 
+    return select(Job.hash).where(*conditions)
+
+
+async def _execute_single_search(db, search, settings) -> int:
+    """Execute a single saved search and create notifications if matches found."""
+    import redis
+    from tasks.watermarks import filter_unsent, unmark_sent
+
+    now = datetime.now(timezone.utc)
+
     # G3/P1-1: la ventana SOLAPA a propósito, así que el conteo crudo volvería
     # a notificar lo ya notificado (justo lo que cerró G2/P3-5). La novedad se
     # decide POR OFERTA con un marcador en Redis por (búsqueda, oferta): el
     # solape recupera lo que la cosecha commiteó tarde sin repetir avisos.
-    hashes = list((await db.execute(select(Job.hash).where(*conditions))).scalars())
+    hashes = list((await db.execute(candidate_query(search, settings, now))).scalars())
     r = redis.from_url(settings.REDIS_URL)
     marker_key = f"{_SENT_PREFIX}:{search.id}"
     try:

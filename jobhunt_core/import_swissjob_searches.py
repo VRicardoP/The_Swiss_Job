@@ -193,3 +193,46 @@ async def apply_plan(session, plan, *, reverse=False):
         if actual != (([], []) if reverse else (expected_config, expected_observed)):
             raise SearchMigrationError("execution read-back differs")
     return {"verdict": "verified", "replayed": False, "changed": len(ids)}
+
+
+async def resolve_pending(session, snapshot):
+    """Map the frozen legacy query + sent markers; never pick a URL clone.
+
+    Exact URL resolution follows existing merge chains in one corpus query.
+    Archived winners cannot receive a pending alert. A known sent alias wins
+    over an unsent alias of the same canonical vacancy (one logical offer).
+    The caller still checks freshness/freeze and prepare_plan checks filters.
+    """
+    from jobhunt_core.import_swissjob_durables import resolve_vacancies_by_incarnation_urls
+
+    if snapshot.get("version") != 1:
+        raise SearchMigrationError("invalid search snapshot version")
+    ids = {str(uuid.UUID(str(row["id"]))) for row in snapshot["rows"]}
+    if len(ids) != len(snapshot["rows"]) or ids != set(snapshot["candidates"]) or ids != set(snapshot["sent"]):
+        raise SearchMigrationError("incomplete candidate inventory")
+    for sid, rows in snapshot["candidates"].items():
+        hashes = {row["hash"] for row in rows}
+        if len(hashes) != len(rows) or hashes != set(snapshot["sent"][sid]):
+            raise SearchMigrationError("incomplete sent-marker inventory")
+        if any(type(value) is not bool for value in snapshot["sent"][sid].values()):
+            raise SearchMigrationError("invalid sent marker")
+    urls = {row["url"] for rows in snapshot["candidates"].values() for row in rows}
+    mapping = await resolve_vacancies_by_incarnation_urls(session, urls)
+    vids = {vid for winners in mapping.values() for vid in winners}
+    presentable = set((await session.execute(sa.text(
+        "SELECT id FROM vacancies WHERE id=ANY(:ids) AND archived_at IS NULL "
+        "AND merged_into IS NULL AND current_offer_revision_id IS NOT NULL"
+    ), {"ids": list(vids)})).scalars()) if vids else set()
+    result = {}
+    for sid, rows in snapshot["candidates"].items():
+        sent, pending = set(), set()
+        for row in rows:
+            winners = set(mapping[row["url"]]) & presentable
+            if snapshot["sent"][sid][row["hash"]]:
+                sent.update(winners)
+            else:
+                if len(winners) != 1:
+                    raise SearchMigrationError("pending offer is missing or ambiguous in core")
+                pending.update(winners)
+        result[sid] = sorted(str(vid) for vid in pending - sent)
+    return result
