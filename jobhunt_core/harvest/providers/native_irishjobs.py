@@ -44,6 +44,10 @@ MAX_PAGES = 8
 PAGE_PAUSE_S = 2.0
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 SWEEP_BUDGET_S = 300
+# Pages weigh ~1 MB and the platform slows down after a run of them.
+# Measured from the NAS: a single page takes 0.4-1.3 s, so this is head
+# room for that slowdown, not a way around it.
+REQUEST_TIMEOUT_S = 40
 
 _ALLOWED_HOSTNAMES = frozenset(urlsplit(host).hostname or "" for host in HOSTS)
 _STATE_ANCHOR = re.compile(
@@ -179,7 +183,7 @@ def register_handlers():
 
 async def _page(http, host, page):
     url = f"{host}{LISTING_PATH}"
-    async with http.stream("GET", url, params={"page": page}, timeout=25,
+    async with http.stream("GET", url, params={"page": page}, timeout=REQUEST_TIMEOUT_S,
                            follow_redirects=True, headers=BROWSER_HEADERS) as response:
         response.raise_for_status()
         chunks, size = [], 0
@@ -234,6 +238,12 @@ class IrishJobsProvider(BaseProvider):
                     await asyncio.sleep(PAGE_PAUSE_S)
                 else:
                     exhausted = False
+            # Both hosts are one platform. Moving to the second one straight
+            # after eight pages of the first is what timed out twice live; the
+            # retiring scraper rarely asks for sixteen in a row because its
+            # incremental cursor stops it earlier.
+            if host != HOSTS[-1]:
+                await asyncio.sleep(PAGE_PAUSE_S * 2)
         listings = tuple(by_identity.values())
         if seen and not listings:
             raise ProviderResponseError(

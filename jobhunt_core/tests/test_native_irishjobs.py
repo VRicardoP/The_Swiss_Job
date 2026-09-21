@@ -174,7 +174,29 @@ def test_unknown_parameter_is_a_configuration_error():
 
 
 def test_page_ceiling_matches_the_retiring_scraper():
-    """Nine pages per host is where the portal stopped answering (measured twice)."""
+    """Same safety ceiling and pace as irishjobs.py:271-272.
+
+    The operating budget is smaller and lives in the scope: measured live, the
+    platform slows down progressively (page 1 in 1.3 s, eight pages in 105 s,
+    the ninth over 40 s). The retiring scraper never feels it because its
+    incremental cursor stops at already-known pages; the native producer always
+    starts at page one, so it declares a 3-page budget instead.
+    """
     from jobhunt_core.harvest.providers import native_irishjobs
     assert native_irishjobs.MAX_PAGES == 8
     assert native_irishjobs.PAGE_PAUSE_S == 2.0
+    assert native_irishjobs.REQUEST_TIMEOUT_S == 40
+
+
+def test_a_pause_separates_the_two_hosts(monkeypatch):
+    """Jumping to the second host right after the first is what timed out."""
+    slept = []
+    monkeypatch.setattr("jobhunt_core.harvest.providers.native_irishjobs.PAGE_PAUSE_S", 0.01)
+
+    async def record(seconds):
+        slept.append(seconds)
+    monkeypatch.setattr(
+        "jobhunt_core.harvest.providers.native_irishjobs.asyncio.sleep", record)
+    fetch({"www.irishjobs.ie": [page([ITEM])], "www.jobs.ie": [page([])]},
+          {"max_pages": 1})
+    assert 0.02 in slept, "the host switch must be paced, not immediate"
