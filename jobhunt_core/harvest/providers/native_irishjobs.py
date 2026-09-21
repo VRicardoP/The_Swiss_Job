@@ -37,7 +37,10 @@ from jobhunt_core.harvest.types import FetchResult, RawListing
 SOURCE_NAME = "irishjobs"
 HOSTS = ("https://www.irishjobs.ie", "https://www.jobs.ie")
 LISTING_PATH = "/jobs/work-from-home"
-MAX_PAGES = 10
+# Eight pages per host and a 2 s pause, exactly like the retiring scraper
+# (irishjobs.py:271-272). Asking for a ninth is what made the portal stop
+# answering: the live sweep read 8 pages and then timed out, twice.
+MAX_PAGES = 8
 PAGE_PAUSE_S = 2.0
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 SWEEP_BUDGET_S = 300

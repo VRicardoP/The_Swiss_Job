@@ -171,3 +171,10 @@ def test_declared_budget_bounds_each_host(monkeypatch):
 def test_unknown_parameter_is_a_configuration_error():
     with pytest.raises(ProviderConfigError):
         fetch(BOTH, {"query": "architect"})
+
+
+def test_page_ceiling_matches_the_retiring_scraper():
+    """Nine pages per host is where the portal stopped answering (measured twice)."""
+    from jobhunt_core.harvest.providers import native_irishjobs
+    assert native_irishjobs.MAX_PAGES == 8
+    assert native_irishjobs.PAGE_PAUSE_S == 2.0
