@@ -68,6 +68,9 @@ class CoreSettings(BaseSettings):
     # matemáticamente imposibles.
     CORE_SHADOW_PROJECT_EVERY_S: int = 300         # jobhunt.shadow.project
     CORE_DELIVERY_DISPATCH_EVERY_S: int = 300      # jobhunt.delivery.dispatch_outbox
+    # Transfer searches only after legacy drain and an inbox projection proof.
+    # Off means no beat entry and manual tasks perform no database work.
+    CORE_SAVED_SEARCH_EXECUTION_ENABLED: bool = False
     # Fase C: destino HTTP por consumer. Vacío conserva el inbox sombra. Si
     # existe al menos un destino, el token es obligatorio y los destinos no
     # mapeados fallan (nunca se marcan delivered por un fallback accidental).

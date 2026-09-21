@@ -310,6 +310,8 @@ class SavedSearchCreateDTO(BaseModel):
     notify_frequency: NotifyFrequency | None = None
     notify_push: bool | None = None
     is_active: bool | None = None
+    # Explicit dialect/authority opt-in; existing clients remain CRUD-only.
+    execution_contract: Literal["swissjob-v1"] | None = None
 
 
 class SavedSearchPutDTO(BaseModel):

@@ -33,7 +33,7 @@ class SwissJobSearchFilters(BaseModel):
     remote_only: bool = False
 
 
-def matching_query(filters: dict) -> tuple[sa.TextClause, dict]:
+def matching_query(filters: dict, *, include_nonmatches=False) -> tuple[sa.TextClause, dict]:
     """One parametrized query, one row per vacancy. Caller owns the transaction.
 
     Uses the primary listing's source, as the served catalog does; legacy:X
@@ -42,7 +42,8 @@ def matching_query(filters: dict) -> tuple[sa.TextClause, dict]:
     The caller must deduplicate delivered vacancies transactionally.
     """
     f = SwissJobSearchFilters.model_validate(filters)
-    where = ["v.archived_at IS NULL", "v.merged_into IS NULL", "pi.ended_at IS NULL"]
+    eligible = ["v.archived_at IS NULL", "v.merged_into IS NULL", "pi.ended_at IS NULL"]
+    where = []
     params = {}
     if f.q:
         # Reuse the existing GIN document as a superset prefilter, but remove
@@ -84,13 +85,19 @@ def matching_query(filters: dict) -> tuple[sa.TextClause, dict]:
                 f"THEN CAST(o.content->>'{stored}' AS numeric) END {operator} :{field}"
             )
             params[field] = value
+    # The executor observes matching AND nonmatching vacancies in ONE snapshot.
+    # Editing filters must not turn already-observed old offers into new alerts.
+    selection = "v.id AS vacancy_id, v.created_at"
+    if include_nonmatches:
+        selection += ", COALESCE((" + (" AND ".join(where) or "true") + "), false) AS matches"
+        where = []
     sql = (
-        "SELECT v.id AS vacancy_id, v.created_at FROM vacancies v "
+        "SELECT " + selection + " FROM vacancies v "
         "JOIN offer_revisions o ON o.id=v.current_offer_revision_id "
         "JOIN source_listing_incarnations pi ON pi.id=v.primary_incarnation_id "
         "JOIN source_listings sl ON sl.id=pi.source_listing_id "
         "JOIN sources src ON src.id=sl.source_id WHERE "
-        + " AND ".join(where) + " ORDER BY v.created_at, v.id"
+        + " AND ".join(eligible + where) + " ORDER BY v.created_at, v.id"
     )
     return sa.text(sql), params
 

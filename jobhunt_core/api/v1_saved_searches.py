@@ -17,6 +17,8 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Request
 
 from jobhunt_core import applications as apps
+from jobhunt_core import search_execution
+from jobhunt_core.config import settings
 from jobhunt_core import saved_searches as searches
 from jobhunt_core.api import schemas
 from jobhunt_core.api.deps import (
@@ -143,6 +145,17 @@ async def create_saved_search(
             session, profile_id=body.profile_id, values=values,
             destination=consumer_name,
         )
+        if body.execution_contract is not None:
+            # Same transaction as the INSERT/idempotency receipt. A bad dialect
+            # or filter cannot leave an apparently executable orphan behind.
+            floor = await session.scalar(sa.text("SELECT clock_timestamp() - interval '1 day'"))
+            try:
+                await search_execution.configure_execution(
+                    session, search_id, contract=body.execution_contract,
+                    notify_since=floor, enabled=True,
+                )
+            except ValueError:
+                raise ApiError(400, "invalid_filters", "contrato de búsqueda incompatible") from None
         row = await searches.fetch_owned(session, search_id, principal.consumer_id)
         return 201, _dto_json(searches.compose(row))
 
@@ -192,7 +205,10 @@ async def update_saved_search(
         if subject_id is None or row.profile_id != subject_id:
             raise ApiError(409, "owner_changed", "propietario cambiado; reintenta")
         check_if_match(request, _dto_json(searches.compose(row)))
-        await searches.update(session, row, values, row.consumer_name)
+        try:
+            await searches.update(session, row, values, row.consumer_name)
+        except ValueError:
+            raise ApiError(400, "invalid_filters", "filters incompatible con el contrato de ejecución") from None
         fresh = await searches.fetch_owned(session, search_id, principal.consumer_id)
         return 200, _dto_json(searches.compose(fresh))
 
@@ -244,3 +260,47 @@ async def delete_saved_search(
         profile_id=subject_id,
     )
     return json_response(status, payload)
+
+
+@router.get("/saved-searches/{search_id}", response_model=schemas.SavedSearchDTO)
+async def get_saved_search(
+    search_id: uuid.UUID, request: Request,
+    session=Depends(get_session),
+    principal: Principal = Depends(require_scope("saved_searches:read")),
+):
+    row = await searches.fetch_owned(session, search_id, principal.consumer_id)
+    if row is None:
+        raise error_404("búsqueda guardada")
+    return with_etag(request, _dto_json(searches.compose(row)))
+
+
+@router.post("/saved-searches/{search_id}/run", status_code=202)
+async def run_saved_search(
+    search_id: uuid.UUID,
+    session=Depends(get_session),
+    principal: Principal = Depends(require_scope("saved_searches:write")),
+):
+    # The queue carries only an owned identity. The worker rechecks authority,
+    # activity and existence; duplicate deliveries cannot duplicate alerts.
+    row = await searches.fetch_owned(session, search_id, principal.consumer_id)
+    if row is None:
+        raise error_404("búsqueda guardada")
+    if not settings.CORE_SAVED_SEARCH_EXECUTION_ENABLED:
+        raise ApiError(503, "execution_disabled", "ejecución de búsquedas desactivada")
+    enabled = await session.scalar(sa.text(
+        "SELECT enabled FROM saved_search_execution WHERE saved_search_id=:id"
+    ), {"id": search_id})
+    if not row.is_active or not enabled:
+        raise ApiError(409, "execution_disabled", "búsqueda sin ejecución activa")
+    if row.consumer_name not in settings.CORE_DELIVERY_HTTP_DESTINATIONS:
+        raise ApiError(503, "delivery_unavailable", "destino de avisos no configurado")
+    from jobhunt_core.celery_app import celery_app
+    from starlette.concurrency import run_in_threadpool
+    try:
+        await run_in_threadpool(
+            celery_app.send_task, "jobhunt.searches.run_one",
+            kwargs={"search_id": str(search_id)}, retry=False,
+        )
+    except Exception:
+        raise ApiError(503, "queue_unavailable", "cola de búsquedas no disponible") from None
+    return {"status": "dispatched", "search_id": str(search_id)}

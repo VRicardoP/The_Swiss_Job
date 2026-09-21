@@ -147,6 +147,15 @@ async def update(session, row, values: dict, destination: str) -> None:
     revision+1 + updated_at + evento, misma tx. La fila viene BLOQUEADA
     (fetch_owned for_update=True)."""
     merged = {k: values.get(k, getattr(row, k)) for k in CLIENT_WRITABLE}
+    contract = await session.scalar(sa.text(
+        "SELECT contract FROM saved_search_execution WHERE saved_search_id=:id"
+    ), {"id": row.id})
+    if contract is not None:
+        from jobhunt_core.search_execution import CONTRACT
+        from jobhunt_core.saved_search_query import SwissJobSearchFilters
+        if contract != CONTRACT:
+            raise ValueError("unsupported saved-search execution contract")
+        SwissJobSearchFilters.model_validate(merged["filters"])
     new_revision = row.revision + 1
     await session.execute(
         sa.text(

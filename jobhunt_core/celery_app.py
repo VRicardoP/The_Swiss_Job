@@ -32,6 +32,8 @@ celery_app.conf.update(
         "jobhunt.harvest.dispatch_native": {"queue": "core.default"},
         "jobhunt.embedding.*": {"queue": "core.embedding"},
         "jobhunt.matching.*": {"queue": "core.matching"},
+        "jobhunt.searches.*": {"queue": "core.notifications"},
+        "jobhunt.searches.run_due": {"queue": "core.notifications"},
         # P7-b: entrada por nombre EXACTO además del comodín — va en el beat
         # y el invariante «todo lo del beat rutea a core.*» se verifica por
         # nombre (mismo patrón que dispatch_outbox).
@@ -194,6 +196,12 @@ celery_app.conf.update(
     },
 )
 
+if settings.CORE_SAVED_SEARCH_EXECUTION_ENABLED:
+    celery_app.conf.beat_schedule["saved-searches-run-due"] = {
+        "task": "jobhunt.searches.run_due",
+        "schedule": 300.0,
+    }
+
 celery_app.conf.include = [
     "jobhunt_core.tasks.maintenance",
     "jobhunt_core.tasks.ping",
@@ -202,6 +210,7 @@ celery_app.conf.include = [
     "jobhunt_core.tasks.matching",
     "jobhunt_core.tasks.materialize",
     "jobhunt_core.tasks.delivery",
+    "jobhunt_core.tasks.searches",
     "jobhunt_core.tasks.idempotency",
     "jobhunt_core.tasks.shadow",
 ]
