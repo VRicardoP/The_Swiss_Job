@@ -1,5 +1,12 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
+Checkpoint 21-09: pausa anulada; core `346fd36` desplegado, suite **1.535 passed**.
+Filtro de títulos preservado y ensayado en copia NAS. Worker R5 preparado con
+guard por fuente, sin añadir Jobicy; feeds de ambos perfiles y 18 guardados de P2
+verificados. [Despliegue](audits/NATIVE_TITLE_DEPLOYMENT_2026-09-21.md).
+Ningún scope nativo activado ni productor retirado en este checkpoint.
+El corte Remotive exige completar la comparación CDC; punto 4 sigue abierto.
+
 Checkpoint 20-09 08:16: **exclusión y planificador nativos desplegados** en core
 `6ba912e`; suite 1.522 verdes, drenaje comprobado y lecturas BFF verificadas.
 [Acta vigente](audits/NATIVE_SCHEDULER_DEPLOYMENT_2026-09-20.md).

@@ -1,5 +1,14 @@
 # Cierre de puntos 4 y 5 — ejecución en curso
 
+## Último checkpoint: 21-09, pausa anulada
+
+Core API/worker/capture `346fd36`, esquema core0049, suite **1.535 passed**.
+Worker R5 actualizado a `d89b6ee` conservando cobertura. Ambos feeds HTTP 200,
+20 ofertas por página, P2 conserva 18 guardados; perfiles sin entregas pendientes.
+[Acta vigente](audits/NATIVE_TITLE_DEPLOYMENT_2026-09-21.md).
+Cero fuentes transferidas todavía: comparación CDC y corte Remotive en curso.
+Punto 4 abierto. Punto 5, cron y entrega final no iniciados.
+
 ## Último checkpoint: 20-09, 08:16 Europe/Madrid
 
 Core API/worker/capture `6ba912e`, core0049; BFF `39579d7`. Exclusión global y
