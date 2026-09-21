@@ -91,3 +91,42 @@ async def test_health_searches_exposes_the_actual_freeze(client, monkeypatch):
         response = await client.get("/health/searches")
         assert response.status_code == 200
         assert response.json() == {"writes": expected}
+
+
+async def test_capture_timestamp_follows_the_writer_drain(db_session, monkeypatch):
+    import asyncio
+    from sqlalchemy import text
+    from tests.conftest import TestSessionLocal
+
+    await fixture(db_session, monkeypatch)
+    await db_session.execute(text("LOCK TABLE jobs IN ROW EXCLUSIVE MODE"))
+    waiting = asyncio.Event()
+    markers = AsyncMock()
+    markers.mget.side_effect = lambda keys: [None]*len(keys)
+
+    async def reader():
+        async with TestSessionLocal() as db:
+            execute = db.execute
+
+            async def observe(statement, *args, **kwargs):
+                if str(statement).startswith("LOCK TABLE"):
+                    waiting.set()
+                return await execute(statement, *args, **kwargs)
+
+            monkeypatch.setattr(db, 'execute', observe)
+            return await capture(db, markers, settings)
+
+    task = asyncio.create_task(reader())
+    try:
+        await asyncio.wait_for(waiting.wait(), 3)
+        await asyncio.sleep(0.1)
+        assert not task.done()
+        boundary = await db_session.scalar(text("SELECT clock_timestamp()"))
+        await db_session.commit()
+        result = await asyncio.wait_for(task, 5)
+        assert result['captured_at'] >= boundary
+    finally:
+        await db_session.rollback()
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

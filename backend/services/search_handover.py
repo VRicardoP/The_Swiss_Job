@@ -42,10 +42,10 @@ JOBS_FINGERPRINT_SQL = """
 """
 
 
-async def capture(db, redis, settings, *, captured_at: datetime):
+async def capture(db, redis, settings, *, captured_at: datetime | None = None):
     if not settings.SAVED_SEARCH_WRITES_FROZEN:
         raise SearchCaptureError("saved-search writers must be frozen")
-    if captured_at.tzinfo is None:
+    if captured_at is not None and captured_at.tzinfo is None:
         raise SearchCaptureError("capture timestamp must be aware")
     await db.execute(text("SET LOCAL lock_timeout='5s'"))
     await db.execute(text("SET LOCAL statement_timeout='60s'"))
@@ -54,6 +54,10 @@ async def capture(db, redis, settings, *, captured_at: datetime):
     # The operational drain precedes these locks (they do not cancel fetches).
     await db.execute(text("LOCK TABLE public.jobhunt_routing, public.jobhunt_profile_map, "
                           "public.saved_searches, public.jobs IN SHARE MODE"))
+    # Production capture seals AFTER any in-flight writer has drained, using
+    # the same clock as jobs.first_seen_at. Explicit time is for replay/tests.
+    if captured_at is None:
+        captured_at = await db.scalar(text("SELECT clock_timestamp()"))
     modes = (await db.execute(text("SELECT mode FROM public.jobhunt_routing "
         "WHERE consumer_id='swissjob' AND capability='saved_searches'"))).scalars().all()
     if any(mode not in {"local", "shadow", "core_read"} for mode in modes):
