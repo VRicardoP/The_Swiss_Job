@@ -21,6 +21,7 @@ from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills
+from jobhunt_core.harvest.providers.search_metadata import workingnomads_metadata
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ def _content(name, raw):
     )
     if name == "workingnomads" and (not isinstance(location, str) or not location.strip()):
         location = "Remote / Worldwide"
-    return {
+    content = {
         "title": title,
         "company": raw.get("companyName" if jobicy else "company_name"),
         "description": description,
@@ -119,6 +120,9 @@ def _content(name, raw):
         # until a validated enrichment step maps its amount/currency/period.
         "salary": None,
     }
+    if name == "workingnomads":
+        content.update(workingnomads_metadata(title, description, location))
+    return content
 
 
 def register_handlers():

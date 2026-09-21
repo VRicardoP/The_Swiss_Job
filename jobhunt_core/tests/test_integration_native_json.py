@@ -54,4 +54,6 @@ def test_native_json_preserves_raw_and_refreshes_old_known_identity(db, source):
             assert len(rows) == 1 and rows[0].raw == raw
             assert rows[0].content["description"] == "TEFL &amp; English"
             assert {"english", "tefl"} <= set(rows[0].content["tags"])
+            if source == "workingnomads":
+                assert rows[0].content["language"] == "en"
     asyncio.run(run())

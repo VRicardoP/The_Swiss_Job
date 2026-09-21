@@ -25,6 +25,14 @@ def literal(path, name):
 
 
 class SearchContract(unittest.TestCase):
+    def test_workingnomads_metadata_tables_preserve_legacy_priority(self):
+        core = 'jobhunt_core/harvest/providers/search_metadata.py'
+        for name in ('SENIORITY_PATTERNS', 'CONTRACT_PATTERNS'):
+            self.assertEqual(literal(core, name),
+                             literal('backend/services/data_normalizer.py', name))
+        self.assertEqual(list(literal(core, 'SWISS_CANTONS').items()),
+                         list(literal('backend/utils/text.py', 'SWISS_CANTONS').items()))
+
     def test_source_fingerprint_is_identical_on_both_sides(self):
         self.assertEqual(literal('backend/services/search_handover.py','JOBS_FINGERPRINT_SQL'),
                          literal('jobhunt_core/search_cutover.py','JOBS_FINGERPRINT_SQL'))
