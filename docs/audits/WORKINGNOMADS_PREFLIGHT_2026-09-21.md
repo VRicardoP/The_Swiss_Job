@@ -1,5 +1,9 @@
 # Punto 4 — WorkingNomads ensayado, corte todavía no aplicado
 
+**Checkpoint histórico, superado:** el corte se aplicó posteriormente el mismo
+día en `3d5d67a`. Consultar el
+[acta operativa](WORKINGNOMADS_CUTOVER_2026-09-21.md) para el estado vigente.
+
 ## Evidencia de fuente e histórico
 
 - Una descarga pública desde NAS: 54 registros crudos, 45 conservados por el

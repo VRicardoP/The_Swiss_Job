@@ -1,5 +1,13 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
+Checkpoint 21-09 16:53 UTC: **WorkingNomads transferido al productor nativo**:
+40 ofertas, replay sin duplicados, guards legacy efectivos y 5 vacantes
+primarias nativas servidas por HTTP desde CoreCatalog. Core `3d5d67a/core0050`.
+[Acta del corte](audits/WORKINGNOMADS_CUTOVER_2026-09-21.md).
+Trabajo del agente en pausa por orden del propietario tras esta comprobación;
+servicios operativos activos. No comenzar otra tarea hasta nueva orden.
+Los checkpoints inferiores son históricos; el punto 4 sigue abierto.
+
 Checkpoint 21-09 15:56 UTC: **diez búsquedas transferidas y ejecución core
 habilitada**, IDs/valores servidos exactos; 277 pendientes conservados y 92
 ofertas recuperadas. Legacy rechaza las diez por autoridad core. Dos barridos
