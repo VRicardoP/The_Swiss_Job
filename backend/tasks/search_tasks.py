@@ -1,11 +1,9 @@
 """Celery tasks: execute saved searches and dispatch notifications.
 
-DECISIÓN D.1 (gate anti-doble-motor, §15bis): esta tarea NO se gatea. Las
-búsquedas guardadas se resuelven contra el CORPUS de ofertas legacy —que se
-sigue cosechando mientras quede algún perfil local—, no contra `match_results`,
-así que no se quedan viejas al migrar un perfil; y la capacidad `saved_searches`
-se sirve de local en TODOS los modos (el /v1 del core no la expone), luego el
-core no puede duplicar este aviso. Revisar cuando el core la asuma.
+Punto 4: routing saved_searches en core_primary/rollback_pending excluye
+la ejecución local, también en tareas manuales ya encoladas. El corte exige
+drenar tareas en vuelo ANTES de activar la ejecución core. Los demás modos
+conservan el ejecutor local; no se mezcla con el routing de matching.
 """
 
 import asyncio
@@ -41,6 +39,8 @@ async def _run_saved_searches_async() -> dict[str, Any]:
     from sqlalchemy import select
 
     from config import settings
+    if settings.SAVED_SEARCH_WRITES_FROZEN:
+        return {"status": "disabled", "reason": "write_freeze"}
     from database import task_session
     from models.enums import NotifyFrequency
     from models.saved_search import SavedSearch
@@ -62,6 +62,9 @@ async def _run_saved_searches_async() -> dict[str, Any]:
         for search_id in search_ids:
             search = await db.get(SavedSearch, search_id)
             if search is None:
+                continue
+            from services.saved_searches import core_owns_searches
+            if await core_owns_searches(db, search.user_id):
                 continue
             # Check if search is due based on frequency
             if search.last_run_at:
@@ -337,6 +340,8 @@ async def _run_single_async(search_id: str, user_id: str) -> dict[str, Any]:
     from sqlalchemy import select
 
     from config import settings
+    if settings.SAVED_SEARCH_WRITES_FROZEN:
+        return {"status": "disabled", "reason": "write_freeze"}
     from database import task_session
     from models.saved_search import SavedSearch
 
@@ -354,6 +359,9 @@ async def _run_single_async(search_id: str, user_id: str) -> dict[str, Any]:
 
         if search is None:
             return {"status": "error", "reason": "search_not_found"}
+        from services.saved_searches import core_owns_searches
+        if await core_owns_searches(db, search.user_id):
+            return {"status": "disabled", "reason": "core_authority"}
 
         matches = await _execute_single_search(db, search, settings)
         return {

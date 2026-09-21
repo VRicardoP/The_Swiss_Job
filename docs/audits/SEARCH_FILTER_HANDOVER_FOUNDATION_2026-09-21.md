@@ -1,5 +1,53 @@
 # Punto 4 — conservar filtros antes del traspaso de avisos
 
+## Continuación 21-09: circuito de ejecución, todavía SIN corte productivo
+
+Implementación local en verificación:
+
+- `core0050`: autoridad de ejecución explícita por búsqueda + observaciones
+  durables; upgrade desde core0049 conserva búsquedas y downgrade se niega
+  a borrar estado de ejecución existente, incluso deshabilitado.
+- Ejecutor: lock perfil→búsqueda; consulta, observaciones, contadores y outbox
+  en una transacción. Reintentos/doble ejecución no duplican avisos. Un commit
+  tardío de cosecha no se pierde por adelantar `last_run_at`. Las identidades
+  observadas se propagan por cadenas de merge sin volver a notificar.
+- Planificador y tarea manual apagados por defecto. Solo ejecutan búsquedas
+  transferidas, activas, con dueño activo y destino HTTP real. Una búsqueda
+  fallida revierte sus efectos y cede turno sin adelantar su marca de consumo.
+- API: alta opt-in del dialecto `swissjob-v1`, lectura individual con ETag,
+  ejecución manual autenticada y validación de filtros de búsquedas transferidas.
+  Las búsquedas de Portfolio NO se interpretan con este dialecto.
+- BFF: adaptación de CRUD/manual al contrato existente, routing fresco por
+  capacidad `saved_searches`, sin fallback local en core_primary/rollback_pending.
+  Freeze específico de mutaciones y ejecutores legacy; lecturas vivas.
+- Inbox: recibo + Notification en la misma transacción; replay idempotente,
+  payload validado, SSE solo tras commit y recuperación por historial si falla.
+
+Evidencia dirigida: 41 pruebas del ejecutor/consulta/API previa; 18 de tarea,
+migración y ejecución (solapadas); 14 de API incluidas alta opt-in y ejecución
+manual; 22 del inbox BFF. Las diez regresiones iniciales del inbox fallaban
+antes del fix (ACK sin aviso y mensajes inconsistentes aceptados). La cadena de
+merge también se reprodujo roja antes de su corrección. No se enviaron avisos reales.
+La suite completa core termina con **1.596 passed**, 2 warnings, **894,22 s**
+(`/tmp/point4-search-execution-core-full.log`), commit core `fc7dc70`.
+BFF: **70 pruebas dirigidas**; suite completa **2.497 passed, 4 xfailed,
+5 warnings**, **381,20 s** (`/tmp/point4-search-bff-full.log`), siempre después
+de la suite core. Los warnings corresponden a dos deprecaciones HTTP422 y
+tres corrutinas de cosecha simuladas en los tests G4; no al nuevo ejecutor.
+Estas cifras verifican código, NO el corte: migración operativa y despliegue
+siguen pendientes. La preparación del migrador se verifica separadamente.
+
+Censo READ ONLY en la copia aislada NAS (21-09): diez búsquedas activas, dos
+dueños, todas ejecutadas alguna vez, cero nombres duplicados por dueño. Las diez
+copias core corresponden unívocamente por perfil/nombre en ESTE snapshot, pero
+**0/10 UUID coinciden**; difieren las diez fechas de creación, `last_run_at` y
+`total_matches`, y los filtros de una. No exportados valores ni datos personales.
+Antes del flip: preservar IDs públicos, reconciliar cada valor autoritativo,
+sembrar identidades ya avisadas y demostrar recuperación POST-corte. La ausencia
+actual de nombres duplicados NO convierte el nombre en una clave general.
+
+## Checkpoint anterior: filtros y backfill ensayado
+
 Estado: **preparación local probada y ensayo revertido en copia NAS**. No es
 el corte de búsquedas/avisos ni de productores. Producción conserva `346fd36`;
 ningún scope nativo se ha activado y no se han enviado avisos de prueba.

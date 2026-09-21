@@ -1,8 +1,9 @@
-"""At-least-once core receipts, committed before ACK; no domain data projection.
+"""At-least-once core receipts and saved-search notifications, committed before ACK.
 
 Document reads use their authority directly, not an inbox-derived copy. Keep only
 metadata and a canonical hash to detect conflicting replays. Owner erase takes
-the same user root lock and removes these receipts. No payload/CV is retained.
+the same user root lock and removes these receipts and notifications. Search
+notifications retain the existing UI contract; no document payload/CV is retained.
 """
 
 import asyncio
@@ -10,6 +11,7 @@ import hashlib
 import hmac
 import json
 import uuid
+import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from starlette.requests import ClientDisconnect
@@ -21,11 +23,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database import get_db
 from models.integration_inbox import IntegrationInbox
+from models.notification import Notification
 from models.jobhunt_profile_map import JobhuntProfileMap
 from models.user import User
 
 router = APIRouter(prefix="/api/v1/integration/events", tags=["integration"])
 MAX_BODY_BYTES = 65536
+logger = logging.getLogger(__name__)
+
+
+class SearchMatches(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    search_id: uuid.UUID
+    profile_id: uuid.UUID
+    search_name: str = Field(strict=True, min_length=1, max_length=200)
+    match_count: int = Field(strict=True, ge=1)
+    notify_push: bool = Field(strict=True)
+
+    @model_validator(mode="after")
+    def valid_text(self):
+        if "\x00" in self.search_name:
+            raise ValueError("invalid search name")
+        self.search_name.encode("utf-8")
+        return self
 
 
 class DocumentChange(BaseModel):
@@ -58,6 +78,15 @@ class CoreEvent(BaseModel):
                 or doc.deleted != (doc.version == 2)
             ):
                 raise ValueError("inconsistent document event")
+        if self.type == "saved_search.matches":
+            matches = SearchMatches.model_validate(self.payload)
+            if (
+                self.aggregate != "saved_search"
+                or matches.search_id != uuid.UUID(self.aggregate_id)
+                or matches.profile_id != self.subject_profile_id
+                or self.version != 1
+            ):
+                raise ValueError("inconsistent saved-search event")
         return self
 
 
@@ -153,5 +182,26 @@ async def receive_event(request: Request, db: AsyncSession = Depends(get_db)):
         )
         if previous != digest:
             raise HTTPException(409, "Conflicting integration event replay")
+    notification = None
+    if inserted is not None and event.type == "saved_search.matches":
+        matches = SearchMatches.model_validate(event.payload)
+        notification = Notification(
+            user_id=uid, event_type="new_matches",
+            title=f"New matches for '{matches.search_name[:150]}'",
+            body=f"Found {matches.match_count} new jobs matching your saved search.",
+            data={"search_id": str(matches.search_id), "search_name": matches.search_name,
+                  "match_count": matches.match_count},
+        )
+        db.add(notification)
+        await db.flush()
+        push_data = {**notification.data, "notification_id": str(notification.id)}
     await db.commit()
+    if notification is not None and matches.notify_push:
+        # The durable inbox/notification must survive an unavailable SSE bridge.
+        # Clients can always recover through the existing notification-history API.
+        try:
+            async with asyncio.timeout(2):
+                await request.app.state.sse_manager.broadcast_to_user(uid, "new_matches", push_data)
+        except Exception:
+            logger.warning("saved-search notification committed; live delivery unavailable")
     return {"accepted": True, "inserted": inserted is not None}

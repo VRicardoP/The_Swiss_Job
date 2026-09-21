@@ -263,6 +263,8 @@ class Settings(BaseSettings):
     # False still captures edits transactionally, but never transfers authority.
     CORE_PROFILE_SYNC_ENABLED: bool = False
     FEEDBACK_WRITES_FROZEN: bool = False
+    # Freeze CRUD/manual runs AND scheduled search writers during handover.
+    SAVED_SEARCH_WRITES_FROZEN: bool = False
     # TTL de la cache en proceso del routing: acota la staleness entre
     # procesos/workers (la invalidacion transaccional cubre el proceso local).
     ROUTING_CACHE_TTL_SECONDS: float = 5.0

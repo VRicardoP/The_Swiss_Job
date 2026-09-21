@@ -3,7 +3,7 @@
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,10 +17,19 @@ from schemas.saved_searches import (
     SavedSearchResponse,
     SavedSearchUpdate,
 )
+from services.saved_searches import CoreSavedSearches, SearchCoreError, block_search_writes, core_owns_searches
+
+
+async def _core_call(operation):
+    try:
+        return await operation
+    except SearchCoreError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/searches", tags=["saved_searches"])
+router = APIRouter(prefix="/api/v1/searches", tags=["saved_searches"],
+                   dependencies=[Depends(block_search_writes)])
 
 
 @router.get("", response_model=SavedSearchListResponse)
@@ -31,6 +40,8 @@ async def list_saved_searches(
     offset: int = Query(0, ge=0),
 ):
     """List user's saved searches."""
+    if await core_owns_searches(db, current_user.id):
+        return await _core_call(CoreSavedSearches(db, current_user.id).list(limit, offset))
     conditions = [SavedSearch.user_id == current_user.id]
 
     total = (
@@ -61,8 +72,15 @@ async def create_saved_search(
     body: SavedSearchCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    idempotency_key: uuid.UUID | None = Header(default=None, alias="Idempotency-Key"),
 ):
     """Create a new saved search with notification preferences."""
+    if await core_owns_searches(db, current_user.id):
+        values = body.model_dump(mode="json")
+        values["filters"] = body.filters.model_dump(exclude_unset=True)
+        return await _core_call(CoreSavedSearches(db, current_user.id).create(
+            values, idempotency_key or uuid.uuid4(),
+        ))
     search = SavedSearch(
         user_id=current_user.id,
         name=body.name,
@@ -89,6 +107,10 @@ async def update_saved_search(
     db: AsyncSession = Depends(get_db),
 ):
     """Update a saved search."""
+    if await core_owns_searches(db, current_user.id):
+        return await _core_call(CoreSavedSearches(db, current_user.id).update(
+            search_id, body.model_dump(mode="json", exclude_unset=True, exclude_none=True),
+        ))
     search = (
         await db.execute(
             select(SavedSearch).where(
@@ -124,6 +146,9 @@ async def delete_saved_search(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a saved search."""
+    if await core_owns_searches(db, current_user.id):
+        await _core_call(CoreSavedSearches(db, current_user.id).delete(search_id))
+        return
     search = (
         await db.execute(
             select(SavedSearch).where(
@@ -149,6 +174,8 @@ async def run_saved_search(
     db: AsyncSession = Depends(get_db),
 ):
     """Manually trigger a saved search (bypass scheduler)."""
+    if await core_owns_searches(db, current_user.id):
+        return await _core_call(CoreSavedSearches(db, current_user.id).run(search_id))
     search = (
         await db.execute(
             select(SavedSearch).where(
