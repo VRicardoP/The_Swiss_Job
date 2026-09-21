@@ -25,8 +25,9 @@ import sqlalchemy as sa
 
 from jobhunt_core.database import SessionLocal
 from jobhunt_core.harvest.admission import ADMISSION_CURSOR_KEY, admission_window, admit_listings
+from jobhunt_core.harvest.admission import title_filter_enabled
 from jobhunt_core.harvest.provider import (
-    ADMISSION_WINDOW_PARAM, BaseProvider, ListingSink, ProviderConfigError,
+    ADMISSION_WINDOW_PARAM, LEGACY_TITLE_FILTER_PARAM, BaseProvider, ListingSink, ProviderConfigError,
 )
 from jobhunt_core.harvest.types import ScopeRunResult
 
@@ -108,7 +109,9 @@ async def run_scope(
         await session.rollback()  # cierra la tx de lectura: el fetch va fuera de tx
 
         window = admission_window(provider.name, params)
-        fetch_params = {k: v for k, v in params.items() if k != ADMISSION_WINDOW_PARAM}
+        filter_titles = title_filter_enabled(provider.name, params)
+        fetch_params = {k: v for k, v in params.items()
+                        if k not in (ADMISSION_WINDOW_PARAM, LEGACY_TITLE_FILTER_PARAM)}
         try:
             result = await provider.fetch_new(fetch_params, provider_cursor, http)
         except ProviderConfigError:
@@ -174,7 +177,9 @@ async def run_scope(
                 )
                 return ScopeRunResult(scope_id=scope_id, status="stale")
 
-            result = await admit_listings(session, provider.name, result, window)
+            result = await admit_listings(
+                session, provider.name, result, window, filter_titles=filter_titles
+            )
             await sink.handle(session, scope_id, result.listings)
             new_cursor = {**result.next_cursor, FINGERPRINT_KEY: fingerprint}
             # Un barrido INCOMPLETO se persiste (sus listings son válidos) pero

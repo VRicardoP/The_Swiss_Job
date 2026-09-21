@@ -17,6 +17,7 @@ from jobhunt_core.harvest.types import FetchResult, RawListing
 
 # Runner-owned, semantic scope policy; not an upstream provider parameter.
 ADMISSION_WINDOW_PARAM = "admission_window_days"
+LEGACY_TITLE_FILTER_PARAM = "legacy_title_filter"
 
 
 class ProviderConfigError(ValueError):
@@ -61,8 +62,9 @@ class BaseProvider(ABC):
     def params_fingerprint(self, params: dict) -> str:
         """Hash canónico del subconjunto semántico de params."""
         semantic = {k: params.get(k) for k in self.SEMANTIC_PARAMS}
-        if ADMISSION_WINDOW_PARAM in params:
-            semantic[ADMISSION_WINDOW_PARAM] = params[ADMISSION_WINDOW_PARAM]
+        for key in (ADMISSION_WINDOW_PARAM, LEGACY_TITLE_FILTER_PARAM):
+            if key in params:
+                semantic[key] = params[key]
         raw = json.dumps(semantic, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(raw.encode()).hexdigest()
 
