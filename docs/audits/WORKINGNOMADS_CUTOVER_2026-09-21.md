@@ -32,11 +32,11 @@ preflight del mismo día. No declara cerrado el punto 4 completo.
   `last_complete_at=2026-09-21 16:43:56.027399+00:00`, fallos consecutivos 0.
 - Replay con la misma clave: **skipped, 0 ofertas**, sin segunda cosecha.
 - Canary HTTP a través del BFF desplegado: **5 vacantes con fuente primaria
+  nativa**, 200, `CoreCatalog`, títulos y enlaces conservados. Sólo lectura;
+  no se crearon candidaturas ni avisos de prueba.
 - Revalidación del feed BFF tras el corte: ambos perfiles por `CoreMatching`,
   página de 20 y totales 1800/1799; entrega del perfil sin pendientes ni error.
   Sólo lectura, sin modificar feedback ni notificaciones.
-  nativa**, 200, `CoreCatalog`, títulos y enlaces conservados. Sólo lectura;
-  no se crearon candidaturas ni avisos de prueba.
 - Suite core del release: **1645 passed, 2 warnings, 907.32 s**.
   Pruebas dirigidas: 70 passed; contrato estático: 3 passed.
 

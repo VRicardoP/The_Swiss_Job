@@ -1,8 +1,12 @@
 # Punto 4 — sustitución de CDC para los perfiles públicos
 
-Estado: implementación LOCAL verificada (20-09-2026). **No desplegada ni
-activada en el NAS**. No cierra el punto 4 por sí sola. El worker público del NAS
-sigue en el checkpoint d89b6ee, core en E.15/core0047.
+Estado actualizado 21-09-2026: **canal desplegado, habilitado y confirmado**
+según el [acta de entrega](audits/PROFILE_DEPLOYMENT_NAS_2026-09-20.md).
+Ambos perfiles mantenían entrega sin pendientes ni errores en el
+[canary posterior](audits/WORKINGNOMADS_CUTOVER_2026-09-21.md).
+No cierra el punto 4 ni autoriza apagar la captura de ofertas todavía necesaria.
+El contrato y las verificaciones de preparación siguientes se conservan como
+historial; sus versiones/imágenes no sustituyen el checkpoint operativo actual.
 
 ## Problema que resuelve
 

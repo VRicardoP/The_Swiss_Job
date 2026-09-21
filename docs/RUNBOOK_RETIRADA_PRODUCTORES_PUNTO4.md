@@ -1,5 +1,15 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
+## Estado documental vigente — 21-09, tras la pausa
+
+Punto 4 **abierto; ejecución funcional pausada**. La autorización posterior es
+actualizar documentación y hacer commits locales, no reanudar cortes ni hacer push.
+[Inventario, pendientes R1–R7 y estimación revisable](PENDIENTES_PUNTO4_REVISION_EXTERNA_2026-09-21.md).
+Ese informe distingue lo cerrado, lo pendiente y lo todavía no comprobado; no
+es una nueva certificación NAS. Última evidencia operativa: checkpoint 16:53 UTC.
+Las estimaciones anteriores no son una fecha comprometida: falta conciliar el
+inventario efectivo de fuentes/lectores de ambos proyectos.
+
 Checkpoint 21-09 16:53 UTC: **WorkingNomads transferido al productor nativo**:
 40 ofertas, replay sin duplicados, guards legacy efectivos y 5 vacantes
 primarias nativas servidas por HTTP desde CoreCatalog. Core `3d5d67a/core0050`.
@@ -26,9 +36,12 @@ No agrupar cortes si difieren cobertura, identidades o recuperación.
 1. Búsquedas/avisos: corte servido aplicado, pendientes conciliados y
    recuperación ensayada. Comprobar la entrega natural al vencer, sin detener
    el traspaso de fuentes ni enviar avisos artificiales.
-2. Completar WorkingNomads de principio a fin reutilizando lo ya probado:
-   metadatos nativos, drenaje, escritor único, lote real, replay y acciones servidas.
-3. Transferir las demás fuentes por grupos compatibles; las diferencias de
+2. WorkingNomads ya transferido: no repetir metadatos, drenaje ni replay. Antes
+   de nuevos cortes, conciliar fuentes activas y lectores de ambos proyectos;
+   reutilizar pruebas de acciones nativas y distinguirlas del canary sólo lectura.
+3. Resolver lectores/avisos Portfolio, producción escolar y autonomía del
+   postprocesado sin CDC; probar la vía existente antes de exigir un refactor.
+   Transferir las demás fuentes por grupos compatibles; las diferencias de
    cobertura (incluido Portfolio), digest y colegios se cierran antes de retirar
    sus productores. No silenciar fuentes ni avisos para reducir el plazo.
 4. Retirar procesos sólo sin dependencias; aceptación y recuperación finales.
@@ -113,7 +126,11 @@ vigente del propietario es sólo cerrar este punto, no un nuevo examen de calida
    aislados. No exportar datos privados a un lugar sin autorización específica.
    El ensayo SwissJob realizado dentro del NAS no autoriza su copia al ordenador.
 
-## Control por fuente (código local, pendiente de despliegue)
+## Control por fuente (desplegado en SwissJob; Portfolio pendiente según acta)
+
+Las guardas SwissJob ya se usan para WorkingNomads. La guarda independiente
+Portfolio `0f7ac3f` sigue sin despliegue acreditado; ver su
+[preflight](audits/REMOTIVE_ALL_PRODUCERS_PREFLIGHT_2026-09-21.md).
 
 El BFF/worker admite listas JSON de nombres exactos:
 
@@ -173,6 +190,11 @@ feedback no es un rollback POST-activación.
   no eliminar tablas/volúmenes porque una suite sea verde.
 
 ## Evidencia disponible y límites
+
+Última release core acreditada: `3d5d67a/core0050`, **1645 passed** y corte
+WorkingNomads confirmado. Las cifras siguientes son evidencias históricas
+reutilizables, no el estado de la release actual. No reactivar fuentes
+inaccesibles ni afirmar que el resto del registro está migrado.
 
 Core `65150ec`: **1.462 pruebas verdes**, incluidas NAV/TheHub. BFF `b19c865`:
 **2.440 passed, 3 skipped, 4 xfailed**, tras 147 dirigidas. Suites en serie.

@@ -1,4 +1,34 @@
-# Cierre de puntos 4 y 5 — ejecución en curso
+# Cierre de puntos 4 y 5 — estado y registro de ejecución
+
+## Estado prevalente — 21-09-2026, documentación tras la pausa
+
+**Punto 4 abierto y trabajo funcional pausado; punto 5 no iniciado en esta
+continuación.** Perfiles y feedback transferidos; las diez búsquedas SwissJob
+ya ejecutan en core, con 277 pendientes conservados y 92 ofertas recuperadas.
+WorkingNomads es la primera fuente transferida: 40 ofertas, replay sin segunda
+cosecha y cinco vacantes primarias nativas servidas por HTTP. Core
+`3d5d67a/core0050`, suite registrada **1645 passed**.
+
+Fuentes: [búsquedas](audits/SEARCH_CUTOVER_OPERATOR_2026-09-21.md) y
+[WorkingNomads](audits/WORKINGNOMADS_CUTOVER_2026-09-21.md). Son actas anteriores,
+no comprobaciones NAS nuevas realizadas para esta actualización.
+
+Pendientes y criterio finito de cierre en
+[informe para revisión externa](PENDIENTES_PUNTO4_REVISION_EXTERNA_2026-09-21.md):
+censo activo, fuentes restantes, lectores/avisos Portfolio, productores escolares,
+postprocesado sin captura CDC, retirada y recuperación. La primera entrega
+natural de búsquedas todavía no está acreditada en las actas disponibles.
+No repetir migraciones cerradas ni añadir calidad/racha al punto 4.
+
+La estimación inicial de unas horas omitió dependencias; el rango posterior
+tampoco es una cota hasta cerrar el censo. El informe desglosa supuestos y
+trabajo evitable para que el revisor los pueda refutar.
+
+La autorización vigente sólo permite actualizar documentación y commitearla.
+Sin nuevos despliegues ni push. **Todo lo siguiente es historial fechado**;
+las frases «pendiente»/«no desplegado» inferiores no prevalecen sobre estas actas.
+
+## Historial de preparación y ejecución
 
 Preparación 21-09: búsqueda core con filtros completos SwissJob y conservación
 de los seis metadatos canónicos, **1.575 tests verdes**; ensayo 99 ofertas en copia
