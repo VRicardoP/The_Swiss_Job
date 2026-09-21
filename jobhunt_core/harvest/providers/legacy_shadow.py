@@ -16,7 +16,9 @@ arbeitnow: title/company crudos, lo no-string degrada, jamás revienta).
 import logging
 
 from jobhunt_core.harvest.identity import register_extractor
-from jobhunt_core.harvest.normalize import register_normalizer
+from jobhunt_core.harvest.normalize import (
+    SEARCH_AMOUNT_FIELDS, SEARCH_TEXT_FIELDS, register_normalizer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +36,8 @@ def _extract(payload: dict) -> tuple:
 
 def _normalize(raw: dict) -> dict:
     """Escoge los campos canónicos del payload de §3; `salary` es el texto
-    original del legacy (salary_original) — los importes numéricos viajan en
-    el raw y participan del content_hash, no del texto embebible (ADR-02)."""
+    original del legacy (salary_original). Los filtros estructurados ya
+    normalizados viajan también a la canónica, nunca al texto embebible."""
     return {
         "title": raw.get("title"),
         "company": raw.get("company_name"),
@@ -44,6 +46,7 @@ def _normalize(raw: dict) -> dict:
         "location": raw.get("location"),
         "remote": raw.get("remote"),
         "salary": raw.get("salary_original"),
+        **{field: raw.get(field) for field in (*SEARCH_TEXT_FIELDS, *SEARCH_AMOUNT_FIELDS)},
     }
 
 

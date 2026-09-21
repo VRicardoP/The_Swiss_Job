@@ -1,5 +1,12 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
+Checkpoint 21-09: filtros de búsquedas preparados, **1.575 tests verdes**.
+Reparación de metadatos ensayada sobre 99 ofertas WorkingNomads en copia NAS:
+texto/embedding intactos, consulta verificada, idempotencia y rollback exacto.
+**No desplegado ni conectado al planificador**; avisos/productores aún sin cortar.
+[Evidencia y siguiente circuito](audits/SEARCH_FILTER_HANDOVER_FOUNDATION_2026-09-21.md).
+Los checkpoints inferiores describen el despliegue vigente y su preparación previa.
+
 Checkpoint 21-09, posterior al despliegue: WorkingNomads ensayado (39 admitidas,
 35 históricas reutilizadas, idempotencia y rollback), 99/99 R5 y 85/85 públicas
 resueltas. **Corte NO aplicado:** las 10 búsquedas activas todavía consultan jobs

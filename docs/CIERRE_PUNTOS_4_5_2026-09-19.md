@@ -1,5 +1,12 @@
 # Cierre de puntos 4 y 5 — ejecución en curso
 
+Preparación 21-09: búsqueda core con filtros completos SwissJob y conservación
+de los seis metadatos canónicos, **1.575 tests verdes**; ensayo 99 ofertas en copia
+NAS, idempotente y revertido, sin cambiar embeddings. **No desplegado**, sin mover
+ejecutor ni productores. Pendiente circuito transaccional de búsquedas/avisos:
+[evidencia](audits/SEARCH_FILTER_HANDOVER_FOUNDATION_2026-09-21.md).
+Punto 4 abierto; punto 5, cron y entrega final siguen fuera de este avance.
+
 ## Orden vigente al continuar el 21-09
 
 Primero **búsquedas/avisos**: las 10 búsquedas activas consultan aún jobs legacy;
