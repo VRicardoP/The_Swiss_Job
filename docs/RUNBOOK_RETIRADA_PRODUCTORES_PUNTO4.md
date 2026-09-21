@@ -1,5 +1,27 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
+## Camino crítico vigente — 21-09, reducción de trabajo repetido
+
+Objetivo exclusivo: cerrar punto 4, sin nuevas funcionalidades, campaña de
+matching ni adelanto del punto 5. Reutilizar evidencias sobre código sin cambios;
+pruebas dirigidas por ajuste, suites completas EN SERIE por release candidata.
+No agrupar cortes si difieren cobertura, identidades o recuperación.
+
+1. Búsquedas/avisos: el migrador ya conserva las diez identidades públicas y
+   valores; aplicación, replay y reversión exacta PASARON en copia NAS (291,31 s).
+   Cinco regresiones locales pasan. Falta conciliar pendientes contra la consulta
+   legacy congelada y marcadores Redis, ensayar la recuperación tras activación
+   y efectuar el corte servido. NO confundir este ensayo con migración productiva.
+2. Completar WorkingNomads de principio a fin reutilizando lo ya probado:
+   metadatos nativos, drenaje, escritor único, lote real, replay y acciones servidas.
+3. Transferir las demás fuentes por grupos compatibles; las diferencias de
+   cobertura (incluido Portfolio), digest y colegios se cierran antes de retirar
+   sus productores. No silenciar fuentes ni avisos para reducir el plazo.
+4. Retirar procesos sólo sin dependencias; aceptación y recuperación finales.
+
+Evidencia y límites en [búsquedas](audits/SEARCH_FILTER_HANDOVER_FOUNDATION_2026-09-21.md).
+Los checkpoints siguientes son históricos. Punto 4 sigue abierto.
+
 Checkpoint 21-09: filtros de búsquedas preparados, **1.575 tests verdes**.
 Reparación de metadatos ensayada sobre 99 ofertas WorkingNomads en copia NAS:
 texto/embedding intactos, consulta verificada, idempotencia y rollback exacto.

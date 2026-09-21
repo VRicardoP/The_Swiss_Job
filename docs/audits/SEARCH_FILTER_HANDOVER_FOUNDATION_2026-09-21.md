@@ -1,5 +1,36 @@
 # Punto 4 — conservar filtros antes del traspaso de avisos
 
+## Ensayo de las diez búsquedas — 21-09, posterior a `038b099`
+
+`import_swissjob_searches.py`: plan sellado, correspondencia explícita de UUID,
+comparación completa antes/después y reversión sólo PRE-activación. Preserva
+IDs públicos, propietario, filtros, preferencias, fechas y contadores; cualquier
+actividad posterior rechaza el revert. Las observaciones iniciales excluyen las
+ofertas pendientes declaradas; no dependen de equiparar fechas core/legacy.
+Evita consultar coincidencias sin pendientes y recalcular sus conjuntos por oferta.
+
+Cinco regresiones locales verdes (2,09 s): ida/vuelta exacta, replay, pendiente
+antigua no perdida, actividad nueva que impide rollback, deriva de destino,
+pendiente incompatible y nombres homónimos (casos agrupados en cinco tests).
+Suite completa pendiente para la siguiente release, no repetida por este ajuste.
+
+Ensayo en `source_copy`/`core_copy` del NAS, sin servicios ni envíos productivos:
+**10 búsquedas, 2 dueños, 291,31 s**. Aplicación = 10; replay = 0; reversión = 10;
+segundo revert = 0. Comparación de todos los campos e identidades en ambos
+sentidos; origen e historial de notificaciones intactos por huella de contenido.
+386.840 observaciones sembradas y eliminadas al revertir; esquema vuelto a
+core0049. Sin contenedores de ensayo ejecutándose al terminar.
+
+**Límite explícito:** pendientes vacíos SIMULADOS en este ensayo de almacenamiento.
+NO acredita conciliación de marcadores Redis ni autoriza el corte. Deben obtenerse
+de la consulta legacy congelada, conservando avisos ya enviados y pendientes.
+El historial persistido se verificó intacto; no se exportaron sus filas.
+
+Plan privado y resultado: `search-rows-20260921/storage-{plan,result}.json` dentro
+de la copia privada NAS ya existente. Conservan su caducidad del 21-09 20:00 UTC;
+no se extiende. Producción sigue sin cambiar. Continuación: conciliación real de
+pendientes, recuperación post-corte y despliegue; después primer productor.
+
 ## Continuación 21-09: circuito de ejecución, todavía SIN corte productivo
 
 Implementación local en verificación:
