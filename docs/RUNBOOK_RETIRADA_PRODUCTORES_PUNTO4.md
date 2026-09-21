@@ -1,5 +1,12 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
+Checkpoint 21-09 15:10 UTC: **a0fb403 + core0050 desplegados**, saludables,
+ambos feeds servidos verificados; diez búsquedas intactas. Recuperación tras
+activación ensayada sin duplicados. **Autoridad local, ejecución core apagada**.
+Siguiente: captura congelada fresca y traspaso, no otra auditoría general.
+[Acta y procedimiento único](audits/SEARCH_CUTOVER_OPERATOR_2026-09-21.md).
+No repetir suites sobre código intacto ni abrir mejoras fuera del punto 4.
+
 ## Camino crítico vigente — 21-09, reducción de trabajo repetido
 
 Objetivo exclusivo: cerrar punto 4, sin nuevas funcionalidades, campaña de

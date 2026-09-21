@@ -1,5 +1,31 @@
 # Punto 4: operador de traspaso de las diez búsquedas
 
+## Desplegado — 21-09 15:10 UTC; autoridad todavía local
+
+Core API/worker/capture, BFF y worker público ejecutan **a0fb403**, sin
+reinicios. Readiness: ready/core0050/a0fb403/authoritative=true. Celery pong.
+Feed servido por CoreMatching: 20 por página, totales 1.800/1.799; entrega
+de perfiles sin pendientes. Upgrade: diez búsquedas idénticas antes/después;
+cero execution/observations y scopes nativos. **No hay corte de búsquedas:**
+ejecución core apagada, routing local intacto. R5 legacy, Portfolio y :prod
+no cambiados. Ninguna fuente retirada ni aviso de prueba enviado.
+
+Ensayo de recuperación en copia: diez búsquedas reales, un pendiente controlado,
+primera ejecución=1, replay tras desactivar/reactivar=0; contadores/outbox
+conservados, revert pre-corte rechazado tras nueva actividad. Rollback exterior
+restaura datos y core0049. 845,55 s. No certifica los 277 pendientes vivos:
+falta captura fresca. La copia PostgreSQL pasó de 384 MiB a 1 GiB por esperas
+de disco; CPU sigue a 0,5. Caducidad intacta: 20:00 UTC. No es benchmark de prod.
+
+Imágenes core/BFF/worker: sha256 `53ea1ebe6687…`, `54a9239bcb42…`,
+`13965d53de8d…`. Configuraciones, env y backups de esquema/búsquedas privados
+en NAS `search-preactivation.a0fb403`. Workers anteriores: salida 0, sin OOM
+ni purga. Inbox alcanzable y token comprobado con sobre inválido: 422 antes
+de insertar. Próximo: freeze → captura fresca → seed/plan/apply → autoridad
+única → canary servido. No repetir auditoría general ni suites de código intacto.
+
+## Preparación anterior (histórico)
+
 Estado: preparado y probado; **no es un acta de corte productivo**. Ningún
 productor nativo activado ni fuente retirada en esta entrega.
 
