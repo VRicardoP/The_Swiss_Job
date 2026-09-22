@@ -7,8 +7,11 @@ qué queda y dónde verificarlo **ejecutando**, no leyendo.
 ---
 
 En **SwissJobHunter** (`/home/lothar/Public/SwissJob`, rama `feat/fase-a-core`)
-se cerraron dos hitos en una jornada: el **punto 4** (traspaso de productores y
-retirada del motor legacy) y el **punto 5** (rendimiento del sistema servido).
+se cerró el **punto 4** (traspaso de productores y retirada del motor legacy) y
+se avanzó el **punto 5** (rendimiento), que **sigue abierto**: la optimización
+está desplegada y verificada, pero la aceptación de rendimiento no. Una
+revalidación externa corrigió un cierre que yo había declarado sin evidencia
+suficiente; el detalle está en §3 y §4.
 
 ## 1. Punto 4 — la cosecha es nativa
 
@@ -58,47 +61,56 @@ cerrar restaba cobertura viva en vez de sólo evitar duplicados.
 Se revirtieron **las 28.767 por id exacto** desde el propio recibo, dentro de la
 ventana de gracia. El operador lleva escrito el motivo para que no se repita.
 
-## 3. Punto 5 — rendimiento del feed servido
+## 3. Punto 5 — optimización desplegada, punto ABIERTO
 
-| Recorrido | Antes p50 | Después p50 | p95 | Peticiones internas |
-|---|---:|---:|---:|---|
-| Feed, perfil 1 | 9,33 s | **0,648 s** | 2,131 s | 18 → **1** |
-| Feed, perfil 2 | 12,87 s | **0,558 s** | **1,413 s** | 18 → **1** |
-| Guardados | — | **0,120 s** | **0,320 s** | — |
-| Catálogo por texto | — | **0,147 s** | **0,219 s** | — |
-| `/api/v1/jobs/search` (HTTP) | — | **0,699 s** | máx. 1,783 s | — |
+El recorrido del feed está corregido y verificado:
 
-**La causa no estaba donde parecía.** El consumidor recorría el feed entero —18
-peticiones, 1.800 items— no por las exclusiones locales, que en producción no se
-aplican porque el feedback vive en el core, sino porque necesitaba el `total` y
-`MatchesPageDTO` no lo traía. Una página del core cuesta **29 ms**: el recorrido
-era la petición entera. La señal que lo delató: **pedir 100 costaba lo mismo que
-pedir 20**.
+| Medida | Antes | Después |
+|---|---:|---:|
+| Peticiones internas para servir 20 ofertas | 18 | **1** |
+| Método `CoreMatching.results`, p50 | 9,33–12,87 s | **0,558–1,186 s** |
+| Equivalencia (ids, orden, scores, total) | — | **8/8 idénticos** |
 
-Dos cambios, medidos por separado, con un control intermedio que confirmó la
-atribución (core nuevo + BFF antiguo = **sin cambio**):
+La causa no estaba donde parecía: el consumidor recorría el feed entero no por
+las exclusiones locales —que en producción no se aplican— sino porque necesitaba
+el `total` y el DTO del core no lo traía. Una página del core cuesta 29 ms. La
+señal que lo delató: **pedir 100 costaba lo mismo que pedir 20**.
 
-1. El core informa del total en su primera página, contado en una pasada con el
-   feedback por lotes que ya existía (0,4-0,9 s frente a 1,1-9,3 s de la forma
-   correlacionada, **mismo número**).
-2. Migración `core0051`: índice parcial de **280 kB** sobre el 15,4 % de filas
-   que pueden pertenecer a un feed.
+**Pero el punto NO está cerrado**, y mi primera acta decía lo contrario. Medido
+después sobre el **endpoint servido**, que es lo que ve el usuario:
 
-**Contrato preservado**, verificado sobre datos reales: 8 de 8 casos con los
-mismos IDs, orden, scores y total —incluida la última página—, y el camino
-escolar conservando sus 7 y 13 ofertas con identidad propia.
+| Endpoint | p50 | p95 | mín |
+|---|---:|---:|---:|
+| `/api/v1/match/results?translate=false` | 1,924 s | 5,357 s | 1,177 s |
+| `/api/v1/match/results` (con traducción) | 2,586 s | 4,063 s | 2,024 s |
+| `/api/v1/jobs/search` | 1,156 s | 2,838 s | 0,513 s |
 
-## 4. Lo que queda por encima del presupuesto no es del código
+Ninguno cumple el **p95 ≤ 2 s** que fija mi propia predeclaración.
 
-El p95 residual (1,4-2,6 s frente a un presupuesto de 2 s) lo domina el host:
-**loadavg 5,65-7,38 sobre dos núcleos** sin carga de prueba propia, y ningún
-contenedor del proyecto pasa del **0,4 % de CPU**. El trabajo propio son ~0,4 s,
-que es exactamente el **mínimo observado**.
+## 4. Cuatro errores míos que encontró una revalidación externa
 
-Tres opciones, sin preferencia impuesta: aceptarlo (la mediana está en
-0,12-1,51 s, holgado para pocos usuarios), poner límites de CPU/memoria a los
-contenedores —hoy los seis del proyecto corren **sin ninguno**— o revisar qué más
-corre en el NAS, diagnóstico que excede este encargo.
+Los cuatro son correctos y están corregidos en el acta:
+
+1. **Declaré cerrado un contrato que no se cumple**, apoyándome en el p50 cuando
+   el criterio sellado era el p95. Eso es cambiar el criterio después de ver el
+   resultado.
+2. **Medí el método intermedio, no el endpoint servido.** El router añade
+   autenticación, overlay escolar, serialización y traducción con un LLM. Su
+   desglose: `results` 0,603 s + overlay escolar 0,208 s + refresh 0,011 s ≈
+   0,82 s, de 1,924 s. **~1,1 s siguen sin atribuir.**
+3. **Atribuí al host toda la latencia residual sin demostrarlo.** El mínimo del
+   endpoint, 1,177 s, es trabajo propio. Un loadavg alto no separa CPU de I/O,
+   locks o consultas. Ahora figura como hipótesis pendiente de comprobar.
+4. **La tabla de versiones era falsa.** Declaraba los tres procesos del core en
+   `point5-cf260b1`; worker y captura siguen en `point4-51be757` porque sólo
+   recreé `core-api`. El despliegue selectivo es defendible —la migración es
+   aditiva y el cambio lo sirve la API— pero había que decirlo, no ocultarlo.
+   **Consecuencia práctica: el worker vivo no contiene `CORE_CAPTURE_ENABLED`**;
+   verificarlo antes de apoyarse en ese interruptor para retirar el slot.
+
+Además, la sonda de aceptación leía la clave `jobs` cuando la respuesta trae
+`data`: habría aprobado un 200 indebidamente vacío. La nueva falla con excepción
+y arranca con **cinco controles negativos** que debe detectar antes de usarse.
 
 ## 5. Dos fallos de método propios, dichos en voz alta
 
@@ -120,8 +132,9 @@ ssh nas "$D exec -i swissjob-postgres psql -U jobhunt_core -d swissjobhunter_r5_
 ssh nas "$D logs swissjob-core-worker-r5 --since 2h | grep check_health | tail -1"
 ```
 
-Versión certificada: core `point5-cf260b1` / `core0051` / `authoritative`, BFF y
-worker `point5-b7df2a9`. Suites: **core 1.749 passed**, **BFF 2.511 passed +
+Versiones REALES: `core-api` en `point5-cf260b1`/`core0051`; **worker y captura
+del core siguen en `point4-51be757`** (despliegue selectivo declarado); BFF y
+worker públicos en `point5-b7df2a9`. Suites: **core 1.749 passed**, **BFF 2.511 passed +
 4 xfailed**. 0 reinicios, outbox y CDC a cero, `alertas: []`.
 
 ## 7. Qué queda abierto
@@ -133,7 +146,9 @@ worker `point5-b7df2a9`. Suites: **core 1.749 passed**, **BFF 2.511 passed +
 2. **Aceptación final** del proyecto y **cron de retención**, separados.
 3. **GO de calidad del ranking**: sigue en NO-GO **por ausencia de un examen
    válido**, no por una métrica mala. No se tocó ni se debe mezclar con esto.
-4. **A18-01/02/03/04/06**: abiertos. Sólo se cerró **A18-05**, con su medición.
+4. **A18-05 sigue ABIERTO**: el recorrido está corregido, la aceptación de
+   rendimiento no. Lo que falta, en §10 del acta. A18-01/02/03/04/06, también
+   abiertos y sin tocar.
 
 ## 8. Dónde está cada cosa
 

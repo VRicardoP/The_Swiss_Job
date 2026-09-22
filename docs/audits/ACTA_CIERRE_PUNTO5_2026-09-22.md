@@ -5,36 +5,87 @@ de comparar variantes en [`PREDECLARACION_PUNTO5_2026-09-22.md`](../PREDECLARACI
 
 ## Veredicto
 
-**PUNTO 5 CERRADO para los recorridos de lectura medidos, con una condición
-externa declarada.** El cuello dominante estaba localizado, medido y corregido:
-servir una página del feed pasó de **9,3–12,9 s a 0,56–1,19 s de mediana**, y de
-**18 peticiones internas a 1**, con contrato idéntico verificado sobre datos
-reales. Lo que queda por encima del presupuesto en la cola alta **no es
-atribuible al código**: el host está sobresuscrito por procesos ajenos al
-proyecto (§5). Esa decisión es del propietario y se enuncia en §7.
+**PUNTO 5 ABIERTO.** La optimización del recorrido del feed está implementada,
+desplegada y verificada; la **aceptación integral de rendimiento queda
+pendiente**.
 
-No se declara GO de calidad del ranking, ni cierre del proyecto, ni se toca la
-retirada del slot ni el cron de retención: siguen siendo entregables separados.
+Esta acta se emitió primero como «PUNTO 5 CERRADO» y **era incorrecto**. Una
+revalidación independiente
+([REVALIDACION_INFORME_DESPLIEGUE_2026-09-22.md](REVALIDACION_INFORME_DESPLIEGUE_2026-09-22.md))
+lo señaló y las mediciones posteriores le dieron la razón en los cuatro puntos.
+Qué estaba mal, sin rodeos:
+
+1. **Declaré cerrado un contrato que no se cumple.** La predeclaración fija
+   **p95 ≤ 2 s**, no mediana; varios escenarios dan 2,1–3,0 s. Apoyarme en el p50
+   era convertir el criterio en otro después de ver el resultado.
+2. **Medí el método intermedio, no el endpoint servido.** `CoreMatching.results`
+   da p50 0,648 s; `GET /api/v1/match/results` da **p50 1,924 s sin traducción y
+   2,586 s con ella**, con un mínimo de 1,177 s. El usuario ve lo segundo.
+3. **Atribuí al host toda la latencia residual sin demostrarlo.** El mínimo del
+   endpoint (1,177 s) es trabajo propio, no espera de CPU ajena.
+4. **La tabla de versiones era falsa**: declaraba los tres procesos del core en
+   `point5-cf260b1` cuando worker y captura siguen en `point4-51be757`.
+
+Lo que sí sostiene la evidencia se mantiene y está en §1–§4. Lo que falta para
+poder cerrar, en §10.
 
 ## 1. Qué se midió y con qué
 
-Camino real `CoreMatching.results()` dentro de los contenedores desplegados,
-sólo lectura, sin fixtures ni carga artificial en producción. Concurrencia 1 y 2,
-n=50 por caso en las medidas finales, warmup declarado y excluido.
+**Dos niveles distintos, que no deben mezclarse.** El método `CoreMatching.results`
+es el recorrido que se optimizó; el endpoint `GET /api/v1/match/results` es lo
+que ve el usuario y añade autenticación, overlay escolar, serialización y —por
+defecto— traducción de títulos con un LLM externo.
 
-| Recorrido | Presupuesto | p50 | p95 | Veredicto |
-|---|---|---:|---:|---|
-| Feed de matching, perfil 1, conc. 1 | ≤2 s | **0,648 s** | 2,131 s | cumple en p50; cola externa |
-| Feed de matching, perfil 1, conc. 2 | ≤2 s | **1,032 s** | 2,366 s | cumple en p50; cola externa |
-| Feed de matching, perfil 2, conc. 1 | ≤2 s | **0,558 s** | **1,413 s** | **cumple** |
-| Feed de matching, perfil 2, conc. 2 | ≤2 s | **1,186 s** | 2,552 s | cumple en p50; cola externa |
-| Guardados | ≤2 s | **0,120 s** | **0,320 s** | **cumple** |
-| Catálogo por texto | ≤2 s | **0,147 s** | **0,219 s** | **cumple** |
-| Catálogo, página profunda (offset 200) | ≤2 s | **0,669 s** | **1,850 s** | **cumple** |
-| Catálogo remoto | ≤2 s | **0,416 s** | 2,753 s | cumple en p50; cola externa |
-| Catálogo general | ≤2 s | **1,510 s** | 2,985 s | cumple en p50; cola externa |
-| `/api/v1/jobs/search` por HTTP (canario, n=10) | ≤2 s | **0,699 s** | máx. 1,783 s | **cumple** |
-| `/api/v1/health` | ≤1 s | 200 OK | — | **cumple** |
+### 1a. El método optimizado (n=50, conc. 1 y 2, warmup excluido)
+
+| Recorrido | p50 | p95 |
+|---|---:|---:|
+| Feed, perfil 1, conc. 1 | 0,648 s | 2,131 s |
+| Feed, perfil 1, conc. 2 | 1,032 s | 2,366 s |
+| Feed, perfil 2, conc. 1 | 0,558 s | 1,413 s |
+| Feed, perfil 2, conc. 2 | 1,186 s | 2,552 s |
+| Guardados | 0,120 s | 0,320 s |
+| Catálogo por texto | 0,147 s | 0,219 s |
+| Catálogo, página profunda (offset 200) | 0,669 s | 1,850 s |
+| Catálogo remoto | 0,416 s | 2,753 s |
+| Catálogo general | 1,510 s | 2,985 s |
+
+### 1b. El endpoint servido (n=20, sonda con aserciones que fallan)
+
+| Endpoint | p50 | p95 | mín | ¿Cumple p95 ≤ 2 s? |
+|---|---:|---:|---:|---|
+| `/api/v1/jobs/search` | 1,156 s | 2,838 s | 0,513 s | **no** |
+| `/api/v1/match/results?translate=false` | 1,924 s | 5,357 s | 1,177 s | **no** |
+| `/api/v1/match/results` (con traducción) | 2,586 s | 4,063 s | 2,024 s | **no** |
+
+**Ningún endpoint cumple el p95 declarado.** La traducción añade ~0,66 s de
+mediana —menos de lo esperado, porque su caché Redis funciona— pero es una
+llamada a un LLM externo y la predeclaración la excluye del presupuesto de 2 s:
+necesita el suyo propio.
+
+### 1c. Desglose del tiempo propio del router (n=8)
+
+| Fase | p50 | máx |
+|---|---:|---:|
+| `resolve_matching` | 0,000 s | 0,018 s |
+| `CoreMatching.results` | 0,603 s | 1,705 s |
+| `db.refresh(profile)` | 0,011 s | 0,087 s |
+| `overlay_school_results` | **0,208 s** | 0,768 s |
+
+Suman **~0,82 s** de los 1,924 s del endpoint sin traducción. **~1,1 s quedan sin
+atribuir**: pueden ser autenticación, serialización Pydantic, el servidor
+(gunicorn con dos workers) o contención. **No se ha separado**, y esta acta no
+afirma cuál es.
+
+### 1d. Las sondas, endurecidas tras la revalidación
+
+La sonda anterior leía la clave `jobs` cuando la respuesta trae `data`: habría
+dado por bueno un 200 indebidamente vacío. La actual comprueba estructura,
+cardinalidad, identidad, título y coherencia del total, **falla con excepción**
+ante cualquier discrepancia, y arranca ejecutando **cinco controles negativos**
+(200 vacío, clave equivocada, total incoherente, cardinalidad distinta y total
+distinto del esperado) que deben detectarse antes de usarla como evidencia:
+`{"controles_negativos": 5, "todos_detectados": true}`.
 
 ## 2. La causa dominante, y por qué era ésa
 
@@ -107,22 +158,29 @@ tabla de pruebas diminuta PostgreSQL prefiere correctamente el barrido
 secuencial. Un test que no falla contra el estado anterior no es una regresión;
 se sustituyó por la afirmación del esquema, y la evidencia del plan vive aquí.
 
-## 5. Lo que queda por encima del presupuesto, y de quién es
+## 5. La cola de latencia: hipótesis, no conclusión
 
-El p95 residual (1,4–2,6 s) **no lo produce este código**. Medido sin carga de
-prueba propia:
+La primera versión de esta acta afirmaba que el residual **no procedía del
+código**. **Esa atribución no estaba demostrada y en parte es falsa**: el mínimo
+del endpoint sin traducción es 1,177 s, y eso es trabajo propio, no espera de
+CPU ajena.
+
+Lo que sí está medido, y que sigue siendo relevante:
 
 - loadavg del host entre **5,65 y 7,38 con dos núcleos** — sobresuscripción de
-  entre 2,8× y 3,7×;
-- ningún contenedor del proyecto pasa del **0,4 % de CPU** (`swissjob-backend`
-  0,37 %); los mayores consumidores del momento eran `redis` 5,69 %, `redis` 4,78 %
-  y `portfolio_db` 4,78 %, insuficientes para explicar esa carga;
-- el trabajo real de una petición son ~0,4 s (COUNT ~0,3 s + página 0,03 s +
-  HTTP), y **ése es justamente el mínimo observado**: 0,349–0,662 s. El p95 es el
-  mismo trabajo esperando CPU.
+  2,8× a 3,7×, sin carga de prueba propia;
+- ningún contenedor del proyecto pasa del **0,4 % de CPU** en el muestreo
+  instantáneo; los mayores eran `redis` 5,69 % y 4,78 %, y `portfolio_db` 4,78 %.
 
-No se paró ningún otro servicio para fabricar una cifra mejor, ni se tocaron
-contenedores ajenos al proyecto.
+Lo que **no** demuestra eso: un loadavg alto y porcentajes instantáneos de CPU no
+separan espera de CPU, de disco, de locks, de conexiones o de consultas, ni
+descartan que el propio proyecto contribuya durante los picos.
+
+**Hipótesis vigente**, pendiente de comprobar: la cola combina (a) trabajo propio
+identificado —0,82 s de fases medidas— más (b) ~1,1 s sin atribuir y (c) espera
+por contención del host. Para separarlos hace falta correlacionar una ventana de
+peticiones con tiempos SQL, esperas de PostgreSQL y CPU/IO de host y contenedores.
+**No se ha hecho.** No se impusieron límites de recursos ni se cambió PostgreSQL.
 
 ## 6. Ausencia de regresión, verificada tras desplegar
 
@@ -143,47 +201,83 @@ y se detuvo de inmediato, antes de que compitieran por la base.
 
 ## 7. Decisión que corresponde al propietario
 
-El presupuesto de 2 s se cumple en mediana en todos los recorridos y en p95 en
-varios. Para que el p95 lo cumpla **siempre** haría falta actuar sobre la
-saturación del host, que es ajena a este proyecto. Tres opciones, sin preferencia
-impuesta:
+Ningún endpoint cumple hoy el p95 de 2 s que fija la predeclaración. Hay dos
+caminos, y la elección no es técnica:
 
-1. **Aceptar el estado actual.** La mediana está en 0,12–1,51 s y el trabajo
-   propio en ~0,4 s. Para un portfolio de pocos usuarios es holgado.
-2. **Poner límites de CPU/memoria** a los contenedores que compiten. Hoy los seis
-   servicios del proyecto corren **sin límite alguno** (`Memory=0`, `NanoCpus=0`),
-   igual que los ajenos. Es una decisión de operación del NAS, no de código.
-3. **Revisar qué más corre en el NAS.** Ese diagnóstico excede el alcance de este
-   encargo y no se ha hecho.
+1. **Completar la aceptación contra el presupuesto vigente**: medir lo que falta
+   (§10) y corregir lo que la evidencia señale.
+2. **Aprobar expresamente otro presupuesto** —por ejemplo p95 ≤ 3 s en LAN para
+   un portfolio de pocos usuarios, o un presupuesto propio para la traducción— y
+   medir contra él. Sería una decisión nueva y registrada, **no** una aprobación
+   retroactiva del criterio anterior.
 
 Observación registrada, no corregida: PostgreSQL corre con `shared_buffers=128 MB`
-y `work_mem=4 MB`, valores **de fábrica**, sobre una base de 2.753 MB. No se tocó
-porque no hay evidencia de que sea el limitante actual y porque subirlo compite
-por la misma memoria que el resto del NAS.
+y `work_mem=4 MB`, valores de fábrica, sobre una base de 2.753 MB; y los seis
+contenedores del proyecto corren **sin límite** de CPU ni memoria. No se tocó
+ninguna de las dos cosas: no hay evidencia de que sean el limitante actual.
 
-## 8. Versión certificada
+## 8. Versiones realmente desplegadas
 
-| Servicio | Imagen | Notas |
+La primera versión de esta acta declaraba los tres procesos del core en
+`point5-cf260b1`. **Era falso**, y lo detectó la revalidación. El despliegue fue
+**selectivo** y así queda registrado:
+
+| Servicio | Imagen REAL | Notas |
 |---|---|---|
-| core-api / worker / capture | `swissjob-core:point5-cf260b1` | `core0051`, `authoritative: true` |
-| backend público | `swissjob-backend:point5-b7df2a9` | |
-| worker público | `swissjob-worker:point5-b7df2a9` | misma imagen, re-etiquetada |
+| `swissjob-core-api-r5` | `swissjob-core:point5-cf260b1` | `core0051`, `authoritative: true`. Es quien sirve `/v1/profiles/{id}/matches` y, por tanto, el único que necesita el cambio |
+| `swissjob-core-worker-r5` | **`swissjob-core:point4-51be757`** | no recreado |
+| `swissjob-core-capture-r5` | **`swissjob-core:point4-51be757`** | no recreado |
+| `swissjob-backend` | `swissjob-backend:point5-b7df2a9` | |
+| `swissjob-worker` | `swissjob-worker:point5-b7df2a9` | misma imagen, re-etiquetada |
 
-Copias `.before` de cada compose en el directorio privado del NAS
-`unification-e15-20260914/point5-20260922/`, junto con los scripts de medición
-(`bench_feed.py`, `bench_fases.py`, `bench_count2.py`, `bench_p95.py`,
-`bench_rutas.py`, `equiv.py`, `plan_count.py`, `canario_http.py`).
+**Por qué no se recrean ahora**: la migración `core0051` es aditiva y ya está
+aplicada; el cambio del feed lo sirve `core-api`; y recrear dos procesos sólo
+para que coincidan con una tabla documental sería mover producción por una razón
+cosmética. Queda como divergencia **conocida y declarada**, no como descuido.
 
-Si más adelante se retira el slot CDC, esta configuración cambia y basta una
-revalidación ligera: repetir `bench_p95.py` y el canario HTTP.
+**Consecuencia que hay que recordar**: el worker en ejecución **no contiene**
+`CORE_CAPTURE_ENABLED`. Antes de apoyarse en ese interruptor para retirar el
+slot CDC hay que verificar que el proceso que lo ejecuta lleva el código —no
+basta con que esté en HEAD—. Anotado también en
+[`RETIRADA_SLOT_CDC_PUNTO4.md`](../RETIRADA_SLOT_CDC_PUNTO4.md).
+
+Copias `.before` y sondas en el directorio privado del NAS
+`unification-e15-20260914/point5-20260922/`. La sonda de aceptación vigente es
+`sonda_endpoint.py` (con sus controles negativos); `canario_http.py` y `equiv.py`
+quedan **obsoletas por comprobación insuficiente** y no deben citarse como
+evidencia.
 
 ## 9. Deuda: qué se cierra y qué no
 
-- **A18-05 (coste del feed de matching) — CERRADO** con medición antes/después,
-  causa identificada, corrección mínima y equivalencia verificada.
+- **A18-05 (coste del feed de matching) — PARCIALMENTE ATENDIDO, no cerrado.**
+  El recorrido de 18 peticiones está corregido y verificado, pero el contrato de
+  rendimiento del endpoint servido no se cumple todavía. Se cierra cuando §10
+  esté completo.
 - **A18-01/02/03/04/06 — NO se cierran por asociación.** No se revalidaron en
   este trabajo y no se tocaron sus recorridos.
 - **Sin deuda nueva de rendimiento** en los recorridos medidos. Queda anotada la
   configuración de fábrica de PostgreSQL (§7) como observación, no como defecto.
 - Fuera de alcance y sin tocar: retirada del slot, cron de retención, aceptación
   final del proyecto y GO de calidad del ranking.
+
+## 10. Qué falta para poder cerrar el punto 5
+
+Lista finita, derivada del contrato que yo mismo sellé:
+
+1. **Medir el endpoint servido en los escenarios que faltan**: frío y caliente
+   por separado, escrituras en copia, y navegación representativa de ambos
+   frontends. Nada de eso se midió.
+2. **Muestra suficiente en copia autorizada** (≥100 observaciones por recorrido
+   prioritario), en lugar de series de producción. La serie de 50 que usé
+   contradice el máximo de 20 que fija mi propia predeclaración para producción.
+3. **Separar la cola de latencia**: correlacionar una ventana de peticiones con
+   tiempos SQL, esperas de PostgreSQL y CPU/IO de host y contenedores, para
+   atribuir los ~1,1 s no explicados del router.
+4. **Presupuesto propio para la traducción de títulos**, o constancia de que el
+   frontend la pide con `translate=false`.
+5. **Decidir el presupuesto** (§7) y emitir aceptación contra el vigente o contra
+   uno nuevo aprobado expresamente.
+
+Mientras tanto: la optimización desplegada es **útil y está verificada** —18
+peticiones a 1, equivalencia 8/8, sin regresión funcional— y no hay motivo para
+revertirla. Simplemente **no basta para declarar el punto cerrado**.
