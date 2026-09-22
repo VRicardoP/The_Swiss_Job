@@ -1,5 +1,24 @@
 # RUNBOOK — Sombra (B-05, CONTRATOS_FASE_B §6/§8)
 
+> ## ⚠ 2026-09-22: este CDC ESTÁ EN RETIRADA
+>
+> Las 16 fuentes del corpus las cosecha el core directamente desde el traspaso
+> del punto 4, así que el legacy ya no escribe nada que capturar: el worker R5 y
+> su disparador están parados. Lo que queda es retirar el slot
+> `jobhunt_shadow_r5_rehearsal`, con su procedimiento propio en
+> `docs/RETIRADA_SLOT_CDC_PUNTO4.md`.
+>
+> **`jobhunt.shadow.project` NO se retira.** Pese al nombre, es el postprocesado
+> del ciclo NATIVO: drena embeddings y reevalúa perfiles tras cada cosecha.
+> Verificado el 21-09 a las 16:59:03 UTC corriendo con `batches: 0` —sin un solo
+> lote CDC— y reportando `recovery_evaluated: 3`. Apagar la familia `shadow.*`
+> por prefijo apagaría el motor de matching con todo en verde; `CORE_CAPTURE_ENABLED`
+> retira sólo las tres entradas que vigilan el slot y `test_capture_retirement.py`
+> fija cuáles pueden desaparecer.
+>
+> Lo de abajo describe la operación del CDC mientras existió.
+
+
 > Operación del CDC de la sombra. **RPO = 0** (ack tras commit: el slot re-entrega
 > lo no confirmado y la PK del staging absorbe duplicados). **RTO consumidor ≤ 1 h**.
 > TODO LOCAL: prod/QNAP fuera de alcance.

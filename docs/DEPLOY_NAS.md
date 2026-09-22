@@ -7,6 +7,17 @@
 > de la tailnet (Mac, Linux, iPhone, iPad).
 >
 > **ALCANCE: solo el stack LEGACY** (postgres, redis, backend, worker, frontend).
+>
+> ⚠ **2026-09-22: el NAS corre también el CORE, y es quien cosecha.** Los servicios
+> `swissjob-core-api-r5`, `swissjob-core-worker-r5` y `swissjob-core-capture-r5`
+> viven bajo el proyecto compose `swissjob-r5` con
+> `/share/CACHEDEV1_DATA/Public/unification-e15-20260914/core.configured.yml`, y el
+> BFF público bajo `swissjob` con `swissjob.configured.yml` del mismo directorio —
+> **no** con los composes de este repositorio. El despliegue real se hace por CLI con
+> `/share/Public/swissjob/bin-docker-compose`, servicio a servicio
+> (`stop -t … <servicio>` + `up -d --no-deps <servicio>`), nunca con un `up` global
+> ni `--remove-orphans`. Procedimiento vigente y recibos:
+> `docs/audits/POINT4_CUTOVER_2026-09-22.md`.
 > El core y la SOMBRA (`core-api`, `core-worker`, `core-capture`, `redis-core`, y el
 > Postgres con wal2json que exige `wal_level=logical`) tienen su propio paquete:
 > [`jobhunt_core/shadow/DEPLOY_NAS.md`](../jobhunt_core/shadow/DEPLOY_NAS.md), con

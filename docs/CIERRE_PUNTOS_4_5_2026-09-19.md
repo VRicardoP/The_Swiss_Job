@@ -1,32 +1,26 @@
 # Cierre de puntos 4 y 5 — estado y registro de ejecución
 
-## Estado prevalente — 21-09-2026, documentación tras la pausa
+## Estado prevalente — 22-09-2026: la cosecha es NATIVA
 
-**Punto 4 abierto y trabajo funcional pausado; punto 5 no iniciado en esta
-continuación.** Perfiles y feedback transferidos; las diez búsquedas SwissJob
-ya ejecutan en core, con 277 pendientes conservados y 92 ofertas recuperadas.
-WorkingNomads es la primera fuente transferida: 40 ofertas, replay sin segunda
-cosecha y cinco vacantes primarias nativas servidas por HTTP. Core
-`3d5d67a/core0050`, suite registrada **1645 passed**.
+**Punto 4 sustancialmente completo; punto 5 no iniciado.** Las 16 fuentes que
+alimentaban el corpus del core las cosechan productores nativos: 17 scopes
+habilitados, todos completos y con 0 fallos, replay 16/16 `skipped`, 45 vacantes
+nativas servidas por `CoreCatalog`. El ciclo corre solo (04:10 UTC: el beat
+despachó los 17 sin worker R5 ni disparador legacy) y la primera entrega natural
+de avisos quedó acreditada de extremo a extremo entre las 07:15:45 y las
+07:19:18 del 22-09. Release core `51be757/core0050`; suite **1.745 passed**.
+[Acta del traspaso](audits/POINT4_CUTOVER_2026-09-22.md).
 
-Fuentes: [búsquedas](audits/SEARCH_CUTOVER_OPERATOR_2026-09-21.md) y
-[WorkingNomads](audits/WORKINGNOMADS_CUTOVER_2026-09-21.md). Son actas anteriores,
-no comprobaciones NAS nuevas realizadas para esta actualización.
+Queda abierto: retirar el slot `jobhunt_shadow_r5_rehearsal` (48 h de
+observación, no antes del 23-09 ~22:40 UTC; procedimiento en
+[RETIRADA_SLOT_CDC_PUNTO4.md](RETIRADA_SLOT_CDC_PUNTO4.md)) y la aceptación
+final. Punto 5, cron de retención y GO de calidad siguen separados.
 
-Pendientes y criterio finito de cierre en
-[informe para revisión externa](PENDIENTES_PUNTO4_REVISION_EXTERNA_2026-09-21.md):
-censo activo, fuentes restantes, lectores/avisos Portfolio, productores escolares,
-postprocesado sin captura CDC, retirada y recuperación. La primera entrega
-natural de búsquedas todavía no está acreditada en las actas disponibles.
-No repetir migraciones cerradas ni añadir calidad/racha al punto 4.
+Análisis que planificó este trabajo y por qué las estimaciones anteriores no se
+sostenían: [ANALISIS_PENDIENTES_PUNTO4_2026-09-21.md](ANALISIS_PENDIENTES_PUNTO4_2026-09-21.md).
 
-La estimación inicial de unas horas omitió dependencias; el rango posterior
-tampoco es una cota hasta cerrar el censo. El informe desglosa supuestos y
-trabajo evitable para que el revisor los pueda refutar.
-
-La autorización vigente sólo permite actualizar documentación y commitearla.
-Sin nuevos despliegues ni push. **Todo lo siguiente es historial fechado**;
-las frases «pendiente»/«no desplegado» inferiores no prevalecen sobre estas actas.
+**Todo lo siguiente es historial fechado**; sus frases «pendiente» y «no
+desplegado» no prevalecen sobre este estado.
 
 ## Historial de preparación y ejecución
 

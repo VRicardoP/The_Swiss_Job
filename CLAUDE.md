@@ -10,8 +10,22 @@
 
 - **Backend**: FastAPI + Celery + PostgreSQL (pgvector) + Redis
 - **Frontend**: React + TailwindCSS v4 + Vite
-- **Workers**: Celery, despachado por APScheduler (`services/scheduler.py`) — cosecha diaria autónoma (fetch→scrape→embed→dedup→match a hora base 12:00 CET ± 4 h de jitter, `SCHEDULER_DAILY_HARVEST_ENABLED=True` por defecto) o, en modo intervalos, providers cada **30 min** (`SCHEDULER_FETCH_INTERVAL_MINUTES`) y scrapers cada **6 h** (`SCHEDULER_SCRAPER_INTERVAL_HOURS`). Además, SIEMPRE: dedup semántico 04:00, chequeo de URLs **diario** 03:00 (no semanal — el log de resumen de `scheduler.py` todavía dice «weekly Sun», es una cadena obsoleta), limpieza de caducadas 03:30, búsquedas guardadas cada 60 min, salud de watchlist cada 6 h, digest de watchlist 18:00, alerta profesor cada 6 h y digest diario de matches (opt-in, `DAILY_DIGEST_ENABLED=False` por defecto)
-- **Core (Fase A)**: paquete `jobhunt_core/` — API v1 FastAPI (`core-api`, puerto 8003), `core-worker` Celery (tareas `jobhunt.*`, broker `redis-core`, colas `core.*`, **beat embebido** `-B`, 10 cadencias: cada **5 min** sampler de lag del outbox, salud del slot, proyector sombra y despacho del outbox; cada **hora** la purga de idempotencia (`CORE_IDEMPOTENCY_PURGE_EVERY_S=3600` — *no* cada 5 min) y la **salud de la cosecha** (`jobhunt.harvest.check_health`, G9 P2-C: alerta si un scope acumula fallos o lleva días sin cosecha completa; G10 P3-4 + G11 P3-2: publica SIEMPRE el censo del parque y avisa cuando no observa a todos los habilitados — `alertas: []` sobre un parque medio invisible se leía como cosecha sana); y cuatro citas diarias en este orden: dedup-scan 05:20 → archive-sweep 05:35 → ciclo sombra 06:05 → purga de retención 06:40; al arrancar registra el transporte sombra → `jobhunt.shadow_inbox`), migraciones propias vía `core-migrate` (cadena `core0001..core0036`). **Desde `ae7fbf2` la imagen del core es INMUTABLE**: el compose base ya no monta `./jobhunt_core` en `core-api`/`core-worker`/`core-capture`/`core-migrate`, y para trabajar sobre el árbol de trabajo hay que pedir el override `-f docker-compose.yml -f docker-compose.dev.yml` (ver «Perfiles de compose» abajo)
+- **Cosecha: NATIVA desde el 2026-09-22.** Las 16 fuentes del corpus las cosecha
+  el core (`jobhunt.harvest.dispatch_native`, 4 ventanas diarias 00:10/06:10/12:10/18:10
+  Europe/Zurich, una tarea acotada por scope). Los productores legacy están
+  retirados por `LEGACY_DISABLED_PROVIDERS` / `LEGACY_DISABLED_SCRAPERS`: listas de
+  ARRANQUE validadas contra el registro, un nombre desconocido impide construir el
+  productor. Acta: `docs/audits/POINT4_CUTOVER_2026-09-22.md`
+- **Workers legacy que SIGUEN y por qué**: `swissjob-worker` conserva 5 providers
+  (`zebis` y `publicjobs` a propósito — alimentan la alerta de profesor de primaria,
+  que lee `jobs.category='H'` de la base pública; `jobicy`, `proz` y `remoteco` nunca
+  se transfirieron) y **13 scrapers**, de los cuales los 8 `swiss_schools_*` son el
+  colector escolar que publica observaciones al core. APScheduler sigue despachando
+  dedup semántico 04:00, chequeo de URLs 03:00, limpieza 03:30, salud de watchlist
+  cada 6 h, digest de watchlist 18:00, alerta profesor cada 6 h y digest diario
+  (opt-in). La cadena `daily_harvest` sigue existiendo pero su etapa de fetch ya no
+  construye las fuentes transferidas
+- **Core (Fase A)**: paquete `jobhunt_core/` — API v1 FastAPI (`core-api`, puerto 8003), `core-worker` Celery (tareas `jobhunt.*`, broker `redis-core`, colas `core.*`, **beat embebido** `-B`, 14 cadencias: cada **5 min** sampler de lag del outbox, salud del slot, proyector sombra y despacho del outbox; cada **hora** la purga de idempotencia (`CORE_IDEMPOTENCY_PURGE_EVERY_S=3600` — *no* cada 5 min) y la **salud de la cosecha** (`jobhunt.harvest.check_health`, G9 P2-C: alerta si un scope acumula fallos o lleva días sin cosecha completa; G10 P3-4 + G11 P3-2: publica SIEMPRE el censo del parque y avisa cuando no observa a todos los habilitados — `alertas: []` sobre un parque medio invisible se leía como cosecha sana); y cuatro citas diarias en este orden: dedup-scan 05:20 → archive-sweep 05:35 → ciclo sombra 06:05 → purga de retención 06:40; al arrancar registra el transporte sombra → `jobhunt.shadow_inbox`), migraciones propias vía `core-migrate` (cadena `core0001..core0050`). **Desde `ae7fbf2` la imagen del core es INMUTABLE**: el compose base ya no monta `./jobhunt_core` en `core-api`/`core-worker`/`core-capture`/`core-migrate`, y para trabajar sobre el árbol de trabajo hay que pedir el override `-f docker-compose.yml -f docker-compose.dev.yml` (ver «Perfiles de compose» abajo)
 - **Sombra (Fase B, SOLO LOCAL)**: CDC legacy→core por slot lógico `jobhunt_shadow` (postgres custom `docker/postgres-core/` con wal2json, `wal_level=logical`) → servicio `core-capture` (staging con ack tras commit) → proyector → métricas y GATE-SOMBRA (7 ciclos). Módulos `jobhunt_core/shadow/`; operación: `jobhunt_core/shadow/RUNBOOK.md`
 - **Documentación de referencia**: **cotas aceptadas y decisiones deliberadas → `docs/COTAS_Y_DECISIONES.md`** (léelo ANTES de "arreglar" cualquier limitación: varias se intentaron cerrar y el intento fue peor que la cota); estado y contadores vigentes → `ESTADO_Y_HOJA_DE_RUTA.md` **§20** (§19 es la foto anterior a la jornada del 2026-08-27); core → `PLAN_UNIFICACION_JOBHUNTING.md` (§23–§24) y `CONTRATOS_FASE_A.md`, los tres en `/home/lothar/Public/`; legacy → `docs/`
 
@@ -103,7 +117,7 @@ docker compose up -d
 # swissjobhunter_test y las dos corridas se vacían las tablas entre sí (deadlocks + falsos rojos)
 docker compose exec -T backend python -m pytest tests/ -v --timeout=30
 
-# Tests core (Fase A/B/C, 689 passed — reconfirmar con pytest tras cada crecida)
+# Tests core (1.745 passed, ~22 min — reconfirmar con pytest tras cada crecida)
 # OJO al perfil: desde la auditoría P1-3 el compose BASE no monta ./jobhunt_core
 # (imagen operativa inmutable). Los tests van con el override de desarrollo, que
 # es el que monta el árbol de trabajo; sin él se probaría el código de la IMAGEN.
@@ -120,7 +134,7 @@ docker compose exec -T backend ruff format --check --no-cache .
 docker compose exec backend alembic upgrade head
 docker compose exec backend alembic revision --autogenerate -m "descripcion"
 
-# Migraciones core (cadena core0001..core0036 — las aplica core-migrate en el arranque).
+# Migraciones core (cadena core0001..core0050 — las aplica core-migrate en el arranque).
 # Sin override: aplica las migraciones DE LA IMAGEN, que es lo correcto al operar.
 # Para probar una migración nueva del árbol de trabajo, añade los dos -f del perfil dev.
 docker compose run --rm core-migrate python -m jobhunt_core.migrate
@@ -145,7 +159,9 @@ Los skills leen los prompts canónicos en `.ai/prompts/` y añaden contexto del 
 ## Arquitectura en una página
 
 ```
-providers/          # 25 providers (20 activos + 5 restringidos gated); BaseJobProvider + CircuitBreaker
+providers/          # 25 REGISTRADOS, pero desde el traspaso solo 5 se construyen
+                    # (LEGACY_DISABLED_PROVIDERS). El registro conserva los nombres a
+                    # propósito: el catálogo y el histórico siguen resolviéndolos
   restricted.py     # jobs.ch/LinkedIn/Indeed/Glassdoor/XING SOLO por ruta autorizada (partner/feed); OFF por defecto
 scrapers/           # 15 scrapers (7 base incl. irishjobs + 8 swiss_schools_*); BaseScraper extends BaseJobProvider
 services/
@@ -153,12 +169,12 @@ services/
                     #   SEIS pesos: embedding .35 · salary .15 · location .10 · recency .15 · llm .15 · language .10
                     #   Etapa 1 SIN LIMIT a propósito (decide el umbral, no un top-K) y ya no transporta el
                     #   embedding: la distancia viene como columna (defer+raiseload). MATCH_SCORE_THRESHOLD=42.0 (.env)
-  translation_service.py  # títulos a inglés via GROQ_RERANK_MODEL=qwen3.6-27b (DE/FR/IT only)
+  translation_service.py  # títulos a inglés via GROQ_RERANK_MODEL=qwen3.8-27b (DE/FR/IT only)
   groq_service.py   # sync SDK + run_in_threadpool; rerank cae a Gemini si Groq falla (también si Groq responde
                     #   basura, no solo si lanza). Caché de rerank POR OFERTA (esquema v3): la clave es la
                     #   proyección de la oferta + huella del perfil + modelo + prompt de sistema — NUNCA el
                     #   índice ni el orden del lote, que era lo que la hacía fallar siempre (0 claves vivas)
-  gemini_service.py # Google Gemini 2.5 Flash — PRIMARIO de generación de CV/carta (httpx); fallback Groq gpt-oss-120b
+  gemini_service.py # Google Gemini 3.6 Flash — PRIMARIO de generación de CV/carta (httpx); fallback Groq gpt-oss-120b
   email_service.py  # SMTP stdlib para avisos (SMTP_* en config)
   teacher_alert.py  # detecta docencia primaria (categoría H job_classifier + nivel) → email
   cursor_store.py   # crawler INCREMENTAL: cursor de URLs recientes por fuente/scope (early-stop)
@@ -180,12 +196,18 @@ schemas/            # Pydantic de entrada/salida de la API
 models/             # SQLAlchemy (incl. source_cursor.py para el crawler incremental)
 jobhunt_core/       # Core Fase A COMPLETA 2026-07-24 (ensayo GATE A superado): API /v1 FastAPI (core-api :8003),
                     #   worker Celery jobhunt.* (broker redis-core, colas core.*), harvest/ + matching/embeddings/
-                    #   delivery/runs/profiles, Alembic propio core0001..core0036, tests 715/715 (vía core-migrate)
+                    #   delivery/runs/profiles, Alembic propio core0001..core0050, tests 1.745/1.745 (vía core-migrate)
 ```
 
-Modelos LLM: `GROQ_MODEL=openai/gpt-oss-120b` (fallback docs), `GROQ_RERANK_MODEL=qwen/qwen3.6-27b`
-(traducción + rerank, requiere `reasoning_effort=none` — lo envía GroqService automáticamente), Gemini `gemini-2.5-flash`
-(primario docs). Decomisos Groq: `llama-3.3-70b-versatile` (2026-08-16), `llama-4-scout` (2026-07-17).
+Modelos LLM (verificados contra el catálogo VIVO el 2026-09-15):
+`GROQ_MODEL=openai/gpt-oss-120b` (fallback docs), `GROQ_RERANK_MODEL=qwen/qwen3.8-27b`
+(traducción + rerank), Gemini `gemini-3.6-flash` (primario docs).
+**Groq decomisa modelos sin avisar y el fallo es MUDO**: `qwen3.6-27b` devolvía
+`model_not_found` y la traducción de títulos y el Stage 3 llevaban tiempo caídos sin
+que nada lo gritara. Comprobar `GET /openai/v1/models` antes de dar por bueno un
+modelo. Decomisos: `llama-3.3-70b-versatile` (2026-08-16), `llama-4-scout`
+(2026-07-17), `qwen3.6-27b` (2026-09-15). `reasoning_effort=none` ya no es necesario
+con 3.8 pero se mantiene como protección ante un futuro modelo que razone.
 
 > Para detalles de cada componente, consultar `docs/` (legacy) y, para el core,
 > `PLAN_UNIFICACION_JOBHUNTING.md` y `CONTRATOS_FASE_A.md` en `/home/lothar/Public/`

@@ -409,3 +409,23 @@ una release que el proceso no sabe nombrar no verifica nada (G9 P2-B). `[V]` —
 | Operación de la sombra y la maniobra de canonización (ya ejecutada) | `jobhunt_core/shadow/RUNBOOK.md` §7 |
 | La auditoría externa del 2026-08-27 (veredicto NO-GO, 5 condiciones) | `/home/lothar/Public/AUDITORIA_EXTERNA_BUGS_2026-08-27.md` y `AUDITORIA_EXTERNA_DISENO_2026-08-27.md` |
 | Contratos del core | `/home/lothar/Public/CONTRATOS_FASE_{A,B,C}.md` |
+
+
+## §N. Cotas del traspaso de productores (punto 4, 2026-09-22)
+
+Medidas contra producción durante el corte. Acta: `docs/audits/POINT4_CUTOVER_2026-09-22.md`.
+
+| Cota | Por qué se acepta |
+|---|---|
+| **La fuente legacy y la nativa conviven** hasta que `archive.py` retire la rancia (`CORE_CORPUS_STALE_DAYS=120`) | Cerrar las encarnaciones legacy en el corte se PROBÓ (28.767 cerradas) y se revirtió el mismo día: con `admission_window_days=7` el nativo **no readmite** lo que el portal publicó antes, así que cerrar restaba cobertura viva en vez de solo evitar duplicados (arbeitnow 19.523 cerradas frente a 2.780 nativas). Duplicado temporal < pérdida de catálogo |
+| **El `canton` del histórico legacy no se repara** | ~4.500 canónicas por un campo que hoy consume UNA búsqueda semanal (canton=GE sobre organismos internacionales, que vienen de globaljobs). Lo NUEVO sí lo lleva: los cuatro normalizadores suizos nativos lo exponen |
+| **`myscience`, `gastrojob` y `tes` no se portan** | 15, 7 y 4 ofertas en 7 días. `gastrojob` además usa Playwright. Su histórico se conserva; reabrirlo exige una decisión, no un olvido |
+| **`stelle_admin` y `schuljobs` quedan fuera** | Sin altas desde el 27-08 y el 25-08. Portar una fuente que no produce sería trabajo sin lector; declararlas sanas sería falso |
+| **`jobicy` no se activa** | El worker R5 nunca lo cosechó (`LEGACY_DISABLED_PROVIDERS=["jobicy"]` se puso para conservar cobertura). Activarlo sería cobertura NUEVA, no un traspaso |
+| **irishjobs lee 3 páginas por host, no 8** | El portal se ralentiza progresivamente: 1,3 s una página suelta, 105 s ocho seguidas, >40 s la novena. El scraper que se retira nunca lo nota porque su cursor incremental para antes; el nativo siempre empieza en la 1. Se declara el presupuesto para que el barrido cuente como completo en vez de dejar `last_complete_at` en NULL para siempre |
+| **Jobgether descarta los anuncios de identidad ambigua** | El portal republica una misma oferta como varias plazas con el mismo título, empresa y slug canónico (3 de 139 identidades). No se arbitra por orden. El productor que se retira pierde esas mismas filas por choque con `ix_jobs_url`: descartarlas ES paridad. El recuento viaja en `next_cursor["ambiguous"]`, no como fallo del barrido |
+
+**Regla que estas cotas dejan escrita:** antes de culpar a un portal, comparar
+nuestro patrón de petición con el del productor que se retira. Los cuatro
+bloqueos que frenaban el traspaso (429 de NAV, 403 de Jobgether, ReadTimeout de
+irishjobs, 4% perdido en Jobgether) eran nuestros, no suyos.

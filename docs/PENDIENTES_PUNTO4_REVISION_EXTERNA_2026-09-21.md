@@ -1,5 +1,25 @@
 # Punto 4: pendientes reales, plan mínimo y revisión de las estimaciones
 
+> ## Resultado — 22-09-2026: ejecutado. Documento HISTÓRICO.
+>
+> Este informe se validó contra el sistema vivo antes de ejecutarlo; el
+> dictamen está en [ANALISIS_PENDIENTES_PUNTO4_2026-09-21.md](ANALISIS_PENDIENTES_PUNTO4_2026-09-21.md)
+> y el trabajo en [audits/POINT4_CUTOVER_2026-09-22.md](audits/POINT4_CUTOVER_2026-09-22.md).
+>
+> Qué acertaba: el alcance, la disciplina de evidencia y la negativa a cerrar
+> por omisión. Qué no: **R6 ya funcionaba** (probado con un log de producción,
+> no con código nuevo), **R4 no tenía nada que desacoplar** (Portfolio tiene 0
+> búsquedas guardadas y su tablero vive de su propia cosecha), el censo que
+> proponía como primera tarea se resolvió con cuatro consultas de solo lectura,
+> y los bloqueos que atribuía a «dependencia externa» (429 de NAV, 403 de
+> Jobgether) eran nuestro patrón de petición, no los portales.
+>
+> Su estimación de 16–31 h «sin contar R3» resultó cubrir de más unas partidas
+> y de menos otras; el trabajo real fueron unas 10 h de reloj.
+>
+> Lo de abajo se conserva sin tocar como la foto de lo que se creía el 21-09.
+
+
 Fecha: 21 de septiembre de 2026. Destinatarios: propietario y revisor externo.
 
 ## 1. Qué afirma este documento y qué no
