@@ -1,30 +1,25 @@
 # Punto 4 — traspaso de productores y retirada legacy
 
-## Estado documental vigente — 21-09, tras la pausa
+## Estado documental vigente — 22-09, las 16 fuentes transferidas
 
-Punto 4 **abierto; ejecución funcional pausada**. La autorización posterior es
-actualizar documentación y hacer commits locales, no reanudar cortes ni hacer push.
-[Inventario, pendientes R1–R7 y estimación revisable](PENDIENTES_PUNTO4_REVISION_EXTERNA_2026-09-21.md).
-Ese informe distingue lo cerrado, lo pendiente y lo todavía no comprobado; no
-es una nueva certificación NAS. Última evidencia operativa: checkpoint 16:53 UTC.
-Las estimaciones anteriores no son una fecha comprometida: falta conciliar el
-inventario efectivo de fuentes/lectores de ambos proyectos.
+**Punto 4 abierto; la cosecha ya es NATIVA.** Las 16 fuentes que alimentaban el
+corpus del core están cosechadas por productores nativos: 17 scopes habilitados,
+todos con `last_complete_at` del día y 0 fallos; replay 16/16 `skipped`; canario
+de 45 vacantes nativas servidas por `CoreCatalog` sin fallos. Release core
+`51be757/core0050`, `authoritative: true`. Suite 1732 passed.
+[Acta del traspaso](audits/POINT4_CUTOVER_2026-09-22.md).
 
-Checkpoint 21-09 16:53 UTC: **WorkingNomads transferido al productor nativo**:
-40 ofertas, replay sin duplicados, guards legacy efectivos y 5 vacantes
-primarias nativas servidas por HTTP desde CoreCatalog. Core `3d5d67a/core0050`.
-[Acta del corte](audits/WORKINGNOMADS_CUTOVER_2026-09-21.md).
-Trabajo del agente en pausa por orden del propietario tras esta comprobación;
-servicios operativos activos. No comenzar otra tarea hasta nueva orden.
-Los checkpoints inferiores son históricos; el punto 4 sigue abierto.
+Retirados: disparador de cosecha R5, worker R5 (exit 0, CDC a 0), frontend R5
+huérfano y la copia temporal caducada. Se conservan con responsabilidad
+explícita el BFF y su worker (CV, documentos, alerta de profesor y los 8
+scrapers escolares), `core-capture` hasta retirar el slot, y `shadow.project`,
+que ES el postprocesado nativo y NO debe deshabilitarse por llamarse «shadow».
 
-Checkpoint 21-09 15:56 UTC: **diez búsquedas transferidas y ejecución core
-habilitada**, IDs/valores servidos exactos; 277 pendientes conservados y 92
-ofertas recuperadas. Legacy rechaza las diez por autoridad core. Dos barridos
-naturales correctos, todavía ninguna búsqueda vencida: entrega real pendiente.
-Release a0fb403/core0050. Siguiente: WorkingNomads; no otra auditoría general.
-[Acta y procedimiento único](audits/SEARCH_CUTOVER_OPERATOR_2026-09-21.md).
-No repetir suites sobre código intacto ni abrir mejoras fuera del punto 4.
+Queda abierto: la primera entrega natural de avisos (~07:10 UTC), la retirada
+del slot `jobhunt_shadow_r5_rehearsal` tras 48 h de dispatcher sin incidencias,
+y la aceptación final. Detalle y cotas en el acta.
+
+Los checkpoints inferiores son históricos.
 
 ## Camino crítico vigente — 21-09, reducción de trabajo repetido
 
