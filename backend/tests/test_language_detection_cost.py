@@ -1,6 +1,6 @@
 """Language detection must not be paid once per served offer.
 
-Measured on the NAS (2026-09-22): the served feed carries 1.800 offers, ALL of
+Measured on the NAS (2026-09-22): the served feed carries 1.800 offers, 96,9 % of
 them without a `language` field, and `_to_match_response` detects the language of
 each one — 50,1 ms per call, about 90 s per request. It happens even with
 `translate=false`, because the detection sits outside the LLM block, and it is

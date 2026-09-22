@@ -102,9 +102,17 @@ una página: el core informa del `total` en su primera página y el consumidor
 deja de paginar al cubrir `offset + limit`. Antes servir 20 ofertas costaba 18
 peticiones internas y 9-13 s; ahora 1 petición y 0,56-1,19 s en el método.
 
-**El punto 5 sigue ABIERTO**: el endpoint servido `/api/v1/match/results` da p50
-1,924 s (2,586 s con traducción) y no cumple el p95 ≤ 2 s declarado. Lo que falta
-está en §10 del acta. El invariante de abajo vale igual.
+**El punto 5 sigue ABIERTO**: el endpoint servido `/api/v1/match/results` no
+cumple el p95 ≤ 2 s declarado. Lo que falta está en §10 del acta. El invariante
+de abajo vale igual.
+
+**El recorrido que de verdad pide la pantalla principal es `limit=3000`**
+(`MatchPage.jsx:40` → `useMatchResults(3000, 0)`, `translate=false`), no una
+página de 20. Es la LECTURA HABITUAL, no una exportación: el lote completo
+alimenta las categorías y sus contadores, la pestaña Watchlist, el top score,
+los matches ≥ 70 **y** las tarjetas visibles. Bajar el límite sin mover esos
+agregados al servidor rompe las cinco cosas. (`useMatchResultsPage`, la única
+consulta con `translate=true`, es código muerto.)
 
 Tres cosas que NO deben deshacerse sin medir:
 
@@ -118,9 +126,21 @@ Tres cosas que NO deben deshacerse sin medir:
 3. La rama de `CORE_FEEDBACK_ENABLED = false` **conserva el recorrido completo**:
    allí sí hay exclusiones locales y el total es un subconjunto recalculado.
 
+4. **El idioma de la oferta VIAJA; no se deduce al servir.** `VacancyDTO.language`
+   (aditivo y opcional) → `_vacancy_dtos` → `_job_view` → router. Antes el campo
+   se perdía en las tres capas y `_to_match_response` detectaba el idioma de
+   CADA oferta servida: 50,1 ms x 1.800 = ~90 s por petición, el cuello real de
+   la pantalla principal (79 s extremo a extremo). Un valor no-cadena se sirve
+   como AUSENTE, nunca como error: es un indicador, no la identidad.
+   Fijado por `backend/tests/test_language_transport.py` y
+   `jobhunt_core/tests/test_vacancy_language.py`.
+   **Pero sólo el 3,1 % del feed trae el dato**, así que la memoización de
+   `TranslationService._detect_language` sigue sosteniendo el recorrido — y NO
+   cubre la primera carga. Deducir el idioma al INGERIR está sin hacer (§10).
+
 Acta y mediciones: `docs/audits/ACTA_CIERRE_PUNTO5_2026-09-22.md`.
-Cota aceptada: el p95 (1,4-2,6 s) lo domina la sobresuscripción del NAS, no el
-código — el trabajo propio son ~0,4 s, que es el mínimo observado.
+La cola de latencia restante **no está atribuida**. Ni el loadavg del NAS ni el
+mínimo observado la explican: un mínimo no separa trabajo de espera.
 
 ---
 
@@ -141,12 +161,12 @@ Estos principios tienen prioridad sobre velocidad, brevedad o DRY.
 # Arrancar entorno completo
 docker compose up -d
 
-# Tests backend (2.511 passed · 4 xfailed)
+# Tests backend (2.527 passed · 4 xfailed)
 # OJO: NO lances dos pytest a la vez — el teardown hace TRUNCATE ... CASCADE de
 # swissjobhunter_test y las dos corridas se vacían las tablas entre sí (deadlocks + falsos rojos)
 docker compose exec -T backend python -m pytest tests/ -v --timeout=30
 
-# Tests core (1.749 passed, ~18 min — reconfirmar con pytest tras cada crecida)
+# Tests core (1.760 passed, ~16 min — reconfirmar con pytest tras cada crecida)
 # OJO al perfil: desde la auditoría P1-3 el compose BASE no monta ./jobhunt_core
 # (imagen operativa inmutable). Los tests van con el override de desarrollo, que
 # es el que monta el árbol de trabajo; sin él se probaría el código de la IMAGEN.
@@ -225,7 +245,7 @@ schemas/            # Pydantic de entrada/salida de la API
 models/             # SQLAlchemy (incl. source_cursor.py para el crawler incremental)
 jobhunt_core/       # Core Fase A COMPLETA 2026-07-24 (ensayo GATE A superado): API /v1 FastAPI (core-api :8003),
                     #   worker Celery jobhunt.* (broker redis-core, colas core.*), harvest/ + matching/embeddings/
-                    #   delivery/runs/profiles, Alembic propio core0001..core0051, tests 1.749/1.749 (vía core-migrate)
+                    #   delivery/runs/profiles, Alembic propio core0001..core0051, tests 1.760/1.760 (vía core-migrate)
 ```
 
 Modelos LLM (verificados contra el catálogo VIVO el 2026-09-15):

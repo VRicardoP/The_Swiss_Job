@@ -109,8 +109,12 @@ Los cuatro son correctos y están corregidos en el acta:
    verificarlo antes de apoyarse en ese interruptor para retirar el slot.
 
 Además, la sonda de aceptación leía la clave `jobs` cuando la respuesta trae
-`data`: habría aprobado un 200 indebidamente vacío. La nueva falla con excepción
-y arranca con **cinco controles negativos** que debe detectar antes de usarse.
+`data`: habría aprobado un 200 indebidamente vacío. Le puse cinco controles
+negativos… y **una segunda revalidación demostró que también mentían**: tres
+usaban la clave `results` y fallaban en la primera guarda, antes de llegar a la
+que decían probar. Ahora cada rechazo lleva un **motivo nombrado** y cada
+control exige ESE motivo, así que borrar una guarda rompe su propio control.
+Prueba de mutación: **12 guardas, 12 mutantes detectados, 0 supervivientes**.
 
 ## 5. Dos fallos de método propios, dichos en voz alta
 

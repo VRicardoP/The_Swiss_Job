@@ -21,8 +21,10 @@ Qué estaba mal, sin rodeos:
 2. **Medí el método intermedio, no el endpoint servido.** `CoreMatching.results`
    da p50 0,648 s; `GET /api/v1/match/results` da **p50 1,924 s sin traducción y
    2,586 s con ella**, con un mínimo de 1,177 s. El usuario ve lo segundo.
-3. **Atribuí al host toda la latencia residual sin demostrarlo.** El mínimo del
-   endpoint (1,177 s) es trabajo propio, no espera de CPU ajena.
+3. **Atribuí al host toda la latencia residual sin demostrarlo.** Y la
+   rectificación tampoco servía: un **mínimo no separa trabajo de espera**
+   —puede incluir I/O, conexión o lock—, así que 1,177 s no demuestra trabajo
+   propio. La cola sigue **sin atribuir** (§5).
 4. **La tabla de versiones era falsa**: declaraba los tres procesos del core en
    `point5-cf260b1` cuando worker y captura siguen en `point4-51be757`.
 
@@ -77,7 +79,8 @@ invocación, así que las partes suman el total.
 **El cuello dominante era la serialización, y nunca la había medido.**
 `_to_match_response` detecta el idioma de **cada oferta servida**, también con
 `translate=false`, porque el indicador de la UI lo necesita. Las 1.800 ofertas
-del feed llegan **todas sin `language`** y cada detección cuesta **50,1 ms**:
+del feed llegan **sin `language`** —el 96,9 %, medido después (§2b)— y cada
+detección cuesta **50,1 ms**:
 unos 90 s de detección pura por petición.
 
 Conexión incómoda con el punto 4: se decidió **no exponer `language`** en los
@@ -106,13 +109,43 @@ no lo causa: lo estabiliza dentro del proceso.
 
 ### 1d. Las sondas, endurecidas tras la revalidación
 
-La sonda anterior leía la clave `jobs` cuando la respuesta trae `data`: habría
-dado por bueno un 200 indebidamente vacío. La actual comprueba estructura,
-cardinalidad, identidad, título y coherencia del total, **falla con excepción**
-ante cualquier discrepancia, y arranca ejecutando **cinco controles negativos**
-(200 vacío, clave equivocada, total incoherente, cardinalidad distinta y total
-distinto del esperado) que deben detectarse antes de usarla como evidencia:
-`{"controles_negativos": 5, "todos_detectados": true}`.
+La sonda original leía la clave `jobs` cuando la respuesta trae `data`: habría
+dado por bueno un 200 indebidamente vacío. Su sustituta parecía arreglarlo con
+cinco controles negativos… **y los cinco mentían**. Lo demostró la revalidación
+externa: tres de ellos usaban la clave `results`, así que fallaban en la primera
+guarda, mucho antes de llegar a la que decían probar. Desactivando las guardas de
+cardinalidad y de total, `self_test()` **seguía verde**. Y el cuerpo
+`data=[{}]*20, total=1800` pasaba: no comprobaba las identidades que su propia
+docstring prometía.
+
+Dos reglas nuevas, que es lo que hace refutable todo lo demás:
+
+1. **Cada rechazo lleva un motivo nombrado** (`ProbeFailure.reason`) y cada
+   control negativo exige **ese** motivo. Borrar una guarda deja de producir su
+   motivo ⇒ rompe su propio control. Es la propiedad que se le pedía.
+2. **Cada control negativo parte de un cuerpo válido y rompe UNA sola
+   propiedad**, y hay además **controles positivos**: el cuerpo válido debe
+   pasar, o una guarda de más convertiría la sonda en un rechazo universal que
+   «detecta» todos los negativos sin probar nada.
+
+Se añadió una comprobación de **equivalencia** entre repeticiones (identidad,
+orden y score), porque devolver la misma *cantidad* con otro contenido pasaba
+todos los controles anteriores.
+
+Prueba de mutación ejecutada sobre el fichero, sin red ni base de datos
+(`scripts/mutation_test_probe.py`, en el repo para que se pueda repetir): se
+desactiva cada guarda una a una y se exige que `self_test()` deje de pasar.
+
+| | Antes | Ahora |
+|---|---:|---:|
+| Guardas | 12 | 12 |
+| Mutantes detectados | — | **12** |
+| Supervivientes | 4 (y 3 controles por causa equivocada) | **0** |
+| Controles | 5 negativos | 14 negativos + 2 positivos |
+
+La primera pasada dejó **4 supervivientes** —cuerpo no-objeto, `data` no-lista,
+oferta sin título y total no positivo, guardas sin ningún control— y se
+añadieron los cuatro controles que faltaban hasta llegar a 12/12.
 
 ## 2. La causa dominante, y por qué era ésa
 
@@ -130,6 +163,76 @@ puede contar en una consulta.
 Desglose medido (n=3): `_fetch_full_feed` **8,7–11,4 s de ~12 s totales**
 (85–90 %); overlay y resto 0,9–2,1 s; resolución de identidad 0,01–0,61 s.
 Una página del core cuesta **29 ms**: el recorrido era la petición entera.
+
+## 2b. El idioma: el transporte estaba roto Y el dato no existe
+
+Al encontrar que `_to_match_response` detectaba el idioma de cada oferta servida,
+escribí que la causa era mi decisión del punto 4 de no exponer `language` en los
+normalizadores nativos, y que «el escritor legacy sí rellenaba ese campo».
+**Las dos mitades eran falsas**, y hicieron falta dos correcciones ajenas y una
+medición para verlo.
+
+**Primera: rellenarlo en el origen no habría servido de nada.** Lo demostró la
+revalidación externa. El campo se perdía aguas abajo, en tres sitios a la vez:
+
+| Capa | Estado antes | Ahora |
+|---|---|---|
+| Contenido canónico (`offer_revisions.content`) | admite `language` | igual |
+| `VacancyDTO` (`api/schemas.py`) | **no lo declaraba** | campo aditivo y opcional |
+| `_vacancy_dtos` (`api/v1.py`) | **no lo leía** | `_canonical_language()` |
+| `_job_view` (BFF `core_client.py`) | **no lo asignaba** | `_language_of()` |
+
+`CoreJobView.language` existía, con el comentario «el router lo detecta por
+título si falta»… y era **siempre** None, porque nadie lo llenaba nunca. Un dato
+perfecto en la canónica se perdía igual. Reproducción del revisor:
+`_job_view({'title':'Software Engineer','language':'de'}, 'core').language`
+devolvía `None` recibiendo el dato explícitamente.
+
+**Segunda: con el transporte arreglado, el dato sigue sin estar.** Es la
+medición que faltaba —la revalidación no pudo hacerla porque la consulta al
+corpus entero agotaba su límite de sentencia—, acotada aquí a las 2.000 filas
+del feed en vez de a las 46.000 del corpus:
+
+| | Ofertas | Con `language` utilizable |
+|---|---:|---:|
+| **Feed servido (muestra de 2.000)** | 2.000 | **62 — 3,1 %** |
+
+Por fuente, lo que explica el 3,1 %:
+
+| Fuente | Ofertas | Con idioma |
+|---|---:|---:|
+| `legacy:arbeitnow` | 1.133 | 17 (1,5 %) |
+| `legacy:jobgether` | 430 | 2 |
+| `arbeitnow` (nativa) | 102 | **0** |
+| `legacy:nav_arbeidsplassen` | 80 | 10 |
+| `legacy:workingnomads` | 15 | **15 (100 %)** |
+| `legacy:thehub` / `legacy:euremotejobs` | 3 / 2 | 3 / 2 (100 %) |
+| resto de fuentes nativas | 132 | **0** |
+
+Lo traen **sólo** las fuentes cuyo metadato lo declara literalmente
+(`search_metadata.py:82` pone `language: "en"`). El escritor legacy no lo
+rellenaba: `legacy:arbeitnow` está al 1,5 %. **El corpus nunca tuvo cobertura de
+idioma**; lo del punto 4 empeoró un campo que ya estaba casi vacío, no rompió
+uno que funcionaba.
+
+**Consecuencia para el cierre, que es lo que importa:** el transporte había que
+arreglarlo —un dato correcto no puede perderse por el camino— pero **recupera el
+3,1 % del coste, no el 100 %**. La memoización sigue siendo la que sostiene el
+recorrido, con la cota que el revisor señaló y que esta acta hace suya: **no
+cubre la primera carga**. Con 1.544 títulos únicos a 50,1 ms, la primera
+petición tras cada arranque o expulsión vuelve a pagar del orden de 77 s. Por
+eso la matriz de aceptación **debe medir frío y caliente por separado**, y por
+eso el arreglo de fondo no es una caché sino **deducir el idioma UNA vez, al
+ingerir**, y escribirlo en la canónica (§10).
+
+### La detección no es una función pura, y la docstring lo decía
+
+La docstring de `_detect_language` afirmaba «función pura», «no cambia ni una
+respuesta» y «el resultado de un mismo título no cambia». El revisor lo midió:
+30 vaciados de caché de «Sviluppatore software» dan **en=21, sv=6, it=3**. La
+caché **estabiliza** una respuesta; no la hace correcta ni igual entre procesos,
+workers o reinicios. Corregida la docstring para prometer exactamente eso y
+nada más.
 
 ## 3. Los dos cambios, medidos por separado
 
@@ -220,8 +323,8 @@ hecho**, y esta acta no afirma la causa.
 | Proyector | 6 ciclos en 30 min, con normalidad |
 | Errores en el BFF | ninguno real: dos `profile erasure drain deferred (ConnectError)` a las 09:29:30, el diferido previsto mientras se recreaba el core-api, y una línea de arranque que contiene `--error-logfile` |
 | Canario HTTP servido | `/api/v1/jobs/search` 200 con datos reales y `total` 45.859; `/api/v1/health` 200 |
-| Suite del core | **1.749 passed** |
-| Suite del BFF | **2.515 passed, 4 xfailed** |
+| Suite del core | **1.760 passed** (+11: transporte de idioma) |
+| Suite del BFF | **2.527 passed, 4 xfailed** (+12: frontera de idioma) |
 
 Suites **en serie**. Una de ellas se lanzó por error en paralelo con la del core
 y se detuvo de inmediato, antes de que compitieran por la base.
@@ -292,26 +395,53 @@ evidencia.
 El criterio debe fijarse **antes** de la ejecución final, no después de ver el
 resultado. Lista finita:
 
-1. **Decidir el presupuesto** (§7) y, en particular, fijar uno propio para dos
-   escenarios que hoy no tienen: la **traducción de títulos** (llamada a un LLM
-   externo) y la **carga de 3.000 ofertas** que pide `MatchPage`, que no es una
-   «lectura habitual» de 20.
+1. **Decidir el presupuesto** (§7). Una corrección sobre lo que esta acta
+   decía aquí: escribí que la carga de 3.000 ofertas «no es una lectura habitual
+   de 20» y por tanto carecía de presupuesto. **Es al revés.** Esa carga es lo
+   que `MatchPage` pide en CADA entrada a la pantalla principal: es la lectura
+   habitual, y la predeclaración ya la cubre con sus objetivos de lectura y de
+   pantalla útil. Descubrir tarde su tamaño no la convierte en una exportación
+   excepcional; excluirla después de medirla sería cambiar el criterio al ver el
+   resultado, que es justo el error que abrió esta ronda. Se puede rediseñar la
+   carga (punto 5 de esta lista) o acordar **expresamente** otro presupuesto
+   como cambio de requisito, nunca como ausencia previa de requisito.
+   Lo que sí carece de presupuesto propio y hay que fijarlo es la **traducción
+   de títulos**, por depender de un LLM externo. Hoy no afecta a esta pantalla:
+   `useMatchResultsPage` —la única consulta con `translate=true`— **no la usa
+   nadie**, es código muerto.
 2. **Matriz única de aceptación** contra el presupuesto vigente: ambos
    frontends, **≥100 muestras por recorrido prioritario en copia**, concurrencia
    prevista, frío y caliente separados, y escrituras. Después, canario acotado
    en el NAS. Nada de eso se ha hecho: las series usadas aquí son de producción
    y una de ellas (n=50) contradice el máximo de 20 que fija la predeclaración.
+   **El frío no es un adorno**: con el 96,9 % del feed sin idioma, la primera
+   petición tras un arranque o una expulsión de caché vuelve a pagar del orden
+   de 77 s de detección. Medir sólo en caliente ocultaría exactamente eso.
 3. **Atribuir el p95 que queda**: `/match/results` con 20 ofertas da mediana
    0,823 s y p95 2,967 s. Exige observación correlacionada de SQL, esperas de
    PostgreSQL y CPU/IO, no deducción entre muestras.
-4. **Que el idioma viaje en la canónica.** La memoización quita el coste
-   repetido, pero la primera carga sigue detectando cada título nuevo porque el
-   dato no está. El escritor legacy lo rellenaba; los normalizadores nativos no.
-   Es la corrección de fondo y está sin hacer.
+4. **Que el idioma EXISTA en la canónica.** El transporte ya está reparado y
+   probado (§2b), pero sólo el **3,1 %** del feed trae el dato: el escritor
+   legacy tampoco lo rellenaba. La corrección de fondo es **deducirlo una vez,
+   al ingerir**, y escribirlo en la canónica —no deducirlo al servir— y sigue
+   sin hacer. Antes de tocar nada hay que decidir qué hacer con el idioma
+   desconocido y con la no-determinación de `langdetect` en títulos cortos: una
+   semilla fija daría reproducibilidad, no acierto. **No reingerir ni reembeber
+   el corpus por suposición**: el reembebido no depende de este campo.
 5. **Revisar si `matching.results` puede servir 3.000 ofertas mejor**: son
    9,7 s de los 10,3 s del caso real, y proceden de 18 peticiones al core en
-   páginas de 100. No se ha tocado: exige decidir si se cambia el tamaño de
-   página del contrato o el frontend pide menos.
+   páginas de 100. No se ha tocado.
+
+   Lo que un rediseño tiene que **conservar**, leído en el frontend y no
+   supuesto: `MatchPage` usa el lote completo para agrupar por categorías y
+   contar cada pestaña (`groupByCategory`), para la pestaña **Watchlist**
+   (filtro por `school_id` y orden por `score_final + urgency_score`), para el
+   **top score** (máximo) y para los **matches ≥ 70** (recuento). Y renderiza
+   las tarjetas visibles desde ese mismo lote. Bajar el límite a 20 sin más
+   **rompería las cinco cosas**. La vía que preserva la semántica es que el
+   servidor calcule esos agregados y la pantalla pagine las tarjetas; es un
+   cambio de funcionalidad y **corresponde decidirlo al propietario**, no
+   colarlo dentro de una corrección de rendimiento.
 
 Cada escenario obligatorio **cumple o queda expresamente pendiente**. Una mejora
 porcentual, una mediana buena o una atribución al hardware no sustituyen ese
@@ -319,4 +449,4 @@ resultado.
 
 Mientras tanto, lo desplegado es útil y está verificado —de 79,3 s a 8,6 s en el
 recorrido que usa la pantalla principal, sin regresión funcional y con
-2.515 pruebas del BFF en verde— y no hay motivo para revertirlo.
+2.527 pruebas del BFF y 1.760 del core en verde— y no hay motivo para revertirlo.

@@ -358,20 +358,31 @@ class TranslationService:
 
         MEMOIZADO (punto 5, 2026-09-22): el router llama aquí UNA VEZ POR OFERTA
         SERVIDA, también con `translate=false`, porque el indicador de idioma de
-        la UI lo necesita. Medido en el NAS: las 1.800 ofertas del feed llegan
-        SIN `language` y cada deteccion cuesta 50,1 ms — unos 90 s por peticion,
+        la UI lo necesita. Medido en el NAS: el 96,9 % de las 1.800 ofertas del
+        feed llega SIN `language` y cada deteccion cuesta 50,1 ms — ~90 s por
+        peticion,
         el cuello real de `GET /match/results?limit=3000` (79 s extremo a
-        extremo). La deteccion es funcion PURA del titulo, asi que memoizarla no
-        cambia ni una respuesta; sólo deja de pagarla repetida.
+        extremo).
+
+        QUE GARANTIZA, exactamente: reutiliza la PRIMERA respuesta de cada
+        titulo mientras siga en la cache de ESTE proceso. Ni mas ni menos.
+        NO es una funcion pura, aunque su firma lo parezca: langdetect no es
+        determinista en titulos cortos —30 vaciados de cache de «Sviluppatore
+        software» dieron en=21, sv=6, it=3— asi que sin memoizar el indicador
+        de idioma de la UI podia cambiar entre dos cargas de la misma oferta.
+        La cache ESTABILIZA esa respuesta; no la hace correcta, ni la hace
+        igual entre workers, reinicios o expulsiones. Cualquier afirmacion de
+        equivalencia entre procesos seria falsa.
 
         `maxsize` cubre holgadamente el corpus servido (1.544 titulos unicos de
-        1.800 en la medicion) y acota la memoria: es una cache por proceso, sin
-        invalidacion, porque el resultado de un mismo titulo no cambia.
+        1.800 en la medicion) y acota la memoria.
 
         Cota: la PRIMERA peticion tras arrancar sigue pagando la deteccion de
-        cada titulo nuevo. La solucion de fondo es que el dato viaje en la
-        canonica —el escritor legacy lo rellenaba y los normalizadores nativos
-        no—, registrada en el acta del punto 5.
+        cada titulo nuevo, y cada expulsion la vuelve a pagar. La solucion de
+        fondo es que el dato NO se deduzca al servir: desde el punto 5 el core
+        transporta `language` en `VacancyDTO` y el BFF lo asigna en `_job_view`
+        (tests/test_language_transport.py). Esta cache cubre lo que quede sin
+        idioma en la canonica.
         """
         return cls._resolve_language(text, "")
 
