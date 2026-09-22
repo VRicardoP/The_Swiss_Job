@@ -90,7 +90,12 @@ def _listing(raw):
         return None
     slug = _text(raw.get("slug"))
     title = _text(raw.get("title"))
-    if not title or not re.fullmatch(r"[\w-]{1,900}", slug):
+    # A dot belongs in real slugs (next.js, .net, psy.d): the retiring
+    # producer keeps them and rejecting them silently lost 4% of the feed
+    # (live probe: 6 of 150). Traversal and anything that could change the
+    # resolved URL stay rejected -- the slug is interpolated into it.
+    if (not title or not re.fullmatch(r"[\w.-]{1,900}", slug)
+            or ".." in slug):
         return None
     company = _text(_object(raw.get("companyData")).get("name"))
     identity = f"{title.lower()}|{company.lower()}|{OFFER_URL}{_VOLATILE_ID.sub('', slug)}"

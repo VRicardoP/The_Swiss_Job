@@ -123,3 +123,26 @@ def test_wired_date_and_provider():
     from jobhunt_core.harvest.providers import get_provider
     assert get_provider("jobgether").name == "jobgether"
     assert publication_date("jobgether", raw()).isoformat() == "2026-09-20T00:00:00+00:00"
+
+
+@pytest.mark.parametrize("slug,kept", [
+    ("6ab14dd3865119c687d6c9df-frontend-engineer-react-next.js", True),
+    ("6ab14dd3865119c687d6c9d3-senior-full-stack-developer-.net", True),
+    ("6ab14dcf865119c687d6c62e-phd-or-psy.d-school-psychologist", True),
+    ("../../etc/passwd", False),          # traversal, never interpolated
+    ("job/../admin", False),
+    ("job?utm=x", False),                 # would fabricate a second URL
+    ("job#frag", False),
+    ("job%2F..", False),
+])
+def test_a_dot_in_the_slug_is_legitimate_but_traversal_is_not(slug, kept, monkeypatch):
+    """Live probe 2026-09-22: 6 of 150 offers were dropped for having a dot.
+
+    Technology names carry dots (next.js, .NET, Psy.D) and the retiring
+    producer keeps those slugs untouched, so rejecting them lost real coverage.
+    What must stay rejected is anything that could change the resolved URL.
+    """
+    result, _ = fetch([{"data": [raw(slug), raw("plain-other")], "maxPages": 1}], monkeypatch)
+    urls = [listing.url for listing in result.listings]
+    assert (f"https://jobgether.com/offer/{slug}" in urls) is kept
+    assert "https://jobgether.com/offer/plain-other" in urls, "the valid one always survives"
