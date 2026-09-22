@@ -25,7 +25,7 @@
   cada 6 h, digest de watchlist 18:00, alerta profesor cada 6 h y digest diario
   (opt-in). La cadena `daily_harvest` sigue existiendo pero su etapa de fetch ya no
   construye las fuentes transferidas
-- **Core (Fase A)**: paquete `jobhunt_core/` — API v1 FastAPI (`core-api`, puerto 8003), `core-worker` Celery (tareas `jobhunt.*`, broker `redis-core`, colas `core.*`, **beat embebido** `-B`, 14 cadencias: cada **5 min** sampler de lag del outbox, salud del slot, proyector sombra y despacho del outbox; cada **hora** la purga de idempotencia (`CORE_IDEMPOTENCY_PURGE_EVERY_S=3600` — *no* cada 5 min) y la **salud de la cosecha** (`jobhunt.harvest.check_health`, G9 P2-C: alerta si un scope acumula fallos o lleva días sin cosecha completa; G10 P3-4 + G11 P3-2: publica SIEMPRE el censo del parque y avisa cuando no observa a todos los habilitados — `alertas: []` sobre un parque medio invisible se leía como cosecha sana); y cuatro citas diarias en este orden: dedup-scan 05:20 → archive-sweep 05:35 → ciclo sombra 06:05 → purga de retención 06:40; al arrancar registra el transporte sombra → `jobhunt.shadow_inbox`), migraciones propias vía `core-migrate` (cadena `core0001..core0050`). **Desde `ae7fbf2` la imagen del core es INMUTABLE**: el compose base ya no monta `./jobhunt_core` en `core-api`/`core-worker`/`core-capture`/`core-migrate`, y para trabajar sobre el árbol de trabajo hay que pedir el override `-f docker-compose.yml -f docker-compose.dev.yml` (ver «Perfiles de compose» abajo)
+- **Core (Fase A)**: paquete `jobhunt_core/` — API v1 FastAPI (`core-api`, puerto 8003), `core-worker` Celery (tareas `jobhunt.*`, broker `redis-core`, colas `core.*`, **beat embebido** `-B`, 14 cadencias: cada **5 min** sampler de lag del outbox, salud del slot, proyector sombra y despacho del outbox; cada **hora** la purga de idempotencia (`CORE_IDEMPOTENCY_PURGE_EVERY_S=3600` — *no* cada 5 min) y la **salud de la cosecha** (`jobhunt.harvest.check_health`, G9 P2-C: alerta si un scope acumula fallos o lleva días sin cosecha completa; G10 P3-4 + G11 P3-2: publica SIEMPRE el censo del parque y avisa cuando no observa a todos los habilitados — `alertas: []` sobre un parque medio invisible se leía como cosecha sana); y cuatro citas diarias en este orden: dedup-scan 05:20 → archive-sweep 05:35 → ciclo sombra 06:05 → purga de retención 06:40; al arrancar registra el transporte sombra → `jobhunt.shadow_inbox`), migraciones propias vía `core-migrate` (cadena `core0001..core0051`). **Desde `ae7fbf2` la imagen del core es INMUTABLE**: el compose base ya no monta `./jobhunt_core` en `core-api`/`core-worker`/`core-capture`/`core-migrate`, y para trabajar sobre el árbol de trabajo hay que pedir el override `-f docker-compose.yml -f docker-compose.dev.yml` (ver «Perfiles de compose» abajo)
 - **Sombra (Fase B, SOLO LOCAL)**: CDC legacy→core por slot lógico `jobhunt_shadow` (postgres custom `docker/postgres-core/` con wal2json, `wal_level=logical`) → servicio `core-capture` (staging con ack tras commit) → proyector → métricas y GATE-SOMBRA (7 ciclos). Módulos `jobhunt_core/shadow/`; operación: `jobhunt_core/shadow/RUNBOOK.md`
 - **Documentación de referencia**: **cotas aceptadas y decisiones deliberadas → `docs/COTAS_Y_DECISIONES.md`** (léelo ANTES de "arreglar" cualquier limitación: varias se intentaron cerrar y el intento fue peor que la cota); estado y contadores vigentes → `ESTADO_Y_HOJA_DE_RUTA.md` **§20** (§19 es la foto anterior a la jornada del 2026-08-27); core → `PLAN_UNIFICACION_JOBHUNTING.md` (§23–§24) y `CONTRATOS_FASE_A.md`, los tres en `/home/lothar/Public/`; legacy → `docs/`
 
@@ -112,12 +112,12 @@ Estos principios tienen prioridad sobre velocidad, brevedad o DRY.
 # Arrancar entorno completo
 docker compose up -d
 
-# Tests backend (2.280 passed · 3 skipped · 4 xfailed)
+# Tests backend (2.511 passed · 4 xfailed)
 # OJO: NO lances dos pytest a la vez — el teardown hace TRUNCATE ... CASCADE de
 # swissjobhunter_test y las dos corridas se vacían las tablas entre sí (deadlocks + falsos rojos)
 docker compose exec -T backend python -m pytest tests/ -v --timeout=30
 
-# Tests core (1.745 passed, ~22 min — reconfirmar con pytest tras cada crecida)
+# Tests core (1.749 passed, ~18 min — reconfirmar con pytest tras cada crecida)
 # OJO al perfil: desde la auditoría P1-3 el compose BASE no monta ./jobhunt_core
 # (imagen operativa inmutable). Los tests van con el override de desarrollo, que
 # es el que monta el árbol de trabajo; sin él se probaría el código de la IMAGEN.
@@ -134,7 +134,7 @@ docker compose exec -T backend ruff format --check --no-cache .
 docker compose exec backend alembic upgrade head
 docker compose exec backend alembic revision --autogenerate -m "descripcion"
 
-# Migraciones core (cadena core0001..core0050 — las aplica core-migrate en el arranque).
+# Migraciones core (cadena core0001..core0051 — las aplica core-migrate en el arranque).
 # Sin override: aplica las migraciones DE LA IMAGEN, que es lo correcto al operar.
 # Para probar una migración nueva del árbol de trabajo, añade los dos -f del perfil dev.
 docker compose run --rm core-migrate python -m jobhunt_core.migrate
@@ -196,7 +196,7 @@ schemas/            # Pydantic de entrada/salida de la API
 models/             # SQLAlchemy (incl. source_cursor.py para el crawler incremental)
 jobhunt_core/       # Core Fase A COMPLETA 2026-07-24 (ensayo GATE A superado): API /v1 FastAPI (core-api :8003),
                     #   worker Celery jobhunt.* (broker redis-core, colas core.*), harvest/ + matching/embeddings/
-                    #   delivery/runs/profiles, Alembic propio core0001..core0050, tests 1.745/1.745 (vía core-migrate)
+                    #   delivery/runs/profiles, Alembic propio core0001..core0051, tests 1.749/1.749 (vía core-migrate)
 ```
 
 Modelos LLM (verificados contra el catálogo VIVO el 2026-09-15):

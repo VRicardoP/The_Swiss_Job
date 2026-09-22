@@ -429,3 +429,11 @@ Medidas contra producción durante el corte. Acta: `docs/audits/POINT4_CUTOVER_2
 nuestro patrón de petición con el del productor que se retira. Los cuatro
 bloqueos que frenaban el traspaso (429 de NAV, 403 de Jobgether, ReadTimeout de
 irishjobs, 4% perdido en Jobgether) eran nuestros, no suyos.
+
+### Cota del punto 5 (2026-09-22)
+
+| Cota | Por qué se acepta |
+|---|---|
+| **El p95 de las lecturas queda en 1,4-2,6 s, por encima del presupuesto de 2 s** | El trabajo propio de una petición son ~0,4 s, que es el MÍNIMO observado; el resto es espera de CPU en un host con loadavg 5,65-7,38 sobre dos núcleos, donde ningún contenedor del proyecto pasa del 0,4 %. No se optimiza más código para compensar una saturación que no produce este proyecto, ni se paran servicios ajenos para mejorar una cifra |
+| **PostgreSQL sigue con `shared_buffers=128 MB` y `work_mem=4 MB` (valores de fábrica)** | Sobre una base de 2.753 MB parecen bajos, pero no hay evidencia de que sean el limitante actual y subirlos compite por la misma memoria que el resto del NAS. Se registra como observación medida, no como defecto |
+| **El total del feed se cuenta en cada primera página, no se cachea** | ~300 ms por petición frente al riesgo de una caché cuya invalidación depende de cada feedback y de cada evaluación. Se prefiere el coste medido y acotado a una invalidación que podría servir un total falso |
