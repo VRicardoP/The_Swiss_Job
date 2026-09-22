@@ -1,4 +1,4 @@
-# Prompt de contexto — SwissJobHunter tras el traspaso a cosecha nativa
+# Prompt de contexto — SwissJobHunter tras el traspaso y el cierre de rendimiento
 
 Pégalo como primer mensaje a cualquier agente que retome el proyecto. Da la
 perspectiva de lo hecho y, sobre todo, dice **dónde está cada cosa** para que no
@@ -13,10 +13,12 @@ capacidad por capacidad.
 
 ## Dónde está el proyecto
 
-**El 2026-09-22 la cosecha pasó a ser NATIVA.** Las 16 fuentes que alimentan el
-corpus las cosecha el core en cuatro ventanas diarias; los productores legacy
-están retirados por lista de arranque. Con eso, el punto 4 —«transferir los
-productores y retirar el motor legacy»— queda sustancialmente completo.
+**El 2026-09-22 pasaron dos cosas.** Por la mañana la cosecha pasó a ser
+NATIVA: las 16 fuentes que alimentan el corpus las cosecha el core en cuatro
+ventanas diarias y los productores legacy están retirados por lista de arranque
+(punto 4, sustancialmente completo). Por la tarde se cerró el punto 5: servir una
+página del feed pasó de **9,3-12,9 s a 0,56-1,19 s** y de **18 peticiones
+internas a 1**, con el contrato verificado idéntico sobre datos reales.
 
 Antes de creerte nada de lo anterior, **compruébalo ejecutando** (regla de oro
 del proyecto: un documento puede afirmar por escrito una garantía que el código
@@ -41,7 +43,8 @@ ssh nas "$D logs swissjob-core-worker-r5 --since 2h | grep check_health | tail -
 | **Qué NO tocar y por qué** | `docs/COTAS_Y_DECISIONES.md` §N (cotas del traspaso) — siete límites aceptados con la medición detrás de cada uno |
 | **Lo único que queda del punto 4** | `docs/RETIRADA_SLOT_CDC_PUNTO4.md` — retirada del slot CDC: precondiciones, orden reversible hasta el último paso y qué no se borra con él |
 | **Cómo se opera el NAS de verdad** | `docs/DEPLOY_NAS.md` (aviso de cabecera) y la memoria `qnap_container_station.md` |
-| **Estado global del proyecto** | `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` §44 |
+| **Rendimiento: qué se midió y qué se corrigió** | `docs/audits/ACTA_CIERRE_PUNTO5_2026-09-22.md`, con los presupuestos sellados antes de medir en `docs/PREDECLARACION_PUNTO5_2026-09-22.md` |
+| **Estado global del proyecto** | `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` §44 y §45 |
 | **Deuda viva** | `/home/lothar/Public/DEUDA_TECNICA.md` |
 | **Convenciones y arquitectura** | `CLAUDE.md` — se carga solo en cada sesión |
 
@@ -76,6 +79,13 @@ ssh nas "$D logs swissjob-core-worker-r5 --since 2h | grep check_health | tail -
    un presupuesto de páginas, agotarlo cuenta como cosecha completa; si no,
    `last_complete_at` no avanza nunca y `harvest.check_health` grita todos los
    días hasta que nadie lo mire.
+6. **El feed no se recorre entero para servir una página.** `MatchesPageDTO.total`
+   es aditivo: si falta, el consumidor vuelve al recorrido completo a propósito,
+   porque sin ese dato el recorrido ES lo que produce el número. Ver el invariante
+   en `CLAUDE.md`.
+7. **Antes de optimizar, comprueba de quién es el tiempo.** El p95 que queda lo
+   domina un host con loadavg 5,65-7,38 sobre dos núcleos donde ningún contenedor
+   del proyecto pasa del 0,4 % de CPU. Optimizar más código no lo arreglaría.
 
 ## Cómo se trabaja aquí
 

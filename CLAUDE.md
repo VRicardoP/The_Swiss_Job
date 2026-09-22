@@ -95,6 +95,31 @@ estuvo dos días en 503 sin que nadie se enterara). `docker-compose.prod.yml` y
 
 ---
 
+## Rendimiento del feed servido — invariante que cuesta caro romper
+
+Desde el punto 5 (2026-09-22) el BFF **no recorre el feed entero** para servir
+una página: el core informa del `total` en su primera página y el consumidor
+deja de paginar al cubrir `offset + limit`. Antes servir 20 ofertas costaba 18
+peticiones internas y 9-13 s; ahora 1 petición y 0,56-1,19 s.
+
+Tres cosas que NO deben deshacerse sin medir:
+
+1. `MatchesPageDTO.total` es **aditivo y opcional**. Si falta, el consumidor
+   vuelve al recorrido completo a propósito: sin ese dato el recorrido ES lo que
+   produce el número, y cortar antes daría un total falso.
+2. El recuento usa `effective_feedback_batch_sql`, **no** la forma correlacionada
+   (1,1-9,3 s frente a 0,4-0,9 s para el mismo número), y se apoya en el índice
+   parcial `ix_pvs_feed_current_eval` (`core0051`). El `current_eval_id IS NOT NULL`
+   redundante del WHERE es lo que deja al planificador alcanzarlo.
+3. La rama de `CORE_FEEDBACK_ENABLED = false` **conserva el recorrido completo**:
+   allí sí hay exclusiones locales y el total es un subconjunto recalculado.
+
+Acta y mediciones: `docs/audits/ACTA_CIERRE_PUNTO5_2026-09-22.md`.
+Cota aceptada: el p95 (1,4-2,6 s) lo domina la sobresuscripción del NAS, no el
+código — el trabajo propio son ~0,4 s, que es el mínimo observado.
+
+---
+
 ## Principios de diseño (máxima prioridad)
 
 1. **Single Responsibility** — cada módulo/clase/función hace UNA cosa
