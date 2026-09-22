@@ -11,6 +11,7 @@ Mejoras v2:
 - Log de fallos de traducción para detectar patrones de degradación.
 """
 
+import functools
 import hashlib
 import json
 import logging
@@ -351,8 +352,27 @@ class TranslationService:
         return top.lang
 
     @classmethod
+    @functools.lru_cache(maxsize=20000)
     def _detect_language(cls, text: str) -> str:
-        """Detecta idioma de un texto corto. Wrapper para compatibilidad externa."""
+        """Detecta idioma de un texto corto. Wrapper para compatibilidad externa.
+
+        MEMOIZADO (punto 5, 2026-09-22): el router llama aquí UNA VEZ POR OFERTA
+        SERVIDA, también con `translate=false`, porque el indicador de idioma de
+        la UI lo necesita. Medido en el NAS: las 1.800 ofertas del feed llegan
+        SIN `language` y cada deteccion cuesta 50,1 ms — unos 90 s por peticion,
+        el cuello real de `GET /match/results?limit=3000` (79 s extremo a
+        extremo). La deteccion es funcion PURA del titulo, asi que memoizarla no
+        cambia ni una respuesta; sólo deja de pagarla repetida.
+
+        `maxsize` cubre holgadamente el corpus servido (1.544 titulos unicos de
+        1.800 en la medicion) y acota la memoria: es una cache por proceso, sin
+        invalidacion, porque el resultado de un mismo titulo no cambia.
+
+        Cota: la PRIMERA peticion tras arrancar sigue pagando la deteccion de
+        cada titulo nuevo. La solucion de fondo es que el dato viaje en la
+        canonica —el escritor legacy lo rellenaba y los normalizadores nativos
+        no—, registrada en el acta del punto 5.
+        """
         return cls._resolve_language(text, "")
 
     # --- Redis cache helpers ---
