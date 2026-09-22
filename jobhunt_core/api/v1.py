@@ -781,6 +781,12 @@ async def get_matches(
     page = schemas.MatchesPageDTO(
         items=items,
         next_cursor=encode_cursor(*next_cur) if next_cur else None,
+        # Sólo en la PRIMERA página: es lo que el consumidor necesita para
+        # paginar, y contar en cada página pagaría el recuento N veces sin
+        # que nadie lo lea. El tenant se filtra también aquí, en SQL.
+        total=(await matching.feed_total(
+            session, profile_id, consumer_id=principal.consumer_id)
+            if cur is None else None),
     )
     # ETag también en el feed (rev. A-09 #2): la página es una representación.
     return _with_etag(request, page.model_dump(mode="json"))

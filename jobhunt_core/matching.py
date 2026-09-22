@@ -1985,6 +1985,50 @@ async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=No
     return rows, next_cursor
 
 
+def feed_total_sql(profile_id, consumer_id=None):
+    """SQL del tamaño del feed y sus parámetros. Mismas tres reglas que `feed`.
+
+    El feedback efectivo se resuelve UNA vez por vacante (`effective_feedback_batch_sql`)
+    en lugar de una subconsulta correlacionada por fila: sobre los datos de
+    producción eso son 0,4-0,9 s frente a 1,1-9,3 s para el MISMO número
+    (medición en PREDECLARACION_PUNTO5_2026-09-22.md §5). El plan se fija en
+    `test_matches_total.py`, que falla si vuelve a aparecer un SubPlan por fila.
+
+    Se expone el SQL además del contador para que esa regresión pueda mirar el
+    plan sin duplicar la consulta que de verdad se ejecuta.
+    """
+    from jobhunt_core.feedback import effective_feedback_batch_sql
+
+    params = {"pid": profile_id}
+    tenant_join = ""
+    if consumer_id is not None:
+        tenant_join = "JOIN profiles p ON p.id = s.profile_id AND p.consumer_id = :cid "
+        params["cid"] = consumer_id
+    sql = (
+        f"WITH fb AS ({effective_feedback_batch_sql(':pid')}) "
+        "SELECT count(*) FROM profile_vacancy_state s "
+        f"{tenant_join}"
+        "JOIN match_evaluations e ON e.id = s.current_eval_id "
+        "  AND e.profile_id = s.profile_id AND e.vacancy_id = s.vacancy_id "
+        "JOIN vacancies v ON v.id = s.vacancy_id "
+        "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
+        "LEFT JOIN fb ON fb.vacancy_id = s.vacancy_id "
+        "WHERE s.profile_id = :pid "
+        "AND COALESCE(fb.feedback,'') NOT IN ('thumbs_down','dismissed')"
+    )
+    return sql, params
+
+
+async def feed_total(session, profile_id, consumer_id=None) -> int:
+    """Cuántas ofertas sirve el feed de este perfil, con su mismo contrato.
+
+    Existe para que el consumidor no tenga que recorrer el feed entero sólo
+    para contarlo: servir 20 ofertas costaba 18 peticiones y ~9 s por eso.
+    """
+    sql, params = feed_total_sql(profile_id, consumer_id)
+    return int(await session.scalar(sa.text(sql), params) or 0)
+
+
 async def set_dismissed(session, profile_id, vacancy_id, dismissed: bool) -> None:
     """Descartar/restaurar: upsert que SOLO toca dismissed_at/updated_at.
     clock_timestamp() + GREATEST (rev. A-08 #3): la hora real de ESCRITURA,

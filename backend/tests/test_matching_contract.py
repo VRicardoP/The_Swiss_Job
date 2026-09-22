@@ -266,6 +266,9 @@ class FakeFeed:
         self.items = items
         self.requests: list[httpx.Request] = []
         self.hits_304 = 0
+        # El core real sólo cuenta en la primera página; `omit_total` simula un
+        # core anterior al campo, para probar el camino de respaldo.
+        self.omit_total = False
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -297,6 +300,8 @@ class FakeFeed:
             else None
         )
         body = {"items": page, "next_cursor": next_cursor}
+        if start == 0 and not self.omit_total:
+            body["total"] = len(self.items)
         etag = (
             '"'
             + hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:32]
@@ -1159,3 +1164,62 @@ async def test_fallback_serves_local_on_invalid_payload(seeded, db_session, capl
     assert total == len(VISIBLE_ORDER)  # servido por el motor local
     warns = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert warns and "payload invalido" in warns[0].getMessage()
+
+
+async def test_core_stops_paging_once_the_page_is_covered(seeded, db_session, monkeypatch):
+    """Serving a page must not walk the whole feed just to count it.
+
+    Measured on the NAS before this change (PREDECLARACION_PUNTO5_2026-09-22.md
+    §5): 18 requests and 1.800 items transformed to return 20 offers, 9.3-12.9 s.
+    One page of the core costs 29 ms; the walk was the entire cost.
+
+    With the core reporting the total on its first page, the consumer only needs
+    the pages that cover `offset + limit`. Asserting on the NUMBER OF REQUESTS
+    keeps the regression deterministic — a stopwatch on a loaded two-core NAS
+    would not be.
+    """
+    monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
+    user_id, matchings, fake = seeded
+    await set_routing(db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id)
+    core = make_core_matching(db_session, fake.transport())
+    items, total = await core.results(user_id, limit=1, offset=0)
+
+    assert len(fake.requests) == 1, (
+        f"one page of {FAKE_PAGE_SIZE} covers limit=1; walked "
+        f"{len(fake.requests)} pages instead")
+    assert len(items) == 1
+    # With feedback in core, this branch applies no exclusion of its own: the
+    # core already filtered dismissed and thumbed-down in its feed, so the
+    # total is the size of that feed and not a locally recomputed subset.
+    assert total == len(fake.items), "the total still describes the whole feed"
+
+
+async def test_core_still_walks_what_a_deep_page_needs(seeded, db_session, monkeypatch):
+    """Stopping early must not truncate a page the caller can actually reach."""
+    monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
+    user_id, matchings, fake = seeded
+    await set_routing(db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id)
+    core = make_core_matching(db_session, fake.transport())
+    items, total = await core.results(user_id, limit=1, offset=2)
+
+    assert len(items) == 1, "a reachable deep page is served, not truncated"
+    assert len(fake.requests) > 1, "it walked what that page needed"
+    assert total == len(fake.items)
+
+
+async def test_total_falls_back_to_a_full_walk_when_the_core_omits_it(
+        seeded, db_session, monkeypatch):
+    """An older core, or a page without the field, must not break the contract.
+
+    `total` is additive: when it is absent the consumer goes back to walking the
+    feed. Losing the optimisation is acceptable; reporting a wrong total is not.
+    """
+    monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
+    user_id, matchings, fake = seeded
+    await set_routing(db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id)
+    fake.omit_total = True
+    core = make_core_matching(db_session, fake.transport())
+    items, total = await core.results(user_id, limit=1, offset=0)
+
+    assert total == len(fake.items)
+    assert len(fake.requests) > 1, "without a total it must still count by walking"

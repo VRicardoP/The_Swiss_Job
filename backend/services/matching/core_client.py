@@ -69,7 +69,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 import httpx
-from pydantic import BaseModel, ConfigDict, FiniteFloat
+from pydantic import BaseModel, ConfigDict, FiniteFloat, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -188,6 +188,9 @@ class _FeedPageDTO(BaseModel):
 
     items: list[_FeedItemDTO] | None = None
     next_cursor: str | None = None
+    # Aditivo: los cores anteriores no lo mandan y el consumidor vuelve a
+    # contar recorriendo. Se valida como entero no negativo, no se confia.
+    total: int | None = Field(default=None, ge=0)
 
 
 def default_client_factory() -> httpx.AsyncClient:
@@ -390,7 +393,11 @@ class CoreMatching:
             # Sin credencial no se hace ni una peticion (mismo trato que caida).
             raise CoreUnavailableError("CORE_CONSUMER_KEY no configurada")
 
-        items = await self._fetch_full_feed(core_profile_id)
+        # La rama de feedback core no excluye ningun item, asi que basta con
+        # las paginas que cubren la ventana pedida; la rama local si excluye
+        # (accionabilidad y feedback negativo) y su total exige el recorrido.
+        needed = offset + limit if settings.CORE_FEEDBACK_ENABLED else None
+        items, core_total = await self._fetch_full_feed(core_profile_id, needed)
         # Identidad por item (candidatos DETERMINISTAS: cualquier listing
         # `legacy:*`, no solo el primary) + respaldo accionable + overlay
         # local en lotes. Los errores de FORMA del payload se traducen a
@@ -446,7 +453,11 @@ class CoreMatching:
                     })
             except _PAYLOAD_ERRORS as exc:
                 raise CoreUnavailableError("identidad core inválida en matching") from exc
-            return results[offset:offset + limit], len(results)
+            # El total describe el feed ENTERO. Si el core lo informo, es el
+            # suyo; si no, `results` viene de un recorrido completo y su
+            # longitud es el mismo numero.
+            return results[offset:offset + limit], (
+                core_total if core_total is not None else len(results))
         local_by_hash: dict[str, MatchResult] = {}
         actionable_hashes: set[str] = set()
         if legacy_refs:
@@ -567,11 +578,26 @@ class CoreMatching:
 
     # ------------------------------------------------------------------ feed
 
-    async def _fetch_full_feed(self, core_profile_id: uuid.UUID) -> list[dict]:
-        """Recorre el feed completo por keyset; cache de paginas por ETag."""
+    async def _fetch_full_feed(
+        self, core_profile_id: uuid.UUID, needed: int | None = None
+    ) -> tuple[list[dict], int | None]:
+        """Recorre el feed por keyset; cache de paginas por ETag.
+
+        `needed` = cuantos items necesita el llamante (offset + limit). Cuando
+        lo indica Y el core informa del total de su feed, se deja de paginar al
+        cubrirlo: servir 20 ofertas costaba 18 peticiones y ~9 s porque el
+        recorrido completo era la UNICA forma de saber el total
+        (PREDECLARACION_PUNTO5_2026-09-22.md §5-6).
+
+        Devuelve (items, total_del_core). `total` es None si el core no lo
+        informa — un core anterior a ese campo, o una pagina intermedia —, y
+        entonces se recorre entero como antes: perder la optimizacion es
+        aceptable, dar un total equivocado no.
+        """
         items: list[dict] = []
         cursor: str | None = None
         seen_cursors: set[str] = set()
+        total: int | None = None
         async with self._client_factory() as client:
             for _ in range(MAX_FEED_PAGES):
                 page = await self._fetch_page(client, core_profile_id, cursor)
@@ -594,9 +620,16 @@ class CoreMatching:
                         f"{type(exc).__name__}: {exc}"
                     ) from exc
                 items.extend(page_items)
+                if total is None:
+                    total = page_dto.total
                 cursor = page_dto.next_cursor
                 if cursor is None:
-                    return items
+                    return items, total
+                # Corte temprano: solo si el core ya dijo cuantas ofertas tiene
+                # su feed. Sin ese dato el total lo da el recorrido, y cortar
+                # aqui lo falsearia.
+                if needed is not None and total is not None and len(items) >= needed:
+                    return items, total
                 if cursor in seen_cursors:
                     raise CoreUnavailableError(
                         f"feed del core con cursor repetido: {cursor[:64]}"

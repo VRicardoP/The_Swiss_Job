@@ -101,6 +101,10 @@ class MatchDTO(BaseModel):
 class MatchesPageDTO(BaseModel):
     items: list[MatchDTO]
     next_cursor: str | None = None
+    # Tamaño del feed completo, con el MISMO contrato que la página. Aditivo:
+    # un consumidor antiguo lo ignora. Sin él, el BFF recorría el feed entero
+    # sólo para contarlo — 18 peticiones y ~9 s para servir 20 ofertas.
+    total: int | None = None
 
 
 class ProfileRevisionDTO(BaseModel):
