@@ -50,32 +50,59 @@ defecto— traducción de títulos con un LLM externo.
 | Catálogo remoto | 0,416 s | 2,753 s |
 | Catálogo general | 1,510 s | 2,985 s |
 
-### 1b. El endpoint servido (n=20, sonda con aserciones que fallan)
+### 1b. El recorrido que el frontend pide de verdad
 
-| Endpoint | p50 | p95 | mín | ¿Cumple p95 ≤ 2 s? |
-|---|---:|---:|---:|---|
-| `/api/v1/jobs/search` | 1,156 s | 2,838 s | 0,513 s | **no** |
-| `/api/v1/match/results?translate=false` | 1,924 s | 5,357 s | 1,177 s | **no** |
-| `/api/v1/match/results` (con traducción) | 2,586 s | 4,063 s | 2,024 s | **no** |
+La revalidación exigió comprobar qué solicita el frontend. `MatchPage` llama
+`useMatchResults(3000, 0)` con **`translate=false`** y no usa la variante
+traducida: la pantalla principal pide **3.000 ofertas de una vez**.
 
-**Ningún endpoint cumple el p95 declarado.** La traducción añade ~0,66 s de
-mediana —menos de lo esperado, porque su caché Redis funciona— pero es una
-llamada a un LLM externo y la predeclaración la excluye del presupuesto de 2 s:
-necesita el suyo propio.
+Eso tiene una consecuencia que conviene decir claro: **el corte temprano del
+consumidor no aplica a ese caso**. Con `needed = 3000 > 1800` recorre el feed
+entero igual que antes. La primera optimización mejoró un tamaño de página que
+la pantalla principal no usa.
 
-### 1c. Desglose del tiempo propio del router (n=8)
+### 1c. Traza de UNA petición completa, por fases
 
-| Fase | p50 | máx |
-|---|---:|---:|
-| `resolve_matching` | 0,000 s | 0,018 s |
-| `CoreMatching.results` | 0,603 s | 1,705 s |
-| `db.refresh(profile)` | 0,011 s | 0,087 s |
-| `overlay_school_results` | **0,208 s** | 0,768 s |
+Sin restar medianas entre muestras distintas: cada fila viene de la misma
+invocación, así que las partes suman el total.
 
-Suman **~0,82 s** de los 1,924 s del endpoint sin traducción. **~1,1 s quedan sin
-atribuir**: pueden ser autenticación, serialización Pydantic, el servidor
-(gunicorn con dos workers) o contención. **No se ha separado**, y esta acta no
-afirma cuál es.
+| Fase | limit=3000 antes | limit=3000 ahora | limit=20 antes | limit=20 ahora |
+|---|---:|---:|---:|---:|
+| cargar usuario + routing + perfil | 0,021 s | 0,023 s | 0,032 s | 0,022 s |
+| `matching.results` | 11,132 s | 9,741 s | 0,873 s | 0,990 s |
+| overlay escolar | 0,478 s | 0,212 s | 0,434 s | 0,367 s |
+| **serializar respuesta** | **65,747 s** | **0,322 s** | **1,888 s** | **0,007 s** |
+| **TOTAL** | **79,265 s** | **10,298 s** | 3,340 s | **1,529 s** |
+
+**El cuello dominante era la serialización, y nunca la había medido.**
+`_to_match_response` detecta el idioma de **cada oferta servida**, también con
+`translate=false`, porque el indicador de la UI lo necesita. Las 1.800 ofertas
+del feed llegan **todas sin `language`** y cada detección cuesta **50,1 ms**:
+unos 90 s de detección pura por petición.
+
+Conexión incómoda con el punto 4: se decidió **no exponer `language`** en los
+normalizadores nativos porque «ninguna búsqueda lo filtra». Tenía un lector que
+no se buscó: el router del BFF. El escritor legacy sí rellenaba ese campo.
+
+Corrección aplicada (`f331c0d`): la detección es función pura del título, así que
+se memoiza por proceso. No cambia ninguna respuesta y elimina el coste repetido;
+1.544 de los 1.800 títulos son distintos, así que la primera carga sigue pagando
+los nuevos. **La causa de fondo —que el dato viaje en la canónica— queda abierta
+en §10.**
+
+Hallazgo colateral: **`langdetect` no es determinista en títulos cortos**.
+«Sviluppatore software» devolvió `sv` en una pasada y `en` en la siguiente, de
+modo que el indicador de idioma **puede cambiar entre cargas**. La memoización
+no lo causa: lo estabiliza dentro del proceso.
+
+### 1c-bis. El endpoint servido, medido por HTTP
+
+| Endpoint | antes | p50 | p95 | mín | ¿p95 ≤ 2 s? |
+|---|---:|---:|---:|---:|---|
+| `/api/v1/jobs/search` | 1,156 s | **0,739 s** | **1,810 s** | 0,517 s | **sí** |
+| `/match/results` 20, `translate=false` | 1,924 s | **0,823 s** | 2,967 s | 0,542 s | no |
+| `/match/results` 20, con traducción | 2,586 s | **1,766 s** | 4,331 s | 1,192 s | no (fuera del presupuesto) |
+| `/match/results` **3000** (el real) | ~79 s | **8,617 s** | 11,387 s | 7,230 s | no (necesita presupuesto propio) |
 
 ### 1d. Las sondas, endurecidas tras la revalidación
 
@@ -158,29 +185,29 @@ tabla de pruebas diminuta PostgreSQL prefiere correctamente el barrido
 secuencial. Un test que no falla contra el estado anterior no es una regresión;
 se sustituyó por la afirmación del esquema, y la evidencia del plan vive aquí.
 
-## 5. La cola de latencia: hipótesis, no conclusión
+## 5. La cola de latencia: qué se sabe y qué no
 
 La primera versión de esta acta afirmaba que el residual **no procedía del
-código**. **Esa atribución no estaba demostrada y en parte es falsa**: el mínimo
-del endpoint sin traducción es 1,177 s, y eso es trabajo propio, no espera de
-CPU ajena.
+código**. Era falso y la traza lo demostró: el cuello dominante del recorrido
+real era **nuestro** —90 s de detección de idioma por petición—, no del host.
 
-Lo que sí está medido, y que sigue siendo relevante:
+Una segunda afirmación tampoco tenía el rigor que aparentaba: dije que «el
+mínimo de 1,177 s es trabajo propio». **Un mínimo tampoco separa trabajo de
+espera**: puede incluir esperas de I/O, de conexión o de lock. Y restar medianas
+de experimentos distintos —0,82 s de un desglose frente a 1,924 s de otro— no
+atribuye nada con rigor. Ambas cosas se corrigieron trazando la petición
+completa, que es de donde salen las cifras de §1c.
 
-- loadavg del host entre **5,65 y 7,38 con dos núcleos** — sobresuscripción de
-  2,8× a 3,7×, sin carga de prueba propia;
-- ningún contenedor del proyecto pasa del **0,4 % de CPU** en el muestreo
-  instantáneo; los mayores eran `redis` 5,69 % y 4,78 %, y `portfolio_db` 4,78 %.
+Lo que sí está medido del entorno, y sigue siendo contexto, no conclusión:
+loadavg 5,65–7,38 sobre dos núcleos sin carga de prueba propia, y ningún
+contenedor del proyecto por encima del 0,4 % de CPU en el muestreo instantáneo.
+Eso **no** separa espera de CPU, disco, locks o consultas.
 
-Lo que **no** demuestra eso: un loadavg alto y porcentajes instantáneos de CPU no
-separan espera de CPU, de disco, de locks, de conexiones o de consultas, ni
-descartan que el propio proyecto contribuya durante los picos.
-
-**Hipótesis vigente**, pendiente de comprobar: la cola combina (a) trabajo propio
-identificado —0,82 s de fases medidas— más (b) ~1,1 s sin atribuir y (c) espera
-por contención del host. Para separarlos hace falta correlacionar una ventana de
-peticiones con tiempos SQL, esperas de PostgreSQL y CPU/IO de host y contenedores.
-**No se ha hecho.** No se impusieron límites de recursos ni se cambió PostgreSQL.
+Lo que queda por explicar, ya con el cuello mayor corregido: el p95 de
+`/match/results` con 20 ofertas (2,967 s) frente a su mediana de 0,823 s. No
+está atribuido. Separarlo exige correlacionar una ventana de peticiones con
+tiempos SQL, esperas de PostgreSQL y CPU/IO de host y contenedores. **No se ha
+hecho**, y esta acta no afirma la causa.
 
 ## 6. Ausencia de regresión, verificada tras desplegar
 
@@ -194,7 +221,7 @@ peticiones con tiempos SQL, esperas de PostgreSQL y CPU/IO de host y contenedore
 | Errores en el BFF | ninguno real: dos `profile erasure drain deferred (ConnectError)` a las 09:29:30, el diferido previsto mientras se recreaba el core-api, y una línea de arranque que contiene `--error-logfile` |
 | Canario HTTP servido | `/api/v1/jobs/search` 200 con datos reales y `total` 45.859; `/api/v1/health` 200 |
 | Suite del core | **1.749 passed** |
-| Suite del BFF | ver §8 |
+| Suite del BFF | **2.515 passed, 4 xfailed** |
 
 Suites **en serie**. Una de ellas se lanzó por error en paralelo con la del core
 y se detuvo de inmediato, antes de que compitieran por la base.
@@ -227,8 +254,8 @@ La primera versión de esta acta declaraba los tres procesos del core en
 | `swissjob-core-api-r5` | `swissjob-core:point5-cf260b1` | `core0051`, `authoritative: true`. Es quien sirve `/v1/profiles/{id}/matches` y, por tanto, el único que necesita el cambio |
 | `swissjob-core-worker-r5` | **`swissjob-core:point4-51be757`** | no recreado |
 | `swissjob-core-capture-r5` | **`swissjob-core:point4-51be757`** | no recreado |
-| `swissjob-backend` | `swissjob-backend:point5-b7df2a9` | |
-| `swissjob-worker` | `swissjob-worker:point5-b7df2a9` | misma imagen, re-etiquetada |
+| `swissjob-backend` | `swissjob-backend:point5-f331c0d` | memoización de la detección de idioma |
+| `swissjob-worker` | `swissjob-worker:point5-b7df2a9` | **no recreado tras `f331c0d`**: no sirve ese recorrido |
 
 **Por qué no se recrean ahora**: la migración `core0051` es aditiva y ya está
 aplicada; el cambio del feed lo sirve `core-api`; y recrear dos procesos sólo
@@ -262,22 +289,34 @@ evidencia.
 
 ## 10. Qué falta para poder cerrar el punto 5
 
-Lista finita, derivada del contrato que yo mismo sellé:
+El criterio debe fijarse **antes** de la ejecución final, no después de ver el
+resultado. Lista finita:
 
-1. **Medir el endpoint servido en los escenarios que faltan**: frío y caliente
-   por separado, escrituras en copia, y navegación representativa de ambos
-   frontends. Nada de eso se midió.
-2. **Muestra suficiente en copia autorizada** (≥100 observaciones por recorrido
-   prioritario), en lugar de series de producción. La serie de 50 que usé
-   contradice el máximo de 20 que fija mi propia predeclaración para producción.
-3. **Separar la cola de latencia**: correlacionar una ventana de peticiones con
-   tiempos SQL, esperas de PostgreSQL y CPU/IO de host y contenedores, para
-   atribuir los ~1,1 s no explicados del router.
-4. **Presupuesto propio para la traducción de títulos**, o constancia de que el
-   frontend la pide con `translate=false`.
-5. **Decidir el presupuesto** (§7) y emitir aceptación contra el vigente o contra
-   uno nuevo aprobado expresamente.
+1. **Decidir el presupuesto** (§7) y, en particular, fijar uno propio para dos
+   escenarios que hoy no tienen: la **traducción de títulos** (llamada a un LLM
+   externo) y la **carga de 3.000 ofertas** que pide `MatchPage`, que no es una
+   «lectura habitual» de 20.
+2. **Matriz única de aceptación** contra el presupuesto vigente: ambos
+   frontends, **≥100 muestras por recorrido prioritario en copia**, concurrencia
+   prevista, frío y caliente separados, y escrituras. Después, canario acotado
+   en el NAS. Nada de eso se ha hecho: las series usadas aquí son de producción
+   y una de ellas (n=50) contradice el máximo de 20 que fija la predeclaración.
+3. **Atribuir el p95 que queda**: `/match/results` con 20 ofertas da mediana
+   0,823 s y p95 2,967 s. Exige observación correlacionada de SQL, esperas de
+   PostgreSQL y CPU/IO, no deducción entre muestras.
+4. **Que el idioma viaje en la canónica.** La memoización quita el coste
+   repetido, pero la primera carga sigue detectando cada título nuevo porque el
+   dato no está. El escritor legacy lo rellenaba; los normalizadores nativos no.
+   Es la corrección de fondo y está sin hacer.
+5. **Revisar si `matching.results` puede servir 3.000 ofertas mejor**: son
+   9,7 s de los 10,3 s del caso real, y proceden de 18 peticiones al core en
+   páginas de 100. No se ha tocado: exige decidir si se cambia el tamaño de
+   página del contrato o el frontend pide menos.
 
-Mientras tanto: la optimización desplegada es **útil y está verificada** —18
-peticiones a 1, equivalencia 8/8, sin regresión funcional— y no hay motivo para
-revertirla. Simplemente **no basta para declarar el punto cerrado**.
+Cada escenario obligatorio **cumple o queda expresamente pendiente**. Una mejora
+porcentual, una mediana buena o una atribución al hardware no sustituyen ese
+resultado.
+
+Mientras tanto, lo desplegado es útil y está verificado —de 79,3 s a 8,6 s en el
+recorrido que usa la pantalla principal, sin regresión funcional y con
+2.515 pruebas del BFF en verde— y no hay motivo para revertirlo.
