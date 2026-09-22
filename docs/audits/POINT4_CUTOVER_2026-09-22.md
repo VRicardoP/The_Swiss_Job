@@ -137,6 +137,19 @@ Se conservan con responsabilidad explícita: `core-api`, `core-worker` (con
 (BFF, CV, documentos, alerta de profesor y los 8 scrapers escolares),
 `swissjob-erasure-cdc` (borrado de perfiles, con 1 solicitud registrada).
 
+## 7bis. Ciclo autónomo acreditado
+
+A las **04:10 UTC** (06:10 Europe/Zurich), con el worker R5 y su disparador ya
+parados, el beat del core despachó por sí solo `jobhunt.harvest.dispatch_native`
+en 0,92 s con **17 scopes despachados**, y los 17 completaron su barrido entre
+las 04:10 y las 04:17 UTC **sin un solo fallo consecutivo**. Las cifras
+crecieron en esa ronda (irishjobs 108 → 166 listings, ostjob 1.188 → 1.224,
+globaljobs 207 → 215, jobgether 136 → 142; vacantes vivas 45.564 → 45.613).
+
+No es una invocación manual: es la cadencia programada haciendo el trabajo que
+hasta ayer hacía el productor legacy. El postprocesado acompañó: 2.378
+embeddings y 159 evaluaciones en las tres horas siguientes al corte.
+
 ## 8. Lo que queda abierto
 
 1. **Primera entrega natural de avisos (R1).** Las 10 búsquedas ejecutan en
