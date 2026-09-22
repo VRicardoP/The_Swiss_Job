@@ -48,10 +48,24 @@ ssh nas "$C -p swissjob-r5 -f $E/core.configured.yml stop -t 300 core-capture"
 ssh nas "$D inspect swissjob-core-capture-r5 --format 'exit={{.State.ExitCode}} oom={{.State.OOMKilled}}'"
 ```
 
-**2. Quitar del beat el harness del slot.** El flag ya está implementado y
-probado (`CORE_CAPTURE_ENABLED`, commit de esta jornada): en `False` el beat
-deja de programar `shadow-check-slot-health`, `shadow-preview-cycle` y
-`shadow-run-cycle`, **y sólo esas tres**.
+**2. Quitar del beat el harness del slot.** El flag está implementado y probado
+(`CORE_CAPTURE_ENABLED`): en `False` el beat deja de programar
+`shadow-check-slot-health`, `shadow-preview-cycle` y `shadow-run-cycle`, **y sólo
+esas tres**.
+
+> ⚠ **El worker que corre HOY no contiene ese flag.** `swissjob-core-worker-r5`
+> sigue en `swissjob-core:point4-51be757`, anterior al commit que lo añade; sólo
+> `core-api` se actualizó en el punto 5. Antes de apoyarse en el interruptor hay
+> que **desplegar el worker** y comprobarlo en el proceso que lo ejecuta, no en
+> HEAD:
+>
+> ```sh
+> ssh nas "$D exec swissjob-core-worker-r5 python -c \
+>   'from jobhunt_core.config import settings; print(settings.CORE_CAPTURE_ENABLED)'"
+> ```
+>
+> Si eso falla con `AttributeError`, el proceso no tiene el código y poner la
+> variable en el compose no haría nada.
 
 > **`shadow-project` se queda.** Pese al nombre, ES el postprocesado del ciclo
 > nativo: drena embeddings y reevalúa perfiles tras cada cosecha. Apagar la
