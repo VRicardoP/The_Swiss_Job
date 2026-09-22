@@ -4,8 +4,9 @@ Fecha: 2026-09-22, 00:30 UTC. Trabajo ejecutado el 21-09 21:38 → 22-09 00:30 U
 
 **Qué acredita este acta:** las 16 fuentes que alimentaban el corpus del core
 están cosechadas por productores nativos, verificadas en el servicio servido.
-**Qué NO acredita:** el punto 4 cerrado. Quedan la primera entrega natural de
-avisos, la retirada del slot de captura y la aceptación final (§6).
+**Qué NO acredita:** el punto 4 cerrado. Queda la retirada del slot de captura
+(48 h de observación) y la aceptación final. La primera entrega natural de
+avisos SÍ quedó acreditada esa misma mañana (§7ter).
 
 ## 1. Versiones desplegadas
 
@@ -150,15 +151,30 @@ No es una invocación manual: es la cadencia programada haciendo el trabajo que
 hasta ayer hacía el productor legacy. El postprocesado acompañó: 2.378
 embeddings y 159 evaluaciones en las tres horas siguientes al corte.
 
+## 7ter. Primera entrega natural de avisos — ACREDITADA
+
+Ocurrió sola, a su hora, sin que se fabricara ninguna búsqueda, oferta ni aviso
+para provocarla. Cadena completa del 22-09:
+
+```
+07:15:45  evento saved_search.matches en integration_outbox (destino swissjob-shadow)
+07:16:20  jobhunt.searches.run_due -> processed=6  matches=1135  failed=0  (125,5 s)
+07:19:17  notificacion creada en swissjobhunter.notifications (BFF publico)
+07:19:18  entrega ACK -> state=delivered  attempts=1  last_error=NULL
+```
+
+Las 6 búsquedas con frecuencia diaria pasaron de `run_number = 0` a `1`;
+las 4 semanales siguen en 0 porque aún no vencen. Observaciones registradas:
+436.008 sobre las 10 búsquedas — todas las vacantes presentables quedan
+observadas, incluidas las que no casan, así que una edición posterior del filtro
+no puede fabricar novedad a partir de ofertas viejas.
+
+Esto cierra R1: el usuario recibe sus avisos con el ejecutor del core y el
+corpus cosechado por los productores nativos.
+
 ## 8. Lo que queda abierto
 
-1. **Primera entrega natural de avisos (R1).** Las 10 búsquedas ejecutan en
-   core; el primer vencimiento estimado es hoy ~07:10 UTC. Comprobar entonces
-   `saved_search_execution.run_number`, un evento `saved_search.matches` en
-   `integration_outbox` con su entrega, y la notificación correspondiente en el
-   BFF. Un resultado vacío correcto no es un fallo: se registra como «sin
-   evento real disponible» y se repite al día siguiente.
-2. **Retirada del slot `jobhunt_shadow_r5_rehearsal`.** Requiere 48 h de
+1. **Retirada del slot `jobhunt_shadow_r5_rehearsal`.** Requiere 48 h de
    dispatcher nativo sin incidencias. Es la única acción sin vuelta atrás
    barata: reanudar el legacy después exigiría un snapshot CDC nuevo. Orden:
    parar `core-capture`, quitar del beat `shadow.check_slot_health`,
