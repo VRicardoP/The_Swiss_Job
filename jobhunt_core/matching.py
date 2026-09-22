@@ -2013,7 +2013,11 @@ def feed_total_sql(profile_id, consumer_id=None):
         "JOIN vacancies v ON v.id = s.vacancy_id "
         "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
         "LEFT JOIN fb ON fb.vacancy_id = s.vacancy_id "
-        "WHERE s.profile_id = :pid "
+        # `current_eval_id IS NOT NULL` es redundante con el JOIN, pero
+        # explicitarlo deja que el planificador use el indice PARCIAL: sin el,
+        # contar un feed recorria las 35.092 filas de la tabla para quedarse
+        # con las 5.400 que pueden estar en uno.
+        "WHERE s.profile_id = :pid AND s.current_eval_id IS NOT NULL "
         "AND COALESCE(fb.feedback,'') NOT IN ('thumbs_down','dismissed')"
     )
     return sql, params

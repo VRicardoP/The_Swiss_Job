@@ -82,3 +82,33 @@ def test_total_is_counted_in_one_pass_not_once_per_row(db):
             assert "SubPlan" not in plan, f"correlated per-row lookup survived:\n{plan}"
 
     asyncio.run(go())
+
+
+def test_the_feed_state_index_exists(db):
+    """Only 15,4 % of profile_vacancy_state rows can belong to a feed.
+
+    Measured on production: 35.092 rows, 5.400 with a `current_eval_id`.
+    Counting a feed sequentially scanned all of them — 604 ms in EXPLAIN
+    ANALYZE, `Rows Removed by Filter: 24712`. The partial index restricts the
+    read to the rows that can possibly be in a feed, the same shape the project
+    already uses for `ix_pvs_saved_feed_keyset`.
+
+    This asserts the index EXISTS rather than that a plan uses it: on a test
+    database of a handful of rows PostgreSQL correctly prefers a sequential
+    scan, so a plan assertion here would pass with or without the fix and prove
+    nothing. The plan evidence belongs to the production measurement, recorded
+    in the closing act.
+    """
+    factory, _ = db
+
+    async def go():
+        async with factory() as s:
+            definition = await s.scalar(sa.text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE schemaname='jobhunt' AND indexname=:name"),
+                {"name": "ix_pvs_feed_current_eval"})
+            assert definition, "the partial index for feed counting is missing"
+            assert "current_eval_id IS NOT NULL" in definition
+            assert "profile_id" in definition
+
+    asyncio.run(go())
