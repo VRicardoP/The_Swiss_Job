@@ -215,7 +215,9 @@ class CoreJobView:
     description_snippet: str | None
     tags: list = field(default_factory=list)
     source: str | None = None
-    language: str | None = None  # el router lo detecta por titulo si falta
+    # Lo sirve el core desde la canonica (_language_of); si viene ausente
+    # —o con una forma invalida— el router lo detecta por titulo.
+    language: str | None = None
     category: str | None = None  # no expuesto por el /v1 (cota, como catalogo)
     salary_min_chf: int | None = None  # idem: el core sirve salario en texto
     salary_max_chf: int | None = None
@@ -299,6 +301,17 @@ def legacy_job_ref(vacancy: dict) -> tuple[str, bool]:
     return str(uuid.UUID(str(vacancy["id"]))), False
 
 
+def _language_of(vacancy: dict) -> str | None:
+    """Idioma servido por el core, sólo si es una cadena utilizable.
+
+    Misma disciplina que el resto del mapeo: un 200 con una forma inesperada
+    no debe romper la pagina. Ausente => el router lo detecta, como siempre."""
+    value = vacancy.get("language")
+    if not isinstance(value, str):
+        return None
+    return value.strip().lower() or None
+
+
 def _job_view(vacancy: dict, job_ref_source: str | None) -> CoreJobView:
     primary = vacancy.get("primary_listing") or {}
     listings = vacancy.get("listings") or []
@@ -314,6 +327,10 @@ def _job_view(vacancy: dict, job_ref_source: str | None) -> CoreJobView:
         description_snippet=description[:500] if description else None,
         tags=vacancy.get("tags") or [],
         source=job_ref_source,
+        # El core lo sirve desde la canonica (VacancyDTO.language). Sin esta
+        # linea el campo existia y era SIEMPRE None, y el router detectaba el
+        # idioma por titulo en cada oferta servida.
+        language=_language_of(vacancy),
     )
 
 

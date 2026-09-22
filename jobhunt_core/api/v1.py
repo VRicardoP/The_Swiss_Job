@@ -175,6 +175,19 @@ def _location_conditions(where: list[str], params: dict, **values: str | None) -
             params[pname] = value.strip()
 
 
+def _canonical_language(value) -> str | None:
+    """`language` de la canónica, sólo si es utilizable.
+
+    La canónica es JSONB escrito por productores heterogéneos: un valor que no
+    sea una cadena NO puede tumbar la página entera del feed con un error de
+    validación — el idioma es un indicador, no la identidad de la oferta. Un
+    tipo inválido se sirve como ausente y el consumidor cae en su detección,
+    que es exactamente el estado anterior a este campo."""
+    if not isinstance(value, str):
+        return None
+    return value.strip().lower() or None
+
+
 async def _vacancy_dtos(session, vacancy_ids) -> dict:
     """{vacancy_id: VacancyDTO} de vacantes ACTIVAS y presentables (con
     canónica vigente). Tres queries por LOTE, sea cual sea la página."""
@@ -245,6 +258,7 @@ async def _vacancy_dtos(session, vacancy_ids) -> dict:
             tags=c.get("tags") or [],
             location=c.get("location"),
             remote=c.get("remote"),
+            language=_canonical_language(c.get("language")),
             primary_listing=(
                 schemas.PrimaryListingDTO(
                     source=primary.source, external_id=primary.external_id,

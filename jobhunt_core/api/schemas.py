@@ -47,6 +47,13 @@ class VacancyDTO(BaseModel):
     tags: list[str] = []
     location: str | None = None
     remote: bool | None = None
+    # Idioma de la canónica. ADITIVO y OPCIONAL: existía en el contenido
+    # canónico desde el proyector, pero no lo declaraba nadie aguas abajo, así
+    # que el consumidor lo detectaba por título en CADA oferta servida —
+    # 50,1 ms x 1.800 ofertas por petición (punto 5, 2026-09-22). Ausente
+    # significa «no lo sé»: el consumidor vuelve a detectarlo, que es el
+    # comportamiento de siempre.
+    language: str | None = None
     primary_listing: PrimaryListingDTO | None = None
     listings: list[ListingDTO] = []
     translations: list = []
