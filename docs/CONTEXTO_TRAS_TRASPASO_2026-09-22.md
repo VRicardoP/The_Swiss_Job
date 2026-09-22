@@ -58,7 +58,7 @@ ssh nas "$D logs swissjob-core-worker-r5 --since 2h | grep check_health | tail -
    cron de retención y el GO de calidad — que sigue en NO-GO por ausencia de un
    examen válido, no por una métrica mala. No los mezcles con este cierre.
 
-## Cinco trampas que ya costaron caro
+## Siete trampas que ya costaron caro
 
 1. **`jobhunt.shadow.project` NO es una tarea de sombra.** Pese al nombre, es el
    postprocesado del ciclo nativo: drena embeddings y reevalúa perfiles.
@@ -94,7 +94,8 @@ ssh nas "$D logs swissjob-core-worker-r5 --since 2h | grep check_health | tail -
 - **Reproducción roja antes de cada fix**, verde después.
 - Suites **en serie**, nunca dos `pytest` a la vez, nunca contra producción.
   Core: `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm
-  core-migrate python -m pytest jobhunt_core/tests` (1.745 passed, ~22 min).
+  core-migrate python -m pytest jobhunt_core/tests` (1.749 passed, ~18 min).
+  BFF: `docker compose exec -T backend python -m pytest tests/ -q` (2.511 passed, 4 xfailed, ~7 min).
 - En el NAS, **solo lectura por defecto**; cada escritura con copia `.before` y
   recibo. Nunca `compose down`, `--remove-orphans`, `celery purge` ni un `up`
   global.
