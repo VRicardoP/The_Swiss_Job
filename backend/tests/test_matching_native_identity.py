@@ -28,7 +28,9 @@ async def test_native_feed_uses_canonical_id_except_school_commands(
     item["vacancy"]["primary_listing"]["source"] = source
     original = item["vacancy"]["primary_listing"]["external_id"]
     matcher = CoreMatching(db_session, client_factory=lambda: None)
-    monkeypatch.setattr(matcher, "_fetch_full_feed", AsyncMock(return_value=[item]))
+    # Devuelve (items, total): el total lo informa el core desde el punto 5,
+    # y sin el el consumidor vuelve a contar recorriendo el feed.
+    monkeypatch.setattr(matcher, "_fetch_full_feed", AsyncMock(return_value=([item], 1)))
     rows, total = await matcher.results(uid)
     assert total == 1
     assert rows[0]["match"].job_hash == (
