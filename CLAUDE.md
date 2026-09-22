@@ -100,7 +100,11 @@ estuvo dos días en 503 sin que nadie se enterara). `docker-compose.prod.yml` y
 Desde el punto 5 (2026-09-22) el BFF **no recorre el feed entero** para servir
 una página: el core informa del `total` en su primera página y el consumidor
 deja de paginar al cubrir `offset + limit`. Antes servir 20 ofertas costaba 18
-peticiones internas y 9-13 s; ahora 1 petición y 0,56-1,19 s.
+peticiones internas y 9-13 s; ahora 1 petición y 0,56-1,19 s en el método.
+
+**El punto 5 sigue ABIERTO**: el endpoint servido `/api/v1/match/results` da p50
+1,924 s (2,586 s con traducción) y no cumple el p95 ≤ 2 s declarado. Lo que falta
+está en §10 del acta. El invariante de abajo vale igual.
 
 Tres cosas que NO deben deshacerse sin medir:
 

@@ -16,9 +16,11 @@ capacidad por capacidad.
 **El 2026-09-22 pasaron dos cosas.** Por la mañana la cosecha pasó a ser
 NATIVA: las 16 fuentes que alimentan el corpus las cosecha el core en cuatro
 ventanas diarias y los productores legacy están retirados por lista de arranque
-(punto 4, sustancialmente completo). Por la tarde se cerró el punto 5: servir una
-página del feed pasó de **9,3-12,9 s a 0,56-1,19 s** y de **18 peticiones
-internas a 1**, con el contrato verificado idéntico sobre datos reales.
+(punto 4, sustancialmente completo). Por la tarde se optimizó el feed —de **18 peticiones internas a 1** y de
+**9,3-12,9 s a 0,56-1,19 s** en el método, con contrato idéntico verificado—,
+pero el **punto 5 sigue ABIERTO**: el endpoint servido da p50 1,924 s y no
+cumple el p95 declarado. Una revalidación externa corrigió un cierre que se
+había declarado sin evidencia suficiente.
 
 Antes de creerte nada de lo anterior, **compruébalo ejecutando** (regla de oro
 del proyecto: un documento puede afirmar por escrito una garantía que el código
@@ -54,8 +56,11 @@ ssh nas "$D logs swissjob-core-worker-r5 --since 2h | grep check_health | tail -
    atrás barata: después, reanudar el legacy exigiría un snapshot CDC nuevo.
    Pide 48 h de dispatcher limpio (no antes del 23-09 ~22:40 UTC). El código ya
    está hecho y probado (`CORE_CAPTURE_ENABLED`); el procedimiento, escrito.
-2. **Aceptación final** del punto 4 y, separados, el punto 5 (rendimiento), el
-   cron de retención y el GO de calidad — que sigue en NO-GO por ausencia de un
+2. **Punto 5**: optimización desplegada, aceptación de rendimiento pendiente
+   (§10 del acta: frío, escrituras en copia, frontend, muestra ≥100, separar la
+   cola de latencia y decidir el presupuesto).
+3. **Aceptación final** del punto 4 y, separados, el cron de retención y el GO
+   de calidad — que sigue en NO-GO por ausencia de un
    examen válido, no por una métrica mala. No los mezcles con este cierre.
 
 ## Siete trampas que ya costaron caro
