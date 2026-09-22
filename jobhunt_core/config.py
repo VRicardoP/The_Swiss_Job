@@ -54,6 +54,14 @@ class CoreSettings(BaseSettings):
 
     # Cadencias del harness GATE-SOMBRA (B-05, §5/§6) — las consume el beat
     # de celery_app.py (corre en el core-worker LOCAL, ver shadow/RUNBOOK.md).
+    # Captura CDC del legacy. En False el beat deja de programar el harness
+    # que SOLO existe para vigilar el slot y cerrar el ciclo de sombra
+    # (check_slot_health, preview_cycle, run_cycle). NO toca shadow.project,
+    # que pese al nombre ES el postprocesado del ciclo nativo: drena embeddings
+    # y reevalua perfiles tras cada cosecha. Apagar la familia shadow.* por su
+    # nombre apagaria el motor de matching con todos los indicadores en verde.
+    CORE_CAPTURE_ENABLED: bool = True
+
     CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S: int = 300   # sample_outbox_lag (§5)
     CORE_SHADOW_SLOT_HEALTH_EVERY_S: int = 300     # check_slot_health (§6)
     CORE_SHADOW_PRE_GATE_EVERY_S: int = Field(default=3600, ge=300)
