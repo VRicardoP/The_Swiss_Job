@@ -18,7 +18,8 @@ avisos SÍ quedó acreditada esa misma mañana (§7ter).
 
 Commits de esta jornada: `20b92b9` (portado + paridad de acceso + canton),
 `1e32dc7` y `f8e2fff` (ritmo de irishjobs), `51be757` (slug de jobgether).
-Suite core sobre `20b92b9`: **1732 passed, 1025,59 s**. Sin push.
+Suite core sobre `20b92b9`: **1732 passed, 1025,59 s**; sobre `281cf54`, con
+el flag de retirada de captura: **1745 passed, 1314,63 s**. Sin push.
 
 ## 2. Fuentes transferidas
 
