@@ -578,7 +578,8 @@ Orden sugerido y forma, sin fecha: (1) `_fetch_scrapers_async`/`_fetch_providers
 | Paquete | Estado | Evidencia |
 |---|---|---|
 | T2 | **CERRADO salvo el canario de escritura** | `7591da4` + `17e2b9e`; 9 pruebas rojas→verdes (5 core, 4 BFF); core 1.770, BFF 2.567 + 4 xfail; `core-api` y `backend` en `point5-17e2b9e` verificados en el proceso (`release`, `inspect`, `_write` contiene `clear_feed_cache`), 0 reinicios. **PENDIENTE**: el «me interesa» real del propietario que demuestre en producción que la lectura siguiente lo sirve. Tropiezo registrado: la cláusula de canónica en `feed()` bajó dos nDCG a 0,0 y se retiró de ahí (es el feed del gate) |
-| T0, T1, T3–T16 | PENDIENTES | — |
+| T3 | **CERRADO** | `351c5a0`, desplegado en `swissjob-backend:point5-351c5a0` (0 reinicios). Medido EN EL PROCESO desplegado, con el espía en ese mismo proceso y sobre 100 títulos reales: el paso de idioma de la traducción pasa de **127,8 ms/título (230 s por feed) a 0,08 ms y 0 llamadas a langdetect**. 5 pruebas, 3 rojas contra HEAD. Suite 2.572 passed. Incluye A19-05: `.gitignore` por prefijo `.env.core.*` — el fichero del DSN **no existe** en el árbol, así que el riesgo era latente, no vivo |
+| T0, T1, T4–T16 | PENDIENTES | T1, T5, T13 y T15 son decisiones del propietario |
 | Fuera del plan — panel «AI Job Match» (Portfolio) | **HECHO salvo publicar el frontend** | `ReactPortfolio/backend` `c01a192`+`32fe475` desplegado (`enrich-32fe475`); frontend `a0bf889` sin push (Cloudflare Pages). Detalle: `docs/audits/DIAGNOSTICO_PANEL_OFERTAS_2026-09-23.md` §5 |
 
 ### Criterio de cierre de cada paquete
