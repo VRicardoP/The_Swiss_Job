@@ -414,10 +414,16 @@ async def test_results_pagination_slice(seeded, impl):
 
 async def test_core_walks_keyset_pages_and_preserves_order(seeded):
     """El cliente sigue next_cursor hasta agotar el feed (fake pagina de a
-    FAKE_PAGE_SIZE aunque se pida mas) y conserva el orden score DESC."""
+    FAKE_PAGE_SIZE aunque se pida mas) y conserva el orden score DESC.
+
+    Se cuentan las peticiones de PAGINA: desde 2026-09-23 el cliente pregunta
+    ademas la version del feed cuando va a recorrerlo entero, para poder
+    reutilizar el recorrido anterior si nada cambio (tests/test_feed_version_cache.py).
+    Esa consulta no es una pagina y no altera lo que esta prueba afirma."""
     user_id, matchings, fake = seeded
     items, _ = await matchings["core"].results(user_id)
-    assert len(fake.requests) == 2  # ceil(3 casos / 2 por pagina)
+    paginas = [r for r in fake.requests if not r.url.path.endswith("/version")]
+    assert len(paginas) == 2  # ceil(3 casos / 2 por pagina)
     scores = [i["match"].score_final for i in items]
     assert scores == sorted(scores, reverse=True)
 

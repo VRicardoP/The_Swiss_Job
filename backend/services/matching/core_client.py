@@ -106,6 +106,36 @@ _etag_cache: dict[tuple[str, str], tuple[str, dict]] = {}
 _cache_generation = 0
 _profile_generations: dict[str, int] = {}
 
+# Recorrido COMPLETO del feed por perfil, indexado por la VERSION que declara
+# el core: {profile_id: (version, items, total)}.
+#
+# Por que existe. La pantalla principal pide 3.000 ofertas (MatchPage.jsx:40) y
+# el feed trae 1.800, asi que el recorrido entero es obligatorio. Medido en el
+# NAS, ese recorrido es el 87-89 % del coste: 47,5 s en frio y 11,5 s en
+# caliente, en 18 paginas. Caliente sigue costando porque un `If-None-Match`
+# NO ahorra trabajo: el ETag se deriva del payload, o sea que el core
+# construye la pagina igual para contestar 304.
+#
+# Con la version, una carga sin cambios cuesta UNA consulta barata en vez de
+# 18 paginas. Es correcto por construccion: si el feed servido cambia, la
+# version cambia (jobhunt_core.matching.feed_version_sql), y aqui solo se
+# reutiliza lo cacheado cuando la version coincide EXACTAMENTE.
+#
+# Solo se cachea el recorrido COMPLETO: uno cortado por `needed` no sirve para
+# responder a otro llamante que pida mas. Y solo la parte INMUTABLE — lo que
+# sirve el core. El estado local del usuario (feedback, candidatura, urgencia,
+# borrador) se relee en CADA peticion, que es lo que hace que esta cache no
+# pueda servir nada rancio de lo que el usuario acaba de tocar.
+#
+# INVARIANTE que sostiene todo esto: los items cacheados se leen y JAMAS se
+# mutan. `_match_view`, `_job_view` y `legacy_job_refs` solo leen, y `results`
+# construye dicts NUEVOS. Se devuelve una copia de la LISTA para que nadie la
+# vacie desde fuera; los dicts se comparten a proposito, porque copiarlos en
+# profundidad 1.800 veces por peticion costaria lo que esta cache ahorra. Si
+# algun dia hace falta mutarlos, copia primero.
+_FEED_CACHE_MAX = 32
+_feed_cache: dict[str, tuple[str, list[dict], int]] = {}
+
 
 def clear_feed_cache(profile_id=None) -> None:
     """Invalidate a deleted subject without evicting other users' pages."""
@@ -114,11 +144,13 @@ def clear_feed_cache(profile_id=None) -> None:
         _cache_generation += 1
         _profile_generations.clear()
         _etag_cache.clear()
+        _feed_cache.clear()
         return
     pid = str(profile_id)
     if pid not in _profile_generations and len(_profile_generations) >= _ETAG_CACHE_MAX:
         clear_feed_cache()  # bounded state; global epoch fences older in-flight requests
     _profile_generations[pid] = _profile_generations.get(pid, 0) + 1
+    _feed_cache.pop(pid, None)
     for key in list(_etag_cache):
         if key[0] == pid:
             _etag_cache.pop(key, None)
@@ -611,11 +643,29 @@ class CoreMatching:
         entonces se recorre entero como antes: perder la optimizacion es
         aceptable, dar un total equivocado no.
         """
+        pid = str(core_profile_id)
         items: list[dict] = []
         cursor: str | None = None
         seen_cursors: set[str] = set()
         total: int | None = None
         async with self._client_factory() as client:
+            # Version del feed ANTES de recorrerlo: si no cambio, el recorrido
+            # completo que ya tenemos sigue siendo valido y nos ahorramos 18
+            # paginas. Si el core no la sirve, se recorre como siempre.
+            #
+            # Solo se pregunta cuando puede PAGAR. La consulta de version
+            # recorre las mismas filas que el recuento del feed (0,4-0,9 s
+            # medidos), asi que pedirla para servir una pagina de 20 —que el
+            # corte temprano ya resuelve en UNA peticion— seria cambiar una
+            # peticion barata por dos. Por encima de una pagina, el recorrido
+            # cuesta 18 peticiones y 11,5 s: ahi compensa de sobra.
+            version = None
+            if needed is None or needed > FEED_PAGE_LIMIT:
+                version = await self._feed_version(client, core_profile_id)
+            if version is not None:
+                cacheado = _feed_cache.get(pid)
+                if cacheado is not None and cacheado[0] == version:
+                    return list(cacheado[1]), cacheado[2]
             for _ in range(MAX_FEED_PAGES):
                 page = await self._fetch_page(client, core_profile_id, cursor)
                 page_items = page.get("items") or []
@@ -641,6 +691,10 @@ class CoreMatching:
                     total = page_dto.total
                 cursor = page_dto.next_cursor
                 if cursor is None:
+                    # Recorrido COMPLETO: es el unico que se cachea. Uno
+                    # cortado por `needed` no puede servir a quien pida mas.
+                    if version is not None:
+                        self._remember_feed(pid, version, items, total)
                     return items, total
                 # Corte temprano: solo si el core ya dijo cuantas ofertas tiene
                 # su feed. Sin ese dato el total lo da el recorrido, y cortar
@@ -655,6 +709,47 @@ class CoreMatching:
         raise CoreUnavailableError(
             f"feed del core excede {MAX_FEED_PAGES} paginas (cota anti-bucle)"
         )
+
+    async def _feed_version(
+        self, client: httpx.AsyncClient, core_profile_id: uuid.UUID
+    ) -> str | None:
+        """Version del feed segun el core, o None si no se puede obtener.
+
+        None significa «no lo se», y el llamante recorre el feed entero como
+        siempre: un core anterior a este endpoint, un fallo de red o un
+        payload raro degradan el RENDIMIENTO, nunca la correccion. Es la misma
+        disciplina que `MatchesPageDTO.total`, y por el mismo motivo: servir
+        algo rancio es peor que servirlo lento.
+        """
+        try:
+            resp = await client.get(f"/profiles/{core_profile_id}/matches/version")
+        except httpx.HTTPError:
+            return None
+        if resp.status_code != 200:
+            return None
+        try:
+            body = resp.json()
+        except ValueError:
+            return None
+        # Misma disciplina que el resto del cliente: un 200 con OTRA forma es
+        # un payload invalido, no una excepcion que escape del fallback. Un
+        # cuerpo no-objeto reventaba aqui con AttributeError.
+        if not isinstance(body, dict):
+            return None
+        version = body.get("version")
+        return version if isinstance(version, str) and version else None
+
+    def _remember_feed(self, pid: str, version: str, items: list[dict], total) -> None:
+        """Guarda un recorrido completo. Acotado y sin LRU a proposito: este
+        despliegue tiene tres perfiles, y vaciar del todo es mas simple y mas
+        facil de razonar que desalojar por uso."""
+        if total is None or len(items) != total:
+            # El total del core y lo recorrido deben cuadrar; si no cuadran,
+            # no se cachea nada. Cachear una discrepancia la perpetuaria.
+            return
+        if len(_feed_cache) >= _FEED_CACHE_MAX and pid not in _feed_cache:
+            _feed_cache.clear()
+        _feed_cache[pid] = (version, list(items), total)
 
     async def _fetch_page(
         self, client: httpx.AsyncClient, core_profile_id: uuid.UUID, cursor: str | None
