@@ -189,3 +189,53 @@ sin resumen, como se advirtió en §1.1.
   el mismo diseño se puede reutilizar (tabla + tarea + decoración).
 - Bloque A del §3 (HTML de `arbeitnow` nativo, tarjeta de colegios,
   etiqueta «Me interesa»): sin hacer.
+
+---
+
+## 6. La «Bolsa de empleo» era otra ventana — y también está arreglada
+
+Corrección de §1: la pantalla que el propietario describió («sólo veo aplicar o
+guardar», «no puedo entrar en la oferta excepto por aplicar») **no es** la
+`/match` de SwissJob que analicé, sino `JobBoardTabbedWindow` del **Portfolio**.
+Sus etiquetas son exactamente `apply`, `save`, `bookmark`. Los datos medidos en
+§1 y §4 siguen valiendo —vienen del feed del core, que ambas leen—, pero el
+análisis de la tarjeta apuntaba al componente equivocado.
+
+Lo que esa tarjeta pintaba de verdad: título, empresa, ubicación, etiquetas,
+fecha y dos botones. **Ninguna descripción**, ni siquiera recortada, aunque el
+backend sí enviaba `description_snippet` — y **33 de cada 40 con marcado crudo**
+(`<br><strong>About Us</strong><p>…`).
+
+### Lo hecho (`483fad0` backend, `f2ce188` frontend)
+
+| Cambio | Dónde |
+|---|---|
+| `strip_html`: HTML de terceros → texto legible, con la stdlib. Las etiquetas de bloque marcan frontera de frase, `script`/`style` se descartan, las entidades se decodifican. Idempotente; un no-`str` devuelve `""` | `utils/text_html.py` |
+| El catálogo limpia descripción y snippet, y transporta el texto limpio al resumidor | `services/catalog/core_client.py` |
+| `/api/v1/jobs/search` decora cada oferta con `title_en` y `summary` del mismo almacén que el AI Job Match. Servir sigue sin llamar a ningún LLM | `routers/jobs_unified.py` |
+| La tarjeta muestra el título traducido, **lo enlaza a la oferta** (antes el único camino era «apply», que sugiere postular) y añade 2-3 frases: resumen, o principio de la descripción, o una línea explícita si la fuente no publica texto | `JobBoardTabbedWindow.jsx` |
+
+**Un defecto que cazó su propia suite:** decorar consulta la base, así que un
+corte de base convertía «servir lo local conocido, no un 500» en un 500
+(`test_jobhunt_routing`). `decorate` ahora **degrada** —sin título traducido,
+sin resumen, página servida— con una prueba que lo fija.
+
+Suites: backend del Portfolio **2.041 passed, 1 skipped**; frontend **394/394**.
+
+### Medido en producción tras desplegar
+
+`GET /api/v1/jobs/search?limit=40`: **0 ofertas con marcado** (antes 33/40),
+`title_en` y `summary` presentes, el texto interno del resumidor no se filtra.
+De esa página, 23 siguen sin texto: **22 de `financejobs` y 1 de `publicjobs`**,
+que no publican descripción en origen (§1.1) — ahí la tarjeta lo dice en vez de
+quedarse muda. El bucle de fondo tenía 15 títulos y 8 resúmenes en cola.
+
+### Lo que sigue pendiente del panel
+
+- **El frontend del Portfolio hay que volver a publicarlo** (`f2ce188`): sin
+  push no hay despliegue en Cloudflare Pages.
+- **`jobgether` y `financejobs` sin descripción en origen** — decisión B.
+- **SwissJob `/match` y su catálogo** siguen sin título traducido ni resumen,
+  y `arbeitnow` nativo sigue guardando HTML en la canónica (bloque A). El
+  `strip_html` del Portfolio es la defensa del consumidor, no el arreglo de
+  raíz.
