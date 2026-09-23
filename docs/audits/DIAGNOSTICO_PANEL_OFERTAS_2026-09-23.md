@@ -114,3 +114,78 @@ ofertas que no tienen texto.
 - Raw financejobs: `description` y `summary` presentes y `null`.
 - Redis: 7 claves `translate:title:*`.
 - Detalle `/jobs/{hash}`: 200 con descripción vacía en la nativa y en 3/3 escolares probadas.
+
+---
+
+## 5. Decisión del propietario y ejecución (23-09, tarde)
+
+El propietario fijó el alcance: **la ventana «AI Job Match» debe mostrar los
+títulos traducidos y un resumen de 2–3 frases**, y además reportó el mensaje
+«Core unavailable and no local fallback is ready» al lanzar el análisis.
+
+### 5.1 La pantalla es del Portfolio, no de SwissJob
+
+El mensaje exacto no existe en este repositorio: está en
+`ReactPortfolio/backend/routers/ai_match.py:171`. La ventana «AI Job Match» es
+la del **Portfolio** (`AIJobMatchWindow.jsx`), que lee el mismo feed del core
+con su propio cliente. Su backend registró a las 12:27:45 UTC «background
+matching core_read: using explicit local fallback»: la lectura del feed falló
+una vez, la excepción se tragaba, y sin resultado local el endpoint devolvía
+503. Reproducida la llamada exacta después, funcionaba (0,75 s, 50
+resultados): el fallo fue transitorio y **no atribuible** con lo que había en
+los logs. Corrección: la causa se registra (`tipo: mensaje`) y viaja en el 503.
+
+### 5.2 Diseño aplicado (Portfolio, `c01a192` + `32fe475`)
+
+Mismo patrón que el idioma persistido de SwissJob: **el texto derivado por LLM
+se resuelve una vez y se persiste; servir sólo lee.**
+
+| Pieza | Dónde |
+|---|---|
+| Tabla `job_enrichments` (`kind`, `key`, `source_text`, `value`, `model`, `resolved_at`) con tres estados explícitos (ausente / `NULL` encolado / `''` nada que hacer) | Alembic `ss22t1153v19` |
+| `decorate()`: una consulta por página, añade `title_en` y `summary`, encola lo que falta (INSERT idempotente) | `services/enrichment.py` |
+| `_periodic_enrichment`: noveno «arpón» del `lifespan`, gateado por el kill-switch; 25 títulos por llamada del traductor existente, 8 resúmenes/min con Groq; un fallo del LLM deja la fila pendiente | `main.py` |
+| `match_to_result` conserva hasta 4.000 caracteres de la descripción bajo `_source_text` para el resumidor; `decorate` la retira antes de servir | `services/matching/core_client.py` |
+| Tarjeta: `title_en` con la insignia existente; resumen; si no hay, inicio de la descripción; si la fuente no publica texto, lo dice | `AIJobMatchWindow.jsx` + i18n en/es/de |
+
+Ocho costuras del propio Portfolio mordieron y se actualizaron **a
+propósito**: pines de arpones (8→9) en dos tests, pin de la cabeza de Alembic,
+censo de columnas acotadas (`key` sanea repertorio antes de recortar; `kind` y
+`model` exentas con motivo), censo de texto libre (`source_text`, `value`
+saneadas por el acuñador), paridad modelo↔migración del índice parcial.
+
+Suites: backend del Portfolio **2.026 passed, 1 skipped**; frontend **390/390**.
+
+### 5.3 Dos tropiezos con lección
+
+1. **Reutilicé un id de revisión de Alembic** que ya existía: los nombres de
+   fichero no van en el orden de los ids. La cabeza se pregunta con
+   `alembic heads` sobre el árbol sin el fichero nuevo, no con `ls | tail`.
+2. **La imagen no arrancó en producción** (~1 min sin servicio, restaurada
+   desde `.before`): el compose del NAS fija `working_dir: /release` y lanza
+   el entrypoint en relativo; las imágenes de release se construían desde un
+   directorio staged con esa disposición, no desde el `Dockerfile` del repo
+   (`/app`). Ahora `ARG APP_DIR` y la release se construye con
+   `--build-arg APP_DIR=/release`. Recibo en `audit-fixes-20260923/`.
+
+### 5.4 Medido en producción tras desplegar
+
+Encolados los 50 resultados del feed vivo: 35 títulos y 38 textos. El bucle
+los drenó en **4 min 45 s** (5 pasadas): `title_en` 34 «ya en inglés» + 1
+traducido; `summary` **38/38 resueltos, 0 vacíos**. Ejemplo servido:
+«The role is a Microsoft‑focused internal IT administrator at … in Dresden.
+Responsib…». 12 de 50 resultados no tienen texto fuente (jobgether) y quedan
+sin resumen, como se advirtió en §1.1.
+
+### 5.5 Lo que falta
+
+- **El frontend del Portfolio no está desplegado**: se publica en Cloudflare
+  Pages desde `github.com/VRicardoP/ReactPortfolio`; el commit `a0bf889`
+  está en local y **no hay push** (regla del proyecto). Hasta entonces el
+  backend ya sirve `title_en` y `summary`, pero la tarjeta antigua los ignora.
+- **Decisión B pendiente**: descargar la página de cada oferta de `jobgether`
+  (27 % del feed) para tener texto; sin eso no hay resumen posible.
+- **SwissJob `/match`** (`MatchPage`) sigue sin títulos traducidos ni resumen:
+  el mismo diseño se puede reutilizar (tabla + tarea + decoración).
+- Bloque A del §3 (HTML de `arbeitnow` nativo, tarjeta de colegios,
+  etiqueta «Me interesa»): sin hacer.
