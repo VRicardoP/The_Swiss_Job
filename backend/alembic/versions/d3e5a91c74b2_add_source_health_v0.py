@@ -39,9 +39,7 @@ def upgrade() -> None:
         sa.Column("last_attempt_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_outcome", sa.String(length=20), nullable=True),
         sa.Column("last_success_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column(
-            "last_jobs_count", sa.Integer(), nullable=False, server_default="0"
-        ),
+        sa.Column("last_jobs_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("last_error_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_error_detail", sa.String(length=500), nullable=True),
         sa.Column(

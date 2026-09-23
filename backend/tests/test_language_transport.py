@@ -32,11 +32,21 @@ from services.translation_service import TranslationService
 
 def _match():
     return CoreMatchView(
-        id=uuid.uuid4(), job_hash="h" * 32, score_final=71.0,
-        score_embedding=0.7, score_salary=0.0, score_location=0.0,
-        score_recency=0.0, score_llm=0.0, explanation=None,
-        matching_skills=[], missing_skills=[], feedback=None,
-        application_status="detected", urgency_score=0.0, draft_letter=None,
+        id=uuid.uuid4(),
+        job_hash="h" * 32,
+        score_final=71.0,
+        score_embedding=0.7,
+        score_salary=0.0,
+        score_location=0.0,
+        score_recency=0.0,
+        score_llm=0.0,
+        explanation=None,
+        matching_skills=[],
+        missing_skills=[],
+        feedback=None,
+        application_status="detected",
+        urgency_score=0.0,
+        draft_letter=None,
         created_at=datetime.now(timezone.utc),
     )
 
@@ -46,8 +56,11 @@ def _vacancy(**extra):
         "id": str(uuid.uuid4()),
         "title": "Softwareentwickler (m/w/d)",
         "company": "Acme",
-        "primary_listing": {"source": "core", "external_id": "x",
-                            "url": "https://example.com/j/1"},
+        "primary_listing": {
+            "source": "core",
+            "external_id": "x",
+            "url": "https://example.com/j/1",
+        },
         "listings": [],
     }
     base.update(extra)
@@ -57,6 +70,7 @@ def _vacancy(**extra):
 @pytest.fixture
 def detector_que_estalla(monkeypatch):
     """Detectar es exactamente lo que NO debe ocurrir con idioma conocido."""
+
     def estallar(cls, text):
         raise AssertionError(f"se detectó el idioma de {text!r} teniéndolo ya")
 
@@ -64,6 +78,7 @@ def detector_que_estalla(monkeypatch):
 
 
 # --- Mapeo del BFF: el campo llega desde el VacancyDTO del core ------------
+
 
 def test_job_view_transporta_el_idioma_del_core():
     assert _job_view(_vacancy(language="de"), "core").language == "de"
@@ -86,9 +101,13 @@ def test_job_view_sin_campo_es_ausente():
 
 # --- Frontera servida: lo que el router hace con ese campo -----------------
 
+
 def test_con_idioma_conocido_el_router_no_detecta(detector_que_estalla):
-    item = {"match": _match(), "job": _job_view(_vacancy(language="fr"), "core"),
-            "school": None}
+    item = {
+        "match": _match(),
+        "job": _job_view(_vacancy(language="fr"), "core"),
+        "school": None,
+    }
     resp = _to_match_response(item, translations={})
     assert resp.job_language == "fr"
 
@@ -111,8 +130,10 @@ def test_sin_idioma_el_router_no_deduce_nada(detector_que_estalla):
 def test_un_idioma_invalido_no_impide_servir(detector_que_estalla):
     """Inválido se degrada a ausente ANTES del router; con título vacío no hay
     nada que detectar, así que la oferta se sirve sin indicador."""
-    item = {"match": _match(),
-            "job": _job_view(_vacancy(title="", language=7), "core"),
-            "school": None}
+    item = {
+        "match": _match(),
+        "job": _job_view(_vacancy(title="", language=7), "core"),
+        "school": None,
+    }
     resp = _to_match_response(item, translations={})
     assert resp.job_language is None

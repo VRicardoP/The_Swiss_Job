@@ -64,10 +64,14 @@ async def _generate_profile_embedding_async(user_id: str) -> dict[str, Any]:
 
     embedding = await asyncio.to_thread(matcher.encode, combined_text)
     async with task_session() as db:
-        profile = (await db.execute(
-            select(UserProfile).where(UserProfile.user_id == uid)
-            .with_for_update().execution_options(populate_existing=True)
-        )).scalar_one_or_none()
+        profile = (
+            await db.execute(
+                select(UserProfile)
+                .where(UserProfile.user_id == uid)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
         if profile is None or embedding_snapshot(profile) != vector_input:
             return {"status": "discarded_profile_changed"}
         profile.cv_embedding = embedding.tolist()

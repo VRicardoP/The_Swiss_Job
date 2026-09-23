@@ -20,16 +20,36 @@ async def test_library_pages_ties_orphans_and_ownership(client, db_session):
     ids = [uuid.uuid4() for _ in range(45)]
     now = datetime.now(timezone.utc)
     for identity in ids:
-        db_session.add(GeneratedDocument(id=identity, user_id=uid, job_hash="gone" * 8,
-            job_title="Original position", job_company="Original company", doc_type="cv",
-            content="Preserved CV", language="en", created_at=now))
-    db_session.add(GeneratedDocument(user_id=other, job_hash="gone" * 8, doc_type="cv",
-                                     content="Private other owner", language="en"))
+        db_session.add(
+            GeneratedDocument(
+                id=identity,
+                user_id=uid,
+                job_hash="gone" * 8,
+                job_title="Original position",
+                job_company="Original company",
+                doc_type="cv",
+                content="Preserved CV",
+                language="en",
+                created_at=now,
+            )
+        )
+    db_session.add(
+        GeneratedDocument(
+            user_id=other,
+            job_hash="gone" * 8,
+            doc_type="cv",
+            content="Private other owner",
+            language="en",
+        )
+    )
     await db_session.commit()
     collected, cursor, sizes = [], None, []
     while True:
-        response = await client.get("/api/v1/documents", headers=_auth(token),
-                                    params={"cursor": cursor} if cursor else {})
+        response = await client.get(
+            "/api/v1/documents",
+            headers=_auth(token),
+            params={"cursor": cursor} if cursor else {},
+        )
         assert response.status_code == 200, response.text
         page = response.json()
         sizes.append(len(page["data"]))
@@ -42,5 +62,7 @@ async def test_library_pages_ties_orphans_and_ownership(client, db_session):
     assert sizes == [20, 20, 5]
     assert collected == sorted(ids, reverse=True)
     assert len(set(collected)) == 45
-    invalid = await client.get("/api/v1/documents", headers=_auth(token), params={"cursor": "bad"})
+    invalid = await client.get(
+        "/api/v1/documents", headers=_auth(token), params={"cursor": "bad"}
+    )
     assert invalid.status_code == 400

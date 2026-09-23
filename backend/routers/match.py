@@ -169,13 +169,17 @@ def _to_match_response(
     # Si ninguno lo tiene, el indicador no se muestra y la tarea de fondo lo
     # resolverá para la próxima carga. Ausente significa «todavía no lo sé»,
     # nunca «no hay idioma»: es lo que hace innecesario detectar al servir.
-    job_language = job.language or (languages or {}).get(
-        language_store.normalise(original_title)
-    ) or None
+    job_language = (
+        job.language
+        or (languages or {}).get(language_store.normalise(original_title))
+        or None
+    )
 
     # Resolver school metadata si el job es de la watchlist (tag = school.id)
     school = item.get("school")
-    if "school" not in item:  # Local authority only; never fall back after the school cutover.
+    if (
+        "school" not in item
+    ):  # Local authority only; never fall back after the school cutover.
         for tag in job.tags or []:
             school = get_school(tag)
             if school:
@@ -232,7 +236,9 @@ async def _build_results_response(
     if db is not None:
         titulos = [item["job"].title or "" for item in results]
         languages = await language_store.lookup(db, titulos)
-        pendientes = [t for t in titulos if language_store.normalise(t) not in languages]
+        pendientes = [
+            t for t in titulos if language_store.normalise(t) not in languages
+        ]
         if pendientes:
             await language_store.record_pending(db, pendientes)
 
@@ -244,7 +250,9 @@ async def _build_results_response(
             for item in results
         ]
         translator = TranslationService(groq)
-        translations = await translator.translate_titles(titles_with_lang, languages=languages)
+        translations = await translator.translate_titles(
+            titles_with_lang, languages=languages
+        )
 
     data = [_to_match_response(item, translations, languages) for item in results]
 

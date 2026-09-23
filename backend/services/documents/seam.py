@@ -50,8 +50,13 @@ class FallbackDocuments:
         # E.2: canary is READ-only. A core timeout may hide a successful commit;
         # never try a second writer. Core writes need the separate E cutover.
         return await self._fallback.create(
-            user_id, job_hash, doc_type, content, language,
-            job_title=job_title, job_company=job_company,
+            user_id,
+            job_hash,
+            doc_type,
+            content,
+            language,
+            job_title=job_title,
+            job_company=job_company,
         )
 
     async def list(self, user_id, job_hash, doc_type=None):
@@ -90,7 +95,10 @@ class FallbackDocuments:
 
 
 async def resolve_documents(
-    db: AsyncSession, user_id: uuid.UUID | None = None, *, write=False,
+    db: AsyncSession,
+    user_id: uuid.UUID | None = None,
+    *,
+    write=False,
 ) -> DocumentsPort:
     """Resolve the sole authority; never guess from cache on a routing error."""
     if write:
@@ -99,11 +107,15 @@ async def resolve_documents(
     try:
         if write:
             await db.execute(text("LOCK TABLE jobhunt_routing IN SHARE MODE"))
-        rows = (await db.execute(select(JobhuntRouting.profile_id, JobhuntRouting.mode).where(
-            JobhuntRouting.consumer_id == CONSUMER_SWISSJOB,
-            JobhuntRouting.capability == "documents",
-            JobhuntRouting.profile_id.in_([pid, PROFILE_WILDCARD]),
-        ))).all()
+        rows = (
+            await db.execute(
+                select(JobhuntRouting.profile_id, JobhuntRouting.mode).where(
+                    JobhuntRouting.consumer_id == CONSUMER_SWISSJOB,
+                    JobhuntRouting.capability == "documents",
+                    JobhuntRouting.profile_id.in_([pid, PROFILE_WILDCARD]),
+                )
+            )
+        ).all()
         modes = dict(rows)
         mode = modes.get(pid, modes.get(PROFILE_WILDCARD, "local"))
         if mode in {"local", "shadow", "core_read"}:

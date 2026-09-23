@@ -106,9 +106,7 @@ async def _analyze_and_autofill_async(user_id: str) -> dict[str, Any]:
 
         async with task_session() as db:
             p = (
-                await db.execute(
-                    select(UserProfile).where(UserProfile.user_id == uid)
-                )
+                await db.execute(select(UserProfile).where(UserProfile.user_id == uid))
             ).scalar_one_or_none()
             if p is None or not p.cv_text:
                 await progress("error", 100, "No CV found to analyze")
@@ -126,13 +124,17 @@ async def _analyze_and_autofill_async(user_id: str) -> dict[str, Any]:
         async with task_session() as db:
             p = (
                 await db.execute(
-                    select(UserProfile).where(UserProfile.user_id == uid)
-                    .with_for_update().execution_options(populate_existing=True)
+                    select(UserProfile)
+                    .where(UserProfile.user_id == uid)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
             ).scalar_one_or_none()
             if p is None or autofill_snapshot(p) != original:
                 await db.rollback()  # release the row before best-effort SSE I/O
-                await progress("done", 100, "Newer profile kept; old analysis discarded")
+                await progress(
+                    "done", 100, "Newer profile kept; old analysis discarded"
+                )
                 return {"status": "discarded_profile_changed"}
             if fields.get("title"):
                 p.title = fields["title"]
@@ -162,13 +164,17 @@ async def _analyze_and_autofill_async(user_id: str) -> dict[str, Any]:
         async with task_session() as db:
             p = (
                 await db.execute(
-                    select(UserProfile).where(UserProfile.user_id == uid)
-                    .with_for_update().execution_options(populate_existing=True)
+                    select(UserProfile)
+                    .where(UserProfile.user_id == uid)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
             ).scalar_one_or_none()
             if p is None or embedding_snapshot(p) != vector_input:
                 await db.rollback()
-                await progress("done", 100, "Newer profile kept; old indexing discarded")
+                await progress(
+                    "done", 100, "Newer profile kept; old indexing discarded"
+                )
                 return {"status": "discarded_profile_changed"}
             p.cv_embedding = emb.tolist()
             await db.commit()

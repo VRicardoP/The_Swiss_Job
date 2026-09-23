@@ -1100,11 +1100,9 @@ class TestApplyUrlGuard:
     @pytest.mark.asyncio
     async def test_apply_url_invalido_degrada_solo_el_campo(self, db_session):
         repo = JobRepository(db_session)
-        base = _job_dict(hash="aurl0001" + "0" * 24,
-                         url="https://x.test/aurl-1")
+        base = _job_dict(hash="aurl0001" + "0" * 24, url="https://x.test/aurl-1")
         # no-string, NUL, desborde (>1000, contrato core) y vacío: campo fuera
-        for i, malo in enumerate([123, "con\x00nul", "https://a/" + "b" * 2100,
-                                  "   "]):
+        for i, malo in enumerate([123, "con\x00nul", "https://a/" + "b" * 2100, "   "]):
             job = dict(base)
             job["hash"] = f"aurl{i:04d}" + "0" * 24
             job["url"] = f"https://x.test/aurl-{i}"
@@ -1116,8 +1114,7 @@ class TestApplyUrlGuard:
     @pytest.mark.asyncio
     async def test_apply_url_valido_persiste_y_refresca(self, db_session):
         repo = JobRepository(db_session)
-        job = _job_dict(hash="aurlok01" + "0" * 24,
-                        url="https://x.test/aurl-ok")
+        job = _job_dict(hash="aurlok01" + "0" * 24, url="https://x.test/aurl-ok")
         job["apply_url"] = "https://ats.acme.com/jobs/1"
         await repo.upsert_job(job)
         row = await db_session.get(Job, job["hash"])

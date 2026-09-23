@@ -13,6 +13,7 @@ El idioma ya lo tenemos por dos vías baratas: el que sirve el core con la
 oferta y el derivado que persiste `job_title_languages`. Aquí se fija que se
 usan ésas y que langdetect NO entra en el camino de respuesta.
 """
+
 import pytest
 
 from services.translation_service import TranslationService
@@ -31,6 +32,7 @@ class _GroqFalso:
 def detector_que_estalla(monkeypatch):
     """langdetect es lo caro: si alguien vuelve a llamarlo al servir, esto
     explota en vez de ponerse lento en producción."""
+
     def estallar(cls, *a, **kw):
         raise AssertionError("el camino de respuesta llamó a langdetect")
 
@@ -56,18 +58,24 @@ def traductor(monkeypatch):
 
 async def test_con_idioma_conocido_no_se_detecta(traductor, detector_que_estalla):
     """El core sirve `language` en la oferta: basta con leerlo."""
-    out = await traductor.translate_titles([
-        {"title": "Software Engineer", "language": "en"},
-        {"title": "Ingénieur logiciel", "language": "fr"},
-    ])
-    assert out["Software Engineer"] == "Software Engineer", "un título EN no se manda al LLM"
+    out = await traductor.translate_titles(
+        [
+            {"title": "Software Engineer", "language": "en"},
+            {"title": "Ingénieur logiciel", "language": "fr"},
+        ]
+    )
+    assert out["Software Engineer"] == "Software Engineer", (
+        "un título EN no se manda al LLM"
+    )
     assert out["Ingénieur logiciel"] == "Ingénieur logiciel [EN]"
 
 
 async def test_sin_idioma_tampoco_se_detecta(traductor, detector_que_estalla):
     """Sin dato, se manda al LLM —que devuelve el título igual si ya es inglés—
     en vez de gastar 104 ms en adivinarlo."""
-    out = await traductor.translate_titles([{"title": "Remote Support Agent", "language": ""}])
+    out = await traductor.translate_titles(
+        [{"title": "Remote Support Agent", "language": ""}]
+    )
     assert out["Remote Support Agent"] == "Remote Support Agent [EN]"
 
 
@@ -81,9 +89,13 @@ async def test_usa_el_idioma_derivado_que_se_le_pasa(traductor, detector_que_est
     assert traductor._groq.lotes == [], "no debía mandarse nada al LLM"
 
 
-async def test_la_heuristica_de_caracteres_sigue_valiendo(traductor, detector_que_estalla):
+async def test_la_heuristica_de_caracteres_sigue_valiendo(
+    traductor, detector_que_estalla
+):
     """Es gratis y no usa langdetect: un compuesto alemán se traduce."""
-    out = await traductor.translate_titles([{"title": "Softwareentwickler (m/w/d)", "language": ""}])
+    out = await traductor.translate_titles(
+        [{"title": "Softwareentwickler (m/w/d)", "language": ""}]
+    )
     assert out["Softwareentwickler (m/w/d)"] == "Softwareentwickler (m/w/d) [EN]"
 
 

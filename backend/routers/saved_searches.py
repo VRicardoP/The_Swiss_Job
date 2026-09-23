@@ -17,7 +17,12 @@ from schemas.saved_searches import (
     SavedSearchResponse,
     SavedSearchUpdate,
 )
-from services.saved_searches import CoreSavedSearches, SearchCoreError, block_search_writes, core_owns_searches
+from services.saved_searches import (
+    CoreSavedSearches,
+    SearchCoreError,
+    block_search_writes,
+    core_owns_searches,
+)
 
 
 async def _core_call(operation):
@@ -26,10 +31,14 @@ async def _core_call(operation):
     except SearchCoreError as exc:
         raise HTTPException(exc.status, str(exc)) from None
 
+
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/searches", tags=["saved_searches"],
-                   dependencies=[Depends(block_search_writes)])
+router = APIRouter(
+    prefix="/api/v1/searches",
+    tags=["saved_searches"],
+    dependencies=[Depends(block_search_writes)],
+)
 
 
 @router.get("", response_model=SavedSearchListResponse)
@@ -41,7 +50,9 @@ async def list_saved_searches(
 ):
     """List user's saved searches."""
     if await core_owns_searches(db, current_user.id):
-        return await _core_call(CoreSavedSearches(db, current_user.id).list(limit, offset))
+        return await _core_call(
+            CoreSavedSearches(db, current_user.id).list(limit, offset)
+        )
     conditions = [SavedSearch.user_id == current_user.id]
 
     total = (
@@ -78,9 +89,12 @@ async def create_saved_search(
     if await core_owns_searches(db, current_user.id):
         values = body.model_dump(mode="json")
         values["filters"] = body.filters.model_dump(exclude_unset=True)
-        return await _core_call(CoreSavedSearches(db, current_user.id).create(
-            values, idempotency_key or uuid.uuid4(),
-        ))
+        return await _core_call(
+            CoreSavedSearches(db, current_user.id).create(
+                values,
+                idempotency_key or uuid.uuid4(),
+            )
+        )
     search = SavedSearch(
         user_id=current_user.id,
         name=body.name,
@@ -108,9 +122,12 @@ async def update_saved_search(
 ):
     """Update a saved search."""
     if await core_owns_searches(db, current_user.id):
-        return await _core_call(CoreSavedSearches(db, current_user.id).update(
-            search_id, body.model_dump(mode="json", exclude_unset=True, exclude_none=True),
-        ))
+        return await _core_call(
+            CoreSavedSearches(db, current_user.id).update(
+                search_id,
+                body.model_dump(mode="json", exclude_unset=True, exclude_none=True),
+            )
+        )
     search = (
         await db.execute(
             select(SavedSearch).where(

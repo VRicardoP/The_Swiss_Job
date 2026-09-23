@@ -19,13 +19,32 @@ from tasks.search_tasks import _SENT_PREFIX, candidate_query
 class SearchCaptureError(ValueError):
     pass
 
+
 # Public offer content needed to recover an absent pending offer through the
 # normal sink. No embeddings, user fields or credentials enter this bundle.
 OFFER_FIELDS = (
-    "hash", "source", "url", "apply_url", "is_active", "duplicate_of",
-    "first_seen_at", "title", "company", "description", "tags", "location",
-    "canton", "language", "seniority", "contract_type", "remote",
-    "salary_min_chf", "salary_max_chf", "salary_original", "salary_currency", "salary_period",
+    "hash",
+    "source",
+    "url",
+    "apply_url",
+    "is_active",
+    "duplicate_of",
+    "first_seen_at",
+    "title",
+    "company",
+    "description",
+    "tags",
+    "location",
+    "canton",
+    "language",
+    "seniority",
+    "contract_type",
+    "remote",
+    "salary_min_chf",
+    "salary_max_chf",
+    "salary_original",
+    "salary_currency",
+    "salary_period",
 )
 
 
@@ -52,43 +71,92 @@ async def capture(db, redis, settings, *, captured_at: datetime | None = None):
     await db.execute(text("SET LOCAL timezone='UTC'"))
     # Blocks old in-flight mutations as well as future ones; readers stay live.
     # The operational drain precedes these locks (they do not cancel fetches).
-    await db.execute(text("LOCK TABLE public.jobhunt_routing, public.jobhunt_profile_map, "
-                          "public.saved_searches, public.jobs IN SHARE MODE"))
+    await db.execute(
+        text(
+            "LOCK TABLE public.jobhunt_routing, public.jobhunt_profile_map, "
+            "public.saved_searches, public.jobs IN SHARE MODE"
+        )
+    )
     # Production capture seals AFTER any in-flight writer has drained, using
     # the same clock as jobs.first_seen_at. Explicit time is for replay/tests.
     if captured_at is None:
         captured_at = await db.scalar(text("SELECT clock_timestamp()"))
-    modes = (await db.execute(text("SELECT mode FROM public.jobhunt_routing "
-        "WHERE consumer_id='swissjob' AND capability='saved_searches'"))).scalars().all()
+    modes = (
+        (
+            await db.execute(
+                text(
+                    "SELECT mode FROM public.jobhunt_routing "
+                    "WHERE consumer_id='swissjob' AND capability='saved_searches'"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
     if any(mode not in {"local", "shadow", "core_read"} for mode in modes):
         raise SearchCaptureError("searches no longer have local authority")
-    searches = (await db.execute(select(SavedSearch).order_by(SavedSearch.id))).scalars().all()
+    searches = (
+        (await db.execute(select(SavedSearch).order_by(SavedSearch.id))).scalars().all()
+    )
     owners = {search.user_id for search in searches}
-    links = dict((await db.execute(select(JobhuntProfileMap.user_id, JobhuntProfileMap.core_profile_id)
-        .where(JobhuntProfileMap.user_id.in_(owners)))).all())
+    links = dict(
+        (
+            await db.execute(
+                select(
+                    JobhuntProfileMap.user_id, JobhuntProfileMap.core_profile_id
+                ).where(JobhuntProfileMap.user_id.in_(owners))
+            )
+        ).all()
+    )
     if set(links) != owners or len(set(links.values())) != len(links):
         raise SearchCaptureError("missing or ambiguous owner binding")
     rows, candidates, markers = [], {}, {}
     for search in searches:
-        row = {column.name: getattr(search, column.name) for column in SavedSearch.__table__.columns}
+        row = {
+            column.name: getattr(search, column.name)
+            for column in SavedSearch.__table__.columns
+        }
         row["notify_frequency"] = search.notify_frequency.value
         rows.append(row)
-        result = (await db.execute(candidate_query(search, settings, captured_at)
-            .with_only_columns(*(getattr(Job, key) for key in OFFER_FIELDS))
-            .order_by(Job.hash))).mappings().all()
+        result = (
+            (
+                await db.execute(
+                    candidate_query(search, settings, captured_at)
+                    .with_only_columns(*(getattr(Job, key) for key in OFFER_FIELDS))
+                    .order_by(Job.hash)
+                )
+            )
+            .mappings()
+            .all()
+        )
         sid = str(search.id)
         candidates[sid] = [dict(item) for item in result]
         keys = [f"{_SENT_PREFIX}:{sid}:{item['hash']}" for item in result]
         # Unlike normal legacy execution, Redis failure is NOT fail-open here.
         # An incomplete migration snapshot must never classify everything new.
         values = await redis.mget(keys) if keys else []
-        if len(values) != len(keys) or any(value not in (None, b"1", "1") for value in values):
+        if len(values) != len(keys) or any(
+            value not in (None, b"1", "1") for value in values
+        ):
             raise SearchCaptureError("invalid sent-marker response")
-        markers[sid] = {item["hash"]: value is not None for item, value in zip(result, values)}
+        markers[sid] = {
+            item["hash"]: value is not None for item, value in zip(result, values)
+        }
     fingerprint = dict((await db.execute(text(JOBS_FINGERPRINT_SQL))).mappings().one())
-    return {"version": 1, "captured_at": captured_at, "rows": rows,
-            "bindings": {str(u): str(p) for u,p in links.items()},
-            "candidates": candidates, "sent": markers, "jobs_fingerprint": fingerprint,
-            "settings": {key: getattr(settings, key) for key in (
-                "NOTIFY_WATERMARK_LAG_MINUTES", "NOTIFY_SENT_MARKER_TTL_DAYS",
-                "SAVED_SEARCH_INITIAL_LOOKBACK_DAYS")}}
+    return {
+        "version": 1,
+        "captured_at": captured_at,
+        "rows": rows,
+        "bindings": {str(u): str(p) for u, p in links.items()},
+        "candidates": candidates,
+        "sent": markers,
+        "jobs_fingerprint": fingerprint,
+        "settings": {
+            key: getattr(settings, key)
+            for key in (
+                "NOTIFY_WATERMARK_LAG_MINUTES",
+                "NOTIFY_SENT_MARKER_TTL_DAYS",
+                "SAVED_SEARCH_INITIAL_LOOKBACK_DAYS",
+            )
+        },
+    }

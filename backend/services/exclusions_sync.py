@@ -5,6 +5,7 @@ afterwards, outside the transaction. A startup/periodic drain retries after
 network failures and process restarts, independently of harvest schedulers.
 Multiple BFF processes may deliver the same snapshot: the core fences versions.
 """
+
 import asyncio
 import logging
 import uuid
@@ -32,51 +33,86 @@ async def lock_filter_writer(db: AsyncSession, user_id: uuid.UUID) -> None:
 async def queue_exclusions(db: AsyncSession, user_id: uuid.UUID) -> None:
     """Called BEFORE the mutation commit, with the user lock held."""
     await db.flush()
-    rows = (await db.execute(
-        select(JobFilter.filter_type, JobFilter.pattern).where(
-            JobFilter.user_id == user_id, JobFilter.is_active.is_(True),
-        ).order_by(JobFilter.filter_type, JobFilter.pattern)
-    )).all()
+    rows = (
+        await db.execute(
+            select(JobFilter.filter_type, JobFilter.pattern)
+            .where(
+                JobFilter.user_id == user_id,
+                JobFilter.is_active.is_(True),
+            )
+            .order_by(JobFilter.filter_type, JobFilter.pattern)
+        )
+    ).all()
     payload = [{"kind": r.filter_type, "pattern": r.pattern} for r in rows]
-    stmt = insert(ExclusionSyncState).values(user_id=user_id, version=1, exclusions=payload)
-    await db.execute(stmt.on_conflict_do_update(
-        index_elements=[ExclusionSyncState.user_id],
-        set_={"version": ExclusionSyncState.version + 1,
-              "exclusions": stmt.excluded.exclusions,
-              "last_error": None, "updated_at": func.now()},
-    ))
+    stmt = insert(ExclusionSyncState).values(
+        user_id=user_id, version=1, exclusions=payload
+    )
+    await db.execute(
+        stmt.on_conflict_do_update(
+            index_elements=[ExclusionSyncState.user_id],
+            set_={
+                "version": ExclusionSyncState.version + 1,
+                "exclusions": stmt.excluded.exclusions,
+                "last_error": None,
+                "updated_at": func.now(),
+            },
+        )
+    )
 
 
 async def exclusion_sync_status(db, user_id):
-    row = (await db.execute(select(
-        ExclusionSyncState.version, ExclusionSyncState.delivered_version,
-        ExclusionSyncState.last_error,
-    ).where(ExclusionSyncState.user_id == user_id))).one_or_none()
+    row = (
+        await db.execute(
+            select(
+                ExclusionSyncState.version,
+                ExclusionSyncState.delivered_version,
+                ExclusionSyncState.last_error,
+            ).where(ExclusionSyncState.user_id == user_id)
+        )
+    ).one_or_none()
     if row is None:
         return {"pending": False, "version": 0, "delivered_version": 0}
-    return {"pending": row.delivered_version < row.version,
-            "version": row.version, "delivered_version": row.delivered_version,
-            "last_error": row.last_error}
+    return {
+        "pending": row.delivered_version < row.version,
+        "version": row.version,
+        "delivered_version": row.delivered_version,
+        "last_error": row.last_error,
+    }
 
 
-async def sync_exclusions_to_core(db: AsyncSession, user_id: uuid.UUID, client_factory=None) -> dict:
+async def sync_exclusions_to_core(
+    db: AsyncSession, user_id: uuid.UUID, client_factory=None
+) -> dict:
     """Deliver a COMMITTED snapshot; errors retain the durable pending row."""
     sent_version = None
     try:
-        row = (await db.execute(select(
-            ExclusionSyncState.version, ExclusionSyncState.exclusions,
-            ExclusionSyncState.delivered_version,
-        ).where(ExclusionSyncState.user_id == user_id))).one_or_none()
+        row = (
+            await db.execute(
+                select(
+                    ExclusionSyncState.version,
+                    ExclusionSyncState.exclusions,
+                    ExclusionSyncState.delivered_version,
+                ).where(ExclusionSyncState.user_id == user_id)
+            )
+        ).one_or_none()
         if row is None or row.delivered_version == row.version:
             await db.commit()
             return {"status": "idle"}
         sent_version = row.version
         payload = {"version": sent_version, "exclusions": row.exclusions}
         mode = await resolve_mode(db, CAPABILITY_MATCHING, user_id)
-        pid = await resolve_core_profile_id(db, user_id) if not legacy_owns(mode) else None
-        await db.execute(update(ExclusionSyncState).where(
-            ExclusionSyncState.user_id == user_id,
-        ).values(last_attempt_at=func.now()))
+        pid = (
+            await resolve_core_profile_id(db, user_id)
+            if not legacy_owns(mode)
+            else None
+        )
+        await db.execute(
+            update(ExclusionSyncState)
+            .where(
+                ExclusionSyncState.user_id == user_id,
+            )
+            .values(last_attempt_at=func.now())
+        )
         await db.commit()  # no database lock/transaction while waiting for HTTP
         if legacy_owns(mode):
             return {"status": "local", "mode": mode}
@@ -93,25 +129,45 @@ async def sync_exclusions_to_core(db: AsyncSession, user_id: uuid.UUID, client_f
             # A newer local snapshot is untouched by the conditional error write.
             # After a DB restore, expose the mismatch instead of retrying silently.
             raise ValueError("core_version_ahead")
-        await db.execute(update(ExclusionSyncState).where(
-            ExclusionSyncState.user_id == user_id,
-            ExclusionSyncState.version == sent_version,
-        ).values(delivered_version=sent_version, last_error=None))
+        await db.execute(
+            update(ExclusionSyncState)
+            .where(
+                ExclusionSyncState.user_id == user_id,
+                ExclusionSyncState.version == sent_version,
+            )
+            .values(delivered_version=sent_version, last_error=None)
+        )
         await db.commit()
-        return {"status": "ok", "version": sent_version, "declaradas": len(payload["exclusions"])}
+        return {
+            "status": "ok",
+            "version": sent_version,
+            "declaradas": len(payload["exclusions"]),
+        }
     except Exception as exc:
         # Do not persist/log exception text (HTTP failures can contain credentials).
-        error = str(exc) if isinstance(exc, ValueError) and str(exc) in {
-            "sin_vinculo", "invalid_ack", "core_version_ahead",
-        } else type(exc).__name__
+        error = (
+            str(exc)
+            if isinstance(exc, ValueError)
+            and str(exc)
+            in {
+                "sin_vinculo",
+                "invalid_ack",
+                "core_version_ahead",
+            }
+            else type(exc).__name__
+        )
         try:
             await db.rollback()
             if sent_version is not None:
-                await db.execute(update(ExclusionSyncState).where(
-                    ExclusionSyncState.user_id == user_id,
-                    ExclusionSyncState.version == sent_version,
-                    ExclusionSyncState.delivered_version < sent_version,
-                ).values(last_error=error, last_attempt_at=func.now()))
+                await db.execute(
+                    update(ExclusionSyncState)
+                    .where(
+                        ExclusionSyncState.user_id == user_id,
+                        ExclusionSyncState.version == sent_version,
+                        ExclusionSyncState.delivered_version < sent_version,
+                    )
+                    .values(last_error=error, last_attempt_at=func.now())
+                )
                 await db.commit()
         except Exception:
             # The original mutation and pending row are already committed.
@@ -127,10 +183,24 @@ async def sync_exclusions_to_core(db: AsyncSession, user_id: uuid.UUID, client_f
 
 async def drain_pending_exclusions(session_factory=async_session) -> int:
     async with session_factory() as db:
-        ids = (await db.execute(select(ExclusionSyncState.user_id).where(
-            ExclusionSyncState.delivered_version < ExclusionSyncState.version,
-        ).order_by(ExclusionSyncState.last_attempt_at.asc().nulls_first(),
-                   ExclusionSyncState.user_id).limit(20))).scalars().all()
+        ids = (
+            (
+                await db.execute(
+                    select(ExclusionSyncState.user_id)
+                    .where(
+                        ExclusionSyncState.delivered_version
+                        < ExclusionSyncState.version,
+                    )
+                    .order_by(
+                        ExclusionSyncState.last_attempt_at.asc().nulls_first(),
+                        ExclusionSyncState.user_id,
+                    )
+                    .limit(20)
+                )
+            )
+            .scalars()
+            .all()
+        )
     for uid in ids:
         async with session_factory() as db:
             await sync_exclusions_to_core(db, uid)

@@ -186,11 +186,15 @@ async def receive_event(request: Request, db: AsyncSession = Depends(get_db)):
     if inserted is not None and event.type == "saved_search.matches":
         matches = SearchMatches.model_validate(event.payload)
         notification = Notification(
-            user_id=uid, event_type="new_matches",
+            user_id=uid,
+            event_type="new_matches",
             title=f"New matches for '{matches.search_name[:150]}'",
             body=f"Found {matches.match_count} new jobs matching your saved search.",
-            data={"search_id": str(matches.search_id), "search_name": matches.search_name,
-                  "match_count": matches.match_count},
+            data={
+                "search_id": str(matches.search_id),
+                "search_name": matches.search_name,
+                "match_count": matches.match_count,
+            },
         )
         db.add(notification)
         await db.flush()
@@ -201,7 +205,11 @@ async def receive_event(request: Request, db: AsyncSession = Depends(get_db)):
         # Clients can always recover through the existing notification-history API.
         try:
             async with asyncio.timeout(2):
-                await request.app.state.sse_manager.broadcast_to_user(uid, "new_matches", push_data)
+                await request.app.state.sse_manager.broadcast_to_user(
+                    uid, "new_matches", push_data
+                )
         except Exception:
-            logger.warning("saved-search notification committed; live delivery unavailable")
+            logger.warning(
+                "saved-search notification committed; live delivery unavailable"
+            )
     return {"accepted": True, "inserted": inserted is not None}

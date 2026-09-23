@@ -149,9 +149,7 @@ async def test_local_delete_semantics(db_session):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "mode", [None, "local", "shadow", "core_read"]
-)
+@pytest.mark.parametrize("mode", [None, "local", "shadow", "core_read"])
 async def test_resolve_documents_serves_local_writer(db_session, mode):
     """Before the document flip, reads and writes remain with the local writer."""
     user_id = uuid.uuid4()
@@ -173,9 +171,7 @@ async def test_resolve_documents_profile_row_beats_wildcard(db_session):
     await set_routing(db_session, CAPABILITY_DOCUMENTS, "core_read")  # comodin
     await set_routing(db_session, CAPABILITY_DOCUMENTS, "local", profile_id=user_id)
     assert isinstance(await resolve_documents(db_session, user_id), LocalDocuments)
-    assert isinstance(
-        await resolve_documents(db_session, uuid.uuid4()), LocalDocuments
-    )
+    assert isinstance(await resolve_documents(db_session, uuid.uuid4()), LocalDocuments)
 
 
 # ---------------------------------------------------------------------------
@@ -249,10 +245,10 @@ async def _set_cv_text(db: AsyncSession, user_id: uuid.UUID) -> None:
     await db.commit()
 
 
-@pytest.mark.parametrize(
-    "mode", ["local", "shadow", "core_read"]
-)
-async def test_router_local_state_accessible_in_local_writer_modes(client, db_session, mode):
+@pytest.mark.parametrize("mode", ["local", "shadow", "core_read"])
+async def test_router_local_state_accessible_in_local_writer_modes(
+    client, db_session, mode
+):
     """Local/shadow/core_read retain local state until the explicit cutover."""
     user_id, headers = await _register(client)
     await seed_job(db_session)
@@ -287,7 +283,9 @@ async def test_router_local_state_accessible_in_local_writer_modes(client, db_se
 
 
 @pytest.mark.parametrize("mode", ["core_primary", "rollback_pending"])
-async def test_core_writer_modes_require_binding_and_never_fallback(client, db_session, mode):
+async def test_core_writer_modes_require_binding_and_never_fallback(
+    client, db_session, mode
+):
     user_id, headers = await _register(client)
     await set_routing(db_session, CAPABILITY_DOCUMENTS, mode, profile_id=user_id)
     with pytest.raises(CoreUnavailableError, match="not bound"):

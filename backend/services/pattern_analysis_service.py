@@ -256,6 +256,7 @@ class PatternAnalysisService:
         """Carga jobs rechazados y todos los jobs del usuario como dicts."""
         if settings.CORE_FEEDBACK_ENABLED:
             from services.matching.feedback import CoreFeedback
+
             jobs = await CoreFeedback(self._db).context(user_id)
             return [j for j in jobs if j["feedback"] in NEGATIVE_FEEDBACK], jobs
         stmt_all = (
@@ -332,9 +333,7 @@ class PatternAnalysisService:
             # llevaba la tautología `p in seen_patterns` dentro del bucle
             # sobre seen_patterns.
             words = set(ngram.split())
-            covered = any(
-                set(p.split()) <= words for p in seen_patterns
-            )
+            covered = any(set(p.split()) <= words for p in seen_patterns)
             if covered:
                 continue
 

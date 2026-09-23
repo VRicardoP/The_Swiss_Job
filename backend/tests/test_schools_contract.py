@@ -92,9 +92,7 @@ async def test_local_list_serves_config_metadata():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "mode", [None, "local", "shadow"]
-)
+@pytest.mark.parametrize("mode", [None, "local", "shadow"])
 async def test_resolve_schools_serves_local_writer(db_session, mode):
     """Todo modo salvo core_read resuelve a LOCAL — incluida core_primary:
     criterio unificador, el escritor del estado es local (config del BFF) y
@@ -175,9 +173,7 @@ async def _register(client) -> tuple[uuid.UUID, dict]:
     return uuid.UUID(me.json()["id"]), headers
 
 
-@pytest.mark.parametrize(
-    "mode", ["local", "shadow", "core_read"]
-)
+@pytest.mark.parametrize("mode", ["local", "shadow", "core_read"])
 async def test_router_schools_listing_in_all_modes(client, db_session, mode):
     """GET /watchlist/schools sirve la config local en los 5 modos de
     routing — incluida core_primary (criterio unificador): jamas un 501/503

@@ -57,8 +57,14 @@ RAIZ_CERROJOS = Path("/var/lock/jobhunt-cutover")
 # Las fases de la marcha atrás y qué puede seguir a qué. `None` es «todavía no
 # hay checkpoint». Cada transición está permitida porque el programa la
 # necesita, no por simetría: lo que no está aquí, no ocurre.
-FASES = ("INICIO", "APARTADA", "DESTINO_CREADO", "RESTAURADO",
-         "VERIFICACION_FALLIDA", "VERIFIED")
+FASES = (
+    "INICIO",
+    "APARTADA",
+    "DESTINO_CREADO",
+    "RESTAURADO",
+    "VERIFICACION_FALLIDA",
+    "VERIFIED",
+)
 TRANSICIONES: dict[str | None, tuple[str, ...]] = {
     None: ("INICIO",),
     # Reanudar desde INICIO vuelve a medir y a elegir nombre: se reescribe.
@@ -170,17 +176,18 @@ def _publicar(args: argparse.Namespace) -> int:
             f"{', '.join(permitidas) or '(nada)'}. Un checkpoint que salta una fase "
             "describe un estado que no ocurrió, y de ahí no se reanuda nada"
         )
-    cuerpo = "".join(f"{clave}='{valor}'\n" for clave, valor in
-                     (d.split("=", 1) for d in args.dato))
+    cuerpo = "".join(
+        f"{clave}='{valor}'\n" for clave, valor in (d.split("=", 1) for d in args.dato)
+    )
     cuerpo += f"CK_FASE='{args.fase}'\n"
     tmp = destino.with_name(destino.name + ".tmp")
     fd = os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
     try:
         os.write(fd, cuerpo.encode("utf-8"))
-        os.fsync(fd)                      # el CONTENIDO, en el disco
+        os.fsync(fd)  # el CONTENIDO, en el disco
     finally:
         os.close(fd)
-    os.replace(tmp, destino)              # el NOMBRE, de una pieza
+    os.replace(tmp, destino)  # el NOMBRE, de una pieza
     # Y el DIRECTORIO: sin esto el contenido puede estar y el nombre no, que es
     # el caso que deja el estado previo en una base que nadie sabe nombrar.
     dfd = os.open(destino.parent, os.O_RDONLY)
@@ -215,7 +222,9 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="orden_", required=True)
 
-    e = sub.add_parser("ejecutar", help="toma el cerrojo del recurso y ejecuta una orden")
+    e = sub.add_parser(
+        "ejecutar", help="toma el cerrojo del recurso y ejecuta una orden"
+    )
     e.add_argument("--identidad", required=True, help="system_identifier del servidor")
     e.add_argument("--db", required=True, help="nombre de la base protegida")
     e.add_argument("orden", nargs=argparse.REMAINDER)

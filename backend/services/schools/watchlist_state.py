@@ -41,31 +41,53 @@ class CoreWatchlist:
                 return None
             try:
                 page = response.json()
-                if not isinstance(page["items"], list) or page.get("next_cursor") is not None or len(page["items"]) > 1:
+                if (
+                    not isinstance(page["items"], list)
+                    or page.get("next_cursor") is not None
+                    or len(page["items"]) > 1
+                ):
                     raise ValueError("ambiguous school reference")
                 if not page["items"]:
                     return None
                 observation = page["items"][0]
                 if observation["source_ref"] != job_hash:
                     raise ValueError("unexpected school reference")
-                jid, mid = uuid.UUID(observation["id"]), uuid.UUID(observation["monitor_id"])
-                monitor = next((m for m in await self._client.monitors() if m.id == mid), None)
+                jid, mid = (
+                    uuid.UUID(observation["id"]),
+                    uuid.UUID(observation["monitor_id"]),
+                )
+                monitor = next(
+                    (m for m in await self._client.monitors() if m.id == mid), None
+                )
                 if monitor is None:
                     raise ValueError("missing school monitor")
                 metadata = observation["metadata"]
                 title, url = metadata["title"], metadata.get("url")
-                if not isinstance(title, str) or not title or (url is not None and not isinstance(url, str)):
+                if (
+                    not isinstance(title, str)
+                    or not title
+                    or (url is not None and not isinstance(url, str))
+                ):
                     raise ValueError("invalid school presentation")
-                detected = datetime.fromisoformat(metadata.get("date_detected") or observation["created_at"])
+                detected = datetime.fromisoformat(
+                    metadata.get("date_detected") or observation["created_at"]
+                )
                 if detected.tzinfo is None:
                     raise ValueError("naive school timestamp")
                 job = SimpleNamespace(
-                    title=title, company=monitor.settings.get("name"), url=url,
-                    location=None, language=None, tags=[monitor.external_ref],
-                    first_seen_at=detected, school_job_id=jid,
+                    title=title,
+                    company=monitor.settings.get("name"),
+                    url=url,
+                    location=None,
+                    language=None,
+                    tags=[monitor.external_ref],
+                    first_seen_at=detected,
+                    school_job_id=jid,
                 )
             except (ValueError, TypeError, KeyError, AttributeError):
-                raise CoreUnavailableError("invalid native school observation") from None
+                raise CoreUnavailableError(
+                    "invalid native school observation"
+                ) from None
         elif job is None:
             state = rows[0]
             monitor = next(
@@ -107,7 +129,8 @@ class CoreWatchlist:
                 local = (
                     await self._db.execute(
                         select(MatchResult).where(
-                            MatchResult.user_id == user_id, MatchResult.job_hash == job_hash
+                            MatchResult.user_id == user_id,
+                            MatchResult.job_hash == job_hash,
                         )
                     )
                 ).scalar_one_or_none()

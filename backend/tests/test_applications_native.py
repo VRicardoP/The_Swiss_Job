@@ -25,12 +25,22 @@ async def test_native_application_create_and_list_preserve_identity(seeded, db_s
     def handler(request):
         requests.append(request)
         if request.url.path == f"/v1/vacancies/{vid}":
-            return httpx.Response(200, json={
-                "id": vid, "title": "Native position", "company": "Native company",
-                "description": "Native description", "location": "Bern", "tags": [],
-                "primary_listing": {"source": "remotive", "url": "https://example.test/native"},
-                "listings": [],
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "id": vid,
+                    "title": "Native position",
+                    "company": "Native company",
+                    "description": "Native description",
+                    "location": "Bern",
+                    "tags": [],
+                    "primary_listing": {
+                        "source": "remotive",
+                        "url": "https://example.test/native",
+                    },
+                    "listings": [],
+                },
+            )
         response = fake.handler(request)
         if request.method == "POST":
             body = json.loads(request.content)
@@ -53,7 +63,9 @@ async def test_native_application_create_and_list_preserve_identity(seeded, db_s
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status,error", [(404, ApplicationJobNotFoundError), (503, CoreUnavailableError)])
+@pytest.mark.parametrize(
+    "status,error", [(404, ApplicationJobNotFoundError), (503, CoreUnavailableError)]
+)
 async def test_native_lookup_failure_does_not_create(seeded, db_session, status, error):  # noqa: F811  (la fixture, no una redefinición)
     user_id, _, _ = seeded
     seen = []

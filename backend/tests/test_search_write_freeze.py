@@ -8,17 +8,30 @@ from config import settings
 from tasks import search_tasks
 
 
-@pytest.mark.parametrize("method,path", [
-    ("POST", ""), ("PUT", "/{id}"), ("DELETE", "/{id}"), ("POST", "/{id}/run"),
-])
-async def test_freeze_precedes_auth_and_payload_parsing(client, monkeypatch, method, path):
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", ""),
+        ("PUT", "/{id}"),
+        ("DELETE", "/{id}"),
+        ("POST", "/{id}/run"),
+    ],
+)
+async def test_freeze_precedes_auth_and_payload_parsing(
+    client, monkeypatch, method, path
+):
     monkeypatch.setattr(settings, "SAVED_SEARCH_WRITES_FROZEN", True)
-    response = await client.request(method, "/api/v1/searches" + path.format(id=uuid.uuid4()), content=b"")
+    response = await client.request(
+        method, "/api/v1/searches" + path.format(id=uuid.uuid4()), content=b""
+    )
     assert response.status_code == 503, response.text
 
 
-async def test_freeze_preserves_reads_and_prevents_task_database_work(client, monkeypatch):
+async def test_freeze_preserves_reads_and_prevents_task_database_work(
+    client, monkeypatch
+):
     import database
+
     monkeypatch.setattr(settings, "SAVED_SEARCH_WRITES_FROZEN", True)
     # The read still reaches auth, unlike mutations.
     assert (await client.get("/api/v1/searches")).status_code == 401

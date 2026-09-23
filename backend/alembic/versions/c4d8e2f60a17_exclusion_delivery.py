@@ -3,6 +3,7 @@
 Revision ID: c4d8e2f60a17
 Revises: b3c7d1a95e42
 """
+
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
@@ -16,14 +17,29 @@ depends_on = None
 def upgrade():
     op.create_table(
         "exclusion_sync_state",
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "user_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
         sa.Column("version", sa.BigInteger(), nullable=False),
-        sa.Column("delivered_version", sa.BigInteger(), nullable=False, server_default="0"),
+        sa.Column(
+            "delivered_version", sa.BigInteger(), nullable=False, server_default="0"
+        ),
         sa.Column("exclusions", postgresql.JSONB(), nullable=False),
         sa.Column("last_error", sa.Text()),
         sa.Column("last_attempt_at", sa.DateTime(timezone=True)),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.CheckConstraint("version > 0 AND delivered_version >= 0 AND delivered_version <= version", name="ck_exclusion_delivery_version"),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.CheckConstraint(
+            "version > 0 AND delivered_version >= 0 AND delivered_version <= version",
+            name="ck_exclusion_delivery_version",
+        ),
     )
     # Reconcile existing rules too: no additional edit required after deployment.
     op.execute("""

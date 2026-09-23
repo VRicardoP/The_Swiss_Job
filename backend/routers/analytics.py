@@ -25,7 +25,10 @@ from services.pattern_analysis_service import PatternAnalysisService
 from services.matching.port import CoreUnavailableError
 
 from services.exclusions_sync import (
-    exclusion_sync_status, lock_filter_writer, queue_exclusions, sync_exclusions_to_core,
+    exclusion_sync_status,
+    lock_filter_writer,
+    queue_exclusions,
+    sync_exclusions_to_core,
 )
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
@@ -57,7 +60,9 @@ async def analyze_rejected_jobs(
             job_context=context,
         )
     except CoreUnavailableError as exc:
-        raise HTTPException(status_code=503, detail="Historial de feedback no disponible") from exc
+        raise HTTPException(
+            status_code=503, detail="Historial de feedback no disponible"
+        ) from exc
     return AnalyzeRejectedResponse(
         status="success",
         suggestions_generated=generated,
@@ -197,8 +202,11 @@ async def list_filters(
     )
     total = (await db.execute(total_stmt)).scalar_one()
 
-    return JobFiltersResponse(data=list(filters), total=total,
-                              sync_status=await exclusion_sync_status(db, current_user.id))
+    return JobFiltersResponse(
+        data=list(filters),
+        total=total,
+        sync_status=await exclusion_sync_status(db, current_user.id),
+    )
 
 
 @router.post(

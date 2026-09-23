@@ -39,20 +39,35 @@ def detector_que_estalla(monkeypatch):
 
 def _match():
     return CoreMatchView(
-        id=uuid.uuid4(), job_hash=uuid.uuid4().hex, score_final=71.0,
-        score_embedding=0.7, score_salary=0.0, score_location=0.0,
-        score_recency=0.0, score_llm=0.0, explanation=None,
-        matching_skills=[], missing_skills=[], feedback=None,
-        application_status="detected", urgency_score=0.0, draft_letter=None,
+        id=uuid.uuid4(),
+        job_hash=uuid.uuid4().hex,
+        score_final=71.0,
+        score_embedding=0.7,
+        score_salary=0.0,
+        score_location=0.0,
+        score_recency=0.0,
+        score_llm=0.0,
+        explanation=None,
+        matching_skills=[],
+        missing_skills=[],
+        feedback=None,
+        application_status="detected",
+        urgency_score=0.0,
+        draft_letter=None,
         created_at=datetime.now(timezone.utc),
     )
 
 
 def _item(title, language=None):
     vacancy = {
-        "id": str(uuid.uuid4()), "title": title, "company": "Acme",
-        "primary_listing": {"source": "core", "external_id": "x",
-                            "url": "https://example.com/j/1"},
+        "id": str(uuid.uuid4()),
+        "title": title,
+        "company": "Acme",
+        "primary_listing": {
+            "source": "core",
+            "external_id": "x",
+            "url": "https://example.com/j/1",
+        },
         "listings": [],
     }
     if language is not None:
@@ -62,10 +77,17 @@ def _item(title, language=None):
 
 # --- Clave canónica ---------------------------------------------------------
 
-@pytest.mark.parametrize("entrada,esperado", [
-    ("  Softwareentwickler  ", "Softwareentwickler"),
-    ("", ""), ("   ", ""), (None, ""), (7, ""),
-])
+
+@pytest.mark.parametrize(
+    "entrada,esperado",
+    [
+        ("  Softwareentwickler  ", "Softwareentwickler"),
+        ("", ""),
+        ("   ", ""),
+        (None, ""),
+        (7, ""),
+    ],
+)
 def test_normalise(entrada, esperado):
     assert language_store.normalise(entrada) == esperado
 
@@ -76,6 +98,7 @@ def test_normalise_trunca_al_limite_del_indice():
 
 
 # --- Estados del almacén ----------------------------------------------------
+
 
 async def test_pendiente_no_se_sirve_como_resuelto(db_session):
     """Pendiente y nunca-visto deben ser el MISMO estado para el consumidor."""
@@ -88,7 +111,9 @@ async def test_desconocido_resuelto_se_sirve_y_no_se_reintenta(db_session):
     await language_store.record_pending(db_session, ["Título raro"])
     await language_store.store_resolved(db_session, {"Título raro": ""})
 
-    assert await language_store.lookup(db_session, ["Título raro"]) == {"Título raro": ""}
+    assert await language_store.lookup(db_session, ["Título raro"]) == {
+        "Título raro": ""
+    }
     assert "Título raro" not in await language_store.pending_titles(db_session, 100)
 
 
@@ -96,7 +121,8 @@ async def test_resuelto_se_sirve(db_session):
     await language_store.record_pending(db_session, ["Softwareentwickler"])
     await language_store.store_resolved(db_session, {"Softwareentwickler": "de"})
     assert await language_store.lookup(db_session, ["Softwareentwickler"]) == {
-        "Softwareentwickler": "de"}
+        "Softwareentwickler": "de"
+    }
 
 
 async def test_encolar_es_idempotente(db_session):
@@ -111,21 +137,28 @@ async def test_encolar_ignora_titulos_vacios(db_session):
 
 # --- El camino de respuesta -------------------------------------------------
 
+
 def test_servir_no_detecta_aunque_el_titulo_sea_desconocido(detector_que_estalla):
-    resp = _to_match_response(_item("Título jamás visto"), translations={}, languages={})
+    resp = _to_match_response(
+        _item("Título jamás visto"), translations={}, languages={}
+    )
     assert resp.job_language is None, "sin dato, el indicador se omite; NO se deduce"
 
 
 def test_servir_usa_el_idioma_derivado(detector_que_estalla):
     item = _item("Softwareentwickler")
-    resp = _to_match_response(item, translations={}, languages={"Softwareentwickler": "de"})
+    resp = _to_match_response(
+        item, translations={}, languages={"Softwareentwickler": "de"}
+    )
     assert resp.job_language == "de"
 
 
 def test_el_idioma_del_core_gana_al_derivado(detector_que_estalla):
     """La canónica es el dato de la fuente; el derivado es nuestra deducción."""
     item = _item("Softwareentwickler", language="fr")
-    resp = _to_match_response(item, translations={}, languages={"Softwareentwickler": "de"})
+    resp = _to_match_response(
+        item, translations={}, languages={"Softwareentwickler": "de"}
+    )
     assert resp.job_language == "fr"
 
 
@@ -153,14 +186,17 @@ async def test_la_segunda_carga_no_vuelve_a_encolar(db_session, detector_que_est
     resultados = [_item("Título repetido")]
     await _build_results_response(resultados, total=1, weights={}, db=db_session)
     antes = await db_session.scalar(
-        sa.select(sa.func.count()).select_from(JobTitleLanguage))
+        sa.select(sa.func.count()).select_from(JobTitleLanguage)
+    )
     await _build_results_response(resultados, total=1, weights={}, db=db_session)
     despues = await db_session.scalar(
-        sa.select(sa.func.count()).select_from(JobTitleLanguage))
+        sa.select(sa.func.count()).select_from(JobTitleLanguage)
+    )
     assert antes == despues
 
 
 # --- La tarea de fondo ------------------------------------------------------
+
 
 async def test_la_tarea_resuelve_los_pendientes_y_los_saca_de_la_cola(
     db_session, monkeypatch
@@ -176,12 +212,14 @@ async def test_la_tarea_resuelve_los_pendientes_y_los_saca_de_la_cola(
 
     monkeypatch.setattr("database.task_session", sesion_de_prueba)
     monkeypatch.setattr(
-        TranslationService, "_detect_language",
+        TranslationService,
+        "_detect_language",
         classmethod(lambda cls, text: "de" if "entwickler" in text else ""),
     )
 
     await language_store.record_pending(
-        db_session, ["Softwareentwickler", "Zzz indecidible"])
+        db_session, ["Softwareentwickler", "Zzz indecidible"]
+    )
 
     resultado = await language_tasks._resolve(batch=100)
 
@@ -205,7 +243,8 @@ async def test_la_tarea_respeta_el_tamano_del_lote(db_session, monkeypatch):
 
     monkeypatch.setattr("database.task_session", sesion_de_prueba)
     monkeypatch.setattr(
-        TranslationService, "_detect_language", classmethod(lambda cls, text: "en"))
+        TranslationService, "_detect_language", classmethod(lambda cls, text: "en")
+    )
 
     await language_store.record_pending(db_session, [f"T{i}" for i in range(10)])
     resultado = await language_tasks._resolve(batch=4)
@@ -225,7 +264,11 @@ async def test_sin_pendientes_la_tarea_no_toca_el_detector(db_session, monkeypat
 
     monkeypatch.setattr("database.task_session", sesion_de_prueba)
     monkeypatch.setattr(
-        TranslationService, "_detect_language",
+        TranslationService,
+        "_detect_language",
         classmethod(lambda cls, text: (_ for _ in ()).throw(AssertionError("detectó"))),
     )
-    assert await language_tasks._resolve(batch=100) == {"resolved": 0, "pending_left": 0}
+    assert await language_tasks._resolve(batch=100) == {
+        "resolved": 0,
+        "pending_left": 0,
+    }

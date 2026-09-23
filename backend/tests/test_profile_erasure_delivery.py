@@ -1,4 +1,5 @@
 """Deletion requests outlive the account; offline core never loses the intent."""
+
 import uuid
 from datetime import datetime, timezone
 
@@ -18,6 +19,7 @@ async def test_erasure_fences_late_http_cache_publication(kind, same_profile):
     import httpx
     from services.profiles import core_client as pc
     from services.matching import core_client as mc
+
     pid, other = uuid.uuid4(), uuid.uuid4()
     module = pc if kind == "profile" else mc
     key = str(pid) if kind == "profile" else (str(pid), "")
@@ -25,12 +27,17 @@ async def test_erasure_fences_late_http_cache_publication(kind, same_profile):
     module._etag_cache[other_key] = ("other", {"preserve": True})
 
     class Late:
-        async def __aenter__(self): return self
-        async def __aexit__(self, *args): pass
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
         async def get(self, *args, **kwargs):
             sync.clear_erased_caches(pid if same_profile else uuid.uuid4())
-            return httpx.Response(200, headers={"etag": "old"},
-                                  json={"content": "synthetic private CV"})
+            return httpx.Response(
+                200, headers={"etag": "old"}, json={"content": "synthetic private CV"}
+            )
 
     async def fetch():
         if kind == "profile":
@@ -54,12 +61,14 @@ async def test_background_without_credentials_keeps_requests_offline(monkeypatch
     import asyncio
     from config import settings
     from unittest.mock import AsyncMock
+
     monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "")
     drain = AsyncMock()
     monkeypatch.setattr(sync, "drain_erasures", drain)
 
     async def stop(_):
         raise asyncio.CancelledError
+
     monkeypatch.setattr(sync.asyncio, "sleep", stop)
     with pytest.raises(asyncio.CancelledError):
         await sync.run_erasure_delivery()
@@ -72,46 +81,75 @@ class Core:
     invalid = False
     calls = 0
 
-    async def __aenter__(self): return self
-    async def __aexit__(self, *args): pass
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
     async def delete(self, path):
         self.calls += 1
         if self.fail:
             raise ConnectionError("secret must never appear in diagnostics")
         self.pid = path.rsplit("/", 1)[-1]
         return self
+
     def json(self):
-        return {"status": "erased", "scope": "core_live_database",
-                "profile_id": str(uuid.uuid4()) if self.invalid else self.pid,
-                "erased_at": datetime.now(timezone.utc).isoformat()}
+        return {
+            "status": "erased",
+            "scope": "core_live_database",
+            "profile_id": str(uuid.uuid4()) if self.invalid else self.pid,
+            "erased_at": datetime.now(timezone.utc).isoformat(),
+        }
 
 
 @pytest.mark.asyncio
 async def test_replica_purges_restored_account_even_with_previous_confirmation(client):
     token, _, _ = await register_and_get_token(client)
-    uid = uuid.UUID((await client.get("/api/v1/auth/me", headers={
-        "Authorization": f"Bearer {token}"})).json()["id"])
+    uid = uuid.UUID(
+        (
+            await client.get(
+                "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
+            )
+        ).json()["id"]
+    )
     pid = uuid.uuid4()
     when = datetime.now(timezone.utc)
     async with TestSessionLocal() as db:
         await sync.queue_erasure(db, uid, pid)
         from sqlalchemy import update
-        await db.execute(update(ProfileErasure).where(ProfileErasure.user_id == uid)
-                         .values(core_confirmed_at=when))
+
+        await db.execute(
+            update(ProfileErasure)
+            .where(ProfileErasure.user_id == uid)
+            .values(core_confirmed_at=when)
+        )
         await db.commit()
 
     class Inventory(Core):
         async def get(self, path, params):
             return self
+
         def json(self):
-            return {"consumer": "swissjob-shadow",
-                    "items": [{"profile_id": str(pid), "external_ref": str(uid),
-                               "erased_at": when.isoformat()}], "next_cursor": None}
+            return {
+                "consumer": "swissjob-shadow",
+                "items": [
+                    {
+                        "profile_id": str(pid),
+                        "external_ref": str(uid),
+                        "erased_at": when.isoformat(),
+                    }
+                ],
+                "next_cursor": None,
+            }
 
     assert await sync.reconcile_replica(TestSessionLocal, Inventory) == 1
     assert await sync.reconcile_replica(TestSessionLocal, Inventory) == 0
-    assert (await client.get("/api/v1/auth/me", headers={
-        "Authorization": f"Bearer {token}"})).status_code == 401
+    assert (
+        await client.get(
+            "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
+        )
+    ).status_code == 401
 
 
 async def delete_linked(client):
@@ -121,8 +159,12 @@ async def delete_linked(client):
     pid = uuid.uuid4()
     async with TestSessionLocal() as db:
         await set_profile_link(db, uid, pid)
-    r = await client.request("DELETE", "/api/v1/profile/delete-all",
-                             headers=headers, json={"password": password})
+    r = await client.request(
+        "DELETE",
+        "/api/v1/profile/delete-all",
+        headers=headers,
+        json={"password": password},
+    )
     assert r.status_code == 200, r.text
     assert r.json()["core_erasure"] == "pending_confirmation"
     return uid, pid
@@ -150,7 +192,9 @@ async def test_request_survives_deletion_restart_and_retry(client, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status,invalid", [(404, False), (503, False), (200, True)])
-async def test_only_explicit_owned_receipt_confirms(client, monkeypatch, status, invalid):
+async def test_only_explicit_owned_receipt_confirms(
+    client, monkeypatch, status, invalid
+):
     uid, _ = await delete_linked(client)
     core = Core()
     core.status_code, core.invalid = status, invalid

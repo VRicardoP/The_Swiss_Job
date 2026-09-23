@@ -39,6 +39,7 @@ async def _run_saved_searches_async() -> dict[str, Any]:
     from sqlalchemy import select
 
     from config import settings
+
     if settings.SAVED_SEARCH_WRITES_FROZEN:
         return {"status": "disabled", "reason": "write_freeze"}
     from database import task_session
@@ -64,6 +65,7 @@ async def _run_saved_searches_async() -> dict[str, Any]:
             if search is None:
                 continue
             from services.saved_searches import core_owns_searches
+
             if await core_owns_searches(db, search.user_id):
                 continue
             # Check if search is due based on frequency
@@ -346,6 +348,7 @@ async def _run_single_async(search_id: str, user_id: str) -> dict[str, Any]:
     from sqlalchemy import select
 
     from config import settings
+
     if settings.SAVED_SEARCH_WRITES_FROZEN:
         return {"status": "disabled", "reason": "write_freeze"}
     from database import task_session
@@ -366,6 +369,7 @@ async def _run_single_async(search_id: str, user_id: str) -> dict[str, Any]:
         if search is None:
             return {"status": "error", "reason": "search_not_found"}
         from services.saved_searches import core_owns_searches
+
         if await core_owns_searches(db, search.user_id):
             return {"status": "disabled", "reason": "core_authority"}
 

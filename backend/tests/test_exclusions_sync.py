@@ -1,4 +1,5 @@
 """Durable projection: versions, restart/retry, rollback and observable lag."""
+
 import asyncio
 import uuid
 
@@ -13,21 +14,32 @@ from tests.test_analytics_router import _auth
 
 
 def _corutina(value):
-    async def call(*args, **kwargs): return value
+    async def call(*args, **kwargs):
+        return value
+
     return call
 
 
 class _Response:
     status_code = 200
-    def __init__(self, version): self.version = version
-    def json(self): return {"version": self.version}
+
+    def __init__(self, version):
+        self.version = version
+
+    def json(self):
+        return {"version": self.version}
 
 
 class _Core:
     def __init__(self):
         self.version, self.rules, self.fail = 0, [], False
-    async def __aenter__(self): return self
-    async def __aexit__(self, *args): pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
     async def put(self, url, json=None):
         if self.fail:
             raise ConnectionError("controlled disconnect")
@@ -46,8 +58,11 @@ def core(monkeypatch):
 
 
 async def _create(client, headers):
-    r = await client.post("/api/v1/analytics/filters", headers=headers,
-        json={"filter_type": "title_contains", "pattern": "director"})
+    r = await client.post(
+        "/api/v1/analytics/filters",
+        headers=headers,
+        json={"filter_type": "title_contains", "pattern": "director"},
+    )
     assert r.status_code == 201
     return r.json()["id"]
 
@@ -58,7 +73,9 @@ async def test_no_proyecta_si_el_perfil_sigue_en_local(client, core, monkeypatch
     monkeypatch.setattr(sync, "resolve_mode", _corutina("local"))
     await _create(client, headers)
     assert core.version == 0
-    assert (await client.get("/api/v1/analytics/filters", headers=headers)).json()["sync_status"]["pending"]
+    assert (await client.get("/api/v1/analytics/filters", headers=headers)).json()[
+        "sync_status"
+    ]["pending"]
 
 
 @pytest.mark.asyncio
@@ -66,9 +83,13 @@ async def test_proyecta_el_conjunto_COMPLETO_incluida_una_baja(client, core):
     headers, _ = await _auth(client)
     fid = await _create(client, headers)
     assert len(core.rules) == 1 and core.version == 1
-    assert (await client.delete(f"/api/v1/analytics/filters/{fid}", headers=headers)).status_code == 204
+    assert (
+        await client.delete(f"/api/v1/analytics/filters/{fid}", headers=headers)
+    ).status_code == 204
     assert core.rules == [] and core.version == 2
-    assert not (await client.get("/api/v1/analytics/filters", headers=headers)).json()["sync_status"]["pending"]
+    assert not (await client.get("/api/v1/analytics/filters", headers=headers)).json()[
+        "sync_status"
+    ]["pending"]
 
 
 @pytest.mark.asyncio
@@ -76,8 +97,12 @@ async def test_un_core_caido_no_tumba_la_operacion_del_usuario(client, core):
     headers, uid = await _auth(client)
     fid = await _create(client, headers)
     core.fail = True
-    assert (await client.delete(f"/api/v1/analytics/filters/{fid}", headers=headers)).status_code == 204
-    status = (await client.get("/api/v1/analytics/filters", headers=headers)).json()["sync_status"]
+    assert (
+        await client.delete(f"/api/v1/analytics/filters/{fid}", headers=headers)
+    ).status_code == 204
+    status = (await client.get("/api/v1/analytics/filters", headers=headers)).json()[
+        "sync_status"
+    ]
     assert status["pending"] and status["version"] == 2
     assert len(core.rules) == 1
     # New session, no new user edit: the persistent drain recovers the deletion.
@@ -99,13 +124,18 @@ async def test_old_delivery_cannot_restore_a_deleted_rule(client, core, monkeypa
             entered.set()
             await release.wait()
         return await original(url, json=json)
+
     monkeypatch.setattr(core, "put", delayed)
     create = asyncio.create_task(_create(client, headers))
     try:
         await asyncio.wait_for(entered.wait(), 10)
         async with TestSessionLocal() as s:
-            fid = (await s.execute(select(JobFilter.id).where(JobFilter.user_id == uid))).scalar_one()
-        assert (await client.delete(f"/api/v1/analytics/filters/{fid}", headers=headers)).status_code == 204
+            fid = (
+                await s.execute(select(JobFilter.id).where(JobFilter.user_id == uid))
+            ).scalar_one()
+        assert (
+            await client.delete(f"/api/v1/analytics/filters/{fid}", headers=headers)
+        ).status_code == 204
         assert core.version == 2 and core.rules == []
     finally:
         release.set()
@@ -124,5 +154,13 @@ async def test_rule_and_pending_snapshot_rollback_together(client):
         await sync.queue_exclusions(s, uid)
         await s.rollback()
     async with TestSessionLocal() as s:
-        assert (await s.execute(select(JobFilter.id).where(JobFilter.user_id == uid))).first() is None
-        assert (await s.execute(select(ExclusionSyncState.user_id).where(ExclusionSyncState.user_id == uid))).first() is None
+        assert (
+            await s.execute(select(JobFilter.id).where(JobFilter.user_id == uid))
+        ).first() is None
+        assert (
+            await s.execute(
+                select(ExclusionSyncState.user_id).where(
+                    ExclusionSyncState.user_id == uid
+                )
+            )
+        ).first() is None

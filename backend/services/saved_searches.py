@@ -24,7 +24,11 @@ CAPABILITY = "saved_searches"
 
 
 def block_search_writes(request: Request):
-    if settings.SAVED_SEARCH_WRITES_FROZEN and request.method not in {"GET", "HEAD", "OPTIONS"}:
+    if settings.SAVED_SEARCH_WRITES_FROZEN and request.method not in {
+        "GET",
+        "HEAD",
+        "OPTIONS",
+    }:
         raise HTTPException(503, "Saved-search writes temporarily frozen")
 
 
@@ -55,11 +59,15 @@ class _Page(BaseModel):
 
 async def core_owns_searches(db, user_id):
     # Fresh routing for this durable authority; no TTL window at cutover.
-    rows = (await db.execute(select(JobhuntRouting.profile_id, JobhuntRouting.mode).where(
-        JobhuntRouting.consumer_id == CONSUMER_SWISSJOB,
-        JobhuntRouting.capability == CAPABILITY,
-        JobhuntRouting.profile_id.in_([user_id, PROFILE_WILDCARD]),
-    ))).all()
+    rows = (
+        await db.execute(
+            select(JobhuntRouting.profile_id, JobhuntRouting.mode).where(
+                JobhuntRouting.consumer_id == CONSUMER_SWISSJOB,
+                JobhuntRouting.capability == CAPABILITY,
+                JobhuntRouting.profile_id.in_([user_id, PROFILE_WILDCARD]),
+            )
+        )
+    ).all()
     modes = dict(rows)
     mode = modes.get(user_id, modes.get(PROFILE_WILDCARD, "local"))
     return mode in {MODE_CORE_PRIMARY, MODE_ROLLBACK_PENDING}
@@ -86,7 +94,9 @@ class CoreSavedSearches:
         if pid is None:
             raise SearchCoreError()
         try:
-            async with asyncio.timeout(max(float(settings.CORE_HTTP_TIMEOUT_SECONDS), 1) * 2):
+            async with asyncio.timeout(
+                max(float(settings.CORE_HTTP_TIMEOUT_SECONDS), 1) * 2
+            ):
                 async with self.client_factory() as client:
                     yield client, pid
         except (httpx.HTTPError, TimeoutError, ValueError, TypeError, KeyError):
@@ -96,7 +106,9 @@ class CoreSavedSearches:
     def _view(self, row, pid, sid=None):
         if row.profile_id != pid or (sid is not None and row.id != sid):
             raise SearchCoreError()
-        return SavedSearchResponse.model_validate({**row.model_dump(), "user_id": self.user_id})
+        return SavedSearchResponse.model_validate(
+            {**row.model_dump(), "user_id": self.user_id}
+        )
 
     @staticmethod
     def _require(response, expected):
@@ -105,7 +117,10 @@ class CoreSavedSearches:
         if response.status_code == 404:
             raise SearchCoreError(404, "Saved search not found")
         if response.status_code in {400, 409, 412, 422}:
-            raise SearchCoreError(response.status_code, "Saved-search operation rejected; refresh and retry")
+            raise SearchCoreError(
+                response.status_code,
+                "Saved-search operation rejected; refresh and retry",
+            )
         raise SearchCoreError()
 
     async def list(self, limit=50, offset=0):
@@ -128,7 +143,9 @@ class CoreSavedSearches:
                     seen_ids.add(row.id)
                 cursor = page.next_cursor
                 if cursor is None:
-                    return SavedSearchListResponse(data=rows[offset:offset+limit], total=len(rows))
+                    return SavedSearchListResponse(
+                        data=rows[offset : offset + limit], total=len(rows)
+                    )
                 if not cursor or cursor in cursors:
                     raise SearchCoreError()
                 cursors.add(cursor)
@@ -136,9 +153,15 @@ class CoreSavedSearches:
 
     async def create(self, values, operation_id):
         async with self._client() as (client, pid):
-            response = await client.post("/saved-searches", json={
-                **values, "profile_id": str(pid), "execution_contract": "swissjob-v1",
-            }, headers={"Idempotency-Key": str(operation_id)})
+            response = await client.post(
+                "/saved-searches",
+                json={
+                    **values,
+                    "profile_id": str(pid),
+                    "execution_contract": "swissjob-v1",
+                },
+                headers={"Idempotency-Key": str(operation_id)},
+            )
             if response.status_code == 404:
                 raise SearchCoreError()  # missing profile, not missing search
             self._require(response, 201)
@@ -156,16 +179,21 @@ class CoreSavedSearches:
     async def update(self, sid, values):
         async with self._client() as (client, pid):
             etag = await self._owned(client, pid, sid)
-            response = await client.put(f"/saved-searches/{sid}", json=values,
-                headers={"If-Match": etag, "Idempotency-Key": str(uuid.uuid4())})
+            response = await client.put(
+                f"/saved-searches/{sid}",
+                json=values,
+                headers={"If-Match": etag, "Idempotency-Key": str(uuid.uuid4())},
+            )
             self._require(response, 200)
             return self._view(_Search.model_validate(response.json()), pid, sid)
 
     async def delete(self, sid):
         async with self._client() as (client, pid):
             etag = await self._owned(client, pid, sid)
-            response = await client.delete(f"/saved-searches/{sid}",
-                headers={"If-Match": etag, "Idempotency-Key": str(uuid.uuid4())})
+            response = await client.delete(
+                f"/saved-searches/{sid}",
+                headers={"If-Match": etag, "Idempotency-Key": str(uuid.uuid4())},
+            )
             self._require(response, 204)
 
     async def run(self, sid):

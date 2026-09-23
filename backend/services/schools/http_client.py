@@ -130,7 +130,13 @@ class SchoolClient:
             raise CoreUnavailableError("invalid school state") from None
 
     async def write_state(
-        self, profile_id, source_ref, monitor_id, changes, context=None, school_job_id=None
+        self,
+        profile_id,
+        source_ref,
+        monitor_id,
+        changes,
+        context=None,
+        school_job_id=None,
     ):
         path = f"/profiles/{profile_id}/school-applications"
         existing = await self.states(profile_id, source_ref)

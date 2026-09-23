@@ -1172,7 +1172,9 @@ async def test_fallback_serves_local_on_invalid_payload(seeded, db_session, capl
     assert warns and "payload invalido" in warns[0].getMessage()
 
 
-async def test_core_stops_paging_once_the_page_is_covered(seeded, db_session, monkeypatch):
+async def test_core_stops_paging_once_the_page_is_covered(
+    seeded, db_session, monkeypatch
+):
     """Serving a page must not walk the whole feed just to count it.
 
     Measured on the NAS before this change (PREDECLARACION_PUNTO5_2026-09-22.md
@@ -1186,13 +1188,16 @@ async def test_core_stops_paging_once_the_page_is_covered(seeded, db_session, mo
     """
     monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
     user_id, matchings, fake = seeded
-    await set_routing(db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id)
+    await set_routing(
+        db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id
+    )
     core = make_core_matching(db_session, fake.transport())
     items, total = await core.results(user_id, limit=1, offset=0)
 
     assert len(fake.requests) == 1, (
         f"one page of {FAKE_PAGE_SIZE} covers limit=1; walked "
-        f"{len(fake.requests)} pages instead")
+        f"{len(fake.requests)} pages instead"
+    )
     assert len(items) == 1
     # With feedback in core, this branch applies no exclusion of its own: the
     # core already filtered dismissed and thumbed-down in its feed, so the
@@ -1204,7 +1209,9 @@ async def test_core_still_walks_what_a_deep_page_needs(seeded, db_session, monke
     """Stopping early must not truncate a page the caller can actually reach."""
     monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
     user_id, matchings, fake = seeded
-    await set_routing(db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id)
+    await set_routing(
+        db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id
+    )
     core = make_core_matching(db_session, fake.transport())
     items, total = await core.results(user_id, limit=1, offset=2)
 
@@ -1214,7 +1221,8 @@ async def test_core_still_walks_what_a_deep_page_needs(seeded, db_session, monke
 
 
 async def test_total_falls_back_to_a_full_walk_when_the_core_omits_it(
-        seeded, db_session, monkeypatch):
+    seeded, db_session, monkeypatch
+):
     """An older core, or a page without the field, must not break the contract.
 
     `total` is additive: when it is absent the consumer goes back to walking the
@@ -1222,7 +1230,9 @@ async def test_total_falls_back_to_a_full_walk_when_the_core_omits_it(
     """
     monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
     user_id, matchings, fake = seeded
-    await set_routing(db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id)
+    await set_routing(
+        db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id
+    )
     fake.omit_total = True
     core = make_core_matching(db_session, fake.transport())
     items, total = await core.results(user_id, limit=1, offset=0)

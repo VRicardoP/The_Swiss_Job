@@ -75,13 +75,23 @@ class _Resp:
 
 def _item(n):
     return {
-        "vacancy": {"id": str(uuid.uuid4()), "title": f"Oferta {n}",
-                    "primary_listing": {"source": "core", "external_id": str(n),
-                                        "url": f"https://e.com/{n}"},
-                    "listings": []},
-        "evaluation": {"eval_key": f"k{n}", "score_final": 50.0, "scores": {},
-                       "model": {"name": "m", "version": "1"},
-                       "policy": {"name": "p", "prompt_version": "1"}},
+        "vacancy": {
+            "id": str(uuid.uuid4()),
+            "title": f"Oferta {n}",
+            "primary_listing": {
+                "source": "core",
+                "external_id": str(n),
+                "url": f"https://e.com/{n}",
+            },
+            "listings": [],
+        },
+        "evaluation": {
+            "eval_key": f"k{n}",
+            "score_final": 50.0,
+            "scores": {},
+            "model": {"name": "m", "version": "1"},
+            "policy": {"name": "p", "prompt_version": "1"},
+        },
         "state": {"saved": False, "dismissed": False, "feedback": None},
     }
 
@@ -90,11 +100,13 @@ def _paginas(n_paginas, por_pagina, total):
     paginas = []
     for i in range(n_paginas):
         ultima = i == n_paginas - 1
-        paginas.append({
-            "items": [_item(i * por_pagina + j) for j in range(por_pagina)],
-            "next_cursor": None if ultima else str(i + 1),
-            "total": total,
-        })
+        paginas.append(
+            {
+                "items": [_item(i * por_pagina + j) for j in range(por_pagina)],
+                "next_cursor": None if ultima else str(i + 1),
+                "total": total,
+            }
+        )
     return paginas
 
 
@@ -115,8 +127,9 @@ async def test_la_segunda_lectura_no_recorre_si_la_version_no_cambio():
 
     segundos, total2 = await m._fetch_full_feed(pid)
     assert cliente.peticiones_pagina == 3, "recorrió otra vez teniendo la misma versión"
-    assert [i["evaluation"]["eval_key"] for i in segundos] == \
-           [i["evaluation"]["eval_key"] for i in primeros]
+    assert [i["evaluation"]["eval_key"] for i in segundos] == [
+        i["evaluation"]["eval_key"] for i in primeros
+    ]
     assert total2 == total
 
 
@@ -236,6 +249,7 @@ async def test_una_version_con_forma_rara_degrada_a_recorrido(cuerpo):
 
 # --- Huecos encontrados por la auditoría del 2026-09-23 --------------------
 
+
 class _ClienteCambiante(_Cliente):
     """Cambia de versión justo DESPUÉS de servir la última página: es el feed
     que se mueve a mitad de un recorrido de 18 páginas."""
@@ -262,7 +276,9 @@ async def test_si_la_version_cambia_durante_el_recorrido_no_se_cachea():
     pid = uuid.uuid4()
 
     await m._fetch_full_feed(pid)
-    assert core_client._feed_cache == {}, "cacheó un recorrido cosido bajo la versión vieja"
+    assert core_client._feed_cache == {}, (
+        "cacheó un recorrido cosido bajo la versión vieja"
+    )
 
 
 async def test_un_descuadre_entre_total_y_recorrido_se_registra(caplog):
@@ -278,7 +294,9 @@ async def test_un_descuadre_entre_total_y_recorrido_se_registra(caplog):
     assert any("no se cachea" in r.getMessage() for r in caplog.records)
 
 
-async def test_una_escritura_de_feedback_invalida_el_recorrido_cacheado(db_session, monkeypatch):
+async def test_una_escritura_de_feedback_invalida_el_recorrido_cacheado(
+    db_session, monkeypatch
+):
     """Con CORE_FEEDBACK_ENABLED el `state.feedback` viaja en el payload
     cacheado. Tras un ACK del core ese payload ya no describe lo que el core
     sirve: la entrada del perfil debe desaparecer."""
@@ -301,13 +319,21 @@ async def test_una_escritura_de_feedback_invalida_el_recorrido_cacheado(db_sessi
         if request.url.path == "/v1/school-jobs":
             return httpx.Response(200, json={"items": [], "next_cursor": None})
         data = json.loads(request.content)
-        return httpx.Response(200, json={"profile_id": str(pid), "vacancy_id": str(vid), **data})
+        return httpx.Response(
+            200, json={"profile_id": str(pid), "vacancy_id": str(vid), **data}
+        )
 
-    core = fb.CoreFeedback(db_session, client_factory=lambda: httpx.AsyncClient(
-        base_url="http://core.test/v1", transport=httpx.MockTransport(handler)))
+    core = fb.CoreFeedback(
+        db_session,
+        client_factory=lambda: httpx.AsyncClient(
+            base_url="http://core.test/v1", transport=httpx.MockTransport(handler)
+        ),
+    )
 
     assert await core.submit_feedback(uuid.uuid4(), str(vid), "thumbs_up")
-    assert str(pid) not in core_client._feed_cache, "el feed cacheado sobrevivió al ACK del feedback"
+    assert str(pid) not in core_client._feed_cache, (
+        "el feed cacheado sobrevivió al ACK del feedback"
+    )
 
 
 async def test_borrar_la_cache_mientras_se_recorre_no_deja_entrada_vieja():
@@ -343,5 +369,7 @@ async def test_el_total_de_la_version_debe_cuadrar_con_la_primera_pagina(caplog)
     m = _matching(_ClienteTotalDistinto(_paginas(2, 10, 20)))
     with caplog.at_level(logging.WARNING, logger="services.matching.core_client"):
         items, total = await m._fetch_full_feed(uuid.uuid4())
-    assert (len(items), total) == (20, 20), "el recorrido se sirve igual; sólo no se cachea"
+    assert (len(items), total) == (20, 20), (
+        "el recorrido se sirve igual; sólo no se cachea"
+    )
     assert core_client._feed_cache == {}

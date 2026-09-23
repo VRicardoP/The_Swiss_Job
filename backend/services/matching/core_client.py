@@ -426,6 +426,7 @@ class CoreMatching:
     ) -> tuple[list[dict], int]:
         if settings.CORE_FEEDBACK_ENABLED:
             from .feedback import require_core_feedback_route
+
             await require_core_feedback_route(self._db, user_id)
         core_profile_id = await resolve_core_profile_id(self._db, user_id)
         if core_profile_id is None:
@@ -491,22 +492,42 @@ class CoreMatching:
                 results = []
                 for item, candidates in zip(items, candidates_per_item):
                     primary = item["vacancy"].get("primary_listing") or {}
-                    school = next((candidate for candidate in candidates
-                                   if candidate[1].removeprefix("legacy:").startswith("swiss_schools_")), None)
-                    ref, source = school if school else (
-                        str(uuid.UUID(item["vacancy"]["id"])), primary.get("source") or "core",
+                    school = next(
+                        (
+                            candidate
+                            for candidate in candidates
+                            if candidate[1]
+                            .removeprefix("legacy:")
+                            .startswith("swiss_schools_")
+                        ),
+                        None,
                     )
-                    results.append({
-                        "match": _match_view(item, ref, None),
-                        "job": _job_view(item["vacancy"], source.removeprefix("legacy:")),
-                    })
+                    ref, source = (
+                        school
+                        if school
+                        else (
+                            str(uuid.UUID(item["vacancy"]["id"])),
+                            primary.get("source") or "core",
+                        )
+                    )
+                    results.append(
+                        {
+                            "match": _match_view(item, ref, None),
+                            "job": _job_view(
+                                item["vacancy"], source.removeprefix("legacy:")
+                            ),
+                        }
+                    )
             except _PAYLOAD_ERRORS as exc:
-                raise CoreUnavailableError("identidad core inválida en matching") from exc
+                raise CoreUnavailableError(
+                    "identidad core inválida en matching"
+                ) from exc
             # El total describe el feed ENTERO. Si el core lo informo, es el
             # suyo; si no, `results` viene de un recorrido completo y su
             # longitud es el mismo numero.
-            return results[offset:offset + limit], (
-                core_total if core_total is not None else len(results))
+            return results[offset : offset + limit], (
+                core_total if core_total is not None else len(results)
+            )
         local_by_hash: dict[str, MatchResult] = {}
         actionable_hashes: set[str] = set()
         if legacy_refs:
@@ -615,8 +636,11 @@ class CoreMatching:
         # Proyeccion PURA del estado del escritor LOCAL (feedback positivo):
         if settings.CORE_FEEDBACK_ENABLED:
             from .feedback import CoreFeedback
+
             return await CoreFeedback(self._db, self._client_factory).saved(
-                user_id, limit=limit, offset=offset,
+                user_id,
+                limit=limit,
+                offset=offset,
             )
         # se sirve de local en TODOS los modos (criterio unificador — ningun
         # estado local puede ser inaccesible por el routing). Sin red: no
@@ -702,8 +726,13 @@ class CoreMatching:
                     # cortado por `needed` no puede servir a quien pida mas.
                     if version is not None:
                         await self._maybe_remember(
-                            client, core_profile_id, version, version_total,
-                            items, total, generation,
+                            client,
+                            core_profile_id,
+                            version,
+                            version_total,
+                            items,
+                            total,
+                            generation,
                         )
                     return items, total
                 # Corte temprano: solo si el core ya dijo cuantas ofertas tiene
@@ -750,10 +779,19 @@ class CoreMatching:
         if not isinstance(version, str) or not version:
             return None
         total = body.get("total")
-        return version, (total if isinstance(total, int) and not isinstance(total, bool) else None)
+        return version, (
+            total if isinstance(total, int) and not isinstance(total, bool) else None
+        )
 
     async def _maybe_remember(
-        self, client, core_profile_id, version, version_total, items, total, generation,
+        self,
+        client,
+        core_profile_id,
+        version,
+        version_total,
+        items,
+        total,
+        generation,
     ) -> None:
         """Decide si un recorrido completo puede cachearse bajo `version`.
 
@@ -772,7 +810,9 @@ class CoreMatching:
         if version_total is not None and total is not None and version_total != total:
             logger.warning(
                 "feed de %s: la version declara %s items y la primera pagina %s — no se cachea",
-                pid, version_total, total,
+                pid,
+                version_total,
+                total,
             )
             return
         confirmada = await self._feed_version(client, core_profile_id)
@@ -782,7 +822,12 @@ class CoreMatching:
         self._remember_feed(pid, version, items, total, generation)
 
     def _remember_feed(
-        self, pid: str, version: str, items: list[dict], total, generation=None,
+        self,
+        pid: str,
+        version: str,
+        items: list[dict],
+        total,
+        generation=None,
     ) -> None:
         """Guarda un recorrido completo. Acotado y sin LRU a proposito: este
         despliegue tiene tres perfiles, y vaciar del todo es mas simple y mas
@@ -794,13 +839,19 @@ class CoreMatching:
             # perfil sin dejar rastro.
             logger.warning(
                 "feed de %s: recorrido de %d items frente a total %s — no se cachea "
-                "(¿vacantes vivas sin revision canonica?)", pid, len(items), total,
+                "(¿vacantes vivas sin revision canonica?)",
+                pid,
+                len(items),
+                total,
             )
             return
         if generation is not None and generation != (
-            _cache_generation, _profile_generations.get(pid, 0)
+            _cache_generation,
+            _profile_generations.get(pid, 0),
         ):
-            logger.info("feed de %s invalidado durante el recorrido — no se cachea", pid)
+            logger.info(
+                "feed de %s invalidado durante el recorrido — no se cachea", pid
+            )
             return
         if len(_feed_cache) >= _FEED_CACHE_MAX and pid not in _feed_cache:
             _feed_cache.clear()

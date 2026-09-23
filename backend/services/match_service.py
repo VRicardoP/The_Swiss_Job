@@ -250,10 +250,15 @@ class MatchService:
             from types import SimpleNamespace
             from services.schools.state import state_on_core
             from services.schools.preferences import preference
+
             if await state_on_core(self.db, user_id):
-                values = {col.name: getattr(profile, col.name) for col in UserProfile.__table__.columns}
+                values = {
+                    col.name: getattr(profile, col.name)
+                    for col in UserProfile.__table__.columns
+                }
                 values["watchlist_schools_enabled"] = await preference(
-                    self.db, user_id, profile.watchlist_schools_enabled)
+                    self.db, user_id, profile.watchlist_schools_enabled
+                )
                 return SimpleNamespace(**values)
         return profile
 
@@ -886,7 +891,10 @@ class MatchService:
         prof_stmt = select(UserProfile).where(UserProfile.user_id == user_id)
         profile = (await self.db.execute(prof_stmt)).scalar_one_or_none()
         from services.schools.preferences import preference
-        if not profile or not await preference(self.db, user_id, profile.watchlist_schools_enabled):
+
+        if not profile or not await preference(
+            self.db, user_id, profile.watchlist_schools_enabled
+        ):
             return
 
         priority = self._priority_watchlist(results)

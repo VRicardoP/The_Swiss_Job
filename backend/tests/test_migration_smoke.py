@@ -98,9 +98,15 @@ def _snapshot(sync_conn) -> dict:
             "checks": {
                 ck["name"]: ck["sqltext"] for ck in insp.get_check_constraints(table)
             },
-            "foreign_keys": sorted((tuple(fk["constrained_columns"]), fk["referred_table"],
-                                     tuple(fk["referred_columns"]), fk["options"].get("ondelete"))
-                                    for fk in insp.get_foreign_keys(table)),
+            "foreign_keys": sorted(
+                (
+                    tuple(fk["constrained_columns"]),
+                    fk["referred_table"],
+                    tuple(fk["referred_columns"]),
+                    fk["options"].get("ondelete"),
+                )
+                for fk in insp.get_foreign_keys(table)
+            ),
             "indexes": {
                 ix["name"]: {"columns": ix["column_names"], "unique": ix["unique"]}
                 for ix in insp.get_indexes(table)

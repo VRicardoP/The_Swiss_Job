@@ -4,7 +4,9 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # Enable only on SwissJob copies sharing the swissjob-shadow identity.
-    CORE_ERASURE_REPLICA_ID: str = Field(default="", pattern="^(|swissjob-live|swissjob-cdc)$")
+    CORE_ERASURE_REPLICA_ID: str = Field(
+        default="", pattern="^(|swissjob-live|swissjob-cdc)$"
+    )
 
     # PostgreSQL
     DATABASE_URL: str = (

@@ -94,21 +94,26 @@ class TestJobicyProvider:
         escalar abortaban las cinco consultas (tags) de la fuente. La forma
         se valida ANTES del dedupe y una fila rota no arrastra a las demás."""
         job_ok = {
-            "jobTitle": "Dev", "companyName": "ACME",
-            "url": "https://jobicy.com/job/ok", "jobGeo": "Europe",
+            "jobTitle": "Dev",
+            "companyName": "ACME",
+            "url": "https://jobicy.com/job/ok",
+            "jobGeo": "Europe",
         }
-        respuestas = iter([
-            [{"malformado": True}],            # raíz lista → lote descartado
-            {"jobs": None},                     # jobs null → lote descartado
-            {"jobs": [None, 42, job_ok]},       # escalares fuera, el válido queda
-            {"jobs": "no-lista"},               # jobs escalar → descartado
-            {},                                 # sin jobs → descartado
-        ])
+        respuestas = iter(
+            [
+                [{"malformado": True}],  # raíz lista → lote descartado
+                {"jobs": None},  # jobs null → lote descartado
+                {"jobs": [None, 42, job_ok]},  # escalares fuera, el válido queda
+                {"jobs": "no-lista"},  # jobs escalar → descartado
+                {},  # sin jobs → descartado
+            ]
+        )
 
         async def fake_fetch(client, url, params=None, headers=None):
             return next(respuestas)
 
         import providers.jobicy as mod
+
         monkeypatch.setattr(mod, "fetch_with_retry", fake_fetch)
         jobs = await JobicyProvider().fetch_jobs("", "Switzerland")
         assert len(jobs) == 1

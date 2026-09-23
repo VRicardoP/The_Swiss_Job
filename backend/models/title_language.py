@@ -44,7 +44,9 @@ class JobTitleLanguage(Base):
     title: Mapped[str] = mapped_column(String(TITLE_MAX_LEN), primary_key=True)
     # NULL = pendiente; '' = resuelto como DESCONOCIDO; 'de'/'fr'/... = resuelto.
     language: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    detected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    detected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

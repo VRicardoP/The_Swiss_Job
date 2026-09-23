@@ -165,7 +165,7 @@ def _feed_page_response(params: dict) -> httpx.Response:
     next_cursor solo si quedan filas mas alla de la pagina (contrato)."""
     matched = [n for n in FEED_ORDER if _feed_case_matches(n, params)]
     total = len(matched)
-    matched = matched[int(params.get("offset", 0)):]
+    matched = matched[int(params.get("offset", 0)) :]
     cursor = params.get("cursor")
     if cursor:
         idx = matched.index(cursor) + 1 if cursor in matched else len(matched)
@@ -626,7 +626,9 @@ async def test_core_search_presents_original_source_for_shadow_listing():
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/vacancies":
-            return httpx.Response(200, json={"items": [dto], "next_cursor": None, "total": 1})
+            return httpx.Response(
+                200, json={"items": [dto], "next_cursor": None, "total": 1}
+            )
         return httpx.Response(200, json=dto)
 
     catalog = make_core_catalog(transport=httpx.MockTransport(handler))
@@ -673,10 +675,14 @@ async def test_core_search_sends_offset_and_preserves_total():
         params = dict(request.url.params)
         calls.append(params)
         start, size = int(params["offset"]), int(params["limit"])
-        return httpx.Response(200, json={
-            "items": [dtos[n] for n in names[start:start+size]],
-            "next_cursor": None, "total": len(names),
-        })
+        return httpx.Response(
+            200,
+            json={
+                "items": [dtos[n] for n in names[start : start + size]],
+                "next_cursor": None,
+                "total": len(names),
+            },
+        )
 
     result = await make_core_catalog(transport=httpx.MockTransport(handler)).search(
         CatalogSearchParams(limit=2, offset=3),
@@ -689,10 +695,13 @@ async def test_core_search_sends_offset_and_preserves_total():
 @pytest.mark.parametrize("total", [None, -1, True, 1.5, "2", [], {}])
 async def test_core_search_invalid_total_is_unavailable(total):
     """Core viejo/roto sin total exacto falla cerrado; nunca recuento parcial."""
-    response = httpx.Response(200, json={"items": [], "next_cursor": None, "total": total})
+    response = httpx.Response(
+        200, json={"items": [], "next_cursor": None, "total": total}
+    )
     catalog = make_core_catalog(transport=httpx.MockTransport(lambda request: response))
     with pytest.raises(CoreUnavailableError):
         await catalog.search(CatalogSearchParams())
+
 
 @pytest.mark.parametrize(
     "body",
@@ -719,10 +728,14 @@ async def test_core_search_large_total_cost_is_one_request():
 
     def handler(request):
         calls.append(dict(request.url.params))
-        return httpx.Response(200, json={
-            "items": [dtos[n] for n in names], "total": 20000,
-            "next_cursor": "opaque-next",
-        })
+        return httpx.Response(
+            200,
+            json={
+                "items": [dtos[n] for n in names],
+                "total": 20000,
+                "next_cursor": "opaque-next",
+            },
+        )
 
     result = await make_core_catalog(transport=httpx.MockTransport(handler)).search(
         CatalogSearchParams(limit=2, offset=12500),
@@ -740,9 +753,15 @@ async def test_core_search_cache_is_scoped_to_offset_and_limit():
         params = dict(request.url.params)
         calls.append((params, request.headers.get("if-none-match")))
         offset = int(params["offset"])
-        return httpx.Response(200, json={
-            "items": [dtos[names[offset]]], "total": 2, "next_cursor": None,
-        }, headers={"ETag": f'"offset-{offset}"'})
+        return httpx.Response(
+            200,
+            json={
+                "items": [dtos[names[offset]]],
+                "total": 2,
+                "next_cursor": None,
+            },
+            headers={"ETag": f'"offset-{offset}"'},
+        )
 
     catalog = make_core_catalog(transport=httpx.MockTransport(handler))
     first = await catalog.search(CatalogSearchParams(limit=1, offset=0))
@@ -763,7 +782,11 @@ async def test_core_search_reuses_etag_cached_pages():
             return httpx.Response(304)
         return httpx.Response(
             200,
-            json={"items": [_vacancy_dto("python_zurich")], "next_cursor": None, "total": 1},
+            json={
+                "items": [_vacancy_dto("python_zurich")],
+                "next_cursor": None,
+                "total": 1,
+            },
             headers={"ETag": '"v1"'},
         )
 

@@ -22,12 +22,18 @@ class JobicyProvider(BaseJobProvider):
     # es — la sonda 2026-09-02 dio 13/50 ofertas del nicho de los perfiles
     # reales (customer success/contenido/localización). Lista corta a
     # propósito: cada tag es UNA petición por run.
-    DEFAULT_TAGS = ("customer-success", "copywriting", "technical-writing",
-                    "translation")
+    DEFAULT_TAGS = (
+        "customer-success",
+        "copywriting",
+        "technical-writing",
+        "translation",
+    )
 
     async def fetch_jobs(self, query: str, location: str = "Switzerland") -> list[dict]:
         """Fetch remote jobs from Jobicy filtered by tag."""
-        tags: tuple[str | None, ...] = (query,) if query else (None,) + self.DEFAULT_TAGS
+        tags: tuple[str | None, ...] = (
+            (query,) if query else (None,) + self.DEFAULT_TAGS
+        )
         geo = location if location and location.lower() != "switzerland" else None
 
         vistos: set[str] = set()
@@ -49,26 +55,27 @@ class JobicyProvider(BaseJobProvider):
                     if data:
                         logger.warning(
                             "jobicy: raíz inesperada %s — lote descartado",
-                            type(data).__name__)
+                            type(data).__name__,
+                        )
                     continue
                 raw_jobs = data.get("jobs")
                 if not isinstance(raw_jobs, list):
                     logger.warning(
                         "jobicy: 'jobs' no es lista (%s) — lote descartado",
-                        type(raw_jobs).__name__)
+                        type(raw_jobs).__name__,
+                    )
                     continue
                 validos = []
                 for r in raw_jobs:
                     if not isinstance(r, dict):
                         logger.warning(
                             "jobicy: elemento no-objeto descartado: %r",
-                            r if not isinstance(r, (bytes, str)) else str(r)[:60])
+                            r if not isinstance(r, (bytes, str)) else str(r)[:60],
+                        )
                         continue
                     validos.append(r)
                 # dedupe entre tags por URL (la misma oferta sale en varios)
-                nuevos = [
-                    r for r in validos if (r.get("url") or "") not in vistos
-                ]
+                nuevos = [r for r in validos if (r.get("url") or "") not in vistos]
                 vistos.update((r.get("url") or "") for r in nuevos)
                 results.extend(self._process_raw_jobs(nuevos))
 

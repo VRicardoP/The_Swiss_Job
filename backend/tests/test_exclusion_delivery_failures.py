@@ -1,4 +1,5 @@
 """Delivery after local commit: lost ACK, diagnostics outage and version drift."""
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,7 +11,12 @@ from tests.test_exclusions_sync import core, _create  # noqa: F401  (fixture de 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("break_rollback", [False, True])
-async def test_diagnostics_outage_does_not_undo_success(client, core, monkeypatch, break_rollback):  # noqa: F811  (la fixture, no una redefinición)
+async def test_diagnostics_outage_does_not_undo_success(
+    client,
+    core,  # noqa: F811  (la fixture, no una redefinición)
+    monkeypatch,
+    break_rollback,  # noqa: F811  (la fixture, no una redefinición)
+):  # noqa: F811  (la fixture, no una redefinición)
     headers, uid = await _auth(client)
     unavailable = False
     execute, rollback = AsyncSession.execute, AsyncSession.rollback

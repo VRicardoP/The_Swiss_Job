@@ -49,10 +49,7 @@ class CVAnalyzer:
         """Devuelve un dict con los campos extraídos (ya normalizados). {} si falla."""
         if not cv_text or not self.is_available:
             return {}
-        prompt = (
-            "Extract the profile fields from this CV as JSON:\n\n"
-            f"{cv_text[:6000]}"
-        )
+        prompt = f"Extract the profile fields from this CV as JSON:\n\n{cv_text[:6000]}"
         try:
             raw = await self._call_llm(prompt)
         except Exception:

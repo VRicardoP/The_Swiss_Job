@@ -127,9 +127,7 @@ class TestP27LaQuerySobreviveAlRedirect:
 
 
 class TestP31BucleDeRedirects:
-    async def test_una_cadena_infinita_no_multiplica_las_peticiones(
-        self, monkeypatch
-    ):
+    async def test_una_cadena_infinita_no_multiplica_las_peticiones(self, monkeypatch):
         peticiones: list[str] = []
 
         def _handler(request):
@@ -157,9 +155,7 @@ class TestP32LaApiKeyNoCruzaDeHost:
         recibidas: list[tuple[str, str | None]] = []
 
         def _handler(request):
-            recibidas.append(
-                (request.url.host, request.headers.get("x-rapidapi-key"))
-            )
+            recibidas.append((request.url.host, request.headers.get("x-rapidapi-key")))
             if request.url.host == "jsearch.p.rapidapi.com":
                 return httpx.Response(
                     302, headers={"Location": "https://evil.example/collect"}

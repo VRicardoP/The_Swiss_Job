@@ -24,6 +24,7 @@ def _clear_cache():
     of AttributeError the moment someone removes the memoisation -- an error,
     not the assertion below failing. A guard that bites for the wrong reason
     proves nothing, which is the same defect the acceptance probe had."""
+
     def clear():
         clear_fn = getattr(TranslationService._detect_language, "cache_clear", None)
         if clear_fn is not None:

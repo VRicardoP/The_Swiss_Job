@@ -74,7 +74,7 @@ class TestShouldRun:
         now = datetime.now(timezone.utc)
         cursor = _cursor(
             consecutive_empty_runs=99,  # racha extrema: backoff saturado
-            last_run_at=now,            # y recién ejecutada
+            last_run_at=now,  # y recién ejecutada
         )
         assert (
             CrawlerBudgetService.should_run(
@@ -87,7 +87,9 @@ class TestShouldRun:
         """Control del test anterior: el backoff SIGUE aplicando por defecto."""
         now = datetime.now(timezone.utc)
         cursor = _cursor(consecutive_empty_runs=99, last_run_at=now)
-        assert CrawlerBudgetService.should_run(cursor, self.BASE_HOURS, now=now) is False
+        assert (
+            CrawlerBudgetService.should_run(cursor, self.BASE_HOURS, now=now) is False
+        )
 
     def test_runs_without_history(self):
         assert CrawlerBudgetService.should_run(_cursor(), self.BASE_HOURS) is True

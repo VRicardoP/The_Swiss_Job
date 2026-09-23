@@ -21,7 +21,6 @@ def require_handover_fields():
     ), "Startup source handover fields are missing"
 
 
-
 @pytest.mark.parametrize(
     "registry,field,classes,single,all_names",
     [

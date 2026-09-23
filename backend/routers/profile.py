@@ -86,6 +86,7 @@ async def get_profile_sync_status(
 ):
     """Delivery status for this authenticated owner; no CV or credentials."""
     from services.profile_sync import profile_sync_status
+
     return await profile_sync_status(db, current_user.id)
 
 
@@ -108,7 +109,8 @@ async def get_profile(
     resp = ProfileResponse.model_validate(profile)
     resp.has_cv_embedding = profile.cv_embedding is not None
     resp.watchlist_schools_enabled = await school_preference(
-        db, current_user.id, profile.watchlist_schools_enabled)
+        db, current_user.id, profile.watchlist_schools_enabled
+    )
     return resp
 
 
@@ -144,12 +146,18 @@ async def update_profile(
         if value is not None or field in NULLABLE_PROFILE_FIELDS
     }
     school_enabled = update_data.get("watchlist_schools_enabled")
-    if school_enabled is not None and await state_on_core(db, current_user.id, write=True):
+    if school_enabled is not None and await state_on_core(
+        db, current_user.id, write=True
+    ):
         # The school authority is the sole writer. Other profile fields remain
         # local; an RPC failure aborts before their commit. Repeating this PUT
         # after a local commit failure is safe (the preference is a desired bool).
-        await school_preference(db, current_user.id, profile.watchlist_schools_enabled,
-                                enabled=school_enabled)
+        await school_preference(
+            db,
+            current_user.id,
+            profile.watchlist_schools_enabled,
+            enabled=school_enabled,
+        )
         update_data.pop("watchlist_schools_enabled")
     for field, value in update_data.items():
         setattr(profile, field, value)
@@ -160,7 +168,8 @@ async def update_profile(
     resp = ProfileResponse.model_validate(profile)
     resp.has_cv_embedding = profile.cv_embedding is not None
     resp.watchlist_schools_enabled = await school_preference(
-        db, current_user.id, profile.watchlist_schools_enabled)
+        db, current_user.id, profile.watchlist_schools_enabled
+    )
     return resp
 
 
@@ -340,15 +349,20 @@ async def delete_all_user_data(
     await db.execute(select(User.id).where(User.id == user_id).with_for_update())
     core_profile_id = await resolve_core_profile_id(db, user_id)
     from services.profile_erasure import queue_erasure
+
     await queue_erasure(db, user_id, core_profile_id)
     now = datetime.now(timezone.utc)
 
     if core_profile_id is not None:
-        await db.execute(delete(IntegrationInbox).where(
-            IntegrationInbox.subject_profile_id == core_profile_id))
+        await db.execute(
+            delete(IntegrationInbox).where(
+                IntegrationInbox.subject_profile_id == core_profile_id
+            )
+        )
     await db.delete(current_user)
     await db.commit()
     from services.profile_erasure import clear_erased_caches
+
     clear_erased_caches(core_profile_id)
 
     return DeleteConfirmation(

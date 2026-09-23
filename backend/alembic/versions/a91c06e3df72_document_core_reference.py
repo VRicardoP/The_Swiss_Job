@@ -15,7 +15,12 @@ depends_on = None
 
 def upgrade():
     op.execute("SET LOCAL lock_timeout='5s'")
-    op.alter_column("generated_documents", "job_hash", existing_type=sa.String(32), type_=sa.String(36))
+    op.alter_column(
+        "generated_documents",
+        "job_hash",
+        existing_type=sa.String(32),
+        type_=sa.String(36),
+    )
 
 
 def downgrade():
@@ -25,4 +30,9 @@ def downgrade():
             RAISE EXCEPTION 'core document references require reconciliation before downgrade';
         END IF;
     END $$""")
-    op.alter_column("generated_documents", "job_hash", existing_type=sa.String(36), type_=sa.String(32))
+    op.alter_column(
+        "generated_documents",
+        "job_hash",
+        existing_type=sa.String(36),
+        type_=sa.String(32),
+    )

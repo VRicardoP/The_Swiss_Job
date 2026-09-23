@@ -227,9 +227,7 @@ async def _check_job_urls_async(limit: int) -> dict[str, Any]:
                 rest = [h for h in probed if h not in dead_set]
                 if rest:
                     await db.execute(
-                        update(Job)
-                        .where(Job.hash.in_(rest))
-                        .values(url_last_check=now)
+                        update(Job).where(Job.hash.in_(rest)).values(url_last_check=now)
                     )
                 await db.commit()
                 total_probed += len(probed)

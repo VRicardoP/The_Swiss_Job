@@ -156,7 +156,9 @@ class TranslationService:
             # heurística completa, en segundo plano. Si uno de los dos se
             # equivoca diciendo «en», el precio es un título sin traducir; el de
             # reconfirmarlo aquí son 104 ms por oferta servida.
-            conocido = item.get("language") or (languages or {}).get(title.strip()[:500]) or ""
+            conocido = (
+                item.get("language") or (languages or {}).get(title.strip()[:500]) or ""
+            )
             lang = conocido or self._lang_from_chars(title)
 
             # Solo omitir traducción si estamos seguros de que es inglés/español

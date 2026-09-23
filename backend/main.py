@@ -84,6 +84,7 @@ async def lifespan(app: FastAPI):
     # Validate handover BEFORE SSE, warmup, or scheduler tasks are armed.
     from scrapers import get_scraper_names
     from services.legacy_sources import disabled_sources
+
     disabled_sources(settings.LEGACY_DISABLED_SCRAPERS, get_scraper_names())
     log_provider_status()
 
@@ -106,11 +107,14 @@ async def lifespan(app: FastAPI):
     scheduler_task = asyncio.create_task(run_scheduler_with_leader_lock())
     exclusion_delivery_task = asyncio.create_task(run_exclusion_delivery())
     from services.profile_sync import run_profile_delivery
+
     profile_delivery_task = (
         asyncio.create_task(run_profile_delivery())
-        if settings.CORE_PROFILE_SYNC_ENABLED else None
+        if settings.CORE_PROFILE_SYNC_ENABLED
+        else None
     )
     from services.profile_erasure import run_erasure_delivery
+
     erasure_delivery_task = asyncio.create_task(run_erasure_delivery())
 
     yield
@@ -183,7 +187,9 @@ from services.schools.port import CoreUnavailableError as SchoolCoreUnavailableE
 
 @app.exception_handler(SchoolCoreUnavailableError)
 async def school_unavailable_handler(request, exc):
-    return JSONResponse(status_code=503, content={"detail": "School storage temporarily unavailable"})
+    return JSONResponse(
+        status_code=503, content={"detail": "School storage temporarily unavailable"}
+    )
 
 
 @app.get("/health/schools")
@@ -193,7 +199,9 @@ async def school_health():
 
 @app.exception_handler(DocumentsError)
 async def document_unavailable_handler(request, exc):
-    return JSONResponse(status_code=503, content={"detail": "Document storage temporarily unavailable"})
+    return JSONResponse(
+        status_code=503, content={"detail": "Document storage temporarily unavailable"}
+    )
 
 
 @app.exception_handler(DocumentDeliveryError)
@@ -209,8 +217,10 @@ async def document_health():
 
 @app.get("/health/feedback")
 async def feedback_health():
-    return {"writes": "frozen" if settings.FEEDBACK_WRITES_FROZEN else "enabled",
-            "writer": "core" if settings.CORE_FEEDBACK_ENABLED else "local"}
+    return {
+        "writes": "frozen" if settings.FEEDBACK_WRITES_FROZEN else "enabled",
+        "writer": "core" if settings.CORE_FEEDBACK_ENABLED else "local",
+    }
 
 
 @app.get("/health/searches")

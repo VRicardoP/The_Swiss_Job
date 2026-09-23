@@ -333,12 +333,16 @@ class CoreCatalog:
         if settings.CORE_FEEDBACK_ENABLED:
             # Final cutover: old bookmarks resolve through persisted core
             # listing identities, never through the retired local catalogue.
-            if len(job_ref) != 32 or any(c not in "0123456789abcdefABCDEF" for c in job_ref):
+            if len(job_ref) != 32 or any(
+                c not in "0123456789abcdefABCDEF" for c in job_ref
+            ):
                 return None
             self._guard_credential()
             try:
                 async with self._client_factory() as client:
-                    response = await client.get("/listing-references", params={"external_id": job_ref})
+                    response = await client.get(
+                        "/listing-references", params={"external_id": job_ref}
+                    )
             except httpx.HTTPError as exc:
                 raise CoreUnavailableError("core reference lookup unavailable") from exc
             if response.status_code == 404:
@@ -475,9 +479,7 @@ class CoreCatalog:
 
     # ------------------------------------------------------------------ feed
 
-    async def _fetch_page(
-        self, client: httpx.AsyncClient, query: dict
-    ) -> dict:
+    async def _fetch_page(self, client: httpx.AsyncClient, query: dict) -> dict:
         cache_key = tuple(sorted(query.items()))
         cached = _etag_cache.get(cache_key)
         headers = {"If-None-Match": cached[0]} if cached else {}

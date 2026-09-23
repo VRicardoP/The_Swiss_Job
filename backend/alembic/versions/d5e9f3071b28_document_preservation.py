@@ -21,11 +21,16 @@ def upgrade():
         FROM jobs j WHERE j.hash=d.job_hash
     """)
     # Keep the opaque source reference; it is not an ownership/lifecycle FK.
-    constraints = [fk for fk in sa.inspect(op.get_bind()).get_foreign_keys("generated_documents")
-                   if fk["constrained_columns"] == ["job_hash"]]
+    constraints = [
+        fk
+        for fk in sa.inspect(op.get_bind()).get_foreign_keys("generated_documents")
+        if fk["constrained_columns"] == ["job_hash"]
+    ]
     if len(constraints) != 1:
         raise RuntimeError("expected exactly one generated_documents job FK")
-    op.drop_constraint(constraints[0]["name"], "generated_documents", type_="foreignkey")
+    op.drop_constraint(
+        constraints[0]["name"], "generated_documents", type_="foreignkey"
+    )
 
 
 def downgrade():
@@ -40,7 +45,13 @@ def downgrade():
             RAISE EXCEPTION 'document snapshots require reconciliation before downgrade';
         END IF;
     END $$""")
-    op.create_foreign_key("generated_documents_job_hash_fkey", "generated_documents", "jobs",
-                          ["job_hash"], ["hash"], ondelete="CASCADE")
+    op.create_foreign_key(
+        "generated_documents_job_hash_fkey",
+        "generated_documents",
+        "jobs",
+        ["job_hash"],
+        ["hash"],
+        ondelete="CASCADE",
+    )
     op.drop_column("generated_documents", "job_company")
     op.drop_column("generated_documents", "job_title")

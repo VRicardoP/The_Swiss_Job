@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_BATCH = 500
 
 
-@celery_app.task(name="tasks.language_tasks.resolve_pending_languages", bind=True, max_retries=1)
+@celery_app.task(
+    name="tasks.language_tasks.resolve_pending_languages", bind=True, max_retries=1
+)
 def resolve_pending_languages(self, batch: int = DEFAULT_BATCH) -> dict[str, Any]:
     """Resuelve un lote de títulos pendientes y lo persiste."""
     try:
@@ -51,6 +53,8 @@ async def _resolve(batch: int) -> dict[str, Any]:
     desconocidos = sum(1 for v in resueltos.values() if not v)
     logger.info(
         "resolve_pending_languages: %d resueltos (%d desconocidos), %d pendientes",
-        len(resueltos), desconocidos, quedan,
+        len(resueltos),
+        desconocidos,
+        quedan,
     )
     return {"resolved": len(resueltos), "unknown": desconocidos, "pending_left": quedan}

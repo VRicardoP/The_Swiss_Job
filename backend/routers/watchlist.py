@@ -36,8 +36,11 @@ from services.schools import resolve_schools
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/watchlist", tags=["watchlist"],
-                   dependencies=[Depends(block_school_writes)])
+router = APIRouter(
+    prefix="/api/v1/watchlist",
+    tags=["watchlist"],
+    dependencies=[Depends(block_school_writes)],
+)
 
 
 def _get_groq(request: Request) -> GroqService:

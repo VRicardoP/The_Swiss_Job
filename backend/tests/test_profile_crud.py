@@ -212,7 +212,9 @@ class TestUploadCV:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["message"] == "CV uploaded — analyzing to auto-complete your profile"
+        assert (
+            data["message"] == "CV uploaded — analyzing to auto-complete your profile"
+        )
         assert data["cv_text_length"] > 0
         assert "English" in data["skills_extracted"]
 

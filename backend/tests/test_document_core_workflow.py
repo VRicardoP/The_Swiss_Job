@@ -15,11 +15,19 @@ from models.job import Job
 from models.jobhunt_profile_map import JobhuntProfileMap
 from models.user import User
 from services.routing import set_routing
-from tests.test_documents import _auth, _gemini_on, _insert_job, _register_and_get_token, _set_cv_text
+from tests.test_documents import (
+    _auth,
+    _gemini_on,
+    _insert_job,
+    _register_and_get_token,
+    _set_cv_text,
+)
 
 
 @pytest.mark.anyio
-async def test_core_ack_loss_retries_without_job_cv_or_provider(client, db_session, monkeypatch):
+async def test_core_ack_loss_retries_without_job_cv_or_provider(
+    client, db_session, monkeypatch
+):
     token, email = await _register_and_get_token(client)
     await _set_cv_text(db_session, email)
     job_hash = await _insert_job(db_session)
@@ -37,9 +45,15 @@ async def test_core_ack_loss_retries_without_job_cv_or_provider(client, db_sessi
         requests.append(request)
         if request.method == "POST":
             body = json.loads(request.content)
-            response = {**body, "id": str(doc_id), "profile_id": str(pid), "version": 1,
-                        "async_state": "ready", "created_at": "2026-09-09T10:00:00Z",
-                        "output_hash": hashlib.sha256(body["content"].encode()).hexdigest()}
+            response = {
+                **body,
+                "id": str(doc_id),
+                "profile_id": str(pid),
+                "version": 1,
+                "async_state": "ready",
+                "created_at": "2026-09-09T10:00:00Z",
+                "output_hash": hashlib.sha256(body["content"].encode()).hexdigest(),
+            }
             key = request.headers["Idempotency-Key"]
             if key not in remote:
                 remote[key] = response
@@ -50,10 +64,16 @@ async def test_core_ack_loss_retries_without_job_cv_or_provider(client, db_sessi
             return httpx.Response(200, json=remote[str(operation)])
         pytest.fail("unexpected HTTP method")
 
-    monkeypatch.setattr("services.documents.core_client.default_client_factory", lambda: httpx.AsyncClient(
-        base_url="http://core/v1/", transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(
+        "services.documents.core_client.default_client_factory",
+        lambda: httpx.AsyncClient(
+            base_url="http://core/v1/", transport=httpx.MockTransport(handler)
+        ),
+    )
     body = {"job_hash": job_hash, "doc_type": "cv", "operation_id": str(operation)}
-    first = await client.post("/api/v1/documents/generate", headers=_auth(token), json=body)
+    first = await client.post(
+        "/api/v1/documents/generate", headers=_auth(token), json=body
+    )
     assert first.status_code == 202 and first.json()["status"] == "pending"
     pending = await client.get("/api/v1/documents/operations", headers=_auth(token))
     assert pending.status_code == 200 and pending.json()["total"] == 1
@@ -63,29 +83,54 @@ async def test_core_ack_loss_retries_without_job_cv_or_provider(client, db_sessi
     # A retry MUST NOT revalidate generation inputs or call a provider again.
     await db_session.execute(delete(Job).where(Job.hash == job_hash))
     await db_session.commit()
-    monkeypatch.setattr("routers.documents._get_gemini", lambda: pytest.fail("must not regenerate"))
-    second = await client.post("/api/v1/documents/generate", headers=_auth(token), json=body)
+    monkeypatch.setattr(
+        "routers.documents._get_gemini", lambda: pytest.fail("must not regenerate")
+    )
+    second = await client.post(
+        "/api/v1/documents/generate", headers=_auth(token), json=body
+    )
     assert second.status_code == 202 and second.json()["status"] == "delivered"
     assert second.json()["document_id"] == str(doc_id)
-    assert (await client.get("/api/v1/documents/operations", headers=_auth(token))).json() == {"data": [], "total": 0}
+    assert (
+        await client.get("/api/v1/documents/operations", headers=_auth(token))
+    ).json() == {"data": [], "total": 0}
     assert provider.get_chat_response.await_count == 1 and len(requests) == 2
     fetched = await client.get(f"/api/v1/documents/item/{doc_id}", headers=_auth(token))
-    assert fetched.status_code == 200 and fetched.json()["content"] == "Prepared exact output"
-    conflict = await client.post("/api/v1/documents/generate", headers=_auth(token), json={**body, "language": "de"})
+    assert (
+        fetched.status_code == 200
+        and fetched.json()["content"] == "Prepared exact output"
+    )
+    conflict = await client.post(
+        "/api/v1/documents/generate",
+        headers=_auth(token),
+        json={**body, "language": "de"},
+    )
     assert conflict.status_code == 409
     db_session.expire_all()
     assert (await db_session.get(DocumentDelivery, operation)).payload is None
     stranger, _ = await _register_and_get_token(client)
-    denied = await client.get(f"/api/v1/documents/operations/{operation}", headers=_auth(stranger))
+    denied = await client.get(
+        f"/api/v1/documents/operations/{operation}", headers=_auth(stranger)
+    )
     assert denied.status_code == 404
-    assert (await client.get("/api/v1/documents/operations", headers=_auth(stranger))).json() == {"data": [], "total": 0}
+    assert (
+        await client.get("/api/v1/documents/operations", headers=_auth(stranger))
+    ).json() == {"data": [], "total": 0}
     monkeypatch.setattr(settings, "DOCUMENT_WRITES_FROZEN", True)
-    assert (await client.get(f"/api/v1/documents/item/{doc_id}", headers=_auth(token))).status_code == 200
-    assert (await client.post(f"/api/v1/documents/operations/{operation}/retry", headers=_auth(token))).status_code == 503
+    assert (
+        await client.get(f"/api/v1/documents/item/{doc_id}", headers=_auth(token))
+    ).status_code == 200
+    assert (
+        await client.post(
+            f"/api/v1/documents/operations/{operation}/retry", headers=_auth(token)
+        )
+    ).status_code == 503
 
 
 @pytest.mark.anyio
-async def test_owner_deleted_during_inference_cannot_publish_local(client, db_session, monkeypatch):
+async def test_owner_deleted_during_inference_cannot_publish_local(
+    client, db_session, monkeypatch
+):
     token, email = await _register_and_get_token(client)
     await _set_cv_text(db_session, email)
     job_hash = await _insert_job(db_session)
@@ -98,8 +143,13 @@ async def test_owner_deleted_during_inference_cannot_publish_local(client, db_se
         await db_session.commit()
         return "must not survive account deletion"
 
-    monkeypatch.setattr("routers.documents.DocumentGeneratorService.generate_cv", generate)
-    response = await client.post("/api/v1/documents/generate", headers=_auth(token),
-                                 json={"job_hash": job_hash, "doc_type": "cv"})
+    monkeypatch.setattr(
+        "routers.documents.DocumentGeneratorService.generate_cv", generate
+    )
+    response = await client.post(
+        "/api/v1/documents/generate",
+        headers=_auth(token),
+        json={"job_hash": job_hash, "doc_type": "cv"},
+    )
     assert response.status_code == 403
     assert await db_session.scalar(select(GeneratedDocument.id)) is None

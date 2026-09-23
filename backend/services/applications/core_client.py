@@ -417,13 +417,18 @@ class CoreApplications:
                 candidate = uuid.UUID(job_hash)
             except ValueError:
                 raise ApplicationJobNotFoundError("Job not found") from None
-            if str(candidate) != job_hash.lower() and not settings.CORE_FEEDBACK_ENABLED:
+            if (
+                str(candidate) != job_hash.lower()
+                and not settings.CORE_FEEDBACK_ENABLED
+            ):
                 raise ApplicationJobNotFoundError("Job not found")
             native_id = job_hash
         core_profile_id = await self._require_profile(user_id)
         if native_id is not None:
             try:
-                job = await CoreCatalog(client_factory=self._client_factory).get(native_id)
+                job = await CoreCatalog(client_factory=self._client_factory).get(
+                    native_id
+                )
             except CatalogUnavailableError as exc:
                 raise CoreUnavailableError(str(exc)) from exc
             if job is None:
@@ -436,7 +441,9 @@ class CoreApplications:
             "company": job.company,
             # Snapshot = "lo que el usuario vio": el snippet legacy de 500
             # (la description completa podria exceder la cota 100k del /v1).
-            "description": (job.description or "")[:500] if native_id else job.description_snippet,
+            "description": (job.description or "")[:500]
+            if native_id
+            else job.description_snippet,
             "source": job.source,
             "notes": notes,
         }

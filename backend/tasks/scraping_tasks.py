@@ -181,6 +181,7 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
     async with task_session() as db:
         repo = JobRepository(db)
         from services.schools.producer import SchoolProducer
+
         school_producer = SchoolProducer(db)
 
         by_name = {scraper.get_source_name(): scraper for scraper in scrapers}
@@ -529,7 +530,9 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 # Do not acknowledge the source cursor until the school
                 # observation reached core. Core dedup makes a replay safe if
                 # the final local commit fails after its remote acknowledgement.
-                await school_producer.reconcile(scraper, live_hashes=stored_school_hashes)
+                await school_producer.reconcile(
+                    scraper, live_hashes=stored_school_hashes
+                )
                 await db.commit()
 
                 # G4/P1-1 — la deriva de identidad sube a INCIDENCIA de run:

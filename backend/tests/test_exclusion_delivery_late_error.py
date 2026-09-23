@@ -1,4 +1,5 @@
 """A failed in-flight duplicate must not overwrite an already confirmed ACK."""
+
 import asyncio
 
 import pytest
@@ -46,7 +47,10 @@ async def test_late_duplicate_failure_preserves_success_diagnostics(client, core
         release.set()
         await late
     async with TestSessionLocal() as session:
-        state = (await session.execute(select(ExclusionSyncState).where(
-            ExclusionSyncState.user_id == uid))).scalar_one()
+        state = (
+            await session.execute(
+                select(ExclusionSyncState).where(ExclusionSyncState.user_id == uid)
+            )
+        ).scalar_one()
         assert state.delivered_version == state.version
         assert state.last_error is None

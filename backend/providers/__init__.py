@@ -141,7 +141,8 @@ def get_all_providers() -> list[BaseJobProvider]:
     """Construct only enabled sources, including the per-source handover guard."""
     disabled = disabled_sources(settings.LEGACY_DISABLED_PROVIDERS, _PROVIDER_CLASSES)
     return [
-        cls() for name, cls in _PROVIDER_CLASSES.items()
+        cls()
+        for name, cls in _PROVIDER_CLASSES.items()
         if name not in disabled and _has_required_key(name)
     ]
 

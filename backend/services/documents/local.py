@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.generated_document import GeneratedDocument
 from models.job import Job
 from .freeze import assert_document_writes_enabled
-from schemas.documents import DocumentListResponse, GeneratedDocumentResponse, DocumentPageResponse
+from schemas.documents import (
+    DocumentListResponse,
+    GeneratedDocumentResponse,
+    DocumentPageResponse,
+)
 
 
 def _to_response(
@@ -97,8 +101,16 @@ class LocalDocuments:
         data = [
             _to_response(
                 doc,
-                job_title=doc.job_title if doc.job_title is not None else job.title if job else None,
-                job_company=doc.job_company if doc.job_company is not None else job.company if job else None,
+                job_title=doc.job_title
+                if doc.job_title is not None
+                else job.title
+                if job
+                else None,
+                job_company=doc.job_company
+                if doc.job_company is not None
+                else job.company
+                if job
+                else None,
             )
             for doc, job in rows
         ]
@@ -111,27 +123,48 @@ class LocalDocuments:
             try:
                 if len(cursor) > 512:
                     raise ValueError()
-                stamp, identity = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
+                stamp, identity = json.loads(
+                    base64.b64decode(cursor, altchars=b"-_", validate=True)
+                )
                 stamp, identity = datetime.fromisoformat(stamp), uuid.UUID(identity)
                 if stamp.tzinfo is None:
                     raise ValueError()
             except (ValueError, TypeError, UnicodeError):
-                raise HTTPException(status_code=400, detail="Invalid document cursor") from None
-            stmt = stmt.where(tuple_(GeneratedDocument.created_at, GeneratedDocument.id) < tuple_(stamp, identity))
-        docs = (await self._db.scalars(stmt.order_by(
-            GeneratedDocument.created_at.desc(), GeneratedDocument.id.desc()).limit(21))).all()
+                raise HTTPException(
+                    status_code=400, detail="Invalid document cursor"
+                ) from None
+            stmt = stmt.where(
+                tuple_(GeneratedDocument.created_at, GeneratedDocument.id)
+                < tuple_(stamp, identity)
+            )
+        docs = (
+            await self._db.scalars(
+                stmt.order_by(
+                    GeneratedDocument.created_at.desc(), GeneratedDocument.id.desc()
+                ).limit(21)
+            )
+        ).all()
         next_cursor = None
         if len(docs) > 20:
             last = docs[19]
-            next_cursor = base64.urlsafe_b64encode(json.dumps(
-                [last.created_at.isoformat(), str(last.id)]).encode()).decode()
-        return DocumentPageResponse(data=[
-            _to_response(doc, job_title=doc.job_title, job_company=doc.job_company) for doc in docs[:20]
-        ], next_cursor=next_cursor)
+            next_cursor = base64.urlsafe_b64encode(
+                json.dumps([last.created_at.isoformat(), str(last.id)]).encode()
+            ).decode()
+        return DocumentPageResponse(
+            data=[
+                _to_response(doc, job_title=doc.job_title, job_company=doc.job_company)
+                for doc in docs[:20]
+            ],
+            next_cursor=next_cursor,
+        )
 
     async def get(self, user_id, document_id):
-        doc = await self._db.scalar(select(GeneratedDocument).where(
-            GeneratedDocument.id == document_id, GeneratedDocument.user_id == user_id))
+        doc = await self._db.scalar(
+            select(GeneratedDocument).where(
+                GeneratedDocument.id == document_id,
+                GeneratedDocument.user_id == user_id,
+            )
+        )
         if doc is None:
             return None
         return _to_response(doc, job_title=doc.job_title, job_company=doc.job_company)

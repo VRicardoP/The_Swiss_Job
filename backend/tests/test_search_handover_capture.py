@@ -23,21 +23,35 @@ async def fixture(db, monkeypatch):
     await db.commit()
     search = await _make_search(db, uid, "ZH", uuid.uuid4().hex[:8])
     stamp = datetime.now(timezone.utc)
-    for name, delta, canton in (("sent", -1, "ZH"), ("owed", -1, "ZH"),
-                               ("future", 1, "ZH"), ("elsewhere", -1, "BE")):
-        await _make_job(db, name, canton=canton, first_seen_at=stamp+timedelta(hours=delta))
+    for name, delta, canton in (
+        ("sent", -1, "ZH"),
+        ("owed", -1, "ZH"),
+        ("future", 1, "ZH"),
+        ("elsewhere", -1, "BE"),
+    ):
+        await _make_job(
+            db, name, canton=canton, first_seen_at=stamp + timedelta(hours=delta)
+        )
     return search, stamp
 
 
-async def test_capture_preserves_pending_and_sent_without_mutation(db_session, monkeypatch):
+async def test_capture_preserves_pending_and_sent_without_mutation(
+    db_session, monkeypatch
+):
     search, stamp = await fixture(db_session, monkeypatch)
     previous = (search.last_run_at, search.total_matches)
     redis = AsyncMock()
     redis.mget.return_value = [None, b"1"]  # ordered hashes: owed, sent
     snapshot = await capture(db_session, redis, settings, captured_at=stamp)
     sid = str(search.id)
-    executor_hashes = set((await db_session.execute(candidate_query(search, settings, stamp))).scalars())
-    assert executor_hashes == {row["hash"] for row in snapshot["candidates"][sid]} == {"owed", "sent"}
+    executor_hashes = set(
+        (await db_session.execute(candidate_query(search, settings, stamp))).scalars()
+    )
+    assert (
+        executor_hashes
+        == {row["hash"] for row in snapshot["candidates"][sid]}
+        == {"owed", "sent"}
+    )
     assert snapshot["sent"][sid] == {"owed": False, "sent": True}
     assert (search.last_run_at, search.total_matches) == previous
     assert not (await db_session.execute(select(Notification))).scalars().all()
@@ -48,15 +62,21 @@ async def test_capture_preserves_pending_and_sent_without_mutation(db_session, m
 async def test_capture_refuses_unfrozen_and_unbound_owners(db_session, monkeypatch):
     monkeypatch.setattr(settings, "SAVED_SEARCH_WRITES_FROZEN", False)
     with pytest.raises(SearchCaptureError, match="frozen"):
-        await capture(db_session, AsyncMock(), settings, captured_at=datetime.now(timezone.utc))
+        await capture(
+            db_session, AsyncMock(), settings, captured_at=datetime.now(timezone.utc)
+        )
     monkeypatch.setattr(settings, "SAVED_SEARCH_WRITES_FROZEN", True)
     uid = await _make_user(db_session)
     await _make_search(db_session, uid, "ZH", "unbound")
     with pytest.raises(SearchCaptureError, match="binding"):
-        await capture(db_session, AsyncMock(), settings, captured_at=datetime.now(timezone.utc))
+        await capture(
+            db_session, AsyncMock(), settings, captured_at=datetime.now(timezone.utc)
+        )
 
 
-@pytest.mark.parametrize("response", [[], [None, b"wrong"], ConnectionError("redis unavailable")])
+@pytest.mark.parametrize(
+    "response", [[], [None, b"wrong"], ConnectionError("redis unavailable")]
+)
 async def test_marker_errors_abort_capture(db_session, monkeypatch, response):
     _, stamp = await fixture(db_session, monkeypatch)
     redis = AsyncMock()
@@ -71,7 +91,9 @@ async def test_marker_errors_abort_capture(db_session, monkeypatch, response):
     assert [call[0] for call in redis.method_calls] == ["mget"]
 
 
-async def test_capture_detects_corpus_changes_not_just_new_rows(db_session, monkeypatch):
+async def test_capture_detects_corpus_changes_not_just_new_rows(
+    db_session, monkeypatch
+):
     _, stamp = await fixture(db_session, monkeypatch)
     redis = AsyncMock()
     redis.mget.side_effect = lambda keys: [None] * len(keys)
@@ -101,7 +123,7 @@ async def test_capture_timestamp_follows_the_writer_drain(db_session, monkeypatc
     await db_session.execute(text("LOCK TABLE jobs IN ROW EXCLUSIVE MODE"))
     waiting = asyncio.Event()
     markers = AsyncMock()
-    markers.mget.side_effect = lambda keys: [None]*len(keys)
+    markers.mget.side_effect = lambda keys: [None] * len(keys)
 
     async def reader():
         async with TestSessionLocal() as db:
@@ -112,7 +134,7 @@ async def test_capture_timestamp_follows_the_writer_drain(db_session, monkeypatc
                     waiting.set()
                 return await execute(statement, *args, **kwargs)
 
-            monkeypatch.setattr(db, 'execute', observe)
+            monkeypatch.setattr(db, "execute", observe)
             return await capture(db, markers, settings)
 
     task = asyncio.create_task(reader())
@@ -123,7 +145,7 @@ async def test_capture_timestamp_follows_the_writer_drain(db_session, monkeypatc
         boundary = await db_session.scalar(text("SELECT clock_timestamp()"))
         await db_session.commit()
         result = await asyncio.wait_for(task, 5)
-        assert result['captured_at'] >= boundary
+        assert result["captured_at"] >= boundary
     finally:
         await db_session.rollback()
         if not task.done():

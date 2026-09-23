@@ -33,8 +33,11 @@ async def oldest_attempt_first(db: AsyncSession, names: list[str]) -> list[str]:
     """Fair order across interrupted sweeps; never infer success from an attempt."""
     if not names:
         return []
-    rows = await db.execute(select(SourceHealth.source_key, SourceHealth.last_attempt_at)
-                            .where(SourceHealth.source_key.in_(names)))
+    rows = await db.execute(
+        select(SourceHealth.source_key, SourceHealth.last_attempt_at).where(
+            SourceHealth.source_key.in_(names)
+        )
+    )
     attempts = dict(rows.all())
     earliest = datetime.min.replace(tzinfo=timezone.utc)
     # Python's stable sort preserves registry order for equal/unseen attempts.
@@ -49,12 +52,18 @@ async def record_attempt(db: AsyncSession, source_key: str) -> None:
     download/storage. None outcome means this attempt has not returned yet.
     Caller must not have uncommitted offer/cursor progress in this session.
     """
-    stmt = insert(SourceHealth).values(source_key=source_key,
-                                      last_attempt_at=func.clock_timestamp())
-    await db.execute(stmt.on_conflict_do_update(
-        index_elements=[SourceHealth.source_key],
-        set_={"last_attempt_at": stmt.excluded.last_attempt_at, "last_outcome": None},
-    ))
+    stmt = insert(SourceHealth).values(
+        source_key=source_key, last_attempt_at=func.clock_timestamp()
+    )
+    await db.execute(
+        stmt.on_conflict_do_update(
+            index_elements=[SourceHealth.source_key],
+            set_={
+                "last_attempt_at": stmt.excluded.last_attempt_at,
+                "last_outcome": None,
+            },
+        )
+    )
     await db.commit()
 
 

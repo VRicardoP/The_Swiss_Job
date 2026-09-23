@@ -29,7 +29,11 @@ from schemas.documents import (
     GenerateDocumentRequest,
     GeneratedDocumentResponse,
 )
-from services.catalog import resolve_catalog, CoreUnavailableError as CatalogUnavailableError, CatalogUnsupportedError
+from services.catalog import (
+    resolve_catalog,
+    CoreUnavailableError as CatalogUnavailableError,
+    CatalogUnsupportedError,
+)
 from services.document_generator import DocumentGeneratorService
 from services.documents import CoreDocuments, resolve_documents
 from services.documents.delivery import deliver, enqueue, operation_status, request_hash
@@ -40,7 +44,8 @@ from services.groq_service import GroqService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v1/documents", tags=["documents"],
+    prefix="/api/v1/documents",
+    tags=["documents"],
     dependencies=[Depends(block_document_writes)],
 )
 
@@ -56,7 +61,9 @@ def _get_gemini() -> GeminiService:
     return GeminiService()
 
 
-@router.post("/generate", response_model=GeneratedDocumentResponse | DocumentOperationResponse)
+@router.post(
+    "/generate", response_model=GeneratedDocumentResponse | DocumentOperationResponse
+)
 async def generate_document(
     request: Request,
     body: GenerateDocumentRequest,
@@ -67,16 +74,26 @@ async def generate_document(
     user_id = current_user.id
     if body.operation_id is not None:
         existing = await operation_status(
-            db, body.operation_id, user_id,
-            expected_request_hash=request_hash(body.job_hash, body.doc_type.value, body.language),
+            db,
+            body.operation_id,
+            user_id,
+            expected_request_hash=request_hash(
+                body.job_hash, body.doc_type.value, body.language
+            ),
         )
         if existing is not None:
             await db.commit()
-            outcome = await deliver(async_sessionmaker(db.bind, expire_on_commit=False), body.operation_id, user_id)
+            outcome = await deliver(
+                async_sessionmaker(db.bind, expire_on_commit=False),
+                body.operation_id,
+                user_id,
+            )
             return JSONResponse(status_code=202, content=jsonable_encoder(outcome))
     documents = await resolve_documents(db, user_id)
     if isinstance(documents, CoreDocuments) and body.operation_id is None:
-        raise HTTPException(status_code=422, detail="Core generation requires a stable operation_id.")
+        raise HTTPException(
+            status_code=422, detail="Core generation requires a stable operation_id."
+        )
     groq = _get_groq(request)
     gemini = _get_gemini()
     if not (gemini.is_available or groq.is_available):
@@ -102,9 +119,13 @@ async def generate_document(
         try:
             job = await catalog.get(body.job_hash)
         except CatalogUnavailableError:
-            raise HTTPException(status_code=503, detail="Catalog temporarily unavailable.") from None
+            raise HTTPException(
+                status_code=503, detail="Catalog temporarily unavailable."
+            ) from None
         except CatalogUnsupportedError:
-            raise HTTPException(status_code=501, detail="Offer unavailable on the active catalog.") from None
+            raise HTTPException(
+                status_code=501, detail="Offer unavailable on the active catalog."
+            ) from None
     else:
         job = (
             await db.execute(select(Job).where(Job.hash == body.job_hash))
@@ -151,7 +172,9 @@ async def generate_document(
             "providers_available": [gemini.is_available, groq.is_available],
         },
     )
-    await db.commit()  # input snapshot complete; Redis/core HTTP never retains this transaction
+    await (
+        db.commit()
+    )  # input snapshot complete; Redis/core HTTP never retains this transaction
     cached_id = None
     if redis:
         try:
@@ -192,20 +215,39 @@ async def generate_document(
 
     # Re-resolve after inference: never retain a pre-cutover writer decision.
     documents = await resolve_documents(db, user_id, write=True)
-    live_owner = await db.scalar(select(User.id).where(
-        User.id == user_id, User.is_active.is_(True)).with_for_update(read=True))
+    live_owner = await db.scalar(
+        select(User.id)
+        .where(User.id == user_id, User.is_active.is_(True))
+        .with_for_update(read=True)
+    )
     if live_owner is None:
-        raise HTTPException(status_code=403, detail="Document owner is no longer active.")
+        raise HTTPException(
+            status_code=403, detail="Document owner is no longer active."
+        )
     if isinstance(documents, CoreDocuments):
         if body.operation_id is None:
-            raise HTTPException(status_code=409, detail="Document authority changed; retry with an operation_id.")
+            raise HTTPException(
+                status_code=409,
+                detail="Document authority changed; retry with an operation_id.",
+            )
         await enqueue(
-            db, operation_id=body.operation_id, user_id=user_id, profile_id=documents.profile_id,
-            job_hash=body.job_hash, doc_type=body.doc_type.value, language=body.language,
-            content=content, job_title=inputs["job_title"], job_company=inputs["job_company"],
+            db,
+            operation_id=body.operation_id,
+            user_id=user_id,
+            profile_id=documents.profile_id,
+            job_hash=body.job_hash,
+            doc_type=body.doc_type.value,
+            language=body.language,
+            content=content,
+            job_title=inputs["job_title"],
+            job_company=inputs["job_company"],
         )
         await db.commit()
-        outcome = await deliver(async_sessionmaker(db.bind, expire_on_commit=False), body.operation_id, user_id)
+        outcome = await deliver(
+            async_sessionmaker(db.bind, expire_on_commit=False),
+            body.operation_id,
+            user_id,
+        )
         return JSONResponse(status_code=202, content=jsonable_encoder(outcome))
     response = await documents.create(
         user_id,
@@ -235,7 +277,8 @@ async def generate_document(
 @router.get("", response_model=DocumentPageResponse)
 async def document_library(
     cursor: str | None = Query(None, max_length=512),
-    current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     user_id = current_user.id
     documents = await resolve_documents(db, user_id)
@@ -246,20 +289,42 @@ async def document_library(
 
 @router.get("/operations")
 async def pending_document_operations(
-    current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    conditions = (DocumentDelivery.user_id == current_user.id, DocumentDelivery.delivered_at.is_(None))
-    total = await db.scalar(select(func.count()).select_from(DocumentDelivery).where(*conditions))
-    rows = (await db.scalars(select(DocumentDelivery).where(*conditions).order_by(
-        DocumentDelivery.created_at, DocumentDelivery.operation_id).limit(20))).all()
-    return {"data": [{"operation_id": row.operation_id, "status": "pending",
-                      "document_id": None, "error": row.last_error} for row in rows],
-            "total": total}
+    conditions = (
+        DocumentDelivery.user_id == current_user.id,
+        DocumentDelivery.delivered_at.is_(None),
+    )
+    total = await db.scalar(
+        select(func.count()).select_from(DocumentDelivery).where(*conditions)
+    )
+    rows = (
+        await db.scalars(
+            select(DocumentDelivery)
+            .where(*conditions)
+            .order_by(DocumentDelivery.created_at, DocumentDelivery.operation_id)
+            .limit(20)
+        )
+    ).all()
+    return {
+        "data": [
+            {
+                "operation_id": row.operation_id,
+                "status": "pending",
+                "document_id": None,
+                "error": row.last_error,
+            }
+            for row in rows
+        ],
+        "total": total,
+    }
 
 
 @router.get("/operations/{operation_id}", response_model=DocumentOperationResponse)
 async def document_operation(
-    operation_id: uuid.UUID, current_user: User = Depends(get_current_user),
+    operation_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     state = await operation_status(db, operation_id, current_user.id)
@@ -268,21 +333,27 @@ async def document_operation(
     return state
 
 
-@router.post("/operations/{operation_id}/retry", response_model=DocumentOperationResponse)
+@router.post(
+    "/operations/{operation_id}/retry", response_model=DocumentOperationResponse
+)
 async def retry_document_operation(
-    operation_id: uuid.UUID, current_user: User = Depends(get_current_user),
+    operation_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     user_id = current_user.id
     if await operation_status(db, operation_id, user_id) is None:
         raise HTTPException(status_code=404, detail="Document operation not found.")
     await db.commit()
-    return await deliver(async_sessionmaker(db.bind, expire_on_commit=False), operation_id, user_id)
+    return await deliver(
+        async_sessionmaker(db.bind, expire_on_commit=False), operation_id, user_id
+    )
 
 
 @router.get("/item/{document_id}", response_model=GeneratedDocumentResponse)
 async def get_document(
-    document_id: uuid.UUID, current_user: User = Depends(get_current_user),
+    document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     user_id = current_user.id

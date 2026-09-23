@@ -40,7 +40,8 @@ def _get_watchlist_sources() -> tuple[str, ...]:
     # health belongs to core; alerting here would invent a silent-scraper fault.
     disabled = disabled_sources(settings.LEGACY_DISABLED_SCRAPERS, _SCRAPER_CLASSES)
     return tuple(
-        k for k in _SCRAPER_CLASSES
+        k
+        for k in _SCRAPER_CLASSES
         if k.startswith("swiss_schools_") and k not in disabled
     )
 
@@ -173,6 +174,7 @@ async def _check_health_async() -> dict[str, Any]:
         if fresh_issues:
             # 2) Notificar a los usuarios con la watchlist activa
             from services.schools.preferences import enabled_users
+
             users = await enabled_users(db)
             notified = await _notify_users(db, users, fresh_issues)
             for issue in fresh_issues:
@@ -278,10 +280,12 @@ async def _send_digest_async() -> dict[str, Any]:
     try:
         async with task_session() as db:
             from services.schools.preferences import enabled_users
+
             # Preserve the anti-double-matcher gate; school preferences have
             # their own authority, independent of local/core matching.
             users = await enabled_users(
-                db, extra_condition=legacy_owned_sql(User.id, CAPABILITY_MATCHING))
+                db, extra_condition=legacy_owned_sql(User.id, CAPABILITY_MATCHING)
+            )
 
             notified = 0
             marked: set[str] = set()
