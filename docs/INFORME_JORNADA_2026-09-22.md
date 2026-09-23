@@ -202,6 +202,32 @@ La pantalla principal pasó de **79,265 s a 2,147 s** de mediana, 37 veces. **Y
 el contrato sigue sin cumplirse**: una mejora grande no convierte un
 incumplimiento en cumplimiento. Detalle y qué falta, en §9-bis y §10 del acta.
 
+## 6-ter. Tarde del 23-09: auditoría, regresión retirada y el panel del Portfolio
+
+**Auditoría profunda** (`docs/audits/AUDITORIA_PROYECTO_2026-09-23.md`): seis
+revisiones de área más verificación ejecutando lo que ellas no podían tocar.
+7 críticos, 14 altos, 26 medios, 6 bajos; Parte I dice qué falta para terminar
+y Parte IV cómo hacerlo, paquete a paquete, con prueba roja→verde. Dos que no
+esperan: un slot de replicación huérfano con **40 GB de WAL retenido** (decisión
+del propietario) y una **regresión desplegada esa misma mañana**: la caché del
+feed por versión servía feedback rancio con `CORE_FEEDBACK_ENABLED=True`.
+
+**T2, retirada el mismo día** (`17e2b9e`): el digest cubre ahora estado de
+usuario y listing primario; las escrituras invalidan; el recorrido se
+reverifica. Un tropiezo con lección: la cláusula de canónica puesta en `feed()`
+bajó dos nDCG del gate a 0,0 — se dejó sólo en recuento y versión.
+
+**Panel de ofertas.** El propietario veía títulos sin traducir y ninguna
+descripción. Medido: el 28,5 % del feed no tiene descripción en ninguna fuente;
+el 5,7 % lleva HTML crudo (`arbeitnow` nativo); la traducción era un botón con
+7 títulos en caché. Y la ventana era la del **Portfolio**, cuyo backend tragaba
+la causa de un fallo transitorio del feed. Implementado allí: `job_enrichments`
++ bucle de fondo acotado + decoración de sólo lectura; 38/38 resúmenes y 35
+títulos resueltos en < 5 min en producción. Dos tropiezos: un id de Alembic
+reutilizado y una imagen que no arrancó por `working_dir: /release` (~1 min sin
+servicio, restaurada). **El frontend del Portfolio sigue sin publicar** (sin
+push).
+
 ## 7. Qué queda abierto
 
 1. **Retirar el slot `jobhunt_shadow_r5_rehearsal`** — única acción sin vuelta
@@ -231,4 +257,4 @@ incumplimiento en cumplimiento. Detalle y qué falta, en §9-bis y §10 del acta
 | Estado y deuda | `ESTADO_Y_HOJA_DE_RUTA.md` §44 y §45 · `DEUDA_TECNICA.md` |
 | Convenciones e invariantes | `CLAUDE.md` |
 
-**26 commits** en SwissJob y **5** en Public. Sin push, como corresponde.
+**25 commits** en SwissJob desde el inicio de la jornada, más los de Public y los tres del Portfolio. Sin push, como corresponde.

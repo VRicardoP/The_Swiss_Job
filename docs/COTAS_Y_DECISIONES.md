@@ -462,3 +462,16 @@ irishjobs, 4% perdido en Jobgether) eran nuestros, no suyos.
 | **`language = ''` significa «resuelto como DESCONOCIDO»** | Sin ese tercer estado, un título indecidible sería trabajo repetido para siempre |
 | **La memoización de `_detect_language` se queda, pero es de segundo orden** | Una caché en proceso NO cubre la primera carga: cada arranque o expulsión la vacía. Lo que resuelve la primera carga es la persistencia |
 | **PostgreSQL sigue con `shared_buffers=128 MB` y `work_mem=4 MB` (valores de fábrica)** | Sobre una base de 2.753 MB parecen bajos, pero no hay evidencia de que sean el limitante y subirlos compite por la memoria del resto del NAS. Observación medida, no defecto |
+
+### Panel de ofertas (2026-09-23)
+
+| Cota / decisión | Por qué |
+|---|---|
+| **`jobgether` no tiene descripción, en ninguna fuente** (491/1.800 del feed, 27 %) | Su endpoint de búsqueda no la trae; el legacy y el nativo escriben `""` a propósito. Tenerla exige descargar la página de cada oferta: **decisión B pendiente del propietario**, es tráfico contra el portal |
+| **El resumen LLM sólo existe con texto fuente ≥ 80 caracteres; `''` es terminal** | Con menos no hay dos frases honestas; y sin el estado «resuelto como nada» un texto indecidible sería trabajo repetido para siempre. La tarjeta dice «esta fuente no publica la descripción» en vez de dejar un hueco |
+| **Servir NUNCA llama a un LLM** (Portfolio y SwissJob) | Detectar idioma al servir costó 90 s por petición; traducir/resumir al servir serían ~1.500 llamadas en la primera carga. Todo lo derivado se resuelve una vez en segundo plano y se persiste |
+
+**Defecto ABIERTO, no cota:** `arbeitnow` nativo guarda HTML crudo en la
+canónica (111/111 revisiones) porque `jobhunt_core/harvest/providers/arbeitnow.py`
+no limpia como hacía el legacy (`strip_html_tags`). La paridad del traspaso
+comparó identidad y cabeceras, no la forma del texto. Bloque A del diagnóstico.

@@ -579,6 +579,7 @@ Orden sugerido y forma, sin fecha: (1) `_fetch_scrapers_async`/`_fetch_providers
 |---|---|---|
 | T2 | **CERRADO salvo el canario de escritura** | `7591da4` + `17e2b9e`; 9 pruebas rojas→verdes (5 core, 4 BFF); core 1.770, BFF 2.567 + 4 xfail; `core-api` y `backend` en `point5-17e2b9e` verificados en el proceso (`release`, `inspect`, `_write` contiene `clear_feed_cache`), 0 reinicios. **PENDIENTE**: el «me interesa» real del propietario que demuestre en producción que la lectura siguiente lo sirve. Tropiezo registrado: la cláusula de canónica en `feed()` bajó dos nDCG a 0,0 y se retiró de ahí (es el feed del gate) |
 | T0, T1, T3–T16 | PENDIENTES | — |
+| Fuera del plan — panel «AI Job Match» (Portfolio) | **HECHO salvo publicar el frontend** | `ReactPortfolio/backend` `c01a192`+`32fe475` desplegado (`enrich-32fe475`); frontend `a0bf889` sin push (Cloudflare Pages). Detalle: `docs/audits/DIAGNOSTICO_PANEL_OFERTAS_2026-09-23.md` §5 |
 
 ### Criterio de cierre de cada paquete
 

@@ -1763,3 +1763,24 @@ Claude Code (fuera del repo, en
 para que el asistente las recuerde en futuras sesiones sin tener que releer
 este doc completo.
 
+---
+
+## 7. El Portfolio en el mismo NAS (añadido 2026-09-23)
+
+El Portfolio (`/home/lothar/Public/ReactPortfolio`, **tres repositorios git distintos**:
+`backend/` → `ReactPortfolioServer`, `frontend/` → `ReactPortfolio`, y `/home/lothar/Public`
+como raíz) comparte el NAS y lee el mismo feed del core. Su ventana «AI Job Match» es la
+que el propietario llama así — no es la `/match` de SwissJob.
+
+| Qué | Dónde |
+|---|---|
+| Compose vigente | `$E/portfolio.configured.yml`, proyecto `portfolio`, servicio `backend` (contenedor `portfolio_backend`) |
+| Imagen | `portfolio-backend:<tag>`, construida desde `git archive` del commit del **backend** con **`--build-arg APP_DIR=/release`** |
+| Por qué `/release` | el compose fija `working_dir: /release` y lanza `./scripts/docker-entrypoint.sh` en relativo. Con el `WORKDIR /app` por defecto del Dockerfile **el contenedor no arranca** (`stat ./scripts/docker-entrypoint.sh: no such file`). Ocurrió el 23-09: ~1 min sin servicio, restaurado desde la copia `.before` |
+| Migraciones | las aplica el entrypoint (`alembic upgrade head`) **antes** de uvicorn; no hay paso manual |
+| Salud | `GET /health` (no `/api/v1/health`); «Startup completed» en el log |
+| Frontend | **Cloudflare Pages desde GitHub** (`ReactPortfolio`): sin `push` no hay despliegue. `VITE_API_BASE_URL` se fija en Pages |
+| Recreación | mismo patrón: `.before`, sólo la línea `image:`, `stop -t 120 backend && up -d --no-deps backend` |
+
+Recibo del despliegue de `enrich-32fe475` (títulos traducidos y resúmenes) en
+`$E/audit-fixes-20260923/portfolio-backend-deploy.receipt`.

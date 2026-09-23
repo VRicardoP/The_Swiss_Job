@@ -73,8 +73,15 @@ ssh nas "$D logs swissjob-core-worker-r5 --since 2h | grep check_health | tail -
 3. **Aceptación final** del punto 4 y, separados, el cron de retención y el GO
    de calidad — que sigue en NO-GO por ausencia de un
    examen válido, no por una métrica mala. No los mezcles con este cierre.
+4. **Auditoría del 23-09** (`docs/audits/AUDITORIA_PROYECTO_2026-09-23.md`,
+   Parte IV): T2 hecho; T1 (slot huérfano con 40 GB de WAL) y el resto,
+   pendientes; T1, T5, T13 y T15 son decisiones del propietario.
+5. **Panel de ofertas** (`docs/audits/DIAGNOSTICO_PANEL_OFERTAS_2026-09-23.md`):
+   el Portfolio ya sirve título traducido y resumen, pero su frontend está
+   **sin publicar** (commit `a0bf889`, sin push); jobgether sin descripción
+   (decisión B); SwissJob `/match` sin lo mismo; bloque A sin hacer.
 
-## Diez trampas que ya costaron caro
+## Doce trampas que ya costaron caro
 
 1. **`jobhunt.shadow.project` NO es una tarea de sombra.** Pese al nombre, es el
    postprocesado del ciclo nativo: drena embeddings y reevalúa perfiles.
@@ -114,6 +121,17 @@ ssh nas "$D logs swissjob-core-worker-r5 --since 2h | grep check_health | tail -
    50,1 ms por oferta servida, ~90 s por petición. Se deriva una vez por título
    y se persiste (`job_title_languages`). Una caché en proceso NO basta: cada
    arranque la vacía.
+
+11. **«AI Job Match» es del PORTFOLIO, no de SwissJob.** Mismo feed del core,
+   otro repositorio (tres, de hecho: `ReactPortfolio/backend`, `ReactPortfolio/frontend`
+   y la raíz `Public`). El mensaje «Core unavailable and no local fallback is
+   ready» vive en `ReactPortfolio/backend/routers/ai_match.py`. Su frontend se
+   publica en **Cloudflare Pages desde GitHub**: sin `push` no hay despliegue.
+12. **Una imagen que arranca en local puede no arrancar en el NAS.** El compose
+   del Portfolio fija `working_dir: /release`; el Dockerfile del repo usa
+   `/app`. Construir con `--build-arg APP_DIR=/release`. Y los ids de Alembic
+   NO van en orden de nombre de fichero: la cabeza se pregunta con
+   `alembic heads`, no con `ls | tail`.
 
 ## Cómo se trabaja aquí
 
