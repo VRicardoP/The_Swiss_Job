@@ -213,7 +213,12 @@ docker compose exec -T backend python -m pytest tests/ -v --timeout=30
 docker compose -f docker-compose.yml -f docker-compose.dev.yml \
   run --rm core-migrate python -m pytest jobhunt_core/tests
 
-# Linting
+# Linting — AMBOS en verde desde el 2026-09-23 (T4). El CI los ejecuta con
+# ruff FIJADO a 0.15.14: subir la versión es una decisión, no un accidente.
+# Los `# noqa: F401/F811` de tests/ marcan el patrón de fixture compartida de
+# pytest (import + parámetro), que es un falso positivo del linter, no deuda.
+# OJO al orden si tocas ambos: formatear parte firmas largas y deja los `noqa`
+# en otra línea. Primero arreglar, luego formatear, luego RE-comprobar.
 docker compose exec -T backend ruff check --no-cache .
 docker compose exec -T backend ruff format --check --no-cache .
 
