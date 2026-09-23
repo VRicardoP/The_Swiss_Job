@@ -102,9 +102,13 @@ una página: el core informa del `total` en su primera página y el consumidor
 deja de paginar al cubrir `offset + limit`. Antes servir 20 ofertas costaba 18
 peticiones internas y 9-13 s; ahora 1 petición y 0,56-1,19 s en el método.
 
-**El punto 5 sigue ABIERTO**: el endpoint servido `/api/v1/match/results` no
-cumple el p95 ≤ 2 s declarado. Lo que falta está en §10 del acta. El invariante
-de abajo vale igual.
+**El punto 5 sigue ABIERTO.** Medido el 2026-09-23 sobre `point5-9d6b46e`
+desplegado en los cinco servicios: la pantalla principal pasó de **79,3 s a
+p50 2,147 s** (p95 2,554 s) y la primera carga de ~54 s a 10,196 s. Aun así
+**ninguna lectura habitual baja del p95 de 2 s** (catálogo 2,420 s; feed 20
+3,040 s) y la primera carga de 3.000 dobla su presupuesto de 5 s. Matriz
+completa con veredicto por escenario en §9-bis del acta; lo que falta, en §10.
+Los invariantes de abajo valen igual.
 
 **El recorrido que de verdad pide la pantalla principal es `limit=3000`**
 (`MatchPage.jsx:40` → `useMatchResults(3000, 0)`, `translate=false`), no una
@@ -186,12 +190,12 @@ Estos principios tienen prioridad sobre velocidad, brevedad o DRY.
 # Arrancar entorno completo
 docker compose up -d
 
-# Tests backend (2.527 passed · 4 xfailed)
+# Tests backend (2.562 passed · 4 xfailed)
 # OJO: NO lances dos pytest a la vez — el teardown hace TRUNCATE ... CASCADE de
 # swissjobhunter_test y las dos corridas se vacían las tablas entre sí (deadlocks + falsos rojos)
 docker compose exec -T backend python -m pytest tests/ -v --timeout=30
 
-# Tests core (1.760 passed, ~16 min — reconfirmar con pytest tras cada crecida)
+# Tests core (1.765 passed, ~16 min — reconfirmar con pytest tras cada crecida)
 # OJO al perfil: desde la auditoría P1-3 el compose BASE no monta ./jobhunt_core
 # (imagen operativa inmutable). Los tests van con el override de desarrollo, que
 # es el que monta el árbol de trabajo; sin él se probaría el código de la IMAGEN.
@@ -270,7 +274,7 @@ schemas/            # Pydantic de entrada/salida de la API
 models/             # SQLAlchemy (incl. source_cursor.py para el crawler incremental)
 jobhunt_core/       # Core Fase A COMPLETA 2026-07-24 (ensayo GATE A superado): API /v1 FastAPI (core-api :8003),
                     #   worker Celery jobhunt.* (broker redis-core, colas core.*), harvest/ + matching/embeddings/
-                    #   delivery/runs/profiles, Alembic propio core0001..core0051, tests 1.760/1.760 (vía core-migrate)
+                    #   delivery/runs/profiles, Alembic propio core0001..core0051, tests 1.765/1.765 (vía core-migrate)
 ```
 
 Modelos LLM (verificados contra el catálogo VIVO el 2026-09-15):

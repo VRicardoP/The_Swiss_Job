@@ -561,17 +561,27 @@ resultado. Lista finita:
    **El frío no es un adorno**: con el 96,9 % del feed sin idioma, la primera
    petición tras un arranque o una expulsión de caché vuelve a pagar del orden
    de 77 s de detección. Medir sólo en caliente ocultaría exactamente eso.
-3. **Atribuir el p95 que queda**: `/match/results` con 20 ofertas da mediana
-   0,823 s y p95 2,967 s. Exige observación correlacionada de SQL, esperas de
-   PostgreSQL y CPU/IO, no deducción entre muestras.
-4. **Que el idioma EXISTA en la canónica.** El transporte ya está reparado y
-   probado (§2b), pero sólo el **3,1 %** del feed trae el dato: el escritor
-   legacy tampoco lo rellenaba. La corrección de fondo es **deducirlo una vez,
-   al ingerir**, y escribirlo en la canónica —no deducirlo al servir— y sigue
-   sin hacer. Antes de tocar nada hay que decidir qué hacer con el idioma
-   desconocido y con la no-determinación de `langdetect` en títulos cortos: una
-   semilla fija daría reproducibilidad, no acierto. **No reingerir ni reembeber
-   el corpus por suposición**: el reembebido no depende de este campo.
+3. **Atribuir el p95 que queda**: `/match/results` con 20 ofertas da p50
+   1,284 s y p95 3,040 s; el catálogo, p95 2,420 s. Con n=20 el p95 ES el
+   máximo, así que un solo pico decide. Exige observación correlacionada de
+   SQL, esperas de PostgreSQL y CPU/IO, no deducción entre muestras. **Sigue
+   sin hacerse.**
+
+3-bis. **Bajar el trabajo del BFF por petición**: ~1,4 s para resolver
+   identidad legacy y superponer estado local de 1.800 items. Es el mayor
+   sumando que queda en caliente de la pantalla principal.
+
+3-ter. **Que la primera carga no la pague el usuario**: recorrer el feed una
+   vez por cambio de versión es inevitable; hacerlo en segundo plano al
+   detectar la versión nueva, no. Hoy son 10,196 s en la cara del usuario.
+4. ~~Que el idioma EXISTA en la canónica.~~ **HECHO de otra forma**, y
+   conviene decir cuál. El transporte se reparó (§2b) pero sólo cubre el 3,1 %.
+   Para el resto, el idioma se deriva **una vez por título** y se persiste en
+   `job_title_languages`, fuera del camino de respuesta. En producción:
+   **1.547 títulos, 0 pendientes, 0 desconocidos**. No se reingirió ni se
+   reembebió nada, y la canónica no se toca: lo derivado vive donde se ve que
+   es derivado. Los tres estados (ausente / encolado / resuelto-desconocido)
+   son explícitos, que era la condición.
 5. **Revisar si `matching.results` puede servir 3.000 ofertas mejor**: son
    9,7 s de los 10,3 s del caso real, y proceden de 18 peticiones al core en
    páginas de 100. No se ha tocado.
@@ -591,6 +601,8 @@ Cada escenario obligatorio **cumple o queda expresamente pendiente**. Una mejora
 porcentual, una mediana buena o una atribución al hardware no sustituyen ese
 resultado.
 
-Mientras tanto, lo desplegado es útil y está verificado —de 79,3 s a 8,6 s en el
-recorrido que usa la pantalla principal, sin regresión funcional y con
-2.527 pruebas del BFF y 1.760 del core en verde— y no hay motivo para revertirlo.
+Mientras tanto, lo desplegado es útil y está verificado —de **79,3 s a 2,147 s**
+de mediana en el recorrido que usa la pantalla principal, sin regresión
+funcional, con **2.562** pruebas del BFF y **1.765** del core en verde, 0
+reinicios y 0 respuestas 5xx— y no hay motivo para revertirlo. Pero **el
+contrato sigue sin cumplirse** y el punto 5 sigue ABIERTO.
