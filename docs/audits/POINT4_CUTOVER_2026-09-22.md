@@ -203,3 +203,31 @@ Recibos privados en el NAS, `unification-e15-20260914/point4-close-20260921/`:
 16:59:03 UTC, `jobhunt.shadow.project` corrió 708 s con `batches: 0` y
 `recovery_evaluated: 3` — la cadena canónica → embedding → evaluación → feed
 **sin un solo lote de captura CDC**.
+
+---
+
+## Addendum 2026-09-23 — borrado del slot huérfano `jobhunt_shadow`
+
+No es el slot que este corte tenía pendiente. El pendiente es
+`jobhunt_shadow_r5_rehearsal` (§8), que **sigue activo y sin tocar**.
+
+`jobhunt_shadow` (el huérfano) era el slot de la sombra sobre la base legacy
+`swissjobhunter`, sin consumidor desde hacía semanas y reteniendo **40 GB de
+WAL** que crecían. Lo encontró la auditoría del 23-09 (A19-01) y lo autorizó el
+propietario.
+
+| | Antes | Después |
+|---|---:|---:|
+| `pg_wal` en disco | 41 GB | **81 MB** |
+| Libre en el volumen | 432 GB (76 %) | **472,3 GB** (74 %) |
+
+Siete precondiciones verificadas antes de una acción irreversible: `active=f`
+sin PID; `pg_stat_replication` vacío; ningún walsender sobre `swissjobhunter`;
+ningún contenedor declara el slot; ningún compose lo nombra; `archive_mode=off`;
+`wal_keep_size=0` — es decir, **el slot era la única causa de la retención**.
+
+El WAL **no se recicló solo** en 4,5 minutos: PostgreSQL lo libera en el
+siguiente checkpoint y el sistema estaba tranquilo. Se forzó `CHECKPOINT`
+(1 min 18 s). Tras el borrado: core `ready`/`authoritative`, CDC 0 pendientes,
+0 reinicios. Recibo con el estado previo completo (irrecuperable después) en
+`unification-e15-20260914/audit-fixes-20260923/T1-drop-slot.receipt`.

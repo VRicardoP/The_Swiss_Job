@@ -1407,7 +1407,10 @@ $p -c 'ALTER DATABASE swissjobhunter RESET max_parallel_maintenance_workers'
 
 ⚠ `max_parallel_maintenance_workers = 0` no es cosmético: el índice HNSW en paralelo pide
 ~64 MB de memoria compartida y el `/dev/shm` por defecto de Docker mide justo 64 MB.
-⚠ El slot lógico `jobhunt_shadow` se queda con la base apartada: sin el §3 del RUNBOOK,
+⚠ ~~El slot lógico `jobhunt_shadow` se queda con la base apartada~~ — **BORRADO el
+2026-09-23** (retenía 40 GB de WAL sin consumidor; acta en
+`docs/audits/POINT4_CUTOVER_2026-09-22.md`). Lo que sigue describe el mecanismo
+para el slot vigente `jobhunt_shadow_r5_rehearsal`: sin el §3 del RUNBOOK,
 `core-capture` aborta con «Estado registrado pero slot AUSENTE».
 
 ⚠ Durante el cutover no se teclea nada de esto: la marcha atrás es
