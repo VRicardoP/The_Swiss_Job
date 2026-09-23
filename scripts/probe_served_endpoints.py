@@ -207,7 +207,14 @@ async def main():
 
     async with httpx.AsyncClient(timeout=180) as c:
         # --- catálogo, sin auth
+        # La PRIMERA peticion de cada ruta tras recrear el contenedor es la
+        # muestra FRIA y tiene su propio presupuesto (<= 5 s). Se informa
+        # aparte: promediarla con las calientes esconderia justo el caso que
+        # una cache en proceso no puede cubrir. Tiene que ser LA PRIMERA de
+        # verdad — cronometrar la segunda la daria por fria sin serlo.
+        t = time.perf_counter()
         r = await c.get(f"{base}/jobs/search", params={"limit": 20})
+        frio = time.perf_counter() - t
         if r.status_code != 200:
             raise ProbeFailure("http_status", f"catálogo devolvió {r.status_code}")
         n_items, total = check_catalog(r.json(), min_items=20)
@@ -219,20 +226,28 @@ async def main():
             check_catalog(rr.json(), min_items=20)
             await asyncio.sleep(0.3)
         print(json.dumps({"endpoint": "/jobs/search", "n": len(ms), "items": n_items,
-                          "total": total, "p50_s": round(statistics.median(ms), 3),
+                          "total": total, "frio_s": round(frio, 3),
+                          "p50_s": round(statistics.median(ms), 3),
                           "p95_s": round(pct(ms, 95), 3), "max_s": round(max(ms), 3),
                           "min_s": round(min(ms), 3)}), flush=True)
 
         # --- feed servido, autenticado y extremo a extremo.
-        # Se mide POR SEPARADO con y sin traduccion: `translate=true` llama a un
-        # LLM externo, que la predeclaracion presupuesta APARTE. Mezclarlos
-        # ocultaria cual de los dos cuesta.
+        # `translate=true` NO se mide aqui: llama a un LLM externo y la
+        # predeclaracion §4 prohibe llamar a proveedores facturables en estas
+        # pruebas. Ademas la pantalla principal no lo usa —`useMatchResultsPage`
+        # es codigo muerto—, asi que no es un recorrido prioritario. Queda
+        # EXPRESAMENTE PENDIENTE, con presupuesto propio por decidir.
+        #
         # `limit=3000, translate=false` NO es una exportacion excepcional: es lo
         # que pide MatchPage (frontend/src/pages/MatchPage.jsx:40) en cada carga
         # de la pantalla principal, y por eso se mide como lectura ordinaria.
-        for limite, translate in ((20, False), (20, True), (3000, False)):
+        for limite, translate in ((20, False), (3000, False)):
             params = {"limit": limite, "offset": 0, "translate": str(translate).lower()}
+            # Muestra FRIA: la PRIMERA de esta forma tras recrear el
+            # contenedor, con la cache del recorrido vacia.
+            t = time.perf_counter()
             r = await c.get(f"{base}/match/results", params=params, headers=headers)
+            frio = time.perf_counter() - t
             if r.status_code != 200:
                 raise ProbeFailure("http_status",
                                    f"match/results devolvió {r.status_code}: {r.text[:200]}")
@@ -257,7 +272,8 @@ async def main():
                 await asyncio.sleep(0.3)
             print(json.dumps({"endpoint": "/match/results", "limit": limite,
                               "translate": translate, "n": len(ms), "items": n_items,
-                              "total": total, "p50_s": round(statistics.median(ms), 3),
+                              "total": total, "frio_s": round(frio, 3),
+                              "p50_s": round(statistics.median(ms), 3),
                               "p95_s": round(pct(ms, 95), 3), "max_s": round(max(ms), 3),
                               "min_s": round(min(ms), 3)}), flush=True)
 

@@ -470,6 +470,70 @@ evidencia.
 - Fuera de alcance y sin tocar: retirada del slot, cron de retención, aceptación
   final del proyecto y GO de calidad del ranking.
 
+## 9-bis. Matriz de aceptación tras el despliegue conjunto (2026-09-23)
+
+Desplegado `point5-9d6b46e` en los **cinco** servicios —`core-api`,
+`core-worker`, `core-capture`, `backend`, `worker`—, sin desfase entre lo
+declarado y lo que corre. Migración `d3a7c1f60b84` aplicada. Copias `.before`
+en `point5-close-20260923`.
+
+Antes de medir se drenó la cola del almacén de idioma: **1.547 títulos
+resueltos, 0 desconocidos, 0 pendientes**. Es el régimen permanente, no un
+estado de estreno. El `backend` se reinició después para que la primera muestra
+de cada ruta fuese **fría de verdad**.
+
+Reglas de la predeclaración respetadas: secuencial, ≤ 20 muestras por ruta, 1
+sesión, sólo lectura, sin fabricar nada y **sin llamar a proveedores
+facturables**.
+
+### Resultado por escenario obligatorio
+
+| Escenario | Presupuesto | Medido | Veredicto |
+|---|---|---|---|
+| Readiness y lectura ligera | p95 ≤ 1 s | `/api/v1/health` p95 **0,323 s**; `/v1/ready` p95 **0,039 s** | **CUMPLE** |
+| Lectura habitual — catálogo | p95 ≤ 2 s | `/jobs/search?limit=20` p50 0,718 s, p95 **2,420 s** | **NO CUMPLE** |
+| Lectura habitual — feed 20 | p95 ≤ 2 s | p50 1,284 s, p95 **3,040 s** | **NO CUMPLE** |
+| Lectura habitual — pantalla principal (3.000) | p95 ≤ 2 s | p50 **2,147 s**, p95 **2,554 s** | **NO CUMPLE** |
+| Primera lectura tras arranque — catálogo | ≤ 5 s | **2,920 s** | **CUMPLE** |
+| Primera lectura tras arranque — feed 20 | ≤ 5 s | **1,002 s** | **CUMPLE** |
+| Primera lectura tras arranque — 3.000 | ≤ 5 s | **10,196 s** | **NO CUMPLE** |
+| ≥ 100 muestras en copia | obligatorio | — | **PENDIENTE**: no existe copia autorizada |
+| Escrituras locales/core | p95 ≤ 2 s | — | **PENDIENTE**: medirlo en producción exigiría fabricar datos, prohibido |
+| Frontend, contenido útil | ≤ 3 s | — | **PENDIENTE**: sin sesión de navegador. La llamada que lo alimenta da p50 2,147 s / p95 2,554 s |
+| Traducción de títulos | sin presupuesto | — | **PENDIENTE**: no medida (LLM facturable); la pantalla principal no la usa |
+| Fondo | pendiente no crece | `alertas: []`, 17/17 scopes sin fallos | **CUMPLE** |
+
+Sin regresión: **0 reinicios**, 0 OOM, **0 respuestas 5xx** en 30 min, cosecha
+sana.
+
+### Lo que sí cambió, que es mucho
+
+| Recorrido | Antes del punto 5 | Ayer | Hoy |
+|---|---:|---:|---:|
+| Pantalla principal (3.000), p50 | **79,265 s** | 8,617 s | **2,147 s** |
+| Pantalla principal, primera carga | ~54 s + ~77 s de idioma | ~54 s | **10,196 s** |
+| `matching.results` 3.000, caliente | 12,910 s | 12,910 s | ~2,4 s |
+
+### El veredicto, sin suavizarlo
+
+**El contrato vigente NO se cumple.** Ninguna de las tres lecturas habituales
+baja del p95 de 2 s, y la primera carga de la pantalla principal se pasa del
+presupuesto de 5 s por el doble. Que la mejora sea de **37 veces** en la
+mediana del recorrido principal no convierte un incumplimiento en cumplimiento.
+
+Lo que queda está identificado y es medible, no es una incógnita:
+
+1. **~1,4 s por petición de trabajo del BFF** sobre 1.800 items (resolver
+   identidad legacy y superponer estado local), del trazado por fases. Es hoy
+   el mayor sumando de la pantalla principal en caliente.
+2. **La primera carga sigue recorriendo el feed entero** (10,2 s). La caché por
+   versión no puede evitarlo: alguien tiene que recorrerlo una vez. Lo que sí
+   puede es que ese alguien **no sea el usuario** — calentar tras cada cambio
+   de versión, en segundo plano.
+3. **La cola de latencia de las rutas de 20 sigue SIN atribuir**. Con n=20 el
+   p95 ES el máximo, así que un único pico decide el veredicto. Separar código
+   de entorno exige observación correlacionada, que sigue sin hacerse.
+
 ## 10. Qué falta para poder cerrar el punto 5
 
 El criterio debe fijarse **antes** de la ejecución final, no después de ver el
