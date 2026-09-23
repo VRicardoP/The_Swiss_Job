@@ -281,6 +281,31 @@ si la versión coincide **exactamente**. Cuatro cotas deliberadas:
    otra forma ⇒ comportamiento de siempre. Degradar el rendimiento es
    aceptable; servir datos viejos, no.
 
+### Lo que cuesta la consulta de versión, medido antes de prometer nada
+
+Sobre la base de producción, mismo SQL que ejecuta el endpoint, tres pasadas
+seguidas (`\timing`, sólo lectura):
+
+| Pasada | Tiempo | Resultado |
+|---|---:|---|
+| 1ª (fría) | **1,224 s** | `total=1800`, digest `b16bfe3a…` |
+| 2ª | **0,292 s** | idéntico |
+| 3ª | **0,606 s** | idéntico |
+
+El digest es estable entre pasadas y el total coincide con el feed servido.
+
+**Aritmética honesta de lo que esto deja, que NO es una medición del endpoint.**
+Una carga con caché válida costaría: versión 0,3-0,6 s + resto del BFF 1,4 s
+(resolución de identidad y overlay local de 1.800 items, del trazado) +
+serialización 0,3 s ≈ **2,0-2,3 s**, frente a los 12,9 s de hoy. Es una mejora
+de unas 6 veces, pero **queda en el filo del p95 ≤ 2 s y puede no cumplirlo**.
+Si no cumple, lo que queda por atacar está identificado y es el resto del BFF:
+1,4 s para resolver identidad y superponer estado local de 1.800 ofertas.
+
+Esto es una estimación compuesta, no un p95 del endpoint servido. Medirlo de
+verdad exige desplegar; mientras no se despliegue, el escenario queda
+**expresamente pendiente**, no aprobado por aritmética.
+
 **El frontend no cambia**: categorías, contadores, Watchlist, orden y tarjetas
 siguen saliendo del mismo payload. Es optimización, no cambio de
 funcionalidad, que es la condición que el propietario puso.
