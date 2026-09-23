@@ -26,7 +26,8 @@ Qué estaba mal, sin rodeos:
    —puede incluir I/O, conexión o lock—, así que 1,177 s no demuestra trabajo
    propio. La cola sigue **sin atribuir** (§5).
 4. **La tabla de versiones era falsa**: declaraba los tres procesos del core en
-   `point5-cf260b1` cuando worker y captura siguen en `point4-51be757`.
+   `point5-cf260b1` cuando worker y captura seguían en `point4-51be757`
+   (resuelto el 23-09 con el despliegue conjunto — §8).
 
 Lo que sí sostiene la evidencia se mantiene y está en §1–§4. Lo que falta para
 poder cerrar, en §10.

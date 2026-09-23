@@ -12,7 +12,7 @@ avisos SÍ quedó acreditada esa misma mañana (§7ter).
 
 | Servicio | Imagen | Estado |
 |---|---|---|
-| core-api / core-worker / core-capture | `swissjob-core:point4-51be757` | `ready`, core0050, `authoritative: true`, 0 reinicios |
+| core-api / core-worker / core-capture | `swissjob-core:point4-51be757` ⟵ *versión del 22-09; hoy `point5-9d6b46e`/`core0051`* | `ready`, core0050, `authoritative: true`, 0 reinicios |
 | backend / worker público | `swissjob-worker:point4-a0fb403` | sin cambios de código; sólo listas de retirada |
 | portfolio_backend | `portfolio-backend:e15-9f8c85a` | intacto |
 

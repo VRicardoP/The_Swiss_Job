@@ -108,8 +108,9 @@ Los cuatro son correctos y están corregidos en el acta:
    endpoint, 1,177 s, es trabajo propio. Un loadavg alto no separa CPU de I/O,
    locks o consultas. Ahora figura como hipótesis pendiente de comprobar.
 4. **La tabla de versiones era falsa.** Declaraba los tres procesos del core en
-   `point5-cf260b1`; worker y captura siguen en `point4-51be757` porque sólo
-   recreé `core-api`. El despliegue selectivo es defendible —la migración es
+   `point5-cf260b1` cuando worker y captura seguían en `point4-51be757`, porque
+   sólo recreé `core-api`. (Resuelto el 23-09: los cinco servicios en
+   `point5-9d6b46e`.) El despliegue selectivo es defendible —la migración es
    aditiva y el cambio lo sirve la API— pero había que decirlo, no ocultarlo.
    **Consecuencia práctica: el worker vivo no contiene `CORE_CAPTURE_ENABLED`**;
    verificarlo antes de apoyarse en ese interruptor para retirar el slot.
