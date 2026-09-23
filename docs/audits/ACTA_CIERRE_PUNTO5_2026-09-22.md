@@ -234,6 +234,61 @@ caché **estabiliza** una respuesta; no la hace correcta ni igual entre procesos
 workers o reinicios. Corregida la docstring para prometer exactamente eso y
 nada más.
 
+## 2c. Los 9,7 s restantes: el 87-89 % son las 18 páginas del core
+
+Con el idioma fuera del camino, el coste de la pantalla principal quedaba en
+`matching.results`. En vez de suponer dónde, se trazó por fases en el NAS
+(`scratchpad/traza_feed.py`, sólo lectura, dos vueltas seguidas):
+
+| Vuelta | Total | Páginas al core | Tiempo en páginas | % | p50/página | Resto BFF |
+|---|---:|---:|---:|---:|---:|---:|
+| 1ª (fría) | 54,347 s | 18 | 47,484 s | **87,4 %** | 1,594 s | 6,863 s |
+| 2ª (caliente) | 12,910 s | 18 | 11,469 s | **88,8 %** | 0,348 s | 1,441 s |
+
+**Por qué caliente sigue costando, que es lo que no era obvio:** hay caché de
+páginas por ETag, pero un `If-None-Match` **no ahorra trabajo en el core**. El
+ETag se deriva del payload (`v1._etag_of`), así que para contestar 304 el core
+tiene que construir la página igual. La caché ahorra transferencia, no cómputo.
+
+De aquí sale la conclusión operativa: **no hay forma de servir 1.800 ofertas
+bajo 2 s**. Ni con páginas mayores —el coste va con los items, 3,5 ms cada uno—
+ni afinando SQL. La pantalla no debe pedirlas en cada carga.
+
+### Qué se hizo: preguntar si cambió en vez de descargarlo
+
+`GET /v1/profiles/{id}/matches/version` devuelve `{version, total}`. La versión
+es un `md5` sobre `vacancy_id : current_eval_id : current_offer_revision_id` de
+todo el feed, con su misma cláusula (excluye no-activas y feedback negativo, y
+alcanza el índice parcial `ix_pvs_feed_current_eval`).
+
+Los tres componentes no son decorativos: cubren **pertenencia** (entra o sale
+una oferta), **evaluación** (re-scoring) y **contenido** (título nuevo ⇒
+revisión canónica nueva). Un contador o un `max(updated_at)` no bastarían: un
+alta y una baja simultáneas dejan el contador igual.
+
+El consumidor cachea el recorrido **completo** por perfil y sólo lo reutiliza
+si la versión coincide **exactamente**. Cuatro cotas deliberadas:
+
+1. **Sólo el recorrido completo se cachea.** Uno cortado por `needed` no puede
+   responder a quien pida más.
+2. **Sólo se pregunta la versión si puede pagar** (`needed > 100`). La consulta
+   recorre las mismas filas que el recuento (0,4-0,9 s): pedirla para servir
+   20 ofertas convertiría una petición barata en dos.
+3. **Sólo se cachea la parte inmutable.** El estado local del usuario
+   —feedback, candidatura, urgencia, borrador— se relee en CADA petición. Por
+   eso esta caché no puede servir rancio lo que el usuario acaba de tocar.
+4. **Sin versión fiable, se recorre.** Core antiguo, fallo de red o payload con
+   otra forma ⇒ comportamiento de siempre. Degradar el rendimiento es
+   aceptable; servir datos viejos, no.
+
+**El frontend no cambia**: categorías, contadores, Watchlist, orden y tarjetas
+siguen saliendo del mismo payload. Es optimización, no cambio de
+funcionalidad, que es la condición que el propietario puso.
+
+Un defecto propio que salió en la suite y conviene dejar escrito: `_feed_version`
+hacía `resp.json().get(...)` y un 200 con un cuerpo **no-objeto** lanzaba
+`AttributeError` fuera del fallback. Corregido y fijado con casos de forma rara.
+
 ## 3. Los dos cambios, medidos por separado
 
 **Experimento 1 — el core informa del total y el consumidor deja de recorrer**

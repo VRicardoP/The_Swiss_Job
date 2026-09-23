@@ -148,6 +148,21 @@ Tres cosas que NO deben deshacerse sin medir:
    ponerla lenta otra vez. La memoización de `_detect_language` se queda, pero
    ya es de segundo orden — una caché en proceso no cubre la primera carga.
 
+6. **El recorrido completo del feed se cachea por VERSIÓN, no por tiempo.**
+   `GET /v1/profiles/{id}/matches/version` da un digest sobre
+   `vacancy_id:current_eval_id:current_offer_revision_id` de todo el feed;
+   el BFF reutiliza su recorrido sólo si coincide EXACTAMENTE. Motivo medido:
+   recorrer el feed es el **87-89 %** del coste de la pantalla principal
+   (47,5 s frío / 11,5 s caliente, 18 páginas). Caliente seguía costando
+   porque **un `If-None-Match` no ahorra cómputo**: el ETag se deriva del
+   payload, así que el core construye la página igual para contestar 304.
+   Cuatro cotas que NO deben deshacerse: sólo se cachea el recorrido
+   **completo**; sólo se pregunta la versión si `needed > 100`; sólo se cachea
+   la parte **inmutable** (el estado local del usuario se relee siempre); y
+   sin versión fiable **se recorre**. Fijado por
+   `backend/tests/test_feed_version_cache.py` y
+   `jobhunt_core/tests/test_matches_version.py`.
+
 Acta y mediciones: `docs/audits/ACTA_CIERRE_PUNTO5_2026-09-22.md`.
 La cola de latencia restante **no está atribuida**. Ni el loadavg del NAS ni el
 mínimo observado la explican: un mínimo no separa trabajo de espera.
