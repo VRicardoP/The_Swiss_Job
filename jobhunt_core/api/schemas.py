@@ -59,6 +59,23 @@ class VacancyDTO(BaseModel):
     translations: list = []
 
 
+class MatchesVersionDTO(BaseModel):
+    """Versión del feed de un perfil (§2): digest + tamaño.
+
+    Deja que el consumidor sepa si el feed cambió SIN descargarlo. Antes, la
+    única forma de saberlo era recorrer las 18 páginas: el 87-89 % del coste
+    de servir la pantalla principal. Un `If-None-Match` no lo evitaba, porque
+    el ETag se deriva del payload y construirlo es el trabajo.
+
+    `version` es opaca: su composición puede cambiar sin avisar y el
+    consumidor sólo debe compararla con la que guardó. Lo único garantizado es
+    que **si el feed servido cambia, la versión cambia**.
+    """
+
+    version: str
+    total: int = Field(ge=0)
+
+
 class VacanciesPageDTO(BaseModel):
     """Página del feed de catálogo (C-API-R): VacancyDTO reutilizado + cursor
     keyset OPACO. Con offset explícito incluye el total para el BFF existente."""

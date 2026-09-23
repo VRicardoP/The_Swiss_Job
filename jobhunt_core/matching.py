@@ -2033,6 +2033,63 @@ async def feed_total(session, profile_id, consumer_id=None) -> int:
     return int(await session.scalar(sa.text(sql), params) or 0)
 
 
+def feed_version_sql(profile_id, consumer_id=None):
+    """SQL de la VERSIÓN del feed: un digest que cambia si cambia el feed.
+
+    Existe para que el consumidor no tenga que descargar 1.800 ofertas en 18
+    páginas sólo para comprobar si algo cambió. Medido en el NAS: ese recorrido
+    es el 87-89 % del coste de servir la pantalla principal — 47,5 s en frío y
+    11,5 s en caliente. Caliente sigue costando porque un `If-None-Match` NO
+    ahorra trabajo: el ETag se deriva del payload, así que el core construye la
+    página igual para responder 304.
+
+    Qué entra en el digest, y por qué exactamente eso: la **pertenencia**
+    (`vacancy_id`), la **evaluación vigente** (`current_eval_id`) y la
+    **revisión canónica vigente** (`current_offer_revision_id`). Con los tres,
+    cualquier cambio observable en lo que sirven las páginas —una oferta que
+    entra o sale, una re-evaluación, un cambio de título— produce otro digest.
+    Un contador o un `max(updated_at)` NO bastarían: una alta y una baja
+    simultáneas dejarían el contador igual.
+
+    La misma cláusula del feed y del recuento: excluye no-activas y feedback
+    negativo, y explicita `current_eval_id IS NOT NULL` para que el
+    planificador alcance el índice parcial `ix_pvs_feed_current_eval`.
+    """
+    from jobhunt_core.feedback import effective_feedback_batch_sql
+
+    params = {"pid": profile_id}
+    tenant_join = ""
+    if consumer_id is not None:
+        tenant_join = "JOIN profiles p ON p.id = s.profile_id AND p.consumer_id = :cid "
+        params["cid"] = consumer_id
+    sql = (
+        f"WITH fb AS ({effective_feedback_batch_sql(':pid')}) "
+        "SELECT count(*) AS total, "
+        "  md5(coalesce(string_agg("
+        "    s.vacancy_id::text || ':' || s.current_eval_id::text || ':' "
+        "    || coalesce(v.current_offer_revision_id::text, '-'), "
+        "    ',' ORDER BY s.vacancy_id"
+        "  ), '')) AS version "
+        "FROM profile_vacancy_state s "
+        f"{tenant_join}"
+        "JOIN match_evaluations e ON e.id = s.current_eval_id "
+        "  AND e.profile_id = s.profile_id AND e.vacancy_id = s.vacancy_id "
+        "JOIN vacancies v ON v.id = s.vacancy_id "
+        "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
+        "LEFT JOIN fb ON fb.vacancy_id = s.vacancy_id "
+        "WHERE s.profile_id = :pid AND s.current_eval_id IS NOT NULL "
+        "AND COALESCE(fb.feedback,'') NOT IN ('thumbs_down','dismissed')"
+    )
+    return sql, params
+
+
+async def feed_version(session, profile_id, consumer_id=None) -> tuple[str, int]:
+    """(version, total) del feed de este perfil. Ver `feed_version_sql`."""
+    sql, params = feed_version_sql(profile_id, consumer_id)
+    row = (await session.execute(sa.text(sql), params)).one()
+    return row.version, int(row.total or 0)
+
+
 async def set_dismissed(session, profile_id, vacancy_id, dismissed: bool) -> None:
     """Descartar/restaurar: upsert que SOLO toca dismissed_at/updated_at.
     clock_timestamp() + GREATEST (rev. A-08 #3): la hora real de ESCRITURA,

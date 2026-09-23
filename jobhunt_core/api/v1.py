@@ -712,6 +712,31 @@ async def put_profile_exclusions(
     return result
 
 
+@router.get("/profiles/{profile_id}/matches/version",
+            response_model=schemas.MatchesVersionDTO)
+async def get_matches_version(
+    profile_id: uuid.UUID,
+    session=Depends(get_session),
+    principal: Principal = Depends(require_scope("matches:read")),
+):
+    """Versión del feed SIN servirlo. Ver `matching.feed_version_sql`.
+
+    Misma regla de tenencia que el feed: 404 indistinguible para ausente y
+    cross-tenant, y el filtro por consumer va TAMBIÉN en el SQL."""
+    owner = (
+        await session.execute(
+            sa.text("SELECT consumer_id FROM profiles WHERE id = :pid"),
+            {"pid": profile_id},
+        )
+    ).scalar_one_or_none()
+    if owner is None or owner != principal.consumer_id:
+        raise error_404("perfil")
+    version, total = await matching.feed_version(
+        session, profile_id, consumer_id=principal.consumer_id
+    )
+    return schemas.MatchesVersionDTO(version=version, total=total)
+
+
 @router.get("/profiles/{profile_id}/matches", response_model=schemas.MatchesPageDTO,
             responses={304: {"description": "Not Modified"}})
 async def get_matches(
