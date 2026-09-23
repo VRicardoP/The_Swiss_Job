@@ -1967,11 +1967,11 @@ async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=No
                 "  AND e.profile_id = s.profile_id AND e.vacancy_id = s.vacancy_id "
                 "JOIN vacancies v ON v.id = s.vacancy_id "
                 "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
-                # Sin revisión canónica vigente la página no puede servirla
-                # (`_vacancy_dtos` la omite): el feed, el recuento y la versión
-                # deben excluirla igual, o `total` sobre-cuenta y el consumidor
-                # apaga su caché al ver `len(items) != total`.
-                "  AND v.current_offer_revision_id IS NOT NULL "
+                # A PROPÓSITO sin `current_offer_revision_id IS NOT NULL`: este feed
+                # es también el que mide el nDCG del gate (shadow/metrics.py) y su
+                # semántica no se toca desde un arreglo de caché. La página omite
+                # esas filas en `_vacancy_dtos`; recuento y versión las excluyen
+                # (feed_total_sql / feed_version_sql) para describir lo SERVIDO.
                 "WHERE s.profile_id = :pid "
                 f"AND COALESCE(({feedback_sql}),'') NOT IN ('thumbs_down','dismissed') "
                 f"{where_cursor}"
