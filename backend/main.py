@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 import redis.asyncio as aioredis
 from fastapi import Depends, FastAPI
@@ -38,6 +40,13 @@ logger = logging.getLogger(__name__)
 
 
 _INSECURE_SECRET_KEY = "change-me-in-production"
+# C7: contraseñas que SOLO valen en dev y marcadores de plantilla sin rellenar.
+# La lista es la del core (`jobhunt_core.config`) más la del postgres legacy,
+# que estaba publicada en .env.example y en este repositorio.
+_DEV_DB_PASSWORDS = frozenset(
+    {"swissjob_dev_2024", "jobhunt_core_dev", "postgres", "password"}
+)
+_PLACEHOLDER_RE = re.compile(r"CAMBIA|CHANGE_?ME|PLACEHOLDER|EXAMPLE", re.IGNORECASE)
 
 
 def _validate_security_config() -> None:
@@ -57,6 +66,44 @@ def _validate_security_config() -> None:
         "SECRET_KEY is set to the insecure default 'change-me-in-production'. "
         'Generate a random value (e.g. `python -c "import secrets; '
         'print(secrets.token_urlsafe(32))"`) and set it in your .env.'
+    )
+
+
+def _es_credencial_de_dev(password: str | None) -> bool:
+    """Misma lista negra que `jobhunt_core.config._bad_secret`, para la base."""
+    return (
+        not password
+        or password in _DEV_DB_PASSWORDS
+        or bool(_PLACEHOLDER_RE.search(password))
+    )
+
+
+def _validate_database_credentials(*, en_pruebas: bool | None = None) -> None:
+    """Aborta el arranque si la base usa una contraseña de dev o de plantilla.
+
+    `ALLOW_DEV_CREDENTIALS=true` lo permite a propósito: el backend legacy no
+    tiene noción de entorno (el core sí, `CORE_ENV`), así que ese permiso
+    explícito es lo único que distingue un portátil de un servidor. Ausente,
+    manda la lectura segura: esto no es dev, luego no se arranca.
+
+    `en_pruebas` existe para poder probar la guardia MISMA: pytest reescribe
+    `PYTEST_CURRENT_TEST` al entrar en cada fase del test, así que borrarla en
+    un fixture no sirve de nada — la guardia se seguiría saltando y los casos
+    pasarían en verde sin haber comprobado nada.
+    """
+    import os
+
+    if en_pruebas is None:
+        en_pruebas = bool(os.getenv("PYTEST_CURRENT_TEST"))
+    if settings.ALLOW_DEV_CREDENTIALS or en_pruebas:
+        return
+    if not _es_credencial_de_dev(urlsplit(settings.DATABASE_URL).password):
+        return
+    raise RuntimeError(
+        "DATABASE_URL usa una contraseña de desarrollo o un marcador de "
+        "plantilla sin rellenar. Pon una contraseña real, o declara "
+        "ALLOW_DEV_CREDENTIALS=true si esto es de verdad un entorno de "
+        "desarrollo."
     )
 
 
@@ -81,6 +128,7 @@ async def _warm_embedding_model() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _validate_security_config()
+    _validate_database_credentials()
     # Validate handover BEFORE SSE, warmup, or scheduler tasks are armed.
     from scrapers import get_scraper_names
     from services.legacy_sources import disabled_sources

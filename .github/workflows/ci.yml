@@ -125,6 +125,12 @@ jobs:
     # NUNCA: solo se construia el compose base. Un YAML roto ahi se descubria en
     # el NAS. `config -q` resuelve el modelo completo sin levantar nada.
     runs-on: ubuntu-latest
+    # C7: el compose base ya no trae contrasenas por defecto — `${VAR:?}` falla
+    # si faltan, que es justo lo que se quiere fuera de CI. Aqui valen valores
+    # de relleno: `config -q` resuelve el modelo, no levanta nada.
+    env:
+      POSTGRES_PASSWORD: ci-validation-only
+      REDIS_PASSWORD: ci-validation-only
     steps:
       - uses: actions/checkout@v4
       - run: cp .env.example .env
@@ -149,9 +155,17 @@ jobs:
           # `qnap` y `rehearsal.qnap` NO se validan aqui: sus `env_file` son rutas
           # ABSOLUTAS del NAS (/share/Public/...) que no pueden existir en CI.
           # Verificado, no supuesto: fallan con "env file ... not found".
+      - name: C7 — el compose base no se reabre a la LAN
+        # Un `ports:` sin interfaz vuelve a publicar postgres y redis en 0.0.0.0,
+        # y un `${VAR:-clave}` devuelve una contrasena conocida a quien no
+        # rellene el .env. Ninguna de las dos cosas se ve revisando un diff.
+        run: python3 scripts/check_compose_exposure.py docker-compose.yml
 
   docker-build:
     runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci-validation-only
+      REDIS_PASSWORD: ci-validation-only
     steps:
       - uses: actions/checkout@v4
       - run: cp .env.example .env

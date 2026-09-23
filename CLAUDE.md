@@ -48,6 +48,27 @@
 
 > Servicios en conflicto en el host: 5433, 5434 (postgres), 6379 (redis), 5678 (n8n), 8001
 
+**Desde el 2026-09-24 (T5/C7) todos salvo el frontend se publican en `127.0.0.1`**
+vía `${HOST_BIND_IP:-127.0.0.1}`: `postgres` y `redis` escuchaban en `0.0.0.0`
+—alcanzables desde toda la LAN— y `redis` además **sin contraseña**. Para abrirlos
+a la red hay que escribir `HOST_BIND_IP=0.0.0.0` en el `.env`, a propósito.
+
+Dos consecuencias para quien trabaje aquí:
+
+- **`docker compose up` no arranca sin `POSTGRES_PASSWORD` ni `REDIS_PASSWORD`**
+  en el `.env` (`${VAR:?}`, sin defecto publicado). El mensaje dice cuál falta.
+- **No declares `REDIS_URL`, `CELERY_BROKER_URL` ni `CELERY_RESULT_BACKEND` en el
+  `.env`.** `config.py` las construye desde `REDIS_PASSWORD`. Si las declaras,
+  **pon la contraseña dentro**: Celery lee `CELERY_BROKER_URL` del ENTORNO y esa
+  variable gana sobre el valor que le pasa el código — con la URL sin credencial
+  el BFF entra y **los dos workers se quedan fuera**, en bucle de `NOAUTH`.
+
+El arranque del BFF además **muere** si `DATABASE_URL` trae una contraseña de dev
+o un marcador de plantilla, salvo `ALLOW_DEV_CREDENTIALS=true` (este `.env` lo
+declara). `scripts/check_compose_exposure.py`, también en CI, impide que esto se
+deshaga: puertos en loopback, ninguna contraseña publicada como defecto y `redis`
+con `--requirepass`.
+
 ---
 
 ## Perfiles de compose — operativo vs. desarrollo (auditoría externa 2026-08-27, P1-3)

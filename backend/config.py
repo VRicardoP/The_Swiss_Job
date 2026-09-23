@@ -1,4 +1,6 @@
-from pydantic import Field
+from urllib.parse import quote
+
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -14,11 +16,36 @@ class Settings(BaseSettings):
     )
 
     # Redis
+    # C7: `redis` dejó de aceptar conexiones anónimas. La contraseña vive UNA
+    # vez aquí y se inyecta en las tres URLs que no traigan credencial; repetirla
+    # en REDIS_URL + CELERY_BROKER_URL + CELERY_RESULT_BACKEND garantizaba que
+    # una de las tres se quedase atrás en la siguiente rotación.
+    REDIS_PASSWORD: str = ""
     REDIS_URL: str = "redis://redis:6379/0"
 
     # Celery
     CELERY_BROKER_URL: str = "redis://redis:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://redis:6379/2"
+
+    @model_validator(mode="after")
+    def _inyecta_password_de_redis(self) -> "Settings":
+        """Añade REDIS_PASSWORD a las URLs de redis que no traigan credencial.
+
+        Una URL que YA trae credencial (`redis://user:pass@…`) se respeta tal
+        cual: quien la escribió explícitamente manda sobre este atajo.
+        """
+        if not self.REDIS_PASSWORD:
+            return self
+        credencial = quote(self.REDIS_PASSWORD, safe="")
+        for campo in ("REDIS_URL", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND"):
+            url = getattr(self, campo)
+            for esquema in ("redis://", "rediss://"):
+                if url.startswith(esquema) and "@" not in url:
+                    setattr(
+                        self, campo, f"{esquema}:{credencial}@{url[len(esquema) :]}"
+                    )
+                    break
+        return self
 
     # CORS — orígenes/métodos/cabeceras explícitos (no wildcard con credenciales).
     # El frontend solo envía Authorization + Content-Type; ampliar aquí si cambia.
@@ -38,6 +65,12 @@ class Settings(BaseSettings):
 
     # App
     SECRET_KEY: str = "change-me-in-production"
+    # C7: el backend legacy no tiene noción de entorno (el core sí: CORE_ENV).
+    # Sin ella, una guardia de credenciales de dev no puede distinguir tu portátil
+    # de un servidor. Este permiso es esa distinción, y es explícita: ausente ⇒
+    # el arranque muere si la contraseña de la base es de dev o una plantilla.
+    # NO aparece en .env.prod.example a propósito.
+    ALLOW_DEV_CREDENTIALS: bool = False
     APP_NAME: str = "SwissJobHunter"
 
     # Nivel de logging de la app (root). La app no fijaba nivel → los loggers

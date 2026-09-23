@@ -219,6 +219,36 @@ Duplicados fusionados; ordenados por severidad. Entre corchetes, quién lo encon
 - `CoreMatching.results` son **dos algoritmos** bajo `CORE_FEEDBACK_ENABLED`; `generate_document` (173 LOC, CC 40) con cuatro `commit()` manuales en el endpoint.
 - CONFIRMADO.
 
+#### [HIGH] H15 · La base de producción del Portfolio escucha en toda la LAN [INFRA + SEC]
+- Descubierto el 2026-09-24 al verificar T5. De los contenedores del NAS,
+  **`portfolio_db` es el ÚNICO que publica un puerto**: `0.0.0.0:5435→5432`.
+  Todo SwissJob (postgres, redis, backend, core-api) no publica ninguno.
+- **Alcanzable, no sólo declarado**: la conexión TCP a `192.168.1.2:5435` se abre
+  desde esta máquina (`192.168.1.19`), que es otro equipo de la red.
+- Mitigación parcial ya presente: usuario `lothar`, base `proyecto`, contraseña de
+  **20 caracteres** que no coincide con ningún patrón débil ni con un defecto
+  conocido. El riesgo es la superficie, no una credencial trivial.
+- Arreglo: `ports: "127.0.0.1:5435:5432"` en el compose del Portfolio del NAS —
+  salvo que el propietario la abra a propósito para conectarse con un cliente
+  gráfico desde el portátil, que es el uso que explicaría esta publicación.
+  **Decisión del propietario**: toca un compose de producción.
+- CONFIRMADO.
+
+#### [HIGH] H16 · El compose base apunta a una imagen del core más vieja que la que corre [INFRA]
+- Descubierto el 2026-09-24 al recrear `core-api` durante T5. `docker-compose.yml`
+  fija `image: swissjob-core:dev` en los cuatro servicios del core; esa etiqueta
+  era un build del **04-09**, mientras los contenedores vivos usaban
+  `swissjob-core:d908ea2` del **08-09**. Nadie lo nota hasta que algo se recrea.
+- Efecto medido: `core-api` pasó a `not_ready` — `alembic core0042` en la base
+  contra `core0040` esperado por la imagen — y a `release unknown` /
+  `authoritative: false`. **Cualquier `docker compose up -d` habría hecho lo mismo.**
+- Mitigado reapuntando `:dev` a la imagen que corre el resto del core (la anterior
+  se conserva como `swissjob-core:dev-20260904`). Tras ello: `ready`,
+  `release d908ea2`, `authoritative: true`.
+- **Deriva de fondo, sin resolver**: el árbol está en `core0051` y la base local en
+  `core0042`. Reconstruir `swissjob-core:dev` del árbol exige pasar `core-migrate`.
+- CONFIRMADO.
+
 ### MEDIOS
 
 - **M1** [BFF] Escritura + `commit()` de la sesión de la petición dentro de un GET, reemitida en cada petición mientras haya pendientes (`lookup` filtra `IS NOT NULL`, así que un pendiente se reencola): `language_store.py:67-78`, `match.py:235-237`. Fix: devolver también las claves «ya vistas»; sesión propia para encolar. CONFIRMADO.
@@ -434,7 +464,11 @@ Eliminar la llamada a `_resolve_language` de este método. En `backend/routers/m
 
 ---
 
-### T5 · Exposición de red del compose base (C7) — 1 h, con confirmación
+### T5 · Exposición de red del compose base (C7) — **EJECUTADO el 2026-09-24**
+
+> Lo de abajo es el plan tal como se escribió. Lo que realmente se hizo, y en qué
+> cinco puntos el plan resultó estar equivocado al medirlo, está en
+> **[T5 — acta de ejecución](#t5--acta-de-ejecución-2026-09-24)**, al final de esta parte.
 
 Preparar el diff (no aplicarlo sin confirmación) en `docker-compose.yml`:
 - `postgres.ports`: `"127.0.0.1:${HOST_POSTGRES_PORT:-5435}:5432"`; `POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}`.
@@ -573,6 +607,97 @@ Presentar al propietario las dos vías con su coste y **no implementar ninguna s
 
 Orden sugerido y forma, sin fecha: (1) `_fetch_scrapers_async`/`_fetch_providers_async` → `run_source()` común con `SourceRunResult`; (2) `CoreMatching.results` → dos clases detrás del puerto; (3) `generate_document` → `DocumentGenerationService`; (4) `matching.py` → `matching/{policies,scoring,feed,user_state}.py`; (5) `RawListingSink` → `IngestBatch`; (6) `import_*`/`*_cutover`/`dev_eval`/`train_cross_encoder` → `jobhunt_core/tools/` extrayendo los 5 símbolos que `applications.py` importa; (7) `repositories/` para los tres módulos `api/v1*.py` con SQL literal; (8) `CoreUnavailableError` base común + `services/core_http.py`. Cada refactor con test de caracterización previo y `radon cc` antes/después en el commit.
 
+### T5 — acta de ejecución (2026-09-24)
+
+**Qué estaba realmente expuesto.** Medido con `docker compose config`, que rinde
+el fichero, y no con `docker compose port`, que rinde el contenedor en marcha:
+
+| Servicio | Antes (lo que publica el FICHERO) | Ahora |
+|---|---|---|
+| `postgres` | `0.0.0.0:5435` con `POSTGRES_PASSWORD` por defecto **publicada en este repositorio** | `127.0.0.1:5435`, contraseña exigida |
+| `redis` | `0.0.0.0:6380`, **sin contraseña** | `127.0.0.1:6380`, `--requirepass` |
+| `backend` | `0.0.0.0:8002` | `127.0.0.1:8002` |
+| `core-api` | `0.0.0.0:8003` | `127.0.0.1:8003` |
+| `frontend` | `0.0.0.0:5174` | `0.0.0.0:5174` — **a propósito**: servidor de Vite, sin credenciales |
+
+**Producción NO estaba afectada y no se ha tocado.** El NAS no corre este
+fichero: `swissjob-backend` y `core-api` vienen de
+`unification-e15-20260914/*.configured.yml` y `swissjob-postgres` de un compose
+de Container Station (comprobado con la etiqueta `compose.project.config_files`
+de cada contenedor). Los cuatro composes de despliegue del repositorio publican
+**sólo el frontend** (`4000:80`, `4010:80` el ensayo): ningún plano de datos.
+
+**Cinco puntos en los que el plan estaba equivocado, y por qué se supo:**
+
+1. **`core-api` parecía ya resuelto y no lo estaba.** `docker compose port`
+   devolvía `127.0.0.1:8003`, pero eso era **deriva de un contenedor viejo**: el
+   fichero decía `0.0.0.0` y el siguiente `up -d` lo habría reabierto. Un puerto
+   se audita en el fichero, no en el contenedor.
+2. **La contraseña de Redis en las URLs no bastaba.** Celery lee
+   `CELERY_BROKER_URL` **del entorno** y esa variable **gana** sobre la que le
+   pasa el código: con `REDIS_URL`/`CELERY_*` declaradas sin credencial en
+   `.env`, el BFF entraba y **los dos workers se quedaban fuera** con
+   `Cannot connect … Authentication required` en bucle. Se vio porque se miró el
+   log del worker, no sólo la salud del BFF. Arreglo: esas tres variables **ya no
+   se declaran** en `.env` ni en `.env.example`; `config.py` las construye a
+   partir de `REDIS_PASSWORD`, que es la única copia de la clave.
+3. **No existe `settings.POSTGRES_PASSWORD`.** El backend usa `DATABASE_URL`; la
+   guardia se escribió sobre la contraseña de esa URL.
+4. **El backend legacy no tiene noción de entorno** (el core sí: `CORE_ENV`), así
+   que una guardia de «credenciales de dev» no puede distinguir un portátil de un
+   servidor. Se añadió `ALLOW_DEV_CREDENTIALS` (ausente ⇒ no arranca), que **no**
+   aparece en `.env.prod.example`. Esta máquina lo declara `true` por escrito.
+5. **`${VAR:?}` habría puesto CI en rojo.** Los jobs `compose-config` y
+   `docker-build` hacen `cp .env.example .env`, y la plantilla ya no trae
+   contraseñas. Se les dan valores de relleno explícitos.
+
+En vez de fijar `127.0.0.1:` literal se usa **`${HOST_BIND_IP:-127.0.0.1}`**: el
+defecto es cerrado y abrirlo a la LAN exige escribirlo en el `.env`.
+
+**Verificación (ejecutada, no leída):**
+
+| Qué | Resultado |
+|---|---|
+| `ss -ltn` | 5435, 6380, 6381, 8002, 8003 → **todos en `127.0.0.1`** |
+| PING crudo al 6380 sin credencial | `-NOAUTH Authentication required.` |
+| Los cuatro puertos **desde el NAS** hacia esta máquina | rechazados los cuatro (antes, alcanzables) |
+| `compose config` sin las contraseñas | **falla** con el mensaje de cada variable (salida 1) |
+| Healthcheck de `redis` (autenticado) | `healthy` |
+| Celery: `control.ping()` por el broker | **2 workers responden**, 40 tareas registradas, 0 líneas `NOAUTH` |
+| Guardia de credenciales | **7/7** casos: aborta con las cuatro claves de dev, con los marcadores de plantilla y sin contraseña; pasa con clave real y con el permiso explícito |
+| `scripts/check_compose_exposure.py` | verde, y **3/3 controles negativos** muerden por su propia condición (puerto reabierto, clave quemada, redis sin auth) |
+| `ruff check` / `ruff format --check` | limpio (orden: arreglar → formatear → volver a comprobar) |
+| Suite BFF | ver tabla de estado |
+
+**Lo que queda, y por qué no se ha hecho aquí:**
+
+- **`redis` de producción sigue sin contraseña** (los cuatro composes de
+  despliegue). No se publica ningún puerto, así que sólo es alcanzable desde
+  dentro de la red de Docker. Cambiarlo exige reiniciar producción → **T13, con
+  confirmación del propietario**.
+- **La contraseña de dev de Postgres sigue siendo la publicada** en esta máquina.
+  Con el 5435 en loopback ya no es alcanzable desde fuera, y rotarla toca la base
+  local viva; queda como decisión del propietario:
+  `ALTER ROLE swissjob PASSWORD '…'` + las dos líneas del `.env`.
+- **Segundo hallazgo, destapado al recrear** (H16): el compose base fijaba
+  `image: swissjob-core:dev`, una imagen del **4 de septiembre**, mientras los
+  contenedores del core que de verdad corrían usaban `swissjob-core:d908ea2`,
+  del **8 de septiembre**. Al recrear `core-api` desde el compose pasó a
+  `not_ready` (`alembic core0042` en la base contra `core0040` esperado por la
+  imagen). **Cualquier `docker compose up -d` habría hecho lo mismo**: era una
+  mina puesta, no un efecto de T5. Restaurado apuntando `:dev` a la imagen que
+  corre el resto del core (la vieja se conserva como `swissjob-core:dev-20260904`);
+  `core-api` quedó `ready`, `release d908ea2`, **`authoritative: true`** — mejor
+  que antes, cuando publicaba `release unknown` y `authoritative: false`. Queda
+  la deriva de fondo: **árbol en `core0051`, base local en `core0042`**.
+- **Hallazgo nuevo, fuera de T5** → ver **H15**: el **único** contenedor
+  del NAS que publica un puerto es `portfolio_db`, en **`0.0.0.0:5435`**,
+  alcanzable desde la LAN (comprobado abriendo la conexión desde esta máquina).
+  La contraseña no es trivial (20 caracteres, no coincide con ningún patrón
+  débil), pero es una base de producción escuchando en toda la red.
+
+---
+
 ### Estado de ejecución
 
 | Paquete | Estado | Evidencia |
@@ -581,7 +706,8 @@ Orden sugerido y forma, sin fecha: (1) `_fetch_scrapers_async`/`_fetch_providers
 | T3 | **CERRADO** | `351c5a0`, desplegado en `swissjob-backend:point5-351c5a0` (0 reinicios). Medido EN EL PROCESO desplegado, con el espía en ese mismo proceso y sobre 100 títulos reales: el paso de idioma de la traducción pasa de **127,8 ms/título (230 s por feed) a 0,08 ms y 0 llamadas a langdetect**. 5 pruebas, 3 rojas contra HEAD. Suite 2.572 passed. Incluye A19-05: `.gitignore` por prefijo `.env.core.*` — el fichero del DSN **no existe** en el árbol, así que el riesgo era latente, no vivo |
 | T1 | **CERRADO** | Slot huérfano `jobhunt_shadow` borrado con autorización del propietario. Siete precondiciones verificadas antes (inactivo y sin PID, sin `pg_stat_replication`, sin walsender en la base legacy, ningún contenedor lo declara, ningún compose lo nombra, `archive_mode=off`, `wal_keep_size=0`). **`pg_wal` 41 GB → 81 MB**, disco libre 432 → **472,3 GB**, tras forzar un `CHECKPOINT` (1m18s: no se recicló solo en 4,5 min). El slot vigente `_r5_rehearsal` sigue activo; core `ready`, CDC 0 pendientes, 0 reinicios. Recibo con el estado previo completo en `audit-fixes-20260923/T1-drop-slot.receipt` |
 | T4 | **CERRADO** (salvo el push, que es del propietario) | `ruff check` **31 → 0** y `ruff format` aplicado a 99 ficheros (`6e30e89`, `02a906a`, `2060308`), con el hash del formateo en `.git-blame-ignore-revs`. CI: dispara en **toda rama** (626 commits se escribieron sin que corriera), `ruff` con **versión fijada** (un `pip install ruff` a secas lo pone rojo solo), `vitest` sin `--passWithNoTests`, job **`core-lint` informativo** (`jobhunt_core` nunca se ha linted) y job **`compose-config`** que valida los composes de despliegue — verificado localmente: `dev` necesita la base, `prod`/`prebuilt` necesitan cinco ficheros de entorno con plantilla, y `qnap`/`rehearsal` quedan fuera porque sus rutas del NAS no existen en CI. Suite 2.572 passed |
-| T0, T5–T16 | PENDIENTES | T5, T13 y T15 son decisiones del propietario |
+| T5 | **CERRADO** | `postgres` (5435) y `redis` (6380, **sin contraseña**) dejaban de escuchar en `0.0.0.0`; todo salvo el frontend va por `${HOST_BIND_IP:-127.0.0.1}`, `redis` con `--requirepass` y el compose se niega a arrancar sin `POSTGRES_PASSWORD` ni `REDIS_PASSWORD`. **18 pruebas nuevas** (`test_c7_credenciales.py`), **13 de las 18 mueren** al mutar el validador y la guardia (las 5 supervivientes son las que afirman «no cambia»/«no lanza»). Suite BFF **2.587 passed**, 3 skipped, 4 xfailed; ruff limpio. Verificado ejecutando: `ss -ltn` con los cinco puertos en loopback, PING crudo → `NOAUTH`, los cuatro puertos rechazados **desde el NAS**, `compose config` sin contraseñas → salida 1, `control.ping()` → 2 workers. **Producción no afectada** (corre `*.configured.yml`). Dos trampas medidas: `compose port` rinde el contenedor y `config` el fichero; y Celery lee `CELERY_BROKER_URL` del entorno y **gana** sobre el código — con la URL sin credencial el BFF entraba y los workers quedaban fuera. Destapó **H15** (base del Portfolio en `0.0.0.0:5435` en el NAS) y **H16** (tag `swissjob-core:dev` obsoleto) |
+| T0, T6–T16 | PENDIENTES | T13 y T15 son decisiones del propietario |
 | Fuera del plan — panel «AI Job Match» (Portfolio) | **HECHO salvo publicar el frontend** | `ReactPortfolio/backend` `c01a192`+`32fe475` desplegado (`enrich-32fe475`); frontend `a0bf889` sin push (Cloudflare Pages). Detalle: `docs/audits/DIAGNOSTICO_PANEL_OFERTAS_2026-09-23.md` §5 |
 
 ### Criterio de cierre de cada paquete

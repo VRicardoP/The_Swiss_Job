@@ -13,10 +13,14 @@ services:
     command: -c wal_level=logical -c max_replication_slots=4 -c max_wal_senders=4
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-swissjob}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-swissjob_dev_2024}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio (ver .env.example)}
       POSTGRES_DB: ${POSTGRES_DB:-swissjobhunter}
     ports:
-      - "${HOST_POSTGRES_PORT:-5435}:5432"
+      # C7: la base NO se publica a la LAN. Con 0.0.0.0 cualquiera del segmento
+      # alcanzaba el 5435 con las credenciales de dev, que están publicadas en
+      # .env.example. HOST_BIND_IP=0.0.0.0 la abre a propósito y por escrito,
+      # que es la única forma aceptable de abrirla.
+      - "${HOST_BIND_IP:-127.0.0.1}:${HOST_POSTGRES_PORT:-5435}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./docker/postgres/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
@@ -27,14 +31,26 @@ services:
       retries: 5
 
   redis:
+    # C7: caché legacy + broker/resultados de Celery. Estaba SIN contraseña y
+    # publicado en 0.0.0.0. Mismo patrón que `redis-core` (líneas abajo): la
+    # clave viaja por entorno —no por el `command` que `compose config` rinde
+    # en claro— y el healthcheck se autentica, porque un PING sin auth pasa a
+    # devolver NOAUTH y dejaría el servicio eternamente «unhealthy».
     image: redis:7-alpine
     container_name: swissjob-redis
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD es obligatorio (ver .env.example)}
+    command:
+      - sh
+      - -c
+      - >-
+        redis-server --requirepass "$$REDIS_PASSWORD"
     ports:
-      - "${HOST_REDIS_PORT:-6380}:6379"
+      - "${HOST_BIND_IP:-127.0.0.1}:${HOST_REDIS_PORT:-6380}:6379"
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -45,7 +61,7 @@ services:
       dockerfile: Dockerfile
     container_name: swissjob-backend
     ports:
-      - "${HOST_BACKEND_PORT:-8002}:8000"
+      - "${HOST_BIND_IP:-127.0.0.1}:${HOST_BACKEND_PORT:-8002}:8000"
     volumes:
       - ./backend:/app
     env_file:
@@ -176,7 +192,7 @@ services:
       - ./docker-compose.qnap.yml:/app/docker-compose.qnap.yml:ro
     environment:
       - CORE_DATABASE_URL=postgresql+asyncpg://jobhunt_core:${CORE_DB_PASSWORD:-jobhunt_core_dev}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
-      - CORE_ADMIN_DATABASE_URL=postgresql://${POSTGRES_USER:-swissjob}:${POSTGRES_PASSWORD:-swissjob_dev_2024}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
+      - CORE_ADMIN_DATABASE_URL=postgresql://${POSTGRES_USER:-swissjob}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
       - CORE_DB_PASSWORD=${CORE_DB_PASSWORD:-jobhunt_core_dev}
       # Espejo de CORE_DB_PASSWORD para el rol de captura (B-01): el bootstrap
       # crea jobhunt_capture con la MISMA credencial que usa core-capture en
@@ -201,7 +217,7 @@ services:
     command: uvicorn jobhunt_core.api.main:app --host 0.0.0.0 --port 8000
     ports:
       # 8003: puerto dedicado del core (plan §21) — sin colisión con 8001/8002/5174/5435/6380.
-      - "${HOST_CORE_API_PORT:-8003}:8000"
+      - "${HOST_BIND_IP:-127.0.0.1}:${HOST_CORE_API_PORT:-8003}:8000"
     environment:
       - CORE_DATABASE_URL=postgresql+asyncpg://jobhunt_core:${CORE_DB_PASSWORD:-jobhunt_core_dev}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
       - CORE_BROKER_URL=redis://:${CORE_REDIS_PASSWORD:-core_redis_dev}@redis-core:6379/0
