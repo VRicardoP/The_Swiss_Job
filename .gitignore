@@ -75,3 +75,21 @@ backend/alembic/versions/*.pyc
 cv.json
 cv.md
 ANALISIS_MAESTRO_EMPLEABILIDAD_*.md
+
+# --- Endurecido el 2026-09-24 tras revisar los tres repositorios ---
+# Imágenes de contenedor exportadas: cada `docker save` deja 0,5-2 GB. Se
+# reconstruyen desde el commit, nunca se versionan.
+*.tar
+*.tar.gz
+*.tgz
+# Claves y credenciales. NINGUNA existe hoy en el árbol; esto es para que un
+# `git add .` futuro no pueda subir una.
+*.pem
+*.key
+*.p12
+id_rsa*
+*credential*.json
+*credentials*.json
+# Informes de cobertura
+coverage.xml
+htmlcov/
