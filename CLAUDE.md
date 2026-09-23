@@ -154,16 +154,23 @@ Tres cosas que NO deben deshacerse sin medir:
 
 6. **El recorrido completo del feed se cachea por VERSIÓN, no por tiempo.**
    `GET /v1/profiles/{id}/matches/version` da un digest sobre
-   `vacancy_id:current_eval_id:current_offer_revision_id` de todo el feed;
-   el BFF reutiliza su recorrido sólo si coincide EXACTAMENTE. Motivo medido:
+   `vacancy_id:current_eval_id:current_offer_revision_id:primary_incarnation_id:updated_at`
+   de todo el feed; el BFF reutiliza su recorrido sólo si coincide EXACTAMENTE
+   **y** lo relee al terminar el recorrido (un recorrido de 18 páginas no es
+   atómico). Los dos últimos componentes se añadieron el 23-09 tras una
+   regresión VIVA: el `state.feedback` viaja en el payload cacheado y, con
+   `CORE_FEEDBACK_ENABLED=True`, un `thumbs_up` se servía como `null` tras el
+   ACK. Además `CoreFeedback._write` invalida la caché del perfil tras cada
+   escritura. **`feed()` NO excluye vacantes sin canónica a propósito**: es el
+   feed que mide el nDCG del gate; recuento y versión sí las excluyen. Motivo medido:
    recorrer el feed es el **87-89 %** del coste de la pantalla principal
    (47,5 s frío / 11,5 s caliente, 18 páginas). Caliente seguía costando
    porque **un `If-None-Match` no ahorra cómputo**: el ETag se deriva del
    payload, así que el core construye la página igual para contestar 304.
    Cuatro cotas que NO deben deshacerse: sólo se cachea el recorrido
-   **completo**; sólo se pregunta la versión si `needed > 100`; sólo se cachea
-   la parte **inmutable** (el estado local del usuario se relee siempre); y
-   sin versión fiable **se recorre**. Fijado por
+   **completo**; sólo se pregunta la versión si `needed > 100`; el overlay
+   LOCAL (candidatura, urgencia, borrador) se relee siempre y el estado del
+   core está cubierto por la versión; y sin versión fiable **se recorre**. Fijado por
    `backend/tests/test_feed_version_cache.py` y
    `jobhunt_core/tests/test_matches_version.py`.
 

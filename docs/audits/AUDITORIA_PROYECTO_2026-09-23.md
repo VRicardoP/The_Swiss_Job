@@ -573,6 +573,13 @@ Presentar al propietario las dos vías con su coste y **no implementar ninguna s
 
 Orden sugerido y forma, sin fecha: (1) `_fetch_scrapers_async`/`_fetch_providers_async` → `run_source()` común con `SourceRunResult`; (2) `CoreMatching.results` → dos clases detrás del puerto; (3) `generate_document` → `DocumentGenerationService`; (4) `matching.py` → `matching/{policies,scoring,feed,user_state}.py`; (5) `RawListingSink` → `IngestBatch`; (6) `import_*`/`*_cutover`/`dev_eval`/`train_cross_encoder` → `jobhunt_core/tools/` extrayendo los 5 símbolos que `applications.py` importa; (7) `repositories/` para los tres módulos `api/v1*.py` con SQL literal; (8) `CoreUnavailableError` base común + `services/core_http.py`. Cada refactor con test de caracterización previo y `radon cc` antes/después en el commit.
 
+### Estado de ejecución
+
+| Paquete | Estado | Evidencia |
+|---|---|---|
+| T2 | **CERRADO salvo el canario de escritura** | `7591da4` + `17e2b9e`; 9 pruebas rojas→verdes (5 core, 4 BFF); core 1.770, BFF 2.567 + 4 xfail; `core-api` y `backend` en `point5-17e2b9e` verificados en el proceso (`release`, `inspect`, `_write` contiene `clear_feed_cache`), 0 reinicios. **PENDIENTE**: el «me interesa» real del propietario que demuestre en producción que la lectura siguiente lo sirve. Tropiezo registrado: la cláusula de canónica en `feed()` bajó dos nDCG a 0,0 y se retiró de ahí (es el feed del gate) |
+| T0, T1, T3–T16 | PENDIENTES | — |
+
 ### Criterio de cierre de cada paquete
 
 Un paquete está cerrado cuando: (1) su prueba roja→verde está en el commit; (2) las suites completas afectadas están en verde **y se citan con su cifra**; (3) si hay despliegue, el recibo en `$W` incluye `.before`, el `release`/imagen verificados en el proceso, 0 reinicios y el canario; (4) la documentación que afirmaba lo contrario está corregida en el mismo commit o en el siguiente. Si algo no se puede cerrar, se escribe **PENDIENTE** con el motivo, nunca «hecho salvo».

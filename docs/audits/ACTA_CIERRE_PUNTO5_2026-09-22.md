@@ -307,6 +307,56 @@ Esto es una estimación compuesta, no un p95 del endpoint servido. Medirlo de
 verdad exige desplegar; mientras no se despliegue, el escenario queda
 **expresamente pendiente**, no aprobado por aritmética.
 
+### Corrección del mismo día (23-09, tarde): cuatro huecos, uno de ellos una regresión viva
+
+La auditoría del 23-09 encontró que el diseño de arriba tenía cuatro huecos, y
+que uno estaba **en producción**: con `CORE_FEEDBACK_ENABLED=True` (verificado
+en el proceso), un `thumbs_up` recibía el ACK del core y la siguiente lectura
+lo servía como `feedback: null` desde el recorrido cacheado, hasta que el
+corpus cambiara. El digest cubría pertenencia, evaluación y canónica; **no**
+cubría el estado de usuario, y ninguna escritura invalidaba. El párrafo que
+prometía «sólo se cachea la parte inmutable» era falso en esa rama: el estado
+había dejado de ser local cuando el feedback pasó al core.
+
+Corregido en `17e2b9e` (`core-api` y `backend` recreados; `core-worker`,
+`core-capture` y `worker` siguen en `9d6b46e` porque no sirven este camino, y
+así lo declaran sus líneas de imagen):
+
+| Hueco | Arreglo | Prueba roja→verde |
+|---|---|---|
+| Estado de usuario fuera del digest | `s.updated_at` en el digest (lo mueven `set_vacancy_feedback` y `set_saved`; misma fila, coste cero) | `test_la_version_cambia_con_feedback_positivo`, `…_al_guardar` |
+| `primary_listing` fuera del digest | `v.primary_incarnation_id` en el digest | `test_la_version_cambia_al_reasignar_el_primary` |
+| `total` sobre-cuenta vacantes sin canónica → caché apagada en silencio | `current_offer_revision_id IS NOT NULL` en **recuento y versión** (no en `feed()`: es el feed del nDCG del gate y su semántica no se toca desde aquí); el descarte ya no es mudo | `test_una_vacante_sin_canonica_no_cuenta_ni_versiona`, `test_un_descuadre…se_registra` |
+| Ninguna escritura invalida; lectura desgarrada; carrera con `clear_feed_cache` | `CoreFeedback._write` → `clear_feed_cache(pid)` tras el ACK (también en 404); versión releída al terminar el recorrido y caché sólo si coincide; el total declarado por la versión debe cuadrar con la primera página; época capturada al entrar | `test_una_escritura_de_feedback_invalida…`, `test_si_la_version_cambia_durante…`, `test_borrar_la_cache_mientras…`, `test_el_total_de_la_version…` |
+
+Un tropiezo que conviene dejar escrito: la primera versión del arreglo puso la
+cláusula también en `feed()` y dos pruebas de nDCG bajaron a **0,0**.
+`shadow/metrics.py` mide el gate sobre ese mismo feed: cambiar su semántica
+como efecto colateral de un arreglo de caché habría sido el error de la
+métrica del gate repetido por otra puerta. Se retiró de `feed()` y se dejó
+donde describe lo servido.
+
+Suites tras el cambio, en serie: core **1.770 passed**, BFF **2.567 passed +
+4 xfailed**.
+
+Canario de sólo lectura tras recrear (`probe_served_endpoints.py`, 20 muestras):
+0 respuestas 5xx, 0 reinicios, `alertas: []`, y **0 avisos «no se cachea»** en
+el BFF — la caché se sigue guardando con la reverificación de versión activa.
+Latencias: catálogo p50 1,011 / p95 7,643 s; feed 20 p50 2,266 / p95 3,318 s;
+pantalla principal frío 42,5 s, p50 **4,520** / p95 5,095 s — peores que por la
+mañana (2,147 s). **Esta vez la atribución se midió, no se supuso**: el canario
+coincidió con la ventana de cosecha de las 12:10 (17 `run_scope` recibidos en
+40 min, `core-worker` al 46 % de CPU, **loadavg 10,9 sobre dos núcleos**
+frente a 6,7 por la mañana), y la consulta de versión con el digest nuevo
+cuesta **0,33–0,47 s** en caliente, lo mismo que la anterior (0,29–0,61 s).
+Es el hallazgo H7 de la auditoría —el matching y el abanico de cosecha
+comparten cola y CPU— visto desde el lado del usuario. La medida válida de
+este cambio se repetirá fuera de una ventana de cosecha.
+
+Lo que queda pendiente de este arreglo: el canario de escritura —un «me
+interesa» real del propietario, no fabricado— que demuestre en producción que
+la lectura siguiente lo sirve.
+
 **El frontend no cambia**: categorías, contadores, Watchlist, orden y tarjetas
 siguen saliendo del mismo payload. Es optimización, no cambio de
 funcionalidad, que es la condición que el propietario puso.
