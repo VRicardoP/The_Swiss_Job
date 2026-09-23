@@ -244,7 +244,7 @@ async def _build_results_response(
             for item in results
         ]
         translator = TranslationService(groq)
-        translations = await translator.translate_titles(titles_with_lang)
+        translations = await translator.translate_titles(titles_with_lang, languages=languages)
 
     data = [_to_match_response(item, translations, languages) for item in results]
 

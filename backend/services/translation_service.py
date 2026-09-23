@@ -110,16 +110,21 @@ class TranslationService:
     async def translate_titles(
         self,
         titles_with_lang: list[dict[str, str]],
+        languages: dict[str, str] | None = None,
     ) -> dict[str, str]:
         """Translate a batch of job titles to English.
 
         Args:
             titles_with_lang: List of {"title": str, "language": str}.
 
+        Args (cont.):
+            languages: {título: idioma} ya resuelto (`job_title_languages`),
+                para no tener que deducirlo aquí.
+
         Returns:
             Dict mapping original title -> English translation.
-            Titles confirmadas como EN/ES (por heurística de caracteres + langdetect)
-            se devuelven tal cual. El resto se intentan traducir — el LLM devuelve
+            Titles confirmadas como EN/ES (por el idioma conocido o por la
+            heurística de caracteres) se devuelven tal cual. El resto se intentan traducir — el LLM devuelve
             el título sin cambios si ya está en inglés.
         """
         result: dict[str, str] = {}
@@ -135,9 +140,24 @@ class TranslationService:
                 result[title] = title
                 continue
 
-            # Determinar idioma real: la heurística de caracteres tiene prioridad
-            # sobre el campo language de BD (puede ser erróneo para títulos cortos).
-            lang = self._resolve_language(title, item.get("language") or "")
+            # Idioma por las vías BARATAS, en este orden:
+            #   1. el que sirve el core con la oferta (`VacancyDTO.language`);
+            #   2. el DERIVADO ya resuelto para ese título (`job_title_languages`),
+            #      que la tarea de fondo calculó con esta misma heurística;
+            #   3. la heurística de caracteres, que es gratis y no usa langdetect.
+            # NUNCA `_resolve_language`: medido en el NAS sobre 100 títulos
+            # reales del feed, cuesta 104 ms por título (sólo 17 de 100 los
+            # cortaba la heurística) — 187 s para las 1.800 ofertas del feed.
+            #
+            # Cambio de comportamiento, deliberado: la versión anterior
+            # DESCONFIABA de un `language` que dijera EN/ES y lo reconfirmaba con
+            # langdetect. Esa desconfianza era para el campo del legacy; el del
+            # core viene de la canónica y el derivado ya se calculó con la
+            # heurística completa, en segundo plano. Si uno de los dos se
+            # equivoca diciendo «en», el precio es un título sin traducir; el de
+            # reconfirmarlo aquí son 104 ms por oferta servida.
+            conocido = item.get("language") or (languages or {}).get(title.strip()[:500]) or ""
+            lang = conocido or self._lang_from_chars(title)
 
             # Solo omitir traducción si estamos seguros de que es inglés/español
             if lang in SKIP_LANGUAGES:
