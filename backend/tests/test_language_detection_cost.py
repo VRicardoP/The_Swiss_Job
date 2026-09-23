@@ -18,9 +18,20 @@ from services.translation_service import TranslationService
 
 @pytest.fixture(autouse=True)
 def _clear_cache():
-    TranslationService._detect_language.cache_clear()
+    """Tolerates a MISSING cache on purpose.
+
+    Calling `cache_clear()` unconditionally makes every test in this file die
+    of AttributeError the moment someone removes the memoisation -- an error,
+    not the assertion below failing. A guard that bites for the wrong reason
+    proves nothing, which is the same defect the acceptance probe had."""
+    def clear():
+        clear_fn = getattr(TranslationService._detect_language, "cache_clear", None)
+        if clear_fn is not None:
+            clear_fn()
+
+    clear()
     yield
-    TranslationService._detect_language.cache_clear()
+    clear()
 
 
 def test_repeated_titles_are_detected_once(monkeypatch):

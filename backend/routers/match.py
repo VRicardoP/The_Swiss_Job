@@ -41,6 +41,7 @@ from services.schools.presentation import overlay_school_results
 from services.gemini_service import GeminiService
 from services.groq_service import GroqService
 from services.job_matcher import DEFAULT_WEIGHTS
+from services import language_store
 from services.matching.feedback import feedback_writer
 from services.match_service import MatchService
 from services.matching import (
@@ -142,8 +143,16 @@ async def analyze_matches(
     )
 
 
-def _to_match_response(item: dict, translations: dict[str, str]) -> MatchResultResponse:
-    """Mapea un resultado del servicio a MatchResultResponse (traducción ya calculada)."""
+def _to_match_response(
+    item: dict,
+    translations: dict[str, str],
+    languages: dict[str, str] | None = None,
+) -> MatchResultResponse:
+    """Mapea un resultado del servicio a MatchResultResponse.
+
+    Traducción e idioma llegan YA CALCULADOS. Esta función no detecta nada:
+    detectar aquí costaba 50,1 ms por oferta servida y ~90 s por petición
+    (punto 5). Quien detecta es `tasks.language_tasks`, en segundo plano."""
     match = item["match"]
     job = item["job"]
 
@@ -154,10 +163,15 @@ def _to_match_response(item: dict, translations: dict[str, str]) -> MatchResultR
     # títulos cortos o mixtos alemán-inglés → job.language = "en" incorrecto).
     is_translated = bool(translated and translated.strip() != original_title.strip())
     job_title_en = translated if is_translated else None
-    # Detectar idioma para el indicador de idioma en la UI
-    job_language = job.language
-    if not job_language and original_title:
-        job_language = TranslationService._detect_language(original_title) or None
+    # Indicador de idioma de la UI. Dos orígenes, en este orden:
+    #   1. el que sirve el core desde la canónica (`VacancyDTO.language`);
+    #   2. el DERIVADO ya resuelto para ese título (`job_title_languages`).
+    # Si ninguno lo tiene, el indicador no se muestra y la tarea de fondo lo
+    # resolverá para la próxima carga. Ausente significa «todavía no lo sé»,
+    # nunca «no hay idioma»: es lo que hace innecesario detectar al servir.
+    job_language = job.language or (languages or {}).get(
+        language_store.normalise(original_title)
+    ) or None
 
     # Resolver school metadata si el job es de la watchlist (tag = school.id)
     school = item.get("school")
@@ -208,8 +222,20 @@ async def _build_results_response(
     total: int,
     weights: dict,
     groq: GroqService | None = None,
+    db: AsyncSession | None = None,
 ):
     """Build MatchResultsResponse from service results, with title translations."""
+    # Idioma ya resuelto, en UNA consulta por página. Los títulos que aún no
+    # tengan fila se encolan para la tarea de fondo: encolar es un INSERT
+    # idempotente que en régimen permanente no inserta nada, no una detección.
+    languages: dict[str, str] = {}
+    if db is not None:
+        titulos = [item["job"].title or "" for item in results]
+        languages = await language_store.lookup(db, titulos)
+        pendientes = [t for t in titulos if language_store.normalise(t) not in languages]
+        if pendientes:
+            await language_store.record_pending(db, pendientes)
+
     # Batch-translate non-EN/ES titles
     translations: dict[str, str] = {}
     if groq:
@@ -220,7 +246,7 @@ async def _build_results_response(
         translator = TranslationService(groq)
         translations = await translator.translate_titles(titles_with_lang)
 
-    data = [_to_match_response(item, translations) for item in results]
+    data = [_to_match_response(item, translations, languages) for item in results]
 
     return MatchResultsResponse(
         data=data,
@@ -262,7 +288,7 @@ async def get_match_results(
 
     results = await overlay_school_results(db, current_user.id, results)
     groq = _get_groq(request) if translate else None
-    return await _build_results_response(results, total, weights, groq)
+    return await _build_results_response(results, total, weights, groq, db)
 
 
 @router.get("/history", response_model=MatchResultsResponse)
@@ -297,7 +323,7 @@ async def get_match_history(
 
     results = await overlay_school_results(db, current_user.id, results)
     groq = _get_groq(request)
-    return await _build_results_response(results, total, weights, groq)
+    return await _build_results_response(results, total, weights, groq, db)
 
 
 @router.post("/{job_hash}/feedback", response_model=MatchFeedbackResponse)
@@ -385,7 +411,7 @@ async def get_saved_jobs(
     )
 
     groq = _get_groq(request)
-    return await _build_results_response(results, total, weights, groq)
+    return await _build_results_response(results, total, weights, groq, db)
 
 
 @router.post("/{job_hash}/implicit", response_model=ImplicitFeedbackResponse)

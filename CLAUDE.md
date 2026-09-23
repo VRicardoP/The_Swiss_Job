@@ -134,9 +134,19 @@ Tres cosas que NO deben deshacerse sin medir:
    como AUSENTE, nunca como error: es un indicador, no la identidad.
    Fijado por `backend/tests/test_language_transport.py` y
    `jobhunt_core/tests/test_vacancy_language.py`.
-   **Pero sólo el 3,1 % del feed trae el dato**, así que la memoización de
-   `TranslationService._detect_language` sigue sosteniendo el recorrido — y NO
-   cubre la primera carga. Deducir el idioma al INGERIR está sin hacer (§10).
+   **Pero sólo el 3,1 % del feed trae el dato.** Para el 96,9 % restante el
+   idioma se DERIVA una vez por título y se PERSISTE en `job_title_languages`
+   (migración `d3a7c1f60b84`): lo resuelve `tasks.language_tasks` cada 5 min en
+   lotes acotados, y servir sólo lee. Los tres estados son explícitos — fila
+   ausente = nunca visto, `language IS NULL` = encolado, `language = ''` =
+   resuelto como DESCONOCIDO (y por eso no se reintenta).
+
+5. **El camino de respuesta NO detecta idioma.** Ni con el dato ausente. Si
+   falta, la tarjeta va sin indicador y la tarea de fondo lo resuelve para la
+   carga siguiente. `tests/test_language_store.py` instala un detector que
+   LANZA: devolver la detección al router hace explotar la prueba en vez de
+   ponerla lenta otra vez. La memoización de `_detect_language` se queda, pero
+   ya es de segundo orden — una caché en proceso no cubre la primera carga.
 
 Acta y mediciones: `docs/audits/ACTA_CIERRE_PUNTO5_2026-09-22.md`.
 La cola de latencia restante **no está atribuida**. Ni el loadavg del NAS ni el

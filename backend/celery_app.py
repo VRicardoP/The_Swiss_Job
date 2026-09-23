@@ -55,4 +55,5 @@ celery_app.conf.include = [
     "tasks.pipeline_tasks",
     "tasks.profile_tasks",
     "tasks.digest_tasks",
+    "tasks.language_tasks",
 ]

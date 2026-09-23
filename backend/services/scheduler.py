@@ -189,6 +189,16 @@ def setup_schedules() -> None:
         replace_existing=True,
     )
 
+    # Idioma de los títulos encolados: cada 5 min, en lotes acotados.
+    # Deliberadamente frecuente y pequeño: lo que importa no es resolver rápido
+    # sino que la detección NUNCA vuelva al camino de una petición (punto 5).
+    scheduler.add_job(
+        _dispatch_resolve_languages,
+        IntervalTrigger(minutes=5),
+        id="resolve_pending_languages",
+        replace_existing=True,
+    )
+
     # Healthcheck de la watchlist: cada 6h
     scheduler.add_job(
         _dispatch_watchlist_health,
@@ -264,6 +274,11 @@ def _dispatch_fetch_scrapers() -> None:
 def _dispatch_cleanup_stale() -> None:
     celery_app.send_task("tasks.cleanup_stale_jobs")
     logger.debug("Dispatched tasks.cleanup_stale_jobs")
+
+
+def _dispatch_resolve_languages() -> None:
+    celery_app.send_task("tasks.language_tasks.resolve_pending_languages")
+    logger.debug("Dispatched tasks.language_tasks.resolve_pending_languages")
 
 
 def _dispatch_watchlist_health() -> None:

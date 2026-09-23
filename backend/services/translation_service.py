@@ -356,13 +356,15 @@ class TranslationService:
     def _detect_language(cls, text: str) -> str:
         """Detecta idioma de un texto corto. Wrapper para compatibilidad externa.
 
-        MEMOIZADO (punto 5, 2026-09-22): el router llama aquí UNA VEZ POR OFERTA
-        SERVIDA, también con `translate=false`, porque el indicador de idioma de
-        la UI lo necesita. Medido en el NAS: el 96,9 % de las 1.800 ofertas del
-        feed llega SIN `language` y cada deteccion cuesta 50,1 ms — ~90 s por
-        peticion,
-        el cuello real de `GET /match/results?limit=3000` (79 s extremo a
-        extremo).
+        DONDE SE LLAMA, que es lo que importa: desde `tasks.language_tasks`, en
+        el worker. **Nunca desde el camino de una peticion.** Hasta el
+        2026-09-23 lo llamaba el router una vez POR OFERTA SERVIDA, tambien con
+        `translate=false`, porque el indicador de idioma de la UI lo necesita:
+        el 96,9 % de las 1.800 ofertas del feed llega SIN `language` y cada
+        deteccion cuesta 50,1 ms — ~90 s por peticion, el cuello real de
+        `GET /match/results?limit=3000` (79 s extremo a extremo). Hoy el
+        resultado se PERSISTE por titulo (`models/title_language.py`) y servir
+        solo lee.
 
         QUE GARANTIZA, exactamente: reutiliza la PRIMERA respuesta de cada
         titulo mientras siga en la cache de ESTE proceso. Ni mas ni menos.
@@ -374,15 +376,11 @@ class TranslationService:
         igual entre workers, reinicios o expulsiones. Cualquier afirmacion de
         equivalencia entre procesos seria falsa.
 
-        `maxsize` cubre holgadamente el corpus servido (1.544 titulos unicos de
-        1.800 en la medicion) y acota la memoria.
-
-        Cota: la PRIMERA peticion tras arrancar sigue pagando la deteccion de
-        cada titulo nuevo, y cada expulsion la vuelve a pagar. La solucion de
-        fondo es que el dato NO se deduzca al servir: desde el punto 5 el core
-        transporta `language` en `VacancyDTO` y el BFF lo asigna en `_job_view`
-        (tests/test_language_transport.py). Esta cache cubre lo que quede sin
-        idioma en la canonica.
+        `maxsize` acota la memoria. La memoizacion SE QUEDA, pero ya es de
+        segundo orden: ahorra repetir un titulo dentro del mismo lote de la
+        tarea. Lo que resuelve la PRIMERA carga —que una cache en proceso no
+        podia resolver, porque cada arranque o expulsion la vaciaba— es la
+        persistencia.
         """
         return cls._resolve_language(text, "")
 

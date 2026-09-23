@@ -12,11 +12,12 @@ Estas pruebas fijan la frontera completa del lado del BFF:
 
 - con idioma válido, el detector NO se invoca (se instala uno que LANZA: si
   alguien deshace el transporte, la prueba explota en vez de ponerse lenta);
-- sin idioma, se detecta — el comportamiento de siempre, que no se rompe;
+- sin idioma, tampoco se detecta: eso vive ahora en la tarea de fondo
+  (`tests/test_language_store.py`);
 - con una forma inválida, se trata como ausente y no tumba la página.
 
-La memoización sigue siendo necesaria: sólo desaparece el coste de las ofertas
-que SÍ traen idioma, y ninguna caché cubre la primera carga de las que no.
+El transporte cubre sólo el 3,1 % del feed medido; el resto lo resuelve el
+almacén derivado. Ninguno de los dos vuelve a detectar al servir.
 """
 
 import uuid
@@ -92,19 +93,19 @@ def test_con_idioma_conocido_el_router_no_detecta(detector_que_estalla):
     assert resp.job_language == "fr"
 
 
-def test_sin_idioma_el_router_sigue_detectando(monkeypatch):
-    """La red de seguridad no se retira: sin dato, se deduce como siempre."""
-    llamadas = []
+def test_sin_idioma_el_router_no_deduce_nada(detector_que_estalla):
+    """Comportamiento NUEVO y explícito (2026-09-23): sin dato no hay
+    indicador, y sobre todo no hay detección.
 
-    def espia(cls, text):
-        llamadas.append(text)
-        return "de"
-
-    monkeypatch.setattr(TranslationService, "_detect_language", classmethod(espia))
+    Esta prueba afirmaba lo contrario —que el router deducía— y era cierto
+    hasta que la deducción se movió a `tasks.language_tasks`. Se cambia a
+    conciencia, no por comodidad: deducir aquí costaba 50,1 ms por oferta
+    servida. Que el título quede sin indicador durante una carga es el precio
+    declarado; lo resuelve la tarea de fondo para la siguiente.
+    Ver `tests/test_language_store.py`."""
     item = {"match": _match(), "job": _job_view(_vacancy(), "core"), "school": None}
     resp = _to_match_response(item, translations={})
-    assert resp.job_language == "de"
-    assert llamadas == ["Softwareentwickler (m/w/d)"]
+    assert resp.job_language is None
 
 
 def test_un_idioma_invalido_no_impide_servir(detector_que_estalla):
