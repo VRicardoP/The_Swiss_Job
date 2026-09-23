@@ -284,3 +284,352 @@ Duplicados fusionados; ordenados por severidad. Entre corchetes, quién lo encon
 - Revisión de credenciales y `.env` **en el NAS** (fuera del alcance de esta pasada: sólo lectura remota acotada).
 - Sesión de navegador real sobre `MatchPage` para el criterio «contenido útil ≤ 3 s» y para H12.
 - Lint del core (358 errores) antes de decidir qué reglas se adoptan.
+
+---
+
+## Parte IV — Plan de acción: qué cambiar exactamente, y cómo demostrar que quedó bien
+
+Cada paquete `T` es autocontenido y se cierra por separado. El orden es de riesgo, no de tamaño. Reglas comunes, que no se repiten en cada paquete:
+
+- **Prueba roja antes, verde después.** Cada corrección va con un test que **falla contra el código actual** y pasa con el cambio. Si el test pasa antes del cambio, no es una prueba: se descarta.
+- **Suites en serie**, nunca dos `pytest` a la vez. BFF: `docker compose exec -T backend python -m pytest tests/ -q`. Core: `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm core-migrate python -m pytest jobhunt_core/tests -q`.
+- **Un commit por paquete** (o por sub-paquete cuando se indica), mensaje que diga el *porqué*. **Nunca `push`** sin aprobación explícita.
+- **NAS**: sólo lectura por defecto; toda escritura con copia `.before` y recibo con fecha UTC en `$W` (ver variables de `docs/ANALISIS_PENDIENTES_PUNTO4_2026-09-21.md` §II.1). Recrear **un servicio por invocación**. Nunca `compose down`, `--remove-orphans`, `celery purge`, `up` global.
+- **Producción**: no fabricar ofertas, avisos ni candidaturas; no llamar a proveedores facturables.
+- **Cambios en `docker-compose*.yml` y `.env*`** exigen confirmación del propietario **antes** de aplicarlos (regla del proyecto). Se preparan como diff y se presentan.
+- Verificar **en el proceso que corre**, no en HEAD: `release` de `/v1/ready`, `docker inspect --format '{{.Config.Image}}'`, `python -c 'from config import settings; print(...)'` dentro del contenedor.
+
+### T0 · Preparación (30 min)
+
+```sh
+git status --short | grep -v '^ D \|^?? docs/' ; git log -1 --oneline   # esperado: sólo cambios ajenos del propietario
+ssh -o ConnectTimeout=10 nas "echo NAS_OK"
+D=/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker
+C=/share/Public/swissjob/bin-docker-compose
+E=/share/CACHEDEV1_DATA/Public/unification-e15-20260914
+W=$E/audit-fixes-$(date -u +%Y%m%d); ssh nas "mkdir -p $W && chmod 700 $W"
+```
+Línea base: anotar en `$W/baseline.txt` la salida de `ssh nas "$D ps --format '{{.Names}}\t{{.Image}}'"`, `/v1/ready` de `core-api`, y los contadores de suites (core 1.765, BFF 2.562 + 4 xfail, frontend 15/16 con el fallo de `nginx.test.js` explicado en §II L5).
+
+---
+
+### T1 · Slot huérfano `jobhunt_shadow` (C1) — decisión del propietario, 15 min
+
+**Precondición** (las tres, el mismo día):
+```sh
+PGC="$D exec -i swissjob-postgres psql -U jobhunt_core -d swissjobhunter_r5_rehearsal -A"
+ssh nas "$PGC -c \"SELECT slot_name, database, active, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) FROM pg_replication_slots;\""
+#  esperado: jobhunt_shadow | swissjobhunter | f | ~40 GB     (si active = t → PARAR: alguien lo consume)
+ssh nas "$D ps --format '{{.Names}}' | grep -c 'capture'"      # esperado: 1 (sólo swissjob-core-capture-r5, que usa el slot _r5_rehearsal)
+ssh nas "$D inspect swissjob-erasure-cdc --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -ic slot"   # esperado: 0
+```
+**Acción** (irreversible; sólo con el visto bueno explícito del propietario):
+```sh
+ssh nas "$PGC -c \"SELECT pg_drop_replication_slot('jobhunt_shadow');\"" | tee -a $W/T1-drop-slot.log
+```
+**Verificación**: la consulta de slots devuelve **una** fila (`jobhunt_shadow_r5_rehearsal`, `active=t`); en los 30 minutos siguientes `df -h /share/CACHEDEV1_DATA` debe mostrar espacio recuperado conforme Postgres recicla WAL (checkpoint). Anotar tamaño antes/después en el recibo. Actualizar `docs/audits/POINT4_CUTOVER_2026-09-22.md` §8 y `docs/DEPLOY_NAS.md:1410`.
+
+---
+
+### T2 · La versión del feed cubre todo lo que se sirve, y las escrituras la invalidan (C2, H2, H3, H4) — 1 día
+
+Cuatro huecos, un cambio de core y uno de BFF.
+
+**T2.a — Core: el digest cubre estado de usuario y listing primario** (`jobhunt_core/matching.py`, `feed_version_sql`).
+
+Sustituir la expresión del `string_agg` por:
+```python
+"  md5(coalesce(string_agg("
+"    s.vacancy_id::text || ':' || s.current_eval_id::text || ':' "
+"    || coalesce(v.current_offer_revision_id::text, '-') || ':' "
+"    || coalesce(v.primary_incarnation_id::text, '-') || ':' "
+"    || coalesce(s.updated_at::text, '-'), "
+"    ',' ORDER BY s.vacancy_id"
+"  ), '')) AS version "
+```
+`s.updated_at` lo escribe `set_vacancy_feedback` (`jobhunt_core/feedback.py:52-60`, `GREATEST(...)`) y `set_saved`/`set_dismissed`, así que **cualquier** feedback positivo, `saved` o `notes` mueve la versión sin coste adicional (la fila ya se recorre). `primary_incarnation_id` cubre reasignación de primary. Actualizar la docstring de `feed_version_sql` y la de `MatchesVersionDTO` (`api/schemas.py`) para decir **qué sigue fuera**: `url`/`apply_url`/`last_seen_at` de listings no primarios y cambios de listing que no toquen el primary (cota declarada).
+
+**T2.b — Core: el recuento y la versión no cuentan lo que la página no sirve** (`matching.py`, cláusula común de `feed`, `feed_total_sql`, `feed_version_sql`): añadir `AND v.current_offer_revision_id IS NOT NULL` junto a `v.archived_at IS NULL AND v.merged_into IS NULL` en los tres sitios.
+
+**Pruebas core** (`jobhunt_core/tests/test_matches_version.py`), añadir — cada una debe FALLAR antes del cambio:
+```python
+def test_la_version_cambia_con_feedback_positivo(db):          # UPDATE profile_vacancy_state SET feedback='thumbs_up', updated_at=clock_timestamp() ...
+def test_la_version_cambia_al_guardar(db):                      # SET saved_at = now(), updated_at = clock_timestamp()
+def test_la_version_cambia_al_reasignar_el_primary(db):         # UPDATE vacancies SET primary_incarnation_id = <otra incarnation del mismo vacancy>
+def test_una_vacante_sin_canonica_no_cuenta_ni_versiona(db):   # UPDATE vacancies SET current_offer_revision_id = NULL → total baja 1 y len(items) == total
+def test_la_ruta_de_version_exige_scope(db):                    # credencial sin matches:read → 403
+```
+Para el 403: `api._issue(factory, created, "tenant-x", ["vacancies:read"])`.
+
+**T2.c — BFF: las escrituras invalidan; el recorrido se verifica; el descuadre se ve** (`backend/services/matching/`).
+
+1. `feedback.py`, en `_write`, justo antes de `return ack` (y también en el `return None` tras `404`, porque el 404 no prueba que nada cambiara):
+```python
+        from services.matching.core_client import clear_feed_cache
+        clear_feed_cache(pid)   # el feed cacheado por version contiene `state`: tras un ACK ya no describe lo que el core sirve
+```
+2. `core_client.py`, `_fetch_full_feed`: releer la versión al terminar el recorrido y cachear sólo si coincide (lectura desgarrada):
+```python
+                if cursor is None:
+                    if version is not None:
+                        confirmada = await self._feed_version(client, core_profile_id)
+                        if confirmada == version:
+                            self._remember_feed(pid, version, items, total)
+                        else:
+                            logger.info("feed de %s cambio durante el recorrido: no se cachea", pid)
+                    return items, total
+```
+3. `_remember_feed`: el descarte por descuadre deja de ser mudo:
+```python
+        if total is None or len(items) != total:
+            logger.warning("feed de %s: recorrido %d != total %s — no se cachea (¿vacantes sin canonica?)", pid, len(items), total)
+            return
+```
+4. `_feed_version` devuelve también `total` (`tuple[str, int] | None`) y `_fetch_full_feed` lo compara con el de la primera página: si difieren, se sigue recorriendo pero no se cachea (misma advertencia). Ajustar `test_feed_version_cache.py::_Cliente` al nuevo retorno.
+5. Carrera `clear_feed_cache` ↔ `_remember_feed` (M2): capturar `generacion = (_cache_generation, _profile_generations.get(pid, 0))` al entrar en `_fetch_full_feed` y en `_remember_feed` descartar si cambió.
+
+**Pruebas BFF** (`backend/tests/test_feed_version_cache.py`), añadir:
+```python
+async def test_una_escritura_de_feedback_invalida_el_recorrido_cacheado(...)   # CoreFeedback con cliente falso que responde ACK; tras submit_feedback, _fetch_full_feed vuelve a pedir páginas
+async def test_si_la_version_cambia_durante_el_recorrido_no_se_cachea(...)       # _Cliente que cambia .version tras servir la última página
+async def test_un_descuadre_total_items_se_registra(caplog, ...)                 # WARNING presente
+async def test_borrar_la_cache_mientras_se_recorre_no_deja_entrada_vieja(...)   # clear_feed_cache(pid) desde dentro de get() del cliente falso
+```
+Y en `backend/tests/test_core_feedback.py`: una prueba que, con `CORE_FEEDBACK_ENABLED=True` y `_feed_cache` caliente, haga `submit_feedback` y compruebe que `results()` sirve `feedback='thumbs_up'`. **Ésta es la que reproduce la regresión: debe fallar en HEAD.**
+
+**Despliegue**: `core-api` (T2.a/b) y `backend` (T2.c), en ese orden, con la receta de `ANALISIS_PENDIENTES_PUNTO4_2026-09-21.md` §II.1 (build desde `git archive`, `docker load`, `.before`, un servicio por invocación). Canario: `GET /match/results?limit=20&translate=false` antes y después de un `thumbs_up` real **del propietario** (no fabricado) — el segundo debe traer `feedback: "thumbs_up"`. Actualizar `CLAUDE.md` invariante 6 y `COTAS_Y_DECISIONES.md` (la fila «sólo la parte inmutable» cambia a «cubierta por la versión + invalidación en escritura»).
+
+---
+
+### T3 · El idioma persistido también en la traducción (H1) — 2 h
+
+`backend/services/translation_service.py`, `translate_titles(self, titles_with_lang, languages=None)`:
+```python
+            # Idioma: 1) el que trae el item (core), 2) el persistido por titulo,
+            # 3) heuristica de caracteres SOLO (barata). NUNCA langdetect aqui:
+            # cuesta 50 ms por titulo y ya se resuelve en tasks.language_tasks.
+            conocido = item.get("language") or (languages or {}).get(title.strip()[:500]) or ""
+            lang = conocido or self._lang_from_chars(title)
+```
+Eliminar la llamada a `_resolve_language` de este método. En `backend/routers/match.py::_build_results_response`, pasar `languages` a `translator.translate_titles(titles_with_lang, languages=languages)`.
+
+**Prueba** (`backend/tests/test_language_store.py`): fixture `detector_que_estalla` extendida a `_resolve_language` **y** `_langdetect_lang`; nueva prueba `test_traducir_no_detecta_idioma` que llame a `_build_results_response(..., groq=<GroqService falso con is_available=True y translate mockeado>)` sobre 5 títulos sin idioma. Falla en HEAD (`AssertionError` del detector). Corregir `CLAUDE.md` §5 sólo cuando la prueba pase. Desplegar `backend` (puede ir con T2.c).
+
+---
+
+### T4 · Respaldo, CI y secretos (C3, C5, lint) — 2 h
+
+1. `.gitignore`: sustituir el bloque de secretos del core por
+```
+.env.core.*
+!.env.core.prod.example
+!.env.core.admin.prod.example
+!.env.core.redis.prod.example
+!.env.core.capture.prod.example
+```
+   Verificar: `git check-ignore -v .env.core.capture.prod` → coincide; `git ls-files | grep '\.env\.core\.' ` → sólo `.example`.
+2. `ruff` en verde en `backend/`: los 15 `F811` son fixtures importadas y redeclaradas como parámetro — en cada fichero listado en §II C3 sustituir `from tests.test_x import seeded` + `def test_y(seeded)` por `pytest.importorskip`… no: la solución correcta es mover esas fixtures a `backend/tests/conftest.py` (una sola definición) y borrar los imports. Los 12 `F401`: `ruff check --fix --select F401`. Los 4 restantes (`E402`, `E701`, `E731`) a mano. `ruff format .` **sólo** si el propietario lo aprueba (98 ficheros; regla «no introducir formatters sin consenso» — el formatter ya está en CI, así que es aplicar lo acordado, pero se pregunta).
+3. `.github/workflows/ci.yml`: `on: push: branches: ['**']` y `pull_request: branches: [main]`. Quitar `--passWithNoTests`. Añadir job `core-lint` (`ruff check jobhunt_core`) **en modo informativo** (`continue-on-error: true`) hasta que T13 decida las reglas; y job `compose-config` con `docker compose -f <cada fichero> config -q` (con `env_file` de ejemplo).
+4. **Push**: presentar al propietario `git log --oneline github/feat/fase-a-core..HEAD | wc -l` y pedir aprobación explícita. Sin ella, no se hace.
+
+---
+
+### T5 · Exposición de red del compose base (C7) — 1 h, con confirmación
+
+Preparar el diff (no aplicarlo sin confirmación) en `docker-compose.yml`:
+- `postgres.ports`: `"127.0.0.1:${HOST_POSTGRES_PORT:-5435}:5432"`; `POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}`.
+- `redis`: `command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?}"]`, `ports: "127.0.0.1:${HOST_REDIS_PORT:-6380}:6379"`, healthcheck con `-a`. Copiar el patrón de `redis-core` (líneas 128-146).
+- `core-api.ports`: `"127.0.0.1:${HOST_CORE_API_PORT:-8003}:8000"`.
+- `backend/config.py`: `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` con `redis://:${REDIS_PASSWORD}@redis:6379/N` (leídos de env); `.env.example` con `REDIS_PASSWORD=` y `POSTGRES_PASSWORD=` **vacíos** (sin default funcional).
+- `backend/main.py`: extender la guardia de arranque de `SECRET_KEY` a `POSTGRES_PASSWORD` con la lista negra de `jobhunt_core/config.py:_bad_secret`.
+**Verificación**: desde fuera del compose, `redis-cli -h 127.0.0.1 -p 6380 PING` → `NOAUTH`; `ss -ltn | grep -E '5435|6380|8003'` → sólo `127.0.0.1`. Suite BFF en verde (usa Redis con contraseña).
+
+---
+
+### T6 · Sesión del frontend: refresh y logout sólo con 401/403 (C6) — medio día
+
+`frontend/src/config/api.js`:
+```js
+let refreshing = null;   // promesa compartida: N peticiones en vuelo → UN refresh
+async function refreshSession() {
+  if (!refreshing) {
+    const rt = localStorage.getItem("swissjob_refresh_token");
+    refreshing = (rt ? authApi.refresh(rt) : Promise.reject(new Error("no refresh token")))
+      .then((data) => { useAuthStore.getState().setAuth(data.access_token, data.refresh_token, data.user ?? useAuthStore.getState().user); return data.access_token; })
+      .finally(() => { refreshing = null; });
+  }
+  return refreshing;
+}
+async function authRequest(path, options = {}) {
+  try {
+    return await request(path, { ...options, headers: { ...getAuthHeaders(), ...options.headers } });
+  } catch (err) {
+    if (err.status !== 401 || options._retried) throw err;
+    try { await refreshSession(); }
+    catch { useAuthStore.getState().logout(); throw err; }
+    return authRequest(path, { ...options, _retried: true });
+  }
+}
+```
+(Ojo al ciclo de imports `api.js` ↔ `authStore.js`: importar el store dentro de la función o inyectarlo.)
+
+`frontend/src/hooks/useAuth.js`: `if (query.isError) { const s = query.error?.status; if (s === 401 || s === 403) logout(); else setHydrated(true); }` y `retry: (n, err) => ![401, 403].includes(err?.status) && n < 2`.
+
+**Pruebas** (`frontend/src/config/api.test.js`, vitest con `fetch` mockeado): «401 → refresh → reintento con el token nuevo»; «refresh fallido → logout»; «tres peticiones concurrentes con 401 → un solo refresh». Para `useAuth`: añadir `@testing-library/react` + `jsdom` (dependencias de desarrollo; consenso del propietario) y probar «503 en /auth/me no borra el token». Añadir `"test": "vitest run"` a `package.json`.
+
+---
+
+### T7 · Defectos funcionales del frontend (H12, M16, L4) — medio día
+
+1. `MatchCard.jsx:134-139`: `{match.job_title_en && match.job_language && (...)}`.
+2. `DocumentGenerator.jsx`: (a) `const operation = pending && pending.docType === docType ? pending : { docType, language, operationId: newOperationId() };` y `disabled={isGenerating || !!pending}` en **ambos** botones; (b) `newOperationId()` en `utils/ids.js` con fallback `crypto.getRandomValues` cuando `crypto.randomUUID` no exista; (c) rehidratar `pending` en un `useEffect([userId, jobHash])` en lugar del inicializador de `useState`.
+3. `MatchPage.jsx:136-143`: los tres handlers con `useCallback(..., [submitFeedback.mutate])` etc.; `PipelinePage.jsx:316-324` igual.
+4. `jobCategories.js`: `classifyMatch` devuelve `match.job_category ?? <clasificación local>`; corregir las tres keywords con `.*` (o borrarlas). Test nuevo `jobCategories.test.js`: precedencia, fallback «otros», y que `job_category` del servidor gana.
+5. `MatchPage.jsx:56-71`: retirar la señal `view_time` sobre `data[0]` (mide algo no visto) o medir por tarjeta con `IntersectionObserver`.
+**Pruebas**: `MatchCard` con `job_language: null` y `''` no contiene «Translated from » (renderToStaticMarkup basta); `DocumentGenerator`: con un CV pendiente, «Cover letter» crea una operación nueva.
+
+---
+
+### T8 · Rate limiting real y login sin oráculos (H5, parte de H6) — medio día
+
+1. `backend/main.py`: `from slowapi.middleware import SlowAPIMiddleware` y `app.add_middleware(SlowAPIMiddleware)` **antes** de CORS. Límites explícitos: `/documents/generate` 5/min, `/profile/cv` 3/min, `/match/results|history|saved` 30/min, `/analytics/analyze` 2/min, `/jobs/search` 60/min por IP.
+2. `frontend/nginx.conf`: `proxy_set_header X-Forwarded-For $remote_addr;` (sobrescribir, no añadir). `backend/config.py`: `RATE_LIMIT_TRUST_PROXY` documentado en `.env.prod.example` con `true` **sólo** tras el cambio de nginx. `rate_limit.py`: `get_limiter_key` toma `request.client.host` cuando gunicorn corra con `--proxy-headers --forwarded-allow-ips=<ip del contenedor nginx>` (T13).
+3. `backend/routers/auth.py` login: calcular siempre `verify_password` (contra un hash dummy si el usuario no existe), comprobar `is_active` **después** de la contraseña, mismo 401 en los tres casos. Registro: responder 201 genérico también si el email existe (sin crear) — o, si se prefiere conservar el 409, limitar `/auth/register` por `(email, IP)`.
+4. `schemas/auth.py`: `password` con `max_length=72` en bytes (validator) en registro **y** login, o pre-hash SHA-256; documentar cuál.
+**Pruebas**: `test_rate_limit_middleware.py` (una ruta sin decorador devuelve 429 al superar el default); `test_auth_no_enumeration.py` (tiempos de login inexistente vs contraseña mala dentro de ±20 %; mismo código y cuerpo); 72 bytes → 422.
+
+---
+
+### T9 · JWT con revocación y rotación de refresh (H6) — 1 día
+
+Diseño mínimo: tabla `refresh_tokens(jti PK, user_id, family_id, expires_at, revoked_at, replaced_by)`; `create_refresh_token` incluye `jti` y `family`; `/auth/refresh` marca el presentado como usado y emite otro de la misma familia; **reutilización** de un `jti` ya usado → revocar la familia entera (robo detectado). `/auth/logout` revoca la familia. `users.token_version` incrementado en cambio de contraseña/borrado y comprobado en `get_current_user` (access tokens de ≤ 30 min: aceptable no revocarlos uno a uno). Migración Alembic aditiva. Pruebas: rotación, detección de reutilización, logout, `token_version`. Credenciales del core: `create_credential(..., expires_at=now+90d)` obligatorio (`jobhunt_core/credentials.py`), script `rotate_credential.py` con solape, alerta en `check_health` si un consumer tiene > 1 credencial activa.
+
+---
+
+### T10 · Token fuera de la query string del SSE (H13) — medio día
+
+`backend/routers/notifications.py`: `POST /notifications/stream-ticket` (auth Bearer) → guarda en Redis `sse:ticket:<uuid>` = `user_id` con TTL 60 s y **un solo uso** (`GETDEL`); `GET /stream?ticket=…` canjea. Frontend: `useNotifications.js` y `useCvAnalysis.js` piden el ticket y abren `EventSource(`/api/v1/notifications/stream?ticket=${t}`)`; en reconexión, ticket nuevo. Mientras se despliega: `access_log off;` en un `location = /api/v1/notifications/stream` de `nginx.conf`. Pruebas: ticket caducado → 401; ticket reutilizado → 401; sin ticket → 401.
+
+---
+
+### T11 · Core: cola del matching, ventana del dispatcher, fechas ausentes, cotas del beat (H7, H8, M14) — medio día
+
+1. `jobhunt_core/celery_app.py`: `"jobhunt.shadow.project": {"queue": "core.default"}` con el comentario actualizado (el single-flight protege el solape; los locks del sink son de Postgres). Prueba: `test_capture_retirement.py` o nuevo `test_task_routes.py` que fije la cola.
+2. `jobhunt_core/tasks/harvest.py`: ventana desde la hora **Europe/Zurich** truncada al slot del crontab:
+```python
+    if window is None:
+        zurich = datetime.now(ZoneInfo("Europe/Zurich"))
+        slot = (zurich.hour // 6) * 6
+        window = zurich.replace(hour=slot, minute=0, second=0, microsecond=0).isoformat()
+```
+   Prueba: con `freezegun`/monkeypatch de `datetime`, un disparo a las 12:59 Zurich y otro a las 13:00 dan ventanas distintas; dos disparos retrasados 50 min dentro del mismo slot dan la misma (idempotencia conservada).
+3. `jobhunt_core/harvest/health.py::_scope_alerts`: leer `row.cursor["_admission"]` y alertar si `missing_date / max(1, missing_date + accepted + refreshed) > CORE_HARVEST_MISSING_DATE_ALERT_RATIO` (nuevo setting, default `0.5`). Prueba: un scope con 9 `missing_date` y 1 `accepted` produce alerta; 1/9 no.
+4. `jobhunt_core/config.py`: `Field(ge=60)` en `CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S`, `CORE_SHADOW_SLOT_HEALTH_EVERY_S`, `CORE_SHADOW_PROJECT_EVERY_S`, `CORE_DELIVERY_DISPATCH_EVERY_S`, `CORE_IDEMPOTENCY_PURGE_EVERY_S`, `CORE_HARVEST_HEALTH_EVERY_S`. Prueba: `Settings(CORE_SHADOW_PROJECT_EVERY_S=0)` → `ValidationError`.
+5. `jobhunt_core/api/v1.py::_canonical_language`: `re.fullmatch(r"[a-z]{2}(-[a-z]{2})?", v)` o `None`; `VacancyDTO.language: str | None = Field(default=None, max_length=5)`. Añadir casos a `test_vacancy_language.py` (`"deutsch"` → None).
+Desplegar `core-worker` (1-4) y `core-api` (5).
+
+---
+
+### T12 · BFF: presupuesto de tiempo, encolado de idioma, cachés (H9, M1, M3, M4, M5) — medio día
+
+1. `core_client.py::_fetch_full_feed`: envolver el bucle en `async with asyncio.timeout(settings.CORE_FEED_TOTAL_BUDGET_S)` (nuevo, default 60) y convertir `TimeoutError` en `CoreUnavailableError("recorrido del feed excede el presupuesto")` → 503 en vez de un worker muerto. Prueba con cliente falso lento.
+2. `language_store.py`: `lookup` devuelve `(resueltos, vistos)`; el router encola sólo `titulos - vistos`. Encolar en **sesión propia** (`async with async_session() as s2`) para no commitear la de la petición. Prueba: la prueba `test_la_segunda_carga_no_vuelve_a_encolar` pasa a afirmar **que no se ejecuta ningún INSERT** (espía sobre `db.execute`), no sólo el `COUNT`.
+3. `language_tasks.py` + `language_store.store_resolved`: un `UPDATE ... FROM (VALUES ...)`; añadir `detector_version` (nueva columna, migración aditiva) y re-derivar cuando cambie. `models/title_language.py`: declarar el índice parcial que la migración ya crea (`__table_args__`).
+4. `_remember_feed`: recortar `description` a 500 y `tags` a `MAX_TAGS` **antes** de cachear (el cliente no consume más), y publicar `clear_feed_cache` por Redis pub/sub (canal `feed-cache:invalidate`) para que los dos workers de gunicorn la reciban; `profile_erasure` y T2.c publican en ese canal.
+5. `school_job_refs` (`schools/presentation.py`): pedir `/school-jobs` sólo para los `vacancy_id` que carecen de listing `legacy:*` (filtro por `dedup_key`/ids), y degradar un fallo escolar a «sin identidad escolar» con `logger.warning`, nunca a 503 del feed. Prueba: cliente escolar que lanza → `results()` sirve el feed sin `school_id`.
+
+---
+
+### T13 · Infraestructura y CI (H10, H11, M19–M22, C4) — 1–2 días, con confirmación para los composes
+
+1. Límites y logs, en `docker-compose.prod.yml` y `.qnap.yml` (diff a confirmar): `mem_limit`/`cpus` por servicio (`core-worker` 2g/1.0, `worker` 2g/1.0, `postgres` 2g, `backend` 1g, resto 512m) y `logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}` en todos. Verificar en el NAS con `docker inspect --format '{{.HostConfig.Memory}}'` tras recrear.
+2. Healthchecks de workers: `test: ["CMD-SHELL", "celery -A celery_app inspect ping -d celery@$$HOSTNAME -t 15 | grep -q pong"]` (BFF) y equivalente con `jobhunt_core.celery_app` (core). Supervisor: contenedor `willfarrell/autoheal` con `autoheal=true` en las etiquetas de `core-api`, `core-worker`, `worker`, `backend`; **o** que `/v1/ready` fallido N veces termine el proceso (documentar cuál).
+3. `docker-compose.core-local.yml`: `image: swissjob-core:${CORE_IMAGE_TAG:?define CORE_IMAGE_TAG}`; recrear el stack local con la release vigente.
+4. `docker-compose.prebuilt.yml`: alinear con `prod.yml` (imagen `swissjob-postgres-core:pg16`, `wal_level=logical`, `core-capture`, sin `profiles:`) **o borrarlo** y quitar su fila de `DEPLOY_NAS.md`.
+5. `.env.prod.example`: generarlo desde `Settings` (`python -c "from config import Settings; ..."` volcando cada campo con su default y un comentario) y una prueba `test_env_example_covers_settings.py` que falle si diverge. Incluir `LEGACY_DISABLED_PROVIDERS/SCRAPERS` con los valores del acta del punto 4, `CORE_*`, `MATCH_SCORE_THRESHOLD=42.0`.
+6. `backend/config.py`: si `SCHEDULER_DAILY_HARVEST_ENABLED` y ambas listas vacías → `logger.error` en arranque con el texto «los productores legacy cosecharían las 16 fuentes nativas» (fail-loud; fail-closed sólo si el propietario lo aprueba).
+7. Versionar la topología real: copiar `core.configured.yml` y `swissjob.configured.yml` del NAS a `deploy/nas/` **con las credenciales sustituidas por `env_file`** (nunca commitear los valores; `git diff` antes del commit debe estar limpio de contraseñas: `git diff --cached | grep -iE 'password|secret|dsn' `).
+8. `backend/.dockerignore` (`tests/`, `tests_live/`, `.pytest_cache/`, `.ruff_cache/`, `__pycache__/`, `.env*`) y `frontend/.dockerignore` (`node_modules`, `dist`, `android`, `ios`). Verificar tamaño de contexto antes/después en el log de `docker build`.
+9. CI: job `core-test` con servicio postgres + `pip install -r jobhunt_core/requirements.txt` + `pytest jobhunt_core/tests`; `requirements.lock` con `pip-compile --generate-hashes` usado por los Dockerfiles; borrar la línea `httpx` duplicada (`backend/requirements.txt:59`).
+10. Suite del core: BD plantilla migrada una vez por sesión en `jobhunt_core/tests/conftest.py` (`CREATE DATABASE x TEMPLATE plantilla`) y que los 19 módulos que hoy hacen `CREATE DATABASE` la usen. Objetivo medible: < 8 min.
+
+---
+
+### T14 · Deriva documental (M26) — 1 h
+
+Corregir, con la cifra medida y su fecha: `CLAUDE.md:28` (5 citas diarias: añadir `matching-materialize-ce` 06:15 y `shadow-preview-cycle`; qué retira `CORE_CAPTURE_ENABLED=false`), `CLAUDE.md:82-84` (el healthcheck falta sólo en `prebuilt.yml`), `CLAUDE.md:209` («ver `alembic current`» en lugar del hash), `CLAUDE.md:240` y `memory/structure.md:7` (26 providers, `jobicy`), `memory/stack.md:24,27,42` (qwen3.8-27b; PyMuPDF; Capacitor 8), `memory/structure.md:9` (38 revisiones, head por `alembic heads`), `.env.example:78` (`gemini-3.6-flash`), `memory/autonomous-daily-pipeline.md:45` (umbral 42 efectivo), y **una sola** cifra de la suite del core con fecha (en `CLAUDE.md`), el resto referencia. Comprobación: `grep -rn "llama-4-scout\|pdfplumber\|Capacitor 6\|25 REGISTRADOS\|gemini-2.5" CLAUDE.md docs/ ~/.claude/projects/-home-lothar-Public-SwissJob/memory/` → 0 fuera de contextos históricos.
+
+---
+
+### T15 · Decisión de producto: móvil/PWA (C) — 1 h de decisión, luego 0 ó 5–15 días
+
+Presentar al propietario las dos vías con su coste y **no implementar ninguna sin decisión**:
+- **Vía A — retirar del alcance**: borrar `useCamera`, `useOfflineStorage`, `usePushNotifications`, `useMatchResultsPage`, `useMatchHistory`, las 7 dependencias `@capacitor/*` y `capacitor.config.ts`; quitar las meta PWA de `index.html`; corregir `PORTALES_EMPLEO_SUIZA.md` §1.1 y `CLAUDE.md`. Medio día.
+- **Vía B — entregarla**: `vite-plugin-pwa` con `manifest.webmanifest`, iconos, `NetworkOnly` para `/api/**` (prueba: ninguna respuesta con `Authorization` cacheada), `skipWaiting` controlado; `VITE_API_BASE` en `api.js`; shells `npx cap add android|ios`; push real (FCM/APNs) sustituyendo el hook muerto; onboarding y swipe según §1.1. 5–15 días y decisiones de tienda.
+
+---
+
+### T16 · Deuda estructural (E) — sólo al tocar cada módulo
+
+Orden sugerido y forma, sin fecha: (1) `_fetch_scrapers_async`/`_fetch_providers_async` → `run_source()` común con `SourceRunResult`; (2) `CoreMatching.results` → dos clases detrás del puerto; (3) `generate_document` → `DocumentGenerationService`; (4) `matching.py` → `matching/{policies,scoring,feed,user_state}.py`; (5) `RawListingSink` → `IngestBatch`; (6) `import_*`/`*_cutover`/`dev_eval`/`train_cross_encoder` → `jobhunt_core/tools/` extrayendo los 5 símbolos que `applications.py` importa; (7) `repositories/` para los tres módulos `api/v1*.py` con SQL literal; (8) `CoreUnavailableError` base común + `services/core_http.py`. Cada refactor con test de caracterización previo y `radon cc` antes/después en el commit.
+
+### Criterio de cierre de cada paquete
+
+Un paquete está cerrado cuando: (1) su prueba roja→verde está en el commit; (2) las suites completas afectadas están en verde **y se citan con su cifra**; (3) si hay despliegue, el recibo en `$W` incluye `.before`, el `release`/imagen verificados en el proceso, 0 reinicios y el canario; (4) la documentación que afirmaba lo contrario está corregida en el mismo commit o en el siguiente. Si algo no se puede cerrar, se escribe **PENDIENTE** con el motivo, nunca «hecho salvo».
+
+---
+
+## Parte V — Prompt de ejecución
+
+Pegar tal cual como primer mensaje a quien vaya a ejecutar el plan (persona o agente). Es autocontenido; el detalle está en el documento que referencia.
+
+```
+Vas a ejecutar el plan de acción de la auditoría técnica de SwissJobHunter:
+/home/lothar/Public/SwissJob/docs/audits/AUDITORIA_PROYECTO_2026-09-23.md — Parte IV
+(paquetes T0–T16). Lee ANTES, en este orden: ese documento entero; CLAUDE.md del repo;
+docs/COTAS_Y_DECISIONES.md (muchas limitaciones son deliberadas y están medidas: no las
+«arregles»); docs/CONTEXTO_TRAS_TRASPASO_2026-09-22.md (las diez trampas que ya
+costaron caro); y ~/.claude/projects/-home-lothar-Public-SwissJob/memory/MEMORY.md.
+
+CONTEXTO EN UNA FRASE. Agregador de empleo con un BFF FastAPI/Celery (backend/), un core
+multi-tenant (jobhunt_core/) y un frontend React (frontend/), desplegado en un NAS QNAP de
+dos núcleos que corre producción real con tres perfiles. Las suites están en verde (core
+1.765, BFF 2.562 + 4 xfail deliberados) y los indicadores operativos también; la auditoría
+encontró 7 críticos, 14 altos, 26 medios y 6 bajos que esos indicadores no ven.
+
+REGLA DE ORO. Un documento —incluida esta auditoría— puede afirmar una garantía que el
+código no da. Verifica EJECUTANDO, no leyendo: si al reproducir un hallazgo no falla como
+se describe, páralo, anótalo y no apliques su fix.
+
+ORDEN. T0 → T1 → T2 → T3 → T4 → T5 → T6 → T7 → T8 → T10 → T11 → T12 → T13 → T14 → T9 →
+T15 → T16. No adelantes paquetes. T1, T5, T13 (composes) y T15 exigen decisión o
+confirmación explícita del propietario: prepara el diff o la propuesta, preséntala y espera.
+El resto ejecútalo de forma autónoma, eligiendo siempre la opción más simple que cierre el
+paquete.
+
+MÉTODO POR PAQUETE. (1) Reproduce el hallazgo con una prueba que FALLE contra HEAD; si
+pasa, no es una prueba: descártala y busca otra. (2) Aplica el cambio mínimo indicado.
+(3) Prueba en verde + suite completa afectada, EN SERIE (jamás dos pytest a la vez).
+(4) Commit propio con mensaje que explique el porqué; nunca `git push` sin aprobación.
+(5) Si despliega: imagen desde `git archive` del commit, `docker load`, copia `.before`
+del compose, un servicio por invocación ssh, verificación en el PROCESO (release de
+/v1/ready, `docker inspect`, `settings` dentro del contenedor), 0 reinicios, canario de
+sólo lectura, recibo con fecha UTC en $W. (6) Corrige en el mismo commit la documentación
+que afirmaba lo contrario. (7) Declara el paquete CERRADO o PENDIENTE con motivo. Nunca
+«hecho salvo».
+
+PROHIBIDO. Escribir en el NAS sin `.before` y recibo; `compose down`, `--remove-orphans`,
+`celery purge`, `up` global; fabricar ofertas, avisos, candidaturas o feedback en
+producción (el canario de T2 usa un thumbs_up REAL del propietario, que tú pides);
+llamar a proveedores facturables (LLM) en pruebas; tocar `.env*` o `docker-compose*.yml`
+de producción sin confirmación; instalar paquetes de sistema; lanzar suites en paralelo;
+declarar cerrado un contrato midiendo otra cosa (p50 por p95, un método por el endpoint,
+HEAD por el proceso).
+
+ENTREGA. Al terminar cada paquete, dos o tres líneas: qué se cambió, la prueba que lo
+demuestra (nombre y por qué fallaba antes), cifras de suites, y si hubo despliegue, el
+release verificado. Al final, actualiza docs/audits/AUDITORIA_PROYECTO_2026-09-23.md con
+una tabla T0–T16 → CERRADO/PENDIENTE (motivo), ESTADO_Y_HOJA_DE_RUTA.md con una sección
+nueva, DEUDA_TECNICA.md (A18-* que cambien de estado) y la memoria
+(audit-2026-09-23.md). Sin push.
+```
