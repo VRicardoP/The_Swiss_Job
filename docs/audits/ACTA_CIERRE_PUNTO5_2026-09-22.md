@@ -403,8 +403,8 @@ hecho**, y esta acta no afirma la causa.
 | Proyector | 6 ciclos en 30 min, con normalidad |
 | Errores en el BFF | ninguno real: dos `profile erasure drain deferred (ConnectError)` a las 09:29:30, el diferido previsto mientras se recreaba el core-api, y una línea de arranque que contiene `--error-logfile` |
 | Canario HTTP servido | `/api/v1/jobs/search` 200 con datos reales y `total` 45.859; `/api/v1/health` 200 |
-| Suite del core | **1.760 passed** (+11: transporte de idioma) |
-| Suite del BFF | **2.527 passed, 4 xfailed** (+12: frontera de idioma) |
+| Suite del core | **1.765 passed** (+16 desde el inicio del punto 5) |
+| Suite del BFF | **2.562 passed, 4 xfailed** (+47 desde el inicio del punto 5) |
 
 Suites **en serie**. Una de ellas se lanzó por error en paralelo con la del core
 y se detuvo de inmediato, antes de que compitieran por la base.
@@ -428,34 +428,43 @@ ninguna de las dos cosas: no hay evidencia de que sean el limitante actual.
 
 ## 8. Versiones realmente desplegadas
 
-La primera versión de esta acta declaraba los tres procesos del core en
-`point5-cf260b1`. **Era falso**, y lo detectó la revalidación. El despliegue fue
-**selectivo** y así queda registrado:
+### Estado VIGENTE — 2026-09-23, despliegue conjunto
 
-| Servicio | Imagen REAL | Notas |
+| Servicio | Imagen | Comprobación |
 |---|---|---|
-| `swissjob-core-api-r5` | `swissjob-core:point5-cf260b1` | `core0051`, `authoritative: true`. Es quien sirve `/v1/profiles/{id}/matches` y, por tanto, el único que necesita el cambio |
-| `swissjob-core-worker-r5` | **`swissjob-core:point4-51be757`** | no recreado |
-| `swissjob-core-capture-r5` | **`swissjob-core:point4-51be757`** | no recreado |
-| `swissjob-backend` | `swissjob-backend:point5-f331c0d` | memoización de la detección de idioma |
-| `swissjob-worker` | `swissjob-worker:point5-b7df2a9` | **no recreado tras `f331c0d`**: no sirve ese recorrido |
+| `swissjob-core-api-r5` | `swissjob-core:point5-9d6b46e` | `/v1/ready` → `core0051`, `release 9d6b46e`, `authoritative: true` |
+| `swissjob-core-worker-r5` | `swissjob-core:point5-9d6b46e` | `settings.CORE_CAPTURE_ENABLED` → `True` **en el proceso vivo** |
+| `swissjob-core-capture-r5` | `swissjob-core:point5-9d6b46e` | corriendo, 0 reinicios |
+| `swissjob-backend` | `swissjob-backend:point5-9d6b46e` | alembic `d3a7c1f60b84` aplicada |
+| `swissjob-worker` | `swissjob-worker:point5-9d6b46e` | resuelve `tasks.language_tasks` |
 
-**Por qué no se recrean ahora**: la migración `core0051` es aditiva y ya está
-aplicada; el cambio del feed lo sirve `core-api`; y recrear dos procesos sólo
-para que coincidan con una tabla documental sería mover producción por una razón
-cosmética. Queda como divergencia **conocida y declarada**, no como descuido.
+**Ya no hay divergencia entre lo declarado y lo que corre.** Los cinco
+servicios publican el mismo SHA y la comprobación de cada uno se hace **en el
+proceso**, no en HEAD.
 
-**Consecuencia que hay que recordar**: el worker en ejecución **no contiene**
-`CORE_CAPTURE_ENABLED`. Antes de apoyarse en ese interruptor para retirar el
-slot CDC hay que verificar que el proceso que lo ejecuta lleva el código —no
-basta con que esté en HEAD—. Anotado también en
-[`RETIRADA_SLOT_CDC_PUNTO4.md`](../RETIRADA_SLOT_CDC_PUNTO4.md).
+### Lo que decía antes, y por qué se deja escrito
 
-Copias `.before` y sondas en el directorio privado del NAS
-`unification-e15-20260914/point5-20260922/`. La sonda de aceptación vigente es
-`sonda_endpoint.py` (con sus controles negativos); `canario_http.py` y `equiv.py`
-quedan **obsoletas por comprobación insuficiente** y no deben citarse como
-evidencia.
+La primera versión de esta acta declaraba los tres procesos del core en
+`point5-cf260b1`. **Era falso** y lo detectó la revalidación: sólo `core-api`
+se había recreado. La divergencia se corrigió declarándola —no ocultándola— y
+duró hasta el despliegue conjunto del 23-09. La consecuencia práctica de
+aquella divergencia era concreta: el worker vivo **no contenía**
+`CORE_CAPTURE_ENABLED`, así que el interruptor para retirar el slot CDC no
+habría hecho nada. Hoy sí lo contiene, y
+[`RETIRADA_SLOT_CDC_PUNTO4.md`](../RETIRADA_SLOT_CDC_PUNTO4.md) está
+actualizado.
+
+**La lección, que sobrevive al problema:** una tabla de versiones en un
+documento no es evidencia. Recrear un servicio y actualizar una fila son cosas
+distintas, y sólo la primera cambia lo que corre.
+
+Copias `.before` de los dos compose y recibos del despliegue conjunto en el
+directorio privado del NAS `unification-e15-20260914/point5-close-20260923/`;
+las del despliegue anterior, en `point5-20260922/`. La sonda de aceptación
+vigente es `scripts/probe_served_endpoints.py`, con su prueba de mutación
+`scripts/mutation_test_probe.py`; `canario_http.py`, `equiv.py` y la primera
+`sonda_endpoint.py` quedan **obsoletas por comprobación insuficiente** y no
+deben citarse como evidencia.
 
 ## 9. Deuda: qué se cierra y qué no
 

@@ -11,6 +11,12 @@ No antes de **23-09-2026 ~22:40 UTC** — 48 h desde el primer corte (21-09
 dispatcher nativo (00:10, 06:10, 12:10, 18:10 Europe/Zurich) con los 17 scopes
 completando y `harvest.check_health` devolviendo `alertas: []`.
 
+> **Aviso sobre la ventana, 2026-09-23.** El despliegue del punto 5 recreó los
+> tres servicios del core ese mismo día. No invalida las 48 h de cosecha —los
+> 17 scopes siguen a 0 fallos y `alertas: []` tras el despliegue— pero el
+> reinicio del beat es un evento nuevo: **vuelve a comprobar la precondición
+> completa el día que ejecutes esto**, no la des por heredada.
+
 ## Precondición, comprobada el mismo día
 
 ```sh
@@ -53,19 +59,21 @@ ssh nas "$D inspect swissjob-core-capture-r5 --format 'exit={{.State.ExitCode}} 
 `shadow-check-slot-health`, `shadow-preview-cycle` y `shadow-run-cycle`, **y sólo
 esas tres**.
 
-> ⚠ **El worker que corre HOY no contiene ese flag.** `swissjob-core-worker-r5`
-> sigue en `swissjob-core:point4-51be757`, anterior al commit que lo añade; sólo
-> `core-api` se actualizó en el punto 5. Antes de apoyarse en el interruptor hay
-> que **desplegar el worker** y comprobarlo en el proceso que lo ejecuta, no en
-> HEAD:
+> ✅ **Precondición RESUELTA el 2026-09-23.** Los tres servicios del core corren
+> `swissjob-core:point5-9d6b46e` y el interruptor existe **en el proceso vivo**,
+> comprobado ahí y no en HEAD:
 >
 > ```sh
 > ssh nas "$D exec swissjob-core-worker-r5 python -c \
 >   'from jobhunt_core.config import settings; print(settings.CORE_CAPTURE_ENABLED)'"
+> # 2026-09-23 → True  (valor por defecto: la captura SIGUE programada)
 > ```
 >
-> Si eso falla con `AttributeError`, el proceso no tiene el código y poner la
-> variable en el compose no haría nada.
+> Hasta ese día el worker seguía en `point4-51be757`, anterior al commit que lo
+> añade, y apoyarse en el interruptor no habría hecho nada. **Vuelve a
+> comprobarlo antes de usarlo**: si algún día responde `AttributeError`, el
+> proceso no tiene el código y poner la variable en el compose es inofensivo y
+> también inútil. Es la regla de oro del proyecto — verifica ejecutando.
 
 > **`shadow-project` se queda.** Pese al nombre, ES el postprocesado del ciclo
 > nativo: drena embeddings y reevalúa perfiles tras cada cosecha. Apagar la

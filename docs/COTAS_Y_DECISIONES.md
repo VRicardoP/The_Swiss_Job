@@ -430,10 +430,34 @@ nuestro patrón de petición con el del productor que se retira. Los cuatro
 bloqueos que frenaban el traspaso (429 de NAV, 403 de Jobgether, ReadTimeout de
 irishjobs, 4% perdido en Jobgether) eran nuestros, no suyos.
 
-### Cota del punto 5 (2026-09-22)
+### Punto 5 (2026-09-22/23) — decisiones y NO-cotas
 
-| Cota | Por qué se acepta |
+> ⚠ **Una entrada de esta tabla fue RETIRADA por falsa.** Decía que el p95
+> residual era saturación del host y que «el trabajo propio son ~0,4 s, que es
+> el mínimo observado». **Ni el loadavg ni un mínimo separan trabajo de
+> espera**, y al trazar una petición completa resultó que el cuello dominante
+> era nuestro: detectar el idioma de cada oferta servida, ~90 s por petición.
+> Se deja escrito el error porque su forma se repite: *atribuir al entorno lo
+> que no se ha separado* es una hipótesis disfrazada de cota.
+
+**Lo que hoy NO es una cota aceptada, sino un incumplimiento abierto:**
+
+| Hecho | Estado |
 |---|---|
-| **El p95 de las lecturas queda en 1,4-2,6 s, por encima del presupuesto de 2 s** | El trabajo propio de una petición son ~0,4 s, que es el MÍNIMO observado; el resto es espera de CPU en un host con loadavg 5,65-7,38 sobre dos núcleos, donde ningún contenedor del proyecto pasa del 0,4 %. No se optimiza más código para compensar una saturación que no produce este proyecto, ni se paran servicios ajenos para mejorar una cifra |
-| **PostgreSQL sigue con `shared_buffers=128 MB` y `work_mem=4 MB` (valores de fábrica)** | Sobre una base de 2.753 MB parecen bajos, pero no hay evidencia de que sean el limitante actual y subirlos compite por la misma memoria que el resto del NAS. Se registra como observación medida, no como defecto |
-| **El total del feed se cuenta en cada primera página, no se cachea** | ~300 ms por petición frente al riesgo de una caché cuya invalidación depende de cada feedback y de cada evaluación. Se prefiere el coste medido y acotado a una invalidación que podría servir un total falso |
+| Ninguna lectura habitual baja del p95 de 2 s (catálogo 2,420 s; feed 20 3,040 s; pantalla principal 2,554 s) | **ABIERTO.** No se acepta como cota: el contrato vigente es el sellado, y lo que falta está identificado y es medible (§10 del acta) |
+| La primera carga de la pantalla principal cuesta 10,196 s contra un presupuesto de 5 s | **ABIERTO.** Recorrer el feed una vez por cambio de versión es inevitable; que lo pague el usuario, no |
+| La cola de latencia de las rutas de 20 sigue sin atribuir | **ABIERTO.** Con n=20 el p95 es el máximo: un solo pico decide. Exige observación correlacionada |
+
+**Decisiones deliberadas que SÍ deben respetarse:**
+
+| Decisión | Por qué |
+|---|---|
+| **El recorrido del feed se cachea por VERSIÓN declarada por el core, nunca por tiempo** | Recorrerlo era el 87-89 % del coste (47,5 s frío / 11,5 s caliente). Una caché por TTL podría servir un feed rancio; una por versión no, porque si el feed servido cambia, la versión cambia. Sin versión fiable **se recorre**: degradar el rendimiento es aceptable, devolver datos viejos no |
+| **Un `If-None-Match` NO era la solución** | El ETag se deriva del payload, así que el core construye la página igual para contestar 304: ahorra transferencia, no cómputo. Si quieres ahorrar CÓMPUTO, el validador no puede depender del cómputo. **Vía muerta**, no volver a intentarlo |
+| **Sólo se cachea el recorrido COMPLETO, y sólo la parte INMUTABLE** | Uno cortado por `needed` no puede responder a quien pida más. Y el estado local del usuario (feedback, candidatura, urgencia, borrador) se relee SIEMPRE: es lo que impide servir rancio lo que el usuario acaba de tocar |
+| **La versión sólo se pregunta si `needed > 100`** | Esa consulta recorre las mismas filas que el recuento (0,3-1,2 s medidos). Pedirla para servir 20 ofertas —que el corte temprano ya resuelve en UNA petición— cambiaría una petición barata por dos |
+| **El total del feed se cuenta en cada primera página; no se cachea POR SEPARADO** | ~300 ms frente al riesgo de una invalidación propia. Cuando la caché del recorrido acierta, el total viaja con él y con su versión, así que no puede desincronizarse |
+| **El idioma se deriva UNA vez por título y se persiste fuera de la canónica** | La canónica guarda lo que dijo la FUENTE; lo deducido vive donde se ve que es deducido (`job_title_languages`). Evita reescribir 46.000 revisiones y evita que una deducción no determinista mueva el `content_hash` y fabrique revisiones en cada cosecha |
+| **`language = ''` significa «resuelto como DESCONOCIDO»** | Sin ese tercer estado, un título indecidible sería trabajo repetido para siempre |
+| **La memoización de `_detect_language` se queda, pero es de segundo orden** | Una caché en proceso NO cubre la primera carga: cada arranque o expulsión la vacía. Lo que resuelve la primera carga es la persistencia |
+| **PostgreSQL sigue con `shared_buffers=128 MB` y `work_mem=4 MB` (valores de fábrica)** | Sobre una base de 2.753 MB parecen bajos, pero no hay evidencia de que sean el limitante y subirlos compite por la memoria del resto del NAS. Observación medida, no defecto |

@@ -13,14 +13,20 @@ capacidad por capacidad.
 
 ## Dónde está el proyecto
 
-**El 2026-09-22 pasaron dos cosas.** Por la mañana la cosecha pasó a ser
-NATIVA: las 16 fuentes que alimentan el corpus las cosecha el core en cuatro
-ventanas diarias y los productores legacy están retirados por lista de arranque
-(punto 4, sustancialmente completo). Por la tarde se optimizó el feed —de **18 peticiones internas a 1** y de
-**9,3-12,9 s a 0,56-1,19 s** en el método, con contrato idéntico verificado—,
-pero el **punto 5 sigue ABIERTO**: el endpoint servido da p50 1,924 s y no
-cumple el p95 declarado. Una revalidación externa corrigió un cierre que se
-había declarado sin evidencia suficiente.
+**El 2026-09-22 la cosecha pasó a ser NATIVA**: las 16 fuentes que alimentan el
+corpus las cosecha el core en cuatro ventanas diarias y los productores legacy
+están retirados por lista de arranque (punto 4, sustancialmente completo).
+
+**El 2026-09-22/23 se trabajó el rendimiento (punto 5), y SIGUE ABIERTO.** Lo
+desplegado hoy (`point5-9d6b46e` en los **cinco** servicios) es grande: la
+pantalla principal pasó de **79,3 s a p50 2,147 s** y la primera carga de ~54 s
+a 10,196 s. Pero **ninguna lectura habitual baja del p95 de 2 s** (catálogo
+2,420 s, feed 20 3,040 s, pantalla principal 2,554 s) y la primera carga de
+3.000 dobla su presupuesto de 5 s.
+
+**Dos revalidaciones externas corrigieron cierres declarados sin evidencia
+suficiente.** Si retomas esto, cuenta con que lo que aquí se afirma puede estar
+igual de equivocado: comprueba antes de creer.
 
 Antes de creerte nada de lo anterior, **compruébalo ejecutando** (regla de oro
 del proyecto: un documento puede afirmar por escrito una garantía que el código
@@ -46,7 +52,7 @@ ssh nas "$D logs swissjob-core-worker-r5 --since 2h | grep check_health | tail -
 | **Lo único que queda del punto 4** | `docs/RETIRADA_SLOT_CDC_PUNTO4.md` — retirada del slot CDC: precondiciones, orden reversible hasta el último paso y qué no se borra con él |
 | **Cómo se opera el NAS de verdad** | `docs/DEPLOY_NAS.md` (aviso de cabecera) y la memoria `qnap_container_station.md` |
 | **Rendimiento: qué se midió y qué se corrigió** | `docs/audits/ACTA_CIERRE_PUNTO5_2026-09-22.md`, con los presupuestos sellados antes de medir en `docs/PREDECLARACION_PUNTO5_2026-09-22.md` |
-| **Estado global del proyecto** | `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` §44 y §45 |
+| **Estado global del proyecto** | `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` §44, §45 y **§46** (la foto vigente) |
 | **Deuda viva** | `/home/lothar/Public/DEUDA_TECNICA.md` |
 | **Convenciones y arquitectura** | `CLAUDE.md` — se carga solo en cada sesión |
 
@@ -54,16 +60,21 @@ ssh nas "$D logs swissjob-core-worker-r5 --since 2h | grep check_health | tail -
 
 1. **Retirar el slot `jobhunt_shadow_r5_rehearsal`.** Única acción sin vuelta
    atrás barata: después, reanudar el legacy exigiría un snapshot CDC nuevo.
-   Pide 48 h de dispatcher limpio (no antes del 23-09 ~22:40 UTC). El código ya
-   está hecho y probado (`CORE_CAPTURE_ENABLED`); el procedimiento, escrito.
-2. **Punto 5**: optimización desplegada, aceptación de rendimiento pendiente
-   (§10 del acta: frío, escrituras en copia, frontend, muestra ≥100, separar la
-   cola de latencia y decidir el presupuesto).
+   Pide 48 h de dispatcher limpio (no antes del 23-09 ~22:40 UTC). El código
+   está hecho y **ya desplegado**: `CORE_CAPTURE_ENABLED` existe en el proceso
+   vivo del worker desde el 23-09 (antes no, y el procedimiento avisaba).
+2. **Punto 5**: desplegado y medido, **contrato incumplido**. Matriz por
+   escenario en §9-bis del acta; lo que falta, en §10. En corto: ~1,4 s de
+   trabajo del BFF por petición sobre 1.800 items; la primera carga, que sigue
+   recorriendo el feed en la cara del usuario en vez de calentarse en segundo
+   plano; la cola de las rutas de 20, sin atribuir; y cuatro escenarios
+   (≥100 muestras en copia, escrituras, frontend y traducción) que siguen
+   **expresamente pendientes** por falta de copia autorizada.
 3. **Aceptación final** del punto 4 y, separados, el cron de retención y el GO
    de calidad — que sigue en NO-GO por ausencia de un
    examen válido, no por una métrica mala. No los mezcles con este cierre.
 
-## Siete trampas que ya costaron caro
+## Diez trampas que ya costaron caro
 
 1. **`jobhunt.shadow.project` NO es una tarea de sombra.** Pese al nombre, es el
    postprocesado del ciclo nativo: drena embeddings y reevalúa perfiles.
@@ -88,9 +99,21 @@ ssh nas "$D logs swissjob-core-worker-r5 --since 2h | grep check_health | tail -
    es aditivo: si falta, el consumidor vuelve al recorrido completo a propósito,
    porque sin ese dato el recorrido ES lo que produce el número. Ver el invariante
    en `CLAUDE.md`.
-7. **Antes de optimizar, comprueba de quién es el tiempo.** El p95 que queda lo
-   domina un host con loadavg 5,65-7,38 sobre dos núcleos donde ningún contenedor
-   del proyecto pasa del 0,4 % de CPU. Optimizar más código no lo arreglaría.
+7. **Antes de optimizar, mira qué pide el CLIENTE.** La pantalla principal pide
+   `limit=3000` (`MatchPage.jsx:40`), no una página de 20. Se optimizó durante
+   un día el tamaño de página equivocado.
+8. **No atribuyas al entorno lo que no has separado.** Aquí llegó a estar
+   escrito que el p95 residual «lo domina el host». Era una hipótesis: ni el
+   loadavg ni el mínimo observado separan trabajo de espera. Al trazar una
+   petición completa por fases, el cuello dominante resultó **nuestro**.
+9. **Un `If-None-Match` no ahorra cómputo si el ETag se deriva del payload.**
+   El core reconstruye la página igual para contestar 304. Para ahorrar
+   cómputo hace falta un validador que no dependa del cómputo: por eso existe
+   `GET /v1/profiles/{id}/matches/version`. **Vía muerta**, no reintentar.
+10. **La detección de idioma NO puede vivir en el camino de respuesta.** Costaba
+   50,1 ms por oferta servida, ~90 s por petición. Se deriva una vez por título
+   y se persiste (`job_title_languages`). Una caché en proceso NO basta: cada
+   arranque la vacía.
 
 ## Cómo se trabaja aquí
 
@@ -99,8 +122,8 @@ ssh nas "$D logs swissjob-core-worker-r5 --since 2h | grep check_health | tail -
 - **Reproducción roja antes de cada fix**, verde después.
 - Suites **en serie**, nunca dos `pytest` a la vez, nunca contra producción.
   Core: `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm
-  core-migrate python -m pytest jobhunt_core/tests` (1.749 passed, ~18 min).
-  BFF: `docker compose exec -T backend python -m pytest tests/ -q` (2.511 passed, 4 xfailed, ~7 min).
+  core-migrate python -m pytest jobhunt_core/tests` (1.765 passed, ~16 min).
+  BFF: `docker compose exec -T backend python -m pytest tests/ -q` (2.562 passed, 4 xfailed, ~6 min).
 - En el NAS, **solo lectura por defecto**; cada escritura con copia `.before` y
   recibo. Nunca `compose down`, `--remove-orphans`, `celery purge` ni un `up`
   global.
