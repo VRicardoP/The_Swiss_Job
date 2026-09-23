@@ -5,12 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services import exclusions_sync as sync
 from tests.conftest import TestSessionLocal
 from tests.test_analytics_router import _auth
-from tests.test_exclusions_sync import core, _create
+from tests.test_exclusions_sync import core, _create  # noqa: F401  (fixture de pytest: se importa para que la resuelva por nombre)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("break_rollback", [False, True])
-async def test_diagnostics_outage_does_not_undo_success(client, core, monkeypatch, break_rollback):
+async def test_diagnostics_outage_does_not_undo_success(client, core, monkeypatch, break_rollback):  # noqa: F811  (la fixture, no una redefinición)
     headers, uid = await _auth(client)
     unavailable = False
     execute, rollback = AsyncSession.execute, AsyncSession.rollback
@@ -44,7 +44,7 @@ async def test_diagnostics_outage_does_not_undo_success(client, core, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_core_version_ahead_is_observable_not_acknowledged(client, core):
+async def test_core_version_ahead_is_observable_not_acknowledged(client, core):  # noqa: F811  (la fixture, no una redefinición)
     headers, uid = await _auth(client)
     core.version = 5
     await _create(client, headers)
@@ -57,7 +57,7 @@ async def test_core_version_ahead_is_observable_not_acknowledged(client, core):
 
 
 @pytest.mark.asyncio
-async def test_ack_lost_retries_without_another_edit(client, core, monkeypatch):
+async def test_ack_lost_retries_without_another_edit(client, core, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     headers, uid = await _auth(client)
     original = core.put
     calls = 0

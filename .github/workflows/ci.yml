@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # TODA rama, no solo main: el trabajo del core, el traspaso de la cosecha y el
+  # punto 5 se hicieron en `feat/fase-a-core` y acumularon 626 commits SIN que el
+  # CI corriera una sola vez (auditoría 2026-09-23, A19-03).
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
     branches: [main]
 
@@ -17,7 +20,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff
+      # Version FIJADA: con `pip install ruff` a secas, una release nueva del
+      # linter pone el CI en rojo sin que cambie una linea de codigo. Subirla es
+      # una decision, no un accidente.
+      - run: pip install ruff==0.15.14
       - run: ruff check .
       - run: ruff format --check .
 
@@ -95,7 +101,54 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npx vitest run --passWithNoTests
+      # Sin `--passWithNoTests`: si la coleccion se rompe o los ficheros se
+      # mueven, el job pasaba en verde sin ejecutar nada.
+      - run: npx vitest run
+
+  core-lint:
+    # INFORMATIVO por ahora: `jobhunt_core/` nunca se ha pasado por ruff y
+    # acumula ~358 avisos. Se deja visible y sin bloquear hasta decidir que
+    # reglas se adoptan (paquete T13); ponerlo bloqueante hoy solo enseñaria a
+    # ignorar el CI.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.15.14
+      - run: ruff check jobhunt_core --statistics
+
+  compose-config:
+    # Los composes de despliegue (prod/qnap/prebuilt/rehearsal) no se validaban
+    # NUNCA: solo se construia el compose base. Un YAML roto ahi se descubria en
+    # el NAS. `config -q` resuelve el modelo completo sin levantar nada.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - name: Ficheros de entorno desde sus plantillas
+        run: |
+          for e in .env.prod .env.core.prod .env.core.redis.prod \
+                   .env.core.capture.prod .env.core.admin.prod; do
+            [ -f "$e.example" ] && cp "$e.example" "$e"
+          done
+      - name: Validar cada compose
+        run: |
+          set -e
+          # `dev` es un OVERRIDE: por si solo no declara imagen para core-capture
+          # y `config` falla. Se valida combinado con la base, que es como se usa.
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q
+          for f in docker-compose.prod.yml docker-compose.prebuilt.yml \
+                   docker-compose.core-local.yml; do
+            echo "== $f"
+            docker compose -f "$f" config -q
+          done
+          # `qnap` y `rehearsal.qnap` NO se validan aqui: sus `env_file` son rutas
+          # ABSOLUTAS del NAS (/share/Public/...) que no pueden existir en CI.
+          # Verificado, no supuesto: fallan con "env file ... not found".
 
   docker-build:
     runs-on: ubuntu-latest

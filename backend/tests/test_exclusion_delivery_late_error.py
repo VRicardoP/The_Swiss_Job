@@ -8,11 +8,11 @@ from models.exclusion_sync_state import ExclusionSyncState
 from services import exclusions_sync as sync
 from tests.conftest import TestSessionLocal
 from tests.test_analytics_router import _auth
-from tests.test_exclusions_sync import core
+from tests.test_exclusions_sync import core  # noqa: F401  (fixture de pytest: se importa para que la resuelva por nombre)
 
 
 @pytest.mark.asyncio
-async def test_late_duplicate_failure_preserves_success_diagnostics(client, core):
+async def test_late_duplicate_failure_preserves_success_diagnostics(client, core):  # noqa: F811  (la fixture, no una redefinición)
     _, uid = await _auth(client)
     async with TestSessionLocal() as session:
         await sync.lock_filter_writer(session, uid)

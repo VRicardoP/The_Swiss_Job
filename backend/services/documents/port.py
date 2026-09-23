@@ -7,7 +7,7 @@ Routing selects one writer; core failures never cause a second local write.
 import uuid
 from typing import Protocol
 
-from schemas.documents import DocumentListResponse, GeneratedDocumentResponse, DocumentPageResponse
+from schemas.documents import DocumentListResponse, GeneratedDocumentResponse
 
 
 class DocumentsError(Exception):

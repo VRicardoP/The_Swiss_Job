@@ -20,7 +20,7 @@ def writer(db, handler):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("legacy", [False, True])
-async def test_feedback_all_writes_without_local_match(seeded, db_session, legacy):
+async def test_feedback_all_writes_without_local_match(seeded, db_session, legacy):  # noqa: F811  (la fixture, no una redefinición)
     user_id, fake, _ = seeded
     vid = str(uuid.uuid4())
     ref = "a" * 32 if legacy else vid
@@ -50,7 +50,7 @@ async def test_feedback_all_writes_without_local_match(seeded, db_session, legac
 @pytest.mark.asyncio
 @pytest.mark.parametrize("response", [httpx.Response(503), httpx.Response(200, json=[]),
                                      httpx.Response(200, json={"profile_id": "wrong"})])
-async def test_feedback_fails_closed_on_core_error(seeded, db_session, response):
+async def test_feedback_fails_closed_on_core_error(seeded, db_session, response):  # noqa: F811  (la fixture, no una redefinición)
     user_id, _, _ = seeded
     with pytest.raises(CoreUnavailableError):
         await writer(db_session, lambda _: response).submit_feedback(user_id, str(uuid.uuid4()), "thumbs_up")
@@ -58,7 +58,7 @@ async def test_feedback_fails_closed_on_core_error(seeded, db_session, response)
 
 
 @pytest.mark.asyncio
-async def test_feedback_saved_historical_page_uses_uuid_and_server_pagination(seeded, db_session):
+async def test_feedback_saved_historical_page_uses_uuid_and_server_pagination(seeded, db_session):  # noqa: F811  (la fixture, no una redefinición)
     user_id, _, _ = seeded
     vid = str(uuid.uuid4())
 

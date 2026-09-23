@@ -6,13 +6,13 @@ import uuid
 import httpx
 import pytest
 
-from tests.test_applications_contract import seeded
+from tests.test_applications_contract import seeded  # noqa: F401  (fixture de pytest: se importa para que la resuelva por nombre)
 from tests.test_core_feedback import writer
 from services.matching.port import CoreUnavailableError
 
 
 @pytest.mark.asyncio
-async def test_school_without_canonical_vacancy_can_be_saved_cleared_and_viewed(seeded, db_session):
+async def test_school_without_canonical_vacancy_can_be_saved_cleared_and_viewed(seeded, db_session):  # noqa: F811  (la fixture, no una redefinición)
     user_id, fake, _ = seeded
     jid, ref = str(uuid.uuid4()), "b" * 32
     requests = []
@@ -49,7 +49,7 @@ async def test_school_without_canonical_vacancy_can_be_saved_cleared_and_viewed(
     {"items": [], "next_cursor": "more"},
     {"items": [{"id": str(uuid.uuid4())}, {"id": str(uuid.uuid4())}], "next_cursor": None},
 ])
-async def test_ambiguous_school_reference_never_falls_back_or_writes(seeded, db_session, page):
+async def test_ambiguous_school_reference_never_falls_back_or_writes(seeded, db_session, page):  # noqa: F811  (la fixture, no una redefinición)
     user_id, _, _ = seeded
     requests = []
 

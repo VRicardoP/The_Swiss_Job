@@ -169,7 +169,7 @@ app.include_router(auth_router)
 app.include_router(documents_router)
 app.include_router(integration_inbox_router)
 app.include_router(jobs_router)
-from services.matching.feedback import block_feedback_writes
+from services.matching.feedback import block_feedback_writes  # noqa: E402  (import tardío a propósito: la dependencia se aplica a match_router justo aquí)
 
 app.include_router(match_router, dependencies=[Depends(block_feedback_writes)])
 app.include_router(notifications_router)
@@ -178,7 +178,7 @@ app.include_router(searches_router)
 app.include_router(watchlist_router)
 
 
-from services.schools.port import CoreUnavailableError as SchoolCoreUnavailableError
+from services.schools.port import CoreUnavailableError as SchoolCoreUnavailableError  # noqa: E402  (import tardío a propósito: sólo lo usa el manejador de excepciones de abajo)
 
 
 @app.exception_handler(SchoolCoreUnavailableError)

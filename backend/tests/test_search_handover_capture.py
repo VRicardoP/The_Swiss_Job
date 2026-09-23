@@ -11,7 +11,6 @@ from config import settings
 from models.job import Job
 from models.jobhunt_profile_map import JobhuntProfileMap
 from models.notification import Notification
-from models.saved_search import SavedSearch
 from services.search_handover import SearchCaptureError, capture
 from tasks.search_tasks import candidate_query
 from tests.test_g2_fix_saved_searches import _make_user, _make_job, _make_search

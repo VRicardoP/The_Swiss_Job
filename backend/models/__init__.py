@@ -30,6 +30,7 @@ from models.user import User
 from models.user_profile import UserProfile
 
 __all__ = [
+    "ProfileErasure",
     "ApplicationStatus",
     "ContractType",
     "GeneratedDocument",

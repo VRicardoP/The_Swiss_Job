@@ -14,7 +14,7 @@ from tests.test_document_delivery import prepared  # noqa: F401 -- shared real-D
 
 
 @pytest.mark.anyio
-async def test_concurrent_same_operation_has_one_committed_body(prepared):
+async def test_concurrent_same_operation_has_one_committed_body(prepared):  # noqa: F811  (la fixture, no una redefinición)
     operation = uuid.uuid4()
     start = asyncio.Event()
 
@@ -35,7 +35,7 @@ async def test_concurrent_same_operation_has_one_committed_body(prepared):
 
 
 @pytest.mark.anyio
-async def test_prepared_delivery_does_not_cross_a_routing_flip(prepared, db_session):
+async def test_prepared_delivery_does_not_cross_a_routing_flip(prepared, db_session):  # noqa: F811  (la fixture, no una redefinición)
     await set_routing(db_session, "documents", "local", profile_id=prepared["user_id"])
     result = await deliver(TestSessionLocal, prepared["operation_id"], prepared["user_id"],
                            sender_factory=lambda *args: pytest.fail("must not send after authority changed"))

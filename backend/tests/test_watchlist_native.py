@@ -11,11 +11,11 @@ from config import settings
 from services.schools.http_client import SchoolClient
 from services.schools.watchlist_state import CoreWatchlist
 from services.schools.port import CoreUnavailableError
-from tests.test_applications_contract import seeded
+from tests.test_applications_contract import seeded  # noqa: F401  (fixture de pytest: se importa para que la resuelva por nombre)
 
 
 @pytest.mark.asyncio
-async def test_native_school_can_create_draft_without_local_corpus(seeded, db_session, monkeypatch):
+async def test_native_school_can_create_draft_without_local_corpus(seeded, db_session, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     user_id, _, _ = seeded
     monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
     mid, jid = uuid.uuid4(), uuid.uuid4()
@@ -46,7 +46,7 @@ async def test_native_school_can_create_draft_without_local_corpus(seeded, db_se
 
 
 @pytest.mark.asyncio
-async def test_native_school_lookup_refuses_ambiguous_identity(seeded, db_session, monkeypatch):
+async def test_native_school_lookup_refuses_ambiguous_identity(seeded, db_session, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     user_id, _, _ = seeded
     monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
     client = SchoolClient()

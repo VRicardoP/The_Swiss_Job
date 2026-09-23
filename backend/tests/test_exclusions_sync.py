@@ -29,7 +29,8 @@ class _Core:
     async def __aenter__(self): return self
     async def __aexit__(self, *args): pass
     async def put(self, url, json=None):
-        if self.fail: raise ConnectionError("controlled disconnect")
+        if self.fail:
+            raise ConnectionError("controlled disconnect")
         if json["version"] > self.version:
             self.version, self.rules = json["version"], json["exclusions"]
         return _Response(self.version)

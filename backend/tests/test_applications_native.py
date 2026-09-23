@@ -17,7 +17,7 @@ def test_application_request_accepts_native_identity():
 
 
 @pytest.mark.asyncio
-async def test_native_application_create_and_list_preserve_identity(seeded, db_session):
+async def test_native_application_create_and_list_preserve_identity(seeded, db_session):  # noqa: F811  (la fixture, no una redefinición)
     user_id, fake, _ = seeded
     vid = str(uuid.uuid4())
     requests = []
@@ -54,7 +54,7 @@ async def test_native_application_create_and_list_preserve_identity(seeded, db_s
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status,error", [(404, ApplicationJobNotFoundError), (503, CoreUnavailableError)])
-async def test_native_lookup_failure_does_not_create(seeded, db_session, status, error):
+async def test_native_lookup_failure_does_not_create(seeded, db_session, status, error):  # noqa: F811  (la fixture, no una redefinición)
     user_id, _, _ = seeded
     seen = []
 

@@ -11,7 +11,6 @@ from config import settings
 from models.match_result import MatchResult
 from services.matching import core_client
 from services.matching.feedback import CoreFeedback, feedback_writer
-from services.matching.port import CoreUnavailableError
 from services.match_result_service import MatchResultService
 from services.matching.identity import set_profile_link
 from services.routing import set_routing
@@ -63,7 +62,12 @@ async def test_feedback_router_never_falls_back_after_write_failure(client, db_s
     uid, headers = await _register(client)
     await set_profile_link(db_session, uid, uuid.uuid4())
     await set_routing(db_session, "matching", "core_primary", profile_id=uid)
-    factory = lambda: httpx.AsyncClient(base_url="http://core.test/v1", transport=httpx.MockTransport(lambda _: httpx.Response(503)))
+    def factory():
+        return httpx.AsyncClient(
+            base_url="http://core.test/v1",
+            transport=httpx.MockTransport(lambda _: httpx.Response(503)),
+        )
+
     monkeypatch.setattr(router, "feedback_writer", lambda db: CoreFeedback(db, factory))
     path = f"/api/v1/match/{uuid.uuid4()}"
     assert (await client.post(path + "/feedback", headers=headers, json={"feedback": "thumbs_up"})).status_code == 503

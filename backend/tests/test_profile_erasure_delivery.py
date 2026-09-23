@@ -3,7 +3,6 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import select
 
 from models.profile_erasure import ProfileErasure
 from services import profile_erasure as sync

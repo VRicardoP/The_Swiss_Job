@@ -77,8 +77,6 @@ async def _check_health_async() -> dict[str, Any]:
 
     from database import task_session
     from models.source_compliance import SourceCompliance
-    from models.user import User
-    from models.user_profile import UserProfile
 
     issues: list[dict] = []
     now = datetime.now(timezone.utc)
@@ -249,7 +247,6 @@ async def _send_digest_async() -> dict[str, Any]:
     from models.match_result import MatchResult
     from models.notification import Notification
     from models.user import User
-    from models.user_profile import UserProfile
     from services.routing import CAPABILITY_MATCHING, legacy_owned_sql
 
     # G1/P3-20 — ventana por MARCA DE AGUA (antes: now-24h fija, que con la
