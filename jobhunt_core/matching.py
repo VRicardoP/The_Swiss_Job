@@ -1967,6 +1967,11 @@ async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=No
                 "  AND e.profile_id = s.profile_id AND e.vacancy_id = s.vacancy_id "
                 "JOIN vacancies v ON v.id = s.vacancy_id "
                 "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
+                # Sin revisión canónica vigente la página no puede servirla
+                # (`_vacancy_dtos` la omite): el feed, el recuento y la versión
+                # deben excluirla igual, o `total` sobre-cuenta y el consumidor
+                # apaga su caché al ver `len(items) != total`.
+                "  AND v.current_offer_revision_id IS NOT NULL "
                 "WHERE s.profile_id = :pid "
                 f"AND COALESCE(({feedback_sql}),'') NOT IN ('thumbs_down','dismissed') "
                 f"{where_cursor}"
@@ -2012,6 +2017,7 @@ def feed_total_sql(profile_id, consumer_id=None):
         "  AND e.profile_id = s.profile_id AND e.vacancy_id = s.vacancy_id "
         "JOIN vacancies v ON v.id = s.vacancy_id "
         "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
+        "  AND v.current_offer_revision_id IS NOT NULL "
         "LEFT JOIN fb ON fb.vacancy_id = s.vacancy_id "
         # `current_eval_id IS NOT NULL` es redundante con el JOIN, pero
         # explicitarlo deja que el planificador use el indice PARCIAL: sin el,
@@ -2043,13 +2049,27 @@ def feed_version_sql(profile_id, consumer_id=None):
     ahorra trabajo: el ETag se deriva del payload, así que el core construye la
     página igual para responder 304.
 
-    Qué entra en el digest, y por qué exactamente eso: la **pertenencia**
-    (`vacancy_id`), la **evaluación vigente** (`current_eval_id`) y la
-    **revisión canónica vigente** (`current_offer_revision_id`). Con los tres,
-    cualquier cambio observable en lo que sirven las páginas —una oferta que
-    entra o sale, una re-evaluación, un cambio de título— produce otro digest.
+    Qué entra en el digest, y por qué exactamente eso — cinco componentes,
+    todos de filas que el JOIN ya recorre (coste cero):
+
+    - **pertenencia** (`vacancy_id`) y **evaluación vigente** (`current_eval_id`);
+    - **revisión canónica vigente** (`current_offer_revision_id`): título,
+      empresa, descripción;
+    - **encarnación primaria** (`v.primary_incarnation_id`): de ella salen
+      `primary_listing.url/apply_url/external_id`, y es la clave con la que el
+      BFF une el estado local. Reasignarla cambia lo servido sin tocar la
+      canónica — la auditoría del 2026-09-23 lo encontró fuera del digest;
+    - **estado de usuario** (`s.updated_at`): lo mueven `set_vacancy_feedback`
+      (feedback positivo, que NO cambia la pertenencia) y `set_saved`. Sin él,
+      un consumidor cacheado servía `feedback: null` después del ACK de un
+      `thumbs_up` — la regresión desplegada y retirada el mismo día.
+
     Un contador o un `max(updated_at)` NO bastarían: una alta y una baja
     simultáneas dejarían el contador igual.
+
+    Lo que sigue FUERA, declarado: `url`/`apply_url`/`last_seen_at` de listings
+    NO primarios, y `s.notes` (hoy sin escritor en el core; si aparece uno,
+    debe mover `updated_at`).
 
     La misma cláusula del feed y del recuento: excluye no-activas y feedback
     negativo, y explicita `current_eval_id IS NOT NULL` para que el
@@ -2067,7 +2087,9 @@ def feed_version_sql(profile_id, consumer_id=None):
         "SELECT count(*) AS total, "
         "  md5(coalesce(string_agg("
         "    s.vacancy_id::text || ':' || s.current_eval_id::text || ':' "
-        "    || coalesce(v.current_offer_revision_id::text, '-'), "
+        "    || coalesce(v.current_offer_revision_id::text, '-') || ':' "
+        "    || coalesce(v.primary_incarnation_id::text, '-') || ':' "
+        "    || coalesce(s.updated_at::text, '-'), "
         "    ',' ORDER BY s.vacancy_id"
         "  ), '')) AS version "
         "FROM profile_vacancy_state s "
@@ -2076,6 +2098,7 @@ def feed_version_sql(profile_id, consumer_id=None):
         "  AND e.profile_id = s.profile_id AND e.vacancy_id = s.vacancy_id "
         "JOIN vacancies v ON v.id = s.vacancy_id "
         "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
+        "  AND v.current_offer_revision_id IS NOT NULL "
         "LEFT JOIN fb ON fb.vacancy_id = s.vacancy_id "
         "WHERE s.profile_id = :pid AND s.current_eval_id IS NOT NULL "
         "AND COALESCE(fb.feedback,'') NOT IN ('thumbs_down','dismissed')"

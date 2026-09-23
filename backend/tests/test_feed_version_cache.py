@@ -232,3 +232,116 @@ async def test_una_version_con_forma_rara_degrada_a_recorrido(cuerpo):
     assert raro.peticiones_pagina == 4, "reutilizó caché con una versión no fiable"
     assert core_client._feed_cache == {}
     assert cliente.peticiones_pagina == 0
+
+
+# --- Huecos encontrados por la auditoría del 2026-09-23 --------------------
+
+class _ClienteCambiante(_Cliente):
+    """Cambia de versión justo DESPUÉS de servir la última página: es el feed
+    que se mueve a mitad de un recorrido de 18 páginas."""
+
+    def __init__(self, paginas, version="v1", version_final="v2"):
+        super().__init__(paginas, version)
+        self.version_final = version_final
+
+    async def get(self, url, params=None, headers=None):
+        resp = await super().get(url, params, headers)
+        if not url.endswith("/version"):
+            cursor = (params or {}).get("cursor")
+            indice = 0 if cursor is None else int(cursor)
+            if indice == len(self.paginas) - 1:
+                self.version = self.version_final
+        return resp
+
+
+async def test_si_la_version_cambia_durante_el_recorrido_no_se_cachea():
+    """Lectura desgarrada: las páginas cosidas no corresponden a ningún estado
+    real. Cachearlas bajo la versión ANTERIOR las serviría como si sí."""
+    cliente = _ClienteCambiante(_paginas(3, 10, 30))
+    m = _matching(cliente)
+    pid = uuid.uuid4()
+
+    await m._fetch_full_feed(pid)
+    assert core_client._feed_cache == {}, "cacheó un recorrido cosido bajo la versión vieja"
+
+
+async def test_un_descuadre_entre_total_y_recorrido_se_registra(caplog):
+    """Antes el descarte era un `return` mudo: la optimización se apagaba
+    para ese perfil sin dejar rastro."""
+    import logging
+
+    cliente = _Cliente(_paginas(2, 10, 999))  # el core dice 999 y entrega 20
+    m = _matching(cliente)
+    with caplog.at_level(logging.WARNING, logger="services.matching.core_client"):
+        await m._fetch_full_feed(uuid.uuid4())
+    assert core_client._feed_cache == {}
+    assert any("no se cachea" in r.getMessage() for r in caplog.records)
+
+
+async def test_una_escritura_de_feedback_invalida_el_recorrido_cacheado(db_session, monkeypatch):
+    """Con CORE_FEEDBACK_ENABLED el `state.feedback` viaja en el payload
+    cacheado. Tras un ACK del core ese payload ya no describe lo que el core
+    sirve: la entrada del perfil debe desaparecer."""
+    import json
+
+    import httpx
+
+    from services.matching import feedback as fb
+
+    pid = uuid.uuid4()
+    vid = uuid.uuid4()
+    core_client._feed_cache[str(pid)] = ("v1", [_item(0)], 1)
+
+    async def perfil(self, user_id):
+        return pid
+
+    monkeypatch.setattr(fb.CoreFeedback, "_profile", perfil)
+
+    def handler(request):
+        if request.url.path == "/v1/school-jobs":
+            return httpx.Response(200, json={"items": [], "next_cursor": None})
+        data = json.loads(request.content)
+        return httpx.Response(200, json={"profile_id": str(pid), "vacancy_id": str(vid), **data})
+
+    core = fb.CoreFeedback(db_session, client_factory=lambda: httpx.AsyncClient(
+        base_url="http://core.test/v1", transport=httpx.MockTransport(handler)))
+
+    assert await core.submit_feedback(uuid.uuid4(), str(vid), "thumbs_up")
+    assert str(pid) not in core_client._feed_cache, "el feed cacheado sobrevivió al ACK del feedback"
+
+
+async def test_borrar_la_cache_mientras_se_recorre_no_deja_entrada_vieja():
+    """Carrera: `clear_feed_cache(pid)` entre la última página y
+    `_remember_feed`. La entrada purgada no debe reaparecer."""
+    pid = uuid.uuid4()
+    m = _matching(_Cliente(_paginas(2, 10, 20)))
+    original = type(m)._remember_feed
+
+    def borrar_y_recordar(self, *args, **kwargs):
+        # La guarda de `_fetch_page` cubre un borrado DURANTE la petición;
+        # la ventana real es después de la última página y antes de guardar.
+        core_client.clear_feed_cache(pid)
+        return original(self, *args, **kwargs)
+
+    type(m)._remember_feed = borrar_y_recordar
+    try:
+        await m._fetch_full_feed(pid)
+    finally:
+        type(m)._remember_feed = original
+    assert str(pid) not in core_client._feed_cache, "la entrada purgada reapareció"
+
+
+async def test_el_total_de_la_version_debe_cuadrar_con_la_primera_pagina(caplog):
+    """El endpoint de versión ya cuenta: si su total no coincide con el de la
+    primera página, algo cambió entre las dos lecturas y no se cachea."""
+    import logging
+
+    class _ClienteTotalDistinto(_Cliente):
+        def _total(self):
+            return 21  # la versión dice 21; las páginas traen total=20
+
+    m = _matching(_ClienteTotalDistinto(_paginas(2, 10, 20)))
+    with caplog.at_level(logging.WARNING, logger="services.matching.core_client"):
+        items, total = await m._fetch_full_feed(uuid.uuid4())
+    assert (len(items), total) == (20, 20), "el recorrido se sirve igual; sólo no se cachea"
+    assert core_client._feed_cache == {}

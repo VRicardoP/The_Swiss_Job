@@ -648,6 +648,10 @@ class CoreMatching:
         cursor: str | None = None
         seen_cursors: set[str] = set()
         total: int | None = None
+        # Epoca al ENTRAR: un `clear_feed_cache` durante el recorrido (borrado
+        # de perfil, ACK de feedback) invalida lo que se este cosiendo, y
+        # `_remember_feed` no debe reinsertarlo (auditoria 2026-09-23).
+        generation = (_cache_generation, _profile_generations.get(pid, 0))
         async with self._client_factory() as client:
             # Version del feed ANTES de recorrerlo: si no cambio, el recorrido
             # completo que ya tenemos sigue siendo valido y nos ahorramos 18
@@ -659,9 +663,12 @@ class CoreMatching:
             # corte temprano ya resuelve en UNA peticion— seria cambiar una
             # peticion barata por dos. Por encima de una pagina, el recorrido
             # cuesta 18 peticiones y 11,5 s: ahi compensa de sobra.
-            version = None
+            version: str | None = None
+            version_total: int | None = None
             if needed is None or needed > FEED_PAGE_LIMIT:
-                version = await self._feed_version(client, core_profile_id)
+                declarada = await self._feed_version(client, core_profile_id)
+                if declarada is not None:
+                    version, version_total = declarada
             if version is not None:
                 cacheado = _feed_cache.get(pid)
                 if cacheado is not None and cacheado[0] == version:
@@ -694,7 +701,10 @@ class CoreMatching:
                     # Recorrido COMPLETO: es el unico que se cachea. Uno
                     # cortado por `needed` no puede servir a quien pida mas.
                     if version is not None:
-                        self._remember_feed(pid, version, items, total)
+                        await self._maybe_remember(
+                            client, core_profile_id, version, version_total,
+                            items, total, generation,
+                        )
                     return items, total
                 # Corte temprano: solo si el core ya dijo cuantas ofertas tiene
                 # su feed. Sin ese dato el total lo da el recorrido, y cortar
@@ -712,8 +722,8 @@ class CoreMatching:
 
     async def _feed_version(
         self, client: httpx.AsyncClient, core_profile_id: uuid.UUID
-    ) -> str | None:
-        """Version del feed segun el core, o None si no se puede obtener.
+    ) -> tuple[str, int | None] | None:
+        """(version, total) del feed segun el core, o None si no se puede obtener.
 
         None significa «no lo se», y el llamante recorre el feed entero como
         siempre: un core anterior a este endpoint, un fallo de red o un
@@ -737,15 +747,60 @@ class CoreMatching:
         if not isinstance(body, dict):
             return None
         version = body.get("version")
-        return version if isinstance(version, str) and version else None
+        if not isinstance(version, str) or not version:
+            return None
+        total = body.get("total")
+        return version, (total if isinstance(total, int) and not isinstance(total, bool) else None)
 
-    def _remember_feed(self, pid: str, version: str, items: list[dict], total) -> None:
+    async def _maybe_remember(
+        self, client, core_profile_id, version, version_total, items, total, generation,
+    ) -> None:
+        """Decide si un recorrido completo puede cachearse bajo `version`.
+
+        Tres comprobaciones, cada una un hueco que encontro la auditoria del
+        2026-09-23; ninguna cambia lo que se SIRVE, solo lo que se guarda:
+
+        1. El total que declaro el endpoint de version debe coincidir con el
+           de la primera pagina: si no, algo cambio entre las dos lecturas.
+        2. Un recorrido de 18 paginas no es atomico. Se relee la version al
+           terminar y solo se guarda si es EXACTAMENTE la de antes; si el
+           feed se movio a mitad, las paginas cosidas no describen ningun
+           estado real (lectura desgarrada).
+        3. `_remember_feed` verifica la epoca capturada al entrar.
+        """
+        pid = str(core_profile_id)
+        if version_total is not None and total is not None and version_total != total:
+            logger.warning(
+                "feed de %s: la version declara %s items y la primera pagina %s — no se cachea",
+                pid, version_total, total,
+            )
+            return
+        confirmada = await self._feed_version(client, core_profile_id)
+        if confirmada is None or confirmada[0] != version:
+            logger.info("feed de %s cambio durante el recorrido — no se cachea", pid)
+            return
+        self._remember_feed(pid, version, items, total, generation)
+
+    def _remember_feed(
+        self, pid: str, version: str, items: list[dict], total, generation=None,
+    ) -> None:
         """Guarda un recorrido completo. Acotado y sin LRU a proposito: este
         despliegue tiene tres perfiles, y vaciar del todo es mas simple y mas
         facil de razonar que desalojar por uso."""
         if total is None or len(items) != total:
             # El total del core y lo recorrido deben cuadrar; si no cuadran,
-            # no se cachea nada. Cachear una discrepancia la perpetuaria.
+            # no se cachea nada. Cachear una discrepancia la perpetuaria. Y
+            # se DICE: un descarte mudo apagaba la optimizacion para ese
+            # perfil sin dejar rastro.
+            logger.warning(
+                "feed de %s: recorrido de %d items frente a total %s — no se cachea "
+                "(¿vacantes vivas sin revision canonica?)", pid, len(items), total,
+            )
+            return
+        if generation is not None and generation != (
+            _cache_generation, _profile_generations.get(pid, 0)
+        ):
+            logger.info("feed de %s invalidado durante el recorrido — no se cachea", pid)
             return
         if len(_feed_cache) >= _FEED_CACHE_MAX and pid not in _feed_cache:
             _feed_cache.clear()

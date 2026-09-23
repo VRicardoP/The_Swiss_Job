@@ -69,7 +69,11 @@ class MatchesVersionDTO(BaseModel):
 
     `version` es opaca: su composición puede cambiar sin avisar y el
     consumidor sólo debe compararla con la que guardó. Lo único garantizado es
-    que **si el feed servido cambia, la versión cambia**.
+    que **si el feed servido cambia, la versión cambia** — incluido el estado
+    de usuario (`feedback`, `saved`) y el listing primario; quedan fuera los
+    listings no primarios y `notes` (ver `matching.feed_version_sql`). No se
+    garantiza lo contrario: dos versiones distintas pueden describir feeds
+    iguales.
     """
 
     version: str

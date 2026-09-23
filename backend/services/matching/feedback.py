@@ -145,6 +145,14 @@ class CoreFeedback:
             f"/profiles/{pid}/{domain}/{vid}/{kind}", json=body,
             headers={"Idempotency-Key": str(uuid.uuid4())},
         )
+        # El recorrido cacheado por version lleva `state.feedback` dentro:
+        # tras esta escritura ya no describe lo que el core sirve, y la
+        # version del core (que cubre `updated_at`) cambiara igualmente. Se
+        # invalida aqui ademas, para no depender de la siguiente consulta de
+        # version — y tambien en el 404, que no prueba que nada cambiara.
+        from services.matching.core_client import clear_feed_cache
+
+        clear_feed_cache(pid)
         if response.status_code == 404:
             return None
         try:
