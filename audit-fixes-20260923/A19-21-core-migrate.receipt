@@ -1,0 +1,34 @@
+# Recibo A19-21 / H16 — subir el core local de core0042 a core0051
+fecha: 2026-09-24T09:19:18+02:00
+
+## antes
+alembic_version: core0042
+release en marcha: {"status":"ready","alembic":"core0042","release":"d908ea2","authoritative":true}
+imagen de los 4 servicios: sha256:4994f3f74bf7880e29696709cfe88858d226c9562b7223fff898cd248a38f8c3
+tag swissjob-core:dev -> sha256:4994f3f74bf7880e29696709cfe88858d226c9562b7223fff898cd248a38f8c3
+copia de seguridad del tag anterior: swissjob-core:dev-20260904
+
+## tamanos relevantes
+profile_vacancy_state: 13967
+tablas en el esquema jobhunt: 53
+
+## slot de replicacion (no debe alterarse)
+jobhunt_shadow activo=true retenido=50 kB
+
+## disco
+/dev/nvme0n1p2  468G  374G   71G  85% /
+
+## despues (2026-09-24T09:37:21+02:00)
+alembic_version: core0051
+ready: {"status":"ready","alembic":"core0051","release":"d63f74b","authoritative":true}
+imagen de los 3 servicios: sha256:4105018924f7454347bafb779f73b305e6a3fe3221db2e7ec55a0ab46f2d5148
+tags nuevos: swissjob-core:dev = swissjob-core:d63f74b
+shadow_change_log sin aplicar: 0
+
+## camino de vuelta — OJO
+Volver a la imagen anterior YA NO basta con reapuntar el tag: d908ea2 espera
+core0042 y la base esta en core0051, asi que quedaria not_ready igual que antes.
+La vuelta atras exige ademas 'alembic downgrade' (los downgrade() existen y son
+los que contienen los DROP) o restaurar la base. Imagenes conservadas:
+  swissjob-core:d908ea2       (la que corria antes, 08-09)
+  swissjob-core:dev-20260904  (la que el compose apuntaba, 04-09)

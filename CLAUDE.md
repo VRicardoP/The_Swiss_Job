@@ -108,6 +108,32 @@ SHA» se cumpliría entre `unknown`s sin significar nada (auditoría G9 P2-A/P2-
 estuvo dos días en 503 sin que nadie se enterara). `docker-compose.prod.yml` y
 `.qnap.yml` **NO** lo tienen todavía: son de producción y no se tocaron.
 
+### La etiqueta del compose puede mentir — compruébalo (H16, 2026-09-24)
+
+`image: swissjob-core:dev` es una etiqueta **mutable**, y mientras no se recree
+nada puede apuntar a una imagen distinta de la que corre. Pasó: los contenedores
+del core corrían `swissjob-core:d908ea2` (08-09) mientras el compose apuntaba a
+un build del 04-09; al recrear `core-api`, la imagen vieja se encontró una base
+más nueva y quedó `not_ready`. **Cualquier `docker compose up -d` lo habría
+hecho.** El sistema lo detectó —para eso está `/v1/ready`— pero sólo *después*, y
+el único síntoma era un contenedor `unhealthy` en un `ps` que nadie mira.
+
+```bash
+python3 scripts/check_core_release.py   # tras cualquier up -d / build del core
+```
+
+Comprueba tres cosas, cada una con su motivo de fallo: (1) los tres servicios del
+core corren **la misma imagen a la que resuelve el compose**; (2) `/v1/ready`
+responde `ready` —la cabeza de alembic de la base casa con la que espera el
+código—; y (3) la release es nombrable y el código inmutable.
+
+**Construye siempre con el SHA**, o la identidad no significa nada:
+
+```bash
+RELEASE_SHA=$(git rev-parse --short HEAD) docker compose build core-api
+docker tag swissjob-core:dev swissjob-core:$(git rev-parse --short HEAD)  # pin inmutable
+```
+
 ---
 
 ## Restricciones del proyecto
@@ -252,6 +278,9 @@ docker compose exec backend alembic revision --autogenerate -m "descripcion"
 # Migraciones core (cadena core0001..core0051 — las aplica core-migrate en el arranque).
 # Sin override: aplica las migraciones DE LA IMAGEN, que es lo correcto al operar.
 # Para probar una migración nueva del árbol de trabajo, añade los dos -f del perfil dev.
+# La base local está en core0051 desde el 2026-09-24 (venía de core0042, nueve
+# migraciones atrás: A19-21). Las nueve son ADITIVAS — todos los DROP están en el
+# downgrade() — y ya estaban probadas en producción, que corre core0051.
 docker compose run --rm core-migrate python -m jobhunt_core.migrate
 
 # Logs en tiempo real

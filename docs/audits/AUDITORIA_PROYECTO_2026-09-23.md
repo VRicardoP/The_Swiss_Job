@@ -245,9 +245,43 @@ Duplicados fusionados; ordenados por severidad. Entre corchetes, quién lo encon
 - Mitigado reapuntando `:dev` a la imagen que corre el resto del core (la anterior
   se conserva como `swissjob-core:dev-20260904`). Tras ello: `ready`,
   `release d908ea2`, `authoritative: true`.
-- **Deriva de fondo, sin resolver**: el árbol está en `core0051` y la base local en
-  `core0042`. Reconstruir `swissjob-core:dev` del árbol exige pasar `core-migrate`.
-- CONFIRMADO.
+- **CERRADO el 2026-09-24.** La deriva de fondo también: la base local pasó de
+  `core0042` a `core0051` con las nueve migraciones pendientes.
+- Lo que hizo aceptable aplicarlas, comprobado antes y no supuesto: **ningún
+  `upgrade()` contiene una sola sentencia destructiva** —los `DROP` están todos en
+  el `downgrade()`, que es donde deben estar— y **producción ya corría `core0051`**.
+  Eso último costó un susto: la primera consulta dio `core0029` porque pregunté a
+  la base equivocada. El core de producción NO usa `swissjobhunter` sino
+  **`swissjobhunter_r5_rehearsal`**; en la primera hay un esquema `jobhunt`
+  residual de 50 tablas y 389 MB, congelado en `core0029`, que no usa nadie
+  (→ A19-22). Los tres `ALTER` son aditivos: una `UNIQUE (id, consumer_id)` sobre
+  una pareja que incluye la clave primaria —no puede encontrar duplicados—, dos
+  `ADD COLUMN` anulables, y tres columnas más en `profiles`, dos de ellas
+  `NOT NULL DEFAULT` (que desde PostgreSQL 11 no reescriben la tabla).
+- Hecho, en este orden: imagen reconstruida del árbol con
+  `RELEASE_SHA=$(git rev-parse --short HEAD)` → **`d63f74b`** (antes `unknown`),
+  etiquetada también como `swissjob-core:d63f74b`; `core-migrate`
+  `core0043→core0051`; recreados `core-api`, `core-worker` y `core-capture`.
+- Verificado ejecutando: `/v1/ready` → `ready`, `alembic core0051`,
+  `release d63f74b`, **`authoritative: true`**; los tres contenedores sobre la
+  **misma** imagen a la que resuelve el compose; `shadow_change_log` sin aplicar
+  **0**; slot `jobhunt_shadow` activo con 344 kB retenidos; **0 líneas de error**
+  en los logs tras recrear; el BFF alcanza el core nuevo (`alembic_expected
+  core0051`); `core-worker` con el beat arrancado y conectado a `redis-core`.
+  Suite del core **1.769 passed, 1 skipped** (16 min, perfil dev). Recibo del
+  estado previo y posterior en
+  `audit-fixes-20260923/A19-21-core-migrate.receipt`.
+- **Costura para que no vuelva a pasar en silencio**: `scripts/check_core_release.py`
+  compara lo que el compose dice con lo que corre, y exige `ready` + release
+  nombrable + `authoritative`. Cuatro controles negativos, cada uno mordiendo por
+  su propia condición (etiqueta divergente —el caso H16 exacto—, `not_ready`,
+  `release unknown`, `authoritative false`) y un control del control que pasa.
+- **El camino de vuelta ya no es reapuntar la etiqueta**: `d908ea2` espera
+  `core0042` y la base está en `core0051`, así que volver a ella daría
+  `not_ready` otra vez. La vuelta atrás exige además `alembic downgrade` —los
+  `downgrade()` existen y son los que traen los `DROP`— o restaurar la base. Las
+  dos imágenes anteriores se conservan (`swissjob-core:d908ea2` y
+  `swissjob-core:dev-20260904`).
 
 ### MEDIOS
 
@@ -688,8 +722,9 @@ defecto es cerrado y abrirlo a la LAN exige escribirlo en el `.env`.
   mina puesta, no un efecto de T5. Restaurado apuntando `:dev` a la imagen que
   corre el resto del core (la vieja se conserva como `swissjob-core:dev-20260904`);
   `core-api` quedó `ready`, `release d908ea2`, **`authoritative: true`** — mejor
-  que antes, cuando publicaba `release unknown` y `authoritative: false`. Queda
-  la deriva de fondo: **árbol en `core0051`, base local en `core0042`**.
+  que antes, cuando publicaba `release unknown` y `authoritative: false`.
+  **Cerrado del todo el 24-09**: la base local subió a `core0051` y el core corre
+  `d63f74b` — ver H16.
 - **Hallazgo nuevo, fuera de T5** → ver **H15**: el **único** contenedor
   del NAS que publica un puerto es `portfolio_db`, en **`0.0.0.0:5435`**,
   alcanzable desde la LAN (comprobado abriendo la conexión desde esta máquina).
