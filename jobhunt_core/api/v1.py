@@ -13,6 +13,7 @@ Todas las lecturas de página son por LOTES (queries O(1) por página).
 import base64
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -186,6 +187,9 @@ def _location_conditions(where: list[str], params: dict, **values: str | None) -
             params[pname] = value.strip()
 
 
+_CODIGO_DE_IDIOMA = re.compile(r"[a-z]{2}(-[a-z]{2})?")
+
+
 def _canonical_language(value) -> str | None:
     """`language` de la canónica, sólo si es utilizable.
 
@@ -196,7 +200,15 @@ def _canonical_language(value) -> str | None:
     que es exactamente el estado anterior a este campo."""
     if not isinstance(value, str):
         return None
-    return value.strip().lower() or None
+    candidato = value.strip().lower()
+    # M14/T11: además de ser cadena, tiene que PARECER un código de idioma.
+    # La canónica la escriben productores heterogéneos y aquí llegaba tal cual:
+    # una frase entera, un HTML o un `unknown` viajaban al consumidor como si
+    # fueran el idioma de la oferta. Lo que no encaja se sirve como ausente,
+    # que es el estado anterior a este campo y el consumidor ya sabe tratar.
+    if not _CODIGO_DE_IDIOMA.fullmatch(candidato):
+        return None
+    return candidato
 
 
 async def _vacancy_dtos(session, vacancy_ids) -> dict:

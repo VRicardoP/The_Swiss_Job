@@ -302,6 +302,11 @@ class Settings(BaseSettings):
     # a local); no se hace ni una peticion sin credencial.
     CORE_CONSUMER_KEY: str = ""
     CORE_INBOX_TOKEN: str = ""
+    # H9/T12: presupuesto TOTAL del recorrido del feed. CORE_HTTP_TIMEOUT_SECONDS
+    # acota cada petición; esto acota la suma. Sin él, un core lento dejaba
+    # ocupado el worker de gunicorn hasta que terminara —y sólo hay dos—.
+    # Agotarlo da un 503, que el consumidor ya sabe tratar.
+    CORE_FEED_TOTAL_BUDGET_S: float = 60.0
     CORE_HTTP_TIMEOUT_SECONDS: float = 5.0
     # F writer cutover: enable ONLY after frozen feedback migration/reconciliation.
     # Once enabled there is no fallback to a local feedback writer or saved feed.

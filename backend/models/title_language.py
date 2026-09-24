@@ -26,7 +26,7 @@ título indecidible sería trabajo repetido en cada pasada.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import DateTime, Index, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -47,6 +47,23 @@ class JobTitleLanguage(Base):
     detected_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # L1/T12: quién resolvió el idioma. Sin esto, cambiar el detector dejaba
+    # el corpus entero con respuestas del anterior y no había forma de saber
+    # cuáles re-derivar: `''` (desconocido) es indistinguible de «lo dijo una
+    # versión que ya no usamos».
+    detector_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # L1/T12: el índice parcial lo creaba la migración y el modelo no lo
+    # declaraba, así que `create_all` (los tests) levantaba una tabla SIN él y
+    # cualquier autogenerate quería borrarlo. Declarado, las dos formas de
+    # crear la tabla dan la misma.
+    __table_args__ = (
+        Index(
+            "ix_job_title_languages_pending",
+            "created_at",
+            postgresql_where=text("language IS NULL"),
+        ),
     )

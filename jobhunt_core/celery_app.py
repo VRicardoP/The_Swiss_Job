@@ -56,7 +56,12 @@ celery_app.conf.update(
         "jobhunt.maintenance.purge_retention": {"queue": "core.default"},
         # Proyector de la sombra (B-02, contrato §3): comparte la cola de
         # cosecha — es ingesta, y serializa con los locks del sink.
-        "jobhunt.shadow.project": {"queue": "core.harvest"},
+        # H7/T11: el MATCHING no es ingesta. Compartía `core.harvest` con el
+        # abanico de la cosecha —16 fuentes por ventana— y quedaba detrás de
+        # ella en la misma cola: una ventana lenta retrasaba el matching de
+        # todos los perfiles. `shadow.project` es el motor de matching nativo
+        # (no una tarea de sombra, pese al nombre heredado).
+        "jobhunt.shadow.project": {"queue": "core.default"},
         # Métricas/muestreo/purga de la sombra (B-04): observabilidad y
         # mantenimiento, NO ingesta — cola general core.default. En
         # core.harvest el muestreador (cadencia 5 min vía B-05) quedaría
@@ -77,6 +82,7 @@ celery_app.conf.update(
         # detrás de un lote de cosecha en core.harvest (donde la enviaría el
         # comodín "jobhunt.harvest.*").
         "jobhunt.harvest.check_health": {"queue": "core.default"},
+        "jobhunt.credentials.check_health": {"queue": "core.default"},
     },
     task_acks_late=True,
     worker_prefetch_multiplier=1,
@@ -125,6 +131,10 @@ celery_app.conf.update(
         # ADR-07 empezaba a retirar vacantes vivas (120 d después).
         "harvest-check-health": {
             "task": "jobhunt.harvest.check_health",
+            "schedule": float(settings.CORE_HARVEST_HEALTH_EVERY_S),
+        },
+        "credentials-check-health": {
+            "task": "jobhunt.credentials.check_health",
             "schedule": float(settings.CORE_HARVEST_HEALTH_EVERY_S),
         },
         "shadow-check-slot-health": {

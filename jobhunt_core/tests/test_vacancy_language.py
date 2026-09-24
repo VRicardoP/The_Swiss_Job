@@ -60,6 +60,15 @@ def test_language_se_normaliza(db):
         (["de"], None),
         ({"code": "de"}, None),
         (True, None),
+        # T11 §5: además de ser cadena, tiene que PARECER un código de idioma.
+        # Lo de abajo llegaba tal cual al consumidor como «idioma de la oferta».
+        ("deutsch", None),
+        ("Softwareentwickler (m/w/d)", None),
+        ("unknown", None),
+        ("<p>de</p>", None),
+        ("d", None),
+        ("de_CH", None),  # el separador canónico es el guion, no el subrayado
+        ("pt-BR", "pt-br"),  # regional SÍ, y normalizado
     ],
 )
 def test_canonical_language_acota_lo_utilizable(valor, esperado):

@@ -20,6 +20,8 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+
+from tests.conftest import TestSessionLocal
 import sqlalchemy as sa
 
 from models.title_language import JobTitleLanguage
@@ -102,37 +104,58 @@ def test_normalise_trunca_al_limite_del_indice():
 
 async def test_pendiente_no_se_sirve_como_resuelto(db_session):
     """Pendiente y nunca-visto deben ser el MISMO estado para el consumidor."""
-    await language_store.record_pending(db_session, ["Título pendiente"])
-    assert await language_store.lookup(db_session, ["Título pendiente"]) == {}
+    await language_store.record_pending(
+        session_factory=TestSessionLocal, titles=["Título pendiente"]
+    )
+    assert (await language_store.lookup(db_session, ["Título pendiente"]))[0] == {}
 
 
 async def test_desconocido_resuelto_se_sirve_y_no_se_reintenta(db_session):
     """`''` significa «ya se intentó»: sale del lookup y sale de los pendientes."""
-    await language_store.record_pending(db_session, ["Título raro"])
+    await language_store.record_pending(
+        session_factory=TestSessionLocal, titles=["Título raro"]
+    )
     await language_store.store_resolved(db_session, {"Título raro": ""})
 
-    assert await language_store.lookup(db_session, ["Título raro"]) == {
+    assert (await language_store.lookup(db_session, ["Título raro"]))[0] == {
         "Título raro": ""
     }
     assert "Título raro" not in await language_store.pending_titles(db_session, 100)
 
 
 async def test_resuelto_se_sirve(db_session):
-    await language_store.record_pending(db_session, ["Softwareentwickler"])
+    await language_store.record_pending(
+        session_factory=TestSessionLocal, titles=["Softwareentwickler"]
+    )
     await language_store.store_resolved(db_session, {"Softwareentwickler": "de"})
-    assert await language_store.lookup(db_session, ["Softwareentwickler"]) == {
+    assert (await language_store.lookup(db_session, ["Softwareentwickler"]))[0] == {
         "Softwareentwickler": "de"
     }
 
 
 async def test_encolar_es_idempotente(db_session):
     titulos = ["Uno", "Dos", "Uno"]
-    assert await language_store.record_pending(db_session, titulos) == 2
-    assert await language_store.record_pending(db_session, titulos) == 0
+    assert (
+        await language_store.record_pending(
+            session_factory=TestSessionLocal, titles=titulos
+        )
+        == 2
+    )
+    assert (
+        await language_store.record_pending(
+            session_factory=TestSessionLocal, titles=titulos
+        )
+        == 0
+    )
 
 
 async def test_encolar_ignora_titulos_vacios(db_session):
-    assert await language_store.record_pending(db_session, ["", "   ", None]) == 0
+    assert (
+        await language_store.record_pending(
+            session_factory=TestSessionLocal, titles=["", "   ", None]
+        )
+        == 0
+    )
 
 
 # --- El camino de respuesta -------------------------------------------------
@@ -168,10 +191,13 @@ def test_desconocido_resuelto_no_inventa_indicador(detector_que_estalla):
 
 
 async def test_construir_la_pagina_no_detecta_y_encola_lo_que_falta(
-    db_session, detector_que_estalla
+    db_session, detector_que_estalla, monkeypatch
 ):
     """La prueba de frontera: una página entera de títulos nuevos se sirve sin
     una sola detección, y deja encolado exactamente lo que no sabía."""
+    import database
+
+    monkeypatch.setattr(database, "async_session", TestSessionLocal)
     titulos = [f"Título nuevo {i}" for i in range(5)]
     resultados = [_item(t) for t in titulos]
 
@@ -202,6 +228,9 @@ async def test_la_tarea_resuelve_los_pendientes_y_los_saca_de_la_cola(
     db_session, monkeypatch
 ):
     """Quien detecta es la tarea, no la petición — y deja la cola vacía."""
+    import database
+
+    monkeypatch.setattr(database, "async_session", TestSessionLocal)
     import contextlib
 
     from tasks import language_tasks
@@ -218,7 +247,8 @@ async def test_la_tarea_resuelve_los_pendientes_y_los_saca_de_la_cola(
     )
 
     await language_store.record_pending(
-        db_session, ["Softwareentwickler", "Zzz indecidible"]
+        session_factory=TestSessionLocal,
+        titles=["Softwareentwickler", "Zzz indecidible"],
     )
 
     resultado = await language_tasks._resolve(batch=100)
@@ -226,9 +256,10 @@ async def test_la_tarea_resuelve_los_pendientes_y_los_saca_de_la_cola(
     assert resultado["resolved"] == 2
     assert resultado["unknown"] == 1
     assert resultado["pending_left"] == 0
-    assert await language_store.lookup(
+    resueltos, _vistos = await language_store.lookup(
         db_session, ["Softwareentwickler", "Zzz indecidible"]
-    ) == {"Softwareentwickler": "de", "Zzz indecidible": ""}
+    )
+    assert resueltos == {"Softwareentwickler": "de", "Zzz indecidible": ""}
 
 
 async def test_la_tarea_respeta_el_tamano_del_lote(db_session, monkeypatch):
@@ -246,7 +277,9 @@ async def test_la_tarea_respeta_el_tamano_del_lote(db_session, monkeypatch):
         TranslationService, "_detect_language", classmethod(lambda cls, text: "en")
     )
 
-    await language_store.record_pending(db_session, [f"T{i}" for i in range(10)])
+    await language_store.record_pending(
+        session_factory=TestSessionLocal, titles=[f"T{i}" for i in range(10)]
+    )
     resultado = await language_tasks._resolve(batch=4)
 
     assert resultado["resolved"] == 4

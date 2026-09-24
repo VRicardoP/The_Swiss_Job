@@ -62,8 +62,10 @@ class CoreSettings(BaseSettings):
     # nombre apagaria el motor de matching con todos los indicadores en verde.
     CORE_CAPTURE_ENABLED: bool = True
 
-    CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S: int = 300  # sample_outbox_lag (§5)
-    CORE_SHADOW_SLOT_HEALTH_EVERY_S: int = 300  # check_slot_health (§6)
+    # M14/T11: cota mínima. Sin ella, un 0 o un 5 en el entorno convertía una
+    # cadencia de observabilidad en un martillo sobre dos núcleos.
+    CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S: int = Field(default=300, ge=60)  # §5
+    CORE_SHADOW_SLOT_HEALTH_EVERY_S: int = Field(default=300, ge=60)  # §6
     CORE_SHADOW_PRE_GATE_EVERY_S: int = Field(default=3600, ge=300)
     CORE_SHADOW_CYCLE_START_HOUR: int = Field(default=6, ge=0, le=23)
     CORE_SHADOW_CYCLE_START_MINUTE: int = Field(default=0, ge=0, le=59)
@@ -74,8 +76,8 @@ class CoreSettings(BaseSettings):
     # CADENCIA — con la proyección solo diaria (06:05) los lotes acumulaban
     # ~20h de latencia y latencia_p95<=600s / outbox_lag_p99<=300s (§6) eran
     # matemáticamente imposibles.
-    CORE_SHADOW_PROJECT_EVERY_S: int = 300  # jobhunt.shadow.project
-    CORE_DELIVERY_DISPATCH_EVERY_S: int = 300  # jobhunt.delivery.dispatch_outbox
+    CORE_SHADOW_PROJECT_EVERY_S: int = Field(default=300, ge=60)  # matching
+    CORE_DELIVERY_DISPATCH_EVERY_S: int = Field(default=300, ge=60)  # outbox
     # Transfer searches only after legacy drain and an inbox projection proof.
     # Off means no beat entry and manual tasks perform no database work.
     CORE_SAVED_SEARCH_EXECUTION_ENABLED: bool = False
@@ -87,7 +89,7 @@ class CoreSettings(BaseSettings):
     CORE_DELIVERY_HTTP_TIMEOUT_S: float = Field(default=10.0, gt=0, le=120)
     # C-API-W 2º análisis: barrido de idempotency_records caducados (acota la
     # retención del cv_text guardado en response al TTL de 24h).
-    CORE_IDEMPOTENCY_PURGE_EVERY_S: int = 3600
+    CORE_IDEMPOTENCY_PURGE_EVERY_S: int = Field(default=3600, ge=60)
     # Barrido de archivado ADR-07 (F-2, 2026-08-22) — la SALIDA del corpus.
     # GRACE: días tras cerrar la última encarnación antes de archivar la
     # vacante muerta (amortigua flaps cierre→reapertura). STALE: los 120 d
@@ -107,7 +109,14 @@ class CoreSettings(BaseSettings):
     # cuales el archivado ADR-07 empieza a retirar vacantes todavía publicadas.
     CORE_HARVEST_MAX_CONSECUTIVE_FAILURES: int = 3
     CORE_HARVEST_STALE_ALERT_DAYS: int = 7
-    CORE_HARVEST_HEALTH_EVERY_S: int = 3600  # jobhunt.harvest.check_health
+    # G-T11 §3: fracción de altas descartadas por falta de fecha a partir de
+    # la cual la fuente se considera rota. 0.5 = pierde más de la mitad.
+    CORE_HARVEST_MISSING_DATE_ALERT_RATIO: float = Field(default=0.5, ge=0.0, le=1.0)
+    # T9: toda credencial del core nace con caducidad. 90 d es el periodo de
+    # rotación; el solape que deja de serlo se alerta a los 7.
+    CORE_CREDENTIAL_TTL_DAYS: int = Field(default=90, ge=1)
+    CORE_CREDENTIAL_OVERLAP_ALERT_DAYS: int = Field(default=7, ge=0)
+    CORE_HARVEST_HEALTH_EVERY_S: int = Field(default=3600, ge=60)  # check_health
     # Dedup semántico nivel 3 (F-5): generador de candidatos cross-source.
     # SIM_MIN hereda el umbral del dedup semántico legado (0,95) como punto
     # de partida operativo — B.3 dejó los SIM_* abiertos y la precisión

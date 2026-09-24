@@ -55,23 +55,66 @@ def needs_rehash(hashed_password: str) -> bool:
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
-def create_access_token(user_id: uuid.UUID) -> str:
+def create_access_token(user_id: uuid.UUID, token_version: int = 0) -> str:
+    """H6/T9: el access token lleva DENTRO la generación que lo autoriza.
+
+    Un access token no tiene fila que revocar —sería una consulta por petición—
+    y vive poco. Lo que sí se puede es invalidar todos los de un usuario a la
+    vez subiendo su `token_version`: los emitidos antes dejan de casar.
+    """
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
     )
-    payload = {"sub": str(user_id), "exp": expire, "type": "access"}
+    payload = {
+        "sub": str(user_id),
+        "exp": expire,
+        "type": "access",
+        "tv": int(token_version),
+    }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def create_refresh_token(user_id: uuid.UUID) -> str:
+def create_refresh_token(
+    user_id: uuid.UUID,
+    *,
+    jti: uuid.UUID | None = None,
+    family_id: uuid.UUID | None = None,
+) -> tuple[str, uuid.UUID, uuid.UUID]:
+    """Devuelve `(token, jti, family_id)`.
+
+    El `jti` es la identidad revocable del token y `family_id` la cadena de
+    rotaciones que nace de un login. Sin `family_id` se abre una nueva (login);
+    con ella, el token continúa la cadena (rotación en `/auth/refresh`).
+
+    Devuelve los tres valores a propósito: quien emite el token es quien tiene
+    que persistir su fila, y volver a decodificar el JWT para averiguar su
+    propio `jti` sería pedirle a la firma que nos cuente lo que acabamos de
+    escribir nosotros.
+    """
+    jti = jti or uuid.uuid4()
+    family_id = family_id or uuid.uuid4()
     expire = datetime.now(timezone.utc) + timedelta(
         days=settings.REFRESH_TOKEN_EXPIRE_DAYS
     )
-    payload = {"sub": str(user_id), "exp": expire, "type": "refresh"}
-    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    payload = {
+        "sub": str(user_id),
+        "exp": expire,
+        "type": "refresh",
+        "jti": str(jti),
+        "fam": str(family_id),
+    }
+    token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return token, jti, family_id
 
 
-def decode_token(token: str, expected_type: str = "access") -> uuid.UUID:
+def decode_token_payload(token: str, expected_type: str = "access") -> dict:
+    """El payload VALIDADO de un token: firma, tipo y sujeto comprobados.
+
+    Sustituye al antiguo `decode_token`, que sólo devolvía el sujeto. Desde T9
+    ningún llamador se conforma con eso —`get_current_user` mira `tv` y
+    `/auth/refresh` mira `jti` y `fam`—, así que mantener las dos vistas dejaba
+    una muerta.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -81,15 +124,15 @@ def decode_token(token: str, expected_type: str = "access") -> uuid.UUID:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
         )
-        user_id_str: str | None = payload.get("sub")
-        token_type: str | None = payload.get("type")
-
-        if user_id_str is None or token_type != expected_type:
-            raise credentials_exception
-
-        return uuid.UUID(user_id_str)
-    except (JWTError, ValueError):
+    except JWTError:
         raise credentials_exception
+    if payload.get("type") != expected_type:
+        raise credentials_exception
+    try:
+        uuid.UUID(str(payload.get("sub")))
+    except (TypeError, ValueError):
+        raise credentials_exception
+    return payload
 
 
 async def get_current_user(
@@ -98,7 +141,8 @@ async def get_current_user(
 ):
     from models.user import User
 
-    user_id = decode_token(token, expected_type="access")
+    payload = decode_token_payload(token, expected_type="access")
+    user_id = uuid.UUID(payload["sub"])
 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -113,5 +157,14 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is deactivated",
+        )
+    # H6/T9: un token emitido antes del último corte de sesiones ya no vale.
+    # Los tokens ANTERIORES a este cambio no traen `tv`; se leen como 0, que es
+    # la generación inicial — no se echa a nadie por desplegar.
+    if int(payload.get("tv", 0)) != int(user.token_version or 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session revoked",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     return user

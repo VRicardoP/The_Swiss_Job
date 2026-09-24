@@ -150,6 +150,35 @@ nombre y no recrea nada.
 
 ---
 
+## Sesiones: el refresh token SE PUEDE revocar (T9, 2026-09-25)
+
+Antes un refresh era una llave firmada de 30 días que nada podía retirar:
+`/auth/refresh` emitía tokens nuevos y dejaba el viejo igual de válido. Ahora:
+
+- Cada refresh lleva `jti` (identidad revocable) y `fam` (la cadena de
+  rotaciones que nace de UN login), con fila en `refresh_tokens`. Se guarda el
+  `jti`, nunca el token.
+- **Un refresh se canjea UNA vez.** Si reaparece uno ya canjeado hay dos copias
+  en circulación y no se puede saber cuál es la del ladrón: cae la familia
+  entera. Es la única señal de robo que ve un servidor sin estado.
+- `POST /auth/logout` revoca la familia. Devuelve 204 SIEMPRE —también con un
+  token ilegible o ya revocado— a propósito: un 401 le contaría a quien lo
+  prueba si el token servía.
+- `users.token_version` viaja dentro del access token (`tv`) y se comprueba en
+  `get_current_user`. `token_store.revocar_todas_las_sesiones()` lo incrementa:
+  es el corte que debe ejecutar un cambio de contraseña o una baja de cuenta
+  (hoy no hay endpoint para ninguna de las dos; el mecanismo va antes).
+- Ventana de migración: los refresh anteriores a T9 no traen `jti`, se aceptan
+  UNA vez y salen con familia nueva. La cierra su propia caducidad.
+- La política vive en `backend/services/token_store.py`; el router sólo la
+  invoca. Las filas revocadas **no se borran**: son la memoria que distingue
+  «reutilizado» de «desconocido». La purga va por caducidad.
+
+Las credenciales del core también caducan: `create_credential` pone 90 d
+(`CORE_CREDENTIAL_TTL_DAYS`) si no se le da fecha, `scripts/rotate_credential.py`
+rota con solape en dos pasos, y `jobhunt.credentials.check_health` alerta del
+solape que lleva más de 7 d sin cerrar.
+
 ## Restricciones del proyecto
 
 - **NO scraping PÚBLICO** de: jobs.ch, jobup.ch, Indeed, LinkedIn, Glassdoor, XING. `providers/restricted.py` permite integrarlos SOLO por ruta autorizada (credencial partner / feed oficial); arrancan deshabilitados (sin credencial → 0 peticiones, nunca scraping)
@@ -270,10 +299,15 @@ Estos principios tienen prioridad sobre velocidad, brevedad o DRY.
 # Arrancar entorno completo
 docker compose up -d
 
-# Tests backend (2.612 passed · 4 xfailed, ~6 min — medido el 2026-09-24)
-# OJO: NO lances dos pytest a la vez — el teardown hace TRUNCATE ... CASCADE de
-# swissjobhunter_test y las dos corridas se vacían las tablas entre sí (deadlocks + falsos rojos)
-docker compose exec -T backend python -m pytest tests/ -v --timeout=30
+# Tests backend (~6 min — medido el 2026-09-24)
+# OJO: NO lances dos pytest a la vez CONTRA LA MISMA BASE — el teardown hace
+# TRUNCATE ... CASCADE de swissjobhunter_test y las dos corridas se vacían las
+# tablas entre sí (deadlocks + falsos rojos). La suite del core usa otra base
+# (derivada de CORE_DATABASE_URL), así que esas dos SÍ pueden ir a la vez.
+# `--timeout=N` NO funciona: pytest-timeout no está instalado y NUNCA lo estuvo
+# (`git log -S pytest-timeout` sobre requirements.txt no devuelve nada). El
+# comando que esta línea documentaba fallaba al arrancar, no al probar.
+docker compose exec -T backend python -m pytest tests/ -q
 
 # Tests core (1.769 passed · 1 skipped, ~16 min — medido el 2026-09-24;
 # reconfirmar con pytest tras cada crecida, no copiar la cifra)
@@ -286,6 +320,9 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml \
 # Linting — ruff FIJADO a 0.15.14 en CI: subir la versión es una decisión, no un
 # accidente. OJO al orden si tocas ambos: formatear parte firmas largas y deja los
 # `noqa` en otra línea. Primero arreglar, luego formatear, luego RE-comprobar.
+# Y OJO a la versión DE LA IMAGEN: `requirements.txt` fija 0.15.14, pero una
+# imagen construida antes de ese pin trae 0.16.8 y da rojos que el CI no ve.
+# `ruff --version` dentro del contenedor ANTES de creerse un rojo masivo.
 docker compose exec -T backend ruff check --no-cache .
 docker compose exec -T backend ruff format --check --no-cache .
 

@@ -26,6 +26,9 @@ def clear_erased_caches(profile_id):
 
         clear_profile_cache(profile_id)
         clear_feed_cache(profile_id)
+        from services.matching.cache_bus import publicar_sin_esperar
+
+        publicar_sin_esperar(profile_id)
 
 
 async def queue_erasure(db, user_id, core_profile_id):

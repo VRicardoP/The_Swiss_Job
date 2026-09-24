@@ -62,6 +62,7 @@ se pagina localmente. El cache de ETag por pagina hace barato el refresco
 en scores.similarity) — la equivalencia de escala NO la exige el contrato.
 """
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -413,6 +414,37 @@ def _match_view(item: dict, job_ref: str, local: MatchResult | None) -> CoreMatc
     )
 
 
+# M4/T12: lo que se guarda va RECORTADO. La cache se acota por numero de
+# entradas, no por bytes, y una descripcion del core puede ocupar kilobytes:
+# 32 perfiles x 1.800 ofertas x descripcion entera es mucha memoria por un
+# texto que el consumidor no llega a leer — `_job_view` corta en 500 de todos
+# modos (el modelo legacy guarda un snippet de ese tamano).
+#
+# Se copia en vez de mutar, porque el INVARIANTE de esta cache es que sus items
+# no se mutan JAMAS (ver la cabecera de `_feed_cache`). La copia se paga una
+# vez por cambio de version, no por peticion.
+#
+# Los TAGS no se tocan, y es deliberado: el acta pedia recortarlos a MAX_TAGS,
+# pero `schools/presentation.school_for_job` empareja el colegio buscando su id
+# ENTRE los tags — recortar a los 15 primeros haria desaparecer colegios cuyo
+# tag cayera mas atras. El ahorro no compensa romper eso.
+_DESCRIPCION_MAX = 500
+
+
+def _recortado(items: list[dict]) -> list[dict]:
+    recortados = []
+    for item in items:
+        vacante = item.get("vacancy")
+        descripcion = vacante.get("description") if isinstance(vacante, dict) else None
+        if isinstance(descripcion, str) and len(descripcion) > _DESCRIPCION_MAX:
+            item = {
+                **item,
+                "vacancy": {**vacante, "description": descripcion[:_DESCRIPCION_MAX]},
+            }
+        recortados.append(item)
+    return recortados
+
+
 class CoreMatching:
     """Cliente del feed /v1 del core detras del puerto MatchingPort."""
 
@@ -506,10 +538,18 @@ class CoreMatching:
                     candidates or school_refs.get(str(it["vacancy"]["id"]), [])
                     for it, candidates in zip(items, candidates_per_item)
                 ]
-            except SchoolUnavailable as exc:
-                raise CoreUnavailableError(
-                    "school corpus identity unavailable"
-                ) from exc
+            except SchoolUnavailable:
+                # M5/T12: un fallo del corpus ESCOLAR no puede tumbar el feed
+                # entero. Antes se traducía a CoreUnavailableError y el usuario
+                # se quedaba sin ninguna oferta por no poder resolver la
+                # identidad de unas pocas. Se degrada: esas vacantes se sirven
+                # sin identidad accionable —sin `school_id`— y el resto va
+                # intacto. Se registra para que la degradación no sea muda.
+                logger.warning(
+                    "identidad escolar no disponible: %d vacantes se sirven "
+                    "sin school_id; el resto del feed va intacto",
+                    sum(1 for c in candidates_per_item if not c),
+                )
         legacy_refs = [ref for cands in candidates_per_item for ref, _source in cands]
         if settings.CORE_FEEDBACK_ENABLED:
             # School commands still address their own stable source_ref; keep
@@ -680,6 +720,27 @@ class CoreMatching:
     # ------------------------------------------------------------------ feed
 
     async def _fetch_full_feed(
+        self, core_profile_id: uuid.UUID, needed: int | None = None
+    ) -> tuple[list[dict], int | None]:
+        """Recorre el feed con un presupuesto TOTAL de tiempo.
+
+        H9/T12: `CORE_HTTP_TIMEOUT_SECONDS` acota CADA petición, no el
+        recorrido. Con cuatro páginas eso son cuatro veces el timeout en el
+        peor caso, y nada lo cortaba: un core lento dejaba ocupado el worker
+        de gunicorn hasta que terminara —y son dos—. Ahora el recorrido
+        entero tiene tope y, al agotarse, sale un 503, que el consumidor ya
+        sabe tratar, en vez de un worker muerto.
+        """
+        try:
+            async with asyncio.timeout(settings.CORE_FEED_TOTAL_BUDGET_S):
+                return await self._recorrer_feed(core_profile_id, needed)
+        except TimeoutError as exc:
+            raise CoreUnavailableError(
+                "recorrido del feed excede el presupuesto de "
+                f"{settings.CORE_FEED_TOTAL_BUDGET_S}s"
+            ) from exc
+
+    async def _recorrer_feed(
         self, core_profile_id: uuid.UUID, needed: int | None = None
     ) -> tuple[list[dict], int | None]:
         """Recorre el feed por keyset; cache de paginas por ETag.
@@ -883,7 +944,7 @@ class CoreMatching:
             return
         if len(_feed_cache) >= _FEED_CACHE_MAX and pid not in _feed_cache:
             _feed_cache.clear()
-        _feed_cache[pid] = (version, list(items), total)
+        _feed_cache[pid] = (version, _recortado(items), total)
 
     async def _fetch_page(
         self, client: httpx.AsyncClient, core_profile_id: uuid.UUID, cursor: str | None

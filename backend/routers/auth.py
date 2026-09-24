@@ -8,9 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.rate_limit import limiter
 from core.security import (
-    create_access_token,
-    create_refresh_token,
-    decode_token,
+    decode_token_payload,
     get_current_user,
     hash_password,
     needs_rehash,
@@ -18,6 +16,7 @@ from core.security import (
 )
 from database import get_db
 from models.user import User
+from services import token_store
 
 from models.user_profile import UserProfile
 from schemas.auth import (
@@ -74,11 +73,9 @@ async def register(
     profile = UserProfile(user_id=user.id)
     db.add(profile)
 
+    access_token, refresh_token = await token_store.emitir_sesion(db, user)
     await db.commit()
     await db.refresh(user)
-
-    access_token = create_access_token(user.id)
-    refresh_token = create_refresh_token(user.id)
 
     return AuthResponse(
         access_token=access_token,
@@ -129,10 +126,8 @@ async def login(request: Request, body: UserLogin, db: AsyncSession = Depends(ge
         user.hashed_password = hash_password(body.password)
 
     user.last_login = datetime.now(timezone.utc)
+    access_token, refresh_token = await token_store.emitir_sesion(db, user)
     await db.commit()
-
-    access_token = create_access_token(user.id)
-    refresh_token = create_refresh_token(user.id)
 
     return AuthResponse(
         access_token=access_token,
@@ -146,7 +141,8 @@ async def login(request: Request, body: UserLogin, db: AsyncSession = Depends(ge
 async def refresh(
     request: Request, body: TokenRefresh, db: AsyncSession = Depends(get_db)
 ):
-    user_id = decode_token(body.refresh_token, expected_type="refresh")
+    payload = decode_token_payload(body.refresh_token, expected_type="refresh")
+    user_id = uuid.UUID(payload["sub"])
 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -163,14 +159,53 @@ async def refresh(
             detail="Account is deactivated",
         )
 
-    access_token = create_access_token(user.id)
-    refresh_token = create_refresh_token(user.id)
+    try:
+        access_token, refresh_token = await token_store.rotar(db, user, payload)
+    except token_store.RefreshRechazado as rechazo:
+        # La revocación de la familia hay que CONFIRMARLA aunque la respuesta
+        # sea un error: si se fuera en rollback, el ladrón podría seguir
+        # canjeando y la detección no habría servido de nada.
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(rechazo),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from rechazo
+    await db.commit()
 
     return AuthResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         user=UserResponse.model_validate(user),
     )
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")
+async def logout(
+    request: Request, body: TokenRefresh, db: AsyncSession = Depends(get_db)
+):
+    """Cierra la sesión de ESTE dispositivo revocando su familia.
+
+    No exige access token a propósito: cerrar sesión tiene que funcionar
+    justamente cuando el access ya caducó, que es cuando el usuario lleva rato
+    sin tocar la aplicación. Presentar un refresh válido ya demuestra que la
+    sesión es suya, y lo único que se consigue es destruirla.
+
+    Idempotente y mudo: un token ilegible, caducado o ya revocado devuelve 204
+    igual. Un logout que contesta 401 le cuenta a quien lo prueba si el token
+    servía; y ante un fallo de cierre de sesión el cliente no tiene nada mejor
+    que hacer que borrar sus tokens, que es lo que va a hacer de todas formas.
+    """
+    try:
+        payload = decode_token_payload(body.refresh_token, expected_type="refresh")
+        familia = payload.get("fam")
+        if familia:
+            await token_store.revocar_familia(db, uuid.UUID(str(familia)))
+            await db.commit()
+    except (HTTPException, ValueError, TypeError):
+        pass
+    return None
 
 
 @router.get("/me", response_model=UserResponse)

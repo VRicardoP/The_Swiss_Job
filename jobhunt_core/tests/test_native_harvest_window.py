@@ -2,6 +2,8 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import sqlalchemy as sa
 
@@ -74,3 +76,48 @@ def test_same_window_only_fetches_once_and_disabled_scope_is_not_dispatched(
                 created["runs"].extend(ids)
 
     asyncio.run(check())
+
+
+class _RelojFijo:
+    """`datetime` de mentira: `now(tz)` devuelve la hora que se le clave."""
+
+    def __init__(self, momento):
+        self._momento = momento
+
+    def now(self, tz=None):
+        return self._momento.astimezone(tz) if tz else self._momento
+
+
+def _ventana_a(momento, monkeypatch) -> str:
+    monkeypatch.setattr(harvest, "datetime", _RelojFijo(momento))
+    return harvest.current_window()
+
+
+def test_la_ventana_se_ancla_al_slot_de_zurich_no_al_de_utc(monkeypatch):
+    """H8/T11: el beat dispara con `timezone="Europe/Zurich"`; la etiqueta se
+    truncaba en UTC. En verano son dos horas de desfase, así que la etiqueta no
+    correspondía al disparo y en el cambio de hora dos disparos distintos podían
+    caer en la misma ventana —perdiendo una cosecha entera por idempotencia—.
+
+    Nota sobre el acta (T11 §2): su ejemplo dice «12:59 y 13:00 dan ventanas
+    distintas». Con slots de SEIS horas ambas caen en el de las 12:00; el límite
+    real es 11:59 → 12:00, que es el que se comprueba aquí.
+    """
+    zurich = ZoneInfo("Europe/Zurich")
+
+    antes = _ventana_a(datetime(2026, 7, 15, 11, 59, tzinfo=zurich), monkeypatch)
+    despues = _ventana_a(datetime(2026, 7, 15, 12, 0, tzinfo=zurich), monkeypatch)
+    assert antes != despues
+    assert antes.startswith("2026-07-15T06:00:00")
+    assert despues.startswith("2026-07-15T12:00:00")
+
+    # Idempotencia: dos disparos separados 50 min DENTRO del slot dan la misma
+    # etiqueta, que es la clave del run (`native:<window>:<scope>`).
+    assert _ventana_a(
+        datetime(2026, 7, 15, 12, 10, tzinfo=zurich), monkeypatch
+    ) == _ventana_a(datetime(2026, 7, 15, 13, 0, tzinfo=zurich), monkeypatch)
+
+    # Y la prueba de que es Zurich y no UTC: 00:30 en Zurich es el día ANTERIOR
+    # a las 22:30 UTC. Anclado en UTC la etiqueta sería la de las 18:00 del 14.
+    medianoche = _ventana_a(datetime(2026, 7, 16, 0, 30, tzinfo=zurich), monkeypatch)
+    assert medianoche.startswith("2026-07-16T00:00:00")

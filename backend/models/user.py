@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum, String, func
+from sqlalchemy import Boolean, DateTime, Enum, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,6 +36,13 @@ class User(Base):
     )
     last_login: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # H6/T9: generación de los access tokens de este usuario. Un access token
+    # lleva la suya dentro; al incrementarla, todos los emitidos antes dejan de
+    # valer de golpe. Es el corte de emergencia para los tokens que NO tienen
+    # fila que revocar (cambio de contraseña, baja, sospecha de robo).
+    token_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
     )
     gdpr_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     gdpr_consent_at: Mapped[datetime | None] = mapped_column(

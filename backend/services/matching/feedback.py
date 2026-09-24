@@ -176,6 +176,10 @@ class CoreFeedback:
         from services.matching.core_client import clear_feed_cache
 
         clear_feed_cache(pid)
+        # M3/T12: y se avisa al OTRO worker de gunicorn, cuya caché es suya.
+        from services.matching.cache_bus import publicar
+
+        await publicar(pid)
         if response.status_code == 404:
             return None
         try:

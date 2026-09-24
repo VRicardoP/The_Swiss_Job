@@ -21,6 +21,7 @@ from models.jobhunt_profile_map import JobhuntProfileMap
 from models.jobhunt_routing import JobhuntRouting
 from models.match_result import MatchResult
 from models.notification import Notification
+from models.refresh_token import RefreshToken
 from models.saved_search import SavedSearch
 from models.source_compliance import SourceCompliance
 from models.source_cursor import SourceCursor
@@ -46,6 +47,7 @@ __all__ = [
     "MatchFeedback",
     "MatchResult",
     "Notification",
+    "RefreshToken",
     "NotifyFrequency",
     "PatternSuggestion",
     "RemotePreference",

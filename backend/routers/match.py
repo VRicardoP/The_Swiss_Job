@@ -235,12 +235,13 @@ async def _build_results_response(
     languages: dict[str, str] = {}
     if db is not None:
         titulos = [item["job"].title or "" for item in results]
-        languages = await language_store.lookup(db, titulos)
-        pendientes = [
-            t for t in titulos if language_store.normalise(t) not in languages
-        ]
+        languages, vistos = await language_store.lookup(db, titulos)
+        # Sólo lo que NUNCA se ha visto. Lo ya encolado (`language IS NULL`)
+        # está esperando a la tarea de fondo: reencolarlo era un INSERT por
+        # página que no cambiaba nada.
+        pendientes = [t for t in titulos if language_store.normalise(t) not in vistos]
         if pendientes:
-            await language_store.record_pending(db, pendientes)
+            await language_store.record_pending(pendientes)
 
     # Batch-translate non-EN/ES titles
     translations: dict[str, str] = {}

@@ -2323,8 +2323,14 @@ def test_task_registered_routed_and_runs(db, monkeypatch):
     from jobhunt_core.tasks import shadow as shadow_tasks
 
     assert "jobhunt.shadow.project" in celery_app.tasks
+    # H7/T11 (2026-09-25): la cola pasa de `core.harvest` a `core.default`.
+    # El nombre engaña —`shadow.project` no es sombra, es el MOTOR DE MATCHING—
+    # y encolarlo detrás de la cosecha lo dejaba esperando a un lote de ingesta
+    # que dura minutos, cada 5 min, contra un presupuesto de latencia p95 de
+    # 600 s. La cadencia del beat no cambia; sólo deja de compartir cola con el
+    # trabajo largo. Si esto vuelve a `core.harvest`, vuelve la espera.
     assert celery_app.conf.task_routes["jobhunt.shadow.project"] == {
-        "queue": "core.harvest"
+        "queue": "core.default"
     }
     # P1-1 (rev. externa parte 2): la tarea SÍ va en el beat (cada 5 min) —
     # proyectar solo dentro de run_cycle (06:05) acumulaba ~20h de latencia

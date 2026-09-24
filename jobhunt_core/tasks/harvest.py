@@ -7,7 +7,8 @@ estado del scope avanzaría sin persistir. Convención del repo: tareas con
 
 import asyncio
 from contextlib import nullcontext
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import logging
 import uuid
 from typing import Any
@@ -180,6 +181,23 @@ def _describe_scope_failure(exc: Exception) -> str:
     return str(exc)
 
 
+def current_window() -> str:
+    """Etiqueta del slot de 6 h en curso, en la zona que decide el disparo.
+
+    H8/T11: se truncaba en UTC, pero el beat dispara en Europe/Zurich (crontab
+    0,6,12,18). Con el desfase estacional la etiqueta no correspondía al
+    disparo, y en el cambio de hora dos disparos distintos podían caer en la
+    misma ventana —o saltarse una—. Se ancla a la MISMA zona que el crontab.
+
+    La etiqueta es la clave de idempotencia del run (`native:<window>:<scope>`),
+    así que dos disparos dentro del mismo slot DEBEN producir la misma cadena.
+    """
+    zurich = datetime.now(ZoneInfo("Europe/Zurich"))
+    return zurich.replace(
+        hour=(zurich.hour // 6) * 6, minute=0, second=0, microsecond=0
+    ).isoformat()
+
+
 @celery_app.task(name="jobhunt.harvest.dispatch_native", bind=True, max_retries=2)
 def dispatch_native_task(self, window: str | None = None) -> dict[str, Any]:
     """Dispatch bounded work per enabled scope, preserving the six-hour cadence.
@@ -190,10 +208,7 @@ def dispatch_native_task(self, window: str | None = None) -> dict[str, Any]:
     is rechecked by the worker; deploying this task does not enable any source.
     """
     if window is None:
-        now = datetime.now(timezone.utc)
-        window = now.replace(
-            hour=(now.hour // 6) * 6, minute=0, second=0, microsecond=0
-        ).isoformat()
+        window = current_window()
     try:
         scope_ids = asyncio.run(_enabled_native_scope_ids())
         for scope_id in scope_ids:
@@ -317,3 +332,26 @@ async def _run_scope_impl(
             if not closed and result.status != "not_found":
                 result.status = "stale"
         return result
+
+
+@celery_app.task(name="jobhunt.credentials.check_health")
+def check_credential_health_task() -> dict:
+    """Solapes de rotación sin cerrar (T9, jobhunt_core/credentials.py).
+
+    Va junto a la salud de la cosecha por ser la misma clase de vigilancia
+    —lectura barata en el beat, sin retry, el siguiente tick vuelve a medir—
+    pero es una tarea aparte: una credencial olvidada no es un scope rancio, y
+    un informe que mezclara las dos cosas no se leería.
+    """
+    return asyncio.run(_check_credential_health_impl())
+
+
+async def _check_credential_health_impl() -> dict:
+    from jobhunt_core import credentials
+
+    async with task_session_factory() as factory:
+        async with factory() as session:
+            alertas = await credentials.active_credential_alerts(session)
+    for alerta in alertas:
+        logger.error("credential_health: %s", alerta["msg"])
+    return {"alertas": alertas}

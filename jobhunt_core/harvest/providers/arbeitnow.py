@@ -57,6 +57,7 @@ import httpx
 
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
+from jobhunt_core.harvest.providers.rss_text import strip_html_tags
 from jobhunt_core.harvest.provider import (
     BaseProvider,
     ProviderConfigError,
@@ -90,7 +91,15 @@ def register_handlers() -> None:
         lambda raw: {
             "title": raw.get("title"),
             "company": raw.get("company_name"),
-            "description": raw.get("description"),
+            # A19-15 bloque A.1: arbeitnow publica la descripción en HTML y el
+            # nativo la guardaba CRUDA — 111 de 111 ofertas llegaban a la
+            # tarjeta con `<p>`, `<ul>` y `<br>` a la vista. El productor legacy
+            # (backend/providers/arbeitnow.py:78) siempre la limpió con esta
+            # misma función; lo que se perdió en el traspaso fue la llamada.
+            # Las entidades (`&amp;`) NO se decodifican, igual que en el resto
+            # de fuentes nativas: decodificar cambiaría el texto embebido y
+            # movería todos los vectores de la fuente.
+            "description": strip_html_tags(raw.get("description") or ""),
             "tags": raw.get("tags"),
             "location": raw.get("location"),
             "remote": raw.get("remote"),

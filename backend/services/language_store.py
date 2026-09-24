@@ -19,6 +19,10 @@ from models.title_language import TITLE_MAX_LEN, JobTitleLanguage
 
 logger = logging.getLogger(__name__)
 
+# Quién resolvió. Subirla marca todo lo anterior como re-derivable sin borrar
+# nada: `pending_titles` puede pedir también lo resuelto por una versión vieja.
+DETECTOR_VERSION = "langdetect-1"
+
 
 def normalise(title: str | None) -> str:
     """Clave canónica de un título. Cadena vacía = no hay título que resolver."""
@@ -27,30 +31,38 @@ def normalise(title: str | None) -> str:
     return title.strip()[:TITLE_MAX_LEN]
 
 
-async def lookup(db: AsyncSession, titles) -> dict[str, str]:
-    """{título: idioma} SÓLO de los títulos ya RESUELTOS.
+async def lookup(db: AsyncSession, titles) -> tuple[dict[str, str], set[str]]:
+    """Devuelve (resueltos, vistos) en UNA consulta.
 
-    Los pendientes (`language IS NULL`) se omiten a propósito: para el
-    consumidor, «pendiente» y «nunca visto» son el mismo estado — no lo sé
-    todavía— y debe comportarse igual en los dos.
+    - `resueltos`: {título: idioma} de los que ya tienen respuesta. El idioma
+      resuelto como desconocido viaja como `''`, que es informativo: distingue
+      «ya se intentó» de «aún no».
+    - `vistos`: todos los títulos con fila, RESUELTOS O NO.
 
-    El idioma resuelto como desconocido viaja como `''`, que es informativo:
-    distingue «ya se intentó» de «aún no».
+    Por qué hacen falta los dos (M1/T12): antes esto devolvía sólo los
+    resueltos, y el router daba por «nunca visto» todo lo demás — así que
+    reencolaba en CADA carga los títulos que ya estaban en cola esperando a la
+    tarea de fondo. Un INSERT por página que en régimen permanente debía ser
+    cero. Para el consumidor «pendiente» y «nunca visto» siguen siendo el mismo
+    estado —no lo sé todavía—; la diferencia sólo importa para no reencolar.
     """
     claves = {normalise(t) for t in titles}
     claves.discard("")
     if not claves:
-        return {}
-    filas = await db.execute(
-        sa.select(JobTitleLanguage.title, JobTitleLanguage.language).where(
-            JobTitleLanguage.title.in_(claves),
-            JobTitleLanguage.language.is_not(None),
+        return {}, set()
+    filas = (
+        await db.execute(
+            sa.select(JobTitleLanguage.title, JobTitleLanguage.language).where(
+                JobTitleLanguage.title.in_(claves)
+            )
         )
-    )
-    return {titulo: idioma for titulo, idioma in filas.all()}
+    ).all()
+    resueltos = {t: idioma for t, idioma in filas if idioma is not None}
+    vistos = {t for t, _ in filas}
+    return resueltos, vistos
 
 
-async def record_pending(db: AsyncSession, titles) -> int:
+async def record_pending(titles, *, session_factory=None) -> int:
     """Encola los títulos que aún no tienen fila. Devuelve cuántos encoló.
 
     Es un INSERT idempotente, no una detección: cuesta una sentencia y sólo
@@ -64,16 +76,24 @@ async def record_pending(db: AsyncSession, titles) -> int:
     claves = sorted({normalise(t) for t in titles} - {""})
     if not claves:
         return 0
+    # M1/T12: sesión PROPIA. Antes encolaba con la sesión de la petición y le
+    # hacía `commit()`, así que una LECTURA (un GET) cerraba la transacción de
+    # quien la llamaba, confirmando de paso cualquier cosa que estuviera en
+    # curso. Encolar es una comodidad para la tarea de fondo; no puede decidir
+    # cuándo commitea la petición.
+    from database import async_session
+
+    fabrica = session_factory or async_session
     try:
-        resultado = await db.execute(
-            pg_insert(JobTitleLanguage)
-            .values([{"title": c} for c in claves])
-            .on_conflict_do_nothing(index_elements=["title"])
-        )
-        await db.commit()
-        return resultado.rowcount or 0
+        async with fabrica() as propia:
+            resultado = await propia.execute(
+                pg_insert(JobTitleLanguage)
+                .values([{"title": c} for c in claves])
+                .on_conflict_do_nothing(index_elements=["title"])
+            )
+            await propia.commit()
+            return resultado.rowcount or 0
     except Exception:
-        await db.rollback()
         logger.warning("language_store: no se pudieron encolar %d títulos", len(claves))
         return 0
 
@@ -93,13 +113,22 @@ async def store_resolved(db: AsyncSession, resolved: dict[str, str]) -> int:
     """Persiste {título: idioma} ya resuelto. `''` es un resultado válido."""
     if not resolved:
         return 0
-    ahora = sa.func.now()
-    for titulo, idioma in resolved.items():
-        await db.execute(
-            sa.update(JobTitleLanguage)
-            .where(JobTitleLanguage.title == titulo)
-            .values(language=idioma or "", detected_at=ahora)
+    # L1/T12: UNA sentencia por lote, no una por título. Con lotes de 100 eran
+    # 100 idas y vueltas a la base para escribir 100 filas diminutas.
+    valores = sa.values(
+        sa.column("titulo", sa.String),
+        sa.column("idioma", sa.String),
+        name="resueltos",
+    ).data([(t, i or "") for t, i in resolved.items()])
+    await db.execute(
+        sa.update(JobTitleLanguage)
+        .where(JobTitleLanguage.title == valores.c.titulo)
+        .values(
+            language=valores.c.idioma,
+            detected_at=sa.func.now(),
+            detector_version=DETECTOR_VERSION,
         )
+    )
     await db.commit()
     return len(resolved)
 

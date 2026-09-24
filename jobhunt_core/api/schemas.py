@@ -53,7 +53,7 @@ class VacancyDTO(BaseModel):
     # 50,1 ms x 1.800 ofertas por petición (punto 5, 2026-09-22). Ausente
     # significa «no lo sé»: el consumidor vuelve a detectarlo, que es el
     # comportamiento de siempre.
-    language: str | None = None
+    language: str | None = Field(default=None, max_length=5)
     primary_listing: PrimaryListingDTO | None = None
     listings: list[ListingDTO] = []
     translations: list = []

@@ -172,16 +172,24 @@ async def lifespan(app: FastAPI):
 
     feed_warmup_task = asyncio.create_task(run_feed_warmup())
 
+    # M3/T12: la caché del recorrido vive en proceso y gunicorn corre con -w 2,
+    # así que cada worker tiene que enterarse de lo que invalidan los demás.
+    from services.matching.cache_bus import escuchar as escuchar_invalidaciones
+
+    cache_bus_task = asyncio.create_task(escuchar_invalidaciones())
+
     yield
 
     # Shutdown
     if warmup_task is not None and not warmup_task.done():
         warmup_task.cancel()
     feed_warmup_task.cancel()
-    try:
-        await feed_warmup_task
-    except asyncio.CancelledError:
-        pass
+    cache_bus_task.cancel()
+    for tarea in (feed_warmup_task, cache_bus_task):
+        try:
+            await tarea
+        except asyncio.CancelledError:
+            pass
     erasure_delivery_task.cancel()
     if profile_delivery_task is not None:
         profile_delivery_task.cancel()

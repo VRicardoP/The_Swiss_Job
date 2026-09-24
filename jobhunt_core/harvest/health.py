@@ -31,6 +31,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jobhunt_core.config import settings
+from jobhunt_core.harvest.admission import ADMISSION_CURSOR_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ async def check_harvest_health(
     now: datetime | None = None,
     max_consecutive_failures: int | None = None,
     stale_days: int | None = None,
+    missing_date_ratio: float | None = None,
 ) -> dict:
     """ALERTA (logger.error) por cada scope HABILITADO y ya ejecutado que:
 
@@ -62,11 +64,16 @@ async def check_harvest_health(
         if stale_days is not None
         else int(settings.CORE_HARVEST_STALE_ALERT_DAYS)
     )
+    ratio_max = (
+        missing_date_ratio
+        if missing_date_ratio is not None
+        else float(settings.CORE_HARVEST_MISSING_DATE_ALERT_RATIO)
+    )
     rows = (
         await session.execute(
             sa.text(
                 "SELECT hs.id AS scope_id, s.name AS source, "
-                "  sss.consecutive_failures, sss.last_complete_at "
+                "  sss.consecutive_failures, sss.last_complete_at, sss.cursor "
                 "FROM harvest_scopes hs "
                 "JOIN sources s ON s.id = hs.source_id "
                 "JOIN source_scope_state sss ON sss.scope_id = hs.id "
@@ -78,7 +85,7 @@ async def check_harvest_health(
     _report_blind_spot(censo, len(rows))
     alertas: list[dict] = []
     for row in rows:
-        alertas += _scope_alerts(row, moment, max_failures, days)
+        alertas += _scope_alerts(row, moment, max_failures, days, ratio_max)
     for alerta in alertas:
         logger.error("harvest_health: %s", alerta["msg"])
     return {"alertas": alertas, "scopes": len(rows), "censo": censo}
@@ -138,7 +145,7 @@ async def _censo(session: AsyncSession) -> dict:
 
 
 def _scope_alerts(
-    row, moment: datetime, max_failures: int, stale_days: int
+    row, moment: datetime, max_failures: int, stale_days: int, ratio_max: float
 ) -> list[dict]:
     """Alertas de UN scope (las dos señales son independientes: una fuente puede
     fallar sin llevar tiempo rancia, y quedarse rancia sin fallar — un barrido
@@ -177,4 +184,58 @@ def _scope_alerts(
                 ),
             }
         )
+    alertas += _missing_date_alert(row, ratio_max)
     return alertas
+
+
+def _missing_date_alert(row, ratio_max: float) -> list[dict]:
+    """Tercera señal, INDEPENDIENTE de las dos de arriba (G-T11 §3).
+
+    La admisión ADR-10 descarta las ofertas NUEVAS sin fecha de publicación:
+    no se inventa una desde la hora de ingesta. Eso es correcto, pero era MUDO.
+    `complete=False` sólo se marca cuando NO HAY NI UNA fecha en todo el lote
+    (`not counts["date_present"]`), así que una fuente que degrada a la mitad
+    —un cambio de campo en su payload, un proxy que recorta el JSON— seguía
+    contando como cosecha completa mientras perdía la mitad de las altas, para
+    siempre y en silencio. Aquí se lee el contador que la admisión ya escribe
+    en el cursor y se dice en voz alta.
+
+    Sin cursor, sin contadores o con un lote de cero decisiones no se alerta:
+    un scope que aún no ha cosechado no es un scope roto.
+    """
+    cursor = getattr(row, "cursor", None)
+    contadores = cursor.get(ADMISSION_CURSOR_KEY) if isinstance(cursor, dict) else None
+    if not isinstance(contadores, dict):
+        return []
+    try:
+        sin_fecha = int(contadores.get("missing_date") or 0)
+        admitidas = int(contadores.get("accepted") or 0)
+        refrescadas = int(contadores.get("refreshed") or 0)
+    except (TypeError, ValueError):
+        return []
+    # Los refrescos cuentan en el denominador a propósito: son ofertas que la
+    # fuente SÍ retuvo. Dejarlos fuera haría que una fuente madura —casi todo
+    # conocido, pocas altas— disparara la alerta con dos altas sin fecha.
+    decisiones = sin_fecha + admitidas + refrescadas
+    if decisiones <= 0:
+        return []
+    ratio = sin_fecha / decisiones
+    if ratio <= ratio_max:
+        return []
+    return [
+        {
+            "code": "cosecha_sin_fechas",
+            "scope_id": str(row.scope_id),
+            "source": row.source,
+            "missing_date": sin_fecha,
+            "accepted": admitidas,
+            "refreshed": refrescadas,
+            "ratio": round(ratio, 3),
+            "msg": (
+                f"scope {row.scope_id} ({row.source}): {sin_fecha} de {decisiones} "
+                f"ofertas nuevas descartadas por no traer fecha ({ratio:.0%} > "
+                f"{ratio_max:.0%}) — la fuente ha dejado de publicar el campo de "
+                "fecha y esas altas se pierden sin que la cosecha se marque incompleta"
+            ),
+        }
+    ]

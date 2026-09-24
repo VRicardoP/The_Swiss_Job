@@ -757,7 +757,7 @@ def test_broken_page_mid_sweep_persists_the_good_pages_and_counts_the_failure(db
     assert st.consecutive_failures == 1  # el fallo es VISIBLE, no un silencio
 
 
-def _set_state(factory, scope_id, *, failures=0, last_complete_at=None):
+def _set_state(factory, scope_id, *, failures=0, last_complete_at=None, cursor=None):
     """Fija el estado del scope (la avería que la vigilancia debe VER)."""
 
     async def go():
@@ -765,12 +765,19 @@ def _set_state(factory, scope_id, *, failures=0, last_complete_at=None):
             await s.execute(
                 sa.text(
                     "INSERT INTO source_scope_state "
-                    "(scope_id, consecutive_failures, last_complete_at) "
-                    "VALUES (:i, :f, :t) ON CONFLICT (scope_id) DO UPDATE SET "
+                    "(scope_id, consecutive_failures, last_complete_at, cursor) "
+                    "VALUES (:i, :f, :t, CAST(:c AS jsonb)) "
+                    "ON CONFLICT (scope_id) DO UPDATE SET "
                     "consecutive_failures = EXCLUDED.consecutive_failures, "
-                    "last_complete_at = EXCLUDED.last_complete_at"
+                    "last_complete_at = EXCLUDED.last_complete_at, "
+                    "cursor = EXCLUDED.cursor"
                 ),
-                {"i": scope_id, "f": failures, "t": last_complete_at},
+                {
+                    "i": scope_id,
+                    "f": failures,
+                    "t": last_complete_at,
+                    "c": json.dumps(cursor) if cursor is not None else None,
+                },
             )
             await s.commit()
 
@@ -932,3 +939,50 @@ def test_harvest_health_task_is_wired_to_the_beat_on_the_light_queue():
     }
     beat_tasks = {e["task"] for e in celery_app.conf.beat_schedule.values()}
     assert "jobhunt.harvest.check_health" in beat_tasks
+
+
+def test_harvest_health_alerts_when_a_source_stops_publishing_dates(db):
+    """G-T11 §3: la degradación PARCIAL de fechas era muda.
+
+    La admisión ADR-10 descarta las altas sin fecha —no la inventa desde la hora
+    de ingesta— y sólo marca la cosecha incompleta cuando NO HAY NI UNA fecha en
+    todo el lote. Entre medias vive el modo de fallo real: una fuente que cambia
+    el nombre del campo para una parte de su catálogo pierde esas altas para
+    siempre mientras la cosecha se sigue declarando COMPLETA. Aquí se comprueba
+    que el contador que la admisión ya escribía en el cursor por fin se lee.
+    """
+    factory, created = db
+    degradada, sana, sin_cosechar = _seed_scopes(factory, created, n=3)
+    ahora = datetime.now(timezone.utc)
+    # 7 de 10 altas nuevas llegan sin fecha: la fuente está rota a medias.
+    _set_state(
+        factory,
+        degradada,
+        last_complete_at=ahora,
+        cursor={"page": 3, "_admission": {"accepted": 3, "missing_date": 7}},
+    )
+    # Control negativo 1: mismo contador, proporción tolerable.
+    _set_state(
+        factory,
+        sana,
+        last_complete_at=ahora,
+        cursor={"_admission": {"accepted": 97, "missing_date": 3}},
+    )
+    # Control negativo 2: sin cursor. Un scope que aún no ha cosechado no es
+    # un scope roto, y 0/0 no puede leerse como «lo pierde todo».
+    _set_state(factory, sin_cosechar, last_complete_at=ahora)
+
+    informe = _health(factory)
+    sin_fechas = [a for a in informe["alertas"] if a["code"] == "cosecha_sin_fechas"]
+
+    assert [a["scope_id"] for a in sin_fechas] == [str(degradada)]
+    assert sin_fechas[0]["missing_date"] == 7
+    assert sin_fechas[0]["ratio"] == 0.7
+    assert "70%" in sin_fechas[0]["msg"]
+
+    # Y el umbral manda: subido por encima de la proporción, la alerta calla.
+    assert not [
+        a
+        for a in _health(factory, missing_date_ratio=0.9)["alertas"]
+        if a["code"] == "cosecha_sin_fechas"
+    ]
