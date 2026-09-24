@@ -5,10 +5,10 @@ from types import SimpleNamespace
 import sqlalchemy as sa
 
 from jobhunt_core.api import schemas, v1
-from jobhunt_core.tests.test_integration_matching import db, _setup
+from jobhunt_core.tests.test_integration_matching import db, _setup  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
-def test_duplicate_version_compares_sets_not_database_collation(db):
+def test_duplicate_version_compares_sets_not_database_collation(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, _, _, _ = _setup(factory, created, ["developer"])
 

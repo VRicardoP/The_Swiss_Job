@@ -26,6 +26,14 @@ jobs:
       - run: pip install ruff==0.15.14
       - run: ruff check .
       - run: ruff format --check .
+      # A19-23: `scripts/` y los .py de `docs/` estaban FUERA del linter y nadie
+      # lo sabia — este job corre con working-directory: backend, asi que el
+      # `ruff check .` de arriba nunca los alcanzo. Acumulaban 22 y 31 avisos.
+      - name: Lint de scripts/ y docs/
+        working-directory: ${{ github.workspace }}
+        run: |
+          ruff check scripts docs
+          ruff format --check scripts docs
 
   backend-test:
     runs-on: ubuntu-latest

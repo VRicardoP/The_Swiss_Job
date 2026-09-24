@@ -3,12 +3,12 @@
 import asyncio
 import uuid
 
-from jobhunt_core.tests.test_integration_api import db, pytestmark
+from jobhunt_core.tests.test_integration_api import db, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_integration_api_feedback import seed
 from jobhunt_core.tests.test_integration_feedback_handover import plan_for, source_row
 
 
-def test_plan_query_count_does_not_grow_with_unmarked_history(db):
+def test_plan_query_count_does_not_grow_with_unmarked_history(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, _ = seed(db)
     first = source_row(factory, pid, vid)
     source = [first] + [

@@ -8,11 +8,11 @@ import sqlalchemy as sa
 
 from jobhunt_core import profiles
 from jobhunt_core.shadow import projector
-from jobhunt_core.tests.test_integration_api import db, _issue
+from jobhunt_core.tests.test_integration_api import db, _issue  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_profile_snapshot_delivery import _put, _snapshot
 
 
-def test_live_activity_overrides_opposite_applied_cdc_state(db):
+def test_live_activity_overrides_opposite_applied_cdc_state(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     cid, _, token = _issue(
         factory, created, projector.SHADOW_CONSUMER, ["profiles:write"]

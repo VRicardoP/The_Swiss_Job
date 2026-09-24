@@ -1,4 +1,5 @@
 """Baja real del BFF, con transporte al core caído y base de tests."""
+
 import uuid
 
 import pytest
@@ -10,9 +11,13 @@ from tests.test_exclusions_sync import _corutina
 
 
 @pytest.mark.asyncio
-async def test_delete_reports_success_despite_failed_projection(client, db_session, monkeypatch):
+async def test_delete_reports_success_despite_failed_projection(
+    client, db_session, monkeypatch
+):
     headers, uid = await _auth(client)
-    rule = JobFilter(user_id=uid, filter_type="title_contains", pattern="director", source="manual")
+    rule = JobFilter(
+        user_id=uid, filter_type="title_contains", pattern="director", source="manual"
+    )
     db_session.add(rule)
     await db_session.commit()
     fid = rule.id
@@ -21,8 +26,12 @@ async def test_delete_reports_success_despite_failed_projection(client, db_sessi
     attempts = []
 
     class Client:
-        async def __aenter__(self): return self
-        async def __aexit__(self, *args): pass
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
         async def put(self, url, json=None):
             attempts.append(json)
             raise ConnectionError("corte controlado del transporte")
@@ -32,4 +41,6 @@ async def test_delete_reports_success_despite_failed_projection(client, db_sessi
     await db_session.refresh(rule)
     assert len(attempts) == 1 and attempts[0] == {"exclusions": []}
     assert not rule.is_active
-    assert response.status_code != 204, "BAJA confirmada 204 aunque su proyección falló; no hay entrega pendiente persistida"
+    assert response.status_code != 204, (
+        "BAJA confirmada 204 aunque su proyección falló; no hay entrega pendiente persistida"
+    )

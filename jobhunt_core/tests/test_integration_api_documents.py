@@ -1,14 +1,12 @@
 """E.1: document storage against real PG; no LLM, PDF engine or live writer."""
 import asyncio
 import hashlib
-import json
 import uuid
 
 import pytest
-import sqlalchemy as sa
 
 from jobhunt_core.tests import test_integration_api as tia
-from jobhunt_core.tests.test_integration_api_saved_searches import db, _rows, _seed_profile, pytestmark
+from jobhunt_core.tests.test_integration_api_saved_searches import db, _rows, _seed_profile, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 SCOPES = ["documents:read", "documents:write"]
 
@@ -31,7 +29,7 @@ def _post(factory, token, pid, body=None, key="auto"):
                     })
 
 
-def test_documents_roundtrip_replay_and_content_free_receipt(db):
+def test_documents_roundtrip_replay_and_content_free_receipt(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, tenant, pid = _seed(f, made)
     first = _post(f, token, pid, key="document-1")
@@ -57,7 +55,7 @@ def test_documents_roundtrip_replay_and_content_free_receipt(db):
     assert "content" not in events[0].payload
 
 
-def test_documents_delete_never_replays_erased_content(db):
+def test_documents_delete_never_replays_erased_content(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed(f, made)
     first = _post(f, token, pid, key="late-create")
@@ -76,7 +74,7 @@ def test_documents_delete_never_replays_erased_content(db):
                     "AND type='document.changed' ORDER BY version", p=pid) == [(1,), (2,)]
 
 
-def test_documents_ownership_scopes_and_immutable_body(db):
+def test_documents_ownership_scopes_and_immutable_body(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, tenant, pid = _seed(f, made)
     other, _, other_pid = _seed(f, made)
@@ -99,7 +97,7 @@ def test_documents_ownership_scopes_and_immutable_body(db):
     {"context": []}, {"generation_time_ms": -1}, {"doc_type": "executable"},
     {"language": "too-long"}, {"content": None}, {"output_hash": "caller-controlled"},
 ])
-def test_documents_invalid_body_is_rejected_without_write(db, bad):
+def test_documents_invalid_body_is_rejected_without_write(db, bad):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed(f, made)
     response = _post(f, token, pid, {"doc_type": "cv", "content": "valid", **bad})
@@ -108,7 +106,7 @@ def test_documents_invalid_body_is_rejected_without_write(db, bad):
     assert _rows(f, "SELECT key FROM idempotency_records WHERE route=:r", r="POST " + _path(pid)) == []
 
 
-def test_documents_require_key_and_pagination_has_no_ghost_page(db):
+def test_documents_require_key_and_pagination_has_no_ghost_page(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed(f, made)
     assert _post(f, token, pid, key=None).status_code == 400
@@ -125,7 +123,7 @@ def test_documents_require_key_and_pagination_has_no_ghost_page(db):
     assert tia._api(f, _path(pid) + "?cursor=broken", token=token).status_code == 400
 
 
-def test_documents_erase_profile_purges_content_events_and_receipts(db):
+def test_documents_erase_profile_purges_content_events_and_receipts(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, tenant, pid = _seed(f, made)
     other, _, other_pid = _seed(f, made)
@@ -145,7 +143,7 @@ def test_documents_erase_profile_purges_content_events_and_receipts(db):
     assert tia._api(f, _path(other_pid, other_doc.json()["id"]), token=other).status_code == 200
 
 
-def test_documents_outbox_failure_rolls_back_document_and_reservation(db, monkeypatch):
+def test_documents_outbox_failure_rolls_back_document_and_reservation(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed(f, made)
     from jobhunt_core import outbox

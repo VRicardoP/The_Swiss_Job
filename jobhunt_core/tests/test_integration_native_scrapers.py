@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from jobhunt_core.harvest.providers import get_provider
 from jobhunt_core.harvest.runner import run_scope
 from jobhunt_core.harvest.sink import RawListingSink
-from jobhunt_core.tests.test_integration_harvest import db, pytestmark, _seed_scopes
+from jobhunt_core.tests.test_integration_harvest import db, pytestmark, _seed_scopes  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_native_financejobs import JOB, page as fj_page
 from jobhunt_core.tests.test_native_irishjobs import ITEM, page as ij_page
 
@@ -29,7 +29,7 @@ def _bodies(source, date):
 
 
 @pytest.mark.parametrize("source", ["financejobs", "irishjobs"])
-def test_admission_raw_and_canonical_roundtrip(db, source, monkeypatch):
+def test_admission_raw_and_canonical_roundtrip(db, source, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     monkeypatch.setattr(
         f"jobhunt_core.harvest.providers.native_{source}.PAGE_PAUSE_S", 0)
     factory, made = db
@@ -83,7 +83,7 @@ def test_admission_raw_and_canonical_roundtrip(db, source, monkeypatch):
 
 
 @pytest.mark.parametrize("source", ["financejobs", "irishjobs"])
-def test_offer_outside_the_window_is_not_admitted(db, source, monkeypatch):
+def test_offer_outside_the_window_is_not_admitted(db, source, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     """A date the portal declares old must not enter as a fresh offering."""
     monkeypatch.setattr(
         f"jobhunt_core.harvest.providers.native_{source}.PAGE_PAUSE_S", 0)

@@ -11,11 +11,11 @@ from jobhunt_core.harvest.admission import DATE_FIELDS
 from jobhunt_core.harvest.providers import get_provider
 from jobhunt_core.harvest.runner import run_scope
 from jobhunt_core.harvest.sink import RawListingSink
-from jobhunt_core.tests.test_integration_harvest import db, pytestmark, _seed_scopes
+from jobhunt_core.tests.test_integration_harvest import db, pytestmark, _seed_scopes  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
 @pytest.mark.parametrize("source", ["remotive", "workingnomads", "jobicy"])
-def test_native_json_preserves_raw_and_refreshes_old_known_identity(db, source):
+def test_native_json_preserves_raw_and_refreshes_old_known_identity(db, source):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     sid, = _seed_scopes(factory, made, 1)
     stamp = (datetime.now(timezone.utc) - timedelta(days=9)).isoformat()

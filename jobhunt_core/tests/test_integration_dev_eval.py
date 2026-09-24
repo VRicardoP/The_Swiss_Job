@@ -97,7 +97,7 @@ def _compute(factory, pid, mid, polid, limit=matching.CANONICAL_EVAL_LIMIT,
 # ------------------------------------------------- P1: una sola ejecución
 
 
-def test_el_feed_de_medicion_es_de_una_sola_ejecucion(db):
+def test_el_feed_de_medicion_es_de_una_sola_ejecucion(db):  # noqa: F811  (la fixture, no una redefinición)
     """El almacén conserva la unión histórica (limit+1 filas, rangos de G1);
     la medición NO puede leerlo: compute_policy_feed devuelve exactamente la
     ejecución de AHORA — tamaño objetivo, rangos actuales, determinista."""
@@ -175,7 +175,7 @@ def test_el_feed_de_medicion_es_de_una_sola_ejecucion(db):
     assert _compute(factory, pid, mid, polid, limit=K)["rows"] == r["rows"]
 
 
-def test_descartada_no_aparece_y_sin_estado_si(db):
+def test_descartada_no_aparece_y_sin_estado_si(db):  # noqa: F811  (la fixture, no una redefinición)
     """Semántica del feed canónico en la medición: dismissed_at excluye; una
     vacante sin fila de estado sigue visible; y el cálculo coincide fila a
     fila con feed() cuando la política es la canónica."""
@@ -240,7 +240,7 @@ def _cosine2_policy(factory, created):
     return asyncio.run(go())
 
 
-def test_promover_y_rollback_conservan_el_feed(db):
+def test_promover_y_rollback_conservan_el_feed(db):  # noqa: F811  (la fixture, no una redefinición)
     """El mismo conjunto y orden que mide el desarrollo es el que sirve el
     feed al promover; el rollback restaura exactamente el anterior. La
     candidata es ABSOLUTA (una relativa ya no puede ser canónica)."""
@@ -271,7 +271,7 @@ def test_promover_y_rollback_conservan_el_feed(db):
 # --------------------------------- Fase 1 cierre definitivo: pair_absolute
 
 
-def test_una_politica_relativa_no_puede_ser_canonica(db):
+def test_una_politica_relativa_no_puede_ser_canonica(db):  # noqa: F811  (la fixture, no una redefinición)
     """G1→corpus nuevo→G2 deja en el almacén una mezcla que la materialización
     de una política RELATIVA (RRF) serviría (winners recupera filas con rangos
     de G1). El sistema debe RECHAZAR la canonicidad de una relativa — en la
@@ -293,7 +293,7 @@ def test_una_politica_relativa_no_puede_ser_canonica(db):
     asyncio.run(go())
 
 
-def test_valla_final_rechaza_mover_feed_con_relativa(db):
+def test_valla_final_rechaza_mover_feed_con_relativa(db):  # noqa: F811  (la fixture, no una redefinición)
     """Aun si un bypass activa una relativa en solitario (SQL directo, sin la
     autoridad), evaluate_profile(move_current=True) falla CERRADO antes de
     tocar profile_vacancy_state."""
@@ -320,7 +320,7 @@ def test_valla_final_rechaza_mover_feed_con_relativa(db):
     assert _feed_actual(factory, pid) == antes  # el feed no se tocó
 
 
-def test_la_sombra_relativa_sigue_permitida(db):
+def test_la_sombra_relativa_sigue_permitida(db):  # noqa: F811  (la fixture, no una redefinición)
     """RRF puede seguir calculándose y midiéndose en sombra sin mover feed."""
     factory, created = db
     pid, mid, cosine_id, _ = _setup(factory, created, TITULOS)
@@ -334,7 +334,7 @@ def test_la_sombra_relativa_sigue_permitida(db):
     assert _feed_actual(factory, pid) == antes
 
 
-def test_absoluta_estable_tras_cambio_de_corpus(db):
+def test_absoluta_estable_tras_cambio_de_corpus(db):  # noqa: F811  (la fixture, no una redefinición)
     """Una política ABSOLUTA tras G1→corpus nuevo→G2 sirve exactamente las
     filas del cálculo G2 y una pareja vieja conserva su score."""
     factory, created = db
@@ -378,7 +378,7 @@ def test_absoluta_estable_tras_cambio_de_corpus(db):
 # ------------------------------------------------- fórmula y fail-closed
 
 
-def test_el_evaluador_usa_la_formula_del_gate_no_la_lineal(db):
+def test_el_evaluador_usa_la_formula_del_gate_no_la_lineal(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, _, vacs = _setup(
         factory, created, TITULOS,
@@ -400,7 +400,7 @@ def test_el_evaluador_usa_la_formula_del_gate_no_la_lineal(db):
     assert out["payload"]["corpus_generation"] is not None
 
 
-def test_idcg_cero_es_no_medible_jamas_verde(db):
+def test_idcg_cero_es_no_medible_jamas_verde(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, _, vacs = _setup(factory, created, TITULOS[:2])
     _shadow_policy(factory, created)
@@ -411,7 +411,7 @@ def test_idcg_cero_es_no_medible_jamas_verde(db):
     assert r["causa_no_medible"]
 
 
-def test_fallos_cerrados_del_evaluador(db):
+def test_fallos_cerrados_del_evaluador(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, _, vacs = _setup(factory, created, TITULOS[:2])
     _shadow_policy(factory, created)
@@ -422,7 +422,7 @@ def test_fallos_cerrados_del_evaluador(db):
     with pytest.raises(ValueError, match="inexistentes"):
         _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
                   _judgments_file(
-                      [f"P1,00000000-0000-0000-0000-000000000000,1"]))
+                      ["P1,00000000-0000-0000-0000-000000000000,1"]))
     with pytest.raises(ValueError, match="inexistente"):
         _run_eval(factory, "hybrid-rrf:v99x", {"P1": pid},
                   _judgments_file([f"P1,{v},1"]))
@@ -435,13 +435,14 @@ def test_fallos_cerrados_del_evaluador(db):
                       {"P1": [v]}):
         f = tempfile.NamedTemporaryFile(
             "w", suffix=".json", delete=False, encoding="utf-8")
-        json.dump(contenido, f); f.close()
+        json.dump(contenido, f)
+        f.close()
         with pytest.raises(ValueError):
             _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
                       _judgments_file([f"P1,{v},1"]), unsure=f.name)
 
 
-def test_release_desconocida_es_error_en_operacion(db):
+def test_release_desconocida_es_error_en_operacion(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, _, vacs = _setup(factory, created, TITULOS[:2])
     _shadow_policy(factory, created)
@@ -459,7 +460,7 @@ def test_release_desconocida_es_error_en_operacion(db):
         pytest.skip("RELEASE_SHA identificable en este entorno")
 
 
-def test_el_payload_es_determinista_y_sellado(db):
+def test_el_payload_es_determinista_y_sellado(db):  # noqa: F811  (la fixture, no una redefinición)
     """El payload reproducible es idéntico entre corridas (sin quitar campos)
     y su hash lo sella; lo volátil (generated_at) vive FUERA del payload."""
     factory, created = db
@@ -476,7 +477,7 @@ def test_el_payload_es_determinista_y_sellado(db):
 # ------------------------------------------- Fase 4: contrato estable
 
 
-def test_top10_sin_cobertura_es_inelegible_no_relevancia_cero(db):
+def test_top10_sin_cobertura_es_inelegible_no_relevancia_cero(db):  # noqa: F811  (la fixture, no una redefinición)
     """Un no-juzgado en el top-10 NO es relevancia 0: el resultado es
     INELEGIBLE con la lista de lo que falta; con cobertura completa, elegible
     y con nDCG."""
@@ -503,7 +504,7 @@ def test_top10_sin_cobertura_es_inelegible_no_relevancia_cero(db):
     assert r2["elegible"] is True and r2["ndcg10"] is not None
 
 
-def test_el_examen_queda_ligado_a_su_universo(db):
+def test_el_examen_queda_ligado_a_su_universo(db):  # noqa: F811  (la fixture, no una redefinición)
     """Prueba mandada por la Fase 4: una oferta nueva no juzgada de score
     alto NO puede variar el examen en silencio — con el universo sellado
     antes del cambio, el resultado se declara INELEGIBLE (fuera_de_universo)."""
@@ -571,7 +572,7 @@ def test_el_examen_queda_ligado_a_su_universo(db):
                   allow_uncovered=False, universe=manifiesto)
 
 
-def test_pool_ciego_es_union_determinista_de_topk(db):
+def test_pool_ciego_es_union_determinista_de_topk(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, cosine_id, vacs = _setup(factory, created, TITULOS)
     _shadow_policy(factory, created)
@@ -605,7 +606,7 @@ def _sellar(factory, profiles):
     return asyncio.run(go())
 
 
-def test_el_universo_detecta_retirada_revision_y_adulteracion(db):
+def test_el_universo_detecta_retirada_revision_y_adulteracion(db):  # noqa: F811  (la fixture, no una redefinición)
     """(a) archivar una pareja sellada ⇒ INELEGIBLE/error GLOBAL aunque el
     top-10 siga dentro de parejas viejas; (b) revisión nueva del perfil ⇒
     error; (c) cuerpo adulterado o SHA falsa ⇒ error. Nada de nDCG parcial."""
@@ -685,7 +686,7 @@ def test_el_universo_detecta_retirada_revision_y_adulteracion(db):
                   allow_uncovered=False, universe=falso)
 
 
-def test_el_pool_ciego_rechaza_deriva_del_sello(db):
+def test_el_pool_ciego_rechaza_deriva_del_sello(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, cosine_id, vacs = _setup(factory, created, TITULOS)
     _shadow_policy(factory, created)
@@ -712,7 +713,7 @@ def test_el_pool_ciego_rechaza_deriva_del_sello(db):
         asyncio.run(pool(sello))
 
 
-def test_cli_extremo_a_extremo_con_el_mismo_sello(db, tmp_path, monkeypatch,
+def test_cli_extremo_a_extremo_con_el_mismo_sello(db, tmp_path, monkeypatch,  # noqa: F811  (la fixture, no una redefinición)
                                                   capsys):
     """P0-5: seal-universe → build-pool → evaluate, ejecutables con el MISMO
     sello, salidas atómicas con sha visible, modo estricto (sin allows)."""
@@ -747,7 +748,7 @@ def test_cli_extremo_a_extremo_con_el_mismo_sello(db, tmp_path, monkeypatch,
     assert out["payload"]["release"] == "e2etest"
 
 
-def test_el_sello_detecta_deriva_de_generacion_sin_cambio_de_identidades(db):
+def test_el_sello_detecta_deriva_de_generacion_sin_cambio_de_identidades(db):  # noqa: F811  (la fixture, no una redefinición)
     """Revisión 2026-09-04 P1: los vectores pueden cambiar (re-embed) sin
     alterar vacancy/offer_revision/text_hash — el conjunto de parejas queda
     idéntico pero la evaluación YA NO es la fotografía sellada. El sello debe
@@ -780,7 +781,7 @@ def test_el_sello_detecta_deriva_de_generacion_sin_cambio_de_identidades(db):
                   allow_uncovered=False, universe=sello)
 
 
-def test_pool_con_universo_restringido_rellena_el_top_k(db):
+def test_pool_con_universo_restringido_rellena_el_top_k(db):  # noqa: F811  (la fixture, no una redefinición)
     """Revisión externa 2026-09-07 (P1-1): el examen del 06-09 filtró las
     vacantes vistas en entrenamiento DESPUÉS de recuperar, así que cada
     excluida se comía una plaza del top-K. Con la exclusión en la frontera,

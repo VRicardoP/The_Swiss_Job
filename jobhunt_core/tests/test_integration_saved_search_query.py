@@ -5,13 +5,12 @@ import asyncio
 import sqlalchemy as sa
 
 from jobhunt_core.harvest.providers import legacy_shadow
-from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.harvest.types import RawListing
 from jobhunt_core.saved_search_query import matching_vacancies
-from jobhunt_core.tests.test_integration_offer import db, pytestmark, _seed, _sink, _vacancy_state
+from jobhunt_core.tests.test_integration_offer import db, pytestmark, _seed, _sink, _vacancy_state  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
-def test_full_text_and_structured_filters_over_canonical_offers(db):
+def test_full_text_and_structured_filters_over_canonical_offers(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     source = "legacy:search-query"
     legacy_shadow.ensure_registered(source)
@@ -56,7 +55,7 @@ def test_full_text_and_structured_filters_over_canonical_offers(db):
     asyncio.run(run())
 
 
-def test_metadata_update_and_replay_do_not_change_embedding_identity(db):
+def test_metadata_update_and_replay_do_not_change_embedding_identity(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     source = "legacy:search-replay"
     legacy_shadow.ensure_registered(source)

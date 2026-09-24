@@ -10,10 +10,10 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
 from jobhunt_core.tests.test_integration_api_documents import _seed
-from jobhunt_core.tests.test_integration_api_saved_searches import db, pytestmark
+from jobhunt_core.tests.test_integration_api_saved_searches import db, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
-def test_documents_downgrade_locks_before_empty_check(db, monkeypatch):
+def test_documents_downgrade_locks_before_empty_check(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     _, _, pid = _seed(factory, made)
     migration = importlib.import_module("jobhunt_core.alembic.versions.core0043_generated_documents")

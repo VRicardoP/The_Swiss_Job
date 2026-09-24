@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from jobhunt_core.import_swissjob_feedback import (
     FeedbackMigrationError, apply_plan, prepare_plan,
 )
-from jobhunt_core.tests.test_integration_api import db, pytestmark
+from jobhunt_core.tests.test_integration_api import db, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_integration_api_feedback import seed, rows
 
 
@@ -29,7 +29,7 @@ async def plan_for(session, pid, source):
     )
 
 
-def test_feedback_plan_import_replay_reverse_preserves_other_state(db):
+def test_feedback_plan_import_replay_reverse_preserves_other_state(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, _ = seed(db)
     event = {"action": "opened", "timestamp": "2026-09-19T10:00:00Z"}
     source = [source_row(factory, pid, vid, feedback_implicit=[event, event])]
@@ -55,7 +55,7 @@ def test_feedback_plan_import_replay_reverse_preserves_other_state(db):
     asyncio.run(run())
 
 
-def test_feedback_clear_is_migrated_and_new_edit_prevents_old_rollback(db):
+def test_feedback_clear_is_migrated_and_new_edit_prevents_old_rollback(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, _ = seed(db)
     source = [source_row(factory, pid, vid, feedback=None)]
 
@@ -76,7 +76,7 @@ def test_feedback_clear_is_migrated_and_new_edit_prevents_old_rollback(db):
     asyncio.run(run())
 
 
-def test_feedback_conflicting_aliases_and_unresolved_marks_abort(db):
+def test_feedback_conflicting_aliases_and_unresolved_marks_abort(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, _ = seed(db)
     first = source_row(factory, pid, vid)
     second = source_row(factory, pid, vid, feedback="thumbs_down")
@@ -90,7 +90,7 @@ def test_feedback_conflicting_aliases_and_unresolved_marks_abort(db):
     asyncio.run(run())
 
 
-def test_feedback_plan_seal_and_ownership_are_not_optional(db):
+def test_feedback_plan_seal_and_ownership_are_not_optional(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, _ = seed(db)
     source = [source_row(factory, pid, vid)]
 

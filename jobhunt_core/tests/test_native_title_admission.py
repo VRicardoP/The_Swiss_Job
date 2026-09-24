@@ -9,12 +9,14 @@ import pytest
 import sqlalchemy as sa
 
 from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError
-from jobhunt_core.harvest.providers import arbeitnow  # registers raw title extraction
+from jobhunt_core.harvest.providers import (  # noqa: F401
+    arbeitnow,  # importado por su efecto: llama a register_handlers() al cargarse
+)
 from jobhunt_core.harvest.runner import run_scope
 from jobhunt_core.harvest.types import FetchResult, RawListing
 from jobhunt_core.tests.test_integration_harvest import (
-    db,
-    pytestmark,
+    db,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
+    pytestmark,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
     _seed_scopes,
     _state,
     CollectSink,
@@ -64,7 +66,7 @@ def config(factory, sid, value):
     asyncio.run(update())
 
 
-def test_filter_blocks_only_new_titles_and_keeps_known_refresh(db):
+def test_filter_blocks_only_new_titles_and_keeps_known_refresh(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     (sid,) = _seed_scopes(factory, made, 1)
     config(factory, sid, True)
@@ -95,7 +97,7 @@ def test_filter_blocks_only_new_titles_and_keeps_known_refresh(db):
     asyncio.run(check())
 
 
-def test_all_deliberately_excluded_is_not_missing_date_failure(db):
+def test_all_deliberately_excluded_is_not_missing_date_failure(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     (sid,) = _seed_scopes(factory, made, 1)
     config(factory, sid, True)
@@ -118,7 +120,7 @@ def test_all_deliberately_excluded_is_not_missing_date_failure(db):
 
 
 @pytest.mark.parametrize("bad", [None, "true", 1, [], {}])
-def test_invalid_title_policy_is_rejected_before_io(db, bad):
+def test_invalid_title_policy_is_rejected_before_io(db, bad):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     (sid,) = _seed_scopes(factory, made, 1)
     config(factory, sid, bad)
@@ -143,7 +145,7 @@ def test_title_policy_is_semantic_but_does_not_change_old_fingerprint():
     )
 
 
-def test_title_policy_change_during_fetch_discards_result(db):
+def test_title_policy_change_during_fetch_discards_result(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     (sid,) = _seed_scopes(factory, made, 1)
     config(factory, sid, False)
@@ -173,7 +175,7 @@ def test_title_policy_change_during_fetch_discards_result(db):
 
 
 @pytest.mark.parametrize("params", [{}, {POLICY: False}])
-def test_filter_is_opt_in_and_preserves_previous_scope(db, params):
+def test_filter_is_opt_in_and_preserves_previous_scope(db, params):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     (sid,) = _seed_scopes(factory, made, 1)
 

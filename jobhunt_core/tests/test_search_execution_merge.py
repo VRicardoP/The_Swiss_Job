@@ -6,11 +6,11 @@ import sqlalchemy as sa
 
 from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.tests.test_integration_search_execution import (
-    db, pytestmark, corpus, new_search, listing, run, state, _vacancy_state,
+    db, pytestmark, corpus, new_search, listing, run, state, _vacancy_state,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 )
 
 
-def test_seen_loser_propagates_through_merge_chain(db):
+def test_seen_loser_propagates_through_merge_chain(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     scope, listings = corpus(factory, made, "Python developer")
     loser = _vacancy_state(factory, listings[0].external_id).vac

@@ -9,7 +9,7 @@ import pytest
 import sqlalchemy as sa
 
 from jobhunt_core.import_schools import import_batch, snapshot, SchoolMigrationError
-from jobhunt_core.tests.test_integration_school_jobs import school_db, db, pytestmark
+from jobhunt_core.tests.test_integration_school_jobs import school_db, db, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_integration_api_schools import SCOPES, SETTINGS
 from jobhunt_core.tests.test_integration_api_saved_searches import _seed_profile, _rows
 
@@ -76,7 +76,7 @@ def _run(f, operation):
 
 
 def test_import_schools_exact_material_idempotence_and_current_reverse_snapshot(
-    school_db,
+    school_db,  # noqa: F811  (la fixture, no una redefinición)
 ):
     f, made = school_db
     _, cid, pid = _seed_profile(f, made, SCOPES)
@@ -119,7 +119,7 @@ def test_import_schools_exact_material_idempotence_and_current_reverse_snapshot(
 
 
 @pytest.mark.parametrize("active", [True, False])
-def test_history_import_replay_is_stable_without_publishing(school_db, active):
+def test_history_import_replay_is_stable_without_publishing(school_db, active):  # noqa: F811  (la fixture, no una redefinición)
     f, made = school_db
     _, name, pid = _seed_profile(f, made, SCOPES)
     data = batch(name, pid)
@@ -137,7 +137,7 @@ def test_history_import_replay_is_stable_without_publishing(school_db, active):
     )
 
 
-def test_import_school_drift_rolls_back_new_monitors_and_corpus_together(school_db):
+def test_import_school_drift_rolls_back_new_monitors_and_corpus_together(school_db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = school_db
     _, cid, pid = _seed_profile(f, made, SCOPES)
     name = cid
@@ -158,7 +158,7 @@ def test_import_school_drift_rolls_back_new_monitors_and_corpus_together(school_
     ) == [(1,)]
 
 
-def test_import_school_rejects_foreign_profile_before_any_insert(school_db):
+def test_import_school_rejects_foreign_profile_before_any_insert(school_db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = school_db
     _, cid, _ = _seed_profile(f, made, SCOPES)
     _, _, other = _seed_profile(f, made, SCOPES)

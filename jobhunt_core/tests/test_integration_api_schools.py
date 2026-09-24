@@ -10,10 +10,10 @@ from sqlalchemy.exc import IntegrityError
 
 from jobhunt_core.tests import test_integration_api as tia
 from jobhunt_core.tests.test_integration_api_saved_searches import (
-    db,
+    db,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
     _rows,
     _seed_profile,
-    pytestmark,
+    pytestmark,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 )
 
 SCOPES = ["schools:read", "schools:write"]
@@ -58,7 +58,7 @@ def _create(f, token, slug=None, **settings):
     )
 
 
-def test_school_identity_shared_but_contacts_and_configuration_private(db):
+def test_school_identity_shared_but_contacts_and_configuration_private(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     a, _, ap = _seed_profile(f, made, SCOPES)
     b, _, bp = _seed_profile(f, made, SCOPES)
@@ -89,7 +89,7 @@ def test_school_identity_shared_but_contacts_and_configuration_private(db):
         )
 
 
-def test_country_edit_cannot_change_shared_school_identity(db):
+def test_country_edit_cannot_change_shared_school_identity(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     a, _, _ = _seed_profile(f, made, SCOPES)
     b, _, _ = _seed_profile(f, made, SCOPES)
@@ -110,7 +110,7 @@ def test_country_edit_cannot_change_shared_school_identity(db):
     assert _request(f, b, "/v1/schools/" + other.json()["id"]).json() == other.json()
 
 
-def test_school_replay_etag_and_deleted_receipt_do_not_resurrect(db):
+def test_school_replay_etag_and_deleted_receipt_do_not_resurrect(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, _ = _seed_profile(f, made, SCOPES)
     key = "school-" + uuid.uuid4().hex
@@ -157,7 +157,7 @@ def test_school_replay_etag_and_deleted_receipt_do_not_resurrect(db):
         {"group_tier": None},
     ],
 )
-def test_school_bad_boundary_never_writes(db, bad):
+def test_school_bad_boundary_never_writes(db, bad):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, _ = _seed_profile(f, made, SCOPES)
     response = _create(f, token, **bad)
@@ -165,7 +165,7 @@ def test_school_bad_boundary_never_writes(db, bad):
     assert _request(f, token).json()["items"] == []
 
 
-def test_school_scope_cursor_and_nonvacuous_pagination(db):
+def test_school_scope_cursor_and_nonvacuous_pagination(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, tenant, _ = _seed_profile(f, made, SCOPES)
     assert _request(f, None).status_code == 401
@@ -183,7 +183,7 @@ def test_school_scope_cursor_and_nonvacuous_pagination(db):
     assert _request(f, token, "/v1/schools?cursor=broken").status_code == 400
 
 
-def test_school_preferences_roundtrip_and_profile_erasure(db):
+def test_school_preferences_roundtrip_and_profile_erasure(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, tenant, pid = _seed_profile(f, made, SCOPES)
     path = f"/v1/profiles/{pid}/school-preferences"
@@ -222,7 +222,7 @@ def test_school_preferences_roundtrip_and_profile_erasure(db):
     )
 
 
-def test_school_db_rejects_unlinked_unexplained_and_cross_consumer_job(db):
+def test_school_db_rejects_unlinked_unexplained_and_cross_consumer_job(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     a, _, ap = _seed_profile(f, made, SCOPES)
     _, _, bp = _seed_profile(f, made, SCOPES)

@@ -11,12 +11,12 @@ import sqlalchemy as sa
 from jobhunt_core.harvest.providers import get_provider
 from jobhunt_core.harvest.runner import run_scope
 from jobhunt_core.harvest.sink import RawListingSink
-from jobhunt_core.tests.test_integration_harvest import db, pytestmark, _seed_scopes
+from jobhunt_core.tests.test_integration_harvest import db, pytestmark, _seed_scopes  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_native_rss_providers import SOURCES, feed
 
 
 @pytest.mark.parametrize("source", SOURCES)
-def test_rss_refreshes_existing_old_listing_without_duplicate_or_new_revision(db, source):
+def test_rss_refreshes_existing_old_listing_without_duplicate_or_new_revision(db, source):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     sid, = _seed_scopes(factory, made, 1)
     # First harvest admits this real upstream timestamp; then tighten the window.

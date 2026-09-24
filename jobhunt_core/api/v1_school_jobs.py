@@ -1,7 +1,6 @@
 """School observations and delivery acknowledgements, scoped to one consumer."""
 
 from datetime import date, datetime, timezone
-import json
 import uuid
 
 import sqlalchemy as sa

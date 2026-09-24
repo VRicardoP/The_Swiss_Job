@@ -22,7 +22,7 @@ from jobhunt_core.import_documents import (
     import_batch,
     prepare_batch,
 )
-from jobhunt_core.tests.test_integration_api_saved_searches import db, _seed_profile
+from jobhunt_core.tests.test_integration_api_saved_searches import db, _seed_profile  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_integration_import_documents import source
 
 
@@ -106,7 +106,7 @@ def source_tables(schema, origin, *, constraint=True):
 
 
 @pytest.mark.parametrize("origin", ["swissjob", "portfolio"])
-def test_source_drift_pending_and_reverse_whole_collection(db, origin):
+def test_source_drift_pending_and_reverse_whole_collection(db, origin):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     _, consumer, pid = _seed_profile(factory, created)
     owner, foreign = (uuid.uuid4(), uuid.uuid4()) if origin == "swissjob" else (11, 12)
@@ -241,7 +241,7 @@ def test_source_drift_pending_and_reverse_whole_collection(db, origin):
     asyncio.run(run())
 
 
-def test_empty_restore_without_constraints_is_rejected(db):
+def test_empty_restore_without_constraints_is_rejected(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, _ = db
     schema = "doc_source_" + uuid.uuid4().hex
     meta, users, _, _ = source_tables(schema, "portfolio", constraint=False)

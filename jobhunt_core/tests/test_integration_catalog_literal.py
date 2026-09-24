@@ -2,7 +2,6 @@
 import asyncio
 from urllib.parse import urlencode
 
-import pytest
 import sqlalchemy as sa
 
 from jobhunt_core.tests import test_integration_api as api

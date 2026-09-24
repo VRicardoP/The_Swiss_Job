@@ -4,7 +4,7 @@ import asyncio
 
 from jobhunt_core import matching
 from jobhunt_core.shadow import projector
-from jobhunt_core.tests.test_integration_api import db
+from jobhunt_core.tests.test_integration_api import db  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_profile_snapshot_concurrency import (
     _current_snapshot,
     _deliver,
@@ -13,7 +13,7 @@ from jobhunt_core.tests.test_profile_snapshot_delivery import _seed, _snapshot
 from jobhunt_core.tests.test_review_closure_20260907 import _pending
 
 
-def test_empty_then_previous_cv_rearms_and_rebuilds_feed(db):
+def test_empty_then_previous_cv_rearms_and_rebuilds_feed(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, _, _, _ = _seed(factory, created)
 

@@ -7,11 +7,11 @@ import pytest
 import sqlalchemy as sa
 
 from jobhunt_core.school_source import lock_source
-from jobhunt_core.tests.test_integration_api import db, pytestmark
+from jobhunt_core.tests.test_integration_api import db, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_integration_document_source import create_test_schema
 
 
-def test_source_freeze_allows_auth_read_but_blocks_owner_mutation(db):
+def test_source_freeze_allows_auth_read_but_blocks_owner_mutation(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, _ = db
     schema = "doc_source_" + uuid.uuid4().hex
     uid, pid = uuid.uuid4(), uuid.uuid4()

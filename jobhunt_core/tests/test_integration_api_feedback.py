@@ -13,7 +13,7 @@ from jobhunt_core.tests.test_integration_api import db  # noqa: F401
 pytestmark = pytest.mark.skipif(not os.getenv("CORE_ADMIN_DATABASE_URL"), reason="requires isolated PostgreSQL")
 
 
-def seed(db, scopes=("applications:write", "matches:read")):
+def seed(db, scopes=("applications:write", "matches:read")):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, vacs, _ = api._seed_matches(factory, created)
     _, _, token = api._issue(factory, created, "tenant-match", list(scopes))
@@ -27,7 +27,7 @@ def rows(factory, statement, **params):
     return asyncio.run(run())
 
 
-def test_feedback_roundtrip_dismiss_clear_and_idempotent_event(db):
+def test_feedback_roundtrip_dismiss_clear_and_idempotent_event(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, token = seed(db)
     path = f"/v1/profiles/{pid}/vacancies/{vid}/feedback"
     before = rows(factory, "SELECT current_eval_id FROM profile_vacancy_state WHERE profile_id=:p AND vacancy_id=:v", p=pid, v=vid)[0]
@@ -45,7 +45,7 @@ def test_feedback_roundtrip_dismiss_clear_and_idempotent_event(db):
     assert state["feedback"] is None and state["dismissed_at"] is None
 
 
-def test_feedback_scopes_and_ownership_fail_before_writing(db):
+def test_feedback_scopes_and_ownership_fail_before_writing(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, token = seed(db, scopes=("matches:read",))
     path = f"/v1/profiles/{pid}/vacancies/{vid}/feedback"
     args = dict(method="PUT", json_body={"feedback": "thumbs_up"})
@@ -55,7 +55,7 @@ def test_feedback_scopes_and_ownership_fail_before_writing(db):
     assert rows(factory, "SELECT id FROM profile_vacancy_events WHERE profile_id=:p", p=pid) == []
 
 
-def test_implicit_append_is_idempotent_and_does_not_overwrite_explicit(db):
+def test_implicit_append_is_idempotent_and_does_not_overwrite_explicit(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, token = seed(db)
     base = f"/v1/profiles/{pid}/vacancies/{vid}"
     assert api._api(factory, base + "/feedback", token=token, method="PUT", json_body={"feedback": "thumbs_up"}).status_code == 200
@@ -66,7 +66,7 @@ def test_implicit_append_is_idempotent_and_does_not_overwrite_explicit(db):
     assert rows(factory, "SELECT feedback FROM profile_vacancy_state WHERE profile_id=:p AND vacancy_id=:v", p=pid, v=vid)[0]["feedback"] == "thumbs_up"
 
 
-def test_feedback_absent_vacancy_and_invalid_values_are_not_success(db):
+def test_feedback_absent_vacancy_and_invalid_values_are_not_success(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, token = seed(db)
     path = f"/v1/profiles/{pid}/vacancies/{uuid.uuid4()}/feedback"
     assert api._api(factory, path, token=token, method="PUT", json_body={"feedback": "dismissed"}).status_code == 404
@@ -75,7 +75,7 @@ def test_feedback_absent_vacancy_and_invalid_values_are_not_success(db):
         assert api._api(factory, path, token=token, method="PUT", json_body=body).status_code == 400
 
 
-def test_feedback_conflicting_replay_does_not_change_state(db):
+def test_feedback_conflicting_replay_does_not_change_state(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, token = seed(db)
     path = f"/v1/profiles/{pid}/vacancies/{vid}/feedback"
     args = dict(token=token, method="PUT", headers={"Idempotency-Key": "same-operation"})
@@ -85,7 +85,7 @@ def test_feedback_conflicting_replay_does_not_change_state(db):
     assert len(rows(factory, "SELECT id FROM profile_vacancy_events WHERE profile_id=:p", p=pid)) == 1
 
 
-def test_archived_feedback_can_be_cleared_without_reopening_corpus(db):
+def test_archived_feedback_can_be_cleared_without_reopening_corpus(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, token = seed(db)
     path = f"/v1/profiles/{pid}/vacancies/{vid}/feedback"
     assert api._api(factory, path, token=token, method="PUT", json_body={"feedback": "dismissed"}).status_code == 200
@@ -101,7 +101,7 @@ def test_archived_feedback_can_be_cleared_without_reopening_corpus(db):
     assert api._api(factory, path, token=token, method="PUT", json_body={"feedback": "thumbs_up"}).status_code == 404
 
 
-def test_feedback_events_are_erased_with_profile_and_replay_stays_closed(db):
+def test_feedback_events_are_erased_with_profile_and_replay_stays_closed(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, token = seed(db, scopes=("applications:write", "profiles:write"))
     base = f"/v1/profiles/{pid}/vacancies/{vid}"
     args = dict(token=token, method="PUT", json_body={"feedback": "thumbs_down"}, headers={"Idempotency-Key": "before-erasure"})
@@ -114,14 +114,14 @@ def test_feedback_events_are_erased_with_profile_and_replay_stays_closed(db):
 
 
 @pytest.mark.parametrize("duration", [-1, True, "500", 2**63])
-def test_invalid_implicit_duration_never_reaches_events(db, duration):
+def test_invalid_implicit_duration_never_reaches_events(db, duration):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, token = seed(db)
     response = api._api(factory, f"/v1/profiles/{pid}/vacancies/{vid}/implicit", token=token, method="POST", json_body={"action": "view_time", "duration_ms": duration})
     assert response.status_code == 400
     assert rows(factory, "SELECT id FROM profile_vacancy_events WHERE profile_id=:p", p=pid) == []
 
 
-def test_positive_feedback_listing_survives_archive_and_missing_evaluation(db):
+def test_positive_feedback_listing_survives_archive_and_missing_evaluation(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, pid, vid, token = seed(db)
     path = f"/v1/profiles/{pid}/vacancies/{vid}/feedback"
     assert api._api(factory, path, token=token, method="PUT", json_body={"feedback": "thumbs_up"}).status_code == 200

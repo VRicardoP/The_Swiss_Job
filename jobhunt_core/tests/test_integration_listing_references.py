@@ -13,7 +13,7 @@ from jobhunt_core.tests.test_integration_api import db  # noqa: F401
 pytestmark = pytest.mark.skipif(not os.getenv("CORE_ADMIN_DATABASE_URL"), reason="requires PostgreSQL")
 
 
-def test_resolve_listing_reference_and_ambiguity(db):
+def test_resolve_listing_reference_and_ambiguity(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     _, vacs, _ = api._seed_matches(factory, created)
     _, _, token = api._issue(factory, created, "tenant-match", ["vacancies:read"])
@@ -56,7 +56,7 @@ def test_resolve_listing_reference_and_ambiguity(db):
 
 
 @pytest.mark.parametrize("field", ["external_id", "source"])
-def test_listing_reference_rejects_unstorable_query(db, field):
+def test_listing_reference_rejects_unstorable_query(db, field):  # noqa: F811  (la fixture, no una redefinición)
     from urllib.parse import urlencode
     factory, created = db
     _, _, token = api._issue(factory, created, "reference-validation", ["vacancies:read"])

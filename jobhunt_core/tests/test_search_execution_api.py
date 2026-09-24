@@ -6,11 +6,11 @@ import uuid
 
 from jobhunt_core import search_execution
 from jobhunt_core.tests.test_integration_api_saved_searches import (
-    db, pytestmark, _seed_profile, _post, _rows, tia,
+    db, pytestmark, _seed_profile, _post, _rows, tia,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 )
 
 
-def test_configured_search_invalid_filter_is_400_without_partial_update(db):
+def test_configured_search_invalid_filter_is_400_without_partial_update(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     token, _, pid = _seed_profile(factory, made)
     created = _post(factory, token, {"profile_id": str(pid), "name": "search", "filters": {"q": "Python"}})
@@ -33,7 +33,7 @@ def test_configured_search_invalid_filter_is_400_without_partial_update(db):
     assert _rows(factory, "SELECT to_jsonb(s) FROM saved_searches s WHERE id=:id", id=sid) == before
 
 
-def test_create_execution_is_atomic_and_idempotent_with_detail_etag(db):
+def test_create_execution_is_atomic_and_idempotent_with_detail_etag(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     token, _, pid = _seed_profile(factory, made)
     body = {"profile_id": str(pid), "name": "new", "filters": {"q": "Python"},
@@ -55,7 +55,7 @@ def test_create_execution_is_atomic_and_idempotent_with_detail_etag(db):
     assert _rows(factory, "SELECT count(*) FROM saved_search_execution") == [(1,)]
 
 
-def test_manual_run_requires_authority_owner_delivery_and_queue(db, monkeypatch):
+def test_manual_run_requires_authority_owner_delivery_and_queue(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     from unittest.mock import Mock
     from jobhunt_core.config import settings
     from jobhunt_core.celery_app import celery_app

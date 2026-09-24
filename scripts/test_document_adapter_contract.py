@@ -5,6 +5,7 @@ SwissJob/backend at /bff and ReactPortfolio/backend at /portfolio, read-only.
 No production routing or credentials. Clients run in isolated Python processes;
 neither BFF imports jobhunt_core. Generation, PDF and cutover are NOT certified.
 """
+
 import os
 import socket
 import subprocess
@@ -16,10 +17,10 @@ from pathlib import Path
 import pytest
 import uvicorn
 
-from jobhunt_core.tests.test_integration_api_saved_searches import db, _seed_profile
+from jobhunt_core.tests.test_integration_api_saved_searches import db, _seed_profile  # noqa: F401  (fixture de pytest: se importa para que la resuelva por nombre)
 
 
-_CLIENT = r'''
+_CLIENT = r"""
 import asyncio, os, sys, uuid
 # Supplement missing BFF-only dependencies from an existing venv, no installs.
 if os.environ.get("DOCUMENT_TEST_EXTRA_PACKAGES"):
@@ -109,11 +110,10 @@ async def go():
 
 asyncio.run(go())
 print("create/replay/new-generation/pagination/ETag-delete/ownership: passed")
-'''
+"""
 
 
-
-_JOURNAL_CLIENT = r'''
+_JOURNAL_CLIENT = r"""
 import asyncio, os, sys, uuid
 sys.path.append(os.environ["DOCUMENT_TEST_EXTRA_PACKAGES"])
 from sqlalchemy import select, text
@@ -188,11 +188,10 @@ async def go():
 
 asyncio.run(go())
 print("journal phase passed:", os.environ["DOCUMENT_JOURNAL_PHASE"])
-'''
+"""
 
 
-
-_WORKFLOW_CLIENT = r'''
+_WORKFLOW_CLIENT = r"""
 import asyncio, os, sys, uuid
 from types import SimpleNamespace
 sys.path.append(os.environ["DOCUMENT_TEST_EXTRA_PACKAGES"])
@@ -311,21 +310,37 @@ async def run():
     finally:
         await engine.dispose()
 asyncio.run(run())
-'''
+"""
 
-@pytest.mark.parametrize("client_name,root", [("swissjob_export", "/bff"), ("swissjob", "/bff"), ("portfolio", "/portfolio"), ("portfolio_delivery", "/portfolio"), ("portfolio_workflow", "/portfolio")])
-def test_document_adapter_over_http(db, client_name, root):
+
+@pytest.mark.parametrize(
+    "client_name,root",
+    [
+        ("swissjob_export", "/bff"),
+        ("swissjob", "/bff"),
+        ("portfolio", "/portfolio"),
+        ("portfolio_delivery", "/portfolio"),
+        ("portfolio_workflow", "/portfolio"),
+    ],
+)
+def test_document_adapter_over_http(db, client_name, root):  # noqa: F811  (la fixture, no una redefinición)
     assert os.path.isfile(root + "/config.py"), "mount the BFF source read-only"
     from sqlalchemy.engine import make_url
     from jobhunt_core.config import settings
     from jobhunt_core.tests.conftest import _suite
+
     # A forgotten -p must fail BEFORE creating even synthetic data in dev.
-    assert _suite.get("dbname") and _suite["dbname"] == make_url(settings.CORE_DATABASE_URL).database, (
-        "requires the disposable-database plugin: -p jobhunt_core.tests.conftest"
-    )
+    assert (
+        _suite.get("dbname")
+        and _suite["dbname"] == make_url(settings.CORE_DATABASE_URL).database
+    ), "requires the disposable-database plugin: -p jobhunt_core.tests.conftest"
     factory, created = db
-    token, _, pid = _seed_profile(factory, created, ["documents:read", "documents:write"])
-    other_token, _, _ = _seed_profile(factory, created, ["documents:read", "documents:write"])
+    token, _, pid = _seed_profile(
+        factory, created, ["documents:read", "documents:write"]
+    )
+    other_token, _, _ = _seed_profile(
+        factory, created, ["documents:read", "documents:write"]
+    )
     from jobhunt_core.api import deps
     from jobhunt_core.api.main import app
 
@@ -336,35 +351,63 @@ def test_document_adapter_over_http(db, client_name, root):
     app.dependency_overrides[deps.get_session] = session
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
-    server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error", access_log=False))
-    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    server = uvicorn.Server(
+        uvicorn.Config(app, lifespan="off", log_level="error", access_log=False)
+    )
+    thread = threading.Thread(
+        target=server.run, kwargs={"sockets": [sock]}, daemon=True
+    )
     try:
         thread.start()
         deadline = time.monotonic() + 10
         while not server.started and thread.is_alive() and time.monotonic() < deadline:
             time.sleep(0.01)
         assert server.started, "test HTTP server did not start"
-        env = {**os.environ, "PYTHONPATH": root, "DOCUMENT_TEST_CLIENT": client_name,
-               "DOCUMENT_TEST_PROFILE": str(pid), "DOCUMENT_TEST_OTHER_TOKEN": other_token,
-               "CORE_API_BASE_URL": f"http://127.0.0.1:{sock.getsockname()[1]}/v1",
-               "CORE_CONSUMER_KEY": token, "REDIS_URL": "",
-               "ADMIN_EMAIL": "adapter-test@example.com", "ADMIN_PASSWORD": "synthetic-only",
-               "DATABASE_URL": "postgresql+asyncpg://test:test@127.0.0.1:1/unused",
-               "DATABASE_URL_ASYNC": "postgresql+asyncpg://test:test@127.0.0.1:1/unused"}
+        env = {
+            **os.environ,
+            "PYTHONPATH": root,
+            "DOCUMENT_TEST_CLIENT": client_name,
+            "DOCUMENT_TEST_PROFILE": str(pid),
+            "DOCUMENT_TEST_OTHER_TOKEN": other_token,
+            "CORE_API_BASE_URL": f"http://127.0.0.1:{sock.getsockname()[1]}/v1",
+            "CORE_CONSUMER_KEY": token,
+            "REDIS_URL": "",
+            "ADMIN_EMAIL": "adapter-test@example.com",
+            "ADMIN_PASSWORD": "synthetic-only",
+            "DATABASE_URL": "postgresql+asyncpg://test:test@127.0.0.1:1/unused",
+            "DATABASE_URL_ASYNC": "postgresql+asyncpg://test:test@127.0.0.1:1/unused",
+        }
         # Never load either project's private .env in this synthetic test.
-        journal_url = make_url(_suite["admin_url"]).set(
-            drivername="postgresql+asyncpg", database=_suite["dbname"],
-        ).render_as_string(hide_password=False)
+        journal_url = (
+            make_url(_suite["admin_url"])
+            .set(
+                drivername="postgresql+asyncpg",
+                database=_suite["dbname"],
+            )
+            .render_as_string(hide_password=False)
+        )
         schema = "document_delivery_" + __import__("uuid").uuid4().hex
-        phases = ("prepare", "resume", "verify") if client_name == "portfolio_delivery" else ("client",)
-        env.update(DOCUMENT_JOURNAL_DSN=journal_url, DOCUMENT_JOURNAL_DATABASE=_suite["dbname"],
-                   DOCUMENT_JOURNAL_SCHEMA=schema, DOCUMENT_JOURNAL_OPERATION=str(__import__("uuid").uuid4()),
-                   DOCUMENT_JOURNAL_APPLICATION=str(__import__("uuid").uuid4()))
+        phases = (
+            ("prepare", "resume", "verify")
+            if client_name == "portfolio_delivery"
+            else ("client",)
+        )
+        env.update(
+            DOCUMENT_JOURNAL_DSN=journal_url,
+            DOCUMENT_JOURNAL_DATABASE=_suite["dbname"],
+            DOCUMENT_JOURNAL_SCHEMA=schema,
+            DOCUMENT_JOURNAL_OPERATION=str(__import__("uuid").uuid4()),
+            DOCUMENT_JOURNAL_APPLICATION=str(__import__("uuid").uuid4()),
+        )
         try:
             for phase in phases:
                 env["DOCUMENT_JOURNAL_PHASE"] = phase
                 if client_name == "swissjob_export":
-                    code = Path(__file__).with_name("swiss_document_export_contract_client.py").read_text()
+                    code = (
+                        Path(__file__)
+                        .with_name("swiss_document_export_contract_client.py")
+                        .read_text()
+                    )
                 elif client_name == "portfolio_workflow":
                     code = _WORKFLOW_CLIENT
                 elif phase != "client":
@@ -373,23 +416,39 @@ def test_document_adapter_over_http(db, client_name, root):
                     code = _CLIENT
                 result = subprocess.run(
                     [sys.executable, "-c", code],
-                    cwd="/tmp", env=env, text=True, capture_output=True, timeout=60,
+                    cwd="/tmp",
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    timeout=60,
                 )
-                diagnostic = (result.stdout + result.stderr).replace(token, "<redacted>").replace(
-                    other_token, "<redacted>").replace(journal_url, "<test-database>")
+                diagnostic = (
+                    (result.stdout + result.stderr)
+                    .replace(token, "<redacted>")
+                    .replace(other_token, "<redacted>")
+                    .replace(journal_url, "<test-database>")
+                )
                 assert result.returncode == 0, diagnostic
         finally:
-            if client_name in ("swissjob_export", "portfolio_delivery", "portfolio_workflow"):
+            if client_name in (
+                "swissjob_export",
+                "portfolio_delivery",
+                "portfolio_workflow",
+            ):
                 import asyncio
                 import sqlalchemy as sa
                 from sqlalchemy.ext.asyncio import create_async_engine
+
                 async def cleanup_journal():
                     engine = create_async_engine(journal_url)
                     try:
                         async with engine.begin() as c:
-                            await c.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+                            await c.execute(
+                                sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+                            )
                     finally:
                         await engine.dispose()
+
                 asyncio.run(cleanup_journal())
     finally:
         server.should_exit = True

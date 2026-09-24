@@ -6,10 +6,10 @@ import pytest
 import sqlalchemy as sa
 
 from jobhunt_core.tests.test_integration_api_documents import _path, _post, _seed
-from jobhunt_core.tests.test_integration_api_saved_searches import db, _rows, pytestmark
+from jobhunt_core.tests.test_integration_api_saved_searches import db, _rows, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
-def test_documents_offer_purge_keeps_content_and_profile_delete_fails_closed(db):
+def test_documents_offer_purge_keeps_content_and_profile_delete_fails_closed(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed(f, made)
     vid, oid = uuid.uuid4(), uuid.uuid4()
@@ -45,7 +45,7 @@ def test_documents_offer_purge_keeps_content_and_profile_delete_fails_closed(db)
         asyncio.run(execute("DELETE FROM vacancies WHERE id=:v", v=vid))
 
 
-def test_documents_missing_offer_does_not_write(db):
+def test_documents_missing_offer_does_not_write(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed(f, made)
     response = _post(f, token, pid, {
@@ -60,7 +60,7 @@ def test_documents_missing_offer_does_not_write(db):
     {"content": "é" * 500001},
     {"context": {str(i): 1e-200 for i in range(400)}},
 ])
-def test_documents_storage_byte_limits_return_400(db, fields):
+def test_documents_storage_byte_limits_return_400(db, fields):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed(f, made)
     response = _post(f, token, pid, {"doc_type": "cv", "content": "cv", **fields})
@@ -68,7 +68,7 @@ def test_documents_storage_byte_limits_return_400(db, fields):
     assert _rows(f, "SELECT id FROM generated_documents WHERE profile_id=:p", p=pid) == []
 
 
-def test_documents_concurrent_same_key_creates_once(db):
+def test_documents_concurrent_same_key_creates_once(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed(f, made)
 

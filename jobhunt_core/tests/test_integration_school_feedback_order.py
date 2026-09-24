@@ -7,8 +7,8 @@ import pytest
 import sqlalchemy as sa
 
 from jobhunt_core.tests import test_integration_api as api
-from jobhunt_core.tests.test_integration_api import db, pytestmark
-from jobhunt_core.tests.test_integration_school_jobs import school_db, _observation
+from jobhunt_core.tests.test_integration_api import db, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
+from jobhunt_core.tests.test_integration_school_jobs import school_db, _observation  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_integration_api_schools import _create, _request, SCOPES
 
 
@@ -19,7 +19,7 @@ from jobhunt_core.tests.test_integration_api_schools import _create, _request, S
     (None, "thumbs_down", False, True, False),
 ])
 def test_latest_intent_wins_when_observation_links_after_both_edits(
-    school_db, school_value, canonical_value, school_first, visible, saved,
+    school_db, school_value, canonical_value, school_first, visible, saved,  # noqa: F811  (la fixture, no una redefinición)
 ):
     f, made = school_db
     pid, vacs, _ = api._seed_matches(f, made)

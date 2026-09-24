@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 from jobhunt_core import embeddings, matching, profiles
 from jobhunt_core.shadow import projector
-from jobhunt_core.tests.test_integration_api import db, _api, _issue, _seed_matches
+from jobhunt_core.tests.test_integration_api import db, _api, _issue, _seed_matches  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
 def _snapshot(version=1, *, title="Current profile", active=True):
@@ -48,7 +48,7 @@ def _put(factory, pid, token, body):
     )
 
 
-def test_snapshot_out_of_order_retry_and_conflicting_version(db):
+def test_snapshot_out_of_order_retry_and_conflicting_version(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, _, token, _ = _seed(factory, created)
     assert _put(factory, pid, token, _snapshot(2)).status_code == 200
@@ -59,7 +59,7 @@ def test_snapshot_out_of_order_retry_and_conflicting_version(db):
     assert current["current_revision"]["content"]["title"] == "Current profile"
 
 
-def test_empty_snapshot_withdraws_feed_without_erasing_feedback(db):
+def test_empty_snapshot_withdraws_feed_without_erasing_feedback(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, vacancies, token, read_token = _seed(factory, created)
     vid = next(iter(vacancies.values()))
@@ -102,7 +102,7 @@ def test_empty_snapshot_withdraws_feed_without_erasing_feedback(db):
 @pytest.mark.parametrize(
     "change", ["missing", "unknown", "bool_version", "negative_version", "salary"]
 )
-def test_snapshot_rejects_incomplete_or_invalid_input(db, change):
+def test_snapshot_rejects_incomplete_or_invalid_input(db, change):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, _, token, _ = _seed(factory, created)
     body = _snapshot()
@@ -119,7 +119,7 @@ def test_snapshot_rejects_incomplete_or_invalid_input(db, change):
     assert _put(factory, pid, token, body).status_code in (400, 422)
 
 
-def test_snapshot_auth_ownership_and_old_put_authority(db):
+def test_snapshot_auth_ownership_and_old_put_authority(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, _, token, read_token = _seed(factory, created)
     _, _, foreign = _issue(factory, created, "foreign-snapshot", ["profiles:write"])
@@ -137,7 +137,7 @@ def test_snapshot_auth_ownership_and_old_put_authority(db):
     assert r.status_code == 409, r.text
 
 
-def test_cdc_cannot_overwrite_or_erase_profile_after_handover(db):
+def test_cdc_cannot_overwrite_or_erase_profile_after_handover(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     cid, _, token = _issue(
         factory, created, projector.SHADOW_CONSUMER, ["profiles:write"]
@@ -183,7 +183,7 @@ def test_cdc_cannot_overwrite_or_erase_profile_after_handover(db):
     asyncio.run(check())
 
 
-def test_inactive_snapshot_blocks_evaluation_and_reactivation_restores_signal(db):
+def test_inactive_snapshot_blocks_evaluation_and_reactivation_restores_signal(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, _, token, _ = _seed(factory, created)
     assert _put(factory, pid, token, _snapshot(active=False)).status_code == 200

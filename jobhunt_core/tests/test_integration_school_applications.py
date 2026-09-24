@@ -5,14 +5,14 @@ import uuid
 
 from jobhunt_core.tests.test_integration_api_schools import _create, _request, SCOPES
 from jobhunt_core.tests.test_integration_api_saved_searches import (
-    db,
+    db,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
     _seed_profile,
     _rows,
-    pytestmark,
+    pytestmark,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 )
 
 
-def test_school_draft_state_etag_replay_and_erase(db):
+def test_school_draft_state_etag_replay_and_erase(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, tenant, pid = _seed_profile(f, made, SCOPES)
     other, _, opid = _seed_profile(f, made, SCOPES)
@@ -107,7 +107,7 @@ def test_school_draft_state_etag_replay_and_erase(db):
     assert _request(f, token, "/v1/schools/" + monitor["id"]).status_code == 200
 
 
-def test_school_application_rejects_foreign_monitor_and_job(db):
+def test_school_application_rejects_foreign_monitor_and_job(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed_profile(f, made, SCOPES)
     other, _, _ = _seed_profile(f, made, SCOPES)

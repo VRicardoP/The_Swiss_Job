@@ -8,10 +8,10 @@ import sqlalchemy as sa
 
 from jobhunt_core import runs
 from jobhunt_core.harvest.runner import _still_claim_owner
-from jobhunt_core.tests.test_integration_runs import db, _seed_scopes, pytestmark
+from jobhunt_core.tests.test_integration_runs import db, _seed_scopes, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
-def test_different_run_keys_share_scope_exclusion(db):
+def test_different_run_keys_share_scope_exclusion(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     (sid,) = _seed_scopes(factory, created, n=1)
 
@@ -36,7 +36,7 @@ def test_different_run_keys_share_scope_exclusion(db):
     asyncio.run(check())
 
 
-def test_new_run_revokes_expired_claim_from_old_run(db):
+def test_new_run_revokes_expired_claim_from_old_run(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     (sid,) = _seed_scopes(factory, created, n=1)
 
@@ -67,7 +67,7 @@ def test_new_run_revokes_expired_claim_from_old_run(db):
     asyncio.run(check())
 
 
-def test_manual_fetch_excludes_another_run_before_external_io(db, monkeypatch):
+def test_manual_fetch_excludes_another_run_before_external_io(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     from contextlib import asynccontextmanager
     from jobhunt_core.harvest.provider import BaseProvider
     from jobhunt_core.harvest.types import FetchResult
@@ -124,7 +124,7 @@ def test_manual_fetch_excludes_another_run_before_external_io(db, monkeypatch):
     asyncio.run(check())
 
 
-def test_completed_retry_does_not_revoke_another_run(db):
+def test_completed_retry_does_not_revoke_another_run(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     (sid,) = _seed_scopes(factory, created, n=1)
 
@@ -154,7 +154,7 @@ def test_completed_retry_does_not_revoke_another_run(db):
     asyncio.run(check())
 
 
-def test_simultaneous_different_runs_have_one_winner(db):
+def test_simultaneous_different_runs_have_one_winner(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     (sid,) = _seed_scopes(factory, created, n=1)
 
@@ -189,7 +189,7 @@ def test_simultaneous_different_runs_have_one_winner(db):
 
 
 @pytest.mark.parametrize("config_error", [False, True])
-def test_standalone_failure_releases_claim(db, monkeypatch, config_error):
+def test_standalone_failure_releases_claim(db, monkeypatch, config_error):  # noqa: F811  (la fixture, no una redefinición)
     from contextlib import asynccontextmanager
     from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError
     from jobhunt_core.tasks import harvest
@@ -252,7 +252,7 @@ def test_standalone_failure_releases_claim(db, monkeypatch, config_error):
     asyncio.run(check())
 
 
-def test_removed_scope_cannot_gain_claim(db):
+def test_removed_scope_cannot_gain_claim(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
 
     async def check():

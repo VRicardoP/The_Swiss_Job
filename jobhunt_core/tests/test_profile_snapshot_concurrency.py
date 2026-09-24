@@ -12,7 +12,7 @@ from jobhunt_core.api.v1_profile_snapshot import (
     put_source_snapshot,
 )
 from jobhunt_core.shadow import projector
-from jobhunt_core.tests.test_integration_api import db
+from jobhunt_core.tests.test_integration_api import db  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_profile_snapshot_delivery import _seed, _put, _snapshot
 from jobhunt_core.tests.test_review_closure_20260907 import _pending
 
@@ -37,7 +37,7 @@ async def _deliver(factory, pid, body):
         )
 
 
-def test_inactive_during_inference_fences_unchanged_revision(db, monkeypatch):
+def test_inactive_during_inference_fences_unchanged_revision(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, _, _, _ = _seed(factory, created)
     original = matching.compute_policy_feed
@@ -64,7 +64,7 @@ def test_inactive_during_inference_fences_unchanged_revision(db, monkeypatch):
     asyncio.run(check())
 
 
-def test_inactive_not_in_recovery_and_reactivation_rearms_same_revision(db):
+def test_inactive_not_in_recovery_and_reactivation_rearms_same_revision(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, _, _, _ = _seed(factory, created)
 
@@ -79,7 +79,7 @@ def test_inactive_not_in_recovery_and_reactivation_rearms_same_revision(db):
     asyncio.run(check())
 
 
-def test_snapshot_failure_rolls_back_revision_and_authority_together(db, monkeypatch):
+def test_snapshot_failure_rolls_back_revision_and_authority_together(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, _, _, _ = _seed(factory, created)
     original = profiles.save_profile_revision
@@ -108,7 +108,7 @@ def test_snapshot_failure_rolls_back_revision_and_authority_together(db, monkeyp
     asyncio.run(check())
 
 
-def test_source_snapshot_preserves_core_only_target_roles(db):
+def test_source_snapshot_preserves_core_only_target_roles(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, _, token, _ = _seed(factory, created)
 

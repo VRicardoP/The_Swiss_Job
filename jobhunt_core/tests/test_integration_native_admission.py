@@ -12,7 +12,7 @@ from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError
 from jobhunt_core.harvest.runner import run_scope
 from jobhunt_core.harvest.types import FetchResult, RawListing
 from jobhunt_core.tests.test_integration_harvest import (
-    db, pytestmark, _seed_scopes, _state, CollectSink, FailingSink,
+    db, pytestmark, _seed_scopes, _state, CollectSink, FailingSink,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 )
 
 WINDOW = "admission_window_days"
@@ -44,7 +44,7 @@ def configure(factory, sid, days):
     asyncio.run(run())
 
 
-def test_window_applies_before_sink_and_counts_are_persisted(db):
+def test_window_applies_before_sink_and_counts_are_persisted(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     sid, = _seed_scopes(factory, made, 1)
     configure(factory, sid, 7)
@@ -63,7 +63,7 @@ def test_window_applies_before_sink_and_counts_are_persisted(db):
 
 
 @pytest.mark.parametrize("days", [True, 0, -1, "7", None, 10**30])
-def test_invalid_window_fails_before_fetch(db, days):
+def test_invalid_window_fails_before_fetch(db, days):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     sid, = _seed_scopes(factory, made, 1)
     configure(factory, sid, days)
@@ -77,7 +77,7 @@ def test_invalid_window_fails_before_fetch(db, days):
     assert p.calls == 0 and _state(factory, sid) is None
 
 
-def test_absent_dates_refresh_known_items_but_never_report_healthy_empty(db):
+def test_absent_dates_refresh_known_items_but_never_report_healthy_empty(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     sid, = _seed_scopes(factory, made, 1)
     configure(factory, sid, 7)
@@ -106,7 +106,7 @@ def test_window_is_semantic_and_omission_keeps_old_fingerprint():
     assert p.params_fingerprint({WINDOW: 7}) != p.params_fingerprint({})
 
 
-def test_legacy_known_url_is_exact_and_source_scoped(db):
+def test_legacy_known_url_is_exact_and_source_scoped(db):  # noqa: F811  (la fixture, no una redefinición)
     import uuid
     factory, made = db
     sid, = _seed_scopes(factory, made, 1)
@@ -137,7 +137,7 @@ def test_legacy_known_url_is_exact_and_source_scoped(db):
     asyncio.run(run())
 
 
-def test_window_change_during_fetch_discards_old_result(db):
+def test_window_change_during_fetch_discards_old_result(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     sid, = _seed_scopes(factory, made, 1)
     configure(factory, sid, 7)
@@ -159,7 +159,7 @@ def test_window_change_during_fetch_discards_old_result(db):
     assert _state(factory, sid) is None
 
 
-def test_admission_sink_failure_does_not_commit_counters(db):
+def test_admission_sink_failure_does_not_commit_counters(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     sid, = _seed_scopes(factory, made, 1)
     configure(factory, sid, 7)
@@ -174,7 +174,7 @@ def test_admission_sink_failure_does_not_commit_counters(db):
     assert state.consecutive_failures == 1
 
 
-def test_admission_empty_feed_stays_healthy_and_omission_keeps_full_feed(db):
+def test_admission_empty_feed_stays_healthy_and_omission_keeps_full_feed(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     with_window, without_window = _seed_scopes(factory, made, 2)
     configure(factory, with_window, 7)

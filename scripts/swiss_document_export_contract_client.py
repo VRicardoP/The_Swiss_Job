@@ -26,7 +26,9 @@ assert make_url(url).database == os.environ["DOCUMENT_JOURNAL_DATABASE"]
 assert make_url(url).database.startswith("jobhunt_suite_")
 schema = os.environ["DOCUMENT_JOURNAL_SCHEMA"]
 assert schema.startswith("document_delivery_") and schema.replace("_", "").isalnum()
-engine = create_async_engine(url, connect_args={"server_settings": {"search_path": schema}})
+engine = create_async_engine(
+    url, connect_args={"server_settings": {"search_path": schema}}
+)
 sessions = async_sessionmaker(engine, expire_on_commit=False)
 pid = uuid.UUID(os.environ["DOCUMENT_TEST_PROFILE"])
 uid, op = uuid.uuid4(), uuid.uuid4()
@@ -36,37 +38,84 @@ async def run():
     try:
         async with engine.begin() as c:
             await c.execute(text(f'CREATE SCHEMA "{schema}"'))
-            await c.run_sync(lambda c: Base.metadata.create_all(c, tables=[
-                User.__table__, GeneratedDocument.__table__, DocumentDelivery.__table__,
-                JobhuntProfileMap.__table__, JobhuntRouting.__table__,
-            ]))
+            await c.run_sync(
+                lambda c: Base.metadata.create_all(
+                    c,
+                    tables=[
+                        User.__table__,
+                        GeneratedDocument.__table__,
+                        DocumentDelivery.__table__,
+                        JobhuntProfileMap.__table__,
+                        JobhuntRouting.__table__,
+                    ],
+                )
+            )
         async with sessions() as db:
-            db.add(User(id=uid, email="synthetic-export@example.invalid", hashed_password="synthetic"))
+            db.add(
+                User(
+                    id=uid,
+                    email="synthetic-export@example.invalid",
+                    hashed_password="synthetic",
+                )
+            )
             await db.flush()
             db.add(JobhuntProfileMap(user_id=uid, core_profile_id=pid))
-            db.add(JobhuntRouting(consumer_id=CONSUMER_SWISSJOB, capability="documents",
-                                  profile_id=uid, mode="core_primary"))
-            db.add(GeneratedDocument(user_id=uid, job_hash="a" * 32, doc_type="cv",
-                                     content="Synthetic retained output", language="en"))
-            db.add(DocumentDelivery(operation_id=op, user_id=uid, profile_id=pid,
-                request_hash="a" * 64, payload_hash="b" * 64,
-                payload={"content": "Synthetic prepared output"}))
+            db.add(
+                JobhuntRouting(
+                    consumer_id=CONSUMER_SWISSJOB,
+                    capability="documents",
+                    profile_id=uid,
+                    mode="core_primary",
+                )
+            )
+            db.add(
+                GeneratedDocument(
+                    user_id=uid,
+                    job_hash="a" * 32,
+                    doc_type="cv",
+                    content="Synthetic retained output",
+                    language="en",
+                )
+            )
+            db.add(
+                DocumentDelivery(
+                    operation_id=op,
+                    user_id=uid,
+                    profile_id=pid,
+                    request_hash="a" * 64,
+                    payload_hash="b" * 64,
+                    payload={"content": "Synthetic prepared output"},
+                )
+            )
             await db.commit()
         client = CoreDocuments(profile_id=pid, user_id=uid)
         expected = set()
         for _ in range(21):
-            doc = await client.create(uid, "b" * 32, "cv", "Synthetic remote output", "fr",
-                                      operation_id=uuid.uuid4())
+            doc = await client.create(
+                uid,
+                "b" * 32,
+                "cv",
+                "Synthetic remote output",
+                "fr",
+                operation_id=uuid.uuid4(),
+            )
             expected.add(doc.id)
         async with sessions() as db:
             exported = await export_documents(db, uid)
             assert not db.in_transaction()
         assert {d["id"] for d in exported["documents"]} == expected
         assert exported["documents_authority"] == "core"
-        assert all(d["content"] == "Synthetic remote output" for d in exported["documents"])
-        assert exported["retained_local_documents"][0]["content"] == "Synthetic retained output"
+        assert all(
+            d["content"] == "Synthetic remote output" for d in exported["documents"]
+        )
+        assert (
+            exported["retained_local_documents"][0]["content"]
+            == "Synthetic retained output"
+        )
         assert exported["document_deliveries"][0]["operation_id"] == op
-        print("SwissJob export + PostgreSQL + real core HTTP: 21 remote, 1 retained, 1 prepared passed")
+        print(
+            "SwissJob export + PostgreSQL + real core HTTP: 21 remote, 1 retained, 1 prepared passed"
+        )
     finally:
         await engine.dispose()
 

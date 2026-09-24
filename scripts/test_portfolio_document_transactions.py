@@ -9,7 +9,7 @@ import os
 import subprocess
 import sys
 
-from jobhunt_core.tests.test_integration_api_saved_searches import db
+from jobhunt_core.tests.test_integration_api_saved_searches import db  # noqa: F401  (fixture de pytest: se importa para que la resuelva por nombre)
 
 
 _PROBE = r"""
@@ -132,7 +132,7 @@ asyncio.run(run())
 """
 
 
-def test_portfolio_document_transactions_on_postgres(db):
+def test_portfolio_document_transactions_on_postgres(db):  # noqa: F811  (la fixture, no una redefinición)
     from sqlalchemy.engine import make_url
     from jobhunt_core.config import settings
     from jobhunt_core.tests.conftest import _suite

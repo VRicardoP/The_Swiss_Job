@@ -4,6 +4,7 @@ No login/password dump, LLM, scrape, POST, or data output. A short-lived token
 stays in this process. These measurements cover served reads, not write/PDF
 throughput or a capacity certification. Do not extrapolate empty collections.
 """
+
 import asyncio
 from collections import Counter
 from datetime import timedelta, datetime, timezone
@@ -29,25 +30,45 @@ async def main():
         version = await db.scalar(text("SELECT version_num FROM alembic_version"))
     output = {
         "at": datetime.now(timezone.utc).isoformat(),
-        "release": os.environ.get("PORTFOLIO_RELEASE"), "revision": version,
-        "concurrency": 2, "samples_per_endpoint": 12, "measurements": {},
+        "release": os.environ.get("PORTFOLIO_RELEASE"),
+        "revision": version,
+        "concurrency": 2,
+        "samples_per_endpoint": 12,
+        "measurements": {},
     }
-    async with httpx.AsyncClient(timeout=30, headers={"Authorization": "Bearer " + token}) as client:
-        for path in ("/health", "/api/v1/cv-generation/", "/api/v1/applications/", "/api/v1/saved-searches/"):
+    async with httpx.AsyncClient(
+        timeout=30, headers={"Authorization": "Bearer " + token}
+    ) as client:
+        for path in (
+            "/health",
+            "/api/v1/cv-generation/",
+            "/api/v1/applications/",
+            "/api/v1/saved-searches/",
+        ):
             values, statuses, lengths = [], Counter(), set()
+
             async def request():
                 start = time.perf_counter()
                 try:
                     response = await client.get("http://127.0.0.1:8000" + path)
                 except httpx.TimeoutException:
-                    print(json.dumps({"failed_path": path, "reason": "timeout_30s",
-                                      "completed": output}), flush=True)
+                    print(
+                        json.dumps(
+                            {
+                                "failed_path": path,
+                                "reason": "timeout_30s",
+                                "completed": output,
+                            }
+                        ),
+                        flush=True,
+                    )
                     raise RuntimeError(f"read timeout: {path}") from None
                 duration = (time.perf_counter() - start) * 1000
                 data = response.json()
                 if isinstance(data, list):
                     lengths.add(len(data))
                 return duration, response.status_code
+
             cold, status = await request()
             if status != 200:
                 raise RuntimeError(f"preflight failed: {path} status={status}")
@@ -63,13 +84,17 @@ async def main():
             ordered = sorted(values)
             output["measurements"][path] = {
                 "cold_ms": round(cold, 2),
-                "p50_ms": round(ordered[math.ceil(.50 * len(ordered)) - 1], 2),
-                "p95_ms": round(ordered[math.ceil(.95 * len(ordered)) - 1], 2),
+                "p50_ms": round(ordered[math.ceil(0.50 * len(ordered)) - 1], 2),
+                "p95_ms": round(ordered[math.ceil(0.95 * len(ordered)) - 1], 2),
                 "max_ms": round(max(values), 2),
                 "wall_seconds_including_pacing": round(total, 3),
-                "statuses": dict(statuses), "collection_sizes": sorted(lengths),
+                "statuses": dict(statuses),
+                "collection_sizes": sorted(lengths),
             }
-            print(json.dumps({"endpoint": path, **output["measurements"][path]}), flush=True)
+            print(
+                json.dumps({"endpoint": path, **output["measurements"][path]}),
+                flush=True,
+            )
     print(json.dumps(output, sort_keys=True))
 
 

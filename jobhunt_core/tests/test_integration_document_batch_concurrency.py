@@ -4,11 +4,11 @@ import asyncio
 import httpx
 
 from jobhunt_core.tests.test_integration_api_documents import _seed, _path
-from jobhunt_core.tests.test_integration_api_saved_searches import db, _rows, pytestmark
+from jobhunt_core.tests.test_integration_api_saved_searches import db, _rows, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_integration_document_batches import body
 
 
-def test_batch_concurrent_retry_waits_and_gets_same_pair(db, monkeypatch):
+def test_batch_concurrent_retry_waits_and_gets_same_pair(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     from jobhunt_core import documents, outbox
     from jobhunt_core.api import deps
     from jobhunt_core.api.main import app

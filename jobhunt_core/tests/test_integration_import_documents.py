@@ -18,7 +18,7 @@ from jobhunt_core.import_documents import (
     prepare_batch,
     restore_rows,
 )
-from jobhunt_core.tests.test_integration_api_saved_searches import db, _seed_profile
+from jobhunt_core.tests.test_integration_api_saved_searches import db, _seed_profile  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
 def source(origin, owner):
@@ -43,7 +43,7 @@ def source(origin, owner):
 
 
 @pytest.mark.parametrize("origin,core_reference", [("swissjob", False), ("swissjob", True), ("portfolio", False)])
-def test_import_preserves_history_and_replays_after_lost_ack(db, origin, core_reference):
+def test_import_preserves_history_and_replays_after_lost_ack(db, origin, core_reference):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     _, consumer, pid = _seed_profile(factory, created)
     owner = uuid.uuid4() if origin == "swissjob" else 11
@@ -95,7 +95,7 @@ def test_import_preserves_history_and_replays_after_lost_ack(db, origin, core_re
     asyncio.run(run())
 
 
-def test_collision_rolls_back_earlier_rows_and_events(db):
+def test_collision_rolls_back_earlier_rows_and_events(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     _, consumer, pid = _seed_profile(factory, created)
     owner = uuid.uuid4()
@@ -144,7 +144,7 @@ def test_collision_rolls_back_earlier_rows_and_events(db):
     asyncio.run(run())
 
 
-def test_seal_and_cross_consumer_fences(db):
+def test_seal_and_cross_consumer_fences(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     _, consumer, pid = _seed_profile(factory, created)
     owner = uuid.uuid4()
@@ -188,7 +188,7 @@ def test_seal_and_cross_consumer_fences(db):
     asyncio.run(run())
 
 
-def test_reverse_snapshot_includes_new_writes_and_excludes_deleted_history(db):
+def test_reverse_snapshot_includes_new_writes_and_excludes_deleted_history(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     _, consumer, pid = _seed_profile(factory, created)
     owner = 11

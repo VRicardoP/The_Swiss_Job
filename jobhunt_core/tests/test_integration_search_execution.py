@@ -11,7 +11,7 @@ from jobhunt_core import outbox, profiles, saved_searches, search_execution as e
 from jobhunt_core.harvest.providers import legacy_shadow
 from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.harvest.types import RawListing
-from jobhunt_core.tests.test_integration_offer import db, pytestmark, _seed, _sink, _vacancy_state
+from jobhunt_core.tests.test_integration_offer import db, pytestmark, _seed, _sink, _vacancy_state  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
 async def new_search(session, made, *, filters=None, configured=True, enabled=True, name="Search"):
@@ -60,7 +60,7 @@ async def state(session, sid):
     """), {"id": sid})).one()
 
 
-def test_observation_counters_and_outbox_are_idempotent(db):
+def test_observation_counters_and_outbox_are_idempotent(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     corpus(factory, made, "Python developer", "Gardener")
 
@@ -82,7 +82,7 @@ def test_observation_counters_and_outbox_are_idempotent(db):
     asyncio.run(go())
 
 
-def test_old_offers_and_filter_edits_do_not_manufacture_novelty(db):
+def test_old_offers_and_filter_edits_do_not_manufacture_novelty(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     _, listings = corpus(factory, made, "Python developer", "Gardener", "Python old")
     old = _vacancy_state(factory, listings[2].external_id).vac
@@ -101,7 +101,7 @@ def test_old_offers_and_filter_edits_do_not_manufacture_novelty(db):
 
 
 @pytest.mark.parametrize("condition", ["unconfigured", "disabled", "inactive_search", "inactive_profile", "inactive_consumer"])
-def test_no_execution_without_explicit_active_authority(db, condition):
+def test_no_execution_without_explicit_active_authority(db, condition):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     corpus(factory, made, "Python developer")
 
@@ -124,7 +124,7 @@ def test_no_execution_without_explicit_active_authority(db, condition):
     asyncio.run(go())
 
 
-def test_missing_real_destination_does_not_consume_or_mark(db):
+def test_missing_real_destination_does_not_consume_or_mark(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     corpus(factory, made, "Python developer")
 
@@ -139,7 +139,7 @@ def test_missing_real_destination_does_not_consume_or_mark(db):
     asyncio.run(go())
 
 
-def test_outbox_failure_rolls_back_consumption_and_retry_delivers(db, monkeypatch):
+def test_outbox_failure_rolls_back_consumption_and_retry_delivers(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     corpus(factory, made, "Python developer")
     original = outbox.emit
@@ -161,7 +161,7 @@ def test_outbox_failure_rolls_back_consumption_and_retry_delivers(db, monkeypatc
     asyncio.run(go())
 
 
-def test_late_harvest_commit_is_not_lost_by_timestamp(db):
+def test_late_harvest_commit_is_not_lost_by_timestamp(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     scope, _ = corpus(factory, made, "Gardener")
 
@@ -177,7 +177,7 @@ def test_late_harvest_commit_is_not_lost_by_timestamp(db):
     asyncio.run(go())
 
 
-def test_two_executors_serialize_without_duplicate_events(db):
+def test_two_executors_serialize_without_duplicate_events(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     corpus(factory, made, "Python developer")
 
@@ -206,7 +206,7 @@ def test_two_executors_serialize_without_duplicate_events(db):
     asyncio.run(go())
 
 
-def test_schedule_and_manual_run_and_authority_disable(db):
+def test_schedule_and_manual_run_and_authority_disable(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     corpus(factory, made, "Python developer")
 
@@ -229,7 +229,7 @@ def test_schedule_and_manual_run_and_authority_disable(db):
     asyncio.run(go())
 
 
-def test_search_delete_cascades_derived_state(db):
+def test_search_delete_cascades_derived_state(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     corpus(factory, made, "Python developer")
 

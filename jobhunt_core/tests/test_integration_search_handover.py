@@ -7,10 +7,10 @@ import uuid
 import pytest
 import sqlalchemy as sa
 
-from jobhunt_core import saved_searches, search_execution
+from jobhunt_core import saved_searches
 from jobhunt_core.import_swissjob_searches import SearchMigrationError, prepare_plan, apply_plan
 from jobhunt_core.tests.test_integration_search_execution import (
-    db, pytestmark, corpus, new_search, run, state, _vacancy_state,
+    db, pytestmark, corpus, new_search, run, state, _vacancy_state,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 )
 
 
@@ -28,7 +28,7 @@ async def fixture_plan(session, made, pending_ids=()):
     return plan, sid, pid, tenant
 
 
-def test_handover_preserves_public_identity_and_every_value_then_reverts_exactly(db):
+def test_handover_preserves_public_identity_and_every_value_then_reverts_exactly(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     corpus(factory, made, "Python one", "Python two", "Gardener")
 
@@ -52,7 +52,7 @@ def test_handover_preserves_public_identity_and_every_value_then_reverts_exactly
     asyncio.run(go())
 
 
-def test_old_pending_offer_is_not_lost_and_new_activity_blocks_stale_revert(db):
+def test_old_pending_offer_is_not_lost_and_new_activity_blocks_stale_revert(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     _, items = corpus(factory, made, "Python owed", "Python already seen")
     pending = _vacancy_state(factory, items[0].external_id).vac
@@ -75,7 +75,7 @@ def test_old_pending_offer_is_not_lost_and_new_activity_blocks_stale_revert(db):
     asyncio.run(go())
 
 
-def test_changed_target_aborts_without_partial_import(db):
+def test_changed_target_aborts_without_partial_import(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
 
     async def go():
@@ -92,7 +92,7 @@ def test_changed_target_aborts_without_partial_import(db):
     asyncio.run(go())
 
 
-def test_nonmatching_pending_is_rejected_instead_of_silently_consumed(db):
+def test_nonmatching_pending_is_rejected_instead_of_silently_consumed(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     _, items = corpus(factory, made, "Gardener")
     vid = _vacancy_state(factory, items[0].external_id).vac
@@ -106,7 +106,7 @@ def test_nonmatching_pending_is_rejected_instead_of_silently_consumed(db):
     asyncio.run(go())
 
 
-def test_explicit_identity_mapping_preserves_homonymous_searches(db):
+def test_explicit_identity_mapping_preserves_homonymous_searches(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
 
     async def go():

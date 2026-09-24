@@ -5,10 +5,10 @@ import sqlalchemy as sa
 
 from jobhunt_core import matching
 from jobhunt_core.shadow import projector
-from jobhunt_core.tests.test_integration_matching import db, _setup
+from jobhunt_core.tests.test_integration_matching import db, _setup  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
-def test_valid_empty_feed_records_attempt_and_drains_recovery(db):
+def test_valid_empty_feed_records_attempt_and_drains_recovery(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, _, _, _ = _setup(factory, created, ["python developer", "python engineer"])
 

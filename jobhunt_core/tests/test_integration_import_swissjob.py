@@ -60,7 +60,7 @@ def _plan(pid, urls, extra_search=None):
     }
 
 
-def test_migracion_idempotente_y_semantica_de_feedback(db):
+def test_migracion_idempotente_y_semantica_de_feedback(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, polid, vacs = _setup(factory, created, TITULOS)
     urls = _urls(factory, created)
@@ -114,7 +114,7 @@ def test_migracion_idempotente_y_semantica_de_feedback(db):
     assert n == 1
 
 
-def test_estado_existente_jamas_se_pisa(db):
+def test_estado_existente_jamas_se_pisa(db):  # noqa: F811  (la fixture, no una redefinición)
     """ADR-03: un feedback ya presente en el core NO se sobreescribe."""
     factory, created = db
     pid, mid, polid, vacs = _setup(factory, created, TITULOS)
@@ -149,7 +149,7 @@ def test_estado_existente_jamas_se_pisa(db):
         "thumbs_up", None, "nota previa")
 
 
-def test_rollback_restaura_el_estado_exacto(db):
+def test_rollback_restaura_el_estado_exacto(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, polid, vacs = _setup(factory, created, TITULOS)
     urls = _urls(factory, created)
@@ -189,7 +189,7 @@ def test_rollback_restaura_el_estado_exacto(db):
     assert asyncio.run(foto()) == antes  # byte-equivalente al estado previo
 
 
-def test_rollback_exacto_con_dos_entradas_que_convergen(db):
+def test_rollback_exacto_con_dos_entradas_que_convergen(db):  # noqa: F811  (la fixture, no una redefinición)
     """Revisión externa 2026-09-07 (P1-5): dos entradas legacy que resuelven a
     la MISMA vacante generaban dos imágenes previas en el manifiesto; la
     segunda capturaba el valor que la PRIMERA acababa de escribir, y el
@@ -241,7 +241,7 @@ def test_rollback_exacto_con_dos_entradas_que_convergen(db):
         None, None, "previa"), f"rollback dejó {fila}"
 
 
-def test_url_con_varias_vacantes_aplica_el_feedback_a_TODAS(db):
+def test_url_con_varias_vacantes_aplica_el_feedback_a_TODAS(db):  # noqa: F811  (la fixture, no una redefinición)
     """Ensayo del 2026-09-07: la deriva de identidad hace que la MISMA oferta
     re-listada entre como clon, así que una url legacy resuelve a varias
     vacantes vivas. Enlazar a una arbitraria (lo que hacía el código
@@ -302,7 +302,7 @@ def test_url_con_varias_vacantes_aplica_el_feedback_a_TODAS(db):
         str(vacs[TITULOS[0]]), str(otra)}
 
 
-def test_declare_exclusiones_proyecta_altas_Y_BAJAS(db):
+def test_declare_exclusiones_proyecta_altas_Y_BAJAS(db):  # noqa: F811  (la fixture, no una redefinición)
     """Revisión externa 2026-09-07 (hallazgo B): el importador solo INSERTA,
     así que una baja hecha en el BFF nunca llegaba al core y la regla seguía
     excluyendo. El escritor autoritativo es DECLARATIVO: recibe el conjunto
@@ -341,7 +341,7 @@ def test_declare_exclusiones_proyecta_altas_Y_BAJAS(db):
         asyncio.run(declarar([{"kind": "regex", "pattern": "x"}]))
 
 
-def test_rollback_restaura_una_fila_que_YA_tenia_dismissed_at(db):
+def test_rollback_restaura_una_fila_que_YA_tenia_dismissed_at(db):  # noqa: F811  (la fixture, no una redefinición)
     """Ensayo fiel 2026-09-07: el rollback pasaba `dismissed_at_antes` como
     CADENA ISO a un parámetro timestamptz y asyncpg lo rechazaba. Solo se
     dispara si la fila previa YA tenía dismissed_at — el caso de los 14

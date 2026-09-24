@@ -8,10 +8,10 @@ Ejecutar vía core-migrate.
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
-import uuid
 
 import pytest
 import sqlalchemy as sa
@@ -368,7 +368,6 @@ def test_wide_consumer_name_does_not_abort_evaluation(db):
     long_name = "swiss-jobhunter-bff-prod-eu-west-frontend-consumer-tenant-0001"
     assert len(long_name) > 60
 
-    from jobhunt_core import embeddings, profiles
 
     pid, mid, polid, vacs = tim._setup(factory, created, ["backend python"])
 
@@ -396,7 +395,7 @@ def test_emission_routes_to_each_consumers_bff(db):
     """Auditoría A-10 #3: dos consumidores DISTINTOS → cada entrega va al
     destino de SU consumer, y el despacho entrega a cada BFF exactamente sus
     event_id."""
-    from jobhunt_core import embeddings, matching as m, profiles
+    from jobhunt_core import embeddings, profiles
 
     factory, created = db
     pid_a, vacs = _setup_evaluated(factory, created, titles=("backend python",))
@@ -512,7 +511,6 @@ def test_late_mark_from_superseded_claim_cannot_resurrect_state(db, monkeypatch)
     assert row.state == "delivered" and row.ack_at is not None  # INTACTO
 
 
-import contextlib
 
 
 @contextlib.contextmanager

@@ -8,11 +8,11 @@ import sqlalchemy as sa
 from jobhunt_core.harvest.provider import BaseProvider
 from jobhunt_core.harvest.types import FetchResult
 from jobhunt_core.tasks import harvest
-from jobhunt_core.tests.test_integration_runs import db, _seed_scopes, pytestmark
+from jobhunt_core.tests.test_integration_runs import db, _seed_scopes, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
 def test_same_window_only_fetches_once_and_disabled_scope_is_not_dispatched(
-    db, monkeypatch
+    db, monkeypatch  # noqa: F811  (la fixture, no una redefinición)
 ):
     factory, created = db
     enabled, disabled = _seed_scopes(factory, created, n=2)

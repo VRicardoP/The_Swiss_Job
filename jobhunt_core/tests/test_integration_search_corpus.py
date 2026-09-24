@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from jobhunt_core.import_search_corpus import seed_missing_offers
 from jobhunt_core.import_swissjob_searches import SearchMigrationError
 from jobhunt_core.shadow.projector import JOB_PAYLOAD_MAP
-from jobhunt_core.tests.test_integration_offer import db, pytestmark
+from jobhunt_core.tests.test_integration_offer import db, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
 def rows(source):
@@ -27,7 +27,7 @@ async def track(session, made, source):
         made['scopes'].append(scope)
 
 
-def test_missing_offer_is_presentable_and_retry_does_not_duplicate(db):
+def test_missing_offer_is_presentable_and_retry_does_not_duplicate(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     source = 'missing-search-'+uuid.uuid4().hex[:8]
     batch = rows(source)
@@ -50,14 +50,18 @@ def test_missing_offer_is_presentable_and_retry_does_not_duplicate(db):
 
 
 @pytest.mark.parametrize('defect', ['inactive','duplicate','missing_field','quarantined'])
-def test_invalid_or_quarantined_rows_do_not_leave_partial_source(db, defect):
+def test_invalid_or_quarantined_rows_do_not_leave_partial_source(db, defect):  # noqa: F811  (la fixture, no una redefinición)
     factory, _ = db
     source = 'invalid-search-'+uuid.uuid4().hex[:8]
     batch = rows(source)
-    if defect == 'inactive': batch[0]['is_active'] = False
-    elif defect == 'duplicate': batch[0]['duplicate_of'] = 'other'
-    elif defect == 'missing_field': del batch[0]['description']
-    else: batch[0]['title'] = '\x00'
+    if defect == 'inactive':
+        batch[0]['is_active'] = False
+    elif defect == 'duplicate':
+        batch[0]['duplicate_of'] = 'other'
+    elif defect == 'missing_field':
+        del batch[0]['description']
+    else:
+        batch[0]['title'] = '\x00'
 
     async def go():
         async with factory() as session:
@@ -68,7 +72,7 @@ def test_invalid_or_quarantined_rows_do_not_leave_partial_source(db, defect):
     asyncio.run(go())
 
 
-def test_existing_closed_slot_is_not_reopened(db):
+def test_existing_closed_slot_is_not_reopened(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     source = 'closed-search-'+uuid.uuid4().hex[:8]
     batch = rows(source)

@@ -4,13 +4,13 @@ import asyncio
 import uuid
 import sqlalchemy as sa
 from jobhunt_core.tests import test_integration_api as api
-from jobhunt_core.tests.test_integration_school_jobs import school_db, _observation
+from jobhunt_core.tests.test_integration_school_jobs import school_db, _observation  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_integration_api_schools import _create, _request, SCOPES
-from jobhunt_core.tests.test_integration_api_saved_searches import _seed_profile, _rows, pytestmark
-from jobhunt_core.tests.test_integration_api import db
+from jobhunt_core.tests.test_integration_api_saved_searches import _seed_profile, _rows, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
+from jobhunt_core.tests.test_integration_api import db  # noqa: F401  (la fixture de la que depende school_db; pytest la resuelve en el espacio de nombres de este módulo — sin ella los tests dan error de fixture)
 
 
-def test_quarantined_school_feedback_preserves_draft_and_has_no_fake_vacancy(school_db):
+def test_quarantined_school_feedback_preserves_draft_and_has_no_fake_vacancy(school_db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = school_db
     token, _, pid = _seed_profile(f, made, [*SCOPES, "matches:read"])
     monitor = _create(f, token).json()
@@ -48,7 +48,7 @@ def test_quarantined_school_feedback_preserves_draft_and_has_no_fake_vacancy(sch
     assert _rows(f, "SELECT vacancy_id FROM profile_vacancy_state WHERE profile_id=:p", p=pid) == []
 
 
-def test_school_feedback_ownership_and_scope_before_mutation(school_db):
+def test_school_feedback_ownership_and_scope_before_mutation(school_db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = school_db
     token, _, pid = _seed_profile(f, made, SCOPES)
     other, _, other_pid = _seed_profile(f, made, SCOPES)
@@ -63,7 +63,7 @@ def test_school_feedback_ownership_and_scope_before_mutation(school_db):
     assert _rows(f, "SELECT id FROM school_applications WHERE profile_id IN (:p,:o,:r)", p=pid, o=other_pid, r=reader_pid) == []
 
 
-def test_rejected_quarantine_stays_hidden_when_linked_and_clear_restores_feed(school_db):
+def test_rejected_quarantine_stays_hidden_when_linked_and_clear_restores_feed(school_db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = school_db
     pid, vacs, _ = api._seed_matches(f, made)
     _, _, token = api._issue(f, made, "tenant-match", [*SCOPES, "matches:read", "applications:write"])

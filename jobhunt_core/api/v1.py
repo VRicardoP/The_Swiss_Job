@@ -33,7 +33,6 @@ from jobhunt_core.api.deps import (
 from jobhunt_core.api.http_contract import (
     etag_of as _etag_of,
     if_match_matches as _if_match_matches,
-    if_none_match_matches as _if_none_match_matches,
     with_etag as _with_etag,
 )
 from jobhunt_core.api.idempotency import run_idempotent

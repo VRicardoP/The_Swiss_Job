@@ -10,14 +10,14 @@ import sqlalchemy as sa
 from jobhunt_core.harvest.providers import get_provider
 from jobhunt_core.harvest.runner import run_scope
 from jobhunt_core.harvest.sink import RawListingSink
-from jobhunt_core.tests.test_integration_harvest import db, pytestmark, _seed_scopes
+from jobhunt_core.tests.test_integration_harvest import db, pytestmark, _seed_scopes  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_native_nav import hit, page
 from jobhunt_core.tests.test_native_thehub import item, detail
 from jobhunt_core.tests.test_native_jobgether import raw
 
 
 @pytest.mark.parametrize("source", ["nav_arbeidsplassen", "thehub", "jobgether"])
-def test_native_scopes_admit_refresh_and_preserve_raw(db, source):
+def test_native_scopes_admit_refresh_and_preserve_raw(db, source):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     sid, = _seed_scopes(factory, made, 1)
     date = (datetime.now(timezone.utc) - timedelta(days=9)).isoformat()

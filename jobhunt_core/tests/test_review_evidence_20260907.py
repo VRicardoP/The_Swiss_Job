@@ -1,16 +1,33 @@
-"""Reproducciones externas; ejecutar montado bajo jobhunt_core/tests."""
+"""Reproducciones externas del 2026-09-07; se ejecutan bajo jobhunt_core/tests.
+
+Son TRES sondas independientes, separadas abajo por sus propios comentarios de
+sección. Cada una se pegó aquí con su bloque de imports, y de ahí venían doce
+E402 y diez F811: `asyncio` se importaba tres veces y `db`/`_setup` dos. Los
+imports están ahora unidos arriba, que es lo que pytest necesita y lo que hace
+legible el fichero; las secciones siguen marcadas.
+"""
+
 import asyncio
+import os
 import time
 from types import SimpleNamespace
 
 import sqlalchemy as sa
 
-from jobhunt_core import matching, dev_eval
-from jobhunt_core.tests.test_integration_matching import db, _setup, _evaluate
-from jobhunt_core.tests.test_integration_cross_encoder import _xenc_policy, _StubEngine
+from jobhunt_core import cross_encoder as ce, dev_eval, embeddings, matching, profiles
+from jobhunt_core.tasks import materialize
+from jobhunt_core.tasks.embedding import _run_pending_impl
+from jobhunt_core.tests.test_integration_cross_encoder import _StubEngine, _xenc_policy
+from jobhunt_core.tests.test_integration_dev_eval import _judgments_file
+from jobhunt_core.tests.test_integration_matching import (
+    DirectionalBackend,
+    _evaluate,
+    _setup,
+    db,  # noqa: F401  (fixture de pytest: se importa para que la resuelva por nombre)
+)
 
 
-def test_new_exclusions_empty_feed_must_remove_previous_results(db):
+def test_new_exclusions_empty_feed_must_remove_previous_results(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, pol, vacs = _setup(factory, created, ["python developer", "python engineer"])
     assert _evaluate(factory, pid, mid, pol)["evaluated"] == 2
@@ -54,7 +71,7 @@ def test_fragment_cannot_overrun_soft_limit_in_second_batch(monkeypatch):
     assert clock[0] < 1800, f"fragmento terminó en {clock[0]} segundos simulados: {result}"
 
 
-def test_delegated_ce_does_not_keep_projector_recovery_on_forever(db):
+def test_delegated_ce_does_not_keep_projector_recovery_on_forever(db):  # noqa: F811  (la fixture, no una redefinición)
     from jobhunt_core.shadow import projector
     factory, created = db
     pid, mid, cosine, vacs = _setup(factory, created, ["python developer"])
@@ -72,17 +89,11 @@ def test_delegated_ce_does_not_keep_projector_recovery_on_forever(db):
     asyncio.run(check())
 
 
-"""Interleaving real entre materializacion y publicacion."""
-import asyncio
 
-from jobhunt_core import matching, profiles, cross_encoder as ce, embeddings
-from jobhunt_core.tasks.embedding import _run_pending_impl
-from jobhunt_core.tasks import materialize
-from jobhunt_core.tests.test_integration_matching import db, _setup, DirectionalBackend
-from jobhunt_core.tests.test_integration_cross_encoder import _xenc_policy, _StubEngine
+# --- Sonda 2: interleaving real entre materialización y publicación ---
 
 
-def test_real_cv_edit_reopens_unbudgeted_inference(db, monkeypatch):
+def test_real_cv_edit_reopens_unbudgeted_inference(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, _, _ = _setup(factory, created, ["python developer", "python engineer"])
     pol = _xenc_policy(factory, created)
@@ -113,16 +124,11 @@ def test_real_cv_edit_reopens_unbudgeted_inference(db, monkeypatch):
     assert extra == 0, f"La publicacion infirio {extra} documentos nuevos: {result}"
 
 
-"""El mismo sello no debe certificar dos restricciones distintas."""
-import asyncio
-import os
 
-from jobhunt_core import dev_eval
-from jobhunt_core.tests.test_integration_matching import db, _setup
-from jobhunt_core.tests.test_integration_dev_eval import _judgments_file
+# --- Sonda 3: el mismo sello no debe certificar dos restricciones ---
 
 
-def test_same_seal_cannot_certify_two_different_exclusions(db):
+def test_same_seal_cannot_certify_two_different_exclusions(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, _, vacs = _setup(factory, created, ["python developer", "python engineer"])
     judgments = _judgments_file([f"P,{vid},2" for vid in vacs.values()])

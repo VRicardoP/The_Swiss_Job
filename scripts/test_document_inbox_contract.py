@@ -21,7 +21,7 @@ import sqlalchemy as sa
 
 from jobhunt_core import documents, delivery
 from jobhunt_core.http_delivery import HttpDestinationTransport
-from jobhunt_core.tests.test_integration_api_saved_searches import db, _seed_profile
+from jobhunt_core.tests.test_integration_api_saved_searches import db, _seed_profile  # noqa: F401  (fixture de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.conftest import _suite
 
 
@@ -29,7 +29,7 @@ from jobhunt_core.tests.conftest import _suite
     "name,root,consumer",
     [("swissjob", "/bff", "swissjob-shadow"), ("portfolio", "/portfolio", "portfolio")],
 )
-def test_inbox_concurrent_delivery_and_process_restart(db, name, root, consumer):
+def test_inbox_concurrent_delivery_and_process_restart(db, name, root, consumer):  # noqa: F811  (la fixture, no una redefinición)
     assert _suite.get("dbname", "").startswith("jobhunt_suite_")
     factory, created = db
     _, original_consumer, pid = _seed_profile(factory, created)

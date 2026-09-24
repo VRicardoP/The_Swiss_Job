@@ -6,13 +6,13 @@ import pytest
 import sqlalchemy as sa
 
 from jobhunt_core.tests import test_integration_api as api
-from jobhunt_core.tests.test_integration_api import db, pytestmark
-from jobhunt_core.tests.test_integration_school_jobs import school_db, _observation
+from jobhunt_core.tests.test_integration_api import db, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
+from jobhunt_core.tests.test_integration_school_jobs import school_db, _observation  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_integration_api_schools import _create, _request, SCOPES
 
 
 @pytest.mark.parametrize('school_feedback', ['thumbs_down', None])
-def test_context_coalesces_linked_school_latest_intent(school_db, school_feedback):
+def test_context_coalesces_linked_school_latest_intent(school_db, school_feedback):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = school_db
     pid, vacancies, _ = api._seed_matches(factory, made)
     _, _, token = api._issue(factory, made, 'tenant-match', [*SCOPES, 'matches:read', 'applications:write'])
@@ -45,7 +45,7 @@ def test_context_coalesces_linked_school_latest_intent(school_db, school_feedbac
     assert canonical['feedback'] == school_feedback
 
 
-def test_context_never_reports_truncated_collection_as_complete(db, monkeypatch):
+def test_context_never_reports_truncated_collection_as_complete(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     from jobhunt_core.api import v1_feedback
     from jobhunt_core.tests.test_integration_api_feedback import seed
     factory, pid, _, token = seed(db)
@@ -54,7 +54,7 @@ def test_context_never_reports_truncated_collection_as_complete(db, monkeypatch)
     assert response.status_code == 503
 
 
-def test_feedback_context_requires_read_scope(db):
+def test_feedback_context_requires_read_scope(db):  # noqa: F811  (la fixture, no una redefinición)
     from jobhunt_core.tests.test_integration_api_feedback import seed
     factory, pid, _, token = seed(db, scopes=('applications:write',))
     assert api._api(factory, f'/v1/profiles/{pid}/feedback-context', token=token).status_code == 403

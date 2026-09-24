@@ -3,10 +3,10 @@ import asyncio
 
 from jobhunt_core.tests import test_integration_api as tia
 from jobhunt_core.tests.test_integration_api_documents import _path, _seed
-from jobhunt_core.tests.test_integration_api_saved_searches import db, _rows, pytestmark
+from jobhunt_core.tests.test_integration_api_saved_searches import db, _rows, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
-def test_documents_uuid_spelling_has_one_receipt_and_one_document(db):
+def test_documents_uuid_spelling_has_one_receipt_and_one_document(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed(f, made)
     body = {"doc_type": "cv", "content": "same original"}
@@ -23,7 +23,7 @@ def test_documents_uuid_spelling_has_one_receipt_and_one_document(db):
     assert _rows(f, "SELECT route FROM idempotency_records WHERE key='spelling'") == [("POST " + _path(pid),)]
 
 
-def test_documents_erase_removes_receipts_from_noncanonical_path(db):
+def test_documents_erase_removes_receipts_from_noncanonical_path(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, tenant, pid = _seed(f, made)
     response = tia._api(f, _path(str(pid).upper()), token=token, method="POST",

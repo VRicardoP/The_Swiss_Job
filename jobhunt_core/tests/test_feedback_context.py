@@ -3,11 +3,11 @@ import asyncio
 
 import sqlalchemy as sa
 
-from jobhunt_core.tests.test_integration_api import db, _api, _issue
-from jobhunt_core.tests.test_integration_api_feedback import seed, pytestmark
+from jobhunt_core.tests.test_integration_api import db, _api, _issue  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
+from jobhunt_core.tests.test_integration_api_feedback import seed, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
-def test_feedback_context_includes_native_rejection_and_unmarked_history(db):
+def test_feedback_context_includes_native_rejection_and_unmarked_history(db):  # noqa: F811  (la fixture, no una redefinición)
     factory,pid,vid,token = seed(db)
     path = f'/v1/profiles/{pid}'
     assert _api(factory,path+f'/vacancies/{vid}/feedback',token=token,method='PUT',json_body={'feedback':'thumbs_down'}).status_code == 200
@@ -23,7 +23,7 @@ def test_feedback_context_includes_native_rejection_and_unmarked_history(db):
     assert _api(factory,path+'/feedback-context',token=other).status_code == 404
 
 
-def test_archival_does_not_erase_rejection_context(db):
+def test_archival_does_not_erase_rejection_context(db):  # noqa: F811  (la fixture, no una redefinición)
     factory,pid,vid,token = seed(db)
     path = f'/v1/profiles/{pid}'
     assert _api(factory,path+f'/vacancies/{vid}/feedback',token=token,method='PUT',json_body={'feedback':'dismissed'}).status_code == 200

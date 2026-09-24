@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from jobhunt_core.config import settings
 from jobhunt_core.tasks import searches
 from jobhunt_core.tests.test_integration_search_execution import (
-    db, pytestmark, corpus, new_search, state,
+    db, pytestmark, corpus, new_search, state,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 )
 
 
@@ -33,7 +33,7 @@ def test_task_executes_coroutine_instead_of_returning_it(monkeypatch):
     execute.assert_awaited_once_with(limit=7)
 
 
-def test_failed_search_does_not_starve_healthy_search_or_consume_observations(db, monkeypatch):
+def test_failed_search_does_not_starve_healthy_search_or_consume_observations(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     corpus(factory, made, "Python developer")
     monkeypatch.setattr(settings, "CORE_SAVED_SEARCH_EXECUTION_ENABLED", True)

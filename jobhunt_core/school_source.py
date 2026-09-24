@@ -456,7 +456,9 @@ async def reverse_sync(
                 dict(row)
                 for row in (await session.execute(sa.select(tables[name]))).mappings()
             ]
-            keys = lambda row: str(row["id"])
+            def keys(row):
+                return str(row["id"])
+
             wanted = sorted(expected, key=keys)
             obtained = sorted(actual, key=keys)
             if len(wanted) != len(obtained) or any(

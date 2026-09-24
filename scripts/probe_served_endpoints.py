@@ -21,6 +21,7 @@ De ahí las dos reglas de esta versión:
 Sólo lectura: firma un token efímero en memoria para un usuario EXISTENTE, hace
 GETs, nunca imprime el token ni datos personales, no crea ni escribe nada.
 """
+
 import asyncio
 import json
 import statistics
@@ -56,7 +57,9 @@ def _page_items(body, *, kind):
     if not isinstance(body, dict):
         raise ProbeFailure("not_object", f"{kind}: el cuerpo no es un objeto")
     if "data" not in body:
-        raise ProbeFailure("no_data_key", f"{kind}: sin clave 'data'; hay {sorted(body)[:6]}")
+        raise ProbeFailure(
+            "no_data_key", f"{kind}: sin clave 'data'; hay {sorted(body)[:6]}"
+        )
     data = body["data"]
     if not isinstance(data, list):
         raise ProbeFailure("data_not_list", f"{kind}: 'data' no es una lista")
@@ -70,11 +73,15 @@ def _identities(items, *, key, kind):
     for item in items:
         value = item.get(key) if isinstance(item, dict) else None
         if not value or not isinstance(value, str):
-            raise ProbeFailure("item_without_identity", f"{kind}: un elemento no trae '{key}'")
+            raise ProbeFailure(
+                "item_without_identity", f"{kind}: un elemento no trae '{key}'"
+            )
         ids.append(value)
     if len(set(ids)) != len(ids):
-        raise ProbeFailure("duplicate_identities",
-                           f"{kind}: {len(ids) - len(set(ids))} identidades repetidas")
+        raise ProbeFailure(
+            "duplicate_identities",
+            f"{kind}: {len(ids) - len(set(ids))} identidades repetidas",
+        )
     return ids
 
 
@@ -82,18 +89,26 @@ def check_catalog(body, *, min_items):
     """La página de catálogo trae `data` con ofertas reales y un total sano."""
     data = _page_items(body, kind="catálogo")
     if len(data) < min_items:
-        raise ProbeFailure("too_few_items",
-                           f"catálogo: se esperaban >= {min_items} ofertas, hay {len(data)}")
+        raise ProbeFailure(
+            "too_few_items",
+            f"catálogo: se esperaban >= {min_items} ofertas, hay {len(data)}",
+        )
     for offer in data:
         if not isinstance(offer, dict) or not offer.get("title"):
-            raise ProbeFailure("item_without_title", "catálogo: una oferta no trae título")
+            raise ProbeFailure(
+                "item_without_title", "catálogo: una oferta no trae título"
+            )
     _identities(data, key="hash", kind="catálogo")
     total = body.get("total")
     if not isinstance(total, int) or isinstance(total, bool) or total <= 0:
-        raise ProbeFailure("bad_total", f"catálogo: total no es un entero positivo: {total!r}")
+        raise ProbeFailure(
+            "bad_total", f"catálogo: total no es un entero positivo: {total!r}"
+        )
     if total < len(data):
-        raise ProbeFailure("total_below_page",
-                           f"catálogo: total {total} menor que la página que transporta")
+        raise ProbeFailure(
+            "total_below_page",
+            f"catálogo: total {total} menor que la página que transporta",
+        )
     return len(data), total
 
 
@@ -101,14 +116,20 @@ def check_matches(body, *, expected_len, expected_total=None):
     """La página del feed trae sus elementos, un total coherente e ids únicos."""
     items = _page_items(body, kind="feed")
     if len(items) != expected_len:
-        raise ProbeFailure("wrong_cardinality",
-                           f"feed: se esperaban {expected_len} elementos, hay {len(items)}")
+        raise ProbeFailure(
+            "wrong_cardinality",
+            f"feed: se esperaban {expected_len} elementos, hay {len(items)}",
+        )
     _identities(items, key="job_hash", kind="feed")
     total = body.get("total")
     if not isinstance(total, int) or isinstance(total, bool) or total < len(items):
-        raise ProbeFailure("bad_total", f"feed: total {total!r} incoherente con {len(items)} elementos")
+        raise ProbeFailure(
+            "bad_total", f"feed: total {total!r} incoherente con {len(items)} elementos"
+        )
     if expected_total is not None and total != expected_total:
-        raise ProbeFailure("total_mismatch", f"feed: total {total} != esperado {expected_total}")
+        raise ProbeFailure(
+            "total_mismatch", f"feed: total {total} != esperado {expected_total}"
+        )
     return len(items), total
 
 
@@ -117,15 +138,22 @@ def fingerprint(body):
 
     Un endpoint que devuelve la misma CANTIDAD con otro contenido pasaría los
     controles de arriba; esto es lo que hace refutable la equivalencia."""
-    return [(i.get("job_hash"), round(float(i.get("score_final") or 0.0), 6))
-            for i in body["data"]]
+    return [
+        (i.get("job_hash"), round(float(i.get("score_final") or 0.0), 6))
+        for i in body["data"]
+    ]
 
 
 # --- Cuerpos VÁLIDOS de referencia. Cada control negativo nace de una copia de
 # uno de ellos con UNA sola propiedad rota.
-_CATALOGO_OK = {"data": [{"hash": f"h{i}", "title": f"t{i}"} for i in range(20)], "total": 46489}
-_FEED_OK = {"data": [{"job_hash": f"j{i}", "score_final": 50.0 + i} for i in range(20)],
-            "total": 1800}
+_CATALOGO_OK = {
+    "data": [{"hash": f"h{i}", "title": f"t{i}"} for i in range(20)],
+    "total": 46489,
+}
+_FEED_OK = {
+    "data": [{"job_hash": f"j{i}", "score_final": 50.0 + i} for i in range(20)],
+    "total": 1800,
+}
 
 
 def _roto(base, **cambios):
@@ -145,35 +173,89 @@ def self_test():
 
     negativos = [
         # (nombre, motivo EXIGIDO, cuerpo con UNA propiedad rota)
-        ("catálogo: el cuerpo no es un objeto", "not_object",
-         lambda: check_catalog([{"hash": "h", "title": "t"}], min_items=1)),
-        ("catálogo: 'data' no es una lista", "data_not_list",
-         lambda: check_catalog(_roto(_CATALOGO_OK, data={"0": "h0"}), min_items=20)),
-        ("catálogo: oferta sin título", "item_without_title",
-         lambda: check_catalog(
-             _roto(_CATALOGO_OK, data=[{"hash": f"h{i}"} for i in range(20)]), min_items=20)),
-        ("catálogo: total no positivo", "bad_total",
-         lambda: check_catalog(_roto(_CATALOGO_OK, total=0), min_items=20)),
-        ("catálogo: 200 vacío indebido", "too_few_items",
-         lambda: check_catalog(_roto(_CATALOGO_OK, data=[]), min_items=20)),
-        ("catálogo: clave equivocada", "no_data_key",
-         lambda: check_catalog({"jobs": _CATALOGO_OK["data"], "total": 46489}, min_items=20)),
-        ("catálogo: oferta sin identidad", "item_without_identity",
-         lambda: check_catalog(_roto(_CATALOGO_OK, data=[{"title": "t"}] * 20), min_items=20)),
-        ("catálogo: total menor que la página", "total_below_page",
-         lambda: check_catalog(_roto(_CATALOGO_OK, total=3), min_items=20)),
-        ("feed: clave equivocada", "no_data_key",
-         lambda: check_matches({"results": _FEED_OK["data"], "total": 1800}, expected_len=20)),
-        ("feed: cardinalidad distinta", "wrong_cardinality",
-         lambda: check_matches(_roto(_FEED_OK, data=_FEED_OK["data"][:1]), expected_len=20)),
-        ("feed: total incoherente", "bad_total",
-         lambda: check_matches(_roto(_FEED_OK, total=3), expected_len=20)),
-        ("feed: total distinto del esperado", "total_mismatch",
-         lambda: check_matches(_FEED_OK, expected_len=20, expected_total=1799)),
-        ("feed: elemento sin identidad", "item_without_identity",
-         lambda: check_matches(_roto(_FEED_OK, data=[{}] * 20), expected_len=20)),
-        ("feed: identidades repetidas", "duplicate_identities",
-         lambda: check_matches(_roto(_FEED_OK, data=[{"job_hash": "j0"}] * 20), expected_len=20)),
+        (
+            "catálogo: el cuerpo no es un objeto",
+            "not_object",
+            lambda: check_catalog([{"hash": "h", "title": "t"}], min_items=1),
+        ),
+        (
+            "catálogo: 'data' no es una lista",
+            "data_not_list",
+            lambda: check_catalog(_roto(_CATALOGO_OK, data={"0": "h0"}), min_items=20),
+        ),
+        (
+            "catálogo: oferta sin título",
+            "item_without_title",
+            lambda: check_catalog(
+                _roto(_CATALOGO_OK, data=[{"hash": f"h{i}"} for i in range(20)]),
+                min_items=20,
+            ),
+        ),
+        (
+            "catálogo: total no positivo",
+            "bad_total",
+            lambda: check_catalog(_roto(_CATALOGO_OK, total=0), min_items=20),
+        ),
+        (
+            "catálogo: 200 vacío indebido",
+            "too_few_items",
+            lambda: check_catalog(_roto(_CATALOGO_OK, data=[]), min_items=20),
+        ),
+        (
+            "catálogo: clave equivocada",
+            "no_data_key",
+            lambda: check_catalog(
+                {"jobs": _CATALOGO_OK["data"], "total": 46489}, min_items=20
+            ),
+        ),
+        (
+            "catálogo: oferta sin identidad",
+            "item_without_identity",
+            lambda: check_catalog(
+                _roto(_CATALOGO_OK, data=[{"title": "t"}] * 20), min_items=20
+            ),
+        ),
+        (
+            "catálogo: total menor que la página",
+            "total_below_page",
+            lambda: check_catalog(_roto(_CATALOGO_OK, total=3), min_items=20),
+        ),
+        (
+            "feed: clave equivocada",
+            "no_data_key",
+            lambda: check_matches(
+                {"results": _FEED_OK["data"], "total": 1800}, expected_len=20
+            ),
+        ),
+        (
+            "feed: cardinalidad distinta",
+            "wrong_cardinality",
+            lambda: check_matches(
+                _roto(_FEED_OK, data=_FEED_OK["data"][:1]), expected_len=20
+            ),
+        ),
+        (
+            "feed: total incoherente",
+            "bad_total",
+            lambda: check_matches(_roto(_FEED_OK, total=3), expected_len=20),
+        ),
+        (
+            "feed: total distinto del esperado",
+            "total_mismatch",
+            lambda: check_matches(_FEED_OK, expected_len=20, expected_total=1799),
+        ),
+        (
+            "feed: elemento sin identidad",
+            "item_without_identity",
+            lambda: check_matches(_roto(_FEED_OK, data=[{}] * 20), expected_len=20),
+        ),
+        (
+            "feed: identidades repetidas",
+            "duplicate_identities",
+            lambda: check_matches(
+                _roto(_FEED_OK, data=[{"job_hash": "j0"}] * 20), expected_len=20
+            ),
+        ),
     ]
     for nombre, motivo, fn in negativos:
         try:
@@ -182,24 +264,37 @@ def self_test():
             if exc.reason != motivo:
                 raise SystemExit(
                     f"CONTROL NEGATIVO POR LA CAUSA EQUIVOCADA: {nombre}; "
-                    f"esperado '{motivo}', obtenido '{exc.reason}'")
+                    f"esperado '{motivo}', obtenido '{exc.reason}'"
+                )
             continue
         raise SystemExit(f"CONTROL NEGATIVO NO DETECTADO: {nombre}")
-    print(json.dumps({"controles_positivos": 2, "controles_negativos": len(negativos),
-                      "cada_uno_por_su_motivo": True}), flush=True)
+    print(
+        json.dumps(
+            {
+                "controles_positivos": 2,
+                "controles_negativos": len(negativos),
+                "cada_uno_por_su_motivo": True,
+            }
+        ),
+        flush=True,
+    )
 
 
 async def token_for(user_id):
     """Bearer efímero para un usuario EXISTENTE. Ni se imprime ni se guarda."""
     from core.security import create_access_token
+
     return create_access_token(user_id)
 
 
 async def main():
     self_test()
     async with async_session() as db:
-        user = (await db.execute(text(
-            "SELECT user_id FROM jobhunt_profile_map ORDER BY user_id LIMIT 1"))).scalar()
+        user = (
+            await db.execute(
+                text("SELECT user_id FROM jobhunt_profile_map ORDER BY user_id LIMIT 1")
+            )
+        ).scalar()
     bearer = await token_for(user)
     headers = {"Authorization": f"Bearer {bearer}"}
     base = "http://127.0.0.1:8000/api/v1"
@@ -225,11 +320,22 @@ async def main():
             ms.append(time.perf_counter() - t)
             check_catalog(rr.json(), min_items=20)
             await asyncio.sleep(0.3)
-        print(json.dumps({"endpoint": "/jobs/search", "n": len(ms), "items": n_items,
-                          "total": total, "frio_s": round(frio, 3),
-                          "p50_s": round(statistics.median(ms), 3),
-                          "p95_s": round(pct(ms, 95), 3), "max_s": round(max(ms), 3),
-                          "min_s": round(min(ms), 3)}), flush=True)
+        print(
+            json.dumps(
+                {
+                    "endpoint": "/jobs/search",
+                    "n": len(ms),
+                    "items": n_items,
+                    "total": total,
+                    "frio_s": round(frio, 3),
+                    "p50_s": round(statistics.median(ms), 3),
+                    "p95_s": round(pct(ms, 95), 3),
+                    "max_s": round(max(ms), 3),
+                    "min_s": round(min(ms), 3),
+                }
+            ),
+            flush=True,
+        )
 
         # --- feed servido, autenticado y extremo a extremo.
         # `translate=true` NO se mide aqui: llama a un LLM externo y la
@@ -249,8 +355,10 @@ async def main():
             r = await c.get(f"{base}/match/results", params=params, headers=headers)
             frio = time.perf_counter() - t
             if r.status_code != 200:
-                raise ProbeFailure("http_status",
-                                   f"match/results devolvió {r.status_code}: {r.text[:200]}")
+                raise ProbeFailure(
+                    "http_status",
+                    f"match/results devolvió {r.status_code}: {r.text[:200]}",
+                )
             primero = r.json()
             esperados = min(limite, len(primero.get("data") or []))
             n_items, total = check_matches(primero, expected_len=esperados)
@@ -260,22 +368,40 @@ async def main():
             repeticiones = n if limite <= 100 else max(3, n // 4)
             for _ in range(repeticiones):
                 t0 = time.perf_counter()
-                rr = await c.get(f"{base}/match/results", params=params, headers=headers)
+                rr = await c.get(
+                    f"{base}/match/results", params=params, headers=headers
+                )
                 ms.append(time.perf_counter() - t0)
                 if rr.status_code != 200:
-                    raise ProbeFailure("http_status", f"match/results devolvió {rr.status_code}")
+                    raise ProbeFailure(
+                        "http_status", f"match/results devolvió {rr.status_code}"
+                    )
                 cuerpo = rr.json()
                 check_matches(cuerpo, expected_len=esperados, expected_total=total)
                 if fingerprint(cuerpo) != huella:
-                    raise ProbeFailure("unstable_page",
-                                       "feed: misma petición, distintos ids/orden/scores")
+                    raise ProbeFailure(
+                        "unstable_page",
+                        "feed: misma petición, distintos ids/orden/scores",
+                    )
                 await asyncio.sleep(0.3)
-            print(json.dumps({"endpoint": "/match/results", "limit": limite,
-                              "translate": translate, "n": len(ms), "items": n_items,
-                              "total": total, "frio_s": round(frio, 3),
-                              "p50_s": round(statistics.median(ms), 3),
-                              "p95_s": round(pct(ms, 95), 3), "max_s": round(max(ms), 3),
-                              "min_s": round(min(ms), 3)}), flush=True)
+            print(
+                json.dumps(
+                    {
+                        "endpoint": "/match/results",
+                        "limit": limite,
+                        "translate": translate,
+                        "n": len(ms),
+                        "items": n_items,
+                        "total": total,
+                        "frio_s": round(frio, 3),
+                        "p50_s": round(statistics.median(ms), 3),
+                        "p95_s": round(pct(ms, 95), 3),
+                        "max_s": round(max(ms), 3),
+                        "min_s": round(min(ms), 3),
+                    }
+                ),
+                flush=True,
+            )
 
 
 if __name__ == "__main__":

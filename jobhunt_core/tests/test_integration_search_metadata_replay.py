@@ -4,11 +4,11 @@ from jobhunt_core.harvest import normalize
 from jobhunt_core.harvest.providers import legacy_shadow
 from jobhunt_core.harvest.types import RawListing
 from jobhunt_core.tests.test_integration_offer import (
-    db, pytestmark, _seed, _sink, _vacancy_state, _rows,
+    db, pytestmark, _seed, _sink, _vacancy_state, _rows,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 )
 
 
-def test_existing_raw_replays_to_enriched_canonical_without_duplicate_raw(db, monkeypatch):
+def test_existing_raw_replays_to_enriched_canonical_without_duplicate_raw(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     name = "legacy:search-old-raw"
     legacy_shadow.ensure_registered(name)

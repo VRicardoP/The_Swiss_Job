@@ -8,7 +8,7 @@ import sqlalchemy as sa
 
 from jobhunt_core.shadow.projector import erase_shadow_profile
 from jobhunt_core.tests.test_integration_api_saved_searches import _seed_profile
-from jobhunt_core.tests.test_integration_api_applications import db
+from jobhunt_core.tests.test_integration_api_applications import db  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests import test_integration_api as api
 
 
@@ -16,7 +16,7 @@ from jobhunt_core.tests import test_integration_api as api
     "spelling", ["canonical", "uppercase", "compact", "braces", "urn"]
 )
 @pytest.mark.parametrize("legacy", [False, True])
-def test_erased_cv_cannot_be_replayed_from_idempotency(db, spelling, legacy):
+def test_erased_cv_cannot_be_replayed_from_idempotency(db, spelling, legacy):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     token, consumer, pid = _seed_profile(
         factory, created, ["profiles:read", "profiles:write"]
@@ -73,7 +73,7 @@ def test_erased_cv_cannot_be_replayed_from_idempotency(db, spelling, legacy):
 
 @pytest.mark.parametrize("resource", ["applications", "saved-searches"])
 @pytest.mark.parametrize("legacy", [False, True])
-def test_erasure_removes_personal_receipts_but_not_another_owner(db, resource, legacy):
+def test_erasure_removes_personal_receipts_but_not_another_owner(db, resource, legacy):  # noqa: F811  (la fixture, no una redefinición)
     from jobhunt_core import profiles
 
     factory, created = db
@@ -169,7 +169,7 @@ def test_erasure_removes_personal_receipts_but_not_another_owner(db, resource, l
 
 @pytest.mark.parametrize("resource", ["applications", "saved-searches"])
 @pytest.mark.parametrize("legacy", [False, True])
-def test_delete_replay_is_preserved_and_new_receipts_are_erased(db, resource, legacy):
+def test_delete_replay_is_preserved_and_new_receipts_are_erased(db, resource, legacy):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     scope = resource.replace("-", "_")
     token, consumer, pid = _seed_profile(
@@ -243,7 +243,7 @@ def test_delete_replay_is_preserved_and_new_receipts_are_erased(db, resource, le
         assert count == 1
 
 
-def test_cached_replay_waits_for_owner_erasure_before_reading_receipt(db):
+def test_cached_replay_waits_for_owner_erasure_before_reading_receipt(db):  # noqa: F811  (la fixture, no una redefinición)
     from httpx import ASGITransport, AsyncClient
     from jobhunt_core.api import deps
     from jobhunt_core.api.main import app

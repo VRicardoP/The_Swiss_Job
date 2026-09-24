@@ -300,7 +300,7 @@ def test_exacto_intra_respeta_multi_ciudad(db):
     pero LOCATION distinta = publicación multi-ciudad legítima — NO candidato.
     Misma location ⇒ sí."""
     factory, created = db
-    mid = _setup(factory, created, [[]])  # fuente sin ofertas: solo el modelo
+    _setup(factory, created, [[]])  # fuente sin ofertas: solo el modelo
 
     async def go():
         async with factory() as s:

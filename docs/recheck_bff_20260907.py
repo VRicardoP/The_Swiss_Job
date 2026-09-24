@@ -1,4 +1,5 @@
 """Sondas externas del envío declarativo; montar bajo backend/tests."""
+
 import asyncio
 import uuid
 
@@ -18,8 +19,12 @@ async def test_delayed_snapshot_must_not_resurrect_deleted_filter(monkeypatch):
     calls = 0
 
     class Client:
-        async def __aenter__(self): return self
-        async def __aexit__(self, *args): pass
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
         async def put(self, url, json=None):
             nonlocal calls
             calls += 1
@@ -51,9 +56,14 @@ async def test_failed_delivery_must_not_be_silently_acknowledged(monkeypatch):
     monkeypatch.setattr(sync, "resolve_core_profile_id", _corutina(uuid.uuid4()))
 
     class Client:
-        async def __aenter__(self): return self
-        async def __aexit__(self, *args): pass
-        async def put(self, *args, **kwargs): raise ConnectionError("corte controlado")
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def put(self, *args, **kwargs):
+            raise ConnectionError("corte controlado")
 
     result = await sync.sync_exclusions_to_core(_Db([]), uuid.uuid4(), Client)
     assert result == {"status": "core_inaccesible"}

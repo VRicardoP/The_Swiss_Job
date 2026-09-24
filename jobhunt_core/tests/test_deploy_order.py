@@ -50,9 +50,13 @@ def _seccion_5() -> list[str]:
         "con el perfil de dev (docker-compose.yml + docker-compose.dev.yml)."
     )
     lineas = _DEPLOY_NAS.read_text(encoding="utf-8").splitlines()
-    inicio = next(i for i, l in enumerate(lineas) if l.startswith("## 5."))
+    inicio = next(i for i, linea in enumerate(lineas) if linea.startswith("## 5."))
     fin = next(
-        (i for i, l in enumerate(lineas[inicio + 1 :], inicio + 1) if l.startswith("## ")),
+        (
+            i
+            for i, linea in enumerate(lineas[inicio + 1 :], inicio + 1)
+            if linea.startswith("## ")
+        ),
         len(lineas),
     )
     return lineas[inicio:fin]
@@ -68,7 +72,7 @@ def _primera(lineas: list[str], patron: str) -> int | None:
 def test_la_seccion_5_tiene_UNA_secuencia_de_siete_pasos_en_orden():
     """Siete pasos numerados, no dos notas ordenadas al revés."""
     lineas = _seccion_5()
-    pasos = [l for l in lineas if l.startswith("#### Paso ")]
+    pasos = [linea for linea in lineas if linea.startswith("#### Paso ")]
     assert len(pasos) == len(_PASOS_ESPERADOS), pasos
     for i, (titulo, (_, claves)) in enumerate(zip(pasos, _PASOS_ESPERADOS), start=1):
         assert titulo.startswith(f"#### Paso {i} "), titulo
@@ -127,7 +131,9 @@ def test_hay_que_parar_todos_los_escritores_que_el_compose_del_NAS_autoarranca()
     inicio = _primera(lineas, r"docker stop")
     assert inicio is not None, "§5 no manda parar nada"
     orden = " ".join(
-        l for l in lineas[inicio:] if l.startswith(("docker stop", " ")) and "swissjob-" in l
+        linea
+        for linea in lineas[inicio:]
+        if linea.startswith(("docker stop", " ")) and "swissjob-" in linea
     )
     faltan = sorted(c for c in escritores if c not in orden.split())
     assert not faltan, f"el `docker stop` de §5 no incluye: {faltan}"
@@ -180,7 +186,8 @@ def test_la_secuencia_la_ejecuta_un_script_versionado():
     assert _primera(lineas, r"nas_cutover\.sh cutover") is not None, "§5 no invoca el script"
     assert _primera(lineas, r"nas_cutover\.sh smoke") is not None, "§5 no invoca el smoke"
     assert _primera(lineas, r"scp .*nas_cutover\.sh") is not None or any(
-        "nas_cutover.sh" in l for l in lineas[: _primera(lineas, r"#### Paso 1")]
+        "nas_cutover.sh" in linea
+        for linea in lineas[: _primera(lineas, r"#### Paso 1")]
     ), "§5.2 no copia el script al NAS"
 
 
@@ -207,6 +214,6 @@ def test_el_smoke_y_la_API_no_pueden_divergir_en_el_status_de_ready():
         f"el smoke exige status={declarado.group(1)!r} y la API devuelve {_READY_STATUS!r}"
     )
     paso7 = _seccion_5()[_primera(_seccion_5(), r"#### Paso 7 ") :]
-    assert not any(re.search(r"`status: ok`", l) for l in paso7), (
+    assert not any(re.search(r"`status: ok`", linea) for linea in paso7), (
         "§5 vuelve a exigir `status: ok` en el Paso 7"
     )

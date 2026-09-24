@@ -8,10 +8,10 @@ import sqlalchemy as sa
 from jobhunt_core import profiles
 from jobhunt_core.erasure import ProfileErasedError, erase_owned_profile
 from jobhunt_core.tests import test_integration_api as tia
-from jobhunt_core.tests.test_integration_api_saved_searches import db, _rows, _seed_profile, pytestmark
+from jobhunt_core.tests.test_integration_api_saved_searches import db, _rows, _seed_profile, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
-def test_portfolio_erasure_scrubs_material_manifest_without_other_user_loss(db):
+def test_portfolio_erasure_scrubs_material_manifest_without_other_user_loss(db):  # noqa: F811  (la fixture, no una redefinición)
     from jobhunt_core.import_portfolio_manifest import persist_manifest
     f, made = db
 
@@ -45,7 +45,7 @@ def test_portfolio_erasure_scrubs_material_manifest_without_other_user_loss(db):
     asyncio.run(run())
 
 
-def test_owned_erasure_retry_and_cross_tenant(db):
+def test_owned_erasure_retry_and_cross_tenant(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed_profile(f, made, scopes=["profiles:write"])
     other, _, other_pid = _seed_profile(f, made, scopes=["profiles:write"])
@@ -61,7 +61,7 @@ def test_owned_erasure_retry_and_cross_tenant(db):
     assert tia._api(f, f"/v1/profiles/{pid}", token=other, method="DELETE").status_code == 404
 
 
-def test_erasure_fences_enrollment_direct_insert_and_cdc(db):
+def test_erasure_fences_enrollment_direct_insert_and_cdc(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     _, _, pid = _seed_profile(f, made)
     cid = _rows(f, "SELECT consumer_id FROM profiles WHERE id=:p", p=pid)[0][0]
@@ -88,7 +88,7 @@ def test_erasure_fences_enrollment_direct_insert_and_cdc(db):
     asyncio.run(run())
 
 
-def test_cdc_buffer_scrub_and_future_capture(db):
+def test_cdc_buffer_scrub_and_future_capture(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
 
     async def run():
@@ -117,7 +117,7 @@ def test_cdc_buffer_scrub_and_future_capture(db):
     asyncio.run(run())
 
 
-def test_erasure_inventory_owned_and_paginated(db):
+def test_erasure_inventory_owned_and_paginated(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed_profile(f, made, scopes=["profiles:write"])
     other, _, _ = _seed_profile(f, made, scopes=["profiles:write"])
@@ -129,7 +129,7 @@ def test_erasure_inventory_owned_and_paginated(db):
     assert tia._api(f, "/v1/profile-erasures?after=" + str(pid), token=token).json()["items"] == []
 
 
-def test_offline_restore_reapplies_sealed_inventory(db):
+def test_offline_restore_reapplies_sealed_inventory(db):  # noqa: F811  (la fixture, no una redefinición)
     from jobhunt_core.erasure_restore import snapshot, reconcile
     f, made = db
     _, _, pid = _seed_profile(f, made)
@@ -154,7 +154,7 @@ def test_offline_restore_reapplies_sealed_inventory(db):
     assert not _rows(f, "SELECT id FROM profiles WHERE id=:p", p=pid)
 
 
-def test_unlinked_user_is_fenced_before_first_projection(db):
+def test_unlinked_user_is_fenced_before_first_projection(db):  # noqa: F811  (la fixture, no una redefinición)
     from jobhunt_core.erasure import erase_external_identity
     f, made = db
     async def run():
@@ -175,7 +175,7 @@ def test_unlinked_user_is_fenced_before_first_projection(db):
 
 
 @pytest.mark.parametrize("direct", [False, True])
-def test_repeatable_read_cannot_recreate_erased_identity(db, direct):
+def test_repeatable_read_cannot_recreate_erased_identity(db, direct):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     _, _, pid = _seed_profile(f, made)
     cid = _rows(f, "SELECT consumer_id FROM profiles WHERE id=:p", p=pid)[0][0]
@@ -197,7 +197,7 @@ def test_repeatable_read_cannot_recreate_erased_identity(db, direct):
     asyncio.run(run())
 
 
-def test_repeatable_read_capture_cannot_restore_erased_payload(db):
+def test_repeatable_read_capture_cannot_restore_erased_payload(db):  # noqa: F811  (la fixture, no una redefinición)
     from jobhunt_core.erasure import erase_external_identity
     import json
     f, made = db
@@ -228,7 +228,7 @@ def test_repeatable_read_capture_cannot_restore_erased_payload(db):
     asyncio.run(run())
 
 
-def test_receipt_and_deletion_rollback_together(db):
+def test_receipt_and_deletion_rollback_together(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     _, _, pid = _seed_profile(f, made)
     cid = _rows(f, "SELECT consumer_id FROM profiles WHERE id=:p", p=pid)[0][0]
@@ -242,7 +242,7 @@ def test_receipt_and_deletion_rollback_together(db):
     assert not _rows(f, "SELECT profile_id FROM profile_erasure_receipts WHERE profile_id=:p", p=pid)
 
 
-def test_erasure_serializes_with_inflight_enrollment(db):
+def test_erasure_serializes_with_inflight_enrollment(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     _, _, pid = _seed_profile(f, made)
     cid = _rows(f, "SELECT consumer_id FROM profiles WHERE id=:p", p=pid)[0][0]

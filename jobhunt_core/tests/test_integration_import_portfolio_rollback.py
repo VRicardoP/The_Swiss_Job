@@ -264,7 +264,7 @@ def test_rollback_invalid_manifest_id_aborts_without_deleting():
 
     async def _run(factory):
         async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user("https://iv.example.ch/1")])
+            await man.migrate_and_reconcile(s, [_user("https://iv.example.ch/1")])
             await s.commit()
             r = await rollback_migration(s, str(uuid.uuid4()))
             assert r["status"] == "aborted" and "no existe" in r["reason"]

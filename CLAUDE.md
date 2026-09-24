@@ -260,14 +260,26 @@ docker compose exec -T backend python -m pytest tests/ -v --timeout=30
 docker compose -f docker-compose.yml -f docker-compose.dev.yml \
   run --rm core-migrate python -m pytest jobhunt_core/tests
 
-# Linting — AMBOS en verde desde el 2026-09-23 (T4). El CI los ejecuta con
-# ruff FIJADO a 0.15.14: subir la versión es una decisión, no un accidente.
-# Los `# noqa: F401/F811` de tests/ marcan el patrón de fixture compartida de
-# pytest (import + parámetro), que es un falso positivo del linter, no deuda.
-# OJO al orden si tocas ambos: formatear parte firmas largas y deja los `noqa`
-# en otra línea. Primero arreglar, luego formatear, luego RE-comprobar.
+# Linting — ruff FIJADO a 0.15.14 en CI: subir la versión es una decisión, no un
+# accidente. OJO al orden si tocas ambos: formatear parte firmas largas y deja los
+# `noqa` en otra línea. Primero arreglar, luego formatear, luego RE-comprobar.
 docker compose exec -T backend ruff check --no-cache .
 docker compose exec -T backend ruff format --check --no-cache .
+
+# `backend/` es lo único que el contenedor monta. Para el RESTO del repo —el core,
+# `scripts/` y los .py de `docs/`, que hasta el 2026-09-24 nadie había pasado por
+# el linter (A19-23)— hay que montar la raíz:
+docker compose run --rm --no-deps -v "$PWD:/repo" -w /repo backend \
+  sh -c "ruff check --no-cache . && ruff format --check --no-cache ."
+
+# Tres familias de `# noqa` que NO son deuda, y que borrar rompe cosas en silencio:
+#  - `F401/F811` de fixtures de pytest: el import hace que pytest resuelva la
+#    fixture por nombre y el parámetro la consume. Medido: quitar el `db` de
+#    `test_integration_school_feedback.py` deja el test en ERROR de fixture.
+#  - `F401` de `pytestmark`: es un `pytest.mark.skipif` re-exportado. Quitarlo hace
+#    CORRER tests que debían saltarse — y en verde, que es lo peor.
+#  - `F401` de imports por efecto lateral: `arbeitnow` llama a `register_handlers()`
+#    al cargarse (línea 102). Sin el import no se registra el extractor.
 
 # Migraciones legacy (la BD local está en `b3c7d1a95e42`, aplicada el 2026-08-27:
 # pone clock_timestamp() en los defaults de jobs.first_seen_at/last_seen_at y

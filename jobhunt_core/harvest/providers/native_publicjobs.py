@@ -14,7 +14,6 @@ from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills
-from jobhunt_core.harvest.providers.search_metadata import swiss_canton
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 SOURCE_NAME = "publicjobs"

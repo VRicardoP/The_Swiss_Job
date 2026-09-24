@@ -64,7 +64,7 @@ def _xenc_policy(factory, created, active=False):
     return asyncio.run(go())
 
 
-def test_ce_es_absoluta_promocionable_y_feed_igual_a_calculo(db, stub):
+def test_ce_es_absoluta_promocionable_y_feed_igual_a_calculo(db, stub):  # noqa: F811  (la fixture, no una redefinición)
     """CE puede ser canónica (pair_absolute); lo servido tras promover es
     EXACTAMENTE el cálculo directo, fila a fila, también tras un cambio de
     corpus (G2); la pareja vieja conserva su score y solo se puntúan misses."""
@@ -127,7 +127,7 @@ def test_ce_es_absoluta_promocionable_y_feed_igual_a_calculo(db, stub):
         v for v, _ in feed_g2}  # mismas vacantes vivas, scores de cosine
 
 
-def test_cambio_de_identidad_repuntua_y_reusa_lo_que_corresponde(db, stub):
+def test_cambio_de_identidad_repuntua_y_reusa_lo_que_corresponde(db, stub):  # noqa: F811  (la fixture, no una redefinición)
     """Cambiar target_roles crea otra revisión de perfil ⇒ otra identidad ⇒
     re-puntuación completa; el MISMO contenido reactivado reutiliza la caché."""
     factory, created = db
@@ -172,7 +172,7 @@ def test_cambio_de_identidad_repuntua_y_reusa_lo_que_corresponde(db, stub):
     assert stub.docs_scored == base + 6  # cero inferencias nuevas
 
 
-def test_fallo_del_modelo_deja_el_feed_intacto(db):
+def test_fallo_del_modelo_deja_el_feed_intacto(db):  # noqa: F811  (la fixture, no una redefinición)
     """Error de inferencia ⇒ excepción observable, transacción abortada, el
     último feed bueno sigue sirviéndose. Sin fallback silencioso a cosine."""
     factory, created = db
@@ -210,7 +210,7 @@ def test_fallo_del_modelo_deja_el_feed_intacto(db):
         "scoring_policy_id = :sp", sp=polid)[0].n == 0
 
 
-def test_receta_ce_manipulada_no_evalua(db, stub):
+def test_receta_ce_manipulada_no_evalua(db, stub):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, _, _ = _setup(factory, created, TITULOS[:2])
 
@@ -229,7 +229,7 @@ def test_receta_ce_manipulada_no_evalua(db, stub):
     asyncio.run(go())
 
 
-def test_escritura_progresa_durante_inferencia_y_lo_rancio_no_se_publica(db):
+def test_escritura_progresa_durante_inferencia_y_lo_rancio_no_se_publica(db):  # noqa: F811  (la fixture, no una redefinición)
     """P1-3 revisión 2026-09-03: la inferencia (horas en el NAS) corría con la
     transacción abierta y el perfil FOR UPDATE — una edición del perfil
     esperaba horas. Trifásico: preparar (txn corta) → inferir SIN BD →
@@ -295,7 +295,7 @@ def test_escritura_progresa_durante_inferencia_y_lo_rancio_no_se_publica(db):
     assert _feed_actual(factory, pid) == antes
 
 
-def test_tier_ordena_viables_antes_que_incompatibles_demostradas(db):
+def test_tier_ordena_viables_antes_que_incompatibles_demostradas(db):  # noqa: F811  (la fixture, no una redefinición)
     """P2-1 revisión 2026-09-03: el CE puro ordena por afinidad temática — una
     oferta restringida a EE. UU. con mayor logit va primero aunque el código
     YA sabe detectar la incompatibilidad. cross_encoder_tier: primero
@@ -367,7 +367,7 @@ def test_tier_ordena_viables_antes_que_incompatibles_demostradas(db):
     assert matching._is_pair_absolute(matching.XENC_TIER_POLICY_WEIGHTS)
 
 
-def test_worker_lento_no_restaura_un_feed_mas_nuevo(db):
+def test_worker_lento_no_restaura_un_feed_mas_nuevo(db):  # noqa: F811  (la fixture, no una redefinición)
     """Revisión 2026-09-04 P1: A prepara sobre la generación G1 y se queda en
     inferencia; el corpus avanza (G2) y B evalúa y publica el feed nuevo; A
     termina DESPUÉS. Sin revalidar corpus_generation, A borraba el puntero de
@@ -447,7 +447,7 @@ def test_worker_lento_no_restaura_un_feed_mas_nuevo(db):
     assert _feed_actual(factory, pid) == feed_b
 
 
-def test_modelo_desactivado_durante_la_inferencia_no_publica(db):
+def test_modelo_desactivado_durante_la_inferencia_no_publica(db):  # noqa: F811  (la fixture, no una redefinición)
     """Revisión 2026-09-04 P1: la fase final protegía la política canónica
     pero NO el modelo — un modelo desactivado durante una inferencia lenta
     aún podía mover el feed. Debe descartarse sin escribir nada."""
@@ -510,7 +510,7 @@ def test_modelo_desactivado_durante_la_inferencia_no_publica(db):
         "WHERE scoring_policy_id = :sp", sp=polid)[0].n == 0
 
 
-def test_generacion_protegida_hasta_el_commit(db):
+def test_generacion_protegida_hasta_el_commit(db):  # noqa: F811  (la fixture, no una redefinición)
     """Revisión 2026-09-04 1A: A revalida en F3 (lee la generación FINAL) y
     se pausa ANTES de escribir; B intenta una mutación de elegibilidad
     (UPDATE de offer_embeddings ⇒ trigger sobre la fila única de
@@ -575,7 +575,7 @@ def test_generacion_protegida_hasta_el_commit(db):
     assert resultado["r"]["moved_current"] is True
 
 
-def test_activar_un_modelo_anterior_durante_la_inferencia_descarta(db):
+def test_activar_un_modelo_anterior_durante_la_inferencia_descarta(db):  # noqa: F811  (la fixture, no una redefinición)
     """Revisión 2026-09-04 1B: A infiere con el modelo Z (canónico); durante
     la inferencia la autoridad activa un modelo ANTERIOR en el orden, ya
     embebido. Z sigue ACTIVO — la comprobación booleana dejaba publicar a A
@@ -663,7 +663,7 @@ def test_activar_un_modelo_anterior_durante_la_inferencia_descarta(db):
         "WHERE scoring_policy_id = :sp", sp=polid)[0].n == 0
 
 
-def test_materializacion_por_watermark_presupuesto_y_publicacion(db):
+def test_materializacion_por_watermark_presupuesto_y_publicacion(db):  # noqa: F811  (la fixture, no una redefinición)
     """P7-b: la materialización puntúa por lotes REANUDABLES dentro del
     presupuesto; con backlog NO publica (feed intacto, señal); al quedar al
     día la evaluación publica la fotografía completa con CERO inferencias
@@ -725,7 +725,7 @@ def test_materializacion_por_watermark_presupuesto_y_publicacion(db):
         ce.set_engine_factory(None)
 
 
-def test_materializacion_en_sombra_no_mueve_ni_descarta(db):
+def test_materializacion_en_sombra_no_mueve_ni_descarta(db):  # noqa: F811  (la fixture, no una redefinición)
     """P7-b: con la política CE INACTIVA (pre-promoción), la tarea materializa
     y evalúa EN SOMBRA — filas append-only registradas, feed intacto, y jamás
     un descarte por la valla de canonicidad."""
@@ -753,7 +753,7 @@ def test_materializacion_en_sombra_no_mueve_ni_descarta(db):
     assert n == len(TITULOS[:3])  # sombra registrada append-only
 
 
-def test_materialize_all_solo_actua_sobre_ce_activas(db):
+def test_materialize_all_solo_actua_sobre_ce_activas(db):  # noqa: F811  (la fixture, no una redefinición)
     """Beat P7-b: sin políticas CE activas = no-op; con la CE canónica activa
     materializa y publica para los perfiles existentes."""
     from jobhunt_core.tasks.materialize import _all_impl
@@ -795,7 +795,7 @@ def test_materialize_all_solo_actua_sobre_ce_activas(db):
     assert all(k.get("queue") == "core.matching" for _, k in encoladas)
 
 
-def test_exclusion_dismissed_tambien_en_el_camino_CE(db, stub):
+def test_exclusion_dismissed_tambien_en_el_camino_CE(db, stub):  # noqa: F811  (la fixture, no una redefinición)
     """Revisión externa 2026-09-07 (P1-1, 2ª parte): el camino CE retornaba
     `ok_prep` ANTES del filtro de descartadas, así que una vacante descartada
     con score cacheado entraba igualmente en el cálculo. Con la frontera en
@@ -829,7 +829,7 @@ def test_exclusion_dismissed_tambien_en_el_camino_CE(db, stub):
     assert len(candidatos) == len(TITULOS[:3]) - 1
 
 
-def test_el_ciclo_de_matching_NO_infiere_CE_sin_presupuesto(db):
+def test_el_ciclo_de_matching_NO_infiere_CE_sin_presupuesto(db):  # noqa: F811  (la fixture, no una redefinición)
     """Revisión externa 2026-09-07 (P1-3): el proyector y la tarea diaria
     llamaban a `_run_profile_impl`, que evalúa TODAS las políticas activas —
     incluida una de cross-encoder — con inferencia completa y SIN el

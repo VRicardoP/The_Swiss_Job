@@ -7,10 +7,10 @@ import sqlalchemy as sa
 
 from jobhunt_core.api import schemas, v1
 from jobhunt_core.api.deps import ApiError
-from jobhunt_core.tests.test_integration_matching import db, _setup
+from jobhunt_core.tests.test_integration_matching import db, _setup  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
-def test_out_of_order_and_duplicate_exclusion_deliveries(db):
+def test_out_of_order_and_duplicate_exclusion_deliveries(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, _, _, _ = _setup(factory, created, ["python developer"])
 

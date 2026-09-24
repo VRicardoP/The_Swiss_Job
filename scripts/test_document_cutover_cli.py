@@ -7,7 +7,6 @@ import asyncio
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -19,14 +18,14 @@ import sqlalchemy as sa
 from jobhunt_core import documents
 from jobhunt_core.import_documents import digest
 from jobhunt_core.tests.conftest import _suite
-from jobhunt_core.tests.test_integration_api_saved_searches import db, _seed_profile
+from jobhunt_core.tests.test_integration_api_saved_searches import db, _seed_profile  # noqa: F401  (fixture de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_integration_document_source import source_tables
 from jobhunt_core.tests.test_integration_import_documents import source
 from jobhunt_core.document_cutover import private_read, private_write
 
 
 @pytest.mark.parametrize("origin", ["swissjob", "portfolio"])
-def test_cli_seal_import_replay_and_current_state_reverse(db, tmp_path, origin):
+def test_cli_seal_import_replay_and_current_state_reverse(db, tmp_path, origin):  # noqa: F811  (la fixture, no una redefinición)
     assert _suite.get("dbname", "").startswith("jobhunt_suite_")
     factory, created = db
     _, consumer, pid = _seed_profile(factory, created)
@@ -81,7 +80,12 @@ def test_cli_seal_import_replay_and_current_state_reverse(db, tmp_path, origin):
 
     def command(*arguments, ok=True):
         result = subprocess.run(
-            [sys.executable, "-m", "jobhunt_core.document_cutover", *map(str, arguments)],
+            [
+                sys.executable,
+                "-m",
+                "jobhunt_core.document_cutover",
+                *map(str, arguments),
+            ],
             cwd="/app",
             env=env,
             text=True,

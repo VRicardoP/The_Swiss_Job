@@ -24,7 +24,7 @@ from jobhunt_core.tests.test_integration_matching import (  # noqa: F401
     db, pytestmark, _setup, _evaluate, _feed)
 
 
-def test_total_counts_exactly_what_the_page_serves(db):
+def test_total_counts_exactly_what_the_page_serves(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, polid, vacs = _setup(
         factory, created, ["backend python", "data eng", "qa manual", "contable"])
@@ -46,7 +46,7 @@ def test_total_counts_exactly_what_the_page_serves(db):
     asyncio.run(go())
 
 
-def test_total_is_scoped_to_its_tenant(db):
+def test_total_is_scoped_to_its_tenant(db):  # noqa: F811  (la fixture, no una redefinición)
     """A consumer must never be told how many matches another one has."""
     factory, created = db
     pid, mid, polid, _ = _setup(factory, created, ["backend python", "data eng"])
@@ -63,7 +63,7 @@ def test_total_is_scoped_to_its_tenant(db):
     asyncio.run(go())
 
 
-def test_total_is_counted_in_one_pass_not_once_per_row(db):
+def test_total_is_counted_in_one_pass_not_once_per_row(db):  # noqa: F811  (la fixture, no una redefinición)
     """Guards the 1.1-9.3 s -> 0.4-0.9 s difference measured in production.
 
     A correlated subquery reappears in the plan as a SubPlan executed per row.
@@ -84,7 +84,7 @@ def test_total_is_counted_in_one_pass_not_once_per_row(db):
     asyncio.run(go())
 
 
-def test_the_feed_state_index_exists(db):
+def test_the_feed_state_index_exists(db):  # noqa: F811  (la fixture, no una redefinición)
     """Only 15,4 % of profile_vacancy_state rows can belong to a feed.
 
     Measured on production: 35.092 rows, 5.400 with a `current_eval_id`.

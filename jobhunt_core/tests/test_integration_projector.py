@@ -1495,7 +1495,7 @@ def test_recovery_does_not_record_a_combo_without_vector(db):
             await s.commit()
             return mid
 
-    model_b = _run(add_model_b())
+    _run(add_model_b())  # registra el segundo modelo; su id no hace falta aquí
     _seed_corpus(factory)  # corpus embebido para AMBOS modelos activos
 
     async def setup():
@@ -2336,7 +2336,8 @@ def test_c8_mordidas_b4_b6_del_fold_y_la_encarnacion_cerrada(db):
     ])
     _project()
     re4 = _job("b4", src, chash="ch-b4-4")
-    re4.pop("url", None); re4.pop("apply_url", None)
+    re4.pop("url", None)
+    re4.pop("apply_url", None)
     re4["_omitted"] = ["url", "apply_url"]
     _seed(factory, [("jobs", "U", "b4", re4)])
     _project()
@@ -2359,7 +2360,8 @@ def test_c8_mordidas_b4_b6_del_fold_y_la_encarnacion_cerrada(db):
                           apply_url="https://a/Y", chash="ch-b6-3"))])
     _project()  # emisión con el slot YA cerrado
     re6 = _job("b6", src, chash="ch-b6-4")
-    re6.pop("url", None); re6.pop("apply_url", None)
+    re6.pop("url", None)
+    re6.pop("apply_url", None)
     re6["_omitted"] = ["url", "apply_url"]
     _seed(factory, [("jobs", "U", "b6", re6)])
     _project()

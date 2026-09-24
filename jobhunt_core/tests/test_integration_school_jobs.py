@@ -10,15 +10,15 @@ from jobhunt_core.school_ingest import SOURCE_NAME, SCOPE_ID
 from jobhunt_core.tests import dbcleanup
 from jobhunt_core.tests.test_integration_api_schools import _create, _request, SCOPES
 from jobhunt_core.tests.test_integration_api_saved_searches import (
-    db,
+    db,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
     _seed_profile,
     _rows,
-    pytestmark,
+    pytestmark,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 )
 
 
 @pytest.fixture()
-def school_db(db):
+def school_db(db):  # noqa: F811  (la fixture, no una redefinición)
     yield db
     f, made = db
 

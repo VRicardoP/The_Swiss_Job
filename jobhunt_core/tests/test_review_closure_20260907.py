@@ -7,7 +7,7 @@ import sqlalchemy as sa
 
 from jobhunt_core import matching
 from jobhunt_core.shadow import projector
-from jobhunt_core.tests.test_integration_matching import db, _setup
+from jobhunt_core.tests.test_integration_matching import db, _setup  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
 async def _declare(factory, pid):
@@ -27,7 +27,7 @@ async def _pending(factory):
         return [r.id for r in result.all()]
 
 
-def test_exclusion_change_must_rearm_recovery(db):
+def test_exclusion_change_must_rearm_recovery(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, pol, _ = _setup(factory, created, ["python developer", "python engineer"])
 
@@ -42,7 +42,7 @@ def test_exclusion_change_must_rearm_recovery(db):
     asyncio.run(check())
 
 
-def test_exclusion_change_during_preparation_must_fence_publication(db, monkeypatch):
+def test_exclusion_change_during_preparation_must_fence_publication(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, pol, _ = _setup(factory, created, ["python developer", "python engineer"])
     original = matching.compute_policy_feed

@@ -6,7 +6,7 @@ import pytest
 
 from jobhunt_core.tests import test_integration_api as tia
 from jobhunt_core.tests.test_integration_api_documents import _seed, _path
-from jobhunt_core.tests.test_integration_api_saved_searches import db, _rows, pytestmark
+from jobhunt_core.tests.test_integration_api_saved_searches import db, _rows, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
 def body():
@@ -22,7 +22,7 @@ def post(f, token, pid, payload=None, key="batch-1"):
                     headers={} if key is None else {"Idempotency-Key": key})
 
 
-def test_batch_roundtrip_canonical_replay_and_new_generation(db):
+def test_batch_roundtrip_canonical_replay_and_new_generation(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed(f, made)
     first = post(f, token, str(pid).upper())
@@ -43,7 +43,7 @@ def test_batch_roundtrip_canonical_replay_and_new_generation(db):
     assert set(ids).isdisjoint(d["id"] for d in new.json()["items"])
 
 
-def test_batch_second_outbox_failure_rolls_back_everything(db, monkeypatch):
+def test_batch_second_outbox_failure_rolls_back_everything(db, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     from jobhunt_core import outbox
     f, made = db
     token, _, pid = _seed(f, made)
@@ -65,7 +65,7 @@ def test_batch_second_outbox_failure_rolls_back_everything(db, monkeypatch):
     assert post(f, token, pid).status_code == 201  # failed attempt did not poison the key
 
 
-def test_batch_missing_second_offer_has_no_partial_commit(db):
+def test_batch_missing_second_offer_has_no_partial_commit(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed(f, made)
     payload = body()
@@ -84,7 +84,7 @@ def test_batch_missing_second_offer_has_no_partial_commit(db):
     {"items": [{"doc_type": "cv", "content": "ok"}, {"doc_type": "cover_letter", "content": "ok", "context": {"bad": "\ud800"}}]},
     {"items": [{"doc_type": "cv", "content": "ok"}, {"doc_type": "cover_letter", "content": "ok", "context": {"huge": 1e100000}}]},
 ])
-def test_batch_invalid_member_fails_before_any_write(db, payload):
+def test_batch_invalid_member_fails_before_any_write(db, payload):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, _, pid = _seed(f, made)
     # Raw JSON permits testing the non-finite boundary, unlike httpx json=.
@@ -97,7 +97,7 @@ def test_batch_invalid_member_fails_before_any_write(db, payload):
     assert _rows(f, "SELECT key FROM idempotency_records WHERE key='bad-batch'") == []
 
 
-def test_batch_ownership_scope_and_required_key(db):
+def test_batch_ownership_scope_and_required_key(db):  # noqa: F811  (la fixture, no una redefinición)
     f, made = db
     token, tenant, pid = _seed(f, made)
     other, _, _ = _seed(f, made)
@@ -110,7 +110,7 @@ def test_batch_ownership_scope_and_required_key(db):
     assert single.status_code == 201 and len(single.json()["items"]) == 1
 
 
-def test_batch_partial_deletion_never_resurrects_and_erase_purges_receipt(db):
+def test_batch_partial_deletion_never_resurrects_and_erase_purges_receipt(db):  # noqa: F811  (la fixture, no una redefinición)
     from jobhunt_core.shadow.projector import erase_shadow_profile
     f, made = db
     token, tenant, pid = _seed(f, made)

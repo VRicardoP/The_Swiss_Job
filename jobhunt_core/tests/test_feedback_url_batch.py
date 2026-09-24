@@ -5,10 +5,10 @@ import asyncio
 import sqlalchemy as sa
 
 from jobhunt_core.import_swissjob_durables import resolve_vacancies_by_incarnation_urls
-from jobhunt_core.tests.test_integration_api import db, _seed_matches, pytestmark
+from jobhunt_core.tests.test_integration_api import db, _seed_matches, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
-def test_batch_url_resolution_preserves_merges_and_url_boundaries(db):
+def test_batch_url_resolution_preserves_merges_and_url_boundaries(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     _, vacancies, _ = _seed_matches(
         factory, created, titles=("python backend", "data engineer", "systems engineer")

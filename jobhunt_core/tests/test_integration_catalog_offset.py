@@ -1,5 +1,4 @@
 """Existing BFF total/offset contract without downloading the entire corpus."""
-import pytest
 
 from jobhunt_core.tests import test_integration_api as api
 

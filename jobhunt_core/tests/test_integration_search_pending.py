@@ -6,7 +6,7 @@ import pytest
 import sqlalchemy as sa
 
 from jobhunt_core.import_swissjob_searches import SearchMigrationError, resolve_pending
-from jobhunt_core.tests.test_integration_search_execution import db, pytestmark, corpus, _vacancy_state
+from jobhunt_core.tests.test_integration_search_execution import db, pytestmark, corpus, _vacancy_state  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
 def snapshot(items, sent=()):
@@ -16,7 +16,7 @@ def snapshot(items, sent=()):
         "sent": {sid: {item.external_id: item.external_id in sent for item in items}}}, sid
 
 
-def test_resolves_only_pending_and_preserves_sent(db):
+def test_resolves_only_pending_and_preserves_sent(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     _, items = corpus(factory, made, "Python owed", "Python sent")
     frozen, sid = snapshot(items, [items[1].external_id])
@@ -28,7 +28,7 @@ def test_resolves_only_pending_and_preserves_sent(db):
     asyncio.run(go())
 
 
-def test_missing_pending_aborts_but_missing_sent_does_not_create_a_new_alert(db):
+def test_missing_pending_aborts_but_missing_sent_does_not_create_a_new_alert(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, _ = db
     sid = str(uuid.uuid4())
     frozen = {"version": 1, "rows": [{"id": sid}],
@@ -44,7 +44,7 @@ def test_missing_pending_aborts_but_missing_sent_does_not_create_a_new_alert(db)
     asyncio.run(go())
 
 
-def test_ambiguous_url_is_not_resolved_by_row_order(db):
+def test_ambiguous_url_is_not_resolved_by_row_order(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     _, items = corpus(factory, made, "Python one", "Python two")
     frozen, _ = snapshot(items[:1])
@@ -59,7 +59,7 @@ def test_ambiguous_url_is_not_resolved_by_row_order(db):
     asyncio.run(go())
 
 
-def test_sent_merged_alias_suppresses_pending_winner(db):
+def test_sent_merged_alias_suppresses_pending_winner(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     _, items = corpus(factory, made, "Python winner", "Python sent loser")
     frozen, sid = snapshot(items, [items[1].external_id])
@@ -73,7 +73,7 @@ def test_sent_merged_alias_suppresses_pending_winner(db):
 
 
 @pytest.mark.parametrize("defect", ["missing_marker", "string_marker", "repeated_candidate", "missing_search"])
-def test_incomplete_or_malformed_snapshot_is_rejected(db, defect):
+def test_incomplete_or_malformed_snapshot_is_rejected(db, defect):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     _, items = corpus(factory, made, "Python owed")
     frozen, sid = snapshot(items)

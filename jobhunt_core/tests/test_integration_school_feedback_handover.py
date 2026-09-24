@@ -7,13 +7,13 @@ from datetime import datetime, timezone
 import sqlalchemy as sa
 
 from jobhunt_core.import_swissjob_feedback import apply_plan, prepare_plan
-from jobhunt_core.tests.test_integration_api import db
-from jobhunt_core.tests.test_integration_api_saved_searches import _seed_profile, _rows, pytestmark
+from jobhunt_core.tests.test_integration_api import db  # noqa: F401  (la fixture de la que depende school_db; pytest la resuelve en el espacio de nombres de este módulo — sin ella los tests dan error de fixture)
+from jobhunt_core.tests.test_integration_api_saved_searches import _seed_profile, _rows, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_integration_api_schools import _create, _request, SCOPES
-from jobhunt_core.tests.test_integration_school_jobs import school_db, _observation
+from jobhunt_core.tests.test_integration_school_jobs import school_db, _observation  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
-def test_quarantined_school_feedback_handover_is_lossless(school_db):
+def test_quarantined_school_feedback_handover_is_lossless(school_db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = school_db
     token, consumer, pid = _seed_profile(factory, made, SCOPES)
     monitor = _create(factory, token).json()
