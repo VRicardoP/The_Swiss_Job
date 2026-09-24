@@ -114,19 +114,20 @@ jobs:
       - run: npx vitest run
 
   core-lint:
-    # INFORMATIVO por ahora: `jobhunt_core/` nunca se ha pasado por ruff y
-    # acumula ~358 avisos. Se deja visible y sin bloquear hasta decidir que
-    # reglas se adoptan (paquete T13); ponerlo bloqueante hoy solo enseñaria a
-    # ignorar el CI.
+    # BLOQUEANTE desde el 2026-09-24: los 358 avisos de `jobhunt_core/` estan a 0
+    # y el arbol formateado, asi que ya se puede exigir. Era informativo porque
+    # exigir 358 avisos solo enseña a ignorar el CI; mantenerlo informativo ahora
+    # que esta limpio solo serviria para que volviera a ensuciarse.
+    # Suite del core verificada en verde con estos cambios: 1.769 passed.
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install ruff==0.15.14
-      - run: ruff check jobhunt_core --statistics
+      - run: ruff check jobhunt_core
+      - run: ruff format --check jobhunt_core
 
   compose-config:
     # Los composes de despliegue (prod/qnap/prebuilt/rehearsal) no se validaban
