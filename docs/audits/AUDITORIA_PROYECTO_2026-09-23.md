@@ -276,6 +276,10 @@ Duplicados fusionados; ordenados por severidad. Entre corchetes, quién lo encon
   nombrable + `authoritative`. Cuatro controles negativos, cada uno mordiendo por
   su propia condición (etiqueta divergente —el caso H16 exacto—, `not_ready`,
   `release unknown`, `authoritative false`) y un control del control que pasa.
+- **Beneficio que no se buscaba**: mientras `core-api` estuvo `not_ready`, los
+  tres tests extremo-a-extremo de `test_aseam_e2e.py` se **saltaban en silencio**
+  (su `skipif` exige que `/v1/ready` devuelva 200). La suite del BFF pasa de
+  «2.587 passed, 3 skipped» a **2.590 passed, sin skips**.
 - **El camino de vuelta ya no es reapuntar la etiqueta**: `d908ea2` espera
   `core0042` y la base está en `core0051`, así que volver a ella daría
   `not_ready` otra vez. La vuelta atrás exige además `alembic downgrade` —los
