@@ -1,8 +1,21 @@
 import { useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { authApi } from "../config/api";
+import { authApi, endsSession } from "../config/api";
 import useAuthStore from "../stores/authStore";
+
+/**
+ * C6: qué hacer cuando la hidratación de la sesión falla.
+ *
+ * Vive fuera del hook para poder probarla: sólo un 401/403 significa que la
+ * credencial murió. Con cualquier otro error —500, 502, backend caído— la
+ * sesión se conserva y se marca hidratado, para no dejar la app en blanco
+ * esperando eternamente. Antes, un 502 de un segundo deslogueaba al usuario.
+ */
+export function resolverErrorDeSesion(status, { logout, setHydrated }) {
+  if (endsSession(status)) logout();
+  else setHydrated(true);
+}
 
 export function useAuthHydration() {
   const token = useAuthStore((s) => s.token);
@@ -27,9 +40,20 @@ export function useAuthHydration() {
       setHydrated(true);
     }
     if (query.isError) {
-      useAuthStore.getState().logout();
+      resolverErrorDeSesion(query.error?.status, {
+        logout: useAuthStore.getState().logout,
+        setHydrated,
+      });
     }
-  }, [token, query.isSuccess, query.isError, query.data, setUser, setHydrated]);
+  }, [
+    token,
+    query.isSuccess,
+    query.isError,
+    query.error,
+    query.data,
+    setUser,
+    setHydrated,
+  ]);
 
   return query;
 }

@@ -1,11 +1,82 @@
+import useAuthStore from "../stores/authStore";
+
 const BASE = "/api/v1";
 
+// C6: los únicos estados que significan «esta credencial ya no vale». Un 500,
+// un 502 o un corte de red NO terminan la sesión: antes, cualquier error la
+// cerraba y un fallo transitorio echaba al usuario.
+const ESTADOS_QUE_CIERRAN_SESION = new Set([401, 403]);
+
+export function endsSession(status) {
+  return ESTADOS_QUE_CIERRAN_SESION.has(status);
+}
+
 function getAuthHeaders() {
-  const token =
-    typeof localStorage !== "undefined"
-      ? localStorage.getItem("swissjob_token")
-      : null;
+  // El store es la única fuente: él lo persiste en localStorage y lo rehidrata
+  // al arrancar. Leer aquí localStorage por separado era una segunda copia que
+  // se quedaba atrás justo después de renovar el token.
+  const token = useAuthStore.getState().token;
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+// Promesa compartida: N peticiones en vuelo que reciben 401 provocan UN refresh,
+// no N. Se limpia al terminar para que el siguiente 401 pueda reintentarlo.
+let refreshing = null;
+
+function refreshSession() {
+  if (!refreshing) {
+    refreshing = (async () => {
+      const rt = useAuthStore.getState().refreshToken;
+      if (!rt) {
+        const err = new Error("sin refresh token");
+        err.sessionEnded = true;
+        throw err;
+      }
+      try {
+        const data = await authApi.refresh(rt);
+        const store = useAuthStore.getState();
+        store.setAuth(
+          data.access_token,
+          data.refresh_token,
+          data.user ?? store.user,
+        );
+        return data;
+      } catch (err) {
+        // Sólo un 401/403 del propio refresh prueba que la credencial murió.
+        // Si el refresh falla por red o por un 500, la sesión sigue viva.
+        if (endsSession(err.status)) err.sessionEnded = true;
+        throw err;
+      }
+    })().finally(() => {
+      refreshing = null;
+    });
+  }
+  return refreshing;
+}
+
+// Renueva y dice si se puede reintentar. Cierra sesión SOLO si el refresh
+// demostró que la credencial ya no sirve.
+async function renovarSesion() {
+  try {
+    await refreshSession();
+    return true;
+  } catch (err) {
+    if (err.sessionEnded) useAuthStore.getState().logout();
+    return false;
+  }
+}
+
+// `fetch` autenticado en crudo, para las tres rutas que necesitan la Response
+// entera (multipart, blob): sin esto, la sesión se caía a los 30 min justo en
+// una subida de CV o una descarga de .ics.
+async function authFetch(url, init = {}, _reintentado = false) {
+  const res = await fetch(url, {
+    ...init,
+    headers: { ...getAuthHeaders(), ...init.headers },
+  });
+  if (res.status !== 401 || _reintentado) return res;
+  if (!(await renovarSesion())) return res;
+  return authFetch(url, init, true);
 }
 
 async function request(path, options = {}) {
@@ -34,10 +105,18 @@ async function request(path, options = {}) {
 }
 
 async function authRequest(path, options = {}) {
-  return request(path, {
-    ...options,
-    headers: { ...getAuthHeaders(), ...options.headers },
-  });
+  const { _reintentado, ...rest } = options;
+  try {
+    return await request(path, {
+      ...rest,
+      headers: { ...getAuthHeaders(), ...rest.headers },
+    });
+  } catch (err) {
+    if (err.status !== 401 || _reintentado) throw err;
+    if (!(await renovarSesion())) throw err;
+    // El reintento vuelve a leer la cabecera, que ya lleva el token nuevo.
+    return authRequest(path, { ...rest, _reintentado: true });
+  }
 }
 
 export const jobsApi = {
@@ -80,10 +159,10 @@ export const profileApi = {
   async uploadCV(file) {
     const formData = new FormData();
     formData.append("file", file);
-    // Use raw fetch — multipart boundary must be set by the browser
-    const res = await fetch(`${BASE}/profile/cv`, {
+    // authFetch y no authRequest: el boundary del multipart lo pone el
+    // navegador, así que aquí NO se fija Content-Type.
+    const res = await authFetch(`${BASE}/profile/cv`, {
       method: "POST",
-      headers: getAuthHeaders(),
       body: formData,
     });
     if (!res.ok) {
@@ -291,9 +370,8 @@ export const analyticsApi = {
   },
 
   async deleteFilter(id) {
-    const res = await fetch(`${BASE}/analytics/filters/${id}`, {
+    const res = await authFetch(`${BASE}/analytics/filters/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
@@ -393,9 +471,8 @@ export const watchlistApi = {
   // de errores estándar. Reemplaza al fetch() directo que existía en
   // WatchlistPage y evitaba el wrapper de auth.
   async downloadIcs(jobHash) {
-    const res = await fetch(
+    const res = await authFetch(
       `${BASE}/watchlist/match/${jobHash}/calendar.ics`,
-      { headers: getAuthHeaders() },
     );
     if (!res.ok) {
       const err = new Error(`HTTP ${res.status}: ${res.statusText}`);
