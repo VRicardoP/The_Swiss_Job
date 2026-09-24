@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Sparkles,
   AlertTriangle,
@@ -46,26 +46,16 @@ export default function MatchPage() {
 
   const [activeCategory, setActiveCategory] = useState(null);
 
-  const enterTime = useRef(Date.now());
-  const resultsRef = useRef(results);
-  resultsRef.current = results;
-
-  // Implicit view_time on unmount
-  useEffect(() => {
-    const enteredAt = enterTime.current;
-    return () => {
-      const duration = Date.now() - enteredAt;
-      const first = resultsRef.current?.data?.[0];
-      if (first) {
-        submitImplicit.mutate({
-          jobHash: first.job_hash,
-          action: "view_time",
-          durationMs: duration,
-        });
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // H12/T7 — RETIRADA la señal implícita `view_time`.
+  //
+  // Medía el tiempo que la PÁGINA estuvo abierta y se lo atribuía a
+  // `data[0]`: la primera oferta del lote, que el usuario puede no haber
+  // visto nunca (las tarjetas se pintan por categoría, y la pestaña inicial
+  // ni siquiera es la primera). Era una señal falsa alimentando el ranking,
+  // y una señal falsa es peor que ninguna.
+  //
+  // Medirlo de verdad exige `IntersectionObserver` por tarjeta: eso es una
+  // funcionalidad nueva, no el arreglo de un defecto, y se decide aparte.
 
   const hasCvEmbedding = profile?.has_cv_embedding;
   const allMatches = useMemo(() => results?.data ?? [], [results?.data]);
@@ -133,15 +123,29 @@ export default function MatchPage() {
     [allMatches],
   );
 
-  function handleFeedback({ jobHash, feedback }) {
-    submitFeedback.mutate({ jobHash, feedback });
-  }
-  function handleClearFeedback({ jobHash }) {
-    clearFeedback.mutate({ jobHash });
-  }
-  function handleImplicit({ jobHash, action, durationMs }) {
-    submitImplicit.mutate({ jobHash, action, durationMs });
-  }
+  // L4/T7: estos tres se recreaban en CADA render, así que cambiaban de
+  // identidad y el `memo(MatchCard)` no servía de nada: se repintaban las
+  // 1.800 tarjetas por cualquier cambio de estado de la página.
+  // `mutate` de react-query es estable entre renders; se extrae para que la
+  // dependencia sea la función y no una expresión de miembro, que es lo que
+  // el plugin de React no sabe memoizar.
+  const { mutate: mutarFeedback } = submitFeedback;
+  const { mutate: mutarBorradoFeedback } = clearFeedback;
+  const { mutate: mutarImplicito } = submitImplicit;
+
+  const handleFeedback = useCallback(
+    ({ jobHash, feedback }) => mutarFeedback({ jobHash, feedback }),
+    [mutarFeedback],
+  );
+  const handleClearFeedback = useCallback(
+    ({ jobHash }) => mutarBorradoFeedback({ jobHash }),
+    [mutarBorradoFeedback],
+  );
+  const handleImplicit = useCallback(
+    ({ jobHash, action, durationMs }) =>
+      mutarImplicito({ jobHash, action, durationMs }),
+    [mutarImplicito],
+  );
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">

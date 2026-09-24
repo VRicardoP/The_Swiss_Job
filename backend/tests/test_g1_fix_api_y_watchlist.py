@@ -115,12 +115,21 @@ class TestP321CooldownSalud:
 
 @pytest.mark.asyncio
 class TestP324SSEUsuarioActivo:
-    async def test_stream_con_usuario_inexistente_es_401(self, client):
-        from core.security import create_access_token
+    async def test_stream_con_usuario_inexistente_es_401(self, client, redis_client):
+        """H13/T10: el vale sustituye al JWT en la URL, pero el invariante es
+        el mismo — un vale cuyo usuario ya no existe NO abre el stream."""
+        from main import app
+        from routers.notifications import _clave_ticket
 
         ghost_id = uuid.uuid4()
-        token = create_access_token(ghost_id)
-        resp = await client.get(f"/api/v1/notifications/stream?token={token}")
+        ticket = uuid.uuid4().hex
+        previo = getattr(app.state, "redis_client", None)
+        app.state.redis_client = redis_client
+        try:
+            await redis_client.set(_clave_ticket(ticket), str(ghost_id), ex=30)
+            resp = await client.get(f"/api/v1/notifications/stream?ticket={ticket}")
+        finally:
+            app.state.redis_client = previo
         assert resp.status_code == 401
 
 

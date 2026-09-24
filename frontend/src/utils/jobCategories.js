@@ -293,6 +293,23 @@ export const CATEGORIES = [
  * Clasifica un match en una de las 13 categorías.
  * Devuelve el id de categoría o "otros" si no encaja en ninguna.
  */
+// M16/T7: tres keywords se escribieron como comodines (`standort.*betreuung`,
+// `springer.*heim`, `fachbegleiter.*wohn`) pero se comparaban con
+// `text.includes(kw)`, que es literal: ningún título contiene los caracteres
+// `.*`, así que llevaban muertas desde que se escribieron. Comprobado contra el
+// corpus real: como literal casan 0 ofertas; como expresión regular, 1.
+// Se compilan UNA vez al cargar el módulo, no por oferta: `classifyMatch` corre
+// sobre las 1.800 del feed en cada agrupación.
+const _COMODIN = /\.\*/;
+const _PATRONES = new Map(
+  CATEGORIES.map((cat) => [
+    cat.id,
+    cat.keywords.map((kw) =>
+      _COMODIN.test(kw) ? new RegExp(kw) : kw,
+    ),
+  ]),
+);
+
 export function classifyMatch(match) {
   const text = [
     match.job_title_en || match.job_title || "",
@@ -302,7 +319,12 @@ export function classifyMatch(match) {
     .toLowerCase();
 
   for (const cat of CATEGORIES) {
-    if (cat.keywords.some((kw) => text.includes(kw))) {
+    const patrones = _PATRONES.get(cat.id) ?? cat.keywords;
+    if (
+      patrones.some((p) =>
+        typeof p === "string" ? text.includes(p) : p.test(text),
+      )
+    ) {
       return cat.id;
     }
   }

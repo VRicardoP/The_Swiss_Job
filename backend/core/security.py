@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -12,12 +14,42 @@ from config import settings
 from database import get_db
 
 
+# H6/T8 — bcrypt sólo mira los primeros 72 BYTES y los demás los descarta EN
+# SILENCIO (medido con bcrypt 4.3.0: una contraseña de 100 caracteres valida
+# contra sus primeros 72). Con `max_length=128` en el registro eso significaba
+# que un tercio de una contraseña larga no protegía nada, y en el login no había
+# tope alguno. Se pre-digiere con SHA-256 y se pasa en base64: 44 bytes fijos,
+# sin truncado posible y sin límite de longitud para el usuario.
+_PREFIJO_SHA256 = "sha256$"
+
+
+def _material(plain_password: str) -> bytes:
+    """Lo que ve bcrypt: 44 bytes, pase lo que pase por arriba."""
+    return base64.b64encode(hashlib.sha256(plain_password.encode()).digest())
+
+
 def hash_password(plain_password: str) -> str:
-    return bcrypt.hashpw(plain_password.encode(), bcrypt.gensalt()).decode()
+    hashed = bcrypt.hashpw(_material(plain_password), bcrypt.gensalt()).decode()
+    return _PREFIJO_SHA256 + hashed
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+    """Acepta el esquema nuevo y el antiguo; el llamante decide si re-hashea.
+
+    Sin esta compatibilidad, cambiar el esquema dejaría fuera a todo el que ya
+    tuviera cuenta. El esquema antiguo se distingue por NO llevar prefijo.
+    """
+    if hashed_password.startswith(_PREFIJO_SHA256):
+        return bcrypt.checkpw(
+            _material(plain_password), hashed_password[len(_PREFIJO_SHA256) :].encode()
+        )
+    # Legado: bcrypt directo sobre la contraseña (truncada a 72 bytes).
+    return bcrypt.checkpw(plain_password.encode()[:72], hashed_password.encode())
+
+
+def needs_rehash(hashed_password: str) -> bool:
+    """True si la contraseña guardada usa todavía el esquema truncable."""
+    return not hashed_password.startswith(_PREFIJO_SHA256)
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")

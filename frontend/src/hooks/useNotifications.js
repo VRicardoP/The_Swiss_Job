@@ -33,10 +33,43 @@ export function useNotificationSSE() {
       setUnreadCount(data.unread_count);
     }).catch(() => {});
 
-    // SSE connection — pass token as query param (EventSource can't send headers)
-    const url = `/api/v1/notifications/stream?token=${encodeURIComponent(token)}`;
-    const es = new EventSource(url);
-    sourceRef.current = es;
+    // H13/T10: el JWT ya NO viaja en la URL. Se pide un vale de un solo uso
+    // (Bearer, por la vía normal) que caduca en 30 s.
+    //
+    // Consecuencia que hay que atender: `EventSource` reconecta solo reusando
+    // la MISMA url, y el vale ya está gastado — reconectaría en bucle contra un
+    // 401. Por eso la reconexión se hace a mano, pidiendo vale nuevo, con
+    // espera creciente para no martillear el servidor si está caído.
+    let cancelado = false;
+    let temporizador = null;
+    let espera = 1000;
+
+    const conectar = async () => {
+      if (cancelado) return;
+      let ticket;
+      try {
+        ({ ticket } = await notificationsApi.streamTicket());
+      } catch {
+        // Sin vale no hay stream; se reintenta. Un 401 aquí ya lo habrá
+        // gestionado el cliente de API (refresh o cierre de sesión).
+        reintentar();
+        return;
+      }
+      if (cancelado) return;
+      const es = new EventSource(
+        `/api/v1/notifications/stream?ticket=${encodeURIComponent(ticket)}`,
+      );
+      sourceRef.current = es;
+      preparar(es);
+    };
+
+    const reintentar = () => {
+      if (cancelado) return;
+      temporizador = setTimeout(conectar, espera);
+      espera = Math.min(espera * 2, 60000);
+    };
+
+    const preparar = (es) => {
 
     es.addEventListener("new_matches", (e) => {
       try {
@@ -49,15 +82,28 @@ export function useNotificationSSE() {
       }
     });
 
-    es.addEventListener("connected", () => {});
+      es.addEventListener("connected", () => {
+        espera = 1000; // conexión buena: la espera vuelve a su valor inicial
+      });
 
-    es.onerror = () => {
-      // EventSource auto-reconnects
+      es.onerror = () => {
+        // El vale ya está gastado, así que dejar reconectar a EventSource sólo
+        // daría 401 en bucle: se cierra y se pide uno nuevo.
+        es.close();
+        if (sourceRef.current === es) sourceRef.current = null;
+        reintentar();
+      };
     };
 
+    conectar();
+
     return () => {
-      es.close();
-      sourceRef.current = null;
+      cancelado = true;
+      if (temporizador) clearTimeout(temporizador);
+      if (sourceRef.current) {
+        sourceRef.current.close();
+        sourceRef.current = null;
+      }
     };
   }, [token, qc]);
 

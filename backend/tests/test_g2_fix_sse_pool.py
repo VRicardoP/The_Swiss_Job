@@ -17,18 +17,35 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from core.security import create_access_token, hash_password
+from core.security import hash_password
 from models.user import User
 from routers.notifications import notification_stream
 from services.sse_manager import SSEManager
+
+TICKET = "vale-de-prueba"
 
 
 class _FakeRedis:
     """SSEManager solo necesita el cliente para pub/sub; aquí no se arranca."""
 
 
-def _fake_request(sse: SSEManager) -> SimpleNamespace:
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(sse_manager=sse)))
+class _ValesFalsos:
+    """Canjea el vale una sola vez, como el `GETDEL` real (H13/T10)."""
+
+    def __init__(self, uid):
+        self._pendiente = str(uid)
+
+    async def getdel(self, _clave):
+        valor, self._pendiente = self._pendiente, None
+        return valor
+
+
+def _fake_request(sse: SSEManager, uid=None) -> SimpleNamespace:
+    return SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(sse_manager=sse, redis_client=_ValesFalsos(uid))
+        )
+    )
 
 
 async def _make_user(db, *, is_active: bool = True) -> uuid.UUID:
@@ -56,8 +73,8 @@ class TestP24StreamNoRetieneConexion:
         sse = SSEManager(_FakeRedis())
 
         response = await notification_stream(
-            request=_fake_request(sse),
-            token=create_access_token(uid),
+            request=_fake_request(sse, uid),
+            ticket=TICKET,
             db=db_session,
         )
 
@@ -73,8 +90,8 @@ class TestP24StreamNoRetieneConexion:
         sse = SSEManager(_FakeRedis())
 
         response = await notification_stream(
-            request=_fake_request(sse),
-            token=create_access_token(uid),
+            request=_fake_request(sse, uid),
+            ticket=TICKET,
             db=db_session,
         )
 
@@ -94,8 +111,8 @@ class TestP24StreamNoRetieneConexion:
 
         with pytest.raises(HTTPException) as exc:
             await notification_stream(
-                request=_fake_request(sse),
-                token=create_access_token(uid),
+                request=_fake_request(sse, uid),
+                ticket=TICKET,
                 db=db_session,
             )
         assert exc.value.status_code == 401

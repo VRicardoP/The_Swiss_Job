@@ -131,7 +131,11 @@ function MatchCard({ match, onFeedback, onClearFeedback, onImplicit }) {
               >
                 {title}
               </Link>
-              {match.job_title_en && (
+              {/* H12/T7: hacía falta también el idioma. Con `job_language`
+                  nulo o vacío —que es el 96,9 % del feed mientras el almacén
+                  derivado no lo resuelve— se leía «Translated from » a secas,
+                  una frase a medias. */}
+              {match.job_title_en && match.job_language && (
                 <span className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-text-quaternary">
                   <Languages className="h-3 w-3" aria-hidden="true" />
                   Translated from {match.job_language?.toUpperCase()}

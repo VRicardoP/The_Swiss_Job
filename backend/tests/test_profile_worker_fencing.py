@@ -111,7 +111,11 @@ async def test_old_vector_cannot_publish_after_edit_or_delete(
         if deleted:
             assert p is None
         else:
-            assert p.cv_text == "New CV" and all(p.cv_embedding == 1)
+            # No asumir ndarray: pgvector devuelve `list` con las versiones
+            # actuales, y `lista == 1` es un booleano, no una comparación
+            # elemento a elemento. La prueba se caía por el tipo, no por el
+            # código que quiere comprobar.
+            assert p.cv_text == "New CV" and all(v == 1 for v in p.cv_embedding)
 
 
 async def test_current_analysis_and_vector_publish_normally(db_session, monkeypatch):
@@ -141,5 +145,5 @@ async def test_current_analysis_and_vector_publish_normally(db_session, monkeypa
             await check.execute(select(UserProfile).where(UserProfile.user_id == uid))
         ).scalar_one()
         assert p.title == "New AI title" and p.skills == ["Python"]
-        assert all(p.cv_embedding == 1)
+        assert all(v == 1 for v in p.cv_embedding)
     encoder.encode.assert_called_once_with("New AI title Current CV Python")

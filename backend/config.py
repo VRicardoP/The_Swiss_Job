@@ -180,6 +180,11 @@ class Settings(BaseSettings):
     # G1/P3-28 — rate limiting tras reverse proxy: confiar en X-Forwarded-For
     # SOLO si el proxy la sobreescribe (activar en el despliegue del NAS).
     RATE_LIMIT_TRUST_PROXY: bool = False
+    # H5/T8: límite por defecto de TODA la API, no sólo de las 5 rutas con
+    # decorador. 240/min = 4/s sostenidos por cliente: la pantalla principal
+    # hace 1 petición y una sesión de navegación normal no se acerca, pero un
+    # bucle descontrolado sí choca. Medir antes de bajarlo.
+    RATE_LIMIT_DEFAULT: str = "240/minute"
 
     ALERTS_MAX_PUSH_PER_DAY: int = 10
     ALERTS_MIN_SCORE_THRESHOLD: int = 50

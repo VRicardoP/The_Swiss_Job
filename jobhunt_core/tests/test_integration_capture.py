@@ -987,11 +987,19 @@ def test_heartbeat_advances_on_keepalive_without_traffic(capture):
         f"SELECT heartbeat_at, updated_at FROM {S}.shadow_capture_state",
     )[0]
     assert row0.heartbeat_at is not None  # el bootstrap ya deja latido
-    cap.stream(max_seconds=1.0)  # sin tráfico: solo keepalives
-    row1 = _rows(
-        engine,
-        f"SELECT heartbeat_at, updated_at FROM {S}.shadow_capture_state",
-    )[0]
+    # A19-24: se espera a que el latido AVANCE, no a que pase un segundo de
+    # reloj. Con un `max_seconds=1.0` fijo el test dependía de la carga de la
+    # máquina: falló una vez dentro de una suite de 20 min y pasó 3/3 aislado,
+    # con el fichero de AST idéntico. Lo que se quiere comprobar es que el
+    # keepalive mueve el latido, no cuánto tarda en hacerlo.
+    limite = time.monotonic() + 30.0
+    row1 = row0
+    while row1.heartbeat_at <= row0.heartbeat_at and time.monotonic() < limite:
+        cap.stream(max_seconds=1.0)  # sin tráfico: solo keepalives
+        row1 = _rows(
+            engine,
+            f"SELECT heartbeat_at, updated_at FROM {S}.shadow_capture_state",
+        )[0]
     assert row1.heartbeat_at > row0.heartbeat_at  # latido VIVO sin tráfico
     assert row1.updated_at == row0.updated_at  # datos: intacto
 

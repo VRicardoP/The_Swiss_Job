@@ -274,6 +274,13 @@ export const searchesApi = {
 };
 
 export const notificationsApi = {
+  // H13/T10: vale de un solo uso para el SSE. `EventSource` no manda
+  // cabeceras, así que antes el JWT iba en la query string y acababa en los
+  // logs de acceso; el vale caduca en 30 s y se canjea una sola vez.
+  streamTicket() {
+    return authRequest("/notifications/stream-ticket", { method: "POST" });
+  },
+
   list(params = {}) {
     const qs = new URLSearchParams();
     if (params.limit) qs.set("limit", params.limit);

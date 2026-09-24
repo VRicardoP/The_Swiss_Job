@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -12,10 +13,12 @@ from core.security import (
     decode_token,
     get_current_user,
     hash_password,
+    needs_rehash,
     verify_password,
 )
 from database import get_db
 from models.user import User
+
 from models.user_profile import UserProfile
 from schemas.auth import (
     AuthResponse,
@@ -24,6 +27,11 @@ from schemas.auth import (
     UserRegister,
     UserResponse,
 )
+
+# Hash señuelo contra el que se verifica cuando el correo no existe, para que
+# el login tarde lo mismo exista la cuenta o no. Se calcula UNA vez al importar:
+# hacerlo por petición añadiría su propio bcrypt y doblaría el tiempo.
+_HASH_SENUELO = hash_password(uuid.uuid4().hex)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -91,7 +99,20 @@ async def login(request: Request, body: UserLogin, db: AsyncSession = Depends(ge
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    if user is None:
+    # H6/T8 — tres oráculos de enumeración, los tres cerrados aquí:
+    #
+    # 1. Salir con 401 ANTES de verificar la contraseña hacía que un correo
+    #    inexistente respondiera mucho más rápido que uno real: el tiempo
+    #    delataba qué cuentas existen. Ahora SIEMPRE se calcula un bcrypt,
+    #    contra un hash señuelo si el usuario no existe.
+    # 2. `is_active` se comprobaba ANTES que la contraseña, así que un 403
+    #    revelaba que la cuenta existe sin saber su contraseña. Ahora va
+    #    después: sólo quien acierta la contraseña se entera de que está
+    #    desactivada, que es a quien le sirve saberlo.
+    # 3. El mensaje es el mismo para «no existe» y «contraseña incorrecta».
+    almacenado = user.hashed_password if user is not None else _HASH_SENUELO
+    contrasena_valida = verify_password(body.password, almacenado)
+    if user is None or not contrasena_valida:
         raise invalid_credentials
 
     if not user.is_active:
@@ -100,8 +121,12 @@ async def login(request: Request, body: UserLogin, db: AsyncSession = Depends(ge
             detail="Account is deactivated",
         )
 
-    if not verify_password(body.password, user.hashed_password):
-        raise invalid_credentials
+    # Migración transparente del esquema de hash: quien entra con una
+    # contraseña guardada al estilo antiguo (bcrypt truncado a 72 bytes) sale
+    # con ella re-hasheada. Sin esto, cambiar el esquema obligaría a resetear
+    # la contraseña de todo el mundo.
+    if needs_rehash(user.hashed_password):
+        user.hashed_password = hash_password(body.password)
 
     user.last_login = datetime.now(timezone.utc)
     await db.commit()

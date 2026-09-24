@@ -14,7 +14,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from config import settings
-from core.rate_limit import limiter
+from core.rate_limit import LimiteGlobalMiddleware, limiter
 from logging_setup import configure_logging
 from providers import log_provider_status
 from services.scheduler import run_scheduler_with_leader_lock
@@ -216,6 +216,14 @@ app = FastAPI(
 # Rate limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# H5/T8: sin esto, `default_limits` del Limiter es configuración MUERTA y sólo
+# las rutas con decorador tienen límite — eran 5 de toda la API. NO se usa el
+# middleware de slowapi: con FastAPI 0.141 no encuentra los handlers de los
+# routers incluidos y exime todas las rutas en silencio (ver rate_limit.py).
+# Se añade ANTES que CORS: en Starlette el último `add_middleware` queda más
+# externo, así que el 429 sale con las cabeceras de CORS puestas y el navegador
+# puede leerlo, en vez de verlo como un fallo de red opaco.
+app.add_middleware(LimiteGlobalMiddleware)
 
 # CORS
 app.add_middleware(
