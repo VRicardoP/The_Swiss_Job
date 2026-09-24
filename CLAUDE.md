@@ -134,6 +134,20 @@ RELEASE_SHA=$(git rev-parse --short HEAD) docker compose build core-api
 docker tag swissjob-core:dev swissjob-core:$(git rev-parse --short HEAD)  # pin inmutable
 ```
 
+**El BFF de producción se construye con `backend/Dockerfile.prod`, NO con
+`backend/Dockerfile`.** El de desarrollo corre `uvicorn --reload` como root; el de
+producción crea el usuario `app`, que es el que exige el compose del NAS. Con la
+imagen equivocada el contenedor ni arranca (`unable to find user app`) — pasó el
+2026-09-24 y dejó el BFF caído hasta restaurar la imagen anterior:
+
+```bash
+docker build -f backend/Dockerfile.prod -t swissjob-backend:point5-<sha> backend/
+```
+
+Y el contenedor de producción hay que recrearlo con **su proyecto de compose**
+(`-p swissjob` para el BFF, `-p swissjob-r5` para el core); sin `-p` choca con el
+nombre y no recrea nada.
+
 ---
 
 ## Restricciones del proyecto
@@ -153,7 +167,15 @@ una página: el core informa del `total` en su primera página y el consumidor
 deja de paginar al cubrir `offset + limit`. Antes servir 20 ofertas costaba 18
 peticiones internas y 9-13 s; ahora 1 petición y 0,56-1,19 s en el método.
 
-**El punto 5 sigue ABIERTO.** Medido el 2026-09-23 sobre `point5-9d6b46e`
+**El punto 5: matriz de aceptación EJECUTADA el 2026-09-24** — acta en
+`docs/audits/MATRIZ_ACEPTACION_PUNTO5_2026-09-24.md`. En hardware holgado el
+contrato SE CUMPLE en los cuatro recorridos (n=100, frío y caliente). En el NAS
+**no**, y la causa está atribuida y no es el código: 2 CPUs con carga 9,4-14,9 y
+un contenedor ajeno (`tinymediamanager`) llevándose hasta el 71 % de la CPU. El
+mismo recorrido cuesta 0,084 s en copia y 1,45-3,09 s allí. Cierra por decisión
+del propietario: dar CPU, rediseñar la carga (§10.5) o aprobar otro presupuesto.
+
+**Historia previa.** Medido el 2026-09-23 sobre `point5-9d6b46e`
 desplegado en los cinco servicios: la pantalla principal pasó de **79,3 s a
 p50 2,147 s** (p95 2,554 s) y la primera carga de ~54 s a 10,196 s. Aun así
 **ninguna lectura habitual baja del p95 de 2 s** (catálogo 2,420 s; feed 20
