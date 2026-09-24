@@ -17,6 +17,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jobhunt_core import credentials, matching, profiles
+from jobhunt_core.api.v1 import MAX_PAGE_LIMIT
 from jobhunt_core.config import settings
 from jobhunt_core.tests import dbcleanup
 from jobhunt_core.tests import test_integration_matching as tim
@@ -410,7 +411,9 @@ def test_matches_dto_pagination_and_errors(db):
     # Errores del contrato: cursor ilegible y limit fuera de rango → 400.
     r = _api(factory, base + "?cursor=%21%21%21no-cursor", token=token)
     assert (r.status_code, r.json()["code"]) == (400, "invalid_cursor")
-    for bad in (0, 101):
+    # Atado al tope REAL del contrato, no al número: cuando subió de 100 a
+    # 500 (punto 5) esta prueba se cayó por fijar el 101 en vez del límite.
+    for bad in (0, MAX_PAGE_LIMIT + 1):
         # Los límites los declara Query(ge/le) → validación → sobre uniforme.
         r = _api(factory, base + f"?limit={bad}", token=token)
         assert (r.status_code, r.json()["code"]) == (400, "invalid_request")
@@ -884,7 +887,7 @@ def test_catalog_cursor_and_limit_errors(db):
         cur = b64.urlsafe_b64encode(payload.encode()).decode()
         r = _api(factory, base + f"?cursor={cur}", token=auth)
         assert (r.status_code, r.json()["code"]) == (400, "invalid_cursor"), payload
-    for badlim in (0, 101):
+    for badlim in (0, MAX_PAGE_LIMIT + 1):
         r = _api(factory, base + f"?limit={badlim}", token=auth)
         assert (r.status_code, r.json()["code"]) == (400, "invalid_request")
 

@@ -49,7 +49,15 @@ router = APIRouter(
     },
 )
 
-MAX_PAGE_LIMIT = 100
+# Punto 5: el tope sube de 100 a 500, y es ADITIVO — quien siga pidiendo <=100
+# no nota nada. Motivo medido, no estimado: servir el feed entero (1.800
+# ofertas) costaba 18 idas y vueltas, y en el NAS cada petición paga ~0,29 s de
+# coste FIJO antes de tocar un solo elemento (medido con limit=1). Eso son 5,3 s
+# de puro ir y venir sobre un total de ~11 s. Con 500 son 4 peticiones.
+# El coste escala LINEAL con el tamaño de página hasta 1.800 ítems, sin
+# acantilado (medido en copia: 100→28 ms, 500→109 ms, 1800→416 ms), así que el
+# tope acota el tamaño de respuesta, no protege de un coste no lineal.
+MAX_PAGE_LIMIT = 500
 # Cota de MAGNITUD del score del cursor (auditoría final A-09→GATE): score_final
 # es NUMERIC(6,2) — nada legítimo se acerca a 1E6. Sin cota, un exponente
 # gigante desborda el NUMERIC en el driver (DataError → 500) o, peor, se

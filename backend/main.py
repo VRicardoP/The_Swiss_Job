@@ -165,11 +165,23 @@ async def lifespan(app: FastAPI):
 
     erasure_delivery_task = asyncio.create_task(run_erasure_delivery())
 
+    # Punto 5 §10.3-ter: calienta el recorrido del feed fuera de la petición.
+    # SIN leader-lock a propósito: la caché del recorrido vive en proceso, así
+    # que cada worker tiene que calentar la suya.
+    from services.matching.warm import run_feed_warmup
+
+    feed_warmup_task = asyncio.create_task(run_feed_warmup())
+
     yield
 
     # Shutdown
     if warmup_task is not None and not warmup_task.done():
         warmup_task.cancel()
+    feed_warmup_task.cancel()
+    try:
+        await feed_warmup_task
+    except asyncio.CancelledError:
+        pass
     erasure_delivery_task.cancel()
     if profile_delivery_task is not None:
         profile_delivery_task.cancel()

@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     ]
     BACKEND_CORS_HEADERS: list[str] = ["Authorization", "Content-Type", "Accept"]
 
+    # Punto 5 (§10.3-ter): recorrer el feed en segundo plano al cambiar la
+    # versión, para que la primera carga no la pague el usuario. En el NAS ese
+    # recorrido eran 11 s. Corre en CADA worker: la caché del recorrido vive en
+    # proceso, así que calentar en uno no sirve al otro.
+    FEED_WARMUP_ENABLED: bool = True
+    FEED_WARMUP_INTERVAL_SECONDS: int = 60
+
     # App
     SECRET_KEY: str = "change-me-in-production"
     # C7: el backend legacy no tiene noción de entorno (el core sí: CORE_ENV).

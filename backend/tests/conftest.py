@@ -19,6 +19,18 @@ from tests.llm_stub import llm_boundary_stub
 # Disable rate limiting in tests
 limiter.enabled = False
 
+# La suite declara su PROPIA línea base de enrutado al core; sin esto la hereda
+# del `.env` de quien ejecute, y el veredicto depende de la máquina. Se descubrió
+# midiendo el punto 5: para que la copia local fuese fiel a producción hubo que
+# poner CORE_FEEDBACK_ENABLED=true en el `.env`, y 89 pruebas se volvieron rojas
+# de golpe — no por un defecto, sino porque asumían el defecto contrario.
+# Los 7 ficheros que necesitan el camino del core lo activan ELLOS, por prueba.
+settings.CORE_FEEDBACK_ENABLED = False
+settings.CORE_PROFILE_SYNC_ENABLED = False
+# El calentamiento de fondo tampoco debe arrancar bajo pruebas: metería tráfico
+# al core desde un bucle que ninguna prueba controla.
+settings.FEED_WARMUP_ENABLED = False
+
 # Use a separate test database to avoid wiping production data
 _base_url = settings.DATABASE_URL.rsplit("/", 1)[0]
 _test_db_url = _base_url + "/swissjobhunter_test"

@@ -83,9 +83,14 @@ from .port import CoreUnavailableError
 
 logger = logging.getLogger(__name__)
 
-# Cotas del recorrido del feed (contrato /v1: MAX_PAGE_LIMIT=100 por pagina).
-FEED_PAGE_LIMIT = 100
-MAX_FEED_PAGES = 100  # 10k items; por encima => cursor en bucle o feed anomalo
+# Cotas del recorrido del feed (contrato /v1: MAX_PAGE_LIMIT=500 por pagina).
+# Punto 5: paginas de 500 y no de 100. El recorrido es POR CURSOR, asi que las
+# paginas son secuenciales por diseño y no se pueden solapar; la unica palanca
+# es pedir menos veces. Medido en el NAS: ~0,29 s de coste FIJO por peticion
+# (limit=1), luego 18 paginas eran 5,3 s de ida y vuelta antes de contar un solo
+# elemento. Con 500 son 4. El coste por pagina escala lineal hasta 1.800 items.
+FEED_PAGE_LIMIT = 500
+MAX_FEED_PAGES = 100  # 50k items; por encima => cursor en bucle o feed anomalo
 
 # Prefijo de las fuentes sombra del proyector B-02 (jobhunt_core/shadow).
 _LEGACY_SOURCE_PREFIX = "legacy:"
@@ -420,6 +425,29 @@ class CoreMatching:
         # local; inyectable para tests (MockTransport) como en catalogo.
         self._db = db
         self._client_factory = client_factory or default_client_factory
+
+    async def warm_feed(self, user_id: uuid.UUID) -> int:
+        """Deja el recorrido del feed en cache SIN construir vistas.
+
+        Punto 5 (§10.3-ter): recorrer el feed una vez por cambio de version es
+        inevitable; que lo pague el usuario en la cara, no. Esto lo hace en
+        segundo plano. Si la version no ha cambiado devuelve de cache y cuesta
+        una sola peticion `/matches/version`; si ha cambiado, recorre.
+
+        NO construye las vistas a proposito: esas dependen del overlay LOCAL
+        (candidatura, urgencia, borrador), que se relee en cada peticion y
+        cachearlas serviria estado rancio — justo la regresion que cerro T2.
+
+        Devuelve cuantos items quedaron en cache (0 si no se pudo calentar).
+        """
+        core_profile_id = await resolve_core_profile_id(self._db, user_id)
+        if core_profile_id is None or (
+            self._client_factory is default_client_factory
+            and not settings.CORE_CONSUMER_KEY
+        ):
+            return 0
+        items, _total = await self._fetch_full_feed(core_profile_id, None)
+        return len(items)
 
     async def results(
         self, user_id: uuid.UUID, limit: int = 20, offset: int = 0
