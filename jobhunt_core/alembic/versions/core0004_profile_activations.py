@@ -41,11 +41,23 @@ S = settings.CORE_DB_SCHEMA  # "jobhunt"
 def upgrade() -> None:
     op.create_table(
         "profile_revision_activations",
-        sa.Column("profile_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.profiles.id"), nullable=False),
+        sa.Column(
+            "profile_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.profiles.id"),
+            nullable=False,
+        ),
         sa.Column("revision_id", UUID(as_uuid=True), nullable=False),
         sa.Column("seq", sa.BigInteger, nullable=False),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
-        sa.PrimaryKeyConstraint("profile_id", "seq", name="pk_profile_revision_activations"),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.PrimaryKeyConstraint(
+            "profile_id", "seq", name="pk_profile_revision_activations"
+        ),
         # FK COMPUESTA: la revisión activada pertenece a ESE perfil (§1).
         sa.ForeignKeyConstraint(
             ["revision_id", "profile_id"],

@@ -31,9 +31,7 @@ def upgrade() -> None:
         ("source_listing_incarnations", "url"),
         ("source_listing_incarnations", "apply_url"),
     ):
-        op.execute(
-            f"ALTER TABLE {S}.{tabla} ALTER COLUMN {col} TYPE VARCHAR(2048)"
-        )
+        op.execute(f"ALTER TABLE {S}.{tabla} ALTER COLUMN {col} TYPE VARCHAR(2048)")
 
 
 def downgrade() -> None:

@@ -9,7 +9,7 @@ Create Date: 2026-02-25 18:55:30.639823
 from typing import Sequence, Union
 
 from alembic import op
-import pgvector.sqlalchemy.vector  # noqa: F401 — needed for VECTOR column type
+import pgvector.sqlalchemy.vector
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 

@@ -54,9 +54,7 @@ S = settings.CORE_DB_SCHEMA
 SHA = "b" * 40
 
 pytestmark = [
-    pytest.mark.skipif(
-        not _ADMIN, reason="requiere BD (ejecutar vía core-migrate)"
-    ),
+    pytest.mark.skipif(not _ADMIN, reason="requiere BD (ejecutar vía core-migrate)"),
     pytest.mark.skipif(
         bool(_ADMIN) and _wal_level() != "logical",
         reason="requiere wal_level=logical (imagen postgres-core, B-01)",
@@ -89,7 +87,11 @@ def gate_db():
     engine = sa.create_engine(db_url, poolclass=sa.pool.NullPool)
     try:
         with engine.begin() as c:
-            c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            c.execute(
+                sa.text(
+                    "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm"
+                )
+            )
             c.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS "{S}"'))
             c.execute(
                 sa.text(
@@ -169,7 +171,9 @@ def db(gate_db, monkeypatch):
             # resto de fixtures (DDL del owner, con rastro) y se vuelve a montar.
             for tabla in ("labeled_dedup_pairs", "labeled_dedup_cohorts"):
                 await c.execute(
-                    sa.text(f"ALTER TABLE {tabla} DISABLE TRIGGER {tabla}_truncate_guard")
+                    sa.text(
+                        f"ALTER TABLE {tabla} DISABLE TRIGGER {tabla}_truncate_guard"
+                    )
                 )
             await c.execute(
                 sa.text(
@@ -179,17 +183,20 @@ def db(gate_db, monkeypatch):
                 )
             )
             for table in ("shadow_declared_downtime", "shadow_gate_attestations"):
-                await c.execute(sa.text(
-                    f"ALTER TABLE {table} DISABLE TRIGGER "
-                    f"{table}_immutable"
-                ))
+                await c.execute(
+                    sa.text(f"ALTER TABLE {table} DISABLE TRIGGER {table}_immutable")
+                )
                 await c.execute(sa.text(f"TRUNCATE {table}"))
-                await c.execute(sa.text(
-                    f"ALTER TABLE {table} ENABLE ALWAYS TRIGGER {table}_immutable"
-                ))
+                await c.execute(
+                    sa.text(
+                        f"ALTER TABLE {table} ENABLE ALWAYS TRIGGER {table}_immutable"
+                    )
+                )
             for tabla in ("labeled_dedup_pairs", "labeled_dedup_cohorts"):
                 await c.execute(
-                    sa.text(f"ALTER TABLE {tabla} ENABLE ALWAYS TRIGGER {tabla}_truncate_guard")
+                    sa.text(
+                        f"ALTER TABLE {tabla} ENABLE ALWAYS TRIGGER {tabla}_truncate_guard"
+                    )
                 )
             await c.execute(sa.text("TRUNCATE integration_outbox CASCADE"))
             await c.execute(
@@ -382,14 +389,26 @@ def _seed_staging(factory, changes):
 def _job_payload(pk, source):
     """Payload de jobs con TODAS las columnas de contenido (§3)."""
     return {
-        "title": "Backend Dev", "company": "ACME AG",
-        "description": f"python backend {pk}", "tags": ["py"],
-        "location": "Zurich", "canton": "ZH", "language": "en",
-        "seniority": "senior", "contract_type": "permanent", "remote": False,
-        "salary_min_chf": 100000, "salary_max_chf": 130000,
-        "salary_original": "100k-130k CHF", "salary_currency": "CHF",
-        "salary_period": "year", "url": f"https://fx/{pk}", "source": source,
-        "is_active": True, "duplicate_of": None, "content_hash": f"c-{pk}",
+        "title": "Backend Dev",
+        "company": "ACME AG",
+        "description": f"python backend {pk}",
+        "tags": ["py"],
+        "location": "Zurich",
+        "canton": "ZH",
+        "language": "en",
+        "seniority": "senior",
+        "contract_type": "permanent",
+        "remote": False,
+        "salary_min_chf": 100000,
+        "salary_max_chf": 130000,
+        "salary_original": "100k-130k CHF",
+        "salary_currency": "CHF",
+        "salary_period": "year",
+        "url": f"https://fx/{pk}",
+        "source": source,
+        "is_active": True,
+        "duplicate_of": None,
+        "content_hash": f"c-{pk}",
     }
 
 
@@ -452,8 +471,14 @@ def _seed_metric(factory, cycle, metric, scope, value, details=None, sealed=True
             "ON CONFLICT (cycle_id, metric, scope) DO UPDATE SET "
             "value = EXCLUDED.value, details = EXCLUDED.details, "
             "finished_at = EXCLUDED.finished_at",
-            {"c": cycle, "m": metric, "s": scope, "v": value,
-             "d": json.dumps(details or {}), "f": sealed},
+            {
+                "c": cycle,
+                "m": metric,
+                "s": scope,
+                "v": value,
+                "d": json.dumps(details or {}),
+                "f": sealed,
+            },
         )
     finally:
         _exec(
@@ -510,7 +535,9 @@ def _seed_green_cycle(factory, cycle, scope="profile:aaaa"):
         ("coste", "global", 5.0, {}),
         ("reenlace_pct", "global", 0.0, {}),
         (
-            "gate_umbrales", "global", 0,
+            "gate_umbrales",
+            "global",
+            0,
             {
                 "release_sha": "test-release-a",
                 "oracle_fingerprint": "a" * 64,
@@ -543,14 +570,18 @@ def test_gate_counter_sequences_green_red_and_reset(db):
         "max_paradas": 3,
         "span_dias": None,
         "max_span_dias": 14,
-        "consecutive_ok": 0, "required": 7, "gate_passed": False,
+        "consecutive_ok": 0,
+        "required": 7,
+        "gate_passed": False,
         "streak_release_sha": None,
         "streak_oracle_fingerprint": None,
         "streak_passed": False,
         "prerequisites": {
-            "rollback_replay": False, "thresholds_ratified": False,
+            "rollback_replay": False,
+            "thresholds_ratified": False,
         },
-        "last_cycle": G0.isoformat(), "holdout_frozen_at": None,
+        "last_cycle": G0.isoformat(),
+        "holdout_frozen_at": None,
         "per_cycle": [],
     }
     # Cohorte congelada ANTES de la ventana más vieja: todos elegibles.
@@ -576,9 +607,14 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     st = _status(factory, now=GNOW)
     assert st["consecutive_ok"] == 3 and st["gate_passed"] is False
     assert st["per_cycle"][3] == {
-        "cycle": "2026-07-16", "computado": True, "recomputado": False,
-        "ok": False, "gates_rojos": ["perdida"], "alertas": [],
-        "elegible": True, "parada_declarada": False,
+        "cycle": "2026-07-16",
+        "computado": True,
+        "recomputado": False,
+        "ok": False,
+        "gates_rojos": ["perdida"],
+        "alertas": [],
+        "elegible": True,
+        "parada_declarada": False,
     }
 
     # Las [alerta] NO resetean (§6): no_ingeribles > 0 y reenlace > 5% en G0
@@ -609,16 +645,26 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     st = _status(factory, now=GNOW)
     assert st["consecutive_ok"] == 1
     assert st["per_cycle"][1] == {
-        "cycle": "2026-07-18", "computado": False, "recomputado": False,
-        "ok": False, "gates_rojos": [], "alertas": [],
-        "elegible": True, "parada_declarada": False,
+        "cycle": "2026-07-18",
+        "computado": False,
+        "recomputado": False,
+        "ok": False,
+        "gates_rojos": [],
+        "alertas": [],
+        "elegible": True,
+        "parada_declarada": False,
     }
 
     # Una fila SOLO del muestreador (finished_at NULL, placeholder) NO es un
     # ciclo computado: el contador no cambia.
     _seed_metric(
-        factory, G0 - timedelta(days=1), "outbox_lag_p99", "global",
-        metrics.NO_DATA_VALUE, {"samples": []}, sealed=False,
+        factory,
+        G0 - timedelta(days=1),
+        "outbox_lag_p99",
+        "global",
+        metrics.NO_DATA_VALUE,
+        {"samples": []},
+        sealed=False,
     )
     st = _status(factory, now=GNOW)
     assert st["consecutive_ok"] == 1
@@ -632,13 +678,10 @@ def test_gate_counter_sequences_green_red_and_reset(db):
     assert "alertas: no_ingeribles, reenlace_pct" in text
 
 
-
 def test_gate_counter_restarts_when_release_or_oracle_changes(db):
     """Siete verdes deben pertenecer a una única release y un único oráculo."""
     factory = db
-    _freeze_holdout(
-        factory, datetime(2026, 7, 1, tzinfo=metrics.CYCLE_TZ)
-    )
+    _freeze_holdout(factory, datetime(2026, 7, 1, tzinfo=metrics.CYCLE_TZ))
     for i in range(7):
         _seed_green_cycle(factory, G0 - timedelta(days=i))
     _seed_metric(
@@ -658,9 +701,7 @@ def test_gate_counter_restarts_when_release_or_oracle_changes(db):
     assert status["gate_passed"] is False
     assert status["streak_release_sha"] == "test-release-a"
     assert status["per_cycle"][3]["ok"] is False
-    assert status["per_cycle"][3]["gates_rojos"] == [
-        "identidad_release_oraculo"
-    ]
+    assert status["per_cycle"][3]["gates_rojos"] == ["identidad_release_oraculo"]
 
 
 def test_gate_counter_ignores_recomputed_cycle(db):
@@ -713,14 +754,12 @@ def test_gate_counter_ciclo_anterior_al_congelado_es_inelegible(db):
 
     # Congelado DENTRO de la ventana de G0-1 (después de su inicio 06:00):
     # solo G0 (empieza el 19 a las 06:00) es posterior ⇒ cuenta 1.
-    _freeze_holdout(
-        factory, datetime(2026, 7, 18, 12, 0, tzinfo=metrics.CYCLE_TZ)
-    )
+    _freeze_holdout(factory, datetime(2026, 7, 18, 12, 0, tzinfo=metrics.CYCLE_TZ))
     st = _status(factory, now=GNOW)
     assert st["consecutive_ok"] == 1
-    assert st["per_cycle"][0]["elegible"] is True   # G0
+    assert st["per_cycle"][0]["elegible"] is True  # G0
     assert st["per_cycle"][1]["elegible"] is False  # G0-1: ventana mixta
-    assert st["per_cycle"][1]["ok"] is True         # verde… pero no computa
+    assert st["per_cycle"][1]["ok"] is True  # verde… pero no computa
 
     # Congelado anterior a todas las ventanas: las 3 cuentan.
     _freeze_holdout(factory, datetime(2026, 7, 1, tzinfo=metrics.CYCLE_TZ))
@@ -744,7 +783,8 @@ def test_slot_health_consumer_stopped_over_30min_alerts(capture, db, caplog):
     assert healthy["ok"] is True and healthy["active"] is True
     assert healthy["alertas"] == []
     assert healthy["umbrales"] == {
-        "wal_retention_max_bytes": 2 * 1024**3, "stalled_max_s": 30 * 60,
+        "wal_retention_max_bytes": 2 * 1024**3,
+        "stalled_max_s": 30 * 60,
     }
 
     cap.close()  # consumidor caído: slot presente pero inactivo
@@ -840,9 +880,7 @@ def test_tasks_registered_beat_cadences_and_core_queues(db):
     # salud del slot, PROYECTOR y despacho del outbox cada 5 min (P1-1: la
     # proyección/entrega solo al cierre del ciclo hacía imposible
     # latencia_p95<=600s); run_cycle diario 06:05 Europe/Zurich.
-    by_task = {
-        e["task"]: e for e in celery_app.conf.beat_schedule.values()
-    }
+    by_task = {e["task"]: e for e in celery_app.conf.beat_schedule.values()}
     assert by_task["jobhunt.shadow.sample_outbox_lag"]["schedule"] == 300.0
     assert by_task["jobhunt.shadow.check_slot_health"]["schedule"] == 300.0
     assert by_task["jobhunt.shadow.preview_cycle"]["schedule"] == float(
@@ -873,11 +911,14 @@ def test_preview_current_cycle_does_not_persist_or_count(db, gate_db):
     assert result["cycle_id"] == G0.isoformat()
     assert result["counts_toward_streak"] is False
     assert result["gates_failed"]
-    assert _scalar(
-        db,
-        "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
-        c=G0,
-    ) == 0
+    assert (
+        _scalar(
+            db,
+            "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
+            c=G0,
+        )
+        == 0
+    )
 
 
 # ------------------------------------------------- run_cycle end-to-end (§7)
@@ -894,20 +935,16 @@ def test_run_cycle_ciclo_mixto_inelegible_no_es_apto(db, gate_db):
     _seed_green_cycle(factory, G0)  # sellado, todo verde
 
     # Freeze a MITAD de la ventana de G0: ciclo mixto.
-    _freeze_holdout(
-        factory, metrics.cycle_bounds(G0)[0] + timedelta(hours=6)
-    )
+    _freeze_holdout(factory, metrics.cycle_bounds(G0)[0] + timedelta(hours=6))
     result = _run(gate.run_cycle(legacy_schema="public", now=GNOW))
     assert result["status"] == "ok"
-    assert result["gates_failed"] == []       # verde en todos los gates…
+    assert result["gates_failed"] == []  # verde en todos los gates…
     assert result["cycle_eligible"] is False  # …pero la ventana es mixta
-    assert result["cycle_ok"] is False        # UN solo veredicto: no apto
+    assert result["cycle_ok"] is False  # UN solo veredicto: no apto
     assert result["consecutive_ok"] == 0
 
     # Freeze ANTERIOR a la ventana: el mismo ciclo pasa a APTO y computa.
-    _freeze_holdout(
-        factory, metrics.cycle_bounds(G0)[0] - timedelta(days=1)
-    )
+    _freeze_holdout(factory, metrics.cycle_bounds(G0)[0] - timedelta(days=1))
     result2 = _run(gate.run_cycle(legacy_schema="public", now=GNOW))
     assert result2["cycle_eligible"] is True
     assert result2["cycle_ok"] is True
@@ -929,16 +966,26 @@ def test_run_cycle_end_to_end_projects_computes_purges_evaluates(db, gate_db):
         for h in (j1, j2):
             _seed_legacy_job(factory, h, source=src)
         _seed_legacy_result(factory, user, j1, 90)
-        _seed_staging(factory, [
-            ("jobs", "I", j1, _job_payload(j1, src)),
-            ("jobs", "I", j2, _job_payload(j2, src)),
-            ("users", "I", str(user), {"id": str(user), "is_active": True}),
-            ("user_profiles", "I", str(uuid.uuid4()), {
-                "user_id": str(user), "title": "dev",
-                "cv_text": "cv con python y fastapi", "skills": ["python"],
-                "updated_at": "2026-07-25T10:00:00+00:00",
-            }),
-        ])
+        _seed_staging(
+            factory,
+            [
+                ("jobs", "I", j1, _job_payload(j1, src)),
+                ("jobs", "I", j2, _job_payload(j2, src)),
+                ("users", "I", str(user), {"id": str(user), "is_active": True}),
+                (
+                    "user_profiles",
+                    "I",
+                    str(uuid.uuid4()),
+                    {
+                        "user_id": str(user),
+                        "title": "dev",
+                        "cv_text": "cv con python y fastapi",
+                        "skills": ["python"],
+                        "updated_at": "2026-07-25T10:00:00+00:00",
+                    },
+                ),
+            ],
+        )
 
         moment = datetime.now(timezone.utc)  # fijo: ambas pasadas, mismo ciclo
         result = _run(gate.run_cycle(legacy_schema="public", now=moment))
@@ -956,7 +1003,8 @@ def test_run_cycle_end_to_end_projects_computes_purges_evaluates(db, gate_db):
         perdida = _rows(
             factory,
             "SELECT value, details FROM shadow_cycle_metrics "
-            "WHERE cycle_id = :c AND metric = 'perdida'", c=cid,
+            "WHERE cycle_id = :c AND metric = 'perdida'",
+            c=cid,
         )[0]
         assert float(perdida.value) == 0
         assert perdida.details["legacy_activos_ingeribles"] == 2
@@ -965,7 +1013,8 @@ def test_run_cycle_end_to_end_projects_computes_purges_evaluates(db, gate_db):
             factory,
             "SELECT value, details FROM shadow_cycle_metrics "
             "WHERE cycle_id = :c AND metric = 'ndcg@10' AND scope = :s",
-            c=cid, s=f"profile:{pid}",
+            c=cid,
+            s=f"profile:{pid}",
         )[0]
         assert 0.0 <= float(ndcg.value) <= 1.0  # computado sobre el feed real
         # Gates evaluados: perdida en verde; los sin datos del ciclo cerrado
@@ -992,16 +1041,20 @@ def test_run_cycle_end_to_end_projects_computes_purges_evaluates(db, gate_db):
         assert result2["status"] == "ok"
         assert result2["project"]["changes"] == 0
         assert result2["metrics"]["skipped_sealed"] is True
-        assert _scalar(
-            factory,
-            "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
-            c=cid,
-        ) == n1
+        assert (
+            _scalar(
+                factory,
+                "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
+                c=cid,
+            )
+            == n1
+        )
 
         # SINGLE-FLIGHT propio: con el lock tomado por otra sesión, la
         # invocación concurrente sale limpia sin orquestar nada.
         lock_engine = sa.create_engine(
-            gate_db["core_dsn"], poolclass=sa.pool.NullPool,
+            gate_db["core_dsn"],
+            poolclass=sa.pool.NullPool,
             isolation_level="AUTOCOMMIT",
         )
         try:
@@ -1022,9 +1075,7 @@ def test_run_cycle_end_to_end_projects_computes_purges_evaluates(db, gate_db):
         embeddings.set_backend_factory(None)
 
 
-def test_run_cycle_aborts_without_metrics_when_projector_busy(
-    db, gate_db, monkeypatch
-):
+def test_run_cycle_aborts_without_metrics_when_projector_busy(db, gate_db, monkeypatch):
     """Regresión P1-3 (rev. externa): con el lock del PROYECTOR tomado por
     otra conexión, run_cycle YA NO "computa igual" — reintenta acotado
     (backoff corto) y sale con status='project_busy' SIN sellar métricas,
@@ -1038,7 +1089,8 @@ def test_run_cycle_aborts_without_metrics_when_projector_busy(
     cid = metrics.latest_closed_cycle_id(moment)
 
     lock_engine = sa.create_engine(
-        gate_db["core_dsn"], poolclass=sa.pool.NullPool,
+        gate_db["core_dsn"],
+        poolclass=sa.pool.NullPool,
         isolation_level="AUTOCOMMIT",
     )
     try:
@@ -1059,15 +1111,21 @@ def test_run_cycle_aborts_without_metrics_when_projector_busy(
     assert res["project"]["status"] == "already_running"
     assert res["project_attempts"] == 2  # reintento ACOTADO, no infinito
     assert "metrics" not in res and "purge" not in res  # nada sellado
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
-        c=cid,
-    ) == 0  # el revisor encontraba aquí un ciclo computado sin drenar
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
-    ) == 1  # el staging sigue pendiente, intacto
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
+            c=cid,
+        )
+        == 0
+    )  # el revisor encontraba aquí un ciclo computado sin drenar
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+        )
+        == 1
+    )  # el staging sigue pendiente, intacto
 
 
 def test_run_cycle_staging_pending_blocks_seal(db):
@@ -1085,21 +1143,25 @@ def test_run_cycle_staging_pending_blocks_seal(db):
         "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
         "payload, received_at) VALUES (:l, 0, 'jobs', 'I', :p, "
         "CAST('{}' AS jsonb), :r)",
-        {"l": next(_LSN_SEQ), "p": f"pend-{uuid.uuid4().hex[:6]}",
-         "r": cycle_end - timedelta(hours=2)},
+        {
+            "l": next(_LSN_SEQ),
+            "p": f"pend-{uuid.uuid4().hex[:6]}",
+            "r": cycle_end - timedelta(hours=2),
+        },
     )
-    res = _run(
-        gate.run_cycle(legacy_schema="public", now=moment, max_batches=0)
-    )
+    res = _run(gate.run_cycle(legacy_schema="public", now=moment, max_batches=0))
     assert res["status"] == "staging_pending"
     assert res["staging_pending"] == 1
     assert res["project"]["status"] == "ok"  # el drenado no falló: no drenó
     assert "metrics" not in res and "purge" not in res
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
-        c=cid,
-    ) == 0
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
+            c=cid,
+        )
+        == 0
+    )
 
 
 # ------------------------------------- rollback/replay COMPLETO (DoD B-05)
@@ -1140,25 +1202,35 @@ def test_rollback_replay_full_executed_against_disposable_db(capture, db, gate_d
 
     # GUARDA: sin confirm=True no se toca NADA.
     with pytest.raises(RuntimeError, match="confirm=True"):
-        gate.rollback_replay(
-            gate_db["capture_dsn"], gate_db["core_dsn"], slot=slot
+        gate.rollback_replay(gate_db["capture_dsn"], gate_db["core_dsn"], slot=slot)
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM pg_replication_slots WHERE slot_name = :n",
+            n=slot,
         )
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM pg_replication_slots WHERE slot_name = :n", n=slot,
-    ) == 1
-    assert _scalar(
-        factory, "SELECT snapshot_lsn FROM shadow_capture_state"
-    ) == old_state.snapshot_lsn
+        == 1
+    )
+    assert (
+        _scalar(factory, "SELECT snapshot_lsn FROM shadow_capture_state")
+        == old_state.snapshot_lsn
+    )
     # GUARDA: el esquema de escritura JAMÁS es public.
     with pytest.raises(RuntimeError, match="public"):
         gate.rollback_replay(
-            gate_db["capture_dsn"], gate_db["core_dsn"], slot=slot,
-            schema="public", confirm=True, operator="test-operator",
+            gate_db["capture_dsn"],
+            gate_db["core_dsn"],
+            slot=slot,
+            schema="public",
+            confirm=True,
+            operator="test-operator",
         )
 
     summary = gate.rollback_replay(
-        gate_db["capture_dsn"], gate_db["core_dsn"], slot=slot, confirm=True,
+        gate_db["capture_dsn"],
+        gate_db["core_dsn"],
+        slot=slot,
+        confirm=True,
         operator="test-operator",
     )
     # Secuencia completa reportada, calculable a mano.
@@ -1177,23 +1249,34 @@ def test_rollback_replay_full_executed_against_disposable_db(capture, db, gate_d
     ]
     assert summary["snapshot_lsn"] > old_state.snapshot_lsn
     assert summary["attestation"]["release_sha"] == "test-release-a"
-    assert _scalar(
-        factory, "SELECT count(*) FROM shadow_gate_attestations "
-        "WHERE kind = 'rollback_replay' AND release_sha = 'test-release-a'"
-    ) == 1
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_gate_attestations "
+            "WHERE kind = 'rollback_replay' AND release_sha = 'test-release-a'",
+        )
+        == 1
+    )
 
     # Fuentes desactivadas y vacantes archivadas (cero encarnaciones vivas).
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM source_listing_incarnations WHERE ended_at IS NULL",
-    ) == 0
-    assert _scalar(
-        factory, "SELECT count(*) FROM vacancies WHERE archived_at IS NULL"
-    ) == 0
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM harvest_scopes WHERE enabled",
-    ) == 0
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM source_listing_incarnations WHERE ended_at IS NULL",
+        )
+        == 0
+    )
+    assert (
+        _scalar(factory, "SELECT count(*) FROM vacancies WHERE archived_at IS NULL")
+        == 0
+    )
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM harvest_scopes WHERE enabled",
+        )
+        == 0
+    )
     # Re-backfill CONSISTENTE: staging nuevo = op 'I' en el snapshot nuevo,
     # sin aplicar, con conteos == legacy por tabla.
     staged = dict(
@@ -1212,14 +1295,16 @@ def test_rollback_replay_full_executed_against_disposable_db(capture, db, gate_d
     assert state.snapshot_lsn == state.last_applied_lsn == summary["snapshot_lsn"]
     slot_row = _rows(
         factory,
-        "SELECT active FROM pg_replication_slots WHERE slot_name = :n", n=slot,
+        "SELECT active FROM pg_replication_slots WHERE slot_name = :n",
+        n=slot,
     )
     assert len(slot_row) == 1 and not slot_row[0].active  # re-creado, a la espera
 
     # `public` INTACTO: el rollback JAMÁS escribe en el esquema legacy.
-    assert _rows(
-        factory, "SELECT hash, title, is_active FROM public.jobs ORDER BY hash"
-    ) == legacy_before
+    assert (
+        _rows(factory, "SELECT hash, title, is_active FROM public.jobs ORDER BY hash")
+        == legacy_before
+    )
     assert _scalar(factory, "SELECT count(*) FROM public.users") == 1
     assert _scalar(factory, "SELECT count(*) FROM public.user_profiles") == 1
 
@@ -1230,14 +1315,18 @@ def test_rollback_replay_full_executed_against_disposable_db(capture, db, gate_d
     _seed_legacy_job(factory, "rb-post")
     _stream_until(
         cap2,
-        lambda: _scalar(
-            factory,
-            "SELECT count(*) FROM shadow_change_log WHERE pk = 'rb-post'",
-        ) >= 1,
+        lambda: (
+            _scalar(
+                factory,
+                "SELECT count(*) FROM shadow_change_log WHERE pk = 'rb-post'",
+            )
+            >= 1
+        ),
     )
-    assert _scalar(
-        factory, "SELECT count(*) FROM shadow_change_log WHERE pk = 'rb-post'"
-    ) == 1
+    assert (
+        _scalar(factory, "SELECT count(*) FROM shadow_change_log WHERE pk = 'rb-post'")
+        == 1
+    )
     cap2.close()
 
 
@@ -1259,10 +1348,13 @@ def test_consumer_down_30min_alert_and_lossless_recovery(capture, db, caplog):
     _seed_legacy_job(factory, "dw-1")  # tx aplicada y ACKeada antes del fallo
     _stream_until(
         cap1,
-        lambda: _scalar(
-            factory,
-            "SELECT count(*) FROM shadow_change_log WHERE pk = 'dw-1'",
-        ) >= 1,
+        lambda: (
+            _scalar(
+                factory,
+                "SELECT count(*) FROM shadow_change_log WHERE pk = 'dw-1'",
+            )
+            >= 1
+        ),
     )
     cap1.close()  # kill de la conexión: consumidor CAÍDO, slot retiene WAL
     _wait_slot_released(slot)
@@ -1290,25 +1382,32 @@ def test_consumer_down_30min_alert_and_lossless_recovery(capture, db, caplog):
     cap2.start()
     _stream_until(
         cap2,
-        lambda: _scalar(
-            factory,
-            "SELECT count(*) FROM shadow_change_log "
-            "WHERE pk IN ('dw-2', 'dw-0') AND lsn > :s", s=snap,
-        ) >= 2,
+        lambda: (
+            _scalar(
+                factory,
+                "SELECT count(*) FROM shadow_change_log "
+                "WHERE pk IN ('dw-2', 'dw-0') AND lsn > :s",
+                s=snap,
+            )
+            >= 2
+        ),
     )
-    assert _scalar(
-        factory, "SELECT count(*) FROM shadow_change_log WHERE pk = 'dw-2'"
-    ) == 1
+    assert (
+        _scalar(factory, "SELECT count(*) FROM shadow_change_log WHERE pk = 'dw-2'")
+        == 1
+    )
     dw0_updates = _rows(
         factory,
         "SELECT payload FROM shadow_change_log "
-        "WHERE pk = 'dw-0' AND op = 'U' AND lsn > :s", s=snap,
+        "WHERE pk = 'dw-0' AND op = 'U' AND lsn > :s",
+        s=snap,
     )
     assert len(dw0_updates) == 1
     assert dw0_updates[0].payload["is_active"] is False
-    assert _scalar(
-        factory, "SELECT count(*) FROM shadow_change_log WHERE pk = 'dw-1'"
-    ) == 1  # lo ya ACKeado no se duplica
+    assert (
+        _scalar(factory, "SELECT count(*) FROM shadow_change_log WHERE pk = 'dw-1'")
+        == 1
+    )  # lo ya ACKeado no se duplica
 
     # Con el consumidor recuperado la salud vuelve a verde (updated_at
     # avanzó con las transacciones aplicadas y el walsender está conectado).
@@ -1342,12 +1441,13 @@ def test_una_parada_declarada_no_rompe_la_racha(db):
     declararlo la racha vuelve a cero; declarándolo, el hueco se salta."""
     factory = db
     _freeze_holdout(factory, datetime(2026, 7, 1, tzinfo=metrics.CYCLE_TZ))
-    for i in (0, 1, 3, 4):                      # falta G0-2
+    for i in (0, 1, 3, 4):  # falta G0-2
         _seed_green_cycle(factory, G0 - timedelta(days=i))
 
     sin = _status(factory, now=GNOW)
     assert sin["consecutive_ok"] == 2, (
-        "sin declarar, el hueco tiene que cortar la racha: " + repr(sin["consecutive_ok"])
+        "sin declarar, el hueco tiene que cortar la racha: "
+        + repr(sin["consecutive_ok"])
     )
 
     _declara_parada(factory, G0 - timedelta(days=2))
@@ -1359,7 +1459,8 @@ def test_una_parada_declarada_no_rompe_la_racha(db):
     assert con["paradas_declaradas"][0]["declarada_por"] == "test-operator"
     assert con["paradas_declaradas"][0]["evidencia_sha256"] == "d" * 64
     hueco = next(
-        e for e in con["per_cycle"]
+        e
+        for e in con["per_cycle"]
         if e["cycle"] == (G0 - timedelta(days=2)).isoformat()
     )
     assert hueco["parada_declarada"] is True and hueco["computado"] is False
@@ -1382,8 +1483,7 @@ def test_una_declaracion_no_puede_tapar_un_ciclo_rojo(db):
         "una declaración tapó un ciclo ROJO computado: " + repr(r["consecutive_ok"])
     )
     rojo = next(
-        e for e in r["per_cycle"]
-        if e["cycle"] == (G0 - timedelta(days=1)).isoformat()
+        e for e in r["per_cycle"] if e["cycle"] == (G0 - timedelta(days=1)).isoformat()
     )
     assert rojo["parada_declarada"] is False, rojo
     assert rojo["computado"] is True
@@ -1399,7 +1499,7 @@ def test_demasiadas_paradas_declaradas_cortan_igual(db):
     verdes = [0, 2, 4, 6, 8]
     for i in verdes:
         _seed_green_cycle(factory, G0 - timedelta(days=i))
-    for i in (1, 3, 5, 7):                       # CUATRO paradas: una de más
+    for i in (1, 3, 5, 7):  # CUATRO paradas: una de más
         _declara_parada(factory, G0 - timedelta(days=i))
 
     r = _status(factory, now=GNOW)
@@ -1419,7 +1519,8 @@ def test_gate_necesita_ensayo_y_ratifacion_para_superarse(db):
     assert status["streak_passed"] is True
     assert status["gate_passed"] is False
     assert status["prerequisites"] == {
-        "rollback_replay": False, "thresholds_ratified": False,
+        "rollback_replay": False,
+        "thresholds_ratified": False,
     }
 
 
@@ -1449,7 +1550,8 @@ def test_presupuesto_de_materializacion_cabe_en_el_limite_de_celery():
     duro = celery_app.conf.task_time_limit
     frag = materialize.MATERIALIZE_FRAGMENT_SECONDS
     assert frag < blando, (
-        f"fragmento {frag}s >= límite blando {blando}s: la tarea muere antes")
+        f"fragmento {frag}s >= límite blando {blando}s: la tarea muere antes"
+    )
     # margen para cerrar el lote en curso y comprometer
     assert frag <= blando - 300, f"fragmento {frag}s sin margen bajo {blando}s"
     assert blando < duro <= 3600, "límites fuera del visibility_timeout"

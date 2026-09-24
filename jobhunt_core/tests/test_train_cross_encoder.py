@@ -6,16 +6,26 @@ import pytest
 
 from jobhunt_core import train_cross_encoder as tce
 
-PERFILES = {"P1": {"title": "Dev", "skills": ["python"],
-                   "languages": ["English"], "locations": ["Remote"],
-                   "remote_pref": "remote_only", "target_roles": []}}
+PERFILES = {
+    "P1": {
+        "title": "Dev",
+        "skills": ["python"],
+        "languages": ["English"],
+        "locations": ["Remote"],
+        "remote_pref": "remote_only",
+        "target_roles": [],
+    }
+}
 
 
 def _docs(tmp_path, vacs):
     p = tmp_path / "docs.jsonl"
-    p.write_text("".join(
-        json.dumps({"vac": v, "t": f"t{v}", "l": "Remote", "d": "desc"}) + "\n"
-        for v in vacs))
+    p.write_text(
+        "".join(
+            json.dumps({"vac": v, "t": f"t{v}", "l": "Remote", "d": "desc"}) + "\n"
+            for v in vacs
+        )
+    )
     return str(p)
 
 
@@ -43,14 +53,17 @@ def test_dataset_canonico_y_split_deterministas(tmp_path):
 def test_dataset_falla_cerrado(tmp_path):
     v = "00000000-0000-0000-0000-000000000001"
     with pytest.raises(ValueError, match="rel"):
-        tce.build_dataset(_judgments(tmp_path, [("P1", v, 7)]),
-                          PERFILES, _docs(tmp_path, [v]))
+        tce.build_dataset(
+            _judgments(tmp_path, [("P1", v, 7)]), PERFILES, _docs(tmp_path, [v])
+        )
     with pytest.raises(ValueError, match="documento"):
-        tce.build_dataset(_judgments(tmp_path, [("P1", v, 1)]),
-                          PERFILES, _docs(tmp_path, []))
+        tce.build_dataset(
+            _judgments(tmp_path, [("P1", v, 1)]), PERFILES, _docs(tmp_path, [])
+        )
     with pytest.raises(ValueError, match="perfil"):
-        tce.build_dataset(_judgments(tmp_path, [("PX", v, 1)]),
-                          PERFILES, _docs(tmp_path, [v]))
+        tce.build_dataset(
+            _judgments(tmp_path, [("PX", v, 1)]), PERFILES, _docs(tmp_path, [v])
+        )
 
 
 def test_e2e_con_stub_produce_artefacto_sellado(tmp_path):
@@ -75,16 +88,19 @@ def test_e2e_con_stub_produce_artefacto_sellado(tmp_path):
 
         def save_pretrained(self, ruta):
             import os
+
             os.makedirs(ruta, exist_ok=True)
             (tmp_path / "nada").write_text("")  # noqa
             open(f"{ruta}/config.json", "w").write('{"stub": true}')
             open(f"{ruta}/model.safetensors", "wb").write(
-                b"stub-" + str(self.epochs).encode())
+                b"stub-" + str(self.epochs).encode()
+            )
 
     tce.set_trainer_factory(lambda b, r: _Stub(b, r))
     try:
-        man = tce.run_training(j, str(perfiles_path), d,
-                               "base/modelo", "0" * 40, str(tmp_path / "out"))
+        man = tce.run_training(
+            j, str(perfiles_path), d, "base/modelo", "0" * 40, str(tmp_path / "out")
+        )
     finally:
         tce.set_trainer_factory(None)
     assert man["epocas_elegidas"] in (1, 2, 3)
@@ -92,11 +108,16 @@ def test_e2e_con_stub_produce_artefacto_sellado(tmp_path):
     assert man["dataset_sha256"] and man["judgments_sha256"]
     # content-addressed: el directorio es la huella y P1-1 puede verificarlo
     from jobhunt_core import cross_encoder as ce
+
     assert man["artifact_dir"].endswith(man["model_fingerprint"])
-    ce.verify_model_identity(man["artifact_dir"], None,
-                             man["model_fingerprint"])
-    assert json.load(open(f"{man['artifact_dir']}/TRAIN_MANIFEST.json"))[
-        "model_fingerprint"] == man["model_fingerprint"]
+    ce.verify_model_identity(man["artifact_dir"], None, man["model_fingerprint"])
+    assert (
+        json.load(open(f"{man['artifact_dir']}/TRAIN_MANIFEST.json"))[
+            "model_fingerprint"
+        ]
+        == man["model_fingerprint"]
+    )
+
 
 def test_parejas_ranknet_solo_dentro_del_mismo_grupo_consulta():
     """P6: parejas (i,j) SOLO dentro del mismo (perfil, consulta) y solo si
@@ -112,8 +133,7 @@ def test_parejas_ranknet_solo_dentro_del_mismo_grupo_consulta():
     assert pares == tce.build_ranknet_pairs(filas)
     # qA: 1.0>0.0, 1.0>0.5, 0.5>0.0 = 3 parejas; qB: empatadas = 0
     assert len(pares) == 3
-    assert all(p[0]["y"] > p[1]["y"] and p[0]["q"] == p[1]["q"]
-               for p in pares)
+    assert all(p[0]["y"] > p[1]["y"] and p[0]["q"] == p[1]["q"] for p in pares)
     # jamás cruza consultas
     assert not any(p[0]["q"] != p[1]["q"] for p in pares)
 

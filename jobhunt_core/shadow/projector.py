@@ -181,8 +181,15 @@ JOB_PAYLOAD_MAP: dict[str, str] = {
 # _complete_profile_content ya preserva genéricamente cualquier campo omitido
 # desde la revisión vigente — un UPDATE parcial jamás vacía una preferencia.
 PROFILE_FIELDS = (
-    "title", "cv_text", "skills", "languages", "locations",
-    "experience_years", "salary_min", "salary_max", "remote_pref",
+    "title",
+    "cv_text",
+    "skills",
+    "languages",
+    "locations",
+    "experience_years",
+    "salary_min",
+    "salary_max",
+    "remote_pref",
     # target_roles es CORE-NATIVO (no existe en la tabla legacy): jamás viene
     # en el payload del CDC ⇒ el fail-safe lo PRESERVA siempre desde la
     # revisión vigente — un UPDATE legacy no puede borrar la intención
@@ -250,13 +257,18 @@ async def project_pending(
 
     Devuelve totales JSON-serializables (resultado de la tarea Celery)."""
     totals = {
-        "status": "ok", "batches": 0, "changes": 0, "upserts": 0, "closes": 0,
-        "erased": 0, "revisions_new": 0, "profiles_evaluated": 0,
-        "recovery_evaluated": 0, "batches_recovered": 0,
+        "status": "ok",
+        "batches": 0,
+        "changes": 0,
+        "upserts": 0,
+        "closes": 0,
+        "erased": 0,
+        "revisions_new": 0,
+        "profiles_evaluated": 0,
+        "recovery_evaluated": 0,
+        "batches_recovered": 0,
     }
-    lock_engine = create_core_engine(
-        poolclass=NullPool, isolation_level="AUTOCOMMIT"
-    )
+    lock_engine = create_core_engine(poolclass=NullPool, isolation_level="AUTOCOMMIT")
     try:
         lock_conn = await lock_engine.connect()
         try:
@@ -294,9 +306,7 @@ async def project_pending(
             finally:
                 try:
                     await lock_conn.execute(
-                        sa.text(
-                            "SELECT pg_advisory_unlock(hashtextextended(:k, 0))"
-                        ),
+                        sa.text("SELECT pg_advisory_unlock(hashtextextended(:k, 0))"),
                         {"k": _PROJECTOR_LOCK},
                     )
                 except Exception:  # pragma: no cover — conexión rota
@@ -362,7 +372,10 @@ async def _project_all(
             # evaluará su propio agregado.
             return
         aggregate = _BatchResult(
-            changes=0, upserts=0, closes=0, erased=0,
+            changes=0,
+            upserts=0,
+            closes=0,
+            erased=0,
             revisions_new=agg_revisions_new,
             corpus_changed=agg_corpus_changed,
             affected_profiles=agg_affected,
@@ -393,14 +406,18 @@ async def _recover_orphan_batches(session_factory) -> int:
     jamás desaparece del p95 (el escenario del revisor)."""
     async with session_factory() as session:
         ids = (
-            await session.execute(
-                sa.text(
-                    "UPDATE shadow_projection_batches "
-                    "SET finished_at = clock_timestamp(), recovered = true "
-                    "WHERE finished_at IS NULL RETURNING id"
+            (
+                await session.execute(
+                    sa.text(
+                        "UPDATE shadow_projection_batches "
+                        "SET finished_at = clock_timestamp(), recovered = true "
+                        "WHERE finished_at IS NULL RETURNING id"
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         await session.commit()
     if ids:
         logger.warning(
@@ -413,10 +430,14 @@ async def _recover_orphan_batches(session_factory) -> int:
 
 async def _register_known_legacy_sources(session) -> None:
     names = (
-        await session.execute(
-            sa.text("SELECT name FROM sources WHERE name LIKE 'legacy:%'")
+        (
+            await session.execute(
+                sa.text("SELECT name FROM sources WHERE name LIKE 'legacy:%'")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for name in names:
         legacy_shadow.ensure_registered(name)
 
@@ -443,7 +464,10 @@ async def _project_batch(session_factory, sink, batch_size: int) -> _BatchResult
         session_factory, rows, batch_id, jobs_by_pk, plans, job_revs + prof_revs
     )
     return _BatchResult(
-        changes=len(rows), upserts=upserts, closes=closes, erased=len(erased),
+        changes=len(rows),
+        upserts=upserts,
+        closes=closes,
+        erased=len(erased),
         revisions_new=job_revs + prof_revs,
         corpus_changed=(job_revs > 0 or closes > 0),
         affected_profiles=affected,
@@ -515,24 +539,19 @@ async def _finish_batch(
     covered = {pk for p in plans.values() for pk, _f in p["upserts"]}
     covered |= {pk for p in plans.values() for pk in p["closes"]}
     leftover = [
-        r
-        for pk, pk_rows in jobs_by_pk.items()
-        if pk not in covered
-        for r in pk_rows
+        r for pk, pk_rows in jobs_by_pk.items() if pk not in covered for r in pk_rows
     ]
     # G1 H-4: una fila con src_table fuera del contrato (jobs/user_profiles/
     # users) no la sellaba NADIE → cada lote la releía y _project_all giraba
     # en bucle infinito bajo el advisory lock (hoy inalcanzable: capture
     # filtra por whitelist; guarda si CORE_CAPTURE_TABLES se ampliara).
-    unknown = [
-        r for r in rows
-        if r.src_table not in ("jobs", "user_profiles", "users")
-    ]
+    unknown = [r for r in rows if r.src_table not in ("jobs", "user_profiles", "users")]
     if unknown:
         logger.warning(
             "projector: %d fila(s) de staging con src_table NO contractual "
             "(%s) — selladas sin proyectar (G1 H-4: jamás un bucle)",
-            len(unknown), sorted({r.src_table for r in unknown}),
+            len(unknown),
+            sorted({r.src_table for r in unknown}),
         )
     async with session_factory() as session:
         await _seal_rows(session, leftover + unknown)
@@ -569,8 +588,10 @@ async def _insert_batch_intent(session, rows) -> uuid.UUID:
                 "VALUES (:f, :l, :m, clock_timestamp(), :c) RETURNING id"
             ),
             {
-                "f": rows[0].lsn, "l": rows[-1].lsn,
-                "m": min(r.received_at for r in rows), "c": len(rows),
+                "f": rows[0].lsn,
+                "l": rows[-1].lsn,
+                "m": min(r.received_at for r in rows),
+                "c": len(rows),
             },
         )
     ).scalar_one()
@@ -644,8 +665,12 @@ async def _apply_jobs_by_source(
             revs += r
         if plan["closes"]:
             closes += await _source_closes_tx(
-                session_factory, sink, name, plan["closes"],
-                last_close_source, jobs_by_pk,
+                session_factory,
+                sink,
+                name,
+                plan["closes"],
+                last_close_source,
+                jobs_by_pk,
             )
     return upserts, closes, revs
 
@@ -660,9 +685,7 @@ async def _source_upserts_tx(
         u, r = await _apply_source_upserts(
             session, sink, source_id, scope_id, name, entries
         )
-        await _seal_rows(
-            session, [row for pk, _f in entries for row in jobs_by_pk[pk]]
-        )
+        await _seal_rows(session, [row for pk, _f in entries for row in jobs_by_pk[pk]])
         await session.commit()
     return u, r
 
@@ -726,7 +749,8 @@ async def _plan_jobs(session, folds) -> dict[str, dict]:
         else:
             logger.error(
                 "projector: ALERTA — cambio de jobs pk=%s sin fuente "
-                "resoluble: descartado", pk,
+                "resoluble: descartado",
+                pk,
             )
     return plans
 
@@ -808,9 +832,11 @@ async def _build_source_batch(
     # borra el apply_url a propósito en un U que además omite contenido,
     # el proyector lo resucita — mismo compromiso que url).
     need_prev = sorted(
-        {pk for pk, f in entries
-         if _missing_content(f) or "url" not in f.cols
-         or "apply_url" not in f.cols}
+        {
+            pk
+            for pk, f in entries
+            if _missing_content(f) or "url" not in f.cols or "apply_url" not in f.cols
+        }
     )
     prev_raws = await _latest_slot_raws(session, source_id, need_prev)
     prev_changes = await _last_applied_changes(session, "jobs", need_prev)
@@ -828,7 +854,8 @@ async def _build_source_batch(
                 "projector: ALERTA — U de jobs pk=%s (%s) con columnas "
                 "omitidas y SIN valor previo conocido: degradado a refresco "
                 "de last_seen (jamás una revisión con contenido perdido)",
-                pk, source_name,
+                pk,
+                source_name,
             )
             touches.append(pk)
         elif url is None:
@@ -841,10 +868,14 @@ async def _build_source_batch(
             if apply_url is _APPLY_STORED:
                 stored_pending.append(pk)
                 apply_url = None
-            listings.append(RawListing(
-                external_id=pk, url=url, payload=payload,
-                apply_url=apply_url,  # R.6
-            ))
+            listings.append(
+                RawListing(
+                    external_id=pk,
+                    url=url,
+                    payload=payload,
+                    apply_url=apply_url,  # R.6
+                )
+            )
             aurl_by_pk[pk] = apply_url
     for pk, payload, url in await _resolve_pending_urls(
         session, source_id, url_pending
@@ -852,14 +883,20 @@ async def _build_source_batch(
         if url is None:
             logger.error(
                 "projector: ALERTA — jobs pk=%s (%s) sin URL resoluble: "
-                "degradado a refresco de last_seen", pk, source_name,
+                "degradado a refresco de last_seen",
+                pk,
+                source_name,
             )
             touches.append(pk)
         else:
-            listings.append(RawListing(
-                external_id=pk, url=url, payload=payload,
-                apply_url=aurl_by_pk.get(pk),  # R.6
-            ))
+            listings.append(
+                RawListing(
+                    external_id=pk,
+                    url=url,
+                    payload=payload,
+                    apply_url=aurl_by_pk.get(pk),  # R.6
+                )
+            )
     # C2-P2-1: tercera vía en LOTE — el apply_url ya almacenado para los
     # omitidos sin valor previo. Se corrige la RawListing ya construida
     # (dataclass frozen ⇒ replace) y el mapa para el camino url_pending.
@@ -932,8 +969,10 @@ def _merge_job_payload(
     # partir de ahí prev_raw ES la revisión truncada. La justificación de
     # `_fill_from_previous` («misma forma que el payload previo ⇒ mismo
     # content_hash ⇒ DO NOTHING») solo vale con prev_raw presente.
-    if missing and prev_raw is None and not all(
-        c in (prev_change or {}) for c in missing
+    if (
+        missing
+        and prev_raw is None
+        and not all(c in (prev_change or {}) for c in missing)
     ):
         return None, None, None
     for col in missing:
@@ -1016,7 +1055,8 @@ def _alert_unnormalizable(source_name: str, listings) -> None:
     if not normalize.has_normalizer(source_name):
         logger.error(
             "projector: ALERTA — fuente %r SIN normalizador registrado "
-            "(canónica imposible para todo el lote)", source_name,
+            "(canónica imposible para todo el lote)",
+            source_name,
         )
         return
     for listing in listings:
@@ -1024,7 +1064,8 @@ def _alert_unnormalizable(source_name: str, listings) -> None:
             logger.error(
                 "projector: ALERTA — normalize_offer devolvió None para "
                 "pk=%s en %r (la vacante quedará sin canónica)",
-                listing.external_id, source_name,
+                listing.external_id,
+                source_name,
             )
 
 
@@ -1098,11 +1139,16 @@ async def _refresh_links_on_close(session, source_id, close_pks, jobs_by_pk):
             if not aurl or len(aurl) > MAX_URL_LEN or "\x00" in aurl:
                 aurl = None
         if set_url or set_aurl:
-            params.append({
-                "src": source_id, "ext": pk,
-                "u": url.strip() if set_url else None, "su": set_url,
-                "a": aurl, "sa": set_aurl,
-            })
+            params.append(
+                {
+                    "src": source_id,
+                    "ext": pk,
+                    "u": url.strip() if set_url else None,
+                    "su": set_url,
+                    "a": aurl,
+                    "sa": set_aurl,
+                }
+            )
     if not params:
         return
     await session.execute(
@@ -1274,9 +1320,10 @@ async def _apply_profiles(session, rows) -> tuple[set, int]:
     for pk in sorted(pid_by_pk, key=lambda pk: (str(pid_by_pk[pk]), pk)):
         pid = pid_by_pk[pk]
         # Lock BEFORE checking authority: serialize with first API snapshot.
-        version = await session.scalar(sa.text(
-            "SELECT projection_version FROM profiles WHERE id=:p FOR UPDATE"
-        ), {"p": pid})
+        version = await session.scalar(
+            sa.text("SELECT projection_version FROM profiles WHERE id=:p FOR UPDATE"),
+            {"p": pid},
+        )
         if version:
             continue
         content = await _complete_profile_content(session, pid, pk, folds[pk])
@@ -1298,18 +1345,20 @@ async def _upsert_profile_pks(session, cid, folds) -> dict[str, uuid.UUID]:
     prev = await _last_applied_changes(session, "user_profiles", missing_uid)
     pid_by_pk: dict[str, uuid.UUID] = {}
     for pk in sorted(folds):
-        user_id = (
-            folds[pk].fields.get("user_id") or (prev.get(pk) or {}).get("user_id")
-        )
+        user_id = folds[pk].fields.get("user_id") or (prev.get(pk) or {}).get("user_id")
         if user_id is None:
             logger.error(
                 "projector: ALERTA — user_profiles pk=%s sin user_id "
-                "resoluble: descartado", pk,
+                "resoluble: descartado",
+                pk,
             )
             continue
         from jobhunt_core.erasure import ProfileErasedError
+
         try:
-            pid_by_pk[pk] = await core_profiles.upsert_profile(session, cid, str(user_id))
+            pid_by_pk[pk] = await core_profiles.upsert_profile(
+                session, cid, str(user_id)
+            )
         except ProfileErasedError:
             # A committed erasure wins over delayed CDC/replays.
             continue
@@ -1340,7 +1389,9 @@ async def _complete_profile_content(session, pid, pk, fold) -> dict | None:
         if criticos:
             logger.error(
                 "projector: ALERTA — user_profiles pk=%s con %s omitidos y "
-                "SIN revisión previa que preserve: se salta", pk, criticos,
+                "SIN revisión previa que preserve: se salta",
+                pk,
+                criticos,
             )
             return None
         return content
@@ -1400,9 +1451,12 @@ async def _apply_users(session, rows) -> set:
     # Sin perfil (str vacío) primero: no toman lock y el orden les da igual.
     for pk in sorted(dead, key=lambda pk: (str(pid_by_ref.get(pk, "")), pk)):
         if pk in pid_by_ref:
-            version = await session.scalar(sa.text(
-                "SELECT projection_version FROM profiles WHERE id=:p FOR UPDATE"
-            ), {"p": pid_by_ref[pk]})
+            version = await session.scalar(
+                sa.text(
+                    "SELECT projection_version FROM profiles WHERE id=:p FOR UPDATE"
+                ),
+                {"p": pid_by_ref[pk]},
+            )
             if version:
                 # This CDC replica no longer owns the live BFF account.
                 # Explicit coordinated erasure remains available via the API.
@@ -1412,7 +1466,8 @@ async def _apply_users(session, rows) -> set:
             erased.add(pid)
             logger.info(
                 "projector: ERASE GDPR del perfil sombra %s (users pk=%s)",
-                pid, pk,
+                pid,
+                pk,
             )
     return erased
 
@@ -1422,14 +1477,16 @@ async def erase_shadow_profile(
 ) -> uuid.UUID | None:
     """CDC erasure shares the same durable fence as explicit API erasure."""
     from jobhunt_core.erasure import erase_external_identity
-    cid = await session.scalar(sa.text(
-        "SELECT id FROM consumers WHERE name=:cn"
-    ), {"cn": consumer_name})
+
+    cid = await session.scalar(
+        sa.text("SELECT id FROM consumers WHERE name=:cn"), {"cn": consumer_name}
+    )
     if cid is None:
         return None
-    pid = await session.scalar(sa.text(
-        "SELECT id FROM profiles WHERE consumer_id=:cid AND external_ref=:ref"
-    ), {"cid": cid, "ref": external_ref})
+    pid = await session.scalar(
+        sa.text("SELECT id FROM profiles WHERE consumer_id=:cid AND external_ref=:ref"),
+        {"cid": cid, "ref": external_ref},
+    )
     # Even DELETE before the first profile event must suppress a late replay.
     await erase_external_identity(session, cid, external_ref)
     return pid
@@ -1490,9 +1547,7 @@ async def _erase_profile_graph(
         await session.execute(
             sa.text(f"DELETE FROM {table} WHERE profile_id = :p"), {"p": pid}
         )
-    await session.execute(
-        sa.text("DELETE FROM profiles WHERE id = :p"), {"p": pid}
-    )
+    await session.execute(sa.text("DELETE FROM profiles WHERE id = :p"), {"p": pid})
     return pid
 
 
@@ -1649,14 +1704,18 @@ async def _evaluate_and_record(session_factory, pid) -> None:
     misma transacción y ANTES de mirar el corpus (P1 rondas 4 y 5): si el corpus cambia después, se
     registra la versión vieja y el siguiente ciclo lo vuelve a coger — dirección segura. Un combo
     sin corpus llega con generación NULL y no se registra: no gobierna ninguna señal."""
+
     async def record(session, result, model_id, policy_id) -> None:
         if result["corpus_generation"] is None:
             return
         await session.execute(
             sa.text(_RECORD_ATTEMPT_SQL),
             {
-                "rev": result["profile_revision_id"], "pid": pid, "model": model_id,
-                "policy": policy_id, "gen": result["corpus_generation"],
+                "rev": result["profile_revision_id"],
+                "pid": pid,
+                "model": model_id,
+                "policy": policy_id,
+                "gen": result["corpus_generation"],
             },
         )
 
@@ -1703,7 +1762,8 @@ async def _recovery_targets(session, evaluated: set) -> list:
     if len(rows) == RECOVERY_MAX_PROFILES:
         logger.info(
             "projector: recuperación acotada a %d perfiles en esta pasada (el resto sigue en "
-            "cola, orden por evaluación más antigua)", RECOVERY_MAX_PROFILES,
+            "cola, orden por evaluación más antigua)",
+            RECOVERY_MAX_PROFILES,
         )
     return sorted((r.id for r in rows), key=str)
 
@@ -1716,9 +1776,7 @@ async def _after_batch(
     consumer sombra si hubo corpus nuevo. Corre FUERA de la tx del lote.
     Devuelve los perfiles evaluados (la recuperación de salida ya no los
     re-evalúa)."""
-    if not (
-        result.revisions_new or result.corpus_changed or result.affected_profiles
-    ):
+    if not (result.revisions_new or result.corpus_changed or result.affected_profiles):
         return []
     await _drain_embeddings(session_factory, max_rounds=max_embedding_rounds)
     async with session_factory() as session:
@@ -1737,9 +1795,7 @@ async def _drain_embeddings(
     """run_pending hasta vaciar (acotado): la evaluación necesita vectores."""
     for _ in range(max_rounds):
         r = await _run_pending_impl(limit, session_factory=session_factory)
-        if not any(r["embedded"].values()) and not any(
-            r["profiles_embedded"].values()
-        ):
+        if not any(r["embedded"].values()) and not any(r["profiles_embedded"].values()):
             return
     logger.warning("projector: embeddings sin drenar tras %d rondas", max_rounds)
 
@@ -1821,20 +1877,29 @@ async def inactive_user_refs(session, refs) -> set[str]:
     """
     if not refs:
         return set()
-    rows = (await session.execute(sa.text(
-        "WITH last_cdc AS ("
-        " SELECT DISTINCT ON (pk) pk, payload->>'is_active' AS act "
-        " FROM shadow_change_log "
-        " WHERE src_table='users' AND op IN ('I','U') "
-        " AND applied_at IS NOT NULL AND pk=ANY(:refs) "
-        " ORDER BY pk,lsn DESC,seq_in_tx DESC), "
-        "projected AS ("
-        " SELECT p.external_ref,p.projection_active FROM profiles p "
-        " JOIN consumers c ON c.id=p.consumer_id "
-        " WHERE c.name=:consumer AND p.external_ref=ANY(:refs) "
-        " AND p.projection_version>0) "
-        "SELECT pk FROM last_cdc WHERE act='false' "
-        "AND NOT EXISTS (SELECT 1 FROM projected WHERE external_ref=last_cdc.pk) "
-        "UNION ALL SELECT external_ref FROM projected WHERE NOT projection_active"
-    ), {"refs": sorted(refs), "consumer": SHADOW_CONSUMER})).scalars().all()
+    rows = (
+        (
+            await session.execute(
+                sa.text(
+                    "WITH last_cdc AS ("
+                    " SELECT DISTINCT ON (pk) pk, payload->>'is_active' AS act "
+                    " FROM shadow_change_log "
+                    " WHERE src_table='users' AND op IN ('I','U') "
+                    " AND applied_at IS NOT NULL AND pk=ANY(:refs) "
+                    " ORDER BY pk,lsn DESC,seq_in_tx DESC), "
+                    "projected AS ("
+                    " SELECT p.external_ref,p.projection_active FROM profiles p "
+                    " JOIN consumers c ON c.id=p.consumer_id "
+                    " WHERE c.name=:consumer AND p.external_ref=ANY(:refs) "
+                    " AND p.projection_version>0) "
+                    "SELECT pk FROM last_cdc WHERE act='false' "
+                    "AND NOT EXISTS (SELECT 1 FROM projected WHERE external_ref=last_cdc.pk) "
+                    "UNION ALL SELECT external_ref FROM projected WHERE NOT projection_active"
+                ),
+                {"refs": sorted(refs), "consumer": SHADOW_CONSUMER},
+            )
+        )
+        .scalars()
+        .all()
+    )
     return set(rows)

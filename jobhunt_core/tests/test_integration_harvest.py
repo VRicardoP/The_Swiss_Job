@@ -40,7 +40,9 @@ class FakeProvider(BaseProvider):
             (100, RawListing(external_id="n1", url="https://x/n1", payload={"t": 1})),
         ]
         new = tuple(listing for ts, listing in all_items if ts > watermark)
-        return FetchResult(listings=new, next_cursor={"watermark": 200}, pages_fetched=1)
+        return FetchResult(
+            listings=new, next_cursor={"watermark": 200}, pages_fetched=1
+        )
 
 
 class CollectSink:
@@ -81,7 +83,9 @@ def _seed_scopes(factory, created, n=2) -> list[str]:
             source_id = uuid.uuid4()
             created["source"] = source_id
             await s.execute(
-                sa.text("INSERT INTO sources (id, name, tier) VALUES (:id, 'arbeitnow', 0)"),
+                sa.text(
+                    "INSERT INTO sources (id, name, tier) VALUES (:id, 'arbeitnow', 0)"
+                ),
                 {"id": source_id},
             )
             for _ in range(n):
@@ -130,7 +134,9 @@ def _run(factory, scope_id, sink):
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(lambda r: httpx.Response(500))
         ) as http:  # el FakeProvider no usa HTTP; el transport 500 vigila que así sea
-            return await run_scope(scope_id, FakeProvider(), sink, http, session_factory=factory)
+            return await run_scope(
+                scope_id, FakeProvider(), sink, http, session_factory=factory
+            )
 
     return asyncio.run(go())
 
@@ -164,6 +170,7 @@ def test_resume_from_cursor_fetches_only_new(db):
     (s1,) = _seed_scopes(factory, created, n=1)
     first = CollectSink()
     assert _run(factory, s1, first).listings == 2
+
     # Simular avance parcial: watermark=100 → solo n2 es nueva.
     async def set_wm():
         async with factory() as s:
@@ -266,7 +273,9 @@ def test_provider_failure_records_and_leaves_cursor(db):
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(lambda r: httpx.Response(500))
         ) as http:
-            return await run_scope(s1, RaisingProvider(), CollectSink(), http, session_factory=factory)
+            return await run_scope(
+                s1, RaisingProvider(), CollectSink(), http, session_factory=factory
+            )
 
     r = asyncio.run(go())
     assert r.status == "error" and "simulada" in r.error
@@ -311,7 +320,9 @@ def test_semantic_param_change_resets_cursor(db):
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(lambda r: httpx.Response(500))
         ) as http:
-            return await run_scope(s1, provider, CollectSink(), http, session_factory=factory)
+            return await run_scope(
+                s1, provider, CollectSink(), http, session_factory=factory
+            )
 
     assert asyncio.run(go()).status == "ok"
     assert provider.received_cursors == [None]  # primer run: sin cursor
@@ -336,7 +347,11 @@ class InterleavedProvider(FakeProvider):
 
     async def fetch_new(self, params, cursor, http):
         inner = await run_scope(
-            self.scope_id, FakeProvider(), CollectSink(), http, session_factory=self.factory
+            self.scope_id,
+            FakeProvider(),
+            CollectSink(),
+            http,
+            session_factory=self.factory,
         )
         assert inner.status == "ok"  # el run rápido gana y commitea watermark=200
         # El lento devuelve un cursor VIEJO (calculado con su snapshot previo).
@@ -354,7 +369,11 @@ def test_concurrent_run_aborts_stale_instead_of_clobbering(db):
             transport=httpx.MockTransport(lambda r: httpx.Response(500))
         ) as http:
             return await run_scope(
-                s1, InterleavedProvider(factory, s1), CollectSink(), http, session_factory=factory
+                s1,
+                InterleavedProvider(factory, s1),
+                CollectSink(),
+                http,
+                session_factory=factory,
             )
 
     r = asyncio.run(go())
@@ -431,7 +450,9 @@ def _run_with(factory, scope_id, provider, sink):
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(lambda r: httpx.Response(500))
         ) as http:
-            return await run_scope(scope_id, provider, sink, http, session_factory=factory)
+            return await run_scope(
+                scope_id, provider, sink, http, session_factory=factory
+            )
 
     return asyncio.run(go())
 
@@ -481,7 +502,8 @@ class DeletingProvider(FakeProvider):
                 {"i": self.scope_id},
             )
             await s.execute(
-                sa.text("DELETE FROM harvest_scopes WHERE id = :i"), {"i": self.scope_id}
+                sa.text("DELETE FROM harvest_scopes WHERE id = :i"),
+                {"i": self.scope_id},
             )
             await s.commit()
         return await FakeProvider.fetch_new(self, params, cursor, http)
@@ -559,7 +581,9 @@ def _run_arbeitnow(factory, scope_id, sink, body):
 
     def handler(request: httpx.Request) -> httpx.Response:
         page = int(request.url.params.get("page", 1))
-        return httpx.Response(200, text=json.dumps(body.get(page, {"data": [], "links": {}})))
+        return httpx.Response(
+            200, text=json.dumps(body.get(page, {"data": [], "links": {}}))
+        )
 
     async def go():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -572,7 +596,15 @@ def _run_arbeitnow(factory, scope_id, sink, body):
 
 _FEED_OK = {
     1: {
-        "data": [{"slug": "a", "url": "https://x/a", "title": "T", "created_at": 300, "tags": []}],
+        "data": [
+            {
+                "slug": "a",
+                "url": "https://x/a",
+                "title": "T",
+                "created_at": 300,
+                "tags": [],
+            }
+        ],
         "links": {},
     }
 }
@@ -596,7 +628,9 @@ def test_invalid_provider_response_does_not_confirm_a_complete_harvest(db):
 
     # 2) La fuente cambia de forma (200 con sobre no conforme).
     sink = CollectSink()
-    r = _run_arbeitnow(factory, s1, sink, {1: {"data": "no-soy-una-lista", "links": {}}})
+    r = _run_arbeitnow(
+        factory, s1, sink, {1: {"data": "no-soy-una-lista", "links": {}}}
+    )
 
     assert r.status == "error"
     assert sink.batches == []  # nada llegó al sink: el fetch murió antes
@@ -613,7 +647,8 @@ def test_disabled_scope_is_skipped(db):
     async def disable():
         async with factory() as s:
             await s.execute(
-                sa.text("UPDATE harvest_scopes SET enabled = false WHERE id = :i"), {"i": s1}
+                sa.text("UPDATE harvest_scopes SET enabled = false WHERE id = :i"),
+                {"i": s1},
             )
             await s.commit()
 
@@ -636,7 +671,9 @@ def test_envelope_without_links_does_not_confirm_a_complete_harvest(db):
     previo = _state(factory, s1)
 
     sink = CollectSink()
-    sin_links = {1: {"data": [{"slug": "z", "url": "https://x/z", "title": "T", "tags": []}]}}
+    sin_links = {
+        1: {"data": [{"slug": "z", "url": "https://x/z", "title": "T", "tags": []}]}
+    }
     r = _run_arbeitnow(factory, s1, sink, sin_links)
 
     assert r.status == "error"
@@ -665,17 +702,21 @@ def test_a_harvest_that_ingests_nothing_is_never_confirmed_complete(db):
     assert previo.last_complete_at is not None and previo.consecutive_failures == 0
 
     for feed in (
-        {1: {"data": [], "links": {"next": "?page=2"}}},                      # P1-1
-        {1: {"data": [{"id": 1, "job_url": "https://x/a", "name": "T"}],      # P2-1
-             "links": {"next": None}}},
+        {1: {"data": [], "links": {"next": "?page=2"}}},  # P1-1
+        {
+            1: {
+                "data": [{"id": 1, "job_url": "https://x/a", "name": "T"}],  # P2-1
+                "links": {"next": None},
+            }
+        },
     ):
         sink = CollectSink()
         r = _run_arbeitnow(factory, s1, sink, feed)
         assert r.status == "error"
-        assert sink.batches == []                       # nada que ingerir, nada ingerido
+        assert sink.batches == []  # nada que ingerir, nada ingerido
         ahora = _state(factory, s1)
-        assert ahora.cursor == previo.cursor            # cursor INTACTO
-        assert ahora.last_complete_at == previo.last_complete_at   # NO se confirmó nada
+        assert ahora.cursor == previo.cursor  # cursor INTACTO
+        assert ahora.last_complete_at == previo.last_complete_at  # NO se confirmó nada
         assert ahora.consecutive_failures == previo.consecutive_failures + 1  # y se VE
         previo = ahora
 
@@ -692,8 +733,15 @@ def test_broken_page_mid_sweep_persists_the_good_pages_and_counts_the_failure(db
     (s1,) = _seed_scopes(factory, created, n=1)
     feed = {
         1: {
-            "data": [{"slug": "a", "url": "https://x/a", "title": "T", "created_at": 300,
-                      "tags": []}],
+            "data": [
+                {
+                    "slug": "a",
+                    "url": "https://x/a",
+                    "title": "T",
+                    "created_at": 300,
+                    "tags": [],
+                }
+            ],
             "links": {"next": "?page=2"},
         },
         2: {"data": {"no": "soy una lista"}, "links": {}},
@@ -704,13 +752,14 @@ def test_broken_page_mid_sweep_persists_the_good_pages_and_counts_the_failure(db
     assert r.status == "partial"
     assert [x.external_id for _, batch in sink.batches for x in batch] == ["a"]
     st = _state(factory, s1)
-    assert st.cursor is not None                 # cursor del barrido parcial persistido
-    assert st.last_complete_at is None           # NUNCA cosecha completa
-    assert st.consecutive_failures == 1          # el fallo es VISIBLE, no un silencio
+    assert st.cursor is not None  # cursor del barrido parcial persistido
+    assert st.last_complete_at is None  # NUNCA cosecha completa
+    assert st.consecutive_failures == 1  # el fallo es VISIBLE, no un silencio
 
 
 def _set_state(factory, scope_id, *, failures=0, last_complete_at=None):
     """Fija el estado del scope (la avería que la vigilancia debe VER)."""
+
     async def go():
         async with factory() as s:
             await s.execute(
@@ -757,7 +806,9 @@ def test_harvest_health_alerts_on_failing_and_stale_scopes(db):
 
     assert (fallando, "cosecha_fallando") in por_scope
     assert (rancio, "cosecha_sin_completar") in por_scope
-    assert not [a for a in out["alertas"] if a["scope_id"] == sano]  # 1 fallo y fresco: sin ruido
+    assert not [
+        a for a in out["alertas"] if a["scope_id"] == sano
+    ]  # 1 fallo y fresco: sin ruido
     assert out["scopes"] == 3
 
 
@@ -818,7 +869,9 @@ def test_harvest_health_dice_en_voz_alta_cuando_no_observa_nada(db, caplog):
                 sa.text("UPDATE harvest_scopes SET enabled = false WHERE id = :i"),
                 {"i": apagado},
             )
-            await s.execute(sa.text("DELETE FROM harvest_scopes WHERE id = :i"), {"i": nunca})
+            await s.execute(
+                sa.text("DELETE FROM harvest_scopes WHERE id = :i"), {"i": nunca}
+            )
             await s.commit()
 
     asyncio.run(disable())
@@ -828,7 +881,9 @@ def test_harvest_health_dice_en_voz_alta_cuando_no_observa_nada(db, caplog):
     # El censo mira TODO el parque, no solo los scopes de este test: lo que importa es
     # que hay scopes y ninguno observable (habilitados 0), no cuántos haya en total.
     censo = out["censo"]
-    assert censo["scopes"] >= 1 and censo["habilitados"] == 0 and censo["con_estado"] == 0
+    assert (
+        censo["scopes"] >= 1 and censo["habilitados"] == 0 and censo["con_estado"] == 0
+    )
     assert "no está midiendo nada" in caplog.text
 
 
@@ -853,8 +908,8 @@ def test_harvest_health_publica_el_censo_y_delata_los_scopes_invisibles(db, capl
     with caplog.at_level(logging.WARNING):
         out = _health(factory)
 
-    assert out["alertas"] == [] and out["scopes"] == 1   # el sano, y solo el sano
-    censo = out["censo"]                                 # …pero el censo va SIEMPRE
+    assert out["alertas"] == [] and out["scopes"] == 1  # el sano, y solo el sano
+    censo = out["censo"]  # …pero el censo va SIEMPRE
     assert censo["habilitados"] >= 3 and censo["con_estado"] == 1
     assert censo["habilitados"] > out["scopes"]
     assert "3 scopes habilitados y solo 1 se observan" in caplog.text
@@ -868,7 +923,9 @@ def test_harvest_health_task_is_wired_to_the_beat_on_the_light_queue():
     from jobhunt_core.celery_app import celery_app
     from jobhunt_core.tasks import harvest as harvest_tasks  # registra las tareas
 
-    assert harvest_tasks.check_harvest_health_task.name == "jobhunt.harvest.check_health"
+    assert (
+        harvest_tasks.check_harvest_health_task.name == "jobhunt.harvest.check_health"
+    )
     assert "jobhunt.harvest.check_health" in celery_app.tasks
     assert celery_app.conf.task_routes["jobhunt.harvest.check_health"] == {
         "queue": "core.default"

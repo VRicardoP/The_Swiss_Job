@@ -23,6 +23,7 @@ from jobhunt_core.dedup import scan_semantic_candidates
 from jobhunt_core.harvest.sink import RawListing, RawListingSink
 from jobhunt_core.tests import dbcleanup
 
+
 class KeywordBackend:
     """Vectores DETERMINISTAS por palabra clave: 'python' en el texto ⇒ eje X,
     si no ⇒ eje Y. Mismo título ⇒ sim 1.0; títulos de familias distintas ⇒
@@ -36,6 +37,7 @@ class KeywordBackend:
             v = [1.0, 0.0] if "python" in t.lower() else [0.0, 1.0]
             out.append(v + [0.0] * (embeddings.EMBED_DIM - 2))
         return out
+
 
 class CasiBackend(KeywordBackend):
     """KeywordBackend + un vector a EXACTAMENTE 0.96 del eje X para textos
@@ -109,16 +111,19 @@ def db():
 
 def _listing(ext, title, loc=None, company="ACME AG"):
     payload = {
-        "title": title, "company_name": company,
-        "description": f"puesto {title}", "tags": ["t"],
+        "title": title,
+        "company_name": company,
+        "description": f"puesto {title}",
+        "tags": ["t"],
     }
     if loc is not None:
         payload["location"] = loc
     return RawListing(external_id=ext, url=f"https://x/{ext}", payload=payload)
 
 
-def _setup(factory, created, por_fuente, backend_cls=KeywordBackend,
-           name_prefix="dedup-src"):
+def _setup(
+    factory, created, por_fuente, backend_cls=KeywordBackend, name_prefix="dedup-src"
+):
     """Siembra N fuentes con sus títulos, registra modelo y embebe con el
     backend determinista (mismo título ⇒ mismo vector ⇒ sim 1.0)."""
     from jobhunt_core.tasks.embedding import run_pending_task
@@ -146,9 +151,7 @@ def _setup(factory, created, por_fuente, backend_cls=KeywordBackend,
                     },
                 )
                 await s.execute(
-                    sa.text(
-                        "INSERT INTO sources (id, name, tier) VALUES (:id, :n, 0)"
-                    ),
+                    sa.text("INSERT INTO sources (id, name, tier) VALUES (:id, :n, 0)"),
                     {"id": source_id, "n": name},
                 )
                 await s.execute(
@@ -160,7 +163,8 @@ def _setup(factory, created, por_fuente, backend_cls=KeywordBackend,
                 )
                 await s.commit()
                 await RawListingSink().handle(
-                    s, str(scope_id),
+                    s,
+                    str(scope_id),
                     tuple(
                         _listing(f"s{i}-j{j}", *(t if isinstance(t, tuple) else (t,)))
                         for j, t in enumerate(titles)
@@ -249,11 +253,14 @@ def test_b2_concentracion_intra_no_oculta_al_vecino_cross(db):
     Con la exclusión en SQL antes del LIMIT deben salir los 6 pares cross."""
     factory, created = db
     _setup(
-        factory, created,
+        factory,
+        created,
         # títulos DISTINTOS (text_hash distinto ⇒ el exacto-intra no dispara)
         # pero todos con 'python' ⇒ mismo vector ⇒ sim 1.0 entre los 6
-        [[(f"python dev {j}", None, f"Emp{'abcdef'[j]}rossa AG")
-          for j in range(6)], ["casi python dev"]],
+        [
+            [(f"python dev {j}", None, f"Emp{'abcdef'[j]}rossa AG") for j in range(6)],
+            ["casi python dev"],
+        ],
         backend_cls=CasiBackend,
     )
     r = _scan(factory)
@@ -261,8 +268,7 @@ def test_b2_concentracion_intra_no_oculta_al_vecino_cross(db):
     pares = _pairs(factory, created)
     assert len(pares) == 6
     assert all(
-        p.state == "pending" and abs(float(p.similarity) - 0.96) < 0.005
-        for p in pares
+        p.state == "pending" and abs(float(p.similarity) - 0.96) < 0.005 for p in pares
     )
 
 
@@ -308,23 +314,34 @@ def test_exacto_intra_respeta_multi_ciudad(db):
             scope = created["scopes"][0]
             # dos pares intra: uno misma location, otro ciudad distinta
             from jobhunt_core.harvest.sink import RawListing, RawListingSink
+
             def _l(ext, loc):
                 return RawListing(
-                    external_id=ext, url=f"https://x/{ext}",
-                    payload={"title": "python dev", "company_name": "ACME AG",
-                             "description": "d", "tags": [], "location": loc},
+                    external_id=ext,
+                    url=f"https://x/{ext}",
+                    payload={
+                        "title": "python dev",
+                        "company_name": "ACME AG",
+                        "description": "d",
+                        "tags": [],
+                        "location": loc,
+                    },
                 )
+
             await RawListingSink().handle(
-                s, str(scope),
-                (_l("l-a", "Zurich"), _l("l-b", "Zurich"),
-                 _l("l-c", "Berna")),
+                s,
+                str(scope),
+                (_l("l-a", "Zurich"), _l("l-b", "Zurich"), _l("l-c", "Berna")),
             )
-            await s.execute(sa.text(
-                "UPDATE vacancies SET archived_at=now() WHERE id=("
-                "SELECT i.vacancy_id FROM source_listings l "
-                "JOIN source_listing_incarnations i ON i.source_listing_id=l.id "
-                "WHERE l.source_id=:src AND l.external_id='l-b')"
-            ), {"src": src})
+            await s.execute(
+                sa.text(
+                    "UPDATE vacancies SET archived_at=now() WHERE id=("
+                    "SELECT i.vacancy_id FROM source_listings l "
+                    "JOIN source_listing_incarnations i ON i.source_listing_id=l.id "
+                    "WHERE l.source_id=:src AND l.external_id='l-b')"
+                ),
+                {"src": src},
+            )
             await s.commit()
 
     asyncio.run(go())
@@ -354,13 +371,18 @@ def test_gate_puntua_solo_la_cohorte_holdout(db):
     mezcla antigua, un TP de development absorbía el FN del holdout
     (recall 1/2 = 0.5); filtrado, el holdout suspende solo: recall 0.0."""
     from jobhunt_core.shadow.labels import DEDUP_EVAL_COHORT
-    from jobhunt_core.shadow.metrics import M_DEDUP_RECALL, _dedup_rows, _labels_ready_row
+    from jobhunt_core.shadow.metrics import (
+        M_DEDUP_RECALL,
+        _dedup_rows,
+        _labels_ready_row,
+    )
 
     factory, created = db
     # 4 fuentes legacy:* — s0/s1 mismo título (candidato cross = detección);
     # s2/s3 ortogonales (sin candidato). external_ids únicos por run.
     _setup(
-        factory, created,
+        factory,
+        created,
         [["python dev"], ["python dev"], ["python dev x"], ["guardabosques"]],
         name_prefix="legacy:dedup-test",
     )
@@ -393,13 +415,12 @@ def test_gate_puntua_solo_la_cohorte_holdout(db):
             # development: el par DETECTADO (TP si contara)
             await s.execute(ins, {"a": refs[0], "b": refs[1], "src": "curado-test"})
             # holdout: par NO detectado (FN real del examen)
-            await s.execute(
-                ins, {"a": refs[2], "b": refs[3], "src": DEDUP_EVAL_COHORT}
-            )
+            await s.execute(ins, {"a": refs[2], "b": refs[3], "src": DEDUP_EVAL_COHORT})
             await s.commit()
 
     asyncio.run(prepara())
     try:
+
         async def evalua():
             async with factory() as s:
                 rows = await _dedup_rows(s)
@@ -415,6 +436,7 @@ def test_gate_puntua_solo_la_cohorte_holdout(db):
         # la precondición cuenta lo que el gate puntúa: 1 par, no 2
         assert ready[2]["pares_dedup"] == 1
     finally:
+
         async def limpia():
             async with factory() as s:
                 await s.execute(
@@ -441,10 +463,19 @@ def test_hnsw_underfill_cae_al_scan_exacto(db, monkeypatch):
 
     factory, created = db
     _setup(
-        factory, created,
-        [[(f"python dev {j}", None,
-           f"emp{chr(97 + j // 26)}{chr(97 + j % 26)} AG") for j in range(350)],
-         [(f"cerca {j}", None, f"otr{chr(97 + j)} AG") for j in range(5)]],
+        factory,
+        created,
+        [
+            [
+                (
+                    f"python dev {j}",
+                    None,
+                    f"emp{chr(97 + j // 26)}{chr(97 + j % 26)} AG",
+                )
+                for j in range(350)
+            ],
+            [(f"cerca {j}", None, f"otr{chr(97 + j)} AG") for j in range(5)],
+        ],
         backend_cls=VecinoBackend,
     )
 
@@ -481,6 +512,7 @@ def test_hnsw_underfill_cae_al_scan_exacto(db, monkeypatch):
     # propios tests de integración.
     dedup_mod._KNN_COUNT_SQL = "SELECT 999"
     try:
+
         async def go():
             async with factory() as s:
                 real = s.execute
@@ -536,12 +568,15 @@ def test_ann_respeta_la_regla_multi_ciudad(db):
     («Zürich» ⊂ «Zürich, Zürich») o ubicación vacía ⇒ candidato."""
     factory, created = db
     _setup(
-        factory, created,
+        factory,
+        created,
         [
             [("python dev", "Zürich", "Uno AG")],
-            [("python dev", "Bern", "DosBe AG"),               # multi-ciudad: NO
-             ("python dev b2", "Zürich, Zürich", "TresCe AG"), # contenida: SÍ
-             ("python dev b3", "", "CuatroDe AG")],            # sin dato: SÍ
+            [
+                ("python dev", "Bern", "DosBe AG"),  # multi-ciudad: NO
+                ("python dev b2", "Zürich, Zürich", "TresCe AG"),  # contenida: SÍ
+                ("python dev b3", "", "CuatroDe AG"),
+            ],  # sin dato: SÍ
         ],
     )
     r = _scan(factory)
@@ -567,18 +602,34 @@ def test_generador_lexico_cross_portal(db):
     # ANN queda fuera y el camino léxico se mide AISLADO (sin él, el ANN a
     # sim 1.0 insertaba el par primero y el léxico moría en el ON CONFLICT)
     _setup(
-        factory, created,
+        factory,
+        created,
         [
-            [("python klassische archäologie (open rank)", "Basel",
-              "Universität Basel")],
-            [("pyton klassische archäologie (open rank)", "Basel-Stadt",
-              "University of Basel"),           # dup: token basel + trgm alto
-             ("pyton klassische archäologie (open rank)", "Genf",
-              "Universität Basel"),             # multi-ciudad: loc incompatible
-             ("bibliothek klassische sammlung", "Basel",
-              "Universität Basel"),             # rol distinto: trgm bajo
-             ("pyton klassische archäologie (open rank)", "remote",
-              "Otra Uni AG")],                  # sin token común de empresa
+            [
+                (
+                    "python klassische archäologie (open rank)",
+                    "Basel",
+                    "Universität Basel",
+                )
+            ],
+            [
+                (
+                    "pyton klassische archäologie (open rank)",
+                    "Basel-Stadt",
+                    "University of Basel",
+                ),  # dup: token basel + trgm alto
+                (
+                    "pyton klassische archäologie (open rank)",
+                    "Genf",
+                    "Universität Basel",
+                ),  # multi-ciudad: loc incompatible
+                (
+                    "bibliothek klassische sammlung",
+                    "Basel",
+                    "Universität Basel",
+                ),  # rol distinto: trgm bajo
+                ("pyton klassische archäologie (open rank)", "remote", "Otra Uni AG"),
+            ],  # sin token común de empresa
         ],
     )
     r = _scan(factory)
@@ -603,20 +654,33 @@ def test_backfill_lexico_cubre_corpus_viejo_y_firma_de_gran_empleador(db):
 
     factory, created = db
     _setup(
-        factory, created,
-        [[(f"puesto {chr(97 + j // 5)}{chr(97 + j % 5)}" * 3, "Berlin",
-           "Megacorp AG") for j in range(50)]
-         + [("python data engineer", "Berlin", "Megacorp AG")],
-         [("pyton data engineer", "Berlin", "Megacorp GmbH")]],
+        factory,
+        created,
+        [
+            [
+                (
+                    f"puesto {chr(97 + j // 5)}{chr(97 + j % 5)}" * 3,
+                    "Berlin",
+                    "Megacorp AG",
+                )
+                for j in range(50)
+            ]
+            + [("python data engineer", "Berlin", "Megacorp AG")],
+            [("pyton data engineer", "Berlin", "Megacorp GmbH")],
+        ],
     )
 
     async def go():
         async with factory() as s:
-            await s.execute(sa.text(
-                "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
-                "WHERE vacancy_id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
-                " JOIN source_listings l ON l.id = i.source_listing_id "
-                " WHERE l.source_id = ANY(:s))"), {"s": created["sources"]})
+            await s.execute(
+                sa.text(
+                    "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
+                    "WHERE vacancy_id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
+                    " JOIN source_listings l ON l.id = i.source_listing_id "
+                    " WHERE l.source_id = ANY(:s))"
+                ),
+                {"s": created["sources"]},
+            )
             await s.commit()
             r_beat = await scan(s)  # camino real del beat: ventana 48 h
             await s.commit()
@@ -628,8 +692,8 @@ def test_backfill_lexico_cubre_corpus_viejo_y_firma_de_gran_empleador(db):
 
     r_beat, b1, b2 = asyncio.run(go())
     assert r_beat["candidatos_lexicos"] == 0  # invisible para el beat
-    assert b1 >= 1                            # el backfill lo encuentra
-    assert b2 == 0                            # idempotente
+    assert b1 >= 1  # el backfill lo encuentra
+    assert b2 == 0  # idempotente
     pares = _pairs(factory, created)
     assert len(pares) == 1
     # Re-confirmación P1-A: la TAREA Celery ejecuta de verdad la corrutina
@@ -678,7 +742,7 @@ def test_compatibilidad_de_ubicacion_semantica(db):
         # C2-P3: alfabetos no latinos son CONCRETOS; husos en DE también
         ("Женева (CET)", "remote", False),
         ("CET (+/- 3 Stunden)", "Anywhere in the World", True),
-        ("CET (+/- 1 Stunde)", "remote", True),   # C3: singular DE
+        ("CET (+/- 1 Stunde)", "remote", True),  # C3: singular DE
         ("CET-Zeit", "Anywhere in the World", True),  # C3: sufijo Zeit
         ("Sector 4", "Sector 5", False),
     ]
@@ -687,9 +751,15 @@ def test_compatibilidad_de_ubicacion_semantica(db):
         async with factory() as s:
             out = []
             for a, b, _e in casos:
-                v = (await s.execute(
-                    sa.text("SELECT " + _loc_compat_sql("CAST(:a AS text)", "CAST(:b AS text)")),
-                    {"a": a, "b": b})).scalar_one()
+                v = (
+                    await s.execute(
+                        sa.text(
+                            "SELECT "
+                            + _loc_compat_sql("CAST(:a AS text)", "CAST(:b AS text)")
+                        ),
+                        {"a": a, "b": b},
+                    )
+                ).scalar_one()
                 out.append(v)
             return out
 
@@ -707,14 +777,24 @@ def test_similarity_es_el_maximo_mientras_pending(db):
 
     async def go():
         async with factory() as s:
-            vacs = (await s.execute(sa.text(
-                "SELECT DISTINCT i.vacancy_id FROM source_listing_incarnations i "
-                "JOIN source_listings l ON l.id = i.source_listing_id "
-                "WHERE l.source_id = ANY(:s) ORDER BY 1"), {"s": created["sources"]})).all()
+            vacs = (
+                await s.execute(
+                    sa.text(
+                        "SELECT DISTINCT i.vacancy_id FROM source_listing_incarnations i "
+                        "JOIN source_listings l ON l.id = i.source_listing_id "
+                        "WHERE l.source_id = ANY(:s) ORDER BY 1"
+                    ),
+                    {"s": created["sources"]},
+                )
+            ).all()
             a, b = vacs[0].vacancy_id, vacs[1].vacancy_id
-            await s.execute(sa.text(
-                "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
-                "VALUES (gen_random_uuid(), :a, :b, 0.500)"), {"a": a, "b": b})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
+                    "VALUES (gen_random_uuid(), :a, :b, 0.500)"
+                ),
+                {"a": a, "b": b},
+            )
             await s.commit()
             return a, b
 
@@ -725,16 +805,20 @@ def test_similarity_es_el_maximo_mientras_pending(db):
 
     async def resuelve_y_reescanea():
         async with factory() as s:
-            await s.execute(sa.text(
-                "UPDATE dedup_candidates SET state = 'rejected', similarity = 0.400 "
-                "WHERE vacancy_a IN (:a, :b)"), {"a": a, "b": b})
+            await s.execute(
+                sa.text(
+                    "UPDATE dedup_candidates SET state = 'rejected', similarity = 0.400 "
+                    "WHERE vacancy_a IN (:a, :b)"
+                ),
+                {"a": a, "b": b},
+            )
             await s.commit()
 
     asyncio.run(resuelve_y_reescanea())
     _scan(factory)
     pares = _pairs(factory, created)
-    assert pares[0].state == "rejected"          # no se reabre
-    assert float(pares[0].similarity) == 0.400   # ni se actualiza
+    assert pares[0].state == "rejected"  # no se reabre
+    assert float(pares[0].similarity) == 0.400  # ni se actualiza
 
 
 def test_fase2_intra_normalizado_y_revalidacion_por_regla(db):
@@ -749,14 +833,19 @@ def test_fase2_intra_normalizado_y_revalidacion_por_regla(db):
 
     factory, created = db
     _setup(
-        factory, created,
+        factory,
+        created,
         # ronda 2 P1-2: % se CONSERVA — la variante 80-100% vs 80% pasa a
         # ser FN intra conocido (pronunciamiento del revisor: dos pensums
         # pueden ser dos plazas). El dup del test es la variante de género.
-        [[("Fachperson Betreuung (m/w/d)", "Luzern", "Stift Uno AG"),
-          ("Fachperson Betreuung", "Luzern", "Stift Uno AG"),
-          ("Fachperson Beteiligung 80%", "Luzern", "Stift Uno AG"),
-          ("Fachperson Betreuung 60%", "Bern", "Stift Uno AG")]],
+        [
+            [
+                ("Fachperson Betreuung (m/w/d)", "Luzern", "Stift Uno AG"),
+                ("Fachperson Betreuung", "Luzern", "Stift Uno AG"),
+                ("Fachperson Beteiligung 80%", "Luzern", "Stift Uno AG"),
+                ("Fachperson Betreuung 60%", "Bern", "Stift Uno AG"),
+            ]
+        ],
     )
     r = _scan(factory)
     assert r["status"] == "ok"
@@ -766,32 +855,48 @@ def test_fase2_intra_normalizado_y_revalidacion_por_regla(db):
 
     async def prepara_y_revalida():
         async with factory() as s:
-            vacs = (await s.execute(sa.text(
-                "SELECT i.vacancy_id, l.external_id "
-                "FROM source_listing_incarnations i "
-                "JOIN source_listings l ON l.id = i.source_listing_id "
-                "WHERE l.source_id = ANY(:s) ORDER BY l.external_id"),
-                {"s": created["sources"]})).all()
+            vacs = (
+                await s.execute(
+                    sa.text(
+                        "SELECT i.vacancy_id, l.external_id "
+                        "FROM source_listing_incarnations i "
+                        "JOIN source_listings l ON l.id = i.source_listing_id "
+                        "WHERE l.source_id = ANY(:s) ORDER BY l.external_id"
+                    ),
+                    {"s": created["sources"]},
+                )
+            ).all()
             v = {r2.external_id: r2.vacancy_id for r2 in vacs}
             # pendiente que VIOLA la regla (Luzern vs Bern) + uno resuelto
-            await s.execute(sa.text(
-                "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
-                "VALUES (gen_random_uuid(), :a, :b, 0.910)"),
-                {"a": v["s0-j0"], "b": v["s0-j3"]})
-            await s.execute(sa.text(
-                "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, "
-                "similarity, state) VALUES (gen_random_uuid(), :a, :b, 0.920, "
-                "CAST('rejected' AS dedup_candidate_state))"),
-                {"a": v["s0-j2"], "b": v["s0-j3"]})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, similarity) "
+                    "VALUES (gen_random_uuid(), :a, :b, 0.910)"
+                ),
+                {"a": v["s0-j0"], "b": v["s0-j3"]},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b, "
+                    "similarity, state) VALUES (gen_random_uuid(), :a, :b, 0.920, "
+                    "CAST('rejected' AS dedup_candidate_state))"
+                ),
+                {"a": v["s0-j2"], "b": v["s0-j3"]},
+            )
             await s.commit()
             prev = await revalidate_pending_candidates(s)  # preview: no escribe
             ap = await revalidate_pending_candidates(s, apply=True)
             await s.commit()
             seg = await revalidate_pending_candidates(s, apply=True)
             await s.commit()
-            meta = (await s.execute(sa.text(
-                "SELECT resolved_by, resolved_at FROM dedup_candidates "
-                "WHERE state = 'rejected' AND resolved_by IS NOT NULL"))).all()
+            meta = (
+                await s.execute(
+                    sa.text(
+                        "SELECT resolved_by, resolved_at FROM dedup_candidates "
+                        "WHERE state = 'rejected' AND resolved_by IS NOT NULL"
+                    )
+                )
+            ).all()
             return prev, ap, seg, meta
 
     prev, ap, seg, meta = asyncio.run(prepara_y_revalida())
@@ -807,8 +912,8 @@ def test_fase2_intra_normalizado_y_revalidacion_por_regla(db):
     )
     pares = sorted(_pairs(factory, created), key=lambda p: float(p.similarity))
     estados = [(float(p.similarity), p.state) for p in pares]
-    assert (0.910, "rejected") in estados   # violaba la regla ⇒ rechazado
-    assert (0.920, "rejected") in estados   # ya resuelto: intacto
+    assert (0.910, "rejected") in estados  # violaba la regla ⇒ rechazado
+    assert (0.920, "rejected") in estados  # ya resuelto: intacto
     assert any(s == "pending" and sim >= 0.99 for sim, s in estados)
 
 
@@ -841,9 +946,11 @@ def test_normalizacion_de_titulo_allowlist(db):
 
     async def norm(x):
         async with factory() as s:
-            return (await s.execute(
-                sa.text("SELECT " + _title_norm_sql("CAST(:x AS text)")),
-                {"x": x})).scalar_one()
+            return (
+                await s.execute(
+                    sa.text("SELECT " + _title_norm_sql("CAST(:x AS text)")), {"x": x}
+                )
+            ).scalar_one()
 
     for a, b in casos_iguales:
         na, nb = asyncio.run(norm(a)), asyncio.run(norm(b))
@@ -860,13 +967,20 @@ def test_reproducciones_adversariales_fase2_del_revisor(db):
     las fronteras conservadoras: CERO candidatos."""
     factory, created = db
     _setup(
-        factory, created,
-        [[("Software Engineer (Frontend)", "Berlin", "ACME AG"),
-          ("Software Engineer (Backend)", "Berlin", "ACME AG"),
-          ("python warehouse operator", "District 1", "ACME AG"),
-          ("python platform engineer", "Remote", "ACME AG")],
-         [("python warehouse operator", "District 2", "ACME AG"),
-          ("python platform engineer", "Berlin", "ACME AG")]],
+        factory,
+        created,
+        [
+            [
+                ("Software Engineer (Frontend)", "Berlin", "ACME AG"),
+                ("Software Engineer (Backend)", "Berlin", "ACME AG"),
+                ("python warehouse operator", "District 1", "ACME AG"),
+                ("python platform engineer", "Remote", "ACME AG"),
+            ],
+            [
+                ("python warehouse operator", "District 2", "ACME AG"),
+                ("python platform engineer", "Berlin", "ACME AG"),
+            ],
+        ],
     )
     r = _scan(factory)
     assert r["status"] == "ok"
@@ -887,20 +1001,35 @@ def test_lenguajes_c_no_colapsan_en_el_trigram(db):
 
     async def sim(a, b):
         async with factory() as s:
-            return float((await s.execute(sa.text(
-                "SELECT similarity(" + _title_norm_sql("CAST(:a AS text)")
-                + ", " + _title_norm_sql("CAST(:b AS text)") + ")"),
-                {"a": a, "b": b})).scalar_one())
+            return float(
+                (
+                    await s.execute(
+                        sa.text(
+                            "SELECT similarity("
+                            + _title_norm_sql("CAST(:a AS text)")
+                            + ", "
+                            + _title_norm_sql("CAST(:b AS text)")
+                            + ")"
+                        ),
+                        {"a": a, "b": b},
+                    )
+                ).scalar_one()
+            )
 
     assert asyncio.run(sim("C developer", "C++ developer")) < 0.9
     assert asyncio.run(sim("C++ developer", "C# developer")) < 0.9
     assert asyncio.run(sim("C developer", "C# developer")) < 0.9
 
     _setup(
-        factory, created,
-        [[("C developer", "Berlin", "ACME AG"),
-          ("C++ developer", "Berlin", "ACME AG"),
-          ("C# developer", "Berlin", "ACME AG")]],
+        factory,
+        created,
+        [
+            [
+                ("C developer", "Berlin", "ACME AG"),
+                ("C++ developer", "Berlin", "ACME AG"),
+                ("C# developer", "Berlin", "ACME AG"),
+            ]
+        ],
     )
     r = _scan(factory)
     assert r["status"] == "ok"
@@ -913,9 +1042,18 @@ def test_prefijo_eks_recupera_el_dup_sin_bajar_umbral(db):
     se toca (7 de 8 IHARD eran distinct en esa banda)."""
     factory, created = db
     _setup(
-        factory, created,
-        [[("Eks: Vil du være med å skape hverdagsmagi?", "Tromsø", "Barnehage Uno AS"),
-          ("Vil du være med å skape hverdagsmagi?", "Tromsø", "Barnehage Uno AS")]],
+        factory,
+        created,
+        [
+            [
+                (
+                    "Eks: Vil du være med å skape hverdagsmagi?",
+                    "Tromsø",
+                    "Barnehage Uno AS",
+                ),
+                ("Vil du være med å skape hverdagsmagi?", "Tromsø", "Barnehage Uno AS"),
+            ]
+        ],
     )
     r = _scan(factory)
     assert r["candidatos_lexicos"] == 1
@@ -964,7 +1102,8 @@ def test_opt1_firma_group_by_equivale_a_la_correlada(db):
     sufijos = [f"{a}{b}{c}" for a in "ab" for b in "abcde" for c in "abcde"]
     assert len(sufijos) == 50
     _setup(
-        factory, created,
+        factory,
+        created,
         [
             [("sachbearbeiter steuern", "Basel", "Stadtverwaltung")]
             + [(f"beruf {s}", "Basel", f"Stadtverwaltung {s}") for s in sufijos],
@@ -1020,11 +1159,15 @@ def test_opt1_firma_group_by_equivale_a_la_correlada(db):
     # (el par sobrevive: basta un miembro en la ventana).
     async def envejecer():
         async with factory() as s:
-            await s.execute(sa.text(
-                "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
-                "WHERE vacancy_id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
-                " JOIN source_listings l ON l.id = i.source_listing_id "
-                " WHERE l.source_id = :src)"), {"src": created["sources"][0]})
+            await s.execute(
+                sa.text(
+                    "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
+                    "WHERE vacancy_id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
+                    " JOIN source_listings l ON l.id = i.source_listing_id "
+                    " WHERE l.source_id = :src)"
+                ),
+                {"src": created["sources"][0]},
+            )
             await s.commit()
 
     asyncio.run(envejecer())
@@ -1052,7 +1195,8 @@ def test_opt2_conteo_omitido_con_k_vecinos_llenos(db):
     # fixture sigue llenando el kNN exacto.
     k = int(settings.CORE_DEDUP_KNN)
     _setup(
-        factory, created,
+        factory,
+        created,
         [
             # 'python base' y no 'python lead': 'lead' está en el léxico del veto de
             # nivel y vaciaría los k vecinos — esta prueba mide el SALTO DEL
@@ -1066,11 +1210,15 @@ def test_opt2_conteo_omitido_con_k_vecinos_llenos(db):
         async with factory() as s:
             # La fuente 1 sale de la ventana: solo 'python base' se escanea,
             # y sus k vecinos cross-source llenan el kNN exacto.
-            await s.execute(sa.text(
-                "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
-                "WHERE vacancy_id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
-                " JOIN source_listings l ON l.id = i.source_listing_id "
-                " WHERE l.source_id = :src)"), {"src": created["sources"][1]})
+            await s.execute(
+                sa.text(
+                    "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
+                    "WHERE vacancy_id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
+                    " JOIN source_listings l ON l.id = i.source_listing_id "
+                    " WHERE l.source_id = :src)"
+                ),
+                {"src": created["sources"][1]},
+            )
             await s.commit()
             r = await scan_semantic_candidates(s, window_hours=1)
             await s.commit()
@@ -1096,7 +1244,8 @@ def test_opt2_conteo_se_ejecuta_con_underfill(db):
 
     factory, created = db
     _setup(
-        factory, created,
+        factory,
+        created,
         [
             [("java base", "Basel", "Firma Tres AG")],
             [(f"java dev {i}", "Basel", "Firma Cuatro AG") for i in range(2)],
@@ -1105,11 +1254,15 @@ def test_opt2_conteo_se_ejecuta_con_underfill(db):
 
     async def envejecer():
         async with factory() as s:
-            await s.execute(sa.text(
-                "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
-                "WHERE vacancy_id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
-                " JOIN source_listings l ON l.id = i.source_listing_id "
-                " WHERE l.source_id = :src)"), {"src": created["sources"][1]})
+            await s.execute(
+                sa.text(
+                    "UPDATE offer_revisions SET created_at = created_at - interval '72 hours' "
+                    "WHERE vacancy_id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
+                    " JOIN source_listings l ON l.id = i.source_listing_id "
+                    " WHERE l.source_id = :src)"
+                ),
+                {"src": created["sources"][1]},
+            )
             await s.commit()
 
     async def scan1h():
@@ -1160,15 +1313,22 @@ def test_el_vector_no_viaja_y_el_orden_kNN_sigue_siendo_una_constante(db):
     async def plan() -> str:
         async with factory() as s:
             rows = (
-                await s.execute(
-                    sa.text("EXPLAIN " + dedup_mod._KNN_SQL),
-                    {
-                        "mid": uuid.uuid4(), "k": 5, "vid": uuid.uuid4(),
-                        "src": uuid.uuid4(), "loc": "Zürich",
-                        "titulo": "Data Engineer",
-                    },
+                (
+                    await s.execute(
+                        sa.text("EXPLAIN " + dedup_mod._KNN_SQL),
+                        {
+                            "mid": uuid.uuid4(),
+                            "k": 5,
+                            "vid": uuid.uuid4(),
+                            "src": uuid.uuid4(),
+                            "loc": "Zürich",
+                            "titulo": "Data Engineer",
+                        },
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             await s.rollback()
             return "\n".join(rows)
 
@@ -1233,6 +1393,7 @@ def test_con_la_cohorte_cargada_el_diagnostico_desaparece(db):
         assert detalles["cohorte_existe"] is True
         assert "diagnostico" not in detalles
     finally:
+
         async def limpia():
             async with factory() as s:
                 await s.execute(
@@ -1280,6 +1441,7 @@ def test_la_variante_historica_no_puede_quedar_igual_que_la_diaria():
 # --------------------------------------------------------------------------
 def _titles_by_id(factory, created):
     """vacancy_id -> título, para las fuentes de ESTA prueba."""
+
     async def go():
         async with factory() as s:
             rows = (
@@ -1330,31 +1492,64 @@ def _veto_expr(factory, ta, tb):
     [
         # Los DISPAROS del desarrollo (3/60, todos distinct)
         ("Senior Project Manager", "Project Manager", True, "D59: el arquetipo"),
-        ("Senior IT Operations Specialist (m/w/d)",
-         "(Senior / Staff) IT Operations Specialist (m/w/d)", True,
-         "D10: conjuntos de nivel distintos, base idéntica"),
+        (
+            "Senior IT Operations Specialist (m/w/d)",
+            "(Senior / Staff) IT Operations Specialist (m/w/d)",
+            True,
+            "D10: conjuntos de nivel distintos, base idéntica",
+        ),
         # Los 5 duplicate de control: JAMÁS
-        ("Werkstudent*in (m/w/d) Lager-und Logistik",
-         "Werkstudent*in (m/w/d) Lager-und Logistik", False, "D23: idénticos"),
-        ("(Senior / Staff) IT Operations Specialist (m/w/d)",
-         "(Senior / Staff) IT Operations Specialist (m/w/d)", False,
-         "D43: niveles iguales"),
+        (
+            "Werkstudent*in (m/w/d) Lager-und Logistik",
+            "Werkstudent*in (m/w/d) Lager-und Logistik",
+            False,
+            "D23: idénticos",
+        ),
+        (
+            "(Senior / Staff) IT Operations Specialist (m/w/d)",
+            "(Senior / Staff) IT Operations Specialist (m/w/d)",
+            False,
+            "D43: niveles iguales",
+        ),
         # Trampas de SUBSTRING: el token entero manda
-        ("International Sales Manager", "Sales Manager", False,
-         "'intern' NO puede casar dentro de 'international'"),
-        ("Team Leader Marketing", "Team Lead Marketing", False,
-         "leader→lead se canoniza: niveles IGUALES, no veta"),
-        ("Leadership Coach", "Coach", False,
-         "'lead' NO puede casar dentro de 'leadership'"),
+        (
+            "International Sales Manager",
+            "Sales Manager",
+            False,
+            "'intern' NO puede casar dentro de 'international'",
+        ),
+        (
+            "Team Leader Marketing",
+            "Team Lead Marketing",
+            False,
+            "leader→lead se canoniza: niveles IGUALES, no veta",
+        ),
+        (
+            "Leadership Coach",
+            "Coach",
+            False,
+            "'lead' NO puede casar dentro de 'leadership'",
+        ),
         # Bases NO contenidas: el veto no aplica aunque el nivel difiera
-        ("Senior Contracts Manager Rail", "Risk Manager Rail", False,
-         "D02: base distinta — decide el resto del detector, no el veto"),
+        (
+            "Senior Contracts Manager Rail",
+            "Risk Manager Rail",
+            False,
+            "D02: base distinta — decide el resto del detector, no el veto",
+        ),
         # Género y porcentajes
-        ("Senior Pflegefachperson (m/w/d) 80-100%",
-         "Pflegefachperson (m/w/d) 80-100%", True,
-         "el marcador de género no rompe la base; el pensum igual tampoco"),
-        ("Senior Pflegefachperson 80-100%", "Pflegefachperson 40-60%", False,
-         "pensums DISTINTOS ⇒ bases distintas ⇒ no veta (IPOS-03)"),
+        (
+            "Senior Pflegefachperson (m/w/d) 80-100%",
+            "Pflegefachperson (m/w/d) 80-100%",
+            True,
+            "el marcador de género no rompe la base; el pensum igual tampoco",
+        ),
+        (
+            "Senior Pflegefachperson 80-100%",
+            "Pflegefachperson 40-60%",
+            False,
+            "pensums DISTINTOS ⇒ bases distintas ⇒ no veta (IPOS-03)",
+        ),
     ],
 )
 def test_el_veto_de_nivel_decide_como_el_desarrollo(db, ta, tb, espera, porque):
@@ -1376,15 +1571,19 @@ def test_el_veto_filtra_el_candidato_lexico_pero_no_el_control(db):
     factory, created = db
     base_t = "Enterprise Business Development Representative"
     _setup(
-        factory, created,
+        factory,
+        created,
         # El control NO puede ser el mismo título exacto: el sink colapsa
         # contenido idéntico en una sola vacante y no habría par que probar.
         # Singular/plural mantiene text_hash distinto y trgm altísimo, con el
         # MISMO conjunto de niveles ({senior}) a ambos lados.
-        [[f"Senior {base_t}", "Senior Growth Partnerships Director"],
-         [base_t, "Senior Growth Partnership Director"]],
+        [
+            [f"Senior {base_t}", "Senior Growth Partnerships Director"],
+            [base_t, "Senior Growth Partnership Director"],
+        ],
         name_prefix="veto-lex",
     )
+
     # Precondición: sin ella el test afirmaría en vacío si el trgm no llega.
     async def trgm():
         async with factory() as s:
@@ -1420,9 +1619,10 @@ def test_el_veto_filtra_el_candidato_lexico_pero_no_el_control(db):
         "el generador léxico propuso el par nivel-incompatible: " + repr(con_senior)
     )
     control = [
-        p for p in pares
-        if set(p) == {"Senior Growth Partnerships Director",
-                      "Senior Growth Partnership Director"}
+        p
+        for p in pares
+        if set(p)
+        == {"Senior Growth Partnerships Director", "Senior Growth Partnership Director"}
     ]
     assert control, "el veto se llevó por delante el par de control con niveles iguales"
 
@@ -1439,13 +1639,15 @@ def test_la_revalidacion_rechaza_pendientes_nivel_incompatibles(db):
     )
     factory, created = db
     _setup(
-        factory, created,
+        factory,
+        created,
         [["Senior Account Manager"], ["Account Manager"]],
         name_prefix="veto-reval",
     )
     por_titulo = _ids_by_title(factory, created)
     assert "Senior Account Manager" in por_titulo and "Account Manager" in por_titulo, (
-        "el arnés no materializó las vacantes esperadas; hay: " + repr(sorted(por_titulo))
+        "el arnés no materializó las vacantes esperadas; hay: "
+        + repr(sorted(por_titulo))
     )
     a, b = por_titulo["Senior Account Manager"], por_titulo["Account Manager"]
 

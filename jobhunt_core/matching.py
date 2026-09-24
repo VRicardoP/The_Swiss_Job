@@ -24,6 +24,7 @@ import re
 import uuid
 
 import sqlalchemy as sa
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,6 +44,7 @@ EVENTS_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "jobhunt-core/integration-even
 
 def event_id_for(event_type: str, natural_key: str) -> uuid.UUID:
     return uuid.uuid5(EVENTS_NAMESPACE, f"{event_type}:{natural_key}")
+
 
 # SQL de candidatos (module-level: los tests lo EXPLAINean tal cual).
 CANDIDATES_SQL = (
@@ -165,8 +167,10 @@ def _hybrid_candidates_sql(lexical_weight: float) -> str:
     """
     patron_suma = f"+ {_LEXICAL_WEIGHT} *"
     patron_norm = f"(1.0 + {_LEXICAL_WEIGHT})"
-    if (HYBRID_CANDIDATES_SQL.count(patron_suma) != 1
-            or HYBRID_CANDIDATES_SQL.count(patron_norm) != 1):
+    if (
+        HYBRID_CANDIDATES_SQL.count(patron_suma) != 1
+        or HYBRID_CANDIDATES_SQL.count(patron_norm) != 1
+    ):
         raise RuntimeError(
             "el SQL de v1 ya no contiene los patrones de peso esperados: "
             "la derivación produciría un SQL con el peso equivocado"
@@ -188,56 +192,207 @@ HYBRID2_CANDIDATES_SQL = _hybrid_candidates_sql(HYBRID2_LEXICAL_WEIGHT)
 # evaluador valida que el binario los implementa. Dato fuera de léxico =
 # NEUTRAL, jamás exclusión. Remote/Anywhere/Worldwide expresan modalidad o
 # deseo, no permiso legal: no expanden el conjunto compatible.
-_US_STATES = frozenset({
-    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
-    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
-    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine",
-    "maryland", "massachusetts", "michigan", "minnesota", "mississippi",
-    "missouri", "montana", "nebraska", "nevada", "new hampshire",
-    "new jersey", "new mexico", "new york", "north carolina", "north dakota",
-    "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island",
-    "south carolina", "south dakota", "tennessee", "texas", "utah", "vermont",
-    "virginia", "washington", "west virginia", "wisconsin", "wyoming",
-})
-_EUROPE = frozenset({
-    "switzerland", "spain", "france", "germany", "italy", "austria",
-    "portugal", "greece", "netherlands", "belgium", "poland", "ireland",
-    "united kingdom", "uk", "norway", "sweden", "denmark", "finland",
-    "czech republic", "hungary", "romania", "bulgaria", "croatia",
-    "slovakia", "slovenia", "estonia", "latvia", "lithuania", "luxembourg",
-    "malta", "cyprus", "iceland", "ukraine", "serbia",
-    "bosnia and herzegovina", "andorra", "monaco", "liechtenstein",
-    "san marino", "albania", "north macedonia", "montenegro", "moldova",
-    "kosovo", "belarus",
-})
-_COUNTRIES = _EUROPE | frozenset({
-    "usa", "united states", "canada", "mexico", "brazil", "argentina",
-    "colombia", "chile", "peru", "india", "philippines", "japan", "china",
-    "australia", "new zealand", "turkey", "egypt", "kenya", "nigeria",
-    "south africa", "israel", "singapore", "south korea", "vietnam",
-    "indonesia", "thailand", "el salvador", "guatemala", "honduras",
-    "costa rica", "panama", "ecuador", "uruguay", "paraguay", "bolivia",
-    "venezuela", "dominican republic",
-})
-_GLOBAL_MARKERS = frozenset({
-    "anywhere in the world", "international", "worldwide", "global",
-    "anywhere", "remote",
-})
+_US_STATES = frozenset(
+    {
+        "alabama",
+        "alaska",
+        "arizona",
+        "arkansas",
+        "california",
+        "colorado",
+        "connecticut",
+        "delaware",
+        "florida",
+        "georgia",
+        "hawaii",
+        "idaho",
+        "illinois",
+        "indiana",
+        "iowa",
+        "kansas",
+        "kentucky",
+        "louisiana",
+        "maine",
+        "maryland",
+        "massachusetts",
+        "michigan",
+        "minnesota",
+        "mississippi",
+        "missouri",
+        "montana",
+        "nebraska",
+        "nevada",
+        "new hampshire",
+        "new jersey",
+        "new mexico",
+        "new york",
+        "north carolina",
+        "north dakota",
+        "ohio",
+        "oklahoma",
+        "oregon",
+        "pennsylvania",
+        "rhode island",
+        "south carolina",
+        "south dakota",
+        "tennessee",
+        "texas",
+        "utah",
+        "vermont",
+        "virginia",
+        "washington",
+        "west virginia",
+        "wisconsin",
+        "wyoming",
+    }
+)
+_EUROPE = frozenset(
+    {
+        "switzerland",
+        "spain",
+        "france",
+        "germany",
+        "italy",
+        "austria",
+        "portugal",
+        "greece",
+        "netherlands",
+        "belgium",
+        "poland",
+        "ireland",
+        "united kingdom",
+        "uk",
+        "norway",
+        "sweden",
+        "denmark",
+        "finland",
+        "czech republic",
+        "hungary",
+        "romania",
+        "bulgaria",
+        "croatia",
+        "slovakia",
+        "slovenia",
+        "estonia",
+        "latvia",
+        "lithuania",
+        "luxembourg",
+        "malta",
+        "cyprus",
+        "iceland",
+        "ukraine",
+        "serbia",
+        "bosnia and herzegovina",
+        "andorra",
+        "monaco",
+        "liechtenstein",
+        "san marino",
+        "albania",
+        "north macedonia",
+        "montenegro",
+        "moldova",
+        "kosovo",
+        "belarus",
+    }
+)
+_COUNTRIES = _EUROPE | frozenset(
+    {
+        "usa",
+        "united states",
+        "canada",
+        "mexico",
+        "brazil",
+        "argentina",
+        "colombia",
+        "chile",
+        "peru",
+        "india",
+        "philippines",
+        "japan",
+        "china",
+        "australia",
+        "new zealand",
+        "turkey",
+        "egypt",
+        "kenya",
+        "nigeria",
+        "south africa",
+        "israel",
+        "singapore",
+        "south korea",
+        "vietnam",
+        "indonesia",
+        "thailand",
+        "el salvador",
+        "guatemala",
+        "honduras",
+        "costa rica",
+        "panama",
+        "ecuador",
+        "uruguay",
+        "paraguay",
+        "bolivia",
+        "venezuela",
+        "dominican republic",
+    }
+)
+_GLOBAL_MARKERS = frozenset(
+    {
+        "anywhere in the world",
+        "international",
+        "worldwide",
+        "global",
+        "anywhere",
+        "remote",
+    }
+)
 # Ciudades → país SOLO para tokens del PERFIL (léxico acotado a las plazas
 # que los perfiles reales declaran; una ciudad de oferta no parseada = neutral).
 _CITY_TO_COUNTRY = {
-    "geneva": "switzerland", "zurich": "switzerland", "basel": "switzerland",
-    "bern": "switzerland", "lausanne": "switzerland",
-    "valencia": "spain", "madrid": "spain", "barcelona": "spain",
+    "geneva": "switzerland",
+    "zurich": "switzerland",
+    "basel": "switzerland",
+    "bern": "switzerland",
+    "lausanne": "switzerland",
+    "valencia": "spain",
+    "madrid": "spain",
+    "barcelona": "spain",
 }
 _MODALITY_TOKENS = frozenset({"remote", "anywhere", "worldwide", "hybrid", "onsite"})
-_TITLE_LANGS = frozenset({
-    "english", "french", "german", "spanish", "portuguese", "italian",
-    "dutch", "japanese", "chinese", "mandarin", "cantonese", "korean",
-    "arabic", "russian", "polish", "turkish", "hebrew", "greek", "swedish",
-    "norwegian", "danish", "finnish", "czech", "hungarian", "romanian",
-    "ukrainian", "vietnamese", "thai", "indonesian", "hindi",
-})
+_TITLE_LANGS = frozenset(
+    {
+        "english",
+        "french",
+        "german",
+        "spanish",
+        "portuguese",
+        "italian",
+        "dutch",
+        "japanese",
+        "chinese",
+        "mandarin",
+        "cantonese",
+        "korean",
+        "arabic",
+        "russian",
+        "polish",
+        "turkish",
+        "hebrew",
+        "greek",
+        "swedish",
+        "norwegian",
+        "danish",
+        "finnish",
+        "czech",
+        "hungarian",
+        "romanian",
+        "ukrainian",
+        "vietnamese",
+        "thai",
+        "indonesian",
+        "hindi",
+    }
+)
 _GEO_LEXICONS = {"v1": True}
 _LANG_LEXICONS = {"v1": True}
 
@@ -336,7 +491,7 @@ def _pair_compatibility(titulo, location, remote, prefs) -> dict:
     (remoto-only vs presencial, países conocidos y disjuntos, idioma exigido
     del título no acreditado) marca la pareja."""
     inc_loc = False
-    remote_only = (prefs.get("remote_pref") == "remote_only")
+    remote_only = prefs.get("remote_pref") == "remote_only"
     if remote_only and remote is False:
         inc_loc = True
     elif remote is True:
@@ -378,8 +533,7 @@ def _rerank_score(base, role_sim, titulo, location, remote, prefs, receta):
         s *= 1 - receta["p_lang"]
     if receta["role_a"]:
         s += 100.0 * receta["role_a"] * exceso
-    comp |= {"loc_incompatible": inc_loc,
-             "lang_missing": list(faltan_idiomas)}
+    comp |= {"loc_incompatible": inc_loc, "lang_missing": list(faltan_idiomas)}
     return s, comp
 
 
@@ -388,8 +542,9 @@ def _rerank_scale(receta) -> float:
     con él a 0..100 (contrato NUMERIC(6,2)); escala monotónica: no cambia el
     orden. Sin él, la familia aditiva saturaría el clamp en 100 y empataría
     los primeros puestos en silencio."""
-    return (100.0 * (1 + receta["role_w"] * (1 - receta["role_theta"]))
-            + 100.0 * receta["role_a"] * (1 - receta["role_theta"]))
+    return 100.0 * (1 + receta["role_w"] * (1 - receta["role_theta"])) + 100.0 * receta[
+        "role_a"
+    ] * (1 - receta["role_theta"])
 
 
 # Versiones de consulta léxica que una receta v4+ puede nombrar. La receta
@@ -412,9 +567,18 @@ def _validated_rerank_recipe(policy_weights: dict) -> dict:
     parámetros que cambian el resultado viven en la fila. Señal con valor 0 =
     apagada; léxicos nombrados y validados contra el binario."""
     esperadas = {
-        "algorithm", "lexical_query", "lexical_weight", "rrf_k", "rerank",
-        "role_theta", "role_w", "role_a", "p_loc", "p_lang",
-        "geo_lexicon", "lang_lexicon",
+        "algorithm",
+        "lexical_query",
+        "lexical_weight",
+        "rrf_k",
+        "rerank",
+        "role_theta",
+        "role_w",
+        "role_a",
+        "p_loc",
+        "p_lang",
+        "geo_lexicon",
+        "lang_lexicon",
     }
     claves = set(policy_weights)
     if claves != esperadas:
@@ -423,29 +587,39 @@ def _validated_rerank_recipe(policy_weights: dict) -> dict:
             f"esperadas {sorted(esperadas)}"
         )
     base = _validated_recipe(
-        {k: policy_weights[k]
-         for k in ("lexical_query", "lexical_weight", "rrf_k")}
+        {k: policy_weights[k] for k in ("lexical_query", "lexical_weight", "rrf_k")}
         | {"algorithm": "hybrid_rrf"}
     )
     if policy_weights["rerank"] != "v1":
-        raise ValueError(
-            f"receta: rerank {policy_weights['rerank']!r} no implementado")
+        raise ValueError(f"receta: rerank {policy_weights['rerank']!r} no implementado")
     if policy_weights["geo_lexicon"] not in _GEO_LEXICONS:
         raise ValueError(
-            f"receta: geo_lexicon {policy_weights['geo_lexicon']!r} desconocido")
+            f"receta: geo_lexicon {policy_weights['geo_lexicon']!r} desconocido"
+        )
     if policy_weights["lang_lexicon"] not in _LANG_LEXICONS:
         raise ValueError(
-            f"receta: lang_lexicon {policy_weights['lang_lexicon']!r} desconocido")
-    for campo, lo, hi in (("role_theta", 0.0, 1.0), ("role_w", 0.0, 100.0),
-                          ("role_a", 0.0, 100.0), ("p_loc", 0.0, 0.999),
-                          ("p_lang", 0.0, 0.999)):
+            f"receta: lang_lexicon {policy_weights['lang_lexicon']!r} desconocido"
+        )
+    for campo, lo, hi in (
+        ("role_theta", 0.0, 1.0),
+        ("role_w", 0.0, 100.0),
+        ("role_a", 0.0, 100.0),
+        ("p_loc", 0.0, 0.999),
+        ("p_lang", 0.0, 0.999),
+    ):
         v = policy_weights[campo]
-        if not isinstance(v, (int, float)) or isinstance(v, bool) \
-                or not math.isfinite(v) or not lo <= v <= hi:
-            raise ValueError(
-                f"receta: {campo}={v!r} fuera de rango [{lo}, {hi}]")
-    return dict(policy_weights, algorithm="hybrid_rrf_rerank",
-                lexical_weight=base["lexical_weight"])
+        if (
+            not isinstance(v, (int, float))
+            or isinstance(v, bool)
+            or not math.isfinite(v)
+            or not lo <= v <= hi
+        ):
+            raise ValueError(f"receta: {campo}={v!r} fuera de rango [{lo}, {hi}]")
+    return dict(
+        policy_weights,
+        algorithm="hybrid_rrf_rerank",
+        lexical_weight=base["lexical_weight"],
+    )
 
 
 def _validated_cross_encoder_recipe(policy_weights: dict) -> dict:
@@ -455,9 +629,16 @@ def _validated_cross_encoder_recipe(policy_weights: dict) -> dict:
     versión. La recuperación de candidatos reutiliza la del híbrido v4
     (lexical_query/lexical_weight/rrf_k), validada contra el binario."""
     esperadas = {
-        "algorithm", "model", "model_revision", "model_fingerprint",
-        "input", "activation", "backend",
-        "lexical_query", "lexical_weight", "rrf_k",
+        "algorithm",
+        "model",
+        "model_revision",
+        "model_fingerprint",
+        "input",
+        "activation",
+        "backend",
+        "lexical_query",
+        "lexical_weight",
+        "rrf_k",
     }
     claves = set(policy_weights)
     if policy_weights.get("algorithm") == "cross_encoder_tier":
@@ -466,7 +647,8 @@ def _validated_cross_encoder_recipe(policy_weights: dict) -> dict:
         if policy_weights.get("compat_rule") != "tier-v1":
             raise ValueError(
                 f"receta: compat_rule {policy_weights.get('compat_rule')!r} "
-                "no implementada (soportada: tier-v1)")
+                "no implementada (soportada: tier-v1)"
+            )
     # Un modelo FINE-TUNED (v3+) añade la procedencia del entrenamiento; el
     # resto de la receta es idéntico. Sin esa clave, el modelo debe ser de hub.
     finetuned = "train_data_sha256" in claves
@@ -480,18 +662,18 @@ def _validated_cross_encoder_recipe(policy_weights: dict) -> dict:
     if finetuned:
         tds = policy_weights["train_data_sha256"]
         if not (isinstance(tds, str) and re.fullmatch(r"[0-9a-f]{64}", tds)):
-            raise ValueError(
-                f"receta: train_data_sha256 {tds!r} debe ser sha256")
+            raise ValueError(f"receta: train_data_sha256 {tds!r} debe ser sha256")
         if not str(policy_weights["model"]).startswith("/"):
             raise ValueError(
                 "receta fine-tuned: model debe ser la RUTA del artefacto "
-                "local sellado por model_fingerprint")
+                "local sellado por model_fingerprint"
+            )
     elif str(policy_weights["model"]).startswith("/"):
         raise ValueError(
-            "receta: un modelo local exige train_data_sha256 (procedencia)")
+            "receta: un modelo local exige train_data_sha256 (procedencia)"
+        )
     _validated_recipe(
-        {k: policy_weights[k]
-         for k in ("lexical_query", "lexical_weight", "rrf_k")}
+        {k: policy_weights[k] for k in ("lexical_query", "lexical_weight", "rrf_k")}
         | {"algorithm": "hybrid_rrf"}
     )
     from jobhunt_core import cross_encoder as ce
@@ -503,21 +685,21 @@ def _validated_cross_encoder_recipe(policy_weights: dict) -> dict:
         )
     if policy_weights["activation"] not in ce.ACTIVATIONS:
         raise ValueError(
-            f"receta: activation {policy_weights['activation']!r} no soportada")
+            f"receta: activation {policy_weights['activation']!r} no soportada"
+        )
     if policy_weights["backend"] != ce.BACKEND:
-        raise ValueError(
-            f"receta: backend {policy_weights['backend']!r} no soportado")
+        raise ValueError(f"receta: backend {policy_weights['backend']!r} no soportado")
     modelo = policy_weights["model"]
     if not isinstance(modelo, str) or not modelo.strip():
         raise ValueError("receta: model vacío")
     rev = policy_weights["model_revision"]
     if not (isinstance(rev, str) and re.fullmatch(r"[0-9a-f]{40}", rev)):
-        raise ValueError(
-            f"receta: model_revision {rev!r} debe ser un SHA de 40 hex")
+        raise ValueError(f"receta: model_revision {rev!r} debe ser un SHA de 40 hex")
     huella = policy_weights["model_fingerprint"]
     if not (isinstance(huella, str) and re.fullmatch(r"[0-9a-f]{64}", huella)):
         raise ValueError(
-            f"receta: model_fingerprint {huella!r} debe ser sha256 (64 hex)")
+            f"receta: model_fingerprint {huella!r} debe ser sha256 (64 hex)"
+        )
     return dict(policy_weights)
 
 
@@ -538,7 +720,13 @@ _CE_CACHE_SQL = (
 
 
 async def _ce_prepare(
-    session, candidates, prof, profile_id, model_id, policy_id, receta_ce,
+    session,
+    candidates,
+    prof,
+    profile_id,
+    model_id,
+    policy_id,
+    receta_ce,
 ):
     """FASE de preparación del cross-encoder (P1-3): TODAS las lecturas de BD
     (cache por identidad absoluta + documentos de los misses + consultas),
@@ -551,8 +739,13 @@ async def _ce_prepare(
         for r in (
             await session.execute(
                 sa.text(_CE_CACHE_SQL),
-                {"pid": profile_id, "spid": policy_id,
-                 "prid": prof.revision_id, "mid": model_id, "orids": orids},
+                {
+                    "pid": profile_id,
+                    "spid": policy_id,
+                    "prid": prof.revision_id,
+                    "mid": model_id,
+                    "orids": orids,
+                },
             )
         ).all()
     }
@@ -576,11 +769,11 @@ async def _ce_prepare(
                     f"cross-encoder sin documento para offer_revision "
                     f"{c.offer_revision_id}"
                 )
-            documentos.append(
-                ce.build_document(m.titulo, m.location, m.descripcion)
-            )
+            documentos.append(ce.build_document(m.titulo, m.location, m.descripcion))
     return {
-        "candidates": candidates, "cache": cache, "misses": misses,
+        "candidates": candidates,
+        "cache": cache,
+        "misses": misses,
         "documentos": documentos,
         "docs_meta": docs_meta if misses else {},
         "consultas": ce.build_queries(prof.content),
@@ -604,8 +797,10 @@ def _ce_score_misses(prep) -> dict:
     if not prep["misses"]:
         return {}
     probs = ce.score_documents(
-        receta_ce["model"], receta_ce["model_revision"],
-        prep["consultas"], prep["documentos"],
+        receta_ce["model"],
+        receta_ce["model_revision"],
+        prep["consultas"],
+        prep["documentos"],
         activation=receta_ce["activation"],
         # Identidad EFECTIVA (P1-1): huella verificada al cargar; batch
         # OPERATIVO del benchmark (P3-1).
@@ -626,12 +821,14 @@ def _ce_assemble(prep, frescos) -> list:
         if cacheada is not None:
             # Verbatim: mismo score y mismos componentes que ya sirvió/serviría
             # el feed — cache hit sin invocar el modelo.
-            rows.append({
-                "vacancy_id": c.vacancy_id,
-                "offer_revision_id": c.offer_revision_id,
-                "score": float(cacheada.score_final),
-                "score_parts": cacheada.scores,
-            })
+            rows.append(
+                {
+                    "vacancy_id": c.vacancy_id,
+                    "offer_revision_id": c.offer_revision_id,
+                    "score": float(cacheada.score_final),
+                    "score_parts": cacheada.scores,
+                }
+            )
             continue
         prob = frescos[c.offer_revision_id]
         algoritmo = receta_ce["algorithm"]
@@ -639,16 +836,15 @@ def _ce_assemble(prep, frescos) -> list:
             "algorithm": algoritmo,
             "recipe": receta_ce,
             "ce_prob": round(prob, 6),
-            "similarity": (
-                round(float(c.sim), 6) if c.sim is not None else None
-            ),
+            "similarity": (round(float(c.sim), 6) if c.sim is not None else None),
             "semantic_rank": c.semantic_rank,
             "lexical_rank": c.lexical_rank,
         }
         if algoritmo == "cross_encoder_tier":
             m = prep["docs_meta"][c.offer_revision_id]
             compat = _pair_compatibility(
-                m.titulo, m.location,
+                m.titulo,
+                m.location,
                 {"true": True, "false": False}.get(m.remote),
                 prep["prefs"],
             )
@@ -657,23 +853,32 @@ def _ce_assemble(prep, frescos) -> list:
             parts |= {"tier": tier, "compat": compat}
         else:
             score = round(prob * 100.0, 2)
-        rows.append({
-            "vacancy_id": c.vacancy_id,
-            "offer_revision_id": c.offer_revision_id,
-            "score": score,
-            "score_parts": parts,
-        })
+        rows.append(
+            {
+                "vacancy_id": c.vacancy_id,
+                "offer_revision_id": c.offer_revision_id,
+                "score": score,
+                "score_parts": parts,
+            }
+        )
     rows.sort(key=lambda r: (-r["score"], str(r["vacancy_id"])))
     return rows
 
 
 async def _cross_encoder_rows(
-    session, candidates, prof, profile_id, model_id, policy_id, receta_ce,
+    session,
+    candidates,
+    prof,
+    profile_id,
+    model_id,
+    policy_id,
+    receta_ce,
 ):
     """Camino de UNA fase (medición/dev): preparar + puntuar + ensamblar en la
     misma sesión. La evaluación productiva usa las fases por separado."""
     prep = await _ce_prepare(
-        session, candidates, prof, profile_id, model_id, policy_id, receta_ce)
+        session, candidates, prof, profile_id, model_id, policy_id, receta_ce
+    )
     return _ce_assemble(prep, _ce_score_misses(prep))
 
 
@@ -713,17 +918,26 @@ async def _rerank_candidates(session, candidates, content, receta):
             )
         remoto = {"true": True, "false": False}.get(sig.remote)
         bruto, comp = _rerank_score(
-            c.rank_score, sig.role_sim, sig.titulo, sig.location, remoto,
-            prefs, receta,
+            c.rank_score,
+            sig.role_sim,
+            sig.titulo,
+            sig.location,
+            remoto,
+            prefs,
+            receta,
         )
-        out.append({
-            "vacancy_id": c.vacancy_id,
-            "offer_revision_id": c.offer_revision_id,
-            "sim": c.sim, "semantic_rank": c.semantic_rank,
-            "lexical_rank": c.lexical_rank, "lexical_score": c.lexical_score,
-            "score": round(min(100.0, max(0.0, bruto / escala * 100.0)), 2),
-            "rerank": comp,
-        })
+        out.append(
+            {
+                "vacancy_id": c.vacancy_id,
+                "offer_revision_id": c.offer_revision_id,
+                "sim": c.sim,
+                "semantic_rank": c.semantic_rank,
+                "lexical_rank": c.lexical_rank,
+                "lexical_score": c.lexical_score,
+                "score": round(min(100.0, max(0.0, bruto / escala * 100.0)), 2),
+                "rerank": comp,
+            }
+        )
     out.sort(key=lambda r: (-r["score"], str(r["vacancy_id"])))
     return out
 
@@ -754,7 +968,12 @@ def _validated_recipe(policy_weights: dict) -> dict:
             f"soportado por esta implementación (rrf_k={_RRF_K})"
         )
     peso = policy_weights["lexical_weight"]
-    if not isinstance(peso, (int, float)) or isinstance(peso, bool)             or not math.isfinite(peso) or peso <= 0:
+    if (
+        not isinstance(peso, (int, float))
+        or isinstance(peso, bool)
+        or not math.isfinite(peso)
+        or peso <= 0
+    ):
         raise ValueError(
             f"receta hybrid_rrf: lexical_weight={peso!r} debe ser un "
             "número finito y positivo"
@@ -790,12 +1009,14 @@ def _lexical_query(content: dict) -> str:
 # Palabras que aparecen repetidas en CUALQUIER CV y no nombran ningún rol.
 # Lista corta y PROBADA (test_matching): añadir aquí sin su test es reabrir la
 # puerta a que un término genérico expulse a uno informativo.
-_CV_STOP = frozenset("""
+_CV_STOP = frozenset(
+    """
     experience experiences work working years management support team teams
     strong excellent skills knowledge professional company companies role
     roles responsibilities con para las los del una this that with from
     and the have has been also able about
-""".split())
+""".split()
+)
 _LEX_CAP = 48  # tope de términos de la tsquery: coste acotado y probado
 
 
@@ -811,6 +1032,7 @@ def _lexical_query_v2(content: dict) -> str:
        por (frecuencia desc, palabra asc).
     3. El tope _LEX_CAP recorta SOLO la cola de menor peso.
     """
+
     def toks(texto: str) -> list[str]:
         # >= 2 letras (no los 3 de v1): 'QA' o 'UX' son señales EXPLÍCITAS del
         # usuario cuando vienen de título/skills. Los términos minados del CV
@@ -819,9 +1041,7 @@ def _lexical_query_v2(content: dict) -> str:
         return re.findall(r"[^\W\d_]\w{1,}", t)
 
     titulo = toks(str(content.get("title") or ""))
-    skills = sorted(
-        {w for sk in (content.get("skills") or []) for w in toks(str(sk))}
-    )
+    skills = sorted({w for sk in (content.get("skills") or []) for w in toks(str(sk))})
     prioritarios = list(dict.fromkeys(titulo + skills))
     ya = set(prioritarios)
 
@@ -829,8 +1049,9 @@ def _lexical_query_v2(content: dict) -> str:
     for w in toks(str(content.get("cv_text") or "")):
         if len(w) >= 3 and w not in ya and w not in _CV_STOP:
             frec[w] = frec.get(w, 0) + 1
-    del_cv = [w for w, n in sorted(frec.items(), key=lambda kv: (-kv[1], kv[0]))
-              if n >= 2]
+    del_cv = [
+        w for w, n in sorted(frec.items(), key=lambda kv: (-kv[1], kv[0])) if n >= 2
+    ]
 
     return " OR ".join((prioritarios + del_cv)[:_LEX_CAP])
 
@@ -848,7 +1069,10 @@ def eval_key(offer_revision_id, profile_revision_id, model_id, policy_id) -> str
 
 
 async def ensure_policy(
-    session, name: str, prompt_version: str, weights: dict | None = None,
+    session,
+    name: str,
+    prompt_version: str,
+    weights: dict | None = None,
     active: bool | None = True,
 ) -> uuid.UUID:
     """Alta idempotente de la política (UNIQUE(name, prompt_version)). Como
@@ -867,7 +1091,9 @@ async def ensure_policy(
             "ON CONFLICT (name, prompt_version) DO NOTHING"
         ),
         {
-            "id": uuid.uuid4(), "name": name, "ver": prompt_version,
+            "id": uuid.uuid4(),
+            "name": name,
+            "ver": prompt_version,
             "w": json.dumps(weights or {}),
             "active": bool(active),
         },
@@ -940,7 +1166,8 @@ XENC2_POLICY_WEIGHTS = dict(XENC_POLICY_WEIGHTS, activation="sigmoid_t4")
 XENC_TIER_POLICY_NAME = "xtier-mmarco"
 XENC_TIER_POLICY_VERSION = "v1"
 XENC_TIER_POLICY_WEIGHTS = dict(
-    XENC2_POLICY_WEIGHTS, algorithm="cross_encoder_tier",
+    XENC2_POLICY_WEIGHTS,
+    algorithm="cross_encoder_tier",
     compat_rule="tier-v1",
 )
 
@@ -957,10 +1184,12 @@ XENC_RANKNET_POLICY_WEIGHTS = dict(
     XENC2_POLICY_WEIGHTS,
     model="/models/xenc-ranknet-n436",
     model_fingerprint=(
-        "58483c94c6f579a6219c3b5fbeef992ed85542f2d8c457bf1e5b7fc83e9eae01"),
+        "58483c94c6f579a6219c3b5fbeef992ed85542f2d8c457bf1e5b7fc83e9eae01"
+    ),
     backend="onnx-cpu",
     train_data_sha256=(
-        "25cdd3a9037c13014188ec23ad19a1d7f6929920522875c54a3b3c57e526e01b"),
+        "25cdd3a9037c13014188ec23ad19a1d7f6929920522875c54a3b3c57e526e01b"
+    ),
 )
 
 _ALGORITHM_PAIR_ABSOLUTE = {
@@ -1000,10 +1229,12 @@ POLICY_CATALOG = (
     (HYBRID_POLICY_NAME, HYBRID4_POLICY_VERSION, HYBRID4_POLICY_WEIGHTS),
     (XENC_POLICY_NAME, XENC_POLICY_VERSION, XENC_POLICY_WEIGHTS),
     (XENC_POLICY_NAME, XENC2_POLICY_VERSION, XENC2_POLICY_WEIGHTS),
-    (XENC_TIER_POLICY_NAME, XENC_TIER_POLICY_VERSION,
-     XENC_TIER_POLICY_WEIGHTS),
-    (XENC_RANKNET_POLICY_NAME, XENC_RANKNET_POLICY_VERSION,
-     XENC_RANKNET_POLICY_WEIGHTS),
+    (XENC_TIER_POLICY_NAME, XENC_TIER_POLICY_VERSION, XENC_TIER_POLICY_WEIGHTS),
+    (
+        XENC_RANKNET_POLICY_NAME,
+        XENC_RANKNET_POLICY_VERSION,
+        XENC_RANKNET_POLICY_WEIGHTS,
+    ),
 )
 
 
@@ -1095,9 +1326,13 @@ ELIGIBLE_CORPUS_FROM = (
 _CANDIDATE_ELIGIBILITY = "WHERE v.archived_at IS NULL AND v.merged_into IS NULL"
 
 
-def _with_candidate_exclusions(sql: str, *, exclude_dismissed: bool,
-                               exclude_ids: bool,
-                               apply_profile_exclusions: bool = True) -> str:
+def _with_candidate_exclusions(
+    sql: str,
+    *,
+    exclude_dismissed: bool,
+    exclude_ids: bool,
+    apply_profile_exclusions: bool = True,
+) -> str:
     """Frontera ÚNICA de exclusión de candidatos (revisión externa
     2026-09-07): los predicados se inyectan en el WHERE de elegibilidad —
     ANTES de los LIMIT de TODOS los brazos (ANN y léxico) y de la preparación
@@ -1117,7 +1352,8 @@ def _with_candidate_exclusions(sql: str, *, exclude_dismissed: bool,
         from jobhunt_core.feedback import effective_feedback_sql
 
         extra += (
-            " AND COALESCE((" + effective_feedback_sql("v.id", ":pid")
+            " AND COALESCE(("
+            + effective_feedback_sql("v.id", ":pid")
             + "),'') NOT IN ('thumbs_down','dismissed')"
         )
     if exclude_ids:
@@ -1148,8 +1384,7 @@ def _with_candidate_exclusions(sql: str, *, exclude_dismissed: bool,
             "SQL de candidatos sin ancla de elegibilidad: la exclusión NO se "
             "aplicaría y el universo recuperado sería otro"
         )
-    return sql.replace(_CANDIDATE_ELIGIBILITY,
-                       _CANDIDATE_ELIGIBILITY + extra)
+    return sql.replace(_CANDIDATE_ELIGIBILITY, _CANDIDATE_ELIGIBILITY + extra)
 
 
 CORPUS_GENERATION_SQL = "SELECT generation FROM corpus_generation WHERE id = 1"
@@ -1188,19 +1423,26 @@ async def declare_profile_exclusions(session, profile_id, reglas) -> dict:
         if kind not in VALID_EXCLUSION_KINDS or not patron:
             raise ValueError(
                 f"exclusión inválida {r!r}: kind ∈ {VALID_EXCLUSION_KINDS} y "
-                "pattern no vacío")
+                "pattern no vacío"
+            )
         normalizadas.append({"kind": kind, "pattern": patron})
     # Same lock order as publication: profile -> generation -> writes.
-    owner = (await session.execute(
-        sa.text("SELECT id FROM profiles WHERE id = :p FOR UPDATE"),
-        {"p": profile_id},
-    )).scalar_one_or_none()
+    owner = (
+        await session.execute(
+            sa.text("SELECT id FROM profiles WHERE id = :p FOR UPDATE"),
+            {"p": profile_id},
+        )
+    ).scalar_one_or_none()
     if owner is None:
         raise ValueError("perfil no encontrado")
-    actuales = (await session.execute(
-        sa.text("SELECT kind, pattern FROM profile_exclusions WHERE profile_id = :p"),
-        {"p": profile_id},
-    )).all()
+    actuales = (
+        await session.execute(
+            sa.text(
+                "SELECT kind, pattern FROM profile_exclusions WHERE profile_id = :p"
+            ),
+            {"p": profile_id},
+        )
+    ).all()
     if {(r.kind, r.pattern) for r in actuales} == {
         (r["kind"], r["pattern"]) for r in normalizadas
     }:
@@ -1215,8 +1457,10 @@ async def declare_profile_exclusions(session, profile_id, reglas) -> dict:
                 "INSERT INTO profile_exclusions (profile_id, kind, pattern) "
                 "VALUES (:p, :k, :pat) ON CONFLICT DO NOTHING"
             ),
-            [{"p": profile_id, "k": r["kind"], "pat": r["pattern"]}
-             for r in normalizadas],
+            [
+                {"p": profile_id, "k": r["kind"], "pat": r["pattern"]}
+                for r in normalizadas
+            ],
         )
     return {"declaradas": len(normalizadas)}
 
@@ -1256,7 +1500,8 @@ async def canonical_model_id(session, profile_id):
                     "SELECT EXISTS (SELECT 1 FROM profile_embeddings "
                     " WHERE model_id = :m AND profile_revision_id = :r) "
                     "AND EXISTS (SELECT 1 "
-                    + ELIGIBLE_CORPUS_FROM.format(model=":m") + ")"
+                    + ELIGIBLE_CORPUS_FROM.format(model=":m")
+                    + ")"
                 ),
                 {"m": m.id, "r": rev},
             )
@@ -1267,8 +1512,13 @@ async def canonical_model_id(session, profile_id):
 
 
 async def compute_policy_feed(
-    session, profile_id, model_id, policy_id, limit: int = CANONICAL_EVAL_LIMIT,
-    exclude_dismissed: bool = False, with_corpus_generation: bool = False,
+    session,
+    profile_id,
+    model_id,
+    policy_id,
+    limit: int = CANONICAL_EVAL_LIMIT,
+    exclude_dismissed: bool = False,
+    with_corpus_generation: bool = False,
     exclude_vacancy_ids: list | None = None,
     ce_inference: bool = True,
 ) -> dict:
@@ -1337,8 +1587,12 @@ async def compute_policy_feed(
     if prof is None:
         # Sin revisión vigente o sin vector para este modelo: nada que evaluar
         # (el worker de embeddings aún no pasó) — no es un error.
-        return {"status": "sin_vector", "rows": [],
-                "profile_revision_id": None, "corpus_generation": None}
+        return {
+            "status": "sin_vector",
+            "rows": [],
+            "profile_revision_id": None,
+            "corpus_generation": None,
+        }
 
     # ANN ROBUSTO (auditoría + rev. A-08 #2 + 2ª P2s): el filtro posterior
     # (revisión vigente + vacante activa) puede dejar el scan HNSW SIN
@@ -1357,7 +1611,8 @@ async def compute_policy_feed(
     # se perdería trabajo en silencio.
     corpus_gen = (
         (await session.execute(sa.text(CORPUS_GENERATION_SQL))).scalar()
-        if with_corpus_generation else None
+        if with_corpus_generation
+        else None
     )
     eligible = (
         await session.execute(
@@ -1373,13 +1628,15 @@ async def compute_policy_feed(
     ).scalar_one()
     target = min(limit, int(eligible))
     if target == 0:
-        return {"status": "ok", "rows": [],
-                "profile_revision_id": prof.revision_id,
-                "corpus_generation": None}
+        return {
+            "status": "ok",
+            "rows": [],
+            "profile_revision_id": prof.revision_id,
+            "corpus_generation": None,
+        }
     recuperacion = receta_ce if receta_ce is not None else receta
     if recuperacion is not None:
-        lex_query = _LEXICAL_QUERY_BUILDERS[recuperacion["lexical_query"]](
-            prof.content)
+        lex_query = _LEXICAL_QUERY_BUILDERS[recuperacion["lexical_query"]](prof.content)
     elif algorithm == "hybrid_rrf_v2":
         lex_query = _lexical_query_v2(prof.content)
     elif algorithm == "hybrid_rrf_v1":
@@ -1398,12 +1655,17 @@ async def compute_policy_feed(
     # Frontera ÚNICA: la exclusión entra en el SQL, antes de todos los LIMIT.
     excl_ids = [str(x) for x in (exclude_vacancy_ids or [])]
     candidate_sql = _with_candidate_exclusions(
-        candidate_sql, exclude_dismissed=exclude_dismissed,
+        candidate_sql,
+        exclude_dismissed=exclude_dismissed,
         exclude_ids=bool(excl_ids),
     )
     params = {
-        "vec": prof.vec, "mid": model_id, "k": limit, "lex_query": lex_query,
-        "pid": profile_id, "excl_ids": excl_ids,
+        "vec": prof.vec,
+        "mid": model_id,
+        "k": limit,
+        "lex_query": lex_query,
+        "pid": profile_id,
+        "excl_ids": excl_ids,
     }
     ef_search = min(max(limit, 40), 1000)
     await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(ef_search)}"))
@@ -1413,9 +1675,7 @@ async def compute_policy_feed(
     )
     candidates = (await session.execute(sa.text(candidate_sql), params)).all()
 
-    if len(candidates) < target or not _semantic_arm_filled(
-        candidates, target, hybrid
-    ):
+    if len(candidates) < target or not _semantic_arm_filled(candidates, target, hybrid):
         # Inanición REAL del scan acotado: el exacto responde siempre bien.
         await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
         await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
@@ -1427,28 +1687,43 @@ async def compute_policy_feed(
         # Rerank v5 SOBRE el conjunto ya recuperado (una consulta de señales
         # para el lote entero; sin N+1). El orden y el score persistidos son
         # los del rerank; los componentes van a score_parts.
-        reranked = await _rerank_candidates(
-            session, candidates, prof.content, receta
-        )
+        reranked = await _rerank_candidates(session, candidates, prof.content, receta)
     if receta_ce is not None and candidates:
         if not ce_inference:
             # P1-3: la evaluación productiva PREPARA aquí (todas las lecturas
             # de BD) y puntúa FUERA de la transacción; el ensamblado llega en
             # la fase de persistencia.
             prep = await _ce_prepare(
-                session, candidates, prof, profile_id, model_id, policy_id,
+                session,
+                candidates,
+                prof,
+                profile_id,
+                model_id,
+                policy_id,
                 receta_ce,
             )
-            return {"status": "ok_prep", "rows": [], "prep": prep,
-                    "profile_revision_id": prof.revision_id,
-                    "corpus_generation": corpus_gen}
+            return {
+                "status": "ok_prep",
+                "rows": [],
+                "prep": prep,
+                "profile_revision_id": prof.revision_id,
+                "corpus_generation": corpus_gen,
+            }
         rows = await _cross_encoder_rows(
-            session, candidates, prof, profile_id, model_id, policy_id,
+            session,
+            candidates,
+            prof,
+            profile_id,
+            model_id,
+            policy_id,
             receta_ce,
         )
-        return {"status": "ok", "rows": rows,
-                "profile_revision_id": prof.revision_id,
-                "corpus_generation": corpus_gen}
+        return {
+            "status": "ok",
+            "rows": rows,
+            "profile_revision_id": prof.revision_id,
+            "corpus_generation": corpus_gen,
+        }
     rows = []
     if reranked is not None:
         for r in reranked:
@@ -1462,17 +1737,21 @@ async def compute_policy_feed(
                 "lexical_rank": r["lexical_rank"],
                 "lexical_score": (
                     round(float(r["lexical_score"]), 6)
-                    if r["lexical_score"] is not None else None
+                    if r["lexical_score"] is not None
+                    else None
                 ),
                 # componentes del rerank: suficientes para explicar el orden
                 **r["rerank"],
             }
-            rows.append({
-                "vacancy_id": r["vacancy_id"],
-                "offer_revision_id": r["offer_revision_id"],
-                "score": r["score"], "score_parts": score_parts,
-            })
-    for c in ([] if reranked is not None else candidates):
+            rows.append(
+                {
+                    "vacancy_id": r["vacancy_id"],
+                    "offer_revision_id": r["offer_revision_id"],
+                    "score": r["score"],
+                    "score_parts": score_parts,
+                }
+            )
+    for c in [] if reranked is not None else candidates:
         if hybrid:
             similarity = round(float(c.sim), 6) if c.sim is not None else None
             score = round(min(100.0, max(0.0, float(c.rank_score))), 2)
@@ -1486,22 +1765,30 @@ async def compute_policy_feed(
                 "lexical_rank": c.lexical_rank,
                 "lexical_score": (
                     round(float(c.lexical_score), 6)
-                    if c.lexical_score is not None else None
+                    if c.lexical_score is not None
+                    else None
                 ),
             }
         else:
             score = round(max(0.0, float(c.sim)) * 100, 2)
             score_parts = {"similarity": round(float(c.sim), 6)}
-        rows.append({
-            "vacancy_id": c.vacancy_id, "offer_revision_id": c.offer_revision_id,
-            "score": score, "score_parts": score_parts,
-        })
+        rows.append(
+            {
+                "vacancy_id": c.vacancy_id,
+                "offer_revision_id": c.offer_revision_id,
+                "score": score,
+                "score_parts": score_parts,
+            }
+        )
     # Orden del FEED (no el bruto del SQL): score final redondeado DESC,
     # vacante ASC — la misma clave con la que sirve el feed canónico.
     rows.sort(key=lambda r: (-r["score"], str(r["vacancy_id"])))
-    return {"status": "ok", "rows": rows,
-            "profile_revision_id": prof.revision_id,
-            "corpus_generation": corpus_gen}
+    return {
+        "status": "ok",
+        "rows": rows,
+        "profile_revision_id": prof.revision_id,
+        "corpus_generation": corpus_gen,
+    }
 
 
 # Margen para cerrar el lote en curso: SQL de persistencia, outbox, commit y
@@ -1513,22 +1800,41 @@ MATERIALIZE_CLOSE_MARGIN_RATIO = 0.05
 
 
 def _margen_cierre(budget_seconds: float) -> float:
-    return min(MATERIALIZE_CLOSE_MARGIN_S,
-               max(1.0, budget_seconds * MATERIALIZE_CLOSE_MARGIN_RATIO))
+    return min(
+        MATERIALIZE_CLOSE_MARGIN_S,
+        max(1.0, budget_seconds * MATERIALIZE_CLOSE_MARGIN_RATIO),
+    )
 
 
 async def materialize_misses(
-    session_factory, profile_id, model_id, policy_id,
-    budget_seconds: float = 3600.0, batch_pairs: int = 8,
+    session_factory,
+    profile_id,
+    model_id,
+    policy_id,
+    budget_seconds: float = 3600.0,
+    batch_pairs: int = 8,
 ) -> dict:
     """Budgeted execution; evaluation and persistence remain in this module."""
     from jobhunt_core.materialization import materialize_misses as run
-    return await run(session_factory, profile_id, model_id, policy_id,
-                     budget_seconds=budget_seconds, batch_pairs=batch_pairs)
+
+    return await run(
+        session_factory,
+        profile_id,
+        model_id,
+        policy_id,
+        budget_seconds=budget_seconds,
+        batch_pairs=batch_pairs,
+    )
 
 
 async def _persist_eval_rows(
-    session, profile_id, rows, prid, model_id, policy_id, consumer_name,
+    session,
+    profile_id,
+    rows,
+    prid,
+    model_id,
+    policy_id,
+    consumer_name,
 ):
     """Persistencia CANÓNICA de evaluaciones (única frontera): filas
     idempotentes por eval_key + outbox de match.evaluated para las frescas,
@@ -1537,11 +1843,16 @@ async def _persist_eval_rows(
     mecanismo de escritura. Devuelve (eval_rows, winners, new_evals)."""
     eval_rows = [
         {
-            "id": uuid.uuid4(), "pid": profile_id, "vid": r["vacancy_id"],
-            "orid": r["offer_revision_id"], "prid": prid,
-            "mid": model_id, "spid": policy_id,
+            "id": uuid.uuid4(),
+            "pid": profile_id,
+            "vid": r["vacancy_id"],
+            "orid": r["offer_revision_id"],
+            "prid": prid,
+            "mid": model_id,
+            "spid": policy_id,
             "key": eval_key(r["offer_revision_id"], prid, model_id, policy_id),
-            "score": r["score"], "scores": json.dumps(r["score_parts"]),
+            "score": r["score"],
+            "scores": json.dumps(r["score_parts"]),
         }
         for r in rows
     ]
@@ -1593,7 +1904,8 @@ async def _persist_eval_rows(
             (
                 {
                     "eid": event_id_for("match.evaluated", r["key"]),
-                    "agg": r["key"], "pid": profile_id,
+                    "agg": r["key"],
+                    "pid": profile_id,
                     "payload": json.dumps(
                         {
                             "eval_key": r["key"],
@@ -1630,7 +1942,11 @@ async def _persist_eval_rows(
 
 
 async def evaluate_profile(
-    session_factory, profile_id, model_id, policy_id, limit: int = 100,
+    session_factory,
+    profile_id,
+    model_id,
+    policy_id,
+    limit: int = 100,
     move_current: bool = True,
     with_corpus_generation: bool = False,
     on_evaluated=None,
@@ -1660,7 +1976,9 @@ async def evaluate_profile(
         ).scalar_one_or_none()
         if existe is None:
             return {
-                "status": "not_found", "evaluated": 0, "new_evals": 0,
+                "status": "not_found",
+                "evaluated": 0,
+                "new_evals": 0,
                 "moved_current": False,
             }
         pesos_snapshot = (
@@ -1669,8 +1987,11 @@ async def evaluate_profile(
                 {"id": policy_id},
             )
         ).scalar_one_or_none()
-        if move_current and isinstance(pesos_snapshot, dict) \
-                and not _is_pair_absolute(pesos_snapshot):
+        if (
+            move_current
+            and isinstance(pesos_snapshot, dict)
+            and not _is_pair_absolute(pesos_snapshot)
+        ):
             # Valla pair_absolute: falla CERRADO antes de cualquier trabajo.
             raise ValueError(
                 f"política {policy_id} con score RELATIVO al lote "
@@ -1686,18 +2007,23 @@ async def evaluate_profile(
             await session.execute(sa.text(CORPUS_GENERATION_SQL))
         ).scalar_one()
         computed = await compute_policy_feed(
-            session, profile_id, model_id, policy_id, limit=limit,
+            session,
+            profile_id,
+            model_id,
+            policy_id,
+            limit=limit,
             exclude_dismissed=False,
             with_corpus_generation=with_corpus_generation,
             ce_inference=False,
         )
     corpus_gen = (
-        computed["corpus_generation"] if with_corpus_generation
-        else gen_snapshot
+        computed["corpus_generation"] if with_corpus_generation else gen_snapshot
     )
     if computed["status"] == "sin_vector":
         return {
-            "status": "sin_vector", "evaluated": 0, "new_evals": 0,
+            "status": "sin_vector",
+            "evaluated": 0,
+            "new_evals": 0,
             "moved_current": False,
         }
     prid = computed["profile_revision_id"]
@@ -1714,7 +2040,9 @@ async def evaluate_profile(
             # justo lo que P7-b existe para impedir. Se devuelve el control
             # al materializador, que los puntúa dentro de su fragmento.
             return {
-                "status": "misses_pendientes", "evaluated": 0, "new_evals": 0,
+                "status": "misses_pendientes",
+                "evaluated": 0,
+                "new_evals": 0,
                 "moved_current": False,
                 "misses": len(computed["prep"]["misses"]),
                 "profile_revision_id": prid,
@@ -1747,7 +2075,9 @@ async def evaluate_profile(
         ).one_or_none()
         if locked is None:
             return {
-                "status": "not_found", "evaluated": 0, "new_evals": 0,
+                "status": "not_found",
+                "evaluated": 0,
+                "new_evals": 0,
                 "moved_current": False,
             }
         # REVALIDACIÓN ATÓMICA de la tupla completa (P1-3 + revisión
@@ -1786,9 +2116,7 @@ async def evaluate_profile(
         # declare_active_policies no toca la generación: no existe orden
         # inverso que pueda producir deadlock.
         gen_ahora = (
-            await session.execute(
-                sa.text(CORPUS_GENERATION_SQL + " FOR SHARE")
-            )
+            await session.execute(sa.text(CORPUS_GENERATION_SQL + " FOR SHARE"))
         ).scalar_one()
         deriva = (
             not locked.projection_active
@@ -1809,8 +2137,7 @@ async def evaluate_profile(
             modelo_activo = (
                 await session.execute(
                     sa.text(
-                        "SELECT active FROM embedding_models "
-                        "WHERE id = :m FOR SHARE"
+                        "SELECT active FROM embedding_models WHERE id = :m FOR SHARE"
                     ),
                     {"m": model_id},
                 )
@@ -1840,17 +2167,28 @@ async def evaluate_profile(
                 "matching: la tupla revalidada derivó durante la evaluación "
                 "de %s (revisión %s→%s, generación %s→%s) — resultado "
                 "descartado sin publicar",
-                profile_id, prid, vigente, gen_snapshot, gen_ahora,
+                profile_id,
+                prid,
+                vigente,
+                gen_snapshot,
+                gen_ahora,
             )
             return {
-                "status": "descartado_por_deriva", "evaluated": 0,
-                "new_evals": 0, "moved_current": False,
+                "status": "descartado_por_deriva",
+                "evaluated": 0,
+                "new_evals": 0,
+                "moved_current": False,
                 "profile_revision_id": prid,
                 "corpus_generation": corpus_gen,
             }
         eval_rows, winners, new_evals = await _persist_eval_rows(
-            session, profile_id, computed["rows"], prid, model_id,
-            policy_id, locked.consumer_name,
+            session,
+            profile_id,
+            computed["rows"],
+            prid,
+            model_id,
+            policy_id,
+            locked.consumer_name,
         )
         moved = False
         # La valla de canonicidad P1-C (revisión 2026-09-02) vive ahora DENTRO
@@ -1860,7 +2198,11 @@ async def evaluate_profile(
         # a «registrada sin mover».
         if move_current:
             state_rows = [
-                {"pid": profile_id, "vid": r["vid"], "eid": winners[(r["vid"], r["key"])]}
+                {
+                    "pid": profile_id,
+                    "vid": r["vid"],
+                    "eid": winners[(r["vid"], r["key"])],
+                }
                 for r in eval_rows
                 if (r["vid"], r["key"]) in winners
             ]
@@ -1914,7 +2256,9 @@ async def evaluate_profile(
                 )
                 moved = True
         resultado = {
-            "status": "ok", "evaluated": len(eval_rows), "new_evals": new_evals,
+            "status": "ok",
+            "evaluated": len(eval_rows),
+            "new_evals": new_evals,
             "moved_current": moved,
             # La revisión REALMENTE evaluada (la de la fase 1, REVALIDADA bajo
             # el lock): quien registre el intento debe usar ESTA.
@@ -1948,8 +2292,7 @@ async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=No
         params["cid"] = consumer_id
     if cursor is not None:
         where_cursor = (
-            "AND (e.score_final < :cs "
-            "OR (e.score_final = :cs AND e.vacancy_id > :cv)) "
+            "AND (e.score_final < :cs OR (e.score_final = :cs AND e.vacancy_id > :cv)) "
         )
         params["cs"], params["cv"] = cursor
     # Se pide una fila EXTRA (limit+1) para distinguir "hay página siguiente" de "esta es la

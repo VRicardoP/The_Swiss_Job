@@ -30,7 +30,9 @@ def test_erased_cv_cannot_be_replayed_from_idempotency(db, spelling, legacy):  #
             else (
                 "{" + str(pid) + "}"
                 if spelling == "braces"
-                else "urn:uuid:" + str(pid) if spelling == "urn" else pid.hex
+                else "urn:uuid:" + str(pid)
+                if spelling == "urn"
+                else pid.hex
             )
         )
     )
@@ -306,9 +308,9 @@ def test_cached_replay_waits_for_owner_erasure_before_reading_receipt(db):  # no
                                     )
                                     if eraser_pid in blockers:
                                         break
-                                    assert (
-                                        not task.done()
-                                    ), "cached response escaped the owner lock"
+                                    assert not task.done(), (
+                                        "cached response escaped the owner lock"
+                                    )
                                     await asyncio.sleep(0.01)
                         await erase_shadow_profile(eraser, "user-1", consumer)
                         await eraser.commit()

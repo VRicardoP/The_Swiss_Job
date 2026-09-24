@@ -1,4 +1,5 @@
 """Real subprocess checks; no model artefacts or production corpus required."""
+
 import asyncio
 import json
 import signal
@@ -11,8 +12,12 @@ from jobhunt_core.ce_runtime import BudgetedScorer
 
 
 def _prep():
-    return {"receta_ce": {}, "consultas": ["synthetic"], "documentos": ["synthetic"],
-            "misses": [SimpleNamespace(offer_revision_id="one")]}
+    return {
+        "receta_ce": {},
+        "consultas": ["synthetic"],
+        "documentos": ["synthetic"],
+        "misses": [SimpleNamespace(offer_revision_id="one")],
+    }
 
 
 def test_process_protocol_and_reuse():
@@ -28,6 +33,7 @@ def test_process_protocol_and_reuse():
         finally:
             await worker.aclose()
         assert worker.process.returncode is not None
+
     asyncio.run(check())
 
 
@@ -42,6 +48,7 @@ def test_timed_out_inference_is_killed_and_reaped():
         finally:
             await worker.aclose()
         assert worker.process.returncode == -signal.SIGKILL
+
     asyncio.run(check())
 
 
@@ -50,11 +57,13 @@ def test_external_cancellation_reaps_process():
 
     async def check():
         worker = BudgetedScorer((sys.executable, "-u", "-c", code))
+
         async def run():
             try:
                 await worker.score(_prep(), 60)
             finally:
                 await worker.aclose()
+
         task = asyncio.create_task(run())
         async with asyncio.timeout(10):
             while worker.process is None:
@@ -63,12 +72,14 @@ def test_external_cancellation_reaps_process():
         with pytest.raises(asyncio.CancelledError):
             await task
         assert worker.process.returncode is not None
+
     asyncio.run(check())
 
 
 @pytest.mark.parametrize("scores", [[], [float("nan")], [True], [1.2]])
 def test_invalid_worker_scores_fail_closed(scores):
     code = f"import sys\nsys.stdin.readline(); print({json.dumps({'scores': scores})!r},flush=True)"
+
     async def check():
         worker = BudgetedScorer((sys.executable, "-u", "-c", code))
         try:
@@ -76,4 +87,5 @@ def test_invalid_worker_scores_fail_closed(scores):
                 await worker.score(_prep(), 10)
         finally:
             await worker.aclose()
+
     asyncio.run(check())

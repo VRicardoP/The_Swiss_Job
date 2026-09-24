@@ -17,6 +17,7 @@ Uso (dentro del contenedor del core):
 
     python -m jobhunt_core.shadow.resync [--schema public]
 """
+
 import argparse
 import asyncio
 import json
@@ -42,7 +43,8 @@ async def resync_profiles(session, legacy_schema: str = "public") -> dict:
         raise ValueError(f"esquema legacy inválido: {legacy_schema!r}")
     spec = TABLE_WHITELIST["user_profiles"]
     existentes = {
-        r[0] for r in (
+        r[0]
+        for r in (
             await session.execute(
                 sa.text(
                     "SELECT column_name FROM information_schema.columns "
@@ -94,7 +96,9 @@ async def resync_profiles(session, legacy_schema: str = "public") -> dict:
         payload = dict(zip(selected, fila[1:]))
         lote.append(
             {
-                "lsn": pos, "seq": seq0 + i, "op": "U",
+                "lsn": pos,
+                "seq": seq0 + i,
+                "op": "U",
                 "pk": str(fila[0]),
                 # misma representación textual estable que la captura
                 "payload": json.dumps(payload, default=str),

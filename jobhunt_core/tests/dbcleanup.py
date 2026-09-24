@@ -24,9 +24,7 @@ async def purge_runs(s: AsyncSession, run_ids: Sequence[uuid.UUID]) -> None:
         sa.text("DELETE FROM source_harvest_runs WHERE run_id = ANY(:r)"),
         {"r": runs},
     )
-    await s.execute(
-        sa.text("DELETE FROM harvest_runs WHERE id = ANY(:r)"), {"r": runs}
-    )
+    await s.execute(sa.text("DELETE FROM harvest_runs WHERE id = ANY(:r)"), {"r": runs})
 
 
 async def purge_consumer_graph(
@@ -84,9 +82,17 @@ async def purge_consumer_graph(
         sa.text("DELETE FROM idempotency_records WHERE consumer_id = ANY(:c)"),
         {"c": cons},
     )
-    await s.execute(sa.text("DELETE FROM profile_erasure_receipts WHERE consumer_id = ANY(:c)"), {"c": cons})
-    await s.execute(sa.text("DELETE FROM school_job_details WHERE consumer_id = ANY(:c)"), {"c": cons})
-    await s.execute(sa.text("DELETE FROM school_monitors WHERE consumer_id = ANY(:c)"), {"c": cons})
+    await s.execute(
+        sa.text("DELETE FROM profile_erasure_receipts WHERE consumer_id = ANY(:c)"),
+        {"c": cons},
+    )
+    await s.execute(
+        sa.text("DELETE FROM school_job_details WHERE consumer_id = ANY(:c)"),
+        {"c": cons},
+    )
+    await s.execute(
+        sa.text("DELETE FROM school_monitors WHERE consumer_id = ANY(:c)"), {"c": cons}
+    )
     await s.execute(sa.text("DELETE FROM consumers WHERE id = ANY(:c)"), {"c": cons})
 
 
@@ -115,7 +121,9 @@ async def purge_source_graph(
                     ),
                     {"srcs": srcs},
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
     vac_ids += list(extra_vac_ids)
     if vac_ids:
@@ -250,7 +258,8 @@ async def purge_model(s: AsyncSession, model_id: uuid.UUID) -> None:
     revienta por FK y el registro queda como residuo."""
     await s.execute(
         # core0019: el watermark de intentos también referencia el modelo.
-        sa.text("DELETE FROM profile_recovery_state WHERE model_id = :m"), {"m": model_id}
+        sa.text("DELETE FROM profile_recovery_state WHERE model_id = :m"),
+        {"m": model_id},
     )
     await s.execute(
         sa.text("DELETE FROM profile_embeddings WHERE model_id = :m"), {"m": model_id}

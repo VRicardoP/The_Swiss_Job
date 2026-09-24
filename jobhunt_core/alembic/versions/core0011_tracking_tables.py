@@ -59,13 +59,25 @@ NOW = sa.text("now()")
 # create_type=False: los crea/borra ESTA migración explícitamente (disciplina
 # core0002 — sin el flag, create_table intentaría crearlos otra vez).
 application_status = PGEnum(
-    "saved", "applied", "phone_screen", "technical", "interview",
-    "offer", "rejected", "withdrawn",
-    name="application_status", schema=S, create_type=False,
+    "saved",
+    "applied",
+    "phone_screen",
+    "technical",
+    "interview",
+    "offer",
+    "rejected",
+    "withdrawn",
+    name="application_status",
+    schema=S,
+    create_type=False,
 )
 notify_frequency = PGEnum(
-    "realtime", "daily", "weekly",
-    name="notify_frequency", schema=S, create_type=False,
+    "realtime",
+    "daily",
+    "weekly",
+    name="notify_frequency",
+    schema=S,
+    create_type=False,
 )
 
 
@@ -78,15 +90,36 @@ def upgrade() -> None:
     op.create_table(
         "applications",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("profile_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.profiles.id"), nullable=False),
-        sa.Column("vacancy_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.vacancies.id"), nullable=False),
+        sa.Column(
+            "profile_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.profiles.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "vacancy_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.vacancies.id"),
+            nullable=False,
+        ),
         sa.Column("source_listing_incarnation_id", UUID(as_uuid=True), nullable=True),
-        sa.Column("snapshot", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
-        sa.Column("status", application_status, nullable=False, server_default="applied"),
+        sa.Column(
+            "snapshot", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")
+        ),
+        sa.Column(
+            "status", application_status, nullable=False, server_default="applied"
+        ),
         sa.Column("notes", sa.Text),
         sa.Column("follow_up_date", sa.Date),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
-        sa.UniqueConstraint("profile_id", "vacancy_id", name="uq_application_profile_vacancy"),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
+        sa.UniqueConstraint(
+            "profile_id", "vacancy_id", name="uq_application_profile_vacancy"
+        ),
         schema=S,
     )
     # FK compuesta con SET NULL POR-COLUMNA (PG15+): borrar la incarnación
@@ -109,7 +142,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("status", application_status, nullable=False),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
         schema=S,
     )
 
@@ -117,35 +155,66 @@ def upgrade() -> None:
     op.create_table(
         "saved_searches",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("profile_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.profiles.id"), nullable=False),
+        sa.Column(
+            "profile_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.profiles.id"),
+            nullable=False,
+        ),
         sa.Column("name", sa.String(200), nullable=False),
-        sa.Column("filters", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column(
+            "filters", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")
+        ),
         sa.Column("min_score", sa.Integer, nullable=False, server_default=sa.text("0")),
-        sa.Column("notify_frequency", notify_frequency, nullable=False, server_default="daily"),
-        sa.Column("notify_push", sa.Boolean, nullable=False, server_default=sa.text("true")),
-        sa.Column("is_active", sa.Boolean, nullable=False, server_default=sa.text("true")),
+        sa.Column(
+            "notify_frequency", notify_frequency, nullable=False, server_default="daily"
+        ),
+        sa.Column(
+            "notify_push", sa.Boolean, nullable=False, server_default=sa.text("true")
+        ),
+        sa.Column(
+            "is_active", sa.Boolean, nullable=False, server_default=sa.text("true")
+        ),
         sa.Column("last_run_at", sa.TIMESTAMP(timezone=True)),
-        sa.Column("total_matches", sa.Integer, nullable=False, server_default=sa.text("0")),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "total_matches", sa.Integer, nullable=False, server_default=sa.text("0")
+        ),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
         schema=S,
     )
     # Camino de lectura del runner de alertas: búsquedas de UN perfil.
-    op.create_index("ix_saved_searches_profile", "saved_searches", ["profile_id"], schema=S)
+    op.create_index(
+        "ix_saved_searches_profile", "saved_searches", ["profile_id"], schema=S
+    )
 
     # ---------- Idempotencia HTTP (PLAN §4, C-API-W) ----------
     op.create_table(
         "idempotency_records",
-        sa.Column("consumer_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.consumers.id"), nullable=False),
+        sa.Column(
+            "consumer_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.consumers.id"),
+            nullable=False,
+        ),
         sa.Column("key", sa.String(200), nullable=False),
         sa.Column("route", sa.String(200), nullable=False),
         sa.Column("request_hash", sa.String(64), nullable=False),
         sa.Column("response", JSONB, nullable=True),  # NULL = petición en vuelo
         sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
-        sa.PrimaryKeyConstraint("consumer_id", "key", "route", name="pk_idempotency_records"),
+        sa.PrimaryKeyConstraint(
+            "consumer_id", "key", "route", name="pk_idempotency_records"
+        ),
         schema=S,
     )
     # Purga futura por expiración (barrido secuencial por fecha).
-    op.create_index("ix_idem_expires_at", "idempotency_records", ["expires_at"], schema=S)
+    op.create_index(
+        "ix_idem_expires_at", "idempotency_records", ["expires_at"], schema=S
+    )
 
 
 def downgrade() -> None:

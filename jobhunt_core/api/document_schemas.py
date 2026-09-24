@@ -1,4 +1,5 @@
 """E.1 document boundary: preserve source text verbatim; engine fields read-only."""
+
 import uuid
 from datetime import datetime
 from typing import Literal
@@ -18,7 +19,9 @@ class DocumentCreateDTO(BaseModel):
     source_ref: str | None = Field(default=None, max_length=512)
     context: dict = Field(default_factory=dict)
     model_used: str | None = Field(default=None, max_length=100)
-    generation_time_ms: int | None = Field(default=None, ge=0, le=2147483647, strict=True)
+    generation_time_ms: int | None = Field(
+        default=None, ge=0, le=2147483647, strict=True
+    )
 
 
 class DocumentDTO(DocumentCreateDTO):

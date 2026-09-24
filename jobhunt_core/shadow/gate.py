@@ -111,7 +111,7 @@ logger = logging.getLogger(__name__)
 
 # ------------------------------------------------ umbrales RATIFICADOS (§6)
 
-GATE_CYCLES_REQUIRED = 7               # N ciclos diarios CONSECUTIVOS en verde
+GATE_CYCLES_REQUIRED = 7  # N ciclos diarios CONSECUTIVOS en verde
 # Paradas DECLARADAS que la racha tolera (core0036). Una ausencia declarada no
 # suma ni resta: se salta. El tope existe para que «consecutivos» siga
 # significando algo — con ausencias ilimitadas, siete verdes podrían repartirse
@@ -122,7 +122,7 @@ GATE_MAX_DECLARED_GAPS = 3
 # cumpliendo el tope de arriba.
 GATE_MAX_SPAN_DAYS = 14
 SLOT_WAL_RETENTION_MAX_BYTES = 2 * 1024**3  # retención WAL del slot > 2 GiB
-SLOT_STALLED_MAX_S = 30 * 60           # consumidor parado > 30 min
+SLOT_STALLED_MAX_S = 30 * 60  # consumidor parado > 30 min
 
 # Clave del single-flight de run_cycle (advisory lock de sesión, patrón y
 # disciplina del proyector — clave DISTINTA de la suya).
@@ -132,7 +132,7 @@ _RUN_CYCLE_LOCK = "jobhunt:shadow-run-cycle"
 # ocupado por otro worker). Corto: run_cycle corre en el beat diario y un
 # lote largo ajeno no debe retener la cola core.harvest — si tras esto el
 # staging sigue sin drenar, el ciclo NO se computa (status='project_busy').
-PROJECT_DRAIN_RETRIES = 3      # intentos TOTALES de project_pending
+PROJECT_DRAIN_RETRIES = 3  # intentos TOTALES de project_pending
 PROJECT_DRAIN_BACKOFF_S = 5.0  # espera entre intentos (acotada: 2×5 s)
 
 
@@ -172,9 +172,7 @@ async def preview_current_cycle(
                         "counts_toward_streak": False,
                     }
                 gates = await evaluate_gates(session, cid)
-                frozen_at = await dedup_cohort_frozen_at(
-                    session, DEDUP_EVAL_COHORT
-                )
+                frozen_at = await dedup_cohort_frozen_at(session, DEDUP_EVAL_COHORT)
             finally:
                 await preview_tx.rollback()
 
@@ -243,9 +241,7 @@ async def run_cycle(
             finally:
                 try:
                     await lock_conn.execute(
-                        sa.text(
-                            "SELECT pg_advisory_unlock(hashtextextended(:k, 0))"
-                        ),
+                        sa.text("SELECT pg_advisory_unlock(hashtextextended(:k, 0))"),
                         {"k": _RUN_CYCLE_LOCK},
                     )
                 except Exception:  # pragma: no cover — conexión rota
@@ -275,9 +271,7 @@ async def _run_cycle_locked(
     proj = await project_pending(batch_size=batch_size, max_batches=max_batches)
     while proj["status"] != "ok" and attempts < PROJECT_DRAIN_RETRIES:
         await asyncio.sleep(PROJECT_DRAIN_BACKOFF_S)
-        proj = await project_pending(
-            batch_size=batch_size, max_batches=max_batches
-        )
+        proj = await project_pending(batch_size=batch_size, max_batches=max_batches)
         attempts += 1
     result["project"] = proj
     result["project_attempts"] = attempts
@@ -286,7 +280,9 @@ async def _run_cycle_locked(
         logger.warning(
             "gate: ciclo %s NO computado — project_pending sigue en '%s' "
             "tras %d intentos (P1-3: sin drenar no se mide ni se sella)",
-            cid, proj["status"], attempts,
+            cid,
+            proj["status"],
+            attempts,
         )
         return
     async with task_session_factory() as factory:
@@ -314,7 +310,9 @@ async def _run_cycle_locked(
                 "gate: ciclo %s NO computado — %d filas de staging sin "
                 "aplicar bajo el watermark del cierre (%s): sin drenar no "
                 "se sella (P1-3)",
-                cid, pending, cycle_end.isoformat(),
+                cid,
+                pending,
+                cycle_end.isoformat(),
             )
             return
         # 3) + 4) Métricas del ciclo cerrado y purga en UNA transacción.
@@ -353,7 +351,8 @@ async def _run_cycle_locked(
     if failed:
         logger.warning(
             "gate: ciclo %s NO APTO (gates en rojo: %s) — contador a 0",
-            cid, ", ".join(failed),
+            cid,
+            ", ".join(failed),
         )
     elif not eligible:
         logger.warning(
@@ -367,7 +366,9 @@ async def _run_cycle_locked(
         # — en un replay/backfill `cid` es otro ciclo y el log mezclaba ambos.
         logger.info(
             "gate: ciclo %s APTO — racha actual %d/%d (ventana hasta %s)",
-            cid, status["consecutive_ok"], status["required"],
+            cid,
+            status["consecutive_ok"],
+            status["required"],
             status["last_cycle"],
         )
 
@@ -394,9 +395,7 @@ async def gate_status(
     """
     last = latest_closed_cycle_id(now)
     first = (
-        await session.execute(
-            sa.text("SELECT min(cycle_id) FROM shadow_cycle_metrics")
-        )
+        await session.execute(sa.text("SELECT min(cycle_id) FROM shadow_cycle_metrics"))
     ).scalar_one_or_none()
     # ELEGIBILIDAD (auditoría Nº2 2026-08-23, BLOQUEANTE 3): un ciclo solo
     # puede sumar si su ventana EMPEZÓ después del congelado del holdout
@@ -412,8 +411,8 @@ async def gate_status(
     saltadas: list[dict] = []
     counting = True
     cid = last
-    primer_verde = None      # el ciclo verde MÁS RECIENTE de la racha
-    ultimo_verde = None      # el más ANTIGUO: entre los dos va la ventana
+    primer_verde = None  # el ciclo verde MÁS RECIENTE de la racha
+    ultimo_verde = None  # el más ANTIGUO: entre los dos va la ventana
     streak_identity = None
     while first is not None and cid >= first:
         entry = await _cycle_entry(session, cid)
@@ -422,9 +421,7 @@ async def gate_status(
         # Una parada DECLARADA solo cubre la AUSENCIA total (core0036): si el
         # ciclo se computó, mandan sus métricas y la declaración se ignora. Así
         # una declaración no puede tapar un día rojo.
-        entry["parada_declarada"] = (
-            not entry["computado"] and cid in declaradas
-        )
+        entry["parada_declarada"] = not entry["computado"] and cid in declaradas
         if entry["parada_declarada"]:
             declaration = declaradas[cid]
             entry["motivo_parada"] = declaration["motivo"]
@@ -586,17 +583,21 @@ async def _gate_prerequisites(
         return {"rollback_replay": False, "thresholds_ratified": False}
     release, oracle = identity
     rows = (
-        await session.execute(
-            sa.text(
-                "SELECT kind FROM shadow_gate_attestations "
-                "WHERE release_sha = :release AND ("
-                "  (kind = 'rollback_replay' AND oracle_fingerprint = '') OR "
-                "  (kind = 'thresholds_ratified' "
-                "   AND oracle_fingerprint = :oracle))"
-            ),
-            {"release": release, "oracle": oracle},
+        (
+            await session.execute(
+                sa.text(
+                    "SELECT kind FROM shadow_gate_attestations "
+                    "WHERE release_sha = :release AND ("
+                    "  (kind = 'rollback_replay' AND oracle_fingerprint = '') OR "
+                    "  (kind = 'thresholds_ratified' "
+                    "   AND oracle_fingerprint = :oracle))"
+                ),
+                {"release": release, "oracle": oracle},
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     present = set(rows)
     return {
         "rollback_replay": "rollback_replay" in present,
@@ -641,8 +642,12 @@ async def _cycle_entry(session: AsyncSession, cid: date) -> dict:
     )
     if not computed:
         return {
-            "cycle": cid.isoformat(), "computado": False, "recomputado": False,
-            "ok": False, "gates_rojos": [], "alertas": [],
+            "cycle": cid.isoformat(),
+            "computado": False,
+            "recomputado": False,
+            "ok": False,
+            "gates_rojos": [],
+            "alertas": [],
         }
     recomputed = bool(
         (
@@ -668,9 +673,13 @@ async def _cycle_entry(session: AsyncSession, cid: date) -> dict:
         failed.append("identidad_release_oraculo")
         failed.sort()
     return {
-        "cycle": cid.isoformat(), "computado": True, "recomputado": recomputed,
-        "ok": not failed and not recomputed, "_identity": identity,
-        "gates_rojos": failed, "alertas": alerts,
+        "cycle": cid.isoformat(),
+        "computado": True,
+        "recomputado": recomputed,
+        "ok": not failed and not recomputed,
+        "_identity": identity,
+        "gates_rojos": failed,
+        "alertas": alerts,
     }
 
 
@@ -708,9 +717,7 @@ async def render_gate_report(
 ) -> str:
     """Informe LEGIBLE del estado del GATE-SOMBRA (contador + últimos ciclos)."""
     st = await gate_status(session, now=now, required=required)
-    missing = [
-        name for name, ready in st["prerequisites"].items() if not ready
-    ]
+    missing = [name for name, ready in st["prerequisites"].items() if not ready]
     if st["gate_passed"]:
         verdict = "GATE-SOMBRA SUPERADO"
     elif st["streak_passed"]:
@@ -811,26 +818,30 @@ async def check_slot_health(
     active = None
     if slot_row is None:
         if state is not None:
-            alerts.append({
-                "code": "slot_ausente",
-                "msg": (
-                    f"slot {slot} AUSENTE con estado registrado: continuidad "
-                    "WAL perdida — ejecutar rollback/replay (RUNBOOK.md)"
-                ),
-            })
+            alerts.append(
+                {
+                    "code": "slot_ausente",
+                    "msg": (
+                        f"slot {slot} AUSENTE con estado registrado: continuidad "
+                        "WAL perdida — ejecutar rollback/replay (RUNBOOK.md)"
+                    ),
+                }
+            )
     else:
         active = bool(slot_row.active)
         retained = int(slot_row.retained) if slot_row.retained is not None else None
         if retained is not None and retained > wal_retention_max_bytes:
-            alerts.append({
-                "code": "retencion_wal",
-                "msg": (
-                    f"slot {slot} retiene {retained} bytes de WAL "
-                    f"(> {wal_retention_max_bytes}): riesgo de disco de la BD "
-                    "COMPARTIDA (§8) — diagnosticar consumidor; en emergencia, "
-                    "drop-slot del RUNBOOK.md"
-                ),
-            })
+            alerts.append(
+                {
+                    "code": "retencion_wal",
+                    "msg": (
+                        f"slot {slot} retiene {retained} bytes de WAL "
+                        f"(> {wal_retention_max_bytes}): riesgo de disco de la BD "
+                        "COMPARTIDA (§8) — diagnosticar consumidor; en emergencia, "
+                        "drop-slot del RUNBOOK.md"
+                    ),
+                }
+            )
         # LIVENESS por heartbeat_at, INDEPENDIENTE de `active`: un consumidor COLGADO con el
         # walsender aún conectado (active=true) deja de LATIR aunque el slot siga activo — el
         # chequeo anterior solo miraba updated_at cuando active=false y no lo veía (P2 rev. externa
@@ -840,20 +851,25 @@ async def check_slot_health(
             # slot presente sin estado = bootstrap en curso (backfill antes de START_REPLICATION).
             logger.warning(
                 "gate: slot %s presente sin estado (bootstrap en curso o "
-                "interrumpido) — sin alerta todavía", slot,
+                "interrumpido) — sin alerta todavía",
+                slot,
             )
         else:
-            hb = state.heartbeat_at or state.updated_at  # backfill core0009 pudo dejarlo null
+            hb = (
+                state.heartbeat_at or state.updated_at
+            )  # backfill core0009 pudo dejarlo null
             stalled_s = (moment - hb).total_seconds()
             if stalled_s > stalled_max_s:
-                alerts.append({
-                    "code": "consumidor_parado",
-                    "msg": (
-                        f"slot {slot} sin LATIDO desde hace {stalled_s:.0f}s "
-                        f"(> {stalled_max_s:.0f}s; active={active}): consumidor "
-                        "parado/colgado — reiniciar core-capture (RTO <= 1h, RUNBOOK.md)"
-                    ),
-                })
+                alerts.append(
+                    {
+                        "code": "consumidor_parado",
+                        "msg": (
+                            f"slot {slot} sin LATIDO desde hace {stalled_s:.0f}s "
+                            f"(> {stalled_max_s:.0f}s; active={active}): consumidor "
+                            "parado/colgado — reiniciar core-capture (RTO <= 1h, RUNBOOK.md)"
+                        ),
+                    }
+                )
     for alert in alerts:
         logger.error("gate: ALERTA slot — %s", alert["msg"])
     return {
@@ -929,7 +945,8 @@ def rollback_replay(
         capture_dsn, slot, slot_release_timeout_s
     )
     logger.info(
-        "rollback_replay: paso 1-2 — slot %s %s", slot,
+        "rollback_replay: paso 1-2 — slot %s %s",
+        slot,
         "eliminado" if summary["slot_dropped"] else "ya ausente",
     )
 
@@ -977,9 +994,7 @@ def rollback_replay(
         # parciales de encarnaciones/vacantes activas. Sin estadísticas
         # frescas, el primer drenado puede repetir durante minutos el join
         # cross-source de `_url_drift_pairs` para cada lote.
-        refreshed = (
-            "source_listings", "source_listing_incarnations", "vacancies"
-        )
+        refreshed = ("source_listings", "source_listing_incarnations", "vacancies")
         with core.cursor() as cur:
             cur.execute("ANALYZE " + ", ".join(refreshed))
         core.commit()
@@ -989,7 +1004,8 @@ def rollback_replay(
             "rollback_replay: paso 3-4 — fuentes legacy desactivadas "
             "(%d encarnaciones cerradas, %d vacantes archivadas) y staging "
             "truncado (%d filas)",
-            summary["incarnations_closed"], summary["vacancies_archived"],
+            summary["incarnations_closed"],
+            summary["vacancies_archived"],
             summary["staging_rows_deleted"],
         )
 
@@ -997,7 +1013,11 @@ def rollback_replay(
         # bootstrap = CREATE_REPLICATION_SLOT ... EXPORT_SNAPSHOT + backfill
         # consistente + frontera en shadow_capture_state, atómico).
         cap = ShadowCapture(
-            capture_dsn, core_dsn, slot=slot, tables=tables, schema=schema,
+            capture_dsn,
+            core_dsn,
+            slot=slot,
+            tables=tables,
+            schema=schema,
             ready_max_retries=ready_max_retries,  # G1 H-13: jamás sin cota
         )
         try:
@@ -1011,8 +1031,7 @@ def rollback_replay(
             )
             snapshot_lsn, last_applied = cur.fetchone()
             cur.execute(
-                "SELECT count(*) FROM shadow_change_log "
-                "WHERE op = 'I' AND lsn = %s",
+                "SELECT count(*) FROM shadow_change_log WHERE op = 'I' AND lsn = %s",
                 (snapshot_lsn,),
             )
             backfill_rows = cur.fetchone()[0]
@@ -1044,7 +1063,9 @@ def rollback_replay(
     logger.info(
         "rollback_replay: paso 5 — slot %s re-creado (snapshot_lsn=%d, "
         "%d filas de re-backfill); re-arrancar core-capture",
-        slot, summary["snapshot_lsn"], summary["backfill_rows"],
+        slot,
+        summary["snapshot_lsn"],
+        summary["backfill_rows"],
     )
     return summary
 
@@ -1075,7 +1096,8 @@ def emergency_drop_slot(
         raise RuntimeError(f"nombre de slot inválido: {slot!r}")
     dropped = _stop_and_drop_slot(capture_dsn, slot, slot_release_timeout_s)
     logger.info(
-        "emergency_drop_slot: slot %s %s", slot,
+        "emergency_drop_slot: slot %s %s",
+        slot,
         "eliminado (WAL liberado)" if dropped else "ya ausente",
     )
     return dropped

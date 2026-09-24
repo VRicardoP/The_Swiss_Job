@@ -25,7 +25,13 @@ def _altas_exact_match() -> dict:
     las únicas fuentes exact-match del core (el resto son `legacy:*`, que
     comparten el handler genérico de la sombra). Imports LOCALES."""
     from jobhunt_core import import_portfolio, school_ingest
-    from jobhunt_core.harvest.providers import arbeitnow, native_json, native_rss, native_chmedia, native_publicjobs
+    from jobhunt_core.harvest.providers import (
+        arbeitnow,
+        native_json,
+        native_rss,
+        native_chmedia,
+        native_publicjobs,
+    )
     from jobhunt_core.harvest.providers import native_nav, native_thehub
     from jobhunt_core.harvest.providers import native_jobgether
 
@@ -82,7 +88,8 @@ def ensure_handler(source_name: str) -> bool:
         # tumbe el run.
         logger.exception(
             "registry: el alta en caliente del handler de %r ha fallado — "
-            "la fuente queda sin normalizador en este proceso", source_name
+            "la fuente queda sin normalizador en este proceso",
+            source_name,
         )
         return False
     return normalize.has_normalizer(source_name)

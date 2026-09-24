@@ -19,19 +19,54 @@ from jobhunt_core.harvest.providers.arbeitnow import ArbeitnowProvider
 PAGES = {
     1: {
         "data": [
-            {"slug": "a", "url": "https://x/a", "title": "Python Dev", "created_at": 300, "tags": []},
-            {"slug": "b", "url": "https://x/b", "title": "Java Dev", "created_at": 250, "tags": []},
+            {
+                "slug": "a",
+                "url": "https://x/a",
+                "title": "Python Dev",
+                "created_at": 300,
+                "tags": [],
+            },
+            {
+                "slug": "b",
+                "url": "https://x/b",
+                "title": "Java Dev",
+                "created_at": 250,
+                "tags": [],
+            },
         ],
         "links": {"next": "?page=2"},
     },
     2: {
         "data": [
-            {"slug": "c", "url": "https://x/c", "title": "Python Senior", "created_at": 200, "tags": []},
-            {"slug": "d", "url": "https://x/d", "title": "QA", "created_at": 100, "tags": []},
+            {
+                "slug": "c",
+                "url": "https://x/c",
+                "title": "Python Senior",
+                "created_at": 200,
+                "tags": [],
+            },
+            {
+                "slug": "d",
+                "url": "https://x/d",
+                "title": "QA",
+                "created_at": 100,
+                "tags": [],
+            },
         ],
         "links": {"next": "?page=3"},
     },
-    3: {"data": [{"slug": "e", "url": "https://x/e", "title": "Old", "created_at": 50, "tags": []}], "links": {}},
+    3: {
+        "data": [
+            {
+                "slug": "e",
+                "url": "https://x/e",
+                "title": "Old",
+                "created_at": 50,
+                "tags": [],
+            }
+        ],
+        "links": {},
+    },
 }
 
 
@@ -41,7 +76,9 @@ def _fetch(params=None, cursor=None, pages=PAGES, handler=None):
     def default_handler(request: httpx.Request) -> httpx.Response:
         page = int(request.url.params.get("page", 1))
         hits.append(page)
-        return httpx.Response(200, text=json.dumps(pages.get(page, {"data": [], "links": {}})))
+        return httpx.Response(
+            200, text=json.dumps(pages.get(page, {"data": [], "links": {}}))
+        )
 
     provider = ArbeitnowProvider()
 
@@ -94,24 +131,73 @@ def test_mid_run_deletion_only_delays_never_loses():
         page = int(request.url.params.get("page", 1))
         if page == 1 and not state["page1_served"]:
             state["page1_served"] = True  # tras servir p1, "se borran" a y b
-            return httpx.Response(200, text=json.dumps({
+            return httpx.Response(
+                200,
+                text=json.dumps(
+                    {
+                        "data": [
+                            {
+                                "slug": "a",
+                                "url": "https://x/a",
+                                "title": "T",
+                                "created_at": 400,
+                                "tags": [],
+                            },
+                            {
+                                "slug": "b",
+                                "url": "https://x/b",
+                                "title": "T",
+                                "created_at": 350,
+                                "tags": [],
+                            },
+                        ],
+                        "links": {"next": "?page=2"},
+                    }
+                ),
+            )
+        v2 = {  # feed tras el borrado: c/d subieron a la página 1
+            1: {
                 "data": [
-                    {"slug": "a", "url": "https://x/a", "title": "T", "created_at": 400, "tags": []},
-                    {"slug": "b", "url": "https://x/b", "title": "T", "created_at": 350, "tags": []},
+                    {
+                        "slug": "c",
+                        "url": "https://x/c",
+                        "title": "T",
+                        "created_at": 300,
+                        "tags": [],
+                    },
+                    {
+                        "slug": "d",
+                        "url": "https://x/d",
+                        "title": "T",
+                        "created_at": 250,
+                        "tags": [],
+                    },
                 ],
                 "links": {"next": "?page=2"},
-            }))
-        v2 = {  # feed tras el borrado: c/d subieron a la página 1
-            1: {"data": [
-                {"slug": "c", "url": "https://x/c", "title": "T", "created_at": 300, "tags": []},
-                {"slug": "d", "url": "https://x/d", "title": "T", "created_at": 250, "tags": []},
-            ], "links": {"next": "?page=2"}},
-            2: {"data": [
-                {"slug": "e", "url": "https://x/e", "title": "T", "created_at": 200, "tags": []},
-                {"slug": "f", "url": "https://x/f", "title": "T", "created_at": 150, "tags": []},
-            ], "links": {}},
+            },
+            2: {
+                "data": [
+                    {
+                        "slug": "e",
+                        "url": "https://x/e",
+                        "title": "T",
+                        "created_at": 200,
+                        "tags": [],
+                    },
+                    {
+                        "slug": "f",
+                        "url": "https://x/f",
+                        "title": "T",
+                        "created_at": 150,
+                        "tags": [],
+                    },
+                ],
+                "links": {},
+            },
         }
-        return httpx.Response(200, text=json.dumps(v2.get(page, {"data": [], "links": {}})))
+        return httpx.Response(
+            200, text=json.dumps(v2.get(page, {"data": [], "links": {}}))
+        )
 
     r1, _ = _fetch(handler=mutating_handler)
     assert _ids(r1) == ["a", "b", "e", "f"]  # c/d desplazados: omisión TEMPORAL
@@ -143,7 +229,9 @@ def test_hard_cap_is_contractual_with_persistent_alert(caplog):
     with caplog.at_level(logging.ERROR):
         r1, h1 = _fetch(params={"max_pages": 2, "hard_max_pages": 2})
         assert (r1.complete, r1.next_cursor["page_target"], h1) == (False, 2, [1, 2])
-        r2, h2 = _fetch(params={"max_pages": 2, "hard_max_pages": 2}, cursor=r1.next_cursor)
+        r2, h2 = _fetch(
+            params={"max_pages": 2, "hard_max_pages": 2}, cursor=r1.next_cursor
+        )
         assert (r2.complete, r2.next_cursor["page_target"], h2) == (False, 2, [1, 2])
     assert caplog.text.count("CAPACIDAD EXCEDIDA") == 2  # persistente, cada run
 
@@ -154,17 +242,28 @@ def test_partial_sweep_flag_and_no_target_regression():
     r1, _ = _fetch(params={"max_pages": 2})
     assert (r1.complete, r1.next_cursor["page_target"]) == (False, 4)
     # Con el feed ya agotable, un cursor con target viejo no reduce el barrido.
-    r2, _ = _fetch(params={"max_pages": 5}, cursor={"page_target": 2, "last_top_seen": 0})
+    r2, _ = _fetch(
+        params={"max_pages": 5}, cursor={"page_target": 2, "last_top_seen": 0}
+    )
     assert r2.complete is True and _ids(r2) == ["a", "b", "c", "d", "e"]
 
 
 def test_items_without_timestamp_are_emitted():
     """Sin filtro por watermark ya no hace falta timestamp para EMITIR."""
     pages = {
-        1: {"data": [
-            {"slug": "sints", "url": "https://x/s", "title": "SinTS", "tags": []},
-            {"slug": "ok", "url": "https://x/ok", "title": "T", "created_at": 300, "tags": []},
-        ], "links": {}},
+        1: {
+            "data": [
+                {"slug": "sints", "url": "https://x/s", "title": "SinTS", "tags": []},
+                {
+                    "slug": "ok",
+                    "url": "https://x/ok",
+                    "title": "T",
+                    "created_at": 300,
+                    "tags": [],
+                },
+            ],
+            "links": {},
+        },
     }
     result, _ = _fetch(pages=pages)
     assert _ids(result) == ["sints", "ok"]
@@ -173,11 +272,20 @@ def test_items_without_timestamp_are_emitted():
 
 def test_missing_url_or_slug_is_skipped():
     pages = {
-        1: {"data": [
-            {"slug": "ok", "url": "https://x/ok", "title": "T", "created_at": 300, "tags": []},
-            {"title": "sin nada", "created_at": 290, "tags": []},
-            {"slug": "sin-url", "title": "T", "created_at": 280, "tags": []},
-        ], "links": {}},
+        1: {
+            "data": [
+                {
+                    "slug": "ok",
+                    "url": "https://x/ok",
+                    "title": "T",
+                    "created_at": 300,
+                    "tags": [],
+                },
+                {"title": "sin nada", "created_at": 290, "tags": []},
+                {"slug": "sin-url", "title": "T", "created_at": 280, "tags": []},
+            ],
+            "links": {},
+        },
     }
     result, _ = _fetch(pages=pages)
     assert _ids(result) == ["ok"]
@@ -188,19 +296,36 @@ def test_malformed_items_isolated_not_fatal():
     `" ".join(tags)` en el filtro de keyword; o item no-objeto) NO debe tumbar el barrido ni dejar
     el scope reintentando la página tóxica. Se aíslan; los válidos de la MISMA página se emiten."""
     pages = {
-        1: {"data": [
-            {"slug": "ok", "url": "https://x/ok", "title": "Python Dev", "created_at": 10,
-             "tags": ["remote"]},
-            {"slug": "bad", "url": "https://x/bad", "title": "Python Toxic", "created_at": 9,
-             "tags": [1]},            # tag NO-string: rompía el join del filtro keyword
-            "no-soy-un-objeto",       # item no-dict
-        ], "links": {}},
+        1: {
+            "data": [
+                {
+                    "slug": "ok",
+                    "url": "https://x/ok",
+                    "title": "Python Dev",
+                    "created_at": 10,
+                    "tags": ["remote"],
+                },
+                {
+                    "slug": "bad",
+                    "url": "https://x/bad",
+                    "title": "Python Toxic",
+                    "created_at": 9,
+                    "tags": [1],
+                },  # tag NO-string: rompía el join del filtro keyword
+                "no-soy-un-objeto",  # item no-dict
+            ],
+            "links": {},
+        },
     }
     # keyword fuerza _matches_keyword (el join de tags) sobre CADA item → antes crasheaba.
     result, _ = _fetch(params={"keyword": "python"}, pages=pages)
     ids = _ids(result)
-    assert "ok" in ids and "bad" in ids  # ambos emitidos, SIN crash por el tag no-string
-    assert result.complete is True       # barrido TERMINÓ (no reintento infinito de página tóxica)
+    assert (
+        "ok" in ids and "bad" in ids
+    )  # ambos emitidos, SIN crash por el tag no-string
+    assert (
+        result.complete is True
+    )  # barrido TERMINÓ (no reintento infinito de página tóxica)
 
 
 def test_malformed_body_is_typed_response_error():
@@ -226,8 +351,12 @@ def test_malformed_links_after_data_is_not_complete():
     pero leerlo como FIN de paginación declara `complete=True` sobre un barrido que se cortó en la
     página 1 con el feed a medias. Ahora es error tipado: el barrido NO se declara completo.
     """
-    pages = {1: {"data": [{"slug": "ok", "url": "https://x/ok", "title": "T", "tags": []}],
-                 "links": "?page=2"}}  # links es un STRING, no un objeto
+    pages = {
+        1: {
+            "data": [{"slug": "ok", "url": "https://x/ok", "title": "T", "tags": []}],
+            "links": "?page=2",
+        }
+    }  # links es un STRING, no un objeto
     with pytest.raises(ProviderResponseError):
         _fetch(pages=pages)
 
@@ -241,8 +370,14 @@ def test_contractual_empty_page_is_complete():
     assert _ids(vacia) == [] and vacia.complete is True and hits == [1]
     # Y con datos + `links` OBJETO sin `next`: también fin legítimo.
     ultima, _ = _fetch(
-        pages={1: {"data": [{"slug": "ok", "url": "https://x/ok", "title": "T", "tags": []}],
-                   "links": {}}}
+        pages={
+            1: {
+                "data": [
+                    {"slug": "ok", "url": "https://x/ok", "title": "T", "tags": []}
+                ],
+                "links": {},
+            }
+        }
     )
     assert _ids(ultima) == ["ok"] and ultima.complete is True
 
@@ -353,9 +488,9 @@ def test_broken_envelope_mid_sweep_keeps_the_pages_already_harvested():
     result, hits = _fetch(pages=pages)
     assert _ids(result) == ["a", "b", "c", "d"]  # páginas 1 y 2, íntegras
     assert hits == [1, 2, 3]
-    assert result.complete is False              # jamás cosecha completa
+    assert result.complete is False  # jamás cosecha completa
     assert result.error and "data" in result.error
-    assert result.pages_fetched == 2             # solo las páginas bien formadas
+    assert result.pages_fetched == 2  # solo las páginas bien formadas
 
 
 def test_broken_envelope_on_the_first_page_still_raises():
@@ -416,8 +551,10 @@ def test_a_sweep_of_items_none_usable_is_not_a_complete_harvest():
     TODAS las páginas sin un solo item utilizable, así que medirlo al final no pierde
     nada y no confunde «la API cambió de forma» con «este anuncio vino roto».
     """
-    renombrada = {"data": [{"id": 1, "job_url": "https://x/a", "name": "T"}],
-                  "links": {"next": None}}
+    renombrada = {
+        "data": [{"id": 1, "job_url": "https://x/a", "name": "T"}],
+        "links": {"next": None},
+    }
     no_objetos = {"data": ["x", "y", 3], "links": {"next": None}}
     for body in (renombrada, no_objetos):
         with pytest.raises(ProviderResponseError):
@@ -438,10 +575,18 @@ def test_one_broken_ad_alone_on_the_last_page_is_not_a_broken_contract():
     nunca volvía a ser True, `consecutive_failures` subía una por corrida y a la tercera
     la vigilancia gritaba «¿campos renombrados?» sobre un feed perfectamente sano.
     """
-    roto = {"id": 1, "job_url": "https://x/z", "name": "T"}   # sin `url`: se salta
-    sano = {"slug": "z", "url": "https://x/z", "title": "T", "created_at": 10, "tags": []}
+    roto = {"id": 1, "job_url": "https://x/z", "name": "T"}  # sin `url`: se salta
+    sano = {
+        "slug": "z",
+        "url": "https://x/z",
+        "title": "T",
+        "created_at": 10,
+        "tags": [],
+    }
     # El item roto SOLO en la página terminal, con el resto del feed sano.
-    solo, hits = _fetch(pages={1: PAGES[1], 2: {"data": [roto], "links": {"next": None}}})
+    solo, hits = _fetch(
+        pages={1: PAGES[1], 2: {"data": [roto], "links": {"next": None}}}
+    )
     assert _ids(solo) == ["a", "b"]
     assert solo.complete is True and solo.error is None, solo.error
     assert hits == [1, 2]
@@ -467,11 +612,14 @@ def test_keyword_filtering_everything_out_is_still_a_complete_harvest():
 
 def _feed_con_fallo_en(page_mala: int, respuesta):
     """Handler del feed sano salvo en `page_mala`, donde devuelve `respuesta()`."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         page = int(request.url.params.get("page", 1))
         if page == page_mala:
             return respuesta()
-        return httpx.Response(200, text=json.dumps(PAGES.get(page, {"data": [], "links": {}})))
+        return httpx.Response(
+            200, text=json.dumps(PAGES.get(page, {"data": [], "links": {}}))
+        )
 
     return handler
 
@@ -479,7 +627,9 @@ def _feed_con_fallo_en(page_mala: int, respuesta):
 _FALLOS_TRANSITORIOS = {
     "HTTP 429": lambda: httpx.Response(429),
     "200 con cuerpo vacío": lambda: httpx.Response(200, text=""),
-    "200 con HTML del CDN": lambda: httpx.Response(200, text="<html>502 Bad Gateway</html>"),
+    "200 con HTML del CDN": lambda: httpx.Response(
+        200, text="<html>502 Bad Gateway</html>"
+    ),
 }
 
 
@@ -495,9 +645,9 @@ def test_transport_failures_mid_sweep_keep_the_pages_already_harvested():
     """
     for nombre, respuesta in _FALLOS_TRANSITORIOS.items():
         result, _ = _fetch(handler=_feed_con_fallo_en(2, respuesta))
-        assert _ids(result) == ["a", "b"], nombre        # la página 1, íntegra
-        assert result.complete is False, nombre          # jamás cosecha completa
-        assert result.error, nombre                      # el runner lo contabiliza
+        assert _ids(result) == ["a", "b"], nombre  # la página 1, íntegra
+        assert result.complete is False, nombre  # jamás cosecha completa
+        assert result.error, nombre  # el runner lo contabiliza
         assert result.pages_fetched == 1, nombre
 
 
@@ -539,7 +689,9 @@ def test_a_rate_limited_page_is_retried_and_the_sweep_completes():
         if page == 2 and rechazos["n"] < arbeitnow.HTTP_ATTEMPTS - 1:
             rechazos["n"] += 1
             return httpx.Response(429)
-        return httpx.Response(200, text=json.dumps(PAGES.get(page, {"data": [], "links": {}})))
+        return httpx.Response(
+            200, text=json.dumps(PAGES.get(page, {"data": [], "links": {}}))
+        )
 
     r, _ = _fetch(handler=handler)
     assert rechazos["n"] == arbeitnow.HTTP_ATTEMPTS - 1
@@ -568,9 +720,18 @@ def test_retry_delay_prefers_the_header_and_falls_back_to_exponential_backoff():
     con = httpx.Response(429, headers={"retry-after": "42"}, request=peticion)
     sin = httpx.Response(429, request=peticion)
     delay = arbeitnow._retry_delay
-    assert delay(httpx.HTTPStatusError("429", request=peticion, response=con), 1.0, 1) == 42.0
-    assert delay(httpx.HTTPStatusError("429", request=peticion, response=sin), 1.0, 1) == 2.0
-    assert delay(httpx.HTTPStatusError("429", request=peticion, response=sin), 1.0, 2) == 4.0
+    assert (
+        delay(httpx.HTTPStatusError("429", request=peticion, response=con), 1.0, 1)
+        == 42.0
+    )
+    assert (
+        delay(httpx.HTTPStatusError("429", request=peticion, response=sin), 1.0, 1)
+        == 2.0
+    )
+    assert (
+        delay(httpx.HTTPStatusError("429", request=peticion, response=sin), 1.0, 2)
+        == 4.0
+    )
 
 
 def _rechazo(valor: str | None, status: int = 429) -> httpx.HTTPStatusError:
@@ -592,13 +753,13 @@ def test_retry_after_is_capped_and_never_yields_a_non_finite_wait():
     """
     delay = arbeitnow._retry_delay
     tope = arbeitnow.MAX_RETRY_WAIT_S
-    assert delay(_rechazo("42"), 3.5, 1) == 42.0            # sigue mandando el servidor
-    assert delay(_rechazo("86400"), 3.5, 1) == tope         # …hasta el techo
+    assert delay(_rechazo("42"), 3.5, 1) == 42.0  # sigue mandando el servidor
+    assert delay(_rechazo("86400"), 3.5, 1) == tope  # …hasta el techo
     assert delay(_rechazo("1e9"), 3.5, 1) == tope
     for veneno in ("nan", "inf", "-inf"):
         espera = delay(_rechazo(veneno), 3.5, 1)
         assert math.isfinite(espera) and 0.0 <= espera <= tope, veneno
-    assert delay(_rechazo("-5"), 3.5, 1) >= 0.0             # jamás por debajo de cero
+    assert delay(_rechazo("-5"), 3.5, 1) >= 0.0  # jamás por debajo de cero
     # El backoff PROPIO también está acotado: la pausa del scope no puede colarlo.
     assert delay(_rechazo(None), 3600.0, 3) == tope
     # Y el camino de siempre no cambia mientras quepa bajo el techo.
@@ -621,14 +782,20 @@ def test_a_hostile_retry_after_no_longer_parks_the_whole_worker(monkeypatch):
         if page == 2 and rechazos["n"] < 1:
             rechazos["n"] += 1
             return httpx.Response(429, headers={"retry-after": "86400"})
-        return httpx.Response(200, text=json.dumps(PAGES.get(page, {"data": [], "links": {}})))
+        return httpx.Response(
+            200, text=json.dumps(PAGES.get(page, {"data": [], "links": {}}))
+        )
 
     t0 = time.monotonic()
     r, _ = _fetch(handler=handler)
     transcurrido = time.monotonic() - t0
-    assert rechazos["n"] == 1 and r.complete is True and _ids(r) == ["a", "b", "c", "d", "e"]
-    assert transcurrido < 5.0, transcurrido      # no 86 400 s
-    assert transcurrido >= 0.05, transcurrido    # pero SÍ esperó lo que dice el techo
+    assert (
+        rechazos["n"] == 1
+        and r.complete is True
+        and _ids(r) == ["a", "b", "c", "d", "e"]
+    )
+    assert transcurrido < 5.0, transcurrido  # no 86 400 s
+    assert transcurrido >= 0.05, transcurrido  # pero SÍ esperó lo que dice el techo
 
 
 def test_the_sweep_gives_up_when_it_spends_its_time_budget(monkeypatch):
@@ -646,18 +813,30 @@ def test_the_sweep_gives_up_when_it_spends_its_time_budget(monkeypatch):
 
     def handler(request: httpx.Request) -> httpx.Response:
         page = int(request.url.params.get("page", 1))
-        return httpx.Response(200, text=json.dumps({
-            "data": [{"slug": f"s{page}", "url": f"https://x/{page}", "title": "T",
-                      "created_at": page, "tags": []}],
-            "links": {"next": f"?page={page + 1}"},   # feed INTERMINABLE
-        }))
+        return httpx.Response(
+            200,
+            text=json.dumps(
+                {
+                    "data": [
+                        {
+                            "slug": f"s{page}",
+                            "url": f"https://x/{page}",
+                            "title": "T",
+                            "created_at": page,
+                            "tags": [],
+                        }
+                    ],
+                    "links": {"next": f"?page={page + 1}"},  # feed INTERMINABLE
+                }
+            ),
+        )
 
     t0 = time.monotonic()
     r, hits = _fetch(handler=handler)
     transcurrido = time.monotonic() - t0
     assert transcurrido < 5.0, transcurrido
-    assert len(hits) < arbeitnow.DEFAULT_PAGE_TARGET   # cortó el reloj, no el tope
-    assert r.complete is False and r.error is None     # parcial, NO fallo de la fuente
-    assert r.listings                                  # y lo cosechado se emite
+    assert len(hits) < arbeitnow.DEFAULT_PAGE_TARGET  # cortó el reloj, no el tope
+    assert r.complete is False and r.error is None  # parcial, NO fallo de la fuente
+    assert r.listings  # y lo cosechado se emite
     # El objetivo adaptativo NO crece: duplicarlo solo alargaría lo que ya no cabe.
     assert "page_target" not in r.next_cursor

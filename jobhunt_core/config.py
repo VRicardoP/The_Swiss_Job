@@ -22,8 +22,10 @@ _PLACEHOLDER_RE = re.compile(r"CAMBIA|CHANGE_?ME|PLACEHOLDER|EXAMPLE", re.IGNORE
 
 
 def _bad_secret(value: str | None) -> bool:
-    return not value or value in (_DEV_PASSWORD, _DEV_REDIS_PASSWORD) or bool(
-        _PLACEHOLDER_RE.search(value)
+    return (
+        not value
+        or value in (_DEV_PASSWORD, _DEV_REDIS_PASSWORD)
+        or bool(_PLACEHOLDER_RE.search(value))
     )
 
 
@@ -34,9 +36,7 @@ class CoreSettings(BaseSettings):
 
     # Postgres COMPARTIDO con el legacy, pero esquema propio + rol de mínimo
     # privilegio (el rol del core no tiene grants sobre `public`).
-    CORE_DATABASE_URL: str = (
-        f"postgresql+asyncpg://jobhunt_core:{_DEV_PASSWORD}@postgres:5432/swissjobhunter"
-    )
+    CORE_DATABASE_URL: str = f"postgresql+asyncpg://jobhunt_core:{_DEV_PASSWORD}@postgres:5432/swissjobhunter"
     CORE_DB_SCHEMA: str = "jobhunt"
 
     # Redis DEDICADO para broker/locks (ADR-08), con auth y en red propia
@@ -62,20 +62,20 @@ class CoreSettings(BaseSettings):
     # nombre apagaria el motor de matching con todos los indicadores en verde.
     CORE_CAPTURE_ENABLED: bool = True
 
-    CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S: int = 300   # sample_outbox_lag (§5)
-    CORE_SHADOW_SLOT_HEALTH_EVERY_S: int = 300     # check_slot_health (§6)
+    CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S: int = 300  # sample_outbox_lag (§5)
+    CORE_SHADOW_SLOT_HEALTH_EVERY_S: int = 300  # check_slot_health (§6)
     CORE_SHADOW_PRE_GATE_EVERY_S: int = Field(default=3600, ge=300)
     CORE_SHADOW_CYCLE_START_HOUR: int = Field(default=6, ge=0, le=23)
     CORE_SHADOW_CYCLE_START_MINUTE: int = Field(default=0, ge=0, le=59)
-    CORE_SHADOW_RUN_CYCLE_HOUR: int = 6            # run_cycle diario 06:05
-    CORE_SHADOW_RUN_CYCLE_MINUTE: int = 5          # (Europe/Zurich, tras el
+    CORE_SHADOW_RUN_CYCLE_HOUR: int = 6  # run_cycle diario 06:05
+    CORE_SHADOW_RUN_CYCLE_MINUTE: int = 5  # (Europe/Zurich, tras el
     #                                              cierre del ciclo a las 06:00)
     # P1-1 (rev. externa parte 2): proyección y despacho del outbox EN
     # CADENCIA — con la proyección solo diaria (06:05) los lotes acumulaban
     # ~20h de latencia y latencia_p95<=600s / outbox_lag_p99<=300s (§6) eran
     # matemáticamente imposibles.
-    CORE_SHADOW_PROJECT_EVERY_S: int = 300         # jobhunt.shadow.project
-    CORE_DELIVERY_DISPATCH_EVERY_S: int = 300      # jobhunt.delivery.dispatch_outbox
+    CORE_SHADOW_PROJECT_EVERY_S: int = 300  # jobhunt.shadow.project
+    CORE_DELIVERY_DISPATCH_EVERY_S: int = 300  # jobhunt.delivery.dispatch_outbox
     # Transfer searches only after legacy drain and an inbox projection proof.
     # Off means no beat entry and manual tasks perform no database work.
     CORE_SAVED_SEARCH_EXECUTION_ENABLED: bool = False
@@ -107,7 +107,7 @@ class CoreSettings(BaseSettings):
     # cuales el archivado ADR-07 empieza a retirar vacantes todavía publicadas.
     CORE_HARVEST_MAX_CONSECUTIVE_FAILURES: int = 3
     CORE_HARVEST_STALE_ALERT_DAYS: int = 7
-    CORE_HARVEST_HEALTH_EVERY_S: int = 3600         # jobhunt.harvest.check_health
+    CORE_HARVEST_HEALTH_EVERY_S: int = 3600  # jobhunt.harvest.check_health
     # Dedup semántico nivel 3 (F-5): generador de candidatos cross-source.
     # SIM_MIN hereda el umbral del dedup semántico legado (0,95) como punto
     # de partida operativo — B.3 dejó los SIM_* abiertos y la precisión
@@ -169,7 +169,9 @@ class CoreSettings(BaseSettings):
                 "ni un marcador de plantilla sin rellenar)"
             )
         if self.CORE_DB_SCHEMA != "jobhunt":
-            raise ValueError(f"en prod CORE_DB_SCHEMA debe ser 'jobhunt' ({self.CORE_DB_SCHEMA!r})")
+            raise ValueError(
+                f"en prod CORE_DB_SCHEMA debe ser 'jobhunt' ({self.CORE_DB_SCHEMA!r})"
+            )
 
         for name, url in (
             ("CORE_BROKER_URL", self.CORE_BROKER_URL),

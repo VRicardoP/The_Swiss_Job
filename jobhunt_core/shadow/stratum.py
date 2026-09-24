@@ -178,9 +178,7 @@ async def _require_unfrozen(session: AsyncSession, cohort: str) -> None:
     sello, con o sin acta, bloquea la escritura vía trigger igualmente."""
     frozen_at = (
         await session.execute(
-            sa.text(
-                "SELECT frozen_at FROM labeled_dedup_cohorts WHERE source = :src"
-            ),
+            sa.text("SELECT frozen_at FROM labeled_dedup_cohorts WHERE source = :src"),
             {"src": cohort},
         )
     ).scalar_one_or_none()
@@ -290,9 +288,7 @@ async def _resolve_legacy_refs(
     de_vuelta = await labels.map_job_refs_to_vacancies(
         session, sorted(set(by_vid.values()))
     )
-    no_vuelven = {
-        vid for vid, ref in by_vid.items() if str(de_vuelta.get(ref)) != vid
-    }
+    no_vuelven = {vid for vid, ref in by_vid.items() if str(de_vuelta.get(ref)) != vid}
     resolved: dict[str, tuple[str, str]] = {}
     bad: list[str] = []
     reciclados: list[str] = []
@@ -353,10 +349,11 @@ def main() -> None:  # pragma: no cover — envoltorio fino del CLI
     ap.add_argument("labels_json", help="JSON pair_id → label (acta de etiquetado)")
     ap.add_argument("--cohorte", default=POSITIVE_STRATUM_COHORT)
     ap.add_argument(
-        "--excluir", default="",
+        "--excluir",
+        default="",
         help="pair_ids separados por coma a excluir de la carga (los que las "
-             "guardas de round-trip o colisión hayan nombrado). Se contabilizan "
-             "como `excluidos_reciclado`: el acta ratificada NO se toca",
+        "guardas de round-trip o colisión hayan nombrado). Se contabilizan "
+        "como `excluidos_reciclado`: el acta ratificada NO se toca",
     )
     args = ap.parse_args()
     manual = parse_excluidos(args.excluir)
@@ -369,7 +366,10 @@ def main() -> None:  # pragma: no cover — envoltorio fino del CLI
         async with task_session_factory() as factory:
             async with factory() as s:
                 summary = await load_positive_stratum(
-                    s, candidates, labels_by_pair, cohort=args.cohorte,
+                    s,
+                    candidates,
+                    labels_by_pair,
+                    cohort=args.cohorte,
                     manual_excluded=manual,
                 )
                 await s.commit()

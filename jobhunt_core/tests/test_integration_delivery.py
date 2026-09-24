@@ -32,7 +32,13 @@ pytestmark = pytest.mark.skipif(
 def db():
     engine = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    created = {"sources": [], "scopes": [], "models": [], "consumers": [], "policies": []}
+    created = {
+        "sources": [],
+        "scopes": [],
+        "models": [],
+        "consumers": [],
+        "policies": [],
+    }
     yield factory, created
 
     async def cleanup():
@@ -86,17 +92,20 @@ def _dejar_pendientes(factory, pid, n: int) -> list:
     orden en que se ejecuten los demás tests. Devuelve los event_id que
     quedan vivos, en el orden en que el claim los verá."""
     vivos = [
-        r.event_id for r in _rows(
+        r.event_id
+        for r in _rows(
             factory,
             "SELECT d.event_id FROM integration_outbox_deliveries d "
             "JOIN integration_outbox o ON o.event_id = d.event_id "
             "WHERE o.subject_profile_id = :p AND d.state = 'pending' "
-            "ORDER BY d.event_id", p=pid,
+            "ORDER BY d.event_id",
+            p=pid,
         )
     ]
     assert len(vivos) >= n, f"el perfil solo tiene {len(vivos)} entregas"
     sobra = vivos[n:]
     if sobra:
+
         async def apartar():
             async with factory() as s:
                 await s.execute(
@@ -148,7 +157,8 @@ def test_emission_same_tx_deterministic_and_no_reemission(db):
         factory,
         "SELECT o.event_id, o.type, o.aggregate_id, o.subject_profile_id, "
         "o.version, o.payload FROM integration_outbox o "
-        "WHERE o.subject_profile_id = :p", p=pid,
+        "WHERE o.subject_profile_id = :p",
+        p=pid,
     )
     assert len(events) == 2
     for e in events:
@@ -159,10 +169,13 @@ def test_emission_same_tx_deterministic_and_no_reemission(db):
         factory,
         "SELECT d.destination, d.state FROM integration_outbox_deliveries d "
         "JOIN integration_outbox o ON o.event_id = d.event_id "
-        "WHERE o.subject_profile_id = :p", p=pid,
+        "WHERE o.subject_profile_id = :p",
+        p=pid,
     )
     assert len(deliveries) == 2
-    assert all(d.destination == "tenant-match" and d.state == "pending" for d in deliveries)
+    assert all(
+        d.destination == "tenant-match" and d.state == "pending" for d in deliveries
+    )
 
     # Reintento de evaluación: mismos eval_key ⇒ mismos event_id ⇒ nada nuevo.
     mid, polid = created["models"][0], created["policies"][0]
@@ -191,7 +204,8 @@ def test_dispatch_delivers_and_consumer_inbox_dedups(db):
             factory,
             "SELECT d.state, d.ack_at FROM integration_outbox_deliveries d "
             "JOIN integration_outbox o ON o.event_id = d.event_id "
-            "WHERE o.subject_profile_id = :p", p=pid,
+            "WHERE o.subject_profile_id = :p",
+            p=pid,
         )
         assert all(s.state == "delivered" and s.ack_at is not None for s in states)
 
@@ -238,7 +252,8 @@ def test_failure_backoff_then_dead_letter_with_alert(db, monkeypatch, caplog):
                 "SELECT d.attempts, d.state, d.last_error "
                 "FROM integration_outbox_deliveries d "
                 "JOIN integration_outbox o ON o.event_id = d.event_id "
-                "WHERE o.subject_profile_id = :p", p=pid,
+                "WHERE o.subject_profile_id = :p",
+                p=pid,
             )[0]
             assert (row.attempts, row.state) == (expected_attempts, "pending")
             assert "BFF caído" in row.last_error
@@ -250,7 +265,8 @@ def test_failure_backoff_then_dead_letter_with_alert(db, monkeypatch, caplog):
             factory,
             "SELECT d.state FROM integration_outbox_deliveries d "
             "JOIN integration_outbox o ON o.event_id = d.event_id "
-            "WHERE o.subject_profile_id = :p", p=pid,
+            "WHERE o.subject_profile_id = :p",
+            p=pid,
         )[0]
         assert row.state == "dead"
         assert any("DEAD-LETTER" in r.getMessage() for r in caplog.records)  # alerta
@@ -277,7 +293,8 @@ def test_expired_lease_is_reclaimed(db, monkeypatch):
         factory,
         "SELECT d.state FROM integration_outbox_deliveries d "
         "JOIN integration_outbox o ON o.event_id = d.event_id "
-        "WHERE o.subject_profile_id = :p", p=pid,
+        "WHERE o.subject_profile_id = :p",
+        p=pid,
     )[0]
     assert row.state == "inflight"  # colgado
 
@@ -303,7 +320,8 @@ def test_no_transport_claims_nothing_and_burns_no_attempts(db):
         factory,
         "SELECT d.state, d.attempts FROM integration_outbox_deliveries d "
         "JOIN integration_outbox o ON o.event_id = d.event_id "
-        "WHERE o.subject_profile_id = :p", p=pid,
+        "WHERE o.subject_profile_id = :p",
+        p=pid,
     )[0]
     assert (row.state, row.attempts) == ("pending", 0)  # intento NO consumido
 
@@ -324,12 +342,15 @@ def test_reclaim_by_expired_lease_burns_no_attempts(db):
             rows, _lease = await delivery.claim_deliveries(s, limit=10)
             await s.commit()
         async with factory() as s:
-            await s.execute(sa.text(
-                "UPDATE integration_outbox_deliveries d "
-                "SET lease = clock_timestamp() - interval '1 second' "
-                "FROM integration_outbox o "
-                "WHERE o.event_id = d.event_id AND o.subject_profile_id = :p"
-            ), {"p": pid})
+            await s.execute(
+                sa.text(
+                    "UPDATE integration_outbox_deliveries d "
+                    "SET lease = clock_timestamp() - interval '1 second' "
+                    "FROM integration_outbox o "
+                    "WHERE o.event_id = d.event_id AND o.subject_profile_id = :p"
+                ),
+                {"p": pid},
+            )
             await s.commit()
         return rows
 
@@ -339,7 +360,8 @@ def test_reclaim_by_expired_lease_burns_no_attempts(db):
         factory,
         "SELECT d.state, d.attempts FROM integration_outbox_deliveries d "
         "JOIN integration_outbox o ON o.event_id = d.event_id "
-        "WHERE o.subject_profile_id = :p", p=pid,
+        "WHERE o.subject_profile_id = :p",
+        p=pid,
     )[0]
     assert row.attempts == 0  # antes: 11 intentos fantasma
 
@@ -355,7 +377,8 @@ def test_reclaim_by_expired_lease_burns_no_attempts(db):
         factory,
         "SELECT d.state, d.attempts FROM integration_outbox_deliveries d "
         "JOIN integration_outbox o ON o.event_id = d.event_id "
-        "WHERE o.subject_profile_id = :p", p=pid,
+        "WHERE o.subject_profile_id = :p",
+        p=pid,
     )[0]
     assert (row.state, row.attempts) == ("pending", 1)  # el intento REAL sí cuenta
 
@@ -367,7 +390,6 @@ def test_wide_consumer_name_does_not_abort_evaluation(db):
     factory, created = db
     long_name = "swiss-jobhunter-bff-prod-eu-west-frontend-consumer-tenant-0001"
     assert len(long_name) > 60
-
 
     pid, mid, polid, vacs = tim._setup(factory, created, ["backend python"])
 
@@ -386,7 +408,8 @@ def test_wide_consumer_name_does_not_abort_evaluation(db):
         factory,
         "SELECT d.destination FROM integration_outbox_deliveries d "
         "JOIN integration_outbox o ON o.event_id = d.event_id "
-        "WHERE o.subject_profile_id = :p", p=pid,
+        "WHERE o.subject_profile_id = :p",
+        p=pid,
     )
     assert [d.destination for d in rows] == [long_name]
 
@@ -427,7 +450,9 @@ def test_emission_routes_to_each_consumers_bff(db):
         "SELECT o.subject_profile_id, d.destination "
         "FROM integration_outbox_deliveries d "
         "JOIN integration_outbox o ON o.event_id = d.event_id "
-        "WHERE o.subject_profile_id IN (:a, :b)", a=pid_a, b=pid_b,
+        "WHERE o.subject_profile_id IN (:a, :b)",
+        a=pid_a,
+        b=pid_b,
     )
     by_subject = {}
     for r in dests:
@@ -489,8 +514,10 @@ def test_late_mark_from_superseded_claim_cannot_resurrect_state(db, monkeypatch)
                 s,
                 [
                     {
-                        "eid": rows1[0].event_id, "dest": rows1[0].destination,
-                        "attempts": rows1[0].attempts + 1, "error": "tarde",
+                        "eid": rows1[0].event_id,
+                        "dest": rows1[0].destination,
+                        "attempts": rows1[0].attempts + 1,
+                        "error": "tarde",
                     }
                 ],
                 lease1,
@@ -506,11 +533,10 @@ def test_late_mark_from_superseded_claim_cannot_resurrect_state(db, monkeypatch)
         factory,
         "SELECT d.state, d.ack_at FROM integration_outbox_deliveries d "
         "JOIN integration_outbox o ON o.event_id = d.event_id "
-        "WHERE o.subject_profile_id = :p", p=pid,
+        "WHERE o.subject_profile_id = :p",
+        p=pid,
     )[0]
     assert row.state == "delivered" and row.ack_at is not None  # INTACTO
-
-
 
 
 @contextlib.contextmanager
@@ -618,7 +644,8 @@ def test_stats_lag_is_event_age_never_next_retry(db, monkeypatch):
         "SELECT d.state, d.next_attempt_at > clock_timestamp() AS future "
         "FROM integration_outbox_deliveries d "
         "JOIN integration_outbox o ON o.event_id = d.event_id "
-        "WHERE o.subject_profile_id = :p", p=pid,
+        "WHERE o.subject_profile_id = :p",
+        p=pid,
     )[0]
     assert (row.state, row.future) == ("pending", True)  # reintento FUTURO
 
@@ -697,7 +724,8 @@ def test_g3_lease_vencido_no_pierde_el_intento_ni_el_dead_letter(db, monkeypatch
             "SELECT d.state, d.attempts, d.last_error, d.dead_at "
             "FROM integration_outbox_deliveries d "
             "JOIN integration_outbox o ON o.event_id = d.event_id "
-            "WHERE o.subject_profile_id = :p", p=pid,
+            "WHERE o.subject_profile_id = :p",
+            p=pid,
         )[0]
 
     async def ciclo():
@@ -721,9 +749,14 @@ def test_g3_lease_vencido_no_pierde_el_intento_ni_el_dead_letter(db, monkeypatch
         async with factory() as s:
             res = await delivery.mark_failed(
                 s,
-                [{"eid": rows[0].event_id, "dest": rows[0].destination,
-                  "attempts": rows[0].attempts + 1,
-                  "error": "timeout real del transporte"}],
+                [
+                    {
+                        "eid": rows[0].event_id,
+                        "dest": rows[0].destination,
+                        "attempts": rows[0].attempts + 1,
+                        "error": "timeout real del transporte",
+                    }
+                ],
                 lease,
             )
             await s.commit()
@@ -773,6 +806,7 @@ def test_dos_fallos_solapados_consumen_dos_intentos_reales(db, monkeypatch):
 
     rows_a, lease_a = asyncio.run(claim())
     assert rows_a[0].attempts == 0
+
     async def expire_a():
         async with factory() as s:
             await s.execute(
@@ -793,12 +827,14 @@ def test_dos_fallos_solapados_consumen_dos_intentos_reales(db, monkeypatch):
         async with factory() as s:
             result = await delivery.mark_failed(
                 s,
-                [{
-                    "eid": row.event_id,
-                    "dest": row.destination,
-                    "attempts": row.attempts + 1,
-                    "error": error,
-                }],
+                [
+                    {
+                        "eid": row.event_id,
+                        "dest": row.destination,
+                        "attempts": row.attempts + 1,
+                        "error": error,
+                    }
+                ],
                 lease,
             )
             await s.commit()
@@ -806,11 +842,13 @@ def test_dos_fallos_solapados_consumen_dos_intentos_reales(db, monkeypatch):
 
     # A cuenta su transporte pero no transiciona: B posee el fence.
     assert asyncio.run(fail(rows_a[0], lease_a, "fallo A")) == {
-        "dead": 0, "retried": 0,
+        "dead": 0,
+        "retried": 0,
     }
     # B suma el segundo resultado y usa el contador devuelto por el UPDATE.
     assert asyncio.run(fail(rows_b[0], lease_b, "fallo B")) == {
-        "dead": 1, "retried": 0,
+        "dead": 1,
+        "retried": 0,
     }
     row = _rows(
         factory,
@@ -854,7 +892,8 @@ def test_g3_retire_exhausted_respeta_al_dueno_vigente_y_los_terminales(db, monke
         factory,
         "SELECT d.state FROM integration_outbox_deliveries d "
         "JOIN integration_outbox o ON o.event_id = d.event_id "
-        "WHERE o.subject_profile_id = :p", p=pid,
+        "WHERE o.subject_profile_id = :p",
+        p=pid,
     )[0]
     assert row.state == "inflight"  # intacta
 
@@ -875,6 +914,7 @@ def test_g3_veneno_que_mata_al_dispatcher_se_retira_y_desbloquea_la_cola(
     monkeypatch.setattr(delivery, "MAX_CLAIMS_WITHOUT_RESULT", 4)
 
     veneno, sano = _dejar_pendientes(factory, pid, 2)
+
     # El sano espera su turno DETRÁS (next_attempt_at no nulo): con limit=1 la
     # cabeza de la cola es siempre el veneno mientras siga vivo.
     async def _atrasar():
@@ -895,7 +935,8 @@ def test_g3_veneno_que_mata_al_dispatcher_se_retira_y_desbloquea_la_cola(
         return _rows(
             factory,
             "SELECT state, attempts, claims, last_error FROM "
-            "integration_outbox_deliveries WHERE event_id = :e", e=eid,
+            "integration_outbox_deliveries WHERE event_id = :e",
+            e=eid,
         )[0]
 
     async def _ciclo_que_mata_al_proceso():
@@ -908,6 +949,7 @@ def test_g3_veneno_que_mata_al_dispatcher_se_retira_y_desbloquea_la_cola(
     for i in range(delivery.MAX_CLAIMS_WITHOUT_RESULT):
         rows = asyncio.run(_ciclo_que_mata_al_proceso())
         assert [r.event_id for r in rows] == [veneno], f"ciclo {i}: la cabeza cambió"
+
         # El lease caduca (el proceso murió con el claim commiteado).
         async def _caducar():
             async with factory() as s:
@@ -965,7 +1007,8 @@ def test_g4_transporte_lento_pero_exitoso_no_muere_como_veneno(db, monkeypatch):
             "SELECT d.state, d.attempts, d.claims, d.last_error FROM "
             "integration_outbox_deliveries d "
             "JOIN integration_outbox o ON o.event_id = d.event_id "
-            "WHERE o.subject_profile_id = :p", p=pid,
+            "WHERE o.subject_profile_id = :p",
+            p=pid,
         )[0]
 
     async def _ciclo_lento_pero_exitoso():
@@ -1041,9 +1084,7 @@ def test_g4_transporte_lento_pero_exitoso_no_muere_como_veneno(db, monkeypatch):
     assert _estado().attempts == 1  # sin doble consumo de intento
 
 
-def test_g3_los_re_claims_de_un_mensaje_sano_no_lo_retiran_como_veneno(
-    db, monkeypatch
-):
+def test_g3_los_re_claims_de_un_mensaje_sano_no_lo_retiran_como_veneno(db, monkeypatch):
     """No-regresión de G3-H-1: un mensaje que SÍ produce resultado en cada
     ciclo —destino caído, el caso normal— no se acerca jamás al tope de
     veneno, porque el resultado pone `claims` a 0 aunque el fence descarte la
@@ -1061,7 +1102,8 @@ def test_g3_los_re_claims_de_un_mensaje_sano_no_lo_retiran_como_veneno(
             "SELECT d.state, d.attempts, d.claims FROM "
             "integration_outbox_deliveries d "
             "JOIN integration_outbox o ON o.event_id = d.event_id "
-            "WHERE o.subject_profile_id = :p", p=pid,
+            "WHERE o.subject_profile_id = :p",
+            p=pid,
         )[0]
 
     async def _ciclo_con_fallo_real():
@@ -1082,8 +1124,14 @@ def test_g3_los_re_claims_de_un_mensaje_sano_no_lo_retiran_como_veneno(
         async with factory() as s:
             await delivery.mark_failed(
                 s,
-                [{"eid": rows[0].event_id, "dest": rows[0].destination,
-                  "attempts": rows[0].attempts + 1, "error": "destino caído"}],
+                [
+                    {
+                        "eid": rows[0].event_id,
+                        "dest": rows[0].destination,
+                        "attempts": rows[0].attempts + 1,
+                        "error": "destino caído",
+                    }
+                ],
                 lease,
             )
             await s.commit()
@@ -1153,7 +1201,8 @@ def test_g5_un_veneno_no_arrastra_a_dead_letter_a_sus_vecinos_entregados(
         return _rows(
             factory,
             "SELECT state, attempts, claims, last_error FROM "
-            "integration_outbox_deliveries WHERE event_id = :e", e=eid,
+            "integration_outbox_deliveries WHERE event_id = :e",
+            e=eid,
         )[0]
 
     delivery.set_transport(transporte_venenoso)
@@ -1174,6 +1223,7 @@ def test_g5_un_veneno_no_arrastra_a_dead_letter_a_sus_vecinos_entregados(
     assert _estado(veneno).claims == delivery.MAX_CLAIMS_WITHOUT_RESULT
 
     with caplog_at_error() as records:
+
         async def retirar():
             async with factory() as s:
                 n = await delivery.retire_poisoned(s)
@@ -1230,12 +1280,13 @@ def test_g5_el_exito_confirmado_gana_al_reintento_de_otro_dispatcher(db):
             "SELECT d.state, d.attempts, d.last_error, d.next_attempt_at FROM "
             "integration_outbox_deliveries d "
             "JOIN integration_outbox o ON o.event_id = d.event_id "
-            "WHERE o.subject_profile_id = :p", p=pid,
+            "WHERE o.subject_profile_id = :p",
+            p=pid,
         )[0]
 
-    rows_a, lease_a = asyncio.run(claim())   # A se lleva el claim…
-    _caducar()                               # …y supera el lease entregando BIEN
-    rows_b, lease_b = asyncio.run(claim())   # el beat siguiente re-clama
+    rows_a, lease_a = asyncio.run(claim())  # A se lleva el claim…
+    _caducar()  # …y supera el lease entregando BIEN
+    rows_b, lease_b = asyncio.run(claim())  # el beat siguiente re-clama
     assert rows_b
 
     async def resolver():
@@ -1243,14 +1294,20 @@ def test_g5_el_exito_confirmado_gana_al_reintento_de_otro_dispatcher(db):
             # B (dueño legítimo) abandona por timeout ANTES de que A marque.
             ko = await delivery.mark_failed(
                 s,
-                [{"eid": rows_b[0].event_id, "dest": rows_b[0].destination,
-                  "attempts": rows_b[0].attempts + 1,
-                  "error": "timeout de cliente (504)"}],
+                [
+                    {
+                        "eid": rows_b[0].event_id,
+                        "dest": rows_b[0].destination,
+                        "attempts": rows_b[0].attempts + 1,
+                        "error": "timeout de cliente (504)",
+                    }
+                ],
                 lease_b,
             )
             # …y ahora llega el ÉXITO CONFIRMADO de A.
             ok = await delivery.mark_delivered(
-                s, [{"eid": rows_a[0].event_id, "dest": rows_a[0].destination}],
+                s,
+                [{"eid": rows_a[0].event_id, "dest": rows_a[0].destination}],
                 lease_a,
             )
             await s.commit()
@@ -1272,7 +1329,8 @@ def test_g5_el_exito_confirmado_gana_al_reintento_de_otro_dispatcher(db):
     async def mark_tardio():
         async with factory() as s:
             n = await delivery.mark_delivered(
-                s, [{"eid": rows_a[0].event_id, "dest": rows_a[0].destination}],
+                s,
+                [{"eid": rows_a[0].event_id, "dest": rows_a[0].destination}],
                 None,
             )
             await s.commit()
@@ -1359,7 +1417,8 @@ def test_shadow_inbox_transport_persistent_idempotent_at_least_once(db):
         rows = _rows(
             factory,
             "SELECT consumer_id, event_id, payload FROM shadow_inbox "
-            "WHERE payload->>'subject_profile_id' = :p", p=str(pid),
+            "WHERE payload->>'subject_profile_id' = :p",
+            p=str(pid),
         )
         assert len(rows) == 2
         for row in rows:
@@ -1367,7 +1426,9 @@ def test_shadow_inbox_transport_persistent_idempotent_at_least_once(db):
             assert row.payload["event_id"] == str(row.event_id)
             assert row.payload["type"] == "match.evaluated"
             assert set(row.payload["payload"]) == {
-                "eval_key", "profile_id", "vacancy_id",
+                "eval_key",
+                "profile_id",
+                "vacancy_id",
             }
 
         # RE-ENTREGA forzada (ack perdido): el transporte corre OTRA vez y
@@ -1390,7 +1451,8 @@ def test_shadow_inbox_transport_persistent_idempotent_at_least_once(db):
         n = _rows(
             factory,
             "SELECT count(*) AS n FROM shadow_inbox "
-            "WHERE payload->>'subject_profile_id' = :p", p=str(pid),
+            "WHERE payload->>'subject_profile_id' = :p",
+            p=str(pid),
         )[0].n
         assert n == 2  # cero duplicados: idempotente y PERSISTENTE
     finally:
@@ -1415,7 +1477,9 @@ def test_delivery_task_registered_and_routed():
     from jobhunt_core.config import settings as core_settings
 
     assert "jobhunt.delivery.dispatch_outbox" in celery_app.tasks
-    assert celery_app.conf.task_routes["jobhunt.delivery.*"] == {"queue": "core.default"}
+    assert celery_app.conf.task_routes["jobhunt.delivery.*"] == {
+        "queue": "core.default"
+    }
     assert celery_app.conf.task_routes["jobhunt.delivery.dispatch_outbox"] == {
         "queue": "core.default"
     }
@@ -1434,6 +1498,7 @@ def _envenenar(factory, eid, claims):
     """Deja ESA entrega justo en el borde del veneno: 'inflight', lease
     CADUCADO (no la posee nadie) y `claims` al tope, sin rastro del ciclo
     anterior. Devuelve el lease para poder fencear con él."""
+
     async def go():
         async with factory() as s:
             lease = (
@@ -1459,6 +1524,7 @@ def _carrera_con_retire_poisoned(factory, resolver):
     A arranca su retirada por veneno mientras tanto; B commitea y A termina.
     Es el interleaving exacto que el beat produce con `--concurrency=2` y un
     ciclo que se pasa del tick."""
+
     async def go():
         async with factory() as sB, factory() as sA:
             res = await resolver(sB)
@@ -1603,6 +1669,7 @@ def test_g7_el_aviso_de_lease_robado_muerde_en_LAS_DOS_direcciones(db, monkeypat
 
     # (a) La fila es NUESTRA y su lease está intacto: ni un aviso.
     with caplog_at_warning() as records:
+
         async def marcar_sana():
             async with factory() as s:
                 n = await delivery.mark_delivered(
@@ -1827,9 +1894,7 @@ def _lease_comun(factory, eids, off="+5 minutes"):
     async def go():
         async with factory() as s:
             lease = (
-                await s.execute(
-                    sa.text(f"SELECT clock_timestamp() + interval '{off}'")
-                )
+                await s.execute(sa.text(f"SELECT clock_timestamp() + interval '{off}'"))
             ).scalar_one()
             for eid in eids:
                 await s.execute(
@@ -1949,9 +2014,7 @@ def test_g8_el_mark_no_espera_en_filas_terminales_que_el_update_ni_mira(db):
     assert _estados(factory, [eid])[eid][0] == "dead"
 
 
-def test_g8_renew_lease_toma_los_locks_en_el_orden_canonico_del_modulo(
-    db, monkeypatch
-):
+def test_g8_renew_lease_toma_los_locks_en_el_orden_canonico_del_modulo(db, monkeypatch):
     """Regresión G8-N-3: `renew_lease` es la ÚNICA sentencia multifila del
     camino normal (un lote lento renueva TODO lo que le queda) y tomaba los
     locks en el orden del array del llamador —el del claim,
@@ -1968,8 +2031,9 @@ def test_g8_renew_lease_toma_los_locks_en_el_orden_canonico_del_modulo(
     todavía la ÚLTIMA."""
     factory, created = db
     pid, _ = _setup_evaluated(
-        factory, created, titles=("backend python", "data eng", "devops sre",
-                                  "ml engineer"),
+        factory,
+        created,
+        titles=("backend python", "data eng", "devops sre", "ml engineer"),
     )
     vivos = sorted(_dejar_pendientes(factory, pid, 4), key=str)
     dests = _destinos(factory, vivos)
@@ -1981,11 +2045,9 @@ def test_g8_renew_lease_toma_los_locks_en_el_orden_canonico_del_modulo(
 
     async def carrera():
         async with factory() as sH, factory() as sR:
-            await _lock(sH, primera, dests[primera])          # RETIENE la 1ª
-            tarea = asyncio.create_task(
-                delivery.renew_lease(sR, filas_al_reves, lease)
-            )
-            await asyncio.sleep(0.6)                          # ya está esperando
+            await _lock(sH, primera, dests[primera])  # RETIENE la 1ª
+            tarea = asyncio.create_task(delivery.renew_lease(sR, filas_al_reves, lease))
+            await asyncio.sleep(0.6)  # ya está esperando
             ultima_libre = await _libre(factory, ultima, dests[ultima])
             await sH.commit()
             nuevo, perdidas = await tarea
@@ -2003,7 +2065,8 @@ def test_g8_renew_lease_toma_los_locks_en_el_orden_canonico_del_modulo(
     vigentes = _rows(
         factory,
         "SELECT DISTINCT lease FROM integration_outbox_deliveries "
-        "WHERE event_id = ANY(:ids)", ids=[str(e) for e in vivos],
+        "WHERE event_id = ANY(:ids)",
+        ids=[str(e) for e in vivos],
     )
     assert [r.lease for r in vigentes] == [nuevo]
 
@@ -2025,8 +2088,9 @@ def test_g8_retire_exhausted_toma_los_locks_en_el_orden_canonico_del_modulo(
     factory, created = db
     monkeypatch.setattr(delivery, "MAX_ATTEMPTS", 2)
     pid, _ = _setup_evaluated(
-        factory, created, titles=("backend python", "data eng", "devops sre",
-                                  "ml engineer"),
+        factory,
+        created,
+        titles=("backend python", "data eng", "devops sre", "ml engineer"),
     )
     vivos = sorted(_dejar_pendientes(factory, pid, 4), key=str)
     dests = _destinos(factory, vivos)

@@ -29,16 +29,22 @@ S = settings.CORE_DB_SCHEMA  # "jobhunt"
 
 def upgrade() -> None:
     op.alter_column(
-        "integration_outbox_deliveries", "destination",
-        type_=sa.String(100), existing_type=sa.String(60),
-        existing_nullable=False, schema=S,
+        "integration_outbox_deliveries",
+        "destination",
+        type_=sa.String(100),
+        existing_type=sa.String(60),
+        existing_nullable=False,
+        schema=S,
     )
 
 
 def downgrade() -> None:
     # Best-effort: falla si existen destinos > 60 (correcto: no se truncan).
     op.alter_column(
-        "integration_outbox_deliveries", "destination",
-        type_=sa.String(60), existing_type=sa.String(100),
-        existing_nullable=False, schema=S,
+        "integration_outbox_deliveries",
+        "destination",
+        type_=sa.String(60),
+        existing_type=sa.String(100),
+        existing_nullable=False,
+        schema=S,
     )

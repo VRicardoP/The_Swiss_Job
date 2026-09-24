@@ -39,7 +39,11 @@ class DirectionalBackend:
     def encode_batch(self, texts):
         out = []
         for t in texts:
-            a = (int(hashlib.sha256(t.encode()).hexdigest()[:8], 16) % 60) * math.pi / 180
+            a = (
+                (int(hashlib.sha256(t.encode()).hexdigest()[:8], 16) % 60)
+                * math.pi
+                / 180
+            )
             out.append([math.cos(a), math.sin(a)] + [0.0] * (embeddings.EMBED_DIM - 2))
         return out
 
@@ -48,7 +52,13 @@ class DirectionalBackend:
 def db():
     engine = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    created = {"sources": [], "scopes": [], "models": [], "consumers": [], "policies": []}
+    created = {
+        "sources": [],
+        "scopes": [],
+        "models": [],
+        "consumers": [],
+        "policies": [],
+    }
     yield factory, created
 
     async def cleanup():
@@ -66,16 +76,25 @@ def db():
 
 def _listing(ext, title):
     return RawListing(
-        external_id=ext, url=f"https://x/{ext}",
+        external_id=ext,
+        url=f"https://x/{ext}",
         payload={
-            "title": title, "company_name": "ACME AG",
-            "description": f"puesto {title}", "tags": ["t"],
+            "title": title,
+            "company_name": "ACME AG",
+            "description": f"puesto {title}",
+            "tags": ["t"],
         },
     )
 
 
-def _setup(factory, created, titles, profile_content=None,
-           model_specs=(("modelo-match", SHA_A),), backend_factory=None):
+def _setup(
+    factory,
+    created,
+    titles,
+    profile_content=None,
+    model_specs=(("modelo-match", SHA_A),),
+    backend_factory=None,
+):
     """Fuente + ofertas (sink) + perfil + policy + modelo(s) + embeddings
     (task). Devuelve (profile_id, model_id_del_PRIMERO, policy_id,
     {título: vacancy_id}); los demás model_ids quedan en created["models"]."""
@@ -87,7 +106,9 @@ def _setup(factory, created, titles, profile_content=None,
             created["sources"].append(source_id)
             created["scopes"].append(scope_id)
             await s.execute(
-                sa.text("INSERT INTO sources (id, name, tier) VALUES (:id, 'arbeitnow', 0)"),
+                sa.text(
+                    "INSERT INTO sources (id, name, tier) VALUES (:id, 'arbeitnow', 0)"
+                ),
                 {"id": source_id},
             )
             await s.execute(
@@ -99,7 +120,8 @@ def _setup(factory, created, titles, profile_content=None,
             )
             await s.commit()
             await RawListingSink().handle(
-                s, str(scope_id),
+                s,
+                str(scope_id),
                 tuple(_listing(f"j{i}", t) for i, t in enumerate(titles)),
             )
             await s.commit()
@@ -107,7 +129,8 @@ def _setup(factory, created, titles, profile_content=None,
             created["consumers"].append(cid)
             pid = await profiles.upsert_profile(s, cid, "user-1")
             await profiles.save_profile_revision(
-                s, pid,
+                s,
+                pid,
                 profile_content or {"title": "python dev", "skills": ["python"]},
             )
             mids = []
@@ -159,7 +182,8 @@ def _evaluate(factory, pid, mid, polid, limit=100, move=True):
     # P1-3: evaluate_profile toma la FACTORY (trifásico, commit propio).
     async def go():
         return await matching.evaluate_profile(
-            factory, pid, mid, polid, limit=limit, move_current=move)
+            factory, pid, mid, polid, limit=limit, move_current=move
+        )
 
     return asyncio.run(go())
 
@@ -184,7 +208,9 @@ def test_evaluate_idempotent_and_state(db):
     """DoD: eval_key determinista — el reintento NO duplica; el estado apunta
     a la evaluación vigente."""
     factory, created = db
-    pid, mid, polid, vacs = _setup(factory, created, ["backend python", "data eng", "qa"])
+    pid, mid, polid, vacs = _setup(
+        factory, created, ["backend python", "data eng", "qa"]
+    )
 
     r1 = _evaluate(factory, pid, mid, polid)
     assert (r1["status"], r1["evaluated"], r1["new_evals"]) == ("ok", 3, 3)
@@ -193,7 +219,8 @@ def test_evaluate_idempotent_and_state(db):
         for r in _rows(
             factory,
             "SELECT vacancy_id, current_eval_id FROM profile_vacancy_state "
-            "WHERE profile_id = :p", p=pid,
+            "WHERE profile_id = :p",
+            p=pid,
         )
     }
     assert len(state1) == 3 and all(state1.values())
@@ -202,7 +229,8 @@ def test_evaluate_idempotent_and_state(db):
     assert r2["new_evals"] == 0  # ni una evaluación duplicada
     n = _rows(
         factory,
-        "SELECT count(*) AS n FROM match_evaluations WHERE profile_id = :p", p=pid,
+        "SELECT count(*) AS n FROM match_evaluations WHERE profile_id = :p",
+        p=pid,
     )
     assert n[0].n == 3
     state2 = {
@@ -210,7 +238,8 @@ def test_evaluate_idempotent_and_state(db):
         for r in _rows(
             factory,
             "SELECT vacancy_id, current_eval_id FROM profile_vacancy_state "
-            "WHERE profile_id = :p", p=pid,
+            "WHERE profile_id = :p",
+            p=pid,
         )
     }
     assert state2 == state1  # current_eval estable (misma fila append-only)
@@ -221,7 +250,8 @@ def test_feed_orders_filters_and_paginates(db):
     (archivada/fundida), keyset estable."""
     factory, created = db
     pid, mid, polid, vacs = _setup(
-        factory, created,
+        factory,
+        created,
         ["backend python", "data eng", "qa manual", "contable"],
     )
     _evaluate(factory, pid, mid, polid)
@@ -319,7 +349,8 @@ def test_smaller_canonical_top_k_retires_old_feed_pointers(db):
         factory,
         "SELECT current_eval_id, saved_at, notes "
         "FROM profile_vacancy_state WHERE profile_id = :p AND vacancy_id = :v",
-        p=pid, v=excluded,
+        p=pid,
+        v=excluded,
     )[0]
     assert state.current_eval_id is None
     assert state.saved_at is not None
@@ -371,7 +402,8 @@ def test_state_preserved_on_reevaluation(db):
         factory,
         "SELECT feedback, notes, dismissed_at, saved_at, current_eval_id "
         "FROM profile_vacancy_state WHERE profile_id = :p AND vacancy_id = :v",
-        p=pid, v=vid,
+        p=pid,
+        v=vid,
     )[0]
     assert (row.feedback, row.notes) == ("good", "mía")
     assert row.dismissed_at is not None and row.saved_at is not None
@@ -388,7 +420,9 @@ def test_new_offer_content_appends_new_eval_and_moves_current(db):
     old_eval = _rows(
         factory,
         "SELECT current_eval_id FROM profile_vacancy_state "
-        "WHERE profile_id = :p AND vacancy_id = :v", p=pid, v=vid,
+        "WHERE profile_id = :p AND vacancy_id = :v",
+        p=pid,
+        v=vid,
     )[0].current_eval_id
 
     # La oferta cambia de contenido → nueva canónica → nuevo embedding.
@@ -414,13 +448,16 @@ def test_new_offer_content_appends_new_eval_and_moves_current(db):
     evals = _rows(
         factory,
         "SELECT id FROM match_evaluations WHERE profile_id = :p AND vacancy_id = :v",
-        p=pid, v=vid,
+        p=pid,
+        v=vid,
     )
     assert len(evals) == 2  # append-only: la vieja permanece
     new_eval = _rows(
         factory,
         "SELECT current_eval_id FROM profile_vacancy_state "
-        "WHERE profile_id = :p AND vacancy_id = :v", p=pid, v=vid,
+        "WHERE profile_id = :p AND vacancy_id = :v",
+        p=pid,
+        v=vid,
     )[0].current_eval_id
     assert new_eval != old_eval  # vigente avanzada
 
@@ -462,7 +499,9 @@ def test_profile_without_vector_is_noop(db):
 
     r = asyncio.run(go())
     assert r == {
-        "status": "sin_vector", "evaluated": 0, "new_evals": 0,
+        "status": "sin_vector",
+        "evaluated": 0,
+        "new_evals": 0,
         "moved_current": False,
     }
 
@@ -481,16 +520,28 @@ def test_two_active_models_canonical_current_is_deterministic(db):
         def encode_batch(self, texts):
             out = []
             for t in texts:
-                a = ((int(hashlib.sha256(t.encode()).hexdigest()[:8], 16) % 60)
-                     + self._offset) * math.pi / 180
-                out.append([math.cos(a), math.sin(a)] + [0.0] * (embeddings.EMBED_DIM - 2))
+                a = (
+                    (
+                        (int(hashlib.sha256(t.encode()).hexdigest()[:8], 16) % 60)
+                        + self._offset
+                    )
+                    * math.pi
+                    / 180
+                )
+                out.append(
+                    [math.cos(a), math.sin(a)] + [0.0] * (embeddings.EMBED_DIM - 2)
+                )
             return out
 
     factory, created = db
     pid, mid_a, polid, vacs = _setup(
-        factory, created, ["backend python", "data eng"],
+        factory,
+        created,
+        ["backend python", "data eng"],
         model_specs=(("modelo-a", SHA_A), ("modelo-b", "b" * 40)),
-        backend_factory=lambda name, version: OffsetBackend(0 if name == "modelo-a" else 25),
+        backend_factory=lambda name, version: OffsetBackend(
+            0 if name == "modelo-a" else 25
+        ),
     )
     mid_b = created["models"][-1]
 
@@ -501,20 +552,24 @@ def test_two_active_models_canonical_current_is_deterministic(db):
             factory,
             "SELECT e.model_id, e.score_final FROM profile_vacancy_state s "
             "JOIN match_evaluations e ON e.id = s.current_eval_id "
-            "WHERE s.profile_id = :p", p=pid,
+            "WHERE s.profile_id = :p",
+            p=pid,
         )
         assert {c.model_id for c in cur} == {mid_a}  # SIEMPRE el canónico
 
     per_vac = _rows(
         factory,
         "SELECT vacancy_id, count(*) AS n FROM match_evaluations "
-        "WHERE profile_id = :p GROUP BY vacancy_id", p=pid,
+        "WHERE profile_id = :p GROUP BY vacancy_id",
+        p=pid,
     )
     assert all(r.n == 2 for r in per_vac)  # la sombra (modelo-b) SÍ se apendea
     sombra = _rows(
         factory,
         "SELECT count(*) AS n FROM match_evaluations "
-        "WHERE profile_id = :p AND model_id = :m", p=pid, m=mid_b,
+        "WHERE profile_id = :p AND model_id = :m",
+        p=pid,
+        m=mid_b,
     )
     assert sombra[0].n == 2
 
@@ -577,7 +632,8 @@ def test_profile_revision_change_appends_new_eval(db):
         factory,
         "SELECT e.profile_revision_id FROM profile_vacancy_state s "
         "JOIN match_evaluations e ON e.id = s.current_eval_id "
-        "WHERE s.profile_id = :p", p=pid,
+        "WHERE s.profile_id = :p",
+        p=pid,
     )
     assert cur[0].profile_revision_id == rid2  # current avanzó a la nueva
 
@@ -612,7 +668,9 @@ def test_canonical_skips_model_without_offer_embeddings(db):
 
     factory, created = db
     pid, mid_a, polid, vacs = _setup(
-        factory, created, ["backend python", "data eng"],
+        factory,
+        created,
+        ["backend python", "data eng"],
         model_specs=(("modelo-a", SHA_A), ("modelo-b", "b" * 40)),
     )
     mid_b = created["models"][-1]
@@ -635,7 +693,8 @@ def test_canonical_skips_model_without_offer_embeddings(db):
         factory,
         "SELECT e.model_id FROM profile_vacancy_state s "
         "JOIN match_evaluations e ON e.id = s.current_eval_id "
-        "WHERE s.profile_id = :p", p=pid,
+        "WHERE s.profile_id = :p",
+        p=pid,
     )
     assert len(cur) == 2 and {c.model_id for c in cur} == {mid_b}  # B movió
     rows, _ = _feed(factory, pid)
@@ -667,7 +726,9 @@ def _profile_vec_text(factory, pid, mid):
     return _rows(
         factory,
         "SELECT pe.vector::text AS v FROM profile_embeddings pe "
-        "WHERE pe.profile_id = :p AND pe.model_id = :m", p=pid, m=mid,
+        "WHERE pe.profile_id = :p AND pe.model_id = :m",
+        p=pid,
+        m=mid,
     )[0].v
 
 
@@ -699,7 +760,9 @@ def test_ann_starvation_by_orphan_embeddings(db):
                         sa.text("EXPLAIN " + matching.CANDIDATES_SQL),
                         {"vec": vec, "mid": mid, "k": 20},
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
             return plan
 
@@ -743,7 +806,9 @@ def test_small_corpus_single_ann_pass_and_fallback_counted(db, monkeypatch):
     pid, mid, polid, vacs = _setup(factory, created, ["backend python", "data eng"])
 
     counter = {"n": 0}
-    engine2 = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
+    engine2 = create_async_engine(
+        settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool
+    )
     factory2 = async_sessionmaker(engine2, expire_on_commit=False)
 
     def count_candidates(conn, cursor, statement, parameters, context, executemany):
@@ -754,8 +819,7 @@ def test_small_corpus_single_ann_pass_and_fallback_counted(db, monkeypatch):
 
     def run_eval():
         async def go():
-            return await matching.evaluate_profile(
-                factory2, pid, mid, polid, limit=100)
+            return await matching.evaluate_profile(factory2, pid, mid, polid, limit=100)
 
         return asyncio.run(go())
 
@@ -775,7 +839,8 @@ def test_small_corpus_single_ann_pass_and_fallback_counted(db, monkeypatch):
     # —así se detecta un camino donde la exclusión no se aplicaría—, así que
     # el vaciado se añade DETRÁS del ancla en vez de romperla.
     monkeypatch.setattr(
-        matching, "CANDIDATES_SQL",
+        matching,
+        "CANDIDATES_SQL",
         matching.CANDIDATES_SQL.replace(
             matching._CANDIDATE_ELIGIBILITY,
             matching._CANDIDATE_ELIGIBILITY + " AND false",
@@ -813,7 +878,9 @@ def test_state_timestamps_never_regress_across_overlapping_txs(db):
     row = _rows(
         factory,
         "SELECT dismissed_at, saved_at, updated_at FROM profile_vacancy_state "
-        "WHERE profile_id = :p AND vacancy_id = :v", p=pid, v=vid,
+        "WHERE profile_id = :p AND vacancy_id = :v",
+        p=pid,
+        v=vid,
     )[0]
     assert row.saved_at >= row.dismissed_at  # hora real de escritura
     assert row.updated_at >= row.dismissed_at  # jamás retrocede
@@ -833,7 +900,6 @@ def test_matching_task_end_to_end_and_not_found(db):
     r2 = run_profile_task.apply(args=[str(uuid.uuid4())])
     assert r2.successful()
 
-
     assert r2.result["status"] == "not_found"  # permanente, sin retry
 
 
@@ -841,17 +907,21 @@ def test_hybrid_policy_recovers_lexical_candidate_outside_ann_top_k(db):
     """El híbrido recupera una oferta explícita que el top-K ANN deja fuera."""
     factory, created = db
     pid, mid, cosine_id, vacs = _setup(
-        factory, created,
+        factory,
+        created,
         ["warehouse accountant", "kubernetes platform engineer"],
         profile_content={
-            "title": "kubernetes engineer", "skills": ["kubernetes"],
+            "title": "kubernetes engineer",
+            "skills": ["kubernetes"],
         },
     )
 
     async def configure():
         async with factory() as s:
             hybrid_id = await matching.ensure_policy(
-                s, matching.HYBRID_POLICY_NAME, matching.HYBRID_POLICY_VERSION,
+                s,
+                matching.HYBRID_POLICY_NAME,
+                matching.HYBRID_POLICY_VERSION,
                 weights=matching.HYBRID_POLICY_WEIGHTS,
             )
             created["policies"].append(hybrid_id)
@@ -897,25 +967,27 @@ def test_hybrid_policy_recovers_lexical_candidate_outside_ann_top_k(db):
             return hybrid_id
 
     hybrid_id = asyncio.run(configure())
-    assert _evaluate(
-        factory, pid, mid, cosine_id, limit=1, move=False)["evaluated"] == 1
+    assert (
+        _evaluate(factory, pid, mid, cosine_id, limit=1, move=False)["evaluated"] == 1
+    )
     cosine_vacancy = _rows(
         factory,
         "SELECT vacancy_id FROM match_evaluations "
         "WHERE profile_id = :p AND scoring_policy_id = :sp",
-        p=pid, sp=cosine_id,
+        p=pid,
+        sp=cosine_id,
     )[0].vacancy_id
     assert cosine_vacancy == vacs["warehouse accountant"]
 
     # Una RELATIVA ya no puede mover el feed (valla pair_absolute, Fase 1
     # cierre definitivo): el rescate léxico se afirma sobre el cálculo directo.
-    assert _evaluate(
-        factory, pid, mid, hybrid_id, limit=1, move=False)["evaluated"] == 1
+    assert (
+        _evaluate(factory, pid, mid, hybrid_id, limit=1, move=False)["evaluated"] == 1
+    )
 
     async def calculo():
         async with factory() as s:
-            return await matching.compute_policy_feed(
-                s, pid, mid, hybrid_id, limit=1)
+            return await matching.compute_policy_feed(s, pid, mid, hybrid_id, limit=1)
 
     filas = asyncio.run(calculo())["rows"]
     assert filas[0]["vacancy_id"] == vacs["kubernetes platform engineer"]
@@ -951,28 +1023,42 @@ def test_v4_reproduce_exactamente_a_v3_y_su_receta_es_reconstruible(db):
     las mismas puntuaciones que v3."""
     factory, created = db
     pid, mid, _, vacs = _setup(
-        factory, created,
-        ["python backend developer", "senior python engineer",
-         "data engineer python sql", "warehouse operative",
-         "kubernetes platform engineer", "frontend react developer"],
+        factory,
+        created,
+        [
+            "python backend developer",
+            "senior python engineer",
+            "data engineer python sql",
+            "warehouse operative",
+            "kubernetes platform engineer",
+            "frontend react developer",
+        ],
         profile_content={"title": "python developer", "skills": ["python", "sql"]},
     )
     # El defecto documentado: la fila de v2/v3 no contiene el peso…
     assert "lexical_weight" not in matching.HYBRID2_POLICY_WEIGHTS
     # …y la de v4 sí: receta completa, reconstruible desde datos.
     assert matching.HYBRID4_POLICY_WEIGHTS == {
-        "algorithm": "hybrid_rrf", "lexical_query": "v2",
-        "lexical_weight": 0.25, "rrf_k": 60,
+        "algorithm": "hybrid_rrf",
+        "lexical_query": "v2",
+        "lexical_weight": 0.25,
+        "rrf_k": 60,
     }
 
     async def policies():
         async with factory() as s:
             v3 = await matching.ensure_policy(
-                s, matching.HYBRID_POLICY_NAME, "v3",
-                weights=matching.HYBRID2_POLICY_WEIGHTS)
+                s,
+                matching.HYBRID_POLICY_NAME,
+                "v3",
+                weights=matching.HYBRID2_POLICY_WEIGHTS,
+            )
             v4 = await matching.ensure_policy(
-                s, matching.HYBRID_POLICY_NAME, matching.HYBRID4_POLICY_VERSION,
-                weights=matching.HYBRID4_POLICY_WEIGHTS)
+                s,
+                matching.HYBRID_POLICY_NAME,
+                matching.HYBRID4_POLICY_VERSION,
+                weights=matching.HYBRID4_POLICY_WEIGHTS,
+            )
             created["policies"] += [v3, v4]
             await s.commit()
             return v3, v4
@@ -987,15 +1073,17 @@ def test_v4_reproduce_exactamente_a_v3_y_su_receta_es_reconstruible(db):
             factory,
             "SELECT vacancy_id, score_final, scores FROM match_evaluations "
             "WHERE profile_id = :p AND scoring_policy_id = :sp "
-            "ORDER BY score_final DESC, vacancy_id", p=pid, sp=spid)
+            "ORDER BY score_final DESC, vacancy_id",
+            p=pid,
+            sp=spid,
+        )
 
     r3, r4 = ranking(v3_id), ranking(v4_id)
-    assert [(r.vacancy_id, r.score_final) for r in r3] == \
-        [(r.vacancy_id, r.score_final) for r in r4]
+    assert [(r.vacancy_id, r.score_final) for r in r3] == [
+        (r.vacancy_id, r.score_final) for r in r4
+    ]
     # v4 deja constancia de su receta en CADA fila; v3 no puede (ese es el bug).
-    assert all(
-        r.scores.get("recipe") == matching.HYBRID4_POLICY_WEIGHTS for r in r4
-    )
+    assert all(r.scores.get("recipe") == matching.HYBRID4_POLICY_WEIGHTS for r in r4)
     assert all("recipe" not in r.scores for r in r3)
 
 
@@ -1010,16 +1098,24 @@ def test_una_receta_no_soportada_no_evalua_nada(db):
         async with factory() as s:
             mala = dict(matching.HYBRID4_POLICY_WEIGHTS, rrf_k=61)
             polid = await matching.ensure_policy(
-                s, matching.HYBRID_POLICY_NAME, "v99", weights=mala)
+                s, matching.HYBRID_POLICY_NAME, "v99", weights=mala
+            )
             created["policies"].append(polid)
             await s.commit()
         with pytest.raises(ValueError, match="rrf_k"):
             await matching.evaluate_profile(
-                factory, pid, mid, polid, move_current=False)
+                factory, pid, mid, polid, move_current=False
+            )
         async with factory() as s:
-            n = (await s.execute(sa.text(
-                "SELECT count(*) FROM match_evaluations "
-                "WHERE scoring_policy_id = :sp"), {"sp": polid})).scalar_one()
+            n = (
+                await s.execute(
+                    sa.text(
+                        "SELECT count(*) FROM match_evaluations "
+                        "WHERE scoring_policy_id = :sp"
+                    ),
+                    {"sp": polid},
+                )
+            ).scalar_one()
             assert n == 0
 
     asyncio.run(go())
@@ -1037,7 +1133,8 @@ def test_un_worker_pre_flip_no_puede_restaurar_el_feed_antiguo(db):
     escribir nada), en vez de degradar a «registrada sin mover»."""
     factory, created = db
     pid, mid, cosine_id, _ = _setup(
-        factory, created, ["python developer", "warehouse operative"])
+        factory, created, ["python developer", "warehouse operative"]
+    )
     # Worker A leyó las políticas: coseno canónico. Feed inicial bajo coseno.
     assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
 
@@ -1046,8 +1143,8 @@ def test_un_worker_pre_flip_no_puede_restaurar_el_feed_antiguo(db):
     async def promote():
         async with factory() as s:
             cand = await matching.ensure_policy(
-                s, "cosine-nueva", "v1", weights={"algorithm": "cosine"},
-                active=False)
+                s, "cosine-nueva", "v1", weights={"algorithm": "cosine"}, active=False
+            )
             created["policies"].append(cand)
             await matching.declare_active_policies(s, [cand])
             await s.commit()
@@ -1067,7 +1164,9 @@ def test_un_worker_pre_flip_no_puede_restaurar_el_feed_antiguo(db):
         "SELECT DISTINCT e.scoring_policy_id AS spid "
         "FROM profile_vacancy_state s "
         "JOIN match_evaluations e ON e.id = s.current_eval_id "
-        "WHERE s.profile_id = :p AND s.current_eval_id IS NOT NULL", p=pid)
+        "WHERE s.profile_id = :p AND s.current_eval_id IS NOT NULL",
+        p=pid,
+    )
     assert [str(x.spid) for x in refs] == [str(v4_id)]
 
 
@@ -1108,22 +1207,23 @@ def test_el_redeploy_no_cambia_la_canonicidad(db):
             ids = await matching.bootstrap_policy_catalog(s)
             created["policies"] += list(ids.values())
             cos = ids[("cosine-baseline", "v1")]
-            v4 = ids[
-                (matching.HYBRID_POLICY_NAME, matching.HYBRID4_POLICY_VERSION)
-            ]
+            v4 = ids[(matching.HYBRID_POLICY_NAME, matching.HYBRID4_POLICY_VERSION)]
             legacy = {
-                str(ids[(matching.HYBRID_POLICY_NAME, v)])
-                for v in ("v1", "v2", "v3")
+                str(ids[(matching.HYBRID_POLICY_NAME, v)]) for v in ("v1", "v2", "v3")
             }
 
             async def activas():
                 return {
-                    str(r[0]) for r in (await s.execute(
-                        sa.text(
-                            "SELECT id FROM scoring_policies WHERE active "
-                            "AND id = ANY(CAST(:c AS uuid[]))"),
-                        {"c": [str(x) for x in ids.values()]},
-                    )).all()
+                    str(r[0])
+                    for r in (
+                        await s.execute(
+                            sa.text(
+                                "SELECT id FROM scoring_policies WHERE active "
+                                "AND id = ANY(CAST(:c AS uuid[]))"
+                            ),
+                            {"c": [str(x) for x in ids.values()]},
+                        )
+                    ).all()
                 }
 
             # Estados operativos LEGALES (canónica absoluta); el redeploy
@@ -1151,33 +1251,45 @@ def test_exclusion_se_aplica_ANTES_del_limite_de_recuperacion(db):
     filas (las dos elegibles); filtrando después vuelve UNA."""
     factory, created = db
     pid, mid, polid, vacs = _setup(
-        factory, created, ["alpha excluida", "beta buena", "gamma buena"])
+        factory, created, ["alpha excluida", "beta buena", "gamma buena"]
+    )
 
     async def preparar():
         async with factory() as s:
             # Orden ANN determinista: alpha > beta > gamma
             vec_perfil = [1.0, 0.0] + [0.0] * (embeddings.EMBED_DIM - 2)
-            await s.execute(sa.text(
-                "UPDATE profile_embeddings SET vector = CAST(:v AS vector) "
-                "WHERE profile_id = :p AND model_id = :m"),
-                {"v": str(vec_perfil), "p": pid, "m": mid})
-            for titulo, ang in (("alpha excluida", 0.0),
-                                ("beta buena", 0.30), ("gamma buena", 0.60)):
-                v = [math.cos(ang), math.sin(ang)] + [0.0] * (
-                    embeddings.EMBED_DIM - 2)
-                await s.execute(sa.text(
-                    "UPDATE offer_embeddings SET vector = CAST(:v AS vector) "
-                    "WHERE model_id = :m AND text_hash IN ("
-                    " SELECT o.text_hash FROM offer_revisions o "
-                    " JOIN vacancies va ON va.current_offer_revision_id = o.id "
-                    " WHERE o.content->>'title' = :t)"),
-                    {"v": str(v), "m": mid, "t": titulo})
+            await s.execute(
+                sa.text(
+                    "UPDATE profile_embeddings SET vector = CAST(:v AS vector) "
+                    "WHERE profile_id = :p AND model_id = :m"
+                ),
+                {"v": str(vec_perfil), "p": pid, "m": mid},
+            )
+            for titulo, ang in (
+                ("alpha excluida", 0.0),
+                ("beta buena", 0.30),
+                ("gamma buena", 0.60),
+            ):
+                v = [math.cos(ang), math.sin(ang)] + [0.0] * (embeddings.EMBED_DIM - 2)
+                await s.execute(
+                    sa.text(
+                        "UPDATE offer_embeddings SET vector = CAST(:v AS vector) "
+                        "WHERE model_id = :m AND text_hash IN ("
+                        " SELECT o.text_hash FROM offer_revisions o "
+                        " JOIN vacancies va ON va.current_offer_revision_id = o.id "
+                        " WHERE o.content->>'title' = :t)"
+                    ),
+                    {"v": str(v), "m": mid, "t": titulo},
+                )
             # alpha queda DESCARTADA
-            await s.execute(sa.text(
-                "INSERT INTO profile_vacancy_state "
-                "(profile_id, vacancy_id, dismissed_at) "
-                "VALUES (:p, :v, now())"),
-                {"p": pid, "v": vacs["alpha excluida"]})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO profile_vacancy_state "
+                    "(profile_id, vacancy_id, dismissed_at) "
+                    "VALUES (:p, :v, now())"
+                ),
+                {"p": pid, "v": vacs["alpha excluida"]},
+            )
             await s.commit()
 
     asyncio.run(preparar())
@@ -1185,14 +1297,16 @@ def test_exclusion_se_aplica_ANTES_del_limite_de_recuperacion(db):
     async def calcular():
         async with factory() as s:
             return await matching.compute_policy_feed(
-                s, pid, mid, polid, limit=2, exclude_dismissed=True)
+                s, pid, mid, polid, limit=2, exclude_dismissed=True
+            )
 
     r = asyncio.run(calcular())
     ids = [str(f["vacancy_id"]) for f in r["rows"]]
     assert str(vacs["alpha excluida"]) not in ids
     # DOS filas: la exclusión no puede robar una plaza del top-K
     assert len(ids) == 2, (
-        f"la exclusión se aplicó después del LIMIT: {len(ids)} candidatos")
+        f"la exclusión se aplicó después del LIMIT: {len(ids)} candidatos"
+    )
     assert set(ids) == {str(vacs["beta buena"]), str(vacs["gamma buena"])}
 
 
@@ -1208,19 +1322,27 @@ def test_modelo_con_corpus_solo_archivado_no_es_canonico(db):
         async with factory() as s:
             # modelo 'aa-…' anterior en el orden, con embeddings COPIADOS…
             m2 = await embeddings.register_model(
-                s, "aa-solo-archivado", "a" * 40, active=False)
+                s, "aa-solo-archivado", "a" * 40, active=False
+            )
             created["models"].append(m2)
             await s.commit()
-            await s.execute(sa.text(
-                "INSERT INTO offer_embeddings (text_hash, model_id, vector) "
-                "SELECT text_hash, :m2, vector FROM offer_embeddings "
-                "WHERE model_id = :m1"), {"m2": m2, "m1": mid})
-            await s.execute(sa.text(
-                "INSERT INTO profile_embeddings "
-                "(profile_id, profile_revision_id, model_id, vector) "
-                "SELECT profile_id, profile_revision_id, :m2, vector "
-                "FROM profile_embeddings WHERE model_id = :m1"),
-                {"m2": m2, "m1": mid})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO offer_embeddings (text_hash, model_id, vector) "
+                    "SELECT text_hash, :m2, vector FROM offer_embeddings "
+                    "WHERE model_id = :m1"
+                ),
+                {"m2": m2, "m1": mid},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO profile_embeddings "
+                    "(profile_id, profile_revision_id, model_id, vector) "
+                    "SELECT profile_id, profile_revision_id, :m2, vector "
+                    "FROM profile_embeddings WHERE model_id = :m1"
+                ),
+                {"m2": m2, "m1": mid},
+            )
             await embeddings.declare_active_models(s, [m2, mid])
             await s.commit()
             return m2
@@ -1236,9 +1358,12 @@ def test_modelo_con_corpus_solo_archivado_no_es_canonico(db):
 
     async def archivar_todo():
         async with factory() as s:
-            await s.execute(sa.text(
-                "UPDATE vacancies SET archived_at = now() WHERE id = ANY(:ids)"),
-                {"ids": list(vacs.values())})
+            await s.execute(
+                sa.text(
+                    "UPDATE vacancies SET archived_at = now() WHERE id = ANY(:ids)"
+                ),
+                {"ids": list(vacs.values())},
+            )
             await s.commit()
 
     asyncio.run(archivar_todo())
@@ -1255,21 +1380,25 @@ def test_exclusiones_del_perfil_se_aplican_en_la_recuperacion(db):
     igualdad case-insensitive de algún elemento."""
     factory, created = db
     pid, mid, polid, vacs = _setup(
-        factory, created,
-        ["Director of Engineering", "Backend Engineer", "Data Analyst"])
+        factory,
+        created,
+        ["Director of Engineering", "Backend Engineer", "Data Analyst"],
+    )
 
     async def excluir(kind, pattern):
         async with factory() as s:
-            await s.execute(sa.text(
-                "INSERT INTO profile_exclusions (profile_id, kind, pattern) "
-                "VALUES (:p, :k, :pat) ON CONFLICT DO NOTHING"),
-                {"p": pid, "k": kind, "pat": pattern})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO profile_exclusions (profile_id, kind, pattern) "
+                    "VALUES (:p, :k, :pat) ON CONFLICT DO NOTHING"
+                ),
+                {"p": pid, "k": kind, "pat": pattern},
+            )
             await s.commit()
 
     async def calcular():
         async with factory() as s:
-            r = await matching.compute_policy_feed(s, pid, mid, polid,
-                                                   limit=100)
+            r = await matching.compute_policy_feed(s, pid, mid, polid, limit=100)
             return {str(f["vacancy_id"]) for f in r["rows"]}
 
     # sin exclusiones: las tres
@@ -1288,9 +1417,10 @@ def test_exclusiones_del_perfil_se_aplican_en_la_recuperacion(db):
     # un patrón que NO casa como elemento completo no excluye
     async def limpiar():
         async with factory() as s:
-            await s.execute(sa.text(
-                "DELETE FROM profile_exclusions WHERE profile_id = :p"),
-                {"p": pid})
+            await s.execute(
+                sa.text("DELETE FROM profile_exclusions WHERE profile_id = :p"),
+                {"p": pid},
+            )
             await s.commit()
 
     asyncio.run(limpiar())

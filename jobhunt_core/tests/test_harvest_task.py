@@ -25,7 +25,11 @@ def test_task_returns_result_dict():
         r = harvest_task.run_scope_task.apply(args=["s1"])
     assert r.successful()
     assert r.result == {
-        "scope_id": "s1", "status": "ok", "listings": 3, "pages": 2, "error": None,
+        "scope_id": "s1",
+        "status": "ok",
+        "listings": 3,
+        "pages": 2,
+        "error": None,
     }
 
 
@@ -34,9 +38,13 @@ def test_task_result_distingue_un_partial_por_fallo_de_uno_por_tope():
     en el resultado Celery un 'partial' por sobre roto a mitad de barrido era
     indistinguible de un 'partial' por tope de páginas — dos cosas con urgencias
     opuestas. El runner sí lo logueaba; quien lea el resultado de la tarea, no."""
+
     async def por_fallo(scope_id):
         return ScopeRunResult(
-            scope_id=scope_id, status="partial", listings=2, pages=1,
+            scope_id=scope_id,
+            status="partial",
+            listings=2,
+            pages=1,
             error="página 2: HTTP 429",
         )
 
@@ -54,6 +62,7 @@ def test_task_result_distingue_un_partial_por_fallo_de_uno_por_tope():
 
 def test_task_partial_and_stale_do_not_retry():
     for status in ("partial", "stale", "skipped"):
+
         async def fake_impl(scope_id, _s=status):
             return ScopeRunResult(scope_id=scope_id, status=_s)
 
@@ -75,6 +84,7 @@ def test_task_error_result_retries():
 def test_task_not_found_does_not_retry():
     """Rev. A-04 #5: scope eliminado tras encolar = caso NORMAL permanente —
     'not_found' sin consumir retry."""
+
     async def fake_impl(scope_id):
         return ScopeRunResult(scope_id=scope_id, status="not_found")
 
@@ -148,20 +158,34 @@ def test_preprocess_boundary_limits():
     positivo: espacios, UTF-8 y un '\\u0000' LITERAL (texto legítimo, sin NUL
     real) NUNCA cuarentenan."""
     ok = RawListing(
-        external_id="a", url="https://x/a",
+        external_id="a",
+        url="https://x/a",
         payload={"title": "desarrollo web", "desc": "señal — ütf8", "lit": "\\u0000"},
     )
     assert _preprocess(ok) is not None
     for bad in (
         RawListing(external_id="x" * 201, url="https://x/a", payload={}),
         RawListing(external_id="a", url="https://x/" + "u" * 2100, payload={}),
-        RawListing(external_id="a", url="https://x/a", payload={}, apply_url="https://x/" + "u" * 2100),
+        RawListing(
+            external_id="a",
+            url="https://x/a",
+            payload={},
+            apply_url="https://x/" + "u" * 2100,
+        ),
         RawListing(external_id="a", url="https://x/a", payload={"t": "a\x00b"}),
         RawListing(external_id="a\x00b", url="https://x/a", payload={}),
-        RawListing(external_id="a", url="https://x/a", payload={"n": float("nan")}),  # 2ª: jsonb sin NaN
-        RawListing(external_id="a", url="https://[invalid", payload={}),  # 2ª: urlsplit ValueError
-        RawListing(external_id="a\ud800", url="https://x/a", payload={}),  # 2ª: surrogate en id
-        RawListing(external_id="a", url="https://x/a\ud800", payload={}),  # 2ª: surrogate en url
+        RawListing(
+            external_id="a", url="https://x/a", payload={"n": float("nan")}
+        ),  # 2ª: jsonb sin NaN
+        RawListing(
+            external_id="a", url="https://[invalid", payload={}
+        ),  # 2ª: urlsplit ValueError
+        RawListing(
+            external_id="a\ud800", url="https://x/a", payload={}
+        ),  # 2ª: surrogate en id
+        RawListing(
+            external_id="a", url="https://x/a\ud800", payload={}
+        ),  # 2ª: surrogate en url
         RawListing(external_id="a", url="https://x/a", payload={"t": "\ud800"}),
     ):
         assert _preprocess(bad) is None
@@ -170,8 +194,13 @@ def test_preprocess_boundary_limits():
 def test_identity_normalization_pf5():
     """PF.5 portado (A-05): seniority/género por TOKEN, sufijos legales fuera."""
     assert identity.normalize_title("Senior Python Dev (m/w/d)") == "python dev"
-    assert identity.normalize_title("International Team Leader") == "international team leader"
-    assert identity.normalize_company("ACME AG") == identity.normalize_company("Acme GmbH")
+    assert (
+        identity.normalize_title("International Team Leader")
+        == "international team leader"
+    )
+    assert identity.normalize_company("ACME AG") == identity.normalize_company(
+        "Acme GmbH"
+    )
     assert identity.fuzzy_key("Python Dev", "ACME AG") == "python dev|acme"
     assert identity.fuzzy_key("Python Dev", None) is None  # identidad incompleta
     assert identity.fuzzy_key(None, "ACME") is None
@@ -184,7 +213,10 @@ def test_identity_recycle_guard_semantics():
     assert not identity.should_recycle(("t", "ACME AG"), ("t", "acme gmbh"))
     assert not identity.should_recycle(("t", None), ("t", "ACME"))
     assert not identity.should_recycle(("t", "ACME"), ("t", None))
-    assert identity.extract_identity("fuente-desconocida", {"title": "x"}) == (None, None)
+    assert identity.extract_identity("fuente-desconocida", {"title": "x"}) == (
+        None,
+        None,
+    )
 
     identity.register_extractor("rota", lambda p: p["no-existe"])
     try:
@@ -196,12 +228,15 @@ def test_identity_recycle_guard_semantics():
 def test_identity_non_string_values_degrade_to_none():
     """Auditoría A-05 #2: title/company no-string del feed (número, bool,
     lista, objeto) = identidad ausente — nunca llega a .lower()."""
-    identity.register_extractor(
-        "tipos", lambda p: (p.get("title"), p.get("company"))
-    )
+    identity.register_extractor("tipos", lambda p: (p.get("title"), p.get("company")))
     try:
-        assert identity.extract_identity("tipos", {"title": 42, "company": 7}) == (None, None)
-        assert identity.extract_identity("tipos", {"title": True, "company": ["x"]}) == (None, None)
+        assert identity.extract_identity("tipos", {"title": 42, "company": 7}) == (
+            None,
+            None,
+        )
+        assert identity.extract_identity(
+            "tipos", {"title": True, "company": ["x"]}
+        ) == (None, None)
         assert identity.extract_identity(
             "tipos", {"title": "ok", "company": {"name": "ACME"}}
         ) == ("ok", None)
@@ -211,7 +246,9 @@ def test_identity_non_string_values_degrade_to_none():
 
 def test_normalize_url_canonical():
     assert normalize_url("HTTPS://Example.com/Job/1/") == "https://example.com/Job/1"
-    assert normalize_url("https://x/a?id=7#frag") == "https://x/a?id=7"  # query se conserva
+    assert (
+        normalize_url("https://x/a?id=7#frag") == "https://x/a?id=7"
+    )  # query se conserva
     assert normalize_url("https://x/a") == normalize_url("https://x/a/")
 
 
@@ -254,10 +291,7 @@ def test_normalize_url_drops_document_anchors():
 def test_normalize_url_base_behavior_unchanged():
     """Sin fragmento, nada cambia: host/esquema en minúsculas, sin barra
     final, query conservada."""
-    assert (
-        normalize_url("HTTPS://X.ch/Jobs/?id=7")
-        == "https://x.ch/Jobs?id=7"
-    )
+    assert normalize_url("HTTPS://X.ch/Jobs/?id=7") == "https://x.ch/Jobs?id=7"
 
 
 def test_ninguna_tarea_del_core_puede_dormir_para_siempre():

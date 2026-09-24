@@ -105,15 +105,12 @@ async def migrate_feedback(
 
     Por cada fila tocada, el manifiesto guarda {vacancy_id, existed,
     feedback_antes, dismissed_at_antes} — rollback por VALORES exactos."""
-    counts = {"migrated": 0, "kept_existing": 0, "unresolved": 0,
-              "invalid_feedback": 0}
+    counts = {"migrated": 0, "kept_existing": 0, "unresolved": 0, "invalid_feedback": 0}
     # P1-5: varias entradas legacy pueden converger en la MISMA vacante. La
     # imagen previa se captura UNA sola vez por clave natural — si no, la
     # segunda captura el valor que acaba de escribir la primera y el rollback
     # lo restauraría.
-    capturadas = {
-        (e["profile_id"], e["vacancy_id"]) for e in manifest["pvs"]
-    }
+    capturadas = {(e["profile_id"], e["vacancy_id"]) for e in manifest["pvs"]}
     for row in rows:
         fb = row.get("feedback")
         if fb not in VALID_FEEDBACK:
@@ -130,8 +127,8 @@ async def migrate_feedback(
             continue
         for vid in vids:
             await _aplicar_feedback(
-                session, profile_id, vid, row, fb, manifest, capturadas,
-                counts)
+                session, profile_id, vid, row, fb, manifest, capturadas, counts
+            )
     return counts
 
 
@@ -157,16 +154,20 @@ async def _aplicar_feedback(
     clave = (str(profile_id), str(vid))
     if clave not in capturadas:
         capturadas.add(clave)
-        manifest["pvs"].append({
-            "profile_id": str(profile_id), "vacancy_id": str(vid),
-            "existed": antes is not None,
-            "feedback_antes": antes.feedback if antes else None,
-            "dismissed_at_antes": (
-                antes.dismissed_at.isoformat()
-                if antes and antes.dismissed_at else None
-            ),
-            "feedback_escrito": fb,
-        })
+        manifest["pvs"].append(
+            {
+                "profile_id": str(profile_id),
+                "vacancy_id": str(vid),
+                "existed": antes is not None,
+                "feedback_antes": antes.feedback if antes else None,
+                "dismissed_at_antes": (
+                    antes.dismissed_at.isoformat()
+                    if antes and antes.dismissed_at
+                    else None
+                ),
+                "feedback_escrito": fb,
+            }
+        )
     if antes is not None and antes.feedback is not None:
         counts["kept_existing"] += 1  # ADR-03: jamás pisar estado
         return
@@ -216,9 +217,13 @@ async def attach_exclusion_filters(
         if insertada is None:
             counts["ya_presentes"] += 1
             continue
-        manifest["exclusiones"].append({
-            "profile_id": str(profile_id), "kind": kind, "pattern": patron,
-        })
+        manifest["exclusiones"].append(
+            {
+                "profile_id": str(profile_id),
+                "kind": kind,
+                "pattern": patron,
+            }
+        )
         counts["insertadas"] += 1
     return counts
 
@@ -254,14 +259,17 @@ async def fixup_notify(
         if antes is None:
             counts["not_found"] += 1
             continue
-        if (str(antes.notify_frequency) == str(freq)
-                and bool(antes.notify_push) == bool(push)):
+        if str(antes.notify_frequency) == str(freq) and bool(antes.notify_push) == bool(
+            push
+        ):
             continue
-        manifest["notify_fixups"].append({
-            "saved_search_id": str(antes.id),
-            "notify_frequency_antes": str(antes.notify_frequency),
-            "notify_push_antes": bool(antes.notify_push),
-        })
+        manifest["notify_fixups"].append(
+            {
+                "saved_search_id": str(antes.id),
+                "notify_frequency_antes": str(antes.notify_frequency),
+                "notify_push_antes": bool(antes.notify_push),
+            }
+        )
         await session.execute(
             sa.text(
                 "UPDATE saved_searches "
@@ -281,8 +289,10 @@ async def run_import(session: AsyncSession, plan: dict) -> dict:
     exclusions: {external: [patterns]}}. Devuelve el MANIFIESTO."""
     manifest = {
         "version": "swissjob-durables-v1",
-        "pvs": [], "saved_search_ids": [],
-        "exclusiones": [], "notify_fixups": [],
+        "pvs": [],
+        "saved_search_ids": [],
+        "exclusiones": [],
+        "notify_fixups": [],
         "counts": {},
     }
     for externo, pid in plan["profiles"].items():
@@ -291,15 +301,14 @@ async def run_import(session: AsyncSession, plan: dict) -> dict:
             str(r)
             for r in (
                 await session.execute(
-                    sa.text(
-                        "SELECT id FROM saved_searches WHERE profile_id = :p"
-                    ),
+                    sa.text("SELECT id FROM saved_searches WHERE profile_id = :p"),
                     {"p": pid},
                 )
             ).scalars()
         }
         c_fb = await migrate_feedback(
-            session, pid, plan.get("feedback", {}).get(externo, []), manifest)
+            session, pid, plan.get("feedback", {}).get(externo, []), manifest
+        )
         # Dedup por (profile_id, name) ANTES del insert del piloto: los
         # fix-ups posteriores (notify, exclusiones) mutan la tupla material
         # que usa su existence-check y un re-run insertaría duplicados. En
@@ -309,40 +318,37 @@ async def run_import(session: AsyncSession, plan: dict) -> dict:
             r
             for r in (
                 await session.execute(
-                    sa.text(
-                        "SELECT name FROM saved_searches WHERE profile_id = :p"
-                    ),
+                    sa.text("SELECT name FROM saved_searches WHERE profile_id = :p"),
                     {"p": pid},
                 )
             ).scalars()
         }
         nuevas = [
-            r for r in filas_ss
-            if (r.get("name") or "")[:200] not in nombres_previos
+            r for r in filas_ss if (r.get("name") or "")[:200] not in nombres_previos
         ]
         c_ss = await migrate_saved_searches(session, pid, nuevas)
-        c_ss["existing"] = c_ss.get("existing", 0) + (
-            len(filas_ss) - len(nuevas))
+        c_ss["existing"] = c_ss.get("existing", 0) + (len(filas_ss) - len(nuevas))
         despues = {
             str(r)
             for r in (
                 await session.execute(
-                    sa.text(
-                        "SELECT id FROM saved_searches WHERE profile_id = :p"
-                    ),
+                    sa.text("SELECT id FROM saved_searches WHERE profile_id = :p"),
                     {"p": pid},
                 )
             ).scalars()
         }
         manifest["saved_search_ids"].extend(sorted(despues - antes_ids))
         c_nf = await fixup_notify(
-            session, pid, plan.get("saved_searches", {}).get(externo, []),
-            manifest)
+            session, pid, plan.get("saved_searches", {}).get(externo, []), manifest
+        )
         c_ex = await attach_exclusion_filters(
-            session, pid, plan.get("exclusions", {}).get(externo, []), manifest)
+            session, pid, plan.get("exclusions", {}).get(externo, []), manifest
+        )
         manifest["counts"][externo] = {
-            "feedback": c_fb, "saved_searches": c_ss,
-            "notify": c_nf, "exclusions": c_ex,
+            "feedback": c_fb,
+            "saved_searches": c_ss,
+            "notify": c_nf,
+            "exclusions": c_ex,
         }
     return manifest
 
@@ -352,8 +358,13 @@ async def rollback_import(session: AsyncSession, manifest: dict) -> dict:
     exacto (fila nueva sin otros campos ⇒ se borra; fila preexistente ⇒ se
     restauran feedback/dismissed_at anteriores, sin tocar nada más);
     búsquedas insertadas ⇒ DELETE por id; fix-ups ⇒ valores anteriores."""
-    counts = {"pvs_deleted": 0, "pvs_restored": 0, "searches_deleted": 0,
-              "exclusiones_borradas": 0, "notify_restored": 0}
+    counts = {
+        "pvs_deleted": 0,
+        "pvs_restored": 0,
+        "searches_deleted": 0,
+        "exclusiones_borradas": 0,
+        "notify_restored": 0,
+    }
     for e in manifest["pvs"]:
         if not e["existed"]:
             # Fila creada por la migración: se borra SOLO si no ha ganado
@@ -389,8 +400,10 @@ async def rollback_import(session: AsyncSession, manifest: dict) -> dict:
                 "WHERE profile_id = :p AND vacancy_id = :v"
             ),
             {
-                "f": e["feedback_antes"], "d": previo,
-                "p": e["profile_id"], "v": e["vacancy_id"],
+                "f": e["feedback_antes"],
+                "d": previo,
+                "p": e["profile_id"],
+                "v": e["vacancy_id"],
             },
         )
         counts["pvs_restored"] += 1
@@ -410,12 +423,16 @@ async def rollback_import(session: AsyncSession, manifest: dict) -> dict:
                 "SET notify_frequency = CAST(:f AS notify_frequency), "
                 "notify_push = :push WHERE id = :id"
             ),
-            {"f": fx["notify_frequency_antes"],
-             "push": fx["notify_push_antes"], "id": fx["saved_search_id"]},
+            {
+                "f": fx["notify_frequency_antes"],
+                "push": fx["notify_push_antes"],
+                "id": fx["saved_search_id"],
+            },
         )
         counts["notify_restored"] += 1
     for sid in manifest["saved_search_ids"]:
         await session.execute(
-            sa.text("DELETE FROM saved_searches WHERE id = :id"), {"id": sid})
+            sa.text("DELETE FROM saved_searches WHERE id = :id"), {"id": sid}
+        )
         counts["searches_deleted"] += 1
     return counts

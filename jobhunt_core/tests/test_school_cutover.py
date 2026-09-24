@@ -32,7 +32,7 @@ def test_portfolio_freeze_requires_actual_scheduler_flag(monkeypatch, enabled, a
             **kwargs,
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(200, json=payload)
-            )
+            ),
         ),
     )
     if allowed:
@@ -93,7 +93,7 @@ def test_open_swiss_school_writer_cannot_be_sealed(monkeypatch):
             **kwargs,
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(200, json={"writes": "enabled"})
-            )
+            ),
         ),
     )
     with pytest.raises(SchoolMigrationError, match="not frozen"):

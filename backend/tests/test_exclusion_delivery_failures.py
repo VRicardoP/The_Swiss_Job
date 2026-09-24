@@ -15,8 +15,8 @@ async def test_diagnostics_outage_does_not_undo_success(
     client,
     core,  # noqa: F811  (la fixture, no una redefinición)
     monkeypatch,
-    break_rollback,  # noqa: F811  (la fixture, no una redefinición)
-):  # noqa: F811  (la fixture, no una redefinición)
+    break_rollback,
+):
     headers, uid = await _auth(client)
     unavailable = False
     execute, rollback = AsyncSession.execute, AsyncSession.rollback

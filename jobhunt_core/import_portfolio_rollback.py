@@ -161,7 +161,10 @@ async def _validate_manifest(
         )
     ).first()
     if row is None:
-        return f"manifest_id {manifest_id} no existe — fallo cerrado, no se borra nada", None
+        return (
+            f"manifest_id {manifest_id} no existe — fallo cerrado, no se borra nada",
+            None,
+        )
     # G1 H-1: 'rollback_aborted' es REINTENTABLE — las condiciones que abortan
     # (vacantes reutilizadas apuntando a la procedencia) son transitorias por
     # diseño; sin esto la marca era TERMINAL: tras reparar, el manifiesto ya no
@@ -204,7 +207,10 @@ async def _validate_manifest(
         )
     provenance = manifest_json["provenance"]
     if not isinstance(provenance, dict):
-        return f"manifest {manifest_id}: 'provenance' no es un objeto — fallo cerrado", None
+        return (
+            f"manifest {manifest_id}: 'provenance' no es un objeto — fallo cerrado",
+            None,
+        )
     # COMPLETITUD: la procedencia debe traer TODAS las tablas que el rollback borra. Una clave
     # FALTANTE se interpretaría como [] (no borrar nada) y dejaría residuo bajo un manifiesto
     # marcado rolled_back — p.ej. borrar `provenance.saved_searches` del JSON deja la búsqueda viva
@@ -242,7 +248,9 @@ async def _validate_manifest(
             )
         if table in COMPOSITE_PK_COLUMNS:
             ok = all(
-                len(parts := x.split(":")) == 2 and _is_uuid(parts[0]) and _is_uuid(parts[1])
+                len(parts := x.split(":")) == 2
+                and _is_uuid(parts[0])
+                and _is_uuid(parts[1])
                 for x in ids
             )
         else:
@@ -271,9 +279,9 @@ async def _cascade_event_mismatch(
     if not app_ids:
         return []
     await session.execute(
-        sa.text("SELECT 1 FROM applications WHERE id::text IN :ids FOR UPDATE").bindparams(
-            sa.bindparam("ids", expanding=True)
-        ),
+        sa.text(
+            "SELECT 1 FROM applications WHERE id::text IN :ids FOR UPDATE"
+        ).bindparams(sa.bindparam("ids", expanding=True)),
         {"ids": app_ids},
     )
     rows = await session.execute(
@@ -299,7 +307,9 @@ async def rollback_migration(session: AsyncSession, manifest_id: str) -> dict:
     # llamador). Se borra la procedencia ALMACENADA en el manifiesto, vinculada al id.
     abort_reason, provenance = await _validate_manifest(session, manifest_id)
     if abort_reason is not None:
-        logger.error("import_portfolio_rollback: ABORTADO (validación) — %s", abort_reason)
+        logger.error(
+            "import_portfolio_rollback: ABORTADO (validación) — %s", abort_reason
+        )
         return {"status": "aborted", "reason": abort_reason}
 
     unsafe = await _reused_pointing_to_provenance(session, provenance)

@@ -74,8 +74,8 @@ async def test_feedback_fails_closed_on_core_error(seeded, db_session, response)
 @pytest.mark.asyncio
 async def test_feedback_saved_historical_page_uses_uuid_and_server_pagination(
     seeded,  # noqa: F811  (la fixture, no una redefinición)
-    db_session,  # noqa: F811  (la fixture, no una redefinición)
-):  # noqa: F811  (la fixture, no una redefinición)
+    db_session,
+):
     user_id, _, _ = seeded
     vid = str(uuid.uuid4())
 

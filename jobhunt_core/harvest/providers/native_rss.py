@@ -15,7 +15,11 @@ from urllib.parse import urlsplit
 
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
-from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
+from jobhunt_core.harvest.provider import (
+    BaseProvider,
+    ProviderConfigError,
+    ProviderResponseError,
+)
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
 from jobhunt_core.harvest.providers.search_metadata import swiss_canton
 from jobhunt_core.harvest.types import FetchResult, RawListing
@@ -118,8 +122,11 @@ def _zebis_url(raw):
         parts = urlsplit(raw)
     except ValueError:
         return None
-    if (parts.scheme not in {"http", "https"} or parts.username is not None or
-            not re.fullmatch(r"/stellen/[^/?#\x00-\x1f\x7f]+", parts.path)):
+    if (
+        parts.scheme not in {"http", "https"}
+        or parts.username is not None
+        or not re.fullmatch(r"/stellen/[^/?#\x00-\x1f\x7f]+", parts.path)
+    ):
         return None
     return "https://www.zebis.ch" + parts.path
 
@@ -142,7 +149,9 @@ def _content(source, raw):
             company, title = title.split(": ", 1)
     elif " at " in title:
         title, company = title.rsplit(" at ", 1)
-    elif source == "euremotejobs" and ": " in title and len(title.split(": ", 1)[0]) < 50:
+    elif (
+        source == "euremotejobs" and ": " in title and len(title.split(": ", 1)[0]) < 50
+    ):
         company, title = title.split(": ", 1)
     elif source == "globaljobs":
         for separator in (" — ", " | "):
@@ -158,21 +167,41 @@ def _content(source, raw):
     elif source == "euremotejobs":
         location = "Remote / Europe"
     elif source == "jobspresso":
-        location = ((item.findtext("{job_listing}job_location") or
-                     item.findtext("job_location") or location).strip())
+        location = (
+            item.findtext("{job_listing}job_location")
+            or item.findtext("job_location")
+            or location
+        ).strip()
     elif source == "globaljobs":
         text = description.lower()
         if "home-based" in text or "home based" in text:
             location = "Remote / Home-based"
         elif "remote" not in text[:300]:
-            location = next((city for city in _INTL_CITIES if city.lower() in text[:500]), "International")
+            location = next(
+                (city for city in _INTL_CITIES if city.lower() in text[:500]),
+                "International",
+            )
     tags = extract_job_skills(title, description)
     category = (item.findtext("category") or "").strip()
-    if source not in {"weworkremotely", "zebis"} and category and category.lower() not in [tag.lower() for tag in tags]:
+    if (
+        source not in {"weworkremotely", "zebis"}
+        and category
+        and category.lower() not in [tag.lower() for tag in tags]
+    ):
         tags = [category] + tags
-    remote = source in {"weworkremotely", "euremotejobs"} or "remote" in location.lower() or "home-based" in location.lower()
-    content = {"title": title, "company": company, "description": description,
-               "location": location, "remote": remote, "tags": tags[:15]}
+    remote = (
+        source in {"weworkremotely", "euremotejobs"}
+        or "remote" in location.lower()
+        or "home-based" in location.lower()
+    )
+    content = {
+        "title": title,
+        "company": company,
+        "description": description,
+        "location": location,
+        "remote": remote,
+        "tags": tags[:15],
+    }
     if source == "zebis":
         # Its location is the constant "Switzerland", so the retiring writer
         # reads the canton off the description instead (zebis.py:194). Saved
@@ -184,9 +213,11 @@ def _content(source, raw):
 def register_handlers():
     for name in ENDPOINTS:
         register_normalizer(name, lambda raw, source=name: _content(source, raw))
+
         def extract(raw, source=name):
             content = _content(source, raw)
             return content["title"], content["company"]
+
         register_extractor(name, extract)
 
 
@@ -200,14 +231,27 @@ def _listing(item, source):
         guid = ""
     try:
         parts = urlsplit(url)
-        if parts.scheme not in {"https", "http"} or not parts.hostname or parts.username or parts.password:
+        if (
+            parts.scheme not in {"https", "http"}
+            or not parts.hostname
+            or parts.username
+            or parts.password
+        ):
             return None
     except ValueError:
         return None
     # Bound identity length, without depending on mutable title/company.
-    identity = ("guid:" if guid else "url:") + hashlib.sha256((guid or url).encode()).hexdigest()
-    return RawListing(identity, url, {"item_xml": ET.tostring(item, encoding="unicode"),
-                                      "pubDate": item.findtext("pubDate")})
+    identity = ("guid:" if guid else "url:") + hashlib.sha256(
+        (guid or url).encode()
+    ).hexdigest()
+    return RawListing(
+        identity,
+        url,
+        {
+            "item_xml": ET.tostring(item, encoding="unicode"),
+            "pubDate": item.findtext("pubDate"),
+        },
+    )
 
 
 class NativeRSSProvider(BaseProvider):
@@ -220,12 +264,22 @@ class NativeRSSProvider(BaseProvider):
         register_handlers()
 
     async def fetch_new(self, params, cursor, http):
-        if (not isinstance(params, dict) or set(params) - {"query"} or
-                not isinstance(params.get("query", ""), str) or len(params.get("query", "")) > 200):
-            raise ProviderConfigError("RSS scope accepts only a query string of at most 200 characters")
-        async with http.stream("GET", ENDPOINTS[self.name], timeout=25,
-                               headers={"User-Agent": "SwissJobHunter/1.0"},
-                               follow_redirects=True) as response:
+        if (
+            not isinstance(params, dict)
+            or set(params) - {"query"}
+            or not isinstance(params.get("query", ""), str)
+            or len(params.get("query", "")) > 200
+        ):
+            raise ProviderConfigError(
+                "RSS scope accepts only a query string of at most 200 characters"
+            )
+        async with http.stream(
+            "GET",
+            ENDPOINTS[self.name],
+            timeout=25,
+            headers={"User-Agent": "SwissJobHunter/1.0"},
+            follow_redirects=True,
+        ) as response:
             response.raise_for_status()
             chunks, size = [], 0
             async for chunk in response.aiter_bytes():
@@ -240,8 +294,13 @@ class NativeRSSProvider(BaseProvider):
         items = channel.findall("item")
         listings, invalid, filtered = [], 0, 0
         query = params.get("query", "").lower()
-        excludes = (EU_TECH_EXCLUDE if self.name == "euremotejobs" else
-                    JOBSPRESSO_TECH_EXCLUDE if self.name == "jobspresso" else ())
+        excludes = (
+            EU_TECH_EXCLUDE
+            if self.name == "euremotejobs"
+            else JOBSPRESSO_TECH_EXCLUDE
+            if self.name == "jobspresso"
+            else ()
+        )
         for item in items:
             listing = _listing(item, self.name)
             if listing is None:
@@ -251,12 +310,18 @@ class NativeRSSProvider(BaseProvider):
             query_text = content["title"] + " " + content["description"]
             if self.name in {"weworkremotely", "zebis"}:
                 query_text += " " + content["company"]
-            if any(word in content["title"].lower() for word in excludes) or query not in query_text.lower():
+            if (
+                any(word in content["title"].lower() for word in excludes)
+                or query not in query_text.lower()
+            ):
                 filtered += 1
                 continue
             listings.append(listing)
         if items and invalid == len(items):
             raise ProviderResponseError("nonempty RSS has no usable identities")
-        return FetchResult(tuple(listings), {"items_seen": len(items), "filtered": filtered},
-                           complete=not invalid, error="invalid_rss_items" if invalid else None)
-
+        return FetchResult(
+            tuple(listings),
+            {"items_seen": len(items), "filtered": filtered},
+            complete=not invalid,
+            error="invalid_rss_items" if invalid else None,
+        )

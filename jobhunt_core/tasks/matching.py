@@ -87,7 +87,10 @@ async def _run_profile_with(
         if model.dim != embeddings.EMBED_DIM:
             logger.error(
                 "matching: modelo %s/%s dim=%d != %d — saltado",
-                model.name, model.version, model.dim, embeddings.EMBED_DIM,
+                model.name,
+                model.version,
+                model.dim,
+                embeddings.EMBED_DIM,
             )
             continue
         for policy in policies:
@@ -98,7 +101,8 @@ async def _run_profile_with(
             # la generación y publicar el feed vacío. Los caminos sin vector,
             # no encontrados o descartados retornan antes de esta costura.
             if str((policy.weights or {}).get("algorithm", "")).startswith(
-                    "cross_encoder"):
+                "cross_encoder"
+            ):
                 # P1-3 (revisión externa 2026-09-07): la inferencia del
                 # cross-encoder cuesta horas y TIENE un camino presupuestado
                 # (jobhunt.matching.materialize_ce). Evaluarla aquí —desde el
@@ -112,7 +116,9 @@ async def _run_profile_with(
                 )
                 results[key_ce] = {
                     "status": "delegado_a_materializacion",
-                    "evaluated": 0, "new_evals": 0, "moved_current": False,
+                    "evaluated": 0,
+                    "new_evals": 0,
+                    "moved_current": False,
                 }
                 continue
             es_canonico = (
@@ -121,7 +127,11 @@ async def _run_profile_with(
                 and str(policy.id) == str(policies[0].id)
             )
             r = await matching.evaluate_profile(
-                session_factory, profile_id, model.id, policy.id, limit=limit,
+                session_factory,
+                profile_id,
+                model.id,
+                policy.id,
+                limit=limit,
                 move_current=es_canonico,
                 with_corpus_generation=on_evaluated is not None,
                 on_evaluated=on_evaluated,
@@ -134,26 +144,32 @@ async def _run_profile_with(
                 logger.warning(
                     "matching: deriva durante la evaluación de %s con %s/%s "
                     "— reintento único desde la fase 1",
-                    profile_id, model.name, policy.name,
+                    profile_id,
+                    model.name,
+                    policy.name,
                 )
                 # «Desde la fase 1» incluye la decisión de canonicidad: se
                 # recomputa con lo VIGENTE antes de reintentar.
                 async with session_factory() as s2:
-                    canon_modelo = await matching.canonical_model_id(
-                        s2, profile_id)
+                    canon_modelo = await matching.canonical_model_id(s2, profile_id)
                 es_canonico = (
                     canon_modelo is not None
                     and str(model.id) == str(canon_modelo)
                     and str(policy.id) == str(policies[0].id)
                 )
                 r = await matching.evaluate_profile(
-                    session_factory, profile_id, model.id, policy.id,
-                    limit=limit, move_current=es_canonico,
+                    session_factory,
+                    profile_id,
+                    model.id,
+                    policy.id,
+                    limit=limit,
+                    move_current=es_canonico,
                     with_corpus_generation=on_evaluated is not None,
                     on_evaluated=on_evaluated,
                 )
             recipe = (
-                "" if model.recipe_version == "legacy_v1"
+                ""
+                if model.recipe_version == "legacy_v1"
                 else f"#{model.recipe_version}"
             )
             key = (

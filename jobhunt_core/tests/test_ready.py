@@ -44,7 +44,9 @@ def test_ready_db_down_is_generic_503(monkeypatch):
     IDENTIDAD de la release sí: G10 P3-2 — de los dos 503 de esta sonda, el de head
     desalineado llevaba `release` + `authoritative` y este no llevaba ninguno de los dos,
     justo cuando el operador está diagnosticando qué proceso tiene delante."""
-    boom = RuntimeError('connection to server at "postgres" failed for user "jobhunt_core"')
+    boom = RuntimeError(
+        'connection to server at "postgres" failed for user "jobhunt_core"'
+    )
     monkeypatch.setattr(api, "engine", _engine_yielding(boom))
     monkeypatch.setattr(api, "__release_sha__", "abc1234")
     r = TestClient(api.app).get("/v1/ready")
@@ -104,7 +106,9 @@ def test_ready_declara_si_autoriza_operaciones(monkeypatch):
     # Release NOMBRABLE: la otra condición de la autoritatividad se prueba aparte
     # (test_no_hay_autoritatividad_sin_SHA_de_release, G9 P2-B).
     monkeypatch.setattr(api, "__release_sha__", "abc1234")
-    monkeypatch.setattr(api, "_BAKED_RELEASE", "abc1234")  # la que hornea la imagen (G10 P2-2)
+    monkeypatch.setattr(
+        api, "_BAKED_RELEASE", "abc1234"
+    )  # la que hornea la imagen (G10 P2-2)
     # El árbol de la suite SÍ va montado (perfil de desarrollo): este test fija las
     # OTRAS condiciones de la marca, y la del montaje tiene test propio (G11 P2-2).
     monkeypatch.setattr(api, "_code_is_mounted", lambda: False)
@@ -162,11 +166,11 @@ def test_un_RELEASE_SHA_del_entorno_no_puede_hacer_autoritativa_la_sonda(monkeyp
     monkeypatch.setattr(api, "_code_is_mounted", lambda: False)
     monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
     monkeypatch.setattr(api, "CODE_MUTABLE", False)
-    monkeypatch.setattr(api, "_BAKED_RELEASE", "450c561")   # lo que la IMAGEN hornea
+    monkeypatch.setattr(api, "_BAKED_RELEASE", "450c561")  # lo que la IMAGEN hornea
     monkeypatch.setattr(api, "__release_sha__", "deadbee")  # lo que el entorno inyecta
     body = TestClient(api.app).get("/v1/ready").json()
-    assert body["release"] == "deadbee"          # se sigue publicando lo que corre
-    assert body["authoritative"] is False        # pero ya no autoriza nada
+    assert body["release"] == "deadbee"  # se sigue publicando lo que corre
+    assert body["authoritative"] is False  # pero ya no autoriza nada
     assert TestClient(api.app).get("/v1/health").json()["authoritative"] is False
     # Y coincidiendo con la copia horneada, la marca vuelve a valer.
     monkeypatch.setattr(api, "__release_sha__", "450c561")
@@ -209,7 +213,7 @@ def test_el_codigo_montado_quita_la_autoritatividad_aunque_nadie_ponga_la_variab
     observable desde dentro del proceso — `/proc/self/mountinfo` lo lista.
     """
     monkeypatch.setattr(api, "engine", _engine_yielding(api._expected_head()))
-    monkeypatch.setattr(api, "CODE_MUTABLE", False)      # nadie puso la variable
+    monkeypatch.setattr(api, "CODE_MUTABLE", False)  # nadie puso la variable
     monkeypatch.setattr(api, "_BAKED_RELEASE", "abc1234")
     monkeypatch.setattr(api, "__release_sha__", "abc1234")
     raiz = str(Path(jobhunt_core.__file__).parent)
@@ -276,7 +280,7 @@ def test_un_montaje_ANCESTRO_del_paquete_tambien_quita_la_autoritatividad(
     monkeypatch.setattr(api, "_BAKED_RELEASE", "abc1234")
     monkeypatch.setattr(api, "__release_sha__", "abc1234")
     raiz = str(Path(jobhunt_core.__file__).parent)
-    padre = str(Path(raiz).parent)          # `/app` en la imagen
+    padre = str(Path(raiz).parent)  # `/app` en la imagen
 
     ancestro = tmp_path / "montaje-en-el-padre"
     ancestro.write_text(

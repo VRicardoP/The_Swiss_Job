@@ -381,9 +381,12 @@ async def reverse_sync(
     # E.15's reverse migrator only owns school status/drafts, not feedback.
     # Once F owns marks (including a deliberate clear), use its coordinated
     # reverse migration and freeze. Never silently discard this new authority.
-    if any(row.get("feedback_recorded_at") is not None
-           or row.get("feedback") is not None or row.get("feedback_implicit")
-           for row in current["school_applications"]):
+    if any(
+        row.get("feedback_recorded_at") is not None
+        or row.get("feedback") is not None
+        or row.get("feedback_implicit")
+        for row in current["school_applications"]
+    ):
         raise SchoolMigrationError(
             "core feedback authority requires coordinated feedback rollback"
         )
@@ -456,6 +459,7 @@ async def reverse_sync(
                 dict(row)
                 for row in (await session.execute(sa.select(tables[name]))).mappings()
             ]
+
             def keys(row):
                 return str(row["id"])
 

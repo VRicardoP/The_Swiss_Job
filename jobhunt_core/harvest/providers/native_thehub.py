@@ -4,6 +4,7 @@ A failed detail is not emitted as a sparse revision: unlike the old local
 upsert, the core stores immutable complete canonical revisions. Keep the
 previous good incarnation and report a partial harvest instead of erasing it.
 """
+
 import asyncio
 import re
 import time
@@ -12,7 +13,11 @@ import httpx
 
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
-from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
+from jobhunt_core.harvest.provider import (
+    BaseProvider,
+    ProviderConfigError,
+    ProviderResponseError,
+)
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
@@ -41,17 +46,29 @@ def _content(raw):
     company = raw.get("company")
     location = raw.get("location")
     company = _text(company.get("name")) if isinstance(company, dict) else ""
-    location = _text(location.get("address") or location.get("locality")) if isinstance(location, dict) else ""
+    location = (
+        _text(location.get("address") or location.get("locality"))
+        if isinstance(location, dict)
+        else ""
+    )
     description = strip_html_tags(_text(raw.get("description")))
-    return {"title": title, "company": company, "location": location, "description": description,
-            "remote": bool(raw.get("isRemote", False)), "tags": extract_job_skills(title, description)[:15]}
+    return {
+        "title": title,
+        "company": company,
+        "location": location,
+        "description": description,
+        "remote": bool(raw.get("isRemote", False)),
+        "tags": extract_job_skills(title, description)[:15],
+    }
 
 
 def register_handlers():
     register_normalizer(SOURCE_NAME, _content)
+
     def identity(raw):
         content = _content(raw)
         return content["title"], content["company"]
+
     register_extractor(SOURCE_NAME, identity)
 
 
@@ -59,8 +76,14 @@ async def _json(http, url, remaining, params=None):
     if remaining <= 0:
         raise TimeoutError()
     async with asyncio.timeout(min(25, remaining)):
-        async with http.stream("GET", url, params=params, timeout=25, follow_redirects=True,
-                               headers={"User-Agent": "SwissJobHunter/1.0"}) as response:
+        async with http.stream(
+            "GET",
+            url,
+            params=params,
+            timeout=25,
+            follow_redirects=True,
+            headers={"User-Agent": "SwissJobHunter/1.0"},
+        ) as response:
             response.raise_for_status()
             chunks, size = [], 0
             async for chunk in response.aiter_bytes():
@@ -78,7 +101,12 @@ def _page(body, page):
     if not isinstance(body, dict) or not isinstance(body.get("docs"), list):
         raise ProviderResponseError("TheHub invalid listing envelope")
     total = body.get("pages")
-    if isinstance(total, str) and total.isascii() and total.isdecimal() and len(total) <= 6:
+    if (
+        isinstance(total, str)
+        and total.isascii()
+        and total.isdecimal()
+        and len(total) <= 6
+    ):
         total = int(total)
     if type(total) is not int or total < 0:
         raise ProviderResponseError("TheHub invalid page count")
@@ -105,7 +133,9 @@ class TheHubProvider(BaseProvider):
             if remaining <= 0:
                 break
             try:
-                body = await _json(http, API_URL, remaining, {"isRemote": "true", "page": page})
+                body = await _json(
+                    http, API_URL, remaining, {"isRemote": "true", "page": page}
+                )
                 rows, exhausted = _page(body, page)
             except (httpx.HTTPError, ProviderResponseError, TimeoutError) as exc:
                 if not listings:
@@ -125,8 +155,11 @@ class TheHubProvider(BaseProvider):
                     break
                 try:
                     detail = await _json(http, DETAIL_URL + job_id, remaining)
-                    if (not isinstance(detail, dict) or _id(detail.get("id")) != job_id
-                            or not isinstance(detail.get("description"), str)):
+                    if (
+                        not isinstance(detail, dict)
+                        or _id(detail.get("id")) != job_id
+                        or not isinstance(detail.get("description"), str)
+                    ):
                         raise ProviderResponseError("TheHub invalid/mismatched detail")
                     payload = {**row, **detail}
                     listings.append(RawListing(job_id, PUBLIC_URL + job_id, payload))
@@ -139,6 +172,13 @@ class TheHubProvider(BaseProvider):
             if page < MAX_PAGES:
                 await asyncio.sleep(PAUSE_S)
         if seen and not listings:
-            raise ProviderResponseError("TheHub nonempty feed has no usable detailed offers")
-        return FetchResult(tuple(listings), {"items_seen": seen, "pages": pages},
-                           pages_fetched=pages, complete=exhausted and error is None, error=error)
+            raise ProviderResponseError(
+                "TheHub nonempty feed has no usable detailed offers"
+            )
+        return FetchResult(
+            tuple(listings),
+            {"items_seen": seen, "pages": pages},
+            pages_fetched=pages,
+            complete=exhausted and error is None,
+            error=error,
+        )

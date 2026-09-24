@@ -51,13 +51,12 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
     asyncio.run(create_db())
     try:
         temp_engine = create_async_engine(
-            temp_url, poolclass=sa.pool.NullPool,
+            temp_url,
+            poolclass=sa.pool.NullPool,
             # search_path fijado POR CONEXIÓN (NullPool renueva la
             # conexión tras cada commit y un SET suelto se perdería).
             connect_args={
-                "server_settings": {
-                    "search_path": f"{settings.CORE_DB_SCHEMA}, public"
-                }
+                "server_settings": {"search_path": f"{settings.CORE_DB_SCHEMA}, public"}
             },
         )
         factory = async_sessionmaker(temp_engine, expire_on_commit=False)
@@ -98,13 +97,17 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                 )
                 await s.commit()
                 await RawListingSink().handle(
-                    s, str(scope_id),
+                    s,
+                    str(scope_id),
                     (
                         RawListing(
-                            external_id="j1", url="https://x/j1",
+                            external_id="j1",
+                            url="https://x/j1",
                             payload={
-                                "title": "Backend Dev", "company_name": "ACME AG",
-                                "description": "d", "tags": ["py"],
+                                "title": "Backend Dev",
+                                "company_name": "ACME AG",
+                                "description": "d",
+                                "tags": ["py"],
                             },
                         ),
                     ),
@@ -128,9 +131,15 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                 )
                 rev = await profiles.current_revision(s, pid)
                 await embeddings.store_profile_embeddings(
-                    s, mid,
-                    [{"revision_id": rev.id, "profile_id": pid,
-                      "vector": [1.0] + [0.0] * 383}],
+                    s,
+                    mid,
+                    [
+                        {
+                            "revision_id": rev.id,
+                            "profile_id": pid,
+                            "vector": [1.0] + [0.0] * 383,
+                        }
+                    ],
                 )
                 await s.commit()
                 r = await matching.evaluate_profile(factory, pid, mid, polid)
@@ -145,7 +154,7 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                 await s.execute(
                     sa.text(
                         "INSERT INTO applications (id, profile_id, vacancy_id, snapshot) "
-                        "VALUES (:a, :p, :v, '{\"title\": \"Backend Dev\"}'::jsonb)"
+                        'VALUES (:a, :p, :v, \'{"title": "Backend Dev"}\'::jsonb)'
                     ),
                     {"a": app_id, "p": pid, "v": vid},
                 )
@@ -174,11 +183,18 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                 await s.commit()
                 counts = {}
                 for tbl in (
-                    "vacancies", "offer_revisions", "profile_revision_activations",
-                    "offer_embeddings", "profile_embeddings", "match_evaluations",
-                    "profile_vacancy_state", "integration_outbox",
-                    "integration_outbox_deliveries", "applications",
-                    "application_status_events", "saved_searches",
+                    "vacancies",
+                    "offer_revisions",
+                    "profile_revision_activations",
+                    "offer_embeddings",
+                    "profile_embeddings",
+                    "match_evaluations",
+                    "profile_vacancy_state",
+                    "integration_outbox",
+                    "integration_outbox_deliveries",
+                    "applications",
+                    "application_status_events",
+                    "saved_searches",
                     "idempotency_records",
                 ):
                     counts[tbl] = (
@@ -234,9 +250,20 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
         # DOWNGRADE COMPLETO paso a paso (valida CADA down-migration con
         # datos reales delante) y vuelta a head.
         for target in (
-            "core0012", "core0011", "core0010", "core0009", "core0008b",
-            "core0008a", "core0007", "core0006", "core0005", "core0004",
-            "core0003", "core0002", "core0001", "base",
+            "core0012",
+            "core0011",
+            "core0010",
+            "core0009",
+            "core0008b",
+            "core0008a",
+            "core0007",
+            "core0006",
+            "core0005",
+            "core0004",
+            "core0003",
+            "core0002",
+            "core0001",
+            "base",
         ):
             run_alembic(temp_url, "downgrade", target)
         run_alembic(temp_url, "upgrade", "head")
@@ -249,7 +276,9 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                 assert version == _read_expected_head()
                 # El esquema re-creado FUNCIONA: smoke de escritura real.
                 await s.execute(
-                    sa.text("INSERT INTO consumers (id, name) VALUES (:i, 'post-cycle')"),
+                    sa.text(
+                        "INSERT INTO consumers (id, name) VALUES (:i, 'post-cycle')"
+                    ),
                     {"i": uuid.uuid4()},
                 )
                 await s.commit()

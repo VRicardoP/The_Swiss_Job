@@ -1,4 +1,5 @@
 """The same generation in flight must not insert CV+letter twice."""
+
 import asyncio
 
 import httpx
@@ -18,7 +19,11 @@ def test_batch_concurrent_retry_waits_and_gets_same_pair(db, monkeypatch):  # no
     owner, emit = documents.owner, outbox.emit
 
     async def run():
-        in_handler, second_at_owner, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        in_handler, second_at_owner, release = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+        )
         owner_calls = 0
         emissions = 0
 
@@ -47,10 +52,20 @@ def test_batch_concurrent_retry_waits_and_gets_same_pair(db, monkeypatch):  # no
         tasks = []
         try:
             async with asyncio.timeout(10):
-                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://test"
+                ) as c:
+
                     async def send():
-                        return await c.post(_path(pid) + "/batch", json=body(),
-                                            headers={"Authorization": f"Bearer {token}", "Idempotency-Key": "parallel-batch"})
+                        return await c.post(
+                            _path(pid) + "/batch",
+                            json=body(),
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": "parallel-batch",
+                            },
+                        )
+
                     tasks.append(asyncio.create_task(send()))
                     await in_handler.wait()
                     tasks.append(asyncio.create_task(send()))
@@ -70,6 +85,21 @@ def test_batch_concurrent_retry_waits_and_gets_same_pair(db, monkeypatch):  # no
             app.dependency_overrides.pop(deps.get_session, None)
 
     asyncio.run(run())
-    assert len(_rows(f, "SELECT id FROM generated_documents WHERE profile_id=:p", p=pid)) == 2
-    assert len(_rows(f, "SELECT event_id FROM integration_outbox WHERE subject_profile_id=:p", p=pid)) == 2
-    assert len(_rows(f, "SELECT key FROM idempotency_records WHERE key='parallel-batch'")) == 1
+    assert (
+        len(_rows(f, "SELECT id FROM generated_documents WHERE profile_id=:p", p=pid))
+        == 2
+    )
+    assert (
+        len(
+            _rows(
+                f,
+                "SELECT event_id FROM integration_outbox WHERE subject_profile_id=:p",
+                p=pid,
+            )
+        )
+        == 2
+    )
+    assert (
+        len(_rows(f, "SELECT key FROM idempotency_records WHERE key='parallel-batch'"))
+        == 1
+    )

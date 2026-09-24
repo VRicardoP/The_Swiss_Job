@@ -10,6 +10,7 @@ Una versión que NO se moviese ante un cambio serviría un feed rancio en
 silencio — peor que el coste que evita. Por eso cada prueba provoca UN cambio
 observable y exige que la versión se mueva.
 """
+
 import asyncio
 import uuid
 
@@ -71,12 +72,19 @@ def _new_revision(factory, vid, title):
                     "INSERT INTO offer_revisions (id, vacancy_id, content_hash, "
                     "text_hash, content) VALUES (:id, :vid, :ch, :th, (:c)::jsonb)"
                 ),
-                {"id": rid, "vid": vid, "ch": uuid.uuid4().hex,
-                 "th": uuid.uuid4().hex, "c": __import__("json").dumps(nuevo)},
+                {
+                    "id": rid,
+                    "vid": vid,
+                    "ch": uuid.uuid4().hex,
+                    "th": uuid.uuid4().hex,
+                    "c": __import__("json").dumps(nuevo),
+                },
             )
             await s.execute(
-                sa.text("UPDATE vacancies SET current_offer_revision_id = :rid "
-                        "WHERE id = :vid"),
+                sa.text(
+                    "UPDATE vacancies SET current_offer_revision_id = :rid "
+                    "WHERE id = :vid"
+                ),
                 {"rid": rid, "vid": vid},
             )
             await s.commit()
@@ -117,7 +125,8 @@ def test_la_version_cambia_al_cambiar_la_canonica(db):
     despues = _version(factory, pid, token)
     assert despues["total"] == antes["total"], "la pertenencia no cambió"
     assert despues["version"] != antes["version"], (
-        "un cambio de contenido debe mover la versión; si no, se sirve rancio")
+        "un cambio de contenido debe mover la versión; si no, se sirve rancio"
+    )
 
 
 def test_la_version_respeta_la_tenencia(db):
@@ -126,23 +135,34 @@ def test_la_version_respeta_la_tenencia(db):
     pid, _vacs, _token = api._seed_matches(factory, created)
     _cid, _kid, ajeno = api._issue(factory, created, "tenant-b", api.ALL_SCOPES)
 
-    assert api._api(factory, f"/v1/profiles/{pid}/matches/version",
-                    token=ajeno).status_code == 404
-    assert api._api(factory, f"/v1/profiles/{uuid.uuid4()}/matches/version",
-                    token=ajeno).status_code == 404
+    assert (
+        api._api(
+            factory, f"/v1/profiles/{pid}/matches/version", token=ajeno
+        ).status_code
+        == 404
+    )
+    assert (
+        api._api(
+            factory, f"/v1/profiles/{uuid.uuid4()}/matches/version", token=ajeno
+        ).status_code
+        == 404
+    )
 
 
 def test_la_version_exige_credencial(db):
     factory, created = db
     pid, _vacs, _token = api._seed_matches(factory, created)
-    assert api._api(factory, f"/v1/profiles/{pid}/matches/version",
-                    token=None).status_code == 401
+    assert (
+        api._api(factory, f"/v1/profiles/{pid}/matches/version", token=None).status_code
+        == 401
+    )
 
 
 # --- Huecos encontrados por la auditoría del 2026-09-23 --------------------
 # Cada prueba provoca UN cambio que la página SIRVE y exige que la versión se
 # mueva. Las cuatro primeras fallaban contra el digest original (pertenencia +
 # evaluación + revisión canónica), que no cubría estado de usuario ni primary.
+
 
 def _feedback(factory, pid, vid, feedback):
     """El escritor REAL de feedback del core, no un UPDATE a mano: lo que se
@@ -174,28 +194,52 @@ def _reassign_primary(factory, vid):
 
     async def go():
         async with factory() as s:
-            actual = (await s.execute(
-                sa.text("SELECT primary_incarnation_id FROM vacancies WHERE id = :vid"),
-                {"vid": vid})).scalar_one()
-            fila = (await s.execute(
-                sa.text("SELECT source_listing_id, seq FROM source_listing_incarnations "
-                        "WHERE id = :iid"),
-                {"iid": actual})).one()
+            actual = (
+                await s.execute(
+                    sa.text(
+                        "SELECT primary_incarnation_id FROM vacancies WHERE id = :vid"
+                    ),
+                    {"vid": vid},
+                )
+            ).scalar_one()
+            fila = (
+                await s.execute(
+                    sa.text(
+                        "SELECT source_listing_id, seq FROM source_listing_incarnations "
+                        "WHERE id = :iid"
+                    ),
+                    {"iid": actual},
+                )
+            ).one()
             # Como el sink: la encarnación anterior se cierra y la nueva lleva seq+1
             # (índice único parcial por listing sobre ended_at IS NULL).
-            await s.execute(sa.text(
-                "UPDATE source_listing_incarnations SET ended_at = now() WHERE id = :iid"),
-                {"iid": actual})
+            await s.execute(
+                sa.text(
+                    "UPDATE source_listing_incarnations SET ended_at = now() WHERE id = :iid"
+                ),
+                {"iid": actual},
+            )
             nueva = uuid.uuid4()
-            await s.execute(sa.text(
-                "INSERT INTO source_listing_incarnations "
-                "(id, source_listing_id, vacancy_id, seq, url, apply_url) "
-                "VALUES (:id, :sl, :vid, :seq, :url, NULL)"),
-                {"id": nueva, "sl": fila.source_listing_id, "vid": vid,
-                 "seq": fila.seq + 1, "url": f"https://example.com/otra/{nueva}"})
-            await s.execute(sa.text(
-                "UPDATE vacancies SET primary_incarnation_id = :iid WHERE id = :vid"),
-                {"iid": nueva, "vid": vid})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO source_listing_incarnations "
+                    "(id, source_listing_id, vacancy_id, seq, url, apply_url) "
+                    "VALUES (:id, :sl, :vid, :seq, :url, NULL)"
+                ),
+                {
+                    "id": nueva,
+                    "sl": fila.source_listing_id,
+                    "vid": vid,
+                    "seq": fila.seq + 1,
+                    "url": f"https://example.com/otra/{nueva}",
+                },
+            )
+            await s.execute(
+                sa.text(
+                    "UPDATE vacancies SET primary_incarnation_id = :iid WHERE id = :vid"
+                ),
+                {"iid": nueva, "vid": vid},
+            )
             await s.commit()
 
     asyncio.run(go())
@@ -207,9 +251,12 @@ def _drop_canonical(factory, vid):
 
     async def go():
         async with factory() as s:
-            await s.execute(sa.text(
-                "UPDATE vacancies SET current_offer_revision_id = NULL WHERE id = :vid"),
-                {"vid": vid})
+            await s.execute(
+                sa.text(
+                    "UPDATE vacancies SET current_offer_revision_id = NULL WHERE id = :vid"
+                ),
+                {"vid": vid},
+            )
             await s.commit()
 
     asyncio.run(go())
@@ -274,6 +321,12 @@ def test_la_ruta_de_version_exige_el_scope(db):
     """401 y 404 ya estaban cubiertos; el 403 por scope insuficiente, no."""
     factory, created = db
     pid, _vacs, _token = api._seed_matches(factory, created)
-    _cid, _kid, sin_scope = api._issue(factory, created, "tenant-match", ["vacancies:read"])
-    assert api._api(factory, f"/v1/profiles/{pid}/matches/version",
-                    token=sin_scope).status_code == 403
+    _cid, _kid, sin_scope = api._issue(
+        factory, created, "tenant-match", ["vacancies:read"]
+    )
+    assert (
+        api._api(
+            factory, f"/v1/profiles/{pid}/matches/version", token=sin_scope
+        ).status_code
+        == 403
+    )

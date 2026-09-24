@@ -4,6 +4,7 @@ No live reader/writer is flipped by this additive migration. Profile deletion
 is RESTRICTed until its documents are explicitly erased; corpus deletion only
 nulls the optional offer reference. Populated storage cannot be downgraded away.
 """
+
 from alembic import op
 from jobhunt_core.config import settings
 

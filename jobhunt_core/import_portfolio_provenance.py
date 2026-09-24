@@ -43,7 +43,10 @@ from .portfolio_provenance_contract import PROVENANCE_TABLES
 logger = logging.getLogger(__name__)
 
 # Corpus alcanzable desde la fuente portfolio-import (el join base de las tablas OWNED).
-_CORPUS_JOIN = "FROM source_listings sl JOIN sources s ON s.id = sl.source_id AND s.name = :src "
+_CORPUS_JOIN = (
+    "FROM source_listings sl JOIN sources s ON s.id = sl.source_id AND s.name = :src "
+)
+
 
 async def begin_exact_capture(session: AsyncSession) -> None:
     """Activa la captura para la transacción/sesión actual."""
@@ -56,14 +59,9 @@ async def begin_exact_capture(session: AsyncSession) -> None:
         )
     )
     # Admite un segundo run idempotente dentro de la misma transacción.
+    await session.execute(sa.text("TRUNCATE pg_temp.portfolio_provenance_log"))
     await session.execute(
-        sa.text("TRUNCATE pg_temp.portfolio_provenance_log")
-    )
-    await session.execute(
-        sa.text(
-            "SELECT set_config("
-            "'jobhunt.portfolio_provenance_run', :run, true)"
-        ),
+        sa.text("SELECT set_config('jobhunt.portfolio_provenance_run', :run, true)"),
         {"run": "active"},
     )
 
@@ -82,15 +80,10 @@ async def captured_provenance(session: AsyncSession) -> dict[str, list[str]]:
     result = {table: [] for table in sorted(PROVENANCE_TABLES)}
     for row in rows:
         if row.table_name not in result:
-            raise RuntimeError(
-                f"tabla de procedencia no soportada: {row.table_name}"
-            )
+            raise RuntimeError(f"tabla de procedencia no soportada: {row.table_name}")
         result[row.table_name].append(row.row_key)
     await session.execute(
-        sa.text(
-            "SELECT set_config("
-            "'jobhunt.portfolio_provenance_run', '', true)"
-        )
+        sa.text("SELECT set_config('jobhunt.portfolio_provenance_run', '', true)")
     )
     return result
 
@@ -151,16 +144,20 @@ async def snapshot_row_ids(
     )
 
     # --- OWNED portfolio-import (scopeado; el scope de estas filas no cambia) ---
-    snap["source_listings"] = await _ids(session, "SELECT sl.id::text k " + _CORPUS_JOIN, src)
+    snap["source_listings"] = await _ids(
+        session, "SELECT sl.id::text k " + _CORPUS_JOIN, src
+    )
     snap["source_listing_incarnations"] = await _ids(
         session,
-        "SELECT i.id::text k " + _CORPUS_JOIN
+        "SELECT i.id::text k "
+        + _CORPUS_JOIN
         + "JOIN source_listing_incarnations i ON i.source_listing_id = sl.id",
         src,
     )
     snap["source_listing_revisions"] = await _ids(
         session,
-        "SELECT r.id::text k " + _CORPUS_JOIN
+        "SELECT r.id::text k "
+        + _CORPUS_JOIN
         + "JOIN source_listing_incarnations i ON i.source_listing_id = sl.id "
         "JOIN source_listing_revisions r ON r.incarnation_id = i.id",
         src,
@@ -193,7 +190,9 @@ async def snapshot_row_ids(
 
     # --- REUSABLE (FULL id-set: un row reutilizado preexistía aunque no fuera reachable) ---
     snap["vacancies"] = await _ids(session, "SELECT id::text k FROM vacancies", {})
-    snap["offer_revisions"] = await _ids(session, "SELECT id::text k FROM offer_revisions", {})
+    snap["offer_revisions"] = await _ids(
+        session, "SELECT id::text k FROM offer_revisions", {}
+    )
     # dedup_candidates referencia vacantes REUTILIZABLES (vacancy_a/vacancy_b): un dc
     # PREEXISTENTE de otra fuente entra en cualquier scope portfolio-import cuando esa vacante
     # gana una incarnación este run → un snapshot scopeado lo daría como falso-nuevo. Full-id
@@ -209,7 +208,10 @@ def exact_provenance(
 ) -> dict[str, list[str]]:
     """{tabla: [ids insertados por ESTE run]} = después − antes, por tabla (ordenado para un
     manifiesto determinista). Las claves son las de `after` (superset del esquema)."""
-    return {table: sorted(after.get(table, set()) - before.get(table, set())) for table in after}
+    return {
+        table: sorted(after.get(table, set()) - before.get(table, set()))
+        for table in after
+    }
 
 
 async def scope_dedup_provenance(
@@ -236,12 +238,15 @@ async def scope_dedup_provenance(
     )
     kept, foreign = [], []
     for r in rows:
-        (kept if (r.a in own_vacancies or r.b in own_vacancies) else foreign).append(r.k)
+        (kept if (r.a in own_vacancies or r.b in own_vacancies) else foreign).append(
+            r.k
+        )
     if foreign:
         logger.warning(
             "provenance: %d dedup_candidate(s) CONCURRENTES ajenos excluidos de la "
             "procedencia (no tocan vacantes de este run — G1 H-2): %s",
-            len(foreign), foreign[:5],
+            len(foreign),
+            foreign[:5],
         )
     out = dict(provenance)
     out["dedup_candidates"] = sorted(kept)

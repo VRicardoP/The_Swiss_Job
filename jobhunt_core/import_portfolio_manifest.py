@@ -69,8 +69,11 @@ def _canon(value) -> str:
     (Decimal/date/UUID), y sin el espejo aquí el lado esperado reventaba con
     TypeError antes de dar veredicto."""
     return json.dumps(
-        _json_safe(value), ensure_ascii=False, sort_keys=True,
-        allow_nan=False, default=str,
+        _json_safe(value),
+        ensure_ascii=False,
+        sort_keys=True,
+        allow_nan=False,
+        default=str,
     )
 
 
@@ -150,7 +153,8 @@ async def _incarnation_urls(
         return {}
     join = (
         "JOIN source_listing_incarnations u ON u.vacancy_id = v.id AND u.ended_at IS NULL "
-        if all_sources else ""
+        if all_sources
+        else ""
     )
     url_col = "u.url" if all_sources else "i.url"
     rows = await session.execute(
@@ -199,9 +203,7 @@ async def _reused_keys(session: AsyncSession, keys: set[str]) -> set[str]:
 # ---------------------------------------------------------------------------
 # Clasificador: ESTRUCTURA del estado final + VALORES del origen.
 # ---------------------------------------------------------------------------
-async def _classify_expected(
-    session: AsyncSession, users: list[dict]
-) -> dict:
+async def _classify_expected(session: AsyncSession, users: list[dict]) -> dict:
     """Deriva lo que el destino DEBE contener. La ESTRUCTURA (qué durable resolvió a una
     vacante, cuál colisionó/quedó unresolved) se lee del ESTADO FINAL — `synth`
     (incarnaciones portfolio-import por clave) refleja lo que REALMENTE se sintetizó, así
@@ -247,7 +249,11 @@ async def _classify_expected(
         if url not in synth.get(key, set()):
             # No se sintetizó esta url: cross-run (hay otra portfolio con la clave) o
             # cuarentena/irresoluble (nada portfolio con la clave).
-            return ("staged", "collision" if synth.get(key) else "unresolved", _ident(url))
+            return (
+                "staged",
+                "collision" if synth.get(key) else "unresolved",
+                _ident(url),
+            )
         if len(allsrc.get(key, {url})) > 1:  # cross-source: la vacante tiene otra url
             return ("staged", "collision", _ident(url))
         return ("grouped", key)
@@ -273,9 +279,14 @@ async def _classify_expected(
             ):
                 offer_first.setdefault(normalize_url(row["url"]), row)
     offer = {
-        (key, _norm_text(r.get("title")) or "", _norm_text(r.get("company")) or "",
-         _norm_text(r.get("description")) or "")
-        for key, r in offer_first.items() if _norm_text(r.get("title"))
+        (
+            key,
+            _norm_text(r.get("title")) or "",
+            _norm_text(r.get("company")) or "",
+            _norm_text(r.get("description")) or "",
+        )
+        for key, r in offer_first.items()
+        if _norm_text(r.get("title"))
     }
 
     for user in users:
@@ -304,7 +315,8 @@ async def _classify_expected(
             )
             ordered = (
                 [winner, *sorted(candidates, key=_recency_key, reverse=True)]
-                if winner else []
+                if winner
+                else []
             )
             follow_up = next(
                 (d for d in (_as_date(r.get("follow_up_date")) for r in ordered) if d),
@@ -315,12 +327,19 @@ async def _classify_expected(
             if winner is not None:
                 # _pg_text (G1 H-9): los campos del snapshot se comparan contra
                 # `->>` del lado real — coerción textual jsonb-equivalente.
-                apps.add((
-                    ref, key, winner["status"], notes or "",
-                    str(follow_up or ""), _pg_text(winner.get("title")),
-                    _pg_text(winner.get("company")), _pg_text(winner.get("url")),
-                    _pg_text(winner.get("description")),
-                ))
+                apps.add(
+                    (
+                        ref,
+                        key,
+                        winner["status"],
+                        notes or "",
+                        str(follow_up or ""),
+                        _pg_text(winner.get("title")),
+                        _pg_text(winner.get("company")),
+                        _pg_text(winner.get("url")),
+                        _pg_text(winner.get("description")),
+                    )
+                )
                 events[(ref, key, winner["status"])] += 1
                 for r in real:
                     if r is not winner:
@@ -330,7 +349,9 @@ async def _classify_expected(
             for r in saved_rows:
                 note = r.get("notes")
                 fu = _as_date(r.get("follow_up_date"))
-                if (note and note != bookmark_note) or (fu is not None and fu != follow_up):
+                if (note and note != bookmark_note) or (
+                    fu is not None and fu != follow_up
+                ):
                     staged[("consolidated_saved", ref, _ident(r.get("url")))] += 1
 
     # saved_searches: tupla material COMPLETA (incl. last_run canónico). La identidad
@@ -375,8 +396,14 @@ async def _classify_expected(
             )
             searches.add((ref, name, _canon(filters), min_score, is_active, last_run))
 
-    return {"applications": apps, "events": events, "bookmarks": bookmarks,
-            "offer": offer, "saved_searches": searches, "staged": staged}
+    return {
+        "applications": apps,
+        "events": events,
+        "bookmarks": bookmarks,
+        "offer": offer,
+        "saved_searches": searches,
+        "staged": staged,
+    }
 
 
 # Subconsulta: url_normalized portfolio-import de la incarnación activa de vacancy.
@@ -399,63 +426,108 @@ _SCOPE = (
 async def _actual(session: AsyncSession) -> dict:
     """Estado REAL del destino con MATERIAL COMPLETO (scope consumer portfolio)."""
     apps = {
-        (r.external_ref, r.urln, r.status, r.notes or "", str(r.fud or ""),
-         r.title or "", r.company or "", r.url or "", r.description or "")
-        for r in await session.execute(sa.text(
-            "SELECT p.external_ref, " + _VAC_URLN.format(col="a.vacancy_id") + " AS urln, "
-            "a.status, a.notes, a.follow_up_date AS fud, a.snapshot->>'title' AS title, "
-            "a.snapshot->>'company' AS company, a.snapshot->>'url' AS url, "
-            "a.snapshot->>'description' AS description "
-            "FROM applications a " + _SCOPE.format(alias="a")))
+        (
+            r.external_ref,
+            r.urln,
+            r.status,
+            r.notes or "",
+            str(r.fud or ""),
+            r.title or "",
+            r.company or "",
+            r.url or "",
+            r.description or "",
+        )
+        for r in await session.execute(
+            sa.text(
+                "SELECT p.external_ref, "
+                + _VAC_URLN.format(col="a.vacancy_id")
+                + " AS urln, "
+                "a.status, a.notes, a.follow_up_date AS fud, a.snapshot->>'title' AS title, "
+                "a.snapshot->>'company' AS company, a.snapshot->>'url' AS url, "
+                "a.snapshot->>'description' AS description "
+                "FROM applications a " + _SCOPE.format(alias="a")
+            )
+        )
     }
     events: Counter = Counter(
         (r.external_ref, r.urln, r.status)
-        for r in await session.execute(sa.text(
-            "SELECT p.external_ref, " + _VAC_URLN.format(col="a.vacancy_id") + " AS urln, "
-            "e.status FROM application_status_events e "
-            "JOIN applications a ON a.id = e.application_id " + _SCOPE.format(alias="a")))
+        for r in await session.execute(
+            sa.text(
+                "SELECT p.external_ref, "
+                + _VAC_URLN.format(col="a.vacancy_id")
+                + " AS urln, "
+                "e.status FROM application_status_events e "
+                "JOIN applications a ON a.id = e.application_id "
+                + _SCOPE.format(alias="a")
+            )
+        )
     )
     bookmarks = {
         (r.external_ref, r.urln, r.notes or "")
-        for r in await session.execute(sa.text(
-            "SELECT p.external_ref, " + _VAC_URLN.format(col="pvs.vacancy_id") + " AS urln, "
-            "pvs.notes FROM profile_vacancy_state pvs " + _SCOPE.format(alias="pvs")
-            + "WHERE pvs.saved_at IS NOT NULL"))
+        for r in await session.execute(
+            sa.text(
+                "SELECT p.external_ref, "
+                + _VAC_URLN.format(col="pvs.vacancy_id")
+                + " AS urln, "
+                "pvs.notes FROM profile_vacancy_state pvs "
+                + _SCOPE.format(alias="pvs")
+                + "WHERE pvs.saved_at IS NOT NULL"
+            )
+        )
     }
     # Oferta canónica de vacantes-sombra NUEVAS (no reutilizadas: su canónica la creó C-4).
     offer = {
         (r.urln, r.title or "", r.company or "", r.description or "")
-        for r in await session.execute(sa.text(
-            "SELECT sl.url_normalized AS urln, o.content->>'title' AS title, "
-            "o.content->>'company' AS company, o.content->>'description' AS description "
-            "FROM vacancies v "
-            "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
-            "JOIN source_listing_incarnations i ON i.vacancy_id = v.id AND i.ended_at IS NULL "
-            "JOIN source_listings sl ON sl.id = i.source_listing_id "
-            "JOIN sources s ON s.id = sl.source_id AND s.name = :src "
-            "WHERE v.merged_into IS NULL AND v.archived_at IS NULL "
-            "AND NOT EXISTS (SELECT 1 FROM source_listing_incarnations oi "
-            "  JOIN source_listings osl ON osl.id = oi.source_listing_id "
-            "  JOIN sources os ON os.id = osl.source_id AND os.name <> :src "
-            "  WHERE oi.vacancy_id = v.id AND oi.ended_at IS NULL)"),
-            {"src": PORTFOLIO_IMPORT_SOURCE})
+        for r in await session.execute(
+            sa.text(
+                "SELECT sl.url_normalized AS urln, o.content->>'title' AS title, "
+                "o.content->>'company' AS company, o.content->>'description' AS description "
+                "FROM vacancies v "
+                "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
+                "JOIN source_listing_incarnations i ON i.vacancy_id = v.id AND i.ended_at IS NULL "
+                "JOIN source_listings sl ON sl.id = i.source_listing_id "
+                "JOIN sources s ON s.id = sl.source_id AND s.name = :src "
+                "WHERE v.merged_into IS NULL AND v.archived_at IS NULL "
+                "AND NOT EXISTS (SELECT 1 FROM source_listing_incarnations oi "
+                "  JOIN source_listings osl ON osl.id = oi.source_listing_id "
+                "  JOIN sources os ON os.id = osl.source_id AND os.name <> :src "
+                "  WHERE oi.vacancy_id = v.id AND oi.ended_at IS NULL)"
+            ),
+            {"src": PORTFOLIO_IMPORT_SOURCE},
+        )
     }
     searches = {
-        (r.external_ref, r.name, _canon(r.filters), int(r.min_score),
-         bool(r.is_active), r.last_run)
-        for r in await session.execute(sa.text(
-            "SELECT p.external_ref, ss.name, ss.filters, ss.min_score, ss.is_active, "
-            "to_char(ss.last_run_at AT TIME ZONE 'UTC', "
-            "'YYYY-MM-DD\"T\"HH24:MI:SS.US') AS last_run "
-            "FROM saved_searches ss " + _SCOPE.format(alias="ss")))
+        (
+            r.external_ref,
+            r.name,
+            _canon(r.filters),
+            int(r.min_score),
+            bool(r.is_active),
+            r.last_run,
+        )
+        for r in await session.execute(
+            sa.text(
+                "SELECT p.external_ref, ss.name, ss.filters, ss.min_score, ss.is_active, "
+                "to_char(ss.last_run_at AT TIME ZONE 'UTC', "
+                "'YYYY-MM-DD\"T\"HH24:MI:SS.US') AS last_run "
+                "FROM saved_searches ss " + _SCOPE.format(alias="ss")
+            )
+        )
     }
-    return {"applications": apps, "events": events, "bookmarks": bookmarks,
-            "offer": offer, "saved_searches": searches}
+    return {
+        "applications": apps,
+        "events": events,
+        "bookmarks": bookmarks,
+        "offer": offer,
+        "saved_searches": searches,
+    }
 
 
 def _diff(expected: set, actual: set) -> dict:
-    return {"missing": sorted(map(str, expected - actual)),
-            "extra": sorted(map(str, actual - expected))}
+    return {
+        "missing": sorted(map(str, expected - actual)),
+        "extra": sorted(map(str, actual - expected)),
+    }
 
 
 async def reconcile(session: AsyncSession, users: list[dict], report: dict) -> dict:
@@ -490,11 +562,18 @@ async def reconcile(session: AsyncSession, users: list[dict], report: dict) -> d
     # que ningún durable queda sin auditar (ni tracking ni staging). Un durable
     # colisionado cuya cadena se revirtió (savepoint) se ve 'unresolved' en el estado
     # final pero 'collision' en el report — la razón la fija el §4; la IDENTIDAD coincide.
-    expected_ids = Counter((ref, ident) for _, ref, ident in expected["staged"].elements())
+    expected_ids = Counter(
+        (ref, ident) for _, ref, ident in expected["staged"].elements()
+    )
     actual_ids = Counter(
-        (r["external_ref"],
-         _ident(r["durable"].get("url") if r["kind"] == "application"
-                else r["durable"].get("name")))
+        (
+            r["external_ref"],
+            _ident(
+                r["durable"].get("url")
+                if r["kind"] == "application"
+                else r["durable"].get("name")
+            ),
+        )
         for r in report.get("staged", [])
     )
     if expected_ids != actual_ids:
@@ -509,8 +588,10 @@ async def reconcile(session: AsyncSession, users: list[dict], report: dict) -> d
             "expected": {str(k): v for k, v in expected["events"].items()},
             "actual": {str(k): v for k, v in actual["events"].items()},
         },
-        "staging": {"expected": {str(k): v for k, v in expected["staged"].items()},
-                    "actual_ids": {str(k): v for k, v in actual_ids.items()}},
+        "staging": {
+            "expected": {str(k): v for k, v in expected["staged"].items()},
+            "actual_ids": {str(k): v for k, v in actual_ids.items()},
+        },
         "divergences": divergences,
     }
     if divergences:
@@ -556,55 +637,91 @@ async def _captured_identities(session: AsyncSession) -> dict:
         "JOIN sources s ON s.id = sl.source_id AND s.name = :src "
     )
     ident = {
-        "source": await _scoped(session,
-            "SELECT id::text k FROM sources WHERE name = :src", src),
-        "consumer": await _scoped(session,
-            "SELECT id::text k FROM consumers WHERE name = :cons", cons),
-        "applications": await _scoped(session,
+        "source": await _scoped(
+            session, "SELECT id::text k FROM sources WHERE name = :src", src
+        ),
+        "consumer": await _scoped(
+            session, "SELECT id::text k FROM consumers WHERE name = :cons", cons
+        ),
+        "applications": await _scoped(
+            session,
             "SELECT a.id::text k FROM applications a JOIN profiles p ON p.id = a.profile_id "
-            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons", cons),
-        "application_status_events": await _scoped(session,
+            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons",
+            cons,
+        ),
+        "application_status_events": await _scoped(
+            session,
             "SELECT e.id::text k FROM application_status_events e "
             "JOIN applications a ON a.id = e.application_id "
             "JOIN profiles p ON p.id = a.profile_id "
-            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons", cons),
-        "profile_vacancy_state": await _scoped(session,
+            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons",
+            cons,
+        ),
+        "profile_vacancy_state": await _scoped(
+            session,
             "SELECT (pvs.profile_id::text || ':' || pvs.vacancy_id::text) k "
             "FROM profile_vacancy_state pvs JOIN profiles p ON p.id = pvs.profile_id "
-            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons", cons),
-        "saved_searches": await _scoped(session,
+            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons",
+            cons,
+        ),
+        "saved_searches": await _scoped(
+            session,
             "SELECT ss.id::text k FROM saved_searches ss JOIN profiles p ON p.id = ss.profile_id "
-            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons", cons),
-        "source_listings": await _scoped(session,
-            "SELECT sl.id::text k " + corpus_join, src),
-        "source_listing_incarnations": await _scoped(session,
-            "SELECT i.id::text k " + corpus_join
-            + "JOIN source_listing_incarnations i ON i.source_listing_id = sl.id", src),
-        "source_listing_revisions": await _scoped(session,
-            "SELECT r.id::text k " + corpus_join
+            "JOIN consumers c ON c.id = p.consumer_id AND c.name = :cons",
+            cons,
+        ),
+        "source_listings": await _scoped(
+            session, "SELECT sl.id::text k " + corpus_join, src
+        ),
+        "source_listing_incarnations": await _scoped(
+            session,
+            "SELECT i.id::text k "
+            + corpus_join
+            + "JOIN source_listing_incarnations i ON i.source_listing_id = sl.id",
+            src,
+        ),
+        "source_listing_revisions": await _scoped(
+            session,
+            "SELECT r.id::text k "
+            + corpus_join
             + "JOIN source_listing_incarnations i ON i.source_listing_id = sl.id "
-            "JOIN source_listing_revisions r ON r.incarnation_id = i.id", src),
-        "offer_revision_sources": await _scoped(session,
+            "JOIN source_listing_revisions r ON r.incarnation_id = i.id",
+            src,
+        ),
+        "offer_revision_sources": await _scoped(
+            session,
             "SELECT (ors.offer_revision_id::text || ':' || ors.source_listing_revision_id::text) k "
             + corpus_join
             + "JOIN source_listing_incarnations i ON i.source_listing_id = sl.id "
             "JOIN source_listing_revisions r ON r.incarnation_id = i.id "
-            "JOIN offer_revision_sources ors ON ors.source_listing_revision_id = r.id", src),
-        "offer_revisions": await _scoped(session,
-            "SELECT DISTINCT ors.offer_revision_id::text k " + corpus_join
+            "JOIN offer_revision_sources ors ON ors.source_listing_revision_id = r.id",
+            src,
+        ),
+        "offer_revisions": await _scoped(
+            session,
+            "SELECT DISTINCT ors.offer_revision_id::text k "
+            + corpus_join
             + "JOIN source_listing_incarnations i ON i.source_listing_id = sl.id "
             "JOIN source_listing_revisions r ON r.incarnation_id = i.id "
-            "JOIN offer_revision_sources ors ON ors.source_listing_revision_id = r.id", src),
-        "link_evidence": await _scoped(session,
+            "JOIN offer_revision_sources ors ON ors.source_listing_revision_id = r.id",
+            src,
+        ),
+        "link_evidence": await _scoped(
+            session,
             "SELECT le.id::text k FROM link_evidence le "
             "JOIN source_listings sl ON sl.id = le.source_listing_id "
-            "JOIN sources s ON s.id = sl.source_id AND s.name = :src", src),
-        "dedup_candidates": await _scoped(session,
+            "JOIN sources s ON s.id = sl.source_id AND s.name = :src",
+            src,
+        ),
+        "dedup_candidates": await _scoped(
+            session,
             "SELECT dc.id::text k FROM dedup_candidates dc WHERE EXISTS ("
             "  SELECT 1 FROM source_listing_incarnations i "
             "  JOIN source_listings sl ON sl.id = i.source_listing_id "
             "  JOIN sources s ON s.id = sl.source_id AND s.name = :src "
-            "  WHERE i.ended_at IS NULL AND i.vacancy_id IN (dc.vacancy_a, dc.vacancy_b))", src),
+            "  WHERE i.ended_at IS NULL AND i.vacancy_id IN (dc.vacancy_a, dc.vacancy_b))",
+            src,
+        ),
     }
     # new = C-4 la sintetizó (sin incarnación de otra fuente); reused = preexistente
     # que C-4 solo enganchó (tiene incarnación de otra fuente).
@@ -621,10 +738,16 @@ async def _captured_identities(session: AsyncSession) -> dict:
         "  JOIN sources os ON os.id = osl.source_id AND os.name <> :src "
         "  WHERE oi.vacancy_id = v.id AND oi.ended_at IS NULL)"
     )
-    ident["new_vacancies"] = await _scoped(session,
-        "SELECT DISTINCT v.id::text k " + portfolio_vac + "AND NOT " + other_source, src)
-    ident["reused_vacancies"] = await _scoped(session,
-        "SELECT DISTINCT v.id::text k " + portfolio_vac + "AND " + other_source, src)
+    ident["new_vacancies"] = await _scoped(
+        session,
+        "SELECT DISTINCT v.id::text k " + portfolio_vac + "AND NOT " + other_source,
+        src,
+    )
+    ident["reused_vacancies"] = await _scoped(
+        session,
+        "SELECT DISTINCT v.id::text k " + portfolio_vac + "AND " + other_source,
+        src,
+    )
     return ident
 
 
@@ -648,12 +771,11 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
     # Los profile_vacancy_state PREEXISTENTES (antes del cutover) se pasan como preflight: un
     # bookmark que apunte a uno lo mutaría sin poder deshacerlo → abort fail-closed (P1 rev.
     # externa integral). En un cutover fresco este set está vacío (nada que abortar).
-    report = await migrate_portfolio(
-        session, users, preexisting_pvs=preexisting_pvs
-    )
+    report = await migrate_portfolio(session, users, preexisting_pvs=preexisting_pvs)
     manifest = await reconcile(session, users, report)
     manifest["report"] = {
-        "users": report["users"], "applications": report["applications"],
+        "users": report["users"],
+        "applications": report["applications"],
         "saved_searches": report["saved_searches"],
     }
     manifest["staged"] = report["staged"]
@@ -666,7 +788,11 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
     # estado final con queries PROPIAS — distingue un listing PERDIDO de una cuarentena legítima
     # y cruza los oráculos (created del ledger == procedencia de vacancies). Solo lectura.
     manifest["verification"] = await verify_migration(
-        session, users, manifest["ledger"], manifest["provenance"], PORTFOLIO_IMPORT_SOURCE
+        session,
+        users,
+        manifest["ledger"],
+        manifest["provenance"],
+        PORTFOLIO_IMPORT_SOURCE,
     )
     # El verdict SUPERIOR (el que se PERSISTE y gobierna la confirmación del llamador — contrato:
     # confirma SOLO si verdict=='ok') DEBE incorporar la verificación estructural: `reconcile`
@@ -677,7 +803,8 @@ async def migrate_and_reconcile(session: AsyncSession, users: list[dict]) -> dic
     if manifest["verification"]["verdict"] != "verified":
         manifest["verdict"] = "divergent"
         manifest["divergences"] = list(manifest.get("divergences", [])) + [
-            f"verificación estructural: {d}" for d in manifest["verification"]["discrepancies"]
+            f"verificación estructural: {d}"
+            for d in manifest["verification"]["discrepancies"]
         ]
         logger.error(
             "migrate_and_reconcile: verdict DEGRADADO a 'divergent' por la verificación "

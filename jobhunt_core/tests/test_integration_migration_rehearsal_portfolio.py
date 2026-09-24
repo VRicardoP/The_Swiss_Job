@@ -57,11 +57,22 @@ U_U2_SAVED = "https://jobs.example.ch/u2-saved"
 # (el sink las escribe por cada vacante-sombra) y dedup_candidates/link_evidence
 # (cross-source, 0 en este dataset pero parte del contrato del sink).
 FULL_WRITE_SET = (
-    "applications", "application_status_events", "profile_vacancy_state",
-    "saved_searches", "vacancies", "offer_revisions", "offer_revision_sources",
-    "source_listings", "source_listing_incarnations", "source_listing_revisions",
-    "dedup_candidates", "link_evidence", "sources", "harvest_scopes",
-    "consumers", "profiles",
+    "applications",
+    "application_status_events",
+    "profile_vacancy_state",
+    "saved_searches",
+    "vacancies",
+    "offer_revisions",
+    "offer_revision_sources",
+    "source_listings",
+    "source_listing_incarnations",
+    "source_listing_revisions",
+    "dedup_candidates",
+    "link_evidence",
+    "sources",
+    "harvest_scopes",
+    "consumers",
+    "profiles",
 )
 
 
@@ -73,56 +84,123 @@ def _representative_users() -> list[dict]:
         {
             "external_ref": 1,
             "applications": [
-                {"url": U_APPLIED, "status": "applied", "title": "Backend Dev",
-                 "company": "ACME", "description": "py", "notes": "enviado",
-                 "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-                {"url": U_SAVED, "status": "saved", "title": "Data Eng",
-                 "company": "Beta", "notes": "mirar",
-                 "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
-                {"url": U_SAVED_FU, "status": "saved", "title": "ML Eng",
-                 "company": "Gamma", "follow_up_date": date(2026, 9, 1),
-                 "created_at": datetime(2026, 6, 3, tzinfo=timezone.utc)},
+                {
+                    "url": U_APPLIED,
+                    "status": "applied",
+                    "title": "Backend Dev",
+                    "company": "ACME",
+                    "description": "py",
+                    "notes": "enviado",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+                {
+                    "url": U_SAVED,
+                    "status": "saved",
+                    "title": "Data Eng",
+                    "company": "Beta",
+                    "notes": "mirar",
+                    "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc),
+                },
+                {
+                    "url": U_SAVED_FU,
+                    "status": "saved",
+                    "title": "ML Eng",
+                    "company": "Gamma",
+                    "follow_up_date": date(2026, 9, 1),
+                    "created_at": datetime(2026, 6, 3, tzinfo=timezone.utc),
+                },
                 # Consolidación: saved+fu y applied a la MISMA url → 1 application.
-                {"url": U_BOTH, "status": "saved", "title": "DevOps",
-                 "company": "Delta", "follow_up_date": date(2026, 9, 5),
-                 "created_at": datetime(2026, 6, 4, tzinfo=timezone.utc)},
-                {"url": U_BOTH, "status": "applied", "title": "DevOps",
-                 "company": "Delta", "description": "IaC",
-                 "created_at": datetime(2026, 6, 5, tzinfo=timezone.utc)},
+                {
+                    "url": U_BOTH,
+                    "status": "saved",
+                    "title": "DevOps",
+                    "company": "Delta",
+                    "follow_up_date": date(2026, 9, 5),
+                    "created_at": datetime(2026, 6, 4, tzinfo=timezone.utc),
+                },
+                {
+                    "url": U_BOTH,
+                    "status": "applied",
+                    "title": "DevOps",
+                    "company": "Delta",
+                    "description": "IaC",
+                    "created_at": datetime(2026, 6, 5, tzinfo=timezone.utc),
+                },
                 # Sin url → unresolved (no persiste, se ENUMERA en staged).
-                {"url": None, "status": "offer", "title": "Sin URL",
-                 "created_at": datetime(2026, 6, 6, tzinfo=timezone.utc)},
+                {
+                    "url": None,
+                    "status": "offer",
+                    "title": "Sin URL",
+                    "created_at": datetime(2026, 6, 6, tzinfo=timezone.utc),
+                },
                 # URL compartida con el usuario 2.
-                {"url": U_SHARED, "status": "applied", "title": "Shared Role",
-                 "company": "Omega",
-                 "created_at": datetime(2026, 6, 7, tzinfo=timezone.utc)},
+                {
+                    "url": U_SHARED,
+                    "status": "applied",
+                    "title": "Shared Role",
+                    "company": "Omega",
+                    "created_at": datetime(2026, 6, 7, tzinfo=timezone.utc),
+                },
             ],
             "saved_searches": [
-                {"name": "python", "filters": '{"q": "python"}', "min_score": 60,
-                 "is_active": True, "last_notified_at": None},
-                {"name": "broken", "filters": "{no json", "min_score": 0,
-                 "is_active": False, "last_notified_at": None},
+                {
+                    "name": "python",
+                    "filters": '{"q": "python"}',
+                    "min_score": 60,
+                    "is_active": True,
+                    "last_notified_at": None,
+                },
+                {
+                    "name": "broken",
+                    "filters": "{no json",
+                    "min_score": 0,
+                    "is_active": False,
+                    "last_notified_at": None,
+                },
                 # Homónimas con filtros distintos = DOS búsquedas legítimas.
-                {"name": "zurich", "filters": '{"q": "a"}', "min_score": 0,
-                 "is_active": True, "last_notified_at": None},
-                {"name": "zurich", "filters": '{"q": "b"}', "min_score": 0,
-                 "is_active": True, "last_notified_at": None},
+                {
+                    "name": "zurich",
+                    "filters": '{"q": "a"}',
+                    "min_score": 0,
+                    "is_active": True,
+                    "last_notified_at": None,
+                },
+                {
+                    "name": "zurich",
+                    "filters": '{"q": "b"}',
+                    "min_score": 0,
+                    "is_active": True,
+                    "last_notified_at": None,
+                },
             ],
         },
         {
             "external_ref": 2,
             "applications": [
                 # MISMA url que el usuario 1 → misma vacante, application propia.
-                {"url": U_SHARED, "status": "rejected", "title": "Shared Role",
-                 "company": "Omega",
-                 "created_at": datetime(2026, 6, 8, tzinfo=timezone.utc)},
-                {"url": U_U2_SAVED, "status": "saved", "title": "Frontend",
-                 "company": "Sigma",
-                 "created_at": datetime(2026, 6, 9, tzinfo=timezone.utc)},
+                {
+                    "url": U_SHARED,
+                    "status": "rejected",
+                    "title": "Shared Role",
+                    "company": "Omega",
+                    "created_at": datetime(2026, 6, 8, tzinfo=timezone.utc),
+                },
+                {
+                    "url": U_U2_SAVED,
+                    "status": "saved",
+                    "title": "Frontend",
+                    "company": "Sigma",
+                    "created_at": datetime(2026, 6, 9, tzinfo=timezone.utc),
+                },
             ],
             "saved_searches": [
-                {"name": "rust", "filters": '{"q": "rust"}', "min_score": 0,
-                 "is_active": True, "last_notified_at": None},
+                {
+                    "name": "rust",
+                    "filters": '{"q": "rust"}',
+                    "min_score": 0,
+                    "is_active": True,
+                    "last_notified_at": None,
+                },
             ],
         },
     ]
@@ -130,16 +208,28 @@ def _representative_users() -> list[dict]:
 
 # Conteos agregados esperados (clasificación de las partes 1+2).
 EXPECTED_APPS = {
-    "applications": 5, "bookmarks": 4, "unresolved": 1,
-    "consolidated": 1, "invalid_status": 0, "collision": 0, "no_title": 0,
+    "applications": 5,
+    "bookmarks": 4,
+    "unresolved": 1,
+    "consolidated": 1,
+    "invalid_status": 0,
+    "collision": 0,
+    "no_title": 0,
 }
-EXPECTED_SS = {"migrated": 5, "existing": 0, "invalid_filters": 1,
-               "invalid_min_score": 0, "no_name": 0}
+EXPECTED_SS = {
+    "migrated": 5,
+    "existing": 0,
+    "invalid_filters": 1,
+    "invalid_min_score": 0,
+    "no_name": 0,
+}
 # Filas resultantes por objetivo de reconciliación (4 tracking + canónica
 # sintetizada: 6 URLs distintas → 6 vacantes-sombra portfolio-import).
 EXPECTED_ROWS = {
-    "applications": 5, "application_status_events": 5,
-    "profile_vacancy_state": 4, "saved_searches": 5,
+    "applications": 5,
+    "application_status_events": 5,
+    "profile_vacancy_state": 4,
+    "saved_searches": 5,
     "portfolio_vacancies": 6,
 }
 
@@ -161,11 +251,10 @@ async def _on_disposable_db(async_fn):
         async with admin_engine.connect() as c:
             await c.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
         temp_engine = create_async_engine(
-            temp_url, poolclass=sa.pool.NullPool,
+            temp_url,
+            poolclass=sa.pool.NullPool,
             connect_args={
-                "server_settings": {
-                    "search_path": f"{settings.CORE_DB_SCHEMA}, public"
-                }
+                "server_settings": {"search_path": f"{settings.CORE_DB_SCHEMA}, public"}
             },
         )
         try:
@@ -182,9 +271,7 @@ async def _on_disposable_db(async_fn):
             await temp_engine.dispose()
     finally:
         async with admin_engine.connect() as c:
-            await c.execute(
-                sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)')
-            )
+            await c.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
         await admin_engine.dispose()
 
 
@@ -223,16 +310,32 @@ def test_collision_routed_to_staging():
     from jobhunt_core import import_portfolio_migrate as ipm
 
     users = [
-        {"external_ref": 1, "applications": [
-            {"url": "https://spa.ch/jobs#anchor-111", "status": "applied",
-             "title": "Job 111", "company": "A",
-             "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-        ], "saved_searches": []},
-        {"external_ref": 2, "applications": [
-            {"url": "https://spa.ch/jobs#anchor-222", "status": "applied",
-             "title": "Job 222", "company": "B",
-             "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
-        ], "saved_searches": []},
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": "https://spa.ch/jobs#anchor-111",
+                    "status": "applied",
+                    "title": "Job 111",
+                    "company": "A",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+            ],
+            "saved_searches": [],
+        },
+        {
+            "external_ref": 2,
+            "applications": [
+                {
+                    "url": "https://spa.ch/jobs#anchor-222",
+                    "status": "applied",
+                    "title": "Job 222",
+                    "company": "B",
+                    "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc),
+                },
+            ],
+            "saved_searches": [],
+        },
     ]
 
     async def _run(factory):
@@ -260,12 +363,26 @@ def test_consolidated_real_enumerated():
     (distinguible de un fold benigno saved+follow_up)."""
     from jobhunt_core import import_portfolio_migrate as ipm
 
-    users = [{"external_ref": 1, "applications": [
-        {"url": "https://x.ch/dup", "status": "applied", "title": "Dup",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-        {"url": "https://x.ch/dup", "status": "rejected", "title": "Dup",
-         "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},  # más reciente
-    ], "saved_searches": []}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": "https://x.ch/dup",
+                    "status": "applied",
+                    "title": "Dup",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+                {
+                    "url": "https://x.ch/dup",
+                    "status": "rejected",
+                    "title": "Dup",
+                    "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc),
+                },  # más reciente
+            ],
+            "saved_searches": [],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
@@ -293,12 +410,28 @@ def test_bookmark_value_loss_staged():
     'consolidated_saved'), no se pierde en silencio."""
     from jobhunt_core import import_portfolio_migrate as ipm
 
-    users = [{"external_ref": 1, "applications": [
-        {"url": "https://x.ch/b", "status": "saved", "title": "Job B", "notes": "vieja",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-        {"url": "https://x.ch/b", "status": "saved", "title": "Job B", "notes": "nueva",
-         "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
-    ], "saved_searches": []}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": "https://x.ch/b",
+                    "status": "saved",
+                    "title": "Job B",
+                    "notes": "vieja",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+                {
+                    "url": "https://x.ch/b",
+                    "status": "saved",
+                    "title": "Job B",
+                    "notes": "nueva",
+                    "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc),
+                },
+            ],
+            "saved_searches": [],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
@@ -308,7 +441,9 @@ def test_bookmark_value_loss_staged():
             assert len(lost) == 1
             assert lost[0]["durable"]["notes"] == "vieja"  # la más antigua, no elegida
             note = (
-                await s.execute(sa.text("SELECT notes FROM profile_vacancy_state LIMIT 1"))
+                await s.execute(
+                    sa.text("SELECT notes FROM profile_vacancy_state LIMIT 1")
+                )
             ).scalar_one()
             assert note == "nueva"  # la más reciente gana
 
@@ -321,10 +456,20 @@ def test_coalescence_deterministic():
     from jobhunt_core import import_portfolio_migrate as ipm
 
     saved = [
-        {"url": "https://x.ch/c", "status": "saved", "title": "Job C", "notes": "vieja",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-        {"url": "https://x.ch/c", "status": "saved", "title": "Job C", "notes": "nueva",
-         "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
+        {
+            "url": "https://x.ch/c",
+            "status": "saved",
+            "title": "Job C",
+            "notes": "vieja",
+            "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+        },
+        {
+            "url": "https://x.ch/c",
+            "status": "saved",
+            "title": "Job C",
+            "notes": "nueva",
+            "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc),
+        },
     ]
 
     def _run_order(order):
@@ -335,7 +480,9 @@ def test_coalescence_deterministic():
                 await ipm.migrate_portfolio(s, users)
                 await s.commit()
                 note = (
-                    await s.execute(sa.text("SELECT notes FROM profile_vacancy_state LIMIT 1"))
+                    await s.execute(
+                        sa.text("SELECT notes FROM profile_vacancy_state LIMIT 1")
+                    )
                 ).scalar_one()
                 return note, await ipm.table_checksums(s)
 
@@ -349,9 +496,15 @@ def test_invalid_filter_disabled_and_staged():
     {} (alertaría de todo): se importa DESACTIVADA + se ENUMERA el original."""
     from jobhunt_core import import_portfolio_migrate as ipm
 
-    users = [{"external_ref": 1, "applications": [], "saved_searches": [
-        {"name": "alertas", "filters": "{broken", "is_active": True},
-    ]}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [],
+            "saved_searches": [
+                {"name": "alertas", "filters": "{broken", "is_active": True},
+            ],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
@@ -361,8 +514,11 @@ def test_invalid_filter_disabled_and_staged():
             assert report["saved_searches"]["migrated"] == 1
             assert [r for r in report["staged"] if r["reason"] == "invalid_filters"]
             row = (
-                await s.execute(sa.text(
-                    "SELECT is_active, filters FROM saved_searches WHERE name = 'alertas'"))
+                await s.execute(
+                    sa.text(
+                        "SELECT is_active, filters FROM saved_searches WHERE name = 'alertas'"
+                    )
+                )
             ).one()
             assert row.is_active is False and row.filters == {}  # inerte, no alerta
 
@@ -374,10 +530,26 @@ def test_saved_search_material_dedup():
     materiales distintas → AMBAS migran (no se colapsa una config en silencio)."""
     from jobhunt_core import import_portfolio_migrate as ipm
 
-    users = [{"external_ref": 1, "applications": [], "saved_searches": [
-        {"name": "s", "filters": '{"q": "x"}', "min_score": 20, "is_active": True},
-        {"name": "s", "filters": '{"q": "x"}', "min_score": 80, "is_active": True},
-    ]}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [],
+            "saved_searches": [
+                {
+                    "name": "s",
+                    "filters": '{"q": "x"}',
+                    "min_score": 20,
+                    "is_active": True,
+                },
+                {
+                    "name": "s",
+                    "filters": '{"q": "x"}',
+                    "min_score": 80,
+                    "is_active": True,
+                },
+            ],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
@@ -397,8 +569,18 @@ def test_recency_tie_deterministic():
 
     same = datetime(2026, 6, 1, tzinfo=timezone.utc)
     apps = [
-        {"url": "https://x.ch/t", "status": "applied", "title": "T", "created_at": same},
-        {"url": "https://x.ch/t", "status": "rejected", "title": "T", "created_at": same},
+        {
+            "url": "https://x.ch/t",
+            "status": "applied",
+            "title": "T",
+            "created_at": same,
+        },
+        {
+            "url": "https://x.ch/t",
+            "status": "rejected",
+            "title": "T",
+            "created_at": same,
+        },
     ]
 
     def _winner(order):
@@ -424,10 +606,20 @@ def test_checksums_scoped_to_consumer():
     from jobhunt_core import import_portfolio_migrate as ipm
     from jobhunt_core import profiles
 
-    users = [{"external_ref": 1, "applications": [
-        {"url": "https://x.ch/a", "status": "applied", "title": "A",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-    ], "saved_searches": []}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": "https://x.ch/a",
+                    "status": "applied",
+                    "title": "A",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+            ],
+            "saved_searches": [],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
@@ -439,8 +631,10 @@ def test_checksums_scoped_to_consumer():
             oc = await profiles.ensure_consumer(s, "other-tenant")
             op = await profiles.upsert_profile(s, oc, "z")
             await s.execute(
-                sa.text("INSERT INTO applications (id, profile_id, vacancy_id, snapshot) "
-                        "VALUES (:i, :p, :v, '{}'::jsonb)"),
+                sa.text(
+                    "INSERT INTO applications (id, profile_id, vacancy_id, snapshot) "
+                    "VALUES (:i, :p, :v, '{}'::jsonb)"
+                ),
                 {"i": uuid.uuid4(), "p": op, "v": vid},
             )
             await s.commit()
@@ -454,10 +648,23 @@ def test_checksums_portable_across_timezones():
     produce checksums IDÉNTICOS (last_run_at→epoch, ORDER BY COLLATE "C")."""
     from jobhunt_core import import_portfolio_migrate as ipm
 
-    users = [{"external_ref": 1, "applications": [], "saved_searches": [
-        {"name": "s", "filters": '{"q": "x"}', "min_score": 0, "is_active": True,
-         "last_notified_at": datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)},
-    ]}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [],
+            "saved_searches": [
+                {
+                    "name": "s",
+                    "filters": '{"q": "x"}',
+                    "min_score": 0,
+                    "is_active": True,
+                    "last_notified_at": datetime(
+                        2026, 7, 1, 12, 0, tzinfo=timezone.utc
+                    ),
+                },
+            ],
+        }
+    ]
 
     def _with_tz(tz):
         async def _run(factory):
@@ -465,7 +672,9 @@ def test_checksums_portable_across_timezones():
                 await s.execute(sa.text(f"SET TIME ZONE '{tz}'"))
                 await ipm.migrate_portfolio(s, users)
                 await s.commit()
-                await s.execute(sa.text(f"SET TIME ZONE '{tz}'"))  # NullPool renovó conexión
+                await s.execute(
+                    sa.text(f"SET TIME ZONE '{tz}'")
+                )  # NullPool renovó conexión
                 return await ipm.table_checksums(s)
 
         return asyncio.run(_on_disposable_db(_run))
@@ -490,9 +699,13 @@ def test_migrate_and_reconcile_ok_and_persists():
             assert len(manifest["identities"]["new_vacancies"]) == 6
             await s.commit()
             row = (
-                await s.execute(sa.text(
-                    "SELECT verdict, manifest FROM portfolio_migration_manifest "
-                    "WHERE id = :i"), {"i": manifest["id"]})
+                await s.execute(
+                    sa.text(
+                        "SELECT verdict, manifest FROM portfolio_migration_manifest "
+                        "WHERE id = :i"
+                    ),
+                    {"i": manifest["id"]},
+                )
             ).one()
             assert row.verdict == "ok"
             assert row.manifest["identities"]["applications"]
@@ -507,9 +720,20 @@ def test_manifest_detects_deterministic_bug():
     from jobhunt_core import import_portfolio_manifest as man
     from jobhunt_core import import_portfolio_migrate as ipm
 
-    users = [{"external_ref": 1, "applications": [], "saved_searches": [
-        {"name": "s", "filters": '{"q": "x"}', "min_score": 60, "is_active": True},
-    ]}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [],
+            "saved_searches": [
+                {
+                    "name": "s",
+                    "filters": '{"q": "x"}',
+                    "min_score": 60,
+                    "is_active": True,
+                },
+            ],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
@@ -528,11 +752,22 @@ def test_offer_oracle_strips_whitespace():
     igual (P1)."""
     from jobhunt_core import import_portfolio_manifest as man
 
-    users = [{"external_ref": 1, "applications": [
-        {"url": "https://x.ch/a", "status": "applied", "title": "Engineer",
-         "company": "Acme", "description": "Great role.\n",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-    ], "saved_searches": []}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": "https://x.ch/a",
+                    "status": "applied",
+                    "title": "Engineer",
+                    "company": "Acme",
+                    "description": "Great role.\n",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+            ],
+            "saved_searches": [],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
@@ -547,10 +782,16 @@ def test_staging_identity_robust():
     → verdict ok (identidad de staging robusta None↔'' + coerción str, sin crash)."""
     from jobhunt_core import import_portfolio_manifest as man
 
-    users = [{"external_ref": 1, "applications": [], "saved_searches": [
-        {"name": "", "filters": "{}"},
-        {"name": ["x"], "filters": "{}"},
-    ]}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [],
+            "saved_searches": [
+                {"name": "", "filters": "{}"},
+                {"name": ["x"], "filters": "{}"},
+            ],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
@@ -566,11 +807,22 @@ def test_utf8_quarantine_modeled():
     final (sin incarnación) → verdict ok (P2)."""
     from jobhunt_core import import_portfolio_manifest as man
 
-    users = [{"external_ref": 1, "applications": [
-        {"url": "https://ok.ch/j1", "status": "applied", "title": "T\ud800",
-         "company": "X", "description": "d",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-    ], "saved_searches": []}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": "https://ok.ch/j1",
+                    "status": "applied",
+                    "title": "T\ud800",
+                    "company": "X",
+                    "description": "d",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+            ],
+            "saved_searches": [],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
@@ -590,10 +842,20 @@ def test_rollback_new_reused_by_creation_not_refs():
     from jobhunt_core import import_portfolio_migrate as ipm
     from jobhunt_core import profiles
 
-    users = [{"external_ref": 1, "applications": [
-        {"url": "https://x.ch/a", "status": "applied", "title": "A",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-    ], "saved_searches": []}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": "https://x.ch/a",
+                    "status": "applied",
+                    "title": "A",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+            ],
+            "saved_searches": [],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
@@ -602,10 +864,13 @@ def test_rollback_new_reused_by_creation_not_refs():
             vid = await ip.resolve_vacancy_by_url(s, "https://x.ch/a")
             oc = await profiles.ensure_consumer(s, "other-tenant")
             op = await profiles.upsert_profile(s, oc, "z")
-            await s.execute(sa.text(
-                "INSERT INTO applications (id, profile_id, vacancy_id, snapshot) "
-                "VALUES (:i, :p, :v, '{}'::jsonb)"),
-                {"i": uuid.uuid4(), "p": op, "v": vid})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO applications (id, profile_id, vacancy_id, snapshot) "
+                    "VALUES (:i, :p, :v, '{}'::jsonb)"
+                ),
+                {"i": uuid.uuid4(), "p": op, "v": vid},
+            )
             await s.commit()
             ident = await man._captured_identities(s)
             # C-4 la sintetizó (sin incarnación de otra fuente) → NEW, aunque la
@@ -623,12 +888,29 @@ def test_manifest_catches_material_corruption():
     from jobhunt_core import import_portfolio_manifest as man
     from jobhunt_core import import_portfolio_migrate as ipm
 
-    users = [{"external_ref": 1, "applications": [
-        {"url": "https://x.ch/a", "status": "applied", "title": "A", "company": "Acme",
-         "notes": "n", "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-        {"url": "https://x.ch/b", "status": "saved", "title": "B", "notes": "bm",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-    ], "saved_searches": []}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": "https://x.ch/a",
+                    "status": "applied",
+                    "title": "A",
+                    "company": "Acme",
+                    "notes": "n",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+                {
+                    "url": "https://x.ch/b",
+                    "status": "saved",
+                    "title": "B",
+                    "notes": "bm",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+            ],
+            "saved_searches": [],
+        }
+    ]
 
     def _corrupt(sql):
         async def _run(factory):
@@ -642,15 +924,22 @@ def test_manifest_catches_material_corruption():
 
     assert _corrupt(None) == "ok"  # baseline
     assert _corrupt("UPDATE applications SET notes = 'X'") == "divergent"
-    assert _corrupt(
-        "UPDATE applications SET snapshot = jsonb_set(snapshot, '{title}', '\"Z\"')"
-    ) == "divergent"
-    assert _corrupt(
-        "UPDATE profile_vacancy_state SET notes = 'X' WHERE notes IS NOT NULL"
-    ) == "divergent"
-    assert _corrupt(
-        "UPDATE offer_revisions SET content = jsonb_set(content, '{title}', '\"Z\"')"
-    ) == "divergent"
+    assert (
+        _corrupt(
+            "UPDATE applications SET snapshot = jsonb_set(snapshot, '{title}', '\"Z\"')"
+        )
+        == "divergent"
+    )
+    assert (
+        _corrupt("UPDATE profile_vacancy_state SET notes = 'X' WHERE notes IS NOT NULL")
+        == "divergent"
+    )
+    assert (
+        _corrupt(
+            "UPDATE offer_revisions SET content = jsonb_set(content, '{title}', '\"Z\"')"
+        )
+        == "divergent"
+    )
 
 
 def test_manifest_catches_missing_tracking():
@@ -659,10 +948,20 @@ def test_manifest_catches_missing_tracking():
     from jobhunt_core import import_portfolio_manifest as man
     from jobhunt_core import import_portfolio_migrate as ipm
 
-    users = [{"external_ref": 1, "applications": [
-        {"url": "https://x.ch/a", "status": "applied", "title": "A",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-    ], "saved_searches": []}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": "https://x.ch/a",
+                    "status": "applied",
+                    "title": "A",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+            ],
+            "saved_searches": [],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
@@ -692,45 +991,85 @@ def test_cross_source_collision_staged():
     from jobhunt_core import import_portfolio_migrate as ipm
 
     url_a = "https://spa-other.ch/jobs/a"
-    users = [{"external_ref": 1, "applications": [
-        {"url": url_a, "status": "applied", "title": "B",
-         "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
-    ], "saved_searches": []}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": url_a,
+                    "status": "applied",
+                    "title": "B",
+                    "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc),
+                },
+            ],
+            "saved_searches": [],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
             # Otra fuente importa /jobs/a…
             src, scope = uuid.uuid4(), uuid.uuid4()
-            await s.execute(sa.text(
-                "INSERT INTO sources (id, name, tier) VALUES (:i, 'arbeitnow', 0)"),
-                {"i": src})
-            await s.execute(sa.text(
-                "INSERT INTO harvest_scopes (id, source_id, params, tier) "
-                "VALUES (:i, :s, '{}'::jsonb, 0)"), {"i": scope, "s": src})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO sources (id, name, tier) VALUES (:i, 'arbeitnow', 0)"
+                ),
+                {"i": src},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO harvest_scopes (id, source_id, params, tier) "
+                    "VALUES (:i, :s, '{}'::jsonb, 0)"
+                ),
+                {"i": scope, "s": src},
+            )
             await s.commit()
-            await RawListingSink().handle(s, str(scope), (RawListing(
-                external_id="other-A", url=url_a,
-                payload={"title": "Other", "company_name": "X",
-                         "description": "d", "tags": []}),))
+            await RawListingSink().handle(
+                s,
+                str(scope),
+                (
+                    RawListing(
+                        external_id="other-A",
+                        url=url_a,
+                        payload={
+                            "title": "Other",
+                            "company_name": "X",
+                            "description": "d",
+                            "tags": [],
+                        },
+                    ),
+                ),
+            )
             await s.commit()
             # …y la MISMA vacante tiene además otra url con clave DISTINTA
             # (attach por identidad título+empresa): vacante multi-clave.
-            vac = (await s.execute(sa.text(
-                "SELECT i.vacancy_id FROM source_listing_incarnations i "
-                "JOIN source_listings sl ON sl.id = i.source_listing_id "
-                "WHERE sl.source_id = :s AND i.ended_at IS NULL"),
-                {"s": src})).scalar_one()
+            vac = (
+                await s.execute(
+                    sa.text(
+                        "SELECT i.vacancy_id FROM source_listing_incarnations i "
+                        "JOIN source_listings sl ON sl.id = i.source_listing_id "
+                        "WHERE sl.source_id = :s AND i.ended_at IS NULL"
+                    ),
+                    {"s": src},
+                )
+            ).scalar_one()
             url_b = "https://spa-other.ch/jobs/b"
             lid = uuid.uuid4()
-            await s.execute(sa.text(
-                "INSERT INTO source_listings (id, source_id, external_id, url_normalized) "
-                "VALUES (:i, :s, 'other-B', :u)"),
-                {"i": lid, "s": src, "u": normalize_url(url_b)})
-            await s.execute(sa.text(
-                "INSERT INTO source_listing_incarnations "
-                "(id, source_listing_id, vacancy_id, seq, url) "
-                "VALUES (:i, :l, :v, 1, :u)"),
-                {"i": uuid.uuid4(), "l": lid, "v": vac, "u": url_b})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO source_listings (id, source_id, external_id, url_normalized) "
+                    "VALUES (:i, :s, 'other-B', :u)"
+                ),
+                {"i": lid, "s": src, "u": normalize_url(url_b)},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO source_listing_incarnations "
+                    "(id, source_listing_id, vacancy_id, seq, url) "
+                    "VALUES (:i, :l, :v, 1, :u)"
+                ),
+                {"i": uuid.uuid4(), "l": lid, "v": vac, "u": url_b},
+            )
             await s.commit()
             other_vac = await _count(s, "vacancies")
 
@@ -748,11 +1087,16 @@ def test_cross_source_collision_staged():
             # Y NINGÚN artefacto de corpus portfolio-import (cadena revertida):
             # resolve→None y cero source_listings portfolio-import con esa clave.
             assert await ip.resolve_vacancy_by_url(s, url_a) is None
-            n_pi = (await s.execute(sa.text(
-                "SELECT count(*) FROM source_listings sl JOIN sources s "
-                "ON s.id = sl.source_id AND s.name = 'portfolio-import' "
-                "WHERE sl.url_normalized = :u"),
-                {"u": normalize_url(url_a)})).scalar_one()
+            n_pi = (
+                await s.execute(
+                    sa.text(
+                        "SELECT count(*) FROM source_listings sl JOIN sources s "
+                        "ON s.id = sl.source_id AND s.name = 'portfolio-import' "
+                        "WHERE sl.url_normalized = :u"
+                    ),
+                    {"u": normalize_url(url_a)},
+                )
+            ).scalar_one()
             assert n_pi == 0
 
     asyncio.run(_on_disposable_db(_run))
@@ -768,25 +1112,54 @@ def test_inventory_reused_vacancy():
     from jobhunt_core import import_portfolio_manifest as man
 
     url = "https://reuse.ch/job-1"
-    users = [{"external_ref": 1, "applications": [
-        {"url": url, "status": "applied", "title": "R",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-    ], "saved_searches": []}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": url,
+                    "status": "applied",
+                    "title": "R",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+            ],
+            "saved_searches": [],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
             src, scope = uuid.uuid4(), uuid.uuid4()
-            await s.execute(sa.text(
-                "INSERT INTO sources (id, name, tier) VALUES (:i, 'arbeitnow', 0)"),
-                {"i": src})
-            await s.execute(sa.text(
-                "INSERT INTO harvest_scopes (id, source_id, params, tier) "
-                "VALUES (:i, :s, '{}'::jsonb, 0)"), {"i": scope, "s": src})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO sources (id, name, tier) VALUES (:i, 'arbeitnow', 0)"
+                ),
+                {"i": src},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO harvest_scopes (id, source_id, params, tier) "
+                    "VALUES (:i, :s, '{}'::jsonb, 0)"
+                ),
+                {"i": scope, "s": src},
+            )
             await s.commit()
-            await RawListingSink().handle(s, str(scope), (RawListing(
-                external_id="reuse-1", url=url,
-                payload={"title": "R", "company_name": "X",
-                         "description": "d", "tags": []}),))
+            await RawListingSink().handle(
+                s,
+                str(scope),
+                (
+                    RawListing(
+                        external_id="reuse-1",
+                        url=url,
+                        payload={
+                            "title": "R",
+                            "company_name": "X",
+                            "description": "d",
+                            "tags": [],
+                        },
+                    ),
+                ),
+            )
             await s.commit()
             existing_vid = (
                 await s.execute(sa.text("SELECT id FROM vacancies LIMIT 1"))
@@ -805,10 +1178,23 @@ def test_manifest_subsecond_last_run_ok():
     divergent (esperado y destino canonizan el timestamp igual, sin trunc↔round)."""
     from jobhunt_core import import_portfolio_manifest as man
 
-    users = [{"external_ref": 1, "applications": [], "saved_searches": [
-        {"name": "s", "filters": '{"q": "x"}', "min_score": 0, "is_active": True,
-         "last_notified_at": datetime(2026, 7, 1, 12, 0, 0, 750000, tzinfo=timezone.utc)},
-    ]}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [],
+            "saved_searches": [
+                {
+                    "name": "s",
+                    "filters": '{"q": "x"}',
+                    "min_score": 0,
+                    "is_active": True,
+                    "last_notified_at": datetime(
+                        2026, 7, 1, 12, 0, 0, 750000, tzinfo=timezone.utc
+                    ),
+                },
+            ],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
@@ -824,10 +1210,20 @@ def test_manifest_models_sink_quarantine():
     from jobhunt_core import import_portfolio_manifest as man
 
     long_url = "https://x.ch/" + "a" * 2100  # > 2048 (core0028)
-    users = [{"external_ref": 1, "applications": [
-        {"url": long_url, "status": "applied", "title": "T",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-    ], "saved_searches": []}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": long_url,
+                    "status": "applied",
+                    "title": "T",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+            ],
+            "saved_searches": [],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
@@ -878,30 +1274,61 @@ def test_identities_exclude_concurrent_foreign():
     from jobhunt_core.harvest.types import RawListing
     from jobhunt_core import import_portfolio_manifest as man
 
-    users = [{"external_ref": 1, "applications": [
-        {"url": "https://x.ch/a", "status": "applied", "title": "A",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-    ], "saved_searches": []}]
+    users = [
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": "https://x.ch/a",
+                    "status": "applied",
+                    "title": "A",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+            ],
+            "saved_searches": [],
+        }
+    ]
 
     async def _run(factory):
         async with factory() as s:
             # Escritura AJENA (otra fuente, otra URL) confirmada antes de reconciliar.
             src, scope = uuid.uuid4(), uuid.uuid4()
-            await s.execute(sa.text(
-                "INSERT INTO sources (id, name, tier) VALUES (:i, 'arbeitnow', 0)"),
-                {"i": src})
-            await s.execute(sa.text(
-                "INSERT INTO harvest_scopes (id, source_id, params, tier) "
-                "VALUES (:i, :s, '{}'::jsonb, 0)"), {"i": scope, "s": src})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO sources (id, name, tier) VALUES (:i, 'arbeitnow', 0)"
+                ),
+                {"i": src},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO harvest_scopes (id, source_id, params, tier) "
+                    "VALUES (:i, :s, '{}'::jsonb, 0)"
+                ),
+                {"i": scope, "s": src},
+            )
             await s.commit()
-            await RawListingSink().handle(s, str(scope), (RawListing(
-                external_id="foreign", url="https://foreign.ch/x",
-                payload={"title": "F", "company_name": "Y",
-                         "description": "d", "tags": []}),))
+            await RawListingSink().handle(
+                s,
+                str(scope),
+                (
+                    RawListing(
+                        external_id="foreign",
+                        url="https://foreign.ch/x",
+                        payload={
+                            "title": "F",
+                            "company_name": "Y",
+                            "description": "d",
+                            "tags": [],
+                        },
+                    ),
+                ),
+            )
             await s.commit()
-            foreign_vid = str((
-                await s.execute(sa.text("SELECT id FROM vacancies LIMIT 1"))
-            ).scalar_one())
+            foreign_vid = str(
+                (
+                    await s.execute(sa.text("SELECT id FROM vacancies LIMIT 1"))
+                ).scalar_one()
+            )
 
             manifest = await man.migrate_and_reconcile(s, users)
             ident = manifest["identities"]
@@ -920,10 +1347,20 @@ def test_winner_tiebreak_company_deterministic():
 
     same = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)
     apps = [
-        {"url": "https://x.ch/d", "status": "applied", "title": "T",
-         "company": "Acme", "created_at": same},
-        {"url": "https://x.ch/d", "status": "applied", "title": "T",
-         "company": "Globex", "created_at": same},
+        {
+            "url": "https://x.ch/d",
+            "status": "applied",
+            "title": "T",
+            "company": "Acme",
+            "created_at": same,
+        },
+        {
+            "url": "https://x.ch/d",
+            "status": "applied",
+            "title": "T",
+            "company": "Globex",
+            "created_at": same,
+        },
     ]
 
     def _company(order):
@@ -934,8 +1371,11 @@ def test_winner_tiebreak_company_deterministic():
                 await ipm.migrate_portfolio(s, users)
                 await s.commit()
                 return (
-                    await s.execute(sa.text(
-                        "SELECT snapshot->>'company' AS c FROM applications LIMIT 1"))
+                    await s.execute(
+                        sa.text(
+                            "SELECT snapshot->>'company' AS c FROM applications LIMIT 1"
+                        )
+                    )
                 ).scalar_one()
 
         return asyncio.run(_on_disposable_db(_run))
@@ -956,9 +1396,9 @@ async def _scenario(factory):
         await ipm.migrate_portfolio(s, users)
         chk_dry = await ipm.table_checksums(s)
         assert all(t["count"] > 0 for t in chk_dry.values()), chk_dry
-        assert all(
-            t["checksum"] != ipm.EMPTY_CHECKSUM for t in chk_dry.values()
-        ), chk_dry
+        assert all(t["checksum"] != ipm.EMPTY_CHECKSUM for t in chk_dry.values()), (
+            chk_dry
+        )
         await s.rollback()
     async with factory() as s:
         for table in FULL_WRITE_SET:
@@ -982,7 +1422,9 @@ async def _scenario(factory):
         assert reasons["no_name"] == report["saved_searches"]["no_name"]
         assert reasons["invalid_filters"] == report["saved_searches"]["invalid_filters"]
         assert reasons == Counter({"unresolved": 1, "invalid_filters": 1})
-        unresolved_rec = next(r for r in report["staged"] if r["reason"] == "unresolved")
+        unresolved_rec = next(
+            r for r in report["staged"] if r["reason"] == "unresolved"
+        )
         assert unresolved_rec["external_ref"] == "1"
         assert unresolved_rec["kind"] == "application"
         assert unresolved_rec["durable"]["title"] == "Sin URL"
@@ -1012,8 +1454,11 @@ async def _scenario(factory):
         await s.commit()
         assert report2["applications"] == EXPECTED_APPS
         assert report2["saved_searches"] == {
-            "migrated": 0, "existing": 5, "invalid_filters": 1,
-            "invalid_min_score": 0, "no_name": 0,
+            "migrated": 0,
+            "existing": 5,
+            "invalid_filters": 1,
+            "invalid_min_score": 0,
+            "no_name": 0,
         }
         chk2 = await ipm.table_checksums(s)
         assert chk2 == chk1  # MISMOS conteos Y checksums: idempotente de verdad

@@ -6,12 +6,23 @@ from pydantic import ValidationError
 from jobhunt_core.saved_search_query import matching_query
 
 
-@pytest.mark.parametrize("filters", [
-    None, [], "python", {"source": 123}, {"canton": ["ZH"]},
-    {"language": {"$ne": None}}, {"remote_only": "false"},
-    {"salary_min": True}, {"salary_max": -1}, {"salary_min": "50"},
-    {"unknown_filter": True}, {"keywords": "python"},
-])
+@pytest.mark.parametrize(
+    "filters",
+    [
+        None,
+        [],
+        "python",
+        {"source": 123},
+        {"canton": ["ZH"]},
+        {"language": {"$ne": None}},
+        {"remote_only": "false"},
+        {"salary_min": True},
+        {"salary_max": -1},
+        {"salary_min": "50"},
+        {"unknown_filter": True},
+        {"keywords": "python"},
+    ],
+)
 def test_invalid_filters_never_become_unfiltered_searches(filters):
     with pytest.raises(ValidationError):
         matching_query(filters)

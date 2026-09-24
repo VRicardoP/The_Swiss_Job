@@ -180,11 +180,19 @@ def test_la_secuencia_la_ejecuta_un_script_versionado():
         "el perfil de dev (docker-compose.yml + docker-compose.dev.yml)."
     )
     guion = _CUTOVER.read_text(encoding="utf-8")
-    assert guion.startswith("#!/usr/bin/env bash"), "el cutover no declara su intérprete"
-    assert "set -Eeuo pipefail" in guion, "sin pipefail una tubería vuelve a tragarse el error"
+    assert guion.startswith("#!/usr/bin/env bash"), (
+        "el cutover no declara su intérprete"
+    )
+    assert "set -Eeuo pipefail" in guion, (
+        "sin pipefail una tubería vuelve a tragarse el error"
+    )
     lineas = _seccion_5()
-    assert _primera(lineas, r"nas_cutover\.sh cutover") is not None, "§5 no invoca el script"
-    assert _primera(lineas, r"nas_cutover\.sh smoke") is not None, "§5 no invoca el smoke"
+    assert _primera(lineas, r"nas_cutover\.sh cutover") is not None, (
+        "§5 no invoca el script"
+    )
+    assert _primera(lineas, r"nas_cutover\.sh smoke") is not None, (
+        "§5 no invoca el smoke"
+    )
     assert _primera(lineas, r"scp .*nas_cutover\.sh") is not None or any(
         "nas_cutover.sh" in linea
         for linea in lineas[: _primera(lineas, r"#### Paso 1")]
@@ -196,8 +204,12 @@ def test_ningun_comando_de_la_seccion_5_pierde_el_estado_de_salida():
     bloques ejecutables no pueden volver a canalizar `psql` ni `pg_dump` a otro comando,
     porque el estado que sobrevive es el del ÚLTIMO de la tubería."""
     for linea in _bloques_bash(_seccion_5()):
-        assert not re.search(r"\bpsql\b[^|]*\|", linea), f"psql canalizado en §5: {linea}"
-        assert not re.search(r"\bpg_dump\b[^|]*\|", linea), f"pg_dump canalizado en §5: {linea}"
+        assert not re.search(r"\bpsql\b[^|]*\|", linea), (
+            f"psql canalizado en §5: {linea}"
+        )
+        assert not re.search(r"\bpg_dump\b[^|]*\|", linea), (
+            f"pg_dump canalizado en §5: {linea}"
+        )
 
 
 def test_el_smoke_y_la_API_no_pueden_divergir_en_el_status_de_ready():
@@ -208,7 +220,7 @@ def test_el_smoke_y_la_API_no_pueden_divergir_en_el_status_de_ready():
     from jobhunt_core.api.main import _READY_STATUS
 
     guion = _CUTOVER.read_text(encoding="utf-8")
-    declarado = re.search(r'READY_STATUS_ESPERADO:=([a-z_]+)\}', guion)
+    declarado = re.search(r"READY_STATUS_ESPERADO:=([a-z_]+)\}", guion)
     assert declarado, "el cutover ya no declara READY_STATUS_ESPERADO"
     assert declarado.group(1) == _READY_STATUS, (
         f"el smoke exige status={declarado.group(1)!r} y la API devuelve {_READY_STATUS!r}"

@@ -59,8 +59,14 @@ SAVED_STATUS = "saved"
 # (saved/applied/phone_screen/technical/offer/rejected) son subconjunto.
 APPLICATION_STATUSES = frozenset(
     {
-        "saved", "applied", "phone_screen", "technical",
-        "interview", "offer", "rejected", "withdrawn",
+        "saved",
+        "applied",
+        "phone_screen",
+        "technical",
+        "interview",
+        "offer",
+        "rejected",
+        "withdrawn",
     }
 )
 # Tope del esquema (String(200)) — también es la clave de dedup.
@@ -122,8 +128,13 @@ async def migrate_applications(
     de C-4; aquí solo se enumera en memoria (el origen es de solo lectura).
     """
     counts = {
-        "applications": 0, "bookmarks": 0, "unresolved": 0,
-        "consolidated": 0, "invalid_status": 0, "collision": 0, "no_title": 0,
+        "applications": 0,
+        "bookmarks": 0,
+        "unresolved": 0,
+        "consolidated": 0,
+        "invalid_status": 0,
+        "collision": 0,
+        "no_title": 0,
     }
     # AGRUPAR por vacancy_id ANTES de insertar: dos durables sobre la misma
     # vacante deben consolidarse en UNA application (UNIQUE del esquema).
@@ -203,7 +214,8 @@ async def migrate_applications(
         # (P2 rev. externa 2). El ganador va primero (su valor prima).
         ordered = (
             [winner, *sorted(candidates, key=_recency_key, reverse=True)]
-            if winner else []
+            if winner
+            else []
         )
         follow_up = next(
             (d for d in (_as_date(r.get("follow_up_date")) for r in ordered) if d),
@@ -227,7 +239,9 @@ async def migrate_applications(
                     logger.warning(
                         "import_portfolio_durables: candidatura real DESCARTADA por "
                         "consolidación — status=%r title=%r; gana status=%r",
-                        r.get("status"), r.get("title"), winner.get("status"),
+                        r.get("status"),
+                        r.get("title"),
+                        winner.get("status"),
                     )
                     staged_ids.add(id(r))
                     _record_skipped(staging, "application", "consolidated_real", r)
@@ -236,7 +250,9 @@ async def migrate_applications(
             fu = _as_date(r.get("follow_up_date"))
             # Nota o follow_up de un bookmark que NO es el elegido (una sola columna
             # de cada): valor material distinto perdido → se enumera (P1 rev. externa).
-            lost = (note and note != bookmark_note) or (fu is not None and fu != follow_up)
+            lost = (note and note != bookmark_note) or (
+                fu is not None and fu != follow_up
+            )
             if lost and id(r) not in staged_ids:
                 staged_ids.add(id(r))
                 _record_skipped(staging, "application", "consolidated_saved", r)
@@ -291,17 +307,23 @@ async def migrate_applications(
                     "ON CONFLICT (profile_id, vacancy_id) DO NOTHING RETURNING id"
                 ),
                 {
-                    "id": uuid.uuid4(), "pid": profile_id, "vid": vacancy_id,
+                    "id": uuid.uuid4(),
+                    "pid": profile_id,
+                    "vid": vacancy_id,
                     # G3-P3-2: `default=str` — la frontera que decide si el
                     # durable es sintetizable serializa con canonical_payload
                     # (que SÍ lo lleva), así que acepta un Decimal/date/UUID en
                     # company/description; sin él, el INSERT reventaba con
                     # TypeError y mataba la transacción ENTERA del cutover.
                     "snap": json.dumps(
-                        _json_safe(snapshot), ensure_ascii=False,
-                        allow_nan=False, default=str,
+                        _json_safe(snapshot),
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        default=str,
                     ),
-                    "st": winner["status"], "n": notes, "fud": follow_up,
+                    "st": winner["status"],
+                    "n": notes,
+                    "fud": follow_up,
                 },
             )
         ).scalar_one_or_none()
@@ -349,16 +371,19 @@ async def migrate_saved_searches(
     filters inválido (importadas desactivadas) se ENUMERAN en la lista
     {kind, reason, durable} para arreglo/reconciliación manual.
     """
-    counts = {"migrated": 0, "existing": 0, "invalid_filters": 0,
-              "invalid_min_score": 0, "no_name": 0}
+    counts = {
+        "migrated": 0,
+        "existing": 0,
+        "invalid_filters": 0,
+        "invalid_min_score": 0,
+        "no_name": 0,
+    }
     for row in rows:
         name = row.get("name")
         if not name or not isinstance(name, str):
             # Sin nombre no hay clave de dedup — cuarentena por-item.
             counts["no_name"] += 1
-            logger.warning(
-                "import_portfolio_durables: saved_search sin name — OMITIDA"
-            )
+            logger.warning("import_portfolio_durables: saved_search sin name — OMITIDA")
             _record_skipped(staging, "saved_search", "no_name", row)
             continue
         if len(name) > SAVED_SEARCH_NAME_MAX:
@@ -396,14 +421,13 @@ async def migrate_saved_searches(
             logger.warning(
                 "import_portfolio_durables: min_score INVÁLIDO (%r) en búsqueda "
                 "%r — se importa DESACTIVADA con 0 y se enumera en staging",
-                row.get("min_score"), name,
+                row.get("min_score"),
+                name,
             )
             _record_skipped(staging, "saved_search", "invalid_min_score", row)
         # G1 H-3: la columna real del origen se llama `last_run_at`; se leen ambas
         # claves (el alias histórico primero) — antes quedaba NULL para todas.
-        last_run = _as_datetime(
-            row.get("last_notified_at") or row.get("last_run_at")
-        )
+        last_run = _as_datetime(row.get("last_notified_at") or row.get("last_run_at"))
         if not isinstance(filters, dict):
             # Filtro INVÁLIDO (no parsea o no es objeto): un {} ACTIVO alertaría de
             # TODAS las ofertas → NO se activa. Se importa DESACTIVADA con {} (para
@@ -453,9 +477,15 @@ async def migrate_saved_searches(
                         "AND last_run_at IS NOT DISTINCT FROM :lra "
                         "AND (min_score < 0 OR min_score > :cota)"
                     ),
-                    {"pid": profile_id, "n": name, "f": filters_json,
-                     "ms": min_score, "act": is_active, "lra": last_run,
-                     "cota": MIN_SCORE_MAX},
+                    {
+                        "pid": profile_id,
+                        "n": name,
+                        "f": filters_json,
+                        "ms": min_score,
+                        "act": is_active,
+                        "lra": last_run,
+                        "cota": MIN_SCORE_MAX,
+                    },
                 )
             ).rowcount
             if degradadas:
@@ -464,7 +494,8 @@ async def migrate_saved_searches(
                     "búsqueda %r tenían el umbral FUERA DE COTA sin degradar "
                     "(import anterior al cambio de regla) — convergidas a "
                     "0/DESACTIVADA en vez de duplicar la búsqueda",
-                    degradadas, name,
+                    degradadas,
+                    name,
                 )
         exists = (
             await session.execute(
@@ -475,8 +506,14 @@ async def migrate_saved_searches(
                     "AND is_active = :act "
                     "AND last_run_at IS NOT DISTINCT FROM :lra LIMIT 1"
                 ),
-                {"pid": profile_id, "n": name, "f": filters_json,
-                 "ms": min_score, "act": is_active, "lra": last_run},
+                {
+                    "pid": profile_id,
+                    "n": name,
+                    "f": filters_json,
+                    "ms": min_score,
+                    "act": is_active,
+                    "lra": last_run,
+                },
             )
         ).first()
         if exists:
@@ -489,8 +526,12 @@ async def migrate_saved_searches(
                 "VALUES (:id, :pid, :n, CAST(:f AS jsonb), :ms, :act, :lra)"
             ),
             {
-                "id": uuid.uuid4(), "pid": profile_id, "n": name,
-                "f": filters_json, "ms": min_score, "act": is_active,
+                "id": uuid.uuid4(),
+                "pid": profile_id,
+                "n": name,
+                "f": filters_json,
+                "ms": min_score,
+                "act": is_active,
                 "lra": last_run,
             },
         )
@@ -509,9 +550,7 @@ async def migrate_saved_searches(
     return counts
 
 
-def _record_skipped(
-    staging: list | None, kind: str, reason: str, row: dict
-) -> None:
+def _record_skipped(staging: list | None, kind: str, reason: str, row: dict) -> None:
     """Enumera un durable IRRECUPERABLE en el sink de staging (si se pasó).
 
     Guarda el durable ÍNTEGRO (identidad completa: url/title/status/name/…) para
@@ -707,9 +746,12 @@ def _recency_key(row: dict) -> tuple:
     # description/follow_up dejan el ganador (y el checksum) a merced del orden del
     # lote (P2 rev. externa 2).
     tiebreak = (
-        str(row.get("status") or ""), str(row.get("url") or ""),
-        str(row.get("title") or ""), str(row.get("notes") or ""),
-        str(row.get("company") or ""), str(row.get("description") or ""),
+        str(row.get("status") or ""),
+        str(row.get("url") or ""),
+        str(row.get("title") or ""),
+        str(row.get("notes") or ""),
+        str(row.get("company") or ""),
+        str(row.get("description") or ""),
         str(_as_date(row.get("follow_up_date")) or ""),
     )
     return (dt, tiebreak)

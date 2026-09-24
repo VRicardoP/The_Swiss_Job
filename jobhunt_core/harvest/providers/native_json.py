@@ -19,7 +19,11 @@ import httpx
 
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
-from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
+from jobhunt_core.harvest.provider import (
+    BaseProvider,
+    ProviderConfigError,
+    ProviderResponseError,
+)
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills
 from jobhunt_core.harvest.providers.search_metadata import workingnomads_metadata
 from jobhunt_core.harvest.types import FetchResult, RawListing
@@ -35,12 +39,29 @@ MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 
 # Same title-only exclusions as the previous Working Nomads producer.
 WORKINGNOMADS_TECH_EXCLUDE = (
-    "software engineer", "backend engineer", "frontend engineer", "full stack",
-    "fullstack", "devops", "sre", "site reliability", "ml engineer",
-    "data engineer", "cloud engineer", "platform engineer", "mobile developer",
-    "ios developer", "android developer", "blockchain", "cybersecurity",
-    "security engineer", "embedded", "firmware", "hardware engineer",
-    "network engineer", "infrastructure",
+    "software engineer",
+    "backend engineer",
+    "frontend engineer",
+    "full stack",
+    "fullstack",
+    "devops",
+    "sre",
+    "site reliability",
+    "ml engineer",
+    "data engineer",
+    "cloud engineer",
+    "platform engineer",
+    "mobile developer",
+    "ios developer",
+    "android developer",
+    "blockchain",
+    "cybersecurity",
+    "security engineer",
+    "embedded",
+    "firmware",
+    "hardware engineer",
+    "network engineer",
+    "infrastructure",
 )
 
 
@@ -95,7 +116,9 @@ def _content(name, raw):
     category = raw.get("category_name") if name == "workingnomads" else None
     if isinstance(category, str) and category.strip():
         tags = [category.strip(), *tags]
-    extracted = extract_job_skills(title if isinstance(title, str) else "", description or "")
+    extracted = extract_job_skills(
+        title if isinstance(title, str) else "", description or ""
+    )
     merged, seen = [], set()
     for tag in [*tags, *extracted]:
         if not isinstance(tag, (str, int, float)) or isinstance(tag, bool):
@@ -104,10 +127,16 @@ def _content(name, raw):
         if tag and tag.lower() not in seen:
             seen.add(tag.lower())
             merged.append(tag)
-    location = (raw.get("jobGeo") or raw.get("country")) if jobicy else raw.get(
-        "candidate_required_location" if name == "remotive" else "location"
+    location = (
+        (raw.get("jobGeo") or raw.get("country"))
+        if jobicy
+        else raw.get(
+            "candidate_required_location" if name == "remotive" else "location"
+        )
     )
-    if name == "workingnomads" and (not isinstance(location, str) or not location.strip()):
+    if name == "workingnomads" and (
+        not isinstance(location, str) or not location.strip()
+    ):
         location = "Remote / Worldwide"
     content = {
         "title": title,
@@ -128,8 +157,14 @@ def _content(name, raw):
 def register_handlers():
     for name in ENDPOINTS:
         register_normalizer(name, lambda raw, source=name: _content(source, raw))
-        title, company = ("jobTitle", "companyName") if name == "jobicy" else ("title", "company_name")
-        register_extractor(name, lambda raw, t=title, c=company: (raw.get(t), raw.get(c)))
+        title, company = (
+            ("jobTitle", "companyName")
+            if name == "jobicy"
+            else ("title", "company_name")
+        )
+        register_extractor(
+            name, lambda raw, t=title, c=company: (raw.get(t), raw.get(c))
+        )
 
 
 def _listing(raw):
@@ -141,12 +176,21 @@ def _listing(raw):
     url = url.strip()
     try:
         parsed = urlsplit(url)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+        ):
             return None
     except ValueError:
         return None
     identity = raw.get("id")
-    if isinstance(identity, bool) or not isinstance(identity, (str, int)) or not str(identity).strip():
+    if (
+        isinstance(identity, bool)
+        or not isinstance(identity, (str, int))
+        or not str(identity).strip()
+    ):
         external_id = "url:" + url
     else:
         external_id = "id:" + str(identity).strip()
@@ -166,8 +210,12 @@ class NativeJSONProvider(BaseProvider):
         allowed = {"query"} if self.name != "jobicy" else {"tag", "geo"}
         if not isinstance(params, dict) or set(params) - allowed:
             raise ProviderConfigError(f"Invalid parameters for {self.name}")
-        if any(not isinstance(value, str) or len(value) > 200 for value in params.values()):
-            raise ProviderConfigError("Source filters must be strings of at most 200 characters")
+        if any(
+            not isinstance(value, str) or len(value) > 200 for value in params.values()
+        ):
+            raise ProviderConfigError(
+                "Source filters must be strings of at most 200 characters"
+            )
         query = {}
         if self.name == "remotive":
             query = {"limit": 200}
@@ -175,28 +223,46 @@ class NativeJSONProvider(BaseProvider):
                 query["search"] = params["query"]
         elif self.name == "jobicy":
             query = {"count": 50, **{k: v for k, v in params.items() if v}}
-        async with http.stream("GET", ENDPOINTS[self.name], params=query, timeout=25,
-                               headers={"User-Agent": "SwissJobHunter/1.0"}, follow_redirects=True) as response:
+        async with http.stream(
+            "GET",
+            ENDPOINTS[self.name],
+            params=query,
+            timeout=25,
+            headers={"User-Agent": "SwissJobHunter/1.0"},
+            follow_redirects=True,
+        ) as response:
             response.raise_for_status()
             chunks, size = [], 0
             async for chunk in response.aiter_bytes():
                 size += len(chunk)
                 if size > MAX_RESPONSE_BYTES:
-                    raise ProviderResponseError(f"{self.name}: response exceeds byte budget")
+                    raise ProviderResponseError(
+                        f"{self.name}: response exceeds byte budget"
+                    )
                 chunks.append(chunk)
             try:
                 body = httpx.Response(200, content=b"".join(chunks)).json()
             except (ValueError, UnicodeError) as exc:
                 raise ProviderResponseError(f"{self.name}: invalid JSON") from exc
-        rows = body if self.name == "workingnomads" else body.get("jobs") if isinstance(body, dict) else None
+        rows = (
+            body
+            if self.name == "workingnomads"
+            else body.get("jobs")
+            if isinstance(body, dict)
+            else None
+        )
         if not isinstance(rows, list):
             raise ProviderResponseError(f"{self.name}: invalid jobs collection")
         listings = tuple(item for row in rows if (item := _listing(row)) is not None)
         if rows and not listings:
-            raise ProviderResponseError(f"{self.name}: nonempty feed has no usable identities")
+            raise ProviderResponseError(
+                f"{self.name}: nonempty feed has no usable identities"
+            )
         invalid = len(rows) - len(listings)
         if invalid:
-            logger.warning("%s: %d items without usable identity/URL", self.name, invalid)
+            logger.warning(
+                "%s: %d items without usable identity/URL", self.name, invalid
+            )
         filtered = 0
         if self.name == "workingnomads":
             accepted = []
@@ -213,5 +279,9 @@ class NativeJSONProvider(BaseProvider):
                 else:
                     accepted.append(listing)
             listings = tuple(accepted)
-        return FetchResult(listings, {"items_seen": len(rows), "filtered": filtered},
-                           complete=not invalid, error="invalid_json_items" if invalid else None)
+        return FetchResult(
+            listings,
+            {"items_seen": len(rows), "filtered": filtered},
+            complete=not invalid,
+            error="invalid_json_items" if invalid else None,
+        )

@@ -4,6 +4,7 @@ The raw listing is the portal object after one-level reference resolution,
 not a lossy canonical projection. Unknown envelope/reference shapes are errors;
 a malformed neighbor makes the run partial, not silently complete.
 """
+
 import asyncio
 import hashlib
 from urllib.parse import unquote, urlsplit
@@ -12,7 +13,11 @@ import httpx
 
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
-from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
+from jobhunt_core.harvest.provider import (
+    BaseProvider,
+    ProviderConfigError,
+    ProviderResponseError,
+)
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
@@ -51,8 +56,12 @@ def _decode(body):
                 raise ProviderResponseError("Publicjobs invalid job object")
             # Svelte uses negative sentinels for undefined/null special values.
             # Retain them as None, never interpret them as Python negative indexes.
-            decoded = {key: (None if value < 0 else _ref(data, value))
-                       if type(value) is int else value for key, value in obj.items()}
+            decoded = {
+                key: (None if value < 0 else _ref(data, value))
+                if type(value) is int
+                else value
+                for key, value in obj.items()
+            }
             rows.append(decoded)
         except ProviderResponseError:
             invalid += 1
@@ -65,33 +74,50 @@ def _listing(raw):
         path.encode("utf-8")
         parsed = urlsplit(path)
         decoded = unquote(path)
-        if (not path.startswith("/") or path.startswith("//") or parsed.netloc or parsed.scheme
-                or "\\" in decoded or any(ord(c) < 32 for c in decoded)
-                or ".." in unquote(parsed.path).split("/")):
+        if (
+            not path.startswith("/")
+            or path.startswith("//")
+            or parsed.netloc
+            or parsed.scheme
+            or "\\" in decoded
+            or any(ord(c) < 32 for c in decoded)
+            or ".." in unquote(parsed.path).split("/")
+        ):
             return None
     except (ValueError, UnicodeError):
         return None
-    return RawListing("path:" + hashlib.sha256(path.encode()).hexdigest(), BASE_URL + path, raw)
+    return RawListing(
+        "path:" + hashlib.sha256(path.encode()).hexdigest(), BASE_URL + path, raw
+    )
 
 
 def _content(raw):
     title = _text(raw.get("title"))
     region = _text(raw.get("workingAddressRegion"))
-    return {"title": title, "company": _text(raw.get("contactCompany")) or "Unknown",
-            "description": "", "location": _text(raw.get("workingAddressCity"))
-                or region or "Switzerland",
-            "remote": False, "tags": extract_job_skills(title, "")[:15],
-            # Same rule as the retiring writer (publicjobs.py:151): this portal
-            # ships the canton code in `workingAddressRegion` when it has one.
-            # A longer name is a region, not a code, and is left unresolved —
-            # matching the writer this handover must not change.
-            "canton": region if len(region) == 2 else None}
+    return {
+        "title": title,
+        "company": _text(raw.get("contactCompany")) or "Unknown",
+        "description": "",
+        "location": _text(raw.get("workingAddressCity")) or region or "Switzerland",
+        "remote": False,
+        "tags": extract_job_skills(title, "")[:15],
+        # Same rule as the retiring writer (publicjobs.py:151): this portal
+        # ships the canton code in `workingAddressRegion` when it has one.
+        # A longer name is a region, not a code, and is left unresolved —
+        # matching the writer this handover must not change.
+        "canton": region if len(region) == 2 else None,
+    }
 
 
 def register_handlers():
     register_normalizer(SOURCE_NAME, _content)
-    register_extractor(SOURCE_NAME, lambda raw: (_text(raw.get("title")),
-                                               _text(raw.get("contactCompany")) or "Unknown"))
+    register_extractor(
+        SOURCE_NAME,
+        lambda raw: (
+            _text(raw.get("title")),
+            _text(raw.get("contactCompany")) or "Unknown",
+        ),
+    )
 
 
 class PublicJobsProvider(BaseProvider):
@@ -102,12 +128,21 @@ class PublicJobsProvider(BaseProvider):
         register_handlers()
 
     async def fetch_new(self, params, cursor, http):
-        if (not isinstance(params, dict) or set(params) - {"query"}
-                or not isinstance(params.get("query", ""), str) or len(params.get("query", "")) > 200):
+        if (
+            not isinstance(params, dict)
+            or set(params) - {"query"}
+            or not isinstance(params.get("query", ""), str)
+            or len(params.get("query", "")) > 200
+        ):
             raise ProviderConfigError("Invalid publicjobs query")
         async with asyncio.timeout(25):
-            async with http.stream("GET", DATA_URL, timeout=20, follow_redirects=True,
-                                   headers={"User-Agent": "SwissJobHunter/1.0"}) as response:
+            async with http.stream(
+                "GET",
+                DATA_URL,
+                timeout=20,
+                follow_redirects=True,
+                headers={"User-Agent": "SwissJobHunter/1.0"},
+            ) as response:
                 response.raise_for_status()
                 chunks, size = [], 0
                 async for chunk in response.aiter_bytes():
@@ -128,10 +163,19 @@ class PublicJobsProvider(BaseProvider):
                 invalid += 1
                 continue
             usable += 1
-            if query and query not in f"{_text(row.get('title'))} {_text(row.get('contactCompany'))}".lower():
+            if (
+                query
+                and query
+                not in f"{_text(row.get('title'))} {_text(row.get('contactCompany'))}".lower()
+            ):
                 continue
             listings.append(listing)
         if seen and not usable:
             raise ProviderResponseError("Publicjobs nonempty feed has no usable jobs")
-        return FetchResult(tuple(listings), {"items_seen": seen}, pages_fetched=1,
-                           complete=not invalid, error="invalid_publicjobs_items" if invalid else None)
+        return FetchResult(
+            tuple(listings),
+            {"items_seen": seen},
+            pages_fetched=1,
+            complete=not invalid,
+            error="invalid_publicjobs_items" if invalid else None,
+        )

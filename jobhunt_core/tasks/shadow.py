@@ -109,23 +109,17 @@ def purge_staging_task(self, legacy_schema: str = "public") -> dict[str, Any]:
     idempotente, preservando SIEMPRE la última fila aplicada de cada pk de
     `users` y —acotada a los pks VIVOS del legacy (G6-P2-3)— de `jobs`."""
     try:
-        return asyncio.run(
-            _in_session(metrics.purge_staging, None, legacy_schema)
-        )
+        return asyncio.run(_in_session(metrics.purge_staging, None, legacy_schema))
     except Exception as exc:
         logger.error("shadow.purge_staging falló: %s", exc)
         raise self.retry(exc=exc, countdown=120)
 
 
 @celery_app.task(name="jobhunt.shadow.preview_cycle", bind=True, max_retries=1)
-def preview_cycle_task(
-    self, legacy_schema: str = "public"
-) -> dict[str, Any]:
+def preview_cycle_task(self, legacy_schema: str = "public") -> dict[str, Any]:
     """Pre-gate del ciclo abierto, solo provisional y sin persistencia."""
     try:
-        result = asyncio.run(
-            gate.preview_current_cycle(legacy_schema=legacy_schema)
-        )
+        result = asyncio.run(gate.preview_current_cycle(legacy_schema=legacy_schema))
         if result["preview_ok"]:
             logger.info(
                 "shadow.preview_cycle %s provisionalmente APTO",
@@ -153,9 +147,7 @@ def run_cycle_task(
     las 06:05 Europe/Zurich."""
     try:
         cid = date.fromisoformat(cycle_id) if cycle_id else None
-        return asyncio.run(
-            gate.run_cycle(cycle_id=cid, legacy_schema=legacy_schema)
-        )
+        return asyncio.run(gate.run_cycle(cycle_id=cid, legacy_schema=legacy_schema))
     except Exception as exc:
         logger.error("shadow.run_cycle falló: %s", exc)
         raise self.retry(exc=exc, countdown=300)

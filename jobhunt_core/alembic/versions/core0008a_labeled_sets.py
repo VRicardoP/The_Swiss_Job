@@ -59,7 +59,10 @@ def upgrade() -> None:
         sa.Column("name", sa.String(80), nullable=False),
         sa.Column("notes", sa.Text),
         sa.Column(
-            "created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
         ),
         sa.Column("frozen_at", sa.TIMESTAMP(timezone=True)),
         sa.UniqueConstraint("profile_id", "name", name="uq_labeled_set_profile_name"),
@@ -77,7 +80,10 @@ def upgrade() -> None:
         sa.Column("relevance", sa.SmallInteger, nullable=False),
         sa.Column("source", sa.String(20), nullable=False),
         sa.Column(
-            "labeled_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW
+            "labeled_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
         ),
         sa.PrimaryKeyConstraint("set_id", "job_ref", name="pk_labeled_judgments"),
         sa.CheckConstraint("relevance BETWEEN 0 AND 3", name="ck_judgment_relevance"),
@@ -94,12 +100,17 @@ def upgrade() -> None:
         sa.Column("verdict", sa.String(20), nullable=False),
         sa.Column("source", sa.String(30), nullable=False),
         sa.Column(
-            "labeled_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW
+            "labeled_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
         ),
         sa.CheckConstraint(
             "verdict IN ('duplicate', 'distinct')", name="ck_dedup_pair_verdict"
         ),
-        sa.CheckConstraint("job_ref_a <> job_ref_b", name="ck_dedup_pair_distinct_refs"),
+        sa.CheckConstraint(
+            "job_ref_a <> job_ref_b", name="ck_dedup_pair_distinct_refs"
+        ),
         schema=S,
     )
     # Par canónico: (a,b) y (b,a) son el MISMO par (UNIQUE por expresión,
@@ -107,7 +118,10 @@ def upgrade() -> None:
     op.create_index(
         "uq_labeled_dedup_pair",
         "labeled_dedup_pairs",
-        [sa.text("LEAST(job_ref_a, job_ref_b)"), sa.text("GREATEST(job_ref_a, job_ref_b)")],
+        [
+            sa.text("LEAST(job_ref_a, job_ref_b)"),
+            sa.text("GREATEST(job_ref_a, job_ref_b)"),
+        ],
         unique=True,
         schema=S,
     )
@@ -115,7 +129,10 @@ def upgrade() -> None:
         "shadow_cycle_metrics",
         sa.Column("cycle_id", sa.Date, nullable=False),
         sa.Column(
-            "started_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW
+            "started_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
         ),
         sa.Column("finished_at", sa.TIMESTAMP(timezone=True)),
         sa.Column("metric", sa.Text, nullable=False),

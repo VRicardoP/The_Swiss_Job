@@ -3,8 +3,14 @@
 from jobhunt_core.harvest.provider import BaseProvider
 from jobhunt_core.harvest.providers.arbeitnow import ArbeitnowProvider
 from jobhunt_core.harvest.providers.native_json import ENDPOINTS, NativeJSONProvider
-from jobhunt_core.harvest.providers.native_rss import ENDPOINTS as RSS_ENDPOINTS, NativeRSSProvider
-from jobhunt_core.harvest.providers.native_chmedia import DOMAINS as CHMEDIA_DOMAINS, CHMediaProvider
+from jobhunt_core.harvest.providers.native_rss import (
+    ENDPOINTS as RSS_ENDPOINTS,
+    NativeRSSProvider,
+)
+from jobhunt_core.harvest.providers.native_chmedia import (
+    DOMAINS as CHMEDIA_DOMAINS,
+    CHMediaProvider,
+)
 from jobhunt_core.harvest.providers.native_publicjobs import PublicJobsProvider
 from jobhunt_core.harvest.providers.native_nav import NavProvider
 from jobhunt_core.harvest.providers.native_thehub import TheHubProvider

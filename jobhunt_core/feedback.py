@@ -37,33 +37,47 @@ _INTENT_ORDER = "intent.stamp DESC,intent.priority,intent.feedback NULLS FIRST"
 
 def effective_feedback_sql(vacancy, profile):
     """Latest explicit intent for one vacancy, including clears and late links."""
-    return (f"SELECT intent.feedback FROM ({_feedback_intents_sql(profile, vacancy)}) intent "
-            f"ORDER BY {_INTENT_ORDER} LIMIT 1")
+    return (
+        f"SELECT intent.feedback FROM ({_feedback_intents_sql(profile, vacancy)}) intent "
+        f"ORDER BY {_INTENT_ORDER} LIMIT 1"
+    )
 
 
 def effective_feedback_batch_sql(profile):
     """Same decision, computed once per vacancy rather than N correlated lookups."""
-    return (f"SELECT DISTINCT ON (vacancy_id) vacancy_id,intent.feedback "
-            f"FROM ({_feedback_intents_sql(profile)}) intent "
-            f"ORDER BY vacancy_id,{_INTENT_ORDER}")
+    return (
+        f"SELECT DISTINCT ON (vacancy_id) vacancy_id,intent.feedback "
+        f"FROM ({_feedback_intents_sql(profile)}) intent "
+        f"ORDER BY vacancy_id,{_INTENT_ORDER}"
+    )
 
 
 async def set_vacancy_feedback(session, profile_id, vacancy_id, feedback):
-    await session.execute(sa.text(
-        "INSERT INTO profile_vacancy_state (profile_id,vacancy_id,feedback,dismissed_at,updated_at,feedback_recorded_at) "
-        "VALUES (:p,:v,:feedback,CASE WHEN :negative THEN clock_timestamp() END,clock_timestamp(),clock_timestamp()) "
-        "ON CONFLICT (profile_id,vacancy_id) DO UPDATE SET feedback=excluded.feedback, "
-        "dismissed_at=excluded.dismissed_at, "
-        "feedback_recorded_at=excluded.feedback_recorded_at, "
-        "updated_at=GREATEST(profile_vacancy_state.updated_at,clock_timestamp())"
-    ), {"p": profile_id, "v": vacancy_id, "feedback": feedback,
-        "negative": feedback in {"thumbs_down", "dismissed"}})
+    await session.execute(
+        sa.text(
+            "INSERT INTO profile_vacancy_state (profile_id,vacancy_id,feedback,dismissed_at,updated_at,feedback_recorded_at) "
+            "VALUES (:p,:v,:feedback,CASE WHEN :negative THEN clock_timestamp() END,clock_timestamp(),clock_timestamp()) "
+            "ON CONFLICT (profile_id,vacancy_id) DO UPDATE SET feedback=excluded.feedback, "
+            "dismissed_at=excluded.dismissed_at, "
+            "feedback_recorded_at=excluded.feedback_recorded_at, "
+            "updated_at=GREATEST(profile_vacancy_state.updated_at,clock_timestamp())"
+        ),
+        {
+            "p": profile_id,
+            "v": vacancy_id,
+            "feedback": feedback,
+            "negative": feedback in {"thumbs_down", "dismissed"},
+        },
+    )
     # A canonical clear/like must not leave a contradictory school rejection.
     # No row is fabricated: historical observations retain their own identity.
-    await session.execute(sa.text(
-        "UPDATE school_applications a SET feedback=:feedback,version=a.version+1,"
-        "feedback_recorded_at=clock_timestamp(),"
-        "updated_at=GREATEST(a.updated_at,clock_timestamp()) FROM school_job_details j "
-        "WHERE j.id=a.school_job_id AND j.vacancy_id=:v AND a.profile_id=:p "
-        "AND (a.feedback IS DISTINCT FROM :feedback OR a.feedback_recorded_at IS NULL)"
-    ), {"p": profile_id, "v": vacancy_id, "feedback": feedback})
+    await session.execute(
+        sa.text(
+            "UPDATE school_applications a SET feedback=:feedback,version=a.version+1,"
+            "feedback_recorded_at=clock_timestamp(),"
+            "updated_at=GREATEST(a.updated_at,clock_timestamp()) FROM school_job_details j "
+            "WHERE j.id=a.school_job_id AND j.vacancy_id=:v AND a.profile_id=:p "
+            "AND (a.feedback IS DISTINCT FROM :feedback OR a.feedback_recorded_at IS NULL)"
+        ),
+        {"p": profile_id, "v": vacancy_id, "feedback": feedback},
+    )

@@ -22,7 +22,9 @@ def run_due_task(self, limit: int = 100):
     except Exception as exc:
         # Never log query text or Pydantic input values (personal preferences).
         logger.error("saved-search sweep failed: %s", type(exc).__name__)
-        raise self.retry(exc=RuntimeError("saved-search sweep failed"), countdown=120) from None
+        raise self.retry(
+            exc=RuntimeError("saved-search sweep failed"), countdown=120
+        ) from None
 
 
 @celery_app.task(name="jobhunt.searches.run_one", bind=True, max_retries=1)
@@ -33,9 +35,13 @@ def run_one_task(self, search_id: str):
     try:
         result = asyncio.run(_run(search_id=sid))
     except Exception:
-        raise self.retry(exc=RuntimeError("saved-search execution failed"), countdown=120) from None
+        raise self.retry(
+            exc=RuntimeError("saved-search execution failed"), countdown=120
+        ) from None
     if result["failed"]:
-        raise self.retry(exc=RuntimeError("saved-search execution failed"), countdown=120)
+        raise self.retry(
+            exc=RuntimeError("saved-search execution failed"), countdown=120
+        )
     return result
 
 
@@ -60,7 +66,10 @@ async def _run(*, limit=100, search_id=None, session_factory=None):
                 await db.execute(sa.text("SET LOCAL lock_timeout='5s'"))
                 await db.execute(sa.text("SET LOCAL statement_timeout='60s'"))
                 result = await search_execution.execute_search(
-                    db, sid, destinations=destinations, force=search_id is not None,
+                    db,
+                    sid,
+                    destinations=destinations,
+                    force=search_id is not None,
                 )
                 await db.commit()
             if result["status"] == "ok":
@@ -78,6 +87,13 @@ async def _run(*, limit=100, search_id=None, session_factory=None):
                     await search_execution.record_failed_attempt(db, sid)
                     await db.commit()
             except Exception as diagnostic:
-                logger.error("saved-search attempt metadata unavailable: %s", type(diagnostic).__name__)
-    return {"status": "ok" if not failed else "partial", "processed": processed,
-            "matches": matches, "failed": failed}
+                logger.error(
+                    "saved-search attempt metadata unavailable: %s",
+                    type(diagnostic).__name__,
+                )
+    return {
+        "status": "ok" if not failed else "partial",
+        "processed": processed,
+        "matches": matches,
+        "failed": failed,
+    }

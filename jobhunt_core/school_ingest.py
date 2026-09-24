@@ -204,7 +204,7 @@ async def record_observation(
     *,
     observation_id=None,
     source_active=True,
-    publish_missing=False
+    publish_missing=False,
 ):
     """Caller locks the monitor. Return (id, inserted) without a commit."""
     existing = (

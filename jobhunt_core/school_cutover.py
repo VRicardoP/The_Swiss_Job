@@ -223,7 +223,9 @@ async def run(args):
                             )
                         await require_freeze(origin)
                         if args.command == "reverse":
-                            await source.commit()  # Keep the core snapshot locked until the local commit.
+                            await (
+                                source.commit()
+                            )  # Keep the core snapshot locked until the local commit.
                 _write(args.report, result)
                 return {"verdict": result["verdict"], "batch_id": envelope["batch_id"]}
     finally:

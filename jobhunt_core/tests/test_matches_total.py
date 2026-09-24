@@ -21,13 +21,19 @@ import sqlalchemy as sa
 
 from jobhunt_core import matching
 from jobhunt_core.tests.test_integration_matching import (  # noqa: F401
-    db, pytestmark, _setup, _evaluate, _feed)
+    db,
+    pytestmark,
+    _setup,
+    _evaluate,
+    _feed,
+)
 
 
 def test_total_counts_exactly_what_the_page_serves(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, polid, vacs = _setup(
-        factory, created, ["backend python", "data eng", "qa manual", "contable"])
+        factory, created, ["backend python", "data eng", "qa manual", "contable"]
+    )
     _evaluate(factory, pid, mid, polid)
 
     async def go():
@@ -55,9 +61,11 @@ def test_total_is_scoped_to_its_tenant(db):  # noqa: F811  (la fixture, no una r
     async def go():
         async with factory() as s:
             owner = await s.scalar(
-                sa.text("SELECT consumer_id FROM profiles WHERE id=:p"), {"p": pid})
+                sa.text("SELECT consumer_id FROM profiles WHERE id=:p"), {"p": pid}
+            )
             assert await matching.feed_total(s, pid, consumer_id=owner) == 2
             import uuid
+
             assert await matching.feed_total(s, pid, consumer_id=uuid.uuid4()) == 0
 
     asyncio.run(go())
@@ -77,8 +85,10 @@ def test_total_is_counted_in_one_pass_not_once_per_row(db):  # noqa: F811  (la f
     async def go():
         async with factory() as s:
             sql, params = matching.feed_total_sql(pid)
-            plan = "\n".join(row[0] for row in (
-                await s.execute(sa.text("EXPLAIN " + sql), params)).all())
+            plan = "\n".join(
+                row[0]
+                for row in (await s.execute(sa.text("EXPLAIN " + sql), params)).all()
+            )
             assert "SubPlan" not in plan, f"correlated per-row lookup survived:\n{plan}"
 
     asyncio.run(go())
@@ -103,10 +113,13 @@ def test_the_feed_state_index_exists(db):  # noqa: F811  (la fixture, no una red
 
     async def go():
         async with factory() as s:
-            definition = await s.scalar(sa.text(
-                "SELECT indexdef FROM pg_indexes "
-                "WHERE schemaname='jobhunt' AND indexname=:name"),
-                {"name": "ix_pvs_feed_current_eval"})
+            definition = await s.scalar(
+                sa.text(
+                    "SELECT indexdef FROM pg_indexes "
+                    "WHERE schemaname='jobhunt' AND indexname=:name"
+                ),
+                {"name": "ix_pvs_feed_current_eval"},
+            )
             assert definition, "the partial index for feed counting is missing"
             assert "current_eval_id IS NOT NULL" in definition
             assert "profile_id" in definition

@@ -72,14 +72,16 @@ def _preprocess(listing: RawListing) -> tuple[str, str, str] | None:
         # nunca debe reventar por el dato que está aislando.
         logger.warning(
             "sink: listing %s EN CUARENTENA (preprocesado imposible: %s)",
-            ascii(listing.external_id)[:80], exc,
+            ascii(listing.external_id)[:80],
+            exc,
         )
         return None
     reasons = _limit_violations(listing, url_norm)
     if reasons:
         logger.warning(
             "sink: listing %r EN CUARENTENA (%s) — no envenena el lote",
-            listing.external_id[:80], "; ".join(reasons),
+            listing.external_id[:80],
+            "; ".join(reasons),
         )
         return None
     return canon, chash, url_norm
@@ -95,8 +97,7 @@ def _limit_violations(listing: RawListing, url_norm: str) -> list[str]:
     # entero (poison pill reaparecido en cada cosecha). RESIDUAL ACEPTADO
     # (C7-P3-2): la banda ~2049-2600 bytes se sobre-cuarentena aunque el
     # btree la albergaría — visible en no_ingeribles, acotada y segura.
-    if (len(listing.url.encode()) > MAX_URL_LEN
-            or len(url_norm.encode()) > MAX_URL_LEN):
+    if len(listing.url.encode()) > MAX_URL_LEN or len(url_norm.encode()) > MAX_URL_LEN:
         reasons.append(f"url > {MAX_URL_LEN} bytes")
     # apply_url en CARACTERES (C7-P2-1): NO tiene btree que proteger — el
     # byte-check rompía los espejos del proyector (que degradan a 2048
@@ -157,9 +158,7 @@ def normalize_url(url: str) -> str:
     de documento se sigue descartando."""
     parts = urlsplit(url.strip())
     path = parts.path.rstrip("/") or "/"
-    fragment = (
-        parts.fragment if _fragment_carries_identity(parts.fragment) else ""
-    )
+    fragment = parts.fragment if _fragment_carries_identity(parts.fragment) else ""
     return urlunsplit(
         (parts.scheme.lower(), parts.netloc.lower(), path, parts.query, fragment)
     )
@@ -231,7 +230,9 @@ class RawListingSink:
         slot_by_ext, stored_urln = await self._ensure_slots(
             session, source_id, by_ext, prep_by_ext
         )
-        inc_by_slot = await self._active_incarnations(session, list(slot_by_ext.values()))
+        inc_by_slot = await self._active_incarnations(
+            session, list(slot_by_ext.values())
+        )
         # TODAS las vacantes con incarnación en el lote (rev. A-06 2ª #1): la
         # canonicalización y las revisiones deben decidirse BAJO su lock — una
         # fuente no-primaria que persiste contenido nuevo sin lock puede leer
@@ -319,9 +320,20 @@ class RawListingSink:
         # A-05 · nivel 2 (cross-source por url_normalized) + creación. Los
         # slots RECICLADOS jamás se attachean (ADR-01: reciclado = vacante
         # NUEVA; en particular no vuelven a la vacante que acaban de dejar).
-        inc_by_slot, created_incs, evidence, pairs = await self._resolve_new_incarnations(
-            session, source_name, slot_by_ext, inc_by_slot, by_ext,
-            prep_by_ext, attach_by_urln, no_attach=set(recycled),
+        (
+            inc_by_slot,
+            created_incs,
+            evidence,
+            pairs,
+        ) = await self._resolve_new_incarnations(
+            session,
+            source_name,
+            slot_by_ext,
+            inc_by_slot,
+            by_ext,
+            prep_by_ext,
+            attach_by_urln,
+            no_attach=set(recycled),
         )
 
         # Auditoría A-05 #1 + rev. #2: la vacante COMPARTIDA que pierde su
@@ -350,8 +362,14 @@ class RawListingSink:
 
         # A-06 · revisión CANÓNICA + puntero vigente (ADR-01/02).
         await self._canonicalize(
-            session, source_name, slot_by_ext, inc_by_slot, by_ext, prep_by_ext,
-            fresh_exts, created_incs,
+            session,
+            source_name,
+            slot_by_ext,
+            inc_by_slot,
+            by_ext,
+            prep_by_ext,
+            fresh_exts,
+            created_incs,
         )
 
     async def _ensure_slots(
@@ -389,7 +407,9 @@ class RawListingSink:
                     {
                         # URL normalizada PREcalculada en _preprocess (rev. 2ª
                         # #2): aquí ya no puede fallar ni se recalcula.
-                        "id": uuid.uuid4(), "src": source_id, "ext": ext,
+                        "id": uuid.uuid4(),
+                        "src": source_id,
+                        "ext": ext,
                         "urln": prep_by_ext[ext][2],
                     }
                     for ext in missing
@@ -414,7 +434,8 @@ class RawListingSink:
                     # cuando el external_id SÍ existe; ADR-01: gana external_id).
                     logger.warning(
                         "sink: listing %r saltado (URL normalizada ya pertenece "
-                        "a otro slot)", ext,
+                        "a otro slot)",
+                        ext,
                     )
         return slot_by_ext, stored_urln
 
@@ -472,7 +493,9 @@ class RawListingSink:
                 )
             ).all()
         }
-        fresh = [(ext, iid) for ext, iid, chash in pairs if (iid, chash) not in existing]
+        fresh = [
+            (ext, iid) for ext, iid, chash in pairs if (iid, chash) not in existing
+        ]
         if not fresh:
             return set(), []
         # Raw VIGENTE solo de las incarnaciones con contenido nuevo. Sin
@@ -502,7 +525,8 @@ class RawListingSink:
                 recycled.append(slot_by_ext[ext])
                 logger.info(
                     "sink: slot %r RECICLADO (empresa distinta) — se cierra la "
-                    "incarnación y se abre otra con vacante nueva", ext,
+                    "incarnación y se abre otra con vacante nueva",
+                    ext,
                 )
             else:
                 fresh_exts.add(ext)
@@ -548,8 +572,7 @@ class RawListingSink:
             return
         await session.execute(
             sa.text(
-                "SELECT id FROM vacancies WHERE id = ANY(:ids) "
-                "ORDER BY id FOR UPDATE"
+                "SELECT id FROM vacancies WHERE id = ANY(:ids) ORDER BY id FOR UPDATE"
             ),
             {"ids": sorted(set(vacancy_ids), key=str)},
         )
@@ -571,8 +594,15 @@ class RawListingSink:
         )
 
     async def _resolve_new_incarnations(
-        self, session, source_name, slot_by_ext, inc_by_slot,
-        by_ext, prep_by_ext, attach_by_urln, no_attach=frozenset(),
+        self,
+        session,
+        source_name,
+        slot_by_ext,
+        inc_by_slot,
+        by_ext,
+        prep_by_ext,
+        attach_by_urln,
+        no_attach=frozenset(),
     ):
         """Incarnaciones para slots SIN activa (nuevos, reabiertos, reciclados).
 
@@ -604,7 +634,8 @@ class RawListingSink:
             ext = ext_by_slot[slot_id]
             listing = by_ext[ext]
             attached_vac = (
-                None if slot_id in no_attach
+                None
+                if slot_id in no_attach
                 else attach_by_urln.get(prep_by_ext[ext][2])
             )
             new_rows.append(
@@ -614,7 +645,8 @@ class RawListingSink:
                     "created": attached_vac is None,
                     "slot": str(slot_id),
                     "seq": max_seq.get(slot_id, 0) + 1,
-                    "url": listing.url, "aurl": listing.apply_url,
+                    "url": listing.url,
+                    "aurl": listing.apply_url,
                 }
             )
         # ORDEN GLOBAL DETERMINISTA (auditoría A-04 #2).
@@ -654,7 +686,8 @@ class RawListingSink:
             ).all()
         }
         ours = [
-            r for r in new_rows
+            r
+            for r in new_rows
             if winners.get(uuid.UUID(r["slot"]), (None, None))[0] == r["iid"]
         ]
         losers = [r for r in new_rows if r not in ours]
@@ -680,10 +713,13 @@ class RawListingSink:
             )
         evidence = [
             {
-                "slot": r["slot"], "vac": r["vid"],
-                "method": "url_normalized", "conf": identity.CONF_URL_ATTACH,
+                "slot": r["slot"],
+                "vac": r["vid"],
+                "method": "url_normalized",
+                "conf": identity.CONF_URL_ATTACH,
             }
-            for r in ours if not r["created"]
+            for r in ours
+            if not r["created"]
         ]
         # Medio intra-lote: misma identidad difusa (PF.5) en DOS+ vacantes
         # CREADAS en este lote → candidatos (el primero contra el resto).
@@ -761,7 +797,8 @@ class RawListingSink:
         logger.error(
             "sink: reparación de primary sobre fuente %r SIN normalizador "
             "en este proceso — la canónica queda NULL (A-06: jamás el "
-            "contenido del primary anterior)", source_name,
+            "contenido del primary anterior)",
+            source_name,
         )
 
     async def _rebuild_canonical_after_repair(self, session, repaired) -> None:
@@ -813,7 +850,9 @@ class RawListingSink:
             if r is not None and not normalize.has_normalizer(r.source_name):
                 self._ensure_handler(r.source_name)
             content = (
-                normalize.normalize_offer(r.source_name, r.raw) if r is not None else None
+                normalize.normalize_offer(r.source_name, r.raw)
+                if r is not None
+                else None
             )
             if content is None:
                 to_null.append({"vid": vac_id, "iid": inc_id})
@@ -823,9 +862,11 @@ class RawListingSink:
                         # Clave CANÓNICA (rev. 2ª #2): hash del contenido
                         # normalizado por SU normalizador — el mismo raw en
                         # otra fuente jamás reutiliza una canónica ajena.
-                        "vid": vac_id, "iid": inc_id,
+                        "vid": vac_id,
+                        "iid": inc_id,
                         "chash": normalize.offer_content_hash(content),
-                        "slrev": r.slrev_id, "content": content,
+                        "slrev": r.slrev_id,
+                        "content": content,
                     }
                 )
         if to_point:
@@ -901,15 +942,15 @@ class RawListingSink:
                 )
             ).all()
         }
-        missing = [
-            e for e in entries if (str(e["vid"]), e["chash"]) not in rev_ids
-        ]
+        missing = [e for e in entries if (str(e["vid"]), e["chash"]) not in rev_ids]
         if not missing:
             return rev_ids
         offer_rows = sorted(
             (
                 {
-                    "id": uuid.uuid4(), "vid": e["vid"], "chash": e["chash"],
+                    "id": uuid.uuid4(),
+                    "vid": e["vid"],
+                    "chash": e["chash"],
                     "thash": normalize.offer_text_hash(e["content"]),
                     "content": json.dumps(e["content"], ensure_ascii=False),
                 }
@@ -984,8 +1025,10 @@ class RawListingSink:
             if vac is not None and (own is None or own[1] != vac):
                 out.append(
                     {
-                        "slot": str(slot_by_ext[ext]), "vac": vac,
-                        "method": "url_alias", "conf": identity.CONF_URL_ALIAS,
+                        "slot": str(slot_by_ext[ext]),
+                        "vac": vac,
+                        "method": "url_alias",
+                        "conf": identity.CONF_URL_ALIAS,
                     }
                 )
         return out
@@ -1090,8 +1133,15 @@ class RawListingSink:
             )
 
     async def _canonicalize(
-        self, session, source_name, slot_by_ext, inc_by_slot, by_ext, prep_by_ext,
-        fresh_exts, new_incs,
+        self,
+        session,
+        source_name,
+        slot_by_ext,
+        inc_by_slot,
+        by_ext,
+        prep_by_ext,
+        fresh_exts,
+        new_incs,
     ) -> None:
         """Revisión CANÓNICA de la oferta y puntero vigente (A-06, ADR-01/02).
 
@@ -1158,7 +1208,8 @@ class RawListingSink:
         for ext, _inc, _vac, _chash in primaries:
             content = normalize.normalize_offer(source_name, by_ext[ext].payload)
             primary_canon[ext] = (
-                None if content is None
+                None
+                if content is None
                 else (normalize.offer_content_hash(content), content)
             )
 
@@ -1297,7 +1348,12 @@ class RawListingSink:
             )
 
     async def _refresh_and_revise(
-        self, session, slot_by_ext, inc_by_slot, by_ext, prep_by_ext,
+        self,
+        session,
+        slot_by_ext,
+        inc_by_slot,
+        by_ext,
+        prep_by_ext,
     ) -> None:
         """`last_seen_at` (y url/apply) en CADA cosecha + revisión por
         contenido, deduplicada por el ON CONFLICT.

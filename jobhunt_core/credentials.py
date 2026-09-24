@@ -37,8 +37,11 @@ async def create_credential(
             "VALUES (:id, :cid, :kid, :hash, CAST(:scopes AS jsonb), :exp)"
         ),
         {
-            "id": uuid.uuid4(), "cid": consumer_id, "kid": key_id,
-            "hash": _hash_secret(secret), "scopes": json.dumps(list(scopes)),
+            "id": uuid.uuid4(),
+            "cid": consumer_id,
+            "kid": key_id,
+            "hash": _hash_secret(secret),
+            "scopes": json.dumps(list(scopes)),
             "exp": expires_at,
         },
     )

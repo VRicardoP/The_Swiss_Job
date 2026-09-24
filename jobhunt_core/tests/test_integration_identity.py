@@ -38,7 +38,9 @@ def db():
             # extra_vacs entran en el MISMO barrido que las vacantes derivadas
             # de incarnaciones (dedup/canónica incluidas — orden FK-seguro).
             await dbcleanup.purge_source_graph(
-                s, created["sources"], created["scopes"],
+                s,
+                created["sources"],
+                created["scopes"],
                 extra_vac_ids=created["extra_vacs"],
             )
             await s.commit()
@@ -170,13 +172,16 @@ def test_cross_source_attach_by_url(db):
     scope_a = _seed(factory, created, "arbeitnow")
     scope_b = _seed(factory, created, "otherboard")
     _sink(factory, scope_a, [_listing("a1", url="https://x/shared")])
-    _sink(factory, scope_b, [_listing("b1", url="https://x/shared/")])  # normaliza igual
+    _sink(
+        factory, scope_b, [_listing("b1", url="https://x/shared/")]
+    )  # normaliza igual
 
     a1, b1 = _incs(factory, "a1")[0], _incs(factory, "b1")[0]
     assert b1.vacancy_id == a1.vacancy_id  # UNA vacante compartida
     rows = _one(
         factory,
-        "SELECT primary_incarnation_id FROM vacancies WHERE id = :v", v=a1.vacancy_id,
+        "SELECT primary_incarnation_id FROM vacancies WHERE id = :v",
+        v=a1.vacancy_id,
     )
     assert rows[0][0] == a1.id  # primary sigue siendo el de la fuente original
     ev = _one(
@@ -195,7 +200,11 @@ def test_url_alias_conflict_external_id_wins(db):
     cosechas repetidas."""
     factory, created = db
     scope = _seed(factory, created, "arbeitnow")
-    _sink(factory, scope, [_listing("a", url="https://x/urlA"), _listing("b", url="https://x/urlB")])
+    _sink(
+        factory,
+        scope,
+        [_listing("a", url="https://x/urlA"), _listing("b", url="https://x/urlB")],
+    )
     for _ in range(2):  # dos cosechas con el conflicto: evidencia UNA sola vez
         _sink(factory, scope, [_listing("a", url="https://x/urlB", v=2)])
 
@@ -246,7 +255,8 @@ def test_url_drift_creates_pending_candidate_never_merges(db):
         factory,
         "SELECT vacancy_a, vacancy_b, similarity, state FROM dedup_candidates "
         "WHERE vacancy_a IN (:a, :b) OR vacancy_b IN (:a, :b)",
-        a=vac_a, b=vac_b,
+        a=vac_a,
+        b=vac_b,
     )
     assert len(cands) == 1
     assert {cands[0].vacancy_a, cands[0].vacancy_b} == {vac_a, vac_b}
@@ -262,13 +272,21 @@ def test_recycle_of_shared_vacancy_reassigns_primary_and_never_reattaches(db):
     factory, created = db
     scope_a = _seed(factory, created, "arbeitnow")
     scope_b = _seed(factory, created, "otherboard")
-    _sink(factory, scope_a, [_listing("a1", company="ACME AG", url="https://x/shared", v=1)])
+    _sink(
+        factory,
+        scope_a,
+        [_listing("a1", company="ACME AG", url="https://x/shared", v=1)],
+    )
     _sink(factory, scope_b, [_listing("b1", url="https://x/shared", v=1)])
     v_shared = _incs(factory, "a1")[0].vacancy_id
     b1_inc = _incs(factory, "b1")[0]
     assert b1_inc.vacancy_id == v_shared  # compartida vía attach
 
-    _sink(factory, scope_a, [_listing("a1", company="Umbrella GmbH", url="https://x/shared", v=2)])
+    _sink(
+        factory,
+        scope_a,
+        [_listing("a1", company="Umbrella GmbH", url="https://x/shared", v=2)],
+    )
 
     a1 = _incs(factory, "a1")
     assert [(r.seq, r.ended_at is None) for r in a1] == [(1, False), (2, True)]
@@ -289,7 +307,8 @@ def test_recycle_of_shared_vacancy_reassigns_primary_and_never_reattaches(db):
         factory,
         "SELECT state FROM dedup_candidates "
         "WHERE vacancy_a IN (:a, :b) AND vacancy_b IN (:a, :b)",
-        a=v_shared, b=a1[1].vacancy_id,
+        a=v_shared,
+        b=a1[1].vacancy_id,
     )
     assert [r.state for r in cands] == ["pending"]
 
@@ -308,9 +327,15 @@ def test_non_string_identity_degrades_conservative_never_aborts(db):
     # Guard con company no-string en la cosecha siguiente: conservador.
     _sink(factory, scope, [_listing("j2", company="ACME AG", v=1)])
     _sink(
-        factory, scope,
-        [RawListing(external_id="j2", url="https://x/j2",
-                    payload={"title": "j2", "company_name": 7, "v": 2})],
+        factory,
+        scope,
+        [
+            RawListing(
+                external_id="j2",
+                url="https://x/j2",
+                payload={"title": "j2", "company_name": 7, "v": 2},
+            )
+        ],
     )
     incs = _incs(factory, "j2")
     assert [(r.seq, r.ended_at is None, r.revs) for r in incs] == [(1, True, 2)]
@@ -347,7 +372,8 @@ def test_merged_vacancy_excluded_from_attach(db):
         factory,
         "SELECT state, similarity FROM dedup_candidates "
         "WHERE vacancy_a IN (:a, :b) AND vacancy_b IN (:a, :b)",
-        a=vac_a, b=vac_b,
+        a=vac_a,
+        b=vac_b,
     )
     assert [(r.state, float(r.similarity)) for r in cands] == [("pending", 0.9)]
 
@@ -393,7 +419,9 @@ def test_concurrent_archive_vs_attach_revalidates_under_lock(db):
 
         async def run_b():
             async with factory() as s:
-                await sink_b.handle(s, scope_b, (_listing("b1", url="https://x/shared"),))
+                await sink_b.handle(
+                    s, scope_b, (_listing("b1", url="https://x/shared"),)
+                )
                 await s.commit()
 
         task = asyncio.create_task(run_b())
@@ -419,7 +447,11 @@ def test_attach_revalidates_relation_after_concurrent_recycle(db):
     factory, created = db
     scope_a = _seed(factory, created, "arbeitnow")
     scope_b = _seed(factory, created, "otherboard")
-    _sink(factory, scope_a, [_listing("a1", company="ACME AG", url="https://x/shared", v=1)])
+    _sink(
+        factory,
+        scope_a,
+        [_listing("a1", company="ACME AG", url="https://x/shared", v=1)],
+    )
     vac_a = _incs(factory, "a1")[0].vacancy_id
 
     async def race():
@@ -427,7 +459,9 @@ def test_attach_revalidates_relation_after_concurrent_recycle(db):
 
         async def run_b():
             async with factory() as s:
-                await sink_b.handle(s, scope_b, (_listing("b1", url="https://x/shared"),))
+                await sink_b.handle(
+                    s, scope_b, (_listing("b1", url="https://x/shared"),)
+                )
                 await s.commit()
 
         task = asyncio.create_task(run_b())
@@ -435,7 +469,8 @@ def test_attach_revalidates_relation_after_concurrent_recycle(db):
         # A recicla COMPLETO (cierra su única incarnación de vac_a) y commitea.
         async with factory() as s:
             await RawListingSink().handle(
-                s, scope_a,
+                s,
+                scope_a,
                 (_listing("a1", company="Umbrella GmbH", url="https://x/shared", v=2),),
             )
             await s.commit()
@@ -469,8 +504,16 @@ def test_archived_shared_vacancy_concurrent_recycles_serialize(db):
         "otherboard", lambda p: (p.get("title"), p.get("company_name"))
     )
     try:
-        _sink(factory, scope_a, [_listing("a1", company="ACME AG", url="https://x/shared", v=1)])
-        _sink(factory, scope_b, [_listing("b1", company="ACME AG", url="https://x/shared", v=1)])
+        _sink(
+            factory,
+            scope_a,
+            [_listing("a1", company="ACME AG", url="https://x/shared", v=1)],
+        )
+        _sink(
+            factory,
+            scope_b,
+            [_listing("b1", company="ACME AG", url="https://x/shared", v=1)],
+        )
         _sink(factory, scope_c, [_listing("c1", url="https://x/shared", v=1)])
         v_shared = _incs(factory, "a1")[0].vacancy_id
         c1_inc = _incs(factory, "c1")[0]
@@ -498,15 +541,25 @@ def test_archived_shared_vacancy_concurrent_recycles_serialize(db):
                     await sink.handle(s, scope_id, (listing,))
                     await s.commit()
 
-            task_a = asyncio.create_task(run(
-                "a", sink_a, scope_a,
-                _listing("a1", company="Umbrella GmbH", url="https://x/shared", v=2),
-            ))
+            task_a = asyncio.create_task(
+                run(
+                    "a",
+                    sink_a,
+                    scope_a,
+                    _listing(
+                        "a1", company="Umbrella GmbH", url="https://x/shared", v=2
+                    ),
+                )
+            )
             await sink_a.hit.wait()  # A cerró SU incarnación, locks en mano
-            task_b = asyncio.create_task(run(
-                "b", sink_b, scope_b,
-                _listing("b1", company="Zombo Corp", url="https://x/shared", v=2),
-            ))
+            task_b = asyncio.create_task(
+                run(
+                    "b",
+                    sink_b,
+                    scope_b,
+                    _listing("b1", company="Zombo Corp", url="https://x/shared", v=2),
+                )
+            )
             # Espera VERIFICADA (rev. 3ª P2): Postgres confirma que B está
             # bloqueado POR A (pg_blocking_pids) — nada de asumirlo por sleep.
             async with factory() as s:
@@ -563,8 +616,16 @@ def test_three_source_concurrent_recycle_repairs_primary_under_lock(db):
         "otherboard", lambda p: (p.get("title"), p.get("company_name"))
     )
     try:
-        _sink(factory, scope_a, [_listing("a1", company="ACME AG", url="https://x/shared", v=1)])
-        _sink(factory, scope_b, [_listing("b1", company="ACME AG", url="https://x/shared", v=1)])
+        _sink(
+            factory,
+            scope_a,
+            [_listing("a1", company="ACME AG", url="https://x/shared", v=1)],
+        )
+        _sink(
+            factory,
+            scope_b,
+            [_listing("b1", company="ACME AG", url="https://x/shared", v=1)],
+        )
         _sink(factory, scope_c, [_listing("c1", url="https://x/shared", v=1)])
         v_shared = _incs(factory, "a1")[0].vacancy_id
         c1_inc = _incs(factory, "c1")[0]
@@ -577,8 +638,16 @@ def test_three_source_concurrent_recycle_repairs_primary_under_lock(db):
 
         async def race():
             await asyncio.gather(
-                worker(scope_a, _listing("a1", company="Umbrella GmbH", url="https://x/shared", v=2)),
-                worker(scope_b, _listing("b1", company="Zombo Corp", url="https://x/shared", v=2)),
+                worker(
+                    scope_a,
+                    _listing(
+                        "a1", company="Umbrella GmbH", url="https://x/shared", v=2
+                    ),
+                ),
+                worker(
+                    scope_b,
+                    _listing("b1", company="Zombo Corp", url="https://x/shared", v=2),
+                ),
             )
 
         asyncio.run(race())
@@ -635,7 +704,8 @@ def test_candidate_similarity_keeps_maximum_and_respects_resolution(db):
             factory,
             "SELECT similarity, state FROM dedup_candidates "
             "WHERE vacancy_a IN (:a, :b) AND vacancy_b IN (:a, :b)",
-            a=va, b=vb,
+            a=va,
+            b=vb,
         )
         return float(r[0].similarity), r[0].state
 
@@ -671,10 +741,15 @@ def test_intra_batch_fuzzy_duplicates_become_candidates_not_one_vacancy(db):
     factory, created = db
     scope = _seed(factory, created, "arbeitnow")
     _sink(
-        factory, scope,
+        factory,
+        scope,
         [
-            _listing("x1", title="Python Dev (m/w/d)", company="ACME AG", url="https://x/1"),
-            _listing("x2", title="Senior Python Dev", company="Acme GmbH", url="https://x/2"),
+            _listing(
+                "x1", title="Python Dev (m/w/d)", company="ACME AG", url="https://x/1"
+            ),
+            _listing(
+                "x2", title="Senior Python Dev", company="Acme GmbH", url="https://x/2"
+            ),
         ],
     )
     v1 = _incs(factory, "x1")[0].vacancy_id
@@ -684,6 +759,7 @@ def test_intra_batch_fuzzy_duplicates_become_candidates_not_one_vacancy(db):
         factory,
         "SELECT similarity, state FROM dedup_candidates "
         "WHERE vacancy_a IN (:a, :b) AND vacancy_b IN (:a, :b)",
-        a=v1, b=v2,
+        a=v1,
+        b=v2,
     )
     assert [(float(r.similarity), r.state) for r in cands] == [(0.85, "pending")]

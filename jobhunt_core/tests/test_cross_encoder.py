@@ -86,8 +86,7 @@ def test_mismo_par_mismo_score_con_otro_batch_y_otro_lote(stub):
     consultas = ce.build_queries(PERFIL)
     solo = ce.score_documents("m", "r", consultas, ["doc X"], batch_size=1)[0]
     ajenos = [f"doc ajeno {i}" for i in range(7)]
-    mezcla = ce.score_documents(
-        "m", "r", consultas, ajenos + ["doc X"], batch_size=32)
+    mezcla = ce.score_documents("m", "r", consultas, ajenos + ["doc X"], batch_size=32)
     assert mezcla[-1] == pytest.approx(solo)  # el lote no cambia la pareja
 
 
@@ -132,13 +131,13 @@ def test_el_contrato_de_2_decimales_no_destruye_el_orden_del_top():
     ce.set_engine_factory(lambda m, r: _LogitsAltos())
     try:
         a, b = ce.score_documents(
-            "m", "r", ["q"], ["doc mejor", "doc bueno"],
-            activation="sigmoid_t4")
+            "m", "r", ["q"], ["doc mejor", "doc bueno"], activation="sigmoid_t4"
+        )
         assert round(a * 100, 2) > round(b * 100, 2), (
-            "t4 debe separar el top tras redondear a 2 decimales")
+            "t4 debe separar el top tras redondear a 2 decimales"
+        )
         # y la plana los empata: esa es la causa del defecto
-        a0, b0 = ce.score_documents("m", "r", ["q"],
-                                    ["doc mejor", "doc bueno"])
+        a0, b0 = ce.score_documents("m", "r", ["q"], ["doc mejor", "doc bueno"])
         assert round(a0 * 100, 2) == round(b0 * 100, 2)  # empatados (100.0)
         # monótona: mismo ORDEN que la plana (solo cambia la escala)
         assert (a > b) == (a0 > b0)
@@ -186,6 +185,7 @@ def test_la_huella_es_manifiesto_canonico_documentado(tmp_path):
     """Formato exacto: sha256 agregada de líneas «sha256  nombre\n» ordenadas
     de los archivos de runtime (allowlist), generable por comando."""
     import hashlib
+
     d = tmp_path / "m"
     d.mkdir()
     (d / "config.json").write_text("c")
@@ -194,8 +194,7 @@ def test_la_huella_es_manifiesto_canonico_documentado(tmp_path):
     man = ce.model_manifest(str(d))
     assert sorted(man) == ["config.json", "model.safetensors"]
     canon = "".join(f"{h}  {n}\n" for n, h in sorted(man.items()))
-    assert ce.model_fingerprint(str(d)) == hashlib.sha256(
-        canon.encode()).hexdigest()
+    assert ce.model_fingerprint(str(d)) == hashlib.sha256(canon.encode()).hexdigest()
 
 
 def test_receta_ranknet_backend_falla_cerrado_bajo_binario_torch(monkeypatch):
@@ -209,10 +208,10 @@ def test_receta_ranknet_backend_falla_cerrado_bajo_binario_torch(monkeypatch):
 
     monkeypatch.setattr(ce, "BACKEND", "torch-cpu")
     with pytest.raises(ValueError, match="backend"):
-        matching._validated_cross_encoder_recipe(
-            matching.XENC_RANKNET_POLICY_WEIGHTS)
+        matching._validated_cross_encoder_recipe(matching.XENC_RANKNET_POLICY_WEIGHTS)
     monkeypatch.setattr(ce, "BACKEND", "onnx-cpu")
     receta = matching._validated_cross_encoder_recipe(
-        matching.XENC_RANKNET_POLICY_WEIGHTS)
+        matching.XENC_RANKNET_POLICY_WEIGHTS
+    )
     assert receta["backend"] == "onnx-cpu"
     assert receta["model"].startswith("/models/")

@@ -28,22 +28,33 @@ def fetch(name, payload, params=None, status=200):
             requests.append(request)
             return httpx.Response(status, json=payload)
 
-        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(transport)
+        ) as client:
             result = await provider(name).fetch_new(params or {}, {}, client)
             return result
 
     return asyncio.run(run()), requests
 
 
-@pytest.mark.parametrize("name,key,title,company", [
-    ("remotive", "jobs", "title", "company_name"),
-    ("workingnomads", None, "title", "company_name"),
-    ("jobicy", "jobs", "jobTitle", "companyName"),
-])
+@pytest.mark.parametrize(
+    "name,key,title,company",
+    [
+        ("remotive", "jobs", "title", "company_name"),
+        ("workingnomads", None, "title", "company_name"),
+        ("jobicy", "jobs", "jobTitle", "companyName"),
+    ],
+)
 def test_raw_preserved_identity_does_not_depend_on_title(name, key, title, company):
-    raw = {"id": 123, title: "Editor", company: "Acme", "url": "https://jobs.example/123",
-           "description": "<p>First &amp; second</p>", "jobDescription": "<p>First &amp; second</p>",
-           "unknown_upstream_field": {"retained": True}}
+    raw = {
+        "id": 123,
+        title: "Editor",
+        company: "Acme",
+        "url": "https://jobs.example/123",
+        "description": "<p>First &amp; second</p>",
+        "jobDescription": "<p>First &amp; second</p>",
+        "unknown_upstream_field": {"retained": True},
+    }
     original = copy.deepcopy(raw)
     result, _ = fetch(name, {key: [raw]} if key else [raw])
     listing = result.listings[0]
@@ -57,19 +68,30 @@ def test_raw_preserved_identity_does_not_depend_on_title(name, key, title, compa
     assert second.listings[0].external_id == listing.external_id
 
 
-@pytest.mark.parametrize("name,payload", [
-    ("remotive", {}), ("remotive", {"jobs": None}),
-    ("remotive", {"jobs": {}}), ("workingnomads", {}),
-    ("jobicy", []), ("jobicy", {"jobs": "changed"}),
-])
+@pytest.mark.parametrize(
+    "name,payload",
+    [
+        ("remotive", {}),
+        ("remotive", {"jobs": None}),
+        ("remotive", {"jobs": {}}),
+        ("workingnomads", {}),
+        ("jobicy", []),
+        ("jobicy", {"jobs": "changed"}),
+    ],
+)
 def test_invalid_envelope_is_error_not_empty(name, payload):
     with pytest.raises(ProviderResponseError):
         fetch(name, payload)
 
 
-@pytest.mark.parametrize("name,payload", [
-    ("remotive", {"jobs": []}), ("workingnomads", []), ("jobicy", {"jobs": []}),
-])
+@pytest.mark.parametrize(
+    "name,payload",
+    [
+        ("remotive", {"jobs": []}),
+        ("workingnomads", []),
+        ("jobicy", {"jobs": []}),
+    ],
+)
 def test_explicit_empty_is_success(name, payload):
     result, _ = fetch(name, payload)
     assert result.complete and result.listings == ()
@@ -77,11 +99,17 @@ def test_explicit_empty_is_success(name, payload):
 
 def test_unrecognized_items_cannot_claim_empty_success():
     with pytest.raises(ProviderResponseError):
-        fetch("remotive", {"jobs": [None, {"id": 1, "renamed_url": "https://example.org/a"}]})
+        fetch(
+            "remotive",
+            {"jobs": [None, {"id": 1, "renamed_url": "https://example.org/a"}]},
+        )
 
 
 def test_bad_item_does_not_drop_valid_neighbor():
-    result, _ = fetch("remotive", {"jobs": [None, {"id": 2, "url": "https://example.org/a", "title": "Editor"}]})
+    result, _ = fetch(
+        "remotive",
+        {"jobs": [None, {"id": 2, "url": "https://example.org/a", "title": "Editor"}]},
+    )
     assert len(result.listings) == 1
 
 
@@ -110,13 +138,24 @@ def test_scope_rejects_unknown_params_before_network():
 
 def test_keyword_is_part_of_scope_identity():
     p = provider("remotive")
-    assert p.params_fingerprint({"query": "editor"}) != p.params_fingerprint({"query": "teacher"})
+    assert p.params_fingerprint({"query": "editor"}) != p.params_fingerprint(
+        {"query": "teacher"}
+    )
 
 
 def test_html_and_tags_are_defensive():
-    result, _ = fetch("workingnomads", [{"id": 1, "url": "https://example.org/a", "title": "Editor",
-                                        "description": "<script>secret()</script><p>Work</p><p>here</p>",
-                                        "tags": "writing, editing"}])
+    result, _ = fetch(
+        "workingnomads",
+        [
+            {
+                "id": 1,
+                "url": "https://example.org/a",
+                "title": "Editor",
+                "description": "<script>secret()</script><p>Work</p><p>here</p>",
+                "tags": "writing, editing",
+            }
+        ],
+    )
     content = normalize_offer("workingnomads", result.listings[0].payload)
     assert content["description"] == "Work here"
     assert content["tags"] == ["writing", "editing"]

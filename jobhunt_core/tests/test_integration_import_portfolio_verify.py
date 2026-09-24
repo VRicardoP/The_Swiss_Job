@@ -21,7 +21,9 @@ from jobhunt_core.tests.test_integration_import_portfolio_ledger import (
     _other_source_vacancy,
     _seed_other_source,
 )
-from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import _on_disposable_db
+from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import (
+    _on_disposable_db,
+)
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("CORE_ADMIN_DATABASE_URL"),
@@ -34,8 +36,13 @@ def _user(apps: list[dict], ref: int = 1) -> dict:
 
 
 def _app(url: str, **extra) -> dict:
-    base = {"url": url, "status": "applied", "title": "T", "company": "C",
-            "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)}
+    base = {
+        "url": url,
+        "status": "applied",
+        "title": "T",
+        "company": "C",
+        "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+    }
     base.update(extra)
     return base
 
@@ -45,9 +52,13 @@ def test_verify_clean_migration_is_verified():
 
     async def _run(factory):
         async with factory() as s:
-            users = [_user([_app("https://v.example.ch/1"), _app("https://v.example.ch/2")])]
+            users = [
+                _user([_app("https://v.example.ch/1"), _app("https://v.example.ch/2")])
+            ]
             manifest = await man.migrate_and_reconcile(s, users)
-            assert manifest["verification"]["verdict"] == "verified", manifest["verification"]
+            assert manifest["verification"]["verdict"] == "verified", manifest[
+                "verification"
+            ]
             assert manifest["verification"]["discrepancies"] == []
             assert manifest["verification"]["checked"]["created_vacancies"] == 2
             await s.commit()
@@ -67,13 +78,22 @@ def test_verify_detects_lost_listing():
             manifest = await man.migrate_and_reconcile(s, users)
             assert manifest["verification"]["verdict"] == "verified"
             # Sabotaje: archiva la vacante creada → ya no es presentable/resoluble.
-            vid = [e["vacancy_id"] for e in manifest["ledger"] if e["disposition"] == "created"][0]
+            vid = [
+                e["vacancy_id"]
+                for e in manifest["ledger"]
+                if e["disposition"] == "created"
+            ][0]
             await s.execute(
-                sa.text("UPDATE vacancies SET archived_at = now() WHERE id = :v"), {"v": vid}
+                sa.text("UPDATE vacancies SET archived_at = now() WHERE id = :v"),
+                {"v": vid},
             )
             # Re-verifica con el MISMO ledger/procedencia (el contrato de lo migrado).
             report = await verify_migration(
-                s, users, manifest["ledger"], manifest["provenance"], PORTFOLIO_IMPORT_SOURCE
+                s,
+                users,
+                manifest["ledger"],
+                manifest["provenance"],
+                PORTFOLIO_IMPORT_SOURCE,
             )
             assert report["verdict"] == "discrepant"
             assert any("PERDIDO" in d for d in report["discrepancies"])
@@ -92,8 +112,14 @@ def test_verify_lost_listing_in_ledger_reports_not_crashes():
             url = "https://lost2.example.ch/z"
             users = [_user([_app(url)])]
             ledger = [
-                {"url": url, "url_normalized": url, "external_id": "x",
-                 "disposition": "created", "reason": None, "vacancy_id": None},
+                {
+                    "url": url,
+                    "url_normalized": url,
+                    "external_id": "x",
+                    "disposition": "created",
+                    "reason": None,
+                    "vacancy_id": None,
+                },
             ]
             report = await verify_migration(
                 s, users, ledger, {"vacancies": []}, PORTFOLIO_IMPORT_SOURCE
@@ -115,14 +141,24 @@ def test_verify_flags_vacancy_without_canonical():
             users = [_user([_app(url)])]
             manifest = await man.migrate_and_reconcile(s, users)
             assert manifest["verification"]["verdict"] == "verified"
-            vid = [e["vacancy_id"] for e in manifest["ledger"] if e["disposition"] == "created"][0]
+            vid = [
+                e["vacancy_id"]
+                for e in manifest["ledger"]
+                if e["disposition"] == "created"
+            ][0]
             # Simular canónica perdida (un fallo del sink que dejara la vacante impresentable).
             await s.execute(
-                sa.text("UPDATE vacancies SET current_offer_revision_id = NULL WHERE id = :v"),
+                sa.text(
+                    "UPDATE vacancies SET current_offer_revision_id = NULL WHERE id = :v"
+                ),
                 {"v": vid},
             )
             report = await verify_migration(
-                s, users, manifest["ledger"], manifest["provenance"], PORTFOLIO_IMPORT_SOURCE
+                s,
+                users,
+                manifest["ledger"],
+                manifest["provenance"],
+                PORTFOLIO_IMPORT_SOURCE,
             )
             assert report["verdict"] == "discrepant"
             assert any("IMPRESENTABLE" in d for d in report["discrepancies"])
@@ -140,10 +176,18 @@ def test_no_title_durable_staged_even_if_sibling_shares_url():
         {
             "external_ref": 1,
             "applications": [
-                {"url": url, "status": "saved", "title": "Good title",
-                 "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-                {"url": url, "status": "applied", "title": "   ",  # sin título → staging
-                 "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
+                {
+                    "url": url,
+                    "status": "saved",
+                    "title": "Good title",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+                {
+                    "url": url,
+                    "status": "applied",
+                    "title": "   ",  # sin título → staging
+                    "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc),
+                },
             ],
             "saved_searches": [],
         }
@@ -153,16 +197,24 @@ def test_no_title_durable_staged_even_if_sibling_shares_url():
         async with factory() as s:
             manifest = await man.migrate_and_reconcile(s, users)
             assert manifest["verdict"] == "ok", manifest["divergences"]
-            assert manifest["verification"]["verdict"] == "verified", manifest["verification"]
+            assert manifest["verification"]["verdict"] == "verified", manifest[
+                "verification"
+            ]
             # La url se sintetizó (por el hermano) → created; SIN doble entrada no_title para la url.
             url_entries = [e for e in manifest["ledger"] if e["url"] == url]
             assert len(url_entries) == 1 and url_entries[0]["disposition"] == "created"
             # El durable sin título está en staging, NO en applications con snapshot vacío.
             assert any(
-                r["reason"] == "no_title" for r in manifest["staged"] if r["external_ref"] == "1"
+                r["reason"] == "no_title"
+                for r in manifest["staged"]
+                if r["external_ref"] == "1"
             )
-            n_apps = (await s.execute(sa.text("SELECT count(*) FROM applications"))).scalar_one()
-            assert n_apps == 0  # el 'saved' es bookmark; el 'applied' sin título → staging
+            n_apps = (
+                await s.execute(sa.text("SELECT count(*) FROM applications"))
+            ).scalar_one()
+            assert (
+                n_apps == 0
+            )  # el 'saved' es bookmark; el 'applied' sin título → staging
             await s.commit()
 
     asyncio.run(_on_disposable_db(_run))
@@ -179,7 +231,9 @@ def test_surrogate_title_quarantined_not_false_lost():
             users = [_user([_app(url, title="T\ud800bad")])]  # título no codificable
             manifest = await man.migrate_and_reconcile(s, users)
             assert manifest["verdict"] == "ok", manifest["divergences"]
-            assert manifest["verification"]["verdict"] == "verified", manifest["verification"]
+            assert manifest["verification"]["verdict"] == "verified", manifest[
+                "verification"
+            ]
             e = [x for x in manifest["ledger"] if x["url"] == url][0]
             assert e["disposition"] == "quarantine" and e["reason"] == "malformed"
             await s.commit()
@@ -197,10 +251,20 @@ def test_toxic_titled_winner_staged_no_crash():
         {
             "external_ref": 1,
             "applications": [
-                {"url": url, "status": "applied", "title": "Engineer", "company": "A",
-                 "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc)},  # limpio, antiguo
-                {"url": url, "status": "applied", "title": "Engineer\ud800", "company": "A",
-                 "created_at": datetime(2026, 1, 2, tzinfo=timezone.utc)},  # tóxico, RECIENTE
+                {
+                    "url": url,
+                    "status": "applied",
+                    "title": "Engineer",
+                    "company": "A",
+                    "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                },  # limpio, antiguo
+                {
+                    "url": url,
+                    "status": "applied",
+                    "title": "Engineer\ud800",
+                    "company": "A",
+                    "created_at": datetime(2026, 1, 2, tzinfo=timezone.utc),
+                },  # tóxico, RECIENTE
             ],
             "saved_searches": [],
         }
@@ -210,12 +274,16 @@ def test_toxic_titled_winner_staged_no_crash():
         async with factory() as s:
             manifest = await man.migrate_and_reconcile(s, users)  # NO debe reventar
             assert manifest["verdict"] == "ok", manifest["divergences"]
-            assert manifest["verification"]["verdict"] == "verified", manifest["verification"]
+            assert manifest["verification"]["verdict"] == "verified", manifest[
+                "verification"
+            ]
             title = (
                 await s.execute(sa.text("SELECT snapshot->>'title' FROM applications"))
             ).scalar_one()
             assert title == "Engineer"  # el LIMPIO, no el tóxico ganador por recencia
-            assert any(r["external_ref"] == "1" for r in manifest["staged"])  # tóxico staged
+            assert any(
+                r["external_ref"] == "1" for r in manifest["staged"]
+            )  # tóxico staged
             await s.commit()
 
     asyncio.run(_on_disposable_db(_run))
@@ -231,12 +299,22 @@ def test_toxic_titled_sibling_no_false_divergent():
         {
             "external_ref": 1,
             "applications": [
-                {"url": url, "status": "applied", "title": "Engineer\ud800", "company": "ACME",
-                 "description": "Great job",
-                 "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc)},
-                {"url": url, "status": "applied", "title": "Engineer", "company": "ACME",
-                 "description": "Great job",
-                 "created_at": datetime(2026, 1, 2, tzinfo=timezone.utc)},  # más reciente, limpio
+                {
+                    "url": url,
+                    "status": "applied",
+                    "title": "Engineer\ud800",
+                    "company": "ACME",
+                    "description": "Great job",
+                    "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                },
+                {
+                    "url": url,
+                    "status": "applied",
+                    "title": "Engineer",
+                    "company": "ACME",
+                    "description": "Great job",
+                    "created_at": datetime(2026, 1, 2, tzinfo=timezone.utc),
+                },  # más reciente, limpio
             ],
             "saved_searches": [],
         }
@@ -246,7 +324,9 @@ def test_toxic_titled_sibling_no_false_divergent():
         async with factory() as s:
             manifest = await man.migrate_and_reconcile(s, users)
             assert manifest["verdict"] == "ok", manifest["divergences"]
-            assert manifest["verification"]["verdict"] == "verified", manifest["verification"]
+            assert manifest["verification"]["verdict"] == "verified", manifest[
+                "verification"
+            ]
             await s.commit()
 
     asyncio.run(_on_disposable_db(_run))
@@ -263,17 +343,29 @@ def test_verify_reused_without_canonical_is_not_flagged():
             await _seed_other_source(s, url, "nc-1")
             users = [_user([_app(url)])]
             manifest = await man.migrate_and_reconcile(s, users)
-            reused = [e["vacancy_id"] for e in manifest["ledger"] if e["disposition"] == "reused"]
+            reused = [
+                e["vacancy_id"]
+                for e in manifest["ledger"]
+                if e["disposition"] == "reused"
+            ]
             assert reused, "el durable debía resolver como reused"
             # Nulificar la canónica de la vacante reutilizada (estado ajeno de la otra fuente).
             await s.execute(
-                sa.text("UPDATE vacancies SET current_offer_revision_id = NULL WHERE id = :v"),
+                sa.text(
+                    "UPDATE vacancies SET current_offer_revision_id = NULL WHERE id = :v"
+                ),
                 {"v": reused[0]},
             )
             report = await verify_migration(
-                s, users, manifest["ledger"], manifest["provenance"], PORTFOLIO_IMPORT_SOURCE
+                s,
+                users,
+                manifest["ledger"],
+                manifest["provenance"],
+                PORTFOLIO_IMPORT_SOURCE,
             )
-            assert report["verdict"] == "verified", report["discrepancies"]  # no bloquea por lo ajeno
+            assert report["verdict"] == "verified", report[
+                "discrepancies"
+            ]  # no bloquea por lo ajeno
             await s.rollback()
 
     asyncio.run(_on_disposable_db(_run))
@@ -285,11 +377,16 @@ def test_verify_no_url_ledger_completeness():
 
     async def _run(factory):
         async with factory() as s:
-            users = [_user([_app("https://u.example.ch/1"), _app(None, status="saved")])]
+            users = [
+                _user([_app("https://u.example.ch/1"), _app(None, status="saved")])
+            ]
             manifest = await man.migrate_and_reconcile(s, users)
-            assert manifest["verification"]["verdict"] == "verified", manifest["verification"]
+            assert manifest["verification"]["verdict"] == "verified", manifest[
+                "verification"
+            ]
             no_url = [
-                e for e in manifest["ledger"]
+                e
+                for e in manifest["ledger"]
                 if e["disposition"] == "quarantine" and e["reason"] == "no_url"
             ]
             assert len(no_url) == 1
@@ -335,11 +432,15 @@ def test_verify_reused_and_collision_are_legitimate():
             )
             await _seed_other_source(s, "https://reuse.example.ch/r", "reuse-r")
             users = [
-                _user([
-                    _app("https://reuse.example.ch/r"),        # reused (otra fuente exacta)
-                    _app(coll_url),                             # collision_cross_source
-                    _app("https://fresh.example.ch/n"),         # created
-                ])
+                _user(
+                    [
+                        _app(
+                            "https://reuse.example.ch/r"
+                        ),  # reused (otra fuente exacta)
+                        _app(coll_url),  # collision_cross_source
+                        _app("https://fresh.example.ch/n"),  # created
+                    ]
+                )
             ]
             manifest = await man.migrate_and_reconcile(s, users)
             v = manifest["verification"]
@@ -364,7 +465,9 @@ def test_entrypoint_downgrades_verdict_on_structural_discrepancy(monkeypatch):
     async def _fake_verify(session, users, ledger, provenance, source_name):
         return {
             "verdict": "discrepant",
-            "discrepancies": ["LISTING PERDIDO: url=https://x.example.ch/1 sin vacante"],
+            "discrepancies": [
+                "LISTING PERDIDO: url=https://x.example.ch/1 sin vacante"
+            ],
             "checked": {},
         }
 
@@ -372,7 +475,9 @@ def test_entrypoint_downgrades_verdict_on_structural_discrepancy(monkeypatch):
 
     async def _run(factory):
         async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user([_app("https://prop.example.ch/1")])])
+            manifest = await man.migrate_and_reconcile(
+                s, [_user([_app("https://prop.example.ch/1")])]
+            )
             # reconcile por sí solo daría 'ok' (destino material coherente); la verificación
             # estructural degrada el verdict superior y aporta la discrepancia.
             assert manifest["verification"]["verdict"] == "discrepant"
@@ -384,7 +489,9 @@ def test_entrypoint_downgrades_verdict_on_structural_discrepancy(monkeypatch):
             # La COLUMNA persistida (la que un GATE-C ingenuo leería) también es 'divergent'.
             persisted = (
                 await s.execute(
-                    sa.text("SELECT verdict FROM portfolio_migration_manifest WHERE id = :i"),
+                    sa.text(
+                        "SELECT verdict FROM portfolio_migration_manifest WHERE id = :i"
+                    ),
                     {"i": manifest["id"]},
                 )
             ).scalar_one()
@@ -419,17 +526,24 @@ def test_verify_detects_extra_url_not_in_origin(monkeypatch):
 
     async def _run(factory):
         async with factory() as s:
-            await _seed_other_source(s, extra_url, "inj-x")  # otra fuente → la extra será reused
+            await _seed_other_source(
+                s, extra_url, "inj-x"
+            )  # otra fuente → la extra será reused
             manifest = await man.migrate_and_reconcile(
                 s, [_user([_app("https://normal.example.ch/1")])]
             )
             # La url extra entró al ledger como reused (no está en users → ajena al origen).
             extra = [e for e in manifest["ledger"] if e["url"] == extra_url]
-            assert len(extra) == 1 and extra[0]["disposition"] == "reused", manifest["ledger"]
+            assert len(extra) == 1 and extra[0]["disposition"] == "reused", manifest[
+                "ledger"
+            ]
             # El verificador la caza como AUSENTE del origen; el verdict superior se degrada.
-            assert manifest["verification"]["verdict"] == "discrepant", manifest["verification"]
+            assert manifest["verification"]["verdict"] == "discrepant", manifest[
+                "verification"
+            ]
             assert any(
-                "AUSENTES del origen" in d for d in manifest["verification"]["discrepancies"]
+                "AUSENTES del origen" in d
+                for d in manifest["verification"]["discrepancies"]
             ), manifest["verification"]["discrepancies"]
             assert manifest["verdict"] == "divergent", manifest["verdict"]
             await s.rollback()
@@ -445,15 +559,22 @@ def test_company_no_str_no_es_falso_divergent():
 
     async def _run(factory):
         async with factory() as s:
-            users = [{
-                "external_ref": 1,
-                "applications": [{
-                    "url": "https://h9fix.example.ch/1", "status": "applied",
-                    "title": "T", "company": 123, "description": 4.5,
-                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
-                }],
-                "saved_searches": [],
-            }]
+            users = [
+                {
+                    "external_ref": 1,
+                    "applications": [
+                        {
+                            "url": "https://h9fix.example.ch/1",
+                            "status": "applied",
+                            "title": "T",
+                            "company": 123,
+                            "description": 4.5,
+                            "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                        }
+                    ],
+                    "saved_searches": [],
+                }
+            ]
             manifest = await man.migrate_and_reconcile(s, users)
             assert manifest["verdict"] == "ok", manifest["divergences"]
             snap = (
@@ -480,15 +601,22 @@ def test_company_float_exponencial_no_es_falso_divergent():
 
     async def _run(factory):
         async with factory() as s:
-            users = [{
-                "external_ref": 1,
-                "applications": [{
-                    "url": "https://g2p31.example.ch/1", "status": "applied",
-                    "title": "T", "company": 1.5e300, "description": 1e-5,
-                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
-                }],
-                "saved_searches": [],
-            }]
+            users = [
+                {
+                    "external_ref": 1,
+                    "applications": [
+                        {
+                            "url": "https://g2p31.example.ch/1",
+                            "status": "applied",
+                            "title": "T",
+                            "company": 1.5e300,
+                            "description": 1e-5,
+                            "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                        }
+                    ],
+                    "saved_searches": [],
+                }
+            ]
             manifest = await man.migrate_and_reconcile(s, users)
             assert manifest["verdict"] == "ok", manifest["divergences"]
             snap = (
@@ -531,14 +659,16 @@ def test_g7_url_con_surrogate_en_el_fragmento_no_mata_el_cutover():
         async with factory() as s:
             users = [_user([_app(toxica), _app(limpia)])]
             manifest = await man.migrate_and_reconcile(s, users)
-            porurl = {e["url"]: (e["disposition"], e["reason"]) for e in manifest["ledger"]}
+            porurl = {
+                e["url"]: (e["disposition"], e["reason"]) for e in manifest["ledger"]
+            }
             # Eslabones 1 y 2: la tóxica llega al ledger CRUDA y con razón de COLISIÓN.
             assert porurl[toxica][0] == "quarantine"
             assert porurl[toxica][1].startswith("collision"), porurl[toxica]
             # Eslabón 3: hubo veredicto y hubo manifiesto persistido.
-            assert manifest["verification"]["verdict"] == "verified", (
-                manifest["verification"]["discrepancies"]
-            )
+            assert manifest["verification"]["verdict"] == "verified", manifest[
+                "verification"
+            ]["discrepancies"]
             assert manifest["id"]
             await s.commit()
 

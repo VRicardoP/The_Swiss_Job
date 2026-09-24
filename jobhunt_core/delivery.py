@@ -148,10 +148,7 @@ async def claim_deliveries(session, limit: int = 100) -> tuple[list, object]:
         return [], None
     lease_token = (
         await session.execute(
-            sa.text(
-                "SELECT clock_timestamp() + "
-                f"make_interval(secs => {int(LEASE_S)})"
-            )
+            sa.text(f"SELECT clock_timestamp() + make_interval(secs => {int(LEASE_S)})")
         )
     ).scalar_one()
     await session.execute(
@@ -196,10 +193,7 @@ async def renew_lease(session, rows, lease_token) -> tuple[object, int]:
         return lease_token, 0
     nuevo = (
         await session.execute(
-            sa.text(
-                "SELECT clock_timestamp() + "
-                f"make_interval(secs => {int(LEASE_S)})"
-            )
+            sa.text(f"SELECT clock_timestamp() + make_interval(secs => {int(LEASE_S)})")
         )
     ).scalar_one()
     kept = (
@@ -232,7 +226,8 @@ async def renew_lease(session, rows, lease_token) -> tuple[object, int]:
                 "RETURNING d.event_id"
             ),
             {
-                "nuevo": nuevo, "old": lease_token,
+                "nuevo": nuevo,
+                "old": lease_token,
                 "eids": [str(r.event_id) for r in rows],
                 "dests": [r.destination for r in rows],
             },
@@ -244,7 +239,8 @@ async def renew_lease(session, rows, lease_token) -> tuple[object, int]:
             "delivery: el lote superó el lease — %d de %d entregas pendientes "
             "ya no son nuestras (otro dispatcher las re-clamó): re-entrega "
             "at-least-once en curso",
-            perdidas, len(rows),
+            perdidas,
+            len(rows),
         )
     return nuevo, perdidas
 
@@ -273,26 +269,26 @@ async def _persist_attempts(session, fails: list) -> list[dict]:
     rows = (
         await session.execute(
             sa.text(
-            "UPDATE integration_outbox_deliveries d "
-            "SET attempts = d.attempts + 1, "
-            "    last_error = t.error, "
-            # G3-H-1: hubo RESULTADO (el transporte se ejecutó y falló) — el
-            # contador de veneno vuelve a 0 aunque el fence descarte la
-            # transición: un destino caído jamás se confunde con un payload
-            # que mata al proceso.
-            "    claims = 0 "
-            "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[]), "
-            "            CAST(:errors AS text[])) "
-            "  AS t(eid, dest, error) "
-            "WHERE d.event_id = t.eid AND d.destination = t.dest "
-            "AND d.state IN ('pending', 'inflight') "
-            "RETURNING d.event_id, d.destination, d.attempts"
-        ),
-        {
-            "eids": [str(f["eid"]) for f in fails],
-            "dests": [f["dest"] for f in fails],
-            "errors": [f["error"] for f in fails],
-        },
+                "UPDATE integration_outbox_deliveries d "
+                "SET attempts = d.attempts + 1, "
+                "    last_error = t.error, "
+                # G3-H-1: hubo RESULTADO (el transporte se ejecutó y falló) — el
+                # contador de veneno vuelve a 0 aunque el fence descarte la
+                # transición: un destino caído jamás se confunde con un payload
+                # que mata al proceso.
+                "    claims = 0 "
+                "FROM unnest(CAST(:eids AS uuid[]), CAST(:dests AS text[]), "
+                "            CAST(:errors AS text[])) "
+                "  AS t(eid, dest, error) "
+                "WHERE d.event_id = t.eid AND d.destination = t.dest "
+                "AND d.state IN ('pending', 'inflight') "
+                "RETURNING d.event_id, d.destination, d.attempts"
+            ),
+            {
+                "eids": [str(f["eid"]) for f in fails],
+                "dests": [f["dest"] for f in fails],
+                "errors": [f["error"] for f in fails],
+            },
         )
     ).all()
     original = {(str(f["eid"]), f["dest"]): f for f in fails}
@@ -354,7 +350,9 @@ async def retire_exhausted(session) -> int:
         logger.error(
             "delivery: evento %s → %s en DEAD-LETTER tras %d intentos (%s) "
             "— lease caducado sin mark: retirado al re-reclamar",
-            row.event_id, row.destination, row.attempts,
+            row.event_id,
+            row.destination,
+            row.attempts,
             (row.last_error or "")[:200],
         )
     return len(rows)
@@ -489,7 +487,10 @@ async def retire_poisoned(session) -> int:
             "reclamos consecutivos SIN un solo resultado (intentos "
             "consumidos: %d): el payload tumba al dispatcher — revisar el "
             "MENSAJE, no el destino",
-            row.event_id, row.destination, row.claims, row.attempts,
+            row.event_id,
+            row.destination,
+            row.claims,
+            row.attempts,
         )
     return len(rows)
 
@@ -651,9 +652,7 @@ async def mark_delivered(session, marks: list, lease_token=None) -> int:
     # re-clamó, o su mark_failed la devolvió a 'pending' con el lease a NULL).
     # Solo se cuentan filas REALMENTE transicionadas por el UPDATE.
     robadas = sum(
-        1
-        for r in done
-        if previos.get((r.event_id, r.destination)) != lease_token
+        1 for r in done if previos.get((r.event_id, r.destination)) != lease_token
     )
     if robadas and lease_token is not None:
         logger.warning(
@@ -720,7 +719,9 @@ async def mark_failed(session, fails: list, lease_token) -> dict:
             # reales confirmadas por el fence.
             logger.error(
                 "delivery: evento %s → %s en DEAD-LETTER tras %d intentos (%s)",
-                row.event_id, row.destination, row.attempts,
+                row.event_id,
+                row.destination,
+                row.attempts,
                 (row.last_error or "")[:200],
             )
     retried = 0

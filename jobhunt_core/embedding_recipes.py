@@ -31,9 +31,7 @@ def offer_views(content: dict, recipe: str) -> tuple[tuple[str, float], ...]:
     tags = " ".join(content.get("tags") or [])
     if recipe == LEGACY_V1:
         return ((" ".join(p for p in (title, company, description, tags) if p), 1.0),)
-    fields_first = " ".join(
-        p for p in (title, tags, company, description) if p
-    )
+    fields_first = " ".join(p for p in (title, tags, company, description) if p)
     return ((fields_first, _FIELDS_WEIGHT), (title, _TITLE_WEIGHT))
 
 
@@ -127,4 +125,6 @@ def _validate_encoded(vectors: list[list[float]], expected_rows: int) -> None:
         )
     for vector in vectors:
         if not vector or not all(math.isfinite(v) for v in vector):
-            raise ValueError("el backend devolvió un vector vacío o con valores no finitos")
+            raise ValueError(
+                "el backend devolvió un vector vacío o con valores no finitos"
+            )

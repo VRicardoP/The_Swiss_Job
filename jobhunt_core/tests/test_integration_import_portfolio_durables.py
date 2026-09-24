@@ -57,13 +57,12 @@ def test_migrate_portfolio_durables(caplog):
     asyncio.run(create_db())
     try:
         temp_engine = create_async_engine(
-            temp_url, poolclass=sa.pool.NullPool,
+            temp_url,
+            poolclass=sa.pool.NullPool,
             # search_path por CONEXIÓN (NullPool renueva la conexión tras cada
             # commit y un SET suelto se perdería).
             connect_args={
-                "server_settings": {
-                    "search_path": f"{settings.CORE_DB_SCHEMA}, public"
-                }
+                "server_settings": {"search_path": f"{settings.CORE_DB_SCHEMA}, public"}
             },
         )
         factory = async_sessionmaker(temp_engine, expire_on_commit=False)
@@ -98,57 +97,95 @@ async def _scenario(factory, caplog):
 
     apps = [
         {
-            "user_id": 7, "url": URL_APPLIED, "title": "Backend Developer",
-            "company": "ACME AG", "description": "Python backend",
-            "status": "applied", "notes": "CV enviado", "follow_up_date": None,
+            "user_id": 7,
+            "url": URL_APPLIED,
+            "title": "Backend Developer",
+            "company": "ACME AG",
+            "description": "Python backend",
+            "status": "applied",
+            "notes": "CV enviado",
+            "follow_up_date": None,
             "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
         },
         {
-            "user_id": 7, "url": URL_SAVED, "title": "Data Engineer",
-            "company": "Beta", "description": None,
-            "status": "saved", "notes": "interesante", "follow_up_date": None,
+            "user_id": 7,
+            "url": URL_SAVED,
+            "title": "Data Engineer",
+            "company": "Beta",
+            "description": None,
+            "status": "saved",
+            "notes": "interesante",
+            "follow_up_date": None,
             "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc),
         },
         {
-            "user_id": 7, "url": URL_SAVED_FU, "title": "ML Engineer",
-            "company": "Gamma", "description": None,
-            "status": "saved", "notes": None,
+            "user_id": 7,
+            "url": URL_SAVED_FU,
+            "title": "ML Engineer",
+            "company": "Gamma",
+            "description": None,
+            "status": "saved",
+            "notes": None,
             "follow_up_date": date(2026, 8, 15),
             "created_at": datetime(2026, 6, 3, tzinfo=timezone.utc),
         },
         # CONSOLIDACIÓN: bookmark con follow_up_date + candidatura REAL con la
         # MISMA url → deben fundirse en UNA application (UNIQUE del esquema).
         {
-            "user_id": 7, "url": URL_BOTH, "title": "DevOps Engineer",
-            "company": "Delta", "description": None,
-            "status": "saved", "notes": "recordar ping",
+            "user_id": 7,
+            "url": URL_BOTH,
+            "title": "DevOps Engineer",
+            "company": "Delta",
+            "description": None,
+            "status": "saved",
+            "notes": "recordar ping",
             "follow_up_date": date(2026, 9, 1),
             "created_at": datetime(2026, 6, 4, tzinfo=timezone.utc),
         },
         {
-            "user_id": 7, "url": URL_BOTH, "title": "DevOps Engineer",
-            "company": "Delta", "description": "IaC",
-            "status": "applied", "notes": None, "follow_up_date": None,
+            "user_id": 7,
+            "url": URL_BOTH,
+            "title": "DevOps Engineer",
+            "company": "Delta",
+            "description": "IaC",
+            "status": "applied",
+            "notes": None,
+            "follow_up_date": None,
             "created_at": datetime(2026, 6, 5, tzinfo=timezone.utc),
         },
         # Sin url → unresolved (staging futuro), no inserta nada.
         {
-            "user_id": 7, "url": None, "title": "Sin URL", "company": "X",
-            "description": None, "status": "offer", "notes": None,
+            "user_id": 7,
+            "url": None,
+            "title": "Sin URL",
+            "company": "X",
+            "description": None,
+            "status": "offer",
+            "notes": None,
             "follow_up_date": None,
             "created_at": datetime(2026, 6, 6, tzinfo=timezone.utc),
         },
         # URL jamás sintetizada (p.ej. cuarentena del sink) → unresolved.
         {
-            "user_id": 7, "url": "https://nunca.vista/x", "title": "Fantasma",
-            "company": "Y", "description": None, "status": "rejected",
-            "notes": None, "follow_up_date": None,
+            "user_id": 7,
+            "url": "https://nunca.vista/x",
+            "title": "Fantasma",
+            "company": "Y",
+            "description": None,
+            "status": "rejected",
+            "notes": None,
+            "follow_up_date": None,
             "created_at": datetime(2026, 6, 7, tzinfo=timezone.utc),
         },
     ]
     expected_counts = {
-        "applications": 3, "bookmarks": 3, "unresolved": 2,
-        "consolidated": 1, "invalid_status": 0, "collision": 0, "no_title": 0,
+        "applications": 3,
+        "bookmarks": 3,
+        "unresolved": 2,
+        "consolidated": 1,
+        "invalid_status": 0,
+        "collision": 0,
+        "no_title": 0,
     }
 
     async with factory() as s:
@@ -190,8 +227,10 @@ async def _scenario(factory, caplog):
         assert app.notes == "CV enviado"
         assert app.follow_up_date is None
         assert app.snapshot == {
-            "title": "Backend Developer", "company": "ACME AG",
-            "url": URL_APPLIED, "description": "Python backend",
+            "title": "Backend Developer",
+            "company": "ACME AG",
+            "url": URL_APPLIED,
+            "description": "Python backend",
         }
         assert await _event_statuses(s, app.id) == ["applied"]
         # Sin bookmark: la application no toca profile_vacancy_state.
@@ -236,15 +275,21 @@ async def _scenario(factory, caplog):
         # defaults de core0011; filters inválido → {} con log.
         searches = [
             {
-                "user_id": 7, "name": "python zurich",
+                "user_id": 7,
+                "name": "python zurich",
                 "filters": '{"q": "python", "location": "Zurich"}',
-                "min_score": 60, "is_active": True,
+                "min_score": 60,
+                "is_active": True,
                 "last_notified_at": datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
                 "created_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
             },
             {
-                "user_id": 7, "name": "rota", "filters": "{no es json",
-                "min_score": 0, "is_active": False, "last_notified_at": None,
+                "user_id": 7,
+                "name": "rota",
+                "filters": "{no es json",
+                "min_score": 0,
+                "is_active": False,
+                "last_notified_at": None,
                 "created_at": datetime(2026, 5, 2, tzinfo=timezone.utc),
             },
         ]
@@ -252,8 +297,11 @@ async def _scenario(factory, caplog):
             sc = await ipd.migrate_saved_searches(s, profile_id, searches)
         await s.commit()
         assert sc == {
-            "migrated": 2, "existing": 0, "invalid_filters": 1,
-            "invalid_min_score": 0, "no_name": 0,
+            "migrated": 2,
+            "existing": 0,
+            "invalid_filters": 1,
+            "invalid_min_score": 0,
+            "no_name": 0,
         }
         assert "filters INVÁLIDO" in caplog.text
         row = (
@@ -290,8 +338,11 @@ async def _scenario(factory, caplog):
         sc2 = await ipd.migrate_saved_searches(s, profile_id, searches)
         await s.commit()
         assert sc2 == {
-            "migrated": 0, "existing": 2, "invalid_filters": 1,
-            "invalid_min_score": 0, "no_name": 0,
+            "migrated": 0,
+            "existing": 2,
+            "invalid_filters": 1,
+            "invalid_min_score": 0,
+            "no_name": 0,
         }
         assert await _count(s, "saved_searches") == 2
 
@@ -303,21 +354,46 @@ async def _scenario(factory, caplog):
         # del lote — P2 rev. externa): tres saved de la MISMA vacante → gana la nota
         # MÁS RECIENTE no vacía ('nota tardía'), en un solo UPDATE.
         await ip.synthesize_vacancies(
-            s, scope_id,
-            [{"url": URL_MULTI, "title": "Multi Note", "company": "M",
-              "description": None}],
+            s,
+            scope_id,
+            [
+                {
+                    "url": URL_MULTI,
+                    "title": "Multi Note",
+                    "company": "M",
+                    "description": None,
+                }
+            ],
         )
         await s.commit()
         multi = [
-            {"user_id": 7, "url": URL_MULTI, "status": "saved", "title": "Multi Note",
-             "notes": None, "follow_up_date": None,
-             "created_at": datetime(2026, 6, 10, tzinfo=timezone.utc)},
-            {"user_id": 7, "url": URL_MULTI, "status": "saved", "title": "Multi Note",
-             "notes": "nota buena", "follow_up_date": None,
-             "created_at": datetime(2026, 6, 11, tzinfo=timezone.utc)},
-            {"user_id": 7, "url": URL_MULTI, "status": "saved", "title": "Multi Note",
-             "notes": "nota tardía", "follow_up_date": None,
-             "created_at": datetime(2026, 6, 12, tzinfo=timezone.utc)},
+            {
+                "user_id": 7,
+                "url": URL_MULTI,
+                "status": "saved",
+                "title": "Multi Note",
+                "notes": None,
+                "follow_up_date": None,
+                "created_at": datetime(2026, 6, 10, tzinfo=timezone.utc),
+            },
+            {
+                "user_id": 7,
+                "url": URL_MULTI,
+                "status": "saved",
+                "title": "Multi Note",
+                "notes": "nota buena",
+                "follow_up_date": None,
+                "created_at": datetime(2026, 6, 11, tzinfo=timezone.utc),
+            },
+            {
+                "user_id": 7,
+                "url": URL_MULTI,
+                "status": "saved",
+                "title": "Multi Note",
+                "notes": "nota tardía",
+                "follow_up_date": None,
+                "created_at": datetime(2026, 6, 12, tzinfo=timezone.utc),
+            },
         ]
         cm = await ipd.migrate_applications(s, profile_id, multi)
         await s.commit()
@@ -332,18 +408,37 @@ async def _scenario(factory, caplog):
         # (el orden batch-last elegiría la equivocada). Gana la reciente, y la
         # descartada se LOGUEA (auditable — no pérdida silenciosa).
         await ip.synthesize_vacancies(
-            s, scope_id,
-            [{"url": URL_TWO_REAL, "title": "Two Real", "company": "T",
-              "description": None}],
+            s,
+            scope_id,
+            [
+                {
+                    "url": URL_TWO_REAL,
+                    "title": "Two Real",
+                    "company": "T",
+                    "description": None,
+                }
+            ],
         )
         await s.commit()
         two_real = [
-            {"user_id": 7, "url": URL_TWO_REAL, "status": "rejected", "title": "Two Real",
-             "notes": None, "follow_up_date": None,
-             "created_at": datetime(2026, 7, 20, tzinfo=timezone.utc)},  # reciente, 1ª
-            {"user_id": 7, "url": URL_TWO_REAL, "status": "applied", "title": "Two Real",
-             "notes": None, "follow_up_date": None,
-             "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},  # antigua, última
+            {
+                "user_id": 7,
+                "url": URL_TWO_REAL,
+                "status": "rejected",
+                "title": "Two Real",
+                "notes": None,
+                "follow_up_date": None,
+                "created_at": datetime(2026, 7, 20, tzinfo=timezone.utc),
+            },  # reciente, 1ª
+            {
+                "user_id": 7,
+                "url": URL_TWO_REAL,
+                "status": "applied",
+                "title": "Two Real",
+                "notes": None,
+                "follow_up_date": None,
+                "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+            },  # antigua, última
         ]
         caplog.clear()
         with caplog.at_level(logging.WARNING):
@@ -360,10 +455,22 @@ async def _scenario(factory, caplog):
         # legítimas (el origen no impone UNIQUE por name) → AMBAS migran (dedup por
         # name+filters, no solo name — no se pierde una en silencio).
         homonym = [
-            {"user_id": 7, "name": "zurich", "filters": '{"q": "python"}',
-             "min_score": 0, "is_active": True, "last_notified_at": None},
-            {"user_id": 7, "name": "zurich", "filters": '{"q": "rust"}',
-             "min_score": 0, "is_active": True, "last_notified_at": None},
+            {
+                "user_id": 7,
+                "name": "zurich",
+                "filters": '{"q": "python"}',
+                "min_score": 0,
+                "is_active": True,
+                "last_notified_at": None,
+            },
+            {
+                "user_id": 7,
+                "name": "zurich",
+                "filters": '{"q": "rust"}',
+                "min_score": 0,
+                "is_active": True,
+                "last_notified_at": None,
+            },
         ]
         sc3 = await ipd.migrate_saved_searches(s, profile_id, homonym)
         await s.commit()
@@ -391,12 +498,19 @@ async def _scenario(factory, caplog):
                     "INSERT INTO saved_searches (id, profile_id, name, filters) "
                     "VALUES (:id, :pid, :n, CAST(:f AS jsonb))"
                 ),
-                {"id": uuid.uuid4(), "pid": profile_id, "n": "dup",
-                 "f": '{"q": "x"}'},
+                {"id": uuid.uuid4(), "pid": profile_id, "n": "dup", "f": '{"q": "x"}'},
             )
         await s.commit()
-        dup_row = [{"user_id": 7, "name": "dup", "filters": '{"q": "x"}',
-                    "min_score": 0, "is_active": True, "last_notified_at": None}]
+        dup_row = [
+            {
+                "user_id": 7,
+                "name": "dup",
+                "filters": '{"q": "x"}',
+                "min_score": 0,
+                "is_active": True,
+                "last_notified_at": None,
+            }
+        ]
         sc5 = await ipd.migrate_saved_searches(s, profile_id, dup_row)  # no lanza
         await s.commit()
         assert sc5["migrated"] == 0 and sc5["existing"] == 1
@@ -585,8 +699,10 @@ def test_min_score_invalido_migra_desactivada_y_enumerada_en_staging():
     )
 
     durable = {
-        "name": "umbral roto", "filters": {"q": "python"},
-        "min_score": "sesenta", "is_active": True,
+        "name": "umbral roto",
+        "filters": {"q": "python"},
+        "min_score": "sesenta",
+        "is_active": True,
     }
 
     async def _run(factory):
@@ -598,8 +714,11 @@ def test_min_score_invalido_migra_desactivada_y_enumerada_en_staging():
             await s.commit()
             assert counts["migrated"] == 1
             assert staging == [
-                {"kind": "saved_search", "reason": "invalid_min_score",
-                 "durable": durable}
+                {
+                    "kind": "saved_search",
+                    "reason": "invalid_min_score",
+                    "durable": durable,
+                }
             ]  # antes: [] — degradación MUDA
             row = (
                 await s.execute(
@@ -617,9 +736,10 @@ def test_min_score_invalido_migra_desactivada_y_enumerada_en_staging():
             expected = await _classify_expected(
                 s, [{"external_ref": "g3-minscore", "saved_searches": [durable]}]
             )
-            assert expected["staged"][
-                ("invalid_min_score", "g3-minscore", "umbral roto")
-            ] == 1
+            assert (
+                expected["staged"][("invalid_min_score", "g3-minscore", "umbral roto")]
+                == 1
+            )
             assert [t[3:5] for t in expected["saved_searches"]] == [(0, False)]
 
     _asyncio.run(_on_disposable_db(_run))
@@ -639,19 +759,31 @@ def test_escalar_no_json_del_durable_no_mata_la_transaccion_del_cutover():
 
     from jobhunt_core import import_portfolio as ip
     from jobhunt_core.import_portfolio_manifest import (
-        _canon, _pg_text, migrate_and_reconcile,
+        _canon,
+        _pg_text,
+        migrate_and_reconcile,
     )
     from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import (
         _on_disposable_db,
     )
 
     durables = [
-        {"url": "https://g3dec.example.ch/1", "title": "T1",
-         "company": Decimal("1.5"), "description": None, "status": "applied",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-        {"url": "https://g3dt.example.ch/1", "title": "T2", "company": "A",
-         "description": date(2026, 1, 1), "status": "applied",
-         "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+        {
+            "url": "https://g3dec.example.ch/1",
+            "title": "T1",
+            "company": Decimal("1.5"),
+            "description": None,
+            "status": "applied",
+            "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+        },
+        {
+            "url": "https://g3dt.example.ch/1",
+            "title": "T2",
+            "company": "A",
+            "description": date(2026, 1, 1),
+            "status": "applied",
+            "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+        },
     ]
     # La frontera los acepta: si el escritor no los acepta, el cutover muere.
     for d in durables:
@@ -663,13 +795,20 @@ def test_escalar_no_json_del_durable_no_mata_la_transaccion_del_cutover():
 
     async def _run(factory):
         async with factory() as s:
-            users = [{
-                "external_ref": 1, "applications": durables,
-                "saved_searches": [
-                    {"name": "f", "filters": {"min": Decimal("2.5")},
-                     "min_score": 60, "is_active": True},
-                ],
-            }]
+            users = [
+                {
+                    "external_ref": 1,
+                    "applications": durables,
+                    "saved_searches": [
+                        {
+                            "name": "f",
+                            "filters": {"min": Decimal("2.5")},
+                            "min_score": 60,
+                            "is_active": True,
+                        },
+                    ],
+                }
+            ]
             report = await migrate_and_reconcile(s, users)  # antes: TypeError
             assert report["verdict"] == "ok", report["divergences"]
 
@@ -715,12 +854,21 @@ def test_g5_la_degradacion_por_cota_tiene_contador_propio_en_el_resumen():
             pid = await upsert_profile(s, cid, "g5-minscore")
             staging: list = []
             counts = await migrate_saved_searches(
-                s, pid,
+                s,
+                pid,
                 [
-                    {"name": "cota", "filters": {"q": "a"}, "min_score": 150,
-                     "is_active": True},
-                    {"name": "filtros", "filters": "no-json", "min_score": 50,
-                     "is_active": True},
+                    {
+                        "name": "cota",
+                        "filters": {"q": "a"},
+                        "min_score": 150,
+                        "is_active": True,
+                    },
+                    {
+                        "name": "filtros",
+                        "filters": "no-json",
+                        "min_score": 50,
+                        "is_active": True,
+                    },
                 ],
                 staging=staging,
             )
@@ -742,7 +890,8 @@ def test_g5_la_degradacion_por_cota_tiene_contador_propio_en_el_resumen():
             }
             assert filas == {"cota": (0, False), "filtros": (50, False)}
             assert {r["reason"] for r in staging} == {
-                "invalid_min_score", "invalid_filters"
+                "invalid_min_score",
+                "invalid_filters",
             }
 
     _asyncio.run(_on_disposable_db(_run))
@@ -765,8 +914,12 @@ def test_g5_rerun_tras_el_cambio_de_cota_converge_la_fila_en_vez_de_duplicarla()
         _on_disposable_db,
     )
 
-    durable = {"name": "cota", "filters": {"q": "a"}, "min_score": 150,
-               "is_active": True}
+    durable = {
+        "name": "cota",
+        "filters": {"q": "a"},
+        "min_score": 150,
+        "is_active": True,
+    }
 
     async def _run(factory):
         async with factory() as s:
@@ -824,12 +977,17 @@ def test_saved_search_filters_dict_y_last_run_at_del_extractor():
             pid = await upsert_profile(s, cid, "h3-user")
             staging: list = []
             counts = await migrate_saved_searches(
-                s, pid,
-                [{
-                    "name": "b1", "filters": {"q": "python"}, "min_score": 60,
-                    "is_active": True,
-                    "last_run_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
-                }],
+                s,
+                pid,
+                [
+                    {
+                        "name": "b1",
+                        "filters": {"q": "python"},
+                        "min_score": 60,
+                        "is_active": True,
+                        "last_run_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                    }
+                ],
                 staging=staging,
             )
             await s.commit()

@@ -39,15 +39,33 @@ SHA = "e" * 40
 FEED = {
     1: {
         "data": [
-            {"slug": "t1", "url": "https://feed/t1", "title": "Python Developer",
-             "company_name": "TechCorp AG", "description": "backend python",
-             "tags": ["python"], "created_at": 400},
-            {"slug": "t2", "url": "https://feed/t2", "title": "Java Backend",
-             "company_name": "TechCorp AG", "description": "java spring",
-             "tags": ["java"], "created_at": 300},
-            {"slug": "n1", "url": "https://feed/n1", "title": "Contable Senior",
-             "company_name": "FinanzHaus GmbH", "description": "contabilidad",
-             "tags": ["finanzas"], "created_at": 200},
+            {
+                "slug": "t1",
+                "url": "https://feed/t1",
+                "title": "Python Developer",
+                "company_name": "TechCorp AG",
+                "description": "backend python",
+                "tags": ["python"],
+                "created_at": 400,
+            },
+            {
+                "slug": "t2",
+                "url": "https://feed/t2",
+                "title": "Java Backend",
+                "company_name": "TechCorp AG",
+                "description": "java spring",
+                "tags": ["java"],
+                "created_at": 300,
+            },
+            {
+                "slug": "n1",
+                "url": "https://feed/n1",
+                "title": "Contable Senior",
+                "company_name": "FinanzHaus GmbH",
+                "description": "contabilidad",
+                "tags": ["finanzas"],
+                "created_at": 200,
+            },
         ],
         "links": {},
     },
@@ -59,8 +77,12 @@ def db():
     engine = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     created = {
-        "sources": [], "scopes": [], "models": [], "consumers": [],
-        "policies": [], "runs": [],
+        "sources": [],
+        "scopes": [],
+        "models": [],
+        "consumers": [],
+        "policies": [],
+        "runs": [],
     }
     yield factory, created
 
@@ -101,7 +123,9 @@ def test_gate_a_end_to_end(db, monkeypatch):
             source_id = uuid.uuid4()
             created["sources"].append(source_id)
             await s.execute(
-                sa.text("INSERT INTO sources (id, name, tier) VALUES (:i, 'arbeitnow', 0)"),
+                sa.text(
+                    "INSERT INTO sources (id, name, tier) VALUES (:i, 'arbeitnow', 0)"
+                ),
                 {"i": source_id},
             )
             scope_ids = {}
@@ -139,11 +163,19 @@ def test_gate_a_end_to_end(db, monkeypatch):
             )
             await s.commit()
             return (
-                scope_ids, cid_a, pid_tech, pid_fin, mid, polid,
-                f"{key_a}.{secret_a}", f"{key_b}.{secret_b}",
+                scope_ids,
+                cid_a,
+                pid_tech,
+                pid_fin,
+                mid,
+                polid,
+                f"{key_a}.{secret_a}",
+                f"{key_b}.{secret_b}",
             )
 
-    (scope_ids, cid_a, pid_tech, pid_fin, mid, polid, token_a, token_b) = asyncio.run(seed())
+    (scope_ids, cid_a, pid_tech, pid_fin, mid, polid, token_a, token_b) = asyncio.run(
+        seed()
+    )
 
     # ---------- 1+2. COSECHA REAL (run_all idempotente, HTTP mockeado) ------
     import jobhunt_core.tasks.harvest as harvest_task
@@ -159,7 +191,8 @@ def test_gate_a_end_to_end(db, monkeypatch):
     # rompería el ASGITransport de las llamadas a la API más abajo).
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(
-            harvest_task.httpx, "AsyncClient",
+            harvest_task.httpx,
+            "AsyncClient",
             lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw),
         )
         r = run_all_task.apply(args=["gate-a-run"])
@@ -177,7 +210,8 @@ def test_gate_a_end_to_end(db, monkeypatch):
             "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
             "WHERE v.id IN (SELECT i.vacancy_id FROM source_listing_incarnations i "
             "JOIN source_listings l ON l.id = i.source_listing_id "
-            "WHERE l.source_id = ANY(:s))", s=created["sources"],
+            "WHERE l.source_id = ANY(:s))",
+            s=created["sources"],
         )
     }
     assert "Python Developer" in vacs  # scope tech
@@ -193,14 +227,22 @@ def test_gate_a_end_to_end(db, monkeypatch):
     # debe seguir VIVO en 4b: el reciclado reconstruye la canónica de la
     # vacante compartida con el normalizador de otherboard (su nuevo primary).
     monkeypatch.setitem(
-        identity_mod._EXTRACTORS, "otherboard",
+        identity_mod._EXTRACTORS,
+        "otherboard",
         lambda p: (p.get("title"), p.get("company_name")),
     )
     monkeypatch.setitem(
-        normalize_mod._NORMALIZERS, "otherboard",
-        lambda raw: {"title": raw.get("title"), "company": raw.get("company_name"),
-                     "description": raw.get("description"), "tags": raw.get("tags"),
-                     "location": None, "remote": None, "salary": None},
+        normalize_mod._NORMALIZERS,
+        "otherboard",
+        lambda raw: {
+            "title": raw.get("title"),
+            "company": raw.get("company_name"),
+            "description": raw.get("description"),
+            "tags": raw.get("tags"),
+            "location": None,
+            "remote": None,
+            "salary": None,
+        },
     )
 
     async def cross_source():
@@ -209,7 +251,9 @@ def test_gate_a_end_to_end(db, monkeypatch):
             created["sources"].append(src2)
             created["scopes"].append(scope2)
             await s.execute(
-                sa.text("INSERT INTO sources (id, name, tier) VALUES (:i, 'otherboard', 0)"),
+                sa.text(
+                    "INSERT INTO sources (id, name, tier) VALUES (:i, 'otherboard', 0)"
+                ),
                 {"i": src2},
             )
             await s.execute(
@@ -226,10 +270,18 @@ def test_gate_a_end_to_end(db, monkeypatch):
             # el mismo título, un puntero stale a la revisión vieja daría el
             # mismo verde. El attach es por URL: el título no lo afecta.
             await RawListingSink().handle(
-                s, str(scope2),
-                (RawListing(external_id="x1", url="https://feed/t1",
-                            payload={"title": "Python Engineer",
-                                     "company_name": "TechCorp AG"}),),
+                s,
+                str(scope2),
+                (
+                    RawListing(
+                        external_id="x1",
+                        url="https://feed/t1",
+                        payload={
+                            "title": "Python Engineer",
+                            "company_name": "TechCorp AG",
+                        },
+                    ),
+                ),
             )
             await s.commit()
             return src2
@@ -275,7 +327,10 @@ def test_gate_a_end_to_end(db, monkeypatch):
     assert r.status_code == 200
     titles = [it["vacancy"]["title"] for it in r.json()["items"]]
     assert "Python Developer" in titles
-    assert _api(factory, f"/v1/profiles/{pid_tech}/matches", token=token_b).status_code == 404
+    assert (
+        _api(factory, f"/v1/profiles/{pid_tech}/matches", token=token_b).status_code
+        == 404
+    )
 
     # ---------- 3. DESCARTES ESTABLES ---------------------------------------
     async def dismiss():
@@ -286,12 +341,15 @@ def test_gate_a_end_to_end(db, monkeypatch):
     asyncio.run(dismiss())
     run_profile_task.apply(args=[str(pid_tech)])  # RE-evaluación completa
     r = _api(factory, f"/v1/profiles/{pid_tech}/matches", token=token_a)
-    assert "Python Developer" not in [it["vacancy"]["title"] for it in r.json()["items"]]
+    assert "Python Developer" not in [
+        it["vacancy"]["title"] for it in r.json()["items"]
+    ]
     st = _rows(
         factory,
         "SELECT dismissed_at, current_eval_id FROM profile_vacancy_state "
         "WHERE profile_id = :p AND vacancy_id = :v",
-        p=pid_tech, v=vacs["Python Developer"],
+        p=pid_tech,
+        v=vacs["Python Developer"],
     )[0]
     assert st.dismissed_at is not None and st.current_eval_id is not None  # estable
 
@@ -364,13 +422,23 @@ def test_gate_a_end_to_end(db, monkeypatch):
             ).scalar_one()
             # Mismo slot, contenido nuevo con EMPRESA distinta → recycle guard.
             await RawListingSink().handle(
-                s, str(scope_ids["tech"]),
-                (RawListing(external_id=eid, url="https://feed/t1b",
-                            payload={"slug": eid, "url": "https://feed/t1b",
-                                     "title": "Office Manager",
-                                     "company_name": "WombatWorks GmbH",
-                                     "description": "gestión de oficina",
-                                     "tags": ["admin"], "created_at": 500}),),
+                s,
+                str(scope_ids["tech"]),
+                (
+                    RawListing(
+                        external_id=eid,
+                        url="https://feed/t1b",
+                        payload={
+                            "slug": eid,
+                            "url": "https://feed/t1b",
+                            "title": "Office Manager",
+                            "company_name": "WombatWorks GmbH",
+                            "description": "gestión de oficina",
+                            "tags": ["admin"],
+                            "created_at": 500,
+                        },
+                    ),
+                ),
             )
             await s.commit()
             return eid
@@ -381,7 +449,8 @@ def test_gate_a_end_to_end(db, monkeypatch):
         "SELECT i.vacancy_id, i.ended_at FROM source_listing_incarnations i "
         "JOIN source_listings l ON l.id = i.source_listing_id "
         "WHERE l.source_id = :src AND l.external_id = :e ORDER BY i.seq",
-        src=created["sources"][0], e=eid,
+        src=created["sources"][0],
+        e=eid,
     )
     # La encarnación vieja (la de la compartida) quedó CERRADA y el slot abrió
     # una vacante NUEVA — el reciclado no hereda la identidad anterior.
@@ -395,7 +464,8 @@ def test_gate_a_end_to_end(db, monkeypatch):
         "JOIN source_listing_incarnations i ON i.id = v.primary_incarnation_id "
         "JOIN source_listings l ON l.id = i.source_listing_id "
         "LEFT JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
-        "WHERE v.id = :v", v=v1,
+        "WHERE v.id = :v",
+        v=v1,
     )[0]
     # El primary de la compartida quedó REASIGNADO a la encarnación ACTIVA de
     # otherboard y su canónica reconstruida desde ESE primary: el título es el

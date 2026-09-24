@@ -74,12 +74,18 @@ def _seed_profile(factory, created, scopes=SS_SCOPES):
 def _post(factory, token, body, key="auto"):
     headers = None
     if key is not None:
-        headers = {"Idempotency-Key": (
-            "ssk-" + uuid.uuid4().hex[:10] if key == "auto" else key
-        )}
+        headers = {
+            "Idempotency-Key": (
+                "ssk-" + uuid.uuid4().hex[:10] if key == "auto" else key
+            )
+        }
     return tia._api(
-        factory, "/v1/saved-searches", token=token, headers=headers,
-        method="POST", json_body=body,
+        factory,
+        "/v1/saved-searches",
+        token=token,
+        headers=headers,
+        method="POST",
+        json_body=body,
     )
 
 
@@ -96,9 +102,10 @@ def test_post_requires_idempotency_key(db):
     r = _post(factory, token, body, key="   ")
     assert r.status_code == 400
     assert r.json()["code"] == "invalid_idempotency_key"
-    assert _rows(
-        factory, "SELECT 1 FROM saved_searches WHERE profile_id = :p", p=pid
-    ) == []
+    assert (
+        _rows(factory, "SELECT 1 FROM saved_searches WHERE profile_id = :p", p=pid)
+        == []
+    )
 
 
 def test_create_defaults_replay_and_event(db):
@@ -108,8 +115,12 @@ def test_create_defaults_replay_and_event(db):
     factory, created = db
     token, tenant, pid = _seed_profile(factory, created)
     key = "ssk-" + uuid.uuid4().hex[:8]
-    body = {"profile_id": str(pid), "name": "python remoto", "min_score": 60,
-            "filters": {"q": "python", "remote": True}}
+    body = {
+        "profile_id": str(pid),
+        "name": "python remoto",
+        "min_score": 60,
+        "filters": {"q": "python", "remote": True},
+    }
     r1 = _post(factory, token, body, key=key)
     assert r1.status_code == 201, r1.text
     dto = r1.json()
@@ -136,9 +147,15 @@ def test_invalid_filters_400(db):
     factory, created = db
     token, _tenant, pid = _seed_profile(factory, created)
     for bad in ("no-un-objeto", None, [1, 2]):
-        r = _post(factory, token, {
-            "profile_id": str(pid), "name": "x", "filters": bad,
-        })
+        r = _post(
+            factory,
+            token,
+            {
+                "profile_id": str(pid),
+                "name": "x",
+                "filters": bad,
+            },
+        )
         assert r.status_code == 400, r.text
         assert r.json()["code"] == "invalid_filters"
 
@@ -153,14 +170,23 @@ def test_put_filters_null_conserva_los_vigentes(db):
     valor vigente y un {} ACTIVO alertaría de todo — R2-6)."""
     factory, created = db
     token, _tenant, pid = _seed_profile(factory, created)
-    r = _post(factory, token, {
-        "profile_id": str(pid), "name": "con filtros", "min_score": 40,
-        "filters": {"q": "sre"},
-    })
+    r = _post(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "name": "con filtros",
+            "min_score": 40,
+            "filters": {"q": "sre"},
+        },
+    )
     sid, etag = r.json()["id"], r.headers["etag"]
 
     put = tia._api(
-        factory, f"/v1/saved-searches/{sid}", token=token, method="PUT",
+        factory,
+        f"/v1/saved-searches/{sid}",
+        token=token,
+        method="PUT",
         headers={"If-Match": etag},
         json_body={"name": "renombrada", "min_score": 70, "filters": None},
     )
@@ -171,7 +197,10 @@ def test_put_filters_null_conserva_los_vigentes(db):
 
     # Un filters presente y NO objeto sigue siendo 400 en el PUT.
     bad = tia._api(
-        factory, f"/v1/saved-searches/{sid}", token=token, method="PUT",
+        factory,
+        f"/v1/saved-searches/{sid}",
+        token=token,
+        method="PUT",
         headers={"If-Match": put.headers["etag"]},
         json_body={"filters": "no-un-objeto"},
     )
@@ -196,21 +225,33 @@ def test_put_partial_engine_owned_immune_and_revision(db):
     revision monotónica: create=1, put=2 en el outbox."""
     factory, created = db
     token, _tenant, pid = _seed_profile(factory, created)
-    r = _post(factory, token, {
-        "profile_id": str(pid), "name": "original", "min_score": 40,
-        "notify_frequency": "weekly", "filters": {"q": "sre"},
-    })
+    r = _post(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "name": "original",
+            "min_score": 40,
+            "notify_frequency": "weekly",
+            "filters": {"q": "sre"},
+        },
+    )
     dto = r.json()
     sid, etag = dto["id"], r.headers["etag"]
 
     put = tia._api(
-        factory, f"/v1/saved-searches/{sid}", token=token, method="PUT",
+        factory,
+        f"/v1/saved-searches/{sid}",
+        token=token,
+        method="PUT",
         headers={"If-Match": etag},
         json_body={
             "min_score": 75,
             # engine-owned que el PUT debe IGNORAR (jamás machacar):
-            "total_matches": 999, "last_run_at": "2020-01-01T00:00:00Z",
-            "id": str(uuid.uuid4()), "created_at": "2020-01-01T00:00:00Z",
+            "total_matches": 999,
+            "last_run_at": "2020-01-01T00:00:00Z",
+            "id": str(uuid.uuid4()),
+            "created_at": "2020-01-01T00:00:00Z",
         },
     )
     assert put.status_code == 200, put.text
@@ -244,22 +285,36 @@ def test_put_if_match_412_and_cross_tenant_404(db):
     sid = r.json()["id"]
 
     stale = tia._api(
-        factory, f"/v1/saved-searches/{sid}", token=token, method="PUT",
-        headers={"If-Match": '"deadbeef"'}, json_body={"min_score": 10},
+        factory,
+        f"/v1/saved-searches/{sid}",
+        token=token,
+        method="PUT",
+        headers={"If-Match": '"deadbeef"'},
+        json_body={"min_score": 10},
     )
     assert stale.status_code == 412
-    assert _rows(
-        factory, "SELECT min_score FROM saved_searches WHERE id = :i",
-        i=uuid.UUID(sid),
-    )[0].min_score == 0
+    assert (
+        _rows(
+            factory,
+            "SELECT min_score FROM saved_searches WHERE id = :i",
+            i=uuid.UUID(sid),
+        )[0].min_score
+        == 0
+    )
 
     _c, _k, intruder = tia._issue(factory, created, "tenant-intruso-ss", SS_SCOPES)
     r404 = tia._api(
-        factory, f"/v1/saved-searches/{sid}", token=intruder, method="PUT",
+        factory,
+        f"/v1/saved-searches/{sid}",
+        token=intruder,
+        method="PUT",
         json_body={"min_score": 10},
     )
     missing = tia._api(
-        factory, f"/v1/saved-searches/{uuid.uuid4()}", token=token, method="PUT",
+        factory,
+        f"/v1/saved-searches/{uuid.uuid4()}",
+        token=token,
+        method="PUT",
         json_body={"min_score": 10},
     )
     assert r404.status_code == missing.status_code == 404
@@ -269,7 +324,10 @@ def test_put_if_match_412_and_cross_tenant_404(db):
         factory, created, "tenant-lector-ss", ["saved_searches:read"]
     )
     forbidden = tia._api(
-        factory, f"/v1/saved-searches/{sid}", token=reader, method="PUT",
+        factory,
+        f"/v1/saved-searches/{sid}",
+        token=reader,
+        method="PUT",
         json_body={"min_score": 10},
     )
     assert forbidden.status_code == 403
@@ -285,13 +343,17 @@ def test_delete_204_last_event_then_404(db):
     sid, etag = r.json()["id"], r.headers["etag"]
 
     d = tia._api(
-        factory, f"/v1/saved-searches/{sid}", token=token, method="DELETE",
+        factory,
+        f"/v1/saved-searches/{sid}",
+        token=token,
+        method="DELETE",
         headers={"If-Match": etag},
     )
     assert d.status_code == 204
-    assert _rows(
-        factory, "SELECT 1 FROM saved_searches WHERE id = :i", i=uuid.UUID(sid)
-    ) == []
+    assert (
+        _rows(factory, "SELECT 1 FROM saved_searches WHERE id = :i", i=uuid.UUID(sid))
+        == []
+    )
     out = _rows(
         factory,
         "SELECT version, payload FROM integration_outbox "
@@ -302,9 +364,7 @@ def test_delete_204_last_event_then_404(db):
     assert [o.version for o in out] == [1, 2]
     assert out[-1].payload["deleted"] is True
 
-    again = tia._api(
-        factory, f"/v1/saved-searches/{sid}", token=token, method="DELETE"
-    )
+    again = tia._api(factory, f"/v1/saved-searches/{sid}", token=token, method="DELETE")
     assert again.status_code == 404
 
 
@@ -314,9 +374,17 @@ def test_list_keyset_pagination(db):
     factory, created = db
     token, _tenant, pid = _seed_profile(factory, created)
     for i in range(3):
-        assert _post(factory, token, {
-            "profile_id": str(pid), "name": f"búsqueda {i}",
-        }).status_code == 201
+        assert (
+            _post(
+                factory,
+                token,
+                {
+                    "profile_id": str(pid),
+                    "name": f"búsqueda {i}",
+                },
+            ).status_code
+            == 201
+        )
 
     r1 = tia._api(factory, f"/v1/saved-searches?profile={pid}&limit=2", token=token)
     page1 = r1.json()
@@ -334,9 +402,12 @@ def test_list_keyset_pagination(db):
     assert keys == sorted(keys, reverse=True)
 
     _c, _k, intruder = tia._issue(factory, created, "tenant-intruso-ss2", SS_SCOPES)
-    assert tia._api(
-        factory, f"/v1/saved-searches?profile={pid}", token=intruder
-    ).status_code == 404
+    assert (
+        tia._api(
+            factory, f"/v1/saved-searches?profile={pid}", token=intruder
+        ).status_code
+        == 404
+    )
 
 
 def test_g7_cuerpo_no_almacenable_es_400_de_frontera_y_no_500(db):
@@ -359,44 +430,54 @@ def test_g7_cuerpo_no_almacenable_es_400_de_frontera_y_no_500(db):
     token, _tenant, pid = _seed_profile(factory, created)
 
     # (1) NaN — solo viaja como cuerpo CRUDO: httpx serializa con allow_nan=False.
-    crudo = (
-        '{"profile_id": "%s", "name": "nan", "filters": {"salary_min": NaN}}' % pid
-    )
+    crudo = '{"profile_id": "%s", "name": "nan", "filters": {"salary_min": NaN}}' % pid
     r = tia._api(
-        factory, "/v1/saved-searches", token=token,
+        factory,
+        "/v1/saved-searches",
+        token=token,
         headers={"Idempotency-Key": "ssk-" + uuid.uuid4().hex[:10]},
-        method="POST", content=crudo,
+        method="POST",
+        content=crudo,
     )
     assert r.status_code == 400, r.text
     assert r.json()["code"] == "invalid_json", r.text
 
     # (2) NUL — JSON perfectamente válido (`\\u0000`), tóxico para jsonb y text.
     r = _post(
-        factory, token,
+        factory,
+        token,
         {"profile_id": str(pid), "name": "nul", "filters": {"q": "a\x00b"}},
     )
     assert r.status_code == 400, r.text
     assert r.json()["code"] == "invalid_json", r.text
 
     # Ninguna de las dos llegó a escribir nada.
-    assert _rows(
-        factory, "SELECT 1 FROM saved_searches WHERE profile_id = :p", p=pid
-    ) == []
+    assert (
+        _rows(factory, "SELECT 1 FROM saved_searches WHERE profile_id = :p", p=pid)
+        == []
+    )
 
     # (3) El PUT tiene el mismo guard y la fila vigente NO se toca.
-    ok = _post(factory, token, {"profile_id": str(pid), "name": "buena",
-                                "filters": {"q": "python"}})
+    ok = _post(
+        factory,
+        token,
+        {"profile_id": str(pid), "name": "buena", "filters": {"q": "python"}},
+    )
     assert ok.status_code == 201, ok.text
     sid = ok.json()["id"]
     bad = tia._api(
-        factory, f"/v1/saved-searches/{sid}", token=token, method="PUT",
+        factory,
+        f"/v1/saved-searches/{sid}",
+        token=token,
+        method="PUT",
         content='{"name": "rota", "filters": {"x": Infinity}}',
     )
     assert bad.status_code == 400, bad.text
     assert bad.json()["code"] == "invalid_json"
     vigente = _rows(
         factory,
-        "SELECT name, revision FROM saved_searches WHERE id = :i", i=sid,
+        "SELECT name, revision FROM saved_searches WHERE id = :i",
+        i=sid,
     )[0]
     assert (vigente.name, vigente.revision) == ("buena", 1)
 
@@ -424,25 +505,35 @@ def test_g8_el_surrogate_suelto_en_filters_es_400_de_frontera_y_no_500(db):
     surrogate = '"\\ud800"'
 
     r = tia._api(
-        factory, "/v1/saved-searches", token=token, method="POST",
+        factory,
+        "/v1/saved-searches",
+        token=token,
+        method="POST",
         headers={"Idempotency-Key": "ssk-" + uuid.uuid4().hex[:10]},
         content='{"profile_id": "%s", "name": "sur", "filters": {"q": %s}}'
-                % (pid, surrogate),
+        % (pid, surrogate),
     )
     assert r.status_code == 400, r.text
     assert r.json()["code"] == "invalid_json", r.text
 
-    assert _rows(
-        factory, "SELECT 1 FROM saved_searches WHERE profile_id = :p", p=pid
-    ) == []
+    assert (
+        _rows(factory, "SELECT 1 FROM saved_searches WHERE profile_id = :p", p=pid)
+        == []
+    )
 
     # El PUT comparte guard y la fila vigente NO se toca.
-    ok = _post(factory, token, {"profile_id": str(pid), "name": "buena",
-                                "filters": {"q": "python"}})
+    ok = _post(
+        factory,
+        token,
+        {"profile_id": str(pid), "name": "buena", "filters": {"q": "python"}},
+    )
     assert ok.status_code == 201, ok.text
     sid = ok.json()["id"]
     bad = tia._api(
-        factory, f"/v1/saved-searches/{sid}", token=token, method="PUT",
+        factory,
+        f"/v1/saved-searches/{sid}",
+        token=token,
+        method="PUT",
         content='{"name": "rota", "filters": {"q": %s}}' % surrogate,
     )
     assert bad.status_code == 400, bad.text

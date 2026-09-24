@@ -19,8 +19,12 @@ import sqlalchemy as sa
 from jobhunt_core import import_portfolio_manifest as man
 from jobhunt_core.import_portfolio_durables import PreexistingStateError
 from jobhunt_core.import_portfolio_rollback import rollback_migration
-from jobhunt_core.tests.test_integration_import_portfolio_ledger import _seed_other_source
-from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import _on_disposable_db
+from jobhunt_core.tests.test_integration_import_portfolio_ledger import (
+    _seed_other_source,
+)
+from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import (
+    _on_disposable_db,
+)
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("CORE_ADMIN_DATABASE_URL"),
@@ -32,8 +36,14 @@ def _user(url: str, ref: int = 1) -> dict:
     return {
         "external_ref": ref,
         "applications": [
-            {"url": url, "status": "applied", "title": "T", "company": "C",
-             "description": "d", "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+            {
+                "url": url,
+                "status": "applied",
+                "title": "T",
+                "company": "C",
+                "description": "d",
+                "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+            },
         ],
         "saved_searches": [],
     }
@@ -49,7 +59,9 @@ def test_rollback_removes_created_migration():
 
     async def _run(factory):
         async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user("https://r.example.ch/1")])
+            manifest = await man.migrate_and_reconcile(
+                s, [_user("https://r.example.ch/1")]
+            )
             assert await _count(s, "vacancies") == 1
             assert await _count(s, "applications") == 1
             result = await rollback_migration(s, manifest["id"])
@@ -62,7 +74,9 @@ def test_rollback_removes_created_migration():
             assert await _count(s, "offer_revisions") == 0
             assert (
                 await s.execute(
-                    sa.text("SELECT count(*) FROM sources WHERE name = 'portfolio-import'")
+                    sa.text(
+                        "SELECT count(*) FROM sources WHERE name = 'portfolio-import'"
+                    )
                 )
             ).scalar_one() == 0
             await s.rollback()
@@ -111,7 +125,8 @@ def test_rollback_preserves_reused_other_source_vacancy():
 async def _manifest_status(s, mid: str) -> str:
     return (
         await s.execute(
-            sa.text("SELECT status FROM portfolio_migration_manifest WHERE id = :i"), {"i": mid}
+            sa.text("SELECT status FROM portfolio_migration_manifest WHERE id = :i"),
+            {"i": mid},
         )
     ).scalar_one()
 
@@ -122,7 +137,9 @@ def test_rollback_marks_manifest_rolled_back():
 
     async def _run(factory):
         async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user("https://ml.example.ch/1")])
+            manifest = await man.migrate_and_reconcile(
+                s, [_user("https://ml.example.ch/1")]
+            )
             mid = manifest["id"]
             await s.commit()
             assert await _manifest_status(s, mid) == "applied"  # recién persistido
@@ -140,7 +157,9 @@ def test_rollback_aborted_marks_manifest_rollback_aborted():
 
     async def _run(factory):
         async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user("https://ab2.example.ch/1")])
+            manifest = await man.migrate_and_reconcile(
+                s, [_user("https://ab2.example.ch/1")]
+            )
             mid = manifest["id"]
             await s.commit()
             # Tamper la procedencia ALMACENADA (el rollback usa ESA, no la del llamador): quita
@@ -192,15 +211,20 @@ def test_core0015_upgrade_from_core0014_adds_seq():
     asyncio.run(_create())
     try:
         temp_engine = create_async_engine(
-            temp_url, poolclass=sa.pool.NullPool,
-            connect_args={"server_settings": {"search_path": f"{settings.CORE_DB_SCHEMA}, public"}},
+            temp_url,
+            poolclass=sa.pool.NullPool,
+            connect_args={
+                "server_settings": {"search_path": f"{settings.CORE_DB_SCHEMA}, public"}
+            },
         )
 
         async def _bootstrap():
             async with temp_engine.begin() as c:
                 await c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
                 await c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-                await c.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS "{settings.CORE_DB_SCHEMA}"'))
+                await c.execute(
+                    sa.text(f'CREATE SCHEMA IF NOT EXISTS "{settings.CORE_DB_SCHEMA}"')
+                )
 
         async def _has_seq() -> int:
             async with temp_engine.connect() as c:
@@ -231,7 +255,9 @@ def test_core0015_upgrade_from_core0014_adds_seq():
             async with temp_engine.connect() as c:
                 return (
                     await c.execute(
-                        sa.text("SELECT status FROM portfolio_migration_manifest WHERE id = :i"),
+                        sa.text(
+                            "SELECT status FROM portfolio_migration_manifest WHERE id = :i"
+                        ),
                         {"i": pre_id},
                     )
                 ).scalar_one()
@@ -239,7 +265,9 @@ def test_core0015_upgrade_from_core0014_adds_seq():
         asyncio.run(_bootstrap())
         run_alembic(temp_url, "upgrade", "core0014")  # status (sin seq)
         assert asyncio.run(_has_seq()) == 0
-        run_alembic(temp_url, "upgrade", "core0015")  # seq (SIN backfill, como se publicó)
+        run_alembic(
+            temp_url, "upgrade", "core0015"
+        )  # seq (SIN backfill, como se publicó)
         assert asyncio.run(_has_seq()) == 1
         # BD YA EN core0015 con una fila 'applied' (seq físico no fiable): tras core0016 debe
         # quedar 'unknown' — prueba que el backfill alcanza una BD parada en la revisión previa.
@@ -251,7 +279,9 @@ def test_core0015_upgrade_from_core0014_adds_seq():
 
         async def _drop():
             async with admin_engine.connect() as c:
-                await c.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+                await c.execute(
+                    sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)')
+                )
             await admin_engine.dispose()
 
         asyncio.run(_drop())
@@ -286,11 +316,17 @@ def test_rollback_uses_stored_provenance_bound_to_manifest_id():
         async with factory() as s:
             m1 = await man.migrate_and_reconcile(s, users)
             await s.commit()
-            m2 = await man.migrate_and_reconcile(s, users)  # idempotente, procedencia VACÍA
+            m2 = await man.migrate_and_reconcile(
+                s, users
+            )  # idempotente, procedencia VACÍA
             await s.commit()
-            r = await rollback_migration(s, m2["id"])  # usa la procedencia de m2 (vacía)
+            r = await rollback_migration(
+                s, m2["id"]
+            )  # usa la procedencia de m2 (vacía)
             assert r["status"] == "rolled_back"
-            assert sum(r["deleted"].values()) == 0  # m2 no borra nada (procedencia vacía)
+            assert (
+                sum(r["deleted"].values()) == 0
+            )  # m2 no borra nada (procedencia vacía)
             assert await _count(s, "vacancies") == 1  # los datos de m1 SIGUEN intactos
             assert await _manifest_status(s, m1["id"]) == "applied"  # m1 intacto
             await s.commit()
@@ -307,7 +343,9 @@ def test_rollback_lifo_uses_seq_not_created_at():
         users = [_user("https://seq.example.ch/1")]
         async with factory() as s:
             m1 = await man.migrate_and_reconcile(s, users)
-            await man.migrate_and_reconcile(s, users)  # m2, MISMA tx (sin commit) → mismo now()
+            await man.migrate_and_reconcile(
+                s, users
+            )  # m2, MISMA tx (sin commit) → mismo now()
             r = await rollback_migration(s, m1["id"])
             assert r["status"] == "aborted" and "LIFO" in r["reason"]
             await s.rollback()
@@ -325,7 +363,9 @@ def test_rollback_refuses_older_manifest_lifo():
         async with factory() as s:
             m1 = await man.migrate_and_reconcile(s, users)
             await s.commit()
-            await man.migrate_and_reconcile(s, users)  # m2 idempotente, también 'applied'
+            await man.migrate_and_reconcile(
+                s, users
+            )  # m2 idempotente, también 'applied'
             await s.commit()
             r = await rollback_migration(s, m1["id"])
             assert r["status"] == "aborted" and "LIFO" in r["reason"]
@@ -342,7 +382,9 @@ def test_rollback_aborts_on_manifest_missing_provenance():
 
     async def _run(factory):
         async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user("https://mp.example.ch/1")])
+            manifest = await man.migrate_and_reconcile(
+                s, [_user("https://mp.example.ch/1")]
+            )
             mid = manifest["id"]
             await s.commit()
             await s.execute(
@@ -395,7 +437,9 @@ def test_rollback_aborts_on_malformed_provenance_value():
 
     async def _run(factory):
         async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user("https://mv.example.ch/1")])
+            manifest = await man.migrate_and_reconcile(
+                s, [_user("https://mv.example.ch/1")]
+            )
             mid = manifest["id"]
             await s.commit()
             await s.execute(
@@ -423,7 +467,9 @@ def test_rollback_aborts_on_non_uuid_pk():
 
     async def _run(factory):
         async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user("https://nu.example.ch/1")])
+            manifest = await man.migrate_and_reconcile(
+                s, [_user("https://nu.example.ch/1")]
+            )
             mid = manifest["id"]
             await s.commit()
             await s.execute(
@@ -452,7 +498,9 @@ def test_rollback_aborts_on_unknown_table_in_provenance():
 
     async def _run(factory):
         async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user("https://ut.example.ch/1")])
+            manifest = await man.migrate_and_reconcile(
+                s, [_user("https://ut.example.ch/1")]
+            )
             mid = manifest["id"]
             await s.commit()
             await s.execute(
@@ -481,7 +529,9 @@ def test_rollback_aborts_and_reverts_on_incomplete_delete():
 
     async def _run(factory):
         async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user("https://ic.example.ch/1")])
+            manifest = await man.migrate_and_reconcile(
+                s, [_user("https://ic.example.ch/1")]
+            )
             mid = manifest["id"]
             await s.commit()
             # saved_searches (hoja, fuera del guard unsafe y sin bloquear vacancies) con un UUID
@@ -543,7 +593,9 @@ def test_rollback_aborts_on_alien_cascade_event():
 
     async def _run(factory):
         async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user("https://cas.example.ch/1")])
+            manifest = await man.migrate_and_reconcile(
+                s, [_user("https://cas.example.ch/1")]
+            )
             assert await _count(s, "applications") == 1
             assert await _count(s, "application_status_events") == 1
             # 2º evento para la MISMA application, NO en la procedencia (simula un evento
@@ -576,9 +628,19 @@ def test_rollback_aborts_on_incomplete_provenance():
     [] → no se borraba, los demás conteos cuadraban y el manifiesto podía marcarse rolled_back
     dejando residuo. Ahora se exige el conjunto EXACTO de tablas → aborta fail-closed sin borrar."""
     users = [
-        {"external_ref": 1, "applications": [], "saved_searches": [
-            {"name": "Zurich devops", "filters": '{"q": "devops"}', "min_score": 0,
-             "is_active": True, "last_notified_at": None}]},
+        {
+            "external_ref": 1,
+            "applications": [],
+            "saved_searches": [
+                {
+                    "name": "Zurich devops",
+                    "filters": '{"q": "devops"}',
+                    "min_score": 0,
+                    "is_active": True,
+                    "last_notified_at": None,
+                }
+            ],
+        },
     ]
 
     async def _run(factory):
@@ -610,10 +672,20 @@ def test_cutover_aborts_on_preexisting_pvs():
     (solo INSERTs) lo capture ni el rollback lo deshaga. El preflight de migrate_and_reconcile lo
     detecta (set `before`) y aborta fail-closed. Un cutover FRESCO no aborta (set vacío)."""
     users = [
-        {"external_ref": 1, "applications": [
-            {"url": "https://pvs.example.ch/1", "status": "saved", "title": "T", "company": "C",
-             "notes": "portfolio", "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)}],
-         "saved_searches": []},
+        {
+            "external_ref": 1,
+            "applications": [
+                {
+                    "url": "https://pvs.example.ch/1",
+                    "status": "saved",
+                    "title": "T",
+                    "company": "C",
+                    "notes": "portfolio",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                }
+            ],
+            "saved_searches": [],
+        },
     ]
 
     async def _run(factory):
@@ -639,12 +711,16 @@ def test_rollback_aborted_es_reintentable_tras_reparar():
 
     async def _run(factory):
         async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user("https://h1r.example.ch/1")])
+            manifest = await man.migrate_and_reconcile(
+                s, [_user("https://h1r.example.ch/1")]
+            )
             mid = manifest["id"]
             await s.commit()
             original = (
                 await s.execute(
-                    sa.text("SELECT manifest FROM portfolio_migration_manifest WHERE id = :i"),
+                    sa.text(
+                        "SELECT manifest FROM portfolio_migration_manifest WHERE id = :i"
+                    ),
                     {"i": uuid.UUID(mid)},
                 )
             ).scalar_one()
@@ -671,7 +747,9 @@ def test_rollback_aborted_es_reintentable_tras_reparar():
                 {"m": json.dumps(original, default=str), "i": uuid.UUID(mid)},
             )
             await s.commit()
-            r2 = await rollback_migration(s, mid)  # antes: aborted («no está 'applied'»)
+            r2 = await rollback_migration(
+                s, mid
+            )  # antes: aborted («no está 'applied'»)
             await s.commit()
             assert r2["status"] == "rolled_back", r2
             assert await _manifest_status(s, mid) == "rolled_back"

@@ -63,8 +63,9 @@ def test_school_identity_shared_but_contacts_and_configuration_private(db):  # n
     a, _, ap = _seed_profile(f, made, SCOPES)
     b, _, bp = _seed_profile(f, made, SCOPES)
     slug = "school-" + uuid.uuid4().hex[:12]
-    ra, rb = _create(f, a, slug), _create(
-        f, b, slug, contact_name="Other contact", is_active=True
+    ra, rb = (
+        _create(f, a, slug),
+        _create(f, b, slug, contact_name="Other contact", is_active=True),
     )
     assert ra.status_code == rb.status_code == 201, (ra.text, rb.text)
     assert ra.json()["school_id"] == rb.json()["school_id"]

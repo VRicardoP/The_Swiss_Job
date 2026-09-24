@@ -57,7 +57,11 @@ async def check_harvest_health(
         if max_consecutive_failures is not None
         else int(settings.CORE_HARVEST_MAX_CONSECUTIVE_FAILURES)
     )
-    days = stale_days if stale_days is not None else int(settings.CORE_HARVEST_STALE_ALERT_DAYS)
+    days = (
+        stale_days
+        if stale_days is not None
+        else int(settings.CORE_HARVEST_STALE_ALERT_DAYS)
+    )
     rows = (
         await session.execute(
             sa.text(
@@ -98,14 +102,18 @@ def _report_blind_spot(censo: dict, observados: int) -> None:
             "harvest_health: la vigilancia no está midiendo nada — %d scopes, %d "
             "habilitados, %d de ellos ya ejecutados. `alertas: []` aquí NO significa "
             "cosecha sana: significa que no hay nada que observar",
-            censo["scopes"], censo["habilitados"], censo["con_estado"],
+            censo["scopes"],
+            censo["habilitados"],
+            censo["con_estado"],
         )
     elif censo["habilitados"] > observados:
         logger.warning(
             "harvest_health: %d scopes habilitados y solo %d se observan — los otros %d "
             "nunca han escrito estado (un scope que solo falla por configuración no lo "
             "escribe JAMÁS: revisar sus params antes de leer `alertas` como cosecha sana)",
-            censo["habilitados"], observados, censo["habilitados"] - observados,
+            censo["habilitados"],
+            observados,
+            censo["habilitados"] - observados,
         )
 
 
@@ -129,38 +137,44 @@ async def _censo(session: AsyncSession) -> dict:
     }
 
 
-def _scope_alerts(row, moment: datetime, max_failures: int, stale_days: int) -> list[dict]:
+def _scope_alerts(
+    row, moment: datetime, max_failures: int, stale_days: int
+) -> list[dict]:
     """Alertas de UN scope (las dos señales son independientes: una fuente puede
     fallar sin llevar tiempo rancia, y quedarse rancia sin fallar — un barrido
     eternamente PARCIAL no incrementa el contador)."""
     alertas: list[dict] = []
     fallos = int(row.consecutive_failures or 0)
     if fallos >= max_failures:
-        alertas.append({
-            "code": "cosecha_fallando",
-            "scope_id": str(row.scope_id),
-            "source": row.source,
-            "consecutive_failures": fallos,
-            "msg": (
-                f"scope {row.scope_id} ({row.source}): {fallos} fallos consecutivos "
-                f"(>= {max_failures}) — la fuente ha dejado de ingerir; revisar el "
-                "log del scope antes de que el corpus se quede rancio"
-            ),
-        })
+        alertas.append(
+            {
+                "code": "cosecha_fallando",
+                "scope_id": str(row.scope_id),
+                "source": row.source,
+                "consecutive_failures": fallos,
+                "msg": (
+                    f"scope {row.scope_id} ({row.source}): {fallos} fallos consecutivos "
+                    f"(>= {max_failures}) — la fuente ha dejado de ingerir; revisar el "
+                    "log del scope antes de que el corpus se quede rancio"
+                ),
+            }
+        )
     edad_d = None
     if row.last_complete_at is not None:
         edad_d = (moment - row.last_complete_at).total_seconds() / 86400
     if edad_d is None or edad_d > stale_days:
         cuando = "NUNCA" if edad_d is None else f"hace {edad_d:.1f} d"
-        alertas.append({
-            "code": "cosecha_sin_completar",
-            "scope_id": str(row.scope_id),
-            "source": row.source,
-            "dias_sin_cosecha_completa": edad_d,
-            "msg": (
-                f"scope {row.scope_id} ({row.source}): última cosecha COMPLETA "
-                f"{cuando} (> {stale_days} d) — el corpus de esta fuente deja de "
-                "refrescarse y el archivado ADR-07 acabará retirando vacantes vivas"
-            ),
-        })
+        alertas.append(
+            {
+                "code": "cosecha_sin_completar",
+                "scope_id": str(row.scope_id),
+                "source": row.source,
+                "dias_sin_cosecha_completa": edad_d,
+                "msg": (
+                    f"scope {row.scope_id} ({row.source}): última cosecha COMPLETA "
+                    f"{cuando} (> {stale_days} d) — el corpus de esta fuente deja de "
+                    "refrescarse y el archivado ADR-07 acabará retirando vacantes vivas"
+                ),
+            }
+        )
     return alertas

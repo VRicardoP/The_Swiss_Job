@@ -48,11 +48,20 @@ logger = logging.getLogger(__name__)
 
 # Claves de los conteos de clasificación (parte 2) — se agregan entre usuarios.
 _APP_COUNT_KEYS = (
-    "applications", "bookmarks", "unresolved", "consolidated", "invalid_status",
-    "collision", "no_title",
+    "applications",
+    "bookmarks",
+    "unresolved",
+    "consolidated",
+    "invalid_status",
+    "collision",
+    "no_title",
 )
 _SS_COUNT_KEYS = (
-    "migrated", "existing", "invalid_filters", "invalid_min_score", "no_name",
+    "migrated",
+    "existing",
+    "invalid_filters",
+    "invalid_min_score",
+    "no_name",
 )
 
 # Tablas de tracking del core que produce la migración (core0011).
@@ -97,7 +106,7 @@ def _checksum(inner: str) -> str:
     (notes/name con '|' o multilínea) funden dos filas distintas — inyectiva.
     coalesce('') ⇒ objetivo vacío = md5('') (EMPTY_CHECKSUM)."""
     return (
-        'SELECT md5(coalesce(string_agg(r, chr(10) ORDER BY r COLLATE "C"), \'\')) '
+        "SELECT md5(coalesce(string_agg(r, chr(10) ORDER BY r COLLATE \"C\"), '')) "
         f"FROM ({inner}) sub"
     )
 
@@ -123,7 +132,8 @@ _CHECKSUM_SPECS = {
             "JOIN profiles p ON p.id = a.profile_id " + _CONSUMER_SCOPE
         ),
         "checksum": _checksum(
-            "SELECT json_build_array(p.external_ref, " + _vac_key("a.vacancy_id")
+            "SELECT json_build_array(p.external_ref, "
+            + _vac_key("a.vacancy_id")
             + ", a.status, a.notes, a.follow_up_date, a.snapshot)::text AS r "
             "FROM applications a JOIN profiles p ON p.id = a.profile_id "
             + _CONSUMER_SCOPE
@@ -136,7 +146,8 @@ _CHECKSUM_SPECS = {
             "JOIN profiles p ON p.id = a.profile_id " + _CONSUMER_SCOPE
         ),
         "checksum": _checksum(
-            "SELECT json_build_array(p.external_ref, " + _vac_key("a.vacancy_id")
+            "SELECT json_build_array(p.external_ref, "
+            + _vac_key("a.vacancy_id")
             + ", e.status)::text AS r "
             "FROM application_status_events e "
             "JOIN applications a ON a.id = e.application_id "
@@ -149,7 +160,8 @@ _CHECKSUM_SPECS = {
             "JOIN profiles p ON p.id = pvs.profile_id " + _CONSUMER_SCOPE
         ),
         "checksum": _checksum(
-            "SELECT json_build_array(p.external_ref, " + _vac_key("pvs.vacancy_id")
+            "SELECT json_build_array(p.external_ref, "
+            + _vac_key("pvs.vacancy_id")
             + ", (pvs.saved_at IS NOT NULL), (pvs.dismissed_at IS NOT NULL), "
             "pvs.notes)::text AS r "
             "FROM profile_vacancy_state pvs JOIN profiles p ON p.id = pvs.profile_id "
@@ -262,7 +274,11 @@ async def migrate_portfolio(
         # (parte 2 solo conoce el profile_id).
         user_staged: list[dict] = []
         app_counts = await migrate_applications(
-            session, profile_id, apps, staging=user_staged, collided=collided,
+            session,
+            profile_id,
+            apps,
+            staging=user_staged,
+            collided=collided,
             preexisting_pvs=preexisting_pvs,
         )
         ss_counts = await migrate_saved_searches(

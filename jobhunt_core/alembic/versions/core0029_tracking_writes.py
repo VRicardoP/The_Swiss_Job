@@ -45,23 +45,25 @@ def upgrade() -> None:
         op.add_column(
             table,
             sa.Column(
-                "updated_at", sa.TIMESTAMP(timezone=True),
-                nullable=False, server_default=NOW,
+                "updated_at",
+                sa.TIMESTAMP(timezone=True),
+                nullable=False,
+                server_default=NOW,
             ),
             schema=S,
         )
         op.add_column(
             table,
             sa.Column(
-                "revision", sa.Integer, nullable=False,
+                "revision",
+                sa.Integer,
+                nullable=False,
                 server_default=sa.text("0"),
             ),
             schema=S,
         )
     for ix, table in _KEYSET_INDEXES:
-        op.create_index(
-            ix, table, ["profile_id", "created_at", "id"], schema=S
-        )
+        op.create_index(ix, table, ["profile_id", "created_at", "id"], schema=S)
     # Rama bookmark del GET compuesto: solo filas CON saved_at (parcial).
     op.create_index(
         "ix_pvs_saved_feed_keyset",

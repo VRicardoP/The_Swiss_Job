@@ -31,7 +31,9 @@ S = settings.CORE_DB_SCHEMA  # "jobhunt"
 def upgrade() -> None:
     op.add_column(
         "portfolio_migration_manifest",
-        sa.Column("seq", sa.BigInteger, sa.Identity(always=False, start=1), nullable=False),
+        sa.Column(
+            "seq", sa.BigInteger, sa.Identity(always=False, start=1), nullable=False
+        ),
         schema=S,
     )
 

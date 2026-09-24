@@ -11,6 +11,7 @@ matching.declare_active_policies — atómico, validado y serializado contra la
 valla de canonicidad del evaluador. Un despliegue normal NO invoca declare:
 solo bootstrap (filas, sin activación) y status.
 """
+
 import asyncio
 import sys
 
@@ -40,9 +41,7 @@ async def _declare(session, objetivos: list[str]) -> None:
     desconocidas = [o for o in objetivos if o not in por_nombre]
     if desconocidas:
         raise SystemExit(f"políticas fuera del catálogo: {desconocidas}")
-    await matching.declare_active_policies(
-        session, [por_nombre[o] for o in objetivos]
-    )
+    await matching.declare_active_policies(session, [por_nombre[o] for o in objetivos])
     await session.commit()
     print(f"conjunto activo declarado: {sorted(objetivos)}")
     await _status(session)

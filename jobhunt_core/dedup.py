@@ -121,15 +121,20 @@ _NIVEL_CANON = (
     # con niveles IGUALES ⇒ el veto no dispara ⇒ conservador hacia el recall.
     "WHEN 'leader' THEN 'lead' ELSE w END"
 )
-_NIVEL_TOKENS = ("('senior','sr','junior','jr','lead','leader','principal',"
-                 "'staff','trainee','intern','graduate','associate','head')")
+_NIVEL_TOKENS = (
+    "('senior','sr','junior','jr','lead','leader','principal',"
+    "'staff','trainee','intern','graduate','associate','head')"
+)
 
 
 def _niveles_de_sql(x_norm: str) -> str:
     """Array ORDENADO de niveles canónicos del título NORMALIZADO `x_norm`."""
     return (
-        "coalesce((SELECT array_agg(DISTINCT " + _NIVEL_CANON + " ORDER BY "
-        + _NIVEL_CANON + ") "
+        "coalesce((SELECT array_agg(DISTINCT "
+        + _NIVEL_CANON
+        + " ORDER BY "
+        + _NIVEL_CANON
+        + ") "
         f"FROM unnest(regexp_split_to_array({x_norm}, '[^a-zà-ÿ0-9]+')) w "
         f"WHERE w IN {_NIVEL_TOKENS}), ARRAY[]::text[])"
     )
@@ -167,8 +172,7 @@ def _title_norm_sql(x: str) -> str:
     +/# al construir palabras y conservarlos en la cadena no distinguía
     nada (ronda 2 P1-1). El resto de puntuación pasa a espacio."""
     genero = (
-        "\\((m/w/d|w/m/d|m/f/d|f/m/d|m/w/x|m/f/x|m/w|w/m|m/f|f/m"
-        "|all genders?|alle)\\)"
+        "\\((m/w/d|w/m/d|m/f/d|f/m/d|m/w/x|m/f/x|m/w|w/m|m/f|f/m|all genders?|alle)\\)"
     )
     return (
         "btrim(regexp_replace(regexp_replace(regexp_replace(regexp_replace("
@@ -280,16 +284,18 @@ _KNN_SQL = (
     "JOIN source_listings sl ON sl.id = pi.source_listing_id "
     "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
     "  AND v.id <> :vid AND sl.source_id <> :src "
-    "  AND " + _loc_compat_sql(
-        "CAST(:loc AS text)", "coalesce(orv.content->>'location', '')"
-    ) + " "
+    "  AND "
+    + _loc_compat_sql("CAST(:loc AS text)", "coalesce(orv.content->>'location', '')")
+    + " "
     # Veto de NIVEL antes del LIMIT: filtrarlo después regalaría plazas del k
     # a vecinos que jamás pueden ser candidatos (mismo motivo que el guard de
     # ubicación de arriba).
-    "  AND NOT " + _nivel_incompatible_sql(
+    "  AND NOT "
+    + _nivel_incompatible_sql(
         _title_norm_sql("CAST(:titulo AS text)"),
         _title_norm_sql("coalesce(orv.content->>'title','')"),
-    ) + " "
+    )
+    + " "
     "ORDER BY oe.vector <=> " + _VEC_SUBQ + " "
     "LIMIT :k"
 )
@@ -308,13 +314,15 @@ _KNN_COUNT_SQL = (
     "JOIN source_listings sl ON sl.id = pi.source_listing_id "
     "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
     "  AND v.id <> :vid AND sl.source_id <> :src "
-    "  AND " + _loc_compat_sql(
-        "CAST(:loc AS text)", "coalesce(orv.content->>'location', '')"
-    ) + " "
-    "  AND NOT " + _nivel_incompatible_sql(
+    "  AND "
+    + _loc_compat_sql("CAST(:loc AS text)", "coalesce(orv.content->>'location', '')")
+    + " "
+    "  AND NOT "
+    + _nivel_incompatible_sql(
         _title_norm_sql("CAST(:titulo AS text)"),
         _title_norm_sql("coalesce(orv.content->>'title','')"),
-    ) + " LIMIT :k) t"
+    )
+    + " LIMIT :k) t"
 )
 
 # ON CONFLICT (revisión Track R, P2-2): similarity = MÁXIMA fuerza de
@@ -356,8 +364,7 @@ _EXACT_INTRA_SQL = (
     "SELECT gen_random_uuid(), a.id, b.id, 1.000 "
     "FROM corpus a JOIN corpus b "
     "  ON a.text_hash = b.text_hash AND a.source_id = b.source_id "
-    "  AND a.loc = b.loc AND a.id < b.id "
-    + _ON_CONFLICT
+    "  AND a.loc = b.loc AND a.id < b.id " + _ON_CONFLICT
 )
 # Variante HISTÓRICA del mismo generador: idéntica salvo que NO excluye las
 # archivadas. `merged_into IS NULL` se conserva —un loser fusionado no vuelve a
@@ -397,16 +404,21 @@ if _EXACT_INTRA_HISTORY_SQL == _EXACT_INTRA_SQL:  # pragma: no cover - guarda de
 # título >= CORE_DEDUP_LEX_TRGM_MIN + ubicación compatible v2 (vacío o
 # código corto no vetan; remoto solo con remoto; si no, contención).
 # Set-based e incremental como el ANN: un miembro del par en la ventana.
-_LEX_STOP = ("'ag','gmbh','mbh','est','ltd','inc','sa','kg','co','llc',"
-             "'bv','as','the','and','und','de','of','für','fur','im'")
-_LEX_REMOTO = ("(lower(btrim(%s)) IN ('global','remote','worldwide',"
-               "'international') OR position('anywhere' IN lower(%s)) > 0)")
+_LEX_STOP = (
+    "'ag','gmbh','mbh','est','ltd','inc','sa','kg','co','llc',"
+    "'bv','as','the','and','und','de','of','für','fur','im'"
+)
+_LEX_REMOTO = (
+    "(lower(btrim(%s)) IN ('global','remote','worldwide',"
+    "'international') OR position('anywhere' IN lower(%s)) > 0)"
+)
 
 
 def _lex_sql(window: bool) -> str:
     filtro_ventana = (
         "WHERE created_at >= now() - make_interval(hours => :ventana) "
-        if window else ""
+        if window
+        else ""
     )
     loc_ok = _loc_compat_sql("p.loc_n", "p.loc_c")
     tn_n, tn_c = "p.tn_n", "p.tn_c"
@@ -414,7 +426,9 @@ def _lex_sql(window: bool) -> str:
         "WITH corpus AS ("
         "  SELECT v.id, sl.source_id, orv.text_hash AS th, "
         "         orv.content->>'title' AS title, "
-        + "         " + _title_norm_sql("orv.content->>'title'") + " AS title_n, "
+        + "         "
+        + _title_norm_sql("orv.content->>'title'")
+        + " AS title_n, "
         "         lower(coalesce(orv.content->>'company','')) AS comp, "
         "         coalesce(orv.content->>'location','') AS loc, "
         "         orv.created_at "
@@ -482,8 +496,7 @@ def _lex_sql(window: bool) -> str:
         f"  AND {loc_ok} "
         # Veto de NIVEL (misma expresión que el ANN): tn_n/tn_c ya vienen
         # normalizados por _title_norm_sql en el CTE corpus.
-        f"  AND NOT {_nivel_incompatible_sql(tn_n, tn_c)} "
-        + _ON_CONFLICT
+        f"  AND NOT {_nivel_incompatible_sql(tn_n, tn_c)} " + _ON_CONFLICT
     )
 
 
@@ -534,7 +547,8 @@ async def revalidate_pending_candidates(
                         "UPDATE dedup_candidates dc SET state = 'rejected', "
                         f"  resolved_by = '{_REVALIDATE_RULE}', "
                         "  resolved_at = statement_timestamp() "
-                        + base + " RETURNING dc.id"
+                        + base
+                        + " RETURNING dc.id"
                     )
                 )
             ).all()
@@ -544,8 +558,11 @@ async def revalidate_pending_candidates(
             str(r.id)
             for r in (
                 await session.execute(
-                    sa.text("SELECT dc.id FROM dedup_candidates dc, "
-                            + base.replace("FROM ", "", 1) + " ORDER BY dc.id")
+                    sa.text(
+                        "SELECT dc.id FROM dedup_candidates dc, "
+                        + base.replace("FROM ", "", 1)
+                        + " ORDER BY dc.id"
+                    )
                 )
             ).all()
         ]
@@ -630,12 +647,15 @@ async def scan_semantic_candidates(
 
     inserted = 0
     for row in nuevos:
-        knn_params = {"mid": model_id, "k": k, "vid": row.id,
-                      "src": row.source_id, "loc": row.loc,
-                      "titulo": row.title}
-        vecinos = (
-            await session.execute(sa.text(_KNN_SQL), knn_params)
-        ).all()
+        knn_params = {
+            "mid": model_id,
+            "k": k,
+            "vid": row.id,
+            "src": row.source_id,
+            "loc": row.loc,
+            "titulo": row.title,
+        }
+        vecinos = (await session.execute(sa.text(_KNN_SQL), knn_params)).all()
         # OPT-ALTA-2 (auditoría de optimización 2026-08-25): si el kNN llenó
         # su k, el conteo es matemáticamente redundante — por el LIMIT :k del
         # propio conteo, objetivo <= k, luego len(vecinos) == k implica
@@ -650,21 +670,11 @@ async def scan_semantic_candidates(
             ).scalar_one()
             if len(vecinos) < objetivo:
                 # Inanición REAL del scan acotado: el exacto responde siempre.
-                await session.execute(
-                    sa.text("SET LOCAL enable_indexscan = off")
-                )
-                await session.execute(
-                    sa.text("SET LOCAL enable_bitmapscan = off")
-                )
-                vecinos = (
-                    await session.execute(sa.text(_KNN_SQL), knn_params)
-                ).all()
-                await session.execute(
-                    sa.text("SET LOCAL enable_indexscan = on")
-                )
-                await session.execute(
-                    sa.text("SET LOCAL enable_bitmapscan = on")
-                )
+                await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
+                await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
+                vecinos = (await session.execute(sa.text(_KNN_SQL), knn_params)).all()
+                await session.execute(sa.text("SET LOCAL enable_indexscan = on"))
+                await session.execute(sa.text("SET LOCAL enable_bitmapscan = on"))
         for n in vecinos:
             # `sim is None` solo puede ocurrir si la sonda del vector (O-3) no
             # resuelve nada —la vacante perdió su revisión vigente o su
@@ -686,9 +696,7 @@ async def scan_semantic_candidates(
 
     # Exactos intra-fuente: pase completo siempre (barato: un join indexado;
     # la idempotencia la da uq_dedup_pair).
-    exactos = (
-        await session.execute(sa.text(_EXACT_INTRA_SQL))
-    ).rowcount
+    exactos = (await session.execute(sa.text(_EXACT_INTRA_SQL))).rowcount
 
     # Léxico cross-portal (R.2b): misma ventana incremental que el ANN.
     lex_params = {
@@ -699,9 +707,7 @@ async def scan_semantic_candidates(
     if window_hours > 0:
         lex_params["ventana"] = window_hours
     lexicos = (
-        await session.execute(
-            sa.text(_lex_sql(window=window_hours > 0)), lex_params
-        )
+        await session.execute(sa.text(_lex_sql(window=window_hours > 0)), lex_params)
     ).rowcount
 
     result = {

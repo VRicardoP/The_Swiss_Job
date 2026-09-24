@@ -110,7 +110,6 @@ def downgrade() -> None:
         f"DROP CONSTRAINT ck_cohort_frozen_requires_manifest"
     )
     op.execute(
-        f"DROP TRIGGER labeled_dedup_cohorts_frozen_guard "
-        f"ON {S}.labeled_dedup_cohorts"
+        f"DROP TRIGGER labeled_dedup_cohorts_frozen_guard ON {S}.labeled_dedup_cohorts"
     )
     op.execute(f"DROP FUNCTION {S}.trg_dedup_cohorts_seal_guard()")

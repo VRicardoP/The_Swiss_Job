@@ -11,6 +11,7 @@
 - El motor se carga UNA vez por proceso y por (modelo, revisión); los tests
   inyectan un stub con set_engine_factory (mismo patrón que embeddings).
 """
+
 import hashlib
 import logging
 import math
@@ -41,7 +42,7 @@ ACTIVATION = "sigmoid"  # compat: la de v1
 _Q_ROLE_LEN = 120
 _Q_MAX_SKILLS = 20
 _Q_SKILLS_LEN = 400
-_Q_LIST_LEN = 120        # idiomas / ubicaciones serializados
+_Q_LIST_LEN = 120  # idiomas / ubicaciones serializados
 _DOC_TITLE_LEN = 200
 _DOC_LOC_LEN = 100
 _DOC_DESC_LEN = 1200
@@ -54,13 +55,20 @@ CE_BATCH_SIZE = 8
 # Archivos de RUNTIME que componen la identidad efectiva del modelo (P1-1
 # revisión 2026-09-03): allowlist determinista de lo que CrossEncoder carga.
 RUNTIME_FILES = (
-    "added_tokens.json", "config.json", "merges.txt", "model.safetensors",
+    "added_tokens.json",
+    "config.json",
+    "merges.txt",
+    "model.safetensors",
     # Export ONNX (P7-b): el artefacto del backend NAS lleva el grafo y sus
     # pesos externos en vez de safetensors; la MISMA huella agregada los
     # sella (allowlist ∩ archivos presentes).
-    "model.onnx", "model.onnx.data",
-    "sentencepiece.bpe.model", "special_tokens_map.json", "tokenizer.json",
-    "tokenizer_config.json", "vocab.txt",
+    "model.onnx",
+    "model.onnx.data",
+    "sentencepiece.bpe.model",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.txt",
 )
 
 _lock = threading.Lock()
@@ -139,16 +147,21 @@ class _OnnxEngine:
 
         out: list[float] = []
         for k in range(0, len(pares), batch_size):
-            lote = pares[k:k + batch_size]
+            lote = pares[k : k + batch_size]
             enc = self._tok(
-                [q for q, _ in lote], [d for _, d in lote],
-                padding=True, truncation=True, max_length=512,
+                [q for q, _ in lote],
+                [d for _, d in lote],
+                padding=True,
+                truncation=True,
+                max_length=512,
                 return_tensors="np",
             )
             logits = self._sess.run(
                 ["logits"],
-                {"input_ids": enc["input_ids"].astype(np.int64),
-                 "attention_mask": enc["attention_mask"].astype(np.int64)},
+                {
+                    "input_ids": enc["input_ids"].astype(np.int64),
+                    "attention_mask": enc["attention_mask"].astype(np.int64),
+                },
             )[0].reshape(-1)
             out.extend(float(x) for x in logits)
         return out
@@ -197,11 +210,12 @@ def _get_engine(model: str, revision, fingerprint=None):
                     from sentence_transformers import CrossEncoder
 
                     if model.startswith("/"):
-                        motor = CrossEncoder(
-                            model, device="cpu", max_length=512)
+                        motor = CrossEncoder(model, device="cpu", max_length=512)
                     else:
                         motor = CrossEncoder(
-                            model, revision=revision, device="cpu",
+                            model,
+                            revision=revision,
+                            device="cpu",
                             max_length=512,
                         )
             _engines[clave] = motor
@@ -216,7 +230,8 @@ def build_queries(content: dict) -> list[str]:
         titulo = (content.get("title") or "").strip()
         roles = [titulo] if titulo else [""]
     skills = ", ".join(
-        s.strip() for s in (content.get("skills") or [])[:_Q_MAX_SKILLS]
+        s.strip()
+        for s in (content.get("skills") or [])[:_Q_MAX_SKILLS]
         if s and s.strip()
     )[:_Q_SKILLS_LEN]
     idiomas = ", ".join(
@@ -243,8 +258,12 @@ def build_document(titulo, location, descripcion) -> str:
 
 
 def score_documents(
-    model: str, revision, queries: list[str], documents: list[str],
-    batch_size: int = CE_BATCH_SIZE, activation: str = "sigmoid",
+    model: str,
+    revision,
+    queries: list[str],
+    documents: list[str],
+    batch_size: int = CE_BATCH_SIZE,
+    activation: str = "sigmoid",
     fingerprint: str | None = None,
 ) -> list[float]:
     """Score por documento = activación fija del MÁXIMO logit sobre las
@@ -253,8 +272,8 @@ def score_documents(
     fn = ACTIVATIONS.get(activation)
     if fn is None:
         raise ValueError(
-            f"activación {activation!r} desconocida "
-            f"(soportadas: {sorted(ACTIVATIONS)})")
+            f"activación {activation!r} desconocida (soportadas: {sorted(ACTIVATIONS)})"
+        )
     if not documents:
         return []
     motor = _get_engine(model, revision, fingerprint)
@@ -262,13 +281,12 @@ def score_documents(
     logits = list(motor.predict(pares, batch_size=batch_size))
     if len(logits) != len(pares):
         raise ValueError(
-            f"cross-encoder devolvió {len(logits)} scores para "
-            f"{len(pares)} pares"
+            f"cross-encoder devolvió {len(logits)} scores para {len(pares)} pares"
         )
     nq = len(queries)
     out = []
     for i in range(len(documents)):
-        mejores = logits[i * nq:(i + 1) * nq]
+        mejores = logits[i * nq : (i + 1) * nq]
         logit = max(float(x) for x in mejores)
         if not math.isfinite(logit):
             raise ValueError(f"cross-encoder devolvió un logit no finito: {logit!r}")
@@ -283,10 +301,17 @@ if __name__ == "__main__":  # comando de manifiesto/huella (P1-1)
     if len(_sys.argv) < 3 or _sys.argv[1] != "fingerprint":
         raise SystemExit(
             "uso: python -m jobhunt_core.cross_encoder fingerprint "
-            "<modelo|ruta> [revision]")
+            "<modelo|ruta> [revision]"
+        )
     _modelo = _sys.argv[2]
     _rev = _sys.argv[3] if len(_sys.argv) > 3 else None
-    print(_json.dumps({
-        "manifest": model_manifest(_modelo, _rev),
-        "fingerprint": model_fingerprint(_modelo, _rev),
-    }, ensure_ascii=False, sort_keys=True))
+    print(
+        _json.dumps(
+            {
+                "manifest": model_manifest(_modelo, _rev),
+                "fingerprint": model_fingerprint(_modelo, _rev),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )

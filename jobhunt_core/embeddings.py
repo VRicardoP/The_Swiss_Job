@@ -90,7 +90,10 @@ def set_backend_factory(factory) -> None:
 
 
 async def register_model(
-    session, name: str, version: str, dim: int = EMBED_DIM,
+    session,
+    name: str,
+    version: str,
+    dim: int = EMBED_DIM,
     active: bool | None = True,
     recipe_version: str = embedding_recipes.LEGACY_V1,
 ) -> uuid.UUID:
@@ -126,8 +129,11 @@ async def register_model(
             "ON CONFLICT (name, version, recipe_version) DO NOTHING"
         ),
         {
-            "id": uuid.uuid4(), "name": name, "version": version,
-            "recipe": recipe_version, "dim": dim,
+            "id": uuid.uuid4(),
+            "name": name,
+            "version": version,
+            "recipe": recipe_version,
+            "dim": dim,
             "active": bool(active) if active is not None else False,
         },
     )
@@ -266,7 +272,11 @@ async def pending_profile_revisions(session, model_id, limit: int = 200) -> list
                 "AND pr.text_hash <> :empty_hash "
                 "ORDER BY pr.id LIMIT :lim"
             ),
-            {"mid": model_id, "lim": limit, "empty_hash": profiles.profile_text_hash({})},
+            {
+                "mid": model_id,
+                "lim": limit,
+                "empty_hash": profiles.profile_text_hash({}),
+            },
         )
     ).all()
 
@@ -358,12 +368,15 @@ async def store_profile_embeddings(session, model_id, items: list[dict]) -> int:
         if current.get(it["profile_id"]) != it["revision_id"]:
             logger.info(
                 "embedding: revisión %s ya no es la vigente de su perfil — "
-                "vector descartado", it["revision_id"],
+                "vector descartado",
+                it["revision_id"],
             )
             continue
         rows.append(
             {
-                "rid": it["revision_id"], "pid": it["profile_id"], "mid": model_id,
+                "rid": it["revision_id"],
+                "pid": it["profile_id"],
+                "mid": model_id,
                 "vec": "[" + ",".join(repr(float(x)) for x in it["vector"]) + "]",
             }
         )
@@ -410,7 +423,8 @@ async def store_offer_embeddings(session, model_id, items: list[dict]) -> int:
     rows = sorted(
         (
             {
-                "th": it["text_hash"], "mid": model_id,
+                "th": it["text_hash"],
+                "mid": model_id,
                 # pgvector en texto: '[f1,f2,...]' + CAST — sin dependencia del
                 # codec binario de asyncpg para el tipo vector.
                 "vec": "[" + ",".join(repr(float(x)) for x in it["vector"]) + "]",

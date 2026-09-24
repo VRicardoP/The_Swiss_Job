@@ -14,20 +14,24 @@ SOURCES = ("weworkremotely", "euremotejobs", "jobspresso", "globaljobs")
 
 def fetch(source, body, params=None, status=200):
     from jobhunt_core.harvest.providers.native_rss import NativeRSSProvider
+
     async def run():
-        async with httpx.AsyncClient(transport=httpx.MockTransport(
-            lambda request: httpx.Response(status, content=body)
-        )) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(status, content=body)
+            )
+        ) as client:
             return await NativeRSSProvider(source).fetch_new(params or {}, None, client)
+
     return asyncio.run(run())
 
 
 def feed(title="Editor at Acme", extra="", guid="stable-123"):
-    return f'''<rss version="2.0"><channel><item>
+    return f"""<rss version="2.0"><channel><item>
       <title>{title}</title><link>https://example.test/job</link><guid>{guid}</guid>
       <description><![CDATA[<p>English writer in Geneva</p>]]></description>
       <pubDate>Fri, 18 Sep 2026 12:00:00 +0000</pubDate>{extra}
-    </item></channel></rss>'''.encode()
+    </item></channel></rss>""".encode()
 
 
 @pytest.mark.parametrize("source", SOURCES)
@@ -44,16 +48,31 @@ def test_feed_raw_fields_dates_and_stable_identity(source):
     assert "english" in content["tags"]
 
 
-@pytest.mark.parametrize("source,title,company,role,location,remote", [
-    ("weworkremotely", "Acme: Editor", "Acme", "Editor", "Remote / Worldwide", True),
-    ("euremotejobs", "Acme: Editor", "Acme", "Editor", "Remote / Europe", True),
-    ("jobspresso", "Editor at Acme", "Acme", "Editor", "Remote / Worldwide", True),
-    ("globaljobs", "Editor — Acme", "Acme", "Editor", "Geneva", False),
-])
+@pytest.mark.parametrize(
+    "source,title,company,role,location,remote",
+    [
+        (
+            "weworkremotely",
+            "Acme: Editor",
+            "Acme",
+            "Editor",
+            "Remote / Worldwide",
+            True,
+        ),
+        ("euremotejobs", "Acme: Editor", "Acme", "Editor", "Remote / Europe", True),
+        ("jobspresso", "Editor at Acme", "Acme", "Editor", "Remote / Worldwide", True),
+        ("globaljobs", "Editor — Acme", "Acme", "Editor", "Geneva", False),
+    ],
+)
 def test_legacy_canonical_content(source, title, company, role, location, remote):
     result = fetch(source, feed(title))
     content = normalize_offer(source, result.listings[0].payload)
-    assert (content["company"], content["title"], content["location"], content["remote"]) == (company, role, location, remote)
+    assert (
+        content["company"],
+        content["title"],
+        content["location"],
+        content["remote"],
+    ) == (company, role, location, remote)
 
 
 @pytest.mark.parametrize("source", ["euremotejobs", "jobspresso"])
@@ -63,9 +82,17 @@ def test_legacy_technical_exclusion_is_not_a_broken_empty_feed(source):
     assert result.next_cursor["filtered"] == 1
 
 
-@pytest.mark.parametrize("body", [b"", b"<html/>", b"<rss/>", b"<rss><channel>",
-    b'<rss><channel><item><title>Lost URL</title></item></channel></rss>',
-    b'<!DOCTYPE rss [<!ENTITY name "expanded">]><rss><channel/></rss>'])
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"",
+        b"<html/>",
+        b"<rss/>",
+        b"<rss><channel>",
+        b"<rss><channel><item><title>Lost URL</title></item></channel></rss>",
+        b'<!DOCTYPE rss [<!ENTITY name "expanded">]><rss><channel/></rss>',
+    ],
+)
 def test_unknown_or_unsafe_structure_is_not_empty(body):
     with pytest.raises(ProviderResponseError):
         fetch("weworkremotely", body)
@@ -85,7 +112,9 @@ def test_config_and_http_errors_propagate():
 
 
 def test_guid_fallback_and_missing_identity_neighbor():
-    body = feed(guid="").replace(b"</channel>", b"<item><title>bad</title></item></channel>")
+    body = feed(guid="").replace(
+        b"</channel>", b"<item><title>bad</title></item></channel>"
+    )
     result = fetch("weworkremotely", body)
     assert len(result.listings) == 1
     assert result.listings[0].external_id.startswith("url:")
@@ -95,6 +124,7 @@ def test_guid_fallback_and_missing_identity_neighbor():
 def test_registered_in_worker_without_legacy_imports():
     from jobhunt_core.harvest.providers import get_provider
     from jobhunt_core.harvest.registry import ensure_handler
+
     for source in SOURCES:
         assert get_provider(source).name == source
         assert ensure_handler(source)
@@ -102,6 +132,7 @@ def test_registered_in_worker_without_legacy_imports():
 
 def test_byte_budget_and_non_utf8_dtd_are_rejected(monkeypatch):
     from jobhunt_core.harvest.providers import native_rss
+
     dtd = '<!DOCTYPE rss [<!ENTITY name "expanded">]><rss><channel/></rss>'
     with pytest.raises(ProviderResponseError):
         fetch("globaljobs", dtd.encode("utf-16"))
@@ -111,7 +142,9 @@ def test_byte_budget_and_non_utf8_dtd_are_rejected(monkeypatch):
 
 
 def test_location_metadata_and_long_guid_are_preserved():
-    result = fetch("jobspresso", feed(extra="<job_location>Geneva</job_location>", guid="x" * 300))
+    result = fetch(
+        "jobspresso", feed(extra="<job_location>Geneva</job_location>", guid="x" * 300)
+    )
     row = result.listings[0]
     assert len(row.external_id) <= 200
     assert ET.fromstring(row.payload["item_xml"]).findtext("guid") == "x" * 300

@@ -12,12 +12,16 @@ S = settings.CORE_DB_SCHEMA
 
 def upgrade():
     op.execute("SET LOCAL lock_timeout='5s'")
-    op.execute(f"ALTER TABLE {S}.profile_vacancy_state ADD COLUMN feedback_recorded_at timestamptz")
-    op.execute(f"ALTER TABLE {S}.school_applications ADD COLUMN feedback text "
-               "CHECK (feedback IN ('thumbs_up','thumbs_down','applied','dismissed')), "
-               "ADD COLUMN feedback_recorded_at timestamptz, "
-               "ADD COLUMN feedback_implicit jsonb NOT NULL DEFAULT '[]'::jsonb "
-               "CHECK (jsonb_typeof(feedback_implicit)='array')")
+    op.execute(
+        f"ALTER TABLE {S}.profile_vacancy_state ADD COLUMN feedback_recorded_at timestamptz"
+    )
+    op.execute(
+        f"ALTER TABLE {S}.school_applications ADD COLUMN feedback text "
+        "CHECK (feedback IN ('thumbs_up','thumbs_down','applied','dismissed')), "
+        "ADD COLUMN feedback_recorded_at timestamptz, "
+        "ADD COLUMN feedback_implicit jsonb NOT NULL DEFAULT '[]'::jsonb "
+        "CHECK (jsonb_typeof(feedback_implicit)='array')"
+    )
 
 
 def downgrade():
@@ -34,5 +38,9 @@ def downgrade():
             RAISE EXCEPTION 'vacancy feedback authority remains';
         END IF;
     END $$""")
-    op.execute(f"ALTER TABLE {S}.school_applications DROP COLUMN feedback_implicit, DROP COLUMN feedback_recorded_at, DROP COLUMN feedback")
-    op.execute(f"ALTER TABLE {S}.profile_vacancy_state DROP COLUMN feedback_recorded_at")
+    op.execute(
+        f"ALTER TABLE {S}.school_applications DROP COLUMN feedback_implicit, DROP COLUMN feedback_recorded_at, DROP COLUMN feedback"
+    )
+    op.execute(
+        f"ALTER TABLE {S}.profile_vacancy_state DROP COLUMN feedback_recorded_at"
+    )

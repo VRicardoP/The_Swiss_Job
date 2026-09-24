@@ -1,4 +1,5 @@
 """Durable erasure receipts and anti-resurrection fence (not backup erasure)."""
+
 from alembic import op
 from jobhunt_core.config import settings
 
@@ -89,7 +90,9 @@ def upgrade():
 def downgrade():
     # Removing receipts after real erasures would permit old CDC/backups to
     # recreate accounts. Empty development databases can still downgrade.
-    op.execute(f"LOCK TABLE {S}.profile_erasure_receipts IN ACCESS EXCLUSIVE MODE NOWAIT")
+    op.execute(
+        f"LOCK TABLE {S}.profile_erasure_receipts IN ACCESS EXCLUSIVE MODE NOWAIT"
+    )
     op.execute(f"""DO $$ BEGIN
         IF EXISTS (SELECT 1 FROM {S}.profile_erasure_receipts) THEN
             RAISE EXCEPTION 'erasure receipts must be preserved';

@@ -47,9 +47,7 @@ def _wal_level() -> str | None:
 
 
 pytestmark = [
-    pytest.mark.skipif(
-        not _ADMIN, reason="requiere BD (ejecutar vía core-migrate)"
-    ),
+    pytest.mark.skipif(not _ADMIN, reason="requiere BD (ejecutar vía core-migrate)"),
     pytest.mark.skipif(
         bool(_ADMIN) and _wal_level() != "logical",
         reason="requiere wal_level=logical (imagen postgres-core + reinicio, B-01)",
@@ -57,8 +55,13 @@ pytestmark = [
 ]
 
 SENSITIVE_KEYS = (
-    "email", "hashed_password", "gdpr_consent", "gdpr_consent_at",
-    "embedding", "cv_embedding", "search_vector",
+    "email",
+    "hashed_password",
+    "gdpr_consent",
+    "gdpr_consent_at",
+    "embedding",
+    "cv_embedding",
+    "search_vector",
 )
 
 
@@ -148,7 +151,11 @@ def capture_db():
     engine = sa.create_engine(db_url, poolclass=sa.pool.NullPool)
     try:
         with engine.begin() as c:
-            c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            c.execute(
+                sa.text(
+                    "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm"
+                )
+            )
             c.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS "{S}"'))
             # Mini-tablas fixture CON las columnas prohibidas/pesadas
             # presentes: el test (c) demuestra que jamás llegan al staging.
@@ -226,7 +233,9 @@ def capture(capture_db):
             c.execute(
                 sa.text(f"TRUNCATE {S}.shadow_change_log, {S}.shadow_capture_state")
             )
-            c.execute(sa.text("TRUNCATE public.jobs, public.users, public.user_profiles"))
+            c.execute(
+                sa.text("TRUNCATE public.jobs, public.users, public.user_profiles")
+            )
 
 
 def _rows(engine, sql: str, **params):
@@ -251,7 +260,12 @@ def _seed_job(engine, h: str, title: str = "Backend Dev", active: bool = True):
         "tags, is_active, content_hash, embedding) VALUES "
         "(:h, :t, 'ACME AG', 'desc', :u, 'legacyfx', CAST(:tags AS jsonb), :a, "
         ":ch, '[1,2,3]'::vector)",
-        h=h, t=title, u=f"https://fx/{h}", tags='["py"]', a=active, ch=f"c-{h}",
+        h=h,
+        t=title,
+        u=f"https://fx/{h}",
+        tags='["py"]',
+        a=active,
+        ch=f"c-{h}",
     )
 
 
@@ -260,7 +274,10 @@ def _seed_user(engine, uid, active: bool = True):
         engine,
         "INSERT INTO public.users (id, email, hashed_password, is_active, "
         "gdpr_consent) VALUES (:i, :e, :hp, :a, true)",
-        i=uid, e=f"{uid}@example.com", hp="$2b$12$super-secreto", a=active,
+        i=uid,
+        e=f"{uid}@example.com",
+        hp="$2b$12$super-secreto",
+        a=active,
     )
 
 
@@ -270,7 +287,9 @@ def _seed_profile(engine, pid, uid):
         "INSERT INTO public.user_profiles (id, user_id, title, cv_text, skills, "
         "cv_embedding) VALUES (:i, :u, 'dev', 'mi cv', CAST(:s AS jsonb), "
         "'[4,5,6]'::vector)",
-        i=pid, u=uid, s='["python"]',
+        i=pid,
+        u=uid,
+        s='["python"]',
     )
 
 
@@ -477,7 +496,10 @@ def test_toast_update_user_profiles_backfills_omitted_cv_text(capture):
         engine,
         "INSERT INTO public.user_profiles (id, user_id, title, cv_text, skills) "
         "VALUES (:i, :u, 'dev', :cv, CAST(:s AS jsonb))",
-        i=pid, u=uid, cv=big_cv, s='["python"]',
+        i=pid,
+        u=uid,
+        cv=big_cv,
+        s='["python"]',
     )
     cap = make()
     cap.start()
@@ -527,7 +549,8 @@ def test_toast_update_jobs_records_omitted_without_reread(capture):
         "INSERT INTO public.jobs (hash, title, company, description, url, source, "
         "tags, is_active, content_hash) VALUES ('job-t-1', 'Dev', 'ACME AG', :d, "
         "'https://fx/job-t-1', 'legacyfx', CAST(:tags AS jsonb), true, 'c-t1')",
-        d=big_desc, tags='["py"]',
+        d=big_desc,
+        tags='["py"]',
     )
     cap = make()
     cap.start()
@@ -601,18 +624,19 @@ def test_ack_after_commit_survives_kill_without_loss_or_duplicates(capture):
     cap3 = make()
     cap3.start()
     cap3.stream(max_seconds=1.0)
-    assert _rows(
-        engine,
-        f"SELECT lsn, seq_in_tx, pk FROM {S}.shadow_change_log ORDER BY lsn, seq_in_tx",
-    ) == after
+    assert (
+        _rows(
+            engine,
+            f"SELECT lsn, seq_in_tx, pk FROM {S}.shadow_change_log ORDER BY lsn, seq_in_tx",
+        )
+        == after
+    )
 
 
 # ------------------------------------------- (g) readiness del esquema legacy
 
 
-def test_cold_start_without_legacy_schema_retries_and_creates_no_slot(
-    capture, caplog
-):
+def test_cold_start_without_legacy_schema_retries_and_creates_no_slot(capture, caplog):
     """P3 arranque en frío: las migraciones legacy son MANUALES — sin las
     tablas capturadas el bootstrap NO debe crear el slot (un slot huérfano
     retendría WAL en cada vuelta del crash-loop, §8) sino esperar
@@ -649,19 +673,26 @@ def test_readiness_blocks_when_required_column_missing(capture):
     with engine.begin() as c:
         c.execute(sa.text("CREATE SCHEMA IF NOT EXISTS partialcv"))
         # user_profiles SIN cv_text (columna REQUERIDA):
-        c.execute(sa.text(
-            "CREATE TABLE IF NOT EXISTS partialcv.user_profiles ("
-            "id uuid PRIMARY KEY, user_id uuid, title varchar(200), "
-            "skills jsonb NOT NULL DEFAULT '[]'::jsonb, "
-            "updated_at timestamptz NOT NULL DEFAULT now())"
-        ))
+        c.execute(
+            sa.text(
+                "CREATE TABLE IF NOT EXISTS partialcv.user_profiles ("
+                "id uuid PRIMARY KEY, user_id uuid, title varchar(200), "
+                "skills jsonb NOT NULL DEFAULT '[]'::jsonb, "
+                "updated_at timestamptz NOT NULL DEFAULT now())"
+            )
+        )
     cap = make(tables="partialcv.user_profiles", ready_max_retries=2)
     with pytest.raises(RuntimeError, match="esquema legacy aún sin migrar"):
         cap.start()
     # Sin la columna requerida NO hay bootstrap: jamás se crea el slot.
-    assert _scalar(
-        engine, "SELECT count(*) FROM pg_replication_slots WHERE slot_name = :n", n=slot
-    ) == 0
+    assert (
+        _scalar(
+            engine,
+            "SELECT count(*) FROM pg_replication_slots WHERE slot_name = :n",
+            n=slot,
+        )
+        == 0
+    )
 
 
 def test_readiness_blocks_when_jobs_source_missing(capture):
@@ -672,17 +703,24 @@ def test_readiness_blocks_when_jobs_source_missing(capture):
     with engine.begin() as c:
         c.execute(sa.text("CREATE SCHEMA IF NOT EXISTS partialsrc"))
         # jobs SIN source (columna REQUERIDA):
-        c.execute(sa.text(
-            "CREATE TABLE IF NOT EXISTS partialsrc.jobs ("
-            "hash varchar(32) PRIMARY KEY, title varchar(500), url varchar(2048), "
-            "is_active boolean NOT NULL DEFAULT true, duplicate_of varchar(32))"
-        ))
+        c.execute(
+            sa.text(
+                "CREATE TABLE IF NOT EXISTS partialsrc.jobs ("
+                "hash varchar(32) PRIMARY KEY, title varchar(500), url varchar(2048), "
+                "is_active boolean NOT NULL DEFAULT true, duplicate_of varchar(32))"
+            )
+        )
     cap = make(tables="partialsrc.jobs", ready_max_retries=2)
     with pytest.raises(RuntimeError, match="esquema legacy aún sin migrar"):
         cap.start()
-    assert _scalar(
-        engine, "SELECT count(*) FROM pg_replication_slots WHERE slot_name = :n", n=slot
-    ) == 0
+    assert (
+        _scalar(
+            engine,
+            "SELECT count(*) FROM pg_replication_slots WHERE slot_name = :n",
+            n=slot,
+        )
+        == 0
+    )
 
 
 # ------------------------------------------- (h) healthcheck con slot inactivo
@@ -746,8 +784,7 @@ def test_health_check_heartbeat_liveness_not_data_progress(
     # con latido fresco ⇒ HEALTHY (antes: unhealthy por progreso estancado).
     _exec(
         engine,
-        f"UPDATE {S}.shadow_capture_state "
-        "SET updated_at = now() - interval '3 days'",
+        f"UPDATE {S}.shadow_capture_state SET updated_at = now() - interval '3 days'",
     )
     assert health_check() == 0
 
@@ -792,8 +829,7 @@ def test_health_check_staging_sin_drenar_es_unhealthy(
     # Aplicado ⇒ vuelve a sano (el pendiente viejo era la única causa).
     _exec(
         engine,
-        f"UPDATE {S}.shadow_change_log SET applied_at = now() "
-        "WHERE pk = 'hc-test'",
+        f"UPDATE {S}.shadow_change_log SET applied_at = now() WHERE pk = 'hc-test'",
     )
     assert health_check() == 0
 
@@ -1026,19 +1062,23 @@ def test_capture_role_and_enumerated_grants_on_shared_db():
                 assert not grants.can_write, f"escritura concedida en public.{table}"
 
             # NADA más: ninguna otra relación de public con privilegio alguno.
-            others = c.execute(
-                sa.text(
-                    "SELECT c.relname FROM pg_class c "
-                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                    "WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','m','f') "
-                    "AND c.relname != ALL(CAST(:allowed AS text[])) "
-                    "AND (has_table_privilege('jobhunt_core', c.oid, "
-                    "'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
-                    "OR has_any_column_privilege('jobhunt_core', c.oid, "
-                    "'SELECT,INSERT,UPDATE,REFERENCES'))"
-                ),
-                {"allowed": list(allowed)},
-            ).scalars().all()
+            others = (
+                c.execute(
+                    sa.text(
+                        "SELECT c.relname FROM pg_class c "
+                        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                        "WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','m','f') "
+                        "AND c.relname != ALL(CAST(:allowed AS text[])) "
+                        "AND (has_table_privilege('jobhunt_core', c.oid, "
+                        "'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
+                        "OR has_any_column_privilege('jobhunt_core', c.oid, "
+                        "'SELECT,INSERT,UPDATE,REFERENCES'))"
+                    ),
+                    {"allowed": list(allowed)},
+                )
+                .scalars()
+                .all()
+            )
             assert others == [], f"privilegios fuera de la whitelist: {others}"
     finally:
         engine.dispose()
@@ -1059,7 +1099,11 @@ def test_core0008b_downgrade_upgrade_cycle_on_disposable_db():
     try:
         engine = sa.create_engine(db_url, poolclass=sa.pool.NullPool)
         with engine.begin() as c:
-            c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            c.execute(
+                sa.text(
+                    "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm"
+                )
+            )
             c.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS "{S}"'))
         run_alembic(_alembic_url(db_url), "upgrade", "head")
 
@@ -1226,9 +1270,9 @@ def test_cambio_contractual_sin_pk_falla_fuerte_no_confirma():
         )
     # Tabla NO contractual: sigue descartándose en silencio (defensa en
     # profundidad — add-tables ya filtra en el servidor).
-    assert cap._change_row(
-        124, {"table": "otra", "action": "I", "columns": None}
-    ) is None
+    assert (
+        cap._change_row(124, {"table": "otra", "action": "I", "columns": None}) is None
+    )
 
 
 def test_backoff_escala_cuando_stream_falla_de_inmediato():

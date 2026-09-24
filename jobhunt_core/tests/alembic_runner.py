@@ -51,14 +51,14 @@ def run_alembic(
     return _run_in_process(db_url, *args)
 
 
-def _run_cli(
-    db_url: str, *args: str, check: bool
-) -> subprocess.CompletedProcess:
+def _run_cli(db_url: str, *args: str, check: bool) -> subprocess.CompletedProcess:
     """El CLI real, en su propio intérprete: returncode y stderr auténticos."""
     env = {**os.environ, "CORE_DATABASE_URL": db_url}
     return subprocess.run(
         ["alembic", "-c", _INI, *args],
-        check=check, capture_output=True, env=env,
+        check=check,
+        capture_output=True,
+        env=env,
     )
 
 

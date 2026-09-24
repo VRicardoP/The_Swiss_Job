@@ -42,13 +42,12 @@ def test_synthesize_and_resolve_shadow_vacancies():
     asyncio.run(create_db())
     try:
         temp_engine = create_async_engine(
-            temp_url, poolclass=sa.pool.NullPool,
+            temp_url,
+            poolclass=sa.pool.NullPool,
             # search_path por CONEXIÓN (NullPool renueva la conexión tras cada
             # commit y un SET suelto se perdería).
             connect_args={
-                "server_settings": {
-                    "search_path": f"{settings.CORE_DB_SCHEMA}, public"
-                }
+                "server_settings": {"search_path": f"{settings.CORE_DB_SCHEMA}, public"}
             },
         )
         factory = async_sessionmaker(temp_engine, expire_on_commit=False)
@@ -177,8 +176,16 @@ async def _scenario(factory):
         # resoluble ⇒ STAGE-ALL: NO se sintetiza ninguna (no se elige ganador por
         # orden) y AMBAS URLs se devuelven colisionadas para enrutar a staging.
         collide = [
-            {"url": "https://spa.example.ch/jobs#aaa", "title": "First Offer", "company": "A"},
-            {"url": "https://spa.example.ch/jobs#bbb", "title": "Second Offer", "company": "B"},
+            {
+                "url": "https://spa.example.ch/jobs#aaa",
+                "title": "First Offer",
+                "company": "A",
+            },
+            {
+                "url": "https://spa.example.ch/jobs#bbb",
+                "title": "Second Offer",
+                "company": "B",
+            },
         ]
         before = await _count(s, "vacancies")
         collided = await ip.synthesize_vacancies(s, scope_id, collide)
@@ -191,16 +198,30 @@ async def _scenario(factory):
         # --- COLISIÓN CROSS-RUN (P1 rev. externa): una URL SPA se sintetiza y CONFIRMA;
         # una 2ª ejecución con OTRA URL de la MISMA clave normalizada la detecta contra
         # el estado PERSISTIDO (incarnación activa), no contra un `seen` en memoria.
-        run1 = [{"url": "https://cross.example.ch/jobs#xxx", "title": "Run1", "company": "A"}]
+        run1 = [
+            {
+                "url": "https://cross.example.ch/jobs#xxx",
+                "title": "Run1",
+                "company": "A",
+            }
+        ]
         assert await ip.synthesize_vacancies(s, scope_id, run1) == set()  # sin colisión
         await s.commit()
         v1 = await ip.resolve_vacancy_by_url(s, run1[0]["url"])
         assert v1 is not None
-        run2 = [{"url": "https://cross.example.ch/jobs#yyy", "title": "Run2", "company": "B"}]
+        run2 = [
+            {
+                "url": "https://cross.example.ch/jobs#yyy",
+                "title": "Run2",
+                "company": "B",
+            }
+        ]
         c2 = await ip.synthesize_vacancies(s, scope_id, run2)
         await s.commit()
         assert c2 == {run2[0]["url"]}  # colisión detectada contra lo persistido
-        assert await _count(s, "vacancies") == before + 1  # solo v1 (run2 NO sintetizada)
+        assert (
+            await _count(s, "vacancies") == before + 1
+        )  # solo v1 (run2 NO sintetizada)
         # resolve(run2) mapearía a v1 por url_normalized — por eso el llamador DEBE
         # enrutar por `collided`, no fiarse de resolve (el vínculo sería equivocado).
         assert await ip.resolve_vacancy_by_url(s, run2[0]["url"]) == v1
@@ -211,7 +232,9 @@ async def _scenario(factory):
         gvid = await ip.resolve_vacancy_by_url(s, with_url[0]["url"])
         assert gvid is not None
         winner = uuid.uuid4()
-        await s.execute(sa.text("INSERT INTO vacancies (id) VALUES (:w)"), {"w": winner})
+        await s.execute(
+            sa.text("INSERT INTO vacancies (id) VALUES (:w)"), {"w": winner}
+        )
         await s.execute(
             sa.text("UPDATE vacancies SET merged_into = :w WHERE id = :v"),
             {"w": winner, "v": gvid},

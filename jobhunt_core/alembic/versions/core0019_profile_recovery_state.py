@@ -42,16 +42,24 @@ def upgrade() -> None:
         sa.Column("policy_id", UUID(as_uuid=True), nullable=False),
         sa.Column("corpus_watermark", sa.DateTime(timezone=True), nullable=False),
         sa.Column(
-            "attempted_at", sa.DateTime(timezone=True),
-            server_default=sa.text("now()"), nullable=False,
+            "attempted_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
         ),
         sa.PrimaryKeyConstraint(
-            "profile_revision_id", "model_id", "policy_id",
+            "profile_revision_id",
+            "model_id",
+            "policy_id",
             name="pk_profile_recovery_state",
         ),
-        sa.ForeignKeyConstraint(["profile_id"], [f"{S}.profiles.id"], name="fk_prs_profile"),
         sa.ForeignKeyConstraint(
-            ["profile_revision_id"], [f"{S}.profile_revisions.id"], name="fk_prs_revision"
+            ["profile_id"], [f"{S}.profiles.id"], name="fk_prs_profile"
+        ),
+        sa.ForeignKeyConstraint(
+            ["profile_revision_id"],
+            [f"{S}.profile_revisions.id"],
+            name="fk_prs_revision",
         ),
         sa.ForeignKeyConstraint(
             ["model_id"], [f"{S}.embedding_models.id"], name="fk_prs_model"
@@ -63,8 +71,10 @@ def upgrade() -> None:
     )
     # Orden de la cola (intento más antiguo primero) y ERASE por perfil.
     op.create_index(
-        "ix_prs_profile_attempted", "profile_recovery_state",
-        ["profile_id", "attempted_at"], schema=S,
+        "ix_prs_profile_attempted",
+        "profile_recovery_state",
+        ["profile_id", "attempted_at"],
+        schema=S,
     )
 
 

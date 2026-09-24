@@ -18,23 +18,33 @@ import pytest
 
 SLOT_ONLY = {"shadow-check-slot-health", "shadow-preview-cycle", "shadow-run-cycle"}
 # Everything below survives: it either feeds the native cycle or bounds growth.
-ALWAYS = {"harvest-dispatch-native", "harvest-check-health", "shadow-project",
-          "shadow-sample-outbox-lag", "delivery-dispatch-outbox",
-          "idempotency-purge-expired", "maintenance-archive-sweep",
-          "maintenance-dedup-scan", "maintenance-purge-retention",
-          "matching-materialize-ce"}
+ALWAYS = {
+    "harvest-dispatch-native",
+    "harvest-check-health",
+    "shadow-project",
+    "shadow-sample-outbox-lag",
+    "delivery-dispatch-outbox",
+    "idempotency-purge-expired",
+    "maintenance-archive-sweep",
+    "maintenance-dedup-scan",
+    "maintenance-purge-retention",
+    "matching-materialize-ce",
+}
 
 
 def _schedule(monkeypatch, capture_enabled):
     from jobhunt_core import config
-    monkeypatch.setattr(config.settings, "CORE_CAPTURE_ENABLED", capture_enabled,
-                        raising=False)
+
+    monkeypatch.setattr(
+        config.settings, "CORE_CAPTURE_ENABLED", capture_enabled, raising=False
+    )
     module = importlib.reload(importlib.import_module("jobhunt_core.celery_app"))
     return set(module.celery_app.conf.beat_schedule)
 
 
 def test_capture_enabled_is_the_default_and_changes_nothing(monkeypatch):
     from jobhunt_core.config import settings
+
     assert settings.CORE_CAPTURE_ENABLED is True, "the flag must be opt-OUT"
     entries = _schedule(monkeypatch, True)
     assert SLOT_ONLY <= entries and ALWAYS <= entries
@@ -65,6 +75,7 @@ def _restore_module():
     strip those beat entries for every later test in the session.
     """
     from jobhunt_core import config
+
     original = getattr(config.settings, "CORE_CAPTURE_ENABLED", True)
     yield
     config.settings.CORE_CAPTURE_ENABLED = original

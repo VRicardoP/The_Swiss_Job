@@ -6,6 +6,7 @@ each raw listing. Three pages is the former request budget, not proof that the
 whole source was consumed: reaching the cap with more/unknown pages is partial.
 Live access returned 403 during preparation; this provider is not activated.
 """
+
 import asyncio
 import hashlib
 import math
@@ -16,10 +17,17 @@ import httpx
 
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
-from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
+from jobhunt_core.harvest.provider import (
+    BaseProvider,
+    ProviderConfigError,
+    ProviderResponseError,
+)
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills
 from jobhunt_core.harvest.providers.browser_headers import (
-    BROWSER_HEADERS, MAX_PAGES_PARAM, page_budget)
+    BROWSER_HEADERS,
+    MAX_PAGES_PARAM,
+    page_budget,
+)
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 SOURCE_NAME = "jobgether"
@@ -67,21 +75,30 @@ def _content(raw):
     skills = raw.get("skills")
     skills = skills if isinstance(skills, list) else []
     tags, seen = [], set()
-    for value in [_text(_object(s).get("name")) for s in skills] + extract_job_skills(title, ""):
+    for value in [_text(_object(s).get("name")) for s in skills] + extract_job_skills(
+        title, ""
+    ):
         if value and value.lower() not in seen:
             seen.add(value.lower())
             tags.append(value)
     remote = _text(raw.get("remoteOfferType")).lower()
-    return {"title": title, "company": _text(_object(raw.get("companyData")).get("name")),
-            "location": _text(raw.get("requiredLocations")), "description": "",
-            "tags": tags[:15], "salary": _salary(raw),
-            "remote": bool(remote) and remote not in _NON_REMOTE}
+    return {
+        "title": title,
+        "company": _text(_object(raw.get("companyData")).get("name")),
+        "location": _text(raw.get("requiredLocations")),
+        "description": "",
+        "tags": tags[:15],
+        "salary": _salary(raw),
+        "remote": bool(remote) and remote not in _NON_REMOTE,
+    }
 
 
 def register_handlers():
     register_normalizer(SOURCE_NAME, _content)
+
     def identity(raw):
         return raw.get("title"), _object(raw.get("companyData")).get("name")
+
     register_extractor(SOURCE_NAME, identity)
 
 
@@ -94,11 +111,12 @@ def _listing(raw):
     # producer keeps them and rejecting them silently lost 4% of the feed
     # (live probe: 6 of 150). Traversal and anything that could change the
     # resolved URL stay rejected -- the slug is interpolated into it.
-    if (not title or not re.fullmatch(r"[\w.-]{1,900}", slug)
-            or ".." in slug):
+    if not title or not re.fullmatch(r"[\w.-]{1,900}", slug) or ".." in slug:
         return None
     company = _text(_object(raw.get("companyData")).get("name"))
-    identity = f"{title.lower()}|{company.lower()}|{OFFER_URL}{_VOLATILE_ID.sub('', slug)}"
+    identity = (
+        f"{title.lower()}|{company.lower()}|{OFFER_URL}{_VOLATILE_ID.sub('', slug)}"
+    )
     try:
         external_id = hashlib.md5(identity.encode()).hexdigest()
     except UnicodeError:
@@ -108,15 +126,22 @@ def _listing(raw):
 
 async def _page(http, query, page, timeout):
     async with asyncio.timeout(timeout):
-        async with http.stream("GET", API_URL, params={"keyword": query, "page": page},
-                               headers=BROWSER_HEADERS,
-                               timeout=25, follow_redirects=True) as response:
+        async with http.stream(
+            "GET",
+            API_URL,
+            params={"keyword": query, "page": page},
+            headers=BROWSER_HEADERS,
+            timeout=25,
+            follow_redirects=True,
+        ) as response:
             response.raise_for_status()
             chunks, size = [], 0
             async for chunk in response.aiter_bytes():
                 size += len(chunk)
                 if size > MAX_RESPONSE_BYTES:
-                    raise ProviderResponseError("Jobgether response byte budget exceeded")
+                    raise ProviderResponseError(
+                        "Jobgether response byte budget exceeded"
+                    )
                 chunks.append(chunk)
     try:
         body = httpx.Response(200, content=b"".join(chunks)).json()
@@ -125,7 +150,12 @@ async def _page(http, query, page, timeout):
     if not isinstance(body, dict) or not isinstance(body.get("data"), list):
         raise ProviderResponseError("Jobgether invalid envelope")
     total = body.get("maxPages")
-    if isinstance(total, str) and total.isascii() and total.isdigit() and len(total) <= 9:
+    if (
+        isinstance(total, str)
+        and total.isascii()
+        and total.isdigit()
+        and len(total) <= 9
+    ):
         total = int(total)
     if total is not None and (type(total) is not int or total < 0):
         raise ProviderResponseError("Jobgether invalid page count")
@@ -163,8 +193,11 @@ class JobgetherProvider(BaseProvider):
             except (httpx.HTTPError, ProviderResponseError, TimeoutError) as exc:
                 if not listings:
                     raise
-                error = (f"http_{exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError)
-                         else type(exc).__name__)
+                error = (
+                    f"http_{exc.response.status_code}"
+                    if isinstance(exc, httpx.HTTPStatusError)
+                    else type(exc).__name__
+                )
                 break
             pages += 1
             seen += len(rows)
@@ -193,14 +226,22 @@ class JobgetherProvider(BaseProvider):
             # it a failed harvest would keep `last_complete_at` NULL forever and
             # turn `cosecha_sin_completar` into permanent noise (G9 P2-C). The
             # count travels in the cursor instead, readable without lying.
-            listings = [listing for listing in listings if listing.external_id not in ambiguous]
+            listings = [
+                listing for listing in listings if listing.external_id not in ambiguous
+            ]
         if seen and not listings:
-            raise ProviderResponseError("Jobgether nonempty feed has no usable identities")
+            raise ProviderResponseError(
+                "Jobgether nonempty feed has no usable identities"
+            )
         error = error or ("invalid_jobgether_items" if invalid else None)
         if not exhausted and MAX_PAGES_PARAM not in params:
             # Undeclared: hitting the internal safety cap is still partial.
             error = error or "page_budget"
         exhausted = exhausted or (MAX_PAGES_PARAM in params and pages >= budget)
-        return FetchResult(tuple(listings),
-                           {"pages": pages, "items_seen": seen, "ambiguous": len(ambiguous)},
-                           pages_fetched=pages, complete=exhausted and error is None, error=error)
+        return FetchResult(
+            tuple(listings),
+            {"pages": pages, "items_seen": seen, "ambiguous": len(ambiguous)},
+            pages_fetched=pages,
+            complete=exhausted and error is None,
+            error=error,
+        )

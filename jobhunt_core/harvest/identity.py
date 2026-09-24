@@ -30,13 +30,34 @@ SIM_FUZZY_BATCH = 0.85  # misma identidad difusa dentro del mismo lote
 
 # Sufijos legales que se quitan del nombre de empresa.
 COMPANY_SUFFIXES: set[str] = {
-    "ag", "gmbh", "sa", "sarl", "sàrl", "ltd", "inc", "corp", "se", "plc",
-    "srl", "co", "llc", "pty", "bv", "nv",
+    "ag",
+    "gmbh",
+    "sa",
+    "sarl",
+    "sàrl",
+    "ltd",
+    "inc",
+    "corp",
+    "se",
+    "plc",
+    "srl",
+    "co",
+    "llc",
+    "pty",
+    "bv",
+    "nv",
 }
 
 # Seniority filtrada POR TOKEN exacto (nunca substring: international, leader).
 SENIORITY_TOKENS: set[str] = {
-    "senior", "junior", "lead", "head", "intern", "trainee", "sr", "jr",
+    "senior",
+    "junior",
+    "lead",
+    "head",
+    "intern",
+    "trainee",
+    "sr",
+    "jr",
 }
 
 # Marcadores de diversidad/género: pares reales enumerados (m/f, m/w, h/f...)

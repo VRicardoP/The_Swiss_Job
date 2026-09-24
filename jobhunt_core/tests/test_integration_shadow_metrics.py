@@ -71,7 +71,11 @@ def met_db():
     engine = sa.create_engine(db_url, poolclass=sa.pool.NullPool)
     try:
         with engine.begin() as c:
-            c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            c.execute(
+                sa.text(
+                    "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm"
+                )
+            )
             c.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS "{S}"'))
         run_alembic(async_url, "upgrade", "head")
         with engine.begin() as c:
@@ -125,7 +129,9 @@ def db(met_db, monkeypatch):
             # core0025/0026 en el resto de fixtures (DDL del owner) y se vuelve a montar.
             for tabla in ("labeled_dedup_pairs", "labeled_dedup_cohorts"):
                 await c.execute(
-                    sa.text(f"ALTER TABLE {tabla} DISABLE TRIGGER {tabla}_truncate_guard")
+                    sa.text(
+                        f"ALTER TABLE {tabla} DISABLE TRIGGER {tabla}_truncate_guard"
+                    )
                 )
             await c.execute(
                 sa.text(
@@ -136,7 +142,9 @@ def db(met_db, monkeypatch):
             )
             for tabla in ("labeled_dedup_pairs", "labeled_dedup_cohorts"):
                 await c.execute(
-                    sa.text(f"ALTER TABLE {tabla} ENABLE ALWAYS TRIGGER {tabla}_truncate_guard")
+                    sa.text(
+                        f"ALTER TABLE {tabla} ENABLE ALWAYS TRIGGER {tabla}_truncate_guard"
+                    )
                 )
             await c.execute(sa.text("TRUNCATE integration_outbox CASCADE"))
             await c.execute(
@@ -194,8 +202,16 @@ def _mk_source(factory, name):
 
 
 def _mk_slot(
-    factory, source_id, ext, seq=1, active=True, archived=False,
-    first_seen=None, last_seen=None, ended=None, vacancy_id=None,
+    factory,
+    source_id,
+    ext,
+    seq=1,
+    active=True,
+    archived=False,
+    first_seen=None,
+    last_seen=None,
+    ended=None,
+    vacancy_id=None,
     listing_id=None,
 ):
     """Vacante + slot + encarnación con timestamps INYECTABLES. Devuelve
@@ -233,9 +249,15 @@ def _mk_slot(
                     " CASE WHEN :act THEN NULL ELSE COALESCE(:en, now()) END)"
                 ),
                 {
-                    "i": iid, "l": lid, "v": vid, "q": seq,
-                    "u": f"https://m/{ext}/{seq}", "fs": first_seen,
-                    "ls": last_seen, "en": ended, "act": active and ended is None,
+                    "i": iid,
+                    "l": lid,
+                    "v": vid,
+                    "q": seq,
+                    "u": f"https://m/{ext}/{seq}",
+                    "fs": first_seen,
+                    "ls": last_seen,
+                    "en": ended,
+                    "act": active and ended is None,
                 },
             )
             await s.commit()
@@ -296,15 +318,15 @@ def _mk_eval(factory, mp, pid, vid, score, created_at=None):
             rid = (
                 await s.execute(
                     sa.text(
-                        "SELECT id FROM profile_revisions "
-                        "WHERE profile_id = :p LIMIT 1"
+                        "SELECT id FROM profile_revisions WHERE profile_id = :p LIMIT 1"
                     ),
                     {"p": pid},
                 )
             ).scalar()
             if rid is None:
                 rid = await core_profiles.save_profile_revision(
-                    s, pid,
+                    s,
+                    pid,
                     {"title": "dev", "cv_text": "cv python", "skills": ["python"]},
                 )
             orid = uuid.uuid4()
@@ -326,8 +348,15 @@ def _mk_eval(factory, mp, pid, vid, score, created_at=None):
                     " CAST('{}' AS jsonb), COALESCE(:ca, now()))"
                 ),
                 {
-                    "i": eid, "p": pid, "v": vid, "o": orid, "r": rid,
-                    "m": mid, "sp": polid, "k": uuid.uuid4().hex, "sc": score,
+                    "i": eid,
+                    "p": pid,
+                    "v": vid,
+                    "o": orid,
+                    "r": rid,
+                    "m": mid,
+                    "sp": polid,
+                    "k": uuid.uuid4().hex,
+                    "sc": score,
                     "ca": created_at,
                 },
             )
@@ -349,17 +378,20 @@ def _mk_eval(factory, mp, pid, vid, score, created_at=None):
 _URL_DEFAULT = object()  # centinela: url=None debe poder INSERTAR NULL
 
 
-def _legacy_job(factory, h, active=True, dup=None, url=_URL_DEFAULT,
-                first_seen=None):
+def _legacy_job(factory, h, active=True, dup=None, url=_URL_DEFAULT, first_seen=None):
     # first_seen anterior al inicio del ciclo FIJO (G1 H-7): el job supera la
     # gracia de alta de 1h y cuenta en el minuendo, como antes del fix.
     _exec(
         factory,
         f"INSERT INTO {LEG}.jobs (hash, source, url, is_active, duplicate_of, "
         f"first_seen_at) VALUES (:h, 'metfx', :u, :a, :d, :f)",
-        {"h": h, "u": f"https://leg/{h}" if url is _URL_DEFAULT else url,
-         "a": active, "d": dup,
-         "f": first_seen or (CSTART - timedelta(days=1))},
+        {
+            "h": h,
+            "u": f"https://leg/{h}" if url is _URL_DEFAULT else url,
+            "a": active,
+            "d": dup,
+            "f": first_seen or (CSTART - timedelta(days=1)),
+        },
     )
 
 
@@ -382,8 +414,12 @@ def _stage_users(factory, rows):
             "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
             "payload, applied_at) VALUES (:l, 0, 'users', :o, :p, "
             "CAST(:j AS jsonb), now())",
-            {"l": lsn, "o": op, "p": str(uid),
-             "j": json.dumps({"id": str(uid), "is_active": active})},
+            {
+                "l": lsn,
+                "o": op,
+                "p": str(uid),
+                "j": json.dumps({"id": str(uid), "is_active": active}),
+            },
         )
 
 
@@ -412,7 +448,9 @@ def _metric_row(factory, metric, scope="global", cycle=CYCLE):
         factory,
         "SELECT value, details, finished_at FROM shadow_cycle_metrics "
         "WHERE cycle_id = :c AND metric = :m AND scope = :s",
-        c=cycle, m=metric, s=scope,
+        c=cycle,
+        m=metric,
+        s=scope,
     )
     return rows[0] if rows else None
 
@@ -440,9 +478,10 @@ def test_cycle_bounds_and_ids_are_deterministic():
     assert metrics.current_cycle_id(start) == CYCLE
     assert metrics.current_cycle_id(start + timedelta(hours=23)) == CYCLE
     # Inyectable en UTC: 2026-07-21T03:59Z = 05:59 CEST → sigue en CYCLE.
-    assert metrics.current_cycle_id(
-        datetime(2026, 7, 21, 3, 59, tzinfo=timezone.utc)
-    ) == CYCLE
+    assert (
+        metrics.current_cycle_id(datetime(2026, 7, 21, 3, 59, tzinfo=timezone.utc))
+        == CYCLE
+    )
     assert metrics.latest_closed_cycle_id(AFTER) == CYCLE
 
 
@@ -452,7 +491,9 @@ def test_cycle_boundary_supports_configured_minute(monkeypatch):
     start, end = metrics.cycle_bounds(CYCLE)
     assert start.isoformat() == "2026-07-20T11:30:00+02:00"
     assert end.isoformat() == "2026-07-21T11:30:00+02:00"
-    assert metrics.current_cycle_id(start - timedelta(minutes=1)) == CYCLE - timedelta(days=1)
+    assert metrics.current_cycle_id(start - timedelta(minutes=1)) == CYCLE - timedelta(
+        days=1
+    )
     assert metrics.current_cycle_id(start) == CYCLE
 
 
@@ -465,11 +506,14 @@ def test_persistent_compute_rejects_open_cycle(db):
             cycle_id=CYCLE,
             now=CSTART + timedelta(hours=1),
         )
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
-        c=CYCLE,
-    ) == 0
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
+            c=CYCLE,
+        )
+        == 0
+    )
 
 
 # ------------------------------------------- ndcg@10 / legacy / overlap (§5)
@@ -498,10 +542,10 @@ def test_ndcg_core_and_legacy_and_overlap_exact_values(db):
     _legacy_job(factory, f"{p}-dup", dup=A)
     _legacy_result(factory, user, B, 99, feedback="thumbs_up")
     _legacy_result(factory, user, A, 98)
-    _legacy_result(factory, user, X, 97)          # sin slot core: no mapea
-    _legacy_result(factory, user, D, 96, feedback="dismissed")   # excluido
-    _legacy_result(factory, user, f"{p}-inact", 95)              # excluido
-    _legacy_result(factory, user, f"{p}-dup", 94)                # excluido
+    _legacy_result(factory, user, X, 97)  # sin slot core: no mapea
+    _legacy_result(factory, user, D, 96, feedback="dismissed")  # excluido
+    _legacy_result(factory, user, f"{p}-inact", 95)  # excluido
+    _legacy_result(factory, user, f"{p}-dup", 94)  # excluido
 
     # Perfil con set SIN congelar: NO se mide (frozen_at es el gate de §4).
     pid2 = _mk_profile(factory, str(uuid.uuid4()))
@@ -548,14 +592,19 @@ def test_ndcg_core_and_legacy_and_overlap_exact_values(db):
     # Recomputar (con force: el ciclo quedó SELLADO — P1-4) es IDEMPOTENTE
     # (upsert por PK): mismos valores, sin filas dup.
     n_before = _scalar(
-        factory, "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
+        factory,
+        "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
         c=CYCLE,
     )
     _compute(factory, force=True)
-    assert _scalar(
-        factory, "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
-        c=CYCLE,
-    ) == n_before
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_cycle_metrics WHERE cycle_id = :c",
+            c=CYCLE,
+        )
+        == n_before
+    )
     assert float(_metric_row(factory, "ndcg@10", scope).value) == pytest.approx(
         0.949980, abs=1e-6
     )
@@ -723,8 +772,8 @@ def test_dedup_precision_recall_with_built_confusion_matrix(db):
         (ref("pa"), ref("pb"), "duplicate"),  # TP (misma vacante)
         (ref("pc"), ref("pd"), "duplicate"),  # TP (candidato pending)
         (ref("pe"), ref("pf"), "duplicate"),  # FN
-        (ref("pg"), ref("ph"), "distinct"),   # FP
-        (ref("pi"), ref("pj"), "distinct"),   # TN
+        (ref("pg"), ref("ph"), "distinct"),  # FP
+        (ref("pi"), ref("pj"), "distinct"),  # TN
         (ref("pk"), ref("pz"), "duplicate"),  # no evaluable (pz sin mapeo)
     ]
     for a, b, v in pairs:
@@ -746,15 +795,18 @@ def test_dedup_precision_recall_with_built_confusion_matrix(db):
     assert float(rec.value) == pytest.approx(2 / 3, abs=1e-6)
     for row in (prec, rec):
         assert (
-            row.details["tp"], row.details["fp"], row.details["fn"],
-            row.details["tn"], row.details["no_evaluables_sin_mapeo"],
+            row.details["tp"],
+            row.details["fp"],
+            row.details["fn"],
+            row.details["tn"],
+            row.details["no_evaluables_sin_mapeo"],
         ) == (2, 1, 1, 1, 1)
     gates = _gates(factory)
     assert gates["dedup_precision"]["ok"] is False  # 0.667 < 0.95
     # Re-ratificación D2 (2026-08-26): el umbral vinculante de recall es 0.40
     # (techo demostrado del examen congelado) ⇒ 0.667 ahora es VERDE. La
     # mordida del umbral nuevo está en test_d2_recall_umbral_reratificado.
-    assert gates["dedup_recall"]["ok"] is True      # 0.667 >= 0.40
+    assert gates["dedup_recall"]["ok"] is True  # 0.667 >= 0.40
 
 
 def test_dedup_empty_oracle_is_no_data_not_green(db):
@@ -854,9 +906,7 @@ def test_dedup_recall_informativo_por_cohorte_no_altera_el_veredicto(db):
     g_vacia = gates["dedup_recall::cohort:positive-stratum-vacia"]
     assert g_vacia["ok"] is True and g_vacia["value"] is None
     # NINGUNA fila de cohorte entra como [gate]: no puede alterar el veredicto
-    assert all(
-        gates[k]["kind"] == "alerta" for k in gates if "::cohort:" in k
-    )
+    assert all(gates[k]["kind"] == "alerta" for k in gates if "::cohort:" in k)
 
 
 def test_labels_ready_green_with_dod_oracle(db):
@@ -881,8 +931,7 @@ def test_labels_ready_green_with_dod_oracle(db):
         _exec(
             factory,
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', '"
-            + labels.DEDUP_EVAL_COHORT + "')",
+            "source) VALUES (:a, :b, 'duplicate', '" + labels.DEDUP_EVAL_COHORT + "')",
             {"a": ra, "b": rb},
         )
 
@@ -902,7 +951,6 @@ def test_labels_ready_green_with_dod_oracle(db):
     assert float(_metric_row(factory, "dedup_recall").value) == 1.0
     assert gates["dedup_precision"]["ok"] is True
     assert gates["dedup_recall"]["ok"] is True
-
 
 
 def test_labels_ready_red_when_one_holdout_pair_is_unmappable(db):
@@ -925,8 +973,7 @@ def test_labels_ready_red_when_one_holdout_pair_is_unmappable(db):
         _exec(
             factory,
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', '"
-            + labels.DEDUP_EVAL_COHORT + "')",
+            "source) VALUES (:a, :b, 'duplicate', '" + labels.DEDUP_EVAL_COHORT + "')",
             {"a": ra, "b": rb},
         )
 
@@ -960,8 +1007,7 @@ def test_labels_ready_red_with_two_sets_one_profile(db):
         _exec(
             factory,
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', '"
-            + labels.DEDUP_EVAL_COHORT + "')",
+            "source) VALUES (:a, :b, 'duplicate', '" + labels.DEDUP_EVAL_COHORT + "')",
             {"a": ra, "b": rb},
         )
     _compute(factory)
@@ -986,7 +1032,10 @@ def test_labels_ready_red_when_effective_set_is_small(db):
     for who in ("a", "b"):
         pid = _mk_profile(factory, str(uuid.uuid4()))
         _mk_frozen_set(
-            factory, pid, {f"{p}-{who}old{i:02d}": i % 4 for i in range(30)}, name="ronda-1"
+            factory,
+            pid,
+            {f"{p}-{who}old{i:02d}": i % 4 for i in range(30)},
+            name="ronda-1",
         )
         # Set NUEVO (más reciente) de UN solo juicio → es el EFECTIVO que se mide.
         _mk_frozen_set(factory, pid, {f"{p}-{who}new": 3}, name="ronda-2")
@@ -998,14 +1047,15 @@ def test_labels_ready_red_when_effective_set_is_small(db):
         _exec(
             factory,
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', '"
-            + labels.DEDUP_EVAL_COHORT + "')",
+            "source) VALUES (:a, :b, 'duplicate', '" + labels.DEDUP_EVAL_COHORT + "')",
             {"a": ra, "b": rb},
         )
     _compute(factory)
     lr = _metric_row(factory, "labels_ready")
     assert float(lr.value) == 0  # ROJO: el set EFECTIVO de cada perfil tiene 1 juicio
-    assert lr.details["sets_congelados_ok"] == 2  # existen 2 sets viejos >=30 (informativo)…
+    assert (
+        lr.details["sets_congelados_ok"] == 2
+    )  # existen 2 sets viejos >=30 (informativo)…
     assert lr.details["perfiles_ok"] == 0  # …pero 0 perfiles con set EFECTIVO >=30
     gates = _gates(factory)
     assert gates["labels_ready"]["ok"] is False
@@ -1025,7 +1075,9 @@ def test_labels_ready_gates_on_passed_snapshot_not_fresh_query(db):
 
     async def labels_ready_with(snapshot):
         async with factory() as s:
-            _metric, _value, details, _merge = await metrics._labels_ready_row(s, snapshot)
+            _metric, _value, details, _merge = await metrics._labels_ready_row(
+                s, snapshot
+            )
             return details
 
     # Snapshot VACÍO → perfiles_ok=0 aunque existan 2 perfiles con set >=30 (NO re-consulta).
@@ -1036,7 +1088,9 @@ def test_labels_ready_gates_on_passed_snapshot_not_fresh_query(db):
         async with factory() as s:
             return await metrics._measured_profiles(s)
 
-    assert asyncio.run(labels_ready_with(asyncio.run(real_snapshot())))["perfiles_ok"] == 2
+    assert (
+        asyncio.run(labels_ready_with(asyncio.run(real_snapshot())))["perfiles_ok"] == 2
+    )
 
 
 def test_inactive_profile_excluded_from_metrics_and_labels_ready(db):
@@ -1069,14 +1123,18 @@ def test_inactive_profile_excluded_from_metrics_and_labels_ready(db):
         _exec(
             factory,
             "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-            "source) VALUES (:a, :b, 'duplicate', '"
-            + labels.DEDUP_EVAL_COHORT + "')",
+            "source) VALUES (:a, :b, 'duplicate', '" + labels.DEDUP_EVAL_COHORT + "')",
             {"a": ra, "b": rb},
         )
     # u1 ACTIVO, u2 INACTIVO (último estado users por pk del staging aplicado).
-    _stage_users(factory, [
-        (1, "I", u1, True), (2, "I", u2, True), (3, "U", u2, False),
-    ])
+    _stage_users(
+        factory,
+        [
+            (1, "I", u1, True),
+            (2, "I", u2, True),
+            (3, "U", u2, False),
+        ],
+    )
 
     r1 = _compute(factory)
     assert r1["profiles_measured"] == 1  # u2 fuera de la medición
@@ -1093,25 +1151,30 @@ def test_inactive_profile_excluded_from_metrics_and_labels_ready(db):
     assert gates["labels_ready"]["ok"] is False
     assert f"ndcg@10::profile:{pid2}" not in gates  # sin fila = sin gate suyo
     # El set del inactivo se CONSERVA congelado e INTACTO (inmutable, §4).
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM labeled_judgments j "
-        "JOIN labeled_sets ls ON ls.id = j.set_id WHERE ls.profile_id = :p",
-        p=pid2,
-    ) == 30
-    assert _scalar(
-        factory, "SELECT frozen_at FROM labeled_sets WHERE profile_id = :p",
-        p=pid2,
-    ) is not None
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM labeled_judgments j "
+            "JOIN labeled_sets ls ON ls.id = j.set_id WHERE ls.profile_id = :p",
+            p=pid2,
+        )
+        == 30
+    )
+    assert (
+        _scalar(
+            factory,
+            "SELECT frozen_at FROM labeled_sets WHERE profile_id = :p",
+            p=pid2,
+        )
+        is not None
+    )
 
     # RE-ACTIVACIÓN aplicada ⇒ el siguiente ciclo lo mide y lo cuenta.
     _stage_users(factory, [(4, "U", u2, True)])
     cycle2 = CYCLE + timedelta(days=1)
     r2 = _compute(factory, cycle_id=cycle2, now=AFTER + timedelta(days=1))
     assert r2["profiles_measured"] == 2
-    assert _metric_row(
-        factory, "ndcg@10", f"profile:{pid2}", cycle=cycle2
-    ) is not None
+    assert _metric_row(factory, "ndcg@10", f"profile:{pid2}", cycle=cycle2) is not None
     lr2 = _metric_row(factory, "labels_ready", cycle=cycle2)
     assert float(lr2.value) == 1
     assert lr2.details["sets_congelados_ok"] == 2
@@ -1183,7 +1246,6 @@ def test_sealed_cycle_immutable_and_force_recompute_resets_streak(db):
 
 
 # --------------------------------------------------- falsos_negativos (§5/§6)
-
 
 
 def test_sealed_metrics_reject_direct_rewrite_and_delete(db):
@@ -1295,13 +1357,14 @@ def test_perdida_zero_on_healthy_mirror_and_gap_when_injected(db):
     for h in (l1, l2, l3):
         _legacy_job(factory, h)
         _mk_slot(factory, src, h)
-    _legacy_job(factory, f"{p}-inact", active=False)   # jamás en el minuendo
-    _legacy_job(factory, f"{p}-dup", dup=l1)           # jamás en el minuendo
+    _legacy_job(factory, f"{p}-inact", active=False)  # jamás en el minuendo
+    _legacy_job(factory, f"{p}-dup", dup=l1)  # jamás en el minuendo
     # Cuarentenables del sink: url > MAX_URL_LEN y url NULL → no_ingeribles.
     # 2048 chars EXACTOS sin path: cabe en la columna (2048) pero la
     # NORMALIZADA crece a 2049 ⇒ cuarentenable (frontera core0028)
-    _legacy_job(factory, f"{p}-longurl",
-                url="https://leg?" + "x" * (2048 - len("https://leg?")))
+    _legacy_job(
+        factory, f"{p}-longurl", url="https://leg?" + "x" * (2048 - len("https://leg?"))
+    )
     _legacy_job(factory, f"{p}-nourl", url=None)
     # Ruido que NO debe contar en el sustraendo: slot cerrado y fuente ajena.
     _legacy_job(factory, f"{p}-closed", active=False)
@@ -1387,7 +1450,7 @@ def test_perdida_quarantine_frontier_matches_sink(db):
         [f"{p}-grow", f"{p}-ipv6"]
     )
     gates = _gates(factory)
-    assert gates["perdida"]["ok"] is True         # sin falso perdida>0
+    assert gates["perdida"]["ok"] is True  # sin falso perdida>0
     assert gates["no_ingeribles"]["ok"] is False  # alerta > 0, APARTE
 
 
@@ -1452,7 +1515,8 @@ def test_sampler_appends_and_p99_exact(db):
         "'{samples}', CAST(:j AS jsonb)) WHERE cycle_id = :c AND metric = :m",
         {
             "j": json.dumps(samples),
-            "c": CYCLE, "m": "outbox_lag_p99",
+            "c": CYCLE,
+            "m": "outbox_lag_p99",
         },
     )
     _compute(factory)
@@ -1477,14 +1541,17 @@ def test_outbox_lag_without_samples_is_no_data_and_gate_fails(db):
     assert float(dead.value) == 0
     assert _gates(factory)["outbox_dead"]["ok"] is True
 
+
 def test_outbox_lag_with_only_early_sample_is_no_data(db):
     """Una muestra verde temprana no representa las 24 h del ciclo."""
     factory = db
-    sample = [{
-        "ts": (CSTART + timedelta(minutes=5)).isoformat(),
-        "oldest_pending_s": 0,
-        "dead_total": 0,
-    }]
+    sample = [
+        {
+            "ts": (CSTART + timedelta(minutes=5)).isoformat(),
+            "oldest_pending_s": 0,
+            "dead_total": 0,
+        }
+    ]
     _exec(
         factory,
         "INSERT INTO shadow_cycle_metrics (cycle_id, metric, scope, value, "
@@ -1503,7 +1570,6 @@ def test_outbox_lag_with_only_early_sample_is_no_data(db):
     assert row.details["samples_count"] == 1
     assert row.details["nota"] == "cobertura temporal insuficiente del muestreador"
     assert _gates(factory)["outbox_lag_p99"]["ok"] is False
-
 
 
 # ------------------------------------------------------- outbox_dead (P2-6)
@@ -1593,11 +1659,17 @@ def test_recompute_after_purge_preserves_sealed_p99(db):
         "CAST(:j AS jsonb))",
         {
             "c": CYCLE,
-            "j": json.dumps({"samples": [
-                {"ts": (CSTART + timedelta(minutes=5 * i)).isoformat(),
-                 "oldest_pending_s": 250.0}
-                for i in range(289)
-            ]}),
+            "j": json.dumps(
+                {
+                    "samples": [
+                        {
+                            "ts": (CSTART + timedelta(minutes=5 * i)).isoformat(),
+                            "oldest_pending_s": 250.0,
+                        }
+                        for i in range(289)
+                    ]
+                }
+            ),
         },
     )
     _compute(factory)
@@ -1628,7 +1700,9 @@ def test_recompute_after_purge_preserves_sealed_p99(db):
     assert row.details["samples_pruned"] == 289
     assert row.finished_at == sealed_at  # ni re-sellado: intacta
     assert row.details["recomputed_at"]  # el force queda TRAZADO (P1-4)
-    assert _gates(factory)["outbox_lag_p99"]["ok"] is True  # 250 <= 900 (umbral recalibrado 2026-08-22)
+    assert (
+        _gates(factory)["outbox_lag_p99"]["ok"] is True
+    )  # 250 <= 900 (umbral recalibrado 2026-08-22)
 
 
 # --------------------------------------------------------- latencia_p95 (§5)
@@ -1658,7 +1732,8 @@ def test_latencia_p95_over_batches_tolerating_unsealed_and_foreign(db):
         "min_received_at, started_at, finished_at, changes) VALUES "
         "(200, 200, :r1, :r1, NULL, 1), (201, 201, :r2, :r2, :f2, 1)",
         {
-            "r1": t0, "r2": CEND + timedelta(hours=1),
+            "r1": t0,
+            "r2": CEND + timedelta(hours=1),
             "f2": CEND + timedelta(hours=1, seconds=999),
         },
     )
@@ -1667,7 +1742,9 @@ def test_latencia_p95_over_batches_tolerating_unsealed_and_foreign(db):
     # A MANO: p95 de [10,20,30,40] = 30 + 0.85·10 = 38.5 (percentile_cont).
     assert float(row.value) == pytest.approx(38.5)
     assert row.details["lotes"] == 4
-    assert _gates(factory)["latencia_p95"]["ok"] is True  # 38.5 <= 3600 (umbral recalibrado 2026-08-22)
+    assert (
+        _gates(factory)["latencia_p95"]["ok"] is True
+    )  # 38.5 <= 3600 (umbral recalibrado 2026-08-22)
 
 
 # ---------------------------------------------------------------- coste (§5)
@@ -1730,8 +1807,13 @@ def test_reenlace_pct_attaches_recycles_over_touched(db):
         factory, src, "re-3", first_seen=before, last_seen=t0
     )
     _mk_slot(  # tocada por cierre en la ventana
-        factory, src, "re-4", first_seen=before, last_seen=before,
-        active=False, ended=t0,
+        factory,
+        src,
+        "re-4",
+        first_seen=before,
+        last_seen=before,
+        active=False,
+        ended=t0,
     )
     # NO cuentan: fuera de ventana y fuente ajena.
     _mk_slot(factory, src, "re-5", first_seen=before, last_seen=before)
@@ -1740,12 +1822,13 @@ def test_reenlace_pct_attaches_recycles_over_touched(db):
     vac_re1 = _scalar(
         factory,
         "SELECT vacancy_id FROM source_listing_incarnations WHERE "
-        "source_listing_id = :l", l=l1,
+        "source_listing_id = :l",
+        l=l1,
     )
     for method, ts in (
-        ("url_normalized", t0),                       # attach: cuenta
-        ("url_alias", t0),                            # alias: NO re-enlaza
-        ("url_normalized", before),                   # fuera de ventana
+        ("url_normalized", t0),  # attach: cuenta
+        ("url_alias", t0),  # alias: NO re-enlaza
+        ("url_normalized", before),  # fuera de ventana
     ):
         _exec(
             factory,
@@ -1758,7 +1841,9 @@ def test_reenlace_pct_attaches_recycles_over_touched(db):
     # A MANO: (1 attach + 1 recycle) / 4 tocadas = 0.5 (ratio 0..1).
     assert float(row.value) == pytest.approx(0.5)
     assert row.details == {
-        "attaches": 1, "recycles": 1, "encarnaciones_tocadas": 4,
+        "attaches": 1,
+        "recycles": 1,
+        "encarnaciones_tocadas": 4,
     }
     g = _gates(factory)["reenlace_pct"]
     assert g["kind"] == "alerta" and g["ok"] is False  # 0.5 > 0.05
@@ -1776,7 +1861,8 @@ def test_reenlace_pct_multiple_evidencias_no_supera_1(db):
     vac = _scalar(
         factory,
         "SELECT vacancy_id FROM source_listing_incarnations "
-        "WHERE source_listing_id = :l", l=l1,
+        "WHERE source_listing_id = :l",
+        l=l1,
     )
     for _ in range(2):  # DOS evidencias del mismo attach (re-cosecha)
         _exec(
@@ -1882,8 +1968,11 @@ def test_perdida_roja_con_cambio_pendiente_que_no_explica_el_hueco(db):
         "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
         "payload, received_at, applied_at) VALUES (9401, 0, 'jobs', 'I', :p, "
         "CAST('{}' AS jsonb), :r, :a)",
-        {"p": perdido, "r": CSTART - timedelta(days=3),
-         "a": CSTART - timedelta(days=3)},
+        {
+            "p": perdido,
+            "r": CSTART - timedelta(days=3),
+            "a": CSTART - timedelta(days=3),
+        },
     )
     # …y el UPDATE RUTINARIO de la re-cosecha recién capturado (la gracia
     # indebida). Tras el cierre del ciclo: no bloquea el sellado.
@@ -1948,16 +2037,23 @@ def test_perdida_roja_cuando_la_reapertura_ya_se_aplico_sin_crear_slot(db):
             "payload, received_at, applied_at) VALUES "
             f"(:l, 0, 'jobs', 'U', :p, CAST('{{\"is_active\": {activo}}}' AS jsonb), "
             ":r, :a)",
-            {"l": 9410 + (0 if activo == "true" else 1), "p": h,
-             "r": cerrado, "a": aplicado},
+            {
+                "l": 9410 + (0 if activo == "true" else 1),
+                "p": h,
+                "r": cerrado,
+                "a": aplicado,
+            },
         )
         _exec(
             factory,
             "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
             "payload, received_at) VALUES (:l, 0, 'jobs', 'U', :p, "
             "CAST('{}' AS jsonb), :r)",
-            {"l": 9420 + (0 if activo == "true" else 1), "p": h,
-             "r": AFTER - timedelta(minutes=5)},
+            {
+                "l": 9420 + (0 if activo == "true" else 1),
+                "p": h,
+                "r": AFTER - timedelta(minutes=5),
+            },
         )
 
     _compute(factory)
@@ -1974,8 +2070,14 @@ def _cambio(factory, lsn, pk, received, applied=None, payload=None, op="U"):
         "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
         "payload, received_at, applied_at) VALUES (:l, 0, 'jobs', :o, :p, "
         "CAST(:j AS jsonb), :r, :a)",
-        {"l": lsn, "o": op, "p": pk, "j": json.dumps(payload or {}),
-         "r": received, "a": applied},
+        {
+            "l": lsn,
+            "o": op,
+            "p": pk,
+            "j": json.dumps(payload or {}),
+            "r": received,
+            "a": applied,
+        },
     )
 
 
@@ -1994,32 +2096,46 @@ def test_perdida_gracia_por_estado_aplicado_cubre_las_tres_patologias(db):
     factory = db
     src = _mk_source(factory, "legacy:g4estadofx")
     p = uuid.uuid4().hex[:6]
-    boot = f"{p}-boot"        # inactivo en el bootstrap, sin slot: GRACIA
-    dupl = f"{p}-dupl"        # cerrado por duplicate_of, sin slot: GRACIA (N-5)
+    boot = f"{p}-boot"  # inactivo en el bootstrap, sin slot: GRACIA
+    dupl = f"{p}-dupl"  # cerrado por duplicate_of, sin slot: GRACIA (N-5)
     perdido = f"{p}-perdido"  # el proyector debía crear slot y no lo creó: ROJO
-    react = f"{p}-react"      # slot cerrado + CDC en vuelo (G2-P2-2): GRACIA
+    react = f"{p}-react"  # slot cerrado + CDC en vuelo (G2-P2-2): GRACIA
     viejo = CSTART - timedelta(days=3)
     en_vuelo = AFTER - timedelta(minutes=5)
 
     # (1) G4-P2-1: el backfill emitió su I ya INACTIVO (aplicado como cierre,
     # sin slot) y HOY el legacy lo re-activó con el CDC aún en vuelo.
     _legacy_job(factory, boot)
-    _cambio(factory, 9601, boot, viejo, applied=viejo, op="I",
-            payload={"is_active": False})
+    _cambio(
+        factory, 9601, boot, viejo, applied=viejo, op="I", payload={"is_active": False}
+    )
     _cambio(factory, 9602, boot, en_vuelo, payload={"is_active": True})
 
     # (2) G4-N-5: cierre por DUPLICADO — `is_active` sigue en true y aun así
     # `_is_close` cierra: la gracia debe espejar el predicado COMPLETO.
     _legacy_job(factory, dupl)
-    _cambio(factory, 9603, dupl, viejo, applied=viejo,
-            payload={"is_active": True, "duplicate_of": "otro"})
+    _cambio(
+        factory,
+        9603,
+        dupl,
+        viejo,
+        applied=viejo,
+        payload={"is_active": True, "duplicate_of": "otro"},
+    )
     _cambio(factory, 9604, dupl, en_vuelo, payload={"is_active": True})
 
     # (3) NO-REGRESIÓN de G3-P2-1: el último aplicado ABRE (el proyector tuvo
     # su oportunidad) y no hay slot ⇒ pérdida REAL, la gracia no la tapa.
     _legacy_job(factory, perdido)
-    _cambio(factory, 9605, perdido, viejo, applied=viejo, op="I",
-            payload={"is_active": True})
+    _cambio(
+        factory,
+        9605,
+        perdido,
+        viejo,
+        applied=viejo,
+        op="I",
+        payload={"is_active": True},
+    )
     _cambio(factory, 9606, perdido, en_vuelo, payload={"is_active": True})
 
     # (4) NO-REGRESIÓN de G2-P2-2: slot CERRADO y reapertura en vuelo.
@@ -2071,8 +2187,15 @@ def test_perdida_roja_cuando_la_purga_se_llevo_la_evidencia_del_hueco(db):
     # APLICADO fue una APERTURA hace 30 días (el proyector tuvo su turno) +
     # el UPDATE rutinario de la re-cosecha recién capturado.
     _legacy_job(factory, perdido)
-    _cambio(factory, 9701, perdido, hace_30, applied=hace_30, op="I",
-            payload={"is_active": True})
+    _cambio(
+        factory,
+        9701,
+        perdido,
+        hace_30,
+        applied=hace_30,
+        op="I",
+        payload={"is_active": True},
+    )
     _cambio(factory, 9702, perdido, en_vuelo, payload={"is_active": True})
     # NO-REGRESIÓN G2-P2-2: reactivación legítima, slot CERRADO, sin ningún
     # cambio aplicado que consultar.
@@ -2089,9 +2212,12 @@ def test_perdida_roja_cuando_la_purga_se_llevo_la_evidencia_del_hueco(db):
             return r
 
     assert _run(purga())["staging_deleted"] == 0  # antes del fix: 1
-    assert {r.lsn for r in _rows(
-        factory, "SELECT lsn FROM shadow_change_log WHERE pk = :p", p=perdido
-    )} == {9701, 9702}
+    assert {
+        r.lsn
+        for r in _rows(
+            factory, "SELECT lsn FROM shadow_change_log WHERE pk = :p", p=perdido
+        )
+    } == {9701, 9702}
 
     _compute(factory)  # PRIMER cómputo, SIN force: el ciclo queda SELLADO
     row = _metric_row(factory, "perdida")
@@ -2110,8 +2236,10 @@ def test_perdida_roja_cuando_la_purga_se_llevo_la_evidencia_del_hueco(db):
     assert float(row.value) == 1  # antes del fix: 0
     assert row.details["huecos_muestra"] == [perdido]
     assert row.details["huecos_graciados_muestra"] == [react]
-    assert (row.details["huecos_graciados_razones"][react]
-            == "slot legacy sin encarnación activa (sin cambio aplicado)")
+    assert (
+        row.details["huecos_graciados_razones"][react]
+        == "slot legacy sin encarnación activa (sin cambio aplicado)"
+    )
     assert _gates(factory)["perdida"]["ok"] is False
 
 
@@ -2137,19 +2265,37 @@ def test_g6_una_fila_con_omitted_no_gracia_el_hueco_que_el_proyector_abriria(db)
     for pk, omitido in ((ciego, True), (control, False)):
         _legacy_job(factory, pk)
         # 1) cierre APLICADO…
-        _cambio(factory, 9910 if omitido else 9920, pk, viejo, applied=viejo,
-                op="U", payload={"is_active": False})
+        _cambio(
+            factory,
+            9910 if omitido else 9920,
+            pk,
+            viejo,
+            applied=viejo,
+            op="U",
+            payload={"is_active": False},
+        )
         # 2) …y encima el cambio aplicado MÁS RECIENTE, que para el proyector
         #    es una APERTURA (no trae is_active=false). Debía haber slot.
         payload = {"title": "reactivado"}
         if omitido:
             payload["_omitted"] = ["is_active"]
-        _cambio(factory, 9911 if omitido else 9921, pk,
-                viejo + timedelta(minutes=1),
-                applied=viejo + timedelta(minutes=1), op="U", payload=payload)
+        _cambio(
+            factory,
+            9911 if omitido else 9921,
+            pk,
+            viejo + timedelta(minutes=1),
+            applied=viejo + timedelta(minutes=1),
+            op="U",
+            payload=payload,
+        )
         # 3) el UPDATE rutinario de la re-cosecha, aún sin aplicar
-        _cambio(factory, 9912 if omitido else 9922, pk, en_vuelo,
-                payload={"is_active": True})
+        _cambio(
+            factory,
+            9912 if omitido else 9922,
+            pk,
+            en_vuelo,
+            payload={"is_active": True},
+        )
 
     _compute(factory)
     row = _metric_row(factory, "perdida")
@@ -2185,10 +2331,24 @@ def test_g6_la_purga_no_retiene_los_pks_que_el_legacy_ya_borro(db):
     _legacy_job(factory, vivo)  # el pk MUERTO no existe en el legacy
 
     for i, pk in enumerate((vivo, muerto)):
-        _cambio(factory, 9930 + i * 3, pk, viejo, applied=viejo, op="I",
-                payload={"is_active": True})
-        _cambio(factory, 9931 + i * 3, pk, viejo, applied=viejo, op="U",
-                payload={"is_active": True})
+        _cambio(
+            factory,
+            9930 + i * 3,
+            pk,
+            viejo,
+            applied=viejo,
+            op="I",
+            payload={"is_active": True},
+        )
+        _cambio(
+            factory,
+            9931 + i * 3,
+            pk,
+            viejo,
+            applied=viejo,
+            op="U",
+            payload={"is_active": True},
+        )
     # …y el legacy BORRA el segundo: lápida D, inconsultable por construcción.
     _cambio(factory, 9935, muerto, viejo, applied=viejo, op="D", payload={})
 
@@ -2200,8 +2360,10 @@ def test_g6_la_purga_no_retiene_los_pks_que_el_legacy_ya_borro(db):
 
     r1 = _run(purga())
     quedan = {
-        (row.pk, row.op) for row in _rows(
-            factory, "SELECT pk, op FROM shadow_change_log WHERE pk = ANY(:p)",
+        (row.pk, row.op)
+        for row in _rows(
+            factory,
+            "SELECT pk, op FROM shadow_change_log WHERE pk = ANY(:p)",
             p=[vivo, muerto],
         )
     }
@@ -2213,9 +2375,10 @@ def test_g6_la_purga_no_retiene_los_pks_que_el_legacy_ya_borro(db):
     # IDEMPOTENTE: el segundo pase no encuentra nada más que borrar…
     assert _run(purga())["staging_deleted"] == 0
     # …y la evidencia del pk vivo sigue ahí (el criterio no se queda ciego).
-    assert _rows(
-        factory, "SELECT lsn FROM shadow_change_log WHERE pk = :p", p=vivo
-    )[0].lsn == 9931
+    assert (
+        _rows(factory, "SELECT lsn FROM shadow_change_log WHERE pk = :p", p=vivo)[0].lsn
+        == 9931
+    )
 
 
 def test_g6_sin_tabla_legacy_alcanzable_la_purga_preserva_y_avisa(db, caplog):
@@ -2226,10 +2389,12 @@ def test_g6_sin_tabla_legacy_alcanzable_la_purga_preserva_y_avisa(db, caplog):
     factory = db
     pk = f"{uuid.uuid4().hex[:6]}-huerfano"
     viejo = CSTART - timedelta(days=30)
-    _cambio(factory, 9940, pk, viejo, applied=viejo, op="I",
-            payload={"is_active": True})
-    _cambio(factory, 9941, pk, viejo, applied=viejo, op="U",
-            payload={"is_active": True})
+    _cambio(
+        factory, 9940, pk, viejo, applied=viejo, op="I", payload={"is_active": True}
+    )
+    _cambio(
+        factory, 9941, pk, viejo, applied=viejo, op="U", payload={"is_active": True}
+    )
 
     async def purga():
         async with factory() as s:
@@ -2242,9 +2407,10 @@ def test_g6_sin_tabla_legacy_alcanzable_la_purga_preserva_y_avisa(db, caplog):
     with caplog.at_level(logging.WARNING, logger="jobhunt_core.shadow.metrics"):
         assert _run(purga())["staging_deleted"] == 1
     assert any("SIN la cota de pk vivo" in r.getMessage() for r in caplog.records)
-    assert _rows(
-        factory, "SELECT lsn FROM shadow_change_log WHERE pk = :p", p=pk
-    )[0].lsn == 9941
+    assert (
+        _rows(factory, "SELECT lsn FROM shadow_change_log WHERE pk = :p", p=pk)[0].lsn
+        == 9941
+    )
 
 
 def test_informe_de_la_gracia_no_afirma_un_slot_que_nunca_existio(db):
@@ -2260,10 +2426,12 @@ def test_informe_de_la_gracia_no_afirma_un_slot_que_nunca_existio(db):
     viejo = CSTART - timedelta(days=3)
     _legacy_job(factory, boot)
     # backfill: I ya INACTIVO ⇒ el proyector lo aplicó como CIERRE sin slot
-    _cambio(factory, 9801, boot, viejo, applied=viejo, op="I",
-            payload={"is_active": False})
-    _cambio(factory, 9802, boot, AFTER - timedelta(minutes=5),
-            payload={"is_active": True})
+    _cambio(
+        factory, 9801, boot, viejo, applied=viejo, op="I", payload={"is_active": False}
+    )
+    _cambio(
+        factory, 9802, boot, AFTER - timedelta(minutes=5), payload={"is_active": True}
+    )
     _compute(factory)
 
     row = _metric_row(factory, "perdida")
@@ -2273,15 +2441,15 @@ def test_informe_de_la_gracia_no_afirma_un_slot_que_nunca_existio(db):
     async def go():
         async with factory() as s:
             slots = await s.scalar(
-                sa.text("SELECT count(*) FROM source_listings "
-                        "WHERE external_id = :e"), {"e": boot},
+                sa.text("SELECT count(*) FROM source_listings WHERE external_id = :e"),
+                {"e": boot},
             )
             return slots, await metrics.render_report(s, CYCLE)
 
     slots, informe = _run(go())
     linea = next(x for x in informe.splitlines() if "GRACIADOS" in x)
-    assert slots == 0                     # jamás hubo slot, ni cerrado
-    assert "slot cerrado" not in linea    # antes del fix: lo afirmaba
+    assert slots == 0  # jamás hubo slot, ni cerrado
+    assert "slot cerrado" not in linea  # antes del fix: lo afirmaba
     assert "último cambio aplicado = is_active=false" in linea
     assert boot in linea
 
@@ -2305,25 +2473,35 @@ def test_informe_conserva_la_linea_del_colapso_en_ciclos_sellados_pre_fix(db):
             {"c": CYCLE, "m": metrics.M_NDCG, "s": scope, "d": json.dumps(det)},
         )
 
-    base = {"set_id": str(uuid.uuid4()), "espacio_idcg": "vacante",
-            "idcg_ref": 11.416508, "dcg": 3.5, "idcg": 7.0,
-            "refs_juzgados": 3, "vacantes_juzgadas": 1}
+    base = {
+        "set_id": str(uuid.uuid4()),
+        "espacio_idcg": "vacante",
+        "idcg_ref": 11.416508,
+        "dcg": 3.5,
+        "idcg": 7.0,
+        "refs_juzgados": 3,
+        "vacantes_juzgadas": 1,
+    }
     # Forma EXACTA de `details` anterior a la separación (sin las dos claves).
     _fila_ndcg("profile:viejo", dict(base, set_name="holdout-viejo"))
     # Y un ciclo POSTERIOR al cambio, que sí las trae.
-    _fila_ndcg("profile:nuevo", dict(base, set_name="holdout-nuevo",
-                                     refs_colapsados_por_attach=2,
-                                     refs_sin_vacante=0))
+    _fila_ndcg(
+        "profile:nuevo",
+        dict(
+            base,
+            set_name="holdout-nuevo",
+            refs_colapsados_por_attach=2,
+            refs_sin_vacante=0,
+        ),
+    )
 
     async def go():
         async with factory() as s:
             return await metrics.render_report(s, CYCLE)
 
     informe = _run(go())
-    viejo = next(x for x in informe.splitlines()
-                 if "ndcg@10 profile:viejo:" in x)
-    nuevo = next(x for x in informe.splitlines()
-                 if "ndcg@10 profile:nuevo:" in x)
+    viejo = next(x for x in informe.splitlines() if "ndcg@10 profile:viejo:" in x)
+    nuevo = next(x for x in informe.splitlines() if "ndcg@10 profile:nuevo:" in x)
     # El histórico recupera el AGREGADO (3 − 1) y dice que el reparto no está
     # disponible: jamás afirma «attach» sobre lo que puede ser falta de corpus.
     assert "2 ref(s) juzgados FUERA del ideal" in viejo
@@ -2407,18 +2585,34 @@ def test_purge_deletes_old_applied_preserving_last_users_and_unapplied(db):
     u1, u2 = str(uuid.uuid4()), str(uuid.uuid4())
     rows = [
         # (lsn, tabla, op, pk, payload, received, applied?)
-        (1, "jobs", "I", "j-old", {}, old, True),          # borra (superada)
-        (2, "users", "I", u1, {"id": u1, "is_active": True}, old, True),   # borra
-        (3, "users", "U", u1, {"id": u1, "is_active": False}, old, True),  # PRESERVA (última users de u1)
-        (4, "users", "I", u2, {"id": u2, "is_active": False}, old, True),  # PRESERVA (última users de u2)
-        (5, "users", "D", "u-gone", {}, old, True),        # borra (el ERASE ya corrió)
-        (6, "jobs", "U", "j-pend", {}, old, False),        # PRESERVA (sin aplicar)
-        (7, "jobs", "I", "j-recent", {}, recent, True),    # PRESERVA (reciente)
-        (8, "jobs", "U", "j-old", {}, old, True),          # PRESERVA (última de j-old)
+        (1, "jobs", "I", "j-old", {}, old, True),  # borra (superada)
+        (2, "users", "I", u1, {"id": u1, "is_active": True}, old, True),  # borra
+        (
+            3,
+            "users",
+            "U",
+            u1,
+            {"id": u1, "is_active": False},
+            old,
+            True,
+        ),  # PRESERVA (última users de u1)
+        (
+            4,
+            "users",
+            "I",
+            u2,
+            {"id": u2, "is_active": False},
+            old,
+            True,
+        ),  # PRESERVA (última users de u2)
+        (5, "users", "D", "u-gone", {}, old, True),  # borra (el ERASE ya corrió)
+        (6, "jobs", "U", "j-pend", {}, old, False),  # PRESERVA (sin aplicar)
+        (7, "jobs", "I", "j-recent", {}, recent, True),  # PRESERVA (reciente)
+        (8, "jobs", "U", "j-old", {}, old, True),  # PRESERVA (última de j-old)
         # G5-P2-1: para `jobs` la última puede ser una D — un borrado es un
         # CIERRE y es EVIDENCIA para el criterio de la gracia (a diferencia de
         # la D de `users`, que no aporta nada a inactive_user_refs).
-        (9, "jobs", "D", "j-gone", {}, old, True),         # PRESERVA (última de j-gone)
+        (9, "jobs", "D", "j-gone", {}, old, True),  # PRESERVA (última de j-gone)
     ]
     for lsn, t, op, pk, payload, recv, applied in rows:
         _exec(
@@ -2427,8 +2621,15 @@ def test_purge_deletes_old_applied_preserving_last_users_and_unapplied(db):
             "payload, received_at, applied_at) VALUES (:l, 0, :t, :o, :p, "
             "CAST(:j AS jsonb), CAST(:r AS timestamptz), "
             "CASE WHEN :a THEN CAST(:r AS timestamptz) END)",
-            {"l": lsn, "t": t, "o": op, "p": pk, "j": json.dumps(payload),
-             "r": recv, "a": applied},
+            {
+                "l": lsn,
+                "t": t,
+                "o": op,
+                "p": pk,
+                "j": json.dumps(payload),
+                "r": recv,
+                "a": applied,
+            },
         )
     # Samples de ciclos FUERA de retención se podan SOLO si el p99 quedó
     # SELLADO (guard value <> centinela — P3); los del ciclo actual, nunca.
@@ -2439,11 +2640,22 @@ def test_purge_deletes_old_applied_preserving_last_users_and_unapplied(db):
             "INSERT INTO shadow_cycle_metrics (cycle_id, metric, scope, value, "
             "details) VALUES (:c, 'outbox_lag_p99', 'global', -1, "
             "CAST(:j AS jsonb))",
-            {"c": cid, "j": json.dumps({"samples": [
-                {"ts": (sample_start + timedelta(minutes=5 * i)).isoformat(),
-                 "oldest_pending_s": i}
-                for i in range(n)
-            ]})},
+            {
+                "c": cid,
+                "j": json.dumps(
+                    {
+                        "samples": [
+                            {
+                                "ts": (
+                                    sample_start + timedelta(minutes=5 * i)
+                                ).isoformat(),
+                                "oldest_pending_s": i,
+                            }
+                            for i in range(n)
+                        ]
+                    }
+                ),
+            },
         )
     # Sella el p99 del ciclo viejo: sin sellar, el guard lo dejaría intacto.
     _compute(factory, cycle_id=date(2026, 7, 10))
@@ -2494,13 +2706,21 @@ def test_purge_keeps_unsealed_samples_until_compute_seals_them(db):
         "INSERT INTO shadow_cycle_metrics (cycle_id, metric, scope, value, "
         "details) VALUES (:c, 'outbox_lag_p99', 'global', :nodata, "
         "CAST(:j AS jsonb))",
-        {"c": CYCLE, "nodata": metrics.NO_DATA_VALUE, "j": json.dumps(
-            {"samples": [
-                {"ts": (CSTART + timedelta(minutes=5 * i)).isoformat(),
-                 "oldest_pending_s": (100, 150, 200, 250)[i % 4]}
-                for i in range(289)
-            ]}
-        )},
+        {
+            "c": CYCLE,
+            "nodata": metrics.NO_DATA_VALUE,
+            "j": json.dumps(
+                {
+                    "samples": [
+                        {
+                            "ts": (CSTART + timedelta(minutes=5 * i)).isoformat(),
+                            "oldest_pending_s": (100, 150, 200, 250)[i % 4],
+                        }
+                        for i in range(289)
+                    ]
+                }
+            ),
+        },
     )
     # Purga con el ciclo YA fuera de retención (cutoff 2026-07-23 > CYCLE)
     # y el compute aún sin correr: el guard la deja INTACTA.
@@ -2552,7 +2772,8 @@ def test_recompute_removes_stale_profile_rows(db):
 
     def profile_scopes():
         return {
-            r.scope for r in _rows(
+            r.scope
+            for r in _rows(
                 factory,
                 "SELECT DISTINCT scope FROM shadow_cycle_metrics "
                 "WHERE cycle_id = :c AND scope LIKE 'profile:%'",
@@ -2579,8 +2800,13 @@ def _seed_metric(factory, cycle, metric, scope, value, details=None):
         factory,
         "INSERT INTO shadow_cycle_metrics (cycle_id, metric, scope, value, "
         "details) VALUES (:c, :m, :s, :v, CAST(:d AS jsonb))",
-        {"c": cycle, "m": metric, "s": scope, "v": value,
-         "d": json.dumps(details or {})},
+        {
+            "c": cycle,
+            "m": metric,
+            "s": scope,
+            "v": value,
+            "d": json.dumps(details or {}),
+        },
     )
 
 
@@ -2592,22 +2818,27 @@ def test_evaluate_gates_ok_and_failed_with_forced_values(db):
         # p1: ndcg 0.70 con legacy 0.80 → umbral 0.75 → FALLO del gate.
         ("ndcg@10", p1, 0.70, {}),
         ("ndcg@10_legacy", p1, 0.80, {}),
-        ("falsos_negativos", p1, 0.5, {"modo": "estricto_0"}),   # FALLO (>0)
-        ("overlap@10", p1, 0.3, {}),                             # informativa
+        ("falsos_negativos", p1, 0.5, {"modo": "estricto_0"}),  # FALLO (>0)
+        ("overlap@10", p1, 0.3, {}),  # informativa
         # p2: ndcg 0.62 con legacy 0.50 → umbral max(0.60, 0.45) = 0.60 → OK.
         ("ndcg@10", p2, 0.62, {}),
         ("ndcg@10_legacy", p2, 0.50, {}),
         ("falsos_negativos", p2, 0.015, {"modo": "ratio_2pct"}),  # OK (<=0.02)
-        ("labels_ready", "global", 1, {}),                        # OK (P1-2)
-        ("dedup_precision", "global", 0.96, {}),                  # OK
-        ("dedup_recall", "global", 0.39, {}),                    # FALLO (<0.40, D2)
-        ("perdida", "global", 1, {}),                             # FALLO (==0)
-        ("no_ingeribles", "global", 2, {}),                       # ALERTA (>0)
+        ("labels_ready", "global", 1, {}),  # OK (P1-2)
+        ("dedup_precision", "global", 0.96, {}),  # OK
+        ("dedup_recall", "global", 0.39, {}),  # FALLO (<0.40, D2)
+        ("perdida", "global", 1, {}),  # FALLO (==0)
+        ("no_ingeribles", "global", 2, {}),  # ALERTA (>0)
         ("outbox_lag_p99", "global", 299.0, {"samples_count": 9}),  # OK
-        ("outbox_dead", "global", 1, {"dead_actual": 1}),           # FALLO (P2-6)
-        ("latencia_p95", "global", 4000.0, {"lotes": 4}),           # FALLO (>3600, umbral 2026-08-22)
-        ("coste", "global", 1234.0, {}),                            # informativa
-        ("reenlace_pct", "global", 0.06, {}),                       # ALERTA
+        ("outbox_dead", "global", 1, {"dead_actual": 1}),  # FALLO (P2-6)
+        (
+            "latencia_p95",
+            "global",
+            4000.0,
+            {"lotes": 4},
+        ),  # FALLO (>3600, umbral 2026-08-22)
+        ("coste", "global", 1234.0, {}),  # informativa
+        ("reenlace_pct", "global", 0.06, {}),  # ALERTA
     ]
     for m, sc, v, d in seed:
         _seed_metric(factory, cyc, m, sc, v, d)
@@ -2619,24 +2850,36 @@ def test_evaluate_gates_ok_and_failed_with_forced_values(db):
     assert gates[f"ndcg@10::{p1}"]["umbral"] == pytest.approx(0.75)
     assert gates[f"ndcg@10::{p2}"]["ok"] is True
     assert gates[f"ndcg@10::{p2}"]["umbral"] == pytest.approx(0.60)
-    assert gates[f"falsos_negativos::{p1}"] ["ok"] is False
+    assert gates[f"falsos_negativos::{p1}"]["ok"] is False
     assert gates[f"falsos_negativos::{p2}"]["ok"] is True
     assert gates["labels_ready"] == {
-        "value": 1.0, "umbral": 1, "kind": "gate", "ok": True,
+        "value": 1.0,
+        "umbral": 1,
+        "kind": "gate",
+        "ok": True,
     }
     assert gates["dedup_precision"]["ok"] is True
     assert gates["dedup_recall"]["ok"] is False
     assert gates["perdida"]["ok"] is False
     assert gates["no_ingeribles"] == {
-        "value": 2.0, "umbral": 0, "kind": "alerta", "ok": False,
+        "value": 2.0,
+        "umbral": 0,
+        "kind": "alerta",
+        "ok": False,
     }
     assert gates["outbox_lag_p99"]["ok"] is True
     assert gates["outbox_dead"] == {
-        "value": 1.0, "umbral": 0, "kind": "gate", "ok": False,  # P2-6
+        "value": 1.0,
+        "umbral": 0,
+        "kind": "gate",
+        "ok": False,  # P2-6
     }
     assert gates["latencia_p95"]["ok"] is False
     assert gates["coste"] == {
-        "value": 1234.0, "umbral": None, "kind": "alerta", "ok": True,
+        "value": 1234.0,
+        "umbral": None,
+        "kind": "alerta",
+        "ok": True,
     }
     assert gates["reenlace_pct"]["ok"] is False
 
@@ -2644,8 +2887,15 @@ def test_evaluate_gates_ok_and_failed_with_forced_values(db):
     empty = _gates(factory, cycle=date(2026, 6, 1))
     assert empty["ndcg@10"]["ok"] is False
     assert "sin perfiles" in empty["ndcg@10"]["nota"]
-    for m in ("labels_ready", "dedup_precision", "dedup_recall", "perdida",
-              "outbox_lag_p99", "outbox_dead", "latencia_p95"):
+    for m in (
+        "labels_ready",
+        "dedup_precision",
+        "dedup_recall",
+        "perdida",
+        "outbox_lag_p99",
+        "outbox_dead",
+        "latencia_p95",
+    ):
         assert empty[m]["ok"] is False and empty[m]["nota"] == "sin datos"
     for m in ("no_ingeribles", "coste", "reenlace_pct"):
         assert empty[m]["ok"] is True and empty[m]["nota"] == "sin datos"
@@ -2666,21 +2916,39 @@ def test_render_report_is_readable_text(db):
     _seed_metric(factory, cyc, "dedup_precision", "global", 0.96, {})
     _seed_metric(factory, cyc, "dedup_recall", "global", 0.95, {})
     _seed_metric(
-        factory, cyc, "perdida", "global", 0,
-        {"legacy_activos_ingeribles": 5, "slots_legacy_activos": 5,
-         "staging_sin_aplicar_1h": 0},
+        factory,
+        cyc,
+        "perdida",
+        "global",
+        0,
+        {
+            "legacy_activos_ingeribles": 5,
+            "slots_legacy_activos": 5,
+            "staging_sin_aplicar_1h": 0,
+        },
     )
     _seed_metric(factory, cyc, "no_ingeribles", "global", 0, {})
     _seed_metric(factory, cyc, "outbox_lag_p99", "global", 12.0, {})
     _seed_metric(factory, cyc, "outbox_dead", "global", 0, {"dead_actual": 0})
     _seed_metric(factory, cyc, "latencia_p95", "global", 38.5, {})
     _seed_metric(
-        factory, cyc, "coste", "global", 12.5,
-        {"embeddings_ofertas": 2, "evaluaciones_nuevas": 3,
-         "worker_s_lotes_proyector": 7.5},
+        factory,
+        cyc,
+        "coste",
+        "global",
+        12.5,
+        {
+            "embeddings_ofertas": 2,
+            "evaluaciones_nuevas": 3,
+            "worker_s_lotes_proyector": 7.5,
+        },
     )
     _seed_metric(
-        factory, cyc, "reenlace_pct", "global", 0.01,
+        factory,
+        cyc,
+        "reenlace_pct",
+        "global",
+        0.01,
         {"attaches": 1, "recycles": 0, "encarnaciones_tocadas": 100},
     )
 
@@ -2692,8 +2960,15 @@ def test_render_report_is_readable_text(db):
     assert "INFORME DE CICLO SOMBRA — 2026-07-01" in text
     assert "[2026-07-01T06:00:00+02:00 .. 2026-07-02T06:00:00+02:00)" in text
     for needle in (
-        f"ndcg@10::{p1}", "overlap@10", "labels_ready", "dedup_precision",
-        "perdida", "outbox_lag_p99", "outbox_dead", "latencia_p95", "coste",
+        f"ndcg@10::{p1}",
+        "overlap@10",
+        "labels_ready",
+        "dedup_precision",
+        "perdida",
+        "outbox_lag_p99",
+        "outbox_dead",
+        "latencia_p95",
+        "coste",
         "reenlace_pct",
     ):
         assert needle in text
@@ -2814,7 +3089,7 @@ def test_tasks_registered_routed_to_core_default_and_run(db):
 def test_dcg_formula_matches_contract():
     """La fórmula EXACTA de §5: DCG = Σ (2^rel_i − 1)/log2(i+1), i desde 1."""
     assert metrics._dcg([]) == 0.0
-    assert metrics._dcg([3]) == pytest.approx(7.0)          # (2^3−1)/log2(2)
+    assert metrics._dcg([3]) == pytest.approx(7.0)  # (2^3−1)/log2(2)
     assert metrics._dcg([0, 2]) == pytest.approx(3 / math.log2(3))
     assert metrics._dcg([3, 2, 1, 0]) == pytest.approx(
         7 + 3 / math.log2(3) + 1 / math.log2(4), abs=1e-9

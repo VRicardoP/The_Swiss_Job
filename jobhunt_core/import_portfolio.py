@@ -44,6 +44,7 @@ PORTFOLIO_IMPORT_TIER = 0
 # (ON CONFLICT (id) DO NOTHING con el mismo id en cada invocación).
 PORTFOLIO_IMPORT_SCOPE_ID = uuid.uuid5(uuid.NAMESPACE_URL, "portfolio-import-scope")
 
+
 def register_handlers() -> None:
     """Alta IDEMPOTENTE de identidad/normalización de `portfolio-import`
     (mismo patrón que arbeitnow/legacy_shadow): sin esto el sink no produce
@@ -153,7 +154,9 @@ def title_normalizable(value) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
-def _synthesizable(item: dict, listing: RawListing, url_normalized: str) -> tuple[bool, str | None]:
+def _synthesizable(
+    item: dict, listing: RawListing, url_normalized: str
+) -> tuple[bool, str | None]:
     """(True, None) si este durable produciría una vacante-sombra PRESENTABLE; (False, razón)
     si no. Razones: no_title (título no normalizable → el sink no crea canónica → impresentable),
     limit (url > MAX_URL_LEN) o malformed (payload/url no codificable —surrogate— o con NUL). La
@@ -188,10 +191,14 @@ def _synthesizable(item: dict, listing: RawListing, url_normalized: str) -> tupl
     # >2048 bytes a _preprocess y el ledger registraba 'malformed' en vez de
     # 'limit'. surrogatepass: un surrogate suelto no revienta la MEDIDA (esa
     # url cae después en _preprocess → malformed, como en el sink).
-    if (len(listing.url.encode("utf-8", "surrogatepass")) > MAX_URL_LEN
-            or len(url_normalized.encode("utf-8", "surrogatepass")) > MAX_URL_LEN):
+    if (
+        len(listing.url.encode("utf-8", "surrogatepass")) > MAX_URL_LEN
+        or len(url_normalized.encode("utf-8", "surrogatepass")) > MAX_URL_LEN
+    ):
         return False, pil.Q_LIMIT
-    if _preprocess(listing) is None:  # no codificable (surrogate) / NUL — el sink la cuarentena
+    if (
+        _preprocess(listing) is None
+    ):  # no codificable (surrogate) / NUL — el sink la cuarentena
         return False, pil.Q_MALFORMED
     return True, None
 
@@ -288,14 +295,23 @@ async def synthesize_vacancies(
     # sintetizable lo hace migrate_applications. Solo sin-url y url-malformada son por-item
     # (deterministas por url). `grp["synth"]` = una listing sintetizable que representa al grupo.
     groups: dict[str, dict] = {}
-    skipped = {"no_url": 0, "malformed": 0, "no_title": 0, "limit": 0, "collision": 0, "dup": 0}
+    skipped = {
+        "no_url": 0,
+        "malformed": 0,
+        "no_title": 0,
+        "limit": 0,
+        "collision": 0,
+        "dup": 0,
+    }
     # Colector de razones de cuarentena por url (para el ledger; barato aunque no se pida).
     quarantined: dict[str, str] = {}
     for item in items:
         url = item.get("url")
         if not url:
             skipped["no_url"] += 1
-            logger.warning("import_portfolio: item sin url OMITIDO (title=%r)", item.get("title"))
+            logger.warning(
+                "import_portfolio: item sin url OMITIDO (title=%r)", item.get("title")
+            )
             continue
         raw_title = item.get("title")
         try:
@@ -312,12 +328,20 @@ async def synthesize_vacancies(
             skipped["malformed"] += 1
             quarantined[url] = pil.Q_MALFORMED
             logger.warning(
-                "import_portfolio: URL malformada OMITIDA (%s: %s)", exc.__class__.__name__, exc
+                "import_portfolio: URL malformada OMITIDA (%s: %s)",
+                exc.__class__.__name__,
+                exc,
             )
             continue
         grp = groups.setdefault(
             listing.external_id,
-            {"urln": url_normalized, "by_url": {}, "count": 0, "synth": None, "reasons": set()},
+            {
+                "urln": url_normalized,
+                "by_url": {},
+                "count": 0,
+                "synth": None,
+                "reasons": set(),
+            },
         )
         grp["count"] += 1
         grp["by_url"].setdefault(url, listing)  # una RawListing por url distinta
@@ -359,14 +383,18 @@ async def synthesize_vacancies(
             skipped["collision"] += grp["count"]
             collided.update(batch_urls)
             reason = (
-                pil.Q_COLLISION_INTRA if len(batch_urls) > 1 else pil.Q_COLLISION_CROSS_RUN
+                pil.Q_COLLISION_INTRA
+                if len(batch_urls) > 1
+                else pil.Q_COLLISION_CROSS_RUN
             )
             for u in batch_urls:
                 quarantined[u] = reason
             logger.warning(
                 "import_portfolio: COLISIÓN intra-lote/cross-run (%s) — lote=%r "
                 "portfolio=%r; a staging",
-                grp["urln"], sorted(batch_urls), sorted(prior_urls),
+                grp["urln"],
+                sorted(batch_urls),
+                sorted(prior_urls),
             )
             continue
         url = next(iter(batch_urls))
@@ -375,16 +403,21 @@ async def synthesize_vacancies(
             # no se crea vacante (ni impresentable ni created-null); a staging con la razón real,
             # elegida por precedencia determinista (independiente del orden del lote).
             reason = _group_reason(grp["reasons"])
-            skipped[{pil.Q_NO_TITLE: "no_title", pil.Q_LIMIT: "limit"}.get(reason, "malformed")] += (
-                grp["count"]
-            )
+            skipped[
+                {pil.Q_NO_TITLE: "no_title", pil.Q_LIMIT: "limit"}.get(
+                    reason, "malformed"
+                )
+            ] += grp["count"]
             quarantined[url] = reason
             logger.warning(
                 "import_portfolio: url sin durable sintetizable (%s) OMITIDA (%s) — a staging",
-                url, reason,
+                url,
+                reason,
             )
             continue
-        listings.append(grp["synth"])  # la listing SINTETIZABLE (título + frontera del sink ok)
+        listings.append(
+            grp["synth"]
+        )  # la listing SINTETIZABLE (título + frontera del sink ok)
         synthesized[grp["urln"]] = url
         skipped["dup"] += grp["count"] - 1  # exactos-dup del mismo url
 
@@ -413,9 +446,14 @@ async def synthesize_vacancies(
         # cross-source no cuentan como sintetizadas — antes el log las sumaba.
         "import_portfolio: %d items → %d sintetizadas (omitidos: %d sin url, %d malformadas, "
         "%d sin título, %d sobre-límite, %d colisiones, %d duplicados).",
-        len(items), len(listings) - len(cross_source), skipped["no_url"],
-        skipped["malformed"], skipped["no_title"], skipped["limit"],
-        skipped["collision"], skipped["dup"],
+        len(items),
+        len(listings) - len(cross_source),
+        skipped["no_url"],
+        skipped["malformed"],
+        skipped["no_title"],
+        skipped["limit"],
+        skipped["collision"],
+        skipped["dup"],
     )
     return collided
 
@@ -459,7 +497,8 @@ async def _synthesize_pruning_collisions(
         # LEGÍTIMOS cross-source (misma clave, grafía distinta: host en
         # mayúsculas, barra final) que el sink adjuntó bien por url_normalized.
         new_collided = {
-            lst.url for lst in to_try
+            lst.url
+            for lst in to_try
             if any(
                 _normalized_or_none(u) != urln_of[lst.url]
                 for u in incarnation_urls.get(urln_of[lst.url], set()) - {lst.url}
@@ -474,7 +513,8 @@ async def _synthesize_pruning_collisions(
         for url in sorted(new_collided):
             logger.warning(
                 "import_portfolio: COLISIÓN cross-source (%s) — cadena REVERTIDA, "
-                "durable a staging (reconciliar a mano)", url,
+                "durable a staging (reconciliar a mano)",
+                url,
             )
         to_try = [lst for lst in to_try if lst.url not in new_collided]
     return collided
@@ -551,9 +591,7 @@ def normalized_key(url: str) -> str | None:
     return key
 
 
-async def resolve_vacancy_by_url(
-    session: AsyncSession, url: str
-) -> uuid.UUID | None:
+async def resolve_vacancy_by_url(session: AsyncSession, url: str) -> uuid.UUID | None:
     """vacancy_id de la vacante-sombra activa para esa URL, o None.
 
     Resuelve por (fuente 'portfolio-import', url_normalized) → incarnación

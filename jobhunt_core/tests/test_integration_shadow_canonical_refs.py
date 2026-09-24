@@ -45,7 +45,13 @@ def _hash(title, company, url) -> str:
 def db():
     engine = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    created = {"consumers": [], "sets": [], "dedup_refs": [], "sources": [], "scopes": []}
+    created = {
+        "consumers": [],
+        "sets": [],
+        "dedup_refs": [],
+        "sources": [],
+        "scopes": [],
+    }
     yield factory, created
 
     async def cleanup():
@@ -88,7 +94,9 @@ def legacy_fx():
             )
             await c.execute(sa.text(f'GRANT USAGE ON SCHEMA "{schema}" TO {core_role}'))
             await c.execute(
-                sa.text(f'GRANT SELECT ON ALL TABLES IN SCHEMA "{schema}" TO {core_role}')
+                sa.text(
+                    f'GRANT SELECT ON ALL TABLES IN SCHEMA "{schema}" TO {core_role}'
+                )
             )
 
     asyncio.run(create())
@@ -212,7 +220,7 @@ def _corpus_canonizado(factory, created, admin_engine, schema, n=3, registrar=Tr
     `url` intacta (los scripts no la tocan) y el slot ya reapuntado por 7c.
     Devuelve (src, viejos, nuevos, old_a_new)."""
     viejos, nuevos, filas = [], [], []
-    sal = uuid.uuid4().hex[:8]   # cada corpus es único: `jobs.hash` es PK
+    sal = uuid.uuid4().hex[:8]  # cada corpus es único: `jobs.hash` es PK
     for i in range(n):
         titulo, empresa = f"Ingeniera {sal}-{i}", f"ACME {sal}-{i}"
         url = f"https://arbeitnow.com/view/{sal}-x{i}-{1000 + i}"
@@ -290,9 +298,7 @@ def _pares(factory, cohorte):
     return _run(go())
 
 
-def test_sin_remapeo_las_etiquetas_dejan_de_resolver_y_con_el_vuelven(
-    db, legacy_fx
-):
+def test_sin_remapeo_las_etiquetas_dejan_de_resolver_y_con_el_vuelven(db, legacy_fx):
     """MORDIDA: el PASO 7c arregla la CDC y rompe las ETIQUETAS.
 
     Tras la maniobra el slot de la sombra lleva el hash canónico y las
@@ -307,7 +313,9 @@ def test_sin_remapeo_las_etiquetas_dejan_de_resolver_y_con_el_vuelven(
     el nuevo es el `jobs.hash` que quedó."""
     factory, created = db
     admin_engine, schema = legacy_fx
-    _src, viejos, nuevos, _m = _corpus_canonizado(factory, created, admin_engine, schema)
+    _src, viejos, nuevos, _m = _corpus_canonizado(
+        factory, created, admin_engine, schema
+    )
     sid = _mk_set_con_juicios(factory, created, viejos)
     cohorte = f"canon-{uuid.uuid4().hex[:8]}"
     _mk_pares(factory, created, [(viejos[0], viejos[1])], cohorte)
@@ -350,8 +358,7 @@ async def _juicios(factory, sid):
         return (
             await s.execute(
                 sa.text(
-                    "SELECT job_ref, relevance FROM labeled_judgments "
-                    "WHERE set_id = :s"
+                    "SELECT job_ref, relevance FROM labeled_judgments WHERE set_id = :s"
                 ),
                 {"s": sid},
             )
@@ -440,7 +447,9 @@ def test_una_colision_de_juicios_aborta_y_nombra(db, legacy_fx):
     exactamente el silencio que este módulo existe para cerrar."""
     factory, created = db
     admin_engine, schema = legacy_fx
-    _src, viejos, nuevos, _m = _corpus_canonizado(factory, created, admin_engine, schema)
+    _src, viejos, nuevos, _m = _corpus_canonizado(
+        factory, created, admin_engine, schema
+    )
     # El set juzga el viejo Y el canónico del MISMO trabajo.
     _mk_set_con_juicios(factory, created, [viejos[0], nuevos[0]])
 
@@ -463,8 +472,9 @@ def test_un_par_que_colapsaria_a_a_igual_b_aborta_y_nombra(db, legacy_fx):
     # Un par que nombra el hash VIEJO de una fila y su propio CANÓNICO: es lo
     # que deja un `duplicate_of` sembrado cuando uno de los dos lados ya
     # estaba canonizado. Tras el re-mapeo los dos lados serían el mismo.
-    _legacy_insert(admin_engine, schema,
-                   [{"h": nuevo, "t": titulo, "c": empresa, "u": url_a}])
+    _legacy_insert(
+        admin_engine, schema, [{"h": nuevo, "t": titulo, "c": empresa, "u": url_a}]
+    )
     src, _vac = _mk_core_corpus(factory, created, [viejo_a, nuevo])
     _aplicar_paso_7c(factory, src, {})
     cohorte = f"canon-colapso-{uuid.uuid4().hex[:8]}"
@@ -473,9 +483,9 @@ def test_un_par_que_colapsaria_a_a_igual_b_aborta_y_nombra(db, legacy_fx):
     with pytest.raises(ValueError) as exc:
         _remap(factory, schema)
     assert "CHECK" in str(exc.value)
-    assert _pares(factory, cohorte) == [
-        (min(viejo_a, nuevo), max(viejo_a, nuevo))
-    ], "el par no puede haberse tocado"
+    assert _pares(factory, cohorte) == [(min(viejo_a, nuevo), max(viejo_a, nuevo))], (
+        "el par no puede haberse tocado"
+    )
 
 
 def _dos_que_invierten_el_orden():
@@ -489,8 +499,15 @@ def _dos_que_invierten_el_orden():
             titulo, empresa = f"Orden {k}-{i}", f"ACME {k}-{i}"
             url = f"https://arbeitnow.com/view/o{k}-{i}-{500 + i}"
             canon = f"https://arbeitnow.com/view/o{k}-{i}"
-            filas.append((titulo, empresa, url, _hash(titulo, empresa, url),
-                          _hash(titulo, empresa, canon)))
+            filas.append(
+                (
+                    titulo,
+                    empresa,
+                    url,
+                    _hash(titulo, empresa, url),
+                    _hash(titulo, empresa, canon),
+                )
+            )
         (_t0, _c0, _u0, v0, n0), (_t1, _c1, _u1, v1, n1) = filas
         if (v0 < v1) != (n0 < n1):
             return filas
@@ -509,8 +526,11 @@ def test_el_remapeo_renormaliza_el_orden_canonico_del_par(db, legacy_fx):
     factory, created = db
     admin_engine, schema = legacy_fx
     filas = _dos_que_invierten_el_orden()
-    _legacy_insert(admin_engine, schema,
-                   [{"h": n, "t": t, "c": c, "u": u} for t, c, u, _v, n in filas])
+    _legacy_insert(
+        admin_engine,
+        schema,
+        [{"h": n, "t": t, "c": c, "u": u} for t, c, u, _v, n in filas],
+    )
     viejos = [v for _t, _c, _u, v, _n in filas]
     nuevos = [n for _t, _c, _u, _v, n in filas]
     src, _vac = _mk_core_corpus(factory, created, viejos)
@@ -556,7 +576,9 @@ def test_la_sonda_publica_la_identidad_de_la_base_que_ve_el_dsn_del_core(db, cap
     # dos clientes con distinto DateStyle darían un rojo falso).
     base, oid, arranque = esperado.split("|")
     assert base and oid.isdigit()
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}", arranque), arranque
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}", arranque), (
+        arranque
+    )
 
 
 def test_la_sonda_rechaza_lo_que_no_sea_un_select(capsys):

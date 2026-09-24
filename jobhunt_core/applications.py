@@ -113,9 +113,7 @@ async def _merge_winner(
     for _ in range(MERGE_CHAIN_MAX):
         row = (
             await session.execute(
-                sa.text(
-                    "SELECT merged_into, archived_at FROM vacancies WHERE id = :v"
-                ),
+                sa.text("SELECT merged_into, archived_at FROM vacancies WHERE id = :v"),
                 {"v": vid},
             )
         ).one_or_none()
@@ -125,15 +123,12 @@ async def _merge_winner(
         if row.merged_into is None:
             if row.archived_at is None:
                 return vid
-            return (
-                vid
-                if await _profile_attached(session, profile_id, cadena)
-                else None
-            )
+            return vid if await _profile_attached(session, profile_id, cadena) else None
         vid = row.merged_into
     logger.warning(
         "applications: cadena merged_into > %d saltos desde %s — no se enlaza",
-        MERGE_CHAIN_MAX, vacancy_id,
+        MERGE_CHAIN_MAX,
+        vacancy_id,
     )
     return None
 
@@ -273,8 +268,10 @@ async def _synthesize_manual(
         external_id=external_id,
         url=url,
         payload={
-            "title": title, "company_name": company,
-            "description": description, "tags": [],
+            "title": title,
+            "company_name": company,
+            "description": description,
+            "tags": [],
         },
     )
     await RawListingSink().handle(session, str(scope_id), (listing,))
@@ -300,8 +297,12 @@ async def link_vacancy(
     if vacancy_id is not None:
         return await resolve_direct(session, vacancy_id, profile_id)
     if url is not None:
-        item = {"url": url, "title": title, "company": company,
-                "description": description}
+        item = {
+            "url": url,
+            "title": title,
+            "company": company,
+            "description": description,
+        }
         # FRONTERA del sink ANTES de tocar la BD (misma partición que el
         # import): una url con NUL/surrogate jamás vive en source_listings
         # (el sink la cuarentena) y como bind-param reventaría la query.
@@ -319,8 +320,14 @@ async def link_vacancy(
 
 
 async def record_status_event(
-    session, *, application_id, profile_id, vacancy_id, status: str,
-    revision: int, destination: str,
+    session,
+    *,
+    application_id,
+    profile_id,
+    vacancy_id,
+    status: str,
+    revision: int,
+    destination: str,
 ) -> None:
     """Evento VIVO en application_status_events + outbox del catálogo
     (`application.status_changed`, event_id = uuid5(application_id + status +
@@ -353,8 +360,15 @@ async def record_status_event(
 
 
 async def create_application(
-    session, *, profile_id, vacancy_id, status: str, notes, follow_up_date,
-    snapshot: dict, destination: str,
+    session,
+    *,
+    profile_id,
+    vacancy_id,
+    status: str,
+    notes,
+    follow_up_date,
+    snapshot: dict,
+    destination: str,
 ) -> uuid.UUID | None:
     """INSERT (revision=1, el INSERT cuenta como primera) + evento inicial +
     outbox; con status=saved además upsert de saved_at en la MISMA tx
@@ -370,17 +384,25 @@ async def create_application(
                 "ON CONFLICT (profile_id, vacancy_id) DO NOTHING RETURNING id"
             ),
             {
-                "id": uuid.uuid4(), "pid": profile_id, "vid": vacancy_id,
+                "id": uuid.uuid4(),
+                "pid": profile_id,
+                "vid": vacancy_id,
                 "snap": json.dumps(snapshot, ensure_ascii=False, default=str),
-                "st": status, "n": notes, "fud": follow_up_date,
+                "st": status,
+                "n": notes,
+                "fud": follow_up_date,
             },
         )
     ).scalar_one_or_none()
     if application_id is None:
         return None
     await record_status_event(
-        session, application_id=application_id, profile_id=profile_id,
-        vacancy_id=vacancy_id, status=status, revision=1,
+        session,
+        application_id=application_id,
+        profile_id=profile_id,
+        vacancy_id=vacancy_id,
+        status=status,
+        revision=1,
         destination=destination,
     )
     if status == SAVED_STATUS:
@@ -432,15 +454,17 @@ def compose_application(row, corpus: dict) -> dict:
     """Item kind=application: claves PRESENTES en snapshot priman aunque
     valgan null (Decisión 3d/5); ausentes → corpus de la vacante enlazada."""
     snap = row.snapshot or {}
-    fields = {
-        k: (snap[k] if k in snap else corpus.get(k)) for k in SNAPSHOT_KEYS
-    }
+    fields = {k: (snap[k] if k in snap else corpus.get(k)) for k in SNAPSHOT_KEYS}
     return {
-        "id": row.id, "profile_id": row.profile_id,
-        "vacancy_id": row.vacancy_id, "kind": "application",
-        "status": row.status, "notes": row.notes,
+        "id": row.id,
+        "profile_id": row.profile_id,
+        "vacancy_id": row.vacancy_id,
+        "kind": "application",
+        "status": row.status,
+        "notes": row.notes,
         "follow_up_date": row.follow_up_date,
-        "created_at": row.created_at, "updated_at": row.updated_at,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
         **fields,
     }
 
@@ -450,10 +474,15 @@ def compose_bookmark(row, corpus: dict) -> dict:
     (direccionable), status=saved, notes de profile_vacancy_state, campos del
     corpus; ts del feed = saved_at."""
     return {
-        "id": row.vacancy_id, "profile_id": row.profile_id,
-        "vacancy_id": row.vacancy_id, "kind": "bookmark",
-        "status": SAVED_STATUS, "notes": row.notes, "follow_up_date": None,
-        "created_at": row.saved_at, "updated_at": row.updated_at,
+        "id": row.vacancy_id,
+        "profile_id": row.profile_id,
+        "vacancy_id": row.vacancy_id,
+        "kind": "bookmark",
+        "status": SAVED_STATUS,
+        "notes": row.notes,
+        "follow_up_date": None,
+        "created_at": row.saved_at,
+        "updated_at": row.updated_at,
         **{k: corpus.get(k) for k in SNAPSHOT_KEYS},
     }
 
@@ -575,7 +604,9 @@ async def _feed_rows(session, profile_id, page_rows) -> tuple[dict, dict]:
     return app_rows, bm_rows
 
 
-async def feed_page(session, profile_id, limit: int, cursor) -> tuple[list, tuple | None]:
+async def feed_page(
+    session, profile_id, limit: int, cursor
+) -> tuple[list, tuple | None]:
     """Página del GET compuesto: (items compuestos en orden, next_cursor
     (ts, id) | None)."""
     page_rows, has_more = await _feed_keys(session, profile_id, limit, cursor)

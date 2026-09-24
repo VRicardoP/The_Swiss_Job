@@ -34,8 +34,12 @@ def db():
     engine = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     created = {
-        "sources": [], "scopes": [], "models": [], "consumers": [],
-        "policies": [], "extra_vacs": [],
+        "sources": [],
+        "scopes": [],
+        "models": [],
+        "consumers": [],
+        "policies": [],
+        "extra_vacs": [],
     }
     yield factory, created
 
@@ -60,7 +64,12 @@ def db():
 
 
 def _api(
-    factory, url, token=None, headers=None, method="GET", json_body=None,
+    factory,
+    url,
+    token=None,
+    headers=None,
+    method="GET",
+    json_body=None,
     content=None,
 ):
     """Petición contra la app real (ASGITransport) con la sesión inyectada.
@@ -151,7 +160,9 @@ def test_auth_negative_catalog(db):
         r = _api(factory, url, token=bad_token)
         assert r.status_code == 401, desc
         body = r.json()
-        assert body["code"] == "unauthorized" and "message" in body and "details" in body
+        assert (
+            body["code"] == "unauthorized" and "message" in body and "details" in body
+        )
 
     # Revocada y caducada → mismo 401.
     async def revoke():
@@ -163,7 +174,10 @@ def test_auth_negative_catalog(db):
     assert _api(factory, url, token=token).status_code == 401
 
     _cid2, _kid2, expired = _issue(
-        factory, created, "tenant-a", ALL_SCOPES,
+        factory,
+        created,
+        "tenant-a",
+        ALL_SCOPES,
         expires_at=datetime.datetime.now(datetime.timezone.utc)
         - datetime.timedelta(hours=1),
     )
@@ -182,9 +196,15 @@ def test_scope_matrix_403(db):
     assert (r.status_code, r.json()["code"]) == (403, "forbidden")
     assert r.json()["details"] == {"required_scope": "profiles:read"}
     r = _api(factory, f"/v1/profiles/{pid}/matches", token=only_vac)
-    assert (r.status_code, r.json()["details"]["required_scope"]) == (403, "matches:read")
+    assert (r.status_code, r.json()["details"]["required_scope"]) == (
+        403,
+        "matches:read",
+    )
     r = _api(factory, f"/v1/vacancies/{uuid.uuid4()}", token=only_prof)
-    assert (r.status_code, r.json()["details"]["required_scope"]) == (403, "vacancies:read")
+    assert (r.status_code, r.json()["details"]["required_scope"]) == (
+        403,
+        "vacancies:read",
+    )
 
 
 def test_cross_tenant_404_and_global_corpus(db):
@@ -224,7 +244,9 @@ def test_vacancy_dto_shape_and_404s(db):
     assert body["primary_listing"]["last_seen_at"] is not None
     assert [x["source"] for x in body["listings"]] == ["arbeitnow"]
 
-    assert _api(factory, f"/v1/vacancies/{uuid.uuid4()}", token=token).status_code == 404
+    assert (
+        _api(factory, f"/v1/vacancies/{uuid.uuid4()}", token=token).status_code == 404
+    )
 
     async def archive():
         async with factory() as s:
@@ -245,7 +267,9 @@ def test_vacancy_dto_shape_and_404s(db):
         async with factory() as s:
             winner = uuid.uuid4()
             created["extra_vacs"].append(winner)
-            await s.execute(sa.text("INSERT INTO vacancies (id) VALUES (:w)"), {"w": winner})
+            await s.execute(
+                sa.text("INSERT INTO vacancies (id) VALUES (:w)"), {"w": winner}
+            )
             await s.execute(
                 sa.text("UPDATE vacancies SET merged_into = :w WHERE id = :v"),
                 {"w": winner, "v": vid2},
@@ -293,7 +317,9 @@ def test_profile_dto_and_etag(db):
     assert body["external_ref"] == "user-1"
     assert body["current_revision"]["content"]["title"] == "python dev"
     etag = r.headers["etag"]
-    r2 = _api(factory, f"/v1/profiles/{pid}", token=token, headers={"If-None-Match": etag})
+    r2 = _api(
+        factory, f"/v1/profiles/{pid}", token=token, headers={"If-None-Match": etag}
+    )
     assert r2.status_code == 304
 
     # Auditoría A-09: una revisión NUEVA cambia la representación → ETag nuevo.
@@ -305,7 +331,9 @@ def test_profile_dto_and_etag(db):
             await s.commit()
 
     asyncio.run(new_revision())
-    r3 = _api(factory, f"/v1/profiles/{pid}", token=token, headers={"If-None-Match": etag})
+    r3 = _api(
+        factory, f"/v1/profiles/{pid}", token=token, headers={"If-None-Match": etag}
+    )
     assert r3.status_code == 200 and r3.headers["etag"] != etag
     assert r3.json()["current_revision"]["content"]["title"] == "arquitecto"
 
@@ -343,10 +371,18 @@ def test_matches_dto_pagination_and_errors(db):
     scores = [it["evaluation"]["score_final"] for it in full["items"]]
     assert scores == sorted(scores, reverse=True)  # score DESC
     first = full["items"][0]
-    assert first["evaluation"]["model"] == {"name": "modelo-match", "version": tim.SHA_A}
+    assert first["evaluation"]["model"] == {
+        "name": "modelo-match",
+        "version": tim.SHA_A,
+    }
     assert first["evaluation"]["policy"] == {"name": "cosine", "prompt_version": "v1"}
     assert "similarity" in first["evaluation"]["scores"]
-    assert first["state"] == {"saved": False, "dismissed": False, "feedback": None, "notes": None}
+    assert first["state"] == {
+        "saved": False,
+        "dismissed": False,
+        "feedback": None,
+        "notes": None,
+    }
     assert first["vacancy"]["primary_listing"]["source"] == "arbeitnow"
 
     # Keyset opaco: página de 1 → cursor → resto, sin repetir ni saltar.
@@ -362,7 +398,9 @@ def test_matches_dto_pagination_and_errors(db):
     # Dismissed fuera del feed vía API.
     async def dismiss():
         async with factory() as s:
-            await matching.set_dismissed(s, pid, uuid.UUID(first["vacancy"]["id"]), True)
+            await matching.set_dismissed(
+                s, pid, uuid.UUID(first["vacancy"]["id"]), True
+            )
             await s.commit()
 
     asyncio.run(dismiss())
@@ -419,7 +457,9 @@ def test_profile_reassignment_never_leaks(db):
 
     asyncio.run(reassign())
     assert _api(factory, f"/v1/profiles/{pid}", token=token_a).status_code == 404
-    assert _api(factory, f"/v1/profiles/{pid}/matches", token=token_a).status_code == 404
+    assert (
+        _api(factory, f"/v1/profiles/{pid}/matches", token=token_a).status_code == 404
+    )
     r = _api(factory, f"/v1/profiles/{pid}", token=token_b)
     assert r.status_code == 200  # el dueño NUEVO sí lo ve
     assert "SECRETO" in r.json()["current_revision"]["content"]["title"]
@@ -502,6 +542,7 @@ def test_openapi_schema_exposed(db):
         for status in ("400", "401", "403", "404", "304", "500"):
             assert status in resps, (p, status)
 
+
 def test_listings_expose_external_id_and_etag_versioning(db):
     """P2 rev. externa A.SEAM: `external_id` en TODOS los listings activos —
     el alias legacy NO-primary (orden de ingestión core→legacy, attach por
@@ -533,8 +574,12 @@ def test_listings_expose_external_id_and_etag_versioning(db):
                     "(id, source_id, external_id, url_normalized) "
                     "VALUES (:id, :sid, :ext, :u)"
                 ),
-                {"id": listing_id, "sid": source_id, "ext": md5,
-                 "u": f"https://x/alias-{md5[:8]}"},
+                {
+                    "id": listing_id,
+                    "sid": source_id,
+                    "ext": md5,
+                    "u": f"https://x/alias-{md5[:8]}",
+                },
             )
             await s.execute(
                 sa.text(
@@ -542,8 +587,12 @@ def test_listings_expose_external_id_and_etag_versioning(db):
                     "(id, source_listing_id, vacancy_id, seq, url) "
                     "VALUES (:id, :lid, :vid, 1, :u)"
                 ),
-                {"id": uuid.uuid4(), "lid": listing_id, "vid": vid,
-                 "u": f"https://x/alias-{md5[:8]}"},
+                {
+                    "id": uuid.uuid4(),
+                    "lid": listing_id,
+                    "vid": vid,
+                    "u": f"https://x/alias-{md5[:8]}",
+                },
             )
             await s.commit()
 
@@ -565,25 +614,29 @@ def test_listings_expose_external_id_and_etag_versioning(db):
     old_shape = {
         **body,
         "listings": [
-            {k: v for k, v in x.items() if k != "external_id"}
-            for x in body["listings"]
+            {k: v for k, v in x.items() if k != "external_id"} for x in body["listings"]
         ],
     }
     r_old = _api(
-        factory, f"/v1/vacancies/{vid}", token=token,
+        factory,
+        f"/v1/vacancies/{vid}",
+        token=token,
         headers={"If-None-Match": _etag_of(old_shape)},
     )
     assert r_old.status_code == 200  # la representación cambió: no revalida
 
     # El ETag real de la forma nueva sí revalida (304).
     r304 = _api(
-        factory, f"/v1/vacancies/{vid}", token=token,
+        factory,
+        f"/v1/vacancies/{vid}",
+        token=token,
         headers={"If-None-Match": r.headers["etag"]},
     )
     assert r304.status_code == 304
 
 
 # ---------- C-API-R: feed/búsqueda de catálogo GET /v1/vacancies ----------
+
 
 def test_catalog_feed_only_active_and_by_id_coherent(db):
     """Feed §2/C-API-R: solo vacantes ACTIVAS y presentables; archivada/fundida
@@ -612,7 +665,9 @@ def test_catalog_feed_only_active_and_by_id_coherent(db):
             )
             winner = uuid.uuid4()
             created["extra_vacs"].append(winner)
-            await s.execute(sa.text("INSERT INTO vacancies (id) VALUES (:w)"), {"w": winner})
+            await s.execute(
+                sa.text("INSERT INTO vacancies (id) VALUES (:w)"), {"w": winner}
+            )
             await s.execute(
                 sa.text("UPDATE vacancies SET merged_into = :w WHERE id = :v"),
                 {"w": winner, "v": ids[1]},
@@ -620,9 +675,14 @@ def test_catalog_feed_only_active_and_by_id_coherent(db):
             await s.commit()
 
     asyncio.run(hide())
-    remaining = [it["id"] for it in _api(factory, base + f"?q={token}", token=auth).json()["items"]]
+    remaining = [
+        it["id"]
+        for it in _api(factory, base + f"?q={token}", token=auth).json()["items"]
+    ]
     assert remaining == [ids[2]]  # solo la ACTIVA queda
-    assert _api(factory, base + f"/{ids[0]}", token=auth).status_code == 404  # coherente
+    assert (
+        _api(factory, base + f"/{ids[0]}", token=auth).status_code == 404
+    )  # coherente
 
 
 def test_catalog_keyset_pagination_stable(db):
@@ -684,7 +744,10 @@ def test_catalog_q_substring_case_insensitive(db):
 
     assert len(_api(factory, base + f"?q={token}", token=auth).json()["items"]) == 3
     # Mayúsculas filtran igual (case-insensitive).
-    assert len(_api(factory, base + f"?q={token.upper()}", token=auth).json()["items"]) == 3
+    assert (
+        len(_api(factory, base + f"?q={token.upper()}", token=auth).json()["items"])
+        == 3
+    )
     # Substring presente en un solo title.
     only = f"{token}v1"
     got = _api(factory, base + f"?q={only}", token=auth).json()["items"]
@@ -722,13 +785,19 @@ def test_catalog_filter_source_primary_ci(db):
     token, _vacs, auth = _seed_catalog(factory, created, n=3)
     base = f"/v1/vacancies?q={token}"
 
-    assert len(_api(factory, base + "&source=arbeitnow", token=auth).json()["items"]) == 3
+    assert (
+        len(_api(factory, base + "&source=arbeitnow", token=auth).json()["items"]) == 3
+    )
     # Case-insensitive.
-    assert len(_api(factory, base + "&source=ARBEITNOW", token=auth).json()["items"]) == 3
+    assert (
+        len(_api(factory, base + "&source=ARBEITNOW", token=auth).json()["items"]) == 3
+    )
     # Fuente desconocida ⇒ página vacía honesta.
     assert _api(factory, base + "&source=jobsch", token=auth).json()["items"] == []
     # CSV: basta con que UNA fuente del listado case (OR entre nombres).
-    got = _api(factory, base + "&source=jobsch,%20arbeitnow", token=auth).json()["items"]
+    got = _api(factory, base + "&source=jobsch,%20arbeitnow", token=auth).json()[
+        "items"
+    ]
     assert len(got) == 3
     # Solo comas/espacios ⇒ se ignora el filtro.
     assert len(_api(factory, base + "&source=,%20,", token=auth).json()["items"]) == 3
@@ -750,12 +819,19 @@ def test_catalog_filter_remote_and_location(db):
     assert [i["id"] for i in one] == [v0]
     one = _api(factory, base + "&remote=false", token=auth).json()["items"]
     assert [i["id"] for i in one] == [v1]  # v2 (NULL) no casa false
-    got = {i["id"] for i in _api(factory, base + "&country=SWITZERLAND", token=auth).json()["items"]}
+    got = {
+        i["id"]
+        for i in _api(factory, base + "&country=SWITZERLAND", token=auth).json()[
+            "items"
+        ]
+    }
     assert got == {v0, v1}  # substring ci; v2 sin location fuera
     one = _api(factory, base + "&city=geneva", token=auth).json()["items"]
     assert [i["id"] for i in one] == [v1]
     # Composición AND entre filtros.
-    one = _api(factory, base + "&country=switzerland&remote=true", token=auth).json()["items"]
+    one = _api(factory, base + "&country=switzerland&remote=true", token=auth).json()[
+        "items"
+    ]
     assert [i["id"] for i in one] == [v0]
     # Tipo inválido en remote ⇒ 400 del contrato, no 500.
     r = _api(factory, base + "&remote=banana", token=auth)
@@ -801,7 +877,10 @@ def test_catalog_cursor_and_limit_errors(db):
     r = _api(factory, base + "?cursor=%21%21%21no-cursor", token=auth)
     assert (r.status_code, r.json()["code"]) == (400, "invalid_cursor")
     # base64 válido pero timestamp NAIVE (sin tz) y timestamp basura ⇒ 400.
-    for payload in (f"2026-07-30T00:00:00|{uuid.uuid4()}", f"no-es-fecha|{uuid.uuid4()}"):
+    for payload in (
+        f"2026-07-30T00:00:00|{uuid.uuid4()}",
+        f"no-es-fecha|{uuid.uuid4()}",
+    ):
         cur = b64.urlsafe_b64encode(payload.encode()).decode()
         r = _api(factory, base + f"?cursor={cur}", token=auth)
         assert (r.status_code, r.json()["code"]) == (400, "invalid_cursor"), payload
@@ -827,7 +906,10 @@ def test_catalog_scope_required(db):
     base = "/v1/vacancies"
     assert _api(factory, base).status_code == 401
     r = _api(factory, base, token=only_prof)
-    assert (r.status_code, r.json()["details"]["required_scope"]) == (403, "vacancies:read")
+    assert (r.status_code, r.json()["details"]["required_scope"]) == (
+        403,
+        "vacancies:read",
+    )
 
 
 # ---------- C-API-W: escritura del /v1 (PUT perfil + idempotency key) ----------
@@ -866,7 +948,11 @@ def test_put_profile_creates_revision_and_returns_etag(db):
     factory, created = db
     pid, _vacs, token = _seed_writable(factory, created)
     url = f"/v1/profiles/{pid}"
-    body = {"title": "staff engineer", "cv_text": "20 anios", "skills": ["python", "pg"]}
+    body = {
+        "title": "staff engineer",
+        "cv_text": "20 anios",
+        "skills": ["python", "pg"],
+    }
 
     r = _api(factory, url, token=token, method="PUT", json_body=body)
     assert r.status_code == 200
@@ -888,20 +974,38 @@ def test_put_parcial_preserva_preferencias_y_c3_sigue_valido(db):
     pid, _vacs, token = _seed_writable(factory, created)
     url = f"/v1/profiles/{pid}"
 
-    r = _api(factory, url, token=token, method="PUT", json_body={
-        "title": "python dev", "cv_text": "cv", "skills": ["python"],
-        "languages": ["English", "Spanish"], "locations": ["Remote"],
-        "remote_pref": "remote_only", "salary_min": 45000,
-    })
+    r = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        json_body={
+            "title": "python dev",
+            "cv_text": "cv",
+            "skills": ["python"],
+            "languages": ["English", "Spanish"],
+            "locations": ["Remote"],
+            "remote_pref": "remote_only",
+            "salary_min": 45000,
+        },
+    )
     assert r.status_code == 200
     c = r.json()["current_revision"]["content"]
     assert c["languages"] == ["English", "Spanish"]
     assert c["remote_pref"] == "remote_only" and c["salary_min"] == 45000
 
     # C-3: PUT clásico de solo-CV — preferencias PRESERVADAS.
-    r = _api(factory, url, token=token, method="PUT", json_body={
-        "title": "senior python dev", "cv_text": "cv v2", "skills": ["python"],
-    })
+    r = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        json_body={
+            "title": "senior python dev",
+            "cv_text": "cv v2",
+            "skills": ["python"],
+        },
+    )
     assert r.status_code == 200
     c = r.json()["current_revision"]["content"]
     assert c["title"] == "senior python dev" and c["cv_text"] == "cv v2"
@@ -909,9 +1013,15 @@ def test_put_parcial_preserva_preferencias_y_c3_sigue_valido(db):
     assert c["remote_pref"] == "remote_only" and c["salary_min"] == 45000
 
     # Explícito manda: languages=[] borra de verdad.
-    r = _api(factory, url, token=token, method="PUT", json_body={
-        "languages": [],
-    })
+    r = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        json_body={
+            "languages": [],
+        },
+    )
     assert r.status_code == 200
     c = r.json()["current_revision"]["content"]
     assert c["languages"] == []
@@ -929,40 +1039,62 @@ def test_put_valida_enum_remoto_y_rango_salarial_combinado(db):
 
     # enum: "banana" no crea revisión (el contrato A-09 sirve la validación
     # malformada como 400 con code=invalid_request, no el 422 de FastAPI)
-    r = _api(factory, url, token=token, method="PUT", json_body={
-        "title": "dev", "cv_text": "cv", "remote_pref": "banana"})
+    r = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        json_body={"title": "dev", "cv_text": "cv", "remote_pref": "banana"},
+    )
     assert r.status_code == 400
     assert r.json()["code"] == "invalid_request"
 
     # rango inválido en el MISMO request
-    r = _api(factory, url, token=token, method="PUT", json_body={
-        "title": "dev", "cv_text": "cv",
-        "salary_min": 100000, "salary_max": 1})
+    r = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        json_body={
+            "title": "dev",
+            "cv_text": "cv",
+            "salary_min": 100000,
+            "salary_max": 1,
+        },
+    )
     assert r.status_code == 400
     assert r.json()["code"] == "invalid_salary_range"
 
     # base válida con mínimo alto…
-    r = _api(factory, url, token=token, method="PUT", json_body={
-        "title": "dev", "cv_text": "cv", "salary_min": 100000})
+    r = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        json_body={"title": "dev", "cv_text": "cv", "salary_min": 100000},
+    )
     assert r.status_code == 200
 
     # …y un PUT parcial cuyo máximo forma rango inválido con el mínimo
     # PRESERVADO: rechazado contra el contenido combinado
-    r = _api(factory, url, token=token, method="PUT",
-             json_body={"salary_max": 50000})
+    r = _api(factory, url, token=token, method="PUT", json_body={"salary_max": 50000})
     assert r.status_code == 400
     assert r.json()["code"] == "invalid_salary_range"
 
     # inverso legítimo: máximo por encima del mínimo preservado
-    r = _api(factory, url, token=token, method="PUT",
-             json_body={"salary_max": 200000})
+    r = _api(factory, url, token=token, method="PUT", json_body={"salary_max": 200000})
     assert r.status_code == 200
     c = r.json()["current_revision"]["content"]
     assert c["salary_min"] == 100000 and c["salary_max"] == 200000
 
     # enum válido pasa
-    r = _api(factory, url, token=token, method="PUT",
-             json_body={"remote_pref": "remote_only"})
+    r = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        json_body={"remote_pref": "remote_only"},
+    )
     assert r.status_code == 200
     assert r.json()["current_revision"]["content"]["remote_pref"] == "remote_only"
 
@@ -973,32 +1105,47 @@ def test_target_roles_round_trip_y_preservacion(db):
     factory, created = db
     pid, _vacs, token = _seed_writable(factory, created)
     url = f"/v1/profiles/{pid}"
-    r = _api(factory, url, token=token, method="PUT", json_body={
-        "title": "dev", "cv_text": "cv",
-        "target_roles": ["Localization QA", "Content Reviewer"]})
+    r = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        json_body={
+            "title": "dev",
+            "cv_text": "cv",
+            "target_roles": ["Localization QA", "Content Reviewer"],
+        },
+    )
     assert r.status_code == 200
     c = r.json()["current_revision"]["content"]
     assert c["target_roles"] == ["Localization QA", "Content Reviewer"]
     hash_texto = r.json()["current_revision"]["text_hash"]
 
     # C-3 (solo CV): los roles se PRESERVAN
-    r = _api(factory, url, token=token, method="PUT", json_body={
-        "title": "dev", "cv_text": "cv"})
+    r = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        json_body={"title": "dev", "cv_text": "cv"},
+    )
     assert r.status_code == 200
     c = r.json()["current_revision"]["content"]
     assert c["target_roles"] == ["Localization QA", "Content Reviewer"]
 
     # cambiar SOLO roles: revisión nueva, MISMO text_hash (no re-embebe)
-    r = _api(factory, url, token=token, method="PUT",
-             json_body={"target_roles": ["QA Lead"]})
+    r = _api(
+        factory, url, token=token, method="PUT", json_body={"target_roles": ["QA Lead"]}
+    )
     assert r.status_code == 200
     rev = r.json()["current_revision"]
     assert rev["content"]["target_roles"] == ["QA Lead"]
     assert rev["text_hash"] == hash_texto
 
     # cota de cantidad en la frontera
-    r = _api(factory, url, token=token, method="PUT",
-             json_body={"target_roles": ["r"] * 11})
+    r = _api(
+        factory, url, token=token, method="PUT", json_body={"target_roles": ["r"] * 11}
+    )
     assert r.status_code == 400  # contrato A-09: validación malformada = 400
 
 
@@ -1009,16 +1156,30 @@ def test_put_profile_cross_tenant_and_absent_404(db):
     pid, _vacs, _tok = _seed_writable(factory, created)
     _cidb, _kidb, token_b = _issue(factory, created, "tenant-b", WRITE_SCOPES)
 
-    r_cross = _api(factory, f"/v1/profiles/{pid}", token=token_b, method="PUT",
-                   json_body={"title": "hijack"})
-    r_absent = _api(factory, f"/v1/profiles/{uuid.uuid4()}", token=token_b,
-                    method="PUT", json_body={"title": "x"})
+    r_cross = _api(
+        factory,
+        f"/v1/profiles/{pid}",
+        token=token_b,
+        method="PUT",
+        json_body={"title": "hijack"},
+    )
+    r_absent = _api(
+        factory,
+        f"/v1/profiles/{uuid.uuid4()}",
+        token=token_b,
+        method="PUT",
+        json_body={"title": "x"},
+    )
     assert r_cross.status_code == r_absent.status_code == 404
     assert r_cross.json() == r_absent.json()
     # La escritura ajena NO ocurrió: el título del dueño sigue intacto.
     _cid, _kid, token_a = _issue(factory, created, "tenant-match", WRITE_SCOPES)
-    assert _api(factory, f"/v1/profiles/{pid}", token=token_a).json()[
-        "current_revision"]["content"]["title"] == "python dev"
+    assert (
+        _api(factory, f"/v1/profiles/{pid}", token=token_a).json()["current_revision"][
+            "content"
+        ]["title"]
+        == "python dev"
+    )
 
 
 def test_put_profile_requires_write_scope(db):
@@ -1026,9 +1187,13 @@ def test_put_profile_requires_write_scope(db):
     factory, created = db
     pid, _vacs, _tok = _seed_writable(factory, created)
     _cid, _kid, ro = _issue(factory, created, "tenant-match", ALL_SCOPES)
-    r = _api(factory, f"/v1/profiles/{pid}", token=ro, method="PUT",
-             json_body={"title": "x"})
-    assert (r.status_code, r.json()["details"]["required_scope"]) == (403, "profiles:write")
+    r = _api(
+        factory, f"/v1/profiles/{pid}", token=ro, method="PUT", json_body={"title": "x"}
+    )
+    assert (r.status_code, r.json()["details"]["required_scope"]) == (
+        403,
+        "profiles:write",
+    )
 
 
 def test_put_profile_if_match_precondition_412(db):
@@ -1039,22 +1204,42 @@ def test_put_profile_if_match_precondition_412(db):
     url = f"/v1/profiles/{pid}"
     stale = _api(factory, url, token=token).headers["etag"]
 
-    r_ok = _api(factory, url, token=token, method="PUT",
-                headers={"If-Match": stale}, json_body={"title": "nuevo"})
+    r_ok = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        headers={"If-Match": stale},
+        json_body={"title": "nuevo"},
+    )
     assert r_ok.status_code == 200 and r_ok.headers["etag"] != stale
 
-    r_stale = _api(factory, url, token=token, method="PUT",
-                   headers={"If-Match": stale}, json_body={"title": "otro"})
+    r_stale = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        headers={"If-Match": stale},
+        json_body={"title": "otro"},
+    )
     assert (r_stale.status_code, r_stale.json()["code"]) == (412, "precondition_failed")
-    assert _api(factory, url, token=token).json()[
-        "current_revision"]["content"]["title"] == "nuevo"  # 'otro' no se escribió
+    assert (
+        _api(factory, url, token=token).json()["current_revision"]["content"]["title"]
+        == "nuevo"
+    )  # 'otro' no se escribió
 
     # If-Match con validador DÉBIL del ETag ACTUAL (1ª rev.): RFC 9110 §13.1.1
     # exige comparación FUERTE → W/ nunca satisface la precondición ⇒ 412
     # (a diferencia de If-None-Match, que sí admite la débil).
     cur = _api(factory, url, token=token).headers["etag"]
-    r_weak = _api(factory, url, token=token, method="PUT",
-                  headers={"If-Match": "W/" + cur}, json_body={"title": "via-debil"})
+    r_weak = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        headers={"If-Match": "W/" + cur},
+        json_body={"title": "via-debil"},
+    )
     assert (r_weak.status_code, r_weak.json()["code"]) == (412, "precondition_failed")
 
 
@@ -1068,17 +1253,25 @@ def test_idempotency_purge_removes_expired_only(db):
     cid = created["consumers"][0]
     url = f"/v1/profiles/{pid}"
     # Reserva viva vía un PUT idempotente real (response con cv_text).
-    _api(factory, url, token=token, method="PUT",
-         headers={"Idempotency-Key": "live-key"},
-         json_body={"title": "t", "cv_text": "curriculum"})
+    _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        headers={"Idempotency-Key": "live-key"},
+        json_body={"title": "t", "cv_text": "curriculum"},
+    )
 
     async def seed_expired():
         async with factory() as s:
-            await s.execute(sa.text(
-                "INSERT INTO idempotency_records "
-                "(consumer_id, key, route, request_hash, response, expires_at) "
-                "VALUES (:c, 'old', 'PUT /v1/x', 'h', '{}'::jsonb, now() - interval '1 hour')"
-            ), {"c": cid})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO idempotency_records "
+                    "(consumer_id, key, route, request_hash, response, expires_at) "
+                    "VALUES (:c, 'old', 'PUT /v1/x', 'h', '{}'::jsonb, now() - interval '1 hour')"
+                ),
+                {"c": cid},
+            )
             await s.commit()
 
     asyncio.run(seed_expired())
@@ -1087,9 +1280,15 @@ def test_idempotency_purge_removes_expired_only(db):
 
     async def count_live():
         async with factory() as s:
-            return (await s.execute(sa.text(
-                "SELECT count(*) FROM idempotency_records "
-                "WHERE consumer_id = :c AND key = 'live-key'"), {"c": cid})).scalar_one()
+            return (
+                await s.execute(
+                    sa.text(
+                        "SELECT count(*) FROM idempotency_records "
+                        "WHERE consumer_id = :c AND key = 'live-key'"
+                    ),
+                    {"c": cid},
+                )
+            ).scalar_one()
 
     assert asyncio.run(count_live()) == 1  # la viva sobrevive
 
@@ -1142,10 +1341,22 @@ def test_idempotency_different_key_reexecutes(db):
     factory, created = db
     pid, _vacs, token = _seed_writable(factory, created)
     url = f"/v1/profiles/{pid}"
-    r1 = _api(factory, url, token=token, method="PUT",
-              headers={"Idempotency-Key": "k-a"}, json_body={"title": "aaa"})
-    r2 = _api(factory, url, token=token, method="PUT",
-              headers={"Idempotency-Key": "k-b"}, json_body={"title": "bbb"})
+    r1 = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        headers={"Idempotency-Key": "k-a"},
+        json_body={"title": "aaa"},
+    )
+    r2 = _api(
+        factory,
+        url,
+        token=token,
+        method="PUT",
+        headers={"Idempotency-Key": "k-b"},
+        json_body={"title": "bbb"},
+    )
     assert r1.json()["current_revision"]["content"]["title"] == "aaa"
     assert r2.json()["current_revision"]["content"]["title"] == "bbb"
 
@@ -1157,12 +1368,18 @@ def test_idempotency_same_key_different_body_409(db):
     pid, _vacs, token = _seed_writable(factory, created)
     url = f"/v1/profiles/{pid}"
     h = {"Idempotency-Key": "k-x"}
-    r1 = _api(factory, url, token=token, method="PUT", headers=h, json_body={"title": "one"})
+    r1 = _api(
+        factory, url, token=token, method="PUT", headers=h, json_body={"title": "one"}
+    )
     assert r1.status_code == 200
-    r2 = _api(factory, url, token=token, method="PUT", headers=h, json_body={"title": "two"})
+    r2 = _api(
+        factory, url, token=token, method="PUT", headers=h, json_body={"title": "two"}
+    )
     assert (r2.status_code, r2.json()["code"]) == (409, "idempotency_conflict")
-    assert _api(factory, url, token=token).json()[
-        "current_revision"]["content"]["title"] == "one"
+    assert (
+        _api(factory, url, token=token).json()["current_revision"]["content"]["title"]
+        == "one"
+    )
 
 
 def test_idempotency_concurrent_same_key_single_execution(db):
@@ -1356,9 +1573,11 @@ def test_idempotency_purge_race_reserves_again_instead_of_500(db):
             ):
                 self._fired = True
                 async with factory() as purger:
-                    await purger.execute(sa.text(
-                        "DELETE FROM idempotency_records WHERE expires_at < now()"
-                    ))
+                    await purger.execute(
+                        sa.text(
+                            "DELETE FROM idempotency_records WHERE expires_at < now()"
+                        )
+                    )
                     await purger.commit()
             return result
 
@@ -1370,17 +1589,24 @@ def test_idempotency_purge_race_reserves_again_instead_of_500(db):
 
     async def go():
         async with factory() as s:  # reserva CADUCADA ya commiteada
-            await s.execute(sa.text(
-                "INSERT INTO idempotency_records "
-                "(consumer_id, key, route, request_hash, response, expires_at) "
-                "VALUES (:c, :k, :r, 'h0', '{\"status\": 200, \"body\": {}}'::jsonb, "
-                " now() - interval '1 second')"
-            ), {"c": cid, "k": key, "r": route})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO idempotency_records "
+                    "(consumer_id, key, route, request_hash, response, expires_at) "
+                    "VALUES (:c, :k, :r, 'h0', '{\"status\": 200, \"body\": {}}'::jsonb, "
+                    " now() - interval '1 second')"
+                ),
+                {"c": cid, "k": key, "r": route},
+            )
             await s.commit()
         async with factory() as s:
             return await run_idempotent(
-                _PurgeAfterReserve(s), Principal(cid, tuple(ALL_SCOPES)),
-                route, "h1", key, handler,
+                _PurgeAfterReserve(s),
+                Principal(cid, tuple(ALL_SCOPES)),
+                route,
+                "h1",
+                key,
+                handler,
             )
 
     status, payload = asyncio.run(go())  # antes: NoResultFound → 500

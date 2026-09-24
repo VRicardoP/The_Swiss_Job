@@ -210,8 +210,14 @@ class ProfileWriteDTO(BaseModel):
 
 # Enum del core (8 estados, core0011); el del portfolio (6) es subconjunto.
 ApplicationStatus = Literal[
-    "saved", "applied", "phone_screen", "technical", "interview",
-    "offer", "rejected", "withdrawn",
+    "saved",
+    "applied",
+    "phone_screen",
+    "technical",
+    "interview",
+    "offer",
+    "rejected",
+    "withdrawn",
 ]
 NotifyFrequency = Literal["realtime", "daily", "weekly"]
 

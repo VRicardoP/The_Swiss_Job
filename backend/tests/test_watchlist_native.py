@@ -18,8 +18,8 @@ from tests.test_applications_contract import seeded  # noqa: F401  (fixture de p
 async def test_native_school_can_create_draft_without_local_corpus(
     seeded,  # noqa: F811  (la fixture, no una redefinición)
     db_session,
-    monkeypatch,  # noqa: F811  (la fixture, no una redefinición)
-):  # noqa: F811  (la fixture, no una redefinición)
+    monkeypatch,
+):
     user_id, _, _ = seeded
     monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
     mid, jid = uuid.uuid4(), uuid.uuid4()
@@ -75,8 +75,8 @@ async def test_native_school_can_create_draft_without_local_corpus(
 async def test_native_school_lookup_refuses_ambiguous_identity(
     seeded,  # noqa: F811  (la fixture, no una redefinición)
     db_session,
-    monkeypatch,  # noqa: F811  (la fixture, no una redefinición)
-):  # noqa: F811  (la fixture, no una redefinición)
+    monkeypatch,
+):
     user_id, _, _ = seeded
     monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
     client = SchoolClient()

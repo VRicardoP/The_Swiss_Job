@@ -33,6 +33,7 @@ SCOPE_LEASE_S = 900
 # dura mucho menos) NO paga ninguna consulta extra.
 SCOPE_HEARTBEAT_S = SCOPE_LEASE_S // 3
 
+
 def _alive_at(alias: str = "") -> str:
     """Señal de vida vigente de la fila: las filas anteriores a core0018 no tienen heartbeat y
     conservan la semántica de siempre (started_at)."""
@@ -236,7 +237,9 @@ async def scope_heartbeat(session_factory, run_id, scope_id, token):
             except Exception as exc:
                 # Transitorio (BD, red, timeout): se reintenta con sesión NUEVA mientras quede
                 # margen; el propio timeout ya está recortado a lo que resta.
-                logger.warning("scope %s: latido falló (%s) — se reintenta", scope_id, exc)
+                logger.warning(
+                    "scope %s: latido falló (%s) — se reintenta", scope_id, exc
+                )
                 failed = True
                 continue
             if not alive:
@@ -255,7 +258,9 @@ async def scope_heartbeat(session_factory, run_id, scope_id, token):
         # ronda 2: convertirla en LeaseLostError dejaba al worker ignorando el shutdown).
         if not aborted or body.uncancel() > 0:
             raise
-        raise LeaseLostError(f"scope {scope_id}: {aborted[0]} — fetch abortado") from None
+        raise LeaseLostError(
+            f"scope {scope_id}: {aborted[0]} — fetch abortado"
+        ) from None
     finally:
         task.cancel()
         try:

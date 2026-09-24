@@ -4,6 +4,7 @@ Raw Elasticsearch hits are retained. Offset advances by actual rows received;
 a page/count contradiction is incomplete, never a successful empty harvest.
 Two scopes, one per REMOTE_FACETS value, reproduce the previous coverage.
 """
+
 import asyncio
 import time
 import uuid
@@ -12,10 +13,17 @@ import httpx
 
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
-from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
+from jobhunt_core.harvest.provider import (
+    BaseProvider,
+    ProviderConfigError,
+    ProviderResponseError,
+)
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
 from jobhunt_core.harvest.providers.browser_headers import (
-    BROWSER_HEADERS, MAX_PAGES_PARAM, page_budget)
+    BROWSER_HEADERS,
+    MAX_PAGES_PARAM,
+    page_budget,
+)
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 SOURCE_NAME = "nav_arbeidsplassen"
@@ -43,15 +51,23 @@ def _dict(value):
 def _content(raw):
     source = _dict(raw.get("_source"))
     title = _text(source.get("title"))
-    company = _text(source.get("businessName")) or _text(_dict(source.get("employer")).get("name"))
-    description = strip_html_tags(_text(_dict(source.get("generatedSearchMetadata")).get("shortSummary")))
+    company = _text(source.get("businessName")) or _text(
+        _dict(source.get("employer")).get("name")
+    )
+    description = strip_html_tags(
+        _text(_dict(source.get("generatedSearchMetadata")).get("shortSummary"))
+    )
     locations = source.get("locationList")
     location = ""
     for loc in locations if isinstance(locations, list) else []:
         if not isinstance(loc, dict):
             continue
         seen, parts = set(), []
-        for candidate in (loc.get("city") or loc.get("municipal"), loc.get("county"), loc.get("country")):
+        for candidate in (
+            loc.get("city") or loc.get("municipal"),
+            loc.get("county"),
+            loc.get("country"),
+        ):
             value = _text(candidate)
             if value and value.lower() not in seen:
                 seen.add(value.lower())
@@ -67,15 +83,23 @@ def _content(raw):
         if tag and tag.lower() not in seen:
             seen.add(tag.lower())
             merged.append(tag)
-    return {"title": title, "company": company, "location": location,
-            "description": description, "remote": True, "tags": merged[:15]}
+    return {
+        "title": title,
+        "company": company,
+        "location": location,
+        "description": description,
+        "remote": True,
+        "tags": merged[:15],
+    }
 
 
 def register_handlers():
     register_normalizer(SOURCE_NAME, _content)
+
     def identity(raw):
         content = _content(raw)
         return content["title"], content["company"]
+
     register_extractor(SOURCE_NAME, identity)
 
 
@@ -95,10 +119,14 @@ def _listing(raw):
 
 async def _page(http, facet, offset, timeout):
     async with asyncio.timeout(timeout):
-        async with http.stream("GET", API_URL,
-                               params={"from": offset, "size": PAGE_SIZE, "remote": facet},
-                               timeout=25, follow_redirects=True,
-                               headers=BROWSER_HEADERS) as response:
+        async with http.stream(
+            "GET",
+            API_URL,
+            params={"from": offset, "size": PAGE_SIZE, "remote": facet},
+            timeout=25,
+            follow_redirects=True,
+            headers=BROWSER_HEADERS,
+        ) as response:
             response.raise_for_status()
             chunks, size = [], 0
             async for chunk in response.aiter_bytes():
@@ -136,9 +164,14 @@ class NavProvider(BaseProvider):
         register_handlers()
 
     async def fetch_new(self, params, cursor, http):
-        if (not isinstance(params, dict) or set(params) - {MAX_PAGES_PARAM} != {"remote"}
-                or params["remote"] not in REMOTE_FACETS):
-            raise ProviderConfigError("NAV requires one supported remote facet per scope")
+        if (
+            not isinstance(params, dict)
+            or set(params) - {MAX_PAGES_PARAM} != {"remote"}
+            or params["remote"] not in REMOTE_FACETS
+        ):
+            raise ProviderConfigError(
+                "NAV requires one supported remote facet per scope"
+            )
         # The retiring producer reads three pages (nav_arbeidsplassen.py:56).
         # Declaring that same budget keeps parity AND keeps the sweep honest:
         # finishing it is complete, not truncated.
@@ -151,13 +184,17 @@ class NavProvider(BaseProvider):
             if remaining <= 0:
                 break
             try:
-                rows, exhausted = await _page(http, params["remote"], offset, min(25, remaining))
+                rows, exhausted = await _page(
+                    http, params["remote"], offset, min(25, remaining)
+                )
             except (httpx.HTTPError, ProviderResponseError, TimeoutError) as exc:
                 if not listings:
                     raise
-                error = (f"http_{exc.response.status_code}"
-                         if isinstance(exc, httpx.HTTPStatusError)
-                         else type(exc).__name__)
+                error = (
+                    f"http_{exc.response.status_code}"
+                    if isinstance(exc, httpx.HTTPStatusError)
+                    else type(exc).__name__
+                )
                 break
             pages += 1
             offset += len(rows)
@@ -178,5 +215,10 @@ class NavProvider(BaseProvider):
             raise ProviderResponseError("NAV nonempty feed has no usable identities")
         error = error or ("invalid_nav_items" if invalid else None)
         swept = exhausted or (MAX_PAGES_PARAM in params and pages >= budget)
-        return FetchResult(tuple(listings), {"items_seen": offset, "pages": pages},
-                           pages_fetched=pages, complete=swept and error is None, error=error)
+        return FetchResult(
+            tuple(listings),
+            {"items_seen": offset, "pages": pages},
+            pages_fetched=pages,
+            complete=swept and error is None,
+            error=error,
+        )

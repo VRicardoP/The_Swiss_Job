@@ -52,12 +52,13 @@ def upgrade() -> None:
         sa.Column("id", sa.SmallInteger, primary_key=True, autoincrement=False),
         sa.Column("slot_name", sa.Text, nullable=False),
         sa.Column("snapshot_lsn", sa.BigInteger, nullable=False),
-        sa.Column(
-            "snapshot_exported_at", sa.TIMESTAMP(timezone=True), nullable=False
-        ),
+        sa.Column("snapshot_exported_at", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column("last_applied_lsn", sa.BigInteger, nullable=False),
         sa.Column(
-            "updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
         ),
         sa.CheckConstraint("id = 1", name="ck_capture_state_single_row"),
         schema=S,
@@ -73,7 +74,10 @@ def upgrade() -> None:
             "payload", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")
         ),
         sa.Column(
-            "received_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW
+            "received_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
         ),
         sa.Column("applied_at", sa.TIMESTAMP(timezone=True)),
         sa.PrimaryKeyConstraint("lsn", "seq_in_tx", name="pk_shadow_change_log"),
@@ -101,12 +105,13 @@ def upgrade() -> None:
         sa.Column("last_lsn", sa.BigInteger, nullable=False),
         sa.Column("min_received_at", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column(
-            "started_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW
+            "started_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
         ),
         sa.Column("finished_at", sa.TIMESTAMP(timezone=True)),
-        sa.Column(
-            "changes", sa.Integer, nullable=False, server_default=sa.text("0")
-        ),
+        sa.Column("changes", sa.Integer, nullable=False, server_default=sa.text("0")),
         sa.Column(
             "revisions_new", sa.Integer, nullable=False, server_default=sa.text("0")
         ),

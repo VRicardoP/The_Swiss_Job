@@ -100,17 +100,25 @@ def _bootstrap() -> None:
         conn.execute(
             sa.text(f"{verb} ROLE {_ROLE} {_ROLE_ATTRS} PASSWORD '{password}'")
         )
-        logger.info("Rol %s %s (mínimo privilegio)", _ROLE, "creado" if not exists else "convergido")
+        logger.info(
+            "Rol %s %s (mínimo privilegio)",
+            _ROLE,
+            "creado" if not exists else "convergido",
+        )
 
         # Revocar CUALQUIER membership: el rol del core no hereda de nadie.
-        granted = conn.execute(
-            sa.text(
-                "SELECT r.rolname FROM pg_auth_members m "
-                "JOIN pg_roles r ON r.oid = m.roleid "
-                "WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = :m)"
-            ),
-            {"m": _ROLE},
-        ).scalars().all()
+        granted = (
+            conn.execute(
+                sa.text(
+                    "SELECT r.rolname FROM pg_auth_members m "
+                    "JOIN pg_roles r ON r.oid = m.roleid "
+                    "WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = :m)"
+                ),
+                {"m": _ROLE},
+            )
+            .scalars()
+            .all()
+        )
         for g in granted:
             if not _IDENT_RE.match(g):
                 raise ValueError(f"Membership con nombre inesperado: {g!r}")
@@ -161,7 +169,9 @@ def _bootstrap_capture(conn: sa.Connection, capture_password: str) -> None:
     verb = "CREATE" if not exists else "ALTER"
     # Contraseña Y atributos convergen SIEMPRE (misma disciplina que _ROLE).
     conn.execute(
-        sa.text(f"{verb} ROLE {_CAPTURE_ROLE} {_CAPTURE_ATTRS} PASSWORD '{capture_password}'")
+        sa.text(
+            f"{verb} ROLE {_CAPTURE_ROLE} {_CAPTURE_ATTRS} PASSWORD '{capture_password}'"
+        )
     )
     logger.info(
         "Rol %s %s (LOGIN REPLICATION, sin SELECT sobre tabla alguna)",
@@ -172,14 +182,18 @@ def _bootstrap_capture(conn: sa.Connection, capture_password: str) -> None:
     # Revocar CUALQUIER membership (mismo bucle que _bootstrap para
     # jobhunt_core): el rol de captura no hereda de nadie — una membership
     # pre-existente le daría por herencia privilegios que su whitelist niega.
-    granted = conn.execute(
-        sa.text(
-            "SELECT r.rolname FROM pg_auth_members m "
-            "JOIN pg_roles r ON r.oid = m.roleid "
-            "WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = :m)"
-        ),
-        {"m": _CAPTURE_ROLE},
-    ).scalars().all()
+    granted = (
+        conn.execute(
+            sa.text(
+                "SELECT r.rolname FROM pg_auth_members m "
+                "JOIN pg_roles r ON r.oid = m.roleid "
+                "WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = :m)"
+            ),
+            {"m": _CAPTURE_ROLE},
+        )
+        .scalars()
+        .all()
+    )
     for g in granted:
         if not _IDENT_RE.match(g):
             raise ValueError(f"Membership con nombre inesperado: {g!r}")
@@ -316,14 +330,18 @@ def _verify_isolation(conn: sa.Connection, schema: str) -> None:
     # Y la otra dirección de "EXACTAMENTE ese conjunto": toda tabla enumerada
     # que exista debe tener su SELECT (deriva = GRANT perdido → la captura y
     # las métricas fallarían en silencio más tarde).
-    missing = conn.execute(
-        sa.text(
-            "SELECT t.name FROM unnest(CAST(:tables AS text[])) AS t(name) "
-            "WHERE to_regclass('public.' || t.name) IS NOT NULL "
-            "AND NOT has_table_privilege(:r, ('public.' || t.name)::regclass, 'SELECT')"
-        ),
-        {"r": _ROLE, "tables": list(_LEGACY_RO_TABLES)},
-    ).scalars().all()
+    missing = (
+        conn.execute(
+            sa.text(
+                "SELECT t.name FROM unnest(CAST(:tables AS text[])) AS t(name) "
+                "WHERE to_regclass('public.' || t.name) IS NOT NULL "
+                "AND NOT has_table_privilege(:r, ('public.' || t.name)::regclass, 'SELECT')"
+            ),
+            {"r": _ROLE, "tables": list(_LEGACY_RO_TABLES)},
+        )
+        .scalars()
+        .all()
+    )
     if missing:
         raise RuntimeError(
             f"Rol {_ROLE} SIN el SELECT enumerado de B-01 sobre: {missing}"
@@ -331,15 +349,19 @@ def _verify_isolation(conn: sa.Connection, schema: str) -> None:
 
     # Funciones SECURITY DEFINER en public ejecutables por el core: escalada
     # potencial (corren con los privilegios del dueño) — no debe existir ninguna.
-    secdef = conn.execute(
-        sa.text(
-            "SELECT p.proname FROM pg_proc p "
-            "JOIN pg_namespace n ON n.oid = p.pronamespace "
-            "WHERE n.nspname = 'public' AND p.prosecdef "
-            "AND has_function_privilege(:r, p.oid, 'EXECUTE')"
-        ),
-        {"r": _ROLE},
-    ).scalars().all()
+    secdef = (
+        conn.execute(
+            sa.text(
+                "SELECT p.proname FROM pg_proc p "
+                "JOIN pg_namespace n ON n.oid = p.pronamespace "
+                "WHERE n.nspname = 'public' AND p.prosecdef "
+                "AND has_function_privilege(:r, p.oid, 'EXECUTE')"
+            ),
+            {"r": _ROLE},
+        )
+        .scalars()
+        .all()
+    )
     if secdef:
         raise RuntimeError(
             f"Funciones SECURITY DEFINER de public ejecutables por {_ROLE}: {secdef}"
@@ -348,29 +370,39 @@ def _verify_isolation(conn: sa.Connection, schema: str) -> None:
     # CASE fuerza el orden de evaluación: el planner de Postgres puede evaluar
     # los predicados del WHERE en cualquier orden, y has_sequence_privilege
     # revienta sobre relaciones que no son secuencias.
-    seq_reachable = conn.execute(
-        sa.text(
-            "SELECT c.relname FROM pg_class c "
-            "JOIN pg_namespace n ON n.oid = c.relnamespace "
-            "WHERE n.nspname = 'public' AND CASE WHEN c.relkind = 'S' "
-            "THEN has_sequence_privilege(:r, c.oid, 'USAGE,SELECT,UPDATE') "
-            "ELSE false END"
-        ),
-        {"r": _ROLE},
-    ).scalars().all()
+    seq_reachable = (
+        conn.execute(
+            sa.text(
+                "SELECT c.relname FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = 'public' AND CASE WHEN c.relkind = 'S' "
+                "THEN has_sequence_privilege(:r, c.oid, 'USAGE,SELECT,UPDATE') "
+                "ELSE false END"
+            ),
+            {"r": _ROLE},
+        )
+        .scalars()
+        .all()
+    )
     if seq_reachable:
-        raise RuntimeError(f"Rol {_ROLE} tiene privilegios en secuencias de public: {seq_reachable}")
+        raise RuntimeError(
+            f"Rol {_ROLE} tiene privilegios en secuencias de public: {seq_reachable}"
+        )
 
     # Nada en public debe pertenecer al rol del core.
-    owned_in_public = conn.execute(
-        sa.text(
-            "SELECT c.relname FROM pg_class c "
-            "JOIN pg_namespace n ON n.oid = c.relnamespace "
-            "WHERE n.nspname = 'public' "
-            "AND c.relowner = (SELECT oid FROM pg_roles WHERE rolname = :r)"
-        ),
-        {"r": _ROLE},
-    ).scalars().all()
+    owned_in_public = (
+        conn.execute(
+            sa.text(
+                "SELECT c.relname FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = 'public' "
+                "AND c.relowner = (SELECT oid FROM pg_roles WHERE rolname = :r)"
+            ),
+            {"r": _ROLE},
+        )
+        .scalars()
+        .all()
+    )
     if owned_in_public:
         raise RuntimeError(f"Objetos de public propiedad de {_ROLE}: {owned_in_public}")
 
@@ -383,7 +415,9 @@ def _verify_isolation(conn: sa.Connection, schema: str) -> None:
         {"s": schema},
     ).scalar()
     if schema_owner != _ROLE:
-        raise RuntimeError(f"El esquema {schema} pertenece a {schema_owner!r}, no a {_ROLE}")
+        raise RuntimeError(
+            f"El esquema {schema} pertenece a {schema_owner!r}, no a {_ROLE}"
+        )
 
     audited = conn.execute(
         sa.text(
@@ -412,7 +446,7 @@ def _verify_pgvector(conn: sa.Connection, schema: str) -> None:
     si no resuelve, el job muere aquí (no en la primera migración de A-02).
     """
     try:
-        conn.execute(sa.text(f"SET LOCAL search_path = \"{schema}\", public"))
+        conn.execute(sa.text(f'SET LOCAL search_path = "{schema}", public'))
         conn.execute(sa.text(f"SET LOCAL ROLE {_ROLE}"))
         dist = conn.execute(
             sa.text("SELECT '[1,2,3]'::vector <=> '[1,2,4]'::vector")
@@ -423,7 +457,9 @@ def _verify_pgvector(conn: sa.Connection, schema: str) -> None:
             "pgvector NO resoluble con el rol del core (¿extensión ausente o "
             f"fuera del search_path?): {exc}"
         ) from exc
-    logger.info("pgvector verificado como %s (cast + operador <=>, dist=%s)", _ROLE, dist)
+    logger.info(
+        "pgvector verificado como %s (cast + operador <=>, dist=%s)", _ROLE, dist
+    )
 
 
 def main() -> None:

@@ -94,8 +94,7 @@ async def create_set(
     return (
         await session.execute(
             sa.text(
-                "SELECT id FROM labeled_sets "
-                "WHERE profile_id = :pid AND name = :name"
+                "SELECT id FROM labeled_sets WHERE profile_id = :pid AND name = :name"
             ),
             {"pid": profile_id, "name": name},
         )
@@ -273,9 +272,7 @@ async def freeze_dedup_cohort(
     )
 
 
-async def dedup_cohort_frozen_at(
-    session: AsyncSession, source: str
-) -> datetime | None:
+async def dedup_cohort_frozen_at(session: AsyncSession, source: str) -> datetime | None:
     """frozen_at de la cohorte, o None si no existe o no está congelada.
     FAIL-CLOSED (revisión B-3 + ronda 2 B-2): un sello sin manifest de
     pre-registro REAL no cuenta como congelado — ni jsonb vacío ni un tipo
@@ -313,9 +310,7 @@ async def freeze_set(session: AsyncSession, set_id: uuid.UUID) -> datetime:
             )
         ).scalar_one_or_none()
         if frozen_at is None:
-            raise LabeledSetNotFoundError(
-                f"labeled_set inexistente: {set_id}"
-            )
+            raise LabeledSetNotFoundError(f"labeled_set inexistente: {set_id}")
     return frozen_at
 
 
@@ -373,9 +368,7 @@ async def map_job_refs_to_vacancies(
     return {row.job_ref: row.vacancy_id for row in rows}
 
 
-async def _lock_and_require_unfrozen(
-    session: AsyncSession, set_id: uuid.UUID
-) -> None:
+async def _lock_and_require_unfrozen(session: AsyncSession, set_id: uuid.UUID) -> None:
     """SELECT ... FOR UPDATE del set: excepción exacta (inexistente/congelado)
     y bloqueo de un freeze concurrente hasta el commit de la siembra."""
     row = (

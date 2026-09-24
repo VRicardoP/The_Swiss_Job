@@ -90,8 +90,9 @@ def prepare_batch(*, batch_id, origin, consumer, bindings, rows):
                     "source columns differ from the migration contract"
                 )
             row = dict(raw)
-            row["id"], row["created_at"] = uuid.UUID(str(row["id"])), _time(
-                row["created_at"]
+            row["id"], row["created_at"] = (
+                uuid.UUID(str(row["id"])),
+                _time(row["created_at"]),
             )
             owner = str(row["user_id"])
             if owner not in mapping or row["id"] in seen:
@@ -102,7 +103,10 @@ def prepare_batch(*, batch_id, origin, consumer, bindings, rows):
                 if (
                     not isinstance(row["job_hash"], str)
                     or not 1 <= len(row["job_hash"]) <= 36
-                    or (len(row["job_hash"]) > 32 and str(uuid.UUID(row["job_hash"])) != row["job_hash"])
+                    or (
+                        len(row["job_hash"]) > 32
+                        and str(uuid.UUID(row["job_hash"])) != row["job_hash"]
+                    )
                 ):
                     raise DocumentMigrationError("invalid document job reference")
                 for key, limit in (("job_title", 500), ("job_company", 300)):

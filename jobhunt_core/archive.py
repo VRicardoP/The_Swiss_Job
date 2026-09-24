@@ -128,9 +128,7 @@ async def archive_sweep(session: AsyncSession) -> dict:
             {"ids": stale_ids},
         )
         await session.execute(
-            sa.text(
-                "UPDATE vacancies SET archived_at = now() WHERE id = ANY(:ids)"
-            ),
+            sa.text("UPDATE vacancies SET archived_at = now() WHERE id = ANY(:ids)"),
             {"ids": stale_ids},
         )
 

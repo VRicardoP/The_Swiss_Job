@@ -75,8 +75,16 @@ def _register(factory, created, name="modelo-test", version=SHA_A):
     return mid
 
 
-CONTENT_1 = {"title": "Backend Dev", "cv_text": "10 años Python", "skills": ["python", "sql"]}
-CONTENT_2 = {"title": "Data Engineer", "cv_text": "ETL y pipelines", "skills": ["spark"]}
+CONTENT_1 = {
+    "title": "Backend Dev",
+    "cv_text": "10 años Python",
+    "skills": ["python", "sql"],
+}
+CONTENT_2 = {
+    "title": "Data Engineer",
+    "cv_text": "ETL y pipelines",
+    "skills": ["spark"],
+}
 
 
 def _save(factory, profile_id, content):
@@ -162,7 +170,8 @@ def test_reversion_reactivates_historic_revision(db):
     acts = _run_rows(
         factory,
         "SELECT seq, revision_id FROM profile_revision_activations "
-        "WHERE profile_id = :p ORDER BY seq", p=pid,
+        "WHERE profile_id = :p ORDER BY seq",
+        p=pid,
     )
     assert len(acts) == 3  # historial append-only completo: A, B, A
 
@@ -270,10 +279,13 @@ def test_batch_dedupes_same_text_across_profiles(db):
         assert r.result["profiles_embedded"][f"modelo-test/{SHA_A}"] == 2
     finally:
         embeddings.set_backend_factory(None)
-    assert calls == [[profiles.build_profile_text(profiles.normalize_profile(CONTENT_1))]]
+    assert calls == [
+        [profiles.build_profile_text(profiles.normalize_profile(CONTENT_1))]
+    ]
     rows = _run_rows(
         factory,
-        "SELECT count(*) AS n FROM profile_embeddings WHERE model_id = :m", m=mid,
+        "SELECT count(*) AS n FROM profile_embeddings WHERE model_id = :m",
+        m=mid,
     )
     assert rows[0].n == 2
 
@@ -299,9 +311,15 @@ def test_store_discards_vector_of_superseded_revision(db):
     async def store_r1():
         async with factory() as s:
             n = await embeddings.store_profile_embeddings(
-                s, mid,
-                [{"revision_id": r1, "profile_id": pid,
-                  "vector": [0.9] * embeddings.EMBED_DIM}],
+                s,
+                mid,
+                [
+                    {
+                        "revision_id": r1,
+                        "profile_id": pid,
+                        "vector": [0.9] * embeddings.EMBED_DIM,
+                    }
+                ],
             )
             await s.commit()
             return n
@@ -359,7 +377,8 @@ def test_two_profiles_embedded_by_model_end_to_end(db):
 
     rows = _run_rows(
         factory,
-        "SELECT count(*) AS n FROM profile_embeddings WHERE model_id = :m", m=mid,
+        "SELECT count(*) AS n FROM profile_embeddings WHERE model_id = :m",
+        m=mid,
     )
     assert rows[0].n == 2
 
@@ -393,7 +412,8 @@ def test_new_revision_embeds_only_latest(db):
         embeddings.set_backend_factory(None)
     rows = _run_rows(
         factory,
-        "SELECT profile_revision_id FROM profile_embeddings WHERE model_id = :m", m=mid,
+        "SELECT profile_revision_id FROM profile_embeddings WHERE model_id = :m",
+        m=mid,
     )
     assert [r.profile_revision_id for r in rows] == [r2]  # SOLO la vigente
 
@@ -424,7 +444,9 @@ def test_composite_fk_rejects_cross_profile_embedding(db):
                     "VALUES (:rid, :pid, :mid, CAST(:v AS vector))"
                 ),
                 {
-                    "rid": r1, "pid": p2, "mid": mid,  # revisión de p1 bajo p2
+                    "rid": r1,
+                    "pid": p2,
+                    "mid": mid,  # revisión de p1 bajo p2
                     "v": "[" + ",".join(["0.1"] * 384) + "]",
                 },
             )
@@ -480,7 +502,8 @@ def test_dim_guard_skips_profiles_for_rogue_model(db):
         embeddings.set_backend_factory(None)
     rows = _run_rows(
         factory,
-        "SELECT count(*) AS n FROM profile_embeddings WHERE model_id = :m", m=rogue,
+        "SELECT count(*) AS n FROM profile_embeddings WHERE model_id = :m",
+        m=rogue,
     )
     assert rows[0].n == 0
 
@@ -498,7 +521,11 @@ def test_store_profile_embeddings_optimistic(db):
     pid = _run(mk())
     rid = _save(factory, pid, CONTENT_1)
     mid = _register(factory, created)
-    item = {"revision_id": rid, "profile_id": pid, "vector": [0.2] * embeddings.EMBED_DIM}
+    item = {
+        "revision_id": rid,
+        "profile_id": pid,
+        "vector": [0.2] * embeddings.EMBED_DIM,
+    }
 
     async def store():
         async with factory() as s:
@@ -514,7 +541,9 @@ def test_store_profile_embeddings_optimistic(db):
     rows = _run_rows(
         factory,
         "SELECT count(*) AS n FROM profile_embeddings "
-        "WHERE profile_revision_id = :r AND model_id = :m", r=rid, m=mid,
+        "WHERE profile_revision_id = :r AND model_id = :m",
+        r=rid,
+        m=mid,
     )
     assert rows[0].n == 1
     assert _run(store()) == 0  # re-store: pre-filtro
@@ -597,7 +626,7 @@ def test_core0004_backfills_preexisting_revisions():
                         sa.text(
                             "INSERT INTO profile_revisions "
                             "(id, profile_id, content, content_hash, text_hash, created_at) "
-                            f"VALUES (:id, :pid, '{{\"title\": \"pre\"}}'::jsonb, "
+                            f'VALUES (:id, :pid, \'{{"title": "pre"}}\'::jsonb, '
                             f":ch, :th, {ts})"
                         ),
                         {"id": rid, "pid": pid, "ch": chash, "th": "t" * 64},
@@ -623,19 +652,23 @@ def test_core0004_backfills_preexisting_revisions():
                 assert [(a.seq, a.revision_id) for a in acts] == [(1, r1), (2, r2)]
                 # Pendiente: la MISMA query del worker (vigente sin vector).
                 pend = (
-                    await c.execute(
-                        sa.text(
-                            "SELECT pr.id FROM (SELECT DISTINCT ON (profile_id) "
-                            "profile_id, revision_id FROM profile_revision_activations "
-                            "ORDER BY profile_id, seq DESC) cur "
-                            "JOIN profile_revisions pr ON pr.id = cur.revision_id "
-                            "LEFT JOIN profile_embeddings pe "
-                            "  ON pe.profile_revision_id = pr.id AND pe.model_id = :mid "
-                            "WHERE pe.profile_revision_id IS NULL"
-                        ),
-                        {"mid": uuid.uuid4()},
+                    (
+                        await c.execute(
+                            sa.text(
+                                "SELECT pr.id FROM (SELECT DISTINCT ON (profile_id) "
+                                "profile_id, revision_id FROM profile_revision_activations "
+                                "ORDER BY profile_id, seq DESC) cur "
+                                "JOIN profile_revisions pr ON pr.id = cur.revision_id "
+                                "LEFT JOIN profile_embeddings pe "
+                                "  ON pe.profile_revision_id = pr.id AND pe.model_id = :mid "
+                                "WHERE pe.profile_revision_id IS NULL"
+                            ),
+                            {"mid": uuid.uuid4()},
+                        )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 assert pend == [r2]  # vigente = la más reciente, de vuelta al worker
 
         asyncio.run(verify())

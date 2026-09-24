@@ -30,14 +30,17 @@ logger = logging.getLogger(__name__)
 def run_scope_task(self, scope_id: str, run_key: str | None = None) -> dict[str, Any]:
     try:
         result = asyncio.run(
-            _run_scope_impl(scope_id) if run_key is None
+            _run_scope_impl(scope_id)
+            if run_key is None
             else _run_scope_impl(scope_id, run_key=run_key)
         )
     except (UnknownProviderError, ProviderConfigError) as exc:
         # Config PERMANENTE (provider desconocido / params inválidos, rev. 2ª
         # #3): excepciones CONCRETAS — un KeyError interno cualquiera no debe
         # clasificarse como configuración. Falla explícito SIN retry.
-        logger.error("harvest.run_scope %s: config inválida: %s — sin retry", scope_id, exc)
+        logger.error(
+            "harvest.run_scope %s: config inválida: %s — sin retry", scope_id, exc
+        )
         raise
     except Exception as exc:
         # Transitorios (HTTP, BD): AQUÍ sí retry.
@@ -46,9 +49,7 @@ def run_scope_task(self, scope_id: str, run_key: str | None = None) -> dict[str,
     if result.status == "error":
         # 'stale'/'skipped'/'partial'/'not_found' NO se reintentan (no son
         # fallos de fuente).
-        raise self.retry(
-            exc=RuntimeError(result.error or "run error"), countdown=120
-        )
+        raise self.retry(exc=RuntimeError(result.error or "run error"), countdown=120)
     return {
         "scope_id": result.scope_id,
         "status": result.status,
@@ -106,10 +107,16 @@ async def _run_all_impl(run_key: str) -> dict[str, Any]:
         async with session_factory() as session:
             run_id = await runs.start_run(session, run_key)
             scope_ids = (
-                await session.execute(
-                    sa.text("SELECT id FROM harvest_scopes WHERE enabled ORDER BY id")
+                (
+                    await session.execute(
+                        sa.text(
+                            "SELECT id FROM harvest_scopes WHERE enabled ORDER BY id"
+                        )
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             await session.commit()
         for scope_id in scope_ids:
             async with session_factory() as session:
@@ -127,7 +134,9 @@ async def _run_all_impl(run_key: str) -> dict[str, Any]:
                 # heartbeat mantiene VIVO ese claim mientras dura el fetch: sin él, una fuente lenta
                 # (>SCOPE_LEASE_S) hacía que otro run_all re-armara el scope y golpeara la fuente
                 # externa por duplicado (residual conocido, bloqueante en Fase D).
-                async with runs.scope_heartbeat(session_factory, run_id, scope_id, token):
+                async with runs.scope_heartbeat(
+                    session_factory, run_id, scope_id, token
+                ):
                     result = await _run_scope_impl(str(scope_id), token)
                 status = result.status
                 motivo = result.error
@@ -141,15 +150,20 @@ async def _run_all_impl(run_key: str) -> dict[str, Any]:
             async with session_factory() as session:
                 # Fencing: si el lease venció y OTRO worker re-armó el scope, finish devuelve
                 # False (no sobrescribe el estado ajeno) — se registra pero no cuenta como cierre.
-                closed = await runs.finish_scope_run(session, run_id, scope_id, status, token)
+                closed = await runs.finish_scope_run(
+                    session, run_id, scope_id, status, token
+                )
                 await session.commit()
             results[str(scope_id)] = status if closed else "superseded"
         async with session_factory() as session:
             overall = await runs.finish_run(session, run_id)
             await session.commit()
     return {
-        "run_id": str(run_id), "status": overall,
-        "executed": executed, "skipped": skipped, "scopes": results,
+        "run_id": str(run_id),
+        "status": overall,
+        "executed": executed,
+        "skipped": skipped,
+        "scopes": results,
         "errores": errores,
     }
 

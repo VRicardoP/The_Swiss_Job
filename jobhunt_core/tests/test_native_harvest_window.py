@@ -12,7 +12,8 @@ from jobhunt_core.tests.test_integration_runs import db, _seed_scopes, pytestmar
 
 
 def test_same_window_only_fetches_once_and_disabled_scope_is_not_dispatched(
-    db, monkeypatch  # noqa: F811  (la fixture, no una redefinición)
+    db,  # noqa: F811  (la fixture, no una redefinición)
+    monkeypatch,
 ):
     factory, created = db
     enabled, disabled = _seed_scopes(factory, created, n=2)

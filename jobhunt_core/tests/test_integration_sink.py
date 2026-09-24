@@ -54,7 +54,9 @@ def _seed_scope(factory, created) -> str:
             created["source"] = source_id
             created["scopes"].append(scope_id)
             await s.execute(
-                sa.text("INSERT INTO sources (id, name, tier) VALUES (:id, 'arbeitnow', 0)"),
+                sa.text(
+                    "INSERT INTO sources (id, name, tier) VALUES (:id, 'arbeitnow', 0)"
+                ),
                 {"id": source_id},
             )
             await s.execute(
@@ -116,6 +118,7 @@ async def _orphan_ids(session) -> set[uuid.UUID]:
 
 def _orphan_snapshot(factory) -> set[uuid.UUID]:
     """Baseline atribuible: evita contar fixtures ajenos por una ventana temporal."""
+
     async def go():
         async with factory() as session:
             return await _orphan_ids(session)
@@ -310,8 +313,14 @@ def test_concurrent_cross_key_lock_order_no_deadlock(db):
             await s.commit()
 
     async def race(i):
-        t1 = [_listing(f"a{i}", url=f"https://x/z{i}"), _listing(f"b{i}", url=f"https://x/a{i}")]
-        t2 = [_listing(f"c{i}", url=f"https://x/a{i}"), _listing(f"d{i}", url=f"https://x/z{i}")]
+        t1 = [
+            _listing(f"a{i}", url=f"https://x/z{i}"),
+            _listing(f"b{i}", url=f"https://x/a{i}"),
+        ]
+        t2 = [
+            _listing(f"c{i}", url=f"https://x/a{i}"),
+            _listing(f"d{i}", url=f"https://x/z{i}"),
+        ]
         await asyncio.gather(worker(scope_a, t1), worker(scope_b, t2))
 
     for i in range(5):
@@ -386,7 +395,8 @@ def test_intra_batch_duplicate_external_last_wins(db):
     factory, created = db
     scope = _seed_scope(factory, created)
     _sink_batch(
-        factory, scope,
+        factory,
+        scope,
         [_listing("j1", payload={"v": 1}), _listing("j1", payload={"v": 2})],
     )
     c = _counts(factory, created["source"])
@@ -405,7 +415,8 @@ def test_same_normalized_url_within_one_batch(db):
     factory, created = db
     scope = _seed_scope(factory, created)
     _sink_batch(
-        factory, scope,
+        factory,
+        scope,
         [_listing("j1", url="https://x/misma"), _listing("j2", url="https://x/misma/")],
     )
     c = _counts(factory, created["source"])
@@ -427,7 +438,9 @@ def test_task_two_consecutive_runs_same_process(db):
     async def disable():
         async with factory() as s:
             await s.execute(
-                sa.text("UPDATE harvest_scopes SET enabled = false WHERE id = ANY(:ids)"),
+                sa.text(
+                    "UPDATE harvest_scopes SET enabled = false WHERE id = ANY(:ids)"
+                ),
                 {"ids": [uuid.UUID(scope_a), uuid.UUID(scope_b)]},
             )
             await s.commit()
@@ -459,10 +472,17 @@ def test_reparacion_da_de_alta_el_handler_sombra_en_vez_de_anular_la_canonica(db
     factory, created = db
     scope = _seed_scope(factory, created)
     ext = f"g3norm-{uuid.uuid4().hex[:8]}"
-    _sink_batch(factory, scope, [
-        RawListing(external_id=ext, url=f"https://x/{ext}",
-                   payload={"title": "SRE Engineer", "company_name": "ACME AG"}),
-    ])
+    _sink_batch(
+        factory,
+        scope,
+        [
+            RawListing(
+                external_id=ext,
+                url=f"https://x/{ext}",
+                payload={"title": "SRE Engineer", "company_name": "ACME AG"},
+            ),
+        ],
+    )
 
     def _target():
         async def go():
@@ -533,9 +553,13 @@ def test_g4_la_marca_del_raw_re_visto_es_monotona(db):
     scope = _seed_scope(factory, created)
     ext = f"g4mono-{uuid.uuid4().hex[:8]}"
     payload = {"title": "SRE", "company_name": "ACME AG"}
-    _sink_batch(factory, scope, [
-        RawListing(external_id=ext, url=f"https://x/{ext}", payload=payload),
-    ])
+    _sink_batch(
+        factory,
+        scope,
+        [
+            RawListing(external_id=ext, url=f"https://x/{ext}", payload=payload),
+        ],
+    )
 
     def _fetched():
         return _exec_sql(
@@ -543,7 +567,8 @@ def test_g4_la_marca_del_raw_re_visto_es_monotona(db):
             "SELECT r.fetched_at FROM source_listing_revisions r "
             "JOIN source_listing_incarnations i ON i.id = r.incarnation_id "
             "JOIN source_listings l ON l.id = i.source_listing_id "
-            "WHERE l.external_id = :e", e=ext,
+            "WHERE l.external_id = :e",
+            e=ext,
         ).scalar_one()
 
     # Otra transacción dejó una marca POSTERIOR a la que traerá la siguiente
@@ -553,12 +578,17 @@ def test_g4_la_marca_del_raw_re_visto_es_monotona(db):
         "UPDATE source_listing_revisions SET fetched_at = now() + interval '1 hour' "
         "WHERE incarnation_id IN (SELECT i.id FROM source_listing_incarnations i "
         " JOIN source_listings l ON l.id = i.source_listing_id "
-        " WHERE l.external_id = :e)", e=ext,
+        " WHERE l.external_id = :e)",
+        e=ext,
     )
     futuro = _fetched()
-    _sink_batch(factory, scope, [  # re-cosecha del MISMO contenido
-        RawListing(external_id=ext, url=f"https://x/{ext}", payload=payload),
-    ])
+    _sink_batch(
+        factory,
+        scope,
+        [  # re-cosecha del MISMO contenido
+            RawListing(external_id=ext, url=f"https://x/{ext}", payload=payload),
+        ],
+    )
     assert _fetched() == futuro  # antes: retrocedía a now() de esta tx
 
 
@@ -583,10 +613,17 @@ def test_g4_reparacion_da_de_alta_el_handler_de_portfolio_import(db):
     factory, created = db
     scope = _seed_scope(factory, created)  # fuente 'arbeitnow'
     ext = f"g4pf-{uuid.uuid4().hex[:8]}"
-    _sink_batch(factory, scope, [
-        RawListing(external_id=ext, url=f"https://x/{ext}",
-                   payload={"title": "SRE Engineer", "company_name": "ACME AG"}),
-    ])
+    _sink_batch(
+        factory,
+        scope,
+        [
+            RawListing(
+                external_id=ext,
+                url=f"https://x/{ext}",
+                payload={"title": "SRE Engineer", "company_name": "ACME AG"},
+            ),
+        ],
+    )
 
     def _target():
         async def go():
@@ -618,7 +655,8 @@ def test_g4_reparacion_da_de_alta_el_handler_de_portfolio_import(db):
         factory,
         "INSERT INTO sources (id, name, tier) VALUES (:i, :n, 0) "
         "ON CONFLICT (name) DO NOTHING",
-        i=mia, n=PORTFOLIO_IMPORT_SOURCE,
+        i=mia,
+        n=PORTFOLIO_IMPORT_SOURCE,
     )
     src_pf = _exec_sql(
         factory, "SELECT id FROM sources WHERE name = :n", n=PORTFOLIO_IMPORT_SOURCE
@@ -626,7 +664,8 @@ def test_g4_reparacion_da_de_alta_el_handler_de_portfolio_import(db):
     _exec_sql(
         factory,
         "UPDATE source_listings SET source_id = :s WHERE external_id = :e",
-        s=src_pf, e=ext,
+        s=src_pf,
+        e=ext,
     )
     # Proceso que NUNCA importó `import_portfolio` (el core-worker real).
     fn = normalize._NORMALIZERS.pop(PORTFOLIO_IMPORT_SOURCE)
@@ -648,7 +687,8 @@ def test_g4_reparacion_da_de_alta_el_handler_de_portfolio_import(db):
         _exec_sql(
             factory,
             "UPDATE source_listings SET source_id = :s WHERE external_id = :e",
-            s=created["source"], e=ext,
+            s=created["source"],
+            e=ext,
         )
         _exec_sql(factory, "DELETE FROM sources WHERE id = :i", i=mia)
 
@@ -711,7 +751,8 @@ def test_g6_un_import_roto_del_alta_tampoco_tumba_la_cosecha(monkeypatch, caplog
         monkeypatch.delattr(jobhunt_core, modname.rsplit(".", 1)[1], raising=False)
         monkeypatch.delitem(sys.modules, modname, raising=False)
     monkeypatch.setattr(
-        sys, "meta_path",
+        sys,
+        "meta_path",
         [_ImportRoto("jobhunt_core.import_portfolio")] + list(sys.meta_path),
     )
     with caplog.at_level(logging.ERROR, logger="jobhunt_core.harvest.registry"):
@@ -756,11 +797,21 @@ def test_contenido_que_revierte_refresca_la_marca_del_raw_vigente(db):
     ext = f"g3rev-{uuid.uuid4().hex[:8]}"
 
     def _cosecha(salario):
-        _sink_batch(factory, scope, [
-            RawListing(external_id=ext, url=f"https://x/{ext}",
-                       payload={"title": "SRE", "company_name": "ACME AG",
-                                "salary_original": salario}),
-        ])
+        _sink_batch(
+            factory,
+            scope,
+            [
+                RawListing(
+                    external_id=ext,
+                    url=f"https://x/{ext}",
+                    payload={
+                        "title": "SRE",
+                        "company_name": "ACME AG",
+                        "salary_original": salario,
+                    },
+                ),
+            ],
+        )
 
     _cosecha("80k")
     _cosecha("90k")
@@ -824,7 +875,8 @@ _VIGENTE_SQL = (  # la consulta EXACTA de los tres call-sites del raw vigente
 
 def _lst_titulo(ext, titulo):
     return RawListing(
-        external_id=ext, url=f"https://x/{ext}",
+        external_id=ext,
+        url=f"https://x/{ext}",
         payload={"title": titulo, "company_name": "ACME AG"},
     )
 
@@ -942,7 +994,9 @@ def test_e2e_run_scope_with_real_sink(db):
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(lambda r: httpx.Response(500))
         ) as http:
-            return await run_scope(scope, FakeProvider(), RawListingSink(), http, session_factory=factory)
+            return await run_scope(
+                scope, FakeProvider(), RawListingSink(), http, session_factory=factory
+            )
 
     r = asyncio.run(go())
     assert r.status == "ok" and r.listings == 2
@@ -953,7 +1007,9 @@ def test_e2e_run_scope_with_real_sink(db):
         async with factory() as s:
             return (
                 await s.execute(
-                    sa.text("SELECT last_complete_at FROM source_scope_state WHERE scope_id=:i"),
+                    sa.text(
+                        "SELECT last_complete_at FROM source_scope_state WHERE scope_id=:i"
+                    ),
                     {"i": scope},
                 )
             ).scalar_one()

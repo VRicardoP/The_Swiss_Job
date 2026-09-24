@@ -39,8 +39,12 @@ async def emit(
             "ON CONFLICT (event_id) DO NOTHING"
         ),
         {
-            "eid": eid, "agg": aggregate, "aggid": aggregate_id,
-            "pid": subject_profile_id, "ver": version, "type": event_type,
+            "eid": eid,
+            "agg": aggregate,
+            "aggid": aggregate_id,
+            "pid": subject_profile_id,
+            "ver": version,
+            "type": event_type,
             "payload": json.dumps(payload, ensure_ascii=False, default=str),
         },
     )

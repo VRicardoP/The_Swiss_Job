@@ -32,7 +32,9 @@ def test_portfolio_freeze_probe_uses_operator_token(monkeypatch):
     server = ThreadingHTTPServer(("127.0.0.1", 0), Health)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    monkeypatch.setenv("DOCUMENT_FREEZE_URL", f"http://127.0.0.1:{server.server_port}/health/deep")
+    monkeypatch.setenv(
+        "DOCUMENT_FREEZE_URL", f"http://127.0.0.1:{server.server_port}/health/deep"
+    )
     try:
         monkeypatch.delenv("DOCUMENT_FREEZE_TOKEN", raising=False)
         with pytest.raises(httpx.HTTPStatusError):

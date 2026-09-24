@@ -18,6 +18,7 @@ max_length 512, BCE-with-logits (num_labels=1), objetivo = rel/2 ∈ {0,.5,1},
 épocas candidatas {1,2,3} elegidas por MSE en la validación POR GRUPOS
 (sha1(vacancy) mod 5 == 0). Cambiar cualquiera es OTRA receta.
 """
+
 import argparse
 import asyncio  # noqa: F401 — homogéneo con el resto de CLIs
 import hashlib
@@ -56,8 +57,9 @@ def _sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
-def build_dataset(judgments_path: str, profiles_content: dict,
-                  docs_path: str) -> list[dict]:
+def build_dataset(
+    judgments_path: str, profiles_content: dict, docs_path: str
+) -> list[dict]:
     """Dataset CANÓNICO y determinista: una fila por juicio, con la consulta
     v1 del perfil y el documento v1 de la oferta; grupo = sha1(vacante)."""
     from jobhunt_core import cross_encoder as ce
@@ -81,12 +83,15 @@ def build_dataset(judgments_path: str, profiles_content: dict,
         if m is None:
             raise ValueError(f"juicios línea {n}: vacante sin documento {vac}")
         grupo = int(hashlib.sha1(vac.encode()).hexdigest(), 16) % VAL_MOD
-        filas.append({
-            "q": ce.build_queries(profiles_content[per])[0],
-            "d": ce.build_document(m["t"], m["l"], m["d"]),
-            "y": int(rel) / 2.0,
-            "vac": vac, "grupo": grupo,
-        })
+        filas.append(
+            {
+                "q": ce.build_queries(profiles_content[per])[0],
+                "d": ce.build_document(m["t"], m["l"], m["d"]),
+                "y": int(rel) / 2.0,
+                "vac": vac,
+                "grupo": grupo,
+            }
+        )
     filas.sort(key=lambda f: (f["vac"], f["q"]))  # orden canónico
     return filas
 
@@ -96,8 +101,7 @@ def split_by_group(filas: list[dict]) -> tuple[list, list]:
     train = [f for f in filas if f["grupo"] != 0]
     val = [f for f in filas if f["grupo"] == 0]
     if not train or not val:
-        raise ValueError(
-            f"split degenerado: train={len(train)} val={len(val)}")
+        raise ValueError(f"split degenerado: train={len(train)} val={len(val)}")
     return train, val
 
 
@@ -126,8 +130,7 @@ def _val_pair_acc(modelo, val) -> float:
     pares = build_ranknet_pairs(val)
     if not pares:
         return 0.0
-    aciertos = sum(
-        1 for a, b in pares if puntuacion[id(a)] > puntuacion[id(b)])
+    aciertos = sum(1 for a, b in pares if puntuacion[id(a)] > puntuacion[id(b)])
     return aciertos / len(pares)
 
 
@@ -147,19 +150,24 @@ def _real_trainer(base: str, revision: str):
 
     class _T:
         def __init__(self):
-            self.m = CrossEncoder(base, revision=revision, device="cpu",
-                                  max_length=MAX_LEN, num_labels=1)
+            self.m = CrossEncoder(
+                base, revision=revision, device="cpu", max_length=MAX_LEN, num_labels=1
+            )
 
         def fit(self, train, epochs):
-            ejemplos = [InputExample(texts=[f["q"], f["d"]], label=f["y"])
-                        for f in train]
+            ejemplos = [
+                InputExample(texts=[f["q"], f["d"]], label=f["y"]) for f in train
+            ]
             g = torch.Generator()
             g.manual_seed(SEED)
-            dl = DataLoader(ejemplos, shuffle=True, batch_size=BATCH,
-                            generator=g)
-            self.m.fit(train_dataloader=dl, epochs=epochs,
-                       optimizer_params={"lr": LR}, warmup_steps=WARMUP,
-                       show_progress_bar=False)
+            dl = DataLoader(ejemplos, shuffle=True, batch_size=BATCH, generator=g)
+            self.m.fit(
+                train_dataloader=dl,
+                epochs=epochs,
+                optimizer_params={"lr": LR},
+                warmup_steps=WARMUP,
+                show_progress_bar=False,
+            )
 
         def predict(self, pares):
             return list(self.m.predict(pares, batch_size=16))
@@ -179,14 +187,20 @@ def _ranknet_trainer(base: str, revision: str):
 
     class _T:
         def __init__(self):
-            self.m = CrossEncoder(base, revision=revision, device="cpu",
-                                  max_length=MAX_LEN, num_labels=1)
+            self.m = CrossEncoder(
+                base, revision=revision, device="cpu", max_length=MAX_LEN, num_labels=1
+            )
 
         def _logits(self, filas):
             tok = self.m.tokenizer
-            enc = tok([f["q"] for f in filas], [f["d"] for f in filas],
-                      padding=True, truncation=True, max_length=MAX_LEN,
-                      return_tensors="pt")
+            enc = tok(
+                [f["q"] for f in filas],
+                [f["d"] for f in filas],
+                padding=True,
+                truncation=True,
+                max_length=MAX_LEN,
+                return_tensors="pt",
+            )
             return self.m.model(**enc).logits.squeeze(-1)
 
         def fit(self, train, epochs):
@@ -235,9 +249,16 @@ def _val_mse(modelo, val) -> float:
     return total / len(val)
 
 
-def run_training(judgments_path: str, profiles_content_path: str,
-                 docs_path: str, base: str, revision: str, out_dir: str,
-                 epocas=EPOCAS_CANDIDATAS, loss: str = "bce") -> dict:
+def run_training(
+    judgments_path: str,
+    profiles_content_path: str,
+    docs_path: str,
+    base: str,
+    revision: str,
+    out_dir: str,
+    epocas=EPOCAS_CANDIDATAS,
+    loss: str = "bce",
+) -> dict:
     from jobhunt_core import cross_encoder as ce
 
     if loss not in LOSSES:
@@ -265,8 +286,7 @@ def run_training(judgments_path: str, profiles_content_path: str,
         gana = (
             mejor is None
             or (loss == "bce" and mse < resultados[mejor])
-            or (loss == "ranknet"
-                and concordancias[n_epocas] > concordancias[mejor])
+            or (loss == "ranknet" and concordancias[n_epocas] > concordancias[mejor])
         )
         if gana:
             mejor = n_epocas
@@ -280,21 +300,28 @@ def run_training(judgments_path: str, profiles_content_path: str,
     os.replace(tmp, destino)
 
     manifiesto = {
-        "base": base, "base_revision": revision,
-        "seed": SEED, "batch": BATCH, "lr": LR, "warmup": WARMUP,
+        "base": base,
+        "base_revision": revision,
+        "seed": SEED,
+        "batch": BATCH,
+        "lr": LR,
+        "warmup": WARMUP,
         "max_length": MAX_LEN,
         "loss": "bce-with-logits" if loss == "bce" else "ranknet-pairwise",
         "seleccion": "val_mse" if loss == "bce" else "val_pair_acc",
-        "objetivo": "rel/2", "val_grupo": f"sha1(vac) % {VAL_MOD} == 0",
-        "epocas_candidatas": list(epocas), "epocas_elegidas": mejor,
-        "val_mse": resultados, "val_pair_acc": concordancias,
+        "objetivo": "rel/2",
+        "val_grupo": f"sha1(vac) % {VAL_MOD} == 0",
+        "epocas_candidatas": list(epocas),
+        "epocas_elegidas": mejor,
+        "val_mse": resultados,
+        "val_pair_acc": concordancias,
         "ranknet_pair_cap": RANKNET_PAIR_CAP if loss == "ranknet" else None,
-        "n_total": len(filas), "n_train": len(train), "n_val": len(val),
+        "n_total": len(filas),
+        "n_train": len(train),
+        "n_val": len(val),
         "dataset_sha256": _sha256_bytes(dataset_canon.encode()),
-        "judgments_sha256": _sha256_bytes(
-            io.open(judgments_path, "rb").read()),
-        "profiles_sha256": _sha256_bytes(
-            io.open(profiles_content_path, "rb").read()),
+        "judgments_sha256": _sha256_bytes(io.open(judgments_path, "rb").read()),
+        "profiles_sha256": _sha256_bytes(io.open(profiles_content_path, "rb").read()),
         "model_fingerprint": huella,
         "artifact_dir": destino,
         "artifact_manifest": ce.model_manifest(os.path.abspath(destino)),
@@ -321,16 +348,22 @@ def _library_versions() -> dict:
 def _main(argv) -> None:
     ap = argparse.ArgumentParser(prog="jobhunt_core.train_cross_encoder")
     ap.add_argument("--judgments", required=True)
-    ap.add_argument("--profiles-content", required=True,
-                    help="JSON {perfil: content}")
+    ap.add_argument("--profiles-content", required=True, help="JSON {perfil: content}")
     ap.add_argument("--docs", required=True, help="JSONL {vac,t,l,d}")
     ap.add_argument("--base", required=True)
     ap.add_argument("--revision", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--loss", choices=LOSSES, default="bce")
     args = ap.parse_args(argv)
-    man = run_training(args.judgments, args.profiles_content, args.docs,
-                       args.base, args.revision, args.out, loss=args.loss)
+    man = run_training(
+        args.judgments,
+        args.profiles_content,
+        args.docs,
+        args.base,
+        args.revision,
+        args.out,
+        loss=args.loss,
+    )
     print(json.dumps(man, ensure_ascii=False, sort_keys=True))
 
 

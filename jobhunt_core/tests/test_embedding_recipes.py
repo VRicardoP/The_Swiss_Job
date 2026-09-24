@@ -11,10 +11,7 @@ class FakeBackend:
 
     def encode_batch(self, texts):
         self.calls.append(list(texts))
-        return [
-            [1.0, 0.0] if "fields" in text else [0.0, 1.0]
-            for text in texts
-        ]
+        return [[1.0, 0.0] if "fields" in text else [0.0, 1.0] for text in texts]
 
 
 def test_role_recipe_prioritizes_fields_and_keeps_title_view():
@@ -62,9 +59,7 @@ def test_composite_recipe_encodes_each_view_and_normalizes_once():
 def test_legacy_recipe_preserves_single_backend_call():
     backend = FakeBackend()
 
-    vectors = embedding_recipes.encode_views(
-        backend, [(("legacy fields", 1.0),)]
-    )
+    vectors = embedding_recipes.encode_views(backend, [(("legacy fields", 1.0),)])
 
     assert backend.calls == [["legacy fields"]]
     assert vectors == [[1.0, 0.0]]
@@ -163,15 +158,11 @@ def test_encode_views_rejects_views_with_different_dimensions():
     """Guarda CONSERVADA en el paso a numpy: numpy también fallaría, pero con
     un ValueError sobre "inhomogeneous shape" que no dice qué ocurrió."""
     with pytest.raises(ValueError, match="dimensiones distintas"):
-        embedding_recipes.encode_views(
-            RaggedBackend(), [(("a", 0.6), ("b", 0.4))]
-        )
+        embedding_recipes.encode_views(RaggedBackend(), [(("a", 0.6), ("b", 0.4))])
 
 
 def test_encode_views_rejects_null_combination():
     """Un vector nulo no se puede normalizar y envenenaría la ANN: fail-closed
     con el mismo mensaje que antes de O-5."""
     with pytest.raises(ValueError, match="vector nulo"):
-        embedding_recipes.encode_views(
-            ZeroBackend(), [(("a", 0.6), ("b", 0.4))]
-        )
+        embedding_recipes.encode_views(ZeroBackend(), [(("a", 0.6), ("b", 0.4))])

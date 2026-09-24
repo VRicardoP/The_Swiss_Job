@@ -60,5 +60,6 @@ def page_budget(params, cap):
     budget = params[MAX_PAGES_PARAM]
     if type(budget) is not int or not 0 < budget <= cap:
         raise ProviderConfigError(
-            f"{MAX_PAGES_PARAM} must be an integer between 1 and {cap}")
+            f"{MAX_PAGES_PARAM} must be an integer between 1 and {cap}"
+        )
     return budget

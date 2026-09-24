@@ -19,7 +19,12 @@ from pathlib import Path
 
 import pytest
 
-_RUTA = Path(__file__).resolve().parents[2] / "backend" / "scripts" / "cutover_coordinador.py"
+_RUTA = (
+    Path(__file__).resolve().parents[2]
+    / "backend"
+    / "scripts"
+    / "cutover_coordinador.py"
+)
 
 
 def _modulo():
@@ -49,7 +54,9 @@ def test_la_clave_sale_solo_de_la_identidad_y_la_base(tmp_path):
     assert otra_base != a
 
 
-@pytest.mark.parametrize("identidad", ["", "   ", "swissjob-postgres", "postgres:5432", "12a"])
+@pytest.mark.parametrize(
+    "identidad", ["", "   ", "swissjob-postgres", "postgres:5432", "12a"]
+)
 def test_una_identidad_que_no_es_canonica_para_la_maniobra(identidad, tmp_path):
     """El nombre del contenedor NO es identidad: aceptarlo como tal es exactamente
     cómo dos alias del mismo servidor tomaban dos cerrojos distintos."""
@@ -87,7 +94,9 @@ def test_la_raiz_es_una_constante_del_modulo_y_no_se_lee_del_entorno(monkeypatch
     # Y tampoco por línea de comandos.
     ayuda = subprocess.run(
         [sys.executable, str(_RUTA), "ejecutar", "--help"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     assert "--raiz" not in ayuda and "--lock" not in ayuda, ayuda
 
@@ -117,21 +126,36 @@ def test_una_raiz_accesible_se_prepara_sola(tmp_path):
 def _publicar(ruta: Path, fase: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(_RUTA), "publicar", "--ruta", str(ruta), "--fase", fase],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
 
 
 @pytest.mark.parametrize(
     ("camino", "porque"),
     [
-        (["INICIO", "APARTADA", "DESTINO_CREADO", "RESTAURADO", "VERIFIED"],
-         "el camino feliz"),
-        (["INICIO", "APARTADA", "DESTINO_CREADO", "RESTAURADO",
-          "VERIFICACION_FALLIDA", "DESTINO_CREADO", "RESTAURADO", "VERIFIED"],
-         "la verificación falla y se restaura DE NUEVO hasta certificar"),
+        (
+            ["INICIO", "APARTADA", "DESTINO_CREADO", "RESTAURADO", "VERIFIED"],
+            "el camino feliz",
+        ),
+        (
+            [
+                "INICIO",
+                "APARTADA",
+                "DESTINO_CREADO",
+                "RESTAURADO",
+                "VERIFICACION_FALLIDA",
+                "DESTINO_CREADO",
+                "RESTAURADO",
+                "VERIFIED",
+            ],
+            "la verificación falla y se restaura DE NUEVO hasta certificar",
+        ),
         (["INICIO", "INICIO"], "reanudar desde INICIO vuelve a medir"),
-        (["INICIO", "APARTADA", "DESTINO_CREADO", "DESTINO_CREADO"],
-         "un destino sin certificar se recrea las veces que haga falta"),
+        (
+            ["INICIO", "APARTADA", "DESTINO_CREADO", "DESTINO_CREADO"],
+            "un destino sin certificar se recrea las veces que haga falta",
+        ),
     ],
 )
 def test_los_caminos_validos_se_publican(tmp_path, camino, porque):
@@ -145,10 +169,10 @@ def test_los_caminos_validos_se_publican(tmp_path, camino, porque):
 @pytest.mark.parametrize(
     ("desde", "hasta"),
     [
-        (None, "APARTADA"),          # sin checkpoint no se puede estar apartada
-        (None, "VERIFIED"),          # ni certificada
-        ("INICIO", "RESTAURADO"),    # no se restaura sin haber creado el destino
-        ("APARTADA", "VERIFIED"),    # ni se certifica sin restaurar
+        (None, "APARTADA"),  # sin checkpoint no se puede estar apartada
+        (None, "VERIFIED"),  # ni certificada
+        ("INICIO", "RESTAURADO"),  # no se restaura sin haber creado el destino
+        ("APARTADA", "VERIFIED"),  # ni se certifica sin restaurar
         # LA transición que R7 tuvo que añadir, al revés: no se vuelve a
         # verificar el destino que ya se comprobó que no cuadra.
         ("VERIFICACION_FALLIDA", "VERIFIED"),
@@ -160,10 +184,17 @@ def test_una_transicion_que_no_ocurrio_no_se_publica(tmp_path, desde, hasta):
     se reanuda nada: es peor que no tener checkpoint, porque miente."""
     ruta = tmp_path / "checkpoint"
     if desde is not None:
-        for fase in {"INICIO": ["INICIO"],
-                     "APARTADA": ["INICIO", "APARTADA"],
-                     "VERIFICACION_FALLIDA": ["INICIO", "APARTADA", "DESTINO_CREADO",
-                                              "RESTAURADO", "VERIFICACION_FALLIDA"]}[desde]:
+        for fase in {
+            "INICIO": ["INICIO"],
+            "APARTADA": ["INICIO", "APARTADA"],
+            "VERIFICACION_FALLIDA": [
+                "INICIO",
+                "APARTADA",
+                "DESTINO_CREADO",
+                "RESTAURADO",
+                "VERIFICACION_FALLIDA",
+            ],
+        }[desde]:
             assert _publicar(ruta, fase).returncode == 0
     p = _publicar(ruta, hasta)
     assert p.returncode != 0, f"publicó {desde} → {hasta}:\n{p.stdout}"
@@ -184,9 +215,19 @@ def test_la_publicacion_no_deja_el_checkpoint_a_medias(tmp_path):
     assert _publicar(ruta, "INICIO").returncode == 0
     assert not (tmp_path / "checkpoint.tmp").exists()
     p = subprocess.run(
-        [sys.executable, str(_RUTA), "publicar", "--ruta", str(ruta),
-         "--fase", "APARTADA", "--dato", "CK_PREVIA=swissjobhunter_previa_20260829"],
-        capture_output=True, text=True,
+        [
+            sys.executable,
+            str(_RUTA),
+            "publicar",
+            "--ruta",
+            str(ruta),
+            "--fase",
+            "APARTADA",
+            "--dato",
+            "CK_PREVIA=swissjobhunter_previa_20260829",
+        ],
+        capture_output=True,
+        text=True,
     )
     assert p.returncode == 0, p.stdout + p.stderr
     cuerpo = ruta.read_text(encoding="utf-8")
@@ -204,8 +245,18 @@ def test_un_sync_que_falla_impide_publicar(tmp_path):
     entorno = dict(os.environ, PATH=f"{falso}:{os.environ['PATH']}")
     ruta = tmp_path / "checkpoint"
     p = subprocess.run(
-        [sys.executable, str(_RUTA), "publicar", "--ruta", str(ruta), "--fase", "INICIO"],
-        capture_output=True, text=True, env=entorno,
+        [
+            sys.executable,
+            str(_RUTA),
+            "publicar",
+            "--ruta",
+            str(ruta),
+            "--fase",
+            "INICIO",
+        ],
+        capture_output=True,
+        text=True,
+        env=entorno,
     )
     assert p.returncode != 0, p.stdout
     assert "sync" in p.stdout + p.stderr
@@ -218,17 +269,27 @@ def test_dos_ordenes_sobre_el_mismo_recurso_no_coexisten(tmp_path):
     testigo, fin = tmp_path / "dentro", tmp_path / "sigue"
     fin.write_text("1")
     guion = tmp_path / "espera.sh"
-    guion.write_text(f"#!/bin/sh\ntouch {testigo}\nwhile [ -f {fin} ]; do sleep 0.1; done\n")
+    guion.write_text(
+        f"#!/bin/sh\ntouch {testigo}\nwhile [ -f {fin} ]; do sleep 0.1; done\n"
+    )
     guion.chmod(0o755)
-    argv = [sys.executable, str(_RUTA), "ejecutar",
-            "--identidad", "7610559582315749414", "--db", "base_de_prueba_coordinador"]
+    argv = [
+        sys.executable,
+        str(_RUTA),
+        "ejecutar",
+        "--identidad",
+        "7610559582315749414",
+        "--db",
+        "base_de_prueba_coordinador",
+    ]
     import threading
 
     resultado: dict[str, subprocess.CompletedProcess] = {}
 
     def primera():
-        resultado["a"] = subprocess.run(argv + ["--", str(guion)],
-                                        capture_output=True, text=True)
+        resultado["a"] = subprocess.run(
+            argv + ["--", str(guion)], capture_output=True, text=True
+        )
 
     hilo = threading.Thread(target=primera)
     hilo.start()

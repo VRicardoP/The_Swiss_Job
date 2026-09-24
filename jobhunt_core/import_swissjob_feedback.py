@@ -46,10 +46,13 @@ def _wire(value):
 
 async def _lock_profiles(session, consumer, profile_ids):
     for pid in sorted(profile_ids):
-        found = await session.scalar(sa.text(
-            "SELECT p.id FROM profiles p JOIN consumers c ON c.id=p.consumer_id "
-            "WHERE p.id=:p AND c.name=:c FOR UPDATE OF p"
-        ), {"p": uuid.UUID(pid), "c": consumer})
+        found = await session.scalar(
+            sa.text(
+                "SELECT p.id FROM profiles p JOIN consumers c ON c.id=p.consumer_id "
+                "WHERE p.id=:p AND c.name=:c FOR UPDATE OF p"
+            ),
+            {"p": uuid.UUID(pid), "c": consumer},
+        )
         if found is None:
             raise FeedbackMigrationError("profile ownership changed")
 
@@ -60,18 +63,33 @@ def _predicate(keys):
 
 def _parameters(values):
     return {
-        key: (json.dumps(value) if key in _JSON else
-              datetime.fromisoformat(value) if key in _DATES and value is not None else
-              uuid.UUID(value) if key in _UUIDS else value)
+        key: (
+            json.dumps(value)
+            if key in _JSON
+            else datetime.fromisoformat(value)
+            if key in _DATES and value is not None
+            else uuid.UUID(value)
+            if key in _UUIDS
+            else value
+        )
         for key, value in values.items()
     }
 
 
 async def _read(session, table, identity):
     keys, fields = _TABLES[table]
-    result = (await session.execute(sa.text(
-        f"SELECT {','.join(fields)} FROM {table} WHERE {_predicate(keys)} FOR UPDATE"
-    ), _parameters(identity))).mappings().one_or_none()
+    result = (
+        (
+            await session.execute(
+                sa.text(
+                    f"SELECT {','.join(fields)} FROM {table} WHERE {_predicate(keys)} FOR UPDATE"
+                ),
+                _parameters(identity),
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
     return _wire(dict(result)) if result is not None else None
 
 
@@ -276,16 +294,23 @@ async def apply_plan(session, raw, *, reverse=False):
         if table not in _TABLES:
             raise FeedbackMigrationError("unknown feedback table")
         keys, fields = _TABLES[table]
-        if set(change["identity"]) != set(keys) or any(
-            value is not None and set(value) != set(fields)
-            for value in (change["before"], change["after"])
-        ) or change["after"] is None:
+        if (
+            set(change["identity"]) != set(keys)
+            or any(
+                value is not None and set(value) != set(fields)
+                for value in (change["before"], change["after"])
+            )
+            or change["after"] is None
+        ):
             raise FeedbackMigrationError("invalid feedback image")
         identity = (table, tuple(change["identity"][k] for k in keys))
         if identity in identities:
             raise FeedbackMigrationError("duplicate feedback target")
         identities.add(identity)
-        if table == "profile_vacancy_state" and change["identity"]["profile_id"] not in pids:
+        if (
+            table == "profile_vacancy_state"
+            and change["identity"]["profile_id"] not in pids
+        ):
             raise FeedbackMigrationError("unbound feedback target")
         if table == "profile_vacancy_events" and any(
             image is not None and image["profile_id"] not in pids
@@ -296,12 +321,17 @@ async def apply_plan(session, raw, *, reverse=False):
         await _lock_profiles(session, plan["consumer"], plan["bindings"].values())
         for change in plan["changes"]:
             if change["table"] == "school_applications":
-                owner = await session.scalar(sa.text(
-                    "SELECT profile_id::text FROM school_applications WHERE id=:id"
-                ), _parameters(change["identity"]))
+                owner = await session.scalar(
+                    sa.text(
+                        "SELECT profile_id::text FROM school_applications WHERE id=:id"
+                    ),
+                    _parameters(change["identity"]),
+                )
                 if owner not in pids:
                     raise FeedbackMigrationError("unbound school feedback target")
-        actual = [await _read(session, c["table"], c["identity"]) for c in plan["changes"]]
+        actual = [
+            await _read(session, c["table"], c["identity"]) for c in plan["changes"]
+        ]
         start, finish = ("after", "before") if reverse else ("before", "after")
         if actual == [c[finish] for c in plan["changes"]]:
             return {"verdict": "verified", "replayed": True, "changed": 0}
@@ -315,22 +345,38 @@ async def apply_plan(session, raw, *, reverse=False):
                 # PVS may now own evaluator/bookmark state. Delete only when
                 # the whole row is still disposable, otherwise fail closed.
                 if table == "profile_vacancy_state":
-                    busy = await session.scalar(sa.text(
-                        "SELECT current_eval_id IS NOT NULL OR saved_at IS NOT NULL OR notes IS NOT NULL "
-                        f"FROM profile_vacancy_state WHERE {_predicate(keys)}"
-                    ), _parameters(identity))
+                    busy = await session.scalar(
+                        sa.text(
+                            "SELECT current_eval_id IS NOT NULL OR saved_at IS NOT NULL OR notes IS NOT NULL "
+                            f"FROM profile_vacancy_state WHERE {_predicate(keys)}"
+                        ),
+                        _parameters(identity),
+                    )
                     if busy:
-                        raise FeedbackMigrationError("new state prevents pre-activation rollback")
-                await session.execute(sa.text(f"DELETE FROM {table} WHERE {_predicate(keys)}"), _parameters(identity))
+                        raise FeedbackMigrationError(
+                            "new state prevents pre-activation rollback"
+                        )
+                await session.execute(
+                    sa.text(f"DELETE FROM {table} WHERE {_predicate(keys)}"),
+                    _parameters(identity),
+                )
             else:
                 values = {**identity, **target}
-                expr = {k: f"CAST(:{k} AS jsonb)" if k in _JSON else f":{k}" for k in values}
+                expr = {
+                    k: f"CAST(:{k} AS jsonb)" if k in _JSON else f":{k}" for k in values
+                }
                 if change[start] is None:
                     statement = f"INSERT INTO {table} ({','.join(values)}) VALUES ({','.join(expr.values())})"
                 else:
-                    statement = f"UPDATE {table} SET " + ",".join(f"{k}={expr[k]}" for k in fields) + f" WHERE {_predicate(keys)}"
+                    statement = (
+                        f"UPDATE {table} SET "
+                        + ",".join(f"{k}={expr[k]}" for k in fields)
+                        + f" WHERE {_predicate(keys)}"
+                    )
                 await session.execute(sa.text(statement), _parameters(values))
-        after = [await _read(session, c["table"], c["identity"]) for c in plan["changes"]]
+        after = [
+            await _read(session, c["table"], c["identity"]) for c in plan["changes"]
+        ]
         if after != [c[finish] for c in plan["changes"]]:
             raise FeedbackMigrationError("feedback read-back differs")
     return {"verdict": "verified", "replayed": False, "changed": len(plan["changes"])}

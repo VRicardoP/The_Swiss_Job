@@ -28,9 +28,15 @@ from urllib.parse import urljoin, urlsplit
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.provider import (
-    BaseProvider, ProviderConfigError, ProviderResponseError)
+    BaseProvider,
+    ProviderConfigError,
+    ProviderResponseError,
+)
 from jobhunt_core.harvest.providers.browser_headers import (
-    BROWSER_HEADERS, MAX_PAGES_PARAM, page_budget)
+    BROWSER_HEADERS,
+    MAX_PAGES_PARAM,
+    page_budget,
+)
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
@@ -51,7 +57,8 @@ REQUEST_TIMEOUT_S = 40
 
 _ALLOWED_HOSTNAMES = frozenset(urlsplit(host).hostname or "" for host in HOSTS)
 _STATE_ANCHOR = re.compile(
-    r"""window\.__PRELOADED_STATE__\[\s*["']app-unifiedResultlist["']\s*\]\s*=\s*""")
+    r"""window\.__PRELOADED_STATE__\[\s*["']app-unifiedResultlist["']\s*\]\s*=\s*"""
+)
 _PLATFORM_ID = re.compile(r"-job(\d+)/?$")
 _SCRIPT = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
 
@@ -85,11 +92,14 @@ def _resolve_job_url(raw, host):
         return None
     try:
         parts = urlsplit(urljoin(f"{host}/", raw))
-        port = parts.port          # validated on access; raises on a bad port
+        port = parts.port  # validated on access; raises on a bad port
     except ValueError:
         return None
-    if (parts.scheme not in ("http", "https") or parts.username is not None
-            or port is not None):
+    if (
+        parts.scheme not in ("http", "https")
+        or parts.username is not None
+        or port is not None
+    ):
         return None
     hostname = parts.hostname or ""
     if hostname not in _ALLOWED_HOSTNAMES or not parts.path or parts.path == "/":
@@ -120,7 +130,7 @@ def _balanced_object(text, start):
         elif char == "}":
             depth -= 1
             if depth == 0:
-                return text[start:i + 1]
+                return text[start : i + 1]
     return None
 
 
@@ -163,28 +173,40 @@ def _listing(item, host):
 def _content(raw):
     title = _s(raw.get("title")).strip()
     description = strip_html_tags(_s(raw.get("textSnippet")))
-    return {"title": title,
-            "company": _s(raw.get("companyName")).strip() or "Unknown",
-            "description": description,
-            "location": _s(raw.get("location")).strip() or "Ireland",
-            # Derived from the /jobs/work-from-home scope, not from the item.
-            "remote": True,
-            "tags": extract_job_skills(title, description)[:15],
-            # EUR/GBP text only; no CHF amount is invented at this boundary.
-            "salary": _s(raw.get("salary")).strip() or None}
+    return {
+        "title": title,
+        "company": _s(raw.get("companyName")).strip() or "Unknown",
+        "description": description,
+        "location": _s(raw.get("location")).strip() or "Ireland",
+        # Derived from the /jobs/work-from-home scope, not from the item.
+        "remote": True,
+        "tags": extract_job_skills(title, description)[:15],
+        # EUR/GBP text only; no CHF amount is invented at this boundary.
+        "salary": _s(raw.get("salary")).strip() or None,
+    }
 
 
 def register_handlers():
     register_normalizer(SOURCE_NAME, _content)
-    register_extractor(SOURCE_NAME, lambda raw: (
-        _s(raw.get("title")).strip(),
-        _s(raw.get("companyName")).strip() or "Unknown"))
+    register_extractor(
+        SOURCE_NAME,
+        lambda raw: (
+            _s(raw.get("title")).strip(),
+            _s(raw.get("companyName")).strip() or "Unknown",
+        ),
+    )
 
 
 async def _page(http, host, page):
     url = f"{host}{LISTING_PATH}"
-    async with http.stream("GET", url, params={"page": page}, timeout=REQUEST_TIMEOUT_S,
-                           follow_redirects=True, headers=BROWSER_HEADERS) as response:
+    async with http.stream(
+        "GET",
+        url,
+        params={"page": page},
+        timeout=REQUEST_TIMEOUT_S,
+        follow_redirects=True,
+        headers=BROWSER_HEADERS,
+    ) as response:
         response.raise_for_status()
         chunks, size = [], 0
         async for chunk in response.aiter_bytes():
@@ -247,9 +269,14 @@ class IrishJobsProvider(BaseProvider):
         listings = tuple(by_identity.values())
         if seen and not listings:
             raise ProviderResponseError(
-                "irishjobs: nonempty feed has no usable identities")
+                "irishjobs: nonempty feed has no usable identities"
+            )
         error = error or ("invalid_irishjobs_items" if invalid else None)
         exhausted = exhausted or (MAX_PAGES_PARAM in params and pages >= budget)
-        return FetchResult(listings, {"pages": pages, "items_seen": seen},
-                           pages_fetched=pages,
-                           complete=exhausted and error is None, error=error)
+        return FetchResult(
+            listings,
+            {"pages": pages, "items_seen": seen},
+            pages_fetched=pages,
+            complete=exhausted and error is None,
+            error=error,
+        )

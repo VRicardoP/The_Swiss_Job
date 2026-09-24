@@ -50,7 +50,11 @@ _CREATED = "created"
 _REUSED = "reused"
 _QUARANTINE = "quarantine"
 _Q_NO_URL = "no_url"
-_COLLISION_REASONS = ("collision_intra", "collision_cross_run", "collision_cross_source")
+_COLLISION_REASONS = (
+    "collision_intra",
+    "collision_cross_run",
+    "collision_cross_source",
+)
 
 
 async def _portfolio_vacancies_for_keys(
@@ -152,7 +156,9 @@ async def verify_migration(
         1 for u in users for row in (u.get("applications") or []) if not row.get("url")
     )
     ledger_no_url = sum(
-        1 for e in ledger if e["disposition"] == _QUARANTINE and e["reason"] == _Q_NO_URL
+        1
+        for e in ledger
+        if e["disposition"] == _QUARANTINE and e["reason"] == _Q_NO_URL
     )
     if input_no_url != ledger_no_url:
         discrepancies.append(
@@ -199,7 +205,9 @@ async def verify_migration(
     # vacante portfolio-import (la clave puede existir por la url GANADORA de otra ejecución;
     # lo ilegítimo es que ESTA url resuelva — habría un vínculo falso que la cuarentena evita).
     quarantined = [
-        e for e in ledger if e["disposition"] == _QUARANTINE and e["reason"] in _COLLISION_REASONS
+        e
+        for e in ledger
+        if e["disposition"] == _QUARANTINE and e["reason"] in _COLLISION_REASONS
     ]
     for e in quarantined:
         if await _url_resolves(session, e["url"], source_name):
@@ -244,7 +252,7 @@ async def verify_migration(
 
 def _is_bindable(url: str) -> bool:
     """True si esa url CRUDA puede viajar como bind-param a Postgres (INVARIANTE de C-4, ver
-    cabecera). Un surrogate suelto —`json.loads` los produce sin rechistar desde `\uD800`-`\uDFFF`,
+    cabecera). Un surrogate suelto —`json.loads` los produce sin rechistar desde `\ud800`-`\udfff`,
     y el portfolio de entrada es JSON de USUARIO— pasa `normalize_url` (urlsplit/urlunsplit no
     codifican) pero revienta en asyncpg con `DataError`. UnicodeEncodeError ⊂ ValueError."""
     try:

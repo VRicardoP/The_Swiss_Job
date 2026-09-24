@@ -42,8 +42,15 @@ def source(origin, owner):
     return row
 
 
-@pytest.mark.parametrize("origin,core_reference", [("swissjob", False), ("swissjob", True), ("portfolio", False)])
-def test_import_preserves_history_and_replays_after_lost_ack(db, origin, core_reference):  # noqa: F811  (la fixture, no una redefinición)
+@pytest.mark.parametrize(
+    "origin,core_reference",
+    [("swissjob", False), ("swissjob", True), ("portfolio", False)],
+)
+def test_import_preserves_history_and_replays_after_lost_ack(
+    db,  # noqa: F811  (la fixture, no una redefinición)
+    origin,
+    core_reference,
+):
     factory, created = db
     _, consumer, pid = _seed_profile(factory, created)
     owner = uuid.uuid4() if origin == "swissjob" else 11

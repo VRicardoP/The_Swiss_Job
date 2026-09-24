@@ -173,29 +173,29 @@ SCOPE_COHORT_PREFIX = "cohort:"
 NDCG_K = 10  # top-K de ndcg@10 / overlap@10 (denominador FIJO del overlap)
 
 # Umbrales RATIFICADOS 2026-07-24 (§6) — constantes con nombre.
-NDCG_MIN = 0.60                # [gate] ndcg@10 >= 0.60 por perfil
-NDCG_LEGACY_MARGIN = 0.05      # [gate] y >= ndcg legacy (mismo set) - 0.05
-DEDUP_PRECISION_MIN = 0.95     # [gate]
+NDCG_MIN = 0.60  # [gate] ndcg@10 >= 0.60 por perfil
+NDCG_LEGACY_MARGIN = 0.05  # [gate] y >= ndcg legacy (mismo set) - 0.05
+DEDUP_PRECISION_MIN = 0.95  # [gate]
 # Re-ratificado 2026-08-26 (ACTA_DECISIONES D2): 0.40 = techo DEMOSTRADO del
 # examen congelado (ANALISIS_TRACK_R_FASE3: las señales restantes no existen
 # en los pares históricos; apply_url no puede reverdecerlo). La vía ÚNICA de
 # re-subir el listón: promoción del estrato positivo con re-etiquetado CIEGO
 # independiente + acta. precision 1.000 sigue vinculante sin cambios.
-DEDUP_RECALL_MIN = 0.40        # [gate]
-FN_MIN_RELEVANCE = 2           # juicios "relevantes" del numerador/denominador
-FN_STRICT_BELOW = 50           # < 50 juicios rel>=2 => 0 permitidos (§6)
-FN_MAX_RATIO = 0.02            # >= 50 juicios rel>=2 => <= 2%
-PERDIDA_MAX = 0                # [gate] estricto (DoD B.2 "cero pérdida")
+DEDUP_RECALL_MIN = 0.40  # [gate]
+FN_MIN_RELEVANCE = 2  # juicios "relevantes" del numerador/denominador
+FN_STRICT_BELOW = 50  # < 50 juicios rel>=2 => 0 permitidos (§6)
+FN_MAX_RATIO = 0.02  # >= 50 juicios rel>=2 => <= 2%
+PERDIDA_MAX = 0  # [gate] estricto (DoD B.2 "cero pérdida")
 # Umbrales outbox/latencia RATIFICADOS por el propietario el 2026-08-23
 # (cierre B-4 de la auditoría externa). La fuente única de verdad — con
 # definición, razón y fecha — es CONTRATOS_FASE_B.md §6 (enmienda 2026-08-23):
 # estas constantes la EJECUTAN, no la redefinen. Los ciclos anteriores a la
 # ratificación no cuentan para ninguna racha.
-OUTBOX_LAG_P99_MAX_S = 900.0   # [gate] contrato §6: 3× la cadencia de despacho
-LATENCIA_P95_MAX_S = 3600.0    # [gate] contrato §6: staging CDC solo-sombra
-REENLACE_PCT_MAX = 0.05        # [alerta] <= 5%/ciclo (ratio 0..1)
+OUTBOX_LAG_P99_MAX_S = 900.0  # [gate] contrato §6: 3× la cadencia de despacho
+LATENCIA_P95_MAX_S = 3600.0  # [gate] contrato §6: staging CDC solo-sombra
+REENLACE_PCT_MAX = 0.05  # [alerta] <= 5%/ciclo (ratio 0..1)
 STAGING_BACKLOG_GRACE_S = 3600  # "change_log sin applied_at > 1h" (§5)
-STAGING_RETENTION_DAYS = 7     # retención §2: ciclos cerrados + 7 días
+STAGING_RETENTION_DAYS = 7  # retención §2: ciclos cerrados + 7 días
 
 # Precondición del ORÁCULO (gate `labels_ready`, P1-2 — DoD B-03/§4): sin
 # esto los gates de calidad no son DEMOSTRABLES y el ciclo no puede sumar.
@@ -203,9 +203,9 @@ STAGING_RETENTION_DAYS = 7     # retención §2: ciclos cerrados + 7 días
 # duplicado aquí para no acoplar metrics→projector). Un set de otro consumer (p.ej. portfolio)
 # NO es evidencia del oráculo sombra (P1 rev. externa integral).
 SHADOW_CONSUMER = "swissjob-shadow"
-LABELS_MIN_FROZEN_SETS = 2         # >= 2 PERFILES sombra con set congelado válido (DoD B-03)…
+LABELS_MIN_FROZEN_SETS = 2  # >= 2 PERFILES sombra con set congelado válido (DoD B-03)…
 LABELS_MIN_JUDGMENTS_PER_SET = 30  # …con >= 30 juicios cada uno (DoD B-03)
-LABELS_MIN_DEDUP_PAIRS = 50        # >= 50 pares dedup etiquetados
+LABELS_MIN_DEDUP_PAIRS = 50  # >= 50 pares dedup etiquetados
 
 # value NUMERIC NOT NULL (core0008a inmutable): centinela del "NULL con
 # details" del contrato. Los gates leen details.no_data, NUNCA este número.
@@ -216,24 +216,31 @@ KIND_ALERTA = "alerta"
 # Marca de cada métrica según §6 (RATIFICADAS).
 METRIC_KINDS: dict[str, str] = {
     M_NDCG: KIND_GATE,
-    M_OVERLAP: KIND_ALERTA,           # informativa (el set es el oráculo)
+    M_OVERLAP: KIND_ALERTA,  # informativa (el set es el oráculo)
     M_DEDUP_PRECISION: KIND_GATE,
     M_DEDUP_RECALL: KIND_GATE,
     M_FALSOS_NEG: KIND_GATE,
     M_PERDIDA: KIND_GATE,
-    M_NO_INGERIBLES: KIND_ALERTA,     # alerta si > 0
+    M_NO_INGERIBLES: KIND_ALERTA,  # alerta si > 0
     M_OUTBOX_LAG: KIND_GATE,
-    M_OUTBOX_DEAD: KIND_GATE,         # dead_total > 0 en el ciclo ⇒ rojo (P2-6)
+    M_OUTBOX_DEAD: KIND_GATE,  # dead_total > 0 en el ciclo ⇒ rojo (P2-6)
     M_LATENCIA: KIND_GATE,
-    M_COSTE: KIND_ALERTA,             # proxy informativo, sin umbral duro
+    M_COSTE: KIND_ALERTA,  # proxy informativo, sin umbral duro
     M_REENLACE: KIND_ALERTA,
-    M_LABELS_READY: KIND_GATE,        # precondición del oráculo (P1-2)
+    M_LABELS_READY: KIND_GATE,  # precondición del oráculo (P1-2)
 }
 # Métricas globales que TODO ciclo computado debe tener (gates sin fila =
 # sin datos = ok False; alertas sin fila no inventan estado).
 _EXPECTED_GLOBAL = (
-    M_LABELS_READY, M_DEDUP_PRECISION, M_DEDUP_RECALL, M_PERDIDA,
-    M_NO_INGERIBLES, M_OUTBOX_LAG, M_OUTBOX_DEAD, M_LATENCIA, M_COSTE,
+    M_LABELS_READY,
+    M_DEDUP_PRECISION,
+    M_DEDUP_RECALL,
+    M_PERDIDA,
+    M_NO_INGERIBLES,
+    M_OUTBOX_LAG,
+    M_OUTBOX_DEAD,
+    M_LATENCIA,
+    M_COSTE,
     M_REENLACE,
 )
 
@@ -252,9 +259,7 @@ def cycle_bounds(cycle_id: date) -> tuple[datetime, datetime]:
     """[inicio, fin) de la ventana del ciclo `cycle_id` en CYCLE_TZ."""
     boundary = time(CYCLE_START_HOUR, CYCLE_START_MINUTE)
     start = datetime.combine(cycle_id, boundary, tzinfo=CYCLE_TZ)
-    end = datetime.combine(
-        cycle_id + timedelta(days=1), boundary, tzinfo=CYCLE_TZ
-    )
+    end = datetime.combine(cycle_id + timedelta(days=1), boundary, tzinfo=CYCLE_TZ)
     return start, end
 
 
@@ -305,7 +310,10 @@ async def _upsert_metric(
             "finished_at = clock_timestamp()"
         ),
         {
-            "c": cycle_id, "m": metric, "s": scope, "v": value,
+            "c": cycle_id,
+            "m": metric,
+            "s": scope,
+            "v": value,
             "d": json.dumps(details, default=str),
         },
     )
@@ -314,9 +322,7 @@ async def _upsert_metric(
 # ----------------------------------------------------- muestreador (outbox)
 
 
-async def sample_outbox_lag(
-    session: AsyncSession, now: datetime | None = None
-) -> dict:
+async def sample_outbox_lag(session: AsyncSession, now: datetime | None = None) -> dict:
     """Muestreador LIGERO de `oldest_pending_s` (delivery.stats, §5): appendea
     {ts, oldest_pending_s, dead_total} al array details.samples de la fila del
     ciclo ABIERTO en este momento (metric=outbox_lag_p99, scope=global) vía
@@ -347,8 +353,11 @@ async def sample_outbox_lag(
                 "RETURNING jsonb_array_length(details->'samples')"
             ),
             {
-                "c": cid, "m": M_OUTBOX_LAG, "s": SCOPE_GLOBAL,
-                "nodata": NO_DATA_VALUE, "j": sample,
+                "c": cid,
+                "m": M_OUTBOX_LAG,
+                "s": SCOPE_GLOBAL,
+                "nodata": NO_DATA_VALUE,
+                "j": sample,
             },
         )
     ).scalar_one()
@@ -397,7 +406,8 @@ async def compute_cycle(
     if sealed and not force:
         logger.warning(
             "metrics: ciclo %s ya SELLADO — INMUTABLE sin force=True (P1-4): "
-            "no se recomputa", cid,
+            "no se recomputa",
+            cid,
         )
         return {
             "cycle_id": cid.isoformat(),
@@ -447,7 +457,12 @@ async def compute_cycle(
         session, cid, start, end, legacy_schema, moment, profiles
     ):
         await _upsert_metric(
-            session, cid, metric, SCOPE_GLOBAL, value, details,
+            session,
+            cid,
+            metric,
+            SCOPE_GLOBAL,
+            value,
+            details,
             merge_details=merge,
         )
         computed[metric] = value
@@ -456,7 +471,11 @@ async def compute_cycle(
     # fila no es un gate: evaluate_gates la extrae, el informe no la lista).
     identity = await _cycle_identity(session, profiles)
     await _upsert_metric(
-        session, cid, M_UMBRALES, SCOPE_GLOBAL, 0,
+        session,
+        cid,
+        M_UMBRALES,
+        SCOPE_GLOBAL,
+        0,
         _current_thresholds() | identity,
     )
     computed |= await _persist_cohort_info_rows(session, cid)
@@ -481,7 +500,9 @@ async def compute_cycle(
         summary["recomputed_at"] = recomputed_at
         logger.warning(
             "metrics: ciclo %s RECOMPUTADO con force=True — recomputed_at=%s "
-            "(no computable para la racha de §6)", cid, recomputed_at,
+            "(no computable para la racha de §6)",
+            cid,
+            recomputed_at,
         )
     return summary
 
@@ -533,6 +554,7 @@ async def _measured_profiles(session: AsyncSession) -> list:
     inactive = await inactive_user_refs(session, [r.external_ref for r in rows])
     return [r for r in rows if r.external_ref not in inactive]
 
+
 async def _cycle_identity(session: AsyncSession, profiles: list) -> dict:
     """Identidad inmutable del código y del oráculo que produjo el ciclo."""
     cohort = (
@@ -557,8 +579,7 @@ async def _cycle_identity(session: AsyncSession, profiles: list) -> dict:
         "dedup": {
             "source": DEDUP_EVAL_COHORT,
             "frozen_at": (
-                cohort.frozen_at.isoformat()
-                if cohort and cohort.frozen_at else None
+                cohort.frozen_at.isoformat() if cohort and cohort.frozen_at else None
             ),
             "manifest": cohort.manifest if cohort else None,
         },
@@ -572,15 +593,12 @@ async def _cycle_identity(session: AsyncSession, profiles: list) -> dict:
     }
 
 
-
 # ---------------------------------------------------- métricas por perfil
 
 
 def _dcg(rels) -> float:
     """DCG@k con relevancia graduada (§5): Σ (2^rel_i − 1)/log2(i+1), i=1.."""
-    return sum(
-        (2 ** rel - 1) / math.log2(pos + 2) for pos, rel in enumerate(rels)
-    )
+    return sum((2**rel - 1) / math.log2(pos + 2) for pos, rel in enumerate(rels))
 
 
 async def _profile_metric_rows(
@@ -601,9 +619,7 @@ async def _profile_metric_rows(
             )
         ).all()
     }
-    legacy_top = await _legacy_visible_top(
-        session, legacy_schema, prof.external_ref
-    )
+    legacy_top = await _legacy_visible_top(session, legacy_schema, prof.external_ref)
     # Mapeo por CUALQUIER encarnación (§4) de refs juzgados Y del feed legacy
     # (el overlap necesita llevar el top legacy al espacio de vacantes).
     mapping = await map_job_refs_to_vacancies(
@@ -650,9 +666,7 @@ async def _profile_metric_rows(
         _ndcg_core_row(scope, feed_rows, vac_rel, idcg_core, core_base),
         _ndcg_legacy_row(scope, legacy_top, judgments, idcg_ref, base),
         _overlap_row(scope, feed_rows, legacy_top, mapping, base),
-        await _falsos_negativos_row(
-            session, prof, scope, judgments, mapping, base
-        ),
+        await _falsos_negativos_row(session, prof, scope, judgments, mapping, base),
     ]
     return rows
 
@@ -689,9 +703,7 @@ def _ndcg_legacy_row(scope, legacy_top, judgments, idcg, base) -> tuple:
     rels = [judgments.get(ref, 0) for ref in legacy_top]
     value, details = _ndcg_pair(_dcg(rels), idcg)
     details |= base | {
-        "top": [
-            {"job_ref": ref, "rel": rel} for ref, rel in zip(legacy_top, rels)
-        ],
+        "top": [{"job_ref": ref, "rel": rel} for ref, rel in zip(legacy_top, rels)],
     }
     return M_NDCG_LEGACY, scope, value, details
 
@@ -739,8 +751,7 @@ async def _falsos_negativos_row(
     if not present:
         details |= {
             "no_data": True,
-            "nota": "sin juicios rel>=2 presentes en corpus: no demostrable "
-                    "(P1-2)",
+            "nota": "sin juicios rel>=2 presentes en corpus: no demostrable (P1-2)",
         }
         return M_FALSOS_NEG, scope, NO_DATA_VALUE, details
     value = round(len(absent) / len(present), 6)
@@ -769,7 +780,9 @@ async def _legacy_visible_top(
                 ),
                 {"ref": external_ref, "k": NDCG_K},
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
 
 
@@ -796,7 +809,9 @@ async def _alive_vacancies(session: AsyncSession, vids: set) -> set:
                 ),
                 {"v": sorted(vids, key=str)},
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
 
 
@@ -818,7 +833,9 @@ async def _feed_vacancies_all(session: AsyncSession, profile_id) -> set:
                 ),
                 {"pid": profile_id},
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
 
 
@@ -881,16 +898,19 @@ async def _dedup_rows(session: AsyncSession) -> list[tuple]:
         if denom:
             rows.append((metric, round(tp / denom, 6), details, False))
         else:
-            rows.append((
-                metric,
-                NO_DATA_VALUE,
-                details | {
-                    "no_data": True,
-                    "nota": "sin pares evaluables en el denominador: "
-                            "no demostrable (P1-2)",
-                },
-                False,
-            ))
+            rows.append(
+                (
+                    metric,
+                    NO_DATA_VALUE,
+                    details
+                    | {
+                        "no_data": True,
+                        "nota": "sin pares evaluables en el denominador: "
+                        "no demostrable (P1-2)",
+                    },
+                    False,
+                )
+            )
     return rows
 
 
@@ -935,7 +955,9 @@ async def _dedup_cohort_info_rows(session: AsyncSession) -> list[tuple]:
                 ),
                 {"holdout": DEDUP_EVAL_COHORT},
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     rows: list[tuple] = []
     for cohorte in cohortes:
@@ -945,7 +967,7 @@ async def _dedup_cohort_info_rows(session: AsyncSession) -> list[tuple]:
             "cohorte": cohorte,
             "vinculante": False,
             "nota": "recall informativo por cohorte — NO vinculante: "
-                    "el gate puntúa SOLO el holdout (§4.2 estrato positivo)",
+            "el gate puntúa SOLO el holdout (§4.2 estrato positivo)",
         }
         denom = c["tp"] + c["fn"]
         scope = f"{SCOPE_COHORT_PREFIX}{cohorte}"
@@ -975,7 +997,8 @@ async def _persist_cohort_info_rows(session: AsyncSession, cid: date) -> dict:
             "WHERE cycle_id = :c AND scope LIKE :pfx AND scope <> ALL(:scopes)"
         ),
         {
-            "c": cid, "pfx": f"{SCOPE_COHORT_PREFIX}%",
+            "c": cid,
+            "pfx": f"{SCOPE_COHORT_PREFIX}%",
             "scopes": [scope for _m, scope, _v, _d in cohort_rows],
         },
     )
@@ -1012,13 +1035,9 @@ async def _labels_ready_row(session: AsyncSession, measured_profiles: list) -> t
             {"shadow": SHADOW_CONSUMER},
         )
     ).all()
-    inactive = await inactive_user_refs(
-        session, [r.external_ref for r in frozen_rows]
-    )
+    inactive = await inactive_user_refs(session, [r.external_ref for r in frozen_rows])
     frozen_total = len(frozen_rows)
-    excluded_inactive = sum(
-        1 for r in frozen_rows if r.external_ref in inactive
-    )
+    excluded_inactive = sum(1 for r in frozen_rows if r.external_ref in inactive)
     # Sets congelados VÁLIDOS (>= min juicios) de perfiles ACTIVOS (INFORMATIVO — todos los sets,
     # no solo el efectivo)…
     ok_sets = [
@@ -1064,9 +1083,7 @@ async def _labels_ready_row(session: AsyncSession, measured_profiles: list) -> t
     cohorte_existe = bool(
         (
             await session.execute(
-                sa.text(
-                    "SELECT 1 FROM labeled_dedup_cohorts WHERE source = :cohorte"
-                ),
+                sa.text("SELECT 1 FROM labeled_dedup_cohorts WHERE source = :cohorte"),
                 {"cohorte": DEDUP_EVAL_COHORT},
             )
         ).scalar()
@@ -1122,7 +1139,10 @@ def _dedup_confusion(pairs, mapping: dict, candidate_pairs: set) -> dict:
         else:
             fp, tn = (fp + 1, tn) if says_dup else (fp, tn + 1)
     return {
-        "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
         "no_evaluables_sin_mapeo": unmapped,
     }
 
@@ -1163,8 +1183,7 @@ def _sink_quarantines_url(url: str | None) -> bool:
     except ValueError:  # el mismo caso que captura _preprocess
         return True
     # C6-P2-2: BYTES, espejo exacto del sink (btree mide bytes)
-    return (len(url.encode()) > MAX_URL_LEN
-            or len(url_norm.encode()) > MAX_URL_LEN)
+    return len(url.encode()) > MAX_URL_LEN or len(url_norm.encode()) > MAX_URL_LEN
 
 
 async def _huecos_en_transicion(
@@ -1415,9 +1434,7 @@ async def _perdida_rows(
         # G5-P3-1: la RAZÓN por pk — el informe legible afirmaba «slot
         # cerrado» para huecos que jamás tuvieron slot. El operador decide un
         # go/no-go con esta traza: tiene que decir la verdad y desglosarse.
-        "huecos_graciados_razones": {
-            h: graciados[h] for h in sorted(graciados)[:50]
-        },
+        "huecos_graciados_razones": {h: graciados[h] for h in sorted(graciados)[:50]},
         "gracia_backlog_s": STAGING_BACKLOG_GRACE_S,
         "gracia_alta_s": STAGING_BACKLOG_GRACE_S,  # misma gracia (H-7)
         "gracia_transicion_s": STAGING_BACKLOG_GRACE_S,  # G2-P2-2
@@ -1494,14 +1511,13 @@ async def _outbox_lag_row(
             # preservar — jamás machacarlo con el centinela sin-datos.
             return None
         details = {
-            "no_data": True, "samples_count": 0,
+            "no_data": True,
+            "samples_count": 0,
             "nota": "sin samples del muestreador en el ciclo",
         }
         return M_OUTBOX_LAG, NO_DATA_VALUE, details, True
     expected_end = min(end, moment)
-    tolerance = timedelta(
-        seconds=2 * settings.CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S
-    )
+    tolerance = timedelta(seconds=2 * settings.CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S)
     coverage_ok = bool(
         row.first_sample is not None
         and row.last_sample is not None
@@ -1516,12 +1532,8 @@ async def _outbox_lag_row(
             "first_sample": (
                 row.first_sample.isoformat() if row.first_sample else None
             ),
-            "last_sample": (
-                row.last_sample.isoformat() if row.last_sample else None
-            ),
-            "max_gap_s": (
-                row.max_gap.total_seconds() if row.max_gap else None
-            ),
+            "last_sample": (row.last_sample.isoformat() if row.last_sample else None),
+            "max_gap_s": (row.max_gap.total_seconds() if row.max_gap else None),
             "coverage_start": start.isoformat(),
             "coverage_end": expected_end.isoformat(),
             "max_gap_allowed_s": int(tolerance.total_seconds()),
@@ -1533,7 +1545,8 @@ async def _outbox_lag_row(
     # (para conservar samples) y un no_data=true de un cómputo previo sin
     # samples no debe sobrevivir a un recomputo con datos.
     details = {
-        "samples_count": int(row.n), "no_data": False,
+        "samples_count": int(row.n),
+        "no_data": False,
         "first_sample": row.first_sample.isoformat(),
         "last_sample": row.last_sample.isoformat(),
         "max_gap_s": row.max_gap.total_seconds() if row.max_gap else 0.0,
@@ -1600,9 +1613,7 @@ async def _outbox_dead_row(
     return M_OUTBOX_DEAD, value, details, False
 
 
-async def _latencia_row(
-    session: AsyncSession, start: datetime, end: datetime
-) -> tuple:
+async def _latencia_row(session: AsyncSession, start: datetime, end: datetime) -> tuple:
     """p95 (percentile_cont) por LOTE de finished_at − min_received_at sobre
     shadow_projection_batches del ciclo (por finished_at), INCLUIDOS los
     lotes `recovered` (P2-5: intenciones huérfanas cerradas por la
@@ -1631,9 +1642,7 @@ async def _latencia_row(
     return M_LATENCIA, round(float(row.p95), 6), details, False
 
 
-async def _coste_row(
-    session: AsyncSession, start: datetime, end: datetime
-) -> tuple:
+async def _coste_row(session: AsyncSession, start: datetime, end: datetime) -> tuple:
     """Proxy de coste (§5, [alerta] informativa): embeddings de OFERTAS
     computados en el ciclo + evaluaciones nuevas + segundos de worker
     aproximados por la suma de duraciones de los lotes del proyector.
@@ -1685,9 +1694,7 @@ async def _coste_row(
     return M_COSTE, value, details, False
 
 
-async def _reenlace_row(
-    session: AsyncSession, start: datetime, end: datetime
-) -> tuple:
+async def _reenlace_row(session: AsyncSession, start: datetime, end: datetime) -> tuple:
     """reenlace_pct (§5, [alerta] <= 5%): (attaches + recycles del ciclo) /
     encarnaciones tocadas, TODO sobre fuentes legacy:* (ver docstring de
     módulo para la definición EXACTA de cada término). Sin tocadas ⇒ 0."""
@@ -1819,7 +1826,10 @@ async def evaluate_gates(session: AsyncSession, cycle_id: date) -> dict:
         _profile_gates(out, by, scope, thr)
     if not scopes:
         out[M_NDCG] = _entry(
-            None, thr["ndcg_min"], KIND_GATE, False,
+            None,
+            thr["ndcg_min"],
+            KIND_GATE,
+            False,
             nota="sin perfiles medidos (ningún set congelado): no demostrable",
         )
     _global_gates(out, by, thr)
@@ -1859,12 +1869,19 @@ def _profile_gates(out: dict, by: dict, scope: str, thr: dict) -> None:
             # G1-P3-4: gate sin datos = no demostrable (ok False) — el 0/0
             # ya no aprueba en vacío (política NO_DATA, P1-2).
             out[f"{M_FALSOS_NEG}::{scope}"] = _entry(
-                None, umbral, KIND_GATE, False, nota="sin datos",
+                None,
+                umbral,
+                KIND_GATE,
+                False,
+                nota="sin datos",
                 modo=fn.details.get("modo"),
             )
         else:
             out[f"{M_FALSOS_NEG}::{scope}"] = _entry(
-                float(fn.value), umbral, KIND_GATE, float(fn.value) <= umbral,
+                float(fn.value),
+                umbral,
+                KIND_GATE,
+                float(fn.value) <= umbral,
                 modo=fn.details.get("modo"),
             )
 
@@ -1919,12 +1936,18 @@ def _cohort_info_gates(out: dict, by: dict) -> None:
         row = by[(metric, scope)]
         if _no_data(row) or float(row.value) == NO_DATA_VALUE:
             out[f"{metric}::{scope}"] = _entry(
-                None, None, KIND_ALERTA, True,
+                None,
+                None,
+                KIND_ALERTA,
+                True,
                 nota="informativa por cohorte, NO vinculante — sin datos",
             )
             continue
         out[f"{metric}::{scope}"] = _entry(
-            float(row.value), None, KIND_ALERTA, True,
+            float(row.value),
+            None,
+            KIND_ALERTA,
+            True,
             nota="informativa por cohorte, NO vinculante",
         )
 
@@ -1986,9 +2009,7 @@ def _report_line(key: str, g: dict) -> str:
 def _report_verdict(gates: dict, eligible: bool = True) -> str:
     gate_items = [g for g in gates.values() if g["kind"] == KIND_GATE]
     failed = sum(1 for g in gate_items if not g["ok"])
-    alerts = sum(
-        1 for g in gates.values() if g["kind"] == KIND_ALERTA and not g["ok"]
-    )
+    alerts = sum(1 for g in gates.values() if g["kind"] == KIND_ALERTA and not g["ok"])
     if failed:
         verdict = (
             f"CICLO NO APTO: {failed}/{len(gate_items)} gates fuera de umbral "

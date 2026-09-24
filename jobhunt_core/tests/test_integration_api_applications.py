@@ -44,26 +44,34 @@ async def _purge_portfolio_import(s, urls):
     if not keys:
         return
     slots = (
-        await s.execute(
-            sa.text(
-                "SELECT sl.id FROM source_listings sl "
-                "JOIN sources src ON src.id = sl.source_id AND src.name = :n "
-                "WHERE sl.url_normalized = ANY(:k)"
-            ),
-            {"n": ip.PORTFOLIO_IMPORT_SOURCE, "k": keys},
+        (
+            await s.execute(
+                sa.text(
+                    "SELECT sl.id FROM source_listings sl "
+                    "JOIN sources src ON src.id = sl.source_id AND src.name = :n "
+                    "WHERE sl.url_normalized = ANY(:k)"
+                ),
+                {"n": ip.PORTFOLIO_IMPORT_SOURCE, "k": keys},
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if not slots:
         return
     vac_ids = (
-        await s.execute(
-            sa.text(
-                "SELECT DISTINCT vacancy_id FROM source_listing_incarnations "
-                "WHERE source_listing_id = ANY(:sl)"
-            ),
-            {"sl": slots},
+        (
+            await s.execute(
+                sa.text(
+                    "SELECT DISTINCT vacancy_id FROM source_listing_incarnations "
+                    "WHERE source_listing_id = ANY(:sl)"
+                ),
+                {"sl": slots},
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     # Orden FK-safe (mismo que dbcleanup.purge_source_graph): primero lo que
     # cuelga de las vacantes (ORS referencia source_listing_revisions).
     if vac_ids:
@@ -103,8 +111,7 @@ async def _purge_portfolio_import(s, urls):
     )
     await s.execute(
         sa.text(
-            "DELETE FROM source_listing_incarnations "
-            "WHERE source_listing_id = ANY(:sl)"
+            "DELETE FROM source_listing_incarnations WHERE source_listing_id = ANY(:sl)"
         ),
         {"sl": slots},
     )
@@ -122,8 +129,13 @@ def db():
     engine = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     created = {
-        "sources": [], "scopes": [], "models": [], "consumers": [],
-        "policies": [], "extra_vacs": [], "shadow_urls": [],
+        "sources": [],
+        "scopes": [],
+        "models": [],
+        "consumers": [],
+        "policies": [],
+        "extra_vacs": [],
+        "shadow_urls": [],
     }
     yield factory, created
 
@@ -168,7 +180,9 @@ def _seed(factory, created, n=2, scopes=APP_SCOPES):
             created["sources"].append(source_id)
             created["scopes"].append(scope_id)
             await s.execute(
-                sa.text("INSERT INTO sources (id, name, tier) VALUES (:id, 'arbeitnow', 0)"),
+                sa.text(
+                    "INSERT INTO sources (id, name, tier) VALUES (:id, 'arbeitnow', 0)"
+                ),
                 {"id": source_id},
             )
             await s.execute(
@@ -180,14 +194,17 @@ def _seed(factory, created, n=2, scopes=APP_SCOPES):
             )
             await s.commit()
             await RawListingSink().handle(
-                s, str(scope_id),
+                s,
+                str(scope_id),
                 tuple(
                     RawListing(
                         external_id=f"{tag}-j{i}",
                         url=f"https://x.example.ch/{tag}/j{i}",
                         payload={
-                            "title": f"{tag} title {i}", "company_name": "ACME AG",
-                            "description": "puesto", "tags": [],
+                            "title": f"{tag} title {i}",
+                            "company_name": "ACME AG",
+                            "description": "puesto",
+                            "tags": [],
                         },
                     )
                     for i in range(n)
@@ -237,8 +254,12 @@ def _set_saved(factory, pid, vid, notes=None):
 def _post_app(factory, token, body, key=None):
     headers = {"Idempotency-Key": key} if key else None
     return tia._api(
-        factory, "/v1/applications", token=token, headers=headers,
-        method="POST", json_body=body,
+        factory,
+        "/v1/applications",
+        token=token,
+        headers=headers,
+        method="POST",
+        json_body=body,
     )
 
 
@@ -252,11 +273,19 @@ def test_post_direct_vacancy_event_and_outbox(db):
     factory, created = db
     token, tenant, pid, vacs = _seed(factory, created)
     vid, _url = vacs[0]
-    r = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(vid),
-        "title": "Lo que vio el usuario", "company": "ACME AG",
-        "url": None, "status": "applied", "notes": "cv enviado",
-    })
+    r = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(vid),
+            "title": "Lo que vio el usuario",
+            "company": "ACME AG",
+            "url": None,
+            "status": "applied",
+            "notes": "cv enviado",
+        },
+    )
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["kind"] == "application"
@@ -290,16 +319,23 @@ def test_post_default_saved_upserts_saved_at(db):
     factory, created = db
     token, _tenant, pid, vacs = _seed(factory, created)
     vid, _ = vacs[0]
-    r = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(vid), "title": "T",
-    })
+    r = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(vid),
+            "title": "T",
+        },
+    )
     assert r.status_code == 201, r.text
     assert r.json()["status"] == "saved"
     pvs = _rows(
         factory,
         "SELECT saved_at FROM profile_vacancy_state "
         "WHERE profile_id = :p AND vacancy_id = :v",
-        p=pid, v=vid,
+        p=pid,
+        v=vid,
     )
     assert len(pvs) == 1 and pvs[0].saved_at is not None
 
@@ -311,12 +347,24 @@ def test_post_direct_archived_or_missing_404(db):
     token, _tenant, pid, vacs = _seed(factory, created)
     vid, _ = vacs[0]
     _exec(factory, "UPDATE vacancies SET archived_at = now() WHERE id = :v", v=vid)
-    r1 = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(vid), "title": "T",
-    })
-    r2 = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(uuid.uuid4()), "title": "T",
-    })
+    r1 = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(vid),
+            "title": "T",
+        },
+    )
+    r2 = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(uuid.uuid4()),
+            "title": "T",
+        },
+    )
     assert r1.status_code == r2.status_code == 404
     assert r1.json()["code"] == r2.json()["code"] == "not_found"
 
@@ -327,11 +375,21 @@ def test_post_direct_follows_merge_chain(db):
     factory, created = db
     token, _tenant, pid, vacs = _seed(factory, created, n=3)
     (loser, _), (mid, _), (winner, _) = vacs
-    _exec(factory, "UPDATE vacancies SET merged_into = :w WHERE id = :l", w=mid, l=loser)
-    _exec(factory, "UPDATE vacancies SET merged_into = :w WHERE id = :l", w=winner, l=mid)
-    r = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(loser), "title": "T",
-    })
+    _exec(
+        factory, "UPDATE vacancies SET merged_into = :w WHERE id = :l", w=mid, l=loser
+    )
+    _exec(
+        factory, "UPDATE vacancies SET merged_into = :w WHERE id = :l", w=winner, l=mid
+    )
+    r = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(loser),
+            "title": "T",
+        },
+    )
     assert r.status_code == 201, r.text
     assert r.json()["vacancy_id"] == str(winner)
 
@@ -351,22 +409,37 @@ def test_g5_la_cadena_merged_into_resuelve_aunque_el_GANADOR_este_archivado(db):
     token, _tenant, pid, vacs = _seed(factory, created, n=2)
     (loser, _), (winner, _) = vacs
     # El perfil YA tiene su candidatura sobre el GANADOR…
-    r = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(winner), "title": "T-win",
-    })
+    r = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(winner),
+            "title": "T-win",
+        },
+    )
     assert r.status_code == 201, r.text
     # …el perdedor se funde en él y el barrido archiva al ganador (muerto).
-    _exec(factory, "UPDATE vacancies SET merged_into = :w WHERE id = :l",
-          w=winner, l=loser)
-    _exec(factory, "UPDATE vacancies SET archived_at = now() WHERE id = :w",
-          w=winner)
+    _exec(
+        factory,
+        "UPDATE vacancies SET merged_into = :w WHERE id = :l",
+        w=winner,
+        l=loser,
+    )
+    _exec(factory, "UPDATE vacancies SET archived_at = now() WHERE id = :w", w=winner)
 
     # Con el id del PERDEDOR, la cadena sigue resolviendo al ganador adjunto:
     # el 409 NOMBRA la vacante resuelta (antes del fix era un 404 opaco, con
     # el item aún visible en el feed).
-    r2 = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(loser), "title": "T-win",
-    })
+    r2 = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(loser),
+            "title": "T-win",
+        },
+    )
     assert r2.status_code == 409, r2.text  # antes del fix: 404 not_found
     assert r2.json()["code"] == "application_exists"
     assert r2.json()["details"]["vacancy_id"] == str(winner)
@@ -374,9 +447,15 @@ def test_g5_la_cadena_merged_into_resuelve_aunque_el_GANADOR_este_archivado(db):
     # NO-REGRESIÓN del aislamiento: otro perfil SIN adjunto sigue en 404 (el
     # archivado es la regla; la excepción es «lo que el usuario ya tenía»).
     otro = asyncio.run(_perfil_extra(factory, pid))
-    r3 = _post_app(factory, token, {
-        "profile_id": str(otro), "vacancy_id": str(loser), "title": "T",
-    })
+    r3 = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(otro),
+            "vacancy_id": str(loser),
+            "title": "T",
+        },
+    )
     assert r3.status_code == 404
     assert r3.json()["code"] == "not_found"
 
@@ -396,30 +475,51 @@ def test_g6_la_cadena_resuelve_con_el_adjunto_en_el_PERDEDOR(db):
     token, _tenant, pid, vacs = _seed(factory, created, n=2)
     (loser, _), (winner, _) = vacs
     # El perfil marcó el PERDEDOR (antes de la fusión), no el ganador.
-    r = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(loser), "title": "T-lose",
-    })
+    r = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(loser),
+            "title": "T-lose",
+        },
+    )
     assert r.status_code == 201, r.text
-    _exec(factory, "UPDATE vacancies SET merged_into = :w WHERE id = :l",
-          w=winner, l=loser)
-    _exec(factory, "UPDATE vacancies SET archived_at = now() WHERE id = :w",
-          w=winner)
+    _exec(
+        factory,
+        "UPDATE vacancies SET merged_into = :w WHERE id = :l",
+        w=winner,
+        l=loser,
+    )
+    _exec(factory, "UPDATE vacancies SET archived_at = now() WHERE id = :w", w=winner)
 
     # Con el id del PERDEDOR la cadena RESUELVE al ganador y el vínculo se
     # escribe sobre él (antes del fix: 404 not_found, con el item aún visible
     # en el feed y ninguna escritura de vínculo posible).
-    r2 = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(loser), "title": "T-lose",
-    })
+    r2 = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(loser),
+            "title": "T-lose",
+        },
+    )
     assert r2.status_code == 201, r2.text
     assert r2.json()["vacancy_id"] == str(winner)
 
     # NO-REGRESIÓN del aislamiento: otro perfil, sin adjunto en NINGÚN eslabón
     # de la cadena, sigue en 404.
     otro = asyncio.run(_perfil_extra(factory, pid))
-    r3 = _post_app(factory, token, {
-        "profile_id": str(otro), "vacancy_id": str(loser), "title": "T",
-    })
+    r3 = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(otro),
+            "vacancy_id": str(loser),
+            "title": "T",
+        },
+    )
     assert r3.status_code == 404
     assert r3.json()["code"] == "not_found"
 
@@ -430,9 +530,7 @@ async def _perfil_extra(factory, pid):
         cid = await s.scalar(
             sa.text("SELECT consumer_id FROM profiles WHERE id = :p"), {"p": pid}
         )
-        vid = await profiles.upsert_profile(
-            s, cid, f"g5-extra-{uuid.uuid4().hex[:8]}"
-        )
+        vid = await profiles.upsert_profile(s, cid, f"g5-extra-{uuid.uuid4().hex[:8]}")
         await s.commit()
         return vid
 
@@ -444,9 +542,16 @@ def test_post_by_url_resolves_harvested_no_shadow_duplicate(db):
     factory, created = db
     token, _tenant, pid, vacs = _seed(factory, created)
     vid, url = vacs[0]
-    r = _post_app(factory, token, {
-        "profile_id": str(pid), "url": url, "title": "T", "status": "applied",
-    })
+    r = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "url": url,
+            "title": "T",
+            "status": "applied",
+        },
+    )
     assert r.status_code == 201, r.text
     assert r.json()["vacancy_id"] == str(vid)
     ghosts = _rows(
@@ -454,7 +559,8 @@ def test_post_by_url_resolves_harvested_no_shadow_duplicate(db):
         "SELECT sl.id FROM source_listings sl "
         "JOIN sources s ON s.id = sl.source_id AND s.name = :n "
         "WHERE sl.url_normalized = :k",
-        n=ip.PORTFOLIO_IMPORT_SOURCE, k=ip.normalized_key(url),
+        n=ip.PORTFOLIO_IMPORT_SOURCE,
+        k=ip.normalized_key(url),
     )
     assert ghosts == []  # cero síntesis: la identidad por URL ya existía
 
@@ -466,10 +572,17 @@ def test_post_by_url_synthesizes_shadow(db):
     token, _tenant, pid, _vacs = _seed(factory, created)
     url = f"https://desconocida.example.ch/{uuid.uuid4().hex[:8]}/oferta"
     created["shadow_urls"].append(url)
-    r = _post_app(factory, token, {
-        "profile_id": str(pid), "url": url, "title": "Oferta externa",
-        "company": "Externa SA", "status": "applied",
-    })
+    r = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "url": url,
+            "title": "Oferta externa",
+            "company": "Externa SA",
+            "status": "applied",
+        },
+    )
     assert r.status_code == 201, r.text
     vid = uuid.UUID(r.json()["vacancy_id"])
     src = _rows(
@@ -487,10 +600,15 @@ def test_post_by_url_unsynthesizable_400(db):
     resuelve ni sintetiza → 400 con el sobre del contrato."""
     factory, created = db
     token, _tenant, pid, _vacs = _seed(factory, created)
-    r = _post_app(factory, token, {
-        "profile_id": str(pid), "url": "https://x.example.ch/rota\u0000nul",
-        "title": "T",
-    })
+    r = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "url": "https://x.example.ch/rota\u0000nul",
+            "title": "T",
+        },
+    )
     assert r.status_code == 400, r.text
     assert r.json()["code"] == "invalid_url"
 
@@ -508,8 +626,10 @@ def test_post_manual_without_url(db):
         MANUAL_URL_PREFIX + manual_external_id(pid, "Recruiter Role", "Head GmbH")
     )
     body = {
-        "profile_id": str(pid), "title": "Recruiter Role",
-        "company": "Head GmbH", "status": "applied",
+        "profile_id": str(pid),
+        "title": "Recruiter Role",
+        "company": "Head GmbH",
+        "status": "applied",
     }
     r1 = _post_app(factory, token, body)
     assert r1.status_code == 201, r1.text
@@ -529,8 +649,12 @@ def test_post_idempotent_replay_201_byte_a_byte(db):
     token, _tenant, pid, vacs = _seed(factory, created)
     vid, _ = vacs[0]
     key = "c4-key-" + uuid.uuid4().hex[:8]
-    body = {"profile_id": str(pid), "vacancy_id": str(vid),
-            "title": "T", "status": "applied"}
+    body = {
+        "profile_id": str(pid),
+        "vacancy_id": str(vid),
+        "title": "T",
+        "status": "applied",
+    }
     r1 = _post_app(factory, token, body, key=key)
     r2 = _post_app(factory, token, body, key=key)
     assert (r1.status_code, r2.status_code) == (201, 201)
@@ -560,10 +684,16 @@ def test_get_composite_feed_cursor_and_not_exists(db):
     token, _tenant, pid, vacs = _seed(factory, created, n=5)
     # 2 applications reales + 1 con app Y saved (dedupe) + 2 bookmarks puros.
     for i in (0, 1, 2):
-        r = _post_app(factory, token, {
-            "profile_id": str(pid), "vacancy_id": str(vacs[i][0]),
-            "title": f"app-{i}", "status": "applied",
-        })
+        r = _post_app(
+            factory,
+            token,
+            {
+                "profile_id": str(pid),
+                "vacancy_id": str(vacs[i][0]),
+                "title": f"app-{i}",
+                "status": "applied",
+            },
+        )
         assert r.status_code == 201
     _set_saved(factory, pid, vacs[2][0])  # además saved → NO item doble
     _set_saved(factory, pid, vacs[3][0], notes="nota-b1")
@@ -605,28 +735,43 @@ def test_patch_status_change_event_revision_and_412(db):
     factory, created = db
     token, _tenant, pid, vacs = _seed(factory, created)
     vid, _ = vacs[0]
-    r = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(vid),
-        "title": "T", "status": "applied",
-    })
+    r = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(vid),
+            "title": "T",
+            "status": "applied",
+        },
+    )
     aid = r.json()["id"]
     etag = r.headers["etag"]
 
     stale = tia._api(
-        factory, f"/v1/applications/{aid}", token=token, method="PATCH",
-        headers={"If-Match": '"deadbeef"'}, json_body={"status": "interview"},
+        factory,
+        f"/v1/applications/{aid}",
+        token=token,
+        method="PATCH",
+        headers={"If-Match": '"deadbeef"'},
+        json_body={"status": "interview"},
     )
     assert stale.status_code == 412
     assert stale.json()["code"] == "precondition_failed"
 
     ok = tia._api(
-        factory, f"/v1/applications/{aid}", token=token, method="PATCH",
-        headers={"If-Match": etag}, json_body={"status": "interview"},
+        factory,
+        f"/v1/applications/{aid}",
+        token=token,
+        method="PATCH",
+        headers={"If-Match": etag},
+        json_body={"status": "interview"},
     )
     assert ok.status_code == 200, ok.text
     assert ok.json()["status"] == "interview"
-    row = _rows(factory, "SELECT revision FROM applications WHERE id = :a",
-                a=uuid.UUID(aid))
+    row = _rows(
+        factory, "SELECT revision FROM applications WHERE id = :a", a=uuid.UUID(aid)
+    )
     assert row[0].revision == 2
     events = _rows(
         factory,
@@ -654,7 +799,10 @@ def test_patch_promotes_pure_bookmark_idempotent(db):
     _set_saved(factory, pid, vid, notes="nota del feed")
 
     r1 = tia._api(
-        factory, f"/v1/applications/{vid}", token=token, method="PATCH",
+        factory,
+        f"/v1/applications/{vid}",
+        token=token,
+        method="PATCH",
         json_body={"status": "applied"},
     )
     assert r1.status_code == 200, r1.text
@@ -672,14 +820,18 @@ def test_patch_promotes_pure_bookmark_idempotent(db):
 
     # Reintento con el MISMO identificador-bookmark: redirige a la application.
     r2 = tia._api(
-        factory, f"/v1/applications/{vid}", token=token, method="PATCH",
+        factory,
+        f"/v1/applications/{vid}",
+        token=token,
+        method="PATCH",
         json_body={"notes": "seguimiento"},
     )
     assert r2.status_code == 200, r2.text
     assert r2.json()["id"] == promoted["id"]
     n_apps = _rows(
         factory,
-        "SELECT count(*) AS n FROM applications WHERE profile_id = :p", p=pid,
+        "SELECT count(*) AS n FROM applications WHERE profile_id = :p",
+        p=pid,
     )
     assert n_apps[0].n == 1  # sin duplicado
 
@@ -690,21 +842,32 @@ def test_delete_dual_application_and_pure_bookmark(db):
     factory, created = db
     token, _tenant, pid, vacs = _seed(factory, created)
     (v_app, _), (v_bm, _) = vacs
-    aid = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(v_app),
-        "title": "T", "status": "applied",
-    }).json()["id"]
+    aid = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(v_app),
+            "title": "T",
+            "status": "applied",
+        },
+    ).json()["id"]
     _set_saved(factory, pid, v_bm, notes="conservada")
 
     r = tia._api(factory, f"/v1/applications/{aid}", token=token, method="DELETE")
     assert r.status_code == 204
-    assert _rows(factory, "SELECT id FROM applications WHERE id = :a",
-                 a=uuid.UUID(aid)) == []
-    assert _rows(
-        factory,
-        "SELECT id FROM application_status_events WHERE application_id = :a",
-        a=uuid.UUID(aid),
-    ) == []
+    assert (
+        _rows(factory, "SELECT id FROM applications WHERE id = :a", a=uuid.UUID(aid))
+        == []
+    )
+    assert (
+        _rows(
+            factory,
+            "SELECT id FROM application_status_events WHERE application_id = :a",
+            a=uuid.UUID(aid),
+        )
+        == []
+    )
 
     r = tia._api(factory, f"/v1/applications/{v_bm}", token=token, method="DELETE")
     assert r.status_code == 204
@@ -712,7 +875,8 @@ def test_delete_dual_application_and_pure_bookmark(db):
         factory,
         "SELECT saved_at, notes FROM profile_vacancy_state "
         "WHERE profile_id = :p AND vacancy_id = :v",
-        p=pid, v=v_bm,
+        p=pid,
+        v=v_bm,
     )
     assert pvs[0].saved_at is None and pvs[0].notes == "conservada"
 
@@ -734,24 +898,31 @@ def test_delete_application_creada_por_defecto_no_resucita_como_bookmark(db):
     token, _tenant, pid, vacs = _seed(factory, created)
     (v_app, _), _ = vacs
     # Alta POR DEFECTO (sin status): el camino del cliente normal.
-    created_app = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(v_app), "title": "T",
-    }).json()
+    created_app = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(v_app),
+            "title": "T",
+        },
+    ).json()
     assert created_app["status"] == "saved"
     aid = created_app["id"]
 
     r = tia._api(factory, f"/v1/applications/{aid}", token=token, method="DELETE")
     assert r.status_code == 204
 
-    feed = tia._api(
-        factory, f"/v1/applications?profile={pid}", token=token
-    ).json()["items"]
+    feed = tia._api(factory, f"/v1/applications?profile={pid}", token=token).json()[
+        "items"
+    ]
     assert feed == []  # antes: [(vacancy_id, 'bookmark', 'saved')]
     pvs = _rows(
         factory,
         "SELECT saved_at FROM profile_vacancy_state "
         "WHERE profile_id = :p AND vacancy_id = :v",
-        p=pid, v=v_app,
+        p=pid,
+        v=v_app,
     )
     assert pvs == [] or pvs[0].saved_at is None
     # Y el borrado es idempotente en su propia identidad: 404, no un item
@@ -770,18 +941,29 @@ def test_put_bookmarks_additive_dedupe_and_events(db):
     factory, created = db
     token, _tenant, pid, vacs = _seed(factory, created, n=3)
     (v0, u0), (v1, u1), (_v2, _u2) = vacs
-    r0 = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(v0), "title": "previa",
-    })
+    r0 = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(v0),
+            "title": "previa",
+        },
+    )
     assert r0.status_code == 201  # preexistente: el sync no debe borrarla
 
     r = tia._api(
-        factory, f"/v1/profiles/{pid}/bookmarks", token=token, method="PUT",
-        json_body={"bookmarks": [
-            {"vacancy_id": str(v1), "title": "B1"},
-            {"url": u1, "title": "B1-duplicada"},  # misma vacante → dedupe
-            {"vacancy_id": str(v0), "title": "ya-tenia-app"},
-        ]},
+        factory,
+        f"/v1/profiles/{pid}/bookmarks",
+        token=token,
+        method="PUT",
+        json_body={
+            "bookmarks": [
+                {"vacancy_id": str(v1), "title": "B1"},
+                {"url": u1, "title": "B1-duplicada"},  # misma vacante → dedupe
+                {"vacancy_id": str(v0), "title": "ya-tenia-app"},
+            ]
+        },
     )
     assert r.status_code == 200, r.text
     created_items = r.json()["created"]
@@ -792,7 +974,8 @@ def test_put_bookmarks_additive_dedupe_and_events(db):
         "SELECT e.status FROM application_status_events e "
         "JOIN applications a ON a.id = e.application_id "
         "WHERE a.profile_id = :p AND a.vacancy_id = :v",
-        p=pid, v=v1,
+        p=pid,
+        v=v1,
     )
     assert [e.status for e in events] == ["saved"]
     # ADITIVO: la application preexistente sigue; su saved_at quedó upsertado.
@@ -803,14 +986,21 @@ def test_put_bookmarks_additive_dedupe_and_events(db):
         p=pid,
     )
     assert all(x.saved_at is not None for x in pvs)
-    assert _rows(
-        factory, "SELECT count(*) AS n FROM applications WHERE profile_id = :p",
-        p=pid,
-    )[0].n == 2
+    assert (
+        _rows(
+            factory,
+            "SELECT count(*) AS n FROM applications WHERE profile_id = :p",
+            p=pid,
+        )[0].n
+        == 2
+    )
 
     # Re-PUT del mismo lote: 0 creadas (idempotencia a nivel de datos).
     again = tia._api(
-        factory, f"/v1/profiles/{pid}/bookmarks", token=token, method="PUT",
+        factory,
+        f"/v1/profiles/{pid}/bookmarks",
+        token=token,
+        method="PUT",
         json_body={"bookmarks": [{"vacancy_id": str(v1), "title": "B1"}]},
     )
     assert again.status_code == 200 and again.json()["created"] == []
@@ -829,11 +1019,16 @@ def test_put_bookmarks_archived_item_skipped_not_global_404(db):
     _exec(factory, "UPDATE vacancies SET archived_at = now() WHERE id = :v", v=v0)
 
     r = tia._api(
-        factory, f"/v1/profiles/{pid}/bookmarks", token=token, method="PUT",
-        json_body={"bookmarks": [
-            {"vacancy_id": str(v0), "title": "rancia"},
-            {"vacancy_id": str(v1), "title": "valida"},
-        ]},
+        factory,
+        f"/v1/profiles/{pid}/bookmarks",
+        token=token,
+        method="PUT",
+        json_body={
+            "bookmarks": [
+                {"vacancy_id": str(v0), "title": "rancia"},
+                {"vacancy_id": str(v1), "title": "valida"},
+            ]
+        },
     )
     assert r.status_code == 200, r.text  # antes: 404 global
     body = r.json()
@@ -842,18 +1037,25 @@ def test_put_bookmarks_archived_item_skipped_not_global_404(db):
     sk = body["skipped"][0]
     assert sk["vacancy_id"] == str(v0) and sk["title"] == "rancia" and sk["reason"]
     # El item válido SÍ progresó (la application existe).
-    assert _rows(
-        factory,
-        "SELECT vacancy_id FROM applications WHERE profile_id = :p",
-        p=pid,
-    )[0].vacancy_id == v1
+    assert (
+        _rows(
+            factory,
+            "SELECT vacancy_id FROM applications WHERE profile_id = :p",
+            p=pid,
+        )[0].vacancy_id
+        == v1
+    )
     # El irresoluble no dejó rastro (ni application ni bookmark re-marcado).
-    assert _rows(
-        factory,
-        "SELECT 1 FROM profile_vacancy_state "
-        "WHERE profile_id = :p AND vacancy_id = :v AND saved_at IS NOT NULL",
-        p=pid, v=v0,
-    ) == []
+    assert (
+        _rows(
+            factory,
+            "SELECT 1 FROM profile_vacancy_state "
+            "WHERE profile_id = :p AND vacancy_id = :v AND saved_at IS NOT NULL",
+            p=pid,
+            v=v0,
+        )
+        == []
+    )
 
 
 def test_feed_race_unsaved_bookmark_omitted_not_500(db):
@@ -908,15 +1110,26 @@ def test_cross_tenant_404_and_missing_scope_403(db):
     factory, created = db
     token, _tenant, pid, vacs = _seed(factory, created)
     vid, _ = vacs[0]
-    aid = _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(vid), "title": "T",
-    }).json()["id"]
+    aid = _post_app(
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(vid),
+            "title": "T",
+        },
+    ).json()["id"]
 
     _c, _k, intruder = tia._issue(factory, created, "tenant-intruso-c4", APP_SCOPES)
     r = tia._api(factory, f"/v1/applications?profile={pid}", token=intruder)
     assert r.status_code == 404
-    r = tia._api(factory, f"/v1/applications/{aid}", token=intruder,
-                 method="PATCH", json_body={"status": "applied"})
+    r = tia._api(
+        factory,
+        f"/v1/applications/{aid}",
+        token=intruder,
+        method="PATCH",
+        json_body={"status": "applied"},
+    )
     assert r.status_code == 404
     r = tia._api(factory, f"/v1/applications/{vid}", token=intruder, method="DELETE")
     assert r.status_code == 404
@@ -939,19 +1152,36 @@ def test_erase_covers_v1_written_rows(db):
     (+eventos por CASCADE), saved_searches, pvs y outbox del perfil."""
     factory, created = db
     token, tenant, pid, vacs = _seed(
-        factory, created,
+        factory,
+        created,
         scopes=APP_SCOPES + ["saved_searches:read", "saved_searches:write"],
     )
     vid, _ = vacs[0]
-    assert _post_app(factory, token, {
-        "profile_id": str(pid), "vacancy_id": str(vid),
-        "title": "T", "notes": "PII", "status": "applied",
-    }).status_code == 201
-    assert tia._api(
-        factory, "/v1/saved-searches", token=token, method="POST",
-        headers={"Idempotency-Key": "erase-" + uuid.uuid4().hex[:8]},
-        json_body={"profile_id": str(pid), "name": "búsqueda PII"},
-    ).status_code == 201
+    assert (
+        _post_app(
+            factory,
+            token,
+            {
+                "profile_id": str(pid),
+                "vacancy_id": str(vid),
+                "title": "T",
+                "notes": "PII",
+                "status": "applied",
+            },
+        ).status_code
+        == 201
+    )
+    assert (
+        tia._api(
+            factory,
+            "/v1/saved-searches",
+            token=token,
+            method="POST",
+            headers={"Idempotency-Key": "erase-" + uuid.uuid4().hex[:8]},
+            json_body={"profile_id": str(pid), "name": "búsqueda PII"},
+        ).status_code
+        == 201
+    )
 
     from jobhunt_core.shadow.projector import erase_shadow_profile
 
@@ -963,13 +1193,17 @@ def test_erase_covers_v1_written_rows(db):
 
     assert asyncio.run(erase()) == pid
     for table in ("applications", "saved_searches", "profile_vacancy_state"):
-        assert _rows(
-            factory, f"SELECT 1 FROM {table} WHERE profile_id = :p", p=pid
-        ) == []
-    assert _rows(
-        factory,
-        "SELECT 1 FROM integration_outbox WHERE subject_profile_id = :p", p=pid,
-    ) == []
+        assert (
+            _rows(factory, f"SELECT 1 FROM {table} WHERE profile_id = :p", p=pid) == []
+        )
+    assert (
+        _rows(
+            factory,
+            "SELECT 1 FROM integration_outbox WHERE subject_profile_id = :p",
+            p=pid,
+        )
+        == []
+    )
 
 
 def test_g7_cuerpo_no_almacenable_es_400_de_frontera_y_no_500(db):
@@ -986,17 +1220,22 @@ def test_g7_cuerpo_no_almacenable_es_400_de_frontera_y_no_500(db):
 
     for campo, valor in (("description", "linea1\x00linea2"), ("notes", "a\x00b")):
         r = _post_app(
-            factory, token,
-            {"profile_id": str(pid), "vacancy_id": str(vid), "title": "T",
-             campo: valor},
+            factory,
+            token,
+            {
+                "profile_id": str(pid),
+                "vacancy_id": str(vid),
+                "title": "T",
+                campo: valor,
+            },
             key="app-" + uuid.uuid4().hex[:10],
         )
         assert r.status_code == 400, (campo, r.text)
         assert r.json()["code"] == "invalid_json", (campo, r.text)
 
-    assert _rows(
-        factory, "SELECT 1 FROM applications WHERE profile_id = :p", p=pid
-    ) == []
+    assert (
+        _rows(factory, "SELECT 1 FROM applications WHERE profile_id = :p", p=pid) == []
+    )
 
 
 def test_g8_la_url_toxica_con_vacancy_id_es_400_de_frontera_y_no_500(db):
@@ -1023,19 +1262,29 @@ def test_g8_la_url_toxica_con_vacancy_id_es_400_de_frontera_y_no_500(db):
     url_toxica = "https://x.example.ch/rota" + NUL + "nul"
 
     r = _post_app(
-        factory, token,
-        {"profile_id": str(pid), "vacancy_id": str(vid), "title": "T",
-         "url": url_toxica},
+        factory,
+        token,
+        {
+            "profile_id": str(pid),
+            "vacancy_id": str(vid),
+            "title": "T",
+            "url": url_toxica,
+        },
         key="app-" + uuid.uuid4().hex[:10],
     )
     assert r.status_code == 400, r.text
     assert r.json()["code"] == "invalid_json", r.text
 
     b = tia._api(
-        factory, f"/v1/profiles/{pid}/bookmarks", token=token, method="PUT",
-        json_body={"bookmarks": [
-            {"vacancy_id": str(vid), "title": "T", "url": url_toxica},
-        ]},
+        factory,
+        f"/v1/profiles/{pid}/bookmarks",
+        token=token,
+        method="PUT",
+        json_body={
+            "bookmarks": [
+                {"vacancy_id": str(vid), "title": "T", "url": url_toxica},
+            ]
+        },
     )
     assert b.status_code == 400, b.text
     assert b.json()["code"] == "invalid_json", b.text
@@ -1043,16 +1292,17 @@ def test_g8_la_url_toxica_con_vacancy_id_es_400_de_frontera_y_no_500(db):
     # Control: SIN vacancy_id la cuarentena del sink sí corre y su
     # diagnóstico, más específico, se conserva.
     c = _post_app(
-        factory, token,
+        factory,
+        token,
         {"profile_id": str(pid), "url": url_toxica, "title": "T"},
         key="app-" + uuid.uuid4().hex[:10],
     )
     assert c.status_code == 400, c.text
     assert c.json()["code"] == "invalid_url", c.text
 
-    assert _rows(
-        factory, "SELECT 1 FROM applications WHERE profile_id = :p", p=pid
-    ) == []
+    assert (
+        _rows(factory, "SELECT 1 FROM applications WHERE profile_id = :p", p=pid) == []
+    )
 
 
 def test_g8_el_nul_en_la_cabecera_de_idempotencia_es_400_y_no_500(db):
@@ -1069,7 +1319,8 @@ def test_g8_el_nul_en_la_cabecera_de_idempotencia_es_400_y_no_500(db):
     token, _tenant, pid, vacs = _seed(factory, created, n=1)
     vid, _url = vacs[0]
     r = _post_app(
-        factory, token,
+        factory,
+        token,
         {"profile_id": str(pid), "vacancy_id": str(vid), "title": "T"},
         key="app-" + NUL + "k",
     )

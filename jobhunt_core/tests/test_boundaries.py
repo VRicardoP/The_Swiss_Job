@@ -86,9 +86,11 @@ def test_la_regla_de_almacenabilidad_vive_en_un_solo_sitio():
         docs = {
             id(n.body[0].value)
             for n in ast.walk(arbol)
-            if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef,
-                              ast.AsyncFunctionDef))
-            and n.body and isinstance(n.body[0], ast.Expr)
+            if isinstance(
+                n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            )
+            and n.body
+            and isinstance(n.body[0], ast.Expr)
             and isinstance(n.body[0].value, ast.Constant)
         }
         for nodo in ast.walk(arbol):

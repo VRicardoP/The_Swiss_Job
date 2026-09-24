@@ -24,10 +24,18 @@ import httpx
 import sqlalchemy as sa
 
 from jobhunt_core.database import SessionLocal
-from jobhunt_core.harvest.admission import ADMISSION_CURSOR_KEY, admission_window, admit_listings
+from jobhunt_core.harvest.admission import (
+    ADMISSION_CURSOR_KEY,
+    admission_window,
+    admit_listings,
+)
 from jobhunt_core.harvest.admission import title_filter_enabled
 from jobhunt_core.harvest.provider import (
-    ADMISSION_WINDOW_PARAM, LEGACY_TITLE_FILTER_PARAM, BaseProvider, ListingSink, ProviderConfigError,
+    ADMISSION_WINDOW_PARAM,
+    LEGACY_TITLE_FILTER_PARAM,
+    BaseProvider,
+    ListingSink,
+    ProviderConfigError,
 )
 from jobhunt_core.harvest.types import ScopeRunResult
 
@@ -84,14 +92,16 @@ async def run_scope(
             # Scope eliminado tras encolar: caso NORMAL permanente (rev. 2ª
             # #3) — no es fallo de fuente y la tarea no debe reintentar.
             return ScopeRunResult(
-                scope_id=scope_id, status="not_found",
+                scope_id=scope_id,
+                status="not_found",
                 detail={"reason": "scope inexistente"},
             )
         if not row.enabled:
             return ScopeRunResult(scope_id=scope_id, status="skipped")
         if row.source_name != provider.name:
             return ScopeRunResult(
-                scope_id=scope_id, status="error",
+                scope_id=scope_id,
+                status="error",
                 error=f"provider {provider.name!r} != source {row.source_name!r}",
             )
 
@@ -110,8 +120,11 @@ async def run_scope(
 
         window = admission_window(provider.name, params)
         filter_titles = title_filter_enabled(provider.name, params)
-        fetch_params = {k: v for k, v in params.items()
-                        if k not in (ADMISSION_WINDOW_PARAM, LEGACY_TITLE_FILTER_PARAM)}
+        fetch_params = {
+            k: v
+            for k, v in params.items()
+            if k not in (ADMISSION_WINDOW_PARAM, LEGACY_TITLE_FILTER_PARAM)
+        }
         try:
             result = await provider.fetch_new(fetch_params, provider_cursor, http)
         except ProviderConfigError:
@@ -123,7 +136,9 @@ async def run_scope(
                 session, scope_id, claim_token, state_snapshot=state_snapshot
             )
             logger.warning("scope %s: fetch falló: %s", scope_id, exc)
-            return ScopeRunResult(scope_id=scope_id, status="error", error=str(exc)[:200])
+            return ScopeRunResult(
+                scope_id=scope_id, status="error", error=str(exc)[:200]
+            )
 
         try:
             # Persistencia + cursor en UNA transacción, con la fila del scope
@@ -148,7 +163,8 @@ async def run_scope(
                 await session.rollback()
                 logger.info("scope %s: eliminado durante el run, not_found", scope_id)
                 return ScopeRunResult(
-                    scope_id=scope_id, status="not_found",
+                    scope_id=scope_id,
+                    status="not_found",
                     detail={"reason": "scope eliminado durante el run"},
                 )
             if not locked.enabled:
@@ -173,7 +189,8 @@ async def run_scope(
             if not await _still_claim_owner(session, scope_id, claim_token):
                 await session.rollback()
                 logger.info(
-                    "scope %s: lease vencido y re-armado por otro worker, stale", scope_id
+                    "scope %s: lease vencido y re-armado por otro worker, stale",
+                    scope_id,
                 )
                 return ScopeRunResult(scope_id=scope_id, status="stale")
 
@@ -207,8 +224,10 @@ async def run_scope(
                     "ELSE source_scope_state.consecutive_failures END"
                 ),
                 {
-                    "sid": scope_id, "cur": json.dumps(new_cursor),
-                    "complete": result.complete, "failed": failed,
+                    "sid": scope_id,
+                    "cur": json.dumps(new_cursor),
+                    "complete": result.complete,
+                    "failed": failed,
                 },
             )
             await session.commit()
@@ -217,25 +236,36 @@ async def run_scope(
             await _record_failure_safe(
                 session, scope_id, claim_token, state_snapshot=state_snapshot
             )
-            logger.warning("scope %s: persistencia falló, cursor intacto: %s", scope_id, exc)
-            return ScopeRunResult(scope_id=scope_id, status="error", error=str(exc)[:200])
+            logger.warning(
+                "scope %s: persistencia falló, cursor intacto: %s", scope_id, exc
+            )
+            return ScopeRunResult(
+                scope_id=scope_id, status="error", error=str(exc)[:200]
+            )
 
         status = "ok" if result.complete else "partial"
         log = logger.info if result.complete else logger.warning
         log(
             "scope %s: %d listings, %d páginas, cursor commiteado (%s)%s",
-            scope_id, len(result.listings), result.pages_fetched, status,
+            scope_id,
+            len(result.listings),
+            result.pages_fetched,
+            status,
             f" — fallo contabilizado: {result.error}" if failed else "",
         )
         return ScopeRunResult(
-            scope_id=scope_id, status=status,
-            listings=len(result.listings), pages=result.pages_fetched,
+            scope_id=scope_id,
+            status=status,
+            listings=len(result.listings),
+            pages=result.pages_fetched,
             error=result.error[:200] if result.error else None,
             detail=result.next_cursor.get(ADMISSION_CURSOR_KEY, {}),
         )
 
 
-def _provider_cursor(stored: dict | None, fingerprint: str, scope_id: str) -> dict | None:
+def _provider_cursor(
+    stored: dict | None, fingerprint: str, scope_id: str
+) -> dict | None:
     """Cursor a entregar al provider; None si los params semánticos cambiaron."""
     if not stored:
         return None
@@ -246,12 +276,16 @@ def _provider_cursor(stored: dict | None, fingerprint: str, scope_id: str) -> di
         )
         return None
     cursor = {
-        k: v for k, v in stored.items() if k not in {FINGERPRINT_KEY, ADMISSION_CURSOR_KEY}
+        k: v
+        for k, v in stored.items()
+        if k not in {FINGERPRINT_KEY, ADMISSION_CURSOR_KEY}
     }
     return cursor or None
 
 
-_NO_SNAPSHOT = object()  # centinela: distingue "sin snapshot" (legacy) de "snapshot=None" (sin estado)
+_NO_SNAPSHOT = (
+    object()
+)  # centinela: distingue "sin snapshot" (legacy) de "snapshot=None" (sin estado)
 
 
 async def _still_authoritative(session, scope_id: str, token, state_snapshot) -> bool:

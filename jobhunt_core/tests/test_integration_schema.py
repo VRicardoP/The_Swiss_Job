@@ -38,7 +38,10 @@ def conn():
 def _seed_corpus(conn) -> dict:
     """Grafo mínimo: source → vacancy → incarnation → slrev → offer_revision,
     resolviendo la FK circular por el orden del contrato (insert → UPDATE)."""
-    ids = {k: uuid.uuid4() for k in ("source", "listing", "vacancy", "inc", "slrev", "offrev")}
+    ids = {
+        k: uuid.uuid4()
+        for k in ("source", "listing", "vacancy", "inc", "slrev", "offrev")
+    }
     conn.execute(
         sa.text("INSERT INTO sources (id, name, tier) VALUES (:id, :n, 1)"),
         {"id": ids["source"], "n": f"src-{ids['source'].hex[:8]}"},
@@ -48,9 +51,16 @@ def _seed_corpus(conn) -> dict:
             "INSERT INTO source_listings (id, source_id, external_id, url_normalized) "
             "VALUES (:id, :s, :e, :u)"
         ),
-        {"id": ids["listing"], "s": ids["source"], "e": ids["listing"].hex, "u": f"https://x/{ids['listing'].hex}"},
+        {
+            "id": ids["listing"],
+            "s": ids["source"],
+            "e": ids["listing"].hex,
+            "u": f"https://x/{ids['listing'].hex}",
+        },
     )
-    conn.execute(sa.text("INSERT INTO vacancies (id) VALUES (:id)"), {"id": ids["vacancy"]})
+    conn.execute(
+        sa.text("INSERT INTO vacancies (id) VALUES (:id)"), {"id": ids["vacancy"]}
+    )
     conn.execute(
         sa.text(
             "INSERT INTO source_listing_incarnations (id, source_listing_id, vacancy_id, seq, url) "
@@ -109,7 +119,9 @@ def test_only_one_active_incarnation_per_slot(conn):
 def test_recycled_slot_opens_new_incarnation(conn):
     ids = _seed_corpus(conn)
     conn.execute(
-        sa.text("UPDATE source_listing_incarnations SET ended_at = now() WHERE id = :i"),
+        sa.text(
+            "UPDATE source_listing_incarnations SET ended_at = now() WHERE id = :i"
+        ),
         {"i": ids["inc"]},
     )
     v2 = uuid.uuid4()
@@ -133,7 +145,9 @@ def test_dedup_pair_is_canonical(conn):
     )
     with pytest.raises(sa.exc.IntegrityError, match="uq_dedup_pair"):
         conn.execute(  # el par ESPEJADO es el mismo candidato
-            sa.text("INSERT INTO dedup_candidates (vacancy_a, vacancy_b) VALUES (:a, :b)"),
+            sa.text(
+                "INSERT INTO dedup_candidates (vacancy_a, vacancy_b) VALUES (:a, :b)"
+            ),
             {"a": v2, "b": ids["vacancy"]},
         )
 
@@ -145,7 +159,9 @@ def _seed_profile(conn) -> dict:
         {"id": ids["consumer"], "n": f"c-{ids['consumer'].hex[:8]}"},
     )
     conn.execute(
-        sa.text("INSERT INTO profiles (id, consumer_id, external_ref) VALUES (:id, :c, 'u1')"),
+        sa.text(
+            "INSERT INTO profiles (id, consumer_id, external_ref) VALUES (:id, :c, 'u1')"
+        ),
         {"id": ids["profile"], "c": ids["consumer"]},
     )
     conn.execute(
@@ -179,8 +195,14 @@ def _insert_eval(conn, c, p, eval_id=None) -> uuid.UUID:
             "VALUES (:id, :pr, :v, :orv, :prev, :m, :pol, :key, 80.5, '{}'::jsonb)"
         ),
         {
-            "id": eval_id, "pr": p["profile"], "v": c["vacancy"], "orv": c["offrev"],
-            "prev": p["prev"], "m": p["model"], "pol": p["policy"], "key": eval_id.hex,
+            "id": eval_id,
+            "pr": p["profile"],
+            "v": c["vacancy"],
+            "orv": c["offrev"],
+            "prev": p["prev"],
+            "m": p["model"],
+            "pol": p["policy"],
+            "key": eval_id.hex,
         },
     )
     return eval_id
@@ -190,7 +212,9 @@ def test_composite_fk_rejects_foreign_revision(conn):
     """Una evaluación NO puede citar la offer_revision de OTRA vacante (rev. #3)."""
     c1, p = _seed_corpus(conn), _seed_profile(conn)
     other_vacancy = uuid.uuid4()
-    conn.execute(sa.text("INSERT INTO vacancies (id) VALUES (:id)"), {"id": other_vacancy})
+    conn.execute(
+        sa.text("INSERT INTO vacancies (id) VALUES (:id)"), {"id": other_vacancy}
+    )
     with pytest.raises(sa.exc.IntegrityError, match="fk_eval_offrev_same_vacancy"):
         conn.execute(
             sa.text(
@@ -199,8 +223,12 @@ def test_composite_fk_rejects_foreign_revision(conn):
                 "VALUES (:pr, :v, :orv, :prev, :m, :pol, 'k1', 1, '{}'::jsonb)"
             ),
             {
-                "pr": p["profile"], "v": other_vacancy, "orv": c1["offrev"],  # ← de la vacante 1
-                "prev": p["prev"], "m": p["model"], "pol": p["policy"],
+                "pr": p["profile"],
+                "v": other_vacancy,
+                "orv": c1["offrev"],  # ← de la vacante 1
+                "prev": p["prev"],
+                "m": p["model"],
+                "pol": p["policy"],
             },
         )
 
@@ -217,7 +245,9 @@ def test_current_eval_restrict_enforces_adr03(conn):
         {"pr": p["profile"], "v": c["vacancy"], "e": eval_id},
     )
     with pytest.raises(sa.exc.IntegrityError, match="fk_pvs_current_eval_same_pair"):
-        conn.execute(sa.text("DELETE FROM match_evaluations WHERE id = :e"), {"e": eval_id})
+        conn.execute(
+            sa.text("DELETE FROM match_evaluations WHERE id = :e"), {"e": eval_id}
+        )
 
 
 def test_ors_trigger_rejects_foreign_raw(conn):
@@ -292,8 +322,14 @@ def test_eval_unique_per_profile_vacancy_key(conn):
                 "VALUES (:id, :pr, :v, :orv, :prev, :m, :pol, :key, 10, '{}'::jsonb)"
             ),
             {
-                "id": dup, "pr": p["profile"], "v": c["vacancy"], "orv": c["offrev"],
-                "prev": p["prev"], "m": p["model"], "pol": p["policy"], "key": e1.hex,
+                "id": dup,
+                "pr": p["profile"],
+                "v": c["vacancy"],
+                "orv": c["offrev"],
+                "prev": p["prev"],
+                "m": p["model"],
+                "pol": p["policy"],
+                "key": e1.hex,
             },
         )
 
@@ -308,7 +344,12 @@ def test_profile_embedding_rejects_foreign_profile_revision(conn):
                 "INSERT INTO profile_embeddings (profile_revision_id, profile_id, model_id, vector) "
                 "VALUES (:rev, :p, :m, :v)"
             ),
-            {"rev": p1["prev"], "p": p2["profile"], "m": p1["model"], "v": vec},  # rev ajena
+            {
+                "rev": p1["prev"],
+                "p": p2["profile"],
+                "m": p1["model"],
+                "v": vec,
+            },  # rev ajena
         )
 
 
@@ -323,9 +364,12 @@ def test_eval_rejects_foreign_profile_revision(conn):
                 "VALUES (:pr, :v, :orv, :prev, :m, :pol, 'k2', 1, '{}'::jsonb)"
             ),
             {
-                "pr": p2["profile"], "v": c["vacancy"], "orv": c["offrev"],
+                "pr": p2["profile"],
+                "v": c["vacancy"],
+                "orv": c["offrev"],
                 "prev": p1["prev"],  # ← revisión del perfil 1 con profile_id del 2
-                "m": p1["model"], "pol": p1["policy"],
+                "m": p1["model"],
+                "pol": p1["policy"],
             },
         )
 
@@ -335,7 +379,9 @@ def test_pvs_rejects_current_eval_of_other_pair(conn):
     c, p = _seed_corpus(conn), _seed_profile(conn)
     eval_id = _insert_eval(conn, c, p)
     other_vacancy = uuid.uuid4()
-    conn.execute(sa.text("INSERT INTO vacancies (id) VALUES (:id)"), {"id": other_vacancy})
+    conn.execute(
+        sa.text("INSERT INTO vacancies (id) VALUES (:id)"), {"id": other_vacancy}
+    )
     with pytest.raises(sa.exc.IntegrityError, match="fk_pvs_current_eval_same_pair"):
         conn.execute(
             sa.text(
@@ -351,7 +397,9 @@ def test_vacancy_pointer_rejects_foreign_revision(conn):
     c1, c2 = _seed_corpus(conn), _seed_corpus(conn)
     with pytest.raises(sa.exc.IntegrityError, match="fk_vacancy_current_offrev"):
         conn.execute(
-            sa.text("UPDATE vacancies SET current_offer_revision_id = :o WHERE id = :v"),
+            sa.text(
+                "UPDATE vacancies SET current_offer_revision_id = :o WHERE id = :v"
+            ),
             {"o": c2["offrev"], "v": c1["vacancy"]},  # revisión de la vacante 2
         )
 
@@ -361,7 +409,9 @@ def test_pointer_set_null_only_nulls_pointer(conn):
     SOLO el puntero, no la PK (fix de la auditoría A-02)."""
     c = _seed_corpus(conn)
     # Quitar el otro enlace del grafo para poder borrar la offer_revision.
-    conn.execute(sa.text("DELETE FROM offer_revisions WHERE id = :o"), {"o": c["offrev"]})
+    conn.execute(
+        sa.text("DELETE FROM offer_revisions WHERE id = :o"), {"o": c["offrev"]}
+    )
     row = conn.execute(
         sa.text("SELECT id, current_offer_revision_id FROM vacancies WHERE id = :v"),
         {"v": c["vacancy"]},
@@ -379,7 +429,9 @@ def test_slr_incarnation_id_is_immutable(conn):
     c1, c2 = _seed_corpus(conn), _seed_corpus(conn)
     with pytest.raises(sa.exc.DBAPIError, match="columna inmutable"):
         conn.execute(
-            sa.text("UPDATE source_listing_revisions SET incarnation_id = :i WHERE id = :r"),
+            sa.text(
+                "UPDATE source_listing_revisions SET incarnation_id = :i WHERE id = :r"
+            ),
             {"i": c2["inc"], "r": c1["slrev"]},
         )
 
@@ -390,7 +442,9 @@ def test_incarnation_vacancy_id_is_immutable(conn):
     c1, c2 = _seed_corpus(conn), _seed_corpus(conn)
     with pytest.raises(sa.exc.DBAPIError, match="columna inmutable"):
         conn.execute(
-            sa.text("UPDATE source_listing_incarnations SET vacancy_id = :v WHERE id = :i"),
+            sa.text(
+                "UPDATE source_listing_incarnations SET vacancy_id = :v WHERE id = :i"
+            ),
             {"v": c2["vacancy"], "i": c1["inc"]},
         )
 
@@ -429,7 +483,9 @@ def test_primary_incarnation_set_null_only_nulls_pointer(conn):
     c = _seed_corpus(conn)
     # Incarnación fresca sin revisiones (borrable): cerrar la activa y abrir otra.
     conn.execute(
-        sa.text("UPDATE source_listing_incarnations SET ended_at = now() WHERE id = :i"),
+        sa.text(
+            "UPDATE source_listing_incarnations SET ended_at = now() WHERE id = :i"
+        ),
         {"i": c["inc"]},
     )
     fresh = uuid.uuid4()
@@ -444,7 +500,9 @@ def test_primary_incarnation_set_null_only_nulls_pointer(conn):
         sa.text("UPDATE vacancies SET primary_incarnation_id = :i WHERE id = :v"),
         {"i": fresh, "v": c["vacancy"]},
     )
-    conn.execute(sa.text("DELETE FROM source_listing_incarnations WHERE id = :i"), {"i": fresh})
+    conn.execute(
+        sa.text("DELETE FROM source_listing_incarnations WHERE id = :i"), {"i": fresh}
+    )
     row = conn.execute(
         sa.text("SELECT id, primary_incarnation_id FROM vacancies WHERE id = :v"),
         {"v": c["vacancy"]},
@@ -571,19 +629,29 @@ def test_application_status_enum_starts_applied(conn):
         sa.text("SELECT status FROM applications WHERE id = :id"), {"id": app_id}
     ).scalar()
     assert status == "applied"
-    labels = conn.execute(
-        sa.text(
-            "SELECT e.enumlabel FROM pg_enum e "
-            "JOIN pg_type t ON t.oid = e.enumtypid "
-            "JOIN pg_namespace n ON n.oid = t.typnamespace "
-            "WHERE t.typname = 'application_status' AND n.nspname = :s "
-            "ORDER BY e.enumsortorder"
-        ),
-        {"s": settings.CORE_DB_SCHEMA},
-    ).scalars().all()
+    labels = (
+        conn.execute(
+            sa.text(
+                "SELECT e.enumlabel FROM pg_enum e "
+                "JOIN pg_type t ON t.oid = e.enumtypid "
+                "JOIN pg_namespace n ON n.oid = t.typnamespace "
+                "WHERE t.typname = 'application_status' AND n.nspname = :s "
+                "ORDER BY e.enumsortorder"
+            ),
+            {"s": settings.CORE_DB_SCHEMA},
+        )
+        .scalars()
+        .all()
+    )
     assert labels == [
-        "saved", "applied", "phone_screen", "technical",
-        "interview", "offer", "rejected", "withdrawn",
+        "saved",
+        "applied",
+        "phone_screen",
+        "technical",
+        "interview",
+        "offer",
+        "rejected",
+        "withdrawn",
     ]
 
 
@@ -615,7 +683,9 @@ def test_application_incarnation_set_null_only_nulls_pointer(conn):
     c, p = _seed_corpus(conn), _seed_profile(conn)
     # Incarnación fresca sin revisiones (borrable), patrón del test de vacancies.
     conn.execute(
-        sa.text("UPDATE source_listing_incarnations SET ended_at = now() WHERE id = :i"),
+        sa.text(
+            "UPDATE source_listing_incarnations SET ended_at = now() WHERE id = :i"
+        ),
         {"i": c["inc"]},
     )
     fresh = uuid.uuid4()
@@ -681,7 +751,9 @@ def test_saved_search_defaults_and_profile_fk(conn):
     p = _seed_profile(conn)
     sid = uuid.uuid4()
     conn.execute(
-        sa.text("INSERT INTO saved_searches (id, profile_id, name) VALUES (:id, :p, 'remote py')"),
+        sa.text(
+            "INSERT INTO saved_searches (id, profile_id, name) VALUES (:id, :p, 'remote py')"
+        ),
         {"id": sid, "p": p["profile"]},
     )
     row = conn.execute(

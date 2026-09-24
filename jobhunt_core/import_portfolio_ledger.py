@@ -43,7 +43,9 @@ QUARANTINE = "quarantine"
 # Razones de cuarentena (solo cuando disposition == QUARANTINE).
 Q_NO_URL = "no_url"
 Q_MALFORMED = "malformed"
-Q_NO_TITLE = "no_title"  # sin título normalizable → el sink no crearía canónica (impresentable)
+Q_NO_TITLE = (
+    "no_title"  # sin título normalizable → el sink no crearía canónica (impresentable)
+)
 Q_LIMIT = "limit"  # url > MAX_URL_LEN → el sink la cuarentena (frontera replicada, rev. externa)
 Q_COLLISION_INTRA = "collision_intra"
 Q_COLLISION_CROSS_RUN = "collision_cross_run"
@@ -145,7 +147,10 @@ async def _synthesized_vacancy_info(
     )
     out: dict[str, dict] = {}
     for r in rows:
-        out[r.urln] = {"vacancy_id": r.vacancy_id, "has_other_source": r.has_other_source}
+        out[r.urln] = {
+            "vacancy_id": r.vacancy_id,
+            "has_other_source": r.has_other_source,
+        }
     return out
 
 
@@ -173,12 +178,16 @@ async def build_ledger(
                 "posible pérdida del sink; el verificador §4 lo marcará",
                 url,
             )
-            entries.append(LedgerEntry(url, urln, _external_id(urln), CREATED, None, None))
+            entries.append(
+                LedgerEntry(url, urln, _external_id(urln), CREATED, None, None)
+            )
             continue
         vac = vinfo["vacancy_id"]
         reused = vinfo["has_other_source"] or str(vac) in before_vacancy_ids
         disposition = REUSED if reused else CREATED
-        entries.append(LedgerEntry(url, urln, _external_id(urln), disposition, None, vac))
+        entries.append(
+            LedgerEntry(url, urln, _external_id(urln), disposition, None, vac)
+        )
     for url, reason in quarantined.items():
         # normalize + external_id JUNTOS bajo el guard: una url con surrogate pasa
         # normalize_url pero revienta en el .encode() de _external_id (UnicodeEncodeError ⊂

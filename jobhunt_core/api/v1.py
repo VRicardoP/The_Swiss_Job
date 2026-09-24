@@ -141,7 +141,9 @@ def _catalog_filter_sql(
             "(lower(coalesce(o.content->>'title', '')) LIKE lower(:q_pattern) "
             "OR lower(coalesce(o.content->>'company', '')) LIKE lower(:q_pattern))"
         )
-        literal = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        literal = (
+            q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
         params["q_pattern"] = "%" + literal + "%"
     names = [s.strip().lower() for s in (source or "").split(",") if s.strip()]
     if names:
@@ -157,7 +159,9 @@ def _catalog_filter_sql(
         # estricta (NULL jamás casa — tres estados honestos, no dos).
         # Literales de un bool ya validado, nunca texto del usuario. Así el
         # plan genérico también puede probar el predicado del índice parcial.
-        where.append("(o.content->>'remote')::boolean = " + ("true" if remote else "false"))
+        where.append(
+            "(o.content->>'remote')::boolean = " + ("true" if remote else "false")
+        )
     _location_conditions(where, params, country=country, city=city)
     return join, where, params
 
@@ -240,8 +244,10 @@ async def _vacancy_dtos(session, vacancy_ids) -> dict:
     ).all():
         listings.setdefault(r.vacancy_id, []).append(
             schemas.ListingDTO(
-                source=r.source, external_id=r.external_id,
-                url=r.url, apply_url=r.apply_url,
+                source=r.source,
+                external_id=r.external_id,
+                url=r.url,
+                apply_url=r.apply_url,
             )
         )
     out = {}
@@ -260,8 +266,10 @@ async def _vacancy_dtos(session, vacancy_ids) -> dict:
             language=_canonical_language(c.get("language")),
             primary_listing=(
                 schemas.PrimaryListingDTO(
-                    source=primary.source, external_id=primary.external_id,
-                    url=primary.url, apply_url=primary.apply_url,
+                    source=primary.source,
+                    external_id=primary.external_id,
+                    url=primary.url,
+                    apply_url=primary.apply_url,
                     first_seen_at=primary.first_seen_at,
                     last_seen_at=primary.last_seen_at,
                 )
@@ -273,8 +281,11 @@ async def _vacancy_dtos(session, vacancy_ids) -> dict:
     return out
 
 
-@router.get("/vacancies", response_model=schemas.VacanciesPageDTO,
-            responses={304: {"description": "Not Modified"}})
+@router.get(
+    "/vacancies",
+    response_model=schemas.VacanciesPageDTO,
+    responses={304: {"description": "Not Modified"}},
+)
 async def list_vacancies(
     request: Request,
     session=Depends(get_session),
@@ -325,14 +336,14 @@ async def list_vacancies(
     # está vacía). La fila extra se descarta de `items`; solo decide has_more.
     params["lim"] = limit + 1
     if cur is not None:
-        where.append(
-            "(v.created_at < :cts OR (v.created_at = :cts AND v.id < :cid))"
-        )
+        where.append("(v.created_at < :cts OR (v.created_at = :cts AND v.id < :cid))")
         params["cts"], params["cid"] = cur
     filtered_sql = (
         "SELECT v.id, v.created_at FROM vacancies v "
         "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
-        + join_sql + "WHERE " + " AND ".join(where)
+        + join_sql
+        + "WHERE "
+        + " AND ".join(where)
     )
     total = None
     if offset is not None:
@@ -340,20 +351,30 @@ async def list_vacancies(
         # (mismo snapshot); no descargar/hidratar el corpus para contarlo.
         # LEFT JOIN conserva total incluso si offset >= total o no hay resultados.
         params["off"] = offset
-        rows = (await session.execute(sa.text(
-            "WITH filtered AS MATERIALIZED (" + filtered_sql + "), "
-            "page AS (SELECT id, created_at FROM filtered "
-            "ORDER BY created_at DESC, id DESC LIMIT :lim OFFSET :off) "
-            "SELECT page.id, page.created_at, totals.total "
-            "FROM (SELECT count(*) AS total FROM filtered) totals "
-            "LEFT JOIN page ON true ORDER BY page.created_at DESC, page.id DESC"
-        ), params)).all()
+        rows = (
+            await session.execute(
+                sa.text(
+                    "WITH filtered AS MATERIALIZED (" + filtered_sql + "), "
+                    "page AS (SELECT id, created_at FROM filtered "
+                    "ORDER BY created_at DESC, id DESC LIMIT :lim OFFSET :off) "
+                    "SELECT page.id, page.created_at, totals.total "
+                    "FROM (SELECT count(*) AS total FROM filtered) totals "
+                    "LEFT JOIN page ON true ORDER BY page.created_at DESC, page.id DESC"
+                ),
+                params,
+            )
+        ).all()
         total = rows[0].total
         rows = [row for row in rows if row.id is not None]
     else:
-        rows = (await session.execute(sa.text(
-            filtered_sql + " ORDER BY v.created_at DESC, v.id DESC LIMIT :lim"
-        ), params)).all()
+        rows = (
+            await session.execute(
+                sa.text(
+                    filtered_sql + " ORDER BY v.created_at DESC, v.id DESC LIMIT :lim"
+                ),
+                params,
+            )
+        ).all()
     # Solo las primeras `limit` filas son la página; la (limit+1)-ésima —si
     # existe— únicamente prueba que hay más, y NO se serializa.
     has_more = len(rows) > limit
@@ -365,7 +386,9 @@ async def list_vacancies(
     items = [dtos[r.id] for r in page_rows if r.id in dtos]
     # El cursor apunta a la ÚLTIMA fila devuelta (keyset), y solo si hay una
     # fila más allá de ella (has_more) — nunca en el múltiplo exacto.
-    next_cur = (page_rows[-1].created_at, page_rows[-1].id) if has_more and page_rows else None
+    next_cur = (
+        (page_rows[-1].created_at, page_rows[-1].id) if has_more and page_rows else None
+    )
     page = schemas.VacanciesPageDTO(
         items=items,
         next_cursor=encode_vacancy_cursor(*next_cur) if next_cur else None,
@@ -378,8 +401,11 @@ async def list_vacancies(
     return _with_etag(request, body)
 
 
-@router.get("/vacancies/{vacancy_id}", response_model=schemas.VacancyDTO,
-            responses={304: {"description": "Not Modified"}})
+@router.get(
+    "/vacancies/{vacancy_id}",
+    response_model=schemas.VacancyDTO,
+    responses={304: {"description": "Not Modified"}},
+)
 async def get_vacancy(
     vacancy_id: uuid.UUID,
     request: Request,
@@ -426,10 +452,13 @@ async def _profile_dto(session, profile_id, consumer_id) -> schemas.ProfileDTO |
     if row is None:
         return None
     return schemas.ProfileDTO(
-        id=row.id, external_ref=row.external_ref, created_at=row.created_at,
+        id=row.id,
+        external_ref=row.external_ref,
+        created_at=row.created_at,
         current_revision=(
             schemas.ProfileRevisionDTO(
-                content=row.content, content_hash=row.content_hash,
+                content=row.content,
+                content_hash=row.content_hash,
                 text_hash=row.text_hash,
             )
             if row.content_hash is not None
@@ -438,8 +467,11 @@ async def _profile_dto(session, profile_id, consumer_id) -> schemas.ProfileDTO |
     )
 
 
-@router.get("/profiles/{profile_id}", response_model=schemas.ProfileDTO,
-            responses={304: {"description": "Not Modified"}})
+@router.get(
+    "/profiles/{profile_id}",
+    response_model=schemas.ProfileDTO,
+    responses={304: {"description": "Not Modified"}},
+)
 async def get_profile(
     profile_id: uuid.UUID,
     request: Request,
@@ -452,9 +484,11 @@ async def get_profile(
     return _with_etag(request, dto.model_dump(mode="json"))
 
 
-@router.put("/profiles/{profile_id}", response_model=schemas.ProfileDTO,
-            responses={409: {"model": schemas.ErrorDTO},
-                       412: {"model": schemas.ErrorDTO}})
+@router.put(
+    "/profiles/{profile_id}",
+    response_model=schemas.ProfileDTO,
+    responses={409: {"model": schemas.ErrorDTO}, 412: {"model": schemas.ErrorDTO}},
+)
 async def put_profile(
     profile_id: uuid.UUID,
     request: Request,
@@ -495,18 +529,23 @@ async def put_profile(
         # (re-entrante en la transacción): sin carrera con otro escritor.
         owner = (
             await session.execute(
-                sa.text(
-                    "SELECT consumer_id FROM profiles WHERE id = :pid FOR UPDATE"
-                ),
+                sa.text("SELECT consumer_id FROM profiles WHERE id = :pid FOR UPDATE"),
                 {"pid": profile_id},
             )
         ).scalar_one_or_none()
         if owner is None or owner != principal.consumer_id:
             raise error_404("perfil")
         current = await _profile_dto(session, profile_id, principal.consumer_id)
-        if await session.scalar(sa.text("SELECT projection_version FROM profiles WHERE id=:p"), {"p": profile_id}):
+        if await session.scalar(
+            sa.text("SELECT projection_version FROM profiles WHERE id=:p"),
+            {"p": profile_id},
+        ):
             # A delayed legacy API writer cannot replace the versioned source.
-            raise ApiError(409, "profile_source_authority", "perfil gestionado por snapshots versionados")
+            raise ApiError(
+                409,
+                "profile_source_authority",
+                "perfil gestionado por snapshots versionados",
+            )
         if_match = request.headers.get("if-match")
         if if_match is not None and not _if_match_matches(
             if_match, _etag_of(current.model_dump(mode="json"))
@@ -515,7 +554,8 @@ async def put_profile(
             # ACTUAL (1ª rev.); `*` exige existencia (ya garantizada). Un
             # validador débil (W/) nunca satisface la precondición.
             raise ApiError(
-                412, "precondition_failed",
+                412,
+                "precondition_failed",
                 "If-Match no coincide con el ETag actual del perfil",
             )
         # Preservar-si-omitido (Fase 2, mismo invariante que la defensa
@@ -535,16 +575,15 @@ async def put_profile(
         smin, smax = contenido.get("salary_min"), contenido.get("salary_max")
         if smin is not None and smax is not None and smin > smax:
             raise ApiError(
-                400, "invalid_salary_range",
-                f"salary_min ({smin}) > salary_max ({smax}) en el contenido "
-                "resultante",
+                400,
+                "invalid_salary_range",
+                f"salary_min ({smin}) > salary_max ({smax}) en el contenido resultante",
             )
-        rid = await profiles.save_profile_revision(
-            session, profile_id, contenido
-        )
+        rid = await profiles.save_profile_revision(session, profile_id, contenido)
         if rid is None:
             raise ApiError(
-                400, "empty_profile",
+                400,
+                "empty_profile",
                 "el CV no tiene texto embebible (title/cv_text/skills)",
             )
         new = await _profile_dto(session, profile_id, principal.consumer_id)
@@ -584,15 +623,24 @@ async def erase_unlinked_swissjob_user(
     principal: Principal = Depends(require_scope("profiles:write")),
 ):
     # This external-reference convention belongs ONLY to SwissJob, not Portfolio.
-    consumer = await session.scalar(sa.text("SELECT name FROM consumers WHERE id=:cid"),
-                                    {"cid": principal.consumer_id})
+    consumer = await session.scalar(
+        sa.text("SELECT name FROM consumers WHERE id=:cid"),
+        {"cid": principal.consumer_id},
+    )
     if consumer != "swissjob-shadow":
         raise error_404("perfil")
     from jobhunt_core.erasure import erase_external_identity
-    receipt = await erase_external_identity(session, principal.consumer_id, str(user_id))
+
+    receipt = await erase_external_identity(
+        session, principal.consumer_id, str(user_id)
+    )
     await session.commit()
-    return {**receipt, "status": "erased", "scope": "core_live_database",
-            "backup_erasure": "not_confirmed"}
+    return {
+        **receipt,
+        "status": "erased",
+        "scope": "core_live_database",
+        "backup_erasure": "not_confirmed",
+    }
 
 
 @router.get("/profile-erasures")
@@ -602,15 +650,29 @@ async def list_profile_erasures(
     principal: Principal = Depends(require_scope("profiles:write")),
 ):
     """Owned minimal receipts for BFF copies and restore reconciliation."""
-    rows = (await session.execute(sa.text(
-        "SELECT profile_id, external_ref, erased_at FROM profile_erasure_receipts "
-        "WHERE consumer_id=:cid AND (CAST(:after AS uuid) IS NULL OR profile_id>CAST(:after AS uuid)) "
-        "ORDER BY profile_id LIMIT 100"
-    ), {"cid": principal.consumer_id, "after": after})).mappings().all()
-    consumer = await session.scalar(sa.text("SELECT name FROM consumers WHERE id=:cid"),
-                                    {"cid": principal.consumer_id})
-    return {"consumer": consumer, "items": [dict(r) for r in rows],
-            "next_cursor": str(rows[-1]["profile_id"]) if len(rows) == 100 else None}
+    rows = (
+        (
+            await session.execute(
+                sa.text(
+                    "SELECT profile_id, external_ref, erased_at FROM profile_erasure_receipts "
+                    "WHERE consumer_id=:cid AND (CAST(:after AS uuid) IS NULL OR profile_id>CAST(:after AS uuid)) "
+                    "ORDER BY profile_id LIMIT 100"
+                ),
+                {"cid": principal.consumer_id, "after": after},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    consumer = await session.scalar(
+        sa.text("SELECT name FROM consumers WHERE id=:cid"),
+        {"cid": principal.consumer_id},
+    )
+    return {
+        "consumer": consumer,
+        "items": [dict(r) for r in rows],
+        "next_cursor": str(rows[-1]["profile_id"]) if len(rows) == 100 else None,
+    }
 
 
 @router.post("/profile-erasures/{profile_id}/acks/{replica_id}", status_code=204)
@@ -622,16 +684,22 @@ async def acknowledge_profile_erasure(
 ):
     if replica_id not in {"swissjob-live", "swissjob-cdc"}:
         raise ApiError(400, "invalid_replica", "réplica desconocida")
-    receipt = await session.scalar(sa.text(
-        "SELECT 1 FROM profile_erasure_receipts r JOIN consumers c ON c.id=r.consumer_id "
-        "WHERE r.consumer_id=:cid AND r.profile_id=:pid AND c.name='swissjob-shadow'"
-    ), {"cid": principal.consumer_id, "pid": profile_id})
+    receipt = await session.scalar(
+        sa.text(
+            "SELECT 1 FROM profile_erasure_receipts r JOIN consumers c ON c.id=r.consumer_id "
+            "WHERE r.consumer_id=:cid AND r.profile_id=:pid AND c.name='swissjob-shadow'"
+        ),
+        {"cid": principal.consumer_id, "pid": profile_id},
+    )
     if not receipt:
         raise error_404("recibo")
-    await session.execute(sa.text(
-        "INSERT INTO profile_erasure_acks(profile_id,replica_id) VALUES(:pid,:replica) "
-        "ON CONFLICT DO NOTHING"
-    ), {"pid": profile_id, "replica": replica_id})
+    await session.execute(
+        sa.text(
+            "INSERT INTO profile_erasure_acks(profile_id,replica_id) VALUES(:pid,:replica) "
+            "ON CONFLICT DO NOTHING"
+        ),
+        {"pid": profile_id, "replica": replica_id},
+    )
     await session.commit()
     return Response(status_code=204)
 
@@ -644,16 +712,20 @@ async def erase_profile(
 ):
     """Idempotent live erasure; only a durable owned receipt confirms it."""
     from jobhunt_core.erasure import erase_owned_profile
+
     receipt = await erase_owned_profile(session, principal.consumer_id, profile_id)
     if receipt is None:
         raise error_404("perfil")
     await session.commit()
-    return {**receipt, "status": "erased", "scope": "core_live_database",
-            "backup_erasure": "not_confirmed"}
+    return {
+        **receipt,
+        "status": "erased",
+        "scope": "core_live_database",
+        "backup_erasure": "not_confirmed",
+    }
 
 
-@router.put("/profiles/{profile_id}/exclusions",
-            response_model=schemas.ExclusionsDTO)
+@router.put("/profiles/{profile_id}/exclusions", response_model=schemas.ExclusionsDTO)
 async def put_profile_exclusions(
     profile_id: uuid.UUID,
     body: schemas.ExclusionsWriteDTO,
@@ -665,30 +737,42 @@ async def put_profile_exclusions(
     Profile lock covers ownership, version check, rules and ACK snapshot.
     Duplicate versions must describe exactly the same normalized rules.
     """
-    owner = (await session.execute(
-        sa.text("SELECT consumer_id, exclusions_version FROM profiles "
-                "WHERE id = :pid FOR UPDATE"),
-        {"pid": profile_id},
-    )).one_or_none()
+    owner = (
+        await session.execute(
+            sa.text(
+                "SELECT consumer_id, exclusions_version FROM profiles "
+                "WHERE id = :pid FOR UPDATE"
+            ),
+            {"pid": profile_id},
+        )
+    ).one_or_none()
     if owner is None or str(owner.consumer_id) != str(principal.consumer_id):
         raise ApiError(404, "not_found", "perfil no encontrado")
     version = owner.exclusions_version
     if body.version >= version:
         requested = sorted(set((e.kind, e.pattern.strip()) for e in body.exclusions))
         if body.version == version:
-            current = (await session.execute(
-                sa.text("SELECT kind, pattern FROM profile_exclusions "
-                        "WHERE profile_id = :p ORDER BY kind, pattern"),
-                {"p": profile_id},
-            )).all()
+            current = (
+                await session.execute(
+                    sa.text(
+                        "SELECT kind, pattern FROM profile_exclusions "
+                        "WHERE profile_id = :p ORDER BY kind, pattern"
+                    ),
+                    {"p": profile_id},
+                )
+            ).all()
             # Database collation need not match Python ordering: rules form a set.
             if set(requested) != {(r.kind, r.pattern) for r in current}:
-                raise ApiError(409, "exclusion_version_conflict",
-                               "misma version con contenido diferente")
+                raise ApiError(
+                    409,
+                    "exclusion_version_conflict",
+                    "misma version con contenido diferente",
+                )
         else:
             try:
                 await matching.declare_profile_exclusions(
-                    session, profile_id,
+                    session,
+                    profile_id,
                     [{"kind": k, "pattern": p} for k, p in requested],
                 )
             except ValueError as exc:
@@ -698,11 +782,15 @@ async def put_profile_exclusions(
                 {"v": body.version, "p": profile_id},
             )
             version = body.version
-    rows = (await session.execute(
-        sa.text("SELECT kind, pattern FROM profile_exclusions "
-                "WHERE profile_id = :p ORDER BY kind, pattern"),
-        {"p": profile_id},
-    )).all()
+    rows = (
+        await session.execute(
+            sa.text(
+                "SELECT kind, pattern FROM profile_exclusions "
+                "WHERE profile_id = :p ORDER BY kind, pattern"
+            ),
+            {"p": profile_id},
+        )
+    ).all()
     result = schemas.ExclusionsDTO(
         version=version,
         exclusions=[schemas.ExclusionDTO(kind=r.kind, pattern=r.pattern) for r in rows],
@@ -711,8 +799,9 @@ async def put_profile_exclusions(
     return result
 
 
-@router.get("/profiles/{profile_id}/matches/version",
-            response_model=schemas.MatchesVersionDTO)
+@router.get(
+    "/profiles/{profile_id}/matches/version", response_model=schemas.MatchesVersionDTO
+)
 async def get_matches_version(
     profile_id: uuid.UUID,
     session=Depends(get_session),
@@ -736,8 +825,11 @@ async def get_matches_version(
     return schemas.MatchesVersionDTO(version=version, total=total)
 
 
-@router.get("/profiles/{profile_id}/matches", response_model=schemas.MatchesPageDTO,
-            responses={304: {"description": "Not Modified"}})
+@router.get(
+    "/profiles/{profile_id}/matches",
+    response_model=schemas.MatchesPageDTO,
+    responses={304: {"description": "Not Modified"}},
+)
 async def get_matches(
     profile_id: uuid.UUID,
     request: Request,
@@ -764,27 +856,34 @@ async def get_matches(
 
     cur = decode_cursor(cursor) if cursor else None
     rows, next_cur = await matching.feed(
-        session, profile_id, limit=limit, cursor=cur,
+        session,
+        profile_id,
+        limit=limit,
+        cursor=cur,
         consumer_id=principal.consumer_id,
     )
     eval_ids = [r.eval_id for r in rows]
-    evals = {
-        e.id: e
-        for e in (
-            await session.execute(
-                sa.text(
-                    "SELECT e.id, e.eval_key, e.explanation, "
-                    "m.name AS model_name, m.version AS model_version, "
-                    "p.name AS policy_name, p.prompt_version "
-                    "FROM match_evaluations e "
-                    "JOIN embedding_models m ON m.id = e.model_id "
-                    "JOIN scoring_policies p ON p.id = e.scoring_policy_id "
-                    "WHERE e.id = ANY(:ids) AND e.profile_id = :pid"
-                ),
-                {"ids": eval_ids, "pid": profile_id},
-            )
-        ).all()
-    } if eval_ids else {}
+    evals = (
+        {
+            e.id: e
+            for e in (
+                await session.execute(
+                    sa.text(
+                        "SELECT e.id, e.eval_key, e.explanation, "
+                        "m.name AS model_name, m.version AS model_version, "
+                        "p.name AS policy_name, p.prompt_version "
+                        "FROM match_evaluations e "
+                        "JOIN embedding_models m ON m.id = e.model_id "
+                        "JOIN scoring_policies p ON p.id = e.scoring_policy_id "
+                        "WHERE e.id = ANY(:ids) AND e.profile_id = :pid"
+                    ),
+                    {"ids": eval_ids, "pid": profile_id},
+                )
+            ).all()
+        }
+        if eval_ids
+        else {}
+    )
     vacancies = await _vacancy_dtos(session, [r.vacancy_id for r in rows])
 
     items = []
@@ -822,9 +921,13 @@ async def get_matches(
         # Sólo en la PRIMERA página: es lo que el consumidor necesita para
         # paginar, y contar en cada página pagaría el recuento N veces sin
         # que nadie lo lea. El tenant se filtra también aquí, en SQL.
-        total=(await matching.feed_total(
-            session, profile_id, consumer_id=principal.consumer_id)
-            if cur is None else None),
+        total=(
+            await matching.feed_total(
+                session, profile_id, consumer_id=principal.consumer_id
+            )
+            if cur is None
+            else None
+        ),
     )
     # ETag también en el feed (rev. A-09 #2): la página es una representación.
     return _with_etag(request, page.model_dump(mode="json"))

@@ -550,14 +550,25 @@ def _plantar_dobles(raiz: Path) -> Path:
     binarios.mkdir(parents=True, exist_ok=True)
     psql = _DOBLE_PSQL
     for clave, valor in (
-        ("__HA__", _HA), ("__HB__", _HB), ("__HC__", _HC), ("__HD__", _HD),
-        ("__SLOTS_ANTES__", _ANTES["slots"]), ("__SLOTS_DESPUES__", _DESPUES["slots"]),
-        ("__JOBS_ANTES__", _ANTES["jobs"]), ("__JOBS_DESPUES__", _DESPUES["jobs"]),
-        ("__PARES_ANTES__", _ANTES["pares"]), ("__PARES_DESPUES__", _DESPUES["pares"]),
-        ("__JUICIOS_ANTES__", _ANTES["juicios"]), ("__JUICIOS_DESPUES__", _DESPUES["juicios"]),
+        ("__HA__", _HA),
+        ("__HB__", _HB),
+        ("__HC__", _HC),
+        ("__HD__", _HD),
+        ("__SLOTS_ANTES__", _ANTES["slots"]),
+        ("__SLOTS_DESPUES__", _DESPUES["slots"]),
+        ("__JOBS_ANTES__", _ANTES["jobs"]),
+        ("__JOBS_DESPUES__", _DESPUES["jobs"]),
+        ("__PARES_ANTES__", _ANTES["pares"]),
+        ("__PARES_DESPUES__", _DESPUES["pares"]),
+        ("__JUICIOS_ANTES__", _ANTES["juicios"]),
+        ("__JUICIOS_DESPUES__", _DESPUES["juicios"]),
     ):
         psql = psql.replace(clave, str(valor))
-    for nombre, cuerpo in (("docker", _DOBLE_DOCKER), ("psql", psql), ("sync", _DOBLE_SYNC)):
+    for nombre, cuerpo in (
+        ("docker", _DOBLE_DOCKER),
+        ("psql", psql),
+        ("sync", _DOBLE_SYNC),
+    ):
         destino = binarios / nombre
         destino.write_text(cuerpo, encoding="utf-8")
         destino.chmod(0o755)
@@ -578,7 +589,9 @@ def _montar_nas(raiz: Path) -> dict[str, str]:
     for tar in ("swissjob-core.tar", "swissjob-backend.tar", "swissjob-frontend.tar"):
         (base / tar).write_text("tar", encoding="utf-8")
     for marca, fichero in (("G3", "g3.sql"), ("G6", "g6.sql")):
-        (scripts / fichero).write_text(f"-- {marca}\nBEGIN;\nROLLBACK;\n", encoding="utf-8")
+        (scripts / fichero).write_text(
+            f"-- {marca}\nBEGIN;\nROLLBACK;\n", encoding="utf-8"
+        )
     return {
         "BASE_DIR": str(base),
         "SCRIPTS_DIR": str(scripts),
@@ -596,7 +609,7 @@ def _montar_nas(raiz: Path) -> dict[str, str]:
         # a la vez en el mismo host no se bloqueen entre sí en /var/lock, y
         # para poder mover BACKUP_DIR y comprobar que el cerrojo NO se mueve.
         "LOCK_DIR": str(raiz / "cerrojos"),
-        "SLOT_ESPERA": "0",          # la sonda de progreso no tiene que dormir en tests
+        "SLOT_ESPERA": "0",  # la sonda de progreso no tiene que dormir en tests
         # La postcondición del beat espera DOS cadencias de cinco minutos en el
         # NAS; aquí el doble contesta al primer sondeo.
         "BEAT_ESPERA": "3",
@@ -623,7 +636,11 @@ def _ejecutar(
     entorno.update(_montar_nas(raiz))
     entorno["PATH"] = f"{_plantar_dobles(raiz)}:{entorno['PATH']}"
     entorno["CORE_NET"] = "red-de-mentira"
-    for clave, valor in (("ROMPER", romper), ("MATAR_EN", matar_en), ("LENTO_EN", lento_en)):
+    for clave, valor in (
+        ("ROMPER", romper),
+        ("MATAR_EN", matar_en),
+        ("LENTO_EN", lento_en),
+    ):
         if valor:
             entorno[clave] = valor
         else:
@@ -635,7 +652,10 @@ def _ejecutar(
     entorno.update(override or {})
     return subprocess.run(
         ["bash", str(_SCRIPT), subcomando, *extra],
-        env=entorno, capture_output=True, text=True, timeout=timeout,
+        env=entorno,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
         # SESIÓN PROPIA: los dobles matan el GRUPO de procesos para reproducir
         # un `SIGKILL` (R5 P1-B). Sin esto se llevarían por delante a pytest.
         start_new_session=True,
@@ -672,9 +692,14 @@ def sonda():
 
 
 def _preparar_smoke(raiz: Path, romper: str | None) -> None:
-    ready = {"status": "ready", "alembic": _HEAD, "release": _RELEASE, "authoritative": True}
+    ready = {
+        "status": "ready",
+        "alembic": _HEAD,
+        "release": _RELEASE,
+        "authoritative": True,
+    }
     if romper == "smoke_status":
-        ready["status"] = "ok"          # LO QUE EL RUNBOOK EXIGÍA (R3 P2-1)
+        ready["status"] = "ok"  # LO QUE EL RUNBOOK EXIGÍA (R3 P2-1)
     elif romper == "smoke_release":
         ready["release"] = "0tra1mg"
     elif romper == "smoke_authoritative":
@@ -684,7 +709,10 @@ def _preparar_smoke(raiz: Path, romper: str | None) -> None:
     _RESPUESTAS.clear()
     _RESPUESTAS["/v1/ready"] = ready
     _RESPUESTAS["/v1/health"] = {
-        "status": "ok", "release": _RELEASE, "alembic_expected": _HEAD, "authoritative": True,
+        "status": "ok",
+        "release": _RELEASE,
+        "alembic_expected": _HEAD,
+        "authoritative": True,
     }
     trabajo = raiz / "trabajo"
     trabajo.mkdir(parents=True, exist_ok=True)
@@ -730,8 +758,15 @@ def test_la_copia_es_un_archivo_que_pg_restore_lee_y_queda_sellada(tmp_path):
     assert not list((tmp_path / "backups").glob("*.parcial"))
     assert not list((tmp_path / "backups").glob("*.sql.gz")), "sigue siendo SQL plano"
     manifiesto = (copias[0].parent / (copias[0].name + ".manifiesto")).read_text()
-    for clave in ("DUMP_SHA256=", "DUMP_TABLAS_PUBLIC=", "DUMP_TABLAS_JOBHUNT=",
-                  "DUMP_PG_DB=", "MEDIDA_JOBS=", "MEDIDA_PARES=", "MEDIDA_JUICIOS="):
+    for clave in (
+        "DUMP_SHA256=",
+        "DUMP_TABLAS_PUBLIC=",
+        "DUMP_TABLAS_JOBHUNT=",
+        "DUMP_PG_DB=",
+        "MEDIDA_JOBS=",
+        "MEDIDA_PARES=",
+        "MEDIDA_JUICIOS=",
+    ):
         assert clave in manifiesto, manifiesto
     # Y las identidades pre-corte viajan con la copia, no solo en /tmp.
     assert (copias[0].parent / (copias[0].name + ".pares")).is_file()
@@ -756,12 +791,12 @@ def test_la_restauracion_verifica_sello_manifiesto_e_identidades(tmp_path):
 @pytest.mark.parametrize(
     "etapa",
     [
-        "restaurar_sha",            # el sello no cuadra con la copia
-        "restaurar_toc",            # pg_restore no puede leer el archivo
-        "restaurar_rename",         # no se puede apartar la base rota
-        "restaurar_create",         # no se puede crear la base nueva
-        "restaurar_pgrestore",      # la restauración aborta (single-transaction)
-        "restaurar_verificacion",   # termina pero el estado NO es el del manifiesto
+        "restaurar_sha",  # el sello no cuadra con la copia
+        "restaurar_toc",  # pg_restore no puede leer el archivo
+        "restaurar_rename",  # no se puede apartar la base rota
+        "restaurar_create",  # no se puede crear la base nueva
+        "restaurar_pgrestore",  # la restauración aborta (single-transaction)
+        "restaurar_verificacion",  # termina pero el estado NO es el del manifiesto
         "restaurar_escritor_vivo",  # restaurar con escritores vivos deja mezcla
     ],
 )
@@ -812,7 +847,9 @@ def test_dos_cutovers_a_la_vez_no_se_pisan(tmp_path):
         assert "Paso 4c" not in segundo.stdout, segundo.stdout
     finally:
         hilo.join(timeout=180)
-    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+    assert resultados["a"].returncode == 0, (
+        resultados["a"].stdout + resultados["a"].stderr
+    )
     assert len(list((tmp_path / "backups").glob("pre_canonizacion_*.dump"))) == 1
 
 
@@ -832,38 +869,40 @@ def test_restaurar_sin_manifiesto_no_toca_nada(tmp_path):
 @pytest.mark.parametrize(
     "etapa",
     [
-        "paso1",                 # los cinco escritores siguen vivos tras el `stop`
-        "paso2_pg_dump",         # pg_dump falla y el archivo saldría vacío
-        "paso2_toc",             # el archivo no se puede leer entero: no hay copia
+        "paso1",  # los cinco escritores siguen vivos tras el `stop`
+        "paso2_pg_dump",  # pg_dump falla y el archivo saldría vacío
+        "paso2_toc",  # el archivo no se puede leer entero: no hay copia
         "paso2_sin_public",
-        "paso2_sin_jobhunt",     # el rol no lee `jobhunt`: la copia no sirve
+        "paso2_sin_jobhunt",  # el rol no lee `jobhunt`: la copia no sirve
         "paso3_load",
-        "paso3_release_unknown", # imagen sin RELEASE_SHA → authoritative: false
-        "sonda_destino",         # el core apunta a OTRA base que psql (R4 P1-1)
+        "paso3_release_unknown",  # imagen sin RELEASE_SHA → authoritative: false
+        "sonda_destino",  # el core apunta a OTRA base que psql (R4 P1-1)
         "paso4a_primera",
-        "paso4a_segunda",        # preflight de LAS DOS antes de confirmar la primera
+        "paso4a_segunda",  # preflight de LAS DOS antes de confirmar la primera
         "paso4b_enclavamiento",  # el ensayo DECLARA refs de cohortes selladas
         "enclavamiento_sin_concepto",  # y si no lo declara, tampoco se sigue
-        "paso4b_senal",          # descartaría match_results con señal del usuario
+        "paso4b_senal",  # descartaría match_results con señal del usuario
         "paso4c_primera",
-        "paso4c_segunda",        # EL caso irreparable: la primera ya confirmada
-        "paso4c_informe",        # el informe en firme difiere del ensayo
-        "paso4c_ident",          # …y las identidades declaradas, también
-        "paso5_json",            # la aplicación no cuadra con su --dry-run
+        "paso4c_segunda",  # EL caso irreparable: la primera ya confirmada
+        "paso4c_informe",  # el informe en firme difiere del ensayo
+        "paso4c_ident",  # …y las identidades declaradas, también
+        "paso5_json",  # la aplicación no cuadra con su --dry-run
         "paso5_idempotencia",
         "paso6_slots",
         "paso6_jobs",
         "paso6_juicios",
         "paso6_pares",
-        "paso6_identidad_pares",     # R4 P1-3: cifras iguales, par distinto
-        "paso6_identidad_juicios",   # R4 P1-3: cifras iguales, juicio distinto
-        "paso6_identidad_jobs",      # un hash declarado fusionado sigue vivo
-        "paso6_identidad_canonicas", # un hash canónico declarado no existe
+        "paso6_identidad_pares",  # R4 P1-3: cifras iguales, par distinto
+        "paso6_identidad_juicios",  # R4 P1-3: cifras iguales, juicio distinto
+        "paso6_identidad_jobs",  # un hash declarado fusionado sigue vivo
+        "paso6_identidad_canonicas",  # un hash canónico declarado no existe
     ],
 )
 def test_cada_etapa_rota_detiene_la_secuencia(tmp_path, etapa):
     p = _ejecutar(tmp_path, "cutover", etapa)
-    assert p.returncode != 0, f"la etapa {etapa} falló y la secuencia SIGUIÓ:\n{p.stdout}"
+    assert p.returncode != 0, (
+        f"la etapa {etapa} falló y la secuencia SIGUIÓ:\n{p.stdout}"
+    )
     assert "PARAR" in p.stdout + p.stderr, p.stdout + p.stderr
 
 
@@ -888,7 +927,8 @@ def test_el_enclavamiento_no_para_por_pares_que_los_scripts_no_remapean(tmp_path
     p = _ejecutar(tmp_path, "cutover", "enclavamiento_falso_rojo")
     assert p.returncode == 0, (
         "el enclavamiento sigue parando por pares que los scripts no remapean:\n"
-        + p.stdout + p.stderr
+        + p.stdout
+        + p.stderr
     )
     assert "declara 0 refs de cohortes SELLADAS" in p.stdout, p.stdout
 
@@ -921,11 +961,24 @@ def test_las_cifras_pueden_cuadrar_y_aun_asi_perderse_un_par_conocido(tmp_path):
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "etapa",
-    ["smoke_status", "smoke_release", "smoke_authoritative", "smoke_alembic",
-     "smoke_sin_paso3", "smoke_sin_ids",
-     "smoke_ausente", "smoke_exited", "smoke_restarting", "smoke_unhealthy",
-     "smoke_frontend_ausente", "smoke_frontend_unhealthy", "smoke_imagen",
-     "smoke_celery", "smoke_slot_inactivo", "smoke_slot_atrasado"],
+    [
+        "smoke_status",
+        "smoke_release",
+        "smoke_authoritative",
+        "smoke_alembic",
+        "smoke_sin_paso3",
+        "smoke_sin_ids",
+        "smoke_ausente",
+        "smoke_exited",
+        "smoke_restarting",
+        "smoke_unhealthy",
+        "smoke_frontend_ausente",
+        "smoke_frontend_unhealthy",
+        "smoke_imagen",
+        "smoke_celery",
+        "smoke_slot_inactivo",
+        "smoke_slot_atrasado",
+    ],
 )
 def test_el_smoke_falla_cerrado(tmp_path, sonda, etapa):
     _preparar_smoke(tmp_path, etapa)
@@ -1000,7 +1053,8 @@ def test_un_remapeo_declarado_por_los_ensayos_no_puede_dar_rojo(tmp_path):
     p = _ejecutar(tmp_path, "cutover", None)
     assert p.returncode == 0, (
         "el manifiesto declara perdido un juicio que solo cambió de clave:\n"
-        + p.stdout + p.stderr
+        + p.stdout
+        + p.stderr
     )
     assert "transformación declarada" in p.stdout, p.stdout
 
@@ -1019,7 +1073,10 @@ def test_un_remapeo_declarado_por_los_ensayos_no_puede_dar_rojo(tmp_path):
         ("remap_ambiguo", "un `old_hash` con dos destinos"),
         ("remap_encadenado", "un destino que es a la vez origen"),
         ("paso4_hashes_fantasma", "filas de jobs que ya no reproducen su hash"),
-        ("paso5_mapa_ajeno", "canonical_refs reconstruye un mapa mayor que el declarado"),
+        (
+            "paso5_mapa_ajeno",
+            "canonical_refs reconstruye un mapa mayor que el declarado",
+        ),
     ],
 )
 def test_el_manifiesto_semantico_rechaza(tmp_path, etapa, porque):
@@ -1037,8 +1094,14 @@ def test_el_manifiesto_semantico_rechaza(tmp_path, etapa, porque):
 # continuar, y la siguiente invocación abortaba con «no existe la base». Los
 # traps no valen: `SIGKILL` y un reinicio no los ejecutan.
 # --------------------------------------------------------------------------
-_BORDES = ["antes_rename", "tras_rename", "en_create", "tras_create",
-           "en_restore", "tras_restore"]
+_BORDES = [
+    "antes_rename",
+    "tras_rename",
+    "en_create",
+    "tras_create",
+    "en_restore",
+    "tras_restore",
+]
 
 
 def _dump_de(tmp_path: Path) -> str:
@@ -1058,7 +1121,8 @@ def test_la_restauracion_reanuda_tras_un_sigkill_en_cada_borde(tmp_path, borde):
     reanudado = _ejecutar(tmp_path, "restaurar", None, dump)
     assert reanudado.returncode == 0, (
         f"tras morir en {borde} la marcha atrás NO se reanuda sola:\n"
-        + reanudado.stdout + reanudado.stderr
+        + reanudado.stdout
+        + reanudado.stderr
     )
     assert "VERIFIED" in reanudado.stdout, reanudado.stdout
 
@@ -1070,7 +1134,10 @@ def test_la_restauracion_reanuda_aunque_se_pierda_el_directorio_de_trabajo(tmp_p
 
     assert _ejecutar(tmp_path, "cutover", None).returncode == 0
     dump = _dump_de(tmp_path)
-    assert _ejecutar(tmp_path, "restaurar", None, dump, matar_en="tras_rename").returncode != 0
+    assert (
+        _ejecutar(tmp_path, "restaurar", None, dump, matar_en="tras_rename").returncode
+        != 0
+    )
     shutil.rmtree(tmp_path / "trabajo")
     p = _ejecutar(tmp_path, "restaurar", None, dump)
     assert p.returncode == 0, p.stdout + p.stderr
@@ -1088,7 +1155,9 @@ def test_dos_restauraciones_a_la_vez_no_se_pisan(tmp_path):
     resultados: dict[str, subprocess.CompletedProcess] = {}
 
     def primera():
-        resultados["a"] = _ejecutar(tmp_path, "restaurar", None, dump, lento_en="pg_restore")
+        resultados["a"] = _ejecutar(
+            tmp_path, "restaurar", None, dump, lento_en="pg_restore"
+        )
 
     hilo = threading.Thread(target=primera)
     hilo.start()
@@ -1108,7 +1177,9 @@ def test_dos_restauraciones_a_la_vez_no_se_pisan(tmp_path):
         assert "cerrojo" in segunda.stdout + segunda.stderr
     finally:
         hilo.join(timeout=120)
-    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+    assert resultados["a"].returncode == 0, (
+        resultados["a"].stdout + resultados["a"].stderr
+    )
 
 
 def test_sin_el_runtime_del_coordinador_la_maniobra_no_arranca(tmp_path):
@@ -1116,8 +1187,12 @@ def test_sin_el_runtime_del_coordinador_la_maniobra_no_arranca(tmp_path):
     `mkdir` era atómico, pero LIMPIAR uno huérfano no lo era. Hoy la exclusión mutua
     la da el coordinador, y su runtime es una PRECONDICIÓN: sin él la maniobra para
     antes de tocar nada, en vez de inventarse otro cerrojo."""
-    p = _ejecutar(tmp_path, "cutover", None,
-                  override={"PYTHON": "python-que-no-existe-en-este-host"})
+    p = _ejecutar(
+        tmp_path,
+        "cutover",
+        None,
+        override={"PYTHON": "python-que-no-existe-en-este-host"},
+    )
     salida = p.stdout + p.stderr
     assert p.returncode != 0, "arrancó un cutover sin exclusión mutua:\n" + p.stdout
     assert "python-que-no-existe-en-este-host" in salida, salida
@@ -1130,8 +1205,13 @@ def test_sin_el_coordinador_tampoco_arranca_la_marcha_atras(tmp_path):
     falta el fichero del coordinador, no su intérprete."""
     assert _ejecutar(tmp_path, "cutover", None).returncode == 0
     dump = _dump_de(tmp_path)
-    p = _ejecutar(tmp_path, "restaurar", None, dump,
-                  override={"COORDINADOR": str(tmp_path / "no-existe.py")})
+    p = _ejecutar(
+        tmp_path,
+        "restaurar",
+        None,
+        dump,
+        override={"COORDINADOR": str(tmp_path / "no-existe.py")},
+    )
     salida = p.stdout + p.stderr
     assert p.returncode != 0, "restauró sin exclusión mutua:\n" + p.stdout
     assert "no-existe.py" in salida, salida
@@ -1170,7 +1250,9 @@ def test_la_vuelta_atras_verifica_tambien_las_guardas(tmp_path):
     trae los datos pero deja los triggers de inmutabilidad degradados no es una vuelta
     atrás."""
     assert _ejecutar(tmp_path, "cutover", None).returncode == 0
-    p = _ejecutar(tmp_path, "restaurar", "restaurar_guarda_degradada", _dump_de(tmp_path))
+    p = _ejecutar(
+        tmp_path, "restaurar", "restaurar_guarda_degradada", _dump_de(tmp_path)
+    )
     assert p.returncode != 0, p.stdout
     assert "guarda" in (p.stdout + p.stderr).lower()
     assert "VERIFIED" not in p.stdout, p.stdout
@@ -1227,30 +1309,50 @@ def _con_entorno(tmp_path, entorno, subcomando="cutover", romper=None, extra=(),
     [
         (None, "sin CORE_DSN el Paso 5 escribiría en la base viva"),
         ("postgresql://u:p@postgres:5432/swissjobhunter", "es la base de producción"),
-        ("postgresql://u:p@postgres:5432/swissjobhunter?ssl=require",
-         "query string: la guarda comparaba por SUFIJO (R4 P1-1)"),
-        ("postgresql://u:p@postgres:5432/swissjobhunter?ssl=require&application_name=x",
-         "varios parámetros tras la base de producción"),
-        ("postgresql://u:p@postgres:5432/swissjobhunter#/swissjob_ensayo",
-         "fragmento: el sufijo visible no es la base"),
-        ("postgresql://u:p@postgres:5432/swissjobhunte%72",
-         "percent-encoding: decodifica a la base de producción"),
-        ("postgresql://u:p@postgres:5432/%73wissjobhunter",
-         "percent-encoding en la primera letra"),
-        ("postgresql://u:p@postgres:5432/swissjob_ensayo?dbname=swissjobhunter",
-         "un parámetro que puede REDEFINIR la base de destino"),
-        ("postgresql://u:p@postgres:5432/swissjob_ensayo?host=otro",
-         "un parámetro que puede redefinir el host"),
-        ("postgresql://u:p@otro-servidor:5432/swissjob_ensayo",
-         "la base se llama bien pero el servidor no es el esperado"),
-        ("postgresql://u:p@postgres:5432/otra_base",
-         "el core mediría una base distinta de la de psql"),
+        (
+            "postgresql://u:p@postgres:5432/swissjobhunter?ssl=require",
+            "query string: la guarda comparaba por SUFIJO (R4 P1-1)",
+        ),
+        (
+            "postgresql://u:p@postgres:5432/swissjobhunter?ssl=require&application_name=x",
+            "varios parámetros tras la base de producción",
+        ),
+        (
+            "postgresql://u:p@postgres:5432/swissjobhunter#/swissjob_ensayo",
+            "fragmento: el sufijo visible no es la base",
+        ),
+        (
+            "postgresql://u:p@postgres:5432/swissjobhunte%72",
+            "percent-encoding: decodifica a la base de producción",
+        ),
+        (
+            "postgresql://u:p@postgres:5432/%73wissjobhunter",
+            "percent-encoding en la primera letra",
+        ),
+        (
+            "postgresql://u:p@postgres:5432/swissjob_ensayo?dbname=swissjobhunter",
+            "un parámetro que puede REDEFINIR la base de destino",
+        ),
+        (
+            "postgresql://u:p@postgres:5432/swissjob_ensayo?host=otro",
+            "un parámetro que puede redefinir el host",
+        ),
+        (
+            "postgresql://u:p@otro-servidor:5432/swissjob_ensayo",
+            "la base se llama bien pero el servidor no es el esperado",
+        ),
+        (
+            "postgresql://u:p@postgres:5432/otra_base",
+            "el core mediría una base distinta de la de psql",
+        ),
         ("esto no es una url", "no es parseable"),
         ("postgresql://u:p@postgres:5432/", "no nombra ninguna base"),
         ("mysql://u:p@postgres:3306/swissjob_ensayo", "no es un DSN de PostgreSQL"),
     ],
 )
-def test_el_unico_escape_del_ensayo_no_puede_apuntar_a_produccion(tmp_path, dsn, porque):
+def test_el_unico_escape_del_ensayo_no_puede_apuntar_a_produccion(
+    tmp_path, dsn, porque
+):
     """`ENSAYO=1` es la única salida del fallo cerrado y se salta dos pasos, así que no
     puede convertirse en la maniobra real por descuido — ni tocar la base viva. La guarda
     vieja comparaba por sufijo y `…/swissjobhunter?ssl=require` llegaba al Paso 5 EN
@@ -1258,15 +1360,22 @@ def test_el_unico_escape_del_ensayo_no_puede_apuntar_a_produccion(tmp_path, dsn,
     entorno = {"ENSAYO": "1", "PG_DB": "swissjob_ensayo", "CORE_DSN": dsn or ""}
     p = _con_entorno(tmp_path, entorno)
     assert p.returncode != 0, f"el ensayo se aceptó aunque {porque}:\n{p.stdout}"
-    assert "Paso 4c" not in p.stdout, f"llegó a escribir con un DSN que {porque}:\n{p.stdout}"
-    assert "Paso 5" not in p.stdout, f"llegó al Paso 5 con un DSN que {porque}:\n{p.stdout}"
+    assert "Paso 4c" not in p.stdout, (
+        f"llegó a escribir con un DSN que {porque}:\n{p.stdout}"
+    )
+    assert "Paso 5" not in p.stdout, (
+        f"llegó al Paso 5 con un DSN que {porque}:\n{p.stdout}"
+    )
 
 
 def test_el_ensayo_con_pg_db_de_produccion_no_arranca(tmp_path):
     p = _con_entorno(
         tmp_path,
-        {"ENSAYO": "1", "PG_DB": "swissjobhunter",
-         "CORE_DSN": "postgresql://u:p@postgres:5432/swissjob_ensayo"},
+        {
+            "ENSAYO": "1",
+            "PG_DB": "swissjobhunter",
+            "CORE_DSN": "postgresql://u:p@postgres:5432/swissjob_ensayo",
+        },
     )
     assert p.returncode != 0
     assert "producción" in p.stdout + p.stderr
@@ -1299,8 +1408,17 @@ def test_la_sonda_de_destino_para_si_el_core_ve_otra_base(tmp_path):
 # ejecutan `RENAME`, `DROP`, `CREATE` y `pg_restore` sobre el MISMO `PG_DB`, así
 # que el recurso a proteger nunca fue el archivo: es la base.
 # --------------------------------------------------------------------------
-_ESTADO_DOBLES = ("firme", "canon", "parados", "bases", "restaurado",
-                  "lento", "muertes", "muestras", "sync_n")
+_ESTADO_DOBLES = (
+    "firme",
+    "canon",
+    "parados",
+    "bases",
+    "restaurado",
+    "lento",
+    "muertes",
+    "muestras",
+    "sync_n",
+)
 
 
 def _cerrojo_de_la_base(tmp_path: Path) -> Path:
@@ -1308,7 +1426,10 @@ def _cerrojo_de_la_base(tmp_path: Path) -> Path:
     clave sale de la identidad canónica del servidor más el nombre de la base: ni
     la copia, ni el subcomando, ni el directorio de copias, ni el alias del
     contenedor entran aquí (R6 P1-1, R7 P1-2, R8 P1)."""
-    return Path("/var/lock/jobhunt-cutover") / f"{_identidad_de(tmp_path)}.swissjobhunter.cerrojo"
+    return (
+        Path("/var/lock/jobhunt-cutover")
+        / f"{_identidad_de(tmp_path)}.swissjobhunter.cerrojo"
+    )
 
 
 def _reiniciar_dobles(tmp_path: Path) -> None:
@@ -1352,13 +1473,21 @@ def test_dos_restauraciones_con_copias_distintas_no_se_pisan(tmp_path):
     primera = Path(_dump_de(tmp_path))
     segunda = primera.parent / "segunda_copia.dump"
     shutil.copy(primera, segunda)
-    for sufijo in ("manifiesto", "pares", "juicios", "pares.resuelven",
-                   "juicios.resuelven", "guardas"):
+    for sufijo in (
+        "manifiesto",
+        "pares",
+        "juicios",
+        "pares.resuelven",
+        "juicios.resuelven",
+        "guardas",
+    ):
         shutil.copy(f"{primera}.{sufijo}", f"{segunda}.{sufijo}")
 
     hilo, resultados, timeout = _mientras_retiene(
         tmp_path,
-        lambda: _ejecutar(tmp_path, "restaurar", None, str(primera), lento_en="pg_restore"),
+        lambda: _ejecutar(
+            tmp_path, "restaurar", None, str(primera), lento_en="pg_restore"
+        ),
     )
     try:
         b = _ejecutar(tmp_path, "restaurar", None, str(segunda))
@@ -1370,7 +1499,9 @@ def test_dos_restauraciones_con_copias_distintas_no_se_pisan(tmp_path):
         assert "APARTADO" not in b.stdout, b.stdout
     finally:
         hilo.join(timeout=timeout)
-    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+    assert resultados["a"].returncode == 0, (
+        resultados["a"].stdout + resultados["a"].stderr
+    )
 
 
 def test_un_cutover_no_entra_mientras_hay_una_restauracion(tmp_path):
@@ -1385,12 +1516,16 @@ def test_un_cutover_no_entra_mientras_hay_una_restauracion(tmp_path):
     )
     try:
         p = _ejecutar(tmp_path, "cutover", None)
-        assert p.returncode != 0, "el cutover entró con una restauración en curso:\n" + p.stdout
+        assert p.returncode != 0, (
+            "el cutover entró con una restauración en curso:\n" + p.stdout
+        )
         assert "otra maniobra tiene el cerrojo" in p.stdout + p.stderr, p.stdout
         assert "Paso 2" not in p.stdout, p.stdout
     finally:
         hilo.join(timeout=timeout)
-    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+    assert resultados["a"].returncode == 0, (
+        resultados["a"].stdout + resultados["a"].stderr
+    )
 
 
 def test_una_restauracion_no_entra_mientras_hay_un_cutover(tmp_path):
@@ -1405,12 +1540,16 @@ def test_una_restauracion_no_entra_mientras_hay_un_cutover(tmp_path):
     )
     try:
         p = _ejecutar(tmp_path, "restaurar", None, dump)
-        assert p.returncode != 0, "la restauración entró con un cutover en curso:\n" + p.stdout
+        assert p.returncode != 0, (
+            "la restauración entró con un cutover en curso:\n" + p.stdout
+        )
         assert "otra maniobra tiene el cerrojo" in p.stdout + p.stderr, p.stdout
         assert "APARTADO" not in p.stdout, p.stdout
     finally:
         hilo.join(timeout=timeout)
-    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+    assert resultados["a"].returncode == 0, (
+        resultados["a"].stdout + resultados["a"].stderr
+    )
 
 
 # --------------------------------------------------------------------------
@@ -1444,7 +1583,9 @@ def test_el_smoke_no_da_verde_si_beat_despacha_otra_cadencia(tmp_path, sonda):
     p = _ejecutar(tmp_path, "smoke", "beat_desacoplado")
     salida = p.stdout + p.stderr
     assert "Paso 7d" in salida, salida
-    assert p.returncode != 0, "verde con el proyector despachado y una muestra ajena:\n" + p.stdout
+    assert p.returncode != 0, (
+        "verde con el proyector despachado y una muestra ajena:\n" + p.stdout
+    )
     assert "shadow-sample-outbox-lag" in salida
 
 
@@ -1459,7 +1600,9 @@ def test_un_sync_que_falla_para_antes_del_paso_4c(tmp_path):
     Una copia que no ha llegado al disco es la única marcha atrás que hay."""
     p = _ejecutar(tmp_path, "cutover", "sync_falla")
     salida = p.stdout + p.stderr
-    assert p.returncode != 0, "confirmó la canonización con la copia sin sincronizar:\n" + p.stdout
+    assert p.returncode != 0, (
+        "confirmó la canonización con la copia sin sincronizar:\n" + p.stdout
+    )
     assert "sync" in salida
     assert "Paso 4c" not in p.stdout, p.stdout
     assert "Pasos 1–6 OK" not in p.stdout, p.stdout
@@ -1499,7 +1642,9 @@ def test_el_cerrojo_no_cambia_al_cambiar_el_directorio_de_copias(tmp_path):
         assert "APARTADO" not in b.stdout, b.stdout
     finally:
         hilo.join(timeout=timeout)
-    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+    assert resultados["a"].returncode == 0, (
+        resultados["a"].stdout + resultados["a"].stderr
+    )
 
 
 def test_el_smoke_no_da_verde_por_una_muestra_fechada_en_el_futuro(tmp_path, sonda):
@@ -1527,7 +1672,9 @@ def test_una_verificacion_fallida_se_anota_y_la_siguiente_restaura_de_nuevo(tmp_
     dump = _dump_de(tmp_path)
 
     primera = _ejecutar(tmp_path, "restaurar", "restaurar_verificacion", dump)
-    assert primera.returncode != 0, "certificó una vuelta que no cuadra:\n" + primera.stdout
+    assert primera.returncode != 0, (
+        "certificó una vuelta que no cuadra:\n" + primera.stdout
+    )
     checkpoint = Path(f"{dump}.restauracion").read_text(encoding="utf-8")
     assert "VERIFICACION_FALLIDA" in checkpoint, (
         "la verificación fallida no quedó anotada; el checkpoint dice:\n" + checkpoint
@@ -1550,6 +1697,7 @@ def test_una_verificacion_fallida_se_anota_y_la_siguiente_restaura_de_nuevo(tmp_
 # CLASE, que es lo que impide que el mismo invariante se reabra por una variante.
 # --------------------------------------------------------------------------
 
+
 # --- Invariante 1: un solo cerrojo por recurso -----------------------------
 def test_el_cerrojo_se_suelta_solo_si_su_dueno_muere(tmp_path):
     """Clase (f): dueño muerto. Es la contracara de exigir `flock` — si el cerrojo
@@ -1570,7 +1718,9 @@ def test_el_cerrojo_se_suelta_solo_si_su_dueno_muere(tmp_path):
 
 # --- Invariante 2: durabilidad antes que irreversibilidad ------------------
 @pytest.mark.parametrize("barrera", [1, 2, 3, 4])
-def test_cada_barrera_de_persistencia_de_la_marcha_atras_para_lo_irreversible(tmp_path, barrera):
+def test_cada_barrera_de_persistencia_de_la_marcha_atras_para_lo_irreversible(
+    tmp_path, barrera
+):
     """Clase completa del invariante 2 en la marcha atrás: no basta con probar que la
     PRIMERA barrera para. Se recorre una a una —`INICIO`, `APARTADA`,
     `DESTINO_CREADO`, `RESTAURADO`— y en todas el fallo de `sync` tiene que detener la
@@ -1589,7 +1739,8 @@ def test_cada_barrera_de_persistencia_de_la_marcha_atras_para_lo_irreversible(tm
     reanudada = _ejecutar(tmp_path, "restaurar", None, dump)
     assert reanudada.returncode == 0, (
         f"tras parar en la barrera {barrera} la marcha atrás no converge:\n"
-        + reanudada.stdout + reanudada.stderr
+        + reanudada.stdout
+        + reanudada.stderr
     )
 
 
@@ -1617,7 +1768,8 @@ def test_la_marcha_atras_converge_tras_reanudaciones_consecutivas(tmp_path):
     p = _ejecutar(tmp_path, "restaurar", None, dump)
     assert p.returncode == 0, (
         "tras cuatro muertes encadenadas la marcha atrás no converge:\n"
-        + p.stdout + p.stderr
+        + p.stdout
+        + p.stderr
     )
     assert "restauración VERIFIED" in p.stdout, p.stdout
 
@@ -1629,7 +1781,9 @@ def test_una_muerte_tras_anotar_la_verificacion_fallida_sigue_convergiendo(tmp_p
     dump = _dump_de(tmp_path)
     primera = _ejecutar(tmp_path, "restaurar", "restaurar_verificacion", dump)
     assert primera.returncode != 0
-    assert "VERIFICACION_FALLIDA" in Path(f"{dump}.restauracion").read_text(encoding="utf-8")
+    assert "VERIFICACION_FALLIDA" in Path(f"{dump}.restauracion").read_text(
+        encoding="utf-8"
+    )
     segunda = _ejecutar(tmp_path, "restaurar", None, dump, matar_en="en_restore")
     assert segunda.returncode != 0, "no murió donde se le pidió"
     tercera = _ejecutar(tmp_path, "restaurar", None, dump)
@@ -1650,7 +1804,9 @@ def test_una_muerte_tras_anotar_la_verificacion_fallida_sigue_convergiendo(tmp_p
         ("muestra_pasada", "la única muestra es anterior al sondeo"),
     ],
 )
-def test_el_beat_solo_da_verde_con_evidencia_causal_y_nueva(tmp_path, sonda, clase, porque):
+def test_el_beat_solo_da_verde_con_evidencia_causal_y_nueva(
+    tmp_path, sonda, clase, porque
+):
     """Las siete clases del invariante 4. Verde exige LAS DOS señales de la MISMA
     capacidad: el despacho exacto del muestreador durante el sondeo y una muestra
     nueva causada por él. Cualquier otra combinación es roja."""
@@ -1686,13 +1842,20 @@ def test_dos_lock_dir_distintos_no_pueden_restaurar_a_la_vez(tmp_path):
     hilo, resultados, timeout = _mientras_retiene(
         tmp_path,
         lambda: _ejecutar(
-            tmp_path, "restaurar", None, dump, lento_en="pg_restore",
+            tmp_path,
+            "restaurar",
+            None,
+            dump,
+            lento_en="pg_restore",
             override={"LOCK_DIR": str(tmp_path / "locks-a")},
         ),
     )
     try:
         b = _ejecutar(
-            tmp_path, "restaurar", None, dump,
+            tmp_path,
+            "restaurar",
+            None,
+            dump,
             override={"LOCK_DIR": str(tmp_path / "locks-b")},
         )
         salida = b.stdout + b.stderr
@@ -1706,7 +1869,9 @@ def test_dos_lock_dir_distintos_no_pueden_restaurar_a_la_vez(tmp_path):
         assert "VERIFIED" not in b.stdout, b.stdout
     finally:
         hilo.join(timeout=timeout)
-    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+    assert resultados["a"].returncode == 0, (
+        resultados["a"].stdout + resultados["a"].stderr
+    )
 
 
 def test_el_mismo_servidor_por_otro_nombre_toma_el_mismo_cerrojo(tmp_path):
@@ -1722,7 +1887,10 @@ def test_el_mismo_servidor_por_otro_nombre_toma_el_mismo_cerrojo(tmp_path):
     )
     try:
         b = _ejecutar(
-            tmp_path, "restaurar", None, dump,
+            tmp_path,
+            "restaurar",
+            None,
+            dump,
             override={"PG_CONTAINER": "swissjob-postgres-alias"},
         )
         salida = b.stdout + b.stderr
@@ -1733,7 +1901,9 @@ def test_el_mismo_servidor_por_otro_nombre_toma_el_mismo_cerrojo(tmp_path):
         assert "otra maniobra tiene el cerrojo" in salida, salida
     finally:
         hilo.join(timeout=timeout)
-    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+    assert resultados["a"].returncode == 0, (
+        resultados["a"].stdout + resultados["a"].stderr
+    )
 
 
 def test_la_ruta_del_cerrojo_no_la_mueve_ninguna_variable_del_entorno(tmp_path):
@@ -1790,8 +1960,13 @@ def test_una_marca_de_reentrada_heredada_no_salta_el_cerrojo(tmp_path):
         lambda: _ejecutar(tmp_path, "restaurar", None, dump, lento_en="pg_restore"),
     )
     try:
-        b = _ejecutar(tmp_path, "restaurar", None, dump,
-                      override={"CUTOVER_CERROJO_PID": "999999"})
+        b = _ejecutar(
+            tmp_path,
+            "restaurar",
+            None,
+            dump,
+            override={"CUTOVER_CERROJO_PID": "999999"},
+        )
         salida = b.stdout + b.stderr
         assert b.returncode != 0, (
             "una marca de reentrada falsa saltó el cerrojo:\n" + b.stdout
@@ -1800,4 +1975,6 @@ def test_una_marca_de_reentrada_heredada_no_salta_el_cerrojo(tmp_path):
         assert "APARTADO" not in b.stdout, b.stdout
     finally:
         hilo.join(timeout=timeout)
-    assert resultados["a"].returncode == 0, resultados["a"].stdout + resultados["a"].stderr
+    assert resultados["a"].returncode == 0, (
+        resultados["a"].stdout + resultados["a"].stderr
+    )

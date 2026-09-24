@@ -119,6 +119,7 @@ JOB_TAGS: list[str] = [
     "scrum",
 ]
 
+
 def strip_html_tags(text: str) -> str:
     """Remove HTML tags and normalize whitespace."""
     if not text:
@@ -139,6 +140,3 @@ def extract_job_skills(title: str, description: str) -> list[str]:
         if tag.lower() in combined and tag not in found:
             found.append(tag)
     return found[:15]
-
-
-

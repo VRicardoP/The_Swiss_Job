@@ -54,9 +54,7 @@ def register_shadow_inbox_transport(**_kwargs) -> None:
     from jobhunt_core import http_delivery
     from jobhunt_core.shadow import inbox
 
-    if http_delivery.register_if_configured(
-        fallback=inbox.shadow_inbox_transport
-    ):
+    if http_delivery.register_if_configured(fallback=inbox.shadow_inbox_transport):
         return
     inbox.register_if_unset()
 
@@ -79,9 +77,15 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
             "delivery: sin transporte configurado — no se reclama ninguna entrega"
         )
         return {
-            "claimed": 0, "delivered": 0, "failed": 0, "dead": 0,
-            "poisoned": 0, "fenced_out": 0, "lease_renewals": 0,
-            "lease_overrun": 0, "no_transport": True,
+            "claimed": 0,
+            "delivered": 0,
+            "failed": 0,
+            "dead": 0,
+            "poisoned": 0,
+            "fenced_out": 0,
+            "lease_renewals": 0,
+            "lease_overrun": 0,
+            "no_transport": True,
         }
 
     async with task_session_factory() as session_factory:
@@ -100,9 +104,14 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
             await session.commit()
         if not claimed:
             return {
-                "claimed": 0, "delivered": 0, "failed": 0,
-                "dead": retired + poisoned, "poisoned": poisoned,
-                "fenced_out": 0, "lease_renewals": 0, "lease_overrun": 0,
+                "claimed": 0,
+                "delivered": 0,
+                "failed": 0,
+                "dead": retired + poisoned,
+                "poisoned": poisoned,
+                "fenced_out": 0,
+                "lease_renewals": 0,
+                "lease_overrun": 0,
                 "no_transport": False,
             }
 
@@ -121,8 +130,10 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
                 except Exception as exc:
                     ko.append(
                         {
-                            "eid": row.event_id, "dest": row.destination,
-                            "attempts": row.attempts + 1, "error": str(exc)[:500],
+                            "eid": row.event_id,
+                            "dest": row.destination,
+                            "attempts": row.attempts + 1,
+                            "error": str(exc)[:500],
                         }
                     )
                 # G5-P2-2: el resultado se persiste AQUÍ, no al final del lote.
@@ -148,7 +159,7 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
                 # último elemento del lote), y contar esa vuelta como
                 # renovación hacía que `lease_renewals` avisara de un
                 # desbordamiento inexistente en lotes de milisegundos.
-                resto = claimed[idx + 1:]
+                resto = claimed[idx + 1 :]
                 if resto and time.monotonic() - desde >= delivery.LEASE_RENEW_AFTER_S:
                     lease_token, perdidas = await delivery.renew_lease(
                         session, resto, lease_token

@@ -16,10 +16,19 @@ from jobhunt_core import cross_encoder as ce
 from jobhunt_core import embeddings, matching
 from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.tests.test_integration_dev_eval import (  # noqa: F401
-    _compute, _evaluate_shadow, _feed_actual, _judgments_file, _run_eval,
+    _compute,
+    _evaluate_shadow,
+    _feed_actual,
+    _judgments_file,
+    _run_eval,
 )
 from jobhunt_core.tests.test_integration_matching import (  # noqa: F401
-    DirectionalBackend, _evaluate, _listing, _rows, _setup, db,
+    DirectionalBackend,
+    _evaluate,
+    _listing,
+    _rows,
+    _setup,
+    db,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -28,9 +37,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 TITULOS = [
-    "python backend developer", "senior python engineer",
-    "data engineer python sql", "warehouse operative",
-    "kubernetes platform engineer", "frontend react developer",
+    "python backend developer",
+    "senior python engineer",
+    "data engineer python sql",
+    "warehouse operative",
+    "kubernetes platform engineer",
+    "frontend react developer",
 ]
 
 
@@ -55,8 +67,12 @@ def _xenc_policy(factory, created, active=False):
     async def go():
         async with factory() as s:
             polid = await matching.ensure_policy(
-                s, matching.XENC_POLICY_NAME, matching.XENC_POLICY_VERSION,
-                weights=matching.XENC_POLICY_WEIGHTS, active=active)
+                s,
+                matching.XENC_POLICY_NAME,
+                matching.XENC_POLICY_VERSION,
+                weights=matching.XENC_POLICY_WEIGHTS,
+                active=active,
+            )
             created["policies"].append(polid)
             await s.commit()
             return polid
@@ -86,8 +102,10 @@ def test_ce_es_absoluta_promocionable_y_feed_igual_a_calculo(db, stub):  # noqa:
     assert docs_g1 == len(TITULOS)  # una consulta (title) × 6 documentos
 
     feed_g1 = _feed_actual(factory, pid)
-    calculo = [(f["vacancy_id"], f"{f['score']:.2f}")
-               for f in _compute(factory, pid, mid, polid)["rows"]]
+    calculo = [
+        (f["vacancy_id"], f"{f['score']:.2f}")
+        for f in _compute(factory, pid, mid, polid)["rows"]
+    ]
     assert feed_g1 == calculo
     assert stub.docs_scored == docs_g1  # el cálculo usó la CACHÉ, no el modelo
 
@@ -95,14 +113,15 @@ def test_ce_es_absoluta_promocionable_y_feed_igual_a_calculo(db, stub):  # noqa:
     async def sink_offer():
         async with factory() as s:
             await RawListingSink().handle(
-                s, str(created["scopes"][0]),
-                (_listing("j-ce-g2", "python developer"),))
+                s, str(created["scopes"][0]), (_listing("j-ce-g2", "python developer"),)
+            )
             await s.commit()
 
     asyncio.run(sink_offer())
     embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
     try:
         from jobhunt_core.tasks.embedding import run_pending_task
+
         r = run_pending_task.apply(kwargs={"limit": 100})
         assert r.successful(), r.traceback
     finally:
@@ -112,8 +131,10 @@ def test_ce_es_absoluta_promocionable_y_feed_igual_a_calculo(db, stub):  # noqa:
     assert r2["moved_current"] is True and r2["evaluated"] == len(TITULOS) + 1
     assert stub.docs_scored == docs_g1 + 1  # SOLO el nuevo documento
     feed_g2 = _feed_actual(factory, pid)
-    assert feed_g2 == [(f["vacancy_id"], f"{f['score']:.2f}")
-                       for f in _compute(factory, pid, mid, polid)["rows"]]
+    assert feed_g2 == [
+        (f["vacancy_id"], f"{f['score']:.2f}")
+        for f in _compute(factory, pid, mid, polid)["rows"]
+    ]
     # la pareja vieja conserva su score exacto
     viejas = dict(feed_g1)
     for vac, score in feed_g2:
@@ -124,7 +145,8 @@ def test_ce_es_absoluta_promocionable_y_feed_igual_a_calculo(db, stub):  # noqa:
     asyncio.run(declare([cosine_id]))
     assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
     assert {v for v, _ in _feed_actual(factory, pid)} == {
-        v for v, _ in feed_g2}  # mismas vacantes vivas, scores de cosine
+        v for v, _ in feed_g2
+    }  # mismas vacantes vivas, scores de cosine
 
 
 def test_cambio_de_identidad_repuntua_y_reusa_lo_que_corresponde(db, stub):  # noqa: F811  (la fixture, no una redefinición)
@@ -140,6 +162,7 @@ def test_cambio_de_identidad_repuntua_y_reusa_lo_que_corresponde(db, stub):  # n
         async def go():
             async with factory() as s:
                 from jobhunt_core import profiles as core_profiles
+
                 cur = await core_profiles.current_revision(s, pid)
                 contenido = dict(cur.content, target_roles=roles)
                 await core_profiles.save_profile_revision(s, pid, contenido)
@@ -156,6 +179,7 @@ def test_cambio_de_identidad_repuntua_y_reusa_lo_que_corresponde(db, stub):  # n
         embeddings.set_backend_factory(lambda n, v: _Poison())
         try:
             from jobhunt_core.tasks.embedding import run_pending_task
+
             r = run_pending_task.apply(kwargs={"limit": 100})
             assert r.successful(), r.traceback
         finally:
@@ -187,13 +211,15 @@ def test_fallo_del_modelo_deja_el_feed_intacto(db):  # noqa: F811  (la fixture, 
 
     ce.set_engine_factory(lambda m, r: _Roto())
     try:
+
         async def go():
             async with factory() as s:
                 await matching.declare_active_policies(s, [polid])
                 await s.commit()
             with pytest.raises(RuntimeError, match="OOM"):
                 await matching.evaluate_profile(
-                    factory, pid, mid, polid, move_current=True)
+                    factory, pid, mid, polid, move_current=True
+                )
             async with factory() as s:  # rollback de activación explícito
                 await matching.declare_active_policies(s, [cosine_id])
                 await s.commit()
@@ -204,10 +230,14 @@ def test_fallo_del_modelo_deja_el_feed_intacto(db):  # noqa: F811  (la fixture, 
     # el fallo del modelo (fase 2, sin BD) no persistió NADA: cosine vuelve a
     # ser canónica y el feed bueno sigue intacto
     assert _feed_actual(factory, pid) == antes
-    assert _rows(
-        factory,
-        "SELECT count(*) AS n FROM match_evaluations WHERE "
-        "scoring_policy_id = :sp", sp=polid)[0].n == 0
+    assert (
+        _rows(
+            factory,
+            "SELECT count(*) AS n FROM match_evaluations WHERE scoring_policy_id = :sp",
+            sp=polid,
+        )[0].n
+        == 0
+    )
 
 
 def test_receta_ce_manipulada_no_evalua(db, stub):  # noqa: F811  (la fixture, no una redefinición)
@@ -218,13 +248,14 @@ def test_receta_ce_manipulada_no_evalua(db, stub):  # noqa: F811  (la fixture, n
         async with factory() as s:
             mala = dict(matching.XENC_POLICY_WEIGHTS, input="v9")
             polid = await matching.ensure_policy(
-                s, matching.XENC_POLICY_NAME, "v99", weights=mala,
-                active=False)
+                s, matching.XENC_POLICY_NAME, "v99", weights=mala, active=False
+            )
             created["policies"].append(polid)
             await s.commit()
         with pytest.raises(ValueError, match="input"):
             await matching.evaluate_profile(
-                factory, pid, mid, polid, move_current=False)
+                factory, pid, mid, polid, move_current=False
+            )
 
     asyncio.run(go())
 
@@ -259,7 +290,8 @@ def test_escritura_progresa_durante_inferencia_y_lo_rancio_no_se_publica(db):  #
     def evaluar():
         async def run():
             return await matching.evaluate_profile(
-                factory, pid, mid, polid, move_current=False)
+                factory, pid, mid, polid, move_current=False
+            )
 
         resultado["r"] = asyncio.run(run())
 
@@ -274,9 +306,11 @@ def test_escritura_progresa_durante_inferencia_y_lo_rancio_no_se_publica(db):  #
             async with factory() as s:
                 await s.execute(sa.text("SET LOCAL lock_timeout = '2s'"))
                 from jobhunt_core import profiles as core_profiles
+
                 cur = await core_profiles.current_revision(s, pid)
                 rid = await core_profiles.save_profile_revision(
-                    s, pid, dict(cur.content, target_roles=["QA Lead"]))
+                    s, pid, dict(cur.content, target_roles=["QA Lead"])
+                )
                 await s.commit()
                 return rid
 
@@ -288,10 +322,14 @@ def test_escritura_progresa_durante_inferencia_y_lo_rancio_no_se_publica(db):  #
 
     # lo RANCIO no se publica: la revisión derivó durante la inferencia
     assert resultado["r"]["status"] == "descartado_por_deriva"
-    assert _rows(
-        factory,
-        "SELECT count(*) AS n FROM match_evaluations "
-        "WHERE scoring_policy_id = :sp", sp=polid)[0].n == 0
+    assert (
+        _rows(
+            factory,
+            "SELECT count(*) AS n FROM match_evaluations WHERE scoring_policy_id = :sp",
+            sp=polid,
+        )[0].n
+        == 0
+    )
     assert _feed_actual(factory, pid) == antes
 
 
@@ -303,25 +341,35 @@ def test_tier_ordena_viables_antes_que_incompatibles_demostradas(db):  # noqa: F
     manda ce_prob. Absoluto por pareja ⇒ promovible."""
     factory, created = db
     pid, mid, cosine_id, vacs = _setup(
-        factory, created,
+        factory,
+        created,
         ["bilingual content specialist", "bilingual content expert"],
         profile_content={
-            "title": "bilingual content specialist", "skills": ["content"],
+            "title": "bilingual content specialist",
+            "skills": ["content"],
             "languages": ["English", "Spanish"],
-            "locations": ["Remote", "Spain"], "remote_pref": "remote_only",
-        })
+            "locations": ["Remote", "Spain"],
+            "remote_pref": "remote_only",
+        },
+    )
 
     # la oferta 'expert' se ancla a EE. UU. (remota restringida)
     async def anclar():
         async with factory() as s:
-            await s.execute(sa.text(
-                "UPDATE offer_revisions SET content = content || "
-                "CAST('{\"location\": \"Texas (USA)\", \"remote\": true}' AS jsonb) "
-                "WHERE content->>'title' = 'bilingual content expert'"))
-            await s.execute(sa.text(
-                "UPDATE offer_revisions SET content = content || "
-                "CAST('{\"location\": \"Remote\", \"remote\": true}' AS jsonb) "
-                "WHERE content->>'title' = 'bilingual content specialist'"))
+            await s.execute(
+                sa.text(
+                    "UPDATE offer_revisions SET content = content || "
+                    'CAST(\'{"location": "Texas (USA)", "remote": true}\' AS jsonb) '
+                    "WHERE content->>'title' = 'bilingual content expert'"
+                )
+            )
+            await s.execute(
+                sa.text(
+                    "UPDATE offer_revisions SET content = content || "
+                    'CAST(\'{"location": "Remote", "remote": true}\' AS jsonb) '
+                    "WHERE content->>'title' = 'bilingual content specialist'"
+                )
+            )
             await s.commit()
 
     asyncio.run(anclar())
@@ -333,15 +381,23 @@ def test_tier_ordena_viables_antes_que_incompatibles_demostradas(db):  # noqa: F
 
     ce.set_engine_factory(lambda m, r: _Tematico())
     try:
+
         async def go():
             async with factory() as s:
                 puro = await matching.ensure_policy(
-                    s, matching.XENC_POLICY_NAME, "v2",
-                    weights=matching.XENC2_POLICY_WEIGHTS, active=False)
+                    s,
+                    matching.XENC_POLICY_NAME,
+                    "v2",
+                    weights=matching.XENC2_POLICY_WEIGHTS,
+                    active=False,
+                )
                 tier = await matching.ensure_policy(
-                    s, matching.XENC_TIER_POLICY_NAME,
+                    s,
+                    matching.XENC_TIER_POLICY_NAME,
                     matching.XENC_TIER_POLICY_VERSION,
-                    weights=matching.XENC_TIER_POLICY_WEIGHTS, active=False)
+                    weights=matching.XENC_TIER_POLICY_WEIGHTS,
+                    active=False,
+                )
                 created["policies"] += [puro, tier]
                 await s.commit()
             async with factory() as s:
@@ -397,8 +453,7 @@ def test_worker_lento_no_restaura_un_feed_mas_nuevo(db):  # noqa: F811  (la fixt
                 primera.set()
                 dentro.set()
                 assert barrera.wait(timeout=60), "la barrera no se liberó"
-            return [((hash(q + "|" + d) % 1000) - 500) / 100.0
-                    for q, d in pares]
+            return [((hash(q + "|" + d) % 1000) - 500) / 100.0 for q, d in pares]
 
     ce.set_engine_factory(lambda m, r: _Motor())
     resultado = {}
@@ -418,15 +473,17 @@ def test_worker_lento_no_restaura_un_feed_mas_nuevo(db):  # noqa: F811  (la fixt
         async def sink_offer():
             async with factory() as s:
                 await RawListingSink().handle(
-                    s, str(created["scopes"][0]),
-                    (_listing("j-race-g2", "python developer"),))
+                    s,
+                    str(created["scopes"][0]),
+                    (_listing("j-race-g2", "python developer"),),
+                )
                 await s.commit()
 
         asyncio.run(sink_offer())
-        embeddings.set_backend_factory(
-            lambda name, version: DirectionalBackend())
+        embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
         try:
             from jobhunt_core.tasks.embedding import run_pending_task
+
             r = run_pending_task.apply(kwargs={"limit": 100})
             assert r.successful(), r.traceback
         finally:
@@ -491,9 +548,10 @@ def test_modelo_desactivado_durante_la_inferencia_no_publica(db):  # noqa: F811 
 
         async def desactivar():
             async with factory() as s:
-                await s.execute(sa.text(
-                    "UPDATE embedding_models SET active = false "
-                    "WHERE id = :m"), {"m": mid})
+                await s.execute(
+                    sa.text("UPDATE embedding_models SET active = false WHERE id = :m"),
+                    {"m": mid},
+                )
                 await s.commit()
 
         asyncio.run(desactivar())
@@ -504,10 +562,14 @@ def test_modelo_desactivado_durante_la_inferencia_no_publica(db):  # noqa: F811 
 
     assert resultado["r"]["status"] == "descartado_por_deriva"
     assert _feed_actual(factory, pid) == antes
-    assert _rows(
-        factory,
-        "SELECT count(*) AS n FROM match_evaluations "
-        "WHERE scoring_policy_id = :sp", sp=polid)[0].n == 0
+    assert (
+        _rows(
+            factory,
+            "SELECT count(*) AS n FROM match_evaluations WHERE scoring_policy_id = :sp",
+            sp=polid,
+        )[0].n
+        == 0
+    )
 
 
 def test_generacion_protegida_hasta_el_commit(db):  # noqa: F811  (la fixture, no una redefinición)
@@ -534,8 +596,7 @@ def test_generacion_protegida_hasta_el_commit(db):  # noqa: F811  (la fixture, n
 
     def evaluar():
         async def run():
-            return await matching.evaluate_profile(
-                factory, pid, mid, cosine_id)
+            return await matching.evaluate_profile(factory, pid, mid, cosine_id)
 
         resultado["r"] = asyncio.run(run())
 
@@ -552,9 +613,13 @@ def test_generacion_protegida_hasta_el_commit(db):  # noqa: F811  (la fixture, n
                 await s.execute(sa.text("SET LOCAL lock_timeout = '2s'"))
                 try:
                     # UPDATE válido que dispara el trigger de sentencia
-                    await s.execute(sa.text(
-                        "UPDATE offer_embeddings SET vector = vector "
-                        "WHERE model_id = :m"), {"m": mid})
+                    await s.execute(
+                        sa.text(
+                            "UPDATE offer_embeddings SET vector = vector "
+                            "WHERE model_id = :m"
+                        ),
+                        {"m": mid},
+                    )
                     await s.commit()
                     return "cometio"
                 except Exception as e:
@@ -601,19 +666,27 @@ def test_activar_un_modelo_anterior_durante_la_inferencia_descarta(db):  # noqa:
     async def preparar_anterior():
         async with factory() as s:
             m2 = await embeddings.register_model(
-                s, "aa-modelo-anterior", "a" * 40, active=False)
+                s, "aa-modelo-anterior", "a" * 40, active=False
+            )
             created["models"].append(m2)
             await s.commit()
-            await s.execute(sa.text(
-                "INSERT INTO offer_embeddings (text_hash, model_id, vector) "
-                "SELECT text_hash, :m2, vector FROM offer_embeddings "
-                "WHERE model_id = :m1"), {"m2": m2, "m1": mid})
-            await s.execute(sa.text(
-                "INSERT INTO profile_embeddings "
-                "(profile_id, profile_revision_id, model_id, vector) "
-                "SELECT profile_id, profile_revision_id, :m2, vector "
-                "FROM profile_embeddings WHERE model_id = :m1"),
-                {"m2": m2, "m1": mid})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO offer_embeddings (text_hash, model_id, vector) "
+                    "SELECT text_hash, :m2, vector FROM offer_embeddings "
+                    "WHERE model_id = :m1"
+                ),
+                {"m2": m2, "m1": mid},
+            )
+            await s.execute(
+                sa.text(
+                    "INSERT INTO profile_embeddings "
+                    "(profile_id, profile_revision_id, model_id, vector) "
+                    "SELECT profile_id, profile_revision_id, :m2, vector "
+                    "FROM profile_embeddings WHERE model_id = :m1"
+                ),
+                {"m2": m2, "m1": mid},
+            )
             await s.commit()
             return m2
 
@@ -633,8 +706,7 @@ def test_activar_un_modelo_anterior_durante_la_inferencia_descarta(db):  # noqa:
 
     def evaluar():
         async def run():
-            return await matching.evaluate_profile(
-                factory, pid, mid, polid)
+            return await matching.evaluate_profile(factory, pid, mid, polid)
 
         resultado["r"] = asyncio.run(run())
 
@@ -657,10 +729,14 @@ def test_activar_un_modelo_anterior_durante_la_inferencia_descarta(db):  # noqa:
 
     assert resultado["r"]["status"] == "descartado_por_deriva"
     assert _feed_actual(factory, pid) == antes  # byte-equivalente
-    assert _rows(
-        factory,
-        "SELECT count(*) AS n FROM match_evaluations "
-        "WHERE scoring_policy_id = :sp", sp=polid)[0].n == 0
+    assert (
+        _rows(
+            factory,
+            "SELECT count(*) AS n FROM match_evaluations WHERE scoring_policy_id = :sp",
+            sp=polid,
+        )[0].n
+        == 0
+    )
 
 
 def test_materializacion_por_watermark_presupuesto_y_publicacion(db):  # noqa: F811  (la fixture, no una redefinición)
@@ -688,21 +764,24 @@ def test_materializacion_por_watermark_presupuesto_y_publicacion(db):  # noqa: F
     class _Motor:
         def predict(self, pares, batch_size=16):
             contador["docs"] += len(pares)
-            return [((hash(q + "|" + d) % 1000) - 500) / 100.0
-                    for q, d in pares]
+            return [((hash(q + "|" + d) % 1000) - 500) / 100.0 for q, d in pares]
 
     ce.set_engine_factory(lambda m, r: _Motor())
     try:
         # Presupuesto 0: primer ciclo entra ya agotado ⇒ backlog, 0 publicado
-        r0 = asyncio.run(materializar(
-            str(pid), str(polid), 0.0, session_factory=factory))
-        assert r0["status"] == "backlog" and r0["remaining"] is None  # zero budget: do not spend time counting misses
+        r0 = asyncio.run(
+            materializar(str(pid), str(polid), 0.0, session_factory=factory)
+        )
+        assert (
+            r0["status"] == "backlog" and r0["remaining"] is None
+        )  # zero budget: do not spend time counting misses
         assert "evaluacion" not in r0
         assert _feed_actual(factory, pid) == antes  # fotografía previa intacta
 
         # Presupuesto holgado: materializa TODO, publica y el feed cambia
-        r1 = asyncio.run(materializar(
-            str(pid), str(polid), 60.0, session_factory=factory))
+        r1 = asyncio.run(
+            materializar(str(pid), str(polid), 60.0, session_factory=factory)
+        )
         assert r1["status"] == "ok" and r1["scored"] == len(TITULOS)
         assert r1["evaluacion"]["moved_current"] is True
         docs_materializados = contador["docs"]
@@ -711,15 +790,18 @@ def test_materializacion_por_watermark_presupuesto_y_publicacion(db):  # noqa: F
         assert feed_ce != antes and len(feed_ce) == len(TITULOS)
 
         # Reanudable/idempotente: repetir NO re-puntúa ni duplica eventos
-        r2 = asyncio.run(materializar(
-            str(pid), str(polid), 60.0, session_factory=factory))
+        r2 = asyncio.run(
+            materializar(str(pid), str(polid), 60.0, session_factory=factory)
+        )
         assert r2["status"] == "ok" and r2["scored"] == 0
         assert contador["docs"] == docs_materializados  # CERO inferencias
         eventos = _rows(
             factory,
             "SELECT count(*) AS n, count(DISTINCT event_id) AS d "
             "FROM integration_outbox WHERE type = 'match.evaluated' "
-            "AND subject_profile_id = :p", p=pid)[0]
+            "AND subject_profile_id = :p",
+            p=pid,
+        )[0]
         assert eventos.n == eventos.d  # un evento por eval_key, sin duplicar
     finally:
         ce.set_engine_factory(None)
@@ -739,17 +821,21 @@ def test_materializacion_en_sombra_no_mueve_ni_descarta(db):  # noqa: F811  (la 
 
     ce.set_engine_factory(lambda m, r: _StubEngine())
     try:
-        r = asyncio.run(materializar(
-            str(pid), str(polid), 60.0, session_factory=factory))
+        r = asyncio.run(
+            materializar(str(pid), str(polid), 60.0, session_factory=factory)
+        )
     finally:
         ce.set_engine_factory(None)
 
     assert r["status"] == "ok"
-    assert r["evaluacion"]["status"] == "ok"          # ni descartado
+    assert r["evaluacion"]["status"] == "ok"  # ni descartado
     assert r["evaluacion"]["moved_current"] is False  # ni movido
     assert _feed_actual(factory, pid) == antes
-    n = _rows(factory, "SELECT count(*) AS n FROM match_evaluations "
-              "WHERE scoring_policy_id = :sp", sp=polid)[0].n
+    n = _rows(
+        factory,
+        "SELECT count(*) AS n FROM match_evaluations WHERE scoring_policy_id = :sp",
+        sp=polid,
+    )[0].n
     assert n == len(TITULOS[:3])  # sombra registrada append-only
 
 
@@ -807,10 +893,13 @@ def test_exclusion_dismissed_tambien_en_el_camino_CE(db, stub):  # noqa: F811  (
 
     async def descartar():
         async with factory() as s:
-            await s.execute(sa.text(
-                "INSERT INTO profile_vacancy_state "
-                "(profile_id, vacancy_id, dismissed_at) VALUES (:p, :v, now())"),
-                {"p": pid, "v": descartada})
+            await s.execute(
+                sa.text(
+                    "INSERT INTO profile_vacancy_state "
+                    "(profile_id, vacancy_id, dismissed_at) VALUES (:p, :v, now())"
+                ),
+                {"p": pid, "v": descartada},
+            )
             await s.commit()
 
     asyncio.run(descartar())
@@ -818,14 +907,21 @@ def test_exclusion_dismissed_tambien_en_el_camino_CE(db, stub):  # noqa: F811  (
     async def calcular():
         async with factory() as s:
             return await matching.compute_policy_feed(
-                s, pid, mid, polid, limit=100, exclude_dismissed=True,
-                ce_inference=False)
+                s,
+                pid,
+                mid,
+                polid,
+                limit=100,
+                exclude_dismissed=True,
+                ce_inference=False,
+            )
 
     r = asyncio.run(calcular())
     assert r["status"] == "ok_prep"
     candidatos = {str(c.vacancy_id) for c in r["prep"]["candidates"]}
     assert str(descartada) not in candidatos, (
-        "la descartada llegó a la preparación del CE")
+        "la descartada llegó a la preparación del CE"
+    )
     assert len(candidatos) == len(TITULOS[:3]) - 1
 
 
@@ -851,13 +947,13 @@ def test_el_ciclo_de_matching_NO_infiere_CE_sin_presupuesto(db):  # noqa: F811  
     motor = _StubEngine()
     ce.set_engine_factory(lambda m, r: motor)
     try:
-        r = asyncio.run(_run_profile_impl(
-            str(pid), 100, session_factory=factory))
+        r = asyncio.run(_run_profile_impl(str(pid), 100, session_factory=factory))
     finally:
         ce.set_engine_factory(None)
 
     assert motor.docs_scored == 0, (
-        f"el ciclo infirió {motor.docs_scored} documentos CE sin presupuesto")
+        f"el ciclo infirió {motor.docs_scored} documentos CE sin presupuesto"
+    )
     clave_ce = [k for k in r["results"] if "xenc" in k]
     assert clave_ce, "la política CE debería aparecer, delegada"
     assert r["results"][clave_ce[0]]["status"] == "delegado_a_materializacion"

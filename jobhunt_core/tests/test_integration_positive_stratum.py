@@ -105,8 +105,7 @@ def _mk_legacy_pair(factory, source_id, prefix, n):
                 )
                 await s.execute(
                     sa.text(
-                        "UPDATE vacancies SET primary_incarnation_id = :p "
-                        "WHERE id = :i"
+                        "UPDATE vacancies SET primary_incarnation_id = :p WHERE id = :i"
                     ),
                     {"p": iid, "i": vid},
                 )
@@ -178,7 +177,7 @@ def test_pair_ids_reproducen_la_numeracion_de_la_hoja():
         "B": [
             _cand("v1", "v2", 0.9),
             _cand("v3", "v4", 0.65),  # baja confianza: va al FINAL (B-03)
-            _cand("v5", "v6", 0.9),   # empate 0.9: estable tras el primero
+            _cand("v5", "v6", 0.9),  # empate 0.9: estable tras el primero
         ],
         "M": [_cand("v7", "v8", 0.65)],
     }
@@ -212,11 +211,16 @@ def test_loader_excluye_ambiguos_y_sinteticos_y_es_idempotente(db):
         _cand(f"fake-{i}a", f"fake-{i}b", round(0.9 - i * 0.001, 3))
         for i in range(1, 28)
     ]
-    candidates = {"B": b_cands, "C": [_cand("fake-ca", "fake-cb", 0.8)],
-                  "M": [_cand(vc, vd, 0.7)]}
+    candidates = {
+        "B": b_cands,
+        "C": [_cand("fake-ca", "fake-cb", 0.8)],
+        "M": [_cand(vc, vd, 0.7)],
+    }
     labels_json = {
         "B-01": "duplicate",
-        "B-26": "duplicate", "B-27": "duplicate", "B-28": "duplicate",
+        "B-26": "duplicate",
+        "B-27": "duplicate",
+        "B-28": "duplicate",
         "C-01": "ambiguous-owner",
         "M-01": "distinct",
     }
@@ -361,13 +365,20 @@ def test_cohorte_estrato_congelada_rechaza_loader_y_mutaciones(db):
         _load(factory, candidates, {"B-01": "duplicate"}, cohort=cohort)
 
     for sql, params in (
-        ("INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-         "source) VALUES (:a, :b, 'duplicate', :src)",
-         {"a": ra, "b": f"{p}-otro", "src": cohort}),
-        ("UPDATE labeled_dedup_pairs SET verdict = 'distinct' "
-         "WHERE job_ref_a = :a AND job_ref_b = :b", {"a": ra, "b": rb}),
-        ("DELETE FROM labeled_dedup_pairs "
-         "WHERE job_ref_a = :a AND job_ref_b = :b", {"a": ra, "b": rb}),
+        (
+            "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
+            "source) VALUES (:a, :b, 'duplicate', :src)",
+            {"a": ra, "b": f"{p}-otro", "src": cohort},
+        ),
+        (
+            "UPDATE labeled_dedup_pairs SET verdict = 'distinct' "
+            "WHERE job_ref_a = :a AND job_ref_b = :b",
+            {"a": ra, "b": rb},
+        ),
+        (
+            "DELETE FROM labeled_dedup_pairs WHERE job_ref_a = :a AND job_ref_b = :b",
+            {"a": ra, "b": rb},
+        ),
     ):
         with pytest.raises(DBAPIError, match="CONGELADA"):
 
@@ -456,8 +467,11 @@ def _mk_slot_reciclado(factory, source_id, prefix):
                     ),
                     {"i": lid_, "s": source_id, "e": ext_, "u": f"https://fx/{ext_}"},
                 )
-            for vid, lid_, iid, seq in ((v1, lid, i1, 1), (v2, lid, i2, 2),
-                                        (v3, lid3, i3, 1)):
+            for vid, lid_, iid, seq in (
+                (v1, lid, i1, 1),
+                (v2, lid, i2, 2),
+                (v3, lid3, i3, 1),
+            ):
                 if iid is i2:
                     # El reciclado CIERRA la vieja antes de abrir la nueva
                     # (sink.py:304 + el índice parcial uq_incarnation_active).
@@ -481,8 +495,7 @@ def _mk_slot_reciclado(factory, source_id, prefix):
                 )
                 await s.execute(
                     sa.text(
-                        "UPDATE vacancies SET primary_incarnation_id = :p "
-                        "WHERE id = :i"
+                        "UPDATE vacancies SET primary_incarnation_id = :p WHERE id = :i"
                     ),
                     {"p": iid, "i": vid},
                 )
@@ -532,7 +545,8 @@ def test_g7n6_un_slot_reciclado_no_se_carga_en_silencio(db):
     candidates = {"B": [_cand(v1, v3, 0.9), _cand(v2, v3, 0.8)]}
     with pytest.raises(ValueError) as exc:
         _load(
-            factory, candidates,
+            factory,
+            candidates,
             {"B-01": "duplicate", "B-02": "distinct"},  # veredictos OPUESTOS
             cohort=cohort,
         )
@@ -542,8 +556,9 @@ def test_g7n6_un_slot_reciclado_no_se_carga_en_silencio(db):
 
     # La vacante VIGENTE del slot (la de mayor seq) sí carga: el guard no
     # cierra el slot reciclado entero, solo las vacantes que no vuelven.
-    ok = _load(factory, {"B": [_cand(v2, v3, 0.9)]}, {"B-01": "duplicate"},
-               cohort=cohort)
+    ok = _load(
+        factory, {"B": [_cand(v2, v3, 0.9)]}, {"B-01": "duplicate"}, cohort=cohort
+    )
     assert (ok["insertados"], ok["ya_presentes"]) == (1, 0)
     filas = _pairs_in_cohort(factory, cohort)
     assert len(filas) == 1 and filas[0].verdict == "duplicate"
@@ -580,13 +595,19 @@ def test_g8p3_4_excluir_desbloquea_sin_falsear_el_acta_ni_el_contador(db):
 
     # (d) una errata NO excluye en silencio.
     with pytest.raises(ValueError) as err:
-        _load(factory, candidates, labels, cohort=cohort,
-              manual_excluded=frozenset({"B-99"}))
+        _load(
+            factory,
+            candidates,
+            labels,
+            cohort=cohort,
+            manual_excluded=frozenset({"B-99"}),
+        )
     assert "B-99" in str(err.value)
 
     # (a) el par que la guarda NOMBRA se excluye y la carga sale adelante.
-    resumen = _load(factory, candidates, labels, cohort=cohort,
-                    manual_excluded=frozenset({"B-01"}))
+    resumen = _load(
+        factory, candidates, labels, cohort=cohort, manual_excluded=frozenset({"B-01"})
+    )
     assert resumen["cargables"] == 1
     assert resumen["insertados"] == 1
     # (c) el contador dice lo que es, y no miente por la vía de los sintéticos.
@@ -639,8 +660,12 @@ def test_g8n6_la_colision_entre_pares_nombra_los_grupos_ordenados(db):
     with pytest.raises(ValueError) as exc:
         # el acta llega con B-02 ANTES que B-01: el orden de iteración del
         # dict es el que se cuela en el mensaje si no se ordena la lista.
-        _load(factory, candidates,
-              {"B-02": "distinct", "B-01": "duplicate"}, cohort=cohort)
+        _load(
+            factory,
+            candidates,
+            {"B-02": "distinct", "B-01": "duplicate"},
+            cohort=cohort,
+        )
     assert "canonizan al MISMO par" in str(exc.value)
     assert "[['B-01', 'B-02']]" in str(exc.value), str(exc.value)
     assert _pairs_in_cohort(factory, cohort) == []

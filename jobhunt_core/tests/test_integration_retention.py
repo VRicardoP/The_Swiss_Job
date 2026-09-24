@@ -28,9 +28,7 @@ pytestmark = pytest.mark.skipif(
 
 def _en_transaccion_deshecha(escenario):
     """Corre `escenario(session)` y hace ROLLBACK: la suite no ve residuo."""
-    engine = create_async_engine(
-        settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool
-    )
+    engine = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async def run():
@@ -101,7 +99,9 @@ def test_purga_entregas_reconocidas_y_conserva_dead_pendientes_y_recientes():
 
         assert await _cuenta(s, "integration_outbox_deliveries", event_id=vieja) == 0
         assert await _cuenta(s, "integration_outbox_deliveries", event_id=muerta) == 1
-        assert await _cuenta(s, "integration_outbox_deliveries", event_id=pendiente) == 1
+        assert (
+            await _cuenta(s, "integration_outbox_deliveries", event_id=pendiente) == 1
+        )
         assert await _cuenta(s, "integration_outbox_deliveries", event_id=reciente) == 1
 
     _en_transaccion_deshecha(escenario)
@@ -163,8 +163,16 @@ async def _grafo_evaluable(s) -> dict:
     ids = {
         k: uuid.uuid4()
         for k in (
-            "source", "listing", "vacancy", "inc", "offrev",
-            "consumer", "profile", "prev", "model", "policy",
+            "source",
+            "listing",
+            "vacancy",
+            "inc",
+            "offrev",
+            "consumer",
+            "profile",
+            "prev",
+            "model",
+            "policy",
         )
     }
     await s.execute(
@@ -177,8 +185,10 @@ async def _grafo_evaluable(s) -> dict:
             "VALUES (:id, :s, :e, :u)"
         ),
         {
-            "id": ids["listing"], "s": ids["source"],
-            "e": ids["listing"].hex, "u": f"https://ret/{ids['listing'].hex}",
+            "id": ids["listing"],
+            "s": ids["source"],
+            "e": ids["listing"].hex,
+            "u": f"https://ret/{ids['listing'].hex}",
         },
     )
     await s.execute(
@@ -252,9 +262,15 @@ async def _evaluacion(s, ids: dict, edad_dias: int) -> uuid.UUID:
             "        now() - make_interval(days => :d))"
         ),
         {
-            "id": eval_id, "p": ids["profile"], "v": ids["vacancy"],
-            "o": ids["offrev"], "pr": ids["prev"], "m": ids["model"],
-            "pol": ids["policy"], "k": eval_id.hex, "d": edad_dias,
+            "id": eval_id,
+            "p": ids["profile"],
+            "v": ids["vacancy"],
+            "o": ids["offrev"],
+            "pr": ids["prev"],
+            "m": ids["model"],
+            "pol": ids["policy"],
+            "k": eval_id.hex,
+            "d": edad_dias,
         },
     )
     return eval_id

@@ -9,7 +9,7 @@ Create Date: 2026-02-25 06:37:50.192619
 from typing import Sequence, Union
 
 from alembic import op
-import pgvector.sqlalchemy.vector  # noqa: F401
+import pgvector.sqlalchemy.vector
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 

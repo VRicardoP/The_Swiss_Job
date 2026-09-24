@@ -26,9 +26,15 @@ import re
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.provider import (
-    BaseProvider, ProviderConfigError, ProviderResponseError)
+    BaseProvider,
+    ProviderConfigError,
+    ProviderResponseError,
+)
 from jobhunt_core.harvest.providers.browser_headers import (
-    BROWSER_HEADERS, MAX_PAGES_PARAM, page_budget)
+    BROWSER_HEADERS,
+    MAX_PAGES_PARAM,
+    page_budget,
+)
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
 from jobhunt_core.harvest.providers.search_metadata import swiss_canton
 from jobhunt_core.harvest.types import FetchResult, RawListing
@@ -37,16 +43,14 @@ SOURCE_NAME = "financejobs"
 BASE_URL = "https://www.financejobs.ch"
 LISTING_URL = f"{BASE_URL}/de/jobs"
 JOB_URL = f"{BASE_URL}/de/job/"
-MAX_PAGES = 10          # = FinancejobsScraper.MAX_PAGES
-PAGE_PAUSE_S = 2.0      # = FinancejobsScraper.RATE_LIMIT_SECONDS
+MAX_PAGES = 10  # = FinancejobsScraper.MAX_PAGES
+PAGE_PAUSE_S = 2.0  # = FinancejobsScraper.RATE_LIMIT_SECONDS
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 SWEEP_BUDGET_S = 300
 
 # Known paths from `props` down to the jobsSSR block, newest first.
-_JOBS_SSR_PATHS = (("pageProps", "jobsSSR"),
-                   ("initialProps", "pageProps", "jobsSSR"))
-_NEXT_DATA = re.compile(
-    r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
+_JOBS_SSR_PATHS = (("pageProps", "jobsSSR"), ("initialProps", "pageProps", "jobsSSR"))
+_NEXT_DATA = re.compile(r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
 # ASCII decimals only: \d would match unicode digits the portal never emits.
 _DECIMAL_ID = re.compile(r"^[0-9]+$")
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -101,9 +105,15 @@ def _content(raw):
     company = strip_html_tags(_s(raw.get("companyName"))).strip() or "Unknown"
     description = strip_html_tags(_s(raw.get("description")) or _s(raw.get("summary")))
     location = _s(raw.get("location")).strip() or "Switzerland"
-    content = {"title": title, "company": company, "description": description,
-               "location": location, "remote": False,
-               "tags": extract_job_skills(title, description)[:15], "salary": None}
+    content = {
+        "title": title,
+        "company": company,
+        "description": description,
+        "location": location,
+        "remote": False,
+        "tags": extract_job_skills(title, description)[:15],
+        "salary": None,
+    }
     canton = swiss_canton(location)
     if canton:
         content["canton"] = canton
@@ -112,14 +122,24 @@ def _content(raw):
 
 def register_handlers():
     register_normalizer(SOURCE_NAME, _content)
-    register_extractor(SOURCE_NAME, lambda raw: (
-        strip_html_tags(_s(raw.get("title"))).strip(),
-        strip_html_tags(_s(raw.get("companyName"))).strip() or "Unknown"))
+    register_extractor(
+        SOURCE_NAME,
+        lambda raw: (
+            strip_html_tags(_s(raw.get("title"))).strip(),
+            strip_html_tags(_s(raw.get("companyName"))).strip() or "Unknown",
+        ),
+    )
 
 
 async def _page(http, page):
-    async with http.stream("GET", LISTING_URL, params={"page": page}, timeout=25,
-                           follow_redirects=True, headers=BROWSER_HEADERS) as response:
+    async with http.stream(
+        "GET",
+        LISTING_URL,
+        params={"page": page},
+        timeout=25,
+        follow_redirects=True,
+        headers=BROWSER_HEADERS,
+    ) as response:
         response.raise_for_status()
         chunks, size = [], 0
         async for chunk in response.aiter_bytes():
@@ -189,9 +209,14 @@ class FinancejobsProvider(BaseProvider):
             # The page carried offers and none survived: the portal changed
             # shape. Reporting an empty harvest here is the original defect.
             raise ProviderResponseError(
-                "financejobs: nonempty feed has no usable identities")
+                "financejobs: nonempty feed has no usable identities"
+            )
         error = error or ("invalid_financejobs_items" if invalid else None)
         exhausted = exhausted or (MAX_PAGES_PARAM in params and pages >= budget)
-        return FetchResult(tuple(listings), {"pages": pages, "items_seen": seen},
-                           pages_fetched=pages,
-                           complete=exhausted and error is None, error=error)
+        return FetchResult(
+            tuple(listings),
+            {"pages": pages, "items_seen": seen},
+            pages_fetched=pages,
+            complete=exhausted and error is None,
+            error=error,
+        )

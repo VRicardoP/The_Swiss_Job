@@ -44,12 +44,21 @@ NOW = sa.text("now()")
 # create_type=False: los crea/borra ESTA migración explícitamente; sin el flag,
 # create_table intentaría crearlos otra vez (DuplicateObject).
 dedup_state = PGEnum(
-    "pending", "confirmed", "rejected",
-    name="dedup_candidate_state", schema=S, create_type=False,
+    "pending",
+    "confirmed",
+    "rejected",
+    name="dedup_candidate_state",
+    schema=S,
+    create_type=False,
 )
 delivery_state = PGEnum(
-    "pending", "inflight", "delivered", "dead",
-    name="delivery_state", schema=S, create_type=False,
+    "pending",
+    "inflight",
+    "delivered",
+    "dead",
+    name="delivery_state",
+    schema=S,
+    create_type=False,
 )
 
 
@@ -69,10 +78,17 @@ def upgrade() -> None:
     op.create_table(
         "consumer_credentials",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("consumer_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.consumers.id"), nullable=False),
+        sa.Column(
+            "consumer_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.consumers.id"),
+            nullable=False,
+        ),
         sa.Column("key_id", sa.String(64), nullable=False, unique=True),
         sa.Column("hash", sa.String(128), nullable=False),
-        sa.Column("scopes", JSONB, nullable=False, server_default=sa.text("'[]'::jsonb")),
+        sa.Column(
+            "scopes", JSONB, nullable=False, server_default=sa.text("'[]'::jsonb")
+        ),
         sa.Column("expires_at", sa.TIMESTAMP(timezone=True)),
         sa.Column("revoked_at", sa.TIMESTAMP(timezone=True)),
         schema=S,
@@ -80,21 +96,45 @@ def upgrade() -> None:
     op.create_table(
         "profiles",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("consumer_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.consumers.id"), nullable=False),
+        sa.Column(
+            "consumer_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.consumers.id"),
+            nullable=False,
+        ),
         sa.Column("external_ref", sa.String(100), nullable=False),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
-        sa.UniqueConstraint("consumer_id", "external_ref", name="uq_profiles_consumer_ref"),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
+        sa.UniqueConstraint(
+            "consumer_id", "external_ref", name="uq_profiles_consumer_ref"
+        ),
         schema=S,
     )
     op.create_table(
         "profile_revisions",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("profile_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.profiles.id"), nullable=False),
+        sa.Column(
+            "profile_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.profiles.id"),
+            nullable=False,
+        ),
         sa.Column("content", JSONB, nullable=False),
         sa.Column("content_hash", sa.String(64), nullable=False),
         sa.Column("text_hash", sa.String(64), nullable=False),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
-        sa.UniqueConstraint("profile_id", "content_hash", name="uq_profrev_profile_hash"),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
+        sa.UniqueConstraint(
+            "profile_id", "content_hash", name="uq_profrev_profile_hash"
+        ),
         # Soporte de la FK compuesta (mismo perfil) desde embeddings/evaluations.
         sa.UniqueConstraint("id", "profile_id", name="uq_profrev_id_profile"),
         schema=S,
@@ -106,7 +146,9 @@ def upgrade() -> None:
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
         sa.Column("name", sa.String(80), nullable=False, unique=True),
         sa.Column("tier", sa.SmallInteger, nullable=False),
-        sa.Column("is_restricted", sa.Boolean, nullable=False, server_default=sa.text("false")),
+        sa.Column(
+            "is_restricted", sa.Boolean, nullable=False, server_default=sa.text("false")
+        ),
         sa.Column("authorized_route", sa.String(200)),
         sa.Column("rate_limit", sa.Integer),
         sa.Column("robots_ok", sa.Boolean),
@@ -115,18 +157,37 @@ def upgrade() -> None:
     op.create_table(
         "harvest_scopes",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("source_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.sources.id"), nullable=False),
-        sa.Column("params", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column(
+            "source_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.sources.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "params", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")
+        ),
         sa.Column("tier", sa.SmallInteger, nullable=False),
-        sa.Column("enabled", sa.Boolean, nullable=False, server_default=sa.text("true")),
+        sa.Column(
+            "enabled", sa.Boolean, nullable=False, server_default=sa.text("true")
+        ),
         schema=S,
     )
     op.create_table(
         "source_scope_state",
-        sa.Column("scope_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.harvest_scopes.id"), primary_key=True),
+        sa.Column(
+            "scope_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.harvest_scopes.id"),
+            primary_key=True,
+        ),
         sa.Column("cursor", JSONB),
         sa.Column("last_complete_at", sa.TIMESTAMP(timezone=True)),
-        sa.Column("consecutive_failures", sa.Integer, nullable=False, server_default=sa.text("0")),
+        sa.Column(
+            "consecutive_failures",
+            sa.Integer,
+            nullable=False,
+            server_default=sa.text("0"),
+        ),
         schema=S,
     )
 
@@ -148,32 +209,71 @@ def upgrade() -> None:
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
         sa.Column("current_offer_revision_id", UUID(as_uuid=True), nullable=True),
         sa.Column("primary_incarnation_id", UUID(as_uuid=True), nullable=True),
-        sa.Column("merged_into", UUID(as_uuid=True), sa.ForeignKey(f"{S}.vacancies.id", ondelete="SET NULL"), nullable=True),
+        sa.Column(
+            "merged_into",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.vacancies.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("archived_at", sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
         schema=S,
     )
     op.create_index("ix_vacancies_archived_at", "vacancies", ["archived_at"], schema=S)
     op.create_table(
         "source_listings",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("source_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.sources.id"), nullable=False),
+        sa.Column(
+            "source_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.sources.id"),
+            nullable=False,
+        ),
         sa.Column("external_id", sa.String(200), nullable=False),
         sa.Column("url_normalized", sa.String(1000), nullable=False),
-        sa.UniqueConstraint("source_id", "external_id", name="uq_listing_source_external"),
-        sa.UniqueConstraint("source_id", "url_normalized", name="uq_listing_source_url"),
+        sa.UniqueConstraint(
+            "source_id", "external_id", name="uq_listing_source_external"
+        ),
+        sa.UniqueConstraint(
+            "source_id", "url_normalized", name="uq_listing_source_url"
+        ),
         schema=S,
     )
     op.create_table(
         "source_listing_incarnations",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("source_listing_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.source_listings.id"), nullable=False),
-        sa.Column("vacancy_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.vacancies.id"), nullable=False),
+        sa.Column(
+            "source_listing_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.source_listings.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "vacancy_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.vacancies.id"),
+            nullable=False,
+        ),
         sa.Column("seq", sa.Integer, nullable=False),
         sa.Column("url", sa.String(1000), nullable=False),
         sa.Column("apply_url", sa.String(1000)),
-        sa.Column("first_seen_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
-        sa.Column("last_seen_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "first_seen_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
+        sa.Column(
+            "last_seen_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
         sa.Column("ended_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.UniqueConstraint("source_listing_id", "seq", name="uq_incarnation_slot_seq"),
         # Soporte de las FKs compuestas (misma vacante) desde vacancies/applications.
@@ -182,28 +282,56 @@ def upgrade() -> None:
     )
     # Una sola incarnación ACTIVA por slot (UNIQUE parcial, ADR-01).
     op.create_index(
-        "uq_incarnation_active", "source_listing_incarnations", ["source_listing_id"],
-        unique=True, postgresql_where=sa.text("ended_at IS NULL"), schema=S,
+        "uq_incarnation_active",
+        "source_listing_incarnations",
+        ["source_listing_id"],
+        unique=True,
+        postgresql_where=sa.text("ended_at IS NULL"),
+        schema=S,
     )
     op.create_table(
         "source_listing_revisions",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("incarnation_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.source_listing_incarnations.id"), nullable=False),
+        sa.Column(
+            "incarnation_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.source_listing_incarnations.id"),
+            nullable=False,
+        ),
         sa.Column("content_hash", sa.String(64), nullable=False),
         sa.Column("raw", JSONB, nullable=False),
-        sa.Column("fetched_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
-        sa.UniqueConstraint("incarnation_id", "content_hash", name="uq_slrev_incarnation_hash"),
+        sa.Column(
+            "fetched_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
+        sa.UniqueConstraint(
+            "incarnation_id", "content_hash", name="uq_slrev_incarnation_hash"
+        ),
         schema=S,
     )
     op.create_table(
         "offer_revisions",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("vacancy_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.vacancies.id"), nullable=False),
+        sa.Column(
+            "vacancy_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.vacancies.id"),
+            nullable=False,
+        ),
         sa.Column("content_hash", sa.String(64), nullable=False),
         sa.Column("text_hash", sa.String(64), nullable=False),
         sa.Column("content", JSONB, nullable=False),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
-        sa.UniqueConstraint("vacancy_id", "content_hash", name="uq_offrev_vacancy_hash"),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
+        sa.UniqueConstraint(
+            "vacancy_id", "content_hash", name="uq_offrev_vacancy_hash"
+        ),
         sa.UniqueConstraint("id", "vacancy_id", name="uq_offrev_id_vacancy"),
         schema=S,
     )
@@ -211,9 +339,18 @@ def upgrade() -> None:
     op.create_table(
         "offer_revision_sources",
         sa.Column("offer_revision_id", UUID(as_uuid=True), nullable=False),
-        sa.Column("source_listing_revision_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.source_listing_revisions.id"), nullable=False),
+        sa.Column(
+            "source_listing_revision_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.source_listing_revisions.id"),
+            nullable=False,
+        ),
         sa.Column("vacancy_id", UUID(as_uuid=True), nullable=False),
-        sa.PrimaryKeyConstraint("offer_revision_id", "source_listing_revision_id", name="pk_offer_revision_sources"),
+        sa.PrimaryKeyConstraint(
+            "offer_revision_id",
+            "source_listing_revision_id",
+            name="pk_offer_revision_sources",
+        ),
         sa.ForeignKeyConstraint(
             ["offer_revision_id", "vacancy_id"],
             [f"{S}.offer_revisions.id", f"{S}.offer_revisions.vacancy_id"],
@@ -249,9 +386,16 @@ def upgrade() -> None:
         "profile_embeddings",
         sa.Column("profile_revision_id", UUID(as_uuid=True), nullable=False),
         sa.Column("profile_id", UUID(as_uuid=True), nullable=False),
-        sa.Column("model_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.embedding_models.id"), nullable=False),
+        sa.Column(
+            "model_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.embedding_models.id"),
+            nullable=False,
+        ),
         sa.Column("vector", Vector(384), nullable=False),
-        sa.PrimaryKeyConstraint("profile_revision_id", "model_id", name="pk_profile_embeddings"),
+        sa.PrimaryKeyConstraint(
+            "profile_revision_id", "model_id", name="pk_profile_embeddings"
+        ),
         # FK compuesta: la revisión embebida pertenece a ESE perfil (contrato §1).
         sa.ForeignKeyConstraint(
             ["profile_revision_id", "profile_id"],
@@ -263,53 +407,115 @@ def upgrade() -> None:
     op.create_table(
         "link_evidence",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("source_listing_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.source_listings.id"), nullable=False),
-        sa.Column("vacancy_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.vacancies.id"), nullable=False),
+        sa.Column(
+            "source_listing_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.source_listings.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "vacancy_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.vacancies.id"),
+            nullable=False,
+        ),
         sa.Column("method", sa.String(30), nullable=False),
         sa.Column("confidence", sa.Numeric(4, 3)),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
         schema=S,
     )
     op.create_table(
         "merge_log",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("winner_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.vacancies.id"), nullable=False),
+        sa.Column(
+            "winner_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.vacancies.id"),
+            nullable=False,
+        ),
         sa.Column("loser_id", UUID(as_uuid=True), nullable=False),
-        sa.Column("evidence", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column(
+            "evidence", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")
+        ),
         sa.Column("confidence", sa.Numeric(4, 3)),
         sa.Column("actor", sa.String(60), nullable=False),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
         schema=S,
     )
     op.create_table(
         "merge_transfers",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("merge_log_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.merge_log.id"), nullable=False),
+        sa.Column(
+            "merge_log_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.merge_log.id"),
+            nullable=False,
+        ),
         sa.Column("entity", sa.String(40), nullable=False),
         sa.Column("row_key", sa.String(200), nullable=False),
         sa.Column("before", JSONB, nullable=False),
         sa.Column("after", JSONB, nullable=False),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
         schema=S,
     )
     op.create_table(
         "dedup_candidates",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("vacancy_a", UUID(as_uuid=True), sa.ForeignKey(f"{S}.vacancies.id"), nullable=False),
-        sa.Column("vacancy_b", UUID(as_uuid=True), sa.ForeignKey(f"{S}.vacancies.id"), nullable=False),
+        sa.Column(
+            "vacancy_a",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.vacancies.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "vacancy_b",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.vacancies.id"),
+            nullable=False,
+        ),
         sa.Column("similarity", sa.Numeric(4, 3)),
         sa.Column("state", dedup_state, nullable=False, server_default="pending"),
         sa.Column("resolved_by", sa.String(60)),
         sa.Column("resolved_at", sa.TIMESTAMP(timezone=True)),
-        sa.Column("merge_log_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.merge_log.id"), nullable=True),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "merge_log_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.merge_log.id"),
+            nullable=True,
+        ),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
         schema=S,
     )
     # Par canónico: (a,b) y (b,a) son el MISMO candidato (UNIQUE por expresión).
     op.create_index(
-        "uq_dedup_pair", "dedup_candidates",
-        [sa.text("LEAST(vacancy_a, vacancy_b)"), sa.text("GREATEST(vacancy_a, vacancy_b)")],
-        unique=True, schema=S,
+        "uq_dedup_pair",
+        "dedup_candidates",
+        [
+            sa.text("LEAST(vacancy_a, vacancy_b)"),
+            sa.text("GREATEST(vacancy_a, vacancy_b)"),
+        ],
+        unique=True,
+        schema=S,
     )
 
     # ---------- Matching / estado ----------
@@ -318,7 +524,9 @@ def upgrade() -> None:
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
         sa.Column("name", sa.String(80), nullable=False),
         sa.Column("prompt_version", sa.String(40), nullable=False),
-        sa.Column("weights", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column(
+            "weights", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")
+        ),
         sa.Column("active", sa.Boolean, nullable=False, server_default=sa.text("true")),
         sa.UniqueConstraint("name", "prompt_version", name="uq_policy_name_version"),
         schema=S,
@@ -326,20 +534,49 @@ def upgrade() -> None:
     op.create_table(
         "match_evaluations",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("profile_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.profiles.id"), nullable=False),
-        sa.Column("vacancy_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.vacancies.id"), nullable=False),
+        sa.Column(
+            "profile_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.profiles.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "vacancy_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.vacancies.id"),
+            nullable=False,
+        ),
         sa.Column("offer_revision_id", UUID(as_uuid=True), nullable=False),
         sa.Column("profile_revision_id", UUID(as_uuid=True), nullable=False),
-        sa.Column("model_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.embedding_models.id"), nullable=False),
-        sa.Column("scoring_policy_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.scoring_policies.id"), nullable=False),
+        sa.Column(
+            "model_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.embedding_models.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "scoring_policy_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.scoring_policies.id"),
+            nullable=False,
+        ),
         sa.Column("eval_key", sa.String(64), nullable=False),
         sa.Column("score_final", sa.Numeric(6, 2), nullable=False),
         sa.Column("scores", JSONB, nullable=False),
         sa.Column("explanation", sa.Text),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
-        sa.UniqueConstraint("profile_id", "vacancy_id", "eval_key", name="uq_eval_profile_vacancy_key"),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
+        sa.UniqueConstraint(
+            "profile_id", "vacancy_id", "eval_key", name="uq_eval_profile_vacancy_key"
+        ),
         # Soporte de la FK compuesta del feed (current_eval del MISMO par).
-        sa.UniqueConstraint("id", "profile_id", "vacancy_id", name="uq_eval_id_profile_vacancy"),
+        sa.UniqueConstraint(
+            "id", "profile_id", "vacancy_id", name="uq_eval_id_profile_vacancy"
+        ),
         # FKs compuestas de integridad de propietario (contrato §1, rev. #3):
         sa.ForeignKeyConstraint(
             ["offer_revision_id", "vacancy_id"],
@@ -355,20 +592,39 @@ def upgrade() -> None:
     )
     # Keyset pagination del feed (contrato §2).
     op.create_index(
-        "ix_eval_feed_keyset", "match_evaluations",
-        ["profile_id", sa.text("score_final DESC"), "vacancy_id"], schema=S,
+        "ix_eval_feed_keyset",
+        "match_evaluations",
+        ["profile_id", sa.text("score_final DESC"), "vacancy_id"],
+        schema=S,
     )
     op.create_table(
         "profile_vacancy_state",
-        sa.Column("profile_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.profiles.id"), nullable=False),
-        sa.Column("vacancy_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.vacancies.id"), nullable=False),
+        sa.Column(
+            "profile_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.profiles.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "vacancy_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.vacancies.id"),
+            nullable=False,
+        ),
         sa.Column("feedback", sa.String(20)),
         sa.Column("dismissed_at", sa.TIMESTAMP(timezone=True)),
         sa.Column("saved_at", sa.TIMESTAMP(timezone=True)),
         sa.Column("notes", sa.Text),
         sa.Column("current_eval_id", UUID(as_uuid=True), nullable=True),
-        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
-        sa.PrimaryKeyConstraint("profile_id", "vacancy_id", name="pk_profile_vacancy_state"),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
+        sa.PrimaryKeyConstraint(
+            "profile_id", "vacancy_id", name="pk_profile_vacancy_state"
+        ),
         # FK compuesta: la eval vigente pertenece al MISMO (perfil, vacante).
         # RESTRICT explícito (no SET NULL: nulificaría también las columnas PK;
         # no NO ACTION: RESTRICT no es diferible) — impone el ADR-03: la
@@ -388,11 +644,26 @@ def upgrade() -> None:
     op.create_table(
         "profile_vacancy_events",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("profile_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.profiles.id"), nullable=False),
-        sa.Column("vacancy_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.vacancies.id"), nullable=False),
+        sa.Column(
+            "profile_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.profiles.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "vacancy_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.vacancies.id"),
+            nullable=False,
+        ),
         sa.Column("kind", sa.String(40), nullable=False),
         sa.Column("data", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
         schema=S,
     )
 
@@ -400,16 +671,36 @@ def upgrade() -> None:
     op.create_table(
         "harvest_runs",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
-        sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "started_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
         sa.Column("finished_at", sa.TIMESTAMP(timezone=True)),
         sa.Column("status", sa.String(20), nullable=False, server_default="running"),
         schema=S,
     )
     op.create_table(
         "source_harvest_runs",
-        sa.Column("run_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.harvest_runs.id"), nullable=False),
-        sa.Column("scope_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.harvest_scopes.id"), nullable=False),
-        sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "run_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.harvest_runs.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "scope_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.harvest_scopes.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "started_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
         sa.Column("finished_at", sa.TIMESTAMP(timezone=True)),
         sa.Column("status", sa.String(20), nullable=False, server_default="running"),
         sa.PrimaryKeyConstraint("run_id", "scope_id", name="pk_source_harvest_runs"),
@@ -417,20 +708,34 @@ def upgrade() -> None:
     )
     op.create_table(
         "integration_outbox",
-        sa.Column("event_id", UUID(as_uuid=True), primary_key=True),  # determinista (uuid5, ADR-05)
+        sa.Column(
+            "event_id", UUID(as_uuid=True), primary_key=True
+        ),  # determinista (uuid5, ADR-05)
         sa.Column("aggregate", sa.String(40), nullable=False),
         sa.Column("aggregate_id", sa.String(100), nullable=False),
         sa.Column("subject_profile_id", UUID(as_uuid=True), nullable=True),
         sa.Column("version", sa.BigInteger, nullable=False),
         sa.Column("type", sa.String(60), nullable=False),
         sa.Column("payload", JSONB, nullable=False),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
         schema=S,
     )
-    op.create_index("ix_outbox_subject", "integration_outbox", ["subject_profile_id"], schema=S)
+    op.create_index(
+        "ix_outbox_subject", "integration_outbox", ["subject_profile_id"], schema=S
+    )
     op.create_table(
         "integration_outbox_deliveries",
-        sa.Column("event_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.integration_outbox.event_id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "event_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.integration_outbox.event_id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("destination", sa.String(60), nullable=False),
         sa.Column("state", delivery_state, nullable=False, server_default="pending"),
         sa.Column("attempts", sa.Integer, nullable=False, server_default=sa.text("0")),
@@ -445,16 +750,35 @@ def upgrade() -> None:
         "erase_requests",
         sa.Column("id", UUID(as_uuid=True), **UUID_PK),
         sa.Column("subject_profile_id", UUID(as_uuid=True), nullable=False),
-        sa.Column("required_consumers", JSONB, nullable=False),  # congelado al crear (ADR-07)
-        sa.Column("requested_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "required_consumers", JSONB, nullable=False
+        ),  # congelado al crear (ADR-07)
+        sa.Column(
+            "requested_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=NOW,
+        ),
         sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
         schema=S,
     )
     op.create_table(
         "erase_acks",
-        sa.Column("erase_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.erase_requests.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("consumer_id", UUID(as_uuid=True), sa.ForeignKey(f"{S}.consumers.id"), nullable=False),
-        sa.Column("acked_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW),
+        sa.Column(
+            "erase_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.erase_requests.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "consumer_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey(f"{S}.consumers.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "acked_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=NOW
+        ),
         sa.PrimaryKeyConstraint("erase_id", "consumer_id", name="pk_erase_acks"),
         schema=S,
     )
@@ -538,7 +862,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(f"DROP TRIGGER IF EXISTS trg_offrev_vacancy_immutable ON {S}.offer_revisions")
+    op.execute(
+        f"DROP TRIGGER IF EXISTS trg_offrev_vacancy_immutable ON {S}.offer_revisions"
+    )
     op.execute(
         f"DROP TRIGGER IF EXISTS trg_incarnation_vacancy_immutable "
         f"ON {S}.source_listing_incarnations"
@@ -548,20 +874,47 @@ def downgrade() -> None:
         f"ON {S}.source_listing_revisions"
     )
     op.execute(f"DROP FUNCTION IF EXISTS {S}.forbid_immutable_update()")
-    op.execute(f"DROP TRIGGER IF EXISTS trg_ors_same_vacancy ON {S}.offer_revision_sources")
+    op.execute(
+        f"DROP TRIGGER IF EXISTS trg_ors_same_vacancy ON {S}.offer_revision_sources"
+    )
     op.execute(f"DROP FUNCTION IF EXISTS {S}.check_ors_same_vacancy()")
-    op.drop_constraint("fk_vacancy_primary_incarnation", "vacancies", schema=S, type_="foreignkey")
-    op.drop_constraint("fk_vacancy_current_offrev", "vacancies", schema=S, type_="foreignkey")
+    op.drop_constraint(
+        "fk_vacancy_primary_incarnation", "vacancies", schema=S, type_="foreignkey"
+    )
+    op.drop_constraint(
+        "fk_vacancy_current_offrev", "vacancies", schema=S, type_="foreignkey"
+    )
     for table in (
-        "erase_acks", "erase_requests", "integration_outbox_deliveries",
-        "integration_outbox", "source_harvest_runs", "harvest_runs",
-        "profile_vacancy_events", "profile_vacancy_state", "match_evaluations",
-        "scoring_policies", "dedup_candidates", "merge_transfers", "merge_log",
-        "link_evidence", "profile_embeddings", "offer_embeddings",
-        "offer_revision_sources", "offer_revisions", "source_listing_revisions",
-        "source_listing_incarnations", "source_listings", "vacancies",
-        "embedding_models", "source_scope_state", "harvest_scopes", "sources",
-        "profile_revisions", "profiles", "consumer_credentials", "consumers",
+        "erase_acks",
+        "erase_requests",
+        "integration_outbox_deliveries",
+        "integration_outbox",
+        "source_harvest_runs",
+        "harvest_runs",
+        "profile_vacancy_events",
+        "profile_vacancy_state",
+        "match_evaluations",
+        "scoring_policies",
+        "dedup_candidates",
+        "merge_transfers",
+        "merge_log",
+        "link_evidence",
+        "profile_embeddings",
+        "offer_embeddings",
+        "offer_revision_sources",
+        "offer_revisions",
+        "source_listing_revisions",
+        "source_listing_incarnations",
+        "source_listings",
+        "vacancies",
+        "embedding_models",
+        "source_scope_state",
+        "harvest_scopes",
+        "sources",
+        "profile_revisions",
+        "profiles",
+        "consumer_credentials",
+        "consumers",
     ):
         op.drop_table(table, schema=S)
     bind = op.get_bind()

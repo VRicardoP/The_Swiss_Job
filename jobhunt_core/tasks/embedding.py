@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 
 def _model_key(model) -> str:
     suffix = (
-        "" if model.recipe_version == embedding_recipes.LEGACY_V1
+        ""
+        if model.recipe_version == embedding_recipes.LEGACY_V1
         else f"#{model.recipe_version}"
     )
     return f"{model.name}/{model.version}{suffix}"
@@ -60,7 +61,10 @@ async def _run_pending_with(session_factory, limit: int) -> dict[str, Any]:
             # (ni ofertas ni perfiles).
             logger.error(
                 "embedding: modelo %s/%s dim=%d != %d — saltado",
-                model.name, model.version, model.dim, embeddings.EMBED_DIM,
+                model.name,
+                model.version,
+                model.dim,
+                embeddings.EMBED_DIM,
             )
             continue
         key = _model_key(model)

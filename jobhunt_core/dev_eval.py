@@ -28,6 +28,7 @@ lectura; el corpus_generation del manifiesto pertenece a esa misma fotografía.
 
 Formato de juicios: CSV `perfil,vacancy_uuid,rel` con rel ∈ {0,1,2}.
 """
+
 import argparse
 import asyncio
 import datetime
@@ -97,8 +98,7 @@ def load_unsure(path: str | None, profiles: dict, juicios: dict) -> dict:
             raise ValueError(f"unsure: perfil desconocido {perfil!r}")
         if not isinstance(vacs, list):
             raise ValueError(
-                f"unsure[{perfil}]: debe ser una lista, no "
-                f"{type(vacs).__name__}"
+                f"unsure[{perfil}]: debe ser una lista, no {type(vacs).__name__}"
             )
         for v in vacs:
             if not isinstance(v, str):
@@ -144,14 +144,16 @@ async def _resolve_model(session, model_id: str | None):
             raise ValueError(f"modelo inexistente: {model_id}")
         return fila
     filas = (
-        await session.execute(
-            sa.text("SELECT id FROM embedding_models WHERE active ORDER BY id")
+        (
+            await session.execute(
+                sa.text("SELECT id FROM embedding_models WHERE active ORDER BY id")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if len(filas) != 1:
-        raise ValueError(
-            f"{len(filas)} modelos activos: indica --model explícitamente"
-        )
+        raise ValueError(f"{len(filas)} modelos activos: indica --model explícitamente")
     return filas[0]
 
 
@@ -162,9 +164,12 @@ async def _verify_judged_vacancies(session, juicios: dict) -> None:
     if not todas:
         return
     existentes = {
-        str(r[0]) for r in (
+        str(r[0])
+        for r in (
             await session.execute(
-                sa.text("SELECT id FROM vacancies WHERE id = ANY(CAST(:ids AS uuid[]))"),
+                sa.text(
+                    "SELECT id FROM vacancies WHERE id = ANY(CAST(:ids AS uuid[]))"
+                ),
                 {"ids": todas},
             )
         ).all()
@@ -175,7 +180,9 @@ async def _verify_judged_vacancies(session, juicios: dict) -> None:
 
 
 async def build_universe_manifest(
-    session, profiles: dict, model_id: str | None = None,
+    session,
+    profiles: dict,
+    model_id: str | None = None,
     allow_unknown_release: bool = False,
     exclude_vacancy_ids: list | None = None,
 ) -> dict:
@@ -197,8 +204,7 @@ async def build_universe_manifest(
     if corpus_gen is None:
         raise ValueError("corpus_generation ausente")
     pares = [
-        {"vacancy_id": str(r.vid), "offer_revision_id": str(r.orid),
-         "text_hash": r.th}
+        {"vacancy_id": str(r.vid), "offer_revision_id": str(r.orid), "text_hash": r.th}
         for r in (
             await session.execute(
                 sa.text(
@@ -229,7 +235,8 @@ async def build_universe_manifest(
     exclusiones_perfil = {}
     for nombre in sorted(profiles):
         exclusiones_perfil[nombre] = sorted(
-            f"{r.kind}:{r.pattern}" for r in (
+            f"{r.kind}:{r.pattern}"
+            for r in (
                 await session.execute(
                     sa.text(
                         "SELECT kind, pattern FROM profile_exclusions "
@@ -240,20 +247,23 @@ async def build_universe_manifest(
             ).all()
         )
     cuerpo = {
-        "release": release, "model_id": str(mid),
+        "release": release,
+        "model_id": str(mid),
         "corpus_generation": corpus_gen,
         # Restricción EFECTIVA del examen (revisión externa 2026-09-07,
         # hallazgo C): sin ella, el mismo sello podía declarar elegibles dos
         # universos distintos (nDCG 1.0 y 0.613147 reproducidos). Va en el
         # cuerpo sellado, así que su sha la cubre.
-        "exclude_vacancy_ids": sorted(
-            str(x) for x in (exclude_vacancy_ids or [])),
+        "exclude_vacancy_ids": sorted(str(x) for x in (exclude_vacancy_ids or [])),
         "profile_exclusions": exclusiones_perfil,
-        "profile_revisions": revisiones, "pairs": pares,
+        "profile_revisions": revisiones,
+        "pairs": pares,
     }
     canon = json.dumps(cuerpo, ensure_ascii=False, sort_keys=True)
-    return {"universe": cuerpo,
-            "universe_sha256": hashlib.sha256(canon.encode()).hexdigest()}
+    return {
+        "universe": cuerpo,
+        "universe_sha256": hashlib.sha256(canon.encode()).hexdigest(),
+    }
 
 
 def _universe_body_sha(body: dict) -> str:
@@ -262,36 +272,47 @@ def _universe_body_sha(body: dict) -> str:
 
 
 async def _validate_universe_seal(
-    session, wrapper: dict, profiles: dict, model_id, release: str,
+    session,
+    wrapper: dict,
+    profiles: dict,
+    model_id,
+    release: str,
     exclude_vacancy_ids: list | None = None,
 ) -> dict:
     """Validación ÚNICA del sello (P1-2, usada por evaluación y pool):
     esquema, SHA, release, modelo, TODAS las revisiones de perfil y el
     conjunto EXACTO de parejas elegibles (vacancy, offer_revision, text_hash).
     Cualquier deriva invalida el examen COMPLETO — jamás nDCG parcial."""
-    if not isinstance(wrapper, dict) or set(wrapper) < {
-            "universe", "universe_sha256"}:
+    if not isinstance(wrapper, dict) or set(wrapper) < {"universe", "universe_sha256"}:
         raise ValueError(
-            "sello de universo malformado: se espera "
-            "{universe, universe_sha256}")
+            "sello de universo malformado: se espera {universe, universe_sha256}"
+        )
     body = wrapper["universe"]
-    esperadas = {"release", "model_id", "corpus_generation",
-                 "profile_revisions", "pairs",
-                 "exclude_vacancy_ids", "profile_exclusions"}
+    esperadas = {
+        "release",
+        "model_id",
+        "corpus_generation",
+        "profile_revisions",
+        "pairs",
+        "exclude_vacancy_ids",
+        "profile_exclusions",
+    }
     if not isinstance(body, dict) or set(body) != esperadas:
         raise ValueError(
-            f"universo malformado: claves {sorted(body) if isinstance(body, dict) else type(body).__name__}")
+            f"universo malformado: claves {sorted(body) if isinstance(body, dict) else type(body).__name__}"
+        )
     if _universe_body_sha(body) != wrapper["universe_sha256"]:
         raise ValueError(
-            "SHA del universo no coincide con su cuerpo — sello adulterado")
+            "SHA del universo no coincide con su cuerpo — sello adulterado"
+        )
     if body["release"] != release:
         raise ValueError(
-            f"universo sellado en release {body['release']!r}, "
-            f"evaluando en {release!r}")
+            f"universo sellado en release {body['release']!r}, evaluando en {release!r}"
+        )
     if str(body["model_id"]) != str(model_id):
         raise ValueError(
-            f"universo sellado para modelo {body['model_id']}, "
-            f"evaluando con {model_id}")
+            f"universo sellado para modelo {body['model_id']}, evaluando con {model_id}"
+        )
     for nombre in sorted(profiles):
         actual = (
             await session.execute(
@@ -321,8 +342,7 @@ async def _validate_universe_seal(
         ).all()
     }
     selladas = {
-        (p["vacancy_id"], p["offer_revision_id"], p["text_hash"])
-        for p in body["pairs"]
+        (p["vacancy_id"], p["offer_revision_id"], p["text_hash"]) for p in body["pairs"]
     }
     if actuales != selladas:
         retiradas = len(selladas - actuales)
@@ -344,7 +364,8 @@ async def _validate_universe_seal(
         )
     for nombre in sorted(profiles):
         vigentes = sorted(
-            f"{r.kind}:{r.pattern}" for r in (
+            f"{r.kind}:{r.pattern}"
+            for r in (
                 await session.execute(
                     sa.text(
                         "SELECT kind, pattern FROM profile_exclusions "
@@ -372,14 +393,20 @@ async def _validate_universe_seal(
     if int(body["corpus_generation"]) != int(gen_actual):
         raise ValueError(
             f"la generación del corpus derivó: sellada "
-            f"{body['corpus_generation']}, vigente {gen_actual}")
+            f"{body['corpus_generation']}, vigente {gen_actual}"
+        )
     return body
 
 
 async def build_blind_pool(
-    session, profiles: dict, baseline_spec: str, candidate_spec: str,
-    judgments_path: str | None = None, k: int = 20,
-    model_id: str | None = None, universe: dict | None = None,
+    session,
+    profiles: dict,
+    baseline_spec: str,
+    candidate_spec: str,
+    judgments_path: str | None = None,
+    k: int = 20,
+    model_id: str | None = None,
+    universe: dict | None = None,
     allow_unknown_release: bool = False,
     exclude_vacancy_ids: list | None = None,
 ) -> dict:
@@ -392,7 +419,7 @@ async def build_blind_pool(
     generalización y no memorización. La exclusión viaja a la frontera de
     recuperación y se aplica en SQL ANTES de los LIMIT: si se filtrara
     después, el excluido consumiría una plaza del top-K y el universo medido
-    no sería el declarado. Se aplica IGUAL a los dos sistemas.""" 
+    no sería el declarado. Se aplica IGUAL a los dos sistemas."""
     release = os.environ.get("RELEASE_SHA", "unknown")
     if release == "unknown" and not allow_unknown_release:
         raise ValueError("RELEASE_SHA=unknown: pool no auditable")
@@ -403,12 +430,18 @@ async def build_blind_pool(
     if universe is not None:
         # El pool queda LIGADO al mismo sello que el examen (P1-2).
         await _validate_universe_seal(
-            session, universe, profiles, mid, release,
-            exclude_vacancy_ids=exclude_vacancy_ids)
+            session,
+            universe,
+            profiles,
+            mid,
+            release,
+            exclude_vacancy_ids=exclude_vacancy_ids,
+        )
     base_id, _ = await _resolve_policy(session, baseline_spec)
     cand_id, _ = await _resolve_policy(session, candidate_spec)
     juicios = (
-        load_judgments(judgments_path, profiles) if judgments_path
+        load_judgments(judgments_path, profiles)
+        if judgments_path
         else {n: {} for n in profiles}
     )
     pool = {}
@@ -417,33 +450,42 @@ async def build_blind_pool(
         union: dict[str, dict] = {}
         for spid in (base_id, cand_id):
             computed = await matching.compute_policy_feed(
-                session, pid, mid, spid,
-                limit=matching.CANONICAL_EVAL_LIMIT, exclude_dismissed=True,
+                session,
+                pid,
+                mid,
+                spid,
+                limit=matching.CANONICAL_EVAL_LIMIT,
+                exclude_dismissed=True,
                 exclude_vacancy_ids=exclude_vacancy_ids,
             )
             if computed["status"] != "ok":
                 raise ValueError(f"pool: perfil {nombre} no computable")
             for f in computed["rows"][:k]:
-                union.setdefault(str(f["vacancy_id"]), {
-                    "vacancy_id": str(f["vacancy_id"]),
-                    "offer_revision_id": str(f["offer_revision_id"]),
-                })
+                union.setdefault(
+                    str(f["vacancy_id"]),
+                    {
+                        "vacancy_id": str(f["vacancy_id"]),
+                        "offer_revision_id": str(f["offer_revision_id"]),
+                    },
+                )
         ya = juicios.get(nombre, {})
         pool[nombre] = {
             "pendientes": sorted(
                 (v for v in union.values() if v["vacancy_id"] not in ya),
                 key=lambda x: x["vacancy_id"],
             ),
-            "juzgados_aplicables": sorted(
-                v for v in union if v in ya
-            ),
+            "juzgados_aplicables": sorted(v for v in union if v in ya),
         }
     return pool
 
 
 async def evaluate_dev(
-    session, policy_spec: str, profiles: dict, judgments_path: str,
-    unsure_path: str | None = None, model_id: str | None = None,
+    session,
+    policy_spec: str,
+    profiles: dict,
+    judgments_path: str,
+    unsure_path: str | None = None,
+    model_id: str | None = None,
     limit: int = matching.CANONICAL_EVAL_LIMIT,
     allow_unknown_release: bool = False,
     allow_uncovered: bool = False,
@@ -477,11 +519,15 @@ async def evaluate_dev(
     pares_universo = None
     if universe is not None:
         cuerpo = await _validate_universe_seal(
-            session, universe, profiles, mid, release,
-            exclude_vacancy_ids=exclude_vacancy_ids)
+            session,
+            universe,
+            profiles,
+            mid,
+            release,
+            exclude_vacancy_ids=exclude_vacancy_ids,
+        )
         pares_universo = {
-            (p["vacancy_id"], p["offer_revision_id"])
-            for p in cuerpo["pairs"]
+            (p["vacancy_id"], p["offer_revision_id"]) for p in cuerpo["pairs"]
         }
     por_perfil = {}
     revisiones = {}
@@ -489,8 +535,13 @@ async def evaluate_dev(
     for nombre in sorted(profiles):
         pid = profiles[nombre]
         computed = await matching.compute_policy_feed(
-            session, pid, mid, policy_id, limit=limit,
-            exclude_dismissed=True, with_corpus_generation=True,
+            session,
+            pid,
+            mid,
+            policy_id,
+            limit=limit,
+            exclude_dismissed=True,
+            with_corpus_generation=True,
             exclude_vacancy_ids=exclude_vacancy_ids,
         )
         if computed["status"] != "ok":
@@ -507,9 +558,7 @@ async def evaluate_dev(
         revisiones[nombre] = str(computed["profile_revision_id"])
         filas = computed["rows"]
         vac_rel = juicios[nombre]
-        rels_top = [
-            vac_rel.get(str(f["vacancy_id"]), 0) for f in filas[:NDCG_K]
-        ]
+        rels_top = [vac_rel.get(str(f["vacancy_id"]), 0) for f in filas[:NDCG_K]]
         dcg = _dcg(rels_top)
         idcg = _dcg(sorted(vac_rel.values(), reverse=True)[:NDCG_K])
         en_feed = {str(f["vacancy_id"]) for f in filas}
@@ -520,12 +569,14 @@ async def evaluate_dev(
         fuera_de_universo = []
         if pares_universo is not None:
             fuera_de_universo = sorted(
-                str(f["vacancy_id"]) for f in filas[:NDCG_K]
+                str(f["vacancy_id"])
+                for f in filas[:NDCG_K]
                 if (str(f["vacancy_id"]), str(f["offer_revision_id"]))
                 not in pares_universo
             )
         sin_juzgar = sorted(
-            str(f["vacancy_id"]) for f in filas[:NDCG_K]
+            str(f["vacancy_id"])
+            for f in filas[:NDCG_K]
             if str(f["vacancy_id"]) not in vac_rel
             and str(f["vacancy_id"]) not in set(unsure.get(nombre, ()))
         )
@@ -539,16 +590,17 @@ async def evaluate_dev(
             "feed_n": len(filas),
             "top10": [
                 {
-                    "rank": i + 1, "vacancy_id": str(f["vacancy_id"]),
-                    "score": str(f["score"]), "rel": rel,
+                    "rank": i + 1,
+                    "vacancy_id": str(f["vacancy_id"]),
+                    "score": str(f["score"]),
+                    "rel": rel,
                 }
                 for i, (f, rel) in enumerate(zip(filas[:NDCG_K], rels_top))
             ],
             "dcg": round(dcg, 6),
             "idcg": round(idcg, 6),
             "ndcg10": (
-                None if inelegible
-                else (round(dcg / idcg, 6) if idcg > 0 else 0.0)
+                None if inelegible else (round(dcg / idcg, 6) if idcg > 0 else 0.0)
             ),
             "no_medible": idcg <= 0,
             "causa_no_medible": (
@@ -624,8 +676,10 @@ async def _main(argv) -> None:
     # La restricción del examen se SELLA aquí (revisión externa 2026-09-07):
     # pool y evaluación la DERIVAN del sello, nunca de un argumento suelto.
     p_seal.add_argument(
-        "--exclude-vacancies", default=None,
-        help="fichero con un vacancy_id por línea (universo restringido)")
+        "--exclude-vacancies",
+        default=None,
+        help="fichero con un vacancy_id por línea (universo restringido)",
+    )
 
     p_pool = sub.add_parser("build-pool")
     p_pool.add_argument("--profile", action="append", required=True)
@@ -653,47 +707,63 @@ async def _main(argv) -> None:
                 excluidas = []
                 if args.exclude_vacancies:
                     excluidas = [
-                        x.strip() for x in
-                        open(args.exclude_vacancies, encoding="utf-8")
+                        x.strip()
+                        for x in open(args.exclude_vacancies, encoding="utf-8")
                         if x.strip()
                     ]
                 sello = await build_universe_manifest(
-                    s, profiles, model_id=args.model,
-                    exclude_vacancy_ids=excluidas)
+                    s, profiles, model_id=args.model, exclude_vacancy_ids=excluidas
+                )
                 sha = _write_atomic(args.out, sello)
-                print(json.dumps({
-                    "out": args.out, "file_sha256": sha,
-                    "universe_sha256": sello["universe_sha256"],
-                    "pairs": len(sello["universe"]["pairs"]),
-                    "exclude_vacancy_ids": len(
-                        sello["universe"]["exclude_vacancy_ids"]),
-                    "profile_exclusions": sello["universe"]["profile_exclusions"],
-                }, sort_keys=True))
+                print(
+                    json.dumps(
+                        {
+                            "out": args.out,
+                            "file_sha256": sha,
+                            "universe_sha256": sello["universe_sha256"],
+                            "pairs": len(sello["universe"]["pairs"]),
+                            "exclude_vacancy_ids": len(
+                                sello["universe"]["exclude_vacancy_ids"]
+                            ),
+                            "profile_exclusions": sello["universe"][
+                                "profile_exclusions"
+                            ],
+                        },
+                        sort_keys=True,
+                    )
+                )
             elif args.cmd == "build-pool":
                 sello_pool = _load_universe(args.universe)
                 pool = await build_blind_pool(
-                    s, profiles, args.baseline, args.candidate,
-                    judgments_path=args.judgments, k=args.k,
+                    s,
+                    profiles,
+                    args.baseline,
+                    args.candidate,
+                    judgments_path=args.judgments,
+                    k=args.k,
                     model_id=args.model,
                     universe=sello_pool,
                     # DERIVADA del sello: un argumento contradictorio no
                     # existe porque no hay argumento.
-                    exclude_vacancy_ids=sello_pool["universe"][
-                        "exclude_vacancy_ids"],
+                    exclude_vacancy_ids=sello_pool["universe"]["exclude_vacancy_ids"],
                 )
                 sha = _write_atomic(args.out, pool)
-                print(json.dumps({"out": args.out, "file_sha256": sha},
-                                 sort_keys=True))
+                print(json.dumps({"out": args.out, "file_sha256": sha}, sort_keys=True))
             else:
-                sello_ev = (_load_universe(args.universe)
-                            if args.universe else None)
+                sello_ev = _load_universe(args.universe) if args.universe else None
                 out = await evaluate_dev(
-                    s, args.policy, profiles, args.judgments,
-                    unsure_path=args.unsure, model_id=args.model,
+                    s,
+                    args.policy,
+                    profiles,
+                    args.judgments,
+                    unsure_path=args.unsure,
+                    model_id=args.model,
                     universe=sello_ev,
                     exclude_vacancy_ids=(
                         sello_ev["universe"]["exclude_vacancy_ids"]
-                        if sello_ev else None),
+                        if sello_ev
+                        else None
+                    ),
                 )
                 print(json.dumps(out, ensure_ascii=False, sort_keys=True))
 

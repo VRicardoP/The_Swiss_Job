@@ -77,7 +77,10 @@ async def validation_error_handler(
             "message": "petición malformada",
             "details": {
                 "errors": [
-                    {"loc": [str(x) for x in e.get("loc", [])], "msg": str(e.get("msg", ""))}
+                    {
+                        "loc": [str(x) for x in e.get("loc", [])],
+                        "msg": str(e.get("msg", "")),
+                    }
                     for e in exc.errors()
                 ]
             },
@@ -123,13 +126,13 @@ def _openapi_with_contract_errors():
     if app.openapi_schema:
         return app.openapi_schema
     schema = get_openapi(
-        title=app.title, version=app.version, routes=app.routes,
+        title=app.title,
+        version=app.version,
+        routes=app.routes,
     )
     error_ref = {
         "content": {
-            "application/json": {
-                "schema": {"$ref": "#/components/schemas/ErrorDTO"}
-            }
+            "application/json": {"schema": {"$ref": "#/components/schemas/ErrorDTO"}}
         }
     }
     for path in schema.get("paths", {}).values():
@@ -138,7 +141,9 @@ def _openapi_with_contract_errors():
             if "422" in resps:
                 resps.pop("422")
                 resps.setdefault("400", {"description": "Bad Request", **error_ref})
-            resps.setdefault("500", {"description": "Internal Server Error", **error_ref})
+            resps.setdefault(
+                "500", {"description": "Internal Server Error", **error_ref}
+            )
     app.openapi_schema = schema
     return schema
 
@@ -149,7 +154,11 @@ app.openapi = _openapi_with_contract_errors
 # Perfil de DESARROLLO: `docker-compose.dev.yml` monta ./jobhunt_core como
 # volumen, así que el código en disco puede no ser el de la imagen. Ese readiness
 # NO autoriza operaciones (flip, maniobras de datos) y lo dice en su respuesta.
-CODE_MUTABLE = os.getenv("CORE_CODE_MUTABLE", "").strip().lower() in {"1", "true", "yes"}
+CODE_MUTABLE = os.getenv("CORE_CODE_MUTABLE", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 # El montaje del código es un HECHO OBSERVABLE del proceso (auditoría G11 P2-2). La
 # variable de arriba solo dice lo que alguien escribió en el compose: montando

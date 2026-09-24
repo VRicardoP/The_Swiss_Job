@@ -19,7 +19,15 @@ from typing import Callable
 logger = logging.getLogger(__name__)
 
 # Campos del contenido canónico (DTO §2: title/company/description/salary/tags).
-CONTENT_FIELDS = ("title", "company", "description", "tags", "salary", "location", "remote")
+CONTENT_FIELDS = (
+    "title",
+    "company",
+    "description",
+    "tags",
+    "salary",
+    "location",
+    "remote",
+)
 # Optional structured search fields. Missing is UNKNOWN, never inferred from
 # salary/location text at the canonical boundary. TEXT_FIELDS stays unchanged.
 SEARCH_TEXT_FIELDS = ("canton", "language", "seniority", "contract_type")
@@ -51,7 +59,9 @@ def normalize_offer(source_name: str, raw: dict) -> dict | None:
     try:
         picked = fn(raw)
     except Exception:
-        logger.warning("normalize: normalizador de %r falló con un payload", source_name)
+        logger.warning(
+            "normalize: normalizador de %r falló con un payload", source_name
+        )
         return None
     content = {
         "title": _text(picked.get("title")),
@@ -60,11 +70,16 @@ def normalize_offer(source_name: str, raw: dict) -> dict | None:
         "tags": _tags(picked.get("tags")),
         "salary": _text(picked.get("salary")),
         "location": _text(picked.get("location")),
-        "remote": picked.get("remote") if isinstance(picked.get("remote"), bool) else None,
+        "remote": picked.get("remote")
+        if isinstance(picked.get("remote"), bool)
+        else None,
     }
     if not content["title"]:
         # Sin título no hay oferta presentable (DTO §2): se salta con log.
-        logger.warning("normalize: %r sin título tras normalizar — sin revisión canónica", source_name)
+        logger.warning(
+            "normalize: %r sin título tras normalizar — sin revisión canónica",
+            source_name,
+        )
         return None
     for field in SEARCH_TEXT_FIELDS:
         value = _text(picked.get(field))

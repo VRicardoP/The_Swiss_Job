@@ -9,6 +9,7 @@ it only indexes rows that are actually in someone's feed.
 Revision ID: core0051
 Revises: core0050
 """
+
 from alembic import op
 
 revision = "core0051"

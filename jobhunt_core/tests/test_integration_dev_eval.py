@@ -22,7 +22,12 @@ import sqlalchemy as sa
 from jobhunt_core import dev_eval, embeddings, matching
 from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.tests.test_integration_matching import (  # noqa: F401
-    DirectionalBackend, _evaluate, _listing, _rows, _setup, db,
+    DirectionalBackend,
+    _evaluate,
+    _listing,
+    _rows,
+    _setup,
+    db,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -31,16 +36,17 @@ pytestmark = pytest.mark.skipif(
 )
 
 TITULOS = [
-    "python backend developer", "senior python engineer",
-    "data engineer python sql", "warehouse operative",
-    "kubernetes platform engineer", "frontend react developer",
+    "python backend developer",
+    "senior python engineer",
+    "data engineer python sql",
+    "warehouse operative",
+    "kubernetes platform engineer",
+    "frontend react developer",
 ]
 
 
 def _judgments_file(lineas):
-    f = tempfile.NamedTemporaryFile(
-        "w", suffix=".csv", delete=False, encoding="utf-8"
-    )
+    f = tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8")
     f.write("".join(f"{ln}\n" for ln in lineas))
     f.close()
     return f.name
@@ -50,8 +56,12 @@ def _shadow_policy(factory, created, version="v4"):
     async def go():
         async with factory() as s:
             polid = await matching.ensure_policy(
-                s, matching.HYBRID_POLICY_NAME, version,
-                weights=matching.HYBRID4_POLICY_WEIGHTS, active=False)
+                s,
+                matching.HYBRID_POLICY_NAME,
+                version,
+                weights=matching.HYBRID4_POLICY_WEIGHTS,
+                active=False,
+            )
             created["policies"].append(polid)
             await s.commit()
             return polid
@@ -59,18 +69,32 @@ def _shadow_policy(factory, created, version="v4"):
     return asyncio.run(go())
 
 
-def _run_eval(factory, polid_spec, profiles, judgments, unsure=None,
-              allow_uncovered=True, universe=None):
+def _run_eval(
+    factory,
+    polid_spec,
+    profiles,
+    judgments,
+    unsure=None,
+    allow_uncovered=True,
+    universe=None,
+):
     # `universe` es el ENVOLTORIO {universe, universe_sha256} (P1-2).
     """allow_uncovered=True por defecto SOLO en estos tests exploratorios
     (juzgan 3 de 10 a propósito); el contrato de examen es estricto y sus
     regresiones lo llaman con False."""
+
     async def go():
         async with factory() as s:
             return await dev_eval.evaluate_dev(
-                s, polid_spec, profiles, judgments, unsure_path=unsure,
-                allow_unknown_release=True, allow_uncovered=allow_uncovered,
-                universe=universe)
+                s,
+                polid_spec,
+                profiles,
+                judgments,
+                unsure_path=unsure,
+                allow_unknown_release=True,
+                allow_uncovered=allow_uncovered,
+                universe=universe,
+            )
 
     return asyncio.run(go())
 
@@ -78,18 +102,25 @@ def _run_eval(factory, polid_spec, profiles, judgments, unsure=None,
 def _evaluate_shadow(factory, pid, mid, polid, limit=100):
     async def go():
         return await matching.evaluate_profile(
-            factory, pid, mid, polid, limit=limit, move_current=False)
+            factory, pid, mid, polid, limit=limit, move_current=False
+        )
 
     return asyncio.run(go())
 
 
-def _compute(factory, pid, mid, polid, limit=matching.CANONICAL_EVAL_LIMIT,
-             exclude_dismissed=True):
+def _compute(
+    factory,
+    pid,
+    mid,
+    polid,
+    limit=matching.CANONICAL_EVAL_LIMIT,
+    exclude_dismissed=True,
+):
     async def go():
         async with factory() as s:
             return await matching.compute_policy_feed(
-                s, pid, mid, polid, limit=limit,
-                exclude_dismissed=exclude_dismissed)
+                s, pid, mid, polid, limit=limit, exclude_dismissed=exclude_dismissed
+            )
 
     return asyncio.run(go())
 
@@ -103,8 +134,11 @@ def test_el_feed_de_medicion_es_de_una_sola_ejecucion(db):  # noqa: F811  (la fi
     ejecución de AHORA — tamaño objetivo, rangos actuales, determinista."""
     factory, created = db
     pid, mid, _, vacs = _setup(
-        factory, created, TITULOS,
-        profile_content={"title": "python developer", "skills": ["python"]})
+        factory,
+        created,
+        TITULOS,
+        profile_content={"title": "python developer", "skills": ["python"]},
+    )
     polid = _shadow_policy(factory, created)
     K = len(TITULOS)
 
@@ -115,7 +149,10 @@ def test_el_feed_de_medicion_es_de_una_sola_ejecucion(db):  # noqa: F811  (la fi
         factory,
         "SELECT vacancy_id, (scores->>'semantic_rank')::int AS sr "
         "FROM match_evaluations WHERE profile_id = :p AND "
-        "scoring_policy_id = :sp", p=pid, sp=polid)
+        "scoring_policy_id = :sp",
+        p=pid,
+        sp=polid,
+    )
     top1_g1 = next(r.vacancy_id for r in g1 if r.sr == 1)
 
     # Cambio de corpus: una oferta NUEVA pegada al vector del perfil.
@@ -123,22 +160,33 @@ def test_el_feed_de_medicion_es_de_una_sola_ejecucion(db):  # noqa: F811  (la fi
         async with factory() as s:
             scope_id = created["scopes"][0]
             await RawListingSink().handle(
-                s, str(scope_id), (_listing("j-nuevo", "python developer"),))
+                s, str(scope_id), (_listing("j-nuevo", "python developer"),)
+            )
             await s.commit()
 
     async def pin_vector():
         async with factory() as s:
             # el vector del perfil, clavado: la nueva pasa a rango semántico 1
-            vec = (await s.execute(sa.text(
-                "SELECT pe.vector::text FROM profile_embeddings pe "
-                "WHERE pe.model_id = :m ORDER BY pe.profile_revision_id "
-                "LIMIT 1"), {"m": mid})).scalar_one()
-            await s.execute(sa.text(
-                "UPDATE offer_embeddings SET vector = CAST(:v AS vector) "
-                "WHERE text_hash IN (SELECT o.text_hash FROM offer_revisions o "
-                " JOIN vacancies va ON va.current_offer_revision_id = o.id "
-                " WHERE o.content->>'title' = 'python developer') "
-                "AND model_id = :m"), {"v": vec, "m": mid})
+            vec = (
+                await s.execute(
+                    sa.text(
+                        "SELECT pe.vector::text FROM profile_embeddings pe "
+                        "WHERE pe.model_id = :m ORDER BY pe.profile_revision_id "
+                        "LIMIT 1"
+                    ),
+                    {"m": mid},
+                )
+            ).scalar_one()
+            await s.execute(
+                sa.text(
+                    "UPDATE offer_embeddings SET vector = CAST(:v AS vector) "
+                    "WHERE text_hash IN (SELECT o.text_hash FROM offer_revisions o "
+                    " JOIN vacancies va ON va.current_offer_revision_id = o.id "
+                    " WHERE o.content->>'title' = 'python developer') "
+                    "AND model_id = :m"
+                ),
+                {"v": vec, "m": mid},
+            )
             await s.commit()
 
     asyncio.run(sink_offer())
@@ -146,6 +194,7 @@ def test_el_feed_de_medicion_es_de_una_sola_ejecucion(db):  # noqa: F811  (la fi
     embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
     try:
         from jobhunt_core.tasks.embedding import run_pending_task
+
         r = run_pending_task.apply(kwargs={"limit": 100})
         assert r.successful(), r.traceback
     finally:
@@ -158,7 +207,10 @@ def test_el_feed_de_medicion_es_de_una_sola_ejecucion(db):  # noqa: F811  (la fi
         factory,
         "SELECT vacancy_id, (scores->>'semantic_rank')::int AS sr "
         "FROM match_evaluations WHERE profile_id = :p AND "
-        "scoring_policy_id = :sp", p=pid, sp=polid)
+        "scoring_policy_id = :sp",
+        p=pid,
+        sp=polid,
+    )
     # El DEFECTO del almacén, documentado: limit+1 filas vigentes y el rango
     # de G1 conservado para el viejo top-1 (ON CONFLICT DO NOTHING).
     assert len(union) == K + 1
@@ -170,7 +222,8 @@ def test_el_feed_de_medicion_es_de_una_sola_ejecucion(db):  # noqa: F811  (la fi
     por_vac = {f["vacancy_id"]: f for f in r["rows"]}
     assert top1_g1 in por_vac, "el viejo top-1 sigue en el corpus"
     assert por_vac[top1_g1]["score_parts"]["semantic_rank"] == 2, (
-        "el cálculo directo debe reflejar el rango ACTUAL, no el de G1")
+        "el cálculo directo debe reflejar el rango ACTUAL, no el de G1"
+    )
     # determinista: dos ejecuciones, mismas filas
     assert _compute(factory, pid, mid, polid, limit=K)["rows"] == r["rows"]
 
@@ -203,10 +256,13 @@ def test_descartada_no_aparece_y_sin_estado_si(db):  # noqa: F811  (la fixture, 
 
     async def dismiss():
         async with factory() as s:
-            await s.execute(sa.text(
-                "UPDATE profile_vacancy_state SET dismissed_at = now() "
-                "WHERE profile_id = :p AND vacancy_id = :v"),
-                {"p": pid, "v": primera})
+            await s.execute(
+                sa.text(
+                    "UPDATE profile_vacancy_state SET dismissed_at = now() "
+                    "WHERE profile_id = :p AND vacancy_id = :v"
+                ),
+                {"p": pid, "v": primera},
+            )
             await s.commit()
 
     asyncio.run(dismiss())
@@ -231,8 +287,8 @@ def _cosine2_policy(factory, created):
     async def go():
         async with factory() as s:
             polid = await matching.ensure_policy(
-                s, "cosine-nueva", "v1", weights={"algorithm": "cosine"},
-                active=False)
+                s, "cosine-nueva", "v1", weights={"algorithm": "cosine"}, active=False
+            )
             created["policies"].append(polid)
             await s.commit()
             return polid
@@ -250,8 +306,10 @@ def test_promover_y_rollback_conservan_el_feed(db):  # noqa: F811  (la fixture, 
 
     feed_cosine = _feed_actual(factory, pid)
     polid = _cosine2_policy(factory, created)
-    medido = [(f["vacancy_id"], f"{f['score']:.2f}")
-              for f in _compute(factory, pid, mid, polid)["rows"]]
+    medido = [
+        (f["vacancy_id"], f"{f['score']:.2f}")
+        for f in _compute(factory, pid, mid, polid)["rows"]
+    ]
 
     async def declare(ids):
         async with factory() as s:
@@ -261,7 +319,8 @@ def test_promover_y_rollback_conservan_el_feed(db):  # noqa: F811  (la fixture, 
     asyncio.run(declare([polid]))
     assert _evaluate(factory, pid, mid, polid)["moved_current"] is True
     assert _feed_actual(factory, pid) == medido, (
-        "lo medido en desarrollo debe ser EXACTAMENTE lo servido al promover")
+        "lo medido en desarrollo debe ser EXACTAMENTE lo servido al promover"
+    )
 
     asyncio.run(declare([cosine_id]))
     assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
@@ -305,13 +364,12 @@ def test_valla_final_rechaza_mover_feed_con_relativa(db):  # noqa: F811  (la fix
 
     async def bypass_y_evaluar():
         async with factory() as s:
-            await s.execute(sa.text(
-                "UPDATE scoring_policies SET active = (id = :v)"),
-                {"v": polid})
+            await s.execute(
+                sa.text("UPDATE scoring_policies SET active = (id = :v)"), {"v": polid}
+            )
             await s.commit()
         with pytest.raises(ValueError, match="RELATIVO"):
-            await matching.evaluate_profile(
-                factory, pid, mid, polid, move_current=True)
+            await matching.evaluate_profile(factory, pid, mid, polid, move_current=True)
         async with factory() as s:  # restaurar activación para el teardown
             await matching.declare_active_policies(s, [cosine_id])
             await s.commit()
@@ -345,33 +403,44 @@ def test_absoluta_estable_tras_cambio_de_corpus(db):  # noqa: F811  (la fixture,
         factory,
         "SELECT score_final FROM match_evaluations WHERE profile_id = :p "
         "AND scoring_policy_id = :sp AND vacancy_id = :v",
-        p=pid, sp=cosine_id, v=v0)[0].score_final
+        p=pid,
+        sp=cosine_id,
+        v=v0,
+    )[0].score_final
 
     async def sink_offer():
         async with factory() as s:
             await RawListingSink().handle(
-                s, str(created["scopes"][0]),
-                (_listing("j-g2", "python developer expert"),))
+                s,
+                str(created["scopes"][0]),
+                (_listing("j-g2", "python developer expert"),),
+            )
             await s.commit()
 
     asyncio.run(sink_offer())
     embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
     try:
         from jobhunt_core.tasks.embedding import run_pending_task
+
         r = run_pending_task.apply(kwargs={"limit": 100})
         assert r.successful(), r.traceback
     finally:
         embeddings.set_backend_factory(None)
 
     assert _evaluate(factory, pid, mid, cosine_id)["moved_current"] is True
-    medido = [(f["vacancy_id"], f"{f['score']:.2f}")
-              for f in _compute(factory, pid, mid, cosine_id)["rows"]]
+    medido = [
+        (f["vacancy_id"], f"{f['score']:.2f}")
+        for f in _compute(factory, pid, mid, cosine_id)["rows"]
+    ]
     assert _feed_actual(factory, pid) == medido
     score_g2 = _rows(
         factory,
         "SELECT score_final FROM match_evaluations WHERE profile_id = :p "
         "AND scoring_policy_id = :sp AND vacancy_id = :v",
-        p=pid, sp=cosine_id, v=v0)[0].score_final
+        p=pid,
+        sp=cosine_id,
+        v=v0,
+    )[0].score_final
     assert score_g2 == score_g1  # la pareja vieja conserva su score
 
 
@@ -381,12 +450,19 @@ def test_absoluta_estable_tras_cambio_de_corpus(db):  # noqa: F811  (la fixture,
 def test_el_evaluador_usa_la_formula_del_gate_no_la_lineal(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     pid, mid, _, vacs = _setup(
-        factory, created, TITULOS,
-        profile_content={"title": "python developer", "skills": ["python"]})
+        factory,
+        created,
+        TITULOS,
+        profile_content={"title": "python developer", "skills": ["python"]},
+    )
     _shadow_policy(factory, created)
     # primera pasada para conocer el orden actual (determinista)
-    sonda = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
-                      _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+    sonda = _run_eval(
+        factory,
+        "hybrid-rrf:v4",
+        {"P1": pid},
+        _judgments_file([f"P1,{list(vacs.values())[0]},1"]),
+    )
     top = [f["vacancy_id"] for f in sonda["payload"]["profiles"]["P1"]["top10"]]
     j = [f"P1,{top[0]},2", f"P1,{top[1]},1", f"P1,{top[2]},0"]
     out = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, _judgments_file(j))
@@ -417,29 +493,43 @@ def test_fallos_cerrados_del_evaluador(db):  # noqa: F811  (la fixture, no una r
     _shadow_policy(factory, created)
     v = str(list(vacs.values())[0])
     with pytest.raises(ValueError, match="ambiguo"):
-        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
-                  _judgments_file([f"P1,{v},2", f"P1,{v},1"]))
+        _run_eval(
+            factory,
+            "hybrid-rrf:v4",
+            {"P1": pid},
+            _judgments_file([f"P1,{v},2", f"P1,{v},1"]),
+        )
     with pytest.raises(ValueError, match="inexistentes"):
-        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
-                  _judgments_file(
-                      ["P1,00000000-0000-0000-0000-000000000000,1"]))
+        _run_eval(
+            factory,
+            "hybrid-rrf:v4",
+            {"P1": pid},
+            _judgments_file(["P1,00000000-0000-0000-0000-000000000000,1"]),
+        )
     with pytest.raises(ValueError, match="inexistente"):
-        _run_eval(factory, "hybrid-rrf:v99x", {"P1": pid},
-                  _judgments_file([f"P1,{v},1"]))
+        _run_eval(
+            factory, "hybrid-rrf:v99x", {"P1": pid}, _judgments_file([f"P1,{v},1"])
+        )
     # perfil sin vector → no medible, jamás un feed vacío en silencio
     with pytest.raises(ValueError, match="no medible"):
-        _run_eval(factory, "hybrid-rrf:v4", {"PX": str(uuid.uuid4())},
-                  _judgments_file([]))
+        _run_eval(
+            factory, "hybrid-rrf:v4", {"PX": str(uuid.uuid4())}, _judgments_file([])
+        )
     # unsure malformado: raíz lista, valor no-lista, elemento escalar, solape
-    for contenido in (["a"], {"P1": "no-lista"}, {"P1": [123]},
-                      {"P1": [v]}):
+    for contenido in (["a"], {"P1": "no-lista"}, {"P1": [123]}, {"P1": [v]}):
         f = tempfile.NamedTemporaryFile(
-            "w", suffix=".json", delete=False, encoding="utf-8")
+            "w", suffix=".json", delete=False, encoding="utf-8"
+        )
         json.dump(contenido, f)
         f.close()
         with pytest.raises(ValueError):
-            _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
-                      _judgments_file([f"P1,{v},1"]), unsure=f.name)
+            _run_eval(
+                factory,
+                "hybrid-rrf:v4",
+                {"P1": pid},
+                _judgments_file([f"P1,{v},1"]),
+                unsure=f.name,
+            )
 
 
 def test_release_desconocida_es_error_en_operacion(db):  # noqa: F811  (la fixture, no una redefinición)
@@ -451,8 +541,11 @@ def test_release_desconocida_es_error_en_operacion(db):  # noqa: F811  (la fixtu
         async with factory() as s:
             with pytest.raises(ValueError, match="RELEASE_SHA"):
                 await dev_eval.evaluate_dev(
-                    s, "hybrid-rrf:v4", {"P1": pid},
-                    _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+                    s,
+                    "hybrid-rrf:v4",
+                    {"P1": pid},
+                    _judgments_file([f"P1,{list(vacs.values())[0]},1"]),
+                )
 
     if os.environ.get("RELEASE_SHA", "unknown") == "unknown":
         asyncio.run(go())
@@ -484,22 +577,34 @@ def test_top10_sin_cobertura_es_inelegible_no_relevancia_cero(db):  # noqa: F811
     factory, created = db
     pid, mid, _, vacs = _setup(factory, created, TITULOS)
     _shadow_policy(factory, created)
-    sonda = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
-                      _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+    sonda = _run_eval(
+        factory,
+        "hybrid-rrf:v4",
+        {"P1": pid},
+        _judgments_file([f"P1,{list(vacs.values())[0]},1"]),
+    )
     top = [f["vacancy_id"] for f in sonda["payload"]["profiles"]["P1"]["top10"]]
 
     # cobertura parcial + contrato estricto ⇒ INELEGIBLE, ndcg None
-    out = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
-                    _judgments_file([f"P1,{top[0]},2"]),
-                    allow_uncovered=False)
+    out = _run_eval(
+        factory,
+        "hybrid-rrf:v4",
+        {"P1": pid},
+        _judgments_file([f"P1,{top[0]},2"]),
+        allow_uncovered=False,
+    )
     r = out["payload"]["profiles"]["P1"]
     assert r["elegible"] is False and r["ndcg10"] is None
     assert set(r["sin_juzgar_en_top10"]) == set(top[1:])
 
     # cobertura completa ⇒ elegible con nDCG
-    out2 = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
-                     _judgments_file([f"P1,{v},1" for v in top]),
-                     allow_uncovered=False)
+    out2 = _run_eval(
+        factory,
+        "hybrid-rrf:v4",
+        {"P1": pid},
+        _judgments_file([f"P1,{v},1" for v in top]),
+        allow_uncovered=False,
+    )
     r2 = out2["payload"]["profiles"]["P1"]
     assert r2["elegible"] is True and r2["ndcg10"] is not None
 
@@ -510,40 +615,55 @@ def test_el_examen_queda_ligado_a_su_universo(db):  # noqa: F811  (la fixture, n
     antes del cambio, el resultado se declara INELEGIBLE (fuera_de_universo)."""
     factory, created = db
     pid, mid, _, vacs = _setup(
-        factory, created, TITULOS,
-        profile_content={"title": "python developer", "skills": ["python"]})
+        factory,
+        created,
+        TITULOS,
+        profile_content={"title": "python developer", "skills": ["python"]},
+    )
     _shadow_policy(factory, created)
 
     async def sellar():
         async with factory() as s:
             return await dev_eval.build_universe_manifest(
-                s, {"P1": pid}, allow_unknown_release=True)
+                s, {"P1": pid}, allow_unknown_release=True
+            )
 
     manifiesto = asyncio.run(sellar())
     assert manifiesto["universe_sha256"]
 
-    sonda = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
-                      _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+    sonda = _run_eval(
+        factory,
+        "hybrid-rrf:v4",
+        {"P1": pid},
+        _judgments_file([f"P1,{list(vacs.values())[0]},1"]),
+    )
     top = [f["vacancy_id"] for f in sonda["payload"]["profiles"]["P1"]["top10"]]
     juicios = _judgments_file([f"P1,{v},1" for v in top])
 
     # examen ligado al universo, sin deriva: elegible (envoltorio COMPLETO)
-    out = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
-                    allow_uncovered=False, universe=manifiesto)
+    out = _run_eval(
+        factory,
+        "hybrid-rrf:v4",
+        {"P1": pid},
+        juicios,
+        allow_uncovered=False,
+        universe=manifiesto,
+    )
     assert out["payload"]["profiles"]["P1"]["elegible"] is True
 
     # deriva: oferta NUEVA que asalta el top (vector clavado al del perfil)
     async def sink_offer():
         async with factory() as s:
             await RawListingSink().handle(
-                s, str(created["scopes"][0]),
-                (_listing("j-univ", "python developer"),))
+                s, str(created["scopes"][0]), (_listing("j-univ", "python developer"),)
+            )
             await s.commit()
 
     asyncio.run(sink_offer())
     embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
     try:
         from jobhunt_core.tasks.embedding import run_pending_task
+
         r = run_pending_task.apply(kwargs={"limit": 100})
         assert r.successful(), r.traceback
     finally:
@@ -551,16 +671,26 @@ def test_el_examen_queda_ligado_a_su_universo(db):  # noqa: F811  (la fixture, n
 
     async def clavar():
         async with factory() as s:
-            vec = (await s.execute(sa.text(
-                "SELECT pe.vector::text FROM profile_embeddings pe "
-                "WHERE pe.model_id = :m ORDER BY pe.profile_revision_id "
-                "LIMIT 1"), {"m": mid})).scalar_one()
-            await s.execute(sa.text(
-                "UPDATE offer_embeddings SET vector = CAST(:v AS vector) "
-                "WHERE text_hash IN (SELECT o.text_hash FROM offer_revisions o "
-                " JOIN vacancies va ON va.current_offer_revision_id = o.id "
-                " WHERE o.content->>'title' = 'python developer') "
-                "AND model_id = :m"), {"v": vec, "m": mid})
+            vec = (
+                await s.execute(
+                    sa.text(
+                        "SELECT pe.vector::text FROM profile_embeddings pe "
+                        "WHERE pe.model_id = :m ORDER BY pe.profile_revision_id "
+                        "LIMIT 1"
+                    ),
+                    {"m": mid},
+                )
+            ).scalar_one()
+            await s.execute(
+                sa.text(
+                    "UPDATE offer_embeddings SET vector = CAST(:v AS vector) "
+                    "WHERE text_hash IN (SELECT o.text_hash FROM offer_revisions o "
+                    " JOIN vacancies va ON va.current_offer_revision_id = o.id "
+                    " WHERE o.content->>'title' = 'python developer') "
+                    "AND model_id = :m"
+                ),
+                {"v": vec, "m": mid},
+            )
             await s.commit()
 
     asyncio.run(clavar())
@@ -568,8 +698,14 @@ def test_el_examen_queda_ligado_a_su_universo(db):  # noqa: F811  (la fixture, n
     # intrusa deriva el universo y el examen COMPLETO es inelegible (error),
     # jamás un nDCG parcial ni un 0 silencioso.
     with pytest.raises(ValueError, match="deriv"):
-        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
-                  allow_uncovered=False, universe=manifiesto)
+        _run_eval(
+            factory,
+            "hybrid-rrf:v4",
+            {"P1": pid},
+            juicios,
+            allow_uncovered=False,
+            universe=manifiesto,
+        )
 
 
 def test_pool_ciego_es_union_determinista_de_topk(db):  # noqa: F811  (la fixture, no una redefinición)
@@ -580,15 +716,20 @@ def test_pool_ciego_es_union_determinista_de_topk(db):  # noqa: F811  (la fixtur
     async def go():
         async with factory() as s:
             return await dev_eval.build_blind_pool(
-                s, {"P1": pid}, "cosine:v1", "hybrid-rrf:v4",
+                s,
+                {"P1": pid},
+                "cosine:v1",
+                "hybrid-rrf:v4",
                 judgments_path=_judgments_file(
-                    [f"P1,{vacs['python backend developer']},1"]), k=3,
-                allow_unknown_release=True)
+                    [f"P1,{vacs['python backend developer']},1"]
+                ),
+                k=3,
+                allow_unknown_release=True,
+            )
 
     pool = asyncio.run(go())
     p1 = pool["P1"]
-    assert p1["juzgados_aplicables"] == [
-        str(vacs["python backend developer"])]
+    assert p1["juzgados_aplicables"] == [str(vacs["python backend developer"])]
     ids = [x["vacancy_id"] for x in p1["pendientes"]]
     assert ids == sorted(ids) and len(ids) == len(set(ids))
     assert 2 <= len(ids) <= 6  # unión de dos top-3 sin el ya juzgado
@@ -601,7 +742,8 @@ def _sellar(factory, profiles):
     async def go():
         async with factory() as s:
             return await dev_eval.build_universe_manifest(
-                s, profiles, allow_unknown_release=True)
+                s, profiles, allow_unknown_release=True
+            )
 
     return asyncio.run(go())
 
@@ -612,43 +754,62 @@ def test_el_universo_detecta_retirada_revision_y_adulteracion(db):  # noqa: F811
     error; (c) cuerpo adulterado o SHA falsa ⇒ error. Nada de nDCG parcial."""
     factory, created = db
     # 12 ofertas: quedan parejas selladas FUERA del top-10
-    pid, mid, _, vacs = _setup(
-        factory, created, TITULOS + [t + " ii" for t in TITULOS])
+    pid, mid, _, vacs = _setup(factory, created, TITULOS + [t + " ii" for t in TITULOS])
     _shadow_policy(factory, created)
-    sonda = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
-                      _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+    sonda = _run_eval(
+        factory,
+        "hybrid-rrf:v4",
+        {"P1": pid},
+        _judgments_file([f"P1,{list(vacs.values())[0]},1"]),
+    )
     top = [f["vacancy_id"] for f in sonda["payload"]["profiles"]["P1"]["top10"]]
     juicios = _judgments_file([f"P1,{v},1" for v in top])
     sello = _sellar(factory, {"P1": pid})
 
     # sano: elegible
-    out = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
-                    allow_uncovered=False, universe=sello)
+    out = _run_eval(
+        factory,
+        "hybrid-rrf:v4",
+        {"P1": pid},
+        juicios,
+        allow_uncovered=False,
+        universe=sello,
+    )
     assert out["payload"]["profiles"]["P1"]["elegible"] is True
 
     # (a) retirada del corpus: archivar una pareja sellada que NO está en el
     # top — el top sigue compuesto por parejas viejas y aun así es inelegible
     fuera_del_top = next(
-        p["vacancy_id"] for p in sello["universe"]["pairs"]
-        if p["vacancy_id"] not in top)
+        p["vacancy_id"]
+        for p in sello["universe"]["pairs"]
+        if p["vacancy_id"] not in top
+    )
 
     async def archivar():
         async with factory() as s:
-            await s.execute(sa.text(
-                "UPDATE vacancies SET archived_at = now() WHERE id = :v"),
-                {"v": fuera_del_top})
+            await s.execute(
+                sa.text("UPDATE vacancies SET archived_at = now() WHERE id = :v"),
+                {"v": fuera_del_top},
+            )
             await s.commit()
 
     asyncio.run(archivar())
     with pytest.raises(ValueError, match="universo"):
-        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
-                  allow_uncovered=False, universe=sello)
+        _run_eval(
+            factory,
+            "hybrid-rrf:v4",
+            {"P1": pid},
+            juicios,
+            allow_uncovered=False,
+            universe=sello,
+        )
 
     async def desarchivar():
         async with factory() as s:
-            await s.execute(sa.text(
-                "UPDATE vacancies SET archived_at = NULL WHERE id = :v"),
-                {"v": fuera_del_top})
+            await s.execute(
+                sa.text("UPDATE vacancies SET archived_at = NULL WHERE id = :v"),
+                {"v": fuera_del_top},
+            )
             await s.commit()
 
     asyncio.run(desarchivar())
@@ -657,13 +818,16 @@ def test_el_universo_detecta_retirada_revision_y_adulteracion(db):  # noqa: F811
     async def revisar():
         async with factory() as s:
             from jobhunt_core import profiles as core_profiles
+
             cur = await core_profiles.current_revision(s, pid)
             await core_profiles.save_profile_revision(
-                s, pid, dict(cur.content, languages=["English"]))
+                s, pid, dict(cur.content, languages=["English"])
+            )
             await s.commit()
 
     asyncio.run(revisar())
     from jobhunt_core.tasks.embedding import run_pending_task
+
     embeddings.set_backend_factory(lambda n, v: DirectionalBackend())
     try:
         r = run_pending_task.apply(kwargs={"limit": 100})
@@ -671,19 +835,37 @@ def test_el_universo_detecta_retirada_revision_y_adulteracion(db):  # noqa: F811
     finally:
         embeddings.set_backend_factory(None)
     with pytest.raises(ValueError, match="revisi"):
-        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
-                  allow_uncovered=False, universe=sello)
+        _run_eval(
+            factory,
+            "hybrid-rrf:v4",
+            {"P1": pid},
+            juicios,
+            allow_uncovered=False,
+            universe=sello,
+        )
 
     # (c) adulteración: cuerpo cambiado o SHA falsa
     roto = json.loads(json.dumps(sello))
     roto["universe"]["pairs"] = roto["universe"]["pairs"][:-1]
     with pytest.raises(ValueError, match="sha|SHA"):
-        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
-                  allow_uncovered=False, universe=roto)
+        _run_eval(
+            factory,
+            "hybrid-rrf:v4",
+            {"P1": pid},
+            juicios,
+            allow_uncovered=False,
+            universe=roto,
+        )
     falso = dict(sello, universe_sha256="0" * 64)
     with pytest.raises(ValueError, match="sha|SHA"):
-        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
-                  allow_uncovered=False, universe=falso)
+        _run_eval(
+            factory,
+            "hybrid-rrf:v4",
+            {"P1": pid},
+            juicios,
+            allow_uncovered=False,
+            universe=falso,
+        )
 
 
 def test_el_pool_ciego_rechaza_deriva_del_sello(db):  # noqa: F811  (la fixture, no una redefinición)
@@ -695,17 +877,24 @@ def test_el_pool_ciego_rechaza_deriva_del_sello(db):  # noqa: F811  (la fixture,
     async def pool(universe):
         async with factory() as s:
             return await dev_eval.build_blind_pool(
-                s, {"P1": pid}, "cosine:v1", "hybrid-rrf:v4",
-                universe=universe, k=3, allow_unknown_release=True)
+                s,
+                {"P1": pid},
+                "cosine:v1",
+                "hybrid-rrf:v4",
+                universe=universe,
+                k=3,
+                allow_unknown_release=True,
+            )
 
     assert asyncio.run(pool(sello))["P1"]["pendientes"]
 
     async def archivar_uno():
         async with factory() as s:
             v = sello["universe"]["pairs"][0]["vacancy_id"]
-            await s.execute(sa.text(
-                "UPDATE vacancies SET archived_at = now() WHERE id = :v"),
-                {"v": v})
+            await s.execute(
+                sa.text("UPDATE vacancies SET archived_at = now() WHERE id = :v"),
+                {"v": v},
+            )
             await s.commit()
 
     asyncio.run(archivar_uno())
@@ -713,8 +902,12 @@ def test_el_pool_ciego_rechaza_deriva_del_sello(db):  # noqa: F811  (la fixture,
         asyncio.run(pool(sello))
 
 
-def test_cli_extremo_a_extremo_con_el_mismo_sello(db, tmp_path, monkeypatch,  # noqa: F811  (la fixture, no una redefinición)
-                                                  capsys):
+def test_cli_extremo_a_extremo_con_el_mismo_sello(
+    db,  # noqa: F811  (la fixture, no una redefinición)
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
     """P0-5: seal-universe → build-pool → evaluate, ejecutables con el MISMO
     sello, salidas atómicas con sha visible, modo estricto (sin allows)."""
     monkeypatch.setenv("RELEASE_SHA", "e2etest")
@@ -724,25 +917,57 @@ def test_cli_extremo_a_extremo_con_el_mismo_sello(db, tmp_path, monkeypatch,  # 
     uni = str(tmp_path / "universo.json")
     pool = str(tmp_path / "pool.json")
 
-    asyncio.run(dev_eval._main([
-        "seal-universe", "--profile", f"P1={pid}", "--out", uni]))
+    asyncio.run(
+        dev_eval._main(["seal-universe", "--profile", f"P1={pid}", "--out", uni])
+    )
     sellado = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert sellado["pairs"] == len(TITULOS) and sellado["file_sha256"]
 
-    asyncio.run(dev_eval._main([
-        "build-pool", "--profile", f"P1={pid}",
-        "--baseline", "cosine:v1", "--candidate", "hybrid-rrf:v4",
-        "--universe", uni, "--k", "3", "--out", pool]))
+    asyncio.run(
+        dev_eval._main(
+            [
+                "build-pool",
+                "--profile",
+                f"P1={pid}",
+                "--baseline",
+                "cosine:v1",
+                "--candidate",
+                "hybrid-rrf:v4",
+                "--universe",
+                uni,
+                "--k",
+                "3",
+                "--out",
+                pool,
+            ]
+        )
+    )
     assert json.load(open(pool, encoding="utf-8"))["P1"]["pendientes"]
 
     # cobertura completa del top y evaluación LIGADA al sello
-    sonda = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
-                      _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+    sonda = _run_eval(
+        factory,
+        "hybrid-rrf:v4",
+        {"P1": pid},
+        _judgments_file([f"P1,{list(vacs.values())[0]},1"]),
+    )
     top = [f["vacancy_id"] for f in sonda["payload"]["profiles"]["P1"]["top10"]]
     juicios = _judgments_file([f"P1,{v},1" for v in top])
-    asyncio.run(dev_eval._main([
-        "evaluate", "--policy", "hybrid-rrf:v4", "--judgments", juicios,
-        "--universe", uni, "--profile", f"P1={pid}"]))
+    asyncio.run(
+        dev_eval._main(
+            [
+                "evaluate",
+                "--policy",
+                "hybrid-rrf:v4",
+                "--judgments",
+                juicios,
+                "--universe",
+                uni,
+                "--profile",
+                f"P1={pid}",
+            ]
+        )
+    )
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert out["payload"]["profiles"]["P1"]["elegible"] is True
     assert out["payload"]["release"] == "e2etest"
@@ -756,29 +981,48 @@ def test_el_sello_detecta_deriva_de_generacion_sin_cambio_de_identidades(db):  #
     factory, created = db
     pid, mid, _, vacs = _setup(factory, created, TITULOS)
     _shadow_policy(factory, created)
-    sonda = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid},
-                      _judgments_file([f"P1,{list(vacs.values())[0]},1"]))
+    sonda = _run_eval(
+        factory,
+        "hybrid-rrf:v4",
+        {"P1": pid},
+        _judgments_file([f"P1,{list(vacs.values())[0]},1"]),
+    )
     top = [f["vacancy_id"] for f in sonda["payload"]["profiles"]["P1"]["top10"]]
     juicios = _judgments_file([f"P1,{v},1" for v in top])
     sello = _sellar(factory, {"P1": pid})
 
     # sano: elegible
-    out = _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
-                    allow_uncovered=False, universe=sello)
+    out = _run_eval(
+        factory,
+        "hybrid-rrf:v4",
+        {"P1": pid},
+        juicios,
+        allow_uncovered=False,
+        universe=sello,
+    )
     assert out["payload"]["profiles"]["P1"]["elegible"] is True
 
     # deriva de generación SIN tocar identidades (equivale a un re-embed)
     async def avanzar_generacion():
         async with factory() as s:
-            await s.execute(sa.text(
-                "UPDATE corpus_generation SET generation = generation + 1 "
-                "WHERE id = 1"))
+            await s.execute(
+                sa.text(
+                    "UPDATE corpus_generation SET generation = generation + 1 "
+                    "WHERE id = 1"
+                )
+            )
             await s.commit()
 
     asyncio.run(avanzar_generacion())
     with pytest.raises(ValueError, match="generaci"):
-        _run_eval(factory, "hybrid-rrf:v4", {"P1": pid}, juicios,
-                  allow_uncovered=False, universe=sello)
+        _run_eval(
+            factory,
+            "hybrid-rrf:v4",
+            {"P1": pid},
+            juicios,
+            allow_uncovered=False,
+            universe=sello,
+        )
 
 
 def test_pool_con_universo_restringido_rellena_el_top_k(db):  # noqa: F811  (la fixture, no una redefinición)
@@ -794,8 +1038,14 @@ def test_pool_con_universo_restringido_rellena_el_top_k(db):  # noqa: F811  (la 
     async def go(excl):
         async with factory() as s:
             return await dev_eval.build_blind_pool(
-                s, {"P1": pid}, "cosine:v1", "hybrid-rrf:v4", k=3,
-                allow_unknown_release=True, exclude_vacancy_ids=excl)
+                s,
+                {"P1": pid},
+                "cosine:v1",
+                "hybrid-rrf:v4",
+                k=3,
+                allow_unknown_release=True,
+                exclude_vacancy_ids=excl,
+            )
 
     sin_excluir = asyncio.run(go(None))["P1"]["pendientes"]
     con_excluir = asyncio.run(go(excluidas))["P1"]["pendientes"]
@@ -803,4 +1053,5 @@ def test_pool_con_universo_restringido_rellena_el_top_k(db):  # noqa: F811  (la 
     assert not (ids_excl & set(excluidas)), "una excluida entró en el pool"
     # el pool NO encoge: las plazas liberadas las ocupan otras elegibles
     assert len(con_excluir) >= min(len(sin_excluir), 3), (
-        f"el top-K encogió: {len(con_excluir)} vs {len(sin_excluir)}")
+        f"el top-K encogió: {len(con_excluir)} vs {len(sin_excluir)}"
+    )

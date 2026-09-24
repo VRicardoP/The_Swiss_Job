@@ -196,7 +196,9 @@ async def _build_map(session: AsyncSession, legacy_schema: str) -> list:
         )
     await session.execute(sa.text("CREATE UNIQUE INDEX ON canon_map (old_hash)"))
     return (
-        (await session.execute(sa.text("SELECT old_hash FROM canon_map"))).scalars().all()
+        (await session.execute(sa.text("SELECT old_hash FROM canon_map")))
+        .scalars()
+        .all()
     )
 
 
@@ -338,7 +340,8 @@ def main() -> None:  # pragma: no cover — envoltorio fino del CLI
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--legacy-schema", default="public")
     ap.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="mide sin escribir (no commitea nada)",
     )
     args = ap.parse_args()

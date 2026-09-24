@@ -75,15 +75,14 @@ def _client_values(body, provided) -> dict:
             values[field] = getattr(body, field)
     if "filters" in provided:
         if not isinstance(body.filters, dict):
-            raise ApiError(
-                400, "invalid_filters", "filters debe ser un objeto JSON"
-            )
+            raise ApiError(400, "invalid_filters", "filters debe ser un objeto JSON")
         values["filters"] = body.filters
     return values
 
 
 @router.get(
-    "/saved-searches", response_model=schemas.SavedSearchesPageDTO,
+    "/saved-searches",
+    response_model=schemas.SavedSearchesPageDTO,
     responses={304: {"description": "Not Modified"}},
 )
 async def list_saved_searches(
@@ -108,7 +107,9 @@ async def list_saved_searches(
 
 
 @router.post(
-    "/saved-searches", status_code=201, response_model=schemas.SavedSearchDTO,
+    "/saved-searches",
+    status_code=201,
+    response_model=schemas.SavedSearchDTO,
     responses=WRITE_RESPONSES,
 )
 async def create_saved_search(
@@ -123,7 +124,8 @@ async def create_saved_search(
     idem_key = request.headers.get("idempotency-key")
     if idem_key is None:
         raise ApiError(
-            400, "idempotency_key_required",
+            400,
+            "idempotency_key_required",
             "POST /v1/saved-searches exige el header Idempotency-Key",
         )
     route = f"POST {request.url.path}"
@@ -142,32 +144,47 @@ async def create_saved_search(
             raise error_404("perfil")
         values["name"] = body.name
         search_id = await searches.create(
-            session, profile_id=body.profile_id, values=values,
+            session,
+            profile_id=body.profile_id,
+            values=values,
             destination=consumer_name,
         )
         if body.execution_contract is not None:
             # Same transaction as the INSERT/idempotency receipt. A bad dialect
             # or filter cannot leave an apparently executable orphan behind.
-            floor = await session.scalar(sa.text("SELECT clock_timestamp() - interval '1 day'"))
+            floor = await session.scalar(
+                sa.text("SELECT clock_timestamp() - interval '1 day'")
+            )
             try:
                 await search_execution.configure_execution(
-                    session, search_id, contract=body.execution_contract,
-                    notify_since=floor, enabled=True,
+                    session,
+                    search_id,
+                    contract=body.execution_contract,
+                    notify_since=floor,
+                    enabled=True,
                 )
             except ValueError:
-                raise ApiError(400, "invalid_filters", "contrato de búsqueda incompatible") from None
+                raise ApiError(
+                    400, "invalid_filters", "contrato de búsqueda incompatible"
+                ) from None
         row = await searches.fetch_owned(session, search_id, principal.consumer_id)
         return 201, _dto_json(searches.compose(row))
 
     status, payload = await run_idempotent(
-        session, principal, route, req_hash, idem_key, handler,
+        session,
+        principal,
+        route,
+        req_hash,
+        idem_key,
+        handler,
         profile_id=body.profile_id,
     )
     return json_response(status, payload)
 
 
 @router.put(
-    "/saved-searches/{search_id}", response_model=schemas.SavedSearchDTO,
+    "/saved-searches/{search_id}",
+    response_model=schemas.SavedSearchDTO,
     responses=WRITE_RESPONSES,
 )
 async def update_saved_search(
@@ -194,7 +211,9 @@ async def update_saved_search(
         provided = provided - {"filters"}
     values = _client_values(body, provided)
 
-    subject_id = await resource_subject(session, principal, route, idem_key, "saved_searches", search_id)
+    subject_id = await resource_subject(
+        session, principal, route, idem_key, "saved_searches", search_id
+    )
 
     async def handler():
         row = await searches.fetch_owned(
@@ -208,19 +227,30 @@ async def update_saved_search(
         try:
             await searches.update(session, row, values, row.consumer_name)
         except ValueError:
-            raise ApiError(400, "invalid_filters", "filters incompatible con el contrato de ejecución") from None
+            raise ApiError(
+                400,
+                "invalid_filters",
+                "filters incompatible con el contrato de ejecución",
+            ) from None
         fresh = await searches.fetch_owned(session, search_id, principal.consumer_id)
         return 200, _dto_json(searches.compose(fresh))
 
     status, payload = await run_idempotent(
-        session, principal, route, req_hash, idem_key, handler,
+        session,
+        principal,
+        route,
+        req_hash,
+        idem_key,
+        handler,
         profile_id=subject_id,
     )
     return json_response(status, payload)
 
 
 @router.delete(
-    "/saved-searches/{search_id}", status_code=204, responses=WRITE_RESPONSES,
+    "/saved-searches/{search_id}",
+    status_code=204,
+    responses=WRITE_RESPONSES,
 )
 async def delete_saved_search(
     search_id: uuid.UUID,
@@ -234,7 +264,9 @@ async def delete_saved_search(
     idem_key = request.headers.get("idempotency-key")
     route = f"DELETE {request.url.path}"
 
-    subject_id = await resource_subject(session, principal, route, idem_key, "saved_searches", search_id)
+    subject_id = await resource_subject(
+        session, principal, route, idem_key, "saved_searches", search_id
+    )
 
     async def handler():
         row = await searches.fetch_owned(
@@ -246,8 +278,11 @@ async def delete_saved_search(
             raise ApiError(409, "owner_changed", "propietario cambiado; reintenta")
         check_if_match(request, _dto_json(searches.compose(row)))
         await searches.emit_changed(
-            session, search_id=row.id, profile_id=row.profile_id,
-            revision=row.revision + 1, destination=row.consumer_name,
+            session,
+            search_id=row.id,
+            profile_id=row.profile_id,
+            revision=row.revision + 1,
+            destination=row.consumer_name,
             deleted=True,
         )
         await session.execute(
@@ -256,7 +291,12 @@ async def delete_saved_search(
         return 204, None
 
     status, payload = await run_idempotent(
-        session, principal, route, request_hash({}), idem_key, handler,
+        session,
+        principal,
+        route,
+        request_hash({}),
+        idem_key,
+        handler,
         profile_id=subject_id,
     )
     return json_response(status, payload)
@@ -264,7 +304,8 @@ async def delete_saved_search(
 
 @router.get("/saved-searches/{search_id}", response_model=schemas.SavedSearchDTO)
 async def get_saved_search(
-    search_id: uuid.UUID, request: Request,
+    search_id: uuid.UUID,
+    request: Request,
     session=Depends(get_session),
     principal: Principal = Depends(require_scope("saved_searches:read")),
 ):
@@ -287,20 +328,26 @@ async def run_saved_search(
         raise error_404("búsqueda guardada")
     if not settings.CORE_SAVED_SEARCH_EXECUTION_ENABLED:
         raise ApiError(503, "execution_disabled", "ejecución de búsquedas desactivada")
-    enabled = await session.scalar(sa.text(
-        "SELECT enabled FROM saved_search_execution WHERE saved_search_id=:id"
-    ), {"id": search_id})
+    enabled = await session.scalar(
+        sa.text("SELECT enabled FROM saved_search_execution WHERE saved_search_id=:id"),
+        {"id": search_id},
+    )
     if not row.is_active or not enabled:
         raise ApiError(409, "execution_disabled", "búsqueda sin ejecución activa")
     if row.consumer_name not in settings.CORE_DELIVERY_HTTP_DESTINATIONS:
         raise ApiError(503, "delivery_unavailable", "destino de avisos no configurado")
     from jobhunt_core.celery_app import celery_app
     from starlette.concurrency import run_in_threadpool
+
     try:
         await run_in_threadpool(
-            celery_app.send_task, "jobhunt.searches.run_one",
-            kwargs={"search_id": str(search_id)}, retry=False,
+            celery_app.send_task,
+            "jobhunt.searches.run_one",
+            kwargs={"search_id": str(search_id)},
+            retry=False,
         )
     except Exception:
-        raise ApiError(503, "queue_unavailable", "cola de búsquedas no disponible") from None
+        raise ApiError(
+            503, "queue_unavailable", "cola de búsquedas no disponible"
+        ) from None
     return {"status": "dispatched", "search_id": str(search_id)}

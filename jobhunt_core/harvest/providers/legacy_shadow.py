@@ -17,7 +17,9 @@ import logging
 
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import (
-    SEARCH_AMOUNT_FIELDS, SEARCH_TEXT_FIELDS, register_normalizer,
+    SEARCH_AMOUNT_FIELDS,
+    SEARCH_TEXT_FIELDS,
+    register_normalizer,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,7 +48,10 @@ def _normalize(raw: dict) -> dict:
         "location": raw.get("location"),
         "remote": raw.get("remote"),
         "salary": raw.get("salary_original"),
-        **{field: raw.get(field) for field in (*SEARCH_TEXT_FIELDS, *SEARCH_AMOUNT_FIELDS)},
+        **{
+            field: raw.get(field)
+            for field in (*SEARCH_TEXT_FIELDS, *SEARCH_AMOUNT_FIELDS)
+        },
     }
 
 

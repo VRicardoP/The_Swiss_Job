@@ -34,8 +34,10 @@ def _run(provider, params, handler):
         def transport(request):
             seen.append(request)
             return handler(request)
+
         async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
             return await provider.fetch_new(params, None, http)
+
     return asyncio.run(main()), seen
 
 
@@ -43,33 +45,52 @@ def _nav_page(request):
     """Always reports far more hits than the budget can read."""
     offset = int(request.url.params["from"])
     # Real Elasticsearch envelope: identity in _id, payload in _source.
-    rows = [{"_id": f"00000000-0000-4000-8000-{offset + i:012d}",
-             "_source": {"title": "Utvikler", "employer": {"name": "NAV"},
-                         "published": "2026-09-20T08:00:00"}}
-            for i in range(100)]
-    return httpx.Response(200, json={
-        "hits": {"total": {"value": 5000, "relation": "gte"}, "hits": rows}})
+    rows = [
+        {
+            "_id": f"00000000-0000-4000-8000-{offset + i:012d}",
+            "_source": {
+                "title": "Utvikler",
+                "employer": {"name": "NAV"},
+                "published": "2026-09-20T08:00:00",
+            },
+        }
+        for i in range(100)
+    ]
+    return httpx.Response(
+        200, json={"hits": {"total": {"value": 5000, "relation": "gte"}, "hits": rows}}
+    )
 
 
 def _jobgether_page(request):
     if request.headers.get("User-Agent", "").startswith("SwissJobHunter"):
-        return httpx.Response(403)          # the real portal's anti-bot answer
+        return httpx.Response(403)  # the real portal's anti-bot answer
     page = int(request.url.params["page"])
-    rows = [{"slug": f"job-{page}-{i}", "title": "Engineer",
-             "company": {"name": "Acme"}, "createdAt": "2026-09-20T08:00:00.000Z"}
-            for i in range(20)]
+    rows = [
+        {
+            "slug": f"job-{page}-{i}",
+            "title": "Engineer",
+            "company": {"name": "Acme"},
+            "createdAt": "2026-09-20T08:00:00.000Z",
+        }
+        for i in range(20)
+    ]
     return httpx.Response(200, json={"data": rows, "maxPages": 99})
 
 
-@pytest.mark.parametrize("provider,params,handler,pages", [
-    (NavProvider(), {"remote": FACET, "max_pages": 3}, _nav_page, 3),
-    (JobgetherProvider(), {"max_pages": 3}, _jobgether_page, 3),
-])
+@pytest.mark.parametrize(
+    "provider,params,handler,pages",
+    [
+        (NavProvider(), {"remote": FACET, "max_pages": 3}, _nav_page, 3),
+        (JobgetherProvider(), {"max_pages": 3}, _jobgether_page, 3),
+    ],
+)
 def test_declared_budget_is_swept_completely_and_only_that_far(
-        provider, params, handler, pages, monkeypatch):
+    provider, params, handler, pages, monkeypatch
+):
     for module in ("native_nav", "native_jobgether"):
         monkeypatch.setattr(
-            f"jobhunt_core.harvest.providers.{module}.PAGE_PAUSE_S", 0, raising=False)
+            f"jobhunt_core.harvest.providers.{module}.PAGE_PAUSE_S", 0, raising=False
+        )
     result, seen = _run(provider, params, handler)
     assert len(seen) == pages, "the declared budget is also a ceiling"
     assert result.pages_fetched == pages
@@ -79,36 +100,44 @@ def test_declared_budget_is_swept_completely_and_only_that_far(
 
 def test_undeclared_budget_keeps_reporting_the_safety_cap_as_partial(monkeypatch):
     monkeypatch.setattr(
-        "jobhunt_core.harvest.providers.native_jobgether.PAGE_PAUSE_S", 0)
-    monkeypatch.setattr(
-        "jobhunt_core.harvest.providers.native_jobgether.MAX_PAGES", 2)
+        "jobhunt_core.harvest.providers.native_jobgether.PAGE_PAUSE_S", 0
+    )
+    monkeypatch.setattr("jobhunt_core.harvest.providers.native_jobgether.MAX_PAGES", 2)
     result, _ = _run(JobgetherProvider(), {}, _jobgether_page)
     # `page_budget` is this provider's existing way of saying "there was
     # more and we chose not to read it" — preserved, not softened.
     assert result.complete is False and result.error == "page_budget"
 
 
-@pytest.mark.parametrize("provider,params", [
-    (NavProvider(), {"remote": FACET, "max_pages": 0}),
-    (NavProvider(), {"remote": FACET, "max_pages": True}),
-    (NavProvider(), {"remote": FACET, "max_pages": "3"}),
-    (JobgetherProvider(), {"max_pages": -1}),
-    (JobgetherProvider(), {"max_pages": 10**9}),
-])
+@pytest.mark.parametrize(
+    "provider,params",
+    [
+        (NavProvider(), {"remote": FACET, "max_pages": 0}),
+        (NavProvider(), {"remote": FACET, "max_pages": True}),
+        (NavProvider(), {"remote": FACET, "max_pages": "3"}),
+        (JobgetherProvider(), {"max_pages": -1}),
+        (JobgetherProvider(), {"max_pages": 10**9}),
+    ],
+)
 def test_invalid_budget_is_a_configuration_error_before_any_request(provider, params):
     with pytest.raises(ProviderConfigError):
         _run(provider, params, _nav_page)
 
 
-@pytest.mark.parametrize("provider,params,handler", [
-    (NavProvider(), {"remote": FACET, "max_pages": 1}, _nav_page),
-    (JobgetherProvider(), {"max_pages": 1}, _jobgether_page),
-])
+@pytest.mark.parametrize(
+    "provider,params,handler",
+    [
+        (NavProvider(), {"remote": FACET, "max_pages": 1}, _nav_page),
+        (JobgetherProvider(), {"max_pages": 1}, _jobgether_page),
+    ],
+)
 def test_requests_carry_the_same_browser_headers_as_the_retiring_producer(
-        provider, params, handler, monkeypatch):
+    provider, params, handler, monkeypatch
+):
     for module in ("native_nav", "native_jobgether"):
         monkeypatch.setattr(
-            f"jobhunt_core.harvest.providers.{module}.PAGE_PAUSE_S", 0, raising=False)
+            f"jobhunt_core.harvest.providers.{module}.PAGE_PAUSE_S", 0, raising=False
+        )
     _, seen = _run(provider, params, handler)
     for header, value in BROWSER_HEADERS.items():
         assert seen[0].headers[header] == value
@@ -117,11 +146,14 @@ def test_requests_carry_the_same_browser_headers_as_the_retiring_producer(
 def test_budget_is_operational_and_does_not_reset_the_cursor():
     """Changing how many pages we read must not re-open the admission window."""
     provider = JobgetherProvider()
-    assert provider.params_fingerprint({"max_pages": 3}) == \
-        provider.params_fingerprint({"max_pages": 9})
+    assert provider.params_fingerprint({"max_pages": 3}) == provider.params_fingerprint(
+        {"max_pages": 9}
+    )
 
 
-def test_portal_duplicate_postings_are_dropped_without_faking_a_failed_sweep(monkeypatch):
+def test_portal_duplicate_postings_are_dropped_without_faking_a_failed_sweep(
+    monkeypatch,
+):
     """Jobgether republishes one opening as several postings of the same title.
 
     Live probe 2026-09-21: 3 ambiguous identities out of 139, 8 listings of 150
@@ -136,16 +168,31 @@ def test_portal_duplicate_postings_are_dropped_without_faking_a_failed_sweep(mon
     travels in the cursor, where it can be read without poisoning the signal.
     """
     monkeypatch.setattr(
-        "jobhunt_core.harvest.providers.native_jobgether.PAGE_PAUSE_S", 0)
+        "jobhunt_core.harvest.providers.native_jobgether.PAGE_PAUSE_S", 0
+    )
 
     def handler(request):
         page = int(request.url.params["page"])
-        rows = [{"slug": f"{'a' * 24}-same-role", "title": "Regulatory Manager",
-                 "companyData": {"name": "Acme"}, "createdAt": "2026-09-20T08:00:00.000Z"},
-                {"slug": f"{'b' * 24}-same-role", "title": "Regulatory Manager",
-                 "companyData": {"name": "Acme"}, "createdAt": "2026-09-20T08:00:00.000Z"},
-                {"slug": f"unique-{page}", "title": "Engineer",
-                 "companyData": {"name": "Other"}, "createdAt": "2026-09-20T08:00:00.000Z"}]
+        rows = [
+            {
+                "slug": f"{'a' * 24}-same-role",
+                "title": "Regulatory Manager",
+                "companyData": {"name": "Acme"},
+                "createdAt": "2026-09-20T08:00:00.000Z",
+            },
+            {
+                "slug": f"{'b' * 24}-same-role",
+                "title": "Regulatory Manager",
+                "companyData": {"name": "Acme"},
+                "createdAt": "2026-09-20T08:00:00.000Z",
+            },
+            {
+                "slug": f"unique-{page}",
+                "title": "Engineer",
+                "companyData": {"name": "Other"},
+                "createdAt": "2026-09-20T08:00:00.000Z",
+            },
+        ]
         return httpx.Response(200, json={"data": rows, "maxPages": 99})
 
     result, _ = _run(JobgetherProvider(), {"max_pages": 1}, handler)
@@ -156,10 +203,17 @@ def test_portal_duplicate_postings_are_dropped_without_faking_a_failed_sweep(mon
 
 def test_a_sweep_that_is_entirely_ambiguous_is_still_an_error():
     """Parity ends where honesty does: nothing usable is not a good harvest."""
+
     def handler(request):
-        rows = [{"slug": f"{c * 24}-same-role", "title": "Regulatory Manager",
-                 "companyData": {"name": "Acme"}, "createdAt": "2026-09-20T08:00:00.000Z"}
-                for c in ("a", "b")]
+        rows = [
+            {
+                "slug": f"{c * 24}-same-role",
+                "title": "Regulatory Manager",
+                "companyData": {"name": "Acme"},
+                "createdAt": "2026-09-20T08:00:00.000Z",
+            }
+            for c in ("a", "b")
+        ]
         return httpx.Response(200, json={"data": rows, "maxPages": 1})
 
     with pytest.raises(Exception):

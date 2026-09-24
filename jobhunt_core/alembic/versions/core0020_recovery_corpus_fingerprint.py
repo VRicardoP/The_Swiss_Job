@@ -54,8 +54,10 @@ def downgrade() -> None:
     op.add_column(
         "profile_recovery_state",
         sa.Column(
-            "corpus_watermark", sa.DateTime(timezone=True),
-            nullable=False, server_default=sa.text("now()"),
+            "corpus_watermark",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
         ),
         schema=S,
     )

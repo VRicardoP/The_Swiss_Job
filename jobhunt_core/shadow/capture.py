@@ -88,14 +88,31 @@ _BACKOFF_RESET_AFTER_S = 60.0
 TABLE_WHITELIST: dict[str, dict] = {
     "jobs": {
         "pk": "hash",
-        "columns": frozenset({
-            "title", "company", "description", "tags", "location", "canton",
-            "language", "seniority", "contract_type", "remote",
-            "salary_min_chf", "salary_max_chf", "salary_original",
-            "salary_currency", "salary_period", "url", "source",
-            "is_active", "duplicate_of", "content_hash",
-            "apply_url",  # R.6: señal de dedup cross-portal (nullable, NO crítica)
-        }),
+        "columns": frozenset(
+            {
+                "title",
+                "company",
+                "description",
+                "tags",
+                "location",
+                "canton",
+                "language",
+                "seniority",
+                "contract_type",
+                "remote",
+                "salary_min_chf",
+                "salary_max_chf",
+                "salary_original",
+                "salary_currency",
+                "salary_period",
+                "url",
+                "source",
+                "is_active",
+                "duplicate_of",
+                "content_hash",
+                "apply_url",  # R.6: señal de dedup cross-portal (nullable, NO crítica)
+            }
+        ),
         # Columnas CRÍTICAS para la corrección (si faltan, el snapshot se confirmaría SIN ellas y
         # añadirlas después no genera UPDATE WAL para las filas viejas → histórico irrecuperable —
         # P1 rev. externa integral). Calibradas por lo que el PROYECTOR consume (verificado):
@@ -109,17 +126,27 @@ TABLE_WHITELIST: dict[str, dict] = {
     },
     "user_profiles": {
         "pk": "id",
-        "columns": frozenset({
-            "user_id", "title", "cv_text", "skills", "updated_at",
-            # Preferencias (Fase 2 del cierre v5): el core ya las admite en
-            # profiles.CONTENT_FIELDS pero la captura no las traía y P1/P2
-            # llegaron a R5 con languages=[]/locations=[]/remote_pref=null
-            # mientras el legacy autoritativo los tenía. NO entran al texto
-            # embebible (TEXT_FIELDS no cambia): un cambio solo de
-            # preferencias reutiliza el vector por text_hash.
-            "languages", "locations", "experience_years",
-            "salary_min", "salary_max", "remote_pref",
-        }),
+        "columns": frozenset(
+            {
+                "user_id",
+                "title",
+                "cv_text",
+                "skills",
+                "updated_at",
+                # Preferencias (Fase 2 del cierre v5): el core ya las admite en
+                # profiles.CONTENT_FIELDS pero la captura no las traía y P1/P2
+                # llegaron a R5 con languages=[]/locations=[]/remote_pref=null
+                # mientras el legacy autoritativo los tenía. NO entran al texto
+                # embebible (TEXT_FIELDS no cambia): un cambio solo de
+                # preferencias reutiliza el vector por text_hash.
+                "languages",
+                "locations",
+                "experience_years",
+                "salary_min",
+                "salary_max",
+                "remote_pref",
+            }
+        ),
         # `user_id` resuelve el perfil (sin ella → "sin user_id resoluble: descartado"); title/
         # cv_text/skills son el CONTENIDO del perfil sombra (PROFILE_FIELDS → embeddings). NO
         # `updated_at` (el proyector no la consume). Calibrado por lo que consume el proyector.
@@ -127,11 +154,20 @@ TABLE_WHITELIST: dict[str, dict] = {
         # la tabla legacy autoritativa las tiene todas; si faltaran, el
         # snapshot se confirmaría sin ellas y v5 puntuaría con preferencias
         # vacías — un verde falso. Mejor fallar ruidoso al crear el slot.
-        "required": frozenset({
-            "user_id", "title", "cv_text", "skills",
-            "languages", "locations", "experience_years",
-            "salary_min", "salary_max", "remote_pref",
-        }),
+        "required": frozenset(
+            {
+                "user_id",
+                "title",
+                "cv_text",
+                "skills",
+                "languages",
+                "locations",
+                "experience_years",
+                "salary_min",
+                "salary_max",
+                "remote_pref",
+            }
+        ),
         # TOAST (§2/§8): cv_text es contractual para canónica/embeddings — si
         # wal2json lo omite (UPDATE que no lo toca), se COMPLETA re-leyendo
         # por PK con la conexión normal (SELECT RO de §1). jobs NO lleva esta
@@ -342,8 +378,7 @@ class ShadowCapture:
                     f"comprobaciones (faltan: {', '.join(missing)})"
                 )
             logger.warning(
-                "esquema legacy aún sin migrar (faltan: %s) — "
-                "reintentando en %.0fs",
+                "esquema legacy aún sin migrar (faltan: %s) — reintentando en %.0fs",
                 ", ".join(missing),
                 backoff,
             )
@@ -434,7 +469,7 @@ class ShadowCapture:
         # consumidor. DECLARE explícito y no cursor con nombre de psycopg2:
         # este gestiona la transacción a mano (autocommit + BEGIN).
         cur.execute(
-            f'DECLARE backfill_read CURSOR FOR '
+            f"DECLARE backfill_read CURSOR FOR "
             f'SELECT {col_list} FROM "{src_schema}"."{table}"'
         )
         while True:
@@ -564,8 +599,12 @@ class ShadowCapture:
                 payload["_omitted"] = omitted
                 if spec.get("reread_omitted"):
                     backfilled = self._reread_omitted(
-                        data.get("schema", "public"), table, spec, pk_value,
-                        omitted, payload,
+                        data.get("schema", "public"),
+                        table,
+                        spec,
+                        pk_value,
+                        omitted,
+                        payload,
                     )
                     if backfilled:
                         payload["_backfilled"] = backfilled
@@ -621,7 +660,11 @@ class ShadowCapture:
         except psycopg2.Error as exc:
             logger.error(
                 "Re-lectura RO de %s.%s pk=%s fallida (%s): %s solo en _omitted",
-                src_schema, table, pk_value, exc, omitted,
+                src_schema,
+                table,
+                pk_value,
+                exc,
+                omitted,
             )
             return []
         if db_row is None:
@@ -638,8 +681,10 @@ class ShadowCapture:
         out = {}
         for col in cols or []:
             value = col.get("value")
-            if value is not None and isinstance(value, str) and (
-                col.get("type", "").startswith("json")
+            if (
+                value is not None
+                and isinstance(value, str)
+                and (col.get("type", "").startswith("json"))
             ):
                 try:
                     value = json.loads(value)
@@ -880,7 +925,9 @@ def _rate_verdict(cur, now: float, prev: dict, state: dict) -> str | None:
     return None
 
 
-def _progress_verdict(cur, slot: str, now: float, prev: dict, state: dict) -> str | None:
+def _progress_verdict(
+    cur, slot: str, now: float, prev: dict, state: dict
+) -> str | None:
     """(b) PROGRESO del LSN confirmado: el consumidor debe ganar terreno.
 
     Distancia entre el extremo del WAL y `confirmed_flush_lsn` — el progreso
@@ -1001,9 +1048,7 @@ def health_check() -> int:
                 # de WAL que el slot retiene por detrás del extremo actual,
                 # contra el umbral ya ratificado en §8 (2 GiB).
                 lag_max = float(
-                    os.getenv(
-                        "CORE_CAPTURE_SLOT_LAG_MAX_BYTES", str(2 * 1024**3)
-                    )
+                    os.getenv("CORE_CAPTURE_SLOT_LAG_MAX_BYTES", str(2 * 1024**3))
                 )
                 slot_lag = slot_row[1]
                 if slot_lag is not None and float(slot_lag) > lag_max:

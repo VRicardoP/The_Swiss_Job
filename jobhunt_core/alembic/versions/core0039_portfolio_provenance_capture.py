@@ -83,9 +83,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     for table in TABLES:
         op.execute(
-            f"DROP TRIGGER IF EXISTS {table}_portfolio_provenance "
-            f"ON {S}.{table}"
+            f"DROP TRIGGER IF EXISTS {table}_portfolio_provenance ON {S}.{table}"
         )
-    op.execute(
-        f"DROP FUNCTION IF EXISTS {S}.trg_capture_portfolio_provenance()"
-    )
+    op.execute(f"DROP FUNCTION IF EXISTS {S}.trg_capture_portfolio_provenance()")

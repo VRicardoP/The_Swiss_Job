@@ -47,7 +47,9 @@ def _seed_scopes(factory, created, n=2):
             source_id = uuid.uuid4()
             created["sources"].append(source_id)
             await s.execute(
-                sa.text("INSERT INTO sources (id, name, tier) VALUES (:id, 'arbeitnow', 0)"),
+                sa.text(
+                    "INSERT INTO sources (id, name, tier) VALUES (:id, 'arbeitnow', 0)"
+                ),
                 {"id": source_id},
             )
             out = []
@@ -244,7 +246,8 @@ def test_disabled_scope_between_attempts_does_not_poison_run(db, monkeypatch):
         factory,
         "SELECT status, finished_at FROM source_harvest_runs "
         "WHERE run_id = :r AND scope_id = :s",
-        r=uuid.UUID(r2["run_id"]), s=scope_b,
+        r=uuid.UUID(r2["run_id"]),
+        s=scope_b,
     )[0]
     assert row.status in ("skipped", "error")  # sin fila 'running' huérfana
     assert row.status != "running"
@@ -300,7 +303,9 @@ def test_finish_run_leaves_run_open_while_other_worker_in_flight(db):
             await s.commit()
             run_row_1 = (
                 await s.execute(
-                    sa.text("SELECT status, finished_at FROM harvest_runs WHERE id = :r"),
+                    sa.text(
+                        "SELECT status, finished_at FROM harvest_runs WHERE id = :r"
+                    ),
                     {"r": run_id},
                 )
             ).one()
@@ -310,7 +315,9 @@ def test_finish_run_leaves_run_open_while_other_worker_in_flight(db):
             await s.commit()
             run_row_2 = (
                 await s.execute(
-                    sa.text("SELECT status, finished_at FROM harvest_runs WHERE id = :r"),
+                    sa.text(
+                        "SELECT status, finished_at FROM harvest_runs WHERE id = :r"
+                    ),
                     {"r": run_id},
                 )
             ).one()
@@ -348,7 +355,10 @@ def test_finish_scope_run_fenced_by_claim_token(db):
             tok_new = await runs.claim_scope_run(s, run_id, scope_a)  # worker B re-arma
             assert tok_new is not None and tok_new != tok_old
             # Worker A (desahuciado) intenta cerrar con su token VIEJO → False, no sobrescribe.
-            assert await runs.finish_scope_run(s, run_id, scope_a, "error", tok_old) is False
+            assert (
+                await runs.finish_scope_run(s, run_id, scope_a, "error", tok_old)
+                is False
+            )
             row = (
                 await s.execute(
                     sa.text(
@@ -358,10 +368,14 @@ def test_finish_scope_run_fenced_by_claim_token(db):
                     {"r": run_id, "s": scope_a},
                 )
             ).one()
-            assert row.status == "running" and row.finished_at is None  # estado de B intacto
+            assert (
+                row.status == "running" and row.finished_at is None
+            )  # estado de B intacto
             assert row.ct == str(tok_new)
             # Worker B sí cierra con su token vigente.
-            assert await runs.finish_scope_run(s, run_id, scope_a, "ok", tok_new) is True
+            assert (
+                await runs.finish_scope_run(s, run_id, scope_a, "ok", tok_new) is True
+            )
             await s.commit()
 
     asyncio.run(flow())
@@ -477,8 +491,12 @@ def test_run_scope_success_fenced_by_claim_token(db):
                 transport=httpx.MockTransport(lambda r: httpx.Response(500))
             ) as http:
                 return await run_scope(
-                    scope_a, FakeProvider(), sink, http,
-                    session_factory=factory, claim_token=token,
+                    scope_a,
+                    FakeProvider(),
+                    sink,
+                    http,
+                    session_factory=factory,
+                    claim_token=token,
                 )
 
         return asyncio.run(go())
@@ -545,7 +563,9 @@ def test_record_failure_tokenless_fenced_by_state(db):
                 {"s": sid, "c": '{"last_top_seen": 300}'},
             )
             await s.commit()
-        stale_snap = await _snap()  # snapshot pre-fetch del run OBSOLETO (cursor C, last_complete NULL)
+        stale_snap = (
+            await _snap()
+        )  # snapshot pre-fetch del run OBSOLETO (cursor C, last_complete NULL)
 
         # El VIGENTE (run_all) cosecha COMPLETO — feed ESTACIONARIO: MISMO valor de cursor, pero
         # avanza last_complete_at y resetea a 0.
@@ -633,7 +653,9 @@ def test_still_authoritative_serializes_on_harvest_scope_lock(db):
                     sa.text("SELECT 1 FROM harvest_scopes WHERE id = :s FOR UPDATE"),
                     {"s": sid},
                 )
-            assert "lock" in str(exc.value).lower() or "timeout" in str(exc.value).lower()
+            assert (
+                "lock" in str(exc.value).lower() or "timeout" in str(exc.value).lower()
+            )
             await a.rollback()
             await b.rollback()
 
@@ -704,7 +726,9 @@ def test_beat_scope_run_is_fenced_by_token(db):
                 )
             ).scalar_one()
             assert await runs.beat_scope_run(s, run_id, scope_a, tok_old) is False
-            assert await runs.beat_scope_run(s, run_id, scope_a, None) is False  # fail-closed
+            assert (
+                await runs.beat_scope_run(s, run_id, scope_a, None) is False
+            )  # fail-closed
             after = (
                 await s.execute(
                     sa.text(
@@ -974,14 +998,17 @@ def test_run_all_publica_el_motivo_de_cada_scope_que_falla(db, monkeypatch):
         if scope_id == str(mal_configurado):
             raise ProviderConfigError("keyword debe ser string, no int")
         return ScopeRunResult(
-            scope_id=scope_id, status="partial", listings=2, pages=1,
+            scope_id=scope_id,
+            status="partial",
+            listings=2,
+            pages=1,
             error="página 2: HTTP 429",
         )
 
     monkeypatch.setattr(harvest_task, "_run_scope_impl", fake_impl)
     r = _run_all("ventana-motivos", created)
 
-    assert r["scopes"][str(parcial)] == "partial"          # la forma de siempre, intacta
+    assert r["scopes"][str(parcial)] == "partial"  # la forma de siempre, intacta
     assert r["scopes"][str(roto)] == "error"
     assert "HTTP 429" in r["errores"][str(parcial)]
     assert "HTML del CDN" in r["errores"][str(roto)]

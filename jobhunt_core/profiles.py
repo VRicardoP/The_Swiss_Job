@@ -28,8 +28,15 @@ logger = logging.getLogger(__name__)
 
 # Campos canónicos del contenido (espejo de user_profile del legacy).
 CONTENT_FIELDS = (
-    "title", "cv_text", "skills", "languages", "locations",
-    "experience_years", "salary_min", "salary_max", "remote_pref",
+    "title",
+    "cv_text",
+    "skills",
+    "languages",
+    "locations",
+    "experience_years",
+    "salary_min",
+    "salary_max",
+    "remote_pref",
     # Intención laboral EXPLÍCITA (Fase 2 cierre definitivo): roles objetivo
     # declarados por el usuario. Vacío ⇒ el consumidor usa [title]. NO entra
     # en TEXT_FIELDS: cambiarlo crea revisión (content_hash) sin re-embeber.
@@ -116,6 +123,7 @@ async def ensure_consumer(session, name: str, active: bool = True) -> uuid.UUID:
 async def upsert_profile(session, consumer_id, external_ref: str) -> uuid.UUID:
     """Alta idempotente del perfil por (consumer, external_ref)."""
     from jobhunt_core.erasure import assert_not_erased
+
     await assert_not_erased(session, consumer_id, external_ref)
     await session.execute(
         sa.text(
@@ -136,7 +144,9 @@ async def upsert_profile(session, consumer_id, external_ref: str) -> uuid.UUID:
     ).scalar_one()
 
 
-async def save_profile_revision(session, profile_id, content, *, allow_empty=False) -> uuid.UUID | None:
+async def save_profile_revision(
+    session, profile_id, content, *, allow_empty=False
+) -> uuid.UUID | None:
     """Revisión INMUTABLE + ACTIVACIÓN monotónica (rev. A-07 #1).
 
     Idempotente por (profile_id, content_hash): el mismo contenido reutiliza
@@ -160,9 +170,11 @@ async def save_profile_revision(session, profile_id, content, *, allow_empty=Fal
             "ON CONFLICT (profile_id, content_hash) DO NOTHING"
         ),
         {
-            "id": uuid.uuid4(), "pid": profile_id,
+            "id": uuid.uuid4(),
+            "pid": profile_id,
             "content": json.dumps(norm, ensure_ascii=False),
-            "chash": chash, "thash": profile_text_hash(norm),
+            "chash": chash,
+            "thash": profile_text_hash(norm),
         },
     )
     rid = (

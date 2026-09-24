@@ -19,7 +19,9 @@ import sqlalchemy as sa
 
 from jobhunt_core import import_portfolio as ip
 from jobhunt_core import import_portfolio_ledger as pil
-from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import _on_disposable_db
+from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import (
+    _on_disposable_db,
+)
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("CORE_ADMIN_DATABASE_URL"),
@@ -67,7 +69,12 @@ async def _seed_other_source(s, url: str, external_id: str) -> None:
             RawListing(
                 external_id=external_id,
                 url=url,
-                payload={"title": "Other", "company_name": "X", "description": "d", "tags": []},
+                payload={
+                    "title": "Other",
+                    "company_name": "X",
+                    "description": "d",
+                    "tags": [],
+                },
             ),
         ),
     )
@@ -127,7 +134,9 @@ def test_ledger_reused_other_source():
             await s.commit()
             led: list = []
             await ip.synthesize_vacancies(
-                s, scope_id, [{"url": url, "title": "R", "company": "A", "description": "d"}],
+                s,
+                scope_id,
+                [{"url": url, "title": "R", "company": "A", "description": "d"}],
                 ledger=led,
             )
             await s.commit()
@@ -151,7 +160,9 @@ def test_ledger_quarantine_no_url_and_malformed():
             no_url = {"url": None, "title": "Sin URL", "company": "C"}
 
             led: list = []
-            await ip.synthesize_vacancies(s, scope_id, [good, malformed, no_url], ledger=led)
+            await ip.synthesize_vacancies(
+                s, scope_id, [good, malformed, no_url], ledger=led
+            )
             await s.commit()
 
             by_url = _by_url(led)
@@ -198,8 +209,16 @@ def test_ledger_quarantine_collision_cross_run():
         async with factory() as s:
             scope_id = await ip.ensure_import_scope(s)
             await s.commit()
-            u1 = {"url": "https://cross.example.ch/jobs#xxx", "title": "R1", "company": "A"}
-            u2 = {"url": "https://cross.example.ch/jobs#yyy", "title": "R2", "company": "B"}
+            u1 = {
+                "url": "https://cross.example.ch/jobs#xxx",
+                "title": "R1",
+                "company": "A",
+            }
+            u2 = {
+                "url": "https://cross.example.ch/jobs#yyy",
+                "title": "R2",
+                "company": "B",
+            }
 
             led1: list = []
             await ip.synthesize_vacancies(s, scope_id, [u1], ledger=led1)
@@ -296,9 +315,9 @@ def test_ledger_quarantine_collision_cross_source(caplog):
 
     asyncio.run(_on_disposable_db(_run))
     # G1 H-14a: 1 item, cadena revertida ⇒ "0 sintetizadas" (antes contaba 1).
-    assert any(
-        "1 items → 0 sintetizadas" in r.getMessage() for r in caplog.records
-    ), [r.getMessage() for r in caplog.records if "sintetizadas" in r.getMessage()]
+    assert any("1 items → 0 sintetizadas" in r.getMessage() for r in caplog.records), [
+        r.getMessage() for r in caplog.records if "sintetizadas" in r.getMessage()
+    ]
 
 
 def test_ledger_cross_source_trivial_spelling_attach_kept():
@@ -370,7 +389,10 @@ def test_ledger_non_ascii_url_is_created_not_over_quarantined():
             url = "https://例え.example.ch/求人-42"  # IDN + path CJK, utf-8 válido
             led: list = []
             await ip.synthesize_vacancies(
-                s, scope_id, [{"url": url, "title": "仕事", "company": "会社"}], ledger=led
+                s,
+                scope_id,
+                [{"url": url, "title": "仕事", "company": "会社"}],
+                ledger=led,
             )
             await s.commit()
             e = _by_url(led)[url]
@@ -395,7 +417,11 @@ def test_ledger_no_title_and_over_limit_quarantined():
             long_url = "https://x.example.ch/" + "a" * 2100  # > 2048 (core0028)
             items = [
                 {"url": "https://ok.example.ch/1", "title": "Ok", "company": "A"},
-                {"url": "https://nt.example.ch/2", "title": "   ", "company": "B"},  # solo espacios
+                {
+                    "url": "https://nt.example.ch/2",
+                    "title": "   ",
+                    "company": "B",
+                },  # solo espacios
                 {"url": long_url, "title": "Long", "company": "C"},
             ]
             led: list = []
@@ -411,7 +437,9 @@ def test_ledger_no_title_and_over_limit_quarantined():
             # Ninguna de las cuarentenadas creó vacante.
             assert await ip.resolve_vacancy_by_url(s, "https://nt.example.ch/2") is None
             assert await ip.resolve_vacancy_by_url(s, long_url) is None
-            n_vac = (await s.execute(sa.text("SELECT count(*) FROM vacancies"))).scalar_one()
+            n_vac = (
+                await s.execute(sa.text("SELECT count(*) FROM vacancies"))
+            ).scalar_one()
             assert n_vac == 1  # solo la buena
 
     asyncio.run(_on_disposable_db(_run))
@@ -429,15 +457,24 @@ def test_ledger_non_str_title_quarantined_not_crash():
             items = [
                 {"url": "https://ok.example.ch/1", "title": "Ok", "company": "A"},
                 {"url": "https://n1.example.ch/2", "title": 123, "company": "B"},  # int
-                {"url": "https://n2.example.ch/3", "title": ["x"], "company": "C"},  # list
+                {
+                    "url": "https://n2.example.ch/3",
+                    "title": ["x"],
+                    "company": "C",
+                },  # list
             ]
             led: list = []
-            await ip.synthesize_vacancies(s, scope_id, items, ledger=led)  # NO debe lanzar
+            await ip.synthesize_vacancies(
+                s, scope_id, items, ledger=led
+            )  # NO debe lanzar
             await s.commit()
             by = _by_url(led)
             assert by["https://ok.example.ch/1"].disposition == pil.CREATED
             for u in ("https://n1.example.ch/2", "https://n2.example.ch/3"):
-                assert by[u].disposition == pil.QUARANTINE and by[u].reason == pil.Q_NO_TITLE
+                assert (
+                    by[u].disposition == pil.QUARANTINE
+                    and by[u].reason == pil.Q_NO_TITLE
+                )
 
     asyncio.run(_on_disposable_db(_run))
 
@@ -455,10 +492,18 @@ def test_ledger_surrogate_url_does_not_abort_migration():
         {
             "external_ref": 1,
             "applications": [
-                {"url": "https://good.example.ch/a", "status": "applied", "title": "A",
-                 "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-                {"url": bad, "status": "saved", "title": "Mojibake",
-                 "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
+                {
+                    "url": "https://good.example.ch/a",
+                    "status": "applied",
+                    "title": "A",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+                {
+                    "url": bad,
+                    "status": "saved",
+                    "title": "Mojibake",
+                    "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc),
+                },
             ],
             "saved_searches": [],
         }
@@ -474,10 +519,13 @@ def test_ledger_surrogate_url_does_not_abort_migration():
             assert e["disposition"] == pil.QUARANTINE and e["reason"] == pil.Q_MALFORMED
             assert e["url_normalized"] is None and e["external_id"] is None
             assert any(
-                x["disposition"] == pil.CREATED and x["url"] == "https://good.example.ch/a"
+                x["disposition"] == pil.CREATED
+                and x["url"] == "https://good.example.ch/a"
                 for x in manifest["ledger"]
             )
-            await s.commit()  # el manifiesto persiste pese al surrogate (saneo del persist)
+            await (
+                s.commit()
+            )  # el manifiesto persiste pese al surrogate (saneo del persist)
 
     asyncio.run(_on_disposable_db(_run))
 
@@ -497,10 +545,18 @@ def test_ledger_nul_field_does_not_abort_migration():
         {
             "external_ref": 1,
             "applications": [
-                {"url": "https://good.example.ch/n1", "status": "applied", "title": "A",
-                 "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-                {"url": "https://nul.example.ch/n2", "status": "saved", "title": bad_title,
-                 "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
+                {
+                    "url": "https://good.example.ch/n1",
+                    "status": "applied",
+                    "title": "A",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+                {
+                    "url": "https://nul.example.ch/n2",
+                    "status": "saved",
+                    "title": bad_title,
+                    "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc),
+                },
             ],
             "saved_searches": [],
         }
@@ -511,8 +567,7 @@ def test_ledger_nul_field_does_not_abort_migration():
             manifest = await man.migrate_and_reconcile(s, users)  # NO debe lanzar
             assert manifest["verdict"] == "ok", manifest["divergences"]
             e = next(
-                x for x in manifest["ledger"]
-                if x["url"] == "https://nul.example.ch/n2"
+                x for x in manifest["ledger"] if x["url"] == "https://nul.example.ch/n2"
             )
             assert e["disposition"] == pil.QUARANTINE
             assert e["reason"] == pil.Q_MALFORMED
@@ -541,8 +596,13 @@ def test_persist_manifest_nul_in_staged_value_persists():
 
     manifest = {
         "verdict": "ok",
-        "staging": [{"kind": "application", "reason": "malformed",
-                     "durable": {"url": "https://x.ch/a", "notes": "a\x00b"}}],
+        "staging": [
+            {
+                "kind": "application",
+                "reason": "malformed",
+                "durable": {"url": "https://x.ch/a", "notes": "a\x00b"},
+            }
+        ],
     }
 
     async def _run(factory):
@@ -574,10 +634,18 @@ def test_ledger_persisted_in_manifest():
         {
             "external_ref": 1,
             "applications": [
-                {"url": "https://m.example.ch/a", "status": "applied", "title": "A",
-                 "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
-                {"url": "https://[invalid", "status": "saved", "title": "Rota",
-                 "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
+                {
+                    "url": "https://m.example.ch/a",
+                    "status": "applied",
+                    "title": "A",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
+                {
+                    "url": "https://[invalid",
+                    "status": "saved",
+                    "title": "Rota",
+                    "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc),
+                },
             ],
             "saved_searches": [],
         }
@@ -608,8 +676,12 @@ def test_ledger_group_reason_is_order_independent():
     se elige por precedencia determinista (malformed > limit > no_title): el ledger auditable es
     reproducible al invertir el lote."""
     url = "https://ord.example.ch/1"
-    no_title = {"url": url, "title": "   ", "company": "A"}          # solo espacios → no_title
-    malformed = {"url": url, "title": "Job \ud800", "company": "B"}  # surrogate → malformed
+    no_title = {"url": url, "title": "   ", "company": "A"}  # solo espacios → no_title
+    malformed = {
+        "url": url,
+        "title": "Job \ud800",
+        "company": "B",
+    }  # surrogate → malformed
 
     async def _reason_for(items: list) -> pil.LedgerEntry:
         async def _run(factory):
@@ -626,8 +698,12 @@ def test_ledger_group_reason_is_order_independent():
     forward = asyncio.run(_reason_for([no_title, malformed]))
     reverse = asyncio.run(_reason_for([malformed, no_title]))
     # Misma razón en ambos órdenes: la del MÁS severo (malformed), no la del primero del lote.
-    assert forward.disposition == pil.QUARANTINE and forward.reason == pil.Q_MALFORMED, forward
-    assert reverse.disposition == pil.QUARANTINE and reverse.reason == pil.Q_MALFORMED, reverse
+    assert (
+        forward.disposition == pil.QUARANTINE and forward.reason == pil.Q_MALFORMED
+    ), forward
+    assert (
+        reverse.disposition == pil.QUARANTINE and reverse.reason == pil.Q_MALFORMED
+    ), reverse
     assert forward.reason == reverse.reason
 
 
@@ -646,7 +722,8 @@ def test_vac_key_determinista_con_dos_incarnaciones_activas():
             await s.commit()
             led: list = []
             await ip.synthesize_vacancies(
-                s, scope_id,
+                s,
+                scope_id,
                 # La 'b' primero: sin ORDER BY, un scan por orden de inserción
                 # devolvería 'b' — la aserción exige la MENOR ('a').
                 [{"url": "https://h11.example.ch/b", "title": "B", "company": "B"}],
@@ -684,9 +761,7 @@ def test_vac_key_determinista_con_dos_incarnaciones_activas():
                 man._VAC_URLN.format(col=col),
                 ipm._vac_key(col),  # el coalesce entero: aquí resuelve la subquery
             ):
-                key = (
-                    await s.execute(sa.text(f"SELECT {expr}"))
-                ).scalar_one()
+                key = (await s.execute(sa.text(f"SELECT {expr}"))).scalar_one()
                 assert key == "https://h11.example.ch/a", expr  # la MENOR, siempre
 
     asyncio.run(_on_disposable_db(_run))
@@ -702,11 +777,17 @@ def test_persist_manifest_nan_in_staged_value_persists():
 
     manifest = {
         "verdict": "ok",
-        "staging": [{
-            "kind": "application", "reason": "malformed",
-            "durable": {"url": "https://x.ch/a", "salary_min": float("nan"),
-                        "salary_max": float("inf")},
-        }],
+        "staging": [
+            {
+                "kind": "application",
+                "reason": "malformed",
+                "durable": {
+                    "url": "https://x.ch/a",
+                    "salary_min": float("nan"),
+                    "salary_max": float("inf"),
+                },
+            }
+        ],
     }
 
     async def _run(factory):
@@ -742,19 +823,31 @@ def test_migration_survives_nan_durable_and_nan_min_score():
         {
             "external_ref": 1,
             "applications": [
-                {"url": "https://good.example.ch/nan1", "status": "applied",
-                 "title": "A", "company": "Acme",
-                 "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+                {
+                    "url": "https://good.example.ch/nan1",
+                    "status": "applied",
+                    "title": "A",
+                    "company": "Acme",
+                    "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                },
                 # company NaN: el sink lo cuarentena (canonical_payload usa
                 # allow_nan=False) ⇒ el durable ÍNTEGRO —con el NaN— va a staging
                 # y de ahí al manifiesto.
-                {"url": "https://nan.example.ch/nan2", "status": "saved",
-                 "title": "B", "company": float("nan"),
-                 "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc)},
+                {
+                    "url": "https://nan.example.ch/nan2",
+                    "status": "saved",
+                    "title": "B",
+                    "company": float("nan"),
+                    "created_at": datetime(2026, 6, 2, tzinfo=timezone.utc),
+                },
             ],
             "saved_searches": [
-                {"name": "búsqueda con min_score tóxico", "filters": {"q": "dev"},
-                 "min_score": float("nan"), "is_active": True},
+                {
+                    "name": "búsqueda con min_score tóxico",
+                    "filters": {"q": "dev"},
+                    "min_score": float("nan"),
+                    "is_active": True,
+                },
             ],
         }
     ]
@@ -775,9 +868,7 @@ def test_migration_survives_nan_durable_and_nan_min_score():
             ).scalar_one()
             assert "NaN" not in json.dumps(stored, ensure_ascii=False)
             min_score = (
-                await s.execute(
-                    sa.text("SELECT min_score FROM saved_searches")
-                )
+                await s.execute(sa.text("SELECT min_score FROM saved_searches"))
             ).scalar_one()
             assert min_score == 0  # degradado al default, no un crash
 
@@ -810,7 +901,8 @@ def test_ledger_over_limit_url_with_surrogate_reason_is_malformed():
             # Y la precedencia del módulo coincide con la razón registrada.
             assert ip._group_reason({pil.Q_LIMIT, pil.Q_MALFORMED}) == pil.Q_MALFORMED
             assert ip.durable_synthesizable({"url": url, "title": "U"}) == (
-                False, pil.Q_MALFORMED
+                False,
+                pil.Q_MALFORMED,
             )
 
     asyncio.run(_on_disposable_db(_run))
@@ -828,7 +920,8 @@ def test_ledger_payload_toxico_con_url_larga_reason_is_malformed():
             url = "https://y.example.ch/" + "b" * 2100
             led: list = []
             await ip.synthesize_vacancies(
-                s, scope_id,
+                s,
+                scope_id,
                 [{"url": url, "title": "T\ud800", "company": "A"}],
                 ledger=led,
             )
@@ -857,11 +950,13 @@ def test_url_con_nul_y_url_larga_reason_is_malformed():
     assert len(larga.encode()) > 2048
     # La url CORTA con NUL ya era 'malformed'…
     assert ip.durable_synthesizable({"url": corta, "title": "U"}) == (
-        False, pil.Q_MALFORMED
+        False,
+        pil.Q_MALFORMED,
     )
     # …y la larga mentía con 'limit'.
     assert ip.durable_synthesizable({"url": larga, "title": "U"}) == (
-        False, pil.Q_MALFORMED
+        False,
+        pil.Q_MALFORMED,
     )
     # NUL en el PAYLOAD sobre url larga: misma razón.
     assert ip.durable_synthesizable(

@@ -6,6 +6,7 @@ a fixed page/time/byte budget; exceeding it is visibly incomplete.
 Every run refreshes from page one: offset pagination is mutable, not a durable
 cursor. The task/runner owns retries, admission, persistence and fencing.
 """
+
 import asyncio
 import time
 from urllib.parse import urlsplit
@@ -14,7 +15,11 @@ import httpx
 
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
-from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
+from jobhunt_core.harvest.provider import (
+    BaseProvider,
+    ProviderConfigError,
+    ProviderResponseError,
+)
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
 from jobhunt_core.harvest.providers.search_metadata import swiss_canton
 from jobhunt_core.harvest.types import FetchResult, RawListing
@@ -38,7 +43,12 @@ def _http_url(value):
     try:
         value.encode("utf-8")
         parsed = urlsplit(value)
-        if parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username and not parsed.password:
+        if (
+            parsed.scheme in {"http", "https"}
+            and parsed.hostname
+            and not parsed.username
+            and not parsed.password
+        ):
             return value
     except ValueError:
         pass
@@ -57,7 +67,11 @@ def _listing(name, raw):
     if type(portal_id) is not int or not 0 < portal_id < 2**63:
         return None
     url = f"https://{DOMAINS[name]}/stelle/{portal_id}"
-    apply_url = _http_url(raw.get("urlApplication")) or _http_url(raw.get("urlDescription")) or None
+    apply_url = (
+        _http_url(raw.get("urlApplication"))
+        or _http_url(raw.get("urlDescription"))
+        or None
+    )
     return RawListing(f"id:{portal_id}", url, raw, apply_url=apply_url)
 
 
@@ -68,31 +82,46 @@ def _content(raw):
     city = _text(raw.get("workplaceCity"))
     cantons = raw.get("cantons")
     canton = _text(cantons[0]) if isinstance(cantons, list) and cantons else ""
-    location = f"{city}, {canton}" if city and canton else city or canton or "Switzerland"
+    location = (
+        f"{city}, {canton}" if city and canton else city or canton or "Switzerland"
+    )
     description = strip_html_tags(_text(raw.get("activity")))
     keywords = [k.strip() for k in _text(raw.get("keywords")).split(",") if k.strip()]
     tags = list(dict.fromkeys(keywords + extract_job_skills(title, description)))[:15]
-    return {"title": title, "company": company, "location": location,
-            "description": description, "tags": tags, "remote": raw.get("homeOffice", False),
-            # Same rule as the retiring writer (base_chmedia.py:74): the portal
-            # code when it already ships one, otherwise resolved from the
-            # composed location. Saved searches filter on this field.
-            "canton": canton if len(canton) == 2 else swiss_canton(location)}
+    return {
+        "title": title,
+        "company": company,
+        "location": location,
+        "description": description,
+        "tags": tags,
+        "remote": raw.get("homeOffice", False),
+        # Same rule as the retiring writer (base_chmedia.py:74): the portal
+        # code when it already ships one, otherwise resolved from the
+        # composed location. Saved searches filter on this field.
+        "canton": canton if len(canton) == 2 else swiss_canton(location),
+    }
 
 
 def register_handlers():
     for name in DOMAINS:
         register_normalizer(name, _content)
+
         def identity(raw):
             content = _content(raw)
             return content["title"], content["company"]
+
         register_extractor(name, identity)
 
 
 async def _page(http, url, page):
-    async with http.stream("GET", url, params={"page": page, "pageSize": PAGE_SIZE},
-                           timeout=25, follow_redirects=True,
-                           headers={"User-Agent": "SwissJobHunter/1.0"}) as response:
+    async with http.stream(
+        "GET",
+        url,
+        params={"page": page, "pageSize": PAGE_SIZE},
+        timeout=25,
+        follow_redirects=True,
+        headers={"User-Agent": "SwissJobHunter/1.0"},
+    ) as response:
         response.raise_for_status()
         chunks, size = [], 0
         async for chunk in response.aiter_bytes():
@@ -156,7 +185,14 @@ class CHMediaProvider(BaseProvider):
             if page < MAX_PAGES:
                 await asyncio.sleep(PAGE_PAUSE_S)
         if seen and not listings:
-            raise ProviderResponseError("CH Media nonempty feed has no usable identities")
+            raise ProviderResponseError(
+                "CH Media nonempty feed has no usable identities"
+            )
         error = error or ("invalid_chmedia_items" if invalid else None)
-        return FetchResult(tuple(listings), {"items_seen": seen, "pages": pages}, pages_fetched=pages,
-                           complete=exhausted and error is None, error=error)
+        return FetchResult(
+            tuple(listings),
+            {"items_seen": seen, "pages": pages},
+            pages_fetched=pages,
+            complete=exhausted and error is None,
+            error=error,
+        )

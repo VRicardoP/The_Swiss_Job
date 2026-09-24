@@ -52,6 +52,7 @@ router = APIRouter(
     },
 )
 
+
 def _check_storable(body) -> None:
     """G7-P3-1 en este router, con UNA excepción CONDICIONADA: la `url`.
 
@@ -94,14 +95,18 @@ async def _link(session, profile_id, source_dto) -> uuid.UUID:
     irresoluble → 404 indistinguible; (b)-(d) irresolubles → 400."""
     try:
         vid = await apps.link_vacancy(
-            session, profile_id,
-            vacancy_id=source_dto.vacancy_id, url=source_dto.url,
-            title=source_dto.title, company=source_dto.company,
+            session,
+            profile_id,
+            vacancy_id=source_dto.vacancy_id,
+            url=source_dto.url,
+            title=source_dto.title,
+            company=source_dto.company,
             description=source_dto.description,
         )
     except apps.LinkError as exc:
         raise ApiError(
-            400, "invalid_url",
+            400,
+            "invalid_url",
             "la URL no es resoluble ni sintetizable",
             {"reason": exc.reason},
         ) from exc
@@ -138,7 +143,8 @@ def _sole(rows, item_id):
     defensivo, jamás mutar a ciegas la fila equivocada."""
     if len(rows) > 1:
         raise ApiError(
-            409, "ambiguous_id",
+            409,
+            "ambiguous_id",
             "el identificador direcciona más de un recurso del tenant",
             {"id": str(item_id)},
         )
@@ -151,8 +157,7 @@ async def _lock_target(session, item_id, consumer_id):
     row = (
         await session.execute(
             sa.text(
-                "SELECT " + _APP_COLS + _APP_FROM
-                + "WHERE a.id = :iid FOR UPDATE OF a"
+                "SELECT " + _APP_COLS + _APP_FROM + "WHERE a.id = :iid FOR UPDATE OF a"
             ),
             {"iid": item_id, "cid": consumer_id},
         )
@@ -162,7 +167,9 @@ async def _lock_target(session, item_id, consumer_id):
     rows = (
         await session.execute(
             sa.text(
-                "SELECT " + _APP_COLS + _APP_FROM
+                "SELECT "
+                + _APP_COLS
+                + _APP_FROM
                 + "WHERE a.vacancy_id = :iid FOR UPDATE OF a"
             ),
             {"iid": item_id, "cid": consumer_id},
@@ -194,7 +201,8 @@ async def _current_payload(session, kind: str, row) -> dict:
 
 
 @router.get(
-    "/applications", response_model=schemas.ApplicationsPageDTO,
+    "/applications",
+    response_model=schemas.ApplicationsPageDTO,
     responses={304: {"description": "Not Modified"}},
 )
 async def list_applications(
@@ -220,7 +228,9 @@ async def list_applications(
 
 
 @router.post(
-    "/applications", status_code=201, response_model=schemas.ApplicationDTO,
+    "/applications",
+    status_code=201,
+    response_model=schemas.ApplicationDTO,
     responses=WRITE_RESPONSES,
 )
 async def create_application(
@@ -249,21 +259,31 @@ async def create_application(
         status_value = body.status or apps.SAVED_STATUS
         snapshot = {k: getattr(body, k) for k in apps.SNAPSHOT_KEYS}
         aid = await apps.create_application(
-            session, profile_id=body.profile_id, vacancy_id=vid,
-            status=status_value, notes=body.notes,
-            follow_up_date=body.follow_up_date, snapshot=snapshot,
+            session,
+            profile_id=body.profile_id,
+            vacancy_id=vid,
+            status=status_value,
+            notes=body.notes,
+            follow_up_date=body.follow_up_date,
+            snapshot=snapshot,
             destination=consumer_name,
         )
         if aid is None:
             raise ApiError(
-                409, "application_exists",
+                409,
+                "application_exists",
                 "el perfil ya tiene una candidatura para esa vacante",
                 {"vacancy_id": str(vid)},
             )
         return 201, _dto_json(await apps.application_item(session, aid))
 
     status, payload = await run_idempotent(
-        session, principal, route, req_hash, idem_key, handler,
+        session,
+        principal,
+        route,
+        req_hash,
+        idem_key,
+        handler,
         profile_id=body.profile_id,
     )
     return json_response(status, payload)
@@ -292,15 +312,22 @@ async def _apply_patch(session, row, body, provided) -> dict:
             "updated_at = clock_timestamp() WHERE id = :id"
         ),
         {
-            "st": new_status, "n": new_notes, "fud": new_fud,
-            "rev": new_revision, "id": row.id,
+            "st": new_status,
+            "n": new_notes,
+            "fud": new_fud,
+            "rev": new_revision,
+            "id": row.id,
         },
     )
     if new_status != row.status:
         await apps.record_status_event(
-            session, application_id=row.id, profile_id=row.profile_id,
-            vacancy_id=row.vacancy_id, status=new_status,
-            revision=new_revision, destination=row.consumer_name,
+            session,
+            application_id=row.id,
+            profile_id=row.profile_id,
+            vacancy_id=row.vacancy_id,
+            status=new_status,
+            revision=new_revision,
+            destination=row.consumer_name,
         )
     if new_status == apps.SAVED_STATUS and "status" in provided:
         await matching.set_saved(session, row.profile_id, row.vacancy_id, True)
@@ -323,15 +350,21 @@ async def _promote_bookmark(session, row, body, provided) -> dict:
     )
     snapshot = {k: corpus.get(k) for k in apps.SNAPSHOT_KEYS}
     aid = await apps.create_application(
-        session, profile_id=row.profile_id, vacancy_id=row.vacancy_id,
-        status=new_status, notes=notes, follow_up_date=fud, snapshot=snapshot,
+        session,
+        profile_id=row.profile_id,
+        vacancy_id=row.vacancy_id,
+        status=new_status,
+        notes=notes,
+        follow_up_date=fud,
+        snapshot=snapshot,
         destination=row.consumer_name,
     )
     if aid is None:
         # Carrera rarísima (otra tx creó la application pese al lock pvs):
         # reintible por el cliente, jamás doble fila.
         raise ApiError(
-            409, "application_exists",
+            409,
+            "application_exists",
             "el perfil ya tiene una candidatura para esa vacante",
             {"vacancy_id": str(row.vacancy_id)},
         )
@@ -339,7 +372,8 @@ async def _promote_bookmark(session, row, body, provided) -> dict:
 
 
 @router.patch(
-    "/applications/{item_id}", response_model=schemas.ApplicationDTO,
+    "/applications/{item_id}",
+    response_model=schemas.ApplicationDTO,
     responses=WRITE_RESPONSES,
 )
 async def patch_application(
@@ -358,7 +392,9 @@ async def patch_application(
     req_hash = request_hash(body.model_dump(mode="json", exclude_unset=True))
     provided = body.model_fields_set
 
-    subject_id = await resource_subject(session, principal, route, idem_key, "applications", item_id)
+    subject_id = await resource_subject(
+        session, principal, route, idem_key, "applications", item_id
+    )
 
     async def handler():
         target = await _lock_target(session, item_id, principal.consumer_id)
@@ -373,14 +409,21 @@ async def patch_application(
         return 200, await _promote_bookmark(session, row, body, provided)
 
     status, payload = await run_idempotent(
-        session, principal, route, req_hash, idem_key, handler,
+        session,
+        principal,
+        route,
+        req_hash,
+        idem_key,
+        handler,
         profile_id=subject_id,
     )
     return json_response(status, payload)
 
 
 @router.delete(
-    "/applications/{item_id}", status_code=204, responses=WRITE_RESPONSES,
+    "/applications/{item_id}",
+    status_code=204,
+    responses=WRITE_RESPONSES,
 )
 async def delete_application(
     item_id: uuid.UUID,
@@ -393,7 +436,9 @@ async def delete_application(
     idem_key = request.headers.get("idempotency-key")
     route = f"DELETE {request.url.path}"
 
-    subject_id = await resource_subject(session, principal, route, idem_key, "applications", item_id)
+    subject_id = await resource_subject(
+        session, principal, route, idem_key, "applications", item_id
+    )
 
     async def handler():
         target = await _lock_target(session, item_id, principal.consumer_id)
@@ -410,20 +455,21 @@ async def delete_application(
             # vacante y el item RESUCITARA como bookmark, con id = vacancy_id
             # (otra identidad) y un segundo DELETE en 404. El item del feed es
             # UNO: se retira entero, igual que ya hacía la rama bookmark.
-            await matching.set_saved(
-                session, row.profile_id, row.vacancy_id, False
-            )
+            await matching.set_saved(session, row.profile_id, row.vacancy_id, False)
             await session.execute(
                 sa.text("DELETE FROM applications WHERE id = :id"), {"id": row.id}
             )
         else:
-            await matching.set_saved(
-                session, row.profile_id, row.vacancy_id, False
-            )
+            await matching.set_saved(session, row.profile_id, row.vacancy_id, False)
         return 204, None
 
     status, payload = await run_idempotent(
-        session, principal, route, request_hash({}), idem_key, handler,
+        session,
+        principal,
+        route,
+        request_hash({}),
+        idem_key,
+        handler,
         profile_id=subject_id,
     )
     return json_response(status, payload)
@@ -475,8 +521,10 @@ async def sync_bookmarks(
                     raise
                 skipped.append(
                     schemas.BookmarkSkippedDTO(
-                        vacancy_id=item.vacancy_id, url=item.url,
-                        title=item.title, reason="vacante irresoluble (3a)",
+                        vacancy_id=item.vacancy_id,
+                        url=item.url,
+                        title=item.title,
+                        reason="vacante irresoluble (3a)",
                     )
                 )
                 continue
@@ -485,9 +533,13 @@ async def sync_bookmarks(
             seen.add(vid)
             snapshot = {k: getattr(item, k) for k in apps.SNAPSHOT_KEYS}
             aid = await apps.create_application(
-                session, profile_id=profile_id, vacancy_id=vid,
-                status=apps.SAVED_STATUS, notes=item.notes,
-                follow_up_date=item.follow_up_date, snapshot=snapshot,
+                session,
+                profile_id=profile_id,
+                vacancy_id=vid,
+                status=apps.SAVED_STATUS,
+                notes=item.notes,
+                follow_up_date=item.follow_up_date,
+                snapshot=snapshot,
                 destination=consumer_name,
             )
             if aid is None:
@@ -503,7 +555,12 @@ async def sync_bookmarks(
         return 200, result.model_dump(mode="json")
 
     status, payload = await run_idempotent(
-        session, principal, route, req_hash, idem_key, handler,
+        session,
+        principal,
+        route,
+        req_hash,
+        idem_key,
+        handler,
         profile_id=profile_id,
     )
     return json_response(status, payload)

@@ -164,8 +164,12 @@ class ArbeitnowProvider(BaseProvider):
         # de entorno —no existe ningún `CORE_HARVEST_*` para ellos y es deliberado: la
         # imagen del core es inmutable, así que cambiar el ritmo es reconstruir—.
         sweep = await _sweep_feed(
-            http, target, keyword, _cursor_int(cur, "last_top_seen"),
-            PAGE_PAUSE_S, SWEEP_BUDGET_S,
+            http,
+            target,
+            keyword,
+            _cursor_int(cur, "last_top_seen"),
+            PAGE_PAUSE_S,
+            SWEEP_BUDGET_S,
         )
         collected, pages = sweep.listings, sweep.pages
 
@@ -179,7 +183,9 @@ class ArbeitnowProvider(BaseProvider):
                 next_cursor["page_target"] = target
             logger.error(
                 "arbeitnow: barrido CORTADO por forma inválida tras %d páginas "
-                "(lo cosechado se emite igual): %s", pages, sweep.error,
+                "(lo cosechado se emite igual): %s",
+                pages,
+                sweep.error,
             )
         elif sweep.timed_out:
             # PRESUPUESTO agotado (G11 P1-1): parcial, pero NI fallo de la fuente (no
@@ -192,7 +198,9 @@ class ArbeitnowProvider(BaseProvider):
             logger.error(
                 "arbeitnow: barrido AGOTÓ SU PRESUPUESTO de %.0f s tras %d páginas — "
                 "el feed no cabe en una corrida a este ritmo; la vigilancia lo verá como "
-                "'cosecha_sin_completar' si persiste", SWEEP_BUDGET_S, pages,
+                "'cosecha_sin_completar' si persiste",
+                SWEEP_BUDGET_S,
+                pages,
             )
         elif sweep.exhausted:
             complete = True
@@ -208,21 +216,31 @@ class ArbeitnowProvider(BaseProvider):
             next_cursor["page_target"] = grown
             logger.warning(
                 "arbeitnow: barrido INCOMPLETO (%d páginas sin agotar el feed); "
-                "objetivo adaptativo %d→%d", pages, target, grown,
+                "objetivo adaptativo %d→%d",
+                pages,
+                target,
+                grown,
             )
             if target >= hard_max:
                 # ALERTA PERSISTENTE (cada run): capacidad contractual excedida.
                 logger.error(
                     "arbeitnow: CAPACIDAD EXCEDIDA — el feed supera "
-                    "hard_max_pages=%d; ampliar el límite del scope", hard_max,
+                    "hard_max_pages=%d; ampliar el límite del scope",
+                    hard_max,
                 )
         logger.info(
             "arbeitnow: %d emitidas (%d páginas, %s) cursor=%s",
-            len(collected), pages, "completo" if complete else "PARCIAL", next_cursor,
+            len(collected),
+            pages,
+            "completo" if complete else "PARCIAL",
+            next_cursor,
         )
         return FetchResult(
-            listings=collected, next_cursor=next_cursor,
-            pages_fetched=pages, complete=complete, error=sweep.error,
+            listings=collected,
+            next_cursor=next_cursor,
+            pages_fetched=pages,
+            complete=complete,
+            error=sweep.error,
         )
 
 
@@ -231,16 +249,20 @@ class _Sweep:
     """Resultado CRUDO de un barrido del feed (sin decisiones de cursor)."""
 
     listings: tuple[RawListing, ...]
-    pages: int          # páginas con el sobre ÍNTEGRO recorridas
+    pages: int  # páginas con el sobre ÍNTEGRO recorridas
     top_seen: int
-    exhausted: bool     # el feed se agotó (fin legítimo), no el tope de páginas
-    error: str | None   # sobre inválido a mitad de barrido (lo previo se conserva)
-    timed_out: bool     # se rindió por PRESUPUESTO de tiempo, no por tope ni por fallo
+    exhausted: bool  # el feed se agotó (fin legítimo), no el tope de páginas
+    error: str | None  # sobre inválido a mitad de barrido (lo previo se conserva)
+    timed_out: bool  # se rindió por PRESUPUESTO de tiempo, no por tope ni por fallo
 
 
 async def _sweep_feed(
-    http: httpx.AsyncClient, target: int, keyword: str | None, top_seen: int,
-    pause: float, budget: float,
+    http: httpx.AsyncClient,
+    target: int,
+    keyword: str | None,
+    top_seen: int,
+    pause: float,
+    budget: float,
 ) -> _Sweep:
     """Recorre el feed hasta agotarlo, hasta el tope de páginas o hasta un fallo.
 
@@ -330,7 +352,9 @@ async def _get_page(http: httpx.AsyncClient, page: int, pause: float):
     while True:
         intento += 1
         try:
-            resp = await http.get(API_URL, params={"page": page}, timeout=HTTP_TIMEOUT_S)
+            resp = await http.get(
+                API_URL, params={"page": page}, timeout=HTTP_TIMEOUT_S
+            )
             resp.raise_for_status()
             return resp.json()
         except (httpx.HTTPStatusError, httpx.TransportError) as exc:
@@ -339,7 +363,11 @@ async def _get_page(http: httpx.AsyncClient, page: int, pause: float):
             espera = _retry_delay(exc, pause, intento)
             logger.warning(
                 "arbeitnow: página %d falló (%s), intento %d/%d; reintento en %.1f s",
-                page, _reason(exc), intento, HTTP_ATTEMPTS, espera,
+                page,
+                _reason(exc),
+                intento,
+                HTTP_ATTEMPTS,
+                espera,
             )
             await asyncio.sleep(espera)
 
@@ -391,8 +419,12 @@ def _describe_failure(exc: Exception, page: int) -> str:
 
 
 def _harvest_page(
-    items: list, has_next: bool, keyword: str | None,
-    collected: list[RawListing], top_seen: int, page: int,
+    items: list,
+    has_next: bool,
+    keyword: str | None,
+    collected: list[RawListing],
+    top_seen: int,
+    page: int,
 ) -> "_PageHarvest":
     """Cosecha UNA página, exigiendo que la página no se contradiga A SÍ MISMA (G10 P1-1).
 
@@ -462,7 +494,8 @@ def _collect_items(
         except Exception as exc:  # frontera de datos externos: nunca tumbar el barrido
             logger.warning(
                 "arbeitnow: item malformado saltado (%s): %r",
-                exc, item.get("slug") or item.get("url"),
+                exc,
+                item.get("slug") or item.get("url"),
             )
     return _PageHarvest(top_seen, usable)
 

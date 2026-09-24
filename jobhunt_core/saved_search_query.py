@@ -33,7 +33,9 @@ class SwissJobSearchFilters(BaseModel):
     remote_only: bool = False
 
 
-def matching_query(filters: dict, *, include_nonmatches=False) -> tuple[sa.TextClause, dict]:
+def matching_query(
+    filters: dict, *, include_nonmatches=False
+) -> tuple[sa.TextClause, dict]:
     """One parametrized query, one row per vacancy. Caller owns the transaction.
 
     Uses the primary listing's source, as the served catalog does; legacy:X
@@ -49,19 +51,23 @@ def matching_query(filters: dict, *, include_nonmatches=False) -> tuple[sa.TextC
         # Reuse the existing GIN document as a superset prefilter, but remove
         # tag-only hits with the exact legacy document. No new index needed.
         query = "plainto_tsquery('pg_catalog.simple', :q)"
-        where.extend([
-            f"o.search_document @@ {query}",
-            "to_tsvector('pg_catalog.simple', "
-            "coalesce(o.content->>'title','') || ' ' || "
-            "coalesce(o.content->>'description','') || ' ' || "
-            f"coalesce(o.content->>'company','')) @@ {query}",
-        ])
+        where.extend(
+            [
+                f"o.search_document @@ {query}",
+                "to_tsvector('pg_catalog.simple', "
+                "coalesce(o.content->>'title','') || ' ' || "
+                "coalesce(o.content->>'description','') || ' ' || "
+                f"coalesce(o.content->>'company','')) @@ {query}",
+            ]
+        )
         params["q"] = f.q
     sources = [name.strip() for name in (f.source or "").split(",") if name.strip()]
     if sources:
         where.append("regexp_replace(src.name, '^legacy:', '') = ANY(:sources)")
         params["sources"] = sources
-    cantons = [name.strip().upper() for name in (f.canton or "").split(",") if name.strip()]
+    cantons = [
+        name.strip().upper() for name in (f.canton or "").split(",") if name.strip()
+    ]
     if cantons:
         where.append("o.content->>'canton' = ANY(:cantons)")
         params["cantons"] = cantons
@@ -89,7 +95,9 @@ def matching_query(filters: dict, *, include_nonmatches=False) -> tuple[sa.TextC
     # Editing filters must not turn already-observed old offers into new alerts.
     selection = "v.id AS vacancy_id, v.created_at"
     if include_nonmatches:
-        selection += ", COALESCE((" + (" AND ".join(where) or "true") + "), false) AS matches"
+        selection += (
+            ", COALESCE((" + (" AND ".join(where) or "true") + "), false) AS matches"
+        )
         where = []
     sql = (
         "SELECT " + selection + " FROM vacancies v "
@@ -97,7 +105,8 @@ def matching_query(filters: dict, *, include_nonmatches=False) -> tuple[sa.TextC
         "JOIN source_listing_incarnations pi ON pi.id=v.primary_incarnation_id "
         "JOIN source_listings sl ON sl.id=pi.source_listing_id "
         "JOIN sources src ON src.id=sl.source_id WHERE "
-        + " AND ".join(eligible + where) + " ORDER BY v.created_at, v.id"
+        + " AND ".join(eligible + where)
+        + " ORDER BY v.created_at, v.id"
     )
     return sa.text(sql), params
 

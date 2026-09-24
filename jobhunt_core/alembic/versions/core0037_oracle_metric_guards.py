@@ -59,8 +59,7 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        f"ALTER TABLE {S}.labeled_sets "
-        "ENABLE ALWAYS TRIGGER labeled_sets_frozen_guard"
+        f"ALTER TABLE {S}.labeled_sets ENABLE ALWAYS TRIGGER labeled_sets_frozen_guard"
     )
     op.execute(
         f"""

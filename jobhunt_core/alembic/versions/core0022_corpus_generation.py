@@ -87,7 +87,9 @@ def upgrade() -> None:
     op.drop_column("profile_recovery_state", "corpus_fingerprint", schema=S)
     op.add_column(
         "profile_recovery_state",
-        sa.Column("corpus_generation", sa.BigInteger(), nullable=False, server_default="0"),
+        sa.Column(
+            "corpus_generation", sa.BigInteger(), nullable=False, server_default="0"
+        ),
         schema=S,
     )
     op.alter_column(

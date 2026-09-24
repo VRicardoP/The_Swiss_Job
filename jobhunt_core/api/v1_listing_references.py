@@ -9,7 +9,14 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query
 
 from jobhunt_core import applications
-from jobhunt_core.api.deps import ApiError, Principal, ensure_json_storable, error_404, get_session, require_scope
+from jobhunt_core.api.deps import (
+    ApiError,
+    Principal,
+    ensure_json_storable,
+    error_404,
+    get_session,
+    require_scope,
+)
 
 router = APIRouter(prefix="/v1")
 
@@ -22,13 +29,22 @@ async def resolve_listing_reference(
     principal: Principal = Depends(require_scope("vacancies:read")),
 ):
     ensure_json_storable({"external_id": external_id, "source": source})
-    rows = (await session.execute(sa.text(
-        "SELECT DISTINCT i.vacancy_id FROM source_listings sl "
-        "JOIN sources s ON s.id=sl.source_id "
-        "JOIN source_listing_incarnations i ON i.source_listing_id=sl.id "
-        "WHERE sl.external_id=:ref AND i.ended_at IS NULL "
-        "AND (CAST(:src AS text) IS NULL OR s.name=:src) LIMIT 2"
-    ), {"ref": external_id, "src": source})).scalars().all()
+    rows = (
+        (
+            await session.execute(
+                sa.text(
+                    "SELECT DISTINCT i.vacancy_id FROM source_listings sl "
+                    "JOIN sources s ON s.id=sl.source_id "
+                    "JOIN source_listing_incarnations i ON i.source_listing_id=sl.id "
+                    "WHERE sl.external_id=:ref AND i.ended_at IS NULL "
+                    "AND (CAST(:src AS text) IS NULL OR s.name=:src) LIMIT 2"
+                ),
+                {"ref": external_id, "src": source},
+            )
+        )
+        .scalars()
+        .all()
+    )
     if not rows:
         raise error_404("referencia de oferta")
     if len(rows) != 1:

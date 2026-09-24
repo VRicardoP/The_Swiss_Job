@@ -81,7 +81,11 @@ def proj_db():
     engine = sa.create_engine(db_url, poolclass=sa.pool.NullPool)
     try:
         with engine.begin() as c:
-            c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            c.execute(
+                sa.text(
+                    "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm"
+                )
+            )
             c.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS "{S}"'))
         run_alembic(async_url, "upgrade", "head")
         yield async_url
@@ -180,34 +184,58 @@ def _project(**kwargs):
     return _run(projector.project_pending(**kwargs))
 
 
-def _job(pk, source, title="Backend Dev", company="ACME AG",
-         description="python backend", active=True, dup=None, url=None,
-         chash=None, **extra):
+def _job(
+    pk,
+    source,
+    title="Backend Dev",
+    company="ACME AG",
+    description="python backend",
+    active=True,
+    dup=None,
+    url=None,
+    chash=None,
+    **extra,
+):
     """Payload de staging estilo mini-tabla legacy (whitelist ∩ esquema) con
     TODAS las columnas de contenido contractuales (JOB_PAYLOAD_MAP, §3): un
     U con solo `description` en `_omitted` debe dar _missing_cols() ==
     ('description',) — la degradación del caso huérfano depende SOLO de la
     omisión TOAST, no de columnas que el fixture no traía."""
     payload = {
-        "title": title, "company": company, "description": description,
-        "tags": ["py"], "location": "Zurich", "canton": "ZH",
-        "language": "en", "seniority": "senior", "contract_type": "permanent",
-        "remote": False, "salary_min_chf": 100000, "salary_max_chf": 130000,
-        "salary_original": "100'000 - 130'000 CHF", "salary_currency": "CHF",
+        "title": title,
+        "company": company,
+        "description": description,
+        "tags": ["py"],
+        "location": "Zurich",
+        "canton": "ZH",
+        "language": "en",
+        "seniority": "senior",
+        "contract_type": "permanent",
+        "remote": False,
+        "salary_min_chf": 100000,
+        "salary_max_chf": 130000,
+        "salary_original": "100'000 - 130'000 CHF",
+        "salary_currency": "CHF",
         "salary_period": "year",
-        "url": url or f"https://legacy/{pk}", "source": source,
-        "is_active": active, "duplicate_of": dup,
+        "url": url or f"https://legacy/{pk}",
+        "source": source,
+        "is_active": active,
+        "duplicate_of": dup,
         "content_hash": chash or f"ch-{pk}-1",
     }
     payload.update(extra)
     return payload
 
 
-def _profile(user_id, title="python developer",
-             cv="cv con python y fastapi", skills=("python",)):
+def _profile(
+    user_id, title="python developer", cv="cv con python y fastapi", skills=("python",)
+):
     return {
-        "user_id": str(user_id), "title": title, "cv_text": cv,
-        "skills": list(skills), "updated_at": "2026-07-25T10:00:00+00:00",
+        "user_id": str(user_id),
+        "title": title,
+        "cv_text": cv,
+        "skills": list(skills),
+        "updated_at": "2026-07-25T10:00:00+00:00",
     }
 
 
@@ -225,7 +253,8 @@ def _active_exts(factory, source_id):
             "SELECT l.external_id FROM source_listings l "
             "JOIN source_listing_incarnations i "
             "  ON i.source_listing_id = l.id AND i.ended_at IS NULL "
-            "WHERE l.source_id = :s", s=source_id,
+            "WHERE l.source_id = :s",
+            s=source_id,
         )
     }
 
@@ -239,7 +268,8 @@ def _rev_counts(factory, source_id):
             "FROM source_listing_revisions r "
             "JOIN source_listing_incarnations i ON i.id = r.incarnation_id "
             "JOIN source_listings l ON l.id = i.source_listing_id "
-            "WHERE l.source_id = :s GROUP BY l.external_id", s=source_id,
+            "WHERE l.source_id = :s GROUP BY l.external_id",
+            s=source_id,
         )
     }
 
@@ -255,11 +285,22 @@ def _seed_corpus(factory):
         pk = f"job-corpus-{marca}"
         # Contenido ÚNICO por llamada: dos ofertas idénticas comparten text_hash (y por tanto
         # embedding), así que el corpus no crecería y los tests del conjunto no probarían nada.
-        _seed(factory, [
-            ("jobs", "I", pk, _job(pk, f"fx{marca}",
-                                   title=f"Python Developer {marca}",
-                                   description=f"backend python fastapi {marca}")),
-        ])
+        _seed(
+            factory,
+            [
+                (
+                    "jobs",
+                    "I",
+                    pk,
+                    _job(
+                        pk,
+                        f"fx{marca}",
+                        title=f"Python Developer {marca}",
+                        description=f"backend python fastapi {marca}",
+                    ),
+                ),
+            ],
+        )
         _project()
     finally:
         embeddings.set_backend_factory(None)
@@ -284,6 +325,7 @@ async def _insert_vectors(session, model_id):
 
 def _seed_vectors(factory, model_id):
     """Envoltorio SÍNCRONO de _insert_vectors (fuera de corrutina)."""
+
     async def go():
         async with factory() as s:
             await _insert_vectors(s, model_id)
@@ -311,13 +353,16 @@ def test_jobs_i_u_d_end_to_end_mirror(db):
     src = f"fx{uuid.uuid4().hex[:6]}"
     # Ronda 1 — "backfill": activos, un inactivo y un duplicado (estos dos
     # JAMÁS entran al corpus: espejo del legacy ACTIVO).
-    _seed(factory, [
-        ("jobs", "I", "job-a", _job("job-a", src)),
-        ("jobs", "I", "job-b", _job("job-b", src)),
-        ("jobs", "I", "job-c", _job("job-c", src, active=False)),
-        ("jobs", "I", "job-e", _job("job-e", src, dup="job-a")),
-        ("jobs", "I", "job-d", _job("job-d", src)),
-    ])
+    _seed(
+        factory,
+        [
+            ("jobs", "I", "job-a", _job("job-a", src)),
+            ("jobs", "I", "job-b", _job("job-b", src)),
+            ("jobs", "I", "job-c", _job("job-c", src, active=False)),
+            ("jobs", "I", "job-e", _job("job-e", src, dup="job-a")),
+            ("jobs", "I", "job-d", _job("job-d", src)),
+        ],
+    )
     t1 = _project()
     assert (t1["batches"], t1["changes"], t1["upserts"], t1["closes"]) == (1, 5, 3, 0)
 
@@ -335,12 +380,19 @@ def test_jobs_i_u_d_end_to_end_mirror(db):
     assert scopes[0].tier == 0 and scopes[0].enabled is False
 
     # Ronda 2 — streaming: contenido nuevo, DELETE y refresco sin cambio.
-    _seed(factory, [
-        ("jobs", "U", "job-b", _job("job-b", src, description="python backend v2",
-                                    chash="ch-job-b-2")),
-        ("jobs", "D", "job-d", {}),
-        ("jobs", "U", "job-a", _job("job-a", src)),  # mismo content_hash
-    ])
+    _seed(
+        factory,
+        [
+            (
+                "jobs",
+                "U",
+                "job-b",
+                _job("job-b", src, description="python backend v2", chash="ch-job-b-2"),
+            ),
+            ("jobs", "D", "job-d", {}),
+            ("jobs", "U", "job-a", _job("job-a", src)),  # mismo content_hash
+        ],
+    )
     t2 = _project()
     assert (t2["batches"], t2["changes"], t2["upserts"], t2["closes"]) == (1, 3, 2, 1)
     assert t2["revisions_new"] == 1  # SOLO la v2 de job-b (el refresco no crea)
@@ -352,7 +404,8 @@ def test_jobs_i_u_d_end_to_end_mirror(db):
         r.external_id
         for r in _rows(
             factory,
-            "SELECT external_id FROM source_listings WHERE source_id = :s", s=sid,
+            "SELECT external_id FROM source_listings WHERE source_id = :s",
+            s=sid,
         )
     }
     assert slots == {"job-a", "job-b", "job-d"}  # inactivo/duplicado sin slot
@@ -363,7 +416,8 @@ def test_jobs_i_u_d_end_to_end_mirror(db):
         factory,
         "SELECT i.ended_at FROM source_listing_incarnations i "
         "JOIN source_listings l ON l.id = i.source_listing_id "
-        "WHERE l.source_id = :s AND l.external_id = 'job-d'", s=sid,
+        "WHERE l.source_id = :s AND l.external_id = 'job-d'",
+        s=sid,
     )
     assert ended is not None
 
@@ -374,15 +428,19 @@ def test_jobs_i_u_d_end_to_end_mirror(db):
         "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
         "JOIN source_listing_incarnations i ON i.id = v.primary_incarnation_id "
         "JOIN source_listings l ON l.id = i.source_listing_id "
-        "WHERE l.source_id = :s AND l.external_id = 'job-b'", s=sid,
+        "WHERE l.source_id = :s AND l.external_id = 'job-b'",
+        s=sid,
     )
     assert canon == "python backend v2"
 
     # Staging drenado y sellado.
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
-    ) == 0
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+        )
+        == 0
+    )
 
 
 # ------------------------------------------------------- (b) merge TOAST (§3)
@@ -410,7 +468,8 @@ def test_u_omitted_merges_description_from_last_known_raw(db):
         "JOIN source_listing_incarnations i ON i.id = r.incarnation_id "
         "JOIN source_listings l ON l.id = i.source_listing_id "
         "WHERE l.source_id = :s AND l.external_id = 'job-t' "
-        "ORDER BY r.fetched_at, r.id", s=sid,
+        "ORDER BY r.fetched_at, r.id",
+        s=sid,
     )
     assert len(revs) == 2
     assert revs[-1].raw["title"] == "Dev v2"
@@ -421,7 +480,8 @@ def test_u_omitted_merges_description_from_last_known_raw(db):
         "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
         "JOIN source_listing_incarnations i ON i.id = v.primary_incarnation_id "
         "JOIN source_listings l ON l.id = i.source_listing_id "
-        "WHERE l.source_id = :s AND l.external_id = 'job-t'", s=sid,
+        "WHERE l.source_id = :s AND l.external_id = 'job-t'",
+        s=sid,
     )
     # La canónica pasa por la coerción central (_text hace strip); el raw de
     # arriba conserva el texto EXACTO.
@@ -456,15 +516,22 @@ def test_u_orphan_without_previous_value_degrades_with_alert(db, caplog):
     assert totals["upserts"] == 0
     assert "SIN valor previo conocido" in caplog.text
     sid = _source_id(factory, src)
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM source_listings WHERE source_id = :s", s=sid,
-    ) == 0  # ni slot ni revisión: nada inventado
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM source_listings WHERE source_id = :s",
+            s=sid,
+        )
+        == 0
+    )  # ni slot ni revisión: nada inventado
     # El cambio quedó SELLADO (no se re-procesa en bucle).
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
-    ) == 0
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+        )
+        == 0
+    )
 
 
 def test_u_con_previo_tambien_truncado_degrada_en_vez_de_crear_revision_coja(
@@ -492,7 +559,9 @@ def test_u_con_previo_tambien_truncado_degrada_en_vez_de_crear_revision_coja(
         "INSERT INTO shadow_change_log (lsn, seq_in_tx, src_table, op, pk, "
         "payload, applied_at) VALUES (:l, 0, 'jobs', 'U', :p, "
         "CAST(:j AS jsonb), now())",
-        l=next(_LSN), p=pk, j=json.dumps(previo),
+        l=next(_LSN),
+        p=pk,
+        j=json.dumps(previo),
     )
     # El U nuevo llega con la MISMA columna omitida.
     u = _job(pk, src, title="Dev v2", chash="ch-nuevo")
@@ -505,12 +574,22 @@ def test_u_con_previo_tambien_truncado_degrada_en_vez_de_crear_revision_coja(
     assert totals["upserts"] == 0  # antes: 1, con la revisión coja
     assert "SIN valor previo conocido" in caplog.text
     sid = _source_id(factory, src)
-    assert sid is None or _scalar(
-        factory, "SELECT count(*) FROM source_listings WHERE source_id = :s", s=sid,
-    ) == 0  # ni slot ni revisión truncada
-    assert _scalar(
-        factory, "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
-    ) == 0  # sellado: no se re-procesa en bucle
+    assert (
+        sid is None
+        or _scalar(
+            factory,
+            "SELECT count(*) FROM source_listings WHERE source_id = :s",
+            s=sid,
+        )
+        == 0
+    )  # ni slot ni revisión truncada
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+        )
+        == 0
+    )  # sellado: no se re-procesa en bucle
 
 
 def test_alert_when_normalize_returns_none_for_legacy_source(db, caplog):
@@ -524,13 +603,17 @@ def test_alert_when_normalize_returns_none_for_legacy_source(db, caplog):
     assert "normalize_offer devolvió None" in caplog.text
     sid = _source_id(factory, src)
     assert _rev_counts(factory, sid) == {"job-nt": 1}  # raw persistido
-    assert _scalar(
-        factory,
-        "SELECT v.current_offer_revision_id FROM vacancies v "
-        "JOIN source_listing_incarnations i ON i.id = v.primary_incarnation_id "
-        "JOIN source_listings l ON l.id = i.source_listing_id "
-        "WHERE l.source_id = :s AND l.external_id = 'job-nt'", s=sid,
-    ) is None
+    assert (
+        _scalar(
+            factory,
+            "SELECT v.current_offer_revision_id FROM vacancies v "
+            "JOIN source_listing_incarnations i ON i.id = v.primary_incarnation_id "
+            "JOIN source_listings l ON l.id = i.source_listing_id "
+            "WHERE l.source_id = :s AND l.external_id = 'job-nt'",
+            s=sid,
+        )
+        is None
+    )
 
 
 # ------------------------------- (c) cierres con identidad compartida intacta
@@ -547,22 +630,33 @@ def test_delete_closes_without_breaking_shared_identity(db, monkeypatch):
 
     factory = db
     src = f"fx{uuid.uuid4().hex[:6]}"
-    _seed(factory, [
-        ("jobs", "I", "job-x", _job("job-x", src, url="https://feed/x1")),
-    ])
+    _seed(
+        factory,
+        [
+            ("jobs", "I", "job-x", _job("job-x", src, url="https://feed/x1")),
+        ],
+    )
     _project()
     sid = _source_id(factory, src)
 
     other = f"otherboard{uuid.uuid4().hex[:6]}"
     monkeypatch.setitem(
-        identity_mod._EXTRACTORS, other,
+        identity_mod._EXTRACTORS,
+        other,
         lambda p: (p.get("title"), p.get("company_name")),
     )
     monkeypatch.setitem(
-        normalize_mod._NORMALIZERS, other,
-        lambda raw: {"title": raw.get("title"), "company": raw.get("company_name"),
-                     "description": raw.get("description"), "tags": raw.get("tags"),
-                     "location": None, "remote": None, "salary": None},
+        normalize_mod._NORMALIZERS,
+        other,
+        lambda raw: {
+            "title": raw.get("title"),
+            "company": raw.get("company_name"),
+            "description": raw.get("description"),
+            "tags": raw.get("tags"),
+            "location": None,
+            "remote": None,
+            "salary": None,
+        },
     )
 
     async def cross_source():
@@ -582,10 +676,15 @@ def test_delete_closes_without_breaking_shared_identity(db, monkeypatch):
             # MISMA URL → attach a la vacante existente. Título DISTINTO a
             # propósito: es el discriminador de la canónica reconstruida.
             await RawListingSink().handle(
-                s, str(scope2),
-                (RawListing(external_id="x1", url="https://feed/x1",
-                            payload={"title": "Python Engineer",
-                                     "company_name": "ACME AG"}),),
+                s,
+                str(scope2),
+                (
+                    RawListing(
+                        external_id="x1",
+                        url="https://feed/x1",
+                        payload={"title": "Python Engineer", "company_name": "ACME AG"},
+                    ),
+                ),
             )
             await s.commit()
             return src2
@@ -604,7 +703,8 @@ def test_delete_closes_without_breaking_shared_identity(db, monkeypatch):
         factory,
         "SELECT i.vacancy_id FROM source_listing_incarnations i "
         "JOIN source_listings l ON l.id = i.source_listing_id "
-        "WHERE l.source_id = :s AND l.external_id = 'job-x'", s=sid,
+        "WHERE l.source_id = :s AND l.external_id = 'job-x'",
+        s=sid,
     )
 
     _seed(factory, [("jobs", "D", "job-x", {})])
@@ -617,7 +717,8 @@ def test_delete_closes_without_breaking_shared_identity(db, monkeypatch):
         factory,
         "SELECT i.ended_at, i.vacancy_id FROM source_listing_incarnations i "
         "JOIN source_listings l ON l.id = i.source_listing_id "
-        "WHERE l.source_id = :s AND l.external_id = 'job-x'", s=sid,
+        "WHERE l.source_id = :s AND l.external_id = 'job-x'",
+        s=sid,
     )
     assert len(legacy_inc) == 1 and legacy_inc[0].ended_at is not None
     assert legacy_inc[0].vacancy_id == vac_id
@@ -628,32 +729,40 @@ def test_delete_closes_without_breaking_shared_identity(db, monkeypatch):
         "JOIN source_listing_incarnations i ON i.id = v.primary_incarnation_id "
         "JOIN source_listings l ON l.id = i.source_listing_id "
         "LEFT JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
-        "WHERE v.id = :v", v=vac_id,
+        "WHERE v.id = :v",
+        v=vac_id,
     )[0]
     # Primary REPARADO a la activa de la otra fuente y canónica reconstruida
     # desde ESE primary (título discriminador — un puntero stale no pasaría).
     assert prim.ended_at is None and prim.source_id == src2
     assert prim.title == "Python Engineer"
-    assert _scalar(
-        factory, "SELECT archived_at FROM vacancies WHERE id = :v", v=vac_id
-    ) is None
+    assert (
+        _scalar(factory, "SELECT archived_at FROM vacancies WHERE id = :v", v=vac_id)
+        is None
+    )
 
 
 def test_close_by_inactive_or_duplicate_and_reopen(db):
     factory = db
     src = f"fx{uuid.uuid4().hex[:6]}"
-    _seed(factory, [
-        ("jobs", "I", "job-y", _job("job-y", src)),
-        ("jobs", "I", "job-z", _job("job-z", src)),
-    ])
+    _seed(
+        factory,
+        [
+            ("jobs", "I", "job-y", _job("job-y", src)),
+            ("jobs", "I", "job-z", _job("job-z", src)),
+        ],
+    )
     _project()
     sid = _source_id(factory, src)
     assert _active_exts(factory, sid) == {"job-y", "job-z"}
 
-    _seed(factory, [
-        ("jobs", "U", "job-y", _job("job-y", src, active=False)),
-        ("jobs", "U", "job-z", _job("job-z", src, dup="job-y")),
-    ])
+    _seed(
+        factory,
+        [
+            ("jobs", "U", "job-y", _job("job-y", src, active=False)),
+            ("jobs", "U", "job-z", _job("job-z", src, dup="job-y")),
+        ],
+    )
     totals = _project()
     assert (totals["upserts"], totals["closes"]) == (0, 2)
     assert _active_exts(factory, sid) == set()
@@ -666,7 +775,8 @@ def test_close_by_inactive_or_duplicate_and_reopen(db):
         "SELECT i.seq FROM source_listing_incarnations i "
         "JOIN source_listings l ON l.id = i.source_listing_id "
         "WHERE l.source_id = :s AND l.external_id = 'job-y' "
-        "AND i.ended_at IS NULL", s=sid,
+        "AND i.ended_at IS NULL",
+        s=sid,
     )
     assert seq == 2
 
@@ -681,15 +791,31 @@ def test_profiles_evaluation_and_inactive_user_exclusion(db):
     _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
     embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
     try:
-        _seed(factory, [
-            ("jobs", "I", "job-p1", _job("job-p1", src, title="Python Developer",
-                                         description="backend python fastapi")),
-            ("users", "I", str(u1), {"id": str(u1), "is_active": True}),
-            ("users", "I", str(u2), {"id": str(u2), "is_active": False}),
-            ("user_profiles", "I", "prof-1", _profile(u1)),
-            ("user_profiles", "I", "prof-2",
-             _profile(u2, title="contable", cv="cv de contabilidad")),
-        ])
+        _seed(
+            factory,
+            [
+                (
+                    "jobs",
+                    "I",
+                    "job-p1",
+                    _job(
+                        "job-p1",
+                        src,
+                        title="Python Developer",
+                        description="backend python fastapi",
+                    ),
+                ),
+                ("users", "I", str(u1), {"id": str(u1), "is_active": True}),
+                ("users", "I", str(u2), {"id": str(u2), "is_active": False}),
+                ("user_profiles", "I", "prof-1", _profile(u1)),
+                (
+                    "user_profiles",
+                    "I",
+                    "prof-2",
+                    _profile(u2, title="contable", cv="cv de contabilidad"),
+                ),
+            ],
+        )
         t1 = _project()
 
         # Consumer sombra ÚNICO + perfiles por external_ref = user_id.
@@ -728,31 +854,52 @@ def test_profiles_evaluation_and_inactive_user_exclusion(db):
             p=profs[str(u1)],
         )
         assert n1 >= 1
-        assert _scalar(
-            factory,
-            "SELECT count(*) FROM match_evaluations WHERE profile_id = :p",
-            p=profs[str(u2)],
-        ) == 0
-        assert _scalar(
-            factory,
-            "SELECT count(*) FROM profile_revisions WHERE profile_id = :p",
-            p=profs[str(u2)],
-        ) == 1
+        assert (
+            _scalar(
+                factory,
+                "SELECT count(*) FROM match_evaluations WHERE profile_id = :p",
+                p=profs[str(u2)],
+            )
+            == 0
+        )
+        assert (
+            _scalar(
+                factory,
+                "SELECT count(*) FROM profile_revisions WHERE profile_id = :p",
+                p=profs[str(u2)],
+            )
+            == 1
+        )
 
         # Reactivación + corpus nuevo ⇒ u2 entra al flujo normal.
-        _seed(factory, [
-            ("users", "U", str(u2), {"id": str(u2), "is_active": True}),
-            ("jobs", "U", "job-p1", _job("job-p1", src, title="Python Developer",
-                                         description="backend python fastapi v2",
-                                         chash="ch-p1-2")),
-        ])
+        _seed(
+            factory,
+            [
+                ("users", "U", str(u2), {"id": str(u2), "is_active": True}),
+                (
+                    "jobs",
+                    "U",
+                    "job-p1",
+                    _job(
+                        "job-p1",
+                        src,
+                        title="Python Developer",
+                        description="backend python fastapi v2",
+                        chash="ch-p1-2",
+                    ),
+                ),
+            ],
+        )
         t2 = _project()
         assert t2["profiles_evaluated"] == 2
-        assert _scalar(
-            factory,
-            "SELECT count(*) FROM match_evaluations WHERE profile_id = :p",
-            p=profs[str(u2)],
-        ) >= 1
+        assert (
+            _scalar(
+                factory,
+                "SELECT count(*) FROM match_evaluations WHERE profile_id = :p",
+                p=profs[str(u2)],
+            )
+            >= 1
+        )
     finally:
         embeddings.set_backend_factory(None)
 
@@ -766,8 +913,12 @@ def test_profile_omitted_cv_preserved_or_skipped_with_alert(db, caplog):
     _seed(factory, [("user_profiles", "I", "prof-c", _profile(u))])
     _project()
 
-    partial = {"user_id": str(u), "title": "senior dev",
-               "skills": ["python", "sql"], "_omitted": ["cv_text"]}
+    partial = {
+        "user_id": str(u),
+        "title": "senior dev",
+        "skills": ["python", "sql"],
+        "_omitted": ["cv_text"],
+    }
     _seed(factory, [("user_profiles", "U", "prof-c", partial)])
     _project()
     content = _rows(
@@ -775,25 +926,33 @@ def test_profile_omitted_cv_preserved_or_skipped_with_alert(db, caplog):
         "SELECT pr.content FROM profile_revision_activations a "
         "JOIN profile_revisions pr ON pr.id = a.revision_id "
         "JOIN profiles p ON p.id = a.profile_id "
-        "WHERE p.external_ref = :r ORDER BY a.seq DESC LIMIT 1", r=str(u),
+        "WHERE p.external_ref = :r ORDER BY a.seq DESC LIMIT 1",
+        r=str(u),
     )[0].content
     assert content["title"] == "senior dev"
     assert content["cv_text"] == "cv con python y fastapi"  # PRESERVADO
 
     # Sin revisión previa que preserve → se salta con ALERTA.
     u_new = uuid.uuid4()
-    orphan = {"user_id": str(u_new), "title": "dev",
-              "skills": [], "_omitted": ["cv_text"]}
+    orphan = {
+        "user_id": str(u_new),
+        "title": "dev",
+        "skills": [],
+        "_omitted": ["cv_text"],
+    }
     with caplog.at_level(logging.ERROR, logger="jobhunt_core.shadow.projector"):
         _seed(factory, [("user_profiles", "U", "prof-h", orphan)])
         _project()
     assert "SIN revisión previa" in caplog.text
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM profile_revisions pr "
-        "JOIN profiles p ON p.id = pr.profile_id WHERE p.external_ref = :r",
-        r=str(u_new),
-    ) == 0
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM profile_revisions pr "
+            "JOIN profiles p ON p.id = pr.profile_id WHERE p.external_ref = :r",
+            r=str(u_new),
+        )
+        == 0
+    )
 
 
 # ------------------------------------------------ (f) users op=D → ERASE GDPR
@@ -806,25 +965,26 @@ def test_users_delete_erases_shadow_profile_table_by_table(db):
     _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
     embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
     try:
-        _seed(factory, [
-            ("jobs", "I", "job-g1", _job("job-g1", src, title="Python Developer")),
-            ("users", "I", str(u3), {"id": str(u3), "is_active": True}),
-            ("user_profiles", "I", "prof-g", _profile(u3)),
-        ])
+        _seed(
+            factory,
+            [
+                ("jobs", "I", "job-g1", _job("job-g1", src, title="Python Developer")),
+                ("users", "I", str(u3), {"id": str(u3), "is_active": True}),
+                ("user_profiles", "I", "prof-g", _profile(u3)),
+            ],
+        )
         _project()
     finally:
         embeddings.set_backend_factory(None)
 
-    pid = _scalar(
-        factory, "SELECT id FROM profiles WHERE external_ref = :r", r=str(u3)
-    )
+    pid = _scalar(factory, "SELECT id FROM profiles WHERE external_ref = :r", r=str(u3))
     assert pid is not None
     event_ids = [
         r.event_id
         for r in _rows(
             factory,
-            "SELECT event_id FROM integration_outbox "
-            "WHERE subject_profile_id = :p", p=pid,
+            "SELECT event_id FROM integration_outbox WHERE subject_profile_id = :p",
+            p=pid,
         )
     ]
     # Sanidad: el grafo COMPLETO existe antes del borrado (si no, el test
@@ -833,9 +993,13 @@ def test_users_delete_erases_shadow_profile_table_by_table(db):
         tbl: _scalar(
             factory, f"SELECT count(*) FROM {tbl} WHERE profile_id = :p", p=pid
         )
-        for tbl in ("profile_revisions", "profile_revision_activations",
-                    "profile_embeddings", "match_evaluations",
-                    "profile_vacancy_state")
+        for tbl in (
+            "profile_revisions",
+            "profile_revision_activations",
+            "profile_embeddings",
+            "match_evaluations",
+            "profile_vacancy_state",
+        )
     }
     assert all(n >= 1 for n in pre.values()), pre
     assert len(event_ids) >= 1
@@ -847,22 +1011,28 @@ def test_users_delete_erases_shadow_profile_table_by_table(db):
     # ERASE verificado tabla a tabla (revisiones, activaciones, vectores,
     # evaluaciones, estado, outbox+deliveries y el propio perfil).
     for tbl in pre:
-        assert _scalar(
-            factory, f"SELECT count(*) FROM {tbl} WHERE profile_id = :p", p=pid
-        ) == 0, tbl
-    assert _scalar(
-        factory, "SELECT count(*) FROM profiles WHERE id = :p", p=pid
-    ) == 0
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM integration_outbox WHERE subject_profile_id = :p",
-        p=pid,
-    ) == 0
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM integration_outbox_deliveries "
-        "WHERE event_id = ANY(:e)", e=event_ids,
-    ) == 0
+        assert (
+            _scalar(factory, f"SELECT count(*) FROM {tbl} WHERE profile_id = :p", p=pid)
+            == 0
+        ), tbl
+    assert _scalar(factory, "SELECT count(*) FROM profiles WHERE id = :p", p=pid) == 0
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM integration_outbox WHERE subject_profile_id = :p",
+            p=pid,
+        )
+        == 0
+    )
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM integration_outbox_deliveries "
+            "WHERE event_id = ANY(:e)",
+            e=event_ids,
+        )
+        == 0
+    )
 
     # Idempotencia del erase: un segundo op=D no encuentra nada y no falla.
     _seed(factory, [("users", "D", str(u3), {})])
@@ -875,6 +1045,7 @@ def test_users_delete_erases_shadow_profile_table_by_table(db):
 def _corpus_snapshot(factory):
     """Estado observable del corpus/perfiles (sin last_seen ni timestamps de
     lote): idéntico ⇔ la re-proyección no duplicó ni movió nada."""
+
     def rows(sql):
         return [tuple(r) for r in _rows(factory, sql)]
 
@@ -914,23 +1085,31 @@ def test_reprojection_after_crash_is_idempotent(db):
     factory = db
     src = f"fx{uuid.uuid4().hex[:6]}"
     u = uuid.uuid4()
-    _seed(factory, [
-        ("jobs", "I", "job-r1", _job("job-r1", src)),
-        ("jobs", "I", "job-r2", _job("job-r2", src)),
-    ])
+    _seed(
+        factory,
+        [
+            ("jobs", "I", "job-r1", _job("job-r1", src)),
+            ("jobs", "I", "job-r2", _job("job-r2", src)),
+        ],
+    )
     _project()
-    _seed(factory, [
-        ("jobs", "U", "job-r2", _job("job-r2", src, description="v2",
-                                     chash="ch-r2-2")),
-        ("jobs", "D", "job-r1", {}),
-        ("users", "I", str(u), {"id": str(u), "is_active": True}),
-        ("user_profiles", "I", "prof-r", _profile(u)),
-    ])
+    _seed(
+        factory,
+        [
+            (
+                "jobs",
+                "U",
+                "job-r2",
+                _job("job-r2", src, description="v2", chash="ch-r2-2"),
+            ),
+            ("jobs", "D", "job-r1", {}),
+            ("users", "I", str(u), {"id": str(u), "is_active": True}),
+            ("user_profiles", "I", "prof-r", _profile(u)),
+        ],
+    )
     _project()
     snapshot = _corpus_snapshot(factory)
-    n_batches = _scalar(
-        factory, "SELECT count(*) FROM shadow_projection_batches"
-    )
+    n_batches = _scalar(factory, "SELECT count(*) FROM shadow_projection_batches")
 
     # Crash simulado a mitad: applied_at NULL ⇒ TODO el staging se re-proyecta.
     _exec(factory, "UPDATE shadow_change_log SET applied_at = NULL")
@@ -940,13 +1119,17 @@ def test_reprojection_after_crash_is_idempotent(db):
     assert _corpus_snapshot(factory) == snapshot  # nada duplicado ni movido
     # El lote re-proyectado se registra como marca nueva (traza temporal),
     # pero el corpus no se mueve.
-    assert _scalar(
-        factory, "SELECT count(*) FROM shadow_projection_batches"
-    ) == n_batches + 1
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
-    ) == 0
+    assert (
+        _scalar(factory, "SELECT count(*) FROM shadow_projection_batches")
+        == n_batches + 1
+    )
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+        )
+        == 0
+    )
 
 
 # ------------------- single-flight y transacción por fuente (P2 del 1er B-02)
@@ -976,10 +1159,13 @@ def test_second_concurrent_invocation_exits_clean(db, proj_db):
     totals = _run(with_lock_held())
     assert totals["status"] == "already_running"
     assert (totals["batches"], totals["changes"]) == (0, 0)
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
-    ) == 1  # el staging quedó intacto
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+        )
+        == 1
+    )  # el staging quedó intacto
     # Lock liberado al cerrar la conexión: la siguiente invocación drena.
     totals2 = _project()
     assert totals2["status"] == "ok" and totals2["changes"] == 1
@@ -995,10 +1181,13 @@ def test_crash_between_sources_seals_partially_and_retry_completes(db, monkeypat
     factory = db
     h = uuid.uuid4().hex[:6]
     src_a, src_b = f"fxa{h}", f"fxb{h}"  # orden alfabético determinista
-    _seed(factory, [
-        ("jobs", "I", "job-fa", _job("job-fa", src_a)),
-        ("jobs", "I", "job-fb", _job("job-fb", src_b)),
-    ])
+    _seed(
+        factory,
+        [
+            ("jobs", "I", "job-fa", _job("job-fa", src_a)),
+            ("jobs", "I", "job-fb", _job("job-fb", src_b)),
+        ],
+    )
     orig = projector._apply_source_upserts
     boom = {"armed": True}
 
@@ -1042,15 +1231,16 @@ def test_crash_between_sources_seals_partially_and_retry_completes(db, monkeypat
     )
     assert [(m.changes, m.recovered) for m in marks] == [(2, True), (1, False)]
     assert all(m.finished_at is not None for m in marks)  # nada invisible
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
-    ) == 0
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+        )
+        == 0
+    )
 
 
-def test_slow_batch_crash_before_finalize_recovered_and_visible_in_p95(
-    db, monkeypatch
-):
+def test_slow_batch_crash_before_finalize_recovered_and_visible_in_p95(db, monkeypatch):
     """Regresión P2-5 (rev. externa parte 2, escenario del revisor): crash
     ENTRE el sellado de la última fuente y la finalización del lote. Antes,
     la fila del lote se escribía al final y el crash la PERDÍA: un lote
@@ -1073,10 +1263,13 @@ def test_slow_batch_crash_before_finalize_recovered_and_visible_in_p95(
     monkeypatch.setattr(projector, "_finalize_batch", orig_finalize)
 
     # Los DATOS quedaron aplicados y sellados (tx por fuente commiteada)...
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
-    ) == 0
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+        )
+        == 0
+    )
     # ...y la intención queda ABIERTA: el lote no desapareció (P2-5).
     intent = _rows(
         factory,
@@ -1090,8 +1283,7 @@ def test_slow_batch_crash_before_finalize_recovered_and_visible_in_p95(
     assert (totals["batches"], totals["batches_recovered"]) == (0, 1)
     mark = _rows(
         factory,
-        "SELECT finished_at, recovered, min_received_at "
-        "FROM shadow_projection_batches",
+        "SELECT finished_at, recovered, min_received_at FROM shadow_projection_batches",
     )[0]
     assert mark.finished_at is not None and mark.recovered is True
 
@@ -1099,9 +1291,7 @@ def test_slow_batch_crash_before_finalize_recovered_and_visible_in_p95(
     # ciclo que contiene su finished_at, contado además en details.
     async def latencia():
         async with factory() as s:
-            now = (
-                await s.execute(sa.text("SELECT clock_timestamp()"))
-            ).scalar_one()
+            now = (await s.execute(sa.text("SELECT clock_timestamp()"))).scalar_one()
             return await metrics._latencia_row(
                 s, now - timedelta(hours=1), now + timedelta(hours=1)
             )
@@ -1133,18 +1323,24 @@ def test_replay_recovers_after_batch_crash(db, monkeypatch):
             return await orig(session_factory, result, max_embedding_rounds)
 
         monkeypatch.setattr(projector, "_after_batch", maybe_boom)
-        _seed(factory, [
-            ("jobs", "I", "job-rb", _job("job-rb", src, title="Python Developer")),
-            ("users", "I", str(u), {"id": str(u), "is_active": True}),
-            ("user_profiles", "I", "prof-rb", _profile(u)),
-        ])
+        _seed(
+            factory,
+            [
+                ("jobs", "I", "job-rb", _job("job-rb", src, title="Python Developer")),
+                ("users", "I", str(u), {"id": str(u), "is_active": True}),
+                ("user_profiles", "I", "prof-rb", _profile(u)),
+            ],
+        )
         with pytest.raises(RuntimeError, match="_after_batch"):
             _project()
         # Lote commiteado y SELLADO; el disparo post-lote se perdió entero.
-        assert _scalar(
-            factory,
-            "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
-        ) == 0
+        assert (
+            _scalar(
+                factory,
+                "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+            )
+            == 0
+        )
         assert _scalar(factory, "SELECT count(*) FROM match_evaluations") == 0
 
         state["boom"] = False  # staging vacío: _after_batch ya ni se alcanza
@@ -1181,11 +1377,14 @@ def test_no_crash_no_recovery_and_marks_exclude_replay_time(db, monkeypatch):
             return await orig_replay(session_factory, evaluated, **kwargs)
 
         monkeypatch.setattr(projector, "_replay_after_batch", spying_replay)
-        _seed(factory, [
-            ("jobs", "I", "job-nr", _job("job-nr", src, title="Python Developer")),
-            ("users", "I", str(u), {"id": str(u), "is_active": True}),
-            ("user_profiles", "I", "prof-nr", _profile(u)),
-        ])
+        _seed(
+            factory,
+            [
+                ("jobs", "I", "job-nr", _job("job-nr", src, title="Python Developer")),
+                ("users", "I", str(u), {"id": str(u), "is_active": True}),
+                ("user_profiles", "I", "prof-nr", _profile(u)),
+            ],
+        )
         t1 = _project()
         # _after_batch ya evaluó al perfil en ESTA invocación ⇒ el replay no
         # lo repite aunque su señal siguiera encendida.
@@ -1197,9 +1396,7 @@ def test_no_crash_no_recovery_and_marks_exclude_replay_time(db, monkeypatch):
         # inicio del replay — el tiempo del replay no entra en ninguna marca.
         finished = [
             r.finished_at
-            for r in _rows(
-                factory, "SELECT finished_at FROM shadow_projection_batches"
-            )
+            for r in _rows(factory, "SELECT finished_at FROM shadow_projection_batches")
         ]
         assert finished and all(f <= replay_started["at"] for f in finished)
 
@@ -1211,9 +1408,7 @@ def test_no_crash_no_recovery_and_marks_exclude_replay_time(db, monkeypatch):
 
         async def counting_run(profile_id, limit, session_factory=None):
             calls["n"] += 1
-            return await orig_run(
-                profile_id, limit, session_factory=session_factory
-            )
+            return await orig_run(profile_id, limit, session_factory=session_factory)
 
         monkeypatch.setattr(projector, "_run_profile_impl", counting_run)
         t2 = _project()
@@ -1243,7 +1438,9 @@ def test_recovery_detection_is_one_query_not_one_per_profile(db, monkeypatch):
     con N perfiles candidatos — jamás una consulta por perfil."""
     factory = db
     model_id, _ = _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")
-    _seed_corpus(factory)  # sin corpus, ningún combo genera señal (va antes del monkeypatch)
+    _seed_corpus(
+        factory
+    )  # sin corpus, ningún combo genera señal (va antes del monkeypatch)
     users = [uuid.uuid4() for _ in range(3)]
 
     async def no_after_batch(session_factory, result, *_args, **_kwargs):
@@ -1254,16 +1451,21 @@ def test_recovery_detection_is_one_query_not_one_per_profile(db, monkeypatch):
 
     monkeypatch.setattr(projector, "_after_batch", no_after_batch)
     monkeypatch.setattr(projector, "_replay_after_batch", no_replay)
-    _seed(factory, [
-        row
-        for u in users
-        for row in [
-            ("users", "I", str(u), {"id": str(u), "is_active": True}),
-            ("user_profiles", "I", f"prof-{u}", _profile(u)),
-        ]
-    ])
+    _seed(
+        factory,
+        [
+            row
+            for u in users
+            for row in [
+                ("users", "I", str(u), {"id": str(u), "is_active": True}),
+                ("user_profiles", "I", f"prof-{u}", _profile(u)),
+            ]
+        ],
+    )
     _project()
-    _seed_vectors(factory, model_id)  # el drenado está monkeypatcheado: lo suple el helper
+    _seed_vectors(
+        factory, model_id
+    )  # el drenado está monkeypatcheado: lo suple el helper
 
     async def measure():
         async with factory() as s:
@@ -1274,7 +1476,9 @@ def test_recovery_detection_is_one_query_not_one_per_profile(db, monkeypatch):
     executed, targets = _run(measure())
     # Los 3 perfiles necesitan recuperación (revisión vigente sin evaluación).
     assert len(targets) == 3
-    assert executed == 3  # constante: NO escala con el número de perfiles (sin lookup de consumer)
+    assert (
+        executed == 3
+    )  # constante: NO escala con el número de perfiles (sin lookup de consumer)
 
 
 def test_recovery_covers_non_shadow_profiles(db):
@@ -1290,8 +1494,12 @@ def test_recovery_covers_non_shadow_profiles(db):
 
     async def setup_and_check():
         async with factory() as s:
-            cid = await core_profiles.ensure_consumer(s, "piloto")  # NO es swissjob-shadow
-            pid = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:6]}")
+            cid = await core_profiles.ensure_consumer(
+                s, "piloto"
+            )  # NO es swissjob-shadow
+            pid = await core_profiles.upsert_profile(
+                s, cid, f"u-{uuid.uuid4().hex[:6]}"
+            )
             await core_profiles.save_profile_revision(
                 s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
             )
@@ -1319,11 +1527,14 @@ def test_recovery_excludes_inactive_only_for_shadow_consumer(db):
     victim = uuid.uuid4()  # id de user legacy INACTIVO...
     embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
     try:
-        _seed(factory, [
-            ("users", "I", str(victim), {"id": str(victim), "is_active": True}),
-            ("user_profiles", "I", f"prof-{victim}", _profile(victim)),
-            ("users", "U", str(victim), {"id": str(victim), "is_active": False}),
-        ])
+        _seed(
+            factory,
+            [
+                ("users", "I", str(victim), {"id": str(victim), "is_active": True}),
+                ("user_profiles", "I", f"prof-{victim}", _profile(victim)),
+                ("users", "U", str(victim), {"id": str(victim), "is_active": False}),
+            ],
+        )
         _project()
     finally:
         embeddings.set_backend_factory(None)
@@ -1350,7 +1561,8 @@ def test_recovery_excludes_inactive_only_for_shadow_consumer(db):
         factory,
         "SELECT p.id FROM profiles p JOIN consumers c ON c.id = p.consumer_id "
         "AND c.name = :shadow WHERE p.external_ref = :ref",
-        shadow=projector.SHADOW_CONSUMER, ref=str(victim),
+        shadow=projector.SHADOW_CONSUMER,
+        ref=str(victim),
     )
     assert shadow_pid is not None and shadow_pid not in targets
 
@@ -1372,9 +1584,13 @@ def test_recovery_is_capped_per_pass(db, monkeypatch):
         async with factory() as s:
             cid = await core_profiles.ensure_consumer(s, "piloto")
             for _ in range(4):
-                pid = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+                pid = await core_profiles.upsert_profile(
+                    s, cid, f"u-{uuid.uuid4().hex[:8]}"
+                )
                 await core_profiles.save_profile_revision(
-                    s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
+                    s,
+                    pid,
+                    {"title": "python dev", "cv_text": "backend python postgres"},
                 )
                 pids.append(pid)
             await s.commit()
@@ -1401,10 +1617,13 @@ def test_recovery_attempt_advances_the_queue_even_without_new_evaluations(db):
     user = uuid.uuid4()
     embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
     try:
-        _seed(factory, [
-            ("users", "I", str(user), {"id": str(user), "is_active": True}),
-            ("user_profiles", "I", f"prof-{user}", _profile(user)),
-        ])
+        _seed(
+            factory,
+            [
+                ("users", "I", str(user), {"id": str(user), "is_active": True}),
+                ("user_profiles", "I", f"prof-{user}", _profile(user)),
+            ],
+        )
         _project()  # el flujo normal evalúa Y registra el intento
 
         async def check():
@@ -1438,7 +1657,9 @@ def test_recovery_attempt_records_the_revision_actually_evaluated(db):
     async def setup():
         async with factory() as s:
             cid = await core_profiles.ensure_consumer(s, "piloto")
-            pid = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+            pid = await core_profiles.upsert_profile(
+                s, cid, f"u-{uuid.uuid4().hex[:8]}"
+            )
             rev1 = await core_profiles.save_profile_revision(
                 s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
             )
@@ -1467,10 +1688,13 @@ def test_recovery_attempt_records_the_revision_actually_evaluated(db):
         r.profile_revision_id
         for r in _rows(
             factory,
-            "SELECT profile_revision_id FROM profile_recovery_state WHERE profile_id = :p", p=pid,
+            "SELECT profile_revision_id FROM profile_recovery_state WHERE profile_id = :p",
+            p=pid,
         )
     }
-    assert recorded == {rev1}  # SOLO la revisión evaluada; la nueva no se dio por intentada
+    assert recorded == {
+        rev1
+    }  # SOLO la revisión evaluada; la nueva no se dio por intentada
     assert rev2 not in recorded
 
     async def check():
@@ -1491,7 +1715,9 @@ def test_recovery_does_not_record_a_combo_without_vector(db):
 
     async def add_model_b():
         async with factory() as s:
-            mid = await embeddings.register_model(s, f"modelo-b-{uuid.uuid4().hex[:6]}", "d" * 40)
+            mid = await embeddings.register_model(
+                s, f"modelo-b-{uuid.uuid4().hex[:6]}", "d" * 40
+            )
             await s.commit()
             return mid
 
@@ -1501,7 +1727,9 @@ def test_recovery_does_not_record_a_combo_without_vector(db):
     async def setup():
         async with factory() as s:
             cid = await core_profiles.ensure_consumer(s, "piloto")
-            pid = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+            pid = await core_profiles.upsert_profile(
+                s, cid, f"u-{uuid.uuid4().hex[:8]}"
+            )
             rev = await core_profiles.save_profile_revision(
                 s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
             )
@@ -1513,8 +1741,12 @@ def test_recovery_does_not_record_a_combo_without_vector(db):
                     "(profile_revision_id, profile_id, model_id, vector) "
                     "VALUES (:r, :p, :m, CAST(:v AS vector))"
                 ),
-                {"r": rev, "p": pid, "m": model_a,
-                 "v": "[" + ",".join(["0.1"] * projector.EMBED_DIM) + "]"},
+                {
+                    "r": rev,
+                    "p": pid,
+                    "m": model_a,
+                    "v": "[" + ",".join(["0.1"] * projector.EMBED_DIM) + "]",
+                },
             )
             await s.commit()
         return pid, rev
@@ -1524,7 +1756,9 @@ def test_recovery_does_not_record_a_combo_without_vector(db):
     models = {
         r.model_id
         for r in _rows(
-            factory, "SELECT model_id FROM profile_recovery_state WHERE profile_id = :p", p=pid
+            factory,
+            "SELECT model_id FROM profile_recovery_state WHERE profile_id = :p",
+            p=pid,
         )
     }
     assert models == {model_a}  # B NO se registró: no se evaluó nada para él
@@ -1553,7 +1787,9 @@ def test_recovery_signal_detects_a_late_materialized_embedding(db):
     async def setup():
         async with factory() as s:
             cid = await core_profiles.ensure_consumer(s, "piloto")
-            pid = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+            pid = await core_profiles.upsert_profile(
+                s, cid, f"u-{uuid.uuid4().hex[:8]}"
+            )
             await core_profiles.save_profile_revision(
                 s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
             )
@@ -1576,7 +1812,8 @@ def test_recovery_signal_detects_a_late_materialized_embedding(db):
         factory,
         "INSERT INTO offer_embeddings (text_hash, model_id, vector) "
         "SELECT :h, model_id, vector FROM offer_embeddings WHERE model_id = :m LIMIT 1",
-        h=huerfana, m=model_id,
+        h=huerfana,
+        m=model_id,
     )
     assert _run(check()) == [pid]
 
@@ -1597,7 +1834,9 @@ def test_recovery_survives_an_active_model_without_corpus(db):
                 s, f"modelo-b-{uuid.uuid4().hex[:6]}", "e" * 40
             )
             cid = await core_profiles.ensure_consumer(s, "piloto")
-            pid = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+            pid = await core_profiles.upsert_profile(
+                s, cid, f"u-{uuid.uuid4().hex[:8]}"
+            )
             await core_profiles.save_profile_revision(
                 s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
             )
@@ -1613,7 +1852,9 @@ def test_recovery_survives_an_active_model_without_corpus(db):
     models = {
         r.model_id
         for r in _rows(
-            factory, "SELECT model_id FROM profile_recovery_state WHERE profile_id = :p", p=pid
+            factory,
+            "SELECT model_id FROM profile_recovery_state WHERE profile_id = :p",
+            p=pid,
         )
     }
     assert models == {model_a}  # B no se dio por intentado: no evaluó nada
@@ -1650,8 +1891,12 @@ def test_corpus_generation_triggers_cover_every_eligibility_transition(db):
     assert g4 > g3  # retirada de embedding
 
     # Una columna AJENA a la elegibilidad no mueve la generación (el trigger va POR COLUMNAS).
-    _exec(factory, "UPDATE vacancies SET primary_incarnation_id = primary_incarnation_id "
-                   "WHERE id = :v", v=vac)
+    _exec(
+        factory,
+        "UPDATE vacancies SET primary_incarnation_id = primary_incarnation_id "
+        "WHERE id = :v",
+        v=vac,
+    )
     assert gen() == g4
 
     # Escritura DIRECTA a la partición del modelo: un trigger de SENTENCIA del padre no se dispara
@@ -1662,7 +1907,8 @@ def test_corpus_generation_triggers_cover_every_eligibility_transition(db):
         factory,
         f"INSERT INTO {parte} (text_hash, model_id, vector) "
         "SELECT :h, :m, vector FROM offer_embeddings WHERE model_id = :m LIMIT 1",
-        h=hash_, m=model_id,
+        h=hash_,
+        m=model_id,
     )
     g5 = gen()
     assert g5 > g4
@@ -1695,11 +1941,16 @@ def test_recovery_generation_detects_a_same_size_corpus_swap(db):
             )
         ]
         assert len(vac) == 3
-        _exec(factory, "UPDATE vacancies SET archived_at = now() WHERE id = :v", v=vac[1])
-        _seed(factory, [
-            ("users", "I", str(user), {"id": str(user), "is_active": True}),
-            ("user_profiles", "I", f"prof-{user}", _profile(user)),
-        ])
+        _exec(
+            factory, "UPDATE vacancies SET archived_at = now() WHERE id = :v", v=vac[1]
+        )
+        _seed(
+            factory,
+            [
+                ("users", "I", str(user), {"id": str(user), "is_active": True}),
+                ("user_profiles", "I", f"prof-{user}", _profile(user)),
+            ],
+        )
         _project()  # evalúa con {v0, v2}
 
         async def check():
@@ -1712,7 +1963,8 @@ def test_recovery_generation_detects_a_same_size_corpus_swap(db):
             factory,
             "UPDATE vacancies SET archived_at = CASE WHEN id = :out THEN now() ELSE NULL END "
             "WHERE id IN (:out, :in_)",
-            out=vac[0], in_=vac[1],
+            out=vac[0],
+            in_=vac[1],
         )
         assert _run(check()) != []  # el CONJUNTO cambió: la señal se enciende
     finally:
@@ -1730,7 +1982,9 @@ def test_recovery_order_ignores_combos_that_lost_their_corpus(db, monkeypatch):
 
     async def add_b():
         async with factory() as s:
-            mid = await embeddings.register_model(s, f"modelo-b-{uuid.uuid4().hex[:6]}", "f" * 40)
+            mid = await embeddings.register_model(
+                s, f"modelo-b-{uuid.uuid4().hex[:6]}", "f" * 40
+            )
             await s.commit()
             return mid
 
@@ -1742,7 +1996,9 @@ def test_recovery_order_ignores_combos_that_lost_their_corpus(db, monkeypatch):
     async def new_profile():
         async with factory() as s:
             cid = await core_profiles.ensure_consumer(s, "piloto")
-            pid = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+            pid = await core_profiles.upsert_profile(
+                s, cid, f"u-{uuid.uuid4().hex[:8]}"
+            )
             await core_profiles.save_profile_revision(
                 s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
             )
@@ -1763,14 +2019,16 @@ def test_recovery_order_ignores_combos_that_lost_their_corpus(db, monkeypatch):
         factory,
         "UPDATE profile_recovery_state SET attempted_at = now() - make_interval(days => 10) "
         "WHERE profile_id = :p AND model_id = :m",
-        p=p1, m=model_b,
+        p=p1,
+        m=model_b,
     )
     # p2 queda con el intento (de A) más antiguo de los que HOY cuentan.
     _exec(
         factory,
         "UPDATE profile_recovery_state SET attempted_at = now() - make_interval(days => 1) "
         "WHERE profile_id = :p AND model_id = :m",
-        p=p2, m=model_a,
+        p=p2,
+        m=model_a,
     )
     _exec(
         factory,
@@ -1802,10 +2060,13 @@ def test_recovery_signal_detects_an_unarchived_vacancy(db):
             "UPDATE vacancies SET archived_at = now() WHERE id = "
             "(SELECT id FROM vacancies WHERE archived_at IS NULL ORDER BY id LIMIT 1)",
         )
-        _seed(factory, [
-            ("users", "I", str(user), {"id": str(user), "is_active": True}),
-            ("user_profiles", "I", f"prof-{user}", _profile(user)),
-        ])
+        _seed(
+            factory,
+            [
+                ("users", "I", str(user), {"id": str(user), "is_active": True}),
+                ("user_profiles", "I", f"prof-{user}", _profile(user)),
+            ],
+        )
         _project()  # evalúa con la vacante archivada FUERA del corpus
 
         async def check():
@@ -1814,7 +2075,10 @@ def test_recovery_signal_detects_an_unarchived_vacancy(db):
 
         assert _run(check()) == []
         # Desarchivar: ninguna fecha cambia, solo el CONJUNTO.
-        _exec(factory, "UPDATE vacancies SET archived_at = NULL WHERE archived_at IS NOT NULL")
+        _exec(
+            factory,
+            "UPDATE vacancies SET archived_at = NULL WHERE archived_at IS NOT NULL",
+        )
         assert _run(check()) != []
     finally:
         embeddings.set_backend_factory(None)
@@ -1836,7 +2100,9 @@ def test_recovery_order_ignores_attempts_of_older_revisions(db, monkeypatch):
     async def new_profile():
         async with factory() as s:
             cid = await core_profiles.ensure_consumer(s, "piloto")
-            pid = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+            pid = await core_profiles.upsert_profile(
+                s, cid, f"u-{uuid.uuid4().hex[:8]}"
+            )
             await core_profiles.save_profile_revision(
                 s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
             )
@@ -1851,7 +2117,8 @@ def test_recovery_order_ignores_attempts_of_older_revisions(db, monkeypatch):
             factory,
             "UPDATE profile_recovery_state SET attempted_at = now() - make_interval(days => :d) "
             "WHERE profile_id = :p",
-            p=pid, d=days,
+            p=pid,
+            d=days,
         )
 
     # p1: intento MUY viejo de una revisión superada + intento RECIENTE de la vigente.
@@ -1897,17 +2164,31 @@ def test_recovery_ignores_active_models_without_corpus(db):
     candidatos) → con el lote acotado, esos perfiles se quedaban clavados en la cabeza del orden
     tapando a los que sí necesitan una evaluación real. Un combo sin corpus no genera candidatos."""
     factory = db
-    _seed_model_policy(factory, f"modelo-{uuid.uuid4().hex[:6]}")  # modelo A, con corpus
+    _seed_model_policy(
+        factory, f"modelo-{uuid.uuid4().hex[:6]}"
+    )  # modelo A, con corpus
     user = uuid.uuid4()
     src = f"fx{uuid.uuid4().hex[:6]}"
     embeddings.set_backend_factory(lambda name, version: DirectionalBackend())
     try:
-        _seed(factory, [
-            ("jobs", "I", "job-nc", _job("job-nc", src, title="Python Developer",
-                                         description="backend python fastapi")),
-            ("users", "I", str(user), {"id": str(user), "is_active": True}),
-            ("user_profiles", "I", "prof-nc", _profile(user)),
-        ])
+        _seed(
+            factory,
+            [
+                (
+                    "jobs",
+                    "I",
+                    "job-nc",
+                    _job(
+                        "job-nc",
+                        src,
+                        title="Python Developer",
+                        description="backend python fastapi",
+                    ),
+                ),
+                ("users", "I", str(user), {"id": str(user), "is_active": True}),
+                ("user_profiles", "I", "prof-nc", _profile(user)),
+            ],
+        )
         _project()  # deja corpus embebido, perfil y su evaluación para A → señal APAGADA
     finally:
         embeddings.set_backend_factory(None)
@@ -1924,10 +2205,14 @@ def test_recovery_ignores_active_models_without_corpus(db):
         async with factory() as s:
             return await projector._recovery_targets(s, set())
 
-    assert _run(add_model_b_and_check()) == []  # B no puede generar trabajo: no es señal
+    assert (
+        _run(add_model_b_and_check()) == []
+    )  # B no puede generar trabajo: no es señal
 
 
-def test_recovery_skips_profiles_without_vector_so_they_cannot_starve_the_batch(db, monkeypatch):
+def test_recovery_skips_profiles_without_vector_so_they_cannot_starve_the_batch(
+    db, monkeypatch
+):
     """REGRESIÓN residual pre-Fase D (inanición): un perfil SIN vector no puede evaluarse
     (evaluate_profile → 'sin_vector', que NO escribe match_evaluation), así que conservaría
     `last_eval` NULL y, con el lote acotado y el orden NULLS FIRST, ocuparía su sitio en TODAS las
@@ -1942,12 +2227,18 @@ def test_recovery_skips_profiles_without_vector_so_they_cannot_starve_the_batch(
     async def setup_and_check():
         async with factory() as s:
             cid = await core_profiles.ensure_consumer(s, "piloto")
-            sin_vector = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
-            con_vector = await core_profiles.upsert_profile(s, cid, f"u-{uuid.uuid4().hex[:8]}")
+            sin_vector = await core_profiles.upsert_profile(
+                s, cid, f"u-{uuid.uuid4().hex[:8]}"
+            )
+            con_vector = await core_profiles.upsert_profile(
+                s, cid, f"u-{uuid.uuid4().hex[:8]}"
+            )
             revs = {}
             for pid in (sin_vector, con_vector):
                 revs[pid] = await core_profiles.save_profile_revision(
-                    s, pid, {"title": "python dev", "cv_text": "backend python postgres"}
+                    s,
+                    pid,
+                    {"title": "python dev", "cv_text": "backend python postgres"},
                 )
             await s.commit()
         async with factory() as s:
@@ -1959,7 +2250,9 @@ def test_recovery_skips_profiles_without_vector_so_they_cannot_starve_the_batch(
                     "VALUES (:r, :p, :m, CAST(:v AS vector))"
                 ),
                 {
-                    "r": revs[con_vector], "p": con_vector, "m": model_id,
+                    "r": revs[con_vector],
+                    "p": con_vector,
+                    "m": model_id,
                     "v": "[" + ",".join(["0.1"] * projector.EMBED_DIM) + "]",
                 },
             )
@@ -1975,9 +2268,9 @@ def test_recovery_skips_profiles_without_vector_so_they_cannot_starve_the_batch(
 def test_batches_recorded_with_coherent_marks(db):
     factory = db
     src = f"fx{uuid.uuid4().hex[:6]}"
-    _seed(factory, [
-        ("jobs", "I", f"job-m{i}", _job(f"job-m{i}", src)) for i in range(5)
-    ])
+    _seed(
+        factory, [("jobs", "I", f"job-m{i}", _job(f"job-m{i}", src)) for i in range(5)]
+    )
     totals = _project(batch_size=2)
     assert (totals["batches"], totals["changes"]) == (3, 5)
 
@@ -1995,24 +2288,30 @@ def test_batches_recorded_with_coherent_marks(db):
     # Lotes en orden LSN sin solaparse: la fuente de latencia_p95 es fiable.
     for prev, nxt in zip(batches, batches[1:]):
         assert prev.last_lsn < nxt.first_lsn
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
-    ) == 0
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+        )
+        == 0
+    )
 
 
 def test_max_batches_limits_the_drain(db):
     factory = db
     src = f"fx{uuid.uuid4().hex[:6]}"
-    _seed(factory, [
-        ("jobs", "I", f"job-l{i}", _job(f"job-l{i}", src)) for i in range(3)
-    ])
+    _seed(
+        factory, [("jobs", "I", f"job-l{i}", _job(f"job-l{i}", src)) for i in range(3)]
+    )
     totals = _project(batch_size=1, max_batches=2)
     assert (totals["batches"], totals["changes"]) == (2, 2)
-    assert _scalar(
-        factory,
-        "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
-    ) == 1  # el resto queda para la siguiente invocación
+    assert (
+        _scalar(
+            factory,
+            "SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL",
+        )
+        == 1
+    )  # el resto queda para la siguiente invocación
 
 
 # ------------------------------------------------ (i) tarea Celery registrada
@@ -2031,9 +2330,7 @@ def test_task_registered_routed_and_runs(db, monkeypatch):
     # proyectar solo dentro de run_cycle (06:05) acumulaba ~20h de latencia
     # por lote y latencia_p95<=600s (§6) era imposible. El single-flight
     # tolera el solape con run_cycle (already_running sale limpio).
-    by_task = {
-        e["task"]: e for e in celery_app.conf.beat_schedule.values()
-    }
+    by_task = {e["task"]: e for e in celery_app.conf.beat_schedule.values()}
     assert by_task["jobhunt.shadow.project"]["schedule"] == float(
         core_settings.CORE_SHADOW_PROJECT_EVERY_S
     )
@@ -2061,11 +2358,18 @@ def test_r6_apply_url_viaja_del_staging_a_la_encarnacion(db):
     incarnations.apply_url — la señal futura de dedup cross-portal."""
     factory = db
     src = f"r6-{uuid.uuid4().hex[:6]}"
-    _seed(factory, [
-        ("jobs", "I", "r6a", _job("r6a", src,
-                                  apply_url="https://ats.acme.com/jobs/42")),
-        ("jobs", "I", "r6b", _job("r6b", src)),  # sin apply_url
-    ])
+    _seed(
+        factory,
+        [
+            (
+                "jobs",
+                "I",
+                "r6a",
+                _job("r6a", src, apply_url="https://ats.acme.com/jobs/42"),
+            ),
+            ("jobs", "I", "r6b", _job("r6b", src)),  # sin apply_url
+        ],
+    )
     _project()
     filas = _rows(
         factory,
@@ -2075,7 +2379,8 @@ def test_r6_apply_url_viaja_del_staging_a_la_encarnacion(db):
         "JOIN sources s ON s.id = l.source_id "
         "JOIN vacancies v ON v.id = i.vacancy_id "
         "JOIN offer_revisions orv ON orv.id = v.current_offer_revision_id "
-        "WHERE s.name = :n ORDER BY l.external_id", n=f"legacy:{src}",
+        "WHERE s.name = :n ORDER BY l.external_id",
+        n=f"legacy:{src}",
     )
     assert [(f.external_id, f.apply_url, f.en_contenido) for f in filas] == [
         ("r6a", "https://ats.acme.com/jobs/42", False),
@@ -2089,10 +2394,17 @@ def test_c1_apply_url_desbordado_degrada_solo_el_campo(db):
     degrada SOLO el campo (contrato 2048 desde core0028 — C5-P2-2)."""
     factory = db
     src = f"c1a-{uuid.uuid4().hex[:6]}"
-    _seed(factory, [
-        ("jobs", "I", "c1a", _job("c1a", src,
-                                  apply_url="https://ats.x/" + "a" * 2500)),
-    ])
+    _seed(
+        factory,
+        [
+            (
+                "jobs",
+                "I",
+                "c1a",
+                _job("c1a", src, apply_url="https://ats.x/" + "a" * 2500),
+            ),
+        ],
+    )
     _project()
     filas = _rows(
         factory,
@@ -2110,10 +2422,12 @@ def test_c1_apply_url_omitido_no_borra_el_almacenado(db):
     fallback a prev_change lo conserve."""
     factory = db
     src = f"c1b-{uuid.uuid4().hex[:6]}"
-    _seed(factory, [
-        ("jobs", "I", "c1b", _job("c1b", src,
-                                  apply_url="https://ats.acme.com/7")),
-    ])
+    _seed(
+        factory,
+        [
+            ("jobs", "I", "c1b", _job("c1b", src, apply_url="https://ats.acme.com/7")),
+        ],
+    )
     _project()
     # U que OMITE apply_url (TOAST): payload sin la clave + _omitted
     pay = _job("c1b", src, title="Backend Dev v2", chash="ch-c1b-2")
@@ -2140,8 +2454,10 @@ def test_c2_doble_omision_y_null_explicito_de_apply_url(db):
     omitido != borrado."""
     factory = db
     src = f"c2a-{uuid.uuid4().hex[:6]}"
-    _seed(factory, [("jobs", "I", "c2a",
-                     _job("c2a", src, apply_url="https://ats.acme.com/9"))])
+    _seed(
+        factory,
+        [("jobs", "I", "c2a", _job("c2a", src, apply_url="https://ats.acme.com/9"))],
+    )
     _project()
 
     def u_omitido(n):
@@ -2154,10 +2470,12 @@ def test_c2_doble_omision_y_null_explicito_de_apply_url(db):
     _project()
     _seed(factory, [u_omitido(3)])  # segunda omisión consecutiva
     _project()
-    q = ("SELECT i.apply_url FROM source_listing_incarnations i "
-         "JOIN source_listings l ON l.id = i.source_listing_id "
-         "JOIN sources s ON s.id = l.source_id "
-         "WHERE s.name = :n AND i.ended_at IS NULL")
+    q = (
+        "SELECT i.apply_url FROM source_listing_incarnations i "
+        "JOIN source_listings l ON l.id = i.source_listing_id "
+        "JOIN sources s ON s.id = l.source_id "
+        "WHERE s.name = :n AND i.ended_at IS NULL"
+    )
     filas = _rows(factory, q, n=f"legacy:{src}")
     assert [f.apply_url for f in filas] == ["https://ats.acme.com/9"]
 
@@ -2176,8 +2494,9 @@ def test_c3_reactivacion_conserva_apply_url_sin_fantasmas(db):
     o cerrada), sin resucitar valores de encarnaciones anteriores."""
     factory = db
     src = f"c3a-{uuid.uuid4().hex[:6]}"
-    _seed(factory, [("jobs", "I", "c3a",
-                     _job("c3a", src, apply_url="https://ats.x/11"))])
+    _seed(
+        factory, [("jobs", "I", "c3a", _job("c3a", src, apply_url="https://ats.x/11"))]
+    )
     _project()
     # cierre (job inactivo) y reactivación con apply_url omitido
     pay_off = _job("c3a", src, active=False, chash="ch-c3a-2")
@@ -2193,7 +2512,8 @@ def test_c3_reactivacion_conserva_apply_url_sin_fantasmas(db):
         "SELECT i.apply_url FROM source_listing_incarnations i "
         "JOIN source_listings l ON l.id = i.source_listing_id "
         "JOIN sources s ON s.id = l.source_id "
-        "WHERE s.name = :n AND i.ended_at IS NULL", n=f"legacy:{src}",
+        "WHERE s.name = :n AND i.ended_at IS NULL",
+        n=f"legacy:{src}",
     )
     assert [f.apply_url for f in filas] == ["https://ats.x/11"]
 
@@ -2222,7 +2542,8 @@ def test_c4_reactivacion_con_url_omitida_no_pierde_la_oferta(db):
         "SELECT count(*) AS n FROM source_listing_incarnations i "
         "JOIN source_listings l ON l.id = i.source_listing_id "
         "JOIN sources s ON s.id = l.source_id "
-        "WHERE s.name = :n AND i.ended_at IS NULL", n=f"legacy:{src}",
+        "WHERE s.name = :n AND i.ended_at IS NULL",
+        n=f"legacy:{src}",
     )
     assert filas[0].n == 1  # la reactivación EXISTE
 
@@ -2234,20 +2555,58 @@ def test_c5_cambio_en_cerrado_no_revive_enlaces_rancios(db):
     encarnación."""
     factory = db
     src = f"c5a-{uuid.uuid4().hex[:6]}"
-    _seed(factory, [("jobs", "I", "c5a",
-                     _job("c5a", src, url="https://legacy/A",
-                          apply_url="https://ats.x/X"))])
+    _seed(
+        factory,
+        [
+            (
+                "jobs",
+                "I",
+                "c5a",
+                _job("c5a", src, url="https://legacy/A", apply_url="https://ats.x/X"),
+            )
+        ],
+    )
     _project()
     # cierre que EMITE enlaces nuevos (B, Y)
-    _seed(factory, [("jobs", "U", "c5a",
-                     _job("c5a", src, active=False, url="https://legacy/B",
-                          apply_url="https://ats.x/Y", chash="ch-c5a-2"))])
+    _seed(
+        factory,
+        [
+            (
+                "jobs",
+                "U",
+                "c5a",
+                _job(
+                    "c5a",
+                    src,
+                    active=False,
+                    url="https://legacy/B",
+                    apply_url="https://ats.x/Y",
+                    chash="ch-c5a-2",
+                ),
+            )
+        ],
+    )
     _project()
     # C6-P2-1: edición EN CERRADO que emite (C, Z) — con el slot ya
     # cerrado, en OTRO lote (antes se descartaba: enlaces rancios)
-    _seed(factory, [("jobs", "U", "c5a",
-                     _job("c5a", src, active=False, url="https://legacy/C",
-                          apply_url="https://ats.x/Z", chash="ch-c5a-2b"))])
+    _seed(
+        factory,
+        [
+            (
+                "jobs",
+                "U",
+                "c5a",
+                _job(
+                    "c5a",
+                    src,
+                    active=False,
+                    url="https://legacy/C",
+                    apply_url="https://ats.x/Z",
+                    chash="ch-c5a-2b",
+                ),
+            )
+        ],
+    )
     _project()
     # reactivación con AMBOS omitidos
     pay = _job("c5a", src, chash="ch-c5a-3")
@@ -2261,7 +2620,8 @@ def test_c5_cambio_en_cerrado_no_revive_enlaces_rancios(db):
         "SELECT i.url, i.apply_url FROM source_listing_incarnations i "
         "JOIN source_listings l ON l.id = i.source_listing_id "
         "JOIN sources s ON s.id = l.source_id "
-        "WHERE s.name = :n AND i.ended_at IS NULL", n=f"legacy:{src}",
+        "WHERE s.name = :n AND i.ended_at IS NULL",
+        n=f"legacy:{src}",
     )
     assert [(f.url, f.apply_url) for f in filas] == [
         ("https://legacy/C", "https://ats.x/Z")
@@ -2276,18 +2636,22 @@ def test_c6_contrato_2048_y_cuarentena_por_bytes(db):
     lote entero."""
     factory = db
     src = f"c6a-{uuid.uuid4().hex[:6]}"
-    url_larga = "https://legacy/" + "a" * 1400          # 1500ish chars, legal
-    url_cjk = "https://x/" + "\u4e2d" * 800             # 810 chars, ~2400 bytes
-    _seed(factory, [
-        ("jobs", "I", "c6ok", _job("c6ok", src, url=url_larga)),
-        ("jobs", "I", "c6ko", _job("c6ko", src, url=url_cjk)),
-    ])
+    url_larga = "https://legacy/" + "a" * 1400  # 1500ish chars, legal
+    url_cjk = "https://x/" + "\u4e2d" * 800  # 810 chars, ~2400 bytes
+    _seed(
+        factory,
+        [
+            ("jobs", "I", "c6ok", _job("c6ok", src, url=url_larga)),
+            ("jobs", "I", "c6ko", _job("c6ko", src, url=url_cjk)),
+        ],
+    )
     _project()
     filas = _rows(
         factory,
         "SELECT l.external_id FROM source_listings l "
         "JOIN sources s ON s.id = l.source_id WHERE s.name = :n "
-        "ORDER BY 1", n=f"legacy:{src}",
+        "ORDER BY 1",
+        n=f"legacy:{src}",
     )
     # la larga legal ENTRA; la multibyte tóxica queda en cuarentena sin
     # arrastrar al resto del lote
@@ -2302,15 +2666,15 @@ def test_c7_apply_url_multibyte_legal_persiste(db):
     factory = db
     src = f"c7a-{uuid.uuid4().hex[:6]}"
     aurl_cjk = "https://ats.x/" + "\u4e2d" * 900  # 914 chars, ~2700 bytes
-    _seed(factory, [("jobs", "I", "c7a",
-                     _job("c7a", src, apply_url=aurl_cjk))])
+    _seed(factory, [("jobs", "I", "c7a", _job("c7a", src, apply_url=aurl_cjk))])
     _project()
     filas = _rows(
         factory,
         "SELECT i.apply_url FROM source_listing_incarnations i "
         "JOIN source_listings l ON l.id = i.source_listing_id "
         "JOIN sources s ON s.id = l.source_id "
-        "WHERE s.name = :n AND i.ended_at IS NULL", n=f"legacy:{src}",
+        "WHERE s.name = :n AND i.ended_at IS NULL",
+        n=f"legacy:{src}",
     )
     assert len(filas) == 1 and filas[0].apply_url == aurl_cjk
 
@@ -2323,17 +2687,40 @@ def test_c8_mordidas_b4_b6_del_fold_y_la_encarnacion_cerrada(db):
     factory = db
     # --- B4 ---
     src = f"c8b4-{uuid.uuid4().hex[:6]}"
-    _seed(factory, [("jobs", "I", "b4",
-                     _job("b4", src, url="https://l/A", apply_url="https://a/X"))])
+    _seed(
+        factory,
+        [
+            (
+                "jobs",
+                "I",
+                "b4",
+                _job("b4", src, url="https://l/A", apply_url="https://a/X"),
+            )
+        ],
+    )
     _project()
     ed = _job("b4", src, active=False, url="https://l/C", chash="ch-b4-3")
     ed.pop("apply_url", None)
     ed["_omitted"] = ["apply_url"]
-    _seed(factory, [
-        ("jobs", "U", "b4", _job("b4", src, active=False, url="https://l/B",
-                                 apply_url="https://a/Y", chash="ch-b4-2")),
-        ("jobs", "U", "b4", ed),
-    ])
+    _seed(
+        factory,
+        [
+            (
+                "jobs",
+                "U",
+                "b4",
+                _job(
+                    "b4",
+                    src,
+                    active=False,
+                    url="https://l/B",
+                    apply_url="https://a/Y",
+                    chash="ch-b4-2",
+                ),
+            ),
+            ("jobs", "U", "b4", ed),
+        ],
+    )
     _project()
     re4 = _job("b4", src, chash="ch-b4-4")
     re4.pop("url", None)
@@ -2341,23 +2728,50 @@ def test_c8_mordidas_b4_b6_del_fold_y_la_encarnacion_cerrada(db):
     re4["_omitted"] = ["url", "apply_url"]
     _seed(factory, [("jobs", "U", "b4", re4)])
     _project()
-    q = ("SELECT i.url, i.apply_url FROM source_listing_incarnations i "
-         "JOIN source_listings l ON l.id = i.source_listing_id "
-         "JOIN sources s ON s.id = l.source_id "
-         "WHERE s.name = :n AND i.ended_at IS NULL")
+    q = (
+        "SELECT i.url, i.apply_url FROM source_listing_incarnations i "
+        "JOIN source_listings l ON l.id = i.source_listing_id "
+        "JOIN sources s ON s.id = l.source_id "
+        "WHERE s.name = :n AND i.ended_at IS NULL"
+    )
     filas = _rows(factory, q, n=f"legacy:{src}")
     assert [(f.url, f.apply_url) for f in filas] == [("https://l/C", "https://a/Y")]
     # --- B6 ---
     src = f"c8b6-{uuid.uuid4().hex[:6]}"
-    _seed(factory, [("jobs", "I", "b6",
-                     _job("b6", src, url="https://l/A", apply_url="https://a/X"))])
+    _seed(
+        factory,
+        [
+            (
+                "jobs",
+                "I",
+                "b6",
+                _job("b6", src, url="https://l/A", apply_url="https://a/X"),
+            )
+        ],
+    )
     _project()
-    _seed(factory, [("jobs", "U", "b6",
-                     _job("b6", src, active=False, chash="ch-b6-2"))])
+    _seed(
+        factory, [("jobs", "U", "b6", _job("b6", src, active=False, chash="ch-b6-2"))]
+    )
     _project()  # cerrado SIN emisión
-    _seed(factory, [("jobs", "U", "b6",
-                     _job("b6", src, active=False, url="https://l/B",
-                          apply_url="https://a/Y", chash="ch-b6-3"))])
+    _seed(
+        factory,
+        [
+            (
+                "jobs",
+                "U",
+                "b6",
+                _job(
+                    "b6",
+                    src,
+                    active=False,
+                    url="https://l/B",
+                    apply_url="https://a/Y",
+                    chash="ch-b6-3",
+                ),
+            )
+        ],
+    )
     _project()  # emisión con el slot YA cerrado
     re6 = _job("b6", src, chash="ch-b6-4")
     re6.pop("url", None)
@@ -2383,9 +2797,10 @@ def test_unknown_src_table_sealed_never_loops(db):
     _seed(factory, [("tabla_rara", "I", pk, {})])
     t = _project(max_batches=5)
     assert t["batches"] == 1  # antes: 5 (la MISMA fila, un lote por vuelta)
-    assert _scalar(
-        factory, "SELECT applied_at FROM shadow_change_log WHERE pk = :p", p=pk
-    ) is not None  # sellada
+    assert (
+        _scalar(factory, "SELECT applied_at FROM shadow_change_log WHERE pk = :p", p=pk)
+        is not None
+    )  # sellada
     t2 = _project(max_batches=5)
     assert t2["batches"] == 0  # nada pendiente: sin bucle
 
@@ -2402,9 +2817,16 @@ def test_project_all_stops_when_leadership_lost(db):
     _seed(factory, [("jobs", "I", pk, _job(pk, src))])
 
     totals = {
-        "status": "ok", "batches": 0, "changes": 0, "upserts": 0, "closes": 0,
-        "erased": 0, "revisions_new": 0, "profiles_evaluated": 0,
-        "recovery_evaluated": 0, "batches_recovered": 0,
+        "status": "ok",
+        "batches": 0,
+        "changes": 0,
+        "upserts": 0,
+        "closes": 0,
+        "erased": 0,
+        "revisions_new": 0,
+        "profiles_evaluated": 0,
+        "recovery_evaluated": 0,
+        "batches_recovered": 0,
     }
 
     async def dead_leader() -> bool:
@@ -2417,9 +2839,10 @@ def test_project_all_stops_when_leadership_lost(db):
     )
     assert totals["status"] == "lock_lost"
     assert totals["batches"] == 0  # ni un lote drenado sin liderazgo
-    assert _scalar(
-        factory, "SELECT applied_at FROM shadow_change_log WHERE pk = :p", p=pk
-    ) is None  # el pendiente queda intacto para el proyector legítimo
+    assert (
+        _scalar(factory, "SELECT applied_at FROM shadow_change_log WHERE pk = :p", p=pk)
+        is None
+    )  # el pendiente queda intacto para el proyector legítimo
 
 
 def test_project_all_skips_aggregate_work_after_losing_leadership(db, monkeypatch):
@@ -2447,9 +2870,16 @@ def test_project_all_skips_aggregate_work_after_losing_leadership(db, monkeypatc
     monkeypatch.setattr(projector, "_replay_after_batch", spy_replay)
 
     totals = {
-        "status": "ok", "batches": 0, "changes": 0, "upserts": 0, "closes": 0,
-        "erased": 0, "revisions_new": 0, "profiles_evaluated": 0,
-        "recovery_evaluated": 0, "batches_recovered": 0,
+        "status": "ok",
+        "batches": 0,
+        "changes": 0,
+        "upserts": 0,
+        "closes": 0,
+        "erased": 0,
+        "revisions_new": 0,
+        "profiles_evaluated": 0,
+        "recovery_evaluated": 0,
+        "batches_recovered": 0,
     }
     alive = {"n": 1}  # líder VIVO para el primer lote, muerto después
 
@@ -2475,11 +2905,15 @@ def _profile_full(user_id, **over):
     """Payload user_profiles con TODAS las columnas de la whitelist ampliada
     (Fase 2): como las envía la captura tras el cambio."""
     payload = {
-        "user_id": str(user_id), "title": "python developer",
-        "cv_text": "cv con python y fastapi", "skills": ["python"],
+        "user_id": str(user_id),
+        "title": "python developer",
+        "cv_text": "cv con python y fastapi",
+        "skills": ["python"],
         "languages": ["English", "Spanish"],
         "locations": ["Remote", "Valencia"],
-        "experience_years": 7, "salary_min": 45000, "salary_max": 85000,
+        "experience_years": 7,
+        "salary_min": 45000,
+        "salary_max": 85000,
         "remote_pref": "remote_only",
         "updated_at": "2026-09-02T10:00:00+00:00",
     }
@@ -2515,8 +2949,17 @@ def test_preferencias_viajan_y_un_update_parcial_no_las_vacia(db):
     assert v0.content["remote_pref"] == "remote_only"
 
     # U parcial (solo título): preferencias y CV preservados; texto cambia.
-    _seed(factory, [("user_profiles", "U", "prof-p",
-                     {"user_id": str(u), "title": "senior python developer"})])
+    _seed(
+        factory,
+        [
+            (
+                "user_profiles",
+                "U",
+                "prof-p",
+                {"user_id": str(u), "title": "senior python developer"},
+            )
+        ],
+    )
     _project()
     v1 = _vigente(factory, u)
     assert v1.content["title"] == "senior python developer"
@@ -2525,18 +2968,39 @@ def test_preferencias_viajan_y_un_update_parcial_no_las_vacia(db):
     assert v1.content["cv_text"] == v0.content["cv_text"]
 
     # U solo-preferencias: revisión nueva, MISMO text_hash (no re-embebe).
-    _seed(factory, [("user_profiles", "U", "prof-p",
-                     {"user_id": str(u), "languages": ["English"]})])
+    _seed(
+        factory,
+        [
+            (
+                "user_profiles",
+                "U",
+                "prof-p",
+                {"user_id": str(u), "languages": ["English"]},
+            )
+        ],
+    )
     _project()
     v2 = _vigente(factory, u)
     assert v2.content["languages"] == ["English"]  # explícito manda
     assert v2.id != v1.id and v2.text_hash == v1.text_hash
 
     # Valores raros EXPLÍCITOS: null vacía (≠ omitido), lista mixta coerciona.
-    _seed(factory, [("user_profiles", "U", "prof-p",
-                     {"user_id": str(u), "languages": None,
-                      "skills": [1, {"x": 1}, "ok"],
-                      "experience_years": "nueve"})])
+    _seed(
+        factory,
+        [
+            (
+                "user_profiles",
+                "U",
+                "prof-p",
+                {
+                    "user_id": str(u),
+                    "languages": None,
+                    "skills": [1, {"x": 1}, "ok"],
+                    "experience_years": "nueve",
+                },
+            )
+        ],
+    )
     _project()
     v3 = _vigente(factory, u)
     assert v3.content["languages"] == []
@@ -2565,6 +3029,7 @@ def test_resync_desde_la_tabla_autoritativa_es_idempotente(db):
     preferencias. Segunda ejecución = CERO revisiones nuevas y la revisión
     vigente no cambia. Una tabla sin columna requerida ABORTA."""
     from jobhunt_core.shadow import resync as shadow_resync
+
     factory = db
     u = uuid.uuid4()
     # Perfil ya proyectado por una captura vieja (sin preferencias).
@@ -2572,22 +3037,28 @@ def test_resync_desde_la_tabla_autoritativa_es_idempotente(db):
     _project()
 
     # Mini tabla autoritativa con TODAS las columnas requeridas.
-    _exec(factory, """
+    _exec(
+        factory,
+        """
         CREATE TABLE IF NOT EXISTS public.user_profiles (
             id varchar(64) PRIMARY KEY, user_id uuid NOT NULL,
             title varchar(200), cv_text text, skills jsonb NOT NULL,
             languages jsonb NOT NULL, locations jsonb NOT NULL,
             experience_years int, salary_min int, salary_max int,
             remote_pref varchar(50) NOT NULL, updated_at timestamptz)
-    """)
-    _exec(factory,
-          "INSERT INTO public.user_profiles VALUES ('prof-rs', :u, "
-          "'python developer', 'cv con python y fastapi', "
-          "CAST('[\"python\"]' AS jsonb), "
-          "CAST('[\"English\",\"Japanese\"]' AS jsonb), "
-          "CAST('[\"Remote\",\"Zurich\"]' AS jsonb), "
-          "9, 50000, 90000, 'remote_only', now()) "
-          "ON CONFLICT (id) DO NOTHING", u=u)
+    """,
+    )
+    _exec(
+        factory,
+        "INSERT INTO public.user_profiles VALUES ('prof-rs', :u, "
+        "'python developer', 'cv con python y fastapi', "
+        "CAST('[\"python\"]' AS jsonb), "
+        'CAST(\'["English","Japanese"]\' AS jsonb), '
+        'CAST(\'["Remote","Zurich"]\' AS jsonb), '
+        "9, 50000, 90000, 'remote_only', now()) "
+        "ON CONFLICT (id) DO NOTHING",
+        u=u,
+    )
 
     async def do_resync():
         async with factory() as s:
@@ -2612,11 +3083,14 @@ def test_resync_desde_la_tabla_autoritativa_es_idempotente(db):
 
     # Fallo cerrado: esquema cuya tabla no tiene una requerida.
     _exec(factory, "CREATE SCHEMA IF NOT EXISTS leg2")
-    _exec(factory, """
+    _exec(
+        factory,
+        """
         CREATE TABLE IF NOT EXISTS leg2.user_profiles (
             id varchar(64) PRIMARY KEY, user_id uuid, title varchar(200),
             cv_text text, skills jsonb)
-    """)
+    """,
+    )
 
     async def broken():
         async with factory() as s:

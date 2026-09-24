@@ -38,7 +38,11 @@ def db():
     engine = create_async_engine(settings.CORE_DATABASE_URL, poolclass=sa.pool.NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     created = {
-        "consumers": [], "sets": [], "dedup_refs": [], "sources": [], "scopes": [],
+        "consumers": [],
+        "sets": [],
+        "dedup_refs": [],
+        "sources": [],
+        "scopes": [],
     }
     yield factory, created
 
@@ -100,9 +104,7 @@ def legacy_fx():
                     f"feedback varchar(20))"
                 )
             )
-            await c.execute(
-                sa.text(f'GRANT USAGE ON SCHEMA "{schema}" TO {core_role}')
-            )
+            await c.execute(sa.text(f'GRANT USAGE ON SCHEMA "{schema}" TO {core_role}'))
             await c.execute(
                 sa.text(
                     f'GRANT SELECT ON ALL TABLES IN SCHEMA "{schema}" TO {core_role}'
@@ -182,12 +184,12 @@ def _seed(factory, sid, schema) -> int:
 # Feedback legacy → job_hash de prueba (mapeo contractual 3/2/0/0).
 def _seed_legacy_feedback(admin_engine, schema, user_id, prefix):
     rows = [
-        {"u": user_id, "j": f"{prefix}-up", "f": "thumbs_up"},      # → 2
-        {"u": user_id, "j": f"{prefix}-app", "f": "applied"},       # → 3
+        {"u": user_id, "j": f"{prefix}-up", "f": "thumbs_up"},  # → 2
+        {"u": user_id, "j": f"{prefix}-app", "f": "applied"},  # → 3
         {"u": user_id, "j": f"{prefix}-down", "f": "thumbs_down"},  # → 0
-        {"u": user_id, "j": f"{prefix}-dis", "f": "dismissed"},     # → 0
-        {"u": user_id, "j": f"{prefix}-null", "f": None},           # no siembra
-        {"u": user_id, "j": f"{prefix}-raro", "f": "saved"},        # no siembra
+        {"u": user_id, "j": f"{prefix}-dis", "f": "dismissed"},  # → 0
+        {"u": user_id, "j": f"{prefix}-null", "f": None},  # no siembra
+        {"u": user_id, "j": f"{prefix}-raro", "f": "saved"},  # no siembra
     ]
     _legacy_insert(
         admin_engine,
@@ -230,10 +232,14 @@ def test_seed_maps_legacy_feedback_to_relevance(db, legacy_fx):
     rows = _rows(
         factory,
         "SELECT job_ref, relevance, source FROM labeled_judgments "
-        "WHERE set_id = :s ORDER BY job_ref", s=sid,
+        "WHERE set_id = :s ORDER BY job_ref",
+        s=sid,
     )
     assert {r.job_ref: r.relevance for r in rows} == {
-        f"{p}-up": 2, f"{p}-app": 3, f"{p}-down": 0, f"{p}-dis": 0,
+        f"{p}-up": 2,
+        f"{p}-app": 3,
+        f"{p}-down": 0,
+        f"{p}-dis": 0,
     }
     assert all(r.source == "seed_feedback" for r in rows)  # trazable al origen
 
@@ -259,12 +265,15 @@ def test_reseed_does_not_override_manual_curation(db, legacy_fx):
     rows = _rows(
         factory,
         "SELECT relevance, source FROM labeled_judgments "
-        "WHERE set_id = :s AND job_ref = :j", s=sid, j=f"{p}-up",
+        "WHERE set_id = :s AND job_ref = :j",
+        s=sid,
+        j=f"{p}-up",
     )
     assert (rows[0].relevance, rows[0].source) == (1, "manual")  # curación intacta
     n = _rows(
         factory,
-        "SELECT count(*) AS n FROM labeled_judgments WHERE set_id = :s", s=sid,
+        "SELECT count(*) AS n FROM labeled_judgments WHERE set_id = :s",
+        s=sid,
     )
     assert n[0].n == 4
 
@@ -304,13 +313,16 @@ def test_frozen_set_rejects_judgments_without_inserting(db, legacy_fx):
 
     rows = _rows(
         factory,
-        "SELECT count(*) AS n FROM labeled_judgments WHERE set_id = :s", s=sid,
+        "SELECT count(*) AS n FROM labeled_judgments WHERE set_id = :s",
+        s=sid,
     )
     assert rows[0].n == 4  # NADA se insertó sobre el set congelado
     rows = _rows(
         factory,
         "SELECT count(*) AS n FROM labeled_judgments "
-        "WHERE set_id = :s AND job_ref = :j", s=sid, j=f"{p}-nuevo",
+        "WHERE set_id = :s AND job_ref = :j",
+        s=sid,
+        j=f"{p}-nuevo",
     )
     assert rows[0].n == 0
 
@@ -361,8 +373,7 @@ def test_frozen_set_is_immutable_for_direct_dml(db):
             {"sid": sid},
         ),
         (
-            "DELETE FROM labeled_judgments "
-            "WHERE set_id = :sid AND job_ref = 'job-a'",
+            "DELETE FROM labeled_judgments WHERE set_id = :sid AND job_ref = 'job-a'",
             {"sid": sid},
         ),
         (
@@ -382,7 +393,6 @@ def test_frozen_set_is_immutable_for_direct_dml(db):
         sid=sid,
     )
     assert [r.relevance for r in row] == [2]
-
 
 
 def test_judgment_checks_relevance_and_source(db):
@@ -437,11 +447,11 @@ def test_seed_dedup_pairs_canonical_unique_and_checks(db, legacy_fx):
         f"INSERT INTO {schema}.jobs (hash, duplicate_of, is_active) "
         f"VALUES (:h, :d, :a)",
         [
-            {"h": ja, "d": None, "a": True},   # canónico vivo
-            {"h": jd, "d": ja, "a": False},    # INVERTIDO: hash mayor → menor
-            {"h": jb, "d": jc, "a": False},    # el MISMO par ...
-            {"h": jc, "d": jb, "a": False},    # ... en ambas direcciones
-            {"h": je, "d": je, "a": False},    # self-dup: violaría a<>b, se filtra
+            {"h": ja, "d": None, "a": True},  # canónico vivo
+            {"h": jd, "d": ja, "a": False},  # INVERTIDO: hash mayor → menor
+            {"h": jb, "d": jc, "a": False},  # el MISMO par ...
+            {"h": jc, "d": jb, "a": False},  # ... en ambas direcciones
+            {"h": je, "d": je, "a": False},  # self-dup: violaría a<>b, se filtra
         ],
     )
 
@@ -456,7 +466,8 @@ def test_seed_dedup_pairs_canonical_unique_and_checks(db, legacy_fx):
     rows = _rows(
         factory,
         "SELECT job_ref_a, job_ref_b, verdict, source FROM labeled_dedup_pairs "
-        "WHERE job_ref_a LIKE :p ORDER BY job_ref_a", p=f"{p}-%",
+        "WHERE job_ref_a LIKE :p ORDER BY job_ref_a",
+        p=f"{p}-%",
     )
     assert [(r.job_ref_a, r.job_ref_b) for r in rows] == [(ja, jd)]  # normalizado
 
@@ -464,7 +475,8 @@ def test_seed_dedup_pairs_canonical_unique_and_checks(db, legacy_fx):
     rows = _rows(
         factory,
         "SELECT job_ref_a, job_ref_b, verdict, source FROM labeled_dedup_pairs "
-        "WHERE job_ref_a LIKE :p ORDER BY job_ref_a", p=f"{p}-%",
+        "WHERE job_ref_a LIKE :p ORDER BY job_ref_a",
+        p=f"{p}-%",
     )
     assert [(r.job_ref_a, r.job_ref_b) for r in rows] == [(ja, jd), (jb, jc)]
     assert all(r.job_ref_a < r.job_ref_b for r in rows)  # menor SIEMPRE primero
@@ -581,8 +593,12 @@ def test_map_job_refs_resolves_closed_incarnations_deterministically(db):
                             "CASE WHEN :c THEN now() END)"
                         ),
                         {
-                            "i": uuid.uuid4(), "l": lid, "v": vid, "q": seq,
-                            "u": f"https://fx/{ext}/{seq}", "c": closed,
+                            "i": uuid.uuid4(),
+                            "l": lid,
+                            "v": vid,
+                            "q": seq,
+                            "u": f"https://fx/{ext}/{seq}",
+                            "c": closed,
                         },
                     )
             await s.commit()
@@ -626,11 +642,10 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
     asyncio.run(create_db())
     try:
         temp_engine = create_async_engine(
-            temp_url, poolclass=sa.pool.NullPool,
+            temp_url,
+            poolclass=sa.pool.NullPool,
             connect_args={
-                "server_settings": {
-                    "search_path": f"{settings.CORE_DB_SCHEMA}, public"
-                }
+                "server_settings": {"search_path": f"{settings.CORE_DB_SCHEMA}, public"}
             },
         )
         factory = async_sessionmaker(temp_engine, expire_on_commit=False)
@@ -668,9 +683,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
                 )
                 await s.commit()
                 return (
-                    await s.execute(
-                        sa.text("SELECT version_num FROM alembic_version")
-                    )
+                    await s.execute(sa.text("SELECT version_num FROM alembic_version"))
                 ).scalar_one()
 
         assert asyncio.run(seed_and_version()) == _read_expected_head()
@@ -680,9 +693,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
         async def verify_down():
             async with factory() as s:
                 version = (
-                    await s.execute(
-                        sa.text("SELECT version_num FROM alembic_version")
-                    )
+                    await s.execute(sa.text("SELECT version_num FROM alembic_version"))
                 ).scalar_one()
                 assert version == "core0007"
                 remaining = (
@@ -703,9 +714,7 @@ def test_core0008a_downgrade_upgrade_cycle_on_disposable_db():
         async def verify_up():
             async with factory() as s:
                 version = (
-                    await s.execute(
-                        sa.text("SELECT version_num FROM alembic_version")
-                    )
+                    await s.execute(sa.text("SELECT version_num FROM alembic_version"))
                 ).scalar_one()
                 assert version == _read_expected_head()
                 # El esquema re-creado FUNCIONA y con sus guardas: smoke real.
@@ -784,19 +793,27 @@ def test_core0025_cohorte_congelada_hace_inmutables_sus_pares(db):
 
         # cada mutación en su propia sesión (la excepción aborta la tx)
         for sql, params in (
-            ("INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
-             "source) VALUES (:a, :b, 'duplicate', :src)",
-             {"a": ja, "b": jd, "src": src}),
-            ("UPDATE labeled_dedup_pairs SET verdict = 'distinct' "
-             "WHERE job_ref_a = :a AND job_ref_b = :b",
-             {"a": ja, "b": jb}),
-            ("DELETE FROM labeled_dedup_pairs "
-             "WHERE job_ref_a = :a AND job_ref_b = :b",
-             {"a": ja, "b": jb}),
+            (
+                "INSERT INTO labeled_dedup_pairs (job_ref_a, job_ref_b, verdict, "
+                "source) VALUES (:a, :b, 'duplicate', :src)",
+                {"a": ja, "b": jd, "src": src},
+            ),
+            (
+                "UPDATE labeled_dedup_pairs SET verdict = 'distinct' "
+                "WHERE job_ref_a = :a AND job_ref_b = :b",
+                {"a": ja, "b": jb},
+            ),
+            (
+                "DELETE FROM labeled_dedup_pairs "
+                "WHERE job_ref_a = :a AND job_ref_b = :b",
+                {"a": ja, "b": jb},
+            ),
             # mover un par LIBRE hacia la cohorte congelada tampoco
-            ("UPDATE labeled_dedup_pairs SET source = :src "
-             "WHERE job_ref_a = :a AND job_ref_b = :b",
-             {"a": ja, "b": jc, "src": src}),
+            (
+                "UPDATE labeled_dedup_pairs SET source = :src "
+                "WHERE job_ref_a = :a AND job_ref_b = :b",
+                {"a": ja, "b": jc, "src": src},
+            ),
         ):
             with pytest.raises(DBAPIError, match="CONGELADA"):
                 async with factory() as s2:
@@ -877,18 +894,25 @@ def test_core0026_el_sello_es_inmutable(db):
     try:
         for sql, params in (
             # el descongelado del ataque reproducido
-            ("UPDATE labeled_dedup_cohorts SET frozen_at = NULL "
-             "WHERE source = :src", {"src": src}),
+            (
+                "UPDATE labeled_dedup_cohorts SET frozen_at = NULL WHERE source = :src",
+                {"src": src},
+            ),
             # reescritura del manifest con el sello puesto
-            ("UPDATE labeled_dedup_cohorts SET manifest = '{\"sha\": \"forged\"}' "
-             "WHERE source = :src", {"src": src}),
+            (
+                'UPDATE labeled_dedup_cohorts SET manifest = \'{"sha": "forged"}\' '
+                "WHERE source = :src",
+                {"src": src},
+            ),
             # restauración de un frozen_at arbitrario
-            ("UPDATE labeled_dedup_cohorts SET frozen_at = :ts "
-             "WHERE source = :src", {"src": src, "ts": f1}),
-            ("DELETE FROM labeled_dedup_cohorts WHERE source = :src",
-             {"src": src}),
+            (
+                "UPDATE labeled_dedup_cohorts SET frozen_at = :ts WHERE source = :src",
+                {"src": src, "ts": f1},
+            ),
+            ("DELETE FROM labeled_dedup_cohorts WHERE source = :src", {"src": src}),
         ):
             with pytest.raises(DBAPIError, match="SELLADA"):
+
                 async def intenta(sql=sql, params=params):
                     async with factory() as s2:
                         await s2.execute(sa.text(sql), params)
@@ -906,7 +930,7 @@ def test_core0026_el_sello_es_inmutable(db):
                         "INSERT INTO labeled_dedup_cohorts "
                         "(source, frozen_at, manifest) "
                         "VALUES (:s2, now() - interval '30 days', "
-                        "'{\"sha\": \"x\"}'::jsonb)"
+                        '\'{"sha": "x"}\'::jsonb)'
                     ),
                     {"s2": f"{src}-retro"},
                 )
@@ -929,7 +953,7 @@ def test_core0026_el_sello_es_inmutable(db):
                     sa.text(
                         "INSERT INTO labeled_dedup_cohorts "
                         "(source, frozen_at, manifest) "
-                        "VALUES (:s3, now(), '{\"sha\": \"x\"}'::jsonb)"
+                        'VALUES (:s3, now(), \'{"sha": "x"}\'::jsonb)'
                     ),
                     {"s3": f"{src}-txl"},
                 )
@@ -947,7 +971,7 @@ def test_core0026_el_sello_es_inmutable(db):
                         "INSERT INTO labeled_dedup_cohorts "
                         "(source, frozen_at, manifest) "
                         "VALUES (:s4, statement_timestamp(), "
-                        "'{\"sha\": \"x\"}'::jsonb)"
+                        '\'{"sha": "x"}\'::jsonb)'
                     ),
                     {"s4": f"{src}-txok"},
                 )
@@ -980,8 +1004,14 @@ def test_freeze_exige_manifest_no_vacio(db):
     # CHECK en la BD: sellar a mano con manifest vacío O de tipo no-objeto
     # no pasa (ronda 2 B-2: 'null'::jsonb, arrays, strings y escalares
     # superaban el filtro anterior — JSON null NO es NULL SQL).
-    for mal in ("'{}'::jsonb", "'null'::jsonb", "'[]'::jsonb",
-                "'\"x\"'::jsonb", "'1'::jsonb"):
+    for mal in (
+        "'{}'::jsonb",
+        "'null'::jsonb",
+        "'[]'::jsonb",
+        "'\"x\"'::jsonb",
+        "'1'::jsonb",
+    ):
+
         async def sello_mal(m=mal):
             async with factory() as s:
                 await s.execute(
@@ -994,9 +1024,7 @@ def test_freeze_exige_manifest_no_vacio(db):
                 )
                 await s.commit()
 
-        with pytest.raises(
-            IntegrityError, match="ck_cohort_frozen_requires_manifest"
-        ):
+        with pytest.raises(IntegrityError, match="ck_cohort_frozen_requires_manifest"):
             _run(sello_mal())
 
     # Filas legadas (pre-core0026) simuladas SIN CHECK NI TRIGGER: el
@@ -1071,7 +1099,7 @@ def test_sello_por_dml_directo_tambien_espera_al_escritor(db):
     src = f"cohorte-dml-{p}"
     sello = sa.text(
         "INSERT INTO labeled_dedup_cohorts (source, frozen_at, manifest) "
-        "VALUES (:src, statement_timestamp(), '{\"sha\": \"x\"}'::jsonb)"
+        'VALUES (:src, statement_timestamp(), \'{"sha": "x"}\'::jsonb)'
     )
 
     async def go():
@@ -1102,8 +1130,7 @@ def test_sello_por_dml_directo_tambien_espera_al_escritor(db):
             n = (
                 await s3.execute(
                     sa.text(
-                        "SELECT count(*) FROM labeled_dedup_pairs "
-                        "WHERE source = :src"
+                        "SELECT count(*) FROM labeled_dedup_pairs WHERE source = :src"
                     ),
                     {"src": src},
                 )
@@ -1149,7 +1176,11 @@ def test_p1_el_sello_no_precede_al_drenaje_del_escritor(db):
                 # la sentencia arranca YA (statement_timestamp fijado) y se
                 # bloquea dentro del trigger esperando al escritor
                 async with factory() as sb:
-                    sealer_pid.append((await sb.execute(sa.text("SELECT pg_backend_pid()"))).scalar_one())
+                    sealer_pid.append(
+                        (
+                            await sb.execute(sa.text("SELECT pg_backend_pid()"))
+                        ).scalar_one()
+                    )
                     pid_ready.set()
                     f = (
                         await sb.execute(
@@ -1157,7 +1188,7 @@ def test_p1_el_sello_no_precede_al_drenaje_del_escritor(db):
                                 "INSERT INTO labeled_dedup_cohorts "
                                 "(source, frozen_at, manifest) "
                                 "VALUES (:src, statement_timestamp(), "
-                                "'{\"sha\": \"x\"}'::jsonb) "
+                                '\'{"sha": "x"}\'::jsonb) '
                                 "RETURNING frozen_at"
                             ),
                             {"src": src},
@@ -1253,7 +1284,7 @@ def test_p2_helper_y_dml_directo_no_se_interbloquean(db):
                         sa.text(
                             "UPDATE labeled_dedup_cohorts SET "
                             "frozen_at = statement_timestamp(), "
-                            "manifest = '{\"sha\": \"d\"}'::jsonb "
+                            'manifest = \'{"sha": "d"}\'::jsonb '
                             "WHERE source = :src"
                         ),
                         {"src": src},
@@ -1365,8 +1396,7 @@ def test_freeze_serializa_con_escritores_en_vuelo(db):
             n = (
                 await s3.execute(
                     sa.text(
-                        "SELECT count(*) FROM labeled_dedup_pairs "
-                        "WHERE source = :src"
+                        "SELECT count(*) FROM labeled_dedup_pairs WHERE source = :src"
                     ),
                     {"src": src},
                 )

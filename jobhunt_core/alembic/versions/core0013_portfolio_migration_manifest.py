@@ -36,8 +36,10 @@ def upgrade() -> None:
         "portfolio_migration_manifest",
         sa.Column("id", UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "created_at", sa.TIMESTAMP(timezone=True),
-            nullable=False, server_default=sa.text("now()"),
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
         ),
         # 'ok' si el destino reconcilia con el esperado del origen; 'divergent'
         # si hay divergencias (el manifiesto las detalla) → abortar el cutover.

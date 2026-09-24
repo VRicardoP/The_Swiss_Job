@@ -11,6 +11,7 @@ Un valor inutilizable se sirve como AUSENTE en vez de tumbar la página entera:
 la canónica es JSONB de productores heterogéneos y el idioma es un indicador,
 no la identidad de la oferta.
 """
+
 import pytest
 
 from jobhunt_core.api import v1
@@ -33,7 +34,9 @@ def test_language_viaja_de_la_canonica_al_dto(db):
     assert len(por_titulo) == 3
 
     assert por_titulo[term + "v0"]["language"] == "de"
-    assert por_titulo[term + "v1"]["language"] is None, "un tipo inválido debe servirse ausente"
+    assert por_titulo[term + "v1"]["language"] is None, (
+        "un tipo inválido debe servirse ausente"
+    )
     assert por_titulo[term + "v2"]["language"] is None
 
 
@@ -47,8 +50,17 @@ def test_language_se_normaliza(db):
 
 @pytest.mark.parametrize(
     "valor,esperado",
-    [("de", "de"), ("  EN ", "en"), ("", None), ("   ", None),
-     (None, None), (7, None), (["de"], None), ({"code": "de"}, None), (True, None)],
+    [
+        ("de", "de"),
+        ("  EN ", "en"),
+        ("", None),
+        ("   ", None),
+        (None, None),
+        (7, None),
+        (["de"], None),
+        ({"code": "de"}, None),
+        (True, None),
+    ],
 )
 def test_canonical_language_acota_lo_utilizable(valor, esperado):
     """Unidad de la guarda, sin base de datos: lo que no sea una cadena con

@@ -14,8 +14,8 @@ from services.matching.port import CoreUnavailableError
 @pytest.mark.asyncio
 async def test_school_without_canonical_vacancy_can_be_saved_cleared_and_viewed(
     seeded,  # noqa: F811  (la fixture, no una redefinición)
-    db_session,  # noqa: F811  (la fixture, no una redefinición)
-):  # noqa: F811  (la fixture, no una redefinición)
+    db_session,
+):
     user_id, fake, _ = seeded
     jid, ref = str(uuid.uuid4()), "b" * 32
     requests = []
@@ -98,8 +98,8 @@ async def test_school_without_canonical_vacancy_can_be_saved_cleared_and_viewed(
 async def test_ambiguous_school_reference_never_falls_back_or_writes(
     seeded,  # noqa: F811  (la fixture, no una redefinición)
     db_session,
-    page,  # noqa: F811  (la fixture, no una redefinición)
-):  # noqa: F811  (la fixture, no una redefinición)
+    page,
+):
     user_id, _, _ = seeded
     requests = []
 

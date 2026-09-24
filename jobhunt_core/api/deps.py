@@ -67,7 +67,8 @@ def ensure_text_storable(texto: str, path: str, code: str = "invalid_json") -> N
     diagnóstico que el cliente merece no."""
     if "\x00" in texto:
         raise ApiError(
-            400, code,
+            400,
+            code,
             f"{path}: carácter NUL (U+0000), que Postgres no admite ni en "
             "text ni en jsonb",
         )
@@ -75,7 +76,8 @@ def ensure_text_storable(texto: str, path: str, code: str = "invalid_json") -> N
         texto.encode()
     except UnicodeEncodeError as exc:
         raise ApiError(
-            400, code,
+            400,
+            code,
             f"{path}: surrogate suelto (U+D800–U+DFFF), que no es codificable "
             "en UTF-8 y que Postgres no admite ni en text ni en jsonb",
         ) from exc
@@ -110,7 +112,8 @@ def ensure_json_storable(payload, path: str = "body") -> None:
     if isinstance(payload, float):
         if payload != payload or payload in (float("inf"), float("-inf")):
             raise ApiError(
-                400, "invalid_json",
+                400,
+                "invalid_json",
                 f"{path}: {payload} no es JSON válido (NaN/Infinity son "
                 "literales no estándar que Postgres rechaza)",
             )
@@ -147,7 +150,11 @@ async def get_principal(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
     session=Depends(get_session),
 ) -> Principal:
-    if creds is None or creds.scheme.lower() != "bearer" or not creds.credentials.strip():
+    if (
+        creds is None
+        or creds.scheme.lower() != "bearer"
+        or not creds.credentials.strip()
+    ):
         raise error_401()
     result = await credentials.authenticate(session, creds.credentials.strip())
     if result is None:

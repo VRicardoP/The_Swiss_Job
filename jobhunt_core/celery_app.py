@@ -199,8 +199,11 @@ celery_app.conf.update(
 if not settings.CORE_CAPTURE_ENABLED:
     # Retirada del slot: el harness de la captura pierde su objeto. Se quita
     # POR ENTRADA, nunca por prefijo de nombre — `shadow-project` se queda.
-    for _entry in ("shadow-check-slot-health", "shadow-preview-cycle",
-                   "shadow-run-cycle"):
+    for _entry in (
+        "shadow-check-slot-health",
+        "shadow-preview-cycle",
+        "shadow-run-cycle",
+    ):
         celery_app.conf.beat_schedule.pop(_entry, None)
 
 if settings.CORE_SAVED_SEARCH_EXECUTION_ENABLED:

@@ -29,9 +29,9 @@ def test_version_table_lives_in_core_schema():
     esquema del core (jobhunt.alembic_version), nunca en public (legacy).
     env.py no es importable fuera de alembic → guardia estática sobre su fuente.
     """
-    env_src = (
-        Path(__file__).resolve().parents[1] / "alembic" / "env.py"
-    ).read_text(encoding="utf-8")
+    env_src = (Path(__file__).resolve().parents[1] / "alembic" / "env.py").read_text(
+        encoding="utf-8"
+    )
     # En ambos modos (offline y online).
     assert env_src.count("version_table_schema=settings.CORE_DB_SCHEMA") == 2
 
@@ -53,9 +53,7 @@ def _bd_desechable(admin_engine, prefijo: str):
     with admin_engine.connect() as c:
         c.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
     try:
-        boot = sa.create_engine(
-            _with_db(_ADMIN, dbname), poolclass=sa.pool.NullPool
-        )
+        boot = sa.create_engine(_with_db(_ADMIN, dbname), poolclass=sa.pool.NullPool)
         try:
             with boot.begin() as c:
                 c.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -111,8 +109,10 @@ def test_dos_bases_desechables_del_mismo_proceso_no_comparten_estado():
         _ADMIN, poolclass=sa.pool.NullPool, isolation_level="AUTOCOMMIT"
     )
     try:
-        with _bd_desechable(admin_engine, "jobhunt_iso_a") as a, \
-                _bd_desechable(admin_engine, "jobhunt_iso_b") as b:
+        with (
+            _bd_desechable(admin_engine, "jobhunt_iso_a") as a,
+            _bd_desechable(admin_engine, "jobhunt_iso_b") as b,
+        ):
             run_alembic(_with_db(settings.CORE_DATABASE_URL, a), "upgrade", "head")
             run_alembic(_with_db(settings.CORE_DATABASE_URL, b), "upgrade", "head")
 

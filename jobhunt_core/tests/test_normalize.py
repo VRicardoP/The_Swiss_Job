@@ -28,9 +28,12 @@ def test_normalize_coerces_types_defensively():
     undo = _register_tmp(
         "tipos",
         lambda raw: {
-            "title": raw.get("title"), "company": raw.get("company"),
-            "description": raw.get("description"), "tags": raw.get("tags"),
-            "salary": raw.get("salary"), "location": raw.get("location"),
+            "title": raw.get("title"),
+            "company": raw.get("company"),
+            "description": raw.get("description"),
+            "tags": raw.get("tags"),
+            "salary": raw.get("salary"),
+            "location": raw.get("location"),
             "remote": raw.get("remote"),
         },
     )
@@ -38,14 +41,23 @@ def test_normalize_coerces_types_defensively():
         c = normalize.normalize_offer(
             "tipos",
             {
-                "title": "  Dev Backend  ", "company": 42,
-                "description": ["no", "string"], "tags": ["a", 7, " b ", None],
-                "salary": {"min": 1}, "location": True, "remote": "yes",
+                "title": "  Dev Backend  ",
+                "company": 42,
+                "description": ["no", "string"],
+                "tags": ["a", 7, " b ", None],
+                "salary": {"min": 1},
+                "location": True,
+                "remote": "yes",
             },
         )
         assert c == {
-            "title": "Dev Backend", "company": None, "description": None,
-            "tags": ["a", "b"], "salary": None, "location": None, "remote": None,
+            "title": "Dev Backend",
+            "company": None,
+            "description": None,
+            "tags": ["a", "b"],
+            "salary": None,
+            "location": None,
+            "remote": None,
         }
         # Sin título no hay oferta presentable.
         assert normalize.normalize_offer("tipos", {"title": 99}) is None
@@ -55,8 +67,13 @@ def test_normalize_coerces_types_defensively():
 
 def test_text_hash_ignores_salary_and_location_but_not_text():
     base = {
-        "title": "Dev", "company": "ACME", "description": "d", "tags": ["a"],
-        "salary": "50k", "location": "Zurich", "remote": True,
+        "title": "Dev",
+        "company": "ACME",
+        "description": "d",
+        "tags": ["a"],
+        "salary": "50k",
+        "location": "Zurich",
+        "remote": True,
     }
     other_salary = {**base, "salary": "90k", "location": "Ginebra", "remote": False}
     other_title = {**base, "title": "Dev Senior"}
@@ -75,7 +92,12 @@ def test_text_hash_derives_from_encoder_input():
 
 
 def test_build_offer_text_mirrors_legacy_composition():
-    content = {"title": "Dev", "company": "ACME", "description": "backend", "tags": ["py", "sql"]}
+    content = {
+        "title": "Dev",
+        "company": "ACME",
+        "description": "backend",
+        "tags": ["py", "sql"],
+    }
     assert normalize.build_offer_text(content) == "Dev ACME backend py sql"
     assert normalize.build_offer_text({"title": "Dev", "tags": []}) == "Dev"
 

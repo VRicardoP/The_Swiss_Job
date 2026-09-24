@@ -39,7 +39,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute(f"DROP INDEX IF EXISTS {S}.ix_offrev_search_document")
-    op.execute(
-        f"ALTER TABLE {S}.offer_revisions "
-        f"DROP COLUMN IF EXISTS search_document"
-    )
+    op.execute(f"ALTER TABLE {S}.offer_revisions DROP COLUMN IF EXISTS search_document")

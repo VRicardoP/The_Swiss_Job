@@ -18,8 +18,12 @@ from jobhunt_core import import_portfolio_manifest as man
 from jobhunt_core import import_portfolio_provenance as prov
 from jobhunt_core.import_portfolio import PORTFOLIO_IMPORT_SOURCE
 from jobhunt_core.import_portfolio_durables import PORTFOLIO_CONSUMER
-from jobhunt_core.tests.test_integration_import_portfolio_ledger import _seed_other_source
-from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import _on_disposable_db
+from jobhunt_core.tests.test_integration_import_portfolio_ledger import (
+    _seed_other_source,
+)
+from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import (
+    _on_disposable_db,
+)
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("CORE_ADMIN_DATABASE_URL"),
@@ -31,8 +35,14 @@ def _user(url: str, ref: int = 1) -> dict:
     return {
         "external_ref": ref,
         "applications": [
-            {"url": url, "status": "applied", "title": "T", "company": "C",
-             "description": "d", "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc)},
+            {
+                "url": url,
+                "status": "applied",
+                "title": "T",
+                "company": "C",
+                "description": "d",
+                "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+            },
         ],
         "saved_searches": [],
     }
@@ -49,17 +59,13 @@ def test_exact_capture_excludes_concurrent_insert_from_other_session():
             async with factory() as concurrent:
                 await concurrent.execute(
                     sa.text(
-                        "INSERT INTO sources (id, name, tier) "
-                        "VALUES (:id, :name, 0)"
+                        "INSERT INTO sources (id, name, tier) VALUES (:id, :name, 0)"
                     ),
                     {"id": foreign, "name": f"concurrent-{foreign}"},
                 )
                 await concurrent.commit()
             await c4.execute(
-                sa.text(
-                    "INSERT INTO sources (id, name, tier) "
-                    "VALUES (:id, :name, 0)"
-                ),
+                sa.text("INSERT INTO sources (id, name, tier) VALUES (:id, :name, 0)"),
                 {"id": own, "name": f"c4-{own}"},
             )
             captured = await prov.captured_provenance(c4)
@@ -78,7 +84,9 @@ def test_provenance_created_covers_vacancy_and_durables():
 
     async def _run(factory):
         async with factory() as s:
-            manifest = await man.migrate_and_reconcile(s, [_user("https://p.example.ch/1")])
+            manifest = await man.migrate_and_reconcile(
+                s, [_user("https://p.example.ch/1")]
+            )
             assert manifest["verdict"] == "ok", manifest["divergences"]
             pv = manifest["provenance"]
             assert len(pv["vacancies"]) == 1
@@ -142,7 +150,9 @@ def test_provenance_empty_on_idempotent_rerun():
         async with factory() as s:
             m1 = await man.migrate_and_reconcile(s, users)
             assert m1["verdict"] == "ok", m1["divergences"]
-            assert sum(len(v) for v in m1["provenance"].values()) > 0  # el 1er run insertó
+            assert (
+                sum(len(v) for v in m1["provenance"].values()) > 0
+            )  # el 1er run insertó
             await s.commit()
         async with factory() as s:
             m2 = await man.migrate_and_reconcile(s, users)
@@ -178,7 +188,9 @@ def test_provenance_excludes_preexisting_dedup_candidate_on_reused_vacancy():
             # Un dedup_candidate PREEXISTENTE que referencia la vacante que se reutilizará.
             other_v = uuid.uuid4()
             dc_id = uuid.uuid4()
-            await s.execute(sa.text("INSERT INTO vacancies (id) VALUES (:v)"), {"v": other_v})
+            await s.execute(
+                sa.text("INSERT INTO vacancies (id) VALUES (:v)"), {"v": other_v}
+            )
             await s.execute(
                 sa.text(
                     "INSERT INTO dedup_candidates (id, vacancy_a, vacancy_b) "
@@ -219,7 +231,9 @@ def test_scope_dedup_provenance_excluye_dc_ajenos_conserva_propios():
     async def _run(factory):
         async with factory() as s:
             # Cutover real: crea una vacante propia (del run).
-            manifest = await man.migrate_and_reconcile(s, [_user("https://h2.example.ch/1")])
+            manifest = await man.migrate_and_reconcile(
+                s, [_user("https://h2.example.ch/1")]
+            )
             assert manifest["verdict"] == "ok"
             own_vac = manifest["provenance"]["vacancies"][0]
 
@@ -255,6 +269,6 @@ def test_scope_dedup_provenance_excluye_dc_ajenos_conserva_propios():
             diff["vacancies"] = [own_vac]  # la procedencia real del run
             scoped = await prov.scope_dedup_provenance(s, diff)
             assert str(dc_ajeno) not in scoped["dedup_candidates"]  # excluido
-            assert str(dc_propio) in scoped["dedup_candidates"]     # conservado
+            assert str(dc_propio) in scoped["dedup_candidates"]  # conservado
 
     asyncio.run(_on_disposable_db(_run))

@@ -20,7 +20,11 @@ from jobhunt_core import outbox
 CHANGED_EVENT = "saved_search.changed"
 # Campos que el cliente puede escribir (Decisión 5); el resto es engine-owned.
 CLIENT_WRITABLE = (
-    "name", "filters", "min_score", "notify_frequency", "notify_push",
+    "name",
+    "filters",
+    "min_score",
+    "notify_frequency",
+    "notify_push",
     "is_active",
 )
 
@@ -41,12 +45,18 @@ def compose(row) -> dict:
     parte de la representación (Decisión 2: no es el ETag, es la versión de
     eventos)."""
     return {
-        "id": row.id, "profile_id": row.profile_id, "name": row.name,
-        "filters": row.filters, "min_score": row.min_score,
+        "id": row.id,
+        "profile_id": row.profile_id,
+        "name": row.name,
+        "filters": row.filters,
+        "min_score": row.min_score,
         "notify_frequency": row.notify_frequency,
-        "notify_push": row.notify_push, "is_active": row.is_active,
-        "last_run_at": row.last_run_at, "total_matches": row.total_matches,
-        "created_at": row.created_at, "updated_at": row.updated_at,
+        "notify_push": row.notify_push,
+        "is_active": row.is_active,
+        "last_run_at": row.last_run_at,
+        "total_matches": row.total_matches,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
     }
 
 
@@ -60,8 +70,15 @@ async def fetch_owned(session, search_id, consumer_id, *, for_update=False):
     ).one_or_none()
 
 
-async def emit_changed(session, *, search_id, profile_id, revision: int,
-                       destination: str, deleted: bool = False) -> None:
+async def emit_changed(
+    session,
+    *,
+    search_id,
+    profile_id,
+    revision: int,
+    destination: str,
+    deleted: bool = False,
+) -> None:
     """Evento del catálogo `saved_search.changed` (event_id = uuid5 de
     saved_search_id + revision) en la MISMA tx de la mutación."""
     await outbox.emit(
@@ -82,13 +99,17 @@ async def emit_changed(session, *, search_id, profile_id, revision: int,
     )
 
 
-async def feed_page(session, profile_id, limit: int, cursor) -> tuple[list, tuple | None]:
+async def feed_page(
+    session, profile_id, limit: int, cursor
+) -> tuple[list, tuple | None]:
     """Página keyset (created_at DESC, id DESC) — Decisión 10. Patrón
     limit+1: la fila extra solo decide has_more."""
     params = {"pid": profile_id, "lim": limit + 1}
     where = "WHERE ss.profile_id = :pid"
     if cursor is not None:
-        where += " AND (ss.created_at < :cts OR (ss.created_at = :cts AND ss.id < :cid))"
+        where += (
+            " AND (ss.created_at < :cts OR (ss.created_at = :cts AND ss.id < :cid))"
+        )
         params["cts"], params["cid"] = cursor
     rows = (
         await session.execute(
@@ -105,9 +126,7 @@ async def feed_page(session, profile_id, limit: int, cursor) -> tuple[list, tupl
     has_more = len(rows) > limit
     page_rows = rows[:limit]
     next_cur = (
-        (page_rows[-1].created_at, page_rows[-1].id)
-        if has_more and page_rows
-        else None
+        (page_rows[-1].created_at, page_rows[-1].id) if has_more and page_rows else None
     )
     return [compose(r) for r in page_rows], next_cur
 
@@ -125,7 +144,8 @@ async def create(session, *, profile_id, values: dict, destination: str) -> uuid
             ":nf, :np, :ia, 1)"
         ),
         {
-            "id": search_id, "pid": profile_id,
+            "id": search_id,
+            "pid": profile_id,
             "name": values["name"],
             "filters": json.dumps(values.get("filters") or {}, ensure_ascii=False),
             "ms": values.get("min_score", 0),
@@ -135,7 +155,10 @@ async def create(session, *, profile_id, values: dict, destination: str) -> uuid
         },
     )
     await emit_changed(
-        session, search_id=search_id, profile_id=profile_id, revision=1,
+        session,
+        search_id=search_id,
+        profile_id=profile_id,
+        revision=1,
         destination=destination,
     )
     return search_id
@@ -147,12 +170,16 @@ async def update(session, row, values: dict, destination: str) -> None:
     revision+1 + updated_at + evento, misma tx. La fila viene BLOQUEADA
     (fetch_owned for_update=True)."""
     merged = {k: values.get(k, getattr(row, k)) for k in CLIENT_WRITABLE}
-    contract = await session.scalar(sa.text(
-        "SELECT contract FROM saved_search_execution WHERE saved_search_id=:id"
-    ), {"id": row.id})
+    contract = await session.scalar(
+        sa.text(
+            "SELECT contract FROM saved_search_execution WHERE saved_search_id=:id"
+        ),
+        {"id": row.id},
+    )
     if contract is not None:
         from jobhunt_core.search_execution import CONTRACT
         from jobhunt_core.saved_search_query import SwissJobSearchFilters
+
         if contract != CONTRACT:
             raise ValueError("unsupported saved-search execution contract")
         SwissJobSearchFilters.model_validate(merged["filters"])
@@ -166,14 +193,20 @@ async def update(session, row, values: dict, destination: str) -> None:
             "WHERE id = :id"
         ),
         {
-            "id": row.id, "name": merged["name"],
+            "id": row.id,
+            "name": merged["name"],
             "filters": json.dumps(merged["filters"] or {}, ensure_ascii=False),
-            "ms": merged["min_score"], "nf": merged["notify_frequency"],
-            "np": merged["notify_push"], "ia": merged["is_active"],
+            "ms": merged["min_score"],
+            "nf": merged["notify_frequency"],
+            "np": merged["notify_push"],
+            "ia": merged["is_active"],
             "rev": new_revision,
         },
     )
     await emit_changed(
-        session, search_id=row.id, profile_id=row.profile_id,
-        revision=new_revision, destination=destination,
+        session,
+        search_id=row.id,
+        profile_id=row.profile_id,
+        revision=new_revision,
+        destination=destination,
     )
