@@ -407,7 +407,8 @@ Cuatro huecos, un cambio de core y uno de BFF.
 
 Sustituir la expresión del `string_agg` por:
 ```python
-"  md5(coalesce(string_agg("
+"md5(coalesce(string_agg("
+
 "    s.vacancy_id::text || ':' || s.current_eval_id::text || ':' "
 "    || coalesce(v.current_offer_revision_id::text, '-') || ':' "
 "    || coalesce(v.primary_incarnation_id::text, '-') || ':' "
@@ -433,8 +434,11 @@ Para el 403: `api._issue(factory, created, "tenant-x", ["vacancies:read"])`.
 
 1. `feedback.py`, en `_write`, justo antes de `return ack` (y también en el `return None` tras `404`, porque el 404 no prueba que nada cambiara):
 ```python
-        from services.matching.core_client import clear_feed_cache
-        clear_feed_cache(pid)   # el feed cacheado por version contiene `state`: tras un ACK ya no describe lo que el core sirve
+from services.matching.core_client import clear_feed_cache
+
+clear_feed_cache(
+    pid
+)  # el feed cacheado por version contiene `state`: tras un ACK ya no describe lo que el core sirve
 ```
 2. `core_client.py`, `_fetch_full_feed`: releer la versión al terminar el recorrido y cachear sólo si coincide (lectura desgarrada):
 ```python
@@ -449,9 +453,14 @@ Para el 403: `api._issue(factory, created, "tenant-x", ["vacancies:read"])`.
 ```
 3. `_remember_feed`: el descarte por descuadre deja de ser mudo:
 ```python
-        if total is None or len(items) != total:
-            logger.warning("feed de %s: recorrido %d != total %s — no se cachea (¿vacantes sin canonica?)", pid, len(items), total)
-            return
+if total is None or len(items) != total:
+    logger.warning(
+        "feed de %s: recorrido %d != total %s — no se cachea (¿vacantes sin canonica?)",
+        pid,
+        len(items),
+        total,
+    )
+    return
 ```
 4. `_feed_version` devuelve también `total` (`tuple[str, int] | None`) y `_fetch_full_feed` lo compara con el de la primera página: si difieren, se sigue recorriendo pero no se cachea (misma advertencia). Ajustar `test_feed_version_cache.py::_Cliente` al nuevo retorno.
 5. Carrera `clear_feed_cache` ↔ `_remember_feed` (M2): capturar `generacion = (_cache_generation, _profile_generations.get(pid, 0))` al entrar en `_fetch_full_feed` y en `_remember_feed` descartar si cambió.
@@ -746,7 +755,12 @@ defecto es cerrado y abrirlo a la LAN exige escribirlo en el `.env`.
 | T1 | **CERRADO** | Slot huérfano `jobhunt_shadow` borrado con autorización del propietario. Siete precondiciones verificadas antes (inactivo y sin PID, sin `pg_stat_replication`, sin walsender en la base legacy, ningún contenedor lo declara, ningún compose lo nombra, `archive_mode=off`, `wal_keep_size=0`). **`pg_wal` 41 GB → 81 MB**, disco libre 432 → **472,3 GB**, tras forzar un `CHECKPOINT` (1m18s: no se recicló solo en 4,5 min). El slot vigente `_r5_rehearsal` sigue activo; core `ready`, CDC 0 pendientes, 0 reinicios. Recibo con el estado previo completo en `audit-fixes-20260923/T1-drop-slot.receipt` |
 | T4 | **CERRADO** (salvo el push, que es del propietario) | `ruff check` **31 → 0** y `ruff format` aplicado a 99 ficheros (`6e30e89`, `02a906a`, `2060308`), con el hash del formateo en `.git-blame-ignore-revs`. CI: dispara en **toda rama** (626 commits se escribieron sin que corriera), `ruff` con **versión fijada** (un `pip install ruff` a secas lo pone rojo solo), `vitest` sin `--passWithNoTests`, job **`core-lint` informativo** (`jobhunt_core` nunca se ha linted) y job **`compose-config`** que valida los composes de despliegue — verificado localmente: `dev` necesita la base, `prod`/`prebuilt` necesitan cinco ficheros de entorno con plantilla, y `qnap`/`rehearsal` quedan fuera porque sus rutas del NAS no existen en CI. Suite 2.572 passed |
 | T5 | **CERRADO** | `postgres` (5435) y `redis` (6380, **sin contraseña**) dejaban de escuchar en `0.0.0.0`; todo salvo el frontend va por `${HOST_BIND_IP:-127.0.0.1}`, `redis` con `--requirepass` y el compose se niega a arrancar sin `POSTGRES_PASSWORD` ni `REDIS_PASSWORD`. **18 pruebas nuevas** (`test_c7_credenciales.py`), **13 de las 18 mueren** al mutar el validador y la guardia (las 5 supervivientes son las que afirman «no cambia»/«no lanza»). Suite BFF **2.587 passed**, 3 skipped, 4 xfailed; ruff limpio. Verificado ejecutando: `ss -ltn` con los cinco puertos en loopback, PING crudo → `NOAUTH`, los cuatro puertos rechazados **desde el NAS**, `compose config` sin contraseñas → salida 1, `control.ping()` → 2 workers. **Producción no afectada** (corre `*.configured.yml`). Dos trampas medidas: `compose port` rinde el contenedor y `config` el fichero; y Celery lee `CELERY_BROKER_URL` del entorno y **gana** sobre el código — con la URL sin credencial el BFF entraba y los workers quedaban fuera. Destapó **H15** (base del Portfolio en `0.0.0.0:5435` en el NAS) y **H16** (tag `swissjob-core:dev` obsoleto) |
-| T0, T6–T16 | PENDIENTES | T13 y T15 son decisiones del propietario |
+| T6 | **CERRADO** | Eran **dos** defectos: no había refresh en ninguna parte (el access token vive 30 min ⇒ la sesión moría y había que volver a entrar) y `useAuthHydration` llamaba a `logout()` ante CUALQUIER error de `/auth/me` (un 502 de un segundo borraba los tokens). Ahora refresh compartido —N peticiones en vuelo ⇒ UN refresh— y cierre sólo con 401/403; un refresh que falla por 500 o por red NO cierra. Las tres rutas con `fetch` crudo también renuevan. **28 pruebas, 3 mutantes muertos** (quitar el refresh tumba 5, `endsSession` siempre true tumba 13, quitar la promesa compartida tumba exactamente la del refresh único). Contrato comprobado contra el backend real |
+| T7 | **CERRADO** | «Translated from » se pintaba a medias sin idioma (96,9 % del feed); los tres handlers de `MatchPage` se recreaban en cada render y anulaban el `memo(MatchCard)` sobre 1.800 tarjetas; la señal implícita `view_time` se atribuía a `data[0]` —oferta que el usuario podía no haber visto— y se **retira**: una señal falsa es peor que ninguna. Tres keywords escritas como comodines se comparaban con `includes` literal: muertas desde que se escribieron (corpus real: 0 como literal, 1 como regex) |
+| T8 | **CERRADO** | `default_limits` era configuración MUERTA (slowapi sólo la honra con su middleware, que no estaba: 5 rutas de toda la API tenían límite). Y **su middleware tampoco servía**: con FastAPI 0.141 no encuentra los handlers de los routers incluidos y los exime en silencio — medido, 260 peticiones seguidas con 200 y sin una sola clave en Redis. Middleware propio; primer 429 en la petición 241 con el límite en 240/min. Login sin los tres oráculos (tiempo, 403 antes de la contraseña, y bcrypt truncando a 72 bytes **en silencio**); `nginx` sobreescribe `X-Forwarded-For` en vez de añadir |
+| T10 | **CERRADO** | El JWT salía en la query string del SSE (logs de nginx, historial, `Referer`, válido 30 min). Vale de un solo uso con `GETDEL` atómico y 30 s de vida. Efecto que había que atender: `EventSource` reconecta reusando la MISMA url y el vale ya está gastado ⇒ reconexión a mano con vale nuevo y espera creciente |
+| T14 | **CERRADO** | Cada cifra verificada contra el sistema, no deducida: el healthcheck de `core-api` lo tienen `prod` y `qnap` (el que no, `prebuilt`); **cinco** citas diarias del beat, no cuatro (faltaba `matching-materialize-ce` 06:15); base legacy en `d3a7c1f60b84`; 26 providers; `gemini-3.6-flash`; suites 1.769 y 2.612. En memoria: PyMuPDF y no pdfplumber, Capacitor 8, 38 migraciones, umbral 42 |
+| T0, T9, T11–T13, T15, T16 | PENDIENTES | T13 y T15 son decisiones del propietario |
 | Fuera del plan — panel «AI Job Match» (Portfolio) | **HECHO salvo publicar el frontend** | `ReactPortfolio/backend` `c01a192`+`32fe475` desplegado (`enrich-32fe475`); frontend `a0bf889` sin push (Cloudflare Pages). Detalle: `docs/audits/DIAGNOSTICO_PANEL_OFERTAS_2026-09-23.md` §5 |
 
 ### Criterio de cierre de cada paquete
