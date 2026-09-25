@@ -749,12 +749,34 @@ from jobhunt_core.harvest.providers.native_chmedia import CHMediaProvider
 from jobhunt_core.harvest.providers.native_publicjobs import PublicJobsProvider
 from jobhunt_core.harvest.providers.native_rss import NativeRSSProvider
 
-@pytest.mark.parametrize("source,raw", [
-    ("ostjob", {"id": 1, "title": "Lehrperson", "company": "Schule", "cantons": ["St. Gallen"], "city": "Wil"}),
-    ("zentraljob", {"id": 2, "title": "Lehrperson", "company": "Schule", "cantons": ["Luzern"], "city": "Luzern"}),
-])
+
+@pytest.mark.parametrize(
+    "source,raw",
+    [
+        (
+            "ostjob",
+            {
+                "id": 1,
+                "title": "Lehrperson",
+                "company": "Schule",
+                "cantons": ["St. Gallen"],
+                "city": "Wil",
+            },
+        ),
+        (
+            "zentraljob",
+            {
+                "id": 2,
+                "title": "Lehrperson",
+                "company": "Schule",
+                "cantons": ["Luzern"],
+                "city": "Luzern",
+            },
+        ),
+    ],
+)
 def test_chmedia_exposes_canton_for_saved_search_filters(source, raw):
-    CHMediaProvider(source)               # registra el normalizador
+    CHMediaProvider(source)  # registra el normalizador
     content = normalize_offer(source, raw)
     assert content["canton"] in {"SG", "LU"}
 ```
@@ -884,48 +906,67 @@ Para **financejobs** (más simple; hacerlo primero):
 
 ```python
 """Financejobs.ch via the __NEXT_DATA__ blob; parse copied from the retiring scraper."""
+
 import json, re
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
-from jobhunt_core.harvest.provider import BaseProvider, ProviderConfigError, ProviderResponseError
+from jobhunt_core.harvest.provider import (
+    BaseProvider,
+    ProviderConfigError,
+    ProviderResponseError,
+)
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 SOURCE_NAME = "financejobs"
 BASE_URL = "https://www.financejobs.ch"
 LISTING_URL = f"{BASE_URL}/de/jobs"
-MAX_PAGES = 10            # = MAX_PAGES del scraper legacy (comprobar)
-PAGE_PAUSE_S = 2.0        # = RATE_LIMIT_SECONDS del legacy (comprobar)
+MAX_PAGES = 10  # = MAX_PAGES del scraper legacy (comprobar)
+PAGE_PAUSE_S = 2.0  # = RATE_LIMIT_SECONDS del legacy (comprobar)
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _NEXT_DATA = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
 
-def _jobs_ssr(data):        # copiar _extract_jobs_ssr del legacy
+
+def _jobs_ssr(data):  # copiar _extract_jobs_ssr del legacy
     ...
 
+
 def _listing(job):
-    job_id = ...            # copiar _job_url_id del legacy
+    job_id = ...  # copiar _job_url_id del legacy
     if not job_id:
         return None
     return RawListing("id:" + job_id, f"{BASE_URL}/de/job/{job_id}", job)
 
-def _content(raw):          # copiar normalize_job: title, company, description, location, remote=False, tags
+
+def _content(
+    raw,
+):  # copiar normalize_job: title, company, description, location, remote=False, tags
     ...
+
 
 def register_handlers():
     register_normalizer(SOURCE_NAME, _content)
     register_extractor(SOURCE_NAME, lambda raw: (raw.get("title"), raw.get("company")))
 
+
 class FinancejobsProvider(BaseProvider):
     name = SOURCE_NAME
     SEMANTIC_PARAMS = ()
+
     def __init__(self):
         register_handlers()
+
     async def fetch_new(self, params, cursor, http):
         if not isinstance(params, dict) or params:
             raise ProviderConfigError("financejobs scope takes no parameters")
         listings, invalid, pages = [], 0, 0
         for page in range(1, MAX_PAGES + 1):
-            async with http.stream("GET", f"{LISTING_URL}?page={page}", timeout=25,
-                                   headers=BROWSER_HEADERS, follow_redirects=True) as response:
+            async with http.stream(
+                "GET",
+                f"{LISTING_URL}?page={page}",
+                timeout=25,
+                headers=BROWSER_HEADERS,
+                follow_redirects=True,
+            ) as response:
                 response.raise_for_status()
                 body = await response.aread()
                 if len(body) > MAX_RESPONSE_BYTES:
@@ -935,17 +976,26 @@ class FinancejobsProvider(BaseProvider):
                 raise ProviderResponseError("financejobs: no __NEXT_DATA__")
             jobs = _jobs_ssr(json.loads(m.group(1)))
             if jobs is None:
-                raise ProviderResponseError("financejobs: unknown __NEXT_DATA__ structure")
+                raise ProviderResponseError(
+                    "financejobs: unknown __NEXT_DATA__ structure"
+                )
             pages += 1
             if not jobs:
                 break
             for job in jobs:
                 listing = _listing(job)
-                if listing is None: invalid += 1; continue
+                if listing is None:
+                    invalid += 1
+                    continue
                 listings.append(listing)
             await asyncio.sleep(PAGE_PAUSE_S)
-        return FetchResult(tuple(listings), {"pages": pages}, pages_fetched=pages,
-                           complete=not invalid, error="invalid_items" if invalid else None)
+        return FetchResult(
+            tuple(listings),
+            {"pages": pages},
+            pages_fetched=pages,
+            complete=not invalid,
+            error="invalid_items" if invalid else None,
+        )
 ```
 
    (`BROWSER_HEADERS` = el helper de P6; `asyncio` importado. Adaptar: el

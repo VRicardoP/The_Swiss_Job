@@ -149,24 +149,24 @@ de parada, no un problema a rodear:
 
 ```python
 # Capa 1 — huella de navegador
-SCRAPER_DELAY_JITTER_RATIO          = 0.5      # jitter en delays (hasta +50%)
-SCRAPER_MAX_RETRIES                 = 2
-SCRAPER_RETRY_BACKOFF_SECONDS       = 2.0
-SCRAPER_PROXY_URL                   = ""       # opt-in (proxy externo)
-SCRAPER_BROWSER_CDP_URL             = ""       # opt-in (browser stealth remoto)
+SCRAPER_DELAY_JITTER_RATIO = 0.5  # jitter en delays (hasta +50%)
+SCRAPER_MAX_RETRIES = 2
+SCRAPER_RETRY_BACKOFF_SECONDS = 2.0
+SCRAPER_PROXY_URL = ""  # opt-in (proxy externo)
+SCRAPER_BROWSER_CDP_URL = ""  # opt-in (browser stealth remoto)
 
 # Capa 2 — patrón circadiano
-SCHEDULER_DAILY_HARVEST_ENABLED     = True
-SCHEDULER_DAILY_HARVEST_HOUR        = 12       # hora base CET
-SCHEDULER_DAILY_HARVEST_JITTER_HOURS = 4       # ±4h → hora distinta cada día
+SCHEDULER_DAILY_HARVEST_ENABLED = True
+SCHEDULER_DAILY_HARVEST_HOUR = 12  # hora base CET
+SCHEDULER_DAILY_HARVEST_JITTER_HOURS = 4  # ±4h → hora distinta cada día
 
 # Capa 3.1 — crawler incremental
-CURSOR_INCREMENTAL_ENABLED          = True
-CURSOR_RECENT_IDENTITIES_MAX        = 300
+CURSOR_INCREMENTAL_ENABLED = True
+CURSOR_RECENT_IDENTITIES_MAX = 300
 
 # Capa 3.2 — presupuesto explícito (NUEVO)
-CRAWLER_BUDGET_ENABLED              = True
-CRAWLER_BUDGET_SAFETY_PAGES         = 1
+CRAWLER_BUDGET_ENABLED = True
+CRAWLER_BUDGET_SAFETY_PAGES = 1
 CRAWLER_BUDGET_EMPTY_RUNS_THRESHOLD = 3
 CRAWLER_BUDGET_BACKOFF_MAX_MULTIPLIER = 4
 ```

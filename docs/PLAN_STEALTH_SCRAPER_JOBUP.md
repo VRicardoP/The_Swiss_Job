@@ -262,8 +262,7 @@ class IncrementalProvider:
         scope: SourceScope,
         cursor: SourceCursor,
         budget: CrawlBudget,
-    ) -> IncrementalFetchResult:
-        ...
+    ) -> IncrementalFetchResult: ...
 ```
 
 Para compatibilidad:

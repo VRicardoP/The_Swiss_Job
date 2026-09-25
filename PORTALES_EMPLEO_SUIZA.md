@@ -11,7 +11,7 @@ Objetivo: Identificar portales de empleo suizos **no exclusivamente tecnologicos
 >
 > Para el estado vigente: `CLAUDE.md` (arquitectura y contadores),
 > `docs/COTAS_Y_DECISIONES.md` (limitaciones aceptadas y su motivo) y
-> `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` §19 (contadores verificados).
+> `/home/lothar/Public/SwissJob/docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md` §19 (contadores verificados).
 
 **Ya integrados (excluidos):** Jobicy, Remotive, Arbeitnow, JSearch, RemoteOK, Himalayas, Adzuna, WeWorkRemotely, Ostjob.ch, Zentraljob.ch, SwissTechJobs.com, ICTjobs.ch
 
@@ -357,16 +357,16 @@ Tabla `source_compliance` en la DB:
 class SourceCompliance(Base):
     __tablename__ = "source_compliance"
 
-    source_key: str          # "jooble", "careerjet", "stelle_admin", etc.
-    method: str              # "api" | "scraping"
-    is_allowed: bool         # Kill-switch: False = desactivar inmediatamente
-    rate_limit_seconds: float # Delay minimo entre requests
-    robots_txt_ok: bool      # Resultado de verificar robots.txt
-    tos_reviewed_at: date    # Fecha de ultima revision de TOS
-    tos_notes: str           # Notas sobre restricciones especificas
+    source_key: str  # "jooble", "careerjet", "stelle_admin", etc.
+    method: str  # "api" | "scraping"
+    is_allowed: bool  # Kill-switch: False = desactivar inmediatamente
+    rate_limit_seconds: float  # Delay minimo entre requests
+    robots_txt_ok: bool  # Resultado de verificar robots.txt
+    tos_reviewed_at: date  # Fecha de ultima revision de TOS
+    tos_notes: str  # Notas sobre restricciones especificas
     max_requests_per_hour: int
     last_blocked_at: datetime | None  # Si detectamos bloqueo
-    auto_disable_on_block: bool       # Desactivar automaticamente si bloqueado
+    auto_disable_on_block: bool  # Desactivar automaticamente si bloqueado
 ```
 
 **Reglas:**
@@ -472,26 +472,31 @@ class ApplicationStatus(str, Enum):
     rejected = "rejected"
     withdrawn = "withdrawn"
 
+
 class RemotePreference(str, Enum):
     remote_only = "remote_only"
     hybrid = "hybrid"
     onsite = "onsite"
     any = "any"
 
+
 class NotifyFrequency(str, Enum):
-    realtime = "realtime"     # SSE push inmediato
-    daily = "daily"           # Digest diario por email
-    weekly = "weekly"         # Digest semanal
+    realtime = "realtime"  # SSE push inmediato
+    daily = "daily"  # Digest diario por email
+    weekly = "weekly"  # Digest semanal
+
 
 class MatchFeedback(str, Enum):
     thumbs_up = "thumbs_up"
     thumbs_down = "thumbs_down"
-    applied = "applied"       # Feedback implicito fuerte
+    applied = "applied"  # Feedback implicito fuerte
+
 
 class SalaryPeriod(str, Enum):
     yearly = "yearly"
     monthly = "monthly"
     hourly = "hourly"
+
 
 class Seniority(str, Enum):
     intern = "intern"
@@ -501,6 +506,7 @@ class Seniority(str, Enum):
     lead = "lead"
     head = "head"
     director = "director"
+
 
 class ContractType(str, Enum):
     full_time = "full_time"
@@ -529,12 +535,16 @@ def dedup_exact(job):
     """URL canonica + source_id. Detecta reingestiones del mismo portal."""
     return hash(normalize_url(job.url)) or hash(f"{job.source}:{job.source_id}")
 
+
 # Nivel 2: Fuzzy-lite (rapido, en cada ingestion)
 def dedup_fuzzy(job):
     """Titulo + empresa normalizados. Detecta misma oferta cross-source."""
-    title_norm = normalize(job.title)    # lowercase, strip "Senior/Jr/m-f-d", strip punctuation
-    company_norm = normalize(job.company) # lowercase, strip "AG/GmbH/SA/Ltd"
+    title_norm = normalize(
+        job.title
+    )  # lowercase, strip "Senior/Jr/m-f-d", strip punctuation
+    company_norm = normalize(job.company)  # lowercase, strip "AG/GmbH/SA/Ltd"
     return md5(f"{title_norm}|{company_norm}")
+
 
 # Nivel 3: Semantica (batch diario, en Celery worker)
 async def dedup_semantic(new_jobs, existing_embeddings, threshold=0.95):
@@ -564,9 +574,15 @@ class DataNormalizer:
     """Normaliza campos de jobs a formato consistente."""
 
     CANTON_MAP = {
-        "zurich": "ZH", "zürich": "ZH", "zh": "ZH",
-        "bern": "BE", "berne": "BE", "be": "BE",
-        "geneve": "GE", "geneva": "GE", "genf": "GE",
+        "zurich": "ZH",
+        "zürich": "ZH",
+        "zh": "ZH",
+        "bern": "BE",
+        "berne": "BE",
+        "be": "BE",
+        "geneve": "GE",
+        "geneva": "GE",
+        "genf": "GE",
         # ... 26 cantones con variantes DE/FR/IT/EN
     }
 
@@ -664,11 +680,11 @@ Top N de Etapa 1
 
 ```python
 score_final = (
-    w_embedding * score_embedding +      # Similitud semantica (default 0.25)
-    w_llm * score_llm +                  # Evaluacion contextual (default 0.35)
-    w_salary * score_salary_match +       # Rango salarial (default 0.15)
-    w_location * score_location_match +   # Preferencia ubicacion (default 0.15)
-    w_recency * score_recency             # Frescura del anuncio (default 0.10)
+    w_embedding * score_embedding  # Similitud semantica (default 0.25)
+    + w_llm * score_llm  # Evaluacion contextual (default 0.35)
+    + w_salary * score_salary_match  # Rango salarial (default 0.15)
+    + w_location * score_location_match  # Preferencia ubicacion (default 0.15)
+    + w_recency * score_recency  # Frescura del anuncio (default 0.10)
 )
 # Pesos ajustables por usuario via sliders touch-friendly en UI
 ```
@@ -743,14 +759,19 @@ Rules:
 Output: JSON with sections (profile, experience[], skills[], education[], languages[])
 Additionally: a complete cover_letter field (3-4 paragraphs, professional tone)"""
 
+
 class CVAdapter:
-    async def adapt_cv(self, user_profile, job, language="en", match_result=None) -> dict:
+    async def adapt_cv(
+        self, user_profile, job, language="en", match_result=None
+    ) -> dict:
         """Generate tailored CV + cover letter for a specific job."""
         # Ejecutado en Celery worker (no bloquea FastAPI)
         # Returns: adapted_profile, adapted_experience, highlighted_skills,
         #          transferable_skills, suggested_additions, cover_letter, language
 
-    async def get_or_create(self, user_id, job_hash, language, version=None) -> AdaptedCV:
+    async def get_or_create(
+        self, user_id, job_hash, language, version=None
+    ) -> AdaptedCV:
         """Reutilizar adaptacion existente o crear nueva. Soporta versionado."""
 ```
 
@@ -839,7 +860,7 @@ Reutilizar patron `BaseJobProvider` + `BaseJobCache` de ReactPortfolio:
 class BaseScraper(ABC):
     """Base para scrapers sin API. Se ejecuta en Celery worker."""
 
-    rate_limit: float = 2.0          # segundos entre requests (minimo)
+    rate_limit: float = 2.0  # segundos entre requests (minimo)
     max_pages: int = 10
     user_agent: str = "SwissJobHunter/1.0 (+https://swissjobhunter.ch/bot)"
 
@@ -881,43 +902,50 @@ scheduler = AsyncIOScheduler()
 # APIs rapidas: cada 30 minutos → Celery task
 scheduler.add_job(
     lambda: celery_app.send_task("tasks.update_api_sources"),
-    CronTrigger(minute="*/30"), id="api_sources"
+    CronTrigger(minute="*/30"),
+    id="api_sources",
 )
 
 # Scrapers: cada 6 horas → Celery task
 scheduler.add_job(
     lambda: celery_app.send_task("tasks.update_scraper_sources"),
-    CronTrigger(hour="*/6"), id="scraper_sources"
+    CronTrigger(hour="*/6"),
+    id="scraper_sources",
 )
 
 # AI matching incremental: cada hora → Celery task
 scheduler.add_job(
     lambda: celery_app.send_task("tasks.run_incremental_matching"),
-    CronTrigger(minute="15"), id="ai_matching"
+    CronTrigger(minute="15"),
+    id="ai_matching",
 )
 
 # Alertas email: diario 8:00 CET → Celery task
 scheduler.add_job(
     lambda: celery_app.send_task("tasks.send_daily_digests"),
-    CronTrigger(hour=8, timezone="Europe/Zurich"), id="daily_digest"
+    CronTrigger(hour=8, timezone="Europe/Zurich"),
+    id="daily_digest",
 )
 
 # Health check URLs: semanal domingo 3:00 → Celery task
 scheduler.add_job(
     lambda: celery_app.send_task("tasks.check_job_urls"),
-    CronTrigger(day_of_week="sun", hour=3), id="url_health"
+    CronTrigger(day_of_week="sun", hour=3),
+    id="url_health",
 )
 
 # Dedup semantica batch: diario 4:00 → Celery task
 scheduler.add_job(
     lambda: celery_app.send_task("tasks.dedup_semantic_batch"),
-    CronTrigger(hour=4), id="semantic_dedup"
+    CronTrigger(hour=4),
+    id="semantic_dedup",
 )
 
 # Limpieza: semanal (jobs >30 dias inactivos)
 scheduler.add_job(
     lambda: celery_app.send_task("tasks.cleanup_stale_jobs"),
-    CronTrigger(day_of_week="sun", hour=3, minute=30), id="cleanup"
+    CronTrigger(day_of_week="sun", hour=3, minute=30),
+    id="cleanup",
 )
 ```
 
@@ -953,9 +981,9 @@ Para evitar saturar al usuario con notificaciones:
 
 ```python
 class AlertController:
-    MAX_PUSH_PER_DAY = 5           # Maximo push notifications/dia
-    MIN_SCORE_FOR_PUSH = 75        # Solo push si score > 75
-    DIGEST_GROUP_BY = "company"    # Agrupar por empresa en digests
+    MAX_PUSH_PER_DAY = 5  # Maximo push notifications/dia
+    MIN_SCORE_FOR_PUSH = 75  # Solo push si score > 75
+    DIGEST_GROUP_BY = "company"  # Agrupar por empresa en digests
 
     async def should_notify(self, user_id, match_score, channel):
         if channel == "push":
@@ -1432,7 +1460,7 @@ GET    /api/v1/admin/health          — Health check general
     "jobs_found": 142,
     "duplicates": 23,
     "duration_ms": 1200,
-    "correlation_id": "abc-123-def"
+    "correlation_id": "abc-123-def",
 }
 ```
 
@@ -2116,7 +2144,9 @@ class JobMatcher:
     # EVOLUCION — perfil dinamico por usuario
     async def find_matches(self, jobs, user_profile, top_k=50):
         """Usa user_profile.cv_embedding en vez de archivo fijo."""
-        profile_embedding = user_profile.cv_embedding or await self._encode(user_profile.cv_text)
+        profile_embedding = user_profile.cv_embedding or await self._encode(
+            user_profile.cv_text
+        )
         # pgvector similarity search en DB
         ...
 
@@ -2127,12 +2157,13 @@ class JobMatcher:
     async def compute_final_score(self, user_profile, job, embedding_score, ai_score):
         weights = user_profile.score_weights or DEFAULT_WEIGHTS
         return (
-            weights['embedding'] * embedding_score +
-            weights['llm'] * (ai_score / 100) +
-            weights['salary'] * salary_match(user_profile, job) +
-            weights['location'] * location_match(user_profile, job) +
-            weights['recency'] * recency_score(job.date)
+            weights["embedding"] * embedding_score
+            + weights["llm"] * (ai_score / 100)
+            + weights["salary"] * salary_match(user_profile, job)
+            + weights["location"] * location_match(user_profile, job)
+            + weights["recency"] * recency_score(job.date)
         )
+
 
 # NUEVO — Feedback implicito
 class ImplicitFeedbackCollector:
@@ -2148,11 +2179,12 @@ class ImplicitFeedbackCollector:
 ```python
 class GroqService:
     client: Groq
-    default_model = "llama-3.1-8b-instant"      # Rapido para re-ranking
-    powerful_model = "llama-3.1-70b-versatile"   # Para CV adaptation
+    default_model = "llama-3.1-8b-instant"  # Rapido para re-ranking
+    powerful_model = "llama-3.1-70b-versatile"  # Para CV adaptation
 
-    async def get_chat_response(self, user_message, system_prompt,
-                                 model=None, temperature=0.2, max_tokens=2048):
+    async def get_chat_response(
+        self, user_message, system_prompt, model=None, temperature=0.2, max_tokens=2048
+    ):
         """Llama a Groq API via threadpool."""
 ```
 
@@ -2209,6 +2241,7 @@ class SavedSearch(Base):
     last_run_at: DateTime
     total_matches_found: int
 
+
 @router.post("/{id}/run")
 async def run_saved_search(search_id, user_id):
     """Ejecutar con filtros guardados + AI matching."""
@@ -2244,11 +2277,16 @@ Rules: never fabricate, reorder by relevance, rewrite summary, highlight matchin
 explain transferable skills, output in requested language (de/fr/en).
 Output: JSON with profile, experience[], skills[], education[], languages[], cover_letter."""
 
+
 class CVAdapter:
-    async def adapt_cv(self, user_profile, job, language="en", match_result=None) -> dict:
+    async def adapt_cv(
+        self, user_profile, job, language="en", match_result=None
+    ) -> dict:
         """Generate tailored CV + cover letter. Runs in Celery worker."""
 
-    async def get_or_create(self, user_id, job_hash, language, version=None) -> AdaptedCV:
+    async def get_or_create(
+        self, user_id, job_hash, language, version=None
+    ) -> AdaptedCV:
         """Reutilizar existente o crear nueva version."""
 
     def _parse_adaptation(self, response: str, language: str) -> dict:

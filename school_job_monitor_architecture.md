@@ -169,20 +169,20 @@ NUEVA OFERTA DETECTADA
 
 ```python
 {
-  "source":           "TES",
-  "school":           "International School Basel",
-  "school_id":        "isb",          # clave en tabla de metadatos
-  "title":            "IT Manager",
-  "url":              "https://...",
-  "date_detected":    "2026-05-28",
-  "date_posted":      "2026-05-26",   # si disponible
-  "description_snippet": "...",       # primeros 500 chars
-  "content_hash":     "sha256:...",
-  "role_score":       1.0,            # clasificador
-  "urgency_score":    75,             # 0–100
-  "template":         "A",           # carta A o B
-  "status":           "detected",
-  "raw_html":         "..."           # para diff legible
+    "source": "TES",
+    "school": "International School Basel",
+    "school_id": "isb",  # clave en tabla de metadatos
+    "title": "IT Manager",
+    "url": "https://...",
+    "date_detected": "2026-05-28",
+    "date_posted": "2026-05-26",  # si disponible
+    "description_snippet": "...",  # primeros 500 chars
+    "content_hash": "sha256:...",
+    "role_score": 1.0,  # clasificador
+    "urgency_score": 75,  # 0–100
+    "template": "A",  # carta A o B
+    "status": "detected",
+    "raw_html": "...",  # para diff legible
 }
 ```
 
@@ -224,6 +224,7 @@ import requests
 from bs4 import BeautifulSoup
 import hashlib
 
+
 def scrape_static(url: str, selector: str) -> dict:
     headers = {"User-Agent": "Mozilla/5.0 (compatible; JobMonitor/1.0)"}
     response = requests.get(url, headers=headers, timeout=15)
@@ -233,7 +234,7 @@ def scrape_static(url: str, selector: str) -> dict:
     return {
         "content": content,
         "hash": hashlib.sha256(content.encode()).hexdigest(),
-        "raw_html": str(block)
+        "raw_html": str(block),
     }
 ```
 
@@ -244,6 +245,7 @@ Mínimo **8–12 segundos entre requests al mismo dominio.**
 
 ```python
 from playwright.async_api import async_playwright
+
 
 async def scrape_dynamic(url: str, selector: str) -> dict:
     async with async_playwright() as p:
@@ -258,7 +260,7 @@ async def scrape_dynamic(url: str, selector: str) -> dict:
         return {
             "content": content,
             "hash": hashlib.sha256(content.encode()).hexdigest(),
-            "raw_html": html
+            "raw_html": html,
         }
 ```
 
@@ -270,15 +272,16 @@ import feedparser
 
 TES_RSS = "https://www.tes.com/jobs/search/rss?q=IT+technology&location=Switzerland"
 
+
 def poll_rss(feed_url: str) -> list[dict]:
     feed = feedparser.parse(feed_url)
     return [
         {
-            "title":   entry.title,
-            "url":     entry.link,
+            "title": entry.title,
+            "url": entry.link,
             "summary": entry.summary[:500],
-            "date":    entry.published,
-            "source":  "TES"
+            "date": entry.published,
+            "source": "TES",
         }
         for entry in feed.entries
     ]
@@ -408,9 +411,18 @@ Cruce de la tabla de metadatos (17 colegios) contra la implementación real de l
 - **Extra no listado en la tabla:** `stgeorges_montreux` (St. George's International School, Montreux) vía `inspired_sf`.
 - **3 en modo `manual`** (fichados pero sin scraping automático): La Garenne, British School Bern y Wisdom Tree, por los motivos de la columna Nota.
 
-### ReactPortfolio — 0/17 cubiertos (módulo presente pero sin sembrar)
+### ReactPortfolio — 6/17 sembrados (inactivos), incompletos
 
-El módulo de colegios existe entero (`models/school.py`, `services/school_scraper|extractor|classifier|urgency|alert.py`, `routers/schools.py`, migración) pero **no hay ningún colegio sembrado en el repo**: no existe seed de schools (solo `seed_cv_profiles.py`, de CVs) ni fixture JSON/CSV. Los colegios se crean a mano en runtime vía `POST /api/v1/schools` (admin), así que ninguno de los 17 está pre-configurado. Además `SchoolScrapingMethod` solo cubre `groq_extract`, `jina_reader`, `schoolspring_api`, `nord_anglia_api`, `tes_rss` — sin estrategia dedicada para Workday/SuccessFactors/Finalsite/HubSpot/Drupal/AbaServices (que sí necesitan Ecolint, ISB, Mosaic, GES, St. George's, Haut-Lac, ISR). Fichado como DT-114 en `ReactPortfolio/DEUDA_TECNICA.md`.
+**Corrección (2026-07-21):** una revisión posterior confirmó que la migración
+`alembic/…add_school_monitor_module.py:232` **sí siembra 6 colegios Grupo A** (todos
+`is_active=False`, para que el usuario los active tras revisar). El módulo NO está
+"vacío" como se afirmó en la versión anterior de esta sección. Matices que sí siguen
+en pie: (a) son 6 de los 17 y desactivados por defecto; (b) `SchoolScrapingMethod`
+solo cubre `groq_extract`/`jina_reader`/`schoolspring_api`/`nord_anglia_api`/`tes_rss`
+— sin estrategia dedicada para Workday/SuccessFactors/Finalsite/HubSpot/Drupal/
+AbaServices (que sí necesitan Ecolint, ISB, Mosaic, GES, St. George's, Haut-Lac, ISR);
+(c) su seed **diverge** de la watchlist de SwissJob → conviene una **fuente maestra
+única**. Fichado como DT-114 en `ReactPortfolio/DEUDA_TECNICA.md`.
 
 ### Pendiente
 - **SwissJob:** añadir Grindelwald (`gri`) cuando haya datos (policy, `careers_url`, método) — hoy es el único hueco.

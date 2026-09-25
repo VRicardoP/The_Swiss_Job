@@ -40,6 +40,7 @@ arranca cuando el anterior TERMINA.
 ```python
 from celery import chain
 
+
 @celery_app.task(name="tasks.pipeline.daily_harvest", bind=True, max_retries=0)
 def daily_harvest(self) -> dict:
     from tasks.embedding_tasks import embed_all_pending
@@ -77,15 +78,23 @@ async def _run_all_matches_async() -> dict:
     groq, gemini = GroqService(), GeminiService()
     summary = {"profiles": 0, "results": 0, "skipped": 0, "errors": 0}
     async with task_session() as db:
-        profiles = (await db.execute(
-            select(UserProfile).where(UserProfile.cv_embedding.is_not(None))
-        )).scalars().all()
+        profiles = (
+            (
+                await db.execute(
+                    select(UserProfile).where(UserProfile.cv_embedding.is_not(None))
+                )
+            )
+            .scalars()
+            .all()
+        )
         service = MatchService(db, groq=groq, gemini=gemini)
         for p in profiles:
             result = await service.run_matching(p.user_id)
             summary["profiles"] += 1
             summary["results" if result.get("status") == "success" else "skipped"] += (
-                result.get("results_count", 0) if result.get("status") == "success" else 1
+                result.get("results_count", 0)
+                if result.get("status") == "success"
+                else 1
             )
     return summary
 ```
@@ -134,13 +143,19 @@ if settings.SCHEDULER_DAILY_HARVEST_ENABLED:
     jitter_seconds = settings.SCHEDULER_DAILY_HARVEST_JITTER_HOURS * 3600
     scheduler.add_job(
         _dispatch_daily_harvest,
-        CronTrigger(hour=settings.SCHEDULER_DAILY_HARVEST_HOUR, minute=0,
-                    timezone="Europe/Zurich", jitter=jitter_seconds),
-        id="daily_harvest", replace_existing=True,
+        CronTrigger(
+            hour=settings.SCHEDULER_DAILY_HARVEST_HOUR,
+            minute=0,
+            timezone="Europe/Zurich",
+            jitter=jitter_seconds,
+        ),
+        id="daily_harvest",
+        replace_existing=True,
     )
 else:
     # fetch clásico por intervalos (fetch_providers / fetch_scrapers)
     ...
+
 
 def _dispatch_daily_harvest() -> None:
     celery_app.send_task("tasks.pipeline.daily_harvest")
@@ -157,17 +172,21 @@ async def _rerank_call(self, user_prompt: str, fallback) -> str:
     if self.is_available:
         try:
             return await self.get_chat_response(
-                user_message=user_prompt, system_prompt=RERANK_SYSTEM_PROMPT,
+                user_message=user_prompt,
+                system_prompt=RERANK_SYSTEM_PROMPT,
                 model=settings.GROQ_RERANK_MODEL,
                 temperature=settings.GROQ_RERANK_TEMPERATURE,
-                max_tokens=settings.GROQ_RERANK_MAX_TOKENS)
+                max_tokens=settings.GROQ_RERANK_MAX_TOKENS,
+            )
         except Exception:
             logger.warning("Groq rerank falló; intentando fallback (Gemini)")
     if fallback is not None and getattr(fallback, "is_available", False):
         return await fallback.get_chat_response(
-            user_message=user_prompt, system_prompt=RERANK_SYSTEM_PROMPT,
+            user_message=user_prompt,
+            system_prompt=RERANK_SYSTEM_PROMPT,
             temperature=settings.GROQ_RERANK_TEMPERATURE,
-            max_tokens=settings.GROQ_RERANK_MAX_TOKENS)
+            max_tokens=settings.GROQ_RERANK_MAX_TOKENS,
+        )
     raise RuntimeError("Sin proveedor LLM disponible para el re-ranking")
 ```
 
@@ -219,13 +238,20 @@ Aplicar: `docker compose run --rm backend alembic upgrade head`.
 ```python
 def __init__(self):
     ...
-    self._known_urls: set[str] = set()   # inyectado por el pipeline antes de fetch
+    self._known_urls: set[str] = set()  # inyectado por el pipeline antes de fetch
     self._stop_reason: str | None = None
+
 
 @staticmethod
 def job_identity(job: dict) -> str:
-    return (job.get("url") or job.get("detail_url")
-            or job.get("source_id") or job.get("hash") or "").strip()
+    return (
+        job.get("url")
+        or job.get("detail_url")
+        or job.get("source_id")
+        or job.get("hash")
+        or ""
+    ).strip()
+
 
 def _page_all_known(self, page_jobs: list[dict]) -> bool:
     """True si TODA la página ya se vio (ninguna novedad) según _known_urls.
@@ -243,8 +269,11 @@ En **ambos** bucles (`_scrape_with_httpx` y `_scrape_with_playwright`), tras
 ```python
 if self._page_all_known(stubs):
     self._stop_reason = "known_page"
-    logger.info("%s early-stop en página %d: sin ofertas nuevas (cursor)",
-                self.SOURCE_NAME, page)
+    logger.info(
+        "%s early-stop en página %d: sin ofertas nuevas (cursor)",
+        self.SOURCE_NAME,
+        page,
+    )
     break
 ```
 
@@ -274,14 +303,18 @@ if store is not None:
     cursor = await store.load(db, source)
     scraper._known_urls = store.known_identities(cursor)
 
-jobs = await scraper.fetch_jobs("", "Switzerland")   # early-stops internamente
+jobs = await scraper.fetch_jobs("", "Switzerland")  # early-stops internamente
 fetched_identities = [scraper.job_identity(j) for j in jobs]
 new_before = summary["new"]
 # ... bucle per-job savepoint (upsert) igual que antes ...
 if store is not None and cursor is not None:
     pages_read = max(1, math.ceil(len(jobs) / max(scraper.PAGE_SIZE, 1)))
-    store.update_after_run(cursor, fetched_identities,
-                           new_count=summary["new"] - new_before, pages_read=pages_read)
+    store.update_after_run(
+        cursor,
+        fetched_identities,
+        new_count=summary["new"] - new_before,
+        pages_read=pages_read,
+    )
 await db.commit()
 ```
 
@@ -303,18 +336,27 @@ Base `RestrictedPartnerProvider(BaseJobProvider)` + 5 subclases. Sin credencial 
 
 ```python
 class RestrictedPartnerProvider(BaseJobProvider):
-    CREDENTIAL_ATTR = ""      # nombre del setting con la credencial
-    AUTHORIZED_ROUTE = ""     # doc de activación
+    CREDENTIAL_ATTR = ""  # nombre del setting con la credencial
+    AUTHORIZED_ROUTE = ""  # doc de activación
+
     def _credential(self) -> str:
         return getattr(settings, self.CREDENTIAL_ATTR, "") or ""
+
     async def fetch_jobs(self, query, location="Switzerland"):
         if not self._credential():
-            logger.info("%s deshabilitado: auth_missing (%s vacío). Ruta: %s",
-                        self.SOURCE_NAME, self.CREDENTIAL_ATTR, self.AUTHORIZED_ROUTE)
+            logger.info(
+                "%s deshabilitado: auth_missing (%s vacío). Ruta: %s",
+                self.SOURCE_NAME,
+                self.CREDENTIAL_ATTR,
+                self.AUTHORIZED_ROUTE,
+            )
             return self._finalize_fetch([])
-        logger.warning("%s: credencial presente pero conector partner sin implementar",
-                       self.SOURCE_NAME)
+        logger.warning(
+            "%s: credencial presente pero conector partner sin implementar",
+            self.SOURCE_NAME,
+        )
         return self._finalize_fetch([])
+
     def normalize_job(self, raw): ...  # esqueleto al esquema unificado
 ```
 
@@ -345,8 +387,8 @@ scraping público.'` para las 5 fuentes.
 ```python
 # Cosecha diaria autónoma
 SCHEDULER_DAILY_HARVEST_ENABLED: bool = True
-SCHEDULER_DAILY_HARVEST_HOUR: int = 12          # hora base CET
-SCHEDULER_DAILY_HARVEST_JITTER_HOURS: int = 4   # ± → distinta hora cada día
+SCHEDULER_DAILY_HARVEST_HOUR: int = 12  # hora base CET
+SCHEDULER_DAILY_HARVEST_JITTER_HOURS: int = 4  # ± → distinta hora cada día
 
 # Crawler incremental
 CURSOR_INCREMENTAL_ENABLED: bool = True
