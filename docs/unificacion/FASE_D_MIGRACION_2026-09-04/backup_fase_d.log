@@ -1,0 +1,11 @@
+WARNING: Error loading config file: open /share/CACHEDEV1_DATA/.qpkg/container-station/homes/Ricardo/.docker/config.json: permission denied
+backup swissjobhunter: 327s 281152293 bytes
+WARNING: Error loading config file: open /share/CACHEDEV1_DATA/.qpkg/container-station/homes/Ricardo/.docker/config.json: permission denied
+backup swissjobhunter_r5_rehearsal: 588s 533084664 bytes
+WARNING: Error loading config file: open /share/CACHEDEV1_DATA/.qpkg/container-station/homes/Ricardo/.docker/config.json: permission denied
+NOTICE:  database "ensayo_d_swissjobhunter" does not exist, skipping
+restore ensayo_d_swissjobhunter: 535s RC=0
+WARNING: Error loading config file: open /share/CACHEDEV1_DATA/.qpkg/container-station/homes/Ricardo/.docker/config.json: permission denied
+NOTICE:  database "ensayo_d_swissjobhunter_r5_rehearsal" does not exist, skipping
+restore ensayo_d_swissjobhunter_r5_rehearsal: 1296s RC=0
+FIN_RC=0
