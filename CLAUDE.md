@@ -31,7 +31,7 @@
   distintos; frontend en Cloudflare Pages desde GitHub), no la `/match` de SwissJob. Lee el mismo
   feed del core. Título traducido y resumen se sirven allí desde `job_enrichments` (2026-09-23);
   diagnóstico del panel de ofertas: `docs/audits/DIAGNOSTICO_PANEL_OFERTAS_2026-09-23.md`
-- **Documentación de referencia**: **cotas aceptadas y decisiones deliberadas → `docs/COTAS_Y_DECISIONES.md`** (léelo ANTES de "arreglar" cualquier limitación: varias se intentaron cerrar y el intento fue peor que la cota); estado y contadores vigentes → `ESTADO_Y_HOJA_DE_RUTA.md` **§46** (la foto del 2026-09-23; §45 y anteriores son fotos previas y NO deben leerse como vigentes); core → `PLAN_UNIFICACION_JOBHUNTING.md` (§23–§24) y `CONTRATOS_FASE_A.md`, los tres en `/home/lothar/Public/`; legacy → `docs/`
+- **Documentación de referencia**: **cotas aceptadas y decisiones deliberadas → `docs/COTAS_Y_DECISIONES.md`** (léelo ANTES de "arreglar" cualquier limitación: varias se intentaron cerrar y el intento fue peor que la cota); estado y contadores vigentes → `docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md` **§46** (la foto del 2026-09-23; §45 y anteriores son fotos previas y NO deben leerse como vigentes); core → `docs/unificacion/PLAN_UNIFICACION_JOBHUNTING.md` (§23–§24) y `docs/unificacion/CONTRATOS_FASE_A.md`, los tres en `/home/lothar/Public/`; legacy → `docs/`
 
 ---
 
@@ -427,4 +427,4 @@ modelo. Decomisos: `llama-3.3-70b-versatile` (2026-08-16), `llama-4-scout`
 con 3.8 pero se mantiene como protección ante un futuro modelo que razone.
 
 > Para detalles de cada componente, consultar `docs/` (legacy) y, para el core,
-> `PLAN_UNIFICACION_JOBHUNTING.md` y `CONTRATOS_FASE_A.md` en `/home/lothar/Public/`
+> `docs/unificacion/PLAN_UNIFICACION_JOBHUNTING.md` y `docs/unificacion/CONTRATOS_FASE_A.md` en `/home/lothar/Public/`

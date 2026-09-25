@@ -23,8 +23,8 @@
 
 > **Actualización 2026-09-04.** Este fichero sigue siendo la autoridad de las cotas aceptadas,
 > pero §9 ya no es la fotografía operativa vigente. Para estado y camino crítico manda
-> `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` §24 (2026-09-06); para deuda abierta manda
-> `/home/lothar/Public/DEUDA_TECNICA.md` §0. No conviertas una cota aceptada en trabajo ni cites un
+> `/home/lothar/Public/SwissJob/docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md` §24 (2026-09-06); para deuda abierta manda
+> `/home/lothar/Public/SwissJob/docs/unificacion/DEUDA_TECNICA.md` §0. No conviertas una cota aceptada en trabajo ni cites un
 > pendiente de §9 sin revalidarlo.
 
 ---
@@ -42,7 +42,7 @@ modelo, es del INSTRUMENTO.
 **Regla que queda:** antes de cualquier examen, medir el solape del top-K con el conjunto de
 entrenamiento y, si es ≥3/10, evaluar sobre el universo restringido a NO VISTOS —
 para todos los sistemas por igual. La regla se sella ANTES de mirar el diagnóstico
-(`FREEZE_EXAMEN_2026-09-06.md`, commit b080559), nunca después. Corolario: ningún número de
+(`docs/unificacion/FREEZE_EXAMEN_2026-09-06.md`, commit b080559), nunca después. Corolario: ningún número de
 desarrollo de la campaña 2026-09 debe citarse como calidad.
 
 ## 0. La regla de oro del proyecto
@@ -404,11 +404,11 @@ una release que el proceso no sabe nombrar no verifica nada (G9 P2-B). `[V]` —
 |---|---|
 | Los once ciclos, por ciclo y por repo | Retirados del árbol tras consolidarse aquí. Recuperables del historial del repo de documentación: `git log --diff-filter=D --name-only -- 'AUDITORIA_GLOBAL_*' 'AUDITORIA_BUGS_C*'`. **No son estado actual**: varias de sus cifras fueron refutadas después por quien las implementó |
 | La fase de optimización | `/home/lothar/Public/OPTIMIZACION_{CORE,LEGACY,PORTFOLIO}_2026-08-27.md` |
-| Estado y contadores vigentes | `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` **§20** (§19 es la foto previa al 2026-08-27) |
-| Decisiones ratificadas del propietario | `/home/lothar/Public/ACTA_DECISIONES_2026-08-26.md` |
+| Estado y contadores vigentes | `/home/lothar/Public/SwissJob/docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md` **§20** (§19 es la foto previa al 2026-08-27) |
+| Decisiones ratificadas del propietario | `/home/lothar/Public/SwissJob/docs/unificacion/ACTA_DECISIONES_2026-08-26.md` |
 | Operación de la sombra y la maniobra de canonización (ya ejecutada) | `jobhunt_core/shadow/RUNBOOK.md` §7 |
 | La auditoría externa del 2026-08-27 (veredicto NO-GO, 5 condiciones) | `/home/lothar/Public/AUDITORIA_EXTERNA_BUGS_2026-08-27.md` y `AUDITORIA_EXTERNA_DISENO_2026-08-27.md` |
-| Contratos del core | `/home/lothar/Public/CONTRATOS_FASE_{A,B,C}.md` |
+| Contratos del core | `/home/lothar/Public/SwissJob/docs/unificacion/CONTRATOS_FASE_{A,B,C}.md` |
 
 
 ## §N. Cotas del traspaso de productores (punto 4, 2026-09-22)

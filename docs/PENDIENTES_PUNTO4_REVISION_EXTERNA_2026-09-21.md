@@ -43,7 +43,7 @@ Este documento permite cuestionar ambas estimaciones. Cada pendiente distingue e
 - Las pruebas citadas proceden de las actas identificadas. Se distingue lo ensayado en copia, lo servido realmente y lo aún no comprobado.
 - Se aplica YAGNI: reutilizar los ejecutores, fronteras y pruebas existentes; no inventar un framework de migración, otro motor ni una funcionalidad nueva.
 
-Referencias de alcance: `docs/RUNBOOK_RETIRADA_PRODUCTORES_PUNTO4.md:19`, `docs/CIERRE_PUNTOS_4_5_2026-09-19.md:67` y `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md:2625`. Las actas más recientes prevalecen sobre sus checkpoints históricos.
+Referencias de alcance: `docs/RUNBOOK_RETIRADA_PRODUCTORES_PUNTO4.md:19`, `docs/CIERRE_PUNTOS_4_5_2026-09-19.md:67` y `/home/lothar/Public/SwissJob/docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md:2625`. Las actas más recientes prevalecen sobre sus checkpoints históricos.
 
 ## 2. Qué ya está terminado y no debe repetirse
 
@@ -368,8 +368,8 @@ No constituye nueva evidencia operativa ni cierre de R1–R7.
 - El runbook tiene el checkpoint actualizado de WorkingNomads, seguido de estados históricos.
 - `docs/CIERRE_PUNTOS_4_5_2026-09-19.md:3` aún encabeza un estado de preparación anterior al corte de búsquedas.
 - `docs/PROFILE_DELIVERY_PUNTO4.md:3` dice «no desplegada»; el acta de despliegue posterior acredita lo contrario.
-- `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md:2625` conserva como pendientes perfiles/feedback que después se cerraron.
-- `/home/lothar/Public/DEUDA_TECNICA.md` mezcla foto E.15, auditoría 18-09 e histórico. No debe usarse cada marca «ABIERTO» como prueba automática del estado actual.
+- `/home/lothar/Public/SwissJob/docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md:2625` conserva como pendientes perfiles/feedback que después se cerraron.
+- `/home/lothar/Public/SwissJob/docs/unificacion/DEUDA_TECNICA.md` mezcla foto E.15, auditoría 18-09 e histórico. No debe usarse cada marca «ABIERTO» como prueba automática del estado actual.
 
 **Actualización mínima aplicada:** estado prevalente con fecha y referencias y encabezados anteriores identificados como históricos. Sólo se reclasifican cierres respaldados por actas; A18 conserva sus límites de evidencia. No se borran actas ni se hace una reescritura global. Las modificaciones previas ajenas se preservan y quedan fuera de los commits de esta actualización.
 

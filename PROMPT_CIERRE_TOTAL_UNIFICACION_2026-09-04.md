@@ -33,15 +33,15 @@ No confundas tres hitos distintos:
 - ReactPortfolio backend: `/home/lothar/Public/ReactPortfolio/backend`.
 - ReactPortfolio frontend: `/home/lothar/Public/ReactPortfolio/frontend`.
 - Documentación transversal: `/home/lothar/Public/`.
-- Estado: `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md`.
-- Plan: `/home/lothar/Public/PLAN_UNIFICACION_JOBHUNTING.md`.
-- Backlog: `/home/lothar/Public/BACKLOG_UNIFICACION_JOBHUNTING.md`.
-- Deuda: `/home/lothar/Public/DEUDA_TECNICA.md`.
+- Estado: `/home/lothar/Public/SwissJob/docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md`.
+- Plan: `/home/lothar/Public/SwissJob/docs/unificacion/PLAN_UNIFICACION_JOBHUNTING.md`.
+- Backlog: `/home/lothar/Public/SwissJob/docs/unificacion/BACKLOG_UNIFICACION_JOBHUNTING.md`.
+- Deuda: `/home/lothar/Public/SwissJob/docs/unificacion/DEUDA_TECNICA.md`.
 - Decisiones: `SwissJob/docs/COTAS_Y_DECISIONES.md`.
 - Operación core: `SwissJob/docs/DEPLOY_NAS.md`,
   `SwissJob/jobhunt_core/shadow/{RUNBOOK,DEPLOY_NAS}.md`.
-- Cutover del piloto: `/home/lothar/Public/RUNBOOK_CUTOVER_PILOTO.md`.
-- Datos de SwissJob: `/home/lothar/Public/MANIFIESTO_DATOS_SWISSJOB.md`.
+- Cutover del piloto: `/home/lothar/Public/SwissJob/docs/unificacion/RUNBOOK_CUTOVER_PILOTO.md`.
+- Datos de SwissJob: `/home/lothar/Public/SwissJob/docs/unificacion/MANIFIESTO_DATOS_SWISSJOB.md`.
 
 Si dos documentos discrepan, manda primero el estado observado en producción, después el contrato
 ratificado y finalmente la entrada documental más reciente. Corrige la divergencia en la misma
@@ -289,12 +289,12 @@ declararse terminada antes de E/F.
 
 Actualiza, sin borrar el historial:
 
-1. `ESTADO_Y_HOJA_DE_RUTA.md`: nueva sección fechada que prevalezca sobre §20, con producción,
+1. `docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md`: nueva sección fechada que prevalezca sobre §20, con producción,
    release, routing, gates, procesos en curso y siguiente acción.
-2. `DEUDA_TECNICA.md`: cabecera vigente que marque entradas antiguas como cerradas/superadas y
+2. `docs/unificacion/DEUDA_TECNICA.md`: cabecera vigente que marque entradas antiguas como cerradas/superadas y
    liste solo deuda actual con prioridad, coste, condición y responsable.
-3. `PLAN_UNIFICACION_JOBHUNTING.md`: estados C/D/E/F y gates reales.
-4. `MANIFIESTO_DATOS_SWISSJOB.md`: conteos del instante de corte y decisión final por tabla.
+3. `docs/unificacion/PLAN_UNIFICACION_JOBHUNTING.md`: estados C/D/E/F y gates reales.
+4. `docs/unificacion/MANIFIESTO_DATOS_SWISSJOB.md`: conteos del instante de corte y decisión final por tabla.
 5. Runbook de Fase D; créalo solo si no existe uno ejecutable. No dupliques comandos ya correctos.
 6. Runbooks de NAS: SHA, imagen, migración, backup/restore, canary y rollback realmente usados.
 7. `COTAS_Y_DECISIONES.md`: solo decisiones aceptadas y límites vigentes; elimina como “abiertos”

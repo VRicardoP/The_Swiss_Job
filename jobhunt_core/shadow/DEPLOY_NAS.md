@@ -681,7 +681,7 @@ asyncio.run(main())
 ## Apéndice B. EJECUCIÓN REAL del 2026-08-06 — lo que este paquete no previó
 
 > Bitácora del despliegue efectivo. **Cinco defectos, todos de ENTORNO** (ninguno de lógica):
-> no aparecían en dev. Estado y hoja de ruta completos en `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md`.
+> no aparecían en dev. Estado y hoja de ruta completos en `/home/lothar/Public/SwissJob/docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md`.
 
 ### B.1 El volumen `core_hf_cache` nace `root:root` — PARA LOS EMBEDDINGS EN SILENCIO
 

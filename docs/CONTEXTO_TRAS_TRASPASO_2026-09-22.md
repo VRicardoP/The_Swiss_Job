@@ -52,8 +52,8 @@ ssh nas "$D logs swissjob-core-worker-r5 --since 2h | grep check_health | tail -
 | **Lo único que queda del punto 4** | `docs/RETIRADA_SLOT_CDC_PUNTO4.md` — retirada del slot CDC: precondiciones, orden reversible hasta el último paso y qué no se borra con él |
 | **Cómo se opera el NAS de verdad** | `docs/DEPLOY_NAS.md` (aviso de cabecera) y la memoria `qnap_container_station.md` |
 | **Rendimiento: qué se midió y qué se corrigió** | `docs/audits/ACTA_CIERRE_PUNTO5_2026-09-22.md`, con los presupuestos sellados antes de medir en `docs/PREDECLARACION_PUNTO5_2026-09-22.md` |
-| **Estado global del proyecto** | `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` §44, §45 y **§46** (la foto vigente) |
-| **Deuda viva** | `/home/lothar/Public/DEUDA_TECNICA.md` |
+| **Estado global del proyecto** | `/home/lothar/Public/SwissJob/docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md` §44, §45 y **§46** (la foto vigente) |
+| **Deuda viva** | `/home/lothar/Public/SwissJob/docs/unificacion/DEUDA_TECNICA.md` |
 | **Convenciones y arquitectura** | `CLAUDE.md` — se carga solo en cada sesión |
 
 ## Lo que queda abierto

@@ -9,7 +9,7 @@ Medir el rendimiento del sistema realmente servido, localizar sus costes dominan
 
 **No confundir «optimizado» con «reescrito» ni con «sin ningún bug posible».** Un recorrido que cumple el presupuesto y no presenta un coste material demostrado no necesita modificaciones. El cierre exige un presupuesto fijado antes de comparar variantes, evidencia representativa y ausencia de regresiones conocidas bloqueantes en los recorridos afectados.
 
-El contrato de partida está en `DEUDA_TECNICA.md`, A18-05: medición NAS del recorrido completo, concurrencia, reinicio y backlog, sin variar resultados ni aislamiento. Los canarios E.12–E.15 no certifican por sí solos esa carga global.
+El contrato de partida está en `docs/unificacion/DEUDA_TECNICA.md`, A18-05: medición NAS del recorrido completo, concurrencia, reinicio y backlog, sin variar resultados ni aislamiento. Los canarios E.12–E.15 no certifican por sí solos esa carga global.
 
 Entregar un veredicto **PUNTO 5 CERRADO** o **PUNTO 5 ABIERTO**, no un GO de calidad del ranking ni un cierre automático del proyecto completo. No declarar cierre productivo si el fix sólo está probado localmente o si una autorización pendiente impide verificarlo desplegado.
 
@@ -53,7 +53,7 @@ Leer al comenzar:
 3. `docs/COTAS_Y_DECISIONES.md`, especialmente §N y las cotas del componente a tocar.
 4. `docs/RETIRADA_SLOT_CDC_PUNTO4.md`: residual separado, irreversible sin snapshot nuevo.
 5. Cabecera vigente de `docs/DEPLOY_NAS.md`; memoria `/home/lothar/.claude/projects/-home-lothar-Public/memory/nas-qnap-docker-operativa.md` como orientación, verificando en ejecución lo que importe.
-6. `/home/lothar/Public/ESTADO_Y_HOJA_DE_RUTA.md` §44 y `/home/lothar/Public/DEUDA_TECNICA.md`, especialmente A18-05 y contratos de las rutas medidas.
+6. `/home/lothar/Public/SwissJob/docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md` §44 y `/home/lothar/Public/SwissJob/docs/unificacion/DEUDA_TECNICA.md`, especialmente A18-05 y contratos de las rutas medidas.
 7. Instrucciones AGENTS/skills aplicables. Mantener YAGNI, responsabilidad única, cohesión, bajo acoplamiento y consistencia.
 
 **No tocar para mejorar una cifra:**
