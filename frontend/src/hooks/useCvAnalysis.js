@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import useAuthStore from "../stores/authStore";
+import { notificationsApi } from "../config/api";
 
 const IDLE = { active: false, percent: 0, message: "", stage: "idle" };
 
@@ -34,9 +35,34 @@ export function useCvAnalysis() {
   useEffect(() => {
     if (session === 0 || !token) return;
 
-    const url = `/api/v1/notifications/stream?token=${encodeURIComponent(token)}`;
-    const es = new EventSource(url);
-    esRef.current = es;
+    // H13/T10: el stream ya no acepta el token en la query — exige un vale de un
+    // solo uso. Este consumidor se quedó fuera de aquella migración y seguía
+    // mandando `?token=`, que hoy el endpoint rechaza con 422: la barra de
+    // progreso del análisis no avanzaba nunca. Se pide el vale igual que
+    // `useNotifications`, y como un vale gastado no sirve para reconectar, la
+    // reconexión automática de EventSource se desactiva (`es.close()` en error).
+    let cancelado = false;
+    let es = null;
+
+    const conectar = async () => {
+      let ticket;
+      try {
+        ({ ticket } = await notificationsApi.streamTicket());
+      } catch {
+        // Sin vale no hay progreso. No se reintenta en bucle: el análisis
+        // termina igual en el servidor y la query ["profile"] se recarga al
+        // cerrar el banner. Un 401 ya lo gestiona el cliente de API.
+        return;
+      }
+      if (cancelado) return;
+      es = new EventSource(
+        `/api/v1/notifications/stream?ticket=${encodeURIComponent(ticket)}`,
+      );
+      esRef.current = es;
+      preparar(es);
+    };
+
+    const preparar = (es) => {
 
     es.addEventListener("cv_analysis_progress", (e) => {
       try {
@@ -59,10 +85,18 @@ export function useCvAnalysis() {
       }
     });
 
-    es.onerror = () => {}; // EventSource reconecta solo
+      // Un vale es de un solo uso, así que la reconexión automática de
+      // EventSource iría en bucle contra un 401: se corta.
+      es.onerror = () => {
+        es.close();
+      };
+    };
+
+    conectar();
 
     return () => {
-      es.close();
+      cancelado = true;
+      if (es) es.close();
       esRef.current = null;
     };
   }, [session, token, qc]);
