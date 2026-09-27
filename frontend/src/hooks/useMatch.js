@@ -18,21 +18,7 @@ export function useMatchResults(limit = 20, offset = 0) {
 }
 
 // Carga de una página de resultados con traducciones — para mostrar las tarjetas.
-export function useMatchResultsPage(limit = 100, offset = 0, enabled = true) {
-  return useQuery({
-    queryKey: ["match-results-page", { limit, offset }],
-    queryFn: () => matchApi.getResults({ limit, offset, translate: true }),
-    enabled,
-    staleTime: 5 * 60 * 1000, // 5 min — las traducciones no cambian frecuentemente
-  });
-}
 
-export function useMatchHistory(limit = 20, offset = 0) {
-  return useQuery({
-    queryKey: ["match-history", { limit, offset }],
-    queryFn: () => matchApi.getHistory({ limit, offset }),
-  });
-}
 
 export function useSubmitFeedback() {
   const qc = useQueryClient();

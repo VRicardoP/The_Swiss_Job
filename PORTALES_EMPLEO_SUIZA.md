@@ -197,6 +197,7 @@ Objetivo: Identificar portales de empleo suizos **no exclusivamente tecnologicos
 | 1 | **Pipeline IA (matching + explicacion + CV adapter)** | Diferenciador unico frente a LinkedIn/Indeed/jobs.ch |
 | 2 | **Volumen de datos (Jooble + Careerjet + SECO + scrapers)** | Sin datos de calidad, la IA es inutil |
 | 3 | **UX movil nativa (Capacitor + PWA + swipe + push + onboarding)** | Garantiza retencion y uso diario — app nativa real en App Store/Play Store, push sin limitaciones iOS, offline robusto |
+| — | ~~UX movil nativa~~ **DESCARTADA el 2026-09-27** (T15, vía A): ver el aviso de §11 |
 
 ---
 
@@ -1003,7 +1004,33 @@ class AlertController:
 
 ---
 
-## 11. Frontend Mobile-First (Capacitor + PWA)
+## 11. Frontend Mobile-First (Capacitor + PWA) — **VÍA DESCARTADA (2026-09-27)**
+
+> ⚠ **NADA DE ESTA SECCIÓN SE VA A CONSTRUIR, y lo que se había empezado se ha
+> retirado del árbol.** Decisión del propietario el 2026-09-27 (paquete T15, vía A).
+>
+> Lo que existía eran tres abstracciones sin un solo consumidor —`useCamera`,
+> `useOfflineStorage`, `usePushNotifications`—, ocho dependencias `@capacitor/*`,
+> `capacitor.config.ts` y cuatro etiquetas `<meta>` que anunciaban la web como
+> aplicación instalable. Comprobado antes de borrarlo: **cero usos** de las tres
+> en todo `src/`, y ninguna prueba que las tocara.
+>
+> El motivo no es de coste, es que las tres no resolvían un problema real aquí:
+> - **cámara**: era para fotografiar un CV en papel, pero el CV lo *genera* la
+>   propia aplicación; nace digital.
+> - **sin conexión**: guardaba preferencias, no ofertas — y buscar empleo, puntuar
+>   coincidencias y generar documentos exigen servidor. La aplicación no hace nada
+>   útil sin red.
+> - **notificaciones nativas**: ya hay **cuatro avisos por email** funcionando
+>   (profesor de primaria cada 6 h, resumen diario de coincidencias, digest de la
+>   watchlist a las 18:00 y aviso de fin de cosecha), todos con marca de agua para
+>   no repetir. La versión nativa sólo habría añadido inmediatez, y una vacante no
+>   se cierra en veinte minutos.
+>
+> La sección se conserva como registro de lo que se estudió y por qué se decidió
+> que no. Si algún día se quiere el icono en la pantalla del móvil, eso es una web
+> instalable y **no necesita nada de lo de aquí**.
+
 
 ### 11.1 Onboarding Wizard (nuevo — ausente en plan original)
 
