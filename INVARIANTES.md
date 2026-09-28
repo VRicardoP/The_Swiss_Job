@@ -100,6 +100,17 @@ puede fijar es que no vuelvan los patrones que costaban caro.
 | I-F3 | La caché del recorrido se invalida entre procesos | `docker compose exec -T backend python -m pytest tests/test_cache_bus.py -q` | todas en verde | Quitar `await publicar(pid)` de `services/matching/feedback.py` → falla el caso de cableado; quitar `clear_feed_cache` de `cache_bus.escuchar` → falla el de mecanismo. Hasta el 2026-09-28 este invariante apuntaba a `test_feed_budget_y_degradacion.py`, que **no prueba esto** (presupuesto, recorte y degradación escolar): quitar la publicación dejaba 4 verdes |
 | I-F4 | Las cadencias del beat tienen suelo de 60 s | `… run --rm core-migrate python -m pytest jobhunt_core/tests/test_config_bounds.py -q` | **31 passed** (el 49 anterior era la suma con `test_vacancy_language.py`, 18) | Quitar `ge=60` de `CORE_SHADOW_PROJECT_EVERY_S` → `4 failed` |
 
+## G · Operación (desde el 2026-09-28)
+
+| ID | Afirmación | Comando | Esperado | Control negativo |
+|----|------------|---------|----------|------------------|
+| I-G1 | La topología versionada del NAS no lleva secretos | `python3 scripts/check_no_secrets.py deploy/nas` | código **0** | Una contraseña literal de 28 caracteres en una copia → 1 (ejecutado el 2026-09-28) |
+| I-G2 | `.env.prod.example` cubre todos los campos de `Settings` | `docker compose exec -T backend python -m pytest tests/test_env_example_covers_settings.py -q` | **4 passed** | Borrar una línea del ejemplo → falla «faltan en .env.prod.example» |
+| I-G3 | El arranque avisa si los productores legacy quedan sin restringir | `docker compose exec -T backend python -m pytest tests/test_startup_guards.py -q` | **4 passed** | Devolver `False` fijo en `_legacy_producers_unrestricted` → 1 failed |
+| I-G4 | El supervisor del NAS está vivo y no ve nada caído | `ssh nas "head -1 /share/Public/swissjob/supervisor/estado; $D inspect swissjob-supervisor --format '{{.State.Status}} {{.HostConfig.RestartPolicy.Name}}'"` | `ok` · `running always` | `docker exec -e EXTRA_ESPERADOS=x swissjob-supervisor sh /supervisor_contenedores.sh` → `mal` y línea en el log (ejecutado el 2026-09-28) |
+| I-G5 | Los servicios del NAS corren con límite de memoria | `ssh nas "$D inspect swissjob-backend swissjob-postgres swissjob-core-worker-r5 --format '{{.Name}} {{.HostConfig.Memory}}'"` | ninguno en **0** | `docker update --memory 0` a uno → aparece 0 |
+| I-G6 | El job `core-test` del CI es ejecutable en limpio | los pasos del job en un venv nuevo contra `docker/postgres-core` (ver commit 3443127) | `migrate` al día y subconjunto en verde | Un rango en `jobhunt_core/requirements.txt` → SQLAlchemy 2.1 → `No module named 'psycopg'` (ocurrió) |
+
 ---
 
 ## PARA_EL_CONTRATO — invariantes que faltan

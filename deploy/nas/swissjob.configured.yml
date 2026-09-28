@@ -1,14 +1,12 @@
 # Topología REAL de producción en el NAS — swissjob.configured.yml
-# T13 §7 / A19-04. Copia del fichero que Container Station ejecuta en
-# /share/CACHEDEV1_DATA/Public/unification-e15-20260914/swissjob.configured.yml, con TODOS los
-# valores sensibles sustituidos por ${VARIABLE}. Los valores viven en un
-# `.env.nas` que NO se versiona (ver deploy/nas/README.md). Verificado sin
-# secretos por scripts/check_no_secrets.py, también en CI.
-#
-# Sustituidas (15): ADZUNA_APP_KEY, CELERY_BROKER_URL, CORE_API_BASE_URL, CORE_CONSUMER_KEY, CORE_INBOX_TOKEN, DATABASE_URL, GEMINI_API_KEY, GPG_KEY, GROQ_API_KEY, JOOBLE_API_KEY, JSEARCH_RAPIDAPI_KEY, POSTGRES_PASSWORD, REDIS_URL, SECRET_KEY, SMTP_PASSWORD
+# T13 §7 / A19-04. Copia literal de /share/CACHEDEV1_DATA/Public/unification-e15-20260914/swissjob.configured.yml,
+# con los valores sensibles sustituidos por ${VARIABLE} (19). Verificado sin secretos por
+# scripts/check_no_secrets.py (también en CI). Refrescado el 2026-09-28 tras aplicar
+# healthchecks a 60 s y límites de memoria (A19-25, A19-11).
 services:
   backend:
     image: swissjob-backend:point5-2b59a92
+    mem_limit: 1536m
     container_name: swissjob-backend
     environment:
       REDIS_URL: ${REDIS_URL}
@@ -106,6 +104,7 @@ services:
         hard: 65535
   worker:
     image: swissjob-worker:point5-9d6b46e
+    mem_limit: 1g
     container_name: swissjob-worker
     environment:
       DATABASE_URL: ${DATABASE_URL}

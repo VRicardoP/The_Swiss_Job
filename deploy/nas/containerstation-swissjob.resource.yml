@@ -1,0 +1,36 @@
+# Topología REAL de producción en el NAS — containerstation-swissjob.resource.yml
+# T13 §7 / A19-04. Copia literal de …/application/swissjob/docker-compose.resource.yml (los LÍMITES de postgres/redis viven aquí; el otro fichero los tiene pisados),
+# con los valores sensibles sustituidos por ${VARIABLE} (0). Verificado sin secretos por
+# scripts/check_no_secrets.py (también en CI). Refrescado el 2026-09-28 tras aplicar
+# healthchecks a 60 s y límites de memoria (A19-25, A19-11).
+services:
+  backend:
+    cpus: 0
+    cpuset: ""
+    mem_limit: 0
+    memswap_limit: 0
+    mem_reservation: 0
+  frontend:
+    cpus: 0
+    cpuset: ""
+    mem_limit: 0
+    memswap_limit: 0
+    mem_reservation: 0
+  postgres:
+    cpus: 0
+    cpuset: ""
+    mem_limit: 2g
+    memswap_limit: 0
+    mem_reservation: 0
+  redis:
+    cpus: 0
+    cpuset: ""
+    mem_limit: 256m
+    memswap_limit: 0
+    mem_reservation: 0
+  worker:
+    cpus: 0
+    cpuset: ""
+    mem_limit: 0
+    memswap_limit: 0
+    mem_reservation: 0

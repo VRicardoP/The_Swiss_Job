@@ -11,6 +11,8 @@ Esta selección cruza importancia histórica, calidad, popularidad, relevancia c
 - `(homebrew)` identifica las pocas producciones modernas con relevancia real para la comunidad de la plataforma.
 - `Compatibilidad Pi 3: dudosa` significa que el juego puede arrancar, pero no debe presumirse velocidad estable en una Raspberry Pi 3.
 - En PSP, la marca de compatibilidad es deliberadamente conservadora: la propia guía de Batocera limita la Pi 3 a juegos PSP ligeros.
+- PlayStation funciona de forma práctica mediante PCSX ReARMed, optimizado para equipos ARM. Se recomienda resolución nativa y formato CHD para ahorrar espacio sin perder datos.
+- PlayStation 2 no recibe una lista: PCSX2 en Batocera solo funciona en x86/x86_64 y la Raspberry Pi 3 no ofrece una vía jugable equivalente.
 - Los anexos de anime/manga se ciñen a las ocho licencias conservadas por el usuario. Un juego ya presente en el TOP puede repetirse en el anexo porque este es un índice temático, no otra lista competitiva.
 
 ---
@@ -1419,12 +1421,242 @@ No hay adaptaciones de las ocho licencias conservadas en estas tres placas. Las 
 
 ---
 
+# Sony PlayStation (PS1) — TOP 200
+
+PlayStation es viable en Raspberry Pi 3 con Batocera mediante PCSX ReARMed, un emulador diseñado específicamente para sistemas ARM. La selección usa la carpeta `psx`, presupone resolución nativa y conserva las carreras como género independiente, pero excluye deportes y *Star Wars*. Los juegos multidisco deben mantenerse como un solo título mediante un archivo `.m3u`; CHD es el formato recomendado para cada disco.
+
+1. Metal Gear Solid
+2. Castlevania: Symphony of the Night
+3. Final Fantasy VII
+4. Resident Evil 2
+5. Silent Hill
+6. Tekken 3
+7. Final Fantasy IX
+8. Final Fantasy Tactics
+9. Crash Bandicoot: Warped
+10. Gran Turismo 2
+11. Vagrant Story
+12. Xenogears
+13. Chrono Cross
+14. Resident Evil 3: Nemesis
+15. Final Fantasy VIII
+16. Suikoden II
+17. Ridge Racer Type 4
+18. Crash Bandicoot 2: Cortex Strikes Back
+19. Spyro 2: Ripto's Rage!
+20. Klonoa: Door to Phantomile
+21. Ape Escape
+22. Legacy of Kain: Soul Reaver
+23. Gran Turismo
+24. Resident Evil: Director's Cut
+25. Parasite Eve
+26. Dino Crisis
+27. Tomb Raider
+28. Wipeout 3
+29. Alundra
+30. Wild Arms
+31. Valkyrie Profile
+32. The Legend of Dragoon
+33. Crash Team Racing
+34. Oddworld: Abe's Oddysee
+35. Mega Man X4
+36. Street Fighter Alpha 3
+37. Tomb Raider II
+38. Crash Bandicoot
+39. Spyro the Dragon
+40. Spyro: Year of the Dragon
+41. Driver
+42. Driver 2
+43. Tenchu: Stealth Assassins
+44. Soul Blade
+45. Tekken 2
+46. Breath of Fire III
+47. Breath of Fire IV
+48. Grandia
+49. Lunar: Silver Star Story Complete
+50. Lunar 2: Eternal Blue Complete
+51. Star Ocean: The Second Story
+52. Tales of Destiny
+53. Tales of Eternia
+54. Suikoden
+55. Wild Arms 2
+56. Persona 2: Eternal Punishment
+57. Revelations: Persona
+58. Legend of Mana
+59. Dragon Warrior VII
+60. SaGa Frontier
+61. SaGa Frontier 2
+62. Front Mission 3
+63. Tactics Ogre: Let Us Cling Together
+64. Vandal Hearts
+65. Vandal Hearts II
+66. Arc the Lad
+67. Arc the Lad II
+68. Arc the Lad III
+69. Brigandine: The Legend of Forsena
+70. Jade Cocoon: Story of the Tamamayu
+71. Legend of Legaia
+72. Koudelka
+73. Parasite Eve II
+74. Dino Crisis 2
+75. Fear Effect
+76. Clock Tower
+77. Galerians
+78. Alone in the Dark: The New Nightmare
+79. Echo Night
+80. Blood Omen: Legacy of Kain
+81. Tenchu 2: Birth of the Stealth Assassins
+82. Syphon Filter
+83. Syphon Filter 2
+84. Medal of Honor
+85. Medal of Honor: Underground
+86. Colony Wars
+87. Colony Wars: Vengeance
+88. G-Police
+89. Ace Combat 2
+90. Ace Combat 3: Electrosphere — versión japonesa con traducción de fans recomendada
+91. Warhawk
+92. Omega Boost
+93. Einhänder
+94. R-Type Delta
+95. G-Darius
+96. RayStorm
+97. RayCrisis: Series Termination
+98. Gradius Gaiden
+99. Thunder Force V: Perfect System
+100. The Raiden Project
+101. DoDonPachi
+102. DonPachi
+103. Harmful Park
+104. Zanac X Zanac
+105. Strikers 1945 II
+106. Soukyugurentai: Oubushustugeki
+107. Silent Bomber
+108. Metal Slug X
+109. Strider 2
+110. Rapid Reload
+111. Mega Man 8
+112. Mega Man Legends
+113. Mega Man Legends 2
+114. The Misadventures of Tron Bonne
+115. Mega Man X5
+116. Rayman
+117. Tomba!
+118. Tomba! 2: The Evil Swine Return
+119. Oddworld: Abe's Exoddus
+120. Heart of Darkness
+121. Skullmonkeys
+122. Pandemonium!
+123. Jumping Flash!
+124. Jumping Flash! 2
+125. The Adventures of Lomax
+126. MediEvil
+127. MediEvil 2
+128. Tomb Raider: The Last Revelation
+129. Bugs Bunny: Lost in Time
+130. Sheep, Dog 'n' Wolf
+131. Herc's Adventures
+132. Wild 9
+133. Croc: Legend of the Gobbos
+134. Tail Concerto
+135. Threads of Fate
+136. Brave Fencer Musashi
+137. Harvest Moon: Back to Nature
+138. Moon: Remix RPG Adventure — traducción de fans recomendada
+139. LSD: Dream Emulator
+140. Incredible Crisis
+141. Pepsiman
+142. No One Can Stop Mr. Domino!
+143. Kula World / Roll Away
+144. Intelligent Qube / Kurushi
+145. Devil Dice
+146. Mr. Driller
+147. Super Puzzle Fighter II Turbo
+148. Bust-A-Move 4
+149. Bishi Bashi Special
+150. PaRappa the Rapper
+151. Um Jammer Lammy
+152. Vib-Ribbon
+153. Bust a Groove
+154. Monster Rancher 2
+155. Chocobo's Dungeon 2
+156. Thousand Arms
+157. Bushido Blade
+158. Bushido Blade 2
+159. Rival Schools: United by Fate
+160. Darkstalkers 3
+161. Marvel vs. Capcom: Clash of Super Heroes
+162. X-Men vs. Street Fighter
+163. JoJo's Bizarre Adventure
+164. Bloody Roar 2
+165. Guilty Gear
+166. Tobal No. 1
+167. Ehrgeiz: God Bless the Ring
+168. Mortal Kombat Trilogy
+169. Policenauts — traducción de fans recomendada
+170. Worms Armageddon
+171. Diablo
+172. Command & Conquer: Red Alert — Retaliation
+173. Command & Conquer
+174. Warcraft II: The Dark Saga
+175. X-COM: UFO Defense
+176. Sid Meier's Civilization II
+177. Theme Hospital
+178. Discworld Noir
+179. Doom
+180. Quake II
+181. Duke Nukem: Total Meltdown
+182. PowerSlave / Exhumed
+183. Disruptor
+184. Alien Trilogy
+185. Alien Resurrection
+186. Soviet Strike
+187. Future Cop: L.A.P.D.
+188. MDK
+189. Time Crisis
+190. Point Blank
+191. Elemental Gearbolt
+192. Twisted Metal 2
+193. Vigilante 8
+194. Rollcage Stage II
+195. Need for Speed: High Stakes
+196. Colin McRae Rally 2.0
+197. Micro Machines V3
+198. Grand Theft Auto 2
+199. Broken Sword: The Shadow of the Templars
+200. Broken Sword II: The Smoking Mirror
+
+## ANEXO — ANIME / MANGA
+
+1. Dragon Ball Z: Ultimate Battle 22 — lanzamiento oficial occidental; interés histórico superior a su calidad jugable.
+2. Dragon Ball Z: The Legend — lanzamiento oficial europeo; adaptación singular de combates colectivos.
+3. Dragon Ball GT: Final Bout — lanzamiento oficial occidental; relevante como primer juego de la serie construido alrededor de lucha poligonal.
+
+*JoJo's Bizarre Adventure* permanece en el TOP por su calidad e importancia como videojuego de lucha, pero no entra en este anexo porque el usuario consolidó el índice temático en ocho licencias concretas.
+
+### ANEXO DEL ANEXO — Juegos japoneses importantes sin traducción completa
+
+1. Hokuto no Ken: Seikimatsu Kyūseishu Densetsu — Japón; adaptación de acción muy fiel, sin traducción completa terminada.
+2. Dr. Slump — Japón; aventura de acción basada en la serie de 1997, sin traducción completa conocida.
+
+No se localizaron juegos comerciales de PS1 para *Saint Seiya*, *Kinnikuman*, *Akira*, *Dirty Pair* o *City Hunter*.
+
+---
+
+# Sony PlayStation 2 (PS2) — excluida en Raspberry Pi 3
+
+No se genera un TOP para PS2 porque no sería ejecutable de forma práctica en el equipo objetivo. La documentación de Batocera indica que PCSX2 requiere una CPU y GPU relativamente potentes y que su implementación solo funciona en máquinas x86/x86_64. Raspberry Pi 3 es ARM y no dispone en Batocera de una alternativa PS2 con compatibilidad y rendimiento suficientes. Crear una lista contradiría el requisito de viabilidad real; para PS2 conviene usar un PC x86_64, una consola original o hardware ARM mucho más moderno con otro ecosistema.
+
+---
+
 # Decisiones de exclusión destacadas
 
 - No se han usado prototipos para inflar catálogos: quedan fuera *Recalhorn*, *Dan-Ku-Ga*, *Twin Qix*, *Command War* y equivalentes.
 - *Star Wars Arcade* no aparece en 32X pese a su importancia histórica, porque la exclusión de *Star Wars* es literal.
 - Las bibliotecas pequeñas no llegan artificialmente a 200. El mismo principio se aplica al bloque arcade: las tres placas solicitadas no contienen 200 juegos canónicos únicos después de los filtros.
 - En PSP se conservan 200 juegos por importancia, pero los más exigentes llevan advertencia. Batocera considera que la Pi 3 solo mueve de forma aceptable los títulos PSP ligeros.
+- PS1 sí se incorpora con 200 títulos: PCSX ReARMed está optimizado para ARM y resulta apropiado para Pi 3 a resolución nativa.
+- PS2 queda fuera de la biblioteca de Pi 3: Batocera limita PCSX2 a x86/x86_64 y el hardware no satisface el criterio de jugabilidad práctica.
 - Las versiones HuCard y CD se han separado; cuando una edición es esencialmente el mismo juego se conserva solo la versión más representativa.
 
 # Fuentes principales contrastadas
@@ -1434,6 +1666,8 @@ No hay adaptaciones de las ocho licencias conservadas en estas tres placas. Las 
 - [Batocera: sistemas compatibles](https://wiki.batocera.org/systems)
 - [Batocera: elección de ordenador monoplaca](https://wiki.batocera.org/choose_a_single_board_computer)
 - [Batocera: configuración de PSP](https://wiki.batocera.org/systems:psp)
+- [Batocera: configuración de PlayStation](https://wiki.batocera.org/systems:psx)
+- [Batocera: configuración y requisitos de PlayStation 2](https://wiki.batocera.org/systems:ps2)
 - [Matriz de compatibilidad de Batocera](https://batocera.org/compat_new/batocera_systemsReport.html)
 
 ## Catálogos y nombres canónicos
@@ -1450,10 +1684,13 @@ No hay adaptaciones de las ocho licencias conservadas en estas tres placas. Las 
 - [Master list de Neo Geo Pocket](https://www.neo-geo.com/pocket/)
 - [Catálogo documentado de Game Gear](https://en.wikipedia.org/wiki/List_of_Game_Gear_games)
 - [Catálogo documentado de TurboGrafx-16 / PC Engine](https://en.wikipedia.org/wiki/List_of_TurboGrafx-16_games)
+- [Catálogo Redump de PlayStation en libretro-database](https://github.com/libretro/libretro-database/blob/master/metadat/redump/Sony%20-%20PlayStation.dat)
 
 ## Calidad, recepción y relevancia comunitaria
 
 - [Metacritic: juegos de PSP ordenados por recepción crítica](https://www.metacritic.com/browse/game/psp/all/all-time/metascore/)
+- [Metacritic: juegos de PlayStation ordenados por recepción crítica](https://www.metacritic.com/browse/game/ps1/all/all-time/metascore/)
+- [GamesRadar / Retro Gamer: mejores juegos de PlayStation](https://www.gamesradar.com/best-psx-games/)
 - [GamesRadar: mejores juegos de PSP](https://www.gamesradar.com/best-psp-games/)
 - [Time Extension: mejores juegos de Neo Geo Pocket Color](https://www.timeextension.com/guides/best-neo-geo-pocket-color-games)
 - [Time Extension: mejores juegos de Sega 32X](https://www.timeextension.com/guides/best-sega-32x-games-of-all-time)

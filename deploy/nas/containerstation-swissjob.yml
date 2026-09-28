@@ -1,0 +1,135 @@
+# Topología REAL de producción en el NAS — containerstation-swissjob.yml
+# T13 §7 / A19-04. Copia literal de /share/CACHEDEV1_DATA/.qpkg/container-station/data/application/swissjob/docker-compose.yml (lo gestiona Container Station: postgres, redis, frontend),
+# con los valores sensibles sustituidos por ${VARIABLE} (3). Verificado sin secretos por
+# scripts/check_no_secrets.py (también en CI). Refrescado el 2026-09-28 tras aplicar
+# healthchecks a 60 s y límites de memoria (A19-25, A19-11).
+services:
+  postgres:
+    image: swissjob-postgres-core:pg16
+    container_name: swissjob-postgres
+    restart: unless-stopped
+    env_file:
+    - /share/Public/swissjob/.env.prod
+    volumes:
+    - pgdata:/var/lib/postgresql/data
+    - /share/Public/swissjob/docker/postgres/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
+    healthcheck:
+      test:
+      - CMD
+      - pg_isready
+      - -U
+      - swissjob
+      - -d
+      - swissjobhunter
+      interval: 60s
+      timeout: 5s
+      retries: 5
+    networks:
+    - swissjob-net
+    init: true
+    environment:
+      CORE_API_BASE_URL: ${CORE_API_BASE_URL}
+      CORE_CONSUMER_KEY: ${CORE_CONSUMER_KEY}
+      CORE_HTTP_TIMEOUT_SECONDS: null
+  redis:
+    image: redis:7-alpine
+    container_name: swissjob-redis
+    restart: unless-stopped
+    command:
+    - redis-server
+    - --save
+    - '60'
+    - '1'
+    - --maxmemory
+    - 512mb
+    - --maxmemory-policy
+    - allkeys-lru
+    volumes:
+    - redisdata:/data
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      interval: 60s
+      timeout: 5s
+      retries: 5
+    networks:
+    - swissjob-net
+  backend:
+    image: swissjob-backend:prod
+    container_name: swissjob-backend
+    restart: unless-stopped
+    env_file:
+    - /share/Public/swissjob/.env.prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+    - hfcache:/home/app/.cache/huggingface
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -fsS http://localhost:8000/health || exit 1
+      interval: 30s
+      timeout: 5s
+      start_period: 360s
+      retries: 5
+    networks:
+    - swissjob-net
+    environment:
+      CORE_ERASURE_REPLICA_ID: swissjob-live
+      CORE_INBOX_TOKEN: ${CORE_INBOX_TOKEN}
+  worker:
+    image: swissjob-backend:prod
+    container_name: swissjob-worker
+    restart: unless-stopped
+    env_file:
+    - /share/Public/swissjob/.env.prod
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+    - hfcache:/home/app/.cache/huggingface
+    entrypoint: []
+    command:
+    - celery
+    - -A
+    - celery_app
+    - worker
+    - -Q
+    - default,scraping,ai
+    - --concurrency=2
+    - --loglevel=info
+    networks:
+    - swissjob-net
+  frontend:
+    image: swissjob-frontend:prod
+    container_name: swissjob-frontend
+    restart: unless-stopped
+    ports:
+    - 4000:80
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://127.0.0.1/nginx-health || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+    - swissjob-net
+networks:
+  swissjob-net:
+    driver: bridge
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local
+  hfcache:
+    driver: local

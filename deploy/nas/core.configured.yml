@@ -1,14 +1,12 @@
 # Topología REAL de producción en el NAS — core.configured.yml
-# T13 §7 / A19-04. Copia del fichero que Container Station ejecuta en
-# /share/CACHEDEV1_DATA/Public/unification-e15-20260914/core.configured.yml, con TODOS los
-# valores sensibles sustituidos por ${VARIABLE}. Los valores viven en un
-# `.env.nas` que NO se versiona (ver deploy/nas/README.md). Verificado sin
-# secretos por scripts/check_no_secrets.py, también en CI.
-#
-# Sustituidas (5): CAPTURE_DSN, CORE_BROKER_URL, CORE_DATABASE_URL, CORE_DELIVERY_HTTP_TOKEN, GPG_KEY
+# T13 §7 / A19-04. Copia literal de /share/CACHEDEV1_DATA/Public/unification-e15-20260914/core.configured.yml,
+# con los valores sensibles sustituidos por ${VARIABLE} (6). Verificado sin secretos por
+# scripts/check_no_secrets.py (también en CI). Refrescado el 2026-09-28 tras aplicar
+# healthchecks a 60 s y límites de memoria (A19-25, A19-11).
 services:
   core-api:
     image: swissjob-core:point5-2b59a92
+    mem_limit: 512m
     container_name: swissjob-core-api-r5
     environment:
       CORE_SHADOW_RUN_CYCLE_MINUTE: '35'
@@ -73,6 +71,7 @@ services:
         hard: 65535
   core-worker:
     image: swissjob-core:point5-2b59a92
+    mem_limit: 2g
     container_name: swissjob-core-worker-r5
     environment:
       CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
@@ -139,6 +138,7 @@ services:
         hard: 65535
   core-capture:
     image: swissjob-core:point5-9d6b46e
+    mem_limit: 256m
     container_name: swissjob-core-capture-r5
     environment:
       CORE_CAPTURE_SLOT: jobhunt_shadow_r5_rehearsal
