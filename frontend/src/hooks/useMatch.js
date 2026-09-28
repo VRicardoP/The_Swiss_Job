@@ -55,6 +55,8 @@ export function useClearFeedback() {
 export function useSavedJobs(limit = 100, offset = 0) {
   return useQuery({
     queryKey: ["saved-jobs", { limit, offset }],
-    queryFn: () => matchApi.getSaved({ limit, offset }),
+    // A20-09: como la pantalla principal — títulos ya calentados, sin LLM en
+    // el camino de la petición.
+    queryFn: () => matchApi.getSaved({ limit, offset, translate: false }),
   });
 }

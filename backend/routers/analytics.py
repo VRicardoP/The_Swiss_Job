@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.security import get_current_user
@@ -192,19 +192,10 @@ async def list_filters(
     result = await db.execute(stmt)
     filters = result.scalars().all()
 
-    total_stmt = (
-        select(func.count())
-        .select_from(JobFilter)
-        .where(
-            JobFilter.user_id == current_user.id,
-            JobFilter.is_active.is_(True),
-        )
-    )
-    total = (await db.execute(total_stmt)).scalar_one()
-
+    # A20-12: la consulta no pagina, así que el total es la propia lista.
     return JobFiltersResponse(
         data=list(filters),
-        total=total,
+        total=len(filters),
         sync_status=await exclusion_sync_status(db, current_user.id),
     )
 

@@ -380,12 +380,19 @@ async def patch_application(
     item_id: uuid.UUID,
     request: Request,
     body: schemas.ApplicationPatchDTO,
+    profile: uuid.UUID | None = Query(None),
     session=Depends(get_session),
     principal: Principal = Depends(require_scope("applications:write")),
 ):
     """PATCH con direccionamiento DUAL (Decisión 4): application.id o
     bookmark puro (=vacancy_id, promoción idempotente — si ya hay application
-    del perfil, el identificador REDIRIGE a ella). If-Match bajo FOR UPDATE."""
+    del perfil, el identificador REDIRIGE a ella). If-Match bajo FOR UPDATE.
+
+    `profile` (A20-13, opcional y aditivo): un consumer con VARIOS perfiles
+    (el BFF multiusuario, una credencial para todos) acota la escritura al
+    perfil del usuario; un item de otro perfil del mismo consumer responde 404
+    indistinguible. Sin él, el consumer tenía que drenar el feed entero del
+    perfil para comprobar la propiedad antes de cada escritura."""
     idem_key = request.headers.get("idempotency-key")
     route = f"PATCH {request.url.path}"
     _check_storable(body)  # G7-P3-1
@@ -398,7 +405,7 @@ async def patch_application(
 
     async def handler():
         target = await _lock_target(session, item_id, principal.consumer_id)
-        if target is None:
+        if target is None or (profile is not None and target[1].profile_id != profile):
             raise error_404("candidatura")
         kind, row = target
         if subject_id is None or row.profile_id != subject_id:
@@ -428,11 +435,13 @@ async def patch_application(
 async def delete_application(
     item_id: uuid.UUID,
     request: Request,
+    profile: uuid.UUID | None = Query(None),
     session=Depends(get_session),
     principal: Principal = Depends(require_scope("applications:write")),
 ):
     """DELETE dual (Decisión 4): application → borra la fila (los eventos caen
-    por CASCADE); bookmark puro → saved_at=NULL conservando notes. 204."""
+    por CASCADE); bookmark puro → saved_at=NULL conservando notes. 204.
+    `profile` opcional: mismo scoping por perfil que el PATCH (A20-13)."""
     idem_key = request.headers.get("idempotency-key")
     route = f"DELETE {request.url.path}"
 
@@ -442,7 +451,7 @@ async def delete_application(
 
     async def handler():
         target = await _lock_target(session, item_id, principal.consumer_id)
-        if target is None:
+        if target is None or (profile is not None and target[1].profile_id != profile):
             raise error_404("candidatura")
         kind, row = target
         if subject_id is None or row.profile_id != subject_id:

@@ -3,7 +3,16 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,6 +27,9 @@ class MatchResult(Base):
     __tablename__ = "match_results"
     __table_args__ = (
         UniqueConstraint("user_id", "job_hash", name="uq_match_user_job"),
+        # A20-03: creado por d4e5f6a8b9c1; sin declararlo aquí, autogenerate
+        # lo borraba.
+        Index("ix_match_results_application_status", "application_status"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

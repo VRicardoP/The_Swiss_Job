@@ -11,6 +11,7 @@ from copy import deepcopy
 from datetime import timedelta
 import hashlib
 import json
+import logging
 import uuid
 
 from sqlalchemy import func, select, update
@@ -22,6 +23,8 @@ from models.jobhunt_profile_map import JobhuntProfileMap
 from models.user import User
 from .core_client import CoreDocuments
 from .seam import resolve_documents
+
+logger = logging.getLogger(__name__)
 
 RETRY_WINDOW = timedelta(hours=23)
 
@@ -245,7 +248,13 @@ async def deliver(session_factory, operation_id, user_id, *, sender_factory=None
                 if completed and completed["status"] == "delivered":
                     return completed
         except Exception:
-            pass
+            # A20-20: el diagnóstico no puede convertir la operación en un
+            # error sin rastro, pero tampoco puede perderse en silencio.
+            logger.warning(
+                "documents: no se pudo anotar el fallo de entrega de %s",
+                operation_id,
+                exc_info=True,
+            )
         return {
             "operation_id": operation_id,
             "status": "pending",

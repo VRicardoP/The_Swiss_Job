@@ -336,25 +336,21 @@ class CoreApplications:
         rows = (await self._db.execute(select(Job).where(Job.url.in_(urls)))).scalars()
         return {job.url: job for job in rows}
 
-    async def _owned_by_profile(
-        self, core_profile_id: uuid.UUID, application_id: uuid.UUID
-    ) -> bool:
-        """Scoping de ownership POR PERFIL para las escrituras (G1/P1-3).
+    @staticmethod
+    def _scope(core_profile_id: uuid.UUID) -> dict:
+        """Scoping de ownership POR PERFIL en las escrituras (G1/P1-3, A20-13).
 
-        El PATCH/DELETE del /v1 solo acota por CONSUMER (`p.consumer_id` en el
-        WHERE de `_lock_target`), y la credencial CORE_CONSUMER_KEY es UNA y
-        compartida por todos los usuarios de este BFF: sin este check, el
-        usuario B podia mutar/borrar la candidatura de A conociendo su UUID
-        (IDOR), incumpliendo el contrato del puerto («None si no existe PARA
-        ESE USUARIO»). El perfil no viaja en la escritura porque el contrato
-        /v1 no lo modela — el scoping se aplica AQUI, verificando que el id
-        aparece en el feed DEL PERFIL del usuario antes de emitir la
-        escritura. TOCTOU aceptado: cada usuario es el unico escritor de su
-        perfil (docstring del modulo), y el candado real seguiria siendo el
-        consumer del core.
+        El PATCH/DELETE del /v1 acota por CONSUMER, y la credencial
+        CORE_CONSUMER_KEY es UNA y compartida por todos los usuarios de este
+        BFF: sin scoping, el usuario B podia mutar/borrar la candidatura de A
+        conociendo su UUID (IDOR). Antes el cliente drenaba el feed ENTERO del
+        perfil antes de cada escritura para comprobar que el id era suyo;
+        desde A20-13 el /v1 acepta `profile` y responde 404 indistinguible si
+        el item es de otro perfil — una peticion, y el candado en el core.
+        DESPLIEGUE: el core debe ir ANTES que el BFF (un core anterior ignora
+        el parametro y el scoping quedaria sin efecto).
         """
-        dtos = await self._drain_applications(core_profile_id)
-        return any(dto.id == application_id for dto in dtos)
+        return {"profile": str(core_profile_id)}
 
     @staticmethod
     def _job_hash_for(dto: _ApplicationDTO, by_url: dict[str, Job]) -> str:
@@ -523,12 +519,10 @@ class CoreApplications:
                 "update de applied_url: sin equivalente en el contrato C-4 "
                 "(el /v1 solo muta status/notes/follow_up_date)"
             )
-        # identidad+credencial antes de red; y ownership por PERFIL antes de
-        # la escritura (G1/P1-3): un id ajeno se responde como inexistente
-        # (404 del router), indistinguible — mismo contrato que el motor local.
+        # identidad+credencial antes de red; el scoping por PERFIL viaja en la
+        # propia escritura (`profile`, A20-13): un id ajeno responde 404 del
+        # core → None aqui → 404 del router, indistinguible.
         core_profile_id = await self._require_profile(user_id)
-        if not await self._owned_by_profile(core_profile_id, application_id):
-            return None
         body: dict = {}
         if "status" in provided and changes.status is not None:
             body["status"] = changes.status.value
@@ -542,7 +536,11 @@ class CoreApplications:
                 else None
             )
         resp = await self._request(
-            "PATCH", f"/applications/{application_id}", json_body=body, write=True
+            "PATCH",
+            f"/applications/{application_id}",
+            params=self._scope(core_profile_id),
+            json_body=body,
+            write=True,
         )
         if resp.status_code == 404:
             return None  # el router lo mapea a 404 (mismo contrato que local)
@@ -555,12 +553,12 @@ class CoreApplications:
 
     async def delete(self, user_id: uuid.UUID, application_id: uuid.UUID) -> bool:
         core_profile_id = await self._require_profile(user_id)
-        # Ownership por PERFIL antes de emitir el DELETE (G1/P1-3, ver
-        # _owned_by_profile): un id ajeno = inexistente para este usuario.
-        if not await self._owned_by_profile(core_profile_id, application_id):
-            return False
+        # Scoping por PERFIL en el propio DELETE (G1/P1-3, A20-13).
         resp = await self._request(
-            "DELETE", f"/applications/{application_id}", write=True
+            "DELETE",
+            f"/applications/{application_id}",
+            params=self._scope(core_profile_id),
+            write=True,
         )
         if resp.status_code == 404:
             return False

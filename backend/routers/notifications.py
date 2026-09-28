@@ -165,19 +165,17 @@ async def list_notifications(
     """Get paginated notification history."""
     conditions = [Notification.user_id == current_user.id]
 
-    total = (
+    # A20-12: total y no leídas en UNA consulta (count FILTER).
+    total, unread_count = (
         await db.execute(
-            select(func.count()).select_from(Notification).where(*conditions)
-        )
-    ).scalar_one()
-
-    unread_count = (
-        await db.execute(
-            select(func.count())
+            select(
+                func.count(),
+                func.count().filter(Notification.is_read.is_(False)),
+            )
             .select_from(Notification)
-            .where(*conditions, Notification.is_read.is_(False))
+            .where(*conditions)
         )
-    ).scalar_one()
+    ).one()
 
     stmt = (
         select(Notification)

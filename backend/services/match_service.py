@@ -12,6 +12,8 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
+from collections import defaultdict
+
 from sqlalchemy import delete, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
@@ -38,6 +40,8 @@ LLM_VERDICT_KEY = "llm_verdict"
 # caído) tampoco deja veredicto, y ahí lo correcto es no tocar nada. Sin
 # distinguir los dos casos, una caída del LLM borraría todas las explicaciones.
 LLM_SKIPPED_KEY = "llm_skipped"
+# Filas por sentencia en el INSERT por lotes de `_save_results` (A20-06).
+_INSERT_CHUNK = 500
 
 
 def _unir_skills(base: list[str], extra: list[str]) -> list[str]:
@@ -752,6 +756,7 @@ class MatchService:
         existing_by_hash = await self._load_existing(user_id)
 
         new_hashes: set[str] = set()
+        new_rows: list[dict] = []
         for r in results:
             job_hash = r["job"].hash
             new_hashes.add(job_hash)
@@ -763,15 +768,10 @@ class MatchService:
             else:
                 # INSERT idempotente: si la fila aparecio tras el snapshot
                 # (upsert minimo de feedback de la API), solo pisa scores.
-                stmt = (
-                    pg_insert(MatchResult)
-                    .values(user_id=user_id, job_hash=job_hash, **self._score_values(r))
-                    .on_conflict_do_update(
-                        index_elements=["user_id", "job_hash"],
-                        set_=self._score_values(r),
-                    )
+                new_rows.append(
+                    {"user_id": user_id, "job_hash": job_hash, **self._score_values(r)}
                 )
-                await self.db.execute(stmt)
+        await self._insert_new_rows(new_rows)
 
         # Prune: borrar solo huérfanas SIN engagement del usuario.
         to_delete = [
@@ -789,6 +789,32 @@ class MatchService:
             )
 
         await self.db.commit()
+
+    async def _insert_new_rows(self, rows: list[dict]) -> None:
+        """INSERT ... ON CONFLICT por LOTES (A20-06).
+
+        Antes era una sentencia por fila nueva: 301 para 300 resultados,
+        medido. Las filas se agrupan por su conjunto de columnas porque
+        `_score_values` solo incluye el bloque LLM cuando hay veredicto (o
+        marca de salto) y un VALUES múltiple exige las mismas columnas en
+        todas las filas del lote.
+        """
+        if not rows:
+            return
+        por_columnas: dict[tuple[str, ...], list[dict]] = defaultdict(list)
+        for row in rows:
+            por_columnas[tuple(sorted(row))].append(row)
+        for columnas, lote in por_columnas.items():
+            score_cols = [c for c in columnas if c not in ("user_id", "job_hash")]
+            for inicio in range(0, len(lote), _INSERT_CHUNK):
+                stmt = pg_insert(MatchResult).values(
+                    lote[inicio : inicio + _INSERT_CHUNK]
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["user_id", "job_hash"],
+                    set_={c: getattr(stmt.excluded, c) for c in score_cols},
+                )
+                await self.db.execute(stmt)
 
     async def _load_existing(self, user_id: uuid.UUID) -> dict[str, MatchResult]:
         """Snapshot de los MatchResult del usuario, indexado por job_hash."""

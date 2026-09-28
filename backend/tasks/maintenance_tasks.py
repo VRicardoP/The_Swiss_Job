@@ -116,13 +116,19 @@ _URL_CHECK_BATCH_SIZE = 250
     # success). Peor caso ~3000 sondas × 10s / 10 en vuelo ≈ 50 min.
     soft_time_limit=3600,
     time_limit=3660,
+    bind=True,
+    max_retries=1,
 )
-def check_job_urls(limit: int | None = None) -> dict[str, Any]:
+def check_job_urls(self, limit: int | None = None) -> dict[str, Any]:
     """Comprueba con HEAD que las URLs de las ofertas activas siguen vivas.
 
     Desactiva (is_active=False) solo las que devuelven 404/410. Acotado a
     `limit` ofertas por corrida (las de check más antiguo primero), de modo que
     barre el catálogo por rotación sin martillear ningún portal.
+
+    A20-10: un fallo ya no se devuelve como `{"status": "error"}` — Celery lo
+    contaba como ÉXITO, no reintentaba y no quedaba rastro fuera del log.
+    Mismo criterio que dedup_semantic_batch: reintento y, si persiste, LANZA.
     """
     from config import settings
 
@@ -131,7 +137,7 @@ def check_job_urls(limit: int | None = None) -> dict[str, Any]:
         return asyncio.run(_check_job_urls_async(effective))
     except Exception as exc:
         logger.error("check_job_urls failed: %s", exc)
-        return {"status": "error", "error": str(exc)}
+        raise self.retry(exc=exc, countdown=120)
 
 
 async def _check_job_urls_async(limit: int) -> dict[str, Any]:
@@ -246,18 +252,19 @@ async def _check_job_urls_async(limit: int) -> dict[str, Any]:
     }
 
 
-@celery_app.task(name="tasks.cleanup_stale_jobs")
-def cleanup_stale_jobs(max_age_days: int = 60) -> dict[str, Any]:
+@celery_app.task(name="tasks.cleanup_stale_jobs", bind=True, max_retries=1)
+def cleanup_stale_jobs(self, max_age_days: int = 60) -> dict[str, Any]:
     """Archiva o elimina ofertas caducadas (no vistas en `max_age_days`).
 
     Con adjuntos del usuario → se ARCHIVA (is_active=False); sin adjuntos → se
     BORRA. Ver _cleanup_stale_jobs_async para el detalle de la política.
+    A20-10: el fallo se reintenta y luego LANZA (ver check_job_urls).
     """
     try:
         return asyncio.run(_cleanup_stale_jobs_async(max_age_days))
     except Exception as exc:
         logger.error("cleanup_stale_jobs failed: %s", exc)
-        return {"status": "error", "error": str(exc)}
+        raise self.retry(exc=exc, countdown=120)
 
 
 async def _cleanup_stale_jobs_async(max_age_days: int) -> dict[str, Any]:
@@ -285,7 +292,7 @@ async def _cleanup_stale_jobs_async(max_age_days: int) -> dict[str, Any]:
         OR hash IN (
             SELECT job_hash FROM match_results
             WHERE feedback IS NOT NULL
-               OR feedback_implicit IS NOT NULL
+               OR jsonb_array_length(coalesce(feedback_implicit, '[]'::jsonb)) > 0
                OR draft_letter IS NOT NULL
                OR application_status <> 'detected'
         )

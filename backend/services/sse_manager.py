@@ -24,6 +24,11 @@ class SSEManager:
     Redis pub/sub bridges events across workers.
     """
 
+    # Espera entre reintentos del oyente de Redis (A20-01). Atributos de clase
+    # para que los tests los acorten sin parchear `asyncio.sleep`.
+    RECONNECT_INITIAL_S: float = 1.0
+    RECONNECT_MAX_S: float = 30.0
+
     def __init__(
         self,
         redis_client: aioredis.Redis,
@@ -35,13 +40,15 @@ class SSEManager:
         self._pubsub: aioredis.client.PubSub | None = None
         self._listener_task: asyncio.Task | None = None
         self._dropped_events: int = 0
+        self._closing: bool = False
+        self._delivered_since_open: bool = False
 
     # --- Lifecycle ---
 
     async def start(self) -> None:
         """Start the Redis pub/sub listener. Call during FastAPI lifespan startup."""
-        self._pubsub = self._redis.pubsub()
-        await self._pubsub.psubscribe(f"{SSE_CHANNEL_PREFIX}*")
+        self._closing = False
+        await self._open_pubsub()
         self._listener_task = asyncio.create_task(
             self._listen(), name="sse-redis-listener"
         )
@@ -49,17 +56,32 @@ class SSEManager:
 
     async def stop(self) -> None:
         """Stop the listener and clean up. Call during FastAPI lifespan shutdown."""
+        self._closing = True
         if self._listener_task:
             self._listener_task.cancel()
             try:
                 await self._listener_task
             except asyncio.CancelledError:
                 pass
-        if self._pubsub:
-            await self._pubsub.punsubscribe()
-            await self._pubsub.aclose()
+        await self._close_pubsub()
         self._connections.clear()
         logger.info("SSEManager stopped (dropped events: %d)", self._dropped_events)
+
+    async def _open_pubsub(self) -> None:
+        """Suscripción nueva al patrón de canales SSE."""
+        self._pubsub = self._redis.pubsub()
+        await self._pubsub.psubscribe(f"{SSE_CHANNEL_PREFIX}*")
+
+    async def _close_pubsub(self) -> None:
+        """Cierra la suscripción actual sin propagar fallos (ya está rota)."""
+        pubsub, self._pubsub = self._pubsub, None
+        if pubsub is None:
+            return
+        try:
+            await pubsub.punsubscribe()
+            await pubsub.aclose()
+        except Exception:  # noqa: BLE001 — cerrar una conexión rota no puede fallar
+            logger.debug("SSE pub/sub: cierre con error (ignorado)", exc_info=True)
 
     # --- Connection management ---
 
@@ -135,34 +157,66 @@ class SSEManager:
     # --- Redis listener ---
 
     async def _listen(self) -> None:
-        """Background task: consume Redis pub/sub and fan out to local queues."""
-        try:
-            async for raw_message in self._pubsub.listen():
-                if raw_message["type"] != "pmessage":
-                    continue
+        """Background task: consume Redis pub/sub and fan out to local queues.
 
-                channel = raw_message["channel"]
-                if isinstance(channel, bytes):
-                    channel = channel.decode()
+        A20-01: una excepción del pub/sub (Redis reiniciado, timeout de red)
+        NO mata el oyente. Antes salía del bucle y nada lo relanzaba —el
+        siguiente `subscribe` veía la tarea ya creada— así que las
+        notificaciones en vivo de ese worker se apagaban en silencio hasta
+        reiniciar el contenedor. Ahora se re-suscribe con espera creciente
+        (mismo patrón que el leader-loop del scheduler).
+        """
+        espera = self.RECONNECT_INITIAL_S
+        while not self._closing:
+            try:
+                if self._pubsub is None:
+                    await self._open_pubsub()
+                self._delivered_since_open = False
+                await self._consume()
+                if self._closing:
+                    return
+                # `listen()` terminó sin excepción: la conexión se cerró por
+                # debajo. Se trata igual que un fallo — re-suscribir.
+                logger.warning("SSE Redis listener: stream cerrado, reconectando")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "SSE Redis listener crashed — reintento en %.0f s", espera
+                )
+            await self._close_pubsub()
+            if self._delivered_since_open:
+                espera = self.RECONNECT_INITIAL_S
+            await asyncio.sleep(espera)
+            espera = min(espera * 2, self.RECONNECT_MAX_S)
 
+    async def _consume(self) -> None:
+        """Consume la suscripción actual hasta que se agote o falle."""
+        async for raw_message in self._pubsub.listen():
+            if raw_message["type"] != "pmessage":
+                continue
+
+            channel = raw_message["channel"]
+            if isinstance(channel, bytes):
+                channel = channel.decode()
+
+            try:
+                message = json.loads(raw_message["data"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            if channel == SSE_BROADCAST_CHANNEL:
+                self._fanout_to_all_local(message)
+            elif channel.startswith(SSE_CHANNEL_PREFIX):
+                uid_str = channel[len(SSE_CHANNEL_PREFIX) :]
                 try:
-                    message = json.loads(raw_message["data"])
-                except (json.JSONDecodeError, TypeError):
+                    user_id = uuid.UUID(uid_str)
+                except ValueError:
                     continue
-
-                if channel == SSE_BROADCAST_CHANNEL:
-                    self._fanout_to_all_local(message)
-                elif channel.startswith(SSE_CHANNEL_PREFIX):
-                    uid_str = channel[len(SSE_CHANNEL_PREFIX) :]
-                    try:
-                        user_id = uuid.UUID(uid_str)
-                    except ValueError:
-                        continue
-                    self._fanout_to_local(user_id, message)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("SSE Redis listener crashed")
+                self._fanout_to_local(user_id, message)
+            # Un mensaje entregado prueba que la conexión sirve: la espera
+            # del siguiente fallo vuelve a empezar desde el mínimo.
+            self._delivered_since_open = True
 
     # --- Monitoring ---
 

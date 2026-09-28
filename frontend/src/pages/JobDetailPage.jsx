@@ -107,7 +107,7 @@ export default function JobDetailPage() {
             <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-surface-tertiary text-text-secondary">
               {job.source}
             </span>
-            {job.is_remote && (
+            {job.remote && (
               <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-info-light text-info">
                 Remote
               </span>

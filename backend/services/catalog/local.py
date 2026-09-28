@@ -21,6 +21,36 @@ from schemas.job import (
 from .port import CatalogSearchParams
 
 
+# --- stats en una consulta (A20-12) ------------------------------------------
+# Bits de GROUPING(source, canton, language, seniority, contract_type): un bit a
+# 1 significa «esa columna NO agrupa en esta fila». 31 = todas a 1 = conjunto
+# vacío (total); 15 = solo `source` agrupa; etc.
+_STATS_TOTAL_GROUP = 31
+_G_SOURCE, _G_CANTON, _G_LANGUAGE, _G_SENIORITY, _G_CONTRACT = 15, 23, 27, 29, 30
+_STATS_GROUPS = {
+    _G_SOURCE: "source",
+    _G_CANTON: "canton",
+    _G_LANGUAGE: "language",
+    _G_SENIORITY: "seniority",
+    _G_CONTRACT: "contract_type",
+}
+_STATS_SQL = """
+    SELECT source, canton, language,
+           CAST(seniority AS text) AS seniority,
+           CAST(contract_type AS text) AS contract_type,
+           GROUPING(source, canton, language, seniority, contract_type) AS g,
+           count(*) AS n,
+           min(salary_min_chf) FILTER (WHERE salary_max_chf IS NOT NULL) AS sal_min,
+           max(salary_max_chf) FILTER (WHERE salary_max_chf IS NOT NULL) AS sal_max,
+           avg(salary_max_chf) FILTER (WHERE salary_max_chf IS NOT NULL) AS sal_avg
+    FROM jobs
+    WHERE is_active AND duplicate_of IS NULL
+    GROUP BY GROUPING SETS (
+        (), (source), (canton), (language), (seniority), (contract_type)
+    )
+"""
+
+
 class LocalCatalog:
     """Motor actual: lecturas directas sobre la tabla `jobs`."""
 
@@ -107,58 +137,42 @@ class LocalCatalog:
         )
 
     async def stats(self) -> JobStats:
-        db = self._db
-        base_filter = [Job.is_active.is_(True), Job.duplicate_of.is_(None)]
+        """Agregados del catálogo en UNA consulta (A20-12).
 
-        # Total count
-        total = (
-            await db.execute(select(func.count()).select_from(Job).where(*base_filter))
-        ).scalar_one()
-
-        # Group-by helper
-        async def _group_by(column):
-            stmt = (
-                select(column, func.count())
-                .where(*base_filter)
-                .where(column.is_not(None))
-                .group_by(column)
-            )
-            rows = (await db.execute(stmt)).all()
-            return {str(row[0]): row[1] for row in rows}
-
-        by_source = await _group_by(Job.source)
-        by_canton = await _group_by(Job.canton)
-        by_language = await _group_by(Job.language)
-        by_seniority = await _group_by(Job.seniority)
-        by_contract = await _group_by(Job.contract_type)
-
-        # Salary stats (only jobs with salary data)
-        salary_stmt = (
-            select(
-                func.min(Job.salary_min_chf),
-                func.max(Job.salary_max_chf),
-                func.avg(Job.salary_max_chf),
-            )
-            .where(*base_filter)
-            .where(Job.salary_max_chf.is_not(None))
-        )
-        salary_row = (await db.execute(salary_stmt)).one_or_none()
-
+        Antes eran siete (total + cinco GROUP BY + salario), 63-109 ms medidos
+        en local. `GROUPING SETS` produce los cinco desgloses y el conjunto
+        vacío (total y agregados de salario) en un solo barrido; `GROUPING()`
+        dice a qué desglose pertenece cada fila, y los valores NULL de cada
+        columna se descartan como hacía el `IS NOT NULL` de antes.
+        """
+        rows = (await self._db.execute(text(_STATS_SQL))).all()
+        total = 0
+        desgloses: dict[int, dict[str, int]] = {g: {} for g in _STATS_GROUPS}
         salary_stats = SalaryStats()
-        if salary_row and salary_row[0] is not None:
-            salary_stats = SalaryStats(
-                min=salary_row[0],
-                max=salary_row[1],
-                mean=round(float(salary_row[2]), 2) if salary_row[2] else None,
-            )
+        for row in rows:
+            if row.g == _STATS_TOTAL_GROUP:
+                total = row.n
+                if row.sal_min is not None:
+                    salary_stats = SalaryStats(
+                        min=row.sal_min,
+                        max=row.sal_max,
+                        mean=round(float(row.sal_avg), 2) if row.sal_avg else None,
+                    )
+                continue
+            columna = _STATS_GROUPS.get(row.g)
+            if columna is None:
+                continue
+            valor = getattr(row, columna)
+            if valor is not None:
+                desgloses[row.g][str(valor)] = row.n
 
         return JobStats(
             total_jobs=total,
-            by_source=by_source,
-            by_canton=by_canton,
-            by_language=by_language,
-            by_seniority=by_seniority,
-            by_contract=by_contract,
+            by_source=desgloses[_G_SOURCE],
+            by_canton=desgloses[_G_CANTON],
+            by_language=desgloses[_G_LANGUAGE],
+            by_seniority=desgloses[_G_SENIORITY],
+            by_contract=desgloses[_G_CONTRACT],
             salary_stats=salary_stats,
         )
 

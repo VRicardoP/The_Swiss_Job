@@ -33,13 +33,28 @@ const REMOTE_OPTIONS = [
   { value: "onsite", label: "Onsite" },
 ];
 
+// A20-05: los SEIS pesos del motor (job_matcher.DEFAULT_WEIGHTS). Faltaba
+// `language`: al guardar, el peso ausente cuenta como 0 y el factor idioma
+// desaparecía del matching del usuario sin que la pantalla lo mostrara.
 const WEIGHTS = [
   { key: "embedding", label: "Skills match" },
   { key: "llm", label: "AI rerank" },
   { key: "salary", label: "Salary fit" },
   { key: "location", label: "Location" },
   { key: "recency", label: "Recency" },
+  { key: "language", label: "Language" },
 ];
+
+// Copia de respaldo de los defaults del servidor, SOLO si la respuesta no los
+// trae (`default_score_weights`); el valor autoritativo viene del backend.
+const FALLBACK_WEIGHTS = {
+  embedding: 0.35,
+  salary: 0.15,
+  location: 0.1,
+  recency: 0.15,
+  llm: 0.15,
+  language: 0.1,
+};
 
 function SectionCard({ title, description, children }) {
   return (
@@ -78,13 +93,11 @@ export default function ProfilePage() {
       salary_min: profile.salary_min ?? "",
       salary_max: profile.salary_max ?? "",
       remote_pref: profile.remote_pref || "any",
-      score_weights: profile.score_weights || {
-        embedding: 0.3,
-        llm: 0.1,
-        salary: 0.2,
-        location: 0.25,
-        recency: 0.15,
-      },
+      score_weights:
+        profile.score_weights ||
+        (profile.default_score_weights && Object.keys(profile.default_score_weights).length
+          ? profile.default_score_weights
+          : FALLBACK_WEIGHTS),
       watchlist_schools_enabled: profile.watchlist_schools_enabled ?? false,
     });
   }

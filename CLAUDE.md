@@ -152,7 +152,8 @@ nombre y no recrea nada.
 
 ## Sesiones: el refresh token SE PUEDE revocar (T9, 2026-09-25)
 
-Antes un refresh era una llave firmada de 30 días que nada podía retirar:
+Antes un refresh era una llave firmada de `REFRESH_TOKEN_EXPIRE_DAYS` días
+(7 por defecto en `config.py`) que nada podía retirar:
 `/auth/refresh` emitía tokens nuevos y dejaba el viejo igual de válido. Ahora:
 
 - Cada refresh lleva `jti` (identidad revocable) y `fam` (la cadena de
@@ -221,6 +222,15 @@ solape que lleva más de 7 d sin cerrar.
   tests que parcheaban `tasks.fetch_tasks.DataNormalizer` apuntan ahora a
   `tasks.harvest_persist.DataNormalizer`. Radon: ningún grado E/F en código vivo;
   los que quedan son las herramientas de corte de la Fase E (cota, A19-13).
+- **Análisis profundo de código del 2026-09-28: 23 hallazgos A20-01..23, TODOS
+  corregidos el mismo día** (`docs/unificacion/DEUDA_TECNICA.md` §0.C, con una prueba
+  por hallazgo en `backend/tests/test_a20_fixes.py`). Lo que cambia para quien opere:
+  el `/v1` acepta `profile` opcional en PATCH/DELETE de candidaturas y el BFF lo
+  envía en vez de drenar el feed — **desplegar el núcleo ANTES que el BFF**; el
+  oyente SSE se reconecta solo tras un fallo de Redis; bcrypt y el parseo del CV
+  van al threadpool; `alembic check` es paso del CI (los modelos declaran ya el
+  índice HNSW, el GIN del `search_vector` y `ix_match_results_application_status`,
+  que antes solo existían en la base y un `--autogenerate` habría borrado).
 - **Los títulos de la pantalla principal se traducen EN EL FONDO** (A19-15 §D):
   `warm.py`, tras calentar el feed de cada usuario, traduce ≤ 100 títulos por
   pasada que aún no estén en Redis (`TRANSLATION_WARMUP_*`); `/match` con

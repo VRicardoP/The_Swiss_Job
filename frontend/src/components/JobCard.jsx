@@ -61,7 +61,7 @@ function JobCard({ job }) {
                     {job.canton || job.location}
                   </span>
                 )}
-                {job.is_remote && (
+                {job.remote && (
                   <span className="inline-flex items-center gap-1 text-success">
                     <Globe2 className="h-3.5 w-3.5" aria-hidden="true" />
                     Remote

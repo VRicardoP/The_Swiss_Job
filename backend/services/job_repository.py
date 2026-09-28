@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, case, func, null, or_, select, update
+from sqlalchemy import and_, case, func, literal_column, null, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -331,12 +331,6 @@ class JobRepository:
         values = _sanitize_incoming(values)
         values["content_hash"] = _content_hash(values)
 
-        # Determinar si es nueva antes del upsert (para el valor de retorno).
-        existing = await self.db.execute(
-            select(Job.hash).where(Job.hash == values["hash"])
-        )
-        is_new = existing.scalar_one_or_none() is None
-
         stmt = pg_insert(Job).values(**values)
         # Refrescar el contenido mutable desde el provider; conservar identidad y
         # estado gestionado por el sistema.
@@ -498,9 +492,15 @@ class JobRepository:
         )
 
         try:
-            await self.db.execute(
-                stmt.on_conflict_do_update(index_elements=["hash"], set_=set_)
+            # A20-11: `xmax = 0` en la fila devuelta ⇔ la fila se INSERTÓ (en
+            # un DO UPDATE lleva el xid de esta transacción). Ahorra el SELECT
+            # previo por oferta que solo servía para el valor de retorno.
+            result = await self.db.execute(
+                stmt.on_conflict_do_update(
+                    index_elements=["hash"], set_=set_
+                ).returning(literal_column("(xmax = 0)").label("is_new"))
             )
+            is_new = bool(result.scalar_one())
         except IntegrityError as exc:
             # G4/P1-1 — solo se reclasifica la colisión de IDENTIDAD (url
             # única). Cualquier otro fallo de integridad sigue subiendo tal

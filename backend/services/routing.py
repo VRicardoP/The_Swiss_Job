@@ -68,6 +68,21 @@ def legacy_owns(mode: str) -> bool:
 
 # clave -> (modo, expiracion monotonic)
 _cache: dict[tuple[str, uuid.UUID, str], tuple[str, float]] = {}
+# A20-17: cota del dict. Por encima se podan primero las entradas caducadas y,
+# si no basta, se vacia entero (el coste es una consulta por clave, ya cacheada
+# de nuevo al primer uso). Sin cota crecia una entrada por usuario que pasara
+# por el proceso, sin expulsar nunca las caducadas.
+_CACHE_MAX_ENTRIES = 4096
+
+
+def _prune_cache(now: float) -> None:
+    """Mantiene la cache por debajo de `_CACHE_MAX_ENTRIES`."""
+    if len(_cache) < _CACHE_MAX_ENTRIES:
+        return
+    for key in [k for k, (_mode, exp) in _cache.items() if exp <= now]:
+        del _cache[key]
+    if len(_cache) >= _CACHE_MAX_ENTRIES:
+        _cache.clear()
 
 
 def invalidate_routing_cache() -> None:
@@ -101,6 +116,7 @@ async def resolve_mode(
     by_pid = {row.profile_id: row.mode for row in rows}
     mode = by_pid.get(pid) or by_pid.get(PROFILE_WILDCARD) or MODE_LOCAL
 
+    _prune_cache(now)
     _cache[key] = (mode, now + settings.ROUTING_CACHE_TTL_SECONDS)
     return mode
 

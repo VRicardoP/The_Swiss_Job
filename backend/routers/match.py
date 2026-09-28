@@ -320,11 +320,13 @@ async def get_match_history(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    translate: bool = Query(True),
 ):
     """Get full match history for the current user (all past results).
 
     Hoy el legacy sirve history con la MISMA lectura que /results; la
     costura conserva esa igualdad (una sola operacion `results` del puerto).
+    `translate=false` (A20-09) lee los títulos ya calentados y no llama al LLM.
     """
     matching = await resolve_matching(db, current_user.id)
     try:
@@ -345,7 +347,9 @@ async def get_match_history(
 
     results = await overlay_school_results(db, current_user.id, results)
     groq = _get_groq(request)
-    return await _build_results_response(results, total, weights, groq, db)
+    return await _build_results_response(
+        results, total, weights, groq, db, translate=translate
+    )
 
 
 @router.post("/{job_hash}/feedback", response_model=MatchFeedbackResponse)
@@ -413,8 +417,12 @@ async def get_saved_jobs(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(100, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    translate: bool = Query(True),
 ):
-    """Devuelve los empleos marcados como 'Good' (thumbs_up o applied)."""
+    """Devuelve los empleos marcados como 'Good' (thumbs_up o applied).
+
+    `translate=false` (A20-09): títulos del MGET calentado en fondo, sin LLM.
+    """
     matching = await resolve_matching(db, current_user.id)
     try:
         results, total = await matching.saved(
@@ -433,7 +441,9 @@ async def get_saved_jobs(
     )
 
     groq = _get_groq(request)
-    return await _build_results_response(results, total, weights, groq, db)
+    return await _build_results_response(
+        results, total, weights, groq, db, translate=translate
+    )
 
 
 @router.post("/{job_hash}/implicit", response_model=ImplicitFeedbackResponse)

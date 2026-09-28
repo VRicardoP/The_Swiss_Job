@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 def run_due_task(self, limit: int = 100):
     try:
         return asyncio.run(_run(limit=limit))
+    except SoftTimeLimitExceeded:
+        # A20-22: el aviso de límite de tiempo no es un fallo del barrido —
+        # reintentarlo con la misma duración solo repite el mismo corte.
+        raise
     except Exception as exc:
         # Never log query text or Pydantic input values (personal preferences).
         logger.error("saved-search sweep failed: %s", type(exc).__name__)

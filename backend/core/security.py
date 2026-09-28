@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import uuid
+from starlette.concurrency import run_in_threadpool
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -45,6 +46,22 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         )
     # Legado: bcrypt directo sobre la contraseña (truncada a 72 bytes).
     return bcrypt.checkpw(plain_password.encode()[:72], hashed_password.encode())
+
+
+async def hash_password_async(plain_password: str) -> str:
+    """`hash_password` fuera del event loop (A20-02).
+
+    bcrypt cuesta ~234 ms (medido en el contenedor) y es CPU pura: llamarlo
+    síncrono desde un `async def` congela el worker entero ese tiempo — con
+    dos workers de gunicorn, cuatro logins simultáneos son casi un segundo
+    sin atender SSE, feed ni health. Mismo patrón que Groq (threadpool).
+    """
+    return await run_in_threadpool(hash_password, plain_password)
+
+
+async def verify_password_async(plain_password: str, hashed_password: str) -> bool:
+    """`verify_password` fuera del event loop (ver `hash_password_async`)."""
+    return await run_in_threadpool(verify_password, plain_password, hashed_password)
 
 
 def needs_rehash(hashed_password: str) -> bool:

@@ -70,17 +70,20 @@ export function useNotificationSSE() {
     };
 
     const preparar = (es) => {
-
-    es.addEventListener("new_matches", (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        setLastEvent(data);
-        setUnreadCount((c) => c + 1);
-        qc.invalidateQueries({ queryKey: ["notifications"] });
-      } catch {
-        // payload mal formado: ignoramos para que el stream siga vivo
-      }
-    });
+      // A20-07: `watchlist_priority` (colegio de la watchlist con oferta
+      // urgente) se emitía sin ningún oyente en el frontend.
+      const alta = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          setLastEvent(data);
+          setUnreadCount((c) => c + 1);
+          qc.invalidateQueries({ queryKey: ["notifications"] });
+        } catch {
+          // payload mal formado: ignoramos para que el stream siga vivo
+        }
+      };
+      es.addEventListener("new_matches", alta);
+      es.addEventListener("watchlist_priority", alta);
 
       es.addEventListener("connected", () => {
         espera = 1000; // conexión buena: la espera vuelve a su valor inicial

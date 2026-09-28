@@ -261,7 +261,10 @@ function MatchCard({ match, onFeedback, onClearFeedback, onImplicit }) {
             href={match.job_url}
             target="_blank"
             rel="noopener noreferrer"
-            onClick={() => onImplicit?.({ jobHash: match.job_hash, action: "applied" })}
+            // A20-19: el clic abre el portal, no prueba que se haya aplicado.
+            // `applied` es la señal de más peso (+1.0) y quedaba registrada
+            // por un clic curioso; `opened` es lo que de verdad se sabe.
+            onClick={() => onImplicit?.({ jobHash: match.job_hash, action: "opened" })}
             className={cn(
               "ml-auto inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold",
               "bg-swiss-red text-white transition-colors duration-150",

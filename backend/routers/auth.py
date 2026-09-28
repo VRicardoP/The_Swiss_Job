@@ -11,8 +11,9 @@ from core.security import (
     decode_token_payload,
     get_current_user,
     hash_password,
+    hash_password_async,
     needs_rehash,
-    verify_password,
+    verify_password_async,
 )
 from database import get_db
 from models.user import User
@@ -54,7 +55,7 @@ async def register(
     now = datetime.now(timezone.utc)
     user = User(
         email=body.email,
-        hashed_password=hash_password(body.password),
+        hashed_password=await hash_password_async(body.password),
         gdpr_consent=True,
         gdpr_consent_at=now,
         last_login=now,
@@ -108,7 +109,8 @@ async def login(request: Request, body: UserLogin, db: AsyncSession = Depends(ge
     #    desactivada, que es a quien le sirve saberlo.
     # 3. El mensaje es el mismo para «no existe» y «contraseña incorrecta».
     almacenado = user.hashed_password if user is not None else _HASH_SENUELO
-    contrasena_valida = verify_password(body.password, almacenado)
+    # A20-02: bcrypt (~234 ms) en el threadpool, no en el event loop.
+    contrasena_valida = await verify_password_async(body.password, almacenado)
     if user is None or not contrasena_valida:
         raise invalid_credentials
 
@@ -123,7 +125,7 @@ async def login(request: Request, body: UserLogin, db: AsyncSession = Depends(ge
     # con ella re-hasheada. Sin esto, cambiar el esquema obligaría a resetear
     # la contraseña de todo el mundo.
     if needs_rehash(user.hashed_password):
-        user.hashed_password = hash_password(body.password)
+        user.hashed_password = await hash_password_async(body.password)
 
     user.last_login = datetime.now(timezone.utc)
     access_token, refresh_token = await token_store.emitir_sesion(db, user)

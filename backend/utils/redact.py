@@ -142,8 +142,10 @@ _BEARER_RE = re.compile(
     + r",})",
 )
 # userinfo de una URL: `scheme://usuario:secreto@host`. Solo se tapa la parte
-# que sigue a los dos puntos — el usuario no es el secreto.
-_USERINFO_RE = re.compile(r"//[^/\s:@]+:(?P<sec>[^@\s/]+)@")
+# que sigue a los dos puntos — el usuario no es el secreto. El usuario puede
+# estar VACÍO (A20-15): `redis://:secreto@host` es la forma exacta de
+# `REDIS_URL`/`CELERY_BROKER_URL` y el `+` anterior la dejaba pasar entera.
+_USERINFO_RE = re.compile(r"//[^/\s:@]*:(?P<sec>[^@\s/]+)@")
 
 _KV_PATRONES = (_KV_EQ_RE, _KV_JSON_RE, _KV_HEADER_RE)
 _PATRONES = (*_KV_PATRONES, _BEARER_RE, _USERINFO_RE)

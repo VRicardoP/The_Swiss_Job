@@ -39,8 +39,15 @@ async def _leader_step(r, is_leader: bool) -> bool:
     if not is_leader:
         acquired = await r.set(_LEADER_KEY, _WORKER_ID, nx=True, ex=_LEADER_TTL)
         if acquired:
-            setup_schedules()
-            scheduler.start()
+            try:
+                setup_schedules()
+                scheduler.start()
+            except Exception:
+                # A20-16: el cerrojo acaba de tomarse con NX, es nuestro. Si el
+                # scheduler no arranca, retenerlo dejaba a TODOS los workers
+                # sin despachar hasta que caducara el TTL.
+                await r.delete(_LEADER_KEY)
+                raise
             logger.info("Scheduler LÍDER (%s): jobs programados", _WORKER_ID)
             return True
         return False

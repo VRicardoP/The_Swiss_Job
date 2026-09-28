@@ -1326,3 +1326,52 @@ def test_g8_el_nul_en_la_cabecera_de_idempotencia_es_400_y_no_500(db):
     )
     assert r.status_code == 400, r.text
     assert r.json()["code"] == "invalid_idempotency_key", r.text
+
+
+# ------------------------------------------------ scoping por perfil (A20-13)
+
+
+def test_patch_and_delete_honour_profile_scope(db):
+    """`profile` acota la escritura al perfil del MISMO consumer: con el id de
+    otro perfil el item responde 404 indistinguible (el BFF multiusuario
+    comparte una credencial y antes tenía que drenar el feed entero para
+    comprobar la propiedad); con el perfil correcto la escritura sigue igual."""
+    factory, created = db
+    token, tenant, pid, vacs = _seed(factory, created)
+    vid, _ = vacs[0]
+    aid = _post_app(
+        factory,
+        token,
+        {"profile_id": str(pid), "vacancy_id": str(vid), "title": "T"},
+    ).json()["id"]
+    otro_perfil = uuid.uuid4()
+
+    r = tia._api(
+        factory,
+        f"/v1/applications/{aid}?profile={otro_perfil}",
+        token=token,
+        method="PATCH",
+        json_body={"status": "applied"},
+    )
+    assert r.status_code == 404
+    r = tia._api(
+        factory,
+        f"/v1/applications/{aid}?profile={otro_perfil}",
+        token=token,
+        method="DELETE",
+    )
+    assert r.status_code == 404
+
+    r = tia._api(
+        factory,
+        f"/v1/applications/{aid}?profile={pid}",
+        token=token,
+        method="PATCH",
+        json_body={"status": "applied"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "applied"
+    r = tia._api(
+        factory, f"/v1/applications/{aid}?profile={pid}", token=token, method="DELETE"
+    )
+    assert r.status_code == 204

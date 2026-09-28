@@ -194,6 +194,11 @@ class FakeCoreV1:
         if request.method == "POST" and path == "/v1/applications":
             return self._create(request)
         item_id = path.rsplit("/", 1)[-1]
+        # A20-13: como el /v1 real, `profile` (opcional) acota la escritura al
+        # perfil: un item de otro perfil del consumer responde 404.
+        profile = request.url.params.get("profile")
+        if profile is not None and profile != self.profile_id:
+            return httpx.Response(404, json={"code": "not_found", "message": "?"})
         if request.method == "PATCH":
             return self._patch(item_id, request)
         if request.method == "DELETE":

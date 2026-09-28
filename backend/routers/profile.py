@@ -23,10 +23,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import delete, select
+from starlette.concurrency import run_in_threadpool
+
+from services.job_matcher import DEFAULT_WEIGHTS
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from core.security import get_current_user, verify_password
+from core.security import get_current_user, verify_password_async
 from database import get_db
 from models.user import User
 from models.integration_inbox import IntegrationInbox
@@ -107,6 +110,7 @@ async def get_profile(
             detail="Profile not found",
         )
     resp = ProfileResponse.model_validate(profile)
+    resp.default_score_weights = dict(DEFAULT_WEIGHTS)
     resp.has_cv_embedding = profile.cv_embedding is not None
     resp.watchlist_schools_enabled = await school_preference(
         db, current_user.id, profile.watchlist_schools_enabled
@@ -166,6 +170,7 @@ async def update_profile(
     await db.refresh(profile)
 
     resp = ProfileResponse.model_validate(profile)
+    resp.default_score_weights = dict(DEFAULT_WEIGHTS)
     resp.has_cv_embedding = profile.cv_embedding is not None
     resp.watchlist_schools_enabled = await school_preference(
         db, current_user.id, profile.watchlist_schools_enabled
@@ -187,9 +192,15 @@ async def upload_cv(
             detail=f"Unsupported file type: {file.content_type}. Allowed: PDF, DOCX",
         )
 
-    # Read and validate size
-    file_bytes = await file.read()
+    # Read and validate size. A20-02: el tamaño se rechaza ANTES de cargar el
+    # cuerpo en memoria cuando Starlette ya lo conoce (`UploadFile.size`).
     max_bytes = settings.CV_MAX_SIZE_MB * 1024 * 1024
+    if file.size is not None and file.size > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum: {settings.CV_MAX_SIZE_MB} MB",
+        )
+    file_bytes = await file.read()
     if len(file_bytes) > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -206,7 +217,10 @@ async def upload_cv(
     from services.cv_parser import CVParser
 
     try:
-        raw_text = CVParser.extract_text(file_bytes, file.content_type)
+        # A20-02: parsear PDF/DOCX es CPU pura (cientos de ms) — fuera del loop.
+        raw_text = await run_in_threadpool(
+            CVParser.extract_text, file_bytes, file.content_type
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -337,7 +351,7 @@ async def delete_all_user_data(
 
     Requires password re-entry for confirmation.
     """
-    if not verify_password(body.password, current_user.hashed_password):
+    if not await verify_password_async(body.password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Incorrect password",

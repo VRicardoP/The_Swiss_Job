@@ -411,6 +411,7 @@ export const matchApi = {
     const qs = new URLSearchParams();
     if (params.limit) qs.set("limit", params.limit);
     if (params.offset !== undefined) qs.set("offset", params.offset);
+    if (params.translate === false) qs.set("translate", "false");
     const query = qs.toString();
     return authRequest(`/match/history${query ? `?${query}` : ""}`);
   },
@@ -439,6 +440,7 @@ export const matchApi = {
     const qs = new URLSearchParams();
     if (params.limit) qs.set("limit", params.limit);
     if (params.offset !== undefined) qs.set("offset", params.offset);
+    if (params.translate === false) qs.set("translate", "false");
     const query = qs.toString();
     return authRequest(`/match/saved${query ? `?${query}` : ""}`);
   },

@@ -129,9 +129,9 @@ async def execute_search(
     Serializes with edits, delete, reconfiguration and a second executor.
     min_score stays inert as in the existing SwissJob filter-only search.
     """
-    locked = await _lock_search(session, search_id)
     if type(force) is not bool:
         raise ValueError("force must be boolean")
+    locked = await _lock_search(session, search_id)
     if locked is None:
         return {"status": "not_found", "observed": 0, "matches": 0}
     search, destination = locked

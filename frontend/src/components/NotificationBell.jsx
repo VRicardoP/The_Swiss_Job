@@ -8,7 +8,7 @@ import {
 import { cn } from "./ui";
 
 export default function NotificationBell() {
-  const { unreadCount } = useNotificationSSE();
+  const { unreadCount, resetCount } = useNotificationSSE();
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef(null);
   const { data: notifications } = useNotificationHistory({ limit: 10 });
@@ -38,7 +38,12 @@ export default function NotificationBell() {
     <div className="relative" ref={dropdownRef}>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          // A20-07: abrir el panel es «ya lo he visto»: el contador vuelve a
+          // cero (antes solo subía y nunca bajaba).
+          if (!open) resetCount();
+          setOpen(!open);
+        }}
         aria-label="Notifications"
         aria-haspopup="menu"
         aria-expanded={open}

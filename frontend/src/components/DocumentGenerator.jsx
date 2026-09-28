@@ -187,7 +187,7 @@ function DocumentGenerator({ jobHash, jobTitle, jobCompany, library = false }) {
           variant="secondary"
           leftIcon={<Mail className="h-4 w-4" />}
           loading={isGenerating && generatingType === "cover_letter"}
-          disabled={isGenerating}
+          disabled={isGenerating || !!pending}
           fullWidth
           onClick={() => handleGenerate("cover_letter")}
         >

@@ -79,6 +79,14 @@ jobs:
           psql -h localhost -U swissjob -d swissjobhunter
           -c "CREATE EXTENSION IF NOT EXISTS vector;"
       - run: pip install -r requirements.txt
+      # A20-03: la cadena de migraciones sobre una base VACÍA y, después, que
+      # los modelos describan exactamente lo que las migraciones construyen.
+      # Sin esto, cuatro objetos creados con `op.execute` vivían solo en la
+      # base y un `--autogenerate` los habría borrado (el índice HNSW incluido).
+      - name: Migraciones desde cero + alembic check
+        run: |
+          alembic upgrade head
+          alembic check
       - run: pytest
 
   frontend-lint:

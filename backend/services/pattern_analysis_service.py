@@ -56,8 +56,6 @@ _STOP_WORDS = frozenset(
         # Inglés
         "the",
         "a",
-        "an",
-        "in",
         "at",
         "for",
         "and",
@@ -94,12 +92,9 @@ _STOP_WORDS = frozenset(
         "di",
         "il",
         "lo",
-        "la",
-        "in",
         "e",
         "con",
         "per",
-        "un",
         "una",
         "del",
         "della",
@@ -131,11 +126,9 @@ _STOP_WORDS = frozenset(
         "50%",
         "80-100%",
         # Preposiciones y artículos cortos
-        "of",
         "as",
         "on",
         "by",
-        "be",
     }
 )
 

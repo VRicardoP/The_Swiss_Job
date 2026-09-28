@@ -3,8 +3,19 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, cast, func, or_
-from sqlalchemy.dialects.postgresql import ENUM, JSONB
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    Text,
+    cast,
+    func,
+    or_,
+    text,
+)
+from sqlalchemy.dialects.postgresql import ENUM, JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -13,6 +24,20 @@ from models.enums import ContractType, SalaryPeriod, Seniority
 
 class Job(Base):
     __tablename__ = "jobs"
+    # A20-03: estos índices existían en la base (creados con `op.execute` en
+    # f7a9c1e2b3d4 y 11a4b5b5a28c) pero NO en el modelo, así que
+    # `alembic check` estaba rojo y un `--autogenerate` los habría BORRADO —
+    # el HNSW es el que sostiene la etapa 1 del matching.
+    __table_args__ = (
+        Index("ix_jobs_search_vector", "search_vector", postgresql_using="gin"),
+        Index(
+            "ix_jobs_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_where=text("is_active"),
+        ),
+    )
 
     # Primary key — MD5(title+company+url)
     hash: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -55,6 +80,10 @@ class Job(Base):
 
     # AI embedding (paraphrase-multilingual-MiniLM-L12-v2, 384 dims)
     embedding = mapped_column(Vector(384), nullable=True)
+    # Búsqueda de texto completo; la mantiene el TRIGGER de la migración
+    # 11a4b5b5a28c (no un `Computed`), por eso el modelo la declara pero nunca
+    # la escribe. `deferred`: no viaja en cada SELECT de Job.
+    search_vector = mapped_column(TSVECTOR, nullable=True, deferred=True)
 
     # Extra metadata
     logo: Mapped[str | None] = mapped_column(String(2048))

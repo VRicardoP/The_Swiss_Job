@@ -108,6 +108,10 @@ class ProfileResponse(BaseModel):
     cv_text: str | None
     has_cv_embedding: bool = False
     score_weights: dict | None
+    # A20-05: los pesos que aplica el motor cuando el usuario no ha guardado
+    # ninguno — el formulario se siembra con ESTOS, no con una copia en JS
+    # que derivaba (le faltaba `language`).
+    default_score_weights: dict = Field(default_factory=dict)
     watchlist_schools_enabled: bool = False
     updated_at: datetime
 
