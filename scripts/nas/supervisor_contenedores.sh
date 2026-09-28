@@ -79,9 +79,14 @@ enviar() {
     printf '%s\n' "$mensaje" | /usr/sbin/sendmail -t && echo "$fecha ENVIADO (sendmail): $asunto" >> "$LOG" && return
   fi
   if [ -n "${SMTP_HOST:-}" ]; then
-    printf '%s\n' "$mensaje" | curl -sS --ssl-reqd --url "smtp://${SMTP_HOST}:${SMTP_PORT:-587}" \
-      --user "${SMTP_USER}:${SMTP_PASSWORD}" --mail-from "${SMTP_FROM:-$DESTINO}" --mail-rcpt "$DESTINO" -T - \
+    # El motivo del fallo va al log: «sin SMTP_HOST» y «Gmail rechazó la
+    # credencial» son problemas distintos con dueños distintos (A19-31), y el
+    # mensaje anterior los confundía.
+    error_smtp=$(printf '%s\n' "$mensaje" | curl -sS --ssl-reqd --url "smtp://${SMTP_HOST}:${SMTP_PORT:-587}" \
+      --user "${SMTP_USER}:${SMTP_PASSWORD}" --mail-from "${SMTP_FROM:-$DESTINO}" --mail-rcpt "$DESTINO" -T - 2>&1) \
       && echo "$fecha ENVIADO (smtp): $asunto" >> "$LOG" && return
+    echo "$fecha NO ENVIADO (smtp ${SMTP_HOST}: ${error_smtp:-curl falló}): $asunto" >> "$LOG"
+    return
   fi
   echo "$fecha NO ENVIADO (sin sendmail ni SMTP_HOST): $asunto" >> "$LOG"
 }
