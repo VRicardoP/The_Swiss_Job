@@ -179,6 +179,41 @@ Las credenciales del core también caducan: `create_credential` pone 90 d
 rota con solape en dos pasos, y `jobhunt.credentials.check_health` alerta del
 solape que lleva más de 7 d sin cerrar.
 
+## Operación: lo que existe desde el 2026-09-28 (T13, A19-04, A19-17)
+
+- **La topología REAL del NAS está versionada en `deploy/nas/`** (A19-04): copias
+  literales de `core.configured.yml` y `swissjob.configured.yml` con cada secreto o
+  identificador sustituido por `${VARIABLE}`. `scripts/check_no_secrets.py` (en
+  CI) impide que vuelva un literal. `deploy/nas/README.md` explica cómo renderizarlo.
+  El del Portfolio vive en su repo (`ReactPortfolio/backend/deploy/nas/`).
+- **`backend/.env.prod.example` se GENERA** con `backend/scripts/gen_env_example.py`
+  desde `Settings`; `tests/test_env_example_covers_settings.py` falla si alguien lo
+  edita a mano y se queda corto. El de la raíz (28 claves de 130) se retiró.
+- **`scripts/deploy_nas.sh core|bff`** es el único camino de despliegue: retag POR
+  SERVICIO (nunca `core-capture`), migración del núcleo con contenedor desechable
+  ANTES de recrear, `core-api`+`core-worker` juntos, y `check_core_release.py` al
+  final. Su primera versión fabricaba la deriva A19-21 con un `sed` global.
+- **Supervisor de contenedores (A19-17)**: contenedor `swissjob-supervisor` en el
+  NAS con `restart: always` y el socket de Docker, cada 5 min; alerta si falta o
+  no corre cualquiera de los 15 esperados, con anti-ruido (sólo cambios de estado
+  + recordatorio cada 6 h). Fuente: `scripts/nas/`. **El correo está BLOQUEADO
+  por credencial**: la contraseña SMTP de producción tiene 14 caracteres (una de
+  aplicación de Gmail tiene 16) y Gmail la rechaza —también para los cuatro avisos
+  por email del BFF, que llevan tiempo sin salir—. Hasta que el propietario
+  ponga una válida en `supervisor.env` y en el compose, el supervisor registra en
+  `/share/Public/swissjob/supervisor/supervisor.log` y `estado`. El crontab del
+  QTS no se pudo armar (exige suid); la entrada queda en `/etc/config/crontab`.
+- **CI**: job `core-test` (postgres-core con wal2json construido desde
+  `docker/postgres-core`, `CREATE EXTENSION vector`, bootstrap con
+  `jobhunt_core.migrate`, suite completa). `jobhunt_core/requirements.txt` se fijó
+  a las versiones de la imagen: en limpio, `sqlalchemy>=2.0,<3` traía la 2.1 y su
+  dialecto por defecto pide `psycopg` v3, que no está.
+- **Healthchecks de infraestructura a 60 s en el NAS** (A19-25): postgres, redis,
+  redis-r5 y redis-core-r5 comprobaban cada 5-10 s; 16 de 23 contenedores lo
+  hacían y la máquina arrancaba ~60 procesos/min sólo para vigilarse.
+  `docker-compose.prebuilt.yml` se retiró (rompía la CDC); `core-local.yml`
+  exige `CORE_IMAGE_TAG` en vez de una etiqueta de hace un mes.
+
 ## Restricciones del proyecto
 
 - **NO scraping PÚBLICO** de: jobs.ch, jobup.ch, Indeed, LinkedIn, Glassdoor, XING. `providers/restricted.py` permite integrarlos SOLO por ruta autorizada (credencial partner / feed oficial); arrancan deshabilitados (sin credencial → 0 peticiones, nunca scraping)

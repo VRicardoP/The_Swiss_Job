@@ -1,0 +1,12 @@
+# T13 §8 — lo que la imagen no necesita y engordaba el contexto de build.
+tests/
+tests_live/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.prod.example
+.venv/
+venv/

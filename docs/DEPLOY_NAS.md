@@ -169,7 +169,7 @@ grep -E "^POSTGRES_|^DATABASE_URL" /share/Public/swissjob/.env.prod
 |---|---|---|---|
 | [`docker-compose.yml`](../docker-compose.yml) | Dev local (Linux/Mac) | Build local | Relativos |
 | [`docker-compose.prod.yml`](../docker-compose.prod.yml) | NAS build-on-site | Build en el NAS | Relativos |
-| [`docker-compose.prebuilt.yml`](../docker-compose.prebuilt.yml) | NAS con tars cargados | `docker load` previo | Relativos |
+| ~~`docker-compose.prebuilt.yml`~~ | **RETIRADO el 2026-09-28** (T13 §4): no tenía `core-capture`, usaba `pgvector/pgvector:pg16` sin `wal_level=logical` y llevaba `profiles:`, así que rompía la CDC. El canónico es `qnap.yml`; `prod.yml` es la fuente de build | — | — |
 | [`docker-compose.qnap.yml`](../docker-compose.qnap.yml) | **Container Station** | `docker load` previo | **Absolutos** |
 
 | [`docker-compose.dev.yml`](../docker-compose.dev.yml) | **Override de DESARROLLO del core** (nunca en el NAS) | — | Relativos |
@@ -273,7 +273,7 @@ conflictos con otros servicios:
 | Backend | 8000 | 8002 |
 | Frontend | 5173 | 5174 |
 
-**Producción** (`prod.yml`/`prebuilt.yml`/`qnap.yml`): solo el frontend (nginx)
+**Producción** (`prod.yml`/`qnap.yml`): solo el frontend (nginx)
 expone puerto al host (`4000:80`). Backend, postgres y redis son privados de
 la red `swissjob-net`.
 
@@ -1758,7 +1758,7 @@ BACKEND_CORS_ORIGINS=["http://capsule.tailebc81d.ts.net:4000"]
 | [backend/alembic.ini](../backend/alembic.ini) | Placeholder inocuo | #3 |
 | [docker-compose.qnap.yml](../docker-compose.qnap.yml) | `env_file:` postgres + `$$VAR` en healthcheck + `start_period: 360s` + `hfcache` | #1, #2, #5, #6 |
 | [docker-compose.prod.yml](../docker-compose.prod.yml) | Mismo conjunto de fixes | #1, #2, #5, #6 |
-| [docker-compose.prebuilt.yml](../docker-compose.prebuilt.yml) | Mismo conjunto de fixes | #1, #2, #5, #6 |
+| ~~docker-compose.prebuilt.yml~~ | Retirado el 2026-09-28 (T13 §4) | — |
 
 Todas las incidencias están además resumidas en la memoria persistente de
 Claude Code (fuera del repo, en

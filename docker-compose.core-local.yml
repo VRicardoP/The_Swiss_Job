@@ -4,13 +4,13 @@
 # No usar --build: el árbol actual puede tener un head de esquema posterior.
 services:
   core-migrate:
-    image: swissjob-core:d908ea2
+    image: swissjob-core:${CORE_IMAGE_TAG:?define CORE_IMAGE_TAG (p.ej. point5-2b59a92)}
   core-api:
-    image: swissjob-core:d908ea2
+    image: swissjob-core:${CORE_IMAGE_TAG:?define CORE_IMAGE_TAG (p.ej. point5-2b59a92)}
     restart: unless-stopped
     ports: !override
       - "127.0.0.1:${HOST_CORE_API_PORT:-8003}:8000"
   core-worker:
-    image: swissjob-core:d908ea2
+    image: swissjob-core:${CORE_IMAGE_TAG:?define CORE_IMAGE_TAG (p.ej. point5-2b59a92)}
   core-capture:
-    image: swissjob-core:d908ea2
+    image: swissjob-core:${CORE_IMAGE_TAG:?define CORE_IMAGE_TAG (p.ej. point5-2b59a92)}

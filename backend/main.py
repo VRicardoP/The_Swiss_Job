@@ -125,10 +125,37 @@ async def _warm_embedding_model() -> None:
         logger.exception("Embedding model warmup failed; se cargará bajo demanda")
 
 
+def _legacy_producers_unrestricted() -> bool:
+    """T13 §6 — fail-loud: la cosecha diaria legacy con AMBAS listas vacías.
+
+    Desde el traspaso del 2026-09-22 las 16 fuentes nativas las cosecha el core, y
+    el productor legacy sólo sigue vivo para lo que no se transfirió. Eso lo
+    sostienen `LEGACY_DISABLED_PROVIDERS` y `LEGACY_DISABLED_SCRAPERS`. Si un
+    despliegue las deja vacías —un `.env` copiado de otro entorno, una plantilla
+    sin rellenar— el worker legacy vuelve a cosechar las 16 fuentes: doble
+    cosecha, doble huella en los portales y duplicados en el corpus. Y no falla
+    nada: simplemente pasa. Aquí se dice en voz alta al arrancar. Es fail-LOUD,
+    no fail-closed, a propósito: cerrar el arranque es una decisión del
+    propietario que no está tomada.
+    """
+    return bool(
+        settings.SCHEDULER_DAILY_HARVEST_ENABLED
+        and not settings.LEGACY_DISABLED_PROVIDERS
+        and not settings.LEGACY_DISABLED_SCRAPERS
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _validate_security_config()
     _validate_database_credentials()
+    if _legacy_producers_unrestricted():
+        logger.error(
+            "LEGACY_DISABLED_PROVIDERS y LEGACY_DISABLED_SCRAPERS están VACÍAS con "
+            "SCHEDULER_DAILY_HARVEST_ENABLED=true: los productores legacy "
+            "cosecharían las 16 fuentes nativas (doble cosecha). Revisar el .env "
+            "de este despliegue."
+        )
     # Validate handover BEFORE SSE, warmup, or scheduler tasks are armed.
     from scrapers import get_scraper_names
     from services.legacy_sources import disabled_sources

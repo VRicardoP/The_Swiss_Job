@@ -69,7 +69,6 @@ playwright==1.63.0
 # Dev / Testing
 pytest==8.4.2
 pytest-asyncio==0.26.0
-httpx  # also used for TestClient
 # Fijado a la MISMA version que CI (.github/workflows/ci.yml). Con un rango,
 # cada reconstruccion de la imagen podia traer otro linter: paso el 2026-09-24,
 # ruff salto de 0.15 a 0.16, el conjunto de reglas por defecto crecio y

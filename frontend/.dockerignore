@@ -1,0 +1,10 @@
+# T13 §8 — el contexto de build no lleva dependencias ni salidas previas.
+node_modules/
+dist/
+coverage/
+.vite/
+android/
+ios/
+test-results/
+.env
+.env.*

@@ -129,8 +129,47 @@ jobs:
       - run: ruff check jobhunt_core
       - run: ruff format --check jobhunt_core
 
+  core-test:
+    # T13 §9: la suite del nucleo no corria en CI — solo el lint. Necesita la
+    # imagen custom de postgres (pgvector + wal2json, wal_level=logical) porque
+    # la captura CDC la exige: se construye desde docker/postgres-core, como en
+    # el compose. Sin CORE_ADMIN_DATABASE_URL los tests de integracion se
+    # saltan solos, asi que se pasa a proposito. Tarda ~15-20 min.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      POSTGRES_PASSWORD: swissjob_ci_2026
+      CORE_DB_PASSWORD: jobhunt_core_ci
+      CORE_CAPTURE_PASSWORD: jobhunt_capture_ci
+      CORE_DATABASE_URL: postgresql+asyncpg://jobhunt_core:jobhunt_core_ci@localhost:5432/swissjobhunter
+      CORE_ADMIN_DATABASE_URL: postgresql://swissjob:swissjob_ci_2026@localhost:5432/swissjobhunter
+      CORE_BROKER_URL: redis://localhost:6379/1
+      CORE_RESULT_BACKEND: redis://localhost:6379/2
+      CORE_ENV: dev   # Settings sólo admite dev|prod; CI es un entorno de dev sin datos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Postgres del nucleo (pgvector + wal2json) y redis
+        run: |
+          docker build -t swissjob-postgres-core:pg16 docker/postgres-core
+          docker run -d --name pgcore -p 5432:5432 \
+            -e POSTGRES_USER=swissjob -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+            -e POSTGRES_DB=swissjobhunter swissjob-postgres-core:pg16
+          docker run -d --name rediscore -p 6379:6379 redis:7-alpine
+          for i in $(seq 1 30); do
+            docker exec pgcore pg_isready -U swissjob -d swissjobhunter && break; sleep 2
+          done
+      - name: Extensión pgvector (la crea el superusuario; el rol del core sólo la usa)
+        run: docker exec pgcore psql -U swissjob -d swissjobhunter -c "CREATE EXTENSION IF NOT EXISTS vector;"
+      - run: pip install -r jobhunt_core/requirements.txt
+      - name: Bootstrap del rol y migraciones (lo que hace core-migrate al arrancar)
+        run: python -m jobhunt_core.migrate
+      - run: python -m pytest jobhunt_core/tests -q
+
   compose-config:
-    # Los composes de despliegue (prod/qnap/prebuilt/rehearsal) no se validaban
+    # Los composes de despliegue (prod/qnap/rehearsal) no se validaban
     # NUNCA: solo se construia el compose base. Un YAML roto ahi se descubria en
     # el NAS. `config -q` resuelve el modelo completo sin levantar nada.
     runs-on: ubuntu-latest
@@ -156,11 +195,14 @@ jobs:
           # y `config` falla. Se valida combinado con la base, que es como se usa.
           docker compose -f docker-compose.yml config -q
           docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q
-          for f in docker-compose.prod.yml docker-compose.prebuilt.yml \
+          for f in docker-compose.prod.yml \
                    docker-compose.core-local.yml; do
             echo "== $f"
             docker compose -f "$f" config -q
           done
+          # T13 §7: la topologia REAL del NAS esta versionada en deploy/nas con los
+          # secretos sustituidos por variables. Este paso impide que vuelvan.
+          python3 scripts/check_no_secrets.py deploy/nas
           # `qnap` y `rehearsal.qnap` NO se validan aqui: sus `env_file` son rutas
           # ABSOLUTAS del NAS (/share/Public/...) que no pueden existir en CI.
           # Verificado, no supuesto: fallan con "env file ... not found".

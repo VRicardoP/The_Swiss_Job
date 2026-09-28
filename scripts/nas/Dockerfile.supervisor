@@ -1,0 +1,11 @@
+# Supervisor de contenedores del NAS (A19-17). Imagen mínima: docker CLI para
+# `docker ps` a través del socket del host, curl para el correo SMTP, y el
+# script. Se construye en local y se carga en el NAS con `docker load`, como el
+# resto de imágenes del proyecto. Ver scripts/nas/supervisor_contenedores.sh.
+FROM alpine:3.20
+RUN apk add --no-cache docker-cli curl
+COPY supervisor_contenedores.sh /supervisor_contenedores.sh
+RUN chmod 700 /supervisor_contenedores.sh
+ENV DOCKER_BIN=docker SUPERVISOR_DIR=/estado
+# Bucle simple: cada 5 min. Sin cron dentro del contenedor a propósito.
+CMD ["sh", "-c", "while true; do sh /supervisor_contenedores.sh; sleep 300; done"]

@@ -26,7 +26,7 @@ services:
       - ./docker/postgres/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-swissjob}", "-d", "${POSTGRES_DB:-swissjobhunter}"]
-      interval: 5s
+      interval: 15s
       timeout: 5s
       retries: 5
 
@@ -51,7 +51,7 @@ services:
       - redisdata:/data
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
-      interval: 5s
+      interval: 15s
       timeout: 5s
       retries: 5
 
@@ -159,7 +159,7 @@ services:
       - core-net
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$$CORE_REDIS_PASSWORD\" ping | grep -q PONG"]
-      interval: 5s
+      interval: 15s
       timeout: 5s
       retries: 5
 

@@ -1,0 +1,190 @@
+# Topología REAL de producción en el NAS — swissjob.configured.yml
+# T13 §7 / A19-04. Copia del fichero que Container Station ejecuta en
+# /share/CACHEDEV1_DATA/Public/unification-e15-20260914/swissjob.configured.yml, con TODOS los
+# valores sensibles sustituidos por ${VARIABLE}. Los valores viven en un
+# `.env.nas` que NO se versiona (ver deploy/nas/README.md). Verificado sin
+# secretos por scripts/check_no_secrets.py, también en CI.
+#
+# Sustituidas (15): ADZUNA_APP_KEY, CELERY_BROKER_URL, CORE_API_BASE_URL, CORE_CONSUMER_KEY, CORE_INBOX_TOKEN, DATABASE_URL, GEMINI_API_KEY, GPG_KEY, GROQ_API_KEY, JOOBLE_API_KEY, JSEARCH_RAPIDAPI_KEY, POSTGRES_PASSWORD, REDIS_URL, SECRET_KEY, SMTP_PASSWORD
+services:
+  backend:
+    image: swissjob-backend:point5-2b59a92
+    container_name: swissjob-backend
+    environment:
+      REDIS_URL: ${REDIS_URL}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SMTP_USER: ${SMTP_USER}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      JSEARCH_RAPIDAPI_KEY: ${JSEARCH_RAPIDAPI_KEY}
+      CORE_API_BASE_URL: ${CORE_API_BASE_URL}
+      JOOBLE_API_KEY: ${JOOBLE_API_KEY}
+      SMTP_PORT: '587'
+      CORE_HTTP_TIMEOUT_SECONDS: '120'
+      CORE_INBOX_TOKEN: ${CORE_INBOX_TOKEN}
+      CORE_ERASURE_REPLICA_ID: swissjob-live
+      SECRET_KEY: ${SECRET_KEY}
+      SMTP_HOST: smtp.gmail.com
+      SCHEDULER_ENABLED: 'True'
+      BACKEND_CORS_ORIGINS: '["http://capsule.tailebc81d.ts.net:4000"]'
+      POSTGRES_DB: swissjobhunter
+      DATABASE_URL: ${DATABASE_URL}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      CAREERJET_AFFID: ''
+      SMTP_FROM: ${SMTP_FROM}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      ADZUNA_APP_KEY: ${ADZUNA_APP_KEY}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      TEACHER_ALERT_EMAIL: ${TEACHER_ALERT_EMAIL}
+      SCHEDULER_DAILY_HARVEST_ENABLED: 'True'
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      POSTGRES_USER: swissjob
+      ADZUNA_APP_ID: ''
+      CORE_CONSUMER_KEY: ${CORE_CONSUMER_KEY}
+      PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      LANG: C.UTF-8
+      GPG_KEY: ${GPG_KEY}
+      PYTHON_VERSION: 3.12.14
+      PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      HF_HOME: /home/app/.cache/huggingface
+      SENTENCE_TRANSFORMERS_HOME: /home/app/.cache/huggingface/sentence-transformers
+      PYTHONUNBUFFERED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      SCHOOL_WRITES_FROZEN: 'false'
+      CORE_PROFILE_SYNC_ENABLED: 'true'
+      CORE_FEEDBACK_ENABLED: 'true'
+      FEEDBACK_WRITES_FROZEN: 'false'
+      LEGACY_DISABLED_PROVIDERS: '["arbeitnow", "euremotejobs", "globaljobs", "jobgether", "jobspresso", "nav_arbeidsplassen", "ostjob", "remotive", "thehub", "weworkremotely", "workingnomads", "zentraljob"]'
+      LEGACY_DISABLED_SCRAPERS: '["financejobs", "irishjobs"]'
+    restart: unless-stopped
+    entrypoint:
+    - ./scripts/entrypoint.sh
+    command:
+    - gunicorn
+    - main:app
+    - -w
+    - '2'
+    - -k
+    - uvicorn.workers.UvicornWorker
+    - --bind
+    - 0.0.0.0:8000
+    - --access-logfile
+    - '-'
+    - --error-logfile
+    - '-'
+    - --timeout
+    - '420'
+    working_dir: /app
+    user: app
+    networks:
+      swissjob_swissjob-net:
+        aliases:
+        - swissjob-backend
+        - backend
+    volumes:
+    - type: volume
+      source: swissjob_hfcache
+      target: /home/app/.cache/huggingface
+      read_only: false
+    shm_size: 67108864
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -fsS http://localhost:8000/health || exit 1
+      interval: 30000000000ns
+      timeout: 5000000000ns
+      start_period: 360000000000ns
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-file: '10'
+        max-size: 10m
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+  worker:
+    image: swissjob-worker:point5-9d6b46e
+    container_name: swissjob-worker
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      CAREERJET_AFFID: ''
+      ADZUNA_APP_KEY: ${ADZUNA_APP_KEY}
+      SCHEDULER_DAILY_HARVEST_ENABLED: 'True'
+      BACKEND_CORS_ORIGINS: '["http://capsule.tailebc81d.ts.net:4000"]'
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      JSEARCH_RAPIDAPI_KEY: ${JSEARCH_RAPIDAPI_KEY}
+      SMTP_USER: ${SMTP_USER}
+      POSTGRES_USER: swissjob
+      SMTP_HOST: smtp.gmail.com
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SMTP_PORT: '587'
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      JOOBLE_API_KEY: ${JOOBLE_API_KEY}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      ADZUNA_APP_ID: ''
+      REDIS_URL: ${REDIS_URL}
+      SECRET_KEY: ${SECRET_KEY}
+      SMTP_FROM: ${SMTP_FROM}
+      TEACHER_ALERT_EMAIL: ${TEACHER_ALERT_EMAIL}
+      POSTGRES_DB: swissjobhunter
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SCHEDULER_ENABLED: 'True'
+      PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      LANG: C.UTF-8
+      GPG_KEY: ${GPG_KEY}
+      PYTHON_VERSION: 3.12.14
+      PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      HF_HOME: /home/app/.cache/huggingface
+      SENTENCE_TRANSFORMERS_HOME: /home/app/.cache/huggingface/sentence-transformers
+      PYTHONUNBUFFERED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      CORE_CONSUMER_KEY: ${CORE_CONSUMER_KEY}
+      CORE_API_BASE_URL: ${CORE_API_BASE_URL}
+      SCHOOL_WRITES_FROZEN: 'false'
+      LEGACY_DISABLED_PROVIDERS: '["arbeitnow", "euremotejobs", "globaljobs", "jobgether", "jobspresso", "nav_arbeidsplassen", "ostjob", "remotive", "thehub", "weworkremotely", "workingnomads", "zentraljob"]'
+      LEGACY_DISABLED_SCRAPERS: '["financejobs", "irishjobs"]'
+    restart: unless-stopped
+    entrypoint: []
+    command:
+    - celery
+    - -A
+    - celery_app
+    - worker
+    - -Q
+    - default,scraping,ai
+    - --concurrency=2
+    - --loglevel=info
+    working_dir: /app
+    user: app
+    networks:
+      swissjob_swissjob-net:
+        aliases:
+        - swissjob-worker
+        - worker
+    volumes:
+    - type: volume
+      source: swissjob_hfcache
+      target: /home/app/.cache/huggingface
+      read_only: false
+    shm_size: 67108864
+    logging:
+      driver: json-file
+      options:
+        max-file: '10'
+        max-size: 10m
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+networks:
+  swissjob_swissjob-net:
+    external: true
+    name: swissjob_swissjob-net
+volumes:
+  swissjob_hfcache:
+    external: true
+    name: swissjob_hfcache
