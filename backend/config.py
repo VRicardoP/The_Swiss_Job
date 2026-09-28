@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # proceso, así que calentar en uno no sirve al otro.
     FEED_WARMUP_ENABLED: bool = True
     FEED_WARMUP_INTERVAL_SECONDS: int = 60
+    # A19-15 §D: traducir los títulos del feed EN SEGUNDO PLANO (dentro del
+    # calentamiento), para que la pantalla principal (translate=false) los lea de
+    # Redis sin pagar un LLM por petición. Cota por pasada: son llamadas a Groq.
+    TRANSLATION_WARMUP_ENABLED: bool = True
+    TRANSLATION_WARMUP_MAX_PER_PASS: int = Field(default=100, ge=0)
 
     # App
     SECRET_KEY: str = "change-me-in-production"

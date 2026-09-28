@@ -197,7 +197,7 @@ async def lifespan(app: FastAPI):
     # que cada worker tiene que calentar la suya.
     from services.matching.warm import run_feed_warmup
 
-    feed_warmup_task = asyncio.create_task(run_feed_warmup())
+    feed_warmup_task = asyncio.create_task(run_feed_warmup(redis_client))
 
     # M3/T12: la caché del recorrido vive en proceso y gunicorn corre con -w 2,
     # así que cada worker tiene que enterarse de lo que invalidan los demás.

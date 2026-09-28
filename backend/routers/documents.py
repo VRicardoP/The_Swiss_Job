@@ -61,17 +61,9 @@ def _get_gemini() -> GeminiService:
     return GeminiService()
 
 
-@router.post(
-    "/generate", response_model=GeneratedDocumentResponse | DocumentOperationResponse
-)
-async def generate_document(
-    request: Request,
-    body: GenerateDocumentRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Generate once, or resume the previously prepared operation."""
-    user_id = current_user.id
+async def _resume_operation(db, body, user_id):
+    """Si el cliente trae un `operation_id` ya preparado, retoma la entrega
+    (202) en vez de generar otra vez. `None` = no hay nada que retomar."""
     if body.operation_id is not None:
         existing = await operation_status(
             db,
@@ -89,35 +81,16 @@ async def generate_document(
                 user_id,
             )
             return JSONResponse(status_code=202, content=jsonable_encoder(outcome))
-    documents = await resolve_documents(db, user_id)
-    if isinstance(documents, CoreDocuments) and body.operation_id is None:
-        raise HTTPException(
-            status_code=422, detail="Core generation requires a stable operation_id."
-        )
-    groq = _get_groq(request)
-    gemini = _get_gemini()
-    if not (gemini.is_available or groq.is_available):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service unavailable. Configure GEMINI_API_KEY or GROQ_API_KEY.",
-        )
+    return None
 
-    # Load user profile with CV text
-    await db.refresh(current_user, ["profile"])
-    profile = current_user.profile
-    if not profile or not profile.cv_text:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upload your CV first before generating documents.",
-        )
 
-    # The catalog can serve core UUIDs with no local Job. Preserve that
-    # reference; generation must not create a second copy of the corpus.
-    if len(body.job_hash) > 32:
+async def _load_job(db, job_hash: str):
+    """Oferta del catálogo activo (hash del core) o de la tabla local (md5 legacy)."""
+    if len(job_hash) > 32:
         catalog = await resolve_catalog(db)
         await db.commit()  # release the profile read transaction before HTTP
         try:
-            job = await catalog.get(body.job_hash)
+            job = await catalog.get(job_hash)
         except CatalogUnavailableError:
             raise HTTPException(
                 status_code=503, detail="Catalog temporarily unavailable."
@@ -128,7 +101,7 @@ async def generate_document(
             ) from None
     else:
         job = (
-            await db.execute(select(Job).where(Job.hash == body.job_hash))
+            await db.execute(select(Job).where(Job.hash == job_hash))
         ).scalar_one_or_none()
     if job is None:
         raise HTTPException(
@@ -137,44 +110,12 @@ async def generate_document(
         )
 
     # Load match data if available (for matching/missing skills)
-    match_result = (
-        await db.execute(
-            select(MatchResult).where(
-                MatchResult.user_id == current_user.id,
-                MatchResult.job_hash == body.job_hash,
-            )
-        )
-    ).scalar_one_or_none()
+    return job
 
-    matching_skills = match_result.matching_skills if match_result else None
-    missing_skills = match_result.missing_skills if match_result else None
 
-    # One snapshot drives both the cache identity and the actual LLM call.
-    inputs = dict(
-        cv_text=profile.cv_text,
-        skills=list(profile.skills or []),
-        job_title=job.title,
-        job_company=job.company,
-        job_description=job.description or "",
-        job_tags=list(job.tags or []),
-        matching_skills=list(matching_skills) if matching_skills is not None else None,
-        missing_skills=list(missing_skills) if missing_skills is not None else None,
-        language=body.language,
-    )
-    redis = getattr(request.app.state, "redis_client", None)
-    cache_key = DocumentGeneratorService.cache_key(
-        str(current_user.id),
-        body.job_hash,
-        body.doc_type.value,
-        body.language,
-        inputs={
-            **inputs,
-            "providers_available": [gemini.is_available, groq.is_available],
-        },
-    )
-    await (
-        db.commit()
-    )  # input snapshot complete; Redis/core HTTP never retains this transaction
+async def _cached_document(redis, cache_key, documents, user_id, body):
+    """Documento ya generado para estas mismas entradas, si Redis guarda su id
+    y la biblioteca lo confirma. `None` = hay que generar."""
     cached_id = None
     if redis:
         try:
@@ -204,16 +145,12 @@ async def generate_document(
 
     # Materialized inputs survive this short read transaction. No provider call
     # holds a connection/transaction while waiting for inference.
-    await db.commit()
-    generator = DocumentGeneratorService(groq, gemini)
-    generate = (
-        generator.generate_cv
-        if body.doc_type == DocType.cv
-        else generator.generate_cover_letter
-    )
-    content = await generate(**inputs)
+    return None
 
-    # Re-resolve after inference: never retain a pre-cutover writer decision.
+
+async def _store_generated(db, body, user_id, inputs, content):
+    """Persistencia del documento: por outbox hacia el core (devuelve el 202) o
+    en la biblioteca local (devuelve el documento creado)."""
     documents = await resolve_documents(db, user_id, write=True)
     live_owner = await db.scalar(
         select(User.id)
@@ -260,6 +197,102 @@ async def generate_document(
     )
 
     # Cache in Redis
+    return response
+
+
+@router.post(
+    "/generate", response_model=GeneratedDocumentResponse | DocumentOperationResponse
+)
+async def generate_document(
+    request: Request,
+    body: GenerateDocumentRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate once, or resume the previously prepared operation."""
+    user_id = current_user.id
+    resumed = await _resume_operation(db, body, user_id)
+    if resumed is not None:
+        return resumed
+    documents = await resolve_documents(db, user_id)
+    if isinstance(documents, CoreDocuments) and body.operation_id is None:
+        raise HTTPException(
+            status_code=422, detail="Core generation requires a stable operation_id."
+        )
+    groq = _get_groq(request)
+    gemini = _get_gemini()
+    if not (gemini.is_available or groq.is_available):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service unavailable. Configure GEMINI_API_KEY or GROQ_API_KEY.",
+        )
+
+    # Load user profile with CV text
+    await db.refresh(current_user, ["profile"])
+    profile = current_user.profile
+    if not profile or not profile.cv_text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upload your CV first before generating documents.",
+        )
+
+    # The catalog can serve core UUIDs with no local Job. Preserve that
+    # reference; generation must not create a second copy of the corpus.
+    job = await _load_job(db, body.job_hash)
+    match_result = (
+        await db.execute(
+            select(MatchResult).where(
+                MatchResult.user_id == current_user.id,
+                MatchResult.job_hash == body.job_hash,
+            )
+        )
+    ).scalar_one_or_none()
+
+    matching_skills = match_result.matching_skills if match_result else None
+    missing_skills = match_result.missing_skills if match_result else None
+
+    # One snapshot drives both the cache identity and the actual LLM call.
+    inputs = dict(
+        cv_text=profile.cv_text,
+        skills=list(profile.skills or []),
+        job_title=job.title,
+        job_company=job.company,
+        job_description=job.description or "",
+        job_tags=list(job.tags or []),
+        matching_skills=list(matching_skills) if matching_skills is not None else None,
+        missing_skills=list(missing_skills) if missing_skills is not None else None,
+        language=body.language,
+    )
+    redis = getattr(request.app.state, "redis_client", None)
+    cache_key = DocumentGeneratorService.cache_key(
+        str(current_user.id),
+        body.job_hash,
+        body.doc_type.value,
+        body.language,
+        inputs={
+            **inputs,
+            "providers_available": [gemini.is_available, groq.is_available],
+        },
+    )
+    await (
+        db.commit()
+    )  # input snapshot complete; Redis/core HTTP never retains this transaction
+    cached_doc = await _cached_document(redis, cache_key, documents, user_id, body)
+    if cached_doc is not None:
+        return cached_doc
+    await db.commit()
+    generator = DocumentGeneratorService(groq, gemini)
+    generate = (
+        generator.generate_cv
+        if body.doc_type == DocType.cv
+        else generator.generate_cover_letter
+    )
+    content = await generate(**inputs)
+
+    # Re-resolve after inference: never retain a pre-cutover writer decision.
+    response = await _store_generated(db, body, user_id, inputs, content)
+    if isinstance(response, JSONResponse):
+        return response
     if redis:
         try:
             ttl = settings.GROQ_DOC_CACHE_TTL_HOURS * 3600

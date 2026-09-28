@@ -520,6 +520,24 @@ class CoreMatching:
             ) from exc
         # E.15 school producers do not manufacture a legacy CDC listing.
         # Their scoped extension supplies the original actionable local hash.
+        candidates_per_item = await self._candidates_with_school_identity(
+            user_id, items, candidates_per_item
+        )
+        legacy_refs = [ref for cands in candidates_per_item for ref, _source in cands]
+        if settings.CORE_FEEDBACK_ENABLED:
+            return self._results_with_core_feedback(
+                items, candidates_per_item, core_total, limit, offset
+            )
+        return await self._results_with_local_overlay(
+            user_id, items, candidates_per_item, legacy_refs, limit, offset
+        )
+
+    async def _candidates_with_school_identity(
+        self, user_id, items: list[dict], candidates_per_item: list
+    ) -> list:
+        """Completa la identidad de las vacantes sin referencia legacy con la
+        del corpus ESCOLAR; si ese corpus falla, degrada en vez de tumbar el
+        feed entero (M5/T12). Extraído de `results` (T16)."""
         if any(not candidates for candidates in candidates_per_item):
             from services.schools.presentation import school_job_refs
             from services.schools.port import CoreUnavailableError as SchoolUnavailable
@@ -550,52 +568,72 @@ class CoreMatching:
                     "sin school_id; el resto del feed va intacto",
                     sum(1 for c in candidates_per_item if not c),
                 )
-        legacy_refs = [ref for cands in candidates_per_item for ref, _source in cands]
-        if settings.CORE_FEEDBACK_ENABLED:
-            # School commands still address their own stable source_ref; keep
-            # that identity. Ordinary items use the UUID we already know: an
-            # upstream alias can name multiple historical clones, so resolving
-            # it again would make an otherwise actionable item ambiguous.
-            try:
-                results = []
-                for item, candidates in zip(items, candidates_per_item):
-                    primary = item["vacancy"].get("primary_listing") or {}
-                    school = next(
-                        (
-                            candidate
-                            for candidate in candidates
-                            if candidate[1]
-                            .removeprefix("legacy:")
-                            .startswith("swiss_schools_")
+        return candidates_per_item
+
+    @staticmethod
+    def _results_with_core_feedback(
+        items: list[dict],
+        candidates_per_item: list,
+        core_total,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[dict], int]:
+        """Rama CORE_FEEDBACK_ENABLED: el core es la autoridad del estado; no
+        hay overlay local que leer. Extraído de `results` (T16)."""
+        # School commands still address their own stable source_ref; keep
+        # that identity. Ordinary items use the UUID we already know: an
+        # upstream alias can name multiple historical clones, so resolving
+        # it again would make an otherwise actionable item ambiguous.
+        try:
+            results = []
+            for item, candidates in zip(items, candidates_per_item):
+                primary = item["vacancy"].get("primary_listing") or {}
+                school = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if candidate[1]
+                        .removeprefix("legacy:")
+                        .startswith("swiss_schools_")
+                    ),
+                    None,
+                )
+                ref, source = (
+                    school
+                    if school
+                    else (
+                        str(uuid.UUID(item["vacancy"]["id"])),
+                        primary.get("source") or "core",
+                    )
+                )
+                results.append(
+                    {
+                        "match": _match_view(item, ref, None),
+                        "job": _job_view(
+                            item["vacancy"], source.removeprefix("legacy:")
                         ),
-                        None,
-                    )
-                    ref, source = (
-                        school
-                        if school
-                        else (
-                            str(uuid.UUID(item["vacancy"]["id"])),
-                            primary.get("source") or "core",
-                        )
-                    )
-                    results.append(
-                        {
-                            "match": _match_view(item, ref, None),
-                            "job": _job_view(
-                                item["vacancy"], source.removeprefix("legacy:")
-                            ),
-                        }
-                    )
-            except _PAYLOAD_ERRORS as exc:
-                raise CoreUnavailableError(
-                    "identidad core inválida en matching"
-                ) from exc
-            # El total describe el feed ENTERO. Si el core lo informo, es el
-            # suyo; si no, `results` viene de un recorrido completo y su
-            # longitud es el mismo numero.
-            return results[offset : offset + limit], (
-                core_total if core_total is not None else len(results)
-            )
+                    }
+                )
+        except _PAYLOAD_ERRORS as exc:
+            raise CoreUnavailableError("identidad core inválida en matching") from exc
+        # El total describe el feed ENTERO. Si el core lo informo, es el
+        # suyo; si no, `results` viene de un recorrido completo y su
+        # longitud es el mismo numero.
+        return results[offset : offset + limit], (
+            core_total if core_total is not None else len(results)
+        )
+
+    async def _results_with_local_overlay(
+        self,
+        user_id,
+        items: list[dict],
+        candidates_per_item: list,
+        legacy_refs: list,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[dict], int]:
+        """Rama legacy: excluye lo no accionable localmente y superpone el
+        feedback local. Extraído de `results` (T16)."""
         local_by_hash: dict[str, MatchResult] = {}
         actionable_hashes: set[str] = set()
         if legacy_refs:
@@ -718,6 +756,21 @@ class CoreMatching:
         )
 
     # ------------------------------------------------------------------ feed
+
+    async def cached_feed_titles(self, user_id: uuid.UUID) -> list[str]:
+        """Títulos del recorrido YA cacheado de este usuario (A19-15 §D).
+
+        Lee `_feed_cache` en proceso: no pide nada al core. Si no hay recorrido
+        cacheado devuelve `[]`; calentar es cosa de `warm_feed`, no de esto.
+        """
+        pid = await resolve_core_profile_id(self._db, user_id)
+        if pid is None:
+            return []
+        cacheado = _feed_cache.get(str(pid))
+        if not cacheado:
+            return []
+        _version, items, _total = cacheado
+        return [t for t in (it.get("vacancy", {}).get("title") for it in items) if t]
 
     async def _fetch_full_feed(
         self, core_profile_id: uuid.UUID, needed: int | None = None

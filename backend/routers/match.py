@@ -227,8 +227,14 @@ async def _build_results_response(
     weights: dict,
     groq: GroqService | None = None,
     db: AsyncSession | None = None,
+    *,
+    translate: bool = True,
 ):
-    """Build MatchResultsResponse from service results, with title translations."""
+    """Build MatchResultsResponse from service results, with title translations.
+
+    `translate=False` (la pantalla principal, 3.000 ofertas) NO llama al LLM:
+    sirve lo que el calentamiento de fondo ya dejó en Redis (A19-15 §D).
+    """
     # Idioma ya resuelto, en UNA consulta por página. Los títulos que aún no
     # tengan fila se encolan para la tarea de fondo: encolar es un INSERT
     # idempotente que en régimen permanente no inserta nada, no una detección.
@@ -245,7 +251,13 @@ async def _build_results_response(
 
     # Batch-translate non-EN/ES titles
     translations: dict[str, str] = {}
-    if groq:
+    if groq and results and not translate:
+        # A19-15 §D: sin LLM en la petición, pero lo que el fondo ya tradujo se
+        # sirve. Una ida a Redis (MGET) para 3.000 títulos, cero detecciones.
+        translations = await TranslationService(groq).cached_translations(
+            [item["job"].title or "" for item in results]
+        )
+    elif groq and translate:
         titles_with_lang = [
             {"title": item["job"].title or "", "language": item["job"].language or ""}
             for item in results
@@ -296,8 +308,9 @@ async def get_match_results(
     )
 
     results = await overlay_school_results(db, current_user.id, results)
-    groq = _get_groq(request) if translate else None
-    return await _build_results_response(results, total, weights, groq, db)
+    return await _build_results_response(
+        results, total, weights, _get_groq(request), db, translate=translate
+    )
 
 
 @router.get("/history", response_model=MatchResultsResponse)

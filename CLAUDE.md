@@ -214,6 +214,19 @@ solape que lleva más de 7 d sin cerrar.
   `docker-compose.prebuilt.yml` se retiró (rompía la CDC); `core-local.yml`
   exige `CORE_IMAGE_TAG` en vez de una etiqueta de hace un mes.
 
+- **Cosecha legacy: el bucle por oferta vive en `tasks/harvest_persist.py`** (T16):
+  `persist_harvested_job` (normalizar → upsert → dedup → clon G5), `persist_batch`
+  (un savepoint por oferta; VD.2/K3/VD.3 en su `BatchResult`), `record_lost_batch`
+  e `identity_drift_notes`. `fetch_tasks` y `scraping_tasks` sólo orquestan. Los
+  tests que parcheaban `tasks.fetch_tasks.DataNormalizer` apuntan ahora a
+  `tasks.harvest_persist.DataNormalizer`. Radon: ningún grado E/F en código vivo;
+  los que quedan son las herramientas de corte de la Fase E (cota, A19-13).
+- **Los títulos de la pantalla principal se traducen EN EL FONDO** (A19-15 §D):
+  `warm.py`, tras calentar el feed de cada usuario, traduce ≤ 100 títulos por
+  pasada que aún no estén en Redis (`TRANSLATION_WARMUP_*`); `/match` con
+  `translate=false` los lee con un MGET y NUNCA llama al LLM (la prueba instala
+  un Groq que lanza). Sin `GROQ_API_KEY` o sin Redis no se paga nada.
+
 ## Restricciones del proyecto
 
 - **NO scraping PÚBLICO** de: jobs.ch, jobup.ch, Indeed, LinkedIn, Glassdoor, XING. `providers/restricted.py` permite integrarlos SOLO por ruta autorizada (credencial partner / feed oficial); arrancan deshabilitados (sin credencial → 0 peticiones, nunca scraping)
@@ -334,7 +347,8 @@ Estos principios tienen prioridad sobre velocidad, brevedad o DRY.
 # Arrancar entorno completo
 docker compose up -d
 
-# Tests backend (~6 min — medido el 2026-09-24)
+# Tests backend (2.644 passed · 4 xfailed, ~12 min — medido el 2026-09-28; ~18 min si la
+# suite del núcleo corre a la vez)
 # OJO: NO lances dos pytest a la vez CONTRA LA MISMA BASE — el teardown hace
 # TRUNCATE ... CASCADE de swissjobhunter_test y las dos corridas se vacían las
 # tablas entre sí (deadlocks + falsos rojos). La suite del core usa otra base

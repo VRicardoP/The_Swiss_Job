@@ -30,7 +30,7 @@ async def test_calienta_cada_usuario_enrolado():
     ):
         resumen = await warm.calentar_una_vez()
 
-    assert resumen == {"usuarios": 2, "calentados": 2, "fallos": 0}
+    assert resumen == {"usuarios": 2, "calentados": 2, "fallos": 0, "traducidos": 0}
     assert backend.warm_feed.await_count == 2
     # NO se construyen vistas: sólo se calienta el recorrido
     backend.results.assert_not_called()
@@ -48,7 +48,7 @@ async def test_un_usuario_que_falla_no_arrastra_a_los_demas():
     ):
         resumen = await warm.calentar_una_vez()
 
-    assert resumen == {"usuarios": 3, "calentados": 2, "fallos": 1}
+    assert resumen == {"usuarios": 3, "calentados": 2, "fallos": 1, "traducidos": 0}
 
 
 @pytest.mark.asyncio
@@ -64,7 +64,7 @@ async def test_backend_local_no_tiene_recorrido_que_calentar():
     ):
         resumen = await warm.calentar_una_vez()
 
-    assert resumen == {"usuarios": 1, "calentados": 0, "fallos": 0}
+    assert resumen == {"usuarios": 1, "calentados": 0, "fallos": 0, "traducidos": 0}
 
 
 @pytest.mark.asyncio

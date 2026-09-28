@@ -166,6 +166,149 @@ def _content_hash(values: dict) -> str:
     return hashlib.md5(raw.encode()).hexdigest()
 
 
+def _sanitize_tags(values: dict) -> None:
+    # tags en la frontera (r2/H3): la columna es JSONB y el CASE del
+    # ON CONFLICT aplica jsonb_array_length sobre el entrante — un None
+    # (serializado como `null` JSONB) o cualquier no-lista abortaba el
+    # savepoint en PostgreSQL y la oferta NO se persistía. None significa
+    # "sin tags" y se normaliza a [] (en altas guarda lista válida; en
+    # re-vistas el CASE de abajo decide igual que con [] explícito). Un
+    # no-lista (una cadena, un dict) es un bug del productor, no un dato
+    # degradado: coaccionarlo a [] podría machacar tags buenas con
+    # description real, así que se rechaza ANTES de tocar la BD. Ningún
+    # productor actual emite None ni no-listas (comprobado): esto es una
+    # aserción de frontera, no puede crear falsos positivos (G2).
+    if "tags" in values:
+        if values["tags"] is None:
+            values["tags"] = []
+        elif not isinstance(values["tags"], list):
+            raise ValueError(
+                f"tags debe ser una lista, no {type(values['tags']).__name__}"
+            )
+    # Solo-espacios en la frontera (r3/H1): para NULLIF(valor, '') un
+    # "   " o un "\t" son datos REALES — pisaban la description/snippet/
+    # location buenas — y además hacían falsa la señal de degradación que
+    # protege tags (coalesce(excluded.description,'') == ''), con lo que
+    # una re-vista degradada destruía los cinco valores útiles e
+    # invalidaba el embedding. Normalizar a "" ANTES de construir el
+    # INSERT hace que la cascada de protecciones existente los vea como
+    # vacíos. Los strings NO vacíos no se recortan: cambiar el contenido
+    # real cambiaría content_hash y el texto del embedding (G4/G5).
+
+
+def _blank_only_whitespace(values: dict) -> None:
+    for field in _BLANKABLE_TEXT_FIELDS:
+        value = values.get(field)
+        if isinstance(value, str) and not value.strip():
+            values[field] = ""
+
+
+def _reject_oversized_url(values: dict) -> None:
+    # url en la frontera (r3/R11): varios scrapers construyen la URL con
+    # datos del portal sin acotar y un desborde de String(2048) abortaba
+    # el savepoint con un error del driver. Mismo patrón y justificación
+    # que el rechazo del tags no-lista: degradar ESTA oferta con un
+    # mensaje claro, aquí, donde vive la columna. Truncar no es opción:
+    # la URL es identidad (hash + ix_jobs_url). La cota local de
+    # financejobs se conserva (allí evita además perseguir una URL
+    # absurda); esta es la red central para el resto de fuentes.
+    # Residual conocido (r4/R3-6): una oferta con URL desbordada nunca se
+    # persiste, así que no entra en el cursor (correcto por VD.2) y se
+    # re-intenta y rechaza en CADA run — ruido de log permanente hasta
+    # que la fuente deje de emitirla. Asumido: preferible a truncar la
+    # identidad o a meter en el cursor URLs no persistidas.
+    url = values.get("url")
+    if isinstance(url, str) and len(url) > _URL_MAX_LEN:
+        raise ValueError(f"url excede String({_URL_MAX_LEN}): {len(url)} caracteres")
+
+
+def _degrade_decorative_urls(values: dict) -> None:
+    # logo comparte el String(2048) pero es decorativo: un logo
+    # kilométrico no debe costar la oferta entera — se degrada SOLO el
+    # campo. `pop` y no `= None` (r6/H4, G5): el None asignado ENTRABA en
+    # el ON CONFLICT y pisaba el logo bueno ya almacenado — degradar el
+    # dato inválido no puede destruir el válido. Omitido del INSERT, en
+    # un alta la columna queda en su default (NULL) y en una re-vista el
+    # SET no la toca. Con rastro (r4/R3-5): misma disciplina que el resto
+    # de degradaciones del fichero.
+    # r7/H5 (G5): el None/""/tipo inválido EXPLÍCITO del productor tampoco
+    # pisa el almacenado. Los productores construyen el valor con
+    # `.get("logo")`, así que NO pueden distinguir "el portal retiró el
+    # logo" de "este fetch no lo trajo": tratar None como borrado
+    # autoritativo es interpretar como intención lo que es ausencia de
+    # dato. Si algún día hace falta un borrado autoritativo, el DTO tendrá
+    # que distinguir "campo omitido" de "borrado explícito" (p. ej. un
+    # sentinel dedicado) — deliberadamente NO implementado. SOLO logo:
+    # False, 0 y algunos None sí son datos legítimos en otras columnas
+    # (canton entrante None con location real, p. ej.) — nada de coalesce
+    # genérico.
+    # apply_url (R.6): misma disciplina que logo — decorativa para el
+    # legacy (la consume el CORE como señal de dedup); NUL o desborde
+    # degradan SOLO el campo, jamás la oferta. pop y no None: un None
+    # entraría al ON CONFLICT y pisaría el valor bueno almacenado.
+    if "apply_url" in values:
+        aurl = values["apply_url"]
+        if isinstance(aurl, str):
+            aurl = aurl.strip()  # C4: sin padding almacenado ni medido
+            values["apply_url"] = aurl
+        if not isinstance(aurl, str) or not aurl:
+            values.pop("apply_url")
+        elif "\x00" in aurl or len(aurl) > _APPLY_URL_MAX_LEN:
+            logger.info(
+                "apply_url invalido (NUL o >%d): campo descartado (url=%s)",
+                _APPLY_URL_MAX_LEN,
+                values.get("url"),
+            )
+            values.pop("apply_url")
+    if "logo" in values:
+        logo = values["logo"]
+        if isinstance(logo, str) and "\x00" in logo:
+            # Un byte NUL revienta el INSERT entero en Postgres
+            # (CharacterNotInRepertoireError) y costaba la OFERTA: en un
+            # alta se pierde y en una re-vista no refresca last_seen_at
+            # (a 60 días, cleanup_stale_jobs la borra). El logo es
+            # decorativo: se degrada SOLO el campo, con rastro — misma
+            # disciplina que el logo desbordado de abajo.
+            logger.info(
+                "logo con byte NUL: campo descartado (url=%s)",
+                values.get("url"),
+            )
+            values.pop("logo")
+        elif isinstance(logo, str) and len(logo) > _LOGO_MAX_LEN:
+            logger.info(
+                "logo excede String(%d) (%d caracteres): campo descartado (url=%s)",
+                _LOGO_MAX_LEN,
+                len(logo),
+                values.get("url"),
+            )
+            values.pop("logo")
+        elif not (isinstance(logo, str) and logo.strip()):
+            # Ausencia de dato (None, "" o solo espacios): se omite del
+            # INSERT sin log — es el estado normal de la mayoría de fetches.
+            # Un logo no-string (dict, int…) NO es ausencia sino un bug del
+            # productor (antes abortaba el savepoint con DBAPIError): se
+            # descarta igual pero con rastro (r4/R3-5), misma disciplina
+            # que el logo desbordado de arriba.
+            if logo is not None and not isinstance(logo, str):
+                logger.info(
+                    "logo no-string (%s): campo descartado (url=%s)",
+                    type(logo).__name__,
+                    values.get("url"),
+                )
+            values.pop("logo")
+
+
+def _sanitize_incoming(values: dict) -> dict:
+    """Sanea EN LA FRONTERA los valores que van al INSERT (T16, extraído de
+    `upsert_job` sin cambiar su lógica). Cada paso conserva el comentario del
+    incidente que lo motivó. Devuelve el mismo dict, mutado."""
+    _sanitize_tags(values)
+    _blank_only_whitespace(values)
+    _reject_oversized_url(values)
+    _degrade_decorative_urls(values)
+    return values
+
+
 class JobRepository:
     """Encapsulates all DB operations for jobs."""
 
@@ -185,128 +328,7 @@ class JobRepository:
         # Filtrar a columnas que existen en el modelo Job.
         valid_columns = {c.key for c in Job.__table__.columns}
         values = {k: v for k, v in job_dict.items() if k in valid_columns}
-        # tags en la frontera (r2/H3): la columna es JSONB y el CASE del
-        # ON CONFLICT aplica jsonb_array_length sobre el entrante — un None
-        # (serializado como `null` JSONB) o cualquier no-lista abortaba el
-        # savepoint en PostgreSQL y la oferta NO se persistía. None significa
-        # "sin tags" y se normaliza a [] (en altas guarda lista válida; en
-        # re-vistas el CASE de abajo decide igual que con [] explícito). Un
-        # no-lista (una cadena, un dict) es un bug del productor, no un dato
-        # degradado: coaccionarlo a [] podría machacar tags buenas con
-        # description real, así que se rechaza ANTES de tocar la BD. Ningún
-        # productor actual emite None ni no-listas (comprobado): esto es una
-        # aserción de frontera, no puede crear falsos positivos (G2).
-        if "tags" in values:
-            if values["tags"] is None:
-                values["tags"] = []
-            elif not isinstance(values["tags"], list):
-                raise ValueError(
-                    f"tags debe ser una lista, no {type(values['tags']).__name__}"
-                )
-        # Solo-espacios en la frontera (r3/H1): para NULLIF(valor, '') un
-        # "   " o un "\t" son datos REALES — pisaban la description/snippet/
-        # location buenas — y además hacían falsa la señal de degradación que
-        # protege tags (coalesce(excluded.description,'') == ''), con lo que
-        # una re-vista degradada destruía los cinco valores útiles e
-        # invalidaba el embedding. Normalizar a "" ANTES de construir el
-        # INSERT hace que la cascada de protecciones existente los vea como
-        # vacíos. Los strings NO vacíos no se recortan: cambiar el contenido
-        # real cambiaría content_hash y el texto del embedding (G4/G5).
-        for field in _BLANKABLE_TEXT_FIELDS:
-            value = values.get(field)
-            if isinstance(value, str) and not value.strip():
-                values[field] = ""
-        # url en la frontera (r3/R11): varios scrapers construyen la URL con
-        # datos del portal sin acotar y un desborde de String(2048) abortaba
-        # el savepoint con un error del driver. Mismo patrón y justificación
-        # que el rechazo del tags no-lista: degradar ESTA oferta con un
-        # mensaje claro, aquí, donde vive la columna. Truncar no es opción:
-        # la URL es identidad (hash + ix_jobs_url). La cota local de
-        # financejobs se conserva (allí evita además perseguir una URL
-        # absurda); esta es la red central para el resto de fuentes.
-        # Residual conocido (r4/R3-6): una oferta con URL desbordada nunca se
-        # persiste, así que no entra en el cursor (correcto por VD.2) y se
-        # re-intenta y rechaza en CADA run — ruido de log permanente hasta
-        # que la fuente deje de emitirla. Asumido: preferible a truncar la
-        # identidad o a meter en el cursor URLs no persistidas.
-        url = values.get("url")
-        if isinstance(url, str) and len(url) > _URL_MAX_LEN:
-            raise ValueError(
-                f"url excede String({_URL_MAX_LEN}): {len(url)} caracteres"
-            )
-        # logo comparte el String(2048) pero es decorativo: un logo
-        # kilométrico no debe costar la oferta entera — se degrada SOLO el
-        # campo. `pop` y no `= None` (r6/H4, G5): el None asignado ENTRABA en
-        # el ON CONFLICT y pisaba el logo bueno ya almacenado — degradar el
-        # dato inválido no puede destruir el válido. Omitido del INSERT, en
-        # un alta la columna queda en su default (NULL) y en una re-vista el
-        # SET no la toca. Con rastro (r4/R3-5): misma disciplina que el resto
-        # de degradaciones del fichero.
-        # r7/H5 (G5): el None/""/tipo inválido EXPLÍCITO del productor tampoco
-        # pisa el almacenado. Los productores construyen el valor con
-        # `.get("logo")`, así que NO pueden distinguir "el portal retiró el
-        # logo" de "este fetch no lo trajo": tratar None como borrado
-        # autoritativo es interpretar como intención lo que es ausencia de
-        # dato. Si algún día hace falta un borrado autoritativo, el DTO tendrá
-        # que distinguir "campo omitido" de "borrado explícito" (p. ej. un
-        # sentinel dedicado) — deliberadamente NO implementado. SOLO logo:
-        # False, 0 y algunos None sí son datos legítimos en otras columnas
-        # (canton entrante None con location real, p. ej.) — nada de coalesce
-        # genérico.
-        # apply_url (R.6): misma disciplina que logo — decorativa para el
-        # legacy (la consume el CORE como señal de dedup); NUL o desborde
-        # degradan SOLO el campo, jamás la oferta. pop y no None: un None
-        # entraría al ON CONFLICT y pisaría el valor bueno almacenado.
-        if "apply_url" in values:
-            aurl = values["apply_url"]
-            if isinstance(aurl, str):
-                aurl = aurl.strip()  # C4: sin padding almacenado ni medido
-                values["apply_url"] = aurl
-            if not isinstance(aurl, str) or not aurl:
-                values.pop("apply_url")
-            elif "\x00" in aurl or len(aurl) > _APPLY_URL_MAX_LEN:
-                logger.info(
-                    "apply_url invalido (NUL o >%d): campo descartado (url=%s)",
-                    _APPLY_URL_MAX_LEN,
-                    values.get("url"),
-                )
-                values.pop("apply_url")
-        if "logo" in values:
-            logo = values["logo"]
-            if isinstance(logo, str) and "\x00" in logo:
-                # Un byte NUL revienta el INSERT entero en Postgres
-                # (CharacterNotInRepertoireError) y costaba la OFERTA: en un
-                # alta se pierde y en una re-vista no refresca last_seen_at
-                # (a 60 días, cleanup_stale_jobs la borra). El logo es
-                # decorativo: se degrada SOLO el campo, con rastro — misma
-                # disciplina que el logo desbordado de abajo.
-                logger.info(
-                    "logo con byte NUL: campo descartado (url=%s)",
-                    values.get("url"),
-                )
-                values.pop("logo")
-            elif isinstance(logo, str) and len(logo) > _LOGO_MAX_LEN:
-                logger.info(
-                    "logo excede String(%d) (%d caracteres): campo descartado (url=%s)",
-                    _LOGO_MAX_LEN,
-                    len(logo),
-                    values.get("url"),
-                )
-                values.pop("logo")
-            elif not (isinstance(logo, str) and logo.strip()):
-                # Ausencia de dato (None, "" o solo espacios): se omite del
-                # INSERT sin log — es el estado normal de la mayoría de fetches.
-                # Un logo no-string (dict, int…) NO es ausencia sino un bug del
-                # productor (antes abortaba el savepoint con DBAPIError): se
-                # descarta igual pero con rastro (r4/R3-5), misma disciplina
-                # que el logo desbordado de arriba.
-                if logo is not None and not isinstance(logo, str):
-                    logger.info(
-                        "logo no-string (%s): campo descartado (url=%s)",
-                        type(logo).__name__,
-                        values.get("url"),
-                    )
-                values.pop("logo")
+        values = _sanitize_incoming(values)
         values["content_hash"] = _content_hash(values)
 
         # Determinar si es nueva antes del upsert (para el valor de retorno).

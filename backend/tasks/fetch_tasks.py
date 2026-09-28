@@ -13,11 +13,14 @@ from database import task_session
 from models.source_health import OUTCOME_EMPTY, OUTCOME_ERROR
 from providers import get_all_providers
 from services import harvest_window, source_health
-from services.data_normalizer import DataNormalizer
-from services.deduplicator import Deduplicator
-from services.job_repository import JobIdentityConflictError, JobRepository
+from tasks.harvest_persist import (
+    identity_drift_notes,
+    persist_batch,
+    record_lost_batch,
+)
+from services.job_repository import JobRepository
 from utils import fetch_diagnostics as diag
-from utils.fetch_diagnostics import KIND_NETWORK, FetchIssue, mark_chronic
+from utils.fetch_diagnostics import KIND_NETWORK, FetchIssue
 
 logger = logging.getLogger(__name__)
 
@@ -324,7 +327,7 @@ async def _fetch_providers_async() -> dict[str, Any]:
 
             # VD.3 — ofertas que completan su savepoint sin excepción: es la
             # señal de PERSISTENCIA para source_health.
-            stored_count = 0
+            stored_count = 0  # hasta que el lote se persista
             # `attempted_count` para la señal de persistencia = ofertas que se
             # INTENTARON guardar: las descartadas por el filtro tech o por la
             # ventana nunca entran en el camino del savepoint y contarlas
@@ -391,107 +394,11 @@ async def _fetch_providers_async() -> dict[str, Any]:
                 # L2 — el bucle arranca: a partir de aquí 0 intentos significa
                 # "todo descartado deliberadamente", no "fallo pre-bucle".
                 attempted_count = 0
-                identity_conflicts = 0
-                identity_clones = 0
-                for job, verdict in zip(batch, precheck.verdicts):
-                    if verdict != harvest_window.ACCEPT:
-                        continue
-
-                    attempted_count += 1
-                    try:
-                        async with db.begin_nested():
-                            job = DataNormalizer.normalize(job)
-
-                            job["fuzzy_hash"] = Deduplicator.compute_fuzzy_hash(
-                                job["title"], job["company"]
-                            )
-
-                            is_new = await repo.upsert_job(job)
-
-                            if is_new:
-                                canonical = await Deduplicator.find_fuzzy_duplicate(
-                                    db, job["fuzzy_hash"], job["source"]
-                                )
-                                if canonical:
-                                    await repo.mark_duplicate(job["hash"], canonical)
-                                    summary["dupes"] += 1
-                                else:
-                                    summary["new"] += 1
-                                    # G5/P1-1 — la rama MUDA de la deriva de
-                                    # identidad: el portal re-listó la vacante
-                                    # con un id NUEVO en la url, así que no hay
-                                    # choque con `ix_jobs_url` y el INSERT tiene
-                                    # ÉXITO. Entra un CLON y la fila histórica
-                                    # deja de refrescar `last_seen_at` para
-                                    # siempre. Solo se ALARMA (nunca se marca
-                                    # `duplicate_of` ni se desactiva): ver
-                                    # `Deduplicator.find_same_source_clone`.
-                                    twin = await Deduplicator.find_same_source_clone(
-                                        db,
-                                        job["fuzzy_hash"],
-                                        job["source"],
-                                        job["hash"],
-                                        run_started_at,
-                                    )
-                                    if twin:
-                                        # G6/P3-3 — la gemela de la MISMA
-                                        # corrida NO es deriva: son dos plazas
-                                        # que el portal listó a la vez (32,5 %
-                                        # de los grupos gemelos). Se registra,
-                                        # pero con el texto que corresponde y
-                                        # sin contarla como incidencia del run.
-                                        twin_hash, twin_historica = twin
-                                        if twin_historica:
-                                            summary["identity_clones"] += 1
-                                            identity_clones += 1
-                                            logger.error(
-                                                "DERIVA DE IDENTIDAD (clon) en "
-                                                "%s: %s entra como ALTA nueva "
-                                                "pero %s ya cubre la misma "
-                                                "vacante (%s) — la histórica "
-                                                "dejará de refrescar "
-                                                "last_seen_at",
-                                                source,
-                                                job["hash"],
-                                                twin_hash,
-                                                job["url"],
-                                            )
-                                        else:
-                                            logger.warning(
-                                                "GEMELA EN LA MISMA CORRIDA en "
-                                                "%s: %s y %s comparten título y "
-                                                "empresa (%s). Pueden ser dos "
-                                                "plazas distintas publicadas a "
-                                                "la vez; no se cuenta como "
-                                                "deriva de identidad",
-                                                source,
-                                                job["hash"],
-                                                twin_hash,
-                                                job["url"],
-                                            )
-                            else:
-                                summary["updated"] += 1
-
-                            summary["fetched"] += 1
-
-                        stored_count += 1
-
-                    except SoftTimeLimitExceeded:
-                        # G3/P2-10 — hereda de Exception: el genérico de abajo
-                        # contaba el aviso (que se emite UNA sola vez) como un
-                        # error más de la oferta y el bucle seguía hasta el
-                        # SIGKILL del límite duro. Sube al bucle de fuentes.
-                        raise
-                    except JobIdentityConflictError as e:
-                        # G4/P1-1 — antes caía en el genérico y se disolvía en
-                        # `errors`. Se cuenta aparte para que la deriva sea
-                        # legible en el summary y en la salud de la fuente.
-                        summary["identity_conflicts"] += 1
-                        identity_conflicts += 1
-                        logger.error("%s", e)
-                    except Exception as e:
-                        summary["errors"] += 1
-                        logger.error("Error processing job from %s: %s", source, e)
+                lote = await persist_batch(
+                    db, repo, source, run_started_at, summary, batch, precheck.verdicts
+                )
+                attempted_count = lote.attempted
+                stored_count = lote.stored
 
                 # V.2 rev. J1 — la ventana descarta datos en CUALQUIER run:
                 # rastro por fuente + guardarraíles de fechas (ERROR total /
@@ -522,39 +429,27 @@ async def _fetch_providers_async() -> dict[str, Any]:
                 # G4/P1-1 — la deriva de identidad sube a INCIDENCIA de run:
                 # sin esto la fuente salía `ok` (las URLs nuevas sí entran) y
                 # nadie se enteraba de que las re-listadas se estaban cayendo.
-                if identity_conflicts:
-                    # G8/P2-2: crónica, por la MISMA razón y con la MISMA
-                    # remediación pendiente que `identity_clones` — es la otra
-                    # mitad del mismo fenómeno. Dispara en 11 de los 13 días
-                    # con cosecha del journal (2-9 colisiones/día), así que sin
-                    # marcar volvía a hacer WARNING el ~85 % de las corridas.
-                    # Se publica igual —el operador la sigue viendo, y aquí SÍ
-                    # hay pérdida: la oferta se descarta—; el nivel del run lo
-                    # decide la TASA, en `fetch_diagnostics`.
-                    summary["unhealthy"].append(
-                        mark_chronic(
-                            f"{source}: DERIVA DE IDENTIDAD — {identity_conflicts} "
-                            "ofertas re-listadas descartadas por choque con "
-                            "ix_jobs_url (corpus histórico sin migrar)"
-                        )
-                    )
-                if identity_clones:
-                    # G7/P2-4: crónica. Dispara en 14 de 14 días (2,0-19,2 % de
-                    # las altas) porque la remediación —los dos scripts de
-                    # canonización y la migración `b3c7d1a95e42`— sigue
-                    # pendiente. Se publica igual; no sube el nivel del run.
-                    summary["unhealthy"].append(
-                        mark_chronic(
-                            f"{source}: DERIVA DE IDENTIDAD — {identity_clones} "
-                            "ofertas re-listadas con id NUEVO entraron como CLON "
-                            "(sin choque de url; la fila histórica ya no refresca "
-                            "last_seen_at)"
-                        )
-                    )
-
+                # G8/P2-2: crónica, por la MISMA razón y con la MISMA
+                # remediación pendiente que `identity_clones` — es la otra
+                # mitad del mismo fenómeno. Dispara en 11 de los 13 días
+                # con cosecha del journal (2-9 colisiones/día), así que sin
+                # marcar volvía a hacer WARNING el ~85 % de las corridas.
+                # Se publica igual —el operador la sigue viendo, y aquí SÍ
+                # hay pérdida: la oferta se descarta—; el nivel del run lo
+                # decide la TASA, en `fetch_diagnostics`.
+                # G7/P2-4: crónica. Dispara en 14 de 14 días (2,0-19,2 % de
+                # las altas) porque la remediación —los dos scripts de
+                # canonización y la migración `b3c7d1a95e42`— sigue
+                # pendiente. Se publica igual; no sube el nivel del run.
                 # VD.3 — señal de persistencia, DESPUÉS del commit del lote a
                 # propósito: `record_storage` usa su propia transacción acotada
                 # y no arrastra el lote del provider.
+                summary["unhealthy"].extend(
+                    identity_drift_notes(
+                        source, lote.identity_conflicts, lote.identity_clones
+                    )
+                )
+
                 motivo = await source_health.record_storage(
                     db, source, attempted_count, stored_count
                 )
@@ -599,20 +494,7 @@ async def _fetch_providers_async() -> dict[str, Any]:
                 # lote descargado (post-filtro tech) es el valor honesto.
                 if attempted_count is None:
                     attempted_count = len(batch) if batch is not None else len(jobs)
-                try:
-                    motivo = await source_health.record_storage(
-                        db, source, attempted_count, 0
-                    )
-                except Exception as health_err:  # noqa: BLE001 — no empeorar el error
-                    motivo = None
-                    logger.error(
-                        "No se pudo registrar la persistencia de %s en el "
-                        "camino de error: %s",
-                        source,
-                        health_err,
-                    )
-                if motivo:
-                    summary["unhealthy"].append(f"{source}: {motivo}")
+                await record_lost_batch(db, source, attempted_count, summary)
 
     diag.log_run_summary(logger, "Fetch complete", summary)
     return summary

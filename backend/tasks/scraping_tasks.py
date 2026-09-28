@@ -43,6 +43,7 @@ afectadas:
 
 import asyncio
 import logging
+import math
 from datetime import UTC, datetime
 from typing import Any
 
@@ -56,11 +57,14 @@ from scrapers import get_all_scrapers
 from services import harvest_window, source_health
 from services.crawler_budget import CrawlerBudgetService
 from services.cursor_store import CursorStore
-from services.data_normalizer import DataNormalizer
-from services.deduplicator import Deduplicator
-from services.job_repository import JobIdentityConflictError, JobRepository
+from tasks.harvest_persist import (
+    BatchResult,
+    identity_drift_notes,
+    persist_batch,
+    record_lost_batch,
+)
+from services.job_repository import JobRepository
 from utils import fetch_diagnostics as diag
-from utils.fetch_diagnostics import mark_chronic
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +113,126 @@ def fetch_scrapers(self) -> dict[str, Any]:
         raise self.retry(exc=exc, countdown=600)
 
 
+async def _prepare_cursor(db, store, scraper, source, budget_on, base_interval_hours):
+    """Carga el cursor incremental e inyecta las identidades conocidas; decide
+    si el presupuesto manda saltar la fuente. Devuelve `(cursor, saltar)`."""
+    cursor = None
+    if store is not None:
+        cursor = await store.load(db, source)
+        # B-4 — con el bootstrap PENDIENTE no se inyecta el
+        # cursor: el re-bootstrap tras un run "con hambre" debe
+        # poder bajar POR DEBAJO del primer contenido ya visto.
+        # Con las identidades inyectadas, el early-stop cortaría
+        # en la página 1 (lo más nuevo ya es conocido, la cosecha
+        # es newest-first) y lo hundido bajo el horizonte del
+        # presupuesto no se recuperaría jamás. En el bootstrap
+        # genuino la ventana está vacía y no cambia nada.
+        if cursor.bootstrap_complete:
+            scraper._known_urls = store.known_identities(cursor)
+
+    if budget_on and cursor is not None:
+        # Backoff: fuente sin novedades N runs seguidos → saltar el
+        # run hasta cumplir el intervalo ampliado (0 peticiones).
+        # Registrado a propósito, sin arreglo: una fuente WINDOW
+        # dominada por ofertas viejas acumula runs sin novedades y
+        # el backoff la espacia hasta 4x (96 h con cosecha diaria)
+        # — es latencia, no pérdida, muy por debajo de los 60 días
+        # del cleanup.
+        if not CrawlerBudgetService.should_run(
+            cursor,
+            base_interval_hours,
+            exempt_from_backoff=getattr(scraper, "WATCHLIST_SOURCE", False),
+        ):
+            logger.info(
+                "%s saltado por presupuesto: %d runs sin novedades",
+                source,
+                cursor.consecutive_empty_runs,
+            )
+            return cursor, True
+        # Tope de páginas del run según las novedades medias.
+        scraper._max_pages_this_run = CrawlerBudgetService.max_pages_this_run(
+            cursor, scraper.PAGE_SIZE, scraper.MAX_PAGES
+        )
+
+    return cursor, False
+
+
+def _learn_cursor_after_run(
+    store, cursor, scraper, downloaded: int, lote: BatchResult, *, new_count: int
+) -> None:
+    """Lo que el cursor aprende de un run que NO falló (ver el `if` del llamante)."""
+    # `pages_read` mide esfuerzo de CRAWL (lo descargado), no
+    # persistencia: sigue calculándose sobre `jobs`.
+    pages_read = max(1, math.ceil(downloaded / max(scraper.PAGE_SIZE, 1)))
+    store.update_after_run(
+        cursor,
+        # K3: lo persistido + lo descartado por fecha (destino
+        # resuelto): ninguna de las dos hace falta re-bajarla.
+        [*lote.stored_identities, *lote.stale_identities],
+        # G1/P3-17: los duplicados fuzzy SON actividad de la
+        # fuente (se ingirieron; solo se marcaron cross-source):
+        # excluirlos hacía que un agregador sindicado acumulara
+        # consecutive_empty_runs y entrara en backoff siendo
+        # productivo. Mismo criterio que log_window_summary.
+        new_count=new_count,
+        pages_read=pages_read,
+    )
+    # B-4 — lazo de autolimitación del presupuesto: `avg_new`
+    # es una EMA de `new_count`, y `new_count` nunca puede
+    # superar `presupuesto × page_size` — la EMA no puede
+    # aprender una demanda mayor que el techo que ella misma
+    # fija. Si el run AGOTÓ su presupuesto SIN early-stop
+    # (`_stop_reason is None`), terminó "con hambre": puede
+    # quedar contenido nuevo hundido bajo el horizonte y la
+    # EMA no es fiable — se re-abre el bootstrap para que el
+    # próximo run reciba la ventana completa (sin cursor
+    # inyectado, ver arriba) y re-sincronice midiendo la
+    # novedad REAL. Con `budget == MAX_PAGES` no hay nada más
+    # que pedir (cubre también fuentes de página única), y en
+    # una fuente tranquila el early-stop fija `_stop_reason`:
+    # en esos casos no se activa nunca.
+    budget_pages = scraper._max_pages_this_run
+    if (
+        scraper._stop_reason is None
+        and budget_pages is not None
+        and budget_pages < scraper.MAX_PAGES
+        and pages_read >= budget_pages
+    ):
+        cursor.bootstrap_complete = False
+
+
+async def _record_failed_download(db, source, error, summary) -> None:
+    """VD.10/H5 — si `fetch_jobs` LANZÓ, el flujo normal nunca llegó a
+    `record_and_alert` y el run no dejaba NINGUNA señal de descarga: un scraper
+    petando en cada run era invisible para source_health. Se sintetiza el
+    OUTCOME_ERROR igual que hace `_fetch_one` en fetch_tasks. Aislado: si la BD
+    está caída el propio registro puede lanzar y mataría el bucle."""
+    summary["fetch_failed"] += 1
+    try:
+        motivo = await source_health.record_and_alert(
+            db,
+            source,
+            OUTCOME_ERROR,
+            0,
+            [
+                diag.FetchIssue(
+                    diag.KIND_NETWORK,
+                    url="",
+                    detail=f"{type(error).__name__}: {error}",
+                )
+            ],
+        )
+    except Exception as health_err:  # noqa: BLE001 — no empeorar
+        motivo = None
+        logger.error(
+            "No se pudo registrar la salud de %s en el camino de error: %s",
+            source,
+            health_err,
+        )
+    if motivo:
+        summary["unhealthy"].append(f"{source}: {motivo}")
+
+
 async def _fetch_scrapers_async() -> dict[str, Any]:
     """Async implementation — sequential scraper execution.
 
@@ -123,7 +247,6 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
     # re-ejecución manual dentro de esa hora degradaba clones REALES a
     # «misma corrida» sin contarlos.
     run_started_at = datetime.now(UTC)
-    import math
 
     scrapers = get_all_scrapers()
     store = CursorStore() if settings.CURSOR_INCREMENTAL_ENABLED else None
@@ -212,45 +335,12 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 if not await school_producer.prepare(scraper):
                     summary["skipped"] += 1
                     continue
-                if store is not None:
-                    cursor = await store.load(db, source)
-                    # B-4 — con el bootstrap PENDIENTE no se inyecta el
-                    # cursor: el re-bootstrap tras un run "con hambre" debe
-                    # poder bajar POR DEBAJO del primer contenido ya visto.
-                    # Con las identidades inyectadas, el early-stop cortaría
-                    # en la página 1 (lo más nuevo ya es conocido, la cosecha
-                    # es newest-first) y lo hundido bajo el horizonte del
-                    # presupuesto no se recuperaría jamás. En el bootstrap
-                    # genuino la ventana está vacía y no cambia nada.
-                    if cursor.bootstrap_complete:
-                        scraper._known_urls = store.known_identities(cursor)
-
-                if budget_on and cursor is not None:
-                    # Backoff: fuente sin novedades N runs seguidos → saltar el
-                    # run hasta cumplir el intervalo ampliado (0 peticiones).
-                    # Registrado a propósito, sin arreglo: una fuente WINDOW
-                    # dominada por ofertas viejas acumula runs sin novedades y
-                    # el backoff la espacia hasta 4x (96 h con cosecha diaria)
-                    # — es latencia, no pérdida, muy por debajo de los 60 días
-                    # del cleanup.
-                    if not CrawlerBudgetService.should_run(
-                        cursor,
-                        base_interval_hours,
-                        exempt_from_backoff=getattr(scraper, "WATCHLIST_SOURCE", False),
-                    ):
-                        summary["skipped"] += 1
-                        logger.info(
-                            "%s saltado por presupuesto: %d runs sin novedades",
-                            source,
-                            cursor.consecutive_empty_runs,
-                        )
-                        continue
-                    # Tope de páginas del run según las novedades medias.
-                    scraper._max_pages_this_run = (
-                        CrawlerBudgetService.max_pages_this_run(
-                            cursor, scraper.PAGE_SIZE, scraper.MAX_PAGES
-                        )
-                    )
+                cursor, saltar = await _prepare_cursor(
+                    db, store, scraper, source, budget_on, base_interval_hours
+                )
+                if saltar:
+                    summary["skipped"] += 1
+                    continue
 
                 diag.begin()
                 await source_health.record_attempt(db, source)
@@ -296,143 +386,25 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 new_before = summary["new"]
                 updated_before = summary["updated"]
                 dupes_before = summary["dupes"]
-                # VD.2 — el cursor solo aprende identidades REALMENTE
-                # persistidas: si aprendiera todo lo descargado, un fallo de
-                # guardado lo envenenaría para siempre (el early-stop daría
-                # esas URLs por conocidas y la fuente quedaría muda).
-                stored_identities: list[str] = []
-                stored_school_hashes: set[str] = set()
-                # K3 — EXCEPCIÓN acotada y deliberada a VD.2: las descartadas
-                # por FECHA fuera de ventana SÍ entran en el cursor (destino
-                # resuelto por política, determinista y monótono — ver
-                # docstring del módulo). Los fallos de persistencia y las
-                # SKIP_NO_DATE siguen SIN entrar.
-                window_stale_identities: list[str] = []
-                # VD.3 — ofertas que completan su savepoint sin excepción:
-                # es la señal de PERSISTENCIA para source_health.
-                stored_count = 0
-
                 # L2 — el bucle arranca: a partir de aquí 0 intentos
                 # significa "todo descartado deliberadamente", no "fallo
-                # pre-bucle".
+                # pre-bucle". VD.2/K3/VD.3 viven en `persist_batch`.
                 attempted_count = 0
-                identity_conflicts = 0
-                identity_clones = 0
-                for job, verdict in zip(jobs, precheck.verdicts):
-                    if verdict == harvest_window.SKIP_STALE:
-                        window_stale_identities.append(scraper.job_identity(job))
-                        continue
-                    if verdict != harvest_window.ACCEPT:
-                        continue
-
-                    attempted_count += 1
-                    # Identidad sobre el job CRUDO: `normalize` reasigna `job`
-                    # dentro del savepoint y la perdería.
-                    identity = scraper.job_identity(job)
-                    try:
-                        async with db.begin_nested():
-                            job = DataNormalizer.normalize(job)
-                            job["fuzzy_hash"] = Deduplicator.compute_fuzzy_hash(
-                                job["title"], job["company"]
-                            )
-                            is_new = await repo.upsert_job(job)
-
-                            if is_new:
-                                canonical = await Deduplicator.find_fuzzy_duplicate(
-                                    db, job["fuzzy_hash"], job["source"]
-                                )
-                                if canonical:
-                                    await repo.mark_duplicate(job["hash"], canonical)
-                                    summary["dupes"] += 1
-                                else:
-                                    summary["new"] += 1
-                                    # G5/P1-1 — la rama MUDA de la deriva de
-                                    # identidad: el portal re-listó la vacante
-                                    # con un id NUEVO en la url, así que no hay
-                                    # choque con `ix_jobs_url` y el INSERT tiene
-                                    # ÉXITO. Entra un CLON y la fila histórica
-                                    # deja de refrescar `last_seen_at` para
-                                    # siempre. Solo se ALARMA (nunca se marca
-                                    # `duplicate_of` ni se desactiva): ver
-                                    # `Deduplicator.find_same_source_clone`.
-                                    twin = await Deduplicator.find_same_source_clone(
-                                        db,
-                                        job["fuzzy_hash"],
-                                        job["source"],
-                                        job["hash"],
-                                        run_started_at,
-                                    )
-                                    if twin:
-                                        # G6/P3-3 — la gemela de la MISMA
-                                        # corrida NO es deriva: son dos plazas
-                                        # que el portal listó a la vez (32,5 %
-                                        # de los grupos gemelos). Se registra,
-                                        # pero con el texto que corresponde y
-                                        # sin contarla como incidencia del run.
-                                        twin_hash, twin_historica = twin
-                                        if twin_historica:
-                                            summary["identity_clones"] += 1
-                                            identity_clones += 1
-                                            logger.error(
-                                                "DERIVA DE IDENTIDAD (clon) en "
-                                                "%s: %s entra como ALTA nueva "
-                                                "pero %s ya cubre la misma "
-                                                "vacante (%s) — la histórica "
-                                                "dejará de refrescar "
-                                                "last_seen_at",
-                                                source,
-                                                job["hash"],
-                                                twin_hash,
-                                                job["url"],
-                                            )
-                                        else:
-                                            logger.warning(
-                                                "GEMELA EN LA MISMA CORRIDA en "
-                                                "%s: %s y %s comparten título y "
-                                                "empresa (%s). Pueden ser dos "
-                                                "plazas distintas publicadas a "
-                                                "la vez; no se cuenta como "
-                                                "deriva de identidad",
-                                                source,
-                                                job["hash"],
-                                                twin_hash,
-                                                job["url"],
-                                            )
-                            else:
-                                summary["updated"] += 1
-
-                            summary["fetched"] += 1
-
-                        # El savepoint se completó sin excepción: SOLO ahora la
-                        # identidad puede entrar en el cursor (VD.2).
-                        stored_identities.append(identity)
-                        stored_school_hashes.add(job["hash"])
-                        stored_count += 1
-
-                    except SoftTimeLimitExceeded:
-                        # G3/P2-10 — el aviso de soft time limit se emite UNA
-                        # sola vez y NO es un fallo de esta oferta. Como hereda
-                        # de Exception, el genérico de abajo lo contaba como un
-                        # error más y el bucle seguía hasta que el límite DURO
-                        # mataba el worker por SIGKILL: ese día no había
-                        # embeddings, ni dedup, ni matching, ni digest. Sube al
-                        # bucle de fuentes, que cierra el run como «cosecha
-                        # parcial» (mismo patrón que maintenance_tasks, G1/P2-14).
-                        raise
-                    except JobIdentityConflictError as e:
-                        # G4/P1-1 — ver services/job_repository.py: se cuenta
-                        # aparte de `errors` para que la deriva no se disuelva
-                        # entre los fallos por-oferta.
-                        summary["identity_conflicts"] += 1
-                        identity_conflicts += 1
-                        logger.error("%s", e)
-                    except Exception as e:
-                        summary["errors"] += 1
-                        logger.error(
-                            "Error processing scraped job from %s: %s",
-                            source,
-                            e,
-                        )
+                lote = await persist_batch(
+                    db,
+                    repo,
+                    source,
+                    run_started_at,
+                    summary,
+                    jobs,
+                    precheck.verdicts,
+                    # Acceso PEREZOSO a propósito: sólo se resuelve por oferta
+                    # aceptada, como antes; un doble sin `job_identity` no debe
+                    # fallar antes de intentar persistir.
+                    identity_of=lambda job: scraper.job_identity(job),
+                )
+                attempted_count = lote.attempted
+                stored_count = lote.stored
 
                 # V.2 rev. J1 — la ventana descarta datos en CUALQUIER run:
                 # rastro por fuente + guardarraíles de fechas (ERROR total /
@@ -485,92 +457,46 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                     and outcome != OUTCOME_ERROR
                     and scraper._stop_reason != "error"
                 ):
-                    # `pages_read` mide esfuerzo de CRAWL (lo descargado), no
-                    # persistencia: sigue calculándose sobre `jobs`.
-                    pages_read = max(
-                        1, math.ceil(len(jobs) / max(scraper.PAGE_SIZE, 1))
-                    )
-                    store.update_after_run(
+                    _learn_cursor_after_run(
+                        store,
                         cursor,
-                        # K3: lo persistido + lo descartado por fecha (destino
-                        # resuelto): ninguna de las dos hace falta re-bajarla.
-                        [*stored_identities, *window_stale_identities],
-                        # G1/P3-17: los duplicados fuzzy SON actividad de la
-                        # fuente (se ingirieron; solo se marcaron cross-source):
-                        # excluirlos hacía que un agregador sindicado acumulara
-                        # consecutive_empty_runs y entrara en backoff siendo
-                        # productivo. Mismo criterio que log_window_summary.
+                        scraper,
+                        len(jobs),
+                        lote,
                         new_count=(summary["new"] - new_before)
                         + (summary["dupes"] - dupes_before),
-                        pages_read=pages_read,
                     )
-                    # B-4 — lazo de autolimitación del presupuesto: `avg_new`
-                    # es una EMA de `new_count`, y `new_count` nunca puede
-                    # superar `presupuesto × page_size` — la EMA no puede
-                    # aprender una demanda mayor que el techo que ella misma
-                    # fija. Si el run AGOTÓ su presupuesto SIN early-stop
-                    # (`_stop_reason is None`), terminó "con hambre": puede
-                    # quedar contenido nuevo hundido bajo el horizonte y la
-                    # EMA no es fiable — se re-abre el bootstrap para que el
-                    # próximo run reciba la ventana completa (sin cursor
-                    # inyectado, ver arriba) y re-sincronice midiendo la
-                    # novedad REAL. Con `budget == MAX_PAGES` no hay nada más
-                    # que pedir (cubre también fuentes de página única), y en
-                    # una fuente tranquila el early-stop fija `_stop_reason`:
-                    # en esos casos no se activa nunca.
-                    budget_pages = scraper._max_pages_this_run
-                    if (
-                        scraper._stop_reason is None
-                        and budget_pages is not None
-                        and budget_pages < scraper.MAX_PAGES
-                        and pages_read >= budget_pages
-                    ):
-                        cursor.bootstrap_complete = False
 
                 # Do not acknowledge the source cursor until the school
                 # observation reached core. Core dedup makes a replay safe if
                 # the final local commit fails after its remote acknowledgement.
-                await school_producer.reconcile(
-                    scraper, live_hashes=stored_school_hashes
-                )
+                await school_producer.reconcile(scraper, live_hashes=lote.stored_hashes)
                 await db.commit()
 
                 # G4/P1-1 — la deriva de identidad sube a INCIDENCIA de run:
                 # sin esto la fuente salía `ok` (las URLs nuevas sí entran) y
                 # nadie se enteraba de que las re-listadas se estaban cayendo.
-                if identity_conflicts:
-                    # G8/P2-2: crónica, por la MISMA razón y con la MISMA
-                    # remediación pendiente que `identity_clones` — es la otra
-                    # mitad del mismo fenómeno. Dispara en 11 de los 13 días
-                    # con cosecha del journal (2-9 colisiones/día), así que sin
-                    # marcar volvía a hacer WARNING el ~85 % de las corridas.
-                    # Se publica igual —el operador la sigue viendo, y aquí SÍ
-                    # hay pérdida: la oferta se descarta—; el nivel del run lo
-                    # decide la TASA, en `fetch_diagnostics`.
-                    summary["unhealthy"].append(
-                        mark_chronic(
-                            f"{source}: DERIVA DE IDENTIDAD — {identity_conflicts} "
-                            "ofertas re-listadas descartadas por choque con "
-                            "ix_jobs_url (corpus histórico sin migrar)"
-                        )
-                    )
-                if identity_clones:
-                    # G7/P2-4: crónica. Dispara en 14 de 14 días (2,0-19,2 % de
-                    # las altas) porque la remediación —los dos scripts de
-                    # canonización y la migración `b3c7d1a95e42`— sigue
-                    # pendiente. Se publica igual; no sube el nivel del run.
-                    summary["unhealthy"].append(
-                        mark_chronic(
-                            f"{source}: DERIVA DE IDENTIDAD — {identity_clones} "
-                            "ofertas re-listadas con id NUEVO entraron como CLON "
-                            "(sin choque de url; la fila histórica ya no refresca "
-                            "last_seen_at)"
-                        )
-                    )
-
+                # G8/P2-2: crónica, por la MISMA razón y con la MISMA
+                # remediación pendiente que `identity_clones` — es la otra
+                # mitad del mismo fenómeno. Dispara en 11 de los 13 días
+                # con cosecha del journal (2-9 colisiones/día), así que sin
+                # marcar volvía a hacer WARNING el ~85 % de las corridas.
+                # Se publica igual —el operador la sigue viendo, y aquí SÍ
+                # hay pérdida: la oferta se descarta—; el nivel del run lo
+                # decide la TASA, en `fetch_diagnostics`.
+                # G7/P2-4: crónica. Dispara en 14 de 14 días (2,0-19,2 % de
+                # las altas) porque la remediación —los dos scripts de
+                # canonización y la migración `b3c7d1a95e42`— sigue
+                # pendiente. Se publica igual; no sube el nivel del run.
                 # VD.3 — señal de persistencia, DESPUÉS del commit a propósito:
                 # `record_storage` usa su propia transacción acotada y no
                 # arrastra ni el lote de ofertas ni el cursor.
+                summary["unhealthy"].extend(
+                    identity_drift_notes(
+                        source, lote.identity_conflicts, lote.identity_clones
+                    )
+                )
+
                 motivo = await source_health.record_storage(
                     db, source, attempted_count, stored_count
                 )
@@ -612,31 +538,7 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 # aislamiento que `record_storage` abajo: si la BD está caída
                 # el propio registro puede lanzar y mataría el bucle.
                 if jobs is None:
-                    summary["fetch_failed"] += 1
-                    try:
-                        motivo = await source_health.record_and_alert(
-                            db,
-                            source,
-                            OUTCOME_ERROR,
-                            0,
-                            [
-                                diag.FetchIssue(
-                                    diag.KIND_NETWORK,
-                                    url="",
-                                    detail=f"{type(e).__name__}: {e}",
-                                )
-                            ],
-                        )
-                    except Exception as health_err:  # noqa: BLE001 — no empeorar
-                        motivo = None
-                        logger.error(
-                            "No se pudo registrar la salud de %s en el camino "
-                            "de error: %s",
-                            source,
-                            health_err,
-                        )
-                    if motivo:
-                        summary["unhealthy"].append(f"{source}: {motivo}")
+                    await _record_failed_download(db, source, e, summary)
                 # Perder el LOTE entero (commit o cursor fallidos) también es
                 # señal de persistencia: sin esto la racha quedaba congelada y
                 # el fallo se presentaba como éxito un nivel más arriba. Solo
@@ -656,20 +558,7 @@ async def _fetch_scrapers_async() -> dict[str, Any]:
                 if jobs is not None:
                     if attempted_count is None:
                         attempted_count = len(jobs)
-                    try:
-                        motivo = await source_health.record_storage(
-                            db, source, attempted_count, 0
-                        )
-                    except Exception as health_err:  # noqa: BLE001 — no empeorar
-                        motivo = None
-                        logger.error(
-                            "No se pudo registrar la persistencia de %s en el "
-                            "camino de error: %s",
-                            source,
-                            health_err,
-                        )
-                    if motivo:
-                        summary["unhealthy"].append(f"{source}: {motivo}")
+                    await record_lost_batch(db, source, attempted_count, summary)
 
     diag.log_run_summary(logger, "Scraper fetch complete", summary)
     return summary

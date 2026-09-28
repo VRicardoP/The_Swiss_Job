@@ -145,7 +145,7 @@ class TestSoftTimeLimitEnScrapers:
             new=_mock_session_factory(db_session),
         ):
             with patch(
-                "tasks.scraping_tasks.DataNormalizer.normalize", side_effect=normalize
+                "tasks.harvest_persist.DataNormalizer.normalize", side_effect=normalize
             ):
                 summary = await _fetch_scrapers_async()
 
@@ -223,7 +223,7 @@ class TestSoftTimeLimitEnProviders:
             new=_mock_session_factory(db_session),
         ):
             with patch(
-                "tasks.fetch_tasks.DataNormalizer.normalize", side_effect=normalize
+                "tasks.harvest_persist.DataNormalizer.normalize", side_effect=normalize
             ):
                 summary = await _fetch_providers_async()
 

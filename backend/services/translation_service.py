@@ -413,6 +413,29 @@ class TranslationService:
         h = hashlib.md5(title.encode()).hexdigest()  # noqa: S324
         return f"{CACHE_PREFIX}{h}"
 
+    async def cached_translations(self, titles: list[str]) -> dict[str, str]:
+        """Traducciones YA en Redis para estos títulos, en UNA ida (MGET).
+
+        A19-15 §D: es lo que lee el camino de respuesta cuando `translate=false`
+        —la pantalla principal, 3.000 ofertas—: cero llamadas al LLM, cero
+        detecciones. Lo que no esté cacheado se sirve en su idioma; la tarea de
+        calentamiento (`warm.py`) lo traduce en segundo plano para la carga
+        siguiente. Mismo patrón que el idioma persistido (§4-5 de CLAUDE.md).
+        """
+        limpios = [t for t in dict.fromkeys(titles) if t]
+        if not limpios or not self._groq.redis:
+            return {}
+        try:
+            datos = await self._groq.redis.mget([self._cache_key(t) for t in limpios])
+        except Exception:
+            logger.debug("Translation cache MGET failed (%d títulos)", len(limpios))
+            return {}
+        out = {}
+        for t, d in zip(limpios, datos):
+            if d:
+                out[t] = d.decode() if isinstance(d, bytes) else d
+        return out
+
     async def _get_cached(self, title: str) -> str | None:
         if not self._groq.redis:
             return None

@@ -3054,6 +3054,59 @@ segundo plano; y la cola de latencia de las rutas de 20, **sin atribuir** (con
 n=20 el p95 es el máximo, y un solo pico decide). Detalle en §9-bis y §10 del
 acta. **A18-05 sigue abierto.**
 
+## 47. Cierre del proyecto de unificación (2026-09-28)
+
+**Foto vigente; §46 y anteriores son historia.** Sesión única con Fable 5.1 al
+mando de todas las tareas, tras la auditoría instrumentada del 27-09
+(`AUDITORIA-2026-09-27.md`: 20 CUMPLE, 3 NO_CUMPLE, 2 CHECK_ROTO — los cinco
+corregidos y el contrato `INVARIANTES.md` ampliado con el bloque G).
+
+### Qué está hecho y verificado ejecutando
+
+- **Producción (NAS)**: BFF y núcleo en `point5-<sha>` desplegados con
+  `scripts/deploy_nas.sh` (migración ANTES de recrear, retag por servicio,
+  `check_core_release.py` al final). 9 servicios con límites de memoria en
+  `docker-compose.resource.yml` de Container Station; healthchecks de
+  infraestructura a 60 s; RAM disponible 243 MB → 3,6 GB. Topología real
+  versionada en `deploy/nas/` sin secretos (CI lo vigila).
+- **Supervisor de contenedores** (`swissjob-supervisor`, `restart: always`):
+  vigila los 15 esperados cada 5 min; probado con un esperado inexistente y con
+  recuperación. Su correo y los cuatro avisos del BFF esperan la credencial
+  SMTP del propietario (A19-31).
+- **Sesiones revocables** (T9), cotas del beat (T11), feed que no se cae entero
+  (T12), vía móvil retirada (T15), `.env.prod.example` generado desde
+  `Settings`, CI del núcleo (`core-test`) con `requirements.txt` fijado.
+- **T16 — deuda de complejidad**: ningún grado E/F de radon en código vivo (BFF
+  y núcleo). El bucle por oferta de la cosecha legacy vive una sola vez en
+  `backend/tasks/harvest_persist.py`. Los siete E/F restantes son herramientas
+  de corte de la Fase E, de un solo uso: cota aceptada (A19-13).
+- **A19-15 §D**: la pantalla principal de SwissJob sirve títulos traducidos
+  desde Redis; los traduce el calentamiento de fondo (≤ 100 por pasada) y el
+  camino de respuesta no llama nunca al LLM (prueba con un Groq que lanza).
+- **Suites** (2026-09-28): BFF 2.644 passed · 4 xfailed (11 min 51 s); núcleo 1.769 passed
+  · 1 skipped (recontar tras cada crecida); frontend `eslint` + `vite build`
+  limpios; Portfolio 2.026 + 390. Lint de todo el repo (`ruff check` +
+  `format --check`) en verde.
+- **Public reestructurado**: cada proyecto vive en su directorio con su git;
+  el git de `Public/` se retiró (bundles de respaldo en `Public/tmp/` y en el
+  NAS, `/share/Public/swissjob/public-git-final-20260925-1151.bundle`).
+
+### Lo que queda, y de quién depende
+
+| Qué | Quién | Por qué no lo cierra el código |
+|---|---|---|
+| Contraseña de aplicación de Gmail en `swissjob.configured.yml`, `portfolio.configured.yml` y `supervisor.env` (A19-31) | Propietario | Cuenta de Google |
+| Armar el crontab del QTS (entrada ya en `/etc/config/crontab`) | Propietario | Exige suid/root |
+| Remoto del repo raíz de `ReactPortfolio` (los de backend y frontend ya empujan a GitHub) | Propietario | Decisión de dónde alojarlo |
+| Rotación de la credencial del núcleo (DT-47, `scripts/rotate_credential.py`) | Propietario | Ventana de solape con producción |
+| Decisión B del panel (`jobgether` sin descripción en origen) | Propietario | Coste: descargar 27 % del feed |
+| Contrato del punto 5 en el NAS (A19-25) | Propietario | 2 núcleos con carga ~8 ajena al proyecto: `tinymediamanager` y los demonios de QTS |
+| Bundles de `Public/tmp/` | Propietario | Recomendación: conservar (304 documentos sólo viven ahí) |
+
+Fuera de esa tabla no hay tareas técnicas abiertas del plan T0–T16. La deuda
+que sigue viva está en `DEUDA_TECNICA.md` con su estado y su motivo, y las
+cotas deliberadas en `docs/COTAS_Y_DECISIONES.md`.
+
 ## 45. Punto 5 — optimización desplegada, aceptación PENDIENTE (2026-09-22)
 
 > ⚠ **FOTO DEL 22-09, SUPERADA POR §46.** Las cifras de esta sección
