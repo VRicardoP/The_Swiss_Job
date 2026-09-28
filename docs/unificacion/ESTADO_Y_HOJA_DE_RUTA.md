@@ -3063,7 +3063,8 @@ corregidos y el contrato `INVARIANTES.md` ampliado con el bloque G).
 
 ### Qué está hecho y verificado ejecutando
 
-- **Producción (NAS)**: BFF y núcleo en `point5-<sha>` desplegados con
+- **Producción (NAS)**: BFF `point5-84518aa` y núcleo `point5-fed376a`
+  (`/v1/ready`: core0052, authoritative), desplegados con
   `scripts/deploy_nas.sh` (migración ANTES de recrear, retag por servicio,
   `check_core_release.py` al final). 9 servicios con límites de memoria en
   `docker-compose.resource.yml` de Container Station; healthchecks de
