@@ -358,7 +358,7 @@ docker compose up -d
 # comando que esta línea documentaba fallaba al arrancar, no al probar.
 docker compose exec -T backend python -m pytest tests/ -q
 
-# Tests core (1.769 passed · 1 skipped, ~16 min — medido el 2026-09-24;
+# Tests core (1.817 passed · 1 skipped, ~16 min solo / 32 min con el BFF a la vez — medido el 2026-09-28;
 # reconfirmar con pytest tras cada crecida, no copiar la cifra)
 # OJO al perfil: desde la auditoría P1-3 el compose BASE no monta ./jobhunt_core
 # (imagen operativa inmutable). Los tests van con el override de desarrollo, que
@@ -462,7 +462,7 @@ schemas/            # Pydantic de entrada/salida de la API
 models/             # SQLAlchemy (incl. source_cursor.py para el crawler incremental)
 jobhunt_core/       # Core Fase A COMPLETA 2026-07-24 (ensayo GATE A superado): API /v1 FastAPI (core-api :8003),
                     #   worker Celery jobhunt.* (broker redis-core, colas core.*), harvest/ + matching/embeddings/
-                    #   delivery/runs/profiles, Alembic propio core0001..core0051, tests 1.769 passed · 1 skipped (vía core-migrate)
+                    #   delivery/runs/profiles, Alembic propio core0001..core0052, tests 1.817 passed · 1 skipped (vía core-migrate)
 ```
 
 Modelos LLM (verificados contra el catálogo VIVO el 2026-09-15):

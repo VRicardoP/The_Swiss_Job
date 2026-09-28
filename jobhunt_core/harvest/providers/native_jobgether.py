@@ -165,6 +165,73 @@ async def _page(http, query, page, timeout):
     return rows, not rows or (total is not None and page >= total)
 
 
+def _error_name(exc) -> str:
+    return (
+        f"http_{exc.response.status_code}"
+        if isinstance(exc, httpx.HTTPStatusError)
+        else type(exc).__name__
+    )
+
+
+async def _sweep(http, query, budget):
+    """Recorre hasta `budget` páginas dentro del presupuesto de tiempo.
+
+    Devuelve (listings, invalid, pages, seen, error, exhausted). Un fallo en la
+    primera página sube; a partir de la segunda la cosecha es parcial.
+    """
+    started = time.monotonic()
+    listings, invalid, pages, seen = [], 0, 0, 0
+    error, exhausted = None, False
+    for page in range(1, budget + 1):
+        remaining = SWEEP_BUDGET_S - (time.monotonic() - started)
+        if remaining <= 0:
+            error = "time_budget"
+            break
+        try:
+            rows, exhausted = await _page(http, query, page, min(25, remaining))
+        except (httpx.HTTPError, ProviderResponseError, TimeoutError) as exc:
+            if not listings:
+                raise
+            error = _error_name(exc)
+            break
+        pages += 1
+        seen += len(rows)
+        for row in rows:
+            listing = _listing(row)
+            if listing is None:
+                invalid += 1
+            else:
+                listings.append(listing)
+        if exhausted:
+            break
+        if page < budget:
+            remaining = SWEEP_BUDGET_S - (time.monotonic() - started)
+            if remaining > 0:
+                await asyncio.sleep(min(PAGE_PAUSE_S, remaining))
+    return listings, invalid, pages, seen, error, exhausted
+
+
+def _without_ambiguous(listings):
+    """Identidades con MÁS de una URL quedan fuera; devuelve (listings, ambiguas)."""
+    urls_by_id = {}
+    for listing in listings:
+        urls_by_id.setdefault(listing.external_id, set()).add(listing.url)
+    ambiguous = {key for key, urls in urls_by_id.items() if len(urls) > 1}
+    if ambiguous:
+        # The portal republishes one opening as several postings sharing
+        # title, company and canonical slug. Refusing to pick a winner is
+        # the contract and stays. But it happens on EVERY sweep (live probe
+        # 2026-09-21: 3 of 139 identities, 8 of 150 listings), and the
+        # retiring producer loses the very same rows to ix_jobs_url. Calling
+        # it a failed harvest would keep `last_complete_at` NULL forever and
+        # turn `cosecha_sin_completar` into permanent noise (G9 P2-C). The
+        # count travels in the cursor instead, readable without lying.
+        listings = [
+            listing for listing in listings if listing.external_id not in ambiguous
+        ]
+    return listings, ambiguous
+
+
 class JobgetherProvider(BaseProvider):
     name = SOURCE_NAME
     SEMANTIC_PARAMS = ("query",)
@@ -180,55 +247,10 @@ class JobgetherProvider(BaseProvider):
             raise ProviderConfigError("Jobgether query must be a bounded string")
         # Same three-page budget the retiring producer uses (jobgether.py:57).
         budget = page_budget(params, MAX_PAGES) or MAX_PAGES
-        started = time.monotonic()
-        listings, invalid, pages, seen = [], 0, 0, 0
-        error, exhausted = None, False
-        for page in range(1, budget + 1):
-            remaining = SWEEP_BUDGET_S - (time.monotonic() - started)
-            if remaining <= 0:
-                error = "time_budget"
-                break
-            try:
-                rows, exhausted = await _page(http, query, page, min(25, remaining))
-            except (httpx.HTTPError, ProviderResponseError, TimeoutError) as exc:
-                if not listings:
-                    raise
-                error = (
-                    f"http_{exc.response.status_code}"
-                    if isinstance(exc, httpx.HTTPStatusError)
-                    else type(exc).__name__
-                )
-                break
-            pages += 1
-            seen += len(rows)
-            for row in rows:
-                listing = _listing(row)
-                if listing is None:
-                    invalid += 1
-                else:
-                    listings.append(listing)
-            if exhausted:
-                break
-            if page < budget:
-                remaining = SWEEP_BUDGET_S - (time.monotonic() - started)
-                if remaining > 0:
-                    await asyncio.sleep(min(PAGE_PAUSE_S, remaining))
-        urls_by_id = {}
-        for listing in listings:
-            urls_by_id.setdefault(listing.external_id, set()).add(listing.url)
-        ambiguous = {key for key, urls in urls_by_id.items() if len(urls) > 1}
-        if ambiguous:
-            # The portal republishes one opening as several postings sharing
-            # title, company and canonical slug. Refusing to pick a winner is
-            # the contract and stays. But it happens on EVERY sweep (live probe
-            # 2026-09-21: 3 of 139 identities, 8 of 150 listings), and the
-            # retiring producer loses the very same rows to ix_jobs_url. Calling
-            # it a failed harvest would keep `last_complete_at` NULL forever and
-            # turn `cosecha_sin_completar` into permanent noise (G9 P2-C). The
-            # count travels in the cursor instead, readable without lying.
-            listings = [
-                listing for listing in listings if listing.external_id not in ambiguous
-            ]
+        listings, invalid, pages, seen, error, exhausted = await _sweep(
+            http, query, budget
+        )
+        listings, ambiguous = _without_ambiguous(listings)
         if seen and not listings:
             raise ProviderResponseError(
                 "Jobgether nonempty feed has no usable identities"

@@ -84,6 +84,77 @@ def title_filter_enabled(source, params):
     return value
 
 
+async def _known_history(session, source, outside):
+    """Ids y URLs de `outside` ya conocidos por esta fuente (o su legado)."""
+    if not outside:
+        return set(), set()
+    rows = (
+        await session.execute(
+            sa.text("""
+            SELECT sl.external_id, NULL::text AS url
+              FROM source_listings sl JOIN sources s ON s.id=sl.source_id
+             WHERE s.name=:source AND sl.external_id=ANY(CAST(:ids AS text[]))
+            UNION ALL
+            SELECT NULL::text, i.url
+              FROM source_listing_incarnations i
+              JOIN source_listings sl ON sl.id=i.source_listing_id
+              JOIN sources s ON s.id=sl.source_id
+             WHERE s.name IN (:source, :legacy)
+               AND i.url=ANY(CAST(:urls AS text[]))
+        """),
+            {
+                "source": source,
+                "legacy": "legacy:" + source,
+                "ids": list({row.external_id for row in outside}),
+                "urls": list({row.url for row in outside}),
+            },
+        )
+    ).all()
+    return (
+        {row.external_id for row in rows if row.external_id is not None},
+        {row.url for row in rows if row.url is not None},
+    )
+
+
+def _admit(
+    listings,
+    dates,
+    blocked_titles,
+    known_ids,
+    known_urls,
+    window,
+    cutoff,
+    filter_titles,
+):
+    """Veredicto por fila; devuelve (aceptadas, contadores, consideradas)."""
+    counts = {
+        "accepted": 0,
+        "refreshed": 0,
+        "stale": 0,
+        "missing_date": 0,
+        "date_present": 0,
+    }
+    if filter_titles:
+        counts["title_excluded"] = 0
+    accepted, considered = [], 0
+    for row, date, blocked in zip(listings, dates, blocked_titles):
+        known = row.external_id in known_ids or row.url in known_urls
+        if blocked and not known:
+            counts["title_excluded"] += 1
+            continue
+        considered += 1
+        counts["date_present"] += date is not None
+        if window is None or (date is not None and date >= cutoff):
+            counts["accepted"] += 1
+            accepted.append(row)
+        elif known:
+            counts["refreshed"] += 1
+            accepted.append(row)
+        else:
+            counts["missing_date" if date is None else "stale"] += 1
+    return accepted, counts, considered
+
+
 async def admit_listings(
     session, source, result, window, *, now=None, filter_titles=False
 ):
@@ -111,57 +182,17 @@ async def admit_listings(
         for row, date, blocked in zip(result.listings, dates, blocked_titles)
         if blocked or (window is not None and (date is None or date < cutoff))
     ]
-    known_ids, known_urls = set(), set()
-    if outside:
-        rows = (
-            await session.execute(
-                sa.text("""
-            SELECT sl.external_id, NULL::text AS url
-              FROM source_listings sl JOIN sources s ON s.id=sl.source_id
-             WHERE s.name=:source AND sl.external_id=ANY(CAST(:ids AS text[]))
-            UNION ALL
-            SELECT NULL::text, i.url
-              FROM source_listing_incarnations i
-              JOIN source_listings sl ON sl.id=i.source_listing_id
-              JOIN sources s ON s.id=sl.source_id
-             WHERE s.name IN (:source, :legacy)
-               AND i.url=ANY(CAST(:urls AS text[]))
-        """),
-                {
-                    "source": source,
-                    "legacy": "legacy:" + source,
-                    "ids": list({row.external_id for row in outside}),
-                    "urls": list({row.url for row in outside}),
-                },
-            )
-        ).all()
-        known_ids = {row.external_id for row in rows if row.external_id is not None}
-        known_urls = {row.url for row in rows if row.url is not None}
-    counts = {
-        "accepted": 0,
-        "refreshed": 0,
-        "stale": 0,
-        "missing_date": 0,
-        "date_present": 0,
-    }
-    if filter_titles:
-        counts["title_excluded"] = 0
-    accepted, considered = [], 0
-    for row, date, blocked in zip(result.listings, dates, blocked_titles):
-        known = row.external_id in known_ids or row.url in known_urls
-        if blocked and not known:
-            counts["title_excluded"] += 1
-            continue
-        considered += 1
-        counts["date_present"] += date is not None
-        if window is None or (date is not None and date >= cutoff):
-            counts["accepted"] += 1
-            accepted.append(row)
-        elif known:
-            counts["refreshed"] += 1
-            accepted.append(row)
-        else:
-            counts["missing_date" if date is None else "stale"] += 1
+    known_ids, known_urls = await _known_history(session, source, outside)
+    accepted, counts, considered = _admit(
+        result.listings,
+        dates,
+        blocked_titles,
+        known_ids,
+        known_urls,
+        window,
+        cutoff,
+        filter_titles,
+    )
     # The old pipeline filtered new titles BEFORE assessing dates. A deliberately
     # excluded batch is not a broken date contract; retained refreshes still are.
     missing_dates = window is not None and considered > 0 and not counts["date_present"]

@@ -617,6 +617,36 @@ class RawListingSink:
         orphans = [s for s in slot_by_ext.values() if s not in inc_by_slot]
         if not orphans:
             return inc_by_slot, set(), [], []
+        max_seq = await self._max_seq_by_slot(session, orphans)
+        new_rows = self._incarnation_rows(
+            orphans,
+            ext_by_slot,
+            by_ext,
+            prep_by_ext,
+            attach_by_urln,
+            no_attach,
+            max_seq,
+        )
+        winners = await self._insert_incarnations(session, new_rows, orphans)
+        ours = await self._settle_race(session, new_rows, winners)
+        evidence = [
+            {
+                "slot": r["slot"],
+                "vac": r["vid"],
+                "method": "url_normalized",
+                "conf": identity.CONF_URL_ATTACH,
+            }
+            for r in ours
+            if not r["created"]
+        ]
+        pairs = self._intra_batch_pairs(source_name, ours, by_ext, ext_by_slot)
+        inc_by_slot = dict(inc_by_slot)
+        inc_by_slot.update(winners)
+        new_incs = {info[0] for info in winners.values()}
+        return inc_by_slot, new_incs, evidence, pairs
+
+    @staticmethod
+    async def _max_seq_by_slot(session, orphans):
         seq_rows = (
             await session.execute(
                 sa.text(
@@ -627,8 +657,13 @@ class RawListingSink:
                 {"ids": orphans},
             )
         ).all()
-        max_seq = {r.source_listing_id: r.max_seq for r in seq_rows}
+        return {r.source_listing_id: r.max_seq for r in seq_rows}
 
+    @staticmethod
+    def _incarnation_rows(
+        orphans, ext_by_slot, by_ext, prep_by_ext, attach_by_urln, no_attach, max_seq
+    ):
+        """Filas a insertar: attach a la vacante revalidada o vacante fresca."""
         new_rows = []
         for slot_id in orphans:
             ext = ext_by_slot[slot_id]
@@ -651,6 +686,11 @@ class RawListingSink:
             )
         # ORDEN GLOBAL DETERMINISTA (auditoría A-04 #2).
         new_rows.sort(key=lambda r: r["slot"])
+        return new_rows
+
+    @staticmethod
+    async def _insert_incarnations(session, new_rows, orphans):
+        """Inserta vacantes frescas e incarnaciones; devuelve las ACTIVAS por slot."""
         creating = [r for r in new_rows if r["created"]]
         if creating:
             # Vacante fresca solo para lo NO attacheado.
@@ -672,7 +712,7 @@ class RawListingSink:
                 for r in new_rows
             ],
         )
-        winners = {
+        return {
             r.source_listing_id: (r.id, r.vacancy_id)
             for r in (
                 await session.execute(
@@ -685,6 +725,11 @@ class RawListingSink:
                 )
             ).all()
         }
+
+    @staticmethod
+    async def _settle_race(session, new_rows, winners):
+        """Quita las vacantes que creamos y perdieron la carrera; pone el puntero
+        primario en las frescas que ganaron. Devuelve NUESTRAS filas ganadoras."""
         ours = [
             r
             for r in new_rows
@@ -711,16 +756,10 @@ class RawListingSink:
                 ),
                 pointer_rows,
             )
-        evidence = [
-            {
-                "slot": r["slot"],
-                "vac": r["vid"],
-                "method": "url_normalized",
-                "conf": identity.CONF_URL_ATTACH,
-            }
-            for r in ours
-            if not r["created"]
-        ]
+        return ours
+
+    @staticmethod
+    def _intra_batch_pairs(source_name, ours, by_ext, ext_by_slot):
         # Medio intra-lote: misma identidad difusa (PF.5) en DOS+ vacantes
         # CREADAS en este lote → candidatos (el primero contra el resto).
         pairs = []
@@ -739,10 +778,7 @@ class RawListingSink:
                 {"a": vids[0], "b": other, "sim": identity.SIM_FUZZY_BATCH}
                 for other in vids[1:]
             ]
-        inc_by_slot = dict(inc_by_slot)
-        inc_by_slot.update(winners)
-        new_incs = {info[0] for info in winners.values()}
-        return inc_by_slot, new_incs, evidence, pairs
+        return pairs
 
     async def _repair_primary_pointers(self, session, vacancy_ids) -> list:
         """Reasigna el puntero primario de vacantes cuyo primary quedó CERRADO
@@ -1168,7 +1204,43 @@ class RawListingSink:
         ]
         if not cands:
             return
-        vac_rows = {
+        vac_rows = await self._vacancy_rows(session, cands)
+        primaries = [
+            (ext, inc, vac, chash)
+            for ext, inc, vac, chash in cands
+            if vac_rows.get(vac) is not None
+            and vac_rows[vac].primary_incarnation_id == inc
+        ]
+        fresh_pairs = [
+            (ext, inc, vac, chash)
+            for ext, inc, vac, chash in cands
+            if ext in fresh_exts or inc in new_incs
+        ]
+        primary_canon = self._primary_canon(source_name, primaries, by_ext)
+        rev_ids: dict[tuple[str, str], uuid.UUID] = {}
+        created_pairs: set[tuple[str, str]] = set()
+        pointer_rows: list[dict] = []
+        if primaries:
+            rev_ids, created_pairs = await self._canonical_revisions(
+                session, primaries, primary_canon
+            )
+            pointer_rows = await self._move_pointers(
+                session, primaries, primary_canon, rev_ids, vac_rows
+            )
+        await self._aggregate_sources(
+            session,
+            fresh_pairs,
+            primaries,
+            primary_canon,
+            created_pairs,
+            vac_rows,
+            rev_ids,
+            pointer_rows,
+        )
+
+    @staticmethod
+    async def _vacancy_rows(session, cands):
+        return {
             r.id: r
             for r in (
                 await session.execute(
@@ -1184,18 +1256,9 @@ class RawListingSink:
                 )
             ).all()
         }
-        primaries = [
-            (ext, inc, vac, chash)
-            for ext, inc, vac, chash in cands
-            if vac_rows.get(vac) is not None
-            and vac_rows[vac].primary_incarnation_id == inc
-        ]
-        fresh_pairs = [
-            (ext, inc, vac, chash)
-            for ext, inc, vac, chash in cands
-            if ext in fresh_exts or inc in new_incs
-        ]
 
+    @staticmethod
+    def _primary_canon(source_name, primaries, by_ext):
         # NORMALIZAR SIEMPRE el contenido del primary ANTES de buscar revisión
         # reutilizable (rev. A-06 2ª #2): la canónica se identifica por el
         # hash del CONTENIDO NORMALIZADO (offer_content_hash) — el hash del
@@ -1212,78 +1275,99 @@ class RawListingSink:
                 if content is None
                 else (normalize.offer_content_hash(content), content)
             )
+        return primary_canon
 
-        rev_ids: dict[tuple[str, str], uuid.UUID] = {}
+    async def _canonical_revisions(self, session, primaries, primary_canon):
+        """Revisión canónica por (vacante, hash normalizado): reutiliza la que
+        exista y crea las que falten. Devuelve (rev_ids, pares creados aquí)."""
+        with_canon = [
+            (ext, inc, vac, primary_canon[ext][0], primary_canon[ext][1])
+            for ext, inc, vac, _c in primaries
+            if primary_canon[ext] is not None
+        ]
+        if not with_canon:
+            return {}, set()
+        rev_ids = {
+            (str(r.vacancy_id), r.content_hash): r.id
+            for r in (
+                await session.execute(
+                    sa.text(
+                        "SELECT o.id, o.vacancy_id, o.content_hash "
+                        "FROM offer_revisions o "
+                        "JOIN unnest(CAST(:vids AS uuid[]), CAST(:hs AS text[])) "
+                        "  AS t(vid, chash) "
+                        "ON o.vacancy_id = t.vid AND o.content_hash = t.chash"
+                    ),
+                    {
+                        "vids": [str(v) for _e, _i, v, _ch, _co in with_canon],
+                        "hs": [ch for _e, _i, _v, ch, _co in with_canon],
+                    },
+                )
+            ).all()
+        }
+        entries = [
+            {"vid": vac, "chash": ch, "content": content}
+            for _ext, _inc, vac, ch, content in with_canon
+            if (str(vac), ch) not in rev_ids
+        ]
+        created_pairs: set[tuple[str, str]] = set()
+        if entries:
+            created_pairs = {(str(e["vid"]), e["chash"]) for e in entries}
+            rev_ids.update(await self._ensure_offer_revisions(session, entries))
+        return rev_ids, created_pairs
+
+    @staticmethod
+    async def _move_pointers(session, primaries, primary_canon, rev_ids, vac_rows):
+        """Puntero vigente de cada vacante cuyo primary es este listing; CAS
+        condicionado al primary. Devuelve las filas movidas."""
         pointer_rows: list[dict] = []
         null_rows: list[dict] = []
-        created_pairs: set[tuple[str, str]] = set()
-        if primaries:
-            with_canon = [
-                (ext, inc, vac, primary_canon[ext][0], primary_canon[ext][1])
-                for ext, inc, vac, _c in primaries
-                if primary_canon[ext] is not None
-            ]
-            if with_canon:
-                rev_ids = {
-                    (str(r.vacancy_id), r.content_hash): r.id
-                    for r in (
-                        await session.execute(
-                            sa.text(
-                                "SELECT o.id, o.vacancy_id, o.content_hash "
-                                "FROM offer_revisions o "
-                                "JOIN unnest(CAST(:vids AS uuid[]), CAST(:hs AS text[])) "
-                                "  AS t(vid, chash) "
-                                "ON o.vacancy_id = t.vid AND o.content_hash = t.chash"
-                            ),
-                            {
-                                "vids": [str(v) for _e, _i, v, _ch, _co in with_canon],
-                                "hs": [ch for _e, _i, _v, ch, _co in with_canon],
-                            },
-                        )
-                    ).all()
-                }
-                entries = [
-                    {"vid": vac, "chash": ch, "content": content}
-                    for _ext, _inc, vac, ch, content in with_canon
-                    if (str(vac), ch) not in rev_ids
-                ]
-                if entries:
-                    created_pairs = {(str(e["vid"]), e["chash"]) for e in entries}
-                    rev_ids.update(await self._ensure_offer_revisions(session, entries))
-            for ext, inc, vac, _chash in primaries:
-                pc = primary_canon[ext]
-                if pc is None:
-                    # rev. A-06 #2 + 2ª #2: contenido ACTUAL no normalizable —
-                    # la canónica anterior no puede seguir vigente (se serviría
-                    # obsoleta con last_seen fresco) NI resucitarse otra por
-                    # hash: puntero a NULL, CAS condicionado al primary.
-                    if vac_rows[vac].current_offer_revision_id is not None:
-                        null_rows.append({"vid": vac, "iid": inc})
-                    continue
-                rev_id = rev_ids.get((str(vac), pc[0]))
-                if rev_id is None or vac_rows[vac].cur_chash == pc[0]:
-                    continue  # sin revisión (carrera) o ya vigente
-                pointer_rows.append({"rid": rev_id, "vid": vac, "iid": inc})
-            if pointer_rows:
-                pointer_rows.sort(key=lambda r: str(r["vid"]))
-                # OPTIMISTA: condicionado al primary vigente en la MISMA sentencia.
-                await session.execute(
-                    sa.text(
-                        "UPDATE vacancies SET current_offer_revision_id = :rid "
-                        "WHERE id = :vid AND primary_incarnation_id = :iid"
-                    ),
-                    pointer_rows,
-                )
-            if null_rows:
-                null_rows.sort(key=lambda r: str(r["vid"]))
-                await session.execute(
-                    sa.text(
-                        "UPDATE vacancies SET current_offer_revision_id = NULL "
-                        "WHERE id = :vid AND primary_incarnation_id = :iid"
-                    ),
-                    null_rows,
-                )
+        for ext, inc, vac, _chash in primaries:
+            pc = primary_canon[ext]
+            if pc is None:
+                # rev. A-06 #2 + 2ª #2: contenido ACTUAL no normalizable —
+                # la canónica anterior no puede seguir vigente (se serviría
+                # obsoleta con last_seen fresco) NI resucitarse otra por
+                # hash: puntero a NULL, CAS condicionado al primary.
+                if vac_rows[vac].current_offer_revision_id is not None:
+                    null_rows.append({"vid": vac, "iid": inc})
+                continue
+            rev_id = rev_ids.get((str(vac), pc[0]))
+            if rev_id is None or vac_rows[vac].cur_chash == pc[0]:
+                continue  # sin revisión (carrera) o ya vigente
+            pointer_rows.append({"rid": rev_id, "vid": vac, "iid": inc})
+        if pointer_rows:
+            pointer_rows.sort(key=lambda r: str(r["vid"]))
+            # OPTIMISTA: condicionado al primary vigente en la MISMA sentencia.
+            await session.execute(
+                sa.text(
+                    "UPDATE vacancies SET current_offer_revision_id = :rid "
+                    "WHERE id = :vid AND primary_incarnation_id = :iid"
+                ),
+                pointer_rows,
+            )
+        if null_rows:
+            null_rows.sort(key=lambda r: str(r["vid"]))
+            await session.execute(
+                sa.text(
+                    "UPDATE vacancies SET current_offer_revision_id = NULL "
+                    "WHERE id = :vid AND primary_incarnation_id = :iid"
+                ),
+                null_rows,
+            )
+        return pointer_rows
 
+    @staticmethod
+    async def _aggregate_sources(
+        session,
+        fresh_pairs,
+        primaries,
+        primary_canon,
+        created_pairs,
+        vac_rows,
+        rev_ids,
+        pointer_rows,
+    ):
         # Agregación de fuentes: revisiones raw NUEVAS + primaries cuya
         # canónica se CREÓ en este run (auditoría A-06 #1: el auto-reparador
         # puede crear la canónica de un raw ANTIGUO — p.ej. normalización

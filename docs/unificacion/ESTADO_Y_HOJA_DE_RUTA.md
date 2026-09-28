@@ -3083,8 +3083,8 @@ corregidos y el contrato `INVARIANTES.md` ampliado con el bloque G).
 - **A19-15 §D**: la pantalla principal de SwissJob sirve títulos traducidos
   desde Redis; los traduce el calentamiento de fondo (≤ 100 por pasada) y el
   camino de respuesta no llama nunca al LLM (prueba con un Groq que lanza).
-- **Suites** (2026-09-28): BFF 2.644 passed · 4 xfailed (11 min 51 s); núcleo 1.769 passed
-  · 1 skipped (recontar tras cada crecida); frontend `eslint` + `vite build`
+- **Suites** (2026-09-28): BFF 2.644 passed · 4 xfailed (11 min 51 s); núcleo 1.817 passed
+  · 1 skipped (32 min con el BFF en paralelo; recontar tras cada crecida); frontend `eslint` + `vite build`
   limpios; Portfolio 2.026 + 390. Lint de todo el repo (`ruff check` +
   `format --check`) en verde.
 - **Public reestructurado**: cada proyecto vive en su directorio con su git;

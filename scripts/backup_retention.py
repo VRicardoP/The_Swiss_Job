@@ -29,10 +29,7 @@ def inspect_file(path):
         os.close(fd)
 
 
-def expire(registry, *, now=None, apply=False):
-    now = time.time() if now is None else now
-    if registry.get("version") != 1 or not isinstance(registry.get("entries"), list):
-        raise ValueError("invalid retention registry")
+def _validated_roots(registry):
     roots = [Path(r).resolve(strict=True) for r in registry["roots"]]
 
     def specific_root(root):
@@ -45,24 +42,32 @@ def expire(registry, *, now=None, apply=False):
 
     if not roots or not all(specific_root(root) for root in roots):
         raise ValueError("retention roots must be specific private project directories")
-    entries = registry["entries"]
-    latest = {}
-    paths = set()
+    return roots
+
+
+def _validated_path(entry, roots, seen_paths):
+    path = Path(entry["path"])
+    if (
+        not path.is_absolute()
+        or path.is_symlink()
+        or not any(path.resolve().is_relative_to(r) for r in roots)
+        or str(path) in seen_paths
+    ):
+        raise ValueError("invalid or repeated artifact path")
+    seen_paths.add(str(path))
+    if entry["kind"] not in {"backup", "temporary", "rollback"}:
+        raise ValueError("invalid retention class")
+    limit = 48 * 3600 if entry["kind"] == "temporary" else 7 * 86400
+    if not 0 < entry["expires_at"] - entry["created_at"] <= limit:
+        raise ValueError("retention exceeds declared limit")
+    return path
+
+
+def _latest_verified_backups(entries, roots):
+    """Valida cada entrada y devuelve el backup verificado más reciente por base."""
+    latest, seen_paths = {}, set()
     for entry in entries:
-        path = Path(entry["path"])
-        if (
-            not path.is_absolute()
-            or path.is_symlink()
-            or not any(path.resolve().is_relative_to(r) for r in roots)
-            or str(path) in paths
-        ):
-            raise ValueError("invalid or repeated artifact path")
-        paths.add(str(path))
-        if entry["kind"] not in {"backup", "temporary", "rollback"}:
-            raise ValueError("invalid retention class")
-        limit = 48 * 3600 if entry["kind"] == "temporary" else 7 * 86400
-        if not 0 < entry["expires_at"] - entry["created_at"] <= limit:
-            raise ValueError("retention exceeds declared limit")
+        path = _validated_path(entry, roots, seen_paths)
         if entry["kind"] == "backup" and entry.get("verified") and path.exists():
             db = entry["database"]
             if db not in latest or entry["created_at"] > latest[db]["created_at"]:
@@ -70,9 +75,16 @@ def expire(registry, *, now=None, apply=False):
                 if info.st_size != entry["size"] or digest != entry["sha256"]:
                     raise ValueError("replacement backup is not intact")
                 latest[db] = entry
+    return latest
+
+
+def _expired(entries, latest, now):
+    """Candidatos a borrar, validados TODOS antes de tocar ninguno.
+
+    A changed file is never interpreted as the old registered backup merely
+    because its name matches. Devuelve (candidatos, bloqueados por vencimiento).
+    """
     candidates, overdue = [], 0
-    # Validate ALL candidates before unlinking any. A changed file is never
-    # interpreted as the old registered backup merely because its name matches.
     for entry in entries:
         if entry["expires_at"] > now or not Path(entry["path"]).exists():
             continue
@@ -86,22 +98,37 @@ def expire(registry, *, now=None, apply=False):
         if info.st_size != entry["size"] or digest != entry["sha256"]:
             raise ValueError("registered artifact changed; expiry aborted")
         candidates.append((entry, info))
+    return candidates, overdue
+
+
+def _unlink_unchanged(candidates):
+    for entry, original in candidates:
+        current = os.stat(entry["path"], follow_symlinks=False)
+        if (
+            current.st_dev,
+            current.st_ino,
+            current.st_size,
+            current.st_mtime_ns,
+        ) != (
+            original.st_dev,
+            original.st_ino,
+            original.st_size,
+            original.st_mtime_ns,
+        ):
+            raise ValueError("artifact replaced during expiry")
+        os.unlink(entry["path"])
+
+
+def expire(registry, *, now=None, apply=False):
+    now = time.time() if now is None else now
+    if registry.get("version") != 1 or not isinstance(registry.get("entries"), list):
+        raise ValueError("invalid retention registry")
+    roots = _validated_roots(registry)
+    entries = registry["entries"]
+    latest = _latest_verified_backups(entries, roots)
+    candidates, overdue = _expired(entries, latest, now)
     if apply:
-        for entry, original in candidates:
-            current = os.stat(entry["path"], follow_symlinks=False)
-            if (
-                current.st_dev,
-                current.st_ino,
-                current.st_size,
-                current.st_mtime_ns,
-            ) != (
-                original.st_dev,
-                original.st_ino,
-                original.st_size,
-                original.st_mtime_ns,
-            ):
-                raise ValueError("artifact replaced during expiry")
-            os.unlink(entry["path"])
+        _unlink_unchanged(candidates)
     return {
         "eligible": len(candidates),
         "deleted": len(candidates) if apply else 0,

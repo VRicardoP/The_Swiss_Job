@@ -398,149 +398,154 @@ async def reverse_sync(
     ):
         raise SchoolMigrationError("core snapshot contains an unbound school profile")
     if origin == "portfolio":
-        transformed = {name: [] for name in _TABLES[origin]}
-        for row in current["school_monitors"]:
-            values = {
-                **row["settings"],
-                "id": row["id"],
-                "school_id": row["external_ref"],
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"],
-            }
-            # Core-only optional metadata is not a source column. Refuse material
-            # new values rather than dropping them in a rollback.
-            for key in ("city", "scraping_params"):
-                if values.pop(key, None) is not None:
-                    raise SchoolMigrationError(
-                        "core-only monitor metadata prevents lossless rollback"
-                    )
-            transformed["schools"].append(values)
-        for row in current["school_job_details"]:
-            values = {
-                **row["metadata"],
-                "id": row["id"],
-                "school_id": row["monitor_id"],
-                "notified_at": row["notified_at"],
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"],
-            }
-            values["notified"] = bool(row["notified_at"]) or values.get(
-                "notified", False
-            )
-            values.pop("source_active", None)
-            transformed["school_jobs"].append(values)
-        for row in current["school_applications"]:
-            transformed["school_applications"].append(
-                {
-                    **row["context"],
-                    "id": row["id"],
-                    "user_id": owners[str(row["profile_id"])],
-                    "school_id": row["monitor_id"],
-                    "school_job_id": row["school_job_id"],
-                    "status": row["status"],
-                    "draft_content": row["draft_content"],
-                    "created_at": row["created_at"],
-                    "updated_at": row["updated_at"],
-                }
-            )
-        # Validate all fields/types before the first DELETE. Source constraints
-        # remain enabled; caller's transaction rolls back every partial failure.
-        transformed = {
-            name: [_typed(tables[name], row) for row in rows]
-            for name, rows in transformed.items()
-        }
-        for name in reversed(_TABLES[origin]):
-            await session.execute(sa.delete(tables[name]))
-        for name, rows in transformed.items():
-            for row in rows:
-                await session.execute(sa.insert(tables[name]).values(**row))
-        for name, expected in transformed.items():
-            actual = [
-                dict(row)
-                for row in (await session.execute(sa.select(tables[name]))).mappings()
-            ]
-
-            def keys(row):
-                return str(row["id"])
-
-            wanted = sorted(expected, key=keys)
-            obtained = sorted(actual, key=keys)
-            if len(wanted) != len(obtained) or any(
-                digest(row) != digest({key: other[key] for key in row})
-                for row, other in zip(wanted, obtained)
-            ):
-                raise SchoolMigrationError(
-                    "source readback differs after reverse synchronization"
-                )
-        return {
-            "verdict": "verified",
-            "rows": {name: len(rows) for name, rows in transformed.items()},
-        }
-    if original_monitors is None:
-        raise SchoolMigrationError("original Swiss monitor snapshot required")
-    wanted = {str(row["id"]): row["settings"] for row in original_monitors}
-    actual = {str(row["id"]): row["settings"] for row in current["school_monitors"]}
-    if digest(wanted) != digest(actual):
-        raise SchoolMigrationError(
-            "Swiss monitor configuration changed; preserve core until rollback config is prepared"
-        )
-    matches, jobs, prefs = (
-        tables["match_results"],
-        tables["jobs"],
-        tables["user_profiles"],
+        return await _reverse_sync_portfolio(session, tables, origin, current, owners)
+    return await _reverse_sync_swissjob(
+        session, tables, current, owners, original_monitors
     )
-    for row in current["school_applications"]:
-        uid, ref = owners[str(row["profile_id"])], row["source_ref"]
-        if not await session.scalar(sa.select(jobs.c.hash).where(jobs.c.hash == ref)):
-            raise SchoolMigrationError(
-                "source job missing; preserve core authority until repaired"
-            )
-        existing = await session.scalar(
-            sa.select(matches.c.id).where(
-                matches.c.user_id == uid, matches.c.job_hash == ref
-            )
-        )
-        values = _typed(
-            matches,
-            {
-                "application_status": row["status"],
-                "draft_letter": row["draft_content"],
-                "application_status_at": row["updated_at"],
-            },
-        )
-        if existing is not None:
-            await session.execute(
-                sa.update(matches).where(matches.c.id == existing).values(**values)
-            )
-        else:
-            await session.execute(
-                sa.insert(matches).values(
-                    **_typed(
-                        matches,
-                        {
-                            **values,
-                            "id": row["id"],
-                            "user_id": uid,
-                            "job_hash": ref,
-                            "created_at": row["created_at"],
-                            "score_embedding": 0,
-                            "score_salary": 0,
-                            "score_location": 0,
-                            "score_recency": 0,
-                            "score_llm": 0,
-                            "score_final": 0,
-                            "matching_skills": [],
-                            "missing_skills": [],
-                        },
-                    )
+
+
+def _portfolio_rows(origin, current, owners):
+    """Filas fuente reconstruidas desde el snapshot del core (sin pérdida)."""
+    transformed = {name: [] for name in _TABLES[origin]}
+    for row in current["school_monitors"]:
+        values = {
+            **row["settings"],
+            "id": row["id"],
+            "school_id": row["external_ref"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+        # Core-only optional metadata is not a source column. Refuse material
+        # new values rather than dropping them in a rollback.
+        for key in ("city", "scraping_params"):
+            if values.pop(key, None) is not None:
+                raise SchoolMigrationError(
+                    "core-only monitor metadata prevents lossless rollback"
                 )
-            )
-    for row in current["school_profile_preferences"]:
-        await session.execute(
-            sa.update(prefs)
-            .where(prefs.c.user_id == owners[str(row["profile_id"])])
-            .values(watchlist_schools_enabled=row["enabled"])
+        transformed["schools"].append(values)
+    for row in current["school_job_details"]:
+        values = {
+            **row["metadata"],
+            "id": row["id"],
+            "school_id": row["monitor_id"],
+            "notified_at": row["notified_at"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+        values["notified"] = bool(row["notified_at"]) or values.get("notified", False)
+        values.pop("source_active", None)
+        transformed["school_jobs"].append(values)
+    for row in current["school_applications"]:
+        transformed["school_applications"].append(
+            {
+                **row["context"],
+                "id": row["id"],
+                "user_id": owners[str(row["profile_id"])],
+                "school_id": row["monitor_id"],
+                "school_job_id": row["school_job_id"],
+                "status": row["status"],
+                "draft_content": row["draft_content"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
         )
+    return transformed
+
+
+async def _verify_source_readback(session, tables, transformed):
+    for name, expected in transformed.items():
+        actual = [
+            dict(row)
+            for row in (await session.execute(sa.select(tables[name]))).mappings()
+        ]
+
+        def keys(row):
+            return str(row["id"])
+
+        wanted = sorted(expected, key=keys)
+        obtained = sorted(actual, key=keys)
+        if len(wanted) != len(obtained) or any(
+            digest(row) != digest({key: other[key] for key in row})
+            for row, other in zip(wanted, obtained)
+        ):
+            raise SchoolMigrationError(
+                "source readback differs after reverse synchronization"
+            )
+
+
+async def _reverse_sync_portfolio(session, tables, origin, current, owners):
+    transformed = _portfolio_rows(origin, current, owners)
+    # Validate all fields/types before the first DELETE. Source constraints
+    # remain enabled; caller's transaction rolls back every partial failure.
+    transformed = {
+        name: [_typed(tables[name], row) for row in rows]
+        for name, rows in transformed.items()
+    }
+    for name in reversed(_TABLES[origin]):
+        await session.execute(sa.delete(tables[name]))
+    for name, rows in transformed.items():
+        for row in rows:
+            await session.execute(sa.insert(tables[name]).values(**row))
+    await _verify_source_readback(session, tables, transformed)
+    return {
+        "verdict": "verified",
+        "rows": {name: len(rows) for name, rows in transformed.items()},
+    }
+
+
+def _swiss_application_values(matches, row):
+    return _typed(
+        matches,
+        {
+            "application_status": row["status"],
+            "draft_letter": row["draft_content"],
+            "application_status_at": row["updated_at"],
+        },
+    )
+
+
+async def _upsert_swiss_application(session, matches, jobs, row, uid):
+    ref = row["source_ref"]
+    if not await session.scalar(sa.select(jobs.c.hash).where(jobs.c.hash == ref)):
+        raise SchoolMigrationError(
+            "source job missing; preserve core authority until repaired"
+        )
+    existing = await session.scalar(
+        sa.select(matches.c.id).where(
+            matches.c.user_id == uid, matches.c.job_hash == ref
+        )
+    )
+    values = _swiss_application_values(matches, row)
+    if existing is not None:
+        await session.execute(
+            sa.update(matches).where(matches.c.id == existing).values(**values)
+        )
+        return
+    await session.execute(
+        sa.insert(matches).values(
+            **_typed(
+                matches,
+                {
+                    **values,
+                    "id": row["id"],
+                    "user_id": uid,
+                    "job_hash": ref,
+                    "created_at": row["created_at"],
+                    "score_embedding": 0,
+                    "score_salary": 0,
+                    "score_location": 0,
+                    "score_recency": 0,
+                    "score_llm": 0,
+                    "score_final": 0,
+                    "matching_skills": [],
+                    "missing_skills": [],
+                },
+            )
+        )
+    )
+
+
+async def _verify_swiss_readback(session, matches, prefs, current, owners):
     # Read back material state: an UPDATE matching zero rows is not success.
     for row in current["school_applications"]:
         uid = owners[str(row["profile_id"])]
@@ -555,15 +560,9 @@ async def reverse_sync(
                 )
             )
         ).one()
-        expected = _typed(
-            matches,
-            {
-                "application_status": row["status"],
-                "draft_letter": row["draft_content"],
-                "application_status_at": row["updated_at"],
-            },
-        )
-        if digest(dict(actual._mapping)) != digest(expected):
+        if digest(dict(actual._mapping)) != digest(
+            _swiss_application_values(matches, row)
+        ):
             raise SchoolMigrationError("Swiss application readback differs")
     for row in current["school_profile_preferences"]:
         actual = (
@@ -575,6 +574,33 @@ async def reverse_sync(
         ).scalar_one_or_none()
         if actual is not row["enabled"]:
             raise SchoolMigrationError("Swiss preference readback differs")
+
+
+async def _reverse_sync_swissjob(session, tables, current, owners, original_monitors):
+    if original_monitors is None:
+        raise SchoolMigrationError("original Swiss monitor snapshot required")
+    wanted = {str(row["id"]): row["settings"] for row in original_monitors}
+    actual = {str(row["id"]): row["settings"] for row in current["school_monitors"]}
+    if digest(wanted) != digest(actual):
+        raise SchoolMigrationError(
+            "Swiss monitor configuration changed; preserve core until rollback config is prepared"
+        )
+    matches, jobs, prefs = (
+        tables["match_results"],
+        tables["jobs"],
+        tables["user_profiles"],
+    )
+    for row in current["school_applications"]:
+        await _upsert_swiss_application(
+            session, matches, jobs, row, owners[str(row["profile_id"])]
+        )
+    for row in current["school_profile_preferences"]:
+        await session.execute(
+            sa.update(prefs)
+            .where(prefs.c.user_id == owners[str(row["profile_id"])])
+            .values(watchlist_schools_enabled=row["enabled"])
+        )
+    await _verify_swiss_readback(session, matches, prefs, current, owners)
     return {
         "verdict": "verified",
         "applications": len(current["school_applications"]),

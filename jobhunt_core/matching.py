@@ -1511,6 +1511,170 @@ async def canonical_model_id(session, profile_id):
     return None
 
 
+def _policy_recipes(policy_weights):
+    """(algoritmo, receta v4/v5, receta cross-encoder) validadas ANTES de tocar nada."""
+    algorithm = policy_weights.get("algorithm", "cosine")
+    receta_ce = None
+    if algorithm == "hybrid_rrf":
+        # v4+ (P1-A): la receta persistida manda; se valida ANTES de tocar nada.
+        receta = _validated_recipe(policy_weights)
+    elif algorithm == "hybrid_rrf_rerank":
+        # v5: candidatos de v4 + rerank determinista por señales de la receta.
+        receta = _validated_rerank_recipe(policy_weights)
+    elif algorithm in {"cross_encoder", "cross_encoder_tier"}:
+        # Fase 2 cierre definitivo: recuperación híbrida + score ABSOLUTO por
+        # pareja del cross-encoder local (receta con modelo/revisión/huella).
+        # El tier (P2-1) añade la compatibilidad demostrada por pareja.
+        receta_ce = _validated_cross_encoder_recipe(policy_weights)
+        receta = None
+    elif algorithm in {"cosine", "hybrid_rrf_v1", "hybrid_rrf_v2"}:
+        # Legacy congelado: el comportamiento de estas filas vive en el binario
+        # (v1→1.15, v2/v3→0.25) y los goldens lo fijan. No se crean filas nuevas
+        # con estos algoritmos: toda política híbrida nueva lleva receta.
+        receta = None
+    else:
+        raise ValueError(f"algoritmo de matching no soportado: {algorithm}")
+    return algorithm, receta, receta_ce
+
+
+async def _active_profile(session, profile_id, model_id):
+    """Revisión vigente del perfil con su vector para este modelo, o None."""
+    return (
+        await session.execute(
+            sa.text(
+                "SELECT cur.revision_id, pr.content, pe.vector::text AS vec "
+                "FROM (SELECT DISTINCT ON (profile_id) profile_id, revision_id "
+                "      FROM profile_revision_activations WHERE profile_id = :pid "
+                "      ORDER BY profile_id, seq DESC) cur "
+                "JOIN profile_revisions pr ON pr.id = cur.revision_id "
+                "  AND pr.profile_id = cur.profile_id "
+                "JOIN profile_embeddings pe "
+                "  ON pe.profile_revision_id = cur.revision_id AND pe.model_id = :mid"
+            ),
+            {"pid": profile_id, "mid": model_id},
+        )
+    ).one_or_none()
+
+
+async def _eligible_target(session, model_id, limit):
+    """Objetivo REAL del scan: conteo acotado de elegibles (rev. 2ª P2#2)."""
+    eligible = (
+        await session.execute(
+            # MISMO fragmento que usa la señal de recuperación del proyector: duplicarlo permitiría
+            # que "corpus elegible" significara cosas distintas en cada sitio.
+            sa.text(
+                "SELECT count(*) FROM (SELECT 1 "
+                + ELIGIBLE_CORPUS_FROM.format(model=":mid")
+                + " LIMIT :k) t"
+            ),
+            {"mid": model_id, "k": limit},
+        )
+    ).scalar_one()
+    return min(limit, int(eligible))
+
+
+def _lexical_query_for(algorithm, recuperacion, content):
+    if recuperacion is not None:
+        return _LEXICAL_QUERY_BUILDERS[recuperacion["lexical_query"]](content)
+    if algorithm == "hybrid_rrf_v2":
+        return _lexical_query_v2(content)
+    if algorithm == "hybrid_rrf_v1":
+        return _lexical_query(content)
+    return ""
+
+
+def _candidate_sql_for(algorithm, recuperacion, hybrid):
+    if recuperacion is not None:
+        return _hybrid_candidates_sql(recuperacion["lexical_weight"])
+    if algorithm == "hybrid_rrf_v2":
+        return HYBRID2_CANDIDATES_SQL
+    if hybrid:
+        return HYBRID_CANDIDATES_SQL
+    return CANDIDATES_SQL
+
+
+async def _fetch_candidates(session, candidate_sql, params, limit, target, hybrid):
+    """Scan ANN robusto con fallback exacto sólo ante inanición REAL."""
+    ef_search = min(max(limit, 40), 1000)
+    await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(ef_search)}"))
+    await session.execute(sa.text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
+    await session.execute(
+        sa.text(f"SET LOCAL hnsw.max_scan_tuples = {int(MAX_SCAN_TUPLES)}")
+    )
+    candidates = (await session.execute(sa.text(candidate_sql), params)).all()
+
+    if len(candidates) < target or not _semantic_arm_filled(candidates, target, hybrid):
+        # Inanición REAL del scan acotado: el exacto responde siempre bien.
+        await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
+        await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
+        candidates = (await session.execute(sa.text(candidate_sql), params)).all()
+        await session.execute(sa.text("SET LOCAL enable_indexscan = on"))
+        await session.execute(sa.text("SET LOCAL enable_bitmapscan = on"))
+    return candidates
+
+
+def _reranked_rows(reranked, algorithm, receta):
+    rows = []
+    for r in reranked:
+        score_parts = {
+            "algorithm": algorithm,
+            "recipe": receta,
+            "similarity": (round(float(r["sim"]), 6) if r["sim"] is not None else None),
+            "semantic_rank": r["semantic_rank"],
+            "lexical_rank": r["lexical_rank"],
+            "lexical_score": (
+                round(float(r["lexical_score"]), 6)
+                if r["lexical_score"] is not None
+                else None
+            ),
+            # componentes del rerank: suficientes para explicar el orden
+            **r["rerank"],
+        }
+        rows.append(
+            {
+                "vacancy_id": r["vacancy_id"],
+                "offer_revision_id": r["offer_revision_id"],
+                "score": r["score"],
+                "score_parts": score_parts,
+            }
+        )
+    return rows
+
+
+def _candidate_rows(candidates, hybrid, algorithm, receta):
+    rows = []
+    for c in candidates:
+        if hybrid:
+            similarity = round(float(c.sim), 6) if c.sim is not None else None
+            score = round(min(100.0, max(0.0, float(c.rank_score))), 2)
+            score_parts = {
+                "algorithm": algorithm,
+                # Receta bajo la que se calculó ESTA fila: con ella una eval es
+                # auditable sin reconstruir qué constante regía en el binario.
+                **({"recipe": receta} if receta is not None else {}),
+                "similarity": similarity,
+                "semantic_rank": c.semantic_rank,
+                "lexical_rank": c.lexical_rank,
+                "lexical_score": (
+                    round(float(c.lexical_score), 6)
+                    if c.lexical_score is not None
+                    else None
+                ),
+            }
+        else:
+            score = round(max(0.0, float(c.sim)) * 100, 2)
+            score_parts = {"similarity": round(float(c.sim), 6)}
+        rows.append(
+            {
+                "vacancy_id": c.vacancy_id,
+                "offer_revision_id": c.offer_revision_id,
+                "score": score,
+                "score_parts": score_parts,
+            }
+        )
+    return rows
+
+
 async def compute_policy_feed(
     session,
     profile_id,
@@ -1547,43 +1711,9 @@ async def compute_policy_feed(
     ).scalar_one_or_none()
     if not isinstance(policy_weights, dict):
         raise ValueError(f"política inexistente o weights inválidos: {policy_id}")
-    algorithm = policy_weights.get("algorithm", "cosine")
-    receta_ce = None
-    if algorithm == "hybrid_rrf":
-        # v4+ (P1-A): la receta persistida manda; se valida ANTES de tocar nada.
-        receta = _validated_recipe(policy_weights)
-    elif algorithm == "hybrid_rrf_rerank":
-        # v5: candidatos de v4 + rerank determinista por señales de la receta.
-        receta = _validated_rerank_recipe(policy_weights)
-    elif algorithm in {"cross_encoder", "cross_encoder_tier"}:
-        # Fase 2 cierre definitivo: recuperación híbrida + score ABSOLUTO por
-        # pareja del cross-encoder local (receta con modelo/revisión/huella).
-        # El tier (P2-1) añade la compatibilidad demostrada por pareja.
-        receta_ce = _validated_cross_encoder_recipe(policy_weights)
-        receta = None
-    elif algorithm in {"cosine", "hybrid_rrf_v1", "hybrid_rrf_v2"}:
-        # Legacy congelado: el comportamiento de estas filas vive en el binario
-        # (v1→1.15, v2/v3→0.25) y los goldens lo fijan. No se crean filas nuevas
-        # con estos algoritmos: toda política híbrida nueva lleva receta.
-        receta = None
-    else:
-        raise ValueError(f"algoritmo de matching no soportado: {algorithm}")
+    algorithm, receta, receta_ce = _policy_recipes(policy_weights)
 
-    prof = (
-        await session.execute(
-            sa.text(
-                "SELECT cur.revision_id, pr.content, pe.vector::text AS vec "
-                "FROM (SELECT DISTINCT ON (profile_id) profile_id, revision_id "
-                "      FROM profile_revision_activations WHERE profile_id = :pid "
-                "      ORDER BY profile_id, seq DESC) cur "
-                "JOIN profile_revisions pr ON pr.id = cur.revision_id "
-                "  AND pr.profile_id = cur.profile_id "
-                "JOIN profile_embeddings pe "
-                "  ON pe.profile_revision_id = cur.revision_id AND pe.model_id = :mid"
-            ),
-            {"pid": profile_id, "mid": model_id},
-        )
-    ).one_or_none()
+    prof = await _active_profile(session, profile_id, model_id)
     if prof is None:
         # Sin revisión vigente o sin vector para este modelo: nada que evaluar
         # (el worker de embeddings aún no pasó) — no es un error.
@@ -1614,19 +1744,7 @@ async def compute_policy_feed(
         if with_corpus_generation
         else None
     )
-    eligible = (
-        await session.execute(
-            # MISMO fragmento que usa la señal de recuperación del proyector: duplicarlo permitiría
-            # que "corpus elegible" significara cosas distintas en cada sitio.
-            sa.text(
-                "SELECT count(*) FROM (SELECT 1 "
-                + ELIGIBLE_CORPUS_FROM.format(model=":mid")
-                + " LIMIT :k) t"
-            ),
-            {"mid": model_id, "k": limit},
-        )
-    ).scalar_one()
-    target = min(limit, int(eligible))
+    target = await _eligible_target(session, model_id, limit)
     if target == 0:
         return {
             "status": "ok",
@@ -1635,27 +1753,12 @@ async def compute_policy_feed(
             "corpus_generation": None,
         }
     recuperacion = receta_ce if receta_ce is not None else receta
-    if recuperacion is not None:
-        lex_query = _LEXICAL_QUERY_BUILDERS[recuperacion["lexical_query"]](prof.content)
-    elif algorithm == "hybrid_rrf_v2":
-        lex_query = _lexical_query_v2(prof.content)
-    elif algorithm == "hybrid_rrf_v1":
-        lex_query = _lexical_query(prof.content)
-    else:
-        lex_query = ""
+    lex_query = _lexical_query_for(algorithm, recuperacion, prof.content)
     hybrid = bool(lex_query)
-    if recuperacion is not None:
-        candidate_sql = _hybrid_candidates_sql(recuperacion["lexical_weight"])
-    elif algorithm == "hybrid_rrf_v2":
-        candidate_sql = HYBRID2_CANDIDATES_SQL
-    elif hybrid:
-        candidate_sql = HYBRID_CANDIDATES_SQL
-    else:
-        candidate_sql = CANDIDATES_SQL
     # Frontera ÚNICA: la exclusión entra en el SQL, antes de todos los LIMIT.
     excl_ids = [str(x) for x in (exclude_vacancy_ids or [])]
     candidate_sql = _with_candidate_exclusions(
-        candidate_sql,
+        _candidate_sql_for(algorithm, recuperacion, hybrid),
         exclude_dismissed=exclude_dismissed,
         exclude_ids=bool(excl_ids),
     )
@@ -1667,49 +1770,11 @@ async def compute_policy_feed(
         "pid": profile_id,
         "excl_ids": excl_ids,
     }
-    ef_search = min(max(limit, 40), 1000)
-    await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(ef_search)}"))
-    await session.execute(sa.text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
-    await session.execute(
-        sa.text(f"SET LOCAL hnsw.max_scan_tuples = {int(MAX_SCAN_TUPLES)}")
+    candidates = await _fetch_candidates(
+        session, candidate_sql, params, limit, target, hybrid
     )
-    candidates = (await session.execute(sa.text(candidate_sql), params)).all()
-
-    if len(candidates) < target or not _semantic_arm_filled(candidates, target, hybrid):
-        # Inanición REAL del scan acotado: el exacto responde siempre bien.
-        await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
-        await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
-        candidates = (await session.execute(sa.text(candidate_sql), params)).all()
-        await session.execute(sa.text("SET LOCAL enable_indexscan = on"))
-        await session.execute(sa.text("SET LOCAL enable_bitmapscan = on"))
-    reranked = None
-    if receta is not None and receta.get("rerank"):
-        # Rerank v5 SOBRE el conjunto ya recuperado (una consulta de señales
-        # para el lote entero; sin N+1). El orden y el score persistidos son
-        # los del rerank; los componentes van a score_parts.
-        reranked = await _rerank_candidates(session, candidates, prof.content, receta)
     if receta_ce is not None and candidates:
-        if not ce_inference:
-            # P1-3: la evaluación productiva PREPARA aquí (todas las lecturas
-            # de BD) y puntúa FUERA de la transacción; el ensamblado llega en
-            # la fase de persistencia.
-            prep = await _ce_prepare(
-                session,
-                candidates,
-                prof,
-                profile_id,
-                model_id,
-                policy_id,
-                receta_ce,
-            )
-            return {
-                "status": "ok_prep",
-                "rows": [],
-                "prep": prep,
-                "profile_revision_id": prof.revision_id,
-                "corpus_generation": corpus_gen,
-            }
-        rows = await _cross_encoder_rows(
+        return await _cross_encoder_feed(
             session,
             candidates,
             prof,
@@ -1717,72 +1782,56 @@ async def compute_policy_feed(
             model_id,
             policy_id,
             receta_ce,
+            corpus_gen,
+            ce_inference,
         )
-        return {
-            "status": "ok",
-            "rows": rows,
-            "profile_revision_id": prof.revision_id,
-            "corpus_generation": corpus_gen,
-        }
-    rows = []
-    if reranked is not None:
-        for r in reranked:
-            score_parts = {
-                "algorithm": algorithm,
-                "recipe": receta,
-                "similarity": (
-                    round(float(r["sim"]), 6) if r["sim"] is not None else None
-                ),
-                "semantic_rank": r["semantic_rank"],
-                "lexical_rank": r["lexical_rank"],
-                "lexical_score": (
-                    round(float(r["lexical_score"]), 6)
-                    if r["lexical_score"] is not None
-                    else None
-                ),
-                # componentes del rerank: suficientes para explicar el orden
-                **r["rerank"],
-            }
-            rows.append(
-                {
-                    "vacancy_id": r["vacancy_id"],
-                    "offer_revision_id": r["offer_revision_id"],
-                    "score": r["score"],
-                    "score_parts": score_parts,
-                }
-            )
-    for c in [] if reranked is not None else candidates:
-        if hybrid:
-            similarity = round(float(c.sim), 6) if c.sim is not None else None
-            score = round(min(100.0, max(0.0, float(c.rank_score))), 2)
-            score_parts = {
-                "algorithm": algorithm,
-                # Receta bajo la que se calculó ESTA fila: con ella una eval es
-                # auditable sin reconstruir qué constante regía en el binario.
-                **({"recipe": receta} if receta is not None else {}),
-                "similarity": similarity,
-                "semantic_rank": c.semantic_rank,
-                "lexical_rank": c.lexical_rank,
-                "lexical_score": (
-                    round(float(c.lexical_score), 6)
-                    if c.lexical_score is not None
-                    else None
-                ),
-            }
-        else:
-            score = round(max(0.0, float(c.sim)) * 100, 2)
-            score_parts = {"similarity": round(float(c.sim), 6)}
-        rows.append(
-            {
-                "vacancy_id": c.vacancy_id,
-                "offer_revision_id": c.offer_revision_id,
-                "score": score,
-                "score_parts": score_parts,
-            }
-        )
+    if receta is not None and receta.get("rerank"):
+        # Rerank v5 SOBRE el conjunto ya recuperado (una consulta de señales
+        # para el lote entero; sin N+1). El orden y el score persistidos son
+        # los del rerank; los componentes van a score_parts.
+        reranked = await _rerank_candidates(session, candidates, prof.content, receta)
+        rows = _reranked_rows(reranked, algorithm, receta)
+    else:
+        rows = _candidate_rows(candidates, hybrid, algorithm, receta)
     # Orden del FEED (no el bruto del SQL): score final redondeado DESC,
     # vacante ASC — la misma clave con la que sirve el feed canónico.
     rows.sort(key=lambda r: (-r["score"], str(r["vacancy_id"])))
+    return {
+        "status": "ok",
+        "rows": rows,
+        "profile_revision_id": prof.revision_id,
+        "corpus_generation": corpus_gen,
+    }
+
+
+async def _cross_encoder_feed(
+    session,
+    candidates,
+    prof,
+    profile_id,
+    model_id,
+    policy_id,
+    receta_ce,
+    corpus_gen,
+    ce_inference,
+):
+    if not ce_inference:
+        # P1-3: la evaluación productiva PREPARA aquí (todas las lecturas
+        # de BD) y puntúa FUERA de la transacción; el ensamblado llega en
+        # la fase de persistencia.
+        prep = await _ce_prepare(
+            session, candidates, prof, profile_id, model_id, policy_id, receta_ce
+        )
+        return {
+            "status": "ok_prep",
+            "rows": [],
+            "prep": prep,
+            "profile_revision_id": prof.revision_id,
+            "corpus_generation": corpus_gen,
+        }
+    rows = await _cross_encoder_rows(
+        session, candidates, prof, profile_id, model_id, policy_id, receta_ce
+    )
     return {
         "status": "ok",
         "rows": rows,

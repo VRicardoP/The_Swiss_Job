@@ -197,6 +197,80 @@ def _listing(raw):
     return RawListing(external_id=external_id, url=url, payload=raw)
 
 
+def _validate_params(name, params):
+    allowed = {"query"} if name != "jobicy" else {"tag", "geo"}
+    if not isinstance(params, dict) or set(params) - allowed:
+        raise ProviderConfigError(f"Invalid parameters for {name}")
+    if any(not isinstance(value, str) or len(value) > 200 for value in params.values()):
+        raise ProviderConfigError(
+            "Source filters must be strings of at most 200 characters"
+        )
+
+
+def _query_for(name, params):
+    query = {}
+    if name == "remotive":
+        query = {"limit": 200}
+        if params.get("query"):
+            query["search"] = params["query"]
+    elif name == "jobicy":
+        query = {"count": 50, **{k: v for k, v in params.items() if v}}
+    return query
+
+
+async def _fetch_body(name, http, query):
+    """Descarga acotada en bytes; devuelve el JSON decodificado."""
+    async with http.stream(
+        "GET",
+        ENDPOINTS[name],
+        params=query,
+        timeout=25,
+        headers={"User-Agent": "SwissJobHunter/1.0"},
+        follow_redirects=True,
+    ) as response:
+        response.raise_for_status()
+        chunks, size = [], 0
+        async for chunk in response.aiter_bytes():
+            size += len(chunk)
+            if size > MAX_RESPONSE_BYTES:
+                raise ProviderResponseError(f"{name}: response exceeds byte budget")
+            chunks.append(chunk)
+        try:
+            return httpx.Response(200, content=b"".join(chunks)).json()
+        except (ValueError, UnicodeError) as exc:
+            raise ProviderResponseError(f"{name}: invalid JSON") from exc
+
+
+def _rows_of(name, body):
+    rows = (
+        body
+        if name == "workingnomads"
+        else body.get("jobs")
+        if isinstance(body, dict)
+        else None
+    )
+    if not isinstance(rows, list):
+        raise ProviderResponseError(f"{name}: invalid jobs collection")
+    return rows
+
+
+def _workingnomads_filter(name, listings, query):
+    """Excluye títulos tech y lo que no contenga la consulta; devuelve (aceptadas, filtradas)."""
+    accepted, filtered = [], 0
+    for listing in listings:
+        content = _content(name, listing.payload)
+        title = content["title"] if isinstance(content["title"], str) else ""
+        query_text = (title + " " + (content["description"] or "")).lower()
+        if (
+            any(word in title.lower() for word in WORKINGNOMADS_TECH_EXCLUDE)
+            or query not in query_text
+        ):
+            filtered += 1
+        else:
+            accepted.append(listing)
+    return tuple(accepted), filtered
+
+
 class NativeJSONProvider(BaseProvider):
     SEMANTIC_PARAMS = ("query", "tag", "geo")
 
@@ -207,52 +281,9 @@ class NativeJSONProvider(BaseProvider):
         register_handlers()
 
     async def fetch_new(self, params, cursor, http):
-        allowed = {"query"} if self.name != "jobicy" else {"tag", "geo"}
-        if not isinstance(params, dict) or set(params) - allowed:
-            raise ProviderConfigError(f"Invalid parameters for {self.name}")
-        if any(
-            not isinstance(value, str) or len(value) > 200 for value in params.values()
-        ):
-            raise ProviderConfigError(
-                "Source filters must be strings of at most 200 characters"
-            )
-        query = {}
-        if self.name == "remotive":
-            query = {"limit": 200}
-            if params.get("query"):
-                query["search"] = params["query"]
-        elif self.name == "jobicy":
-            query = {"count": 50, **{k: v for k, v in params.items() if v}}
-        async with http.stream(
-            "GET",
-            ENDPOINTS[self.name],
-            params=query,
-            timeout=25,
-            headers={"User-Agent": "SwissJobHunter/1.0"},
-            follow_redirects=True,
-        ) as response:
-            response.raise_for_status()
-            chunks, size = [], 0
-            async for chunk in response.aiter_bytes():
-                size += len(chunk)
-                if size > MAX_RESPONSE_BYTES:
-                    raise ProviderResponseError(
-                        f"{self.name}: response exceeds byte budget"
-                    )
-                chunks.append(chunk)
-            try:
-                body = httpx.Response(200, content=b"".join(chunks)).json()
-            except (ValueError, UnicodeError) as exc:
-                raise ProviderResponseError(f"{self.name}: invalid JSON") from exc
-        rows = (
-            body
-            if self.name == "workingnomads"
-            else body.get("jobs")
-            if isinstance(body, dict)
-            else None
-        )
-        if not isinstance(rows, list):
-            raise ProviderResponseError(f"{self.name}: invalid jobs collection")
+        _validate_params(self.name, params)
+        body = await _fetch_body(self.name, http, _query_for(self.name, params))
+        rows = _rows_of(self.name, body)
         listings = tuple(item for row in rows if (item := _listing(row)) is not None)
         if rows and not listings:
             raise ProviderResponseError(
@@ -265,20 +296,9 @@ class NativeJSONProvider(BaseProvider):
             )
         filtered = 0
         if self.name == "workingnomads":
-            accepted = []
-            query = params.get("query", "").lower()
-            for listing in listings:
-                content = _content(self.name, listing.payload)
-                title = content["title"] if isinstance(content["title"], str) else ""
-                query_text = (title + " " + (content["description"] or "")).lower()
-                if (
-                    any(word in title.lower() for word in WORKINGNOMADS_TECH_EXCLUDE)
-                    or query not in query_text
-                ):
-                    filtered += 1
-                else:
-                    accepted.append(listing)
-            listings = tuple(accepted)
+            listings, filtered = _workingnomads_filter(
+                self.name, listings, params.get("query", "").lower()
+            )
         return FetchResult(
             listings,
             {"items_seen": len(rows), "filtered": filtered},

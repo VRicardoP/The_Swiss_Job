@@ -137,13 +137,11 @@ def _zebis_employer(description):
     return name if len(name) > 3 and not name[0].isdigit() else "Unknown"
 
 
-def _content(source, raw):
-    item = _xml(raw["item_xml"])
-    title = (item.findtext("title") or "").strip()
-    description = strip_html_tags(item.findtext("description") or "")
+def _title_and_company(source, title, raw_description):
+    """Separa empresa y título según la convención de cada feed."""
     company = ""
     if source == "zebis":
-        company = _zebis_employer(item.findtext("description") or "")
+        company = _zebis_employer(raw_description)
     elif source == "weworkremotely":
         if ": " in title:
             company, title = title.split(": ", 1)
@@ -158,7 +156,22 @@ def _content(source, raw):
             if separator in title:
                 title, company = title.split(separator, 1)
                 break
-    title, company = title.strip(), company.strip()
+    return title.strip(), company.strip()
+
+
+def _globaljobs_location(description):
+    text = description.lower()
+    if "home-based" in text or "home based" in text:
+        return "Remote / Home-based"
+    if "remote" not in text[:300]:
+        return next(
+            (city for city in _INTL_CITIES if city.lower() in text[:500]),
+            "International",
+        )
+    return "Remote / Worldwide"
+
+
+def _location(source, item, description):
     location = "Remote / Worldwide"
     if source == "zebis":
         location = "Switzerland"
@@ -173,14 +186,11 @@ def _content(source, raw):
             or location
         ).strip()
     elif source == "globaljobs":
-        text = description.lower()
-        if "home-based" in text or "home based" in text:
-            location = "Remote / Home-based"
-        elif "remote" not in text[:300]:
-            location = next(
-                (city for city in _INTL_CITIES if city.lower() in text[:500]),
-                "International",
-            )
+        location = _globaljobs_location(description)
+    return location
+
+
+def _tags(source, item, title, description):
     tags = extract_job_skills(title, description)
     category = (item.findtext("category") or "").strip()
     if (
@@ -189,6 +199,18 @@ def _content(source, raw):
         and category.lower() not in [tag.lower() for tag in tags]
     ):
         tags = [category] + tags
+    return tags
+
+
+def _content(source, raw):
+    item = _xml(raw["item_xml"])
+    raw_description = item.findtext("description") or ""
+    title, company = _title_and_company(
+        source, (item.findtext("title") or "").strip(), raw_description
+    )
+    description = strip_html_tags(raw_description)
+    location = _location(source, item, description)
+    tags = _tags(source, item, title, description)
     remote = (
         source in {"weworkremotely", "euremotejobs"}
         or "remote" in location.lower()
