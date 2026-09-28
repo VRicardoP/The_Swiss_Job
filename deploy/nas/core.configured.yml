@@ -5,7 +5,7 @@
 # healthchecks a 60 s y límites de memoria (A19-25, A19-11).
 services:
   core-api:
-    image: swissjob-core:point5-fed376a
+    image: swissjob-core:point5-1125aae
     mem_limit: 512m
     container_name: swissjob-core-api-r5
     environment:
@@ -70,7 +70,7 @@ services:
         soft: 65535
         hard: 65535
   core-worker:
-    image: swissjob-core:point5-fed376a
+    image: swissjob-core:point5-1125aae
     mem_limit: 2g
     container_name: swissjob-core-worker-r5
     environment:

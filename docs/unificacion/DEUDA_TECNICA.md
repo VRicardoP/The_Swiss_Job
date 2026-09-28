@@ -356,7 +356,7 @@ en SQL y el parser de fechas de los portales.
 **Cierre**: los 23 corregidos y verificados el 2026-09-28 (BFF, núcleo y frontend en verde;
 `alembic check` verde sobre base viva y sobre base migrada desde cero). El único cambio de
 contrato es aditivo (`profile` opcional en PATCH/DELETE `/v1/applications/{id}`) y exige
-desplegar el núcleo antes que el BFF.
+desplegar el núcleo antes que el BFF. **Desplegado en el NAS el 2026-09-28** en ese orden: núcleo, BFF y frontend en `point5-1125aae` (`/v1/ready` → `release 1125aae, authoritative`; frontend con etiqueta inmutable y la anterior conservada como `prod-before-1125aae`).
 
 ## 0 · Estado vigente y deuda priorizada (actualización 2026-09-14)
 

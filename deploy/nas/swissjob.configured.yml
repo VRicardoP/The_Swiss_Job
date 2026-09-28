@@ -5,7 +5,7 @@
 # healthchecks a 60 s y límites de memoria (A19-25, A19-11).
 services:
   backend:
-    image: swissjob-backend:point5-84518aa
+    image: swissjob-backend:point5-1125aae
     mem_limit: 1536m
     container_name: swissjob-backend
     environment:
