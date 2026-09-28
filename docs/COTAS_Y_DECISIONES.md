@@ -475,3 +475,16 @@ irishjobs, 4% perdido en Jobgether) eran nuestros, no suyos.
 canónica (111/111 revisiones) porque `jobhunt_core/harvest/providers/arbeitnow.py`
 no limpia como hacía el legacy (`strip_html_tags`). La paridad del traspaso
 comparó identidad y cabeceras, no la forma del texto. Bloque A del diagnóstico.
+
+### Complejidad ciclomática (T16, 2026-09-28)
+
+**Cota aceptada:** siete funciones de grado E/F de radon siguen en las
+herramientas de corte de la Fase E — `import_portfolio_manifest._classify_expected`
+(F 66), `import_portfolio_durables.migrate_applications` (F 43),
+`import_portfolio_verify.verify_migration` (F 41), `import_swissjob_searches.prepare_plan/apply_plan`
+(E 35/40) e `import_swissjob_feedback.prepare_plan/apply_plan` (E 40/39). Son de
+un solo uso, ya ejecutadas, sólo alcanzables desde los CLI `*_cutover` y los
+ensayos, y fijadas por sus tests de integración. Reescribirlas no protege nada
+que corra y sí arriesga la única evidencia de cómo se hizo el corte. Todo lo
+demás que corre en producción (BFF y núcleo) está en grado ≤ D; el estándar de
+CC ≤ 10 para código NUEVO sigue vigente (`radon cc -s -n C`).
