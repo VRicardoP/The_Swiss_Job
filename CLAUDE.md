@@ -196,8 +196,9 @@ solape que lleva más de 7 d sin cerrar.
   final. Su primera versión fabricaba la deriva A19-21 con un `sed` global.
 - **Supervisor de contenedores (A19-17)**: contenedor `swissjob-supervisor` en el
   NAS con `restart: always` y el socket de Docker, cada 5 min; alerta si falta o
-  no corre cualquiera de los 14 esperados (15 hasta el 2026-09-28: `swissjob-redis-r5`
-  era un resto del ensayo r5 sin clientes ni claves y se retiró), con anti-ruido (sólo cambios de estado
+  no corre cualquiera de los 15 esperados (eran 14 tras retirar `swissjob-redis-r5`
+  el 2026-09-28; el 2026-09-30 entra `portfolio_worker`, el proceso de fondo del
+  Portfolio — ver su `backend/CLAUDE.md`), con anti-ruido (sólo cambios de estado
   + recordatorio cada 6 h). Fuente: `scripts/nas/`. **El correo está BLOQUEADO
   por credencial**: la contraseña SMTP de producción tiene 14 caracteres (una de
   aplicación de Gmail tiene 16) y Gmail la rechaza —también para los cuatro avisos
