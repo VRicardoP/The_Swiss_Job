@@ -76,6 +76,66 @@ def test_historical_observation_waits_for_corpus_without_creating_vacancy(school
     assert live.json()["item"]["quarantine_reason"] is None
 
 
+def test_live_reobservation_fills_missing_details_without_replacing_job(school_db):
+    f, made = school_db
+    token, _, _ = _seed_profile(f, made, SCOPES)
+    monitor = _create(f, token).json()
+    path = "/v1/schools/" + monitor["id"] + "/jobs"
+    body = _observation(url=None, description_snippet=None)
+    first = _request(f, token, path, "POST", body, "without-details").json()["item"]
+    current = _request(f, token, "/v1/school-jobs/" + first["id"])
+    notified = _request(
+        f,
+        token,
+        "/v1/school-jobs/" + first["id"] + "/notified",
+        "POST",
+        key="notify-before-enrichment",
+        etag=current.headers["etag"],
+    ).json()
+
+    enriched = _request(
+        f,
+        token,
+        path,
+        "POST",
+        {
+            **body,
+            "url": "https://school.example/jobs/it-technician",
+            "description_snippet": "Complete requirements",
+            "content_hash": "b" * 64,
+        },
+        "with-details",
+    )
+
+    assert enriched.status_code == 200, enriched.text
+    assert enriched.json()["created"] is False
+    item = enriched.json()["item"]
+    assert item["id"] == first["id"]
+    assert item["metadata"]["url"] == "https://school.example/jobs/it-technician"
+    assert item["metadata"]["description_snippet"] == "Complete requirements"
+    assert item["metadata"]["content_hash"] == "b" * 64
+    assert item["metadata"]["notified"] is True
+    assert item["vacancy_id"] is not None
+    assert item["quarantine_reason"] is None
+    assert item["notified_at"] == notified["notified_at"]
+
+    conflicting = _request(
+        f,
+        token,
+        path,
+        "POST",
+        {
+            **body,
+            "url": "https://other.example/jobs/wrong",
+            "description_snippet": "Replacement",
+            "content_hash": "c" * 64,
+        },
+        "conflicting-details",
+    ).json()["item"]
+    assert conflicting["metadata"]["url"] == item["metadata"]["url"]
+    assert conflicting["metadata"]["description_snippet"] == "Complete requirements"
+
+
 def test_same_source_sighting_preserves_canonical_content(school_db):
     f, made = school_db
     token, _, _ = _seed_profile(f, made, SCOPES)

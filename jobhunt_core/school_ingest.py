@@ -220,18 +220,33 @@ async def record_observation(
         .one_or_none()
     )
     if existing is not None:
-        same_identity = existing["metadata"].get("title") == values[
-            "title"
-        ] and existing["metadata"].get("url") == values.get("url")
+        metadata = dict(existing["metadata"])
+        same_title = metadata.get("title") == values["title"]
+        old_url = metadata.get("url")
+        new_url = values.get("url")
+        same_identity = same_title and (not old_url or old_url == new_url)
+        enriched = False
+        if same_identity:
+            for field in ("url", "description_snippet"):
+                if not metadata.get(field) and values.get(field):
+                    metadata[field] = values[field]
+                    enriched = True
+            if enriched:
+                metadata["content_hash"] = values["content_hash"]
+        observation = {**values, **metadata}
         if (
             source_active
             and same_identity
-            and existing["quarantine_reason"] in ("source_inactive", "awaiting_corpus")
+            and (
+                publish_missing
+                or existing["quarantine_reason"]
+                in ("source_inactive", "awaiting_corpus")
+            )
         ):
             vacancy_id, reason = await link_observation(
-                session, monitor, values, publish_missing=publish_missing
+                session, monitor, observation, publish_missing=publish_missing
             )
-            metadata = {**existing["metadata"], "source_active": True}
+            metadata["source_active"] = True
             await session.execute(
                 sa.text(
                     "UPDATE school_job_details SET vacancy_id=:v,quarantine_reason=:r,"
@@ -244,8 +259,6 @@ async def record_observation(
                     "m": json.dumps(metadata),
                 },
             )
-        elif source_active and same_identity and publish_missing:
-            await link_observation(session, monitor, values, publish_missing=True)
         return existing["id"], False
     vacancy_id, reason = (
         await link_observation(
