@@ -584,6 +584,40 @@ explícito de `core_primary` del catálogo**, no de la fase.
 
 ---
 
+## 9. Decisiones del cliente Portfolio que deben seguir siendo reversibles
+
+### DT-138 — efecto gelatina de las ventanas: aceptado
+
+El propietario aceptó el efecto el **2026-10-06** después de probar su percepción y
+rendimiento. La decisión conserva dos invariantes:
+
+- el movimiento real sigue siendo el `translate3d` 1:1 de DT-137; la deformación sólo
+  afecta a la presentación;
+- `prefers-reduced-motion: reduce` desactiva la deformación y el rebote.
+
+La implementación está aislada en el commit del frontend `f852712` y sólo toca
+`src/hooks/useDraggable.js` y sus pruebas. El commit anterior `9af4b8d` es la base
+DT-137 sin gelatina.
+
+**Reversión sobre la rama actual:** crear un commit inverso; no mover la rama a
+`9af4b8d`, porque eso descartaría las correcciones posteriores:
+
+```bash
+cd /home/lothar/Public/ReactPortfolio/frontend
+git revert f852712
+npm run test:run
+npm run lint
+npm run build
+git push gitlab main
+git push github main
+```
+
+El revert debe desplegarse por el flujo normal de Cloudflare Pages. Si el historial
+posterior llegara a solapar esas dos rutas y Git notificase conflicto, se conserva
+DT-137 y se retiran únicamente el cálculo de `skewX`/escala y el rebote WAAPI.
+
+---
+
 ## Continuar
 
 - **[DOC 2 — Componentes](DOC_2_COMPONENTES_2026-08-27.md)** — recorrido pieza a pieza: qué
