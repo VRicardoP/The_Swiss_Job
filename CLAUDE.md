@@ -194,13 +194,20 @@ solape que lleva más de 7 d sin cerrar.
   SERVICIO (nunca `core-capture`), migración del núcleo con contenedor desechable
   ANTES de recrear, `core-api`+`core-worker` juntos, y `check_core_release.py` al
   final. Su primera versión fabricaba la deriva A19-21 con un `sed` global.
-- **Supervisor de contenedores (A19-17)**: contenedor `swissjob-supervisor` en el
-  NAS con `restart: always` y el socket de Docker, cada 5 min; alerta si falta o
-  no corre cualquiera de los 15 esperados (eran 14 tras retirar `swissjob-redis-r5`
-  el 2026-09-28; el 2026-09-30 entra `portfolio_worker`, el proceso de fondo del
-  Portfolio — ver su `backend/CLAUDE.md`), con anti-ruido (sólo cambios de estado
-  + recordatorio cada 6 h). Fuente: `scripts/nas/`. **El correo está BLOQUEADO
-  por credencial**: la contraseña SMTP de producción tiene 14 caracteres (una de
+- **Supervisor de contenedores (A19-17)**: lo ejecuta el **crontab del QTS** cada
+  5 min (`/etc/config/crontab` → `/share/Public/swissjob/supervisor_contenedores.sh`),
+  y alerta si falta o no corre cualquiera de los 15 esperados (incluido
+  `portfolio_worker`, el proceso de fondo del Portfolio — ver su `backend/CLAUDE.md`),
+  con anti-ruido (sólo cambios de estado + recordatorio cada 6 h). Fuente:
+  `scripts/nas/`; al host se sube con `scp` y 700.
+  **NO levantes además el contenedor `swissjob-supervisor`** (retirado el
+  2026-10-07): los dos caminos comparten el fichero de estado, cada uno leía el
+  cambio que escribía el otro y avisaba — **3.729 correos en 24 h**, y encima la
+  copia del host era de antes de retirar `swissjob-redis-r5`, así que pedía un
+  contenedor inexistente. El script lleva desde entonces un guard de ejecución
+  única (240 s) que lo impide aunque se rearme el otro camino. El correo SÍ sale
+  por esta vía: usa el `sendmail` (ssmtp) del QTS; el contenedor no lo tenía y
+  caía al SMTP de Gmail, que sigue rechazando la credencial: la contraseña SMTP de producción tiene 14 caracteres (una de
   aplicación de Gmail tiene 16) y Gmail la rechaza —también para los cuatro avisos
   por email del BFF, que llevan tiempo sin salir—. Hasta que el propietario
   ponga una válida en `supervisor.env` y en el compose, el supervisor registra en

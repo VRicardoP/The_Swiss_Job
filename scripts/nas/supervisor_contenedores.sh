@@ -25,7 +25,12 @@
 # `unless-stopped`: el 23-09 los contenedores quedaron «parados» tras el
 # reinicio del daemon y `unless-stopped` no los levantó; `always` sí vuelve.
 # La entrada del crontab queda además en /etc/config/crontab por si algún día
-# se arma; ambos caminos comparten el fichero de estado y no duplican correos.
+# se arma. OJO (medido el 2026-10-07): los dos caminos compartiendo el fichero
+# de estado SÍ duplican correos, y a lo grande. Cada uno leía el estado que
+# acababa de escribir el otro, lo tomaba por un CAMBIO y avisaba: 3.729 correos
+# en 24 h, la mitad «caídos» (la copia del cron tenía una lista vieja y pedía un
+# `swissjob-redis-r5` retirado) y la otra mitad «recuperado». La regla es UN
+# supervisor; el guard de abajo lo impone aunque alguien rearme el otro camino.
 #
 # EXTRA_ESPERADOS: nombres adicionales (para el control negativo sin editar).
 #
@@ -44,6 +49,24 @@ ESPERADOS="swissjob-backend swissjob-worker portfolio_worker swissjob-core-api-r
 mkdir -p "$(dirname "$ESTADO")"
 ahora=$(date -u +%s)
 fecha=$(date -u +%FT%TZ)
+
+# GUARD de ejecución única (2026-10-07). Dos supervisores a la vez se avisan el
+# cambio de estado el uno al otro, así que como mucho se corre una vez cada
+# MIN_INTERVALO_S. Con un solo supervisor cada 5 min nunca dispara; con dos,
+# el segundo se va en silencio y lo deja anotado una vez por hora.
+MIN_INTERVALO_S=240
+ULTIMO="$DIR/ultimo_run"
+anterior=$(cat "$ULTIMO" 2>/dev/null || echo 0)
+case "$anterior" in *[!0-9]*|'') anterior=0 ;; esac
+if [ "$((ahora - anterior))" -lt "$MIN_INTERVALO_S" ]; then
+  # Una línea por hora, para que se vea que hay un duplicado sin volver a
+  # llenar el log (que es justo lo que pasó).
+  if [ "$((ahora % 3600))" -lt 300 ]; then
+    echo "$fecha OMITIDO: otro supervisor corrió hace $((ahora - anterior))s (¿cron y contenedor a la vez?)" >> "$LOG"
+  fi
+  exit 0
+fi
+echo "$ahora" > "$ULTIMO"
 
 problemas=""
 if ! salida=$($D ps -a --format '{{.Names}}|{{.State}}|{{.Status}}' 2>&1); then
