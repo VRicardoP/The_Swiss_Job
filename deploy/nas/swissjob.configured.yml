@@ -5,7 +5,7 @@
 # healthchecks a 60 s y límites de memoria (A19-25, A19-11).
 services:
   backend:
-    image: swissjob-backend:point5-1125aae
+    image: swissjob-backend:point5-aa36c5e
     mem_limit: 1536m
     container_name: swissjob-backend
     environment:
@@ -51,7 +51,7 @@ services:
       SCHOOL_WRITES_FROZEN: 'false'
       CORE_PROFILE_SYNC_ENABLED: 'true'
       CORE_FEEDBACK_ENABLED: 'true'
-      CORE_MATCH_FACETS_ENABLED: 'false'
+      CORE_MATCH_FACETS_ENABLED: 'true'
       FEEDBACK_WRITES_FROZEN: 'false'
       LEGACY_DISABLED_PROVIDERS: '["arbeitnow", "euremotejobs", "globaljobs", "jobgether", "jobspresso", "nav_arbeidsplassen", "ostjob", "remotive", "thehub", "weworkremotely", "workingnomads", "zentraljob"]'
       LEGACY_DISABLED_SCRAPERS: '["financejobs", "irishjobs"]'
@@ -181,7 +181,7 @@ services:
         soft: 65535
         hard: 65535
   frontend:
-    image: swissjob-frontend:point5-0000000
+    image: swissjob-frontend:point5-3986b4a
     mem_limit: 128m
     container_name: swissjob-frontend
     environment:
