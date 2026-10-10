@@ -1,0 +1,104 @@
+{
+  "core": {
+    "alembic": "core0053",
+    "authoritative": true,
+    "match_facets_enabled": true,
+    "release": "5a1241d"
+  },
+  "credentials": {
+    "portfolio": {
+      "active_credentials": 1,
+      "non_expiring": true,
+      "scopes": [
+        "applications:read",
+        "applications:write",
+        "documents:read",
+        "documents:write",
+        "matches:read",
+        "profiles:read",
+        "profiles:write",
+        "saved_searches:read",
+        "saved_searches:write",
+        "schools:read",
+        "schools:write",
+        "vacancies:read"
+      ]
+    },
+    "swissjob-shadow": {
+      "active_credentials": 1,
+      "non_expiring": true,
+      "scopes": [
+        "applications:read",
+        "applications:write",
+        "documents:read",
+        "documents:write",
+        "matches:read",
+        "profiles:read",
+        "profiles:write",
+        "saved_searches:read",
+        "saved_searches:write",
+        "schools:read",
+        "schools:write",
+        "vacancies:read"
+      ]
+    }
+  },
+  "current_profile_authority": {
+    "portfolio": {
+      "current_evaluations": 1800,
+      "current_revision_activated_at": "2026-10-06T13:14:38.531446+00:00",
+      "current_revisions_embedded": 1,
+      "profiles": 1
+    },
+    "swissjob-shadow": {
+      "current_evaluations": 3600,
+      "current_revision_activation_range": [
+        "2026-09-20T02:25:40.786647+00:00",
+        "2026-09-20T02:25:41.641165+00:00"
+      ],
+      "current_revisions_embedded": 2,
+      "profiles": 2
+    }
+  },
+  "observed_at": "2026-10-10T20:36:57Z",
+  "portfolio_read_probes": {
+    "matching_full_feed": {
+      "items": 1800,
+      "seconds": 29.257,
+      "source": "core_feed"
+    },
+    "parallel_source_pages": {
+      "items": {
+        "arbeitnow": 100,
+        "irishjobs": 100,
+        "jobgether": 100,
+        "nav_arbeidsplassen": 100,
+        "ostjob": 100,
+        "remotive": 11,
+        "thehub": 44,
+        "weworkremotely": 100,
+        "zentraljob": 100
+      },
+      "note": "Each page was requested through the deployed CoreCatalog client with limit=100 and oneshot=true.",
+      "wall_seconds": 7.944
+    }
+  },
+  "remaining_gate": "Portfolio catalog and matching stay in core_read until the frontend release and source handover are live and verified; only then can the rollback window close.",
+  "routing": {
+    "portfolio": {
+      "applications": "core_primary",
+      "catalog": "core_read",
+      "documents": "core_primary",
+      "matching": "core_read",
+      "saved_searches": "core_primary",
+      "schools": "core_primary"
+    },
+    "swissjob": {
+      "catalog": "core_primary",
+      "documents": "core_primary",
+      "matching": "core_primary",
+      "saved_searches": "core_primary",
+      "schools": "core_primary"
+    }
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "at": "2026-10-10T12:42:53.876873+00:00",
+  "pool": {
+    "celery@4e5c8f116b2a": {
+      "implementation": "celery.concurrency.prefork:TaskPool",
+      "max-concurrency": 1,
+      "processes": [
+        10
+      ],
+      "max-tasks-per-child": "N/A",
+      "put-guarded-by-semaphore": false,
+      "timeouts": [
+        1800,
+        2100
+      ],
+      "writes": {
+        "total": 15,
+        "avg": "1.00",
+        "all": "1.00",
+        "raw": "15",
+        "strategy": "fair",
+        "inqueues": {
+          "total": 1,
+          "active": 0
+        }
+      }
+    }
+  },
+  "active": {
+    "celery@4e5c8f116b2a": []
+  },
+  "reserved": {
+    "celery@4e5c8f116b2a": []
+  },
+  "queues": {
+    "core.default": 0,
+    "core.harvest": 0,
+    "core.embedding": 0,
+    "core.matching": 0,
+    "core.notifications": 0
+  },
+  "processes": [
+    {
+      "pid": 1,
+      "memory": {
+        "Rss_kib": 106192,
+        "Pss_kib": 60448,
+        "Private_Dirty_kib": 21324,
+        "SwapPss_kib": 0
+      }
+    },
+    {
+      "pid": 9,
+      "memory": {
+        "Rss_kib": 77716,
+        "Pss_kib": 50884,
+        "Private_Dirty_kib": 37272,
+        "SwapPss_kib": 7320
+      }
+    },
+    {
+      "pid": 10,
+      "memory": {
+        "Rss_kib": 90700,
+        "Pss_kib": 52506,
+        "Private_Dirty_kib": 29296,
+        "SwapPss_kib": 284
+      }
+    }
+  ]
+}

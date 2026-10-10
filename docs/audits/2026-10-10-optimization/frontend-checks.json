@@ -1,0 +1,74 @@
+{
+  "frontend-tests.log": [
+    " \u2713 src/hooks/__tests__/useIsMobile.test.js (4 tests) 42ms",
+    " \u2713 src/hooks/__tests__/useSSENotifications.headers.test.js (1 test) 27ms",
+    "",
+    " Test Files  45 passed (45)",
+    "      Tests  418 passed (418)",
+    "   Start at  14:29:39",
+    "   Duration  18.11s (transform 6.36s, setup 10.65s, import 15.08s, tests 21.80s, environment 59.14s)",
+    ""
+  ],
+  "frontend-e2e.log": [
+    "[12/18] [chromium] \u203a e2e/tests/navigation.spec.js:32:3 \u203a Navigation \u203a redirects /dashboard to /login without auth",
+    "[13/18] [chromium] \u203a e2e/tests/navigation.spec.js:46:3 \u203a Navigation \u203a Back to Portfolio link from login works",
+    "[14/18] [chromium] \u203a e2e/tests/navigation.spec.js:54:3 \u203a Navigation \u203a unknown routes redirect to /",
+    "[15/18] [chromium] \u203a e2e/tests/portfolio.spec.js:12:3 \u203a Portfolio Page \u203a loads and shows main title",
+    "[16/18] [chromium] \u203a e2e/tests/portfolio.spec.js:17:3 \u203a Portfolio Page \u203a shows typewriter with \"Vicente\"",
+    "[17/18] [chromium] \u203a e2e/tests/portfolio.spec.js:24:3 \u203a Portfolio Page \u203a welcome window is visible with Got it button",
+    "[18/18] [chromium] \u203a e2e/tests/portfolio.spec.js:33:3 \u203a Portfolio Page \u203a cube background rotates from free space without stealing window drag",
+    "  18 passed (16.5s)"
+  ],
+  "frontend-lint.log": [
+    "",
+    "> reactportfolio@0.0.0 lint",
+    "> eslint .",
+    ""
+  ],
+  "frontend-build-after.log": [
+    "dist/assets/index-Dv0pH9jl.js                        24.56 kB \u2502 gzip:   6.56 kB",
+    "dist/assets/vendor-particles-DiHK5zkg.js            147.10 kB \u2502 gzip:  42.27 kB",
+    "dist/assets/vendor-maps-DLS69EI9.js                 154.12 kB \u2502 gzip:  45.02 kB",
+    "dist/assets/vendor-charts-Bq8aWBZJ.js               164.76 kB \u2502 gzip:  57.16 kB",
+    "dist/assets/vendor-react-BmVH0Wvc.js                223.38 kB \u2502 gzip:  71.70 kB",
+    "dist/assets/index-DnnHJutR.js                       232.83 kB \u2502 gzip:  72.55 kB",
+    "dist/assets/vendor-three-y9S07vp7.js                521.86 kB \u2502 gzip: 130.36 kB",
+    "\u2713 built in 4.85s"
+  ],
+  "frontend-baseline-build.log": [
+    "dist/assets/index-ChqTKWyP.js                        24.56 kB \u2502 gzip:   6.56 kB",
+    "dist/assets/vendor-particles-DiHK5zkg.js            147.10 kB \u2502 gzip:  42.27 kB",
+    "dist/assets/vendor-maps-DLS69EI9.js                 154.12 kB \u2502 gzip:  45.02 kB",
+    "dist/assets/vendor-charts-Bq8aWBZJ.js               164.76 kB \u2502 gzip:  57.16 kB",
+    "dist/assets/vendor-react-BmVH0Wvc.js                223.38 kB \u2502 gzip:  71.70 kB",
+    "dist/assets/index-BvxGLmOL.js                       232.83 kB \u2502 gzip:  72.55 kB",
+    "dist/assets/vendor-three-y9S07vp7.js                521.86 kB \u2502 gzip: 130.36 kB",
+    "\u2713 built in 5.20s"
+  ],
+  "swissjob-frontend-tests.log": [
+    " \u2713 src/components/MatchCard.test.jsx (7 tests) 40ms",
+    " \u2713 src/App.test.jsx (1 test) 2ms",
+    "",
+    " Test Files  12 passed (12)",
+    "      Tests  56 passed (56)",
+    "   Start at  14:43:36",
+    "   Duration  816ms (transform 726ms, setup 0ms, import 2.30s, tests 347ms, environment 2ms)",
+    ""
+  ],
+  "swissjob-frontend-lint.log": [
+    "",
+    "> frontend@0.0.0 lint",
+    "> eslint .",
+    ""
+  ],
+  "swissjob-frontend-build-isolated.log": [
+    "../../../../../tmp/jobhunt-opt-20261010/swissjob-dist/assets/index-CrY_P-75.js              302.80 kB \u2502 gzip:  95.04 kB",
+    "../../../../../tmp/jobhunt-opt-20261010/swissjob-dist/assets/html2pdf-I7jIdnWX.js           975.75 kB \u2502 gzip: 281.17 kB",
+    "",
+    "(!) Some chunks are larger than 500 kB after minification. Consider:",
+    "- Using dynamic import() to code-split the application",
+    "- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks",
+    "- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.",
+    "\u2713 built in 3.39s"
+  ]
+}

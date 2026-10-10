@@ -1,0 +1,26 @@
+[
+  {
+    "profile_index": 1,
+    "facets_bytes": 1190,
+    "facets_total": 1800,
+    "full_feed_bytes": 7543167,
+    "full_feed_items": 1800,
+    "full_feed_requests": 4,
+    "first_category": "A",
+    "category_page_bytes": 186878,
+    "category_page_items": 50,
+    "category_total": 137
+  },
+  {
+    "profile_index": 2,
+    "facets_bytes": 1190,
+    "facets_total": 1799,
+    "full_feed_bytes": 8929359,
+    "full_feed_items": 1799,
+    "full_feed_requests": 4,
+    "first_category": "A",
+    "category_page_bytes": 160390,
+    "category_page_items": 50,
+    "category_total": 183
+  }
+]

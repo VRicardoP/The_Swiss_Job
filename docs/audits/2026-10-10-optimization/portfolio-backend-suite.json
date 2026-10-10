@@ -1,0 +1,8 @@
+{
+  "commit": "4ce76a7",
+  "command": "env DEBUG=false venv/bin/python -m pytest -q",
+  "passed": 2080,
+  "skipped": 1,
+  "warnings": 113,
+  "duration_s": 203.76
+}

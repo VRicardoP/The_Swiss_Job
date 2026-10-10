@@ -1,0 +1,99 @@
+{
+  "url": "http://127.0.0.1:4173",
+  "at": "2026-10-10T12:33:34.493Z",
+  "viewport": [
+    1440,
+    1000
+  ],
+  "backend": "deterministic fixtures",
+  "loadMs": 592,
+  "windows": [
+    {
+      "id": "stats-window-title",
+      "characters": 74,
+      "hasContent": true
+    },
+    {
+      "id": "recent-visitors-window-title",
+      "characters": 95,
+      "hasContent": true
+    },
+    {
+      "id": "map-window-title",
+      "characters": 30,
+      "hasContent": true
+    },
+    {
+      "id": "chat-analytics-window-title",
+      "characters": 148,
+      "hasContent": true
+    },
+    {
+      "id": "job-analytics-window-title",
+      "characters": 60,
+      "hasContent": true
+    },
+    {
+      "id": "heatmap-window-title",
+      "characters": 56,
+      "hasContent": true
+    },
+    {
+      "id": "job-board-window-title",
+      "characters": 3669,
+      "hasContent": true
+    },
+    {
+      "id": "selected-offers-panel-title",
+      "characters": 125,
+      "hasContent": true
+    },
+    {
+      "id": "job-search-window-title",
+      "characters": 236,
+      "hasContent": true
+    },
+    {
+      "id": "ai-match-window-title",
+      "characters": 296,
+      "hasContent": true
+    },
+    {
+      "id": "school-jobs-window-title",
+      "characters": 170,
+      "hasContent": true
+    },
+    {
+      "id": "school-manual-contacts-window-title",
+      "characters": 179,
+      "hasContent": true
+    }
+  ],
+  "errors": [],
+  "drag": [
+    {
+      "durationMs": 2002,
+      "frames": 119,
+      "meanFrameMs": 16.66302521008403,
+      "p95FrameMs": 16.799999999999272,
+      "layouts": 19,
+      "taskMs": 331.737
+    },
+    {
+      "durationMs": 2001,
+      "frames": 119,
+      "meanFrameMs": 16.66386554621849,
+      "p95FrameMs": 16.700000000000728,
+      "layouts": 0,
+      "taskMs": 263.971
+    },
+    {
+      "durationMs": 2003,
+      "frames": 119,
+      "meanFrameMs": 16.663025210084047,
+      "p95FrameMs": 16.799999999999272,
+      "layouts": 1,
+      "taskMs": 272.819
+    }
+  ]
+}

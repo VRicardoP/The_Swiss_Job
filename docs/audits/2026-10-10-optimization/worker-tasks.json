@@ -1,0 +1,65 @@
+{
+  "completed": [
+    {
+      "task": "jobhunt.delivery.dispatch_outbox",
+      "seconds": 0.2861409919569269
+    },
+    {
+      "task": "jobhunt.searches.run_due",
+      "seconds": 0.21395684103481472
+    },
+    {
+      "task": "jobhunt.shadow.project",
+      "seconds": 3.8427777379984036
+    },
+    {
+      "task": "jobhunt.shadow.sample_outbox_lag",
+      "seconds": 0.44788238499313593
+    },
+    {
+      "task": "jobhunt.shadow.check_slot_health",
+      "seconds": 0.45842978393193334
+    },
+    {
+      "task": "jobhunt.delivery.dispatch_outbox",
+      "seconds": 1.295115877990611
+    },
+    {
+      "task": "jobhunt.searches.run_due",
+      "seconds": 0.35655526199843735
+    },
+    {
+      "task": "jobhunt.shadow.project",
+      "seconds": 11.950213716016151
+    },
+    {
+      "task": "jobhunt.shadow.sample_outbox_lag",
+      "seconds": 1.2671051109209657
+    },
+    {
+      "task": "jobhunt.shadow.check_slot_health",
+      "seconds": 0.4553465769859031
+    },
+    {
+      "task": "jobhunt.delivery.dispatch_outbox",
+      "seconds": 0.5282724830321968
+    },
+    {
+      "task": "jobhunt.searches.run_due",
+      "seconds": 0.601677848957479
+    },
+    {
+      "task": "jobhunt.shadow.project",
+      "seconds": 16.015705688972957
+    },
+    {
+      "task": "jobhunt.shadow.sample_outbox_lag",
+      "seconds": 0.79545211000368
+    },
+    {
+      "task": "jobhunt.shadow.check_slot_health",
+      "seconds": 0.5518426269991323
+    }
+  ],
+  "error_lines": 0
+}

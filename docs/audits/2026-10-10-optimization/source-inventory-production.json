@@ -1,0 +1,158 @@
+{
+  "core": {
+    "enabled_scope_count": 17,
+    "enabled_source_name_count": 16,
+    "enabled_source_names": [
+      "arbeitnow",
+      "euremotejobs",
+      "financejobs",
+      "globaljobs",
+      "irishjobs",
+      "jobgether",
+      "jobspresso",
+      "nav_arbeidsplassen",
+      "ostjob",
+      "publicjobs",
+      "remotive",
+      "thehub",
+      "weworkremotely",
+      "workingnomads",
+      "zebis",
+      "zentraljob"
+    ],
+    "health": {
+      "healthy_scopes_8h": 17,
+      "max_consecutive_failures": 0,
+      "official_alerts": []
+    },
+    "release": "5a1241d",
+    "scope_cardinality_note": "nav_arbeidsplassen has two enabled scopes; every other enabled source has one"
+  },
+  "observed_at": "2026-10-10T20:30:09Z",
+  "portfolio": {
+    "core_overlap": {
+      "arbeitnow": "arbeitnow",
+      "irishjobs": "irishjobs",
+      "jobgether": "jobgether",
+      "nav": "nav_arbeidsplassen",
+      "ostjob": "ostjob",
+      "remotive": "remotive",
+      "thehub": "thehub",
+      "weworkremotely": "weworkremotely",
+      "zentraljob": "zentraljob"
+    },
+    "deployment_state": "prepared; activation waits for the authorized frontend release",
+    "effective_disabled_sources": [],
+    "prepared_disabled_sources": [
+      "arbeitnow",
+      "irishjobs",
+      "jobgether",
+      "nav",
+      "ostjob",
+      "remotive",
+      "thehub",
+      "weworkremotely",
+      "zentraljob"
+    ],
+    "registered_source_count": 20,
+    "routing": {
+      "applications": {
+        "core_primary": 1
+      },
+      "catalog": {
+        "core_read": 1
+      },
+      "documents": {
+        "core_primary": 1
+      },
+      "matching": {
+        "core_read": 1
+      },
+      "saved_searches": {
+        "core_primary": 1
+      },
+      "schools": {
+        "core_primary": 1
+      }
+    },
+    "school_scraper": {
+      "automatic_collection": "delegated_to_core",
+      "deployed_backend_release": "4ce76a7",
+      "manual_refresh": "preserved through the existing collector and Core observation write",
+      "verified_log_at": "2026-10-10T20:21:33.502973+00:00"
+    }
+  },
+  "swissjob": {
+    "deployment_state": "prepared; activation waits for the core-capture removal gate",
+    "effective_disabled_source_names": [
+      "arbeitnow",
+      "euremotejobs",
+      "financejobs",
+      "globaljobs",
+      "irishjobs",
+      "jobgether",
+      "jobspresso",
+      "nav_arbeidsplassen",
+      "ostjob",
+      "remotive",
+      "thehub",
+      "weworkremotely",
+      "workingnomads",
+      "zentraljob"
+    ],
+    "prepared_commit": "085ad6c",
+    "prepared_manifest_source_names": [
+      "arbeitnow",
+      "euremotejobs",
+      "financejobs",
+      "globaljobs",
+      "irishjobs",
+      "jobgether",
+      "jobspresso",
+      "nav_arbeidsplassen",
+      "ostjob",
+      "publicjobs",
+      "remotive",
+      "thehub",
+      "weworkremotely",
+      "workingnomads",
+      "zebis",
+      "zentraljob"
+    ],
+    "routing": {
+      "catalog": {
+        "core_primary": 1
+      },
+      "documents": {
+        "core_primary": 1
+      },
+      "matching": {
+        "core_primary": 2
+      },
+      "saved_searches": {
+        "core_primary": 1
+      },
+      "schools": {
+        "core_primary": 1
+      }
+    },
+    "verified_duplicate_activity": {
+      "publicjobs": {
+        "last_attempt_at": "2026-10-09T13:42:40.239901+00:00",
+        "last_jobs_count": 24,
+        "last_outcome": "ok",
+        "last_stored_count": 18
+      },
+      "zebis": {
+        "last_attempt_at": "2026-10-09T13:42:54.173707+00:00",
+        "last_jobs_count": 50,
+        "last_outcome": "ok",
+        "last_stored_count": 47
+      }
+    },
+    "verified_duplicate_gap": [
+      "publicjobs",
+      "zebis"
+    ]
+  }
+}

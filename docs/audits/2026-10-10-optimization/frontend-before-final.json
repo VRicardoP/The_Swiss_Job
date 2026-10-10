@@ -1,0 +1,104 @@
+{
+  "url": "http://127.0.0.1:4174",
+  "at": "2026-10-10T12:32:49.838Z",
+  "viewport": [
+    1440,
+    1000
+  ],
+  "backend": "deterministic fixtures",
+  "loadMs": 711,
+  "windows": [
+    {
+      "id": "stats-window-title",
+      "characters": 74,
+      "hasContent": true
+    },
+    {
+      "id": "recent-visitors-window-title",
+      "characters": 95,
+      "hasContent": true
+    },
+    {
+      "id": "map-window-title",
+      "characters": 30,
+      "hasContent": true
+    },
+    {
+      "id": "chat-analytics-window-title",
+      "characters": 148,
+      "hasContent": true
+    },
+    {
+      "id": "job-analytics-window-title",
+      "characters": 60,
+      "hasContent": true
+    },
+    {
+      "id": "heatmap-window-title",
+      "characters": 56,
+      "hasContent": true
+    },
+    {
+      "id": "job-board-window-title",
+      "characters": 3669,
+      "hasContent": true
+    },
+    {
+      "id": "selected-offers-panel-title",
+      "characters": 125,
+      "hasContent": true
+    },
+    {
+      "id": "job-search-window-title",
+      "characters": 236,
+      "hasContent": true
+    },
+    {
+      "id": "ai-match-window-title",
+      "characters": 296,
+      "hasContent": true
+    },
+    {
+      "id": "school-jobs-window-title",
+      "characters": 170,
+      "hasContent": true
+    },
+    {
+      "id": "school-manual-contacts-window-title",
+      "characters": 179,
+      "hasContent": true
+    }
+  ],
+  "errors": [
+    {
+      "message": "Cannot read properties of undefined (reading '_leaflet_pos')",
+      "stack": "TypeError: Cannot read properties of undefined (reading '_leaflet_pos')\n    at Pt (http://127.0.0.1:4174/assets/vendor-maps-DLS69EI9.js:4:22057)\n    at e._getMapPanePos (http://127.0.0.1:4174/assets/vendor-maps-DLS69EI9.js:4:44222)\n    at e._rawPanBy (http://127.0.0.1:4174/assets/vendor-maps-DLS69EI9.js:4:41238)\n    at e.invalidateSize (http://127.0.0.1:4174/assets/vendor-maps-DLS69EI9.js:4:33407)\n    at http://127.0.0.1:4174/assets/MapWindow-BzF2ifno.js:1:678"
+    }
+  ],
+  "drag": [
+    {
+      "durationMs": 1999,
+      "frames": 119,
+      "meanFrameMs": 16.66302521008403,
+      "p95FrameMs": 16.700000000000728,
+      "layouts": 19,
+      "taskMs": 291.95
+    },
+    {
+      "durationMs": 2002,
+      "frames": 119,
+      "meanFrameMs": 16.662184873949588,
+      "p95FrameMs": 16.700000000000728,
+      "layouts": 0,
+      "taskMs": 278.752
+    },
+    {
+      "durationMs": 1999,
+      "frames": 119,
+      "meanFrameMs": 16.66302521008403,
+      "p95FrameMs": 16.799999999999272,
+      "layouts": 1,
+      "taskMs": 269.7409999999999
+    }
+  ]
+}

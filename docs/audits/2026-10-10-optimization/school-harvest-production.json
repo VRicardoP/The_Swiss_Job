@@ -1,0 +1,26 @@
+{
+  "task_id": "656d7341-b8ad-4b20-8dbd-fe3e66858935",
+  "started_at": "2026-10-10T19:42:03Z",
+  "finished_at": "2026-10-10T20:12:05Z",
+  "duration_s": 1802.058,
+  "result": {
+    "scrapers": 12,
+    "skipped": 0,
+    "fetched": 67,
+    "new": 1,
+    "updated": 66,
+    "dupes": 0,
+    "errors": 0,
+    "fetch_failed": 0,
+    "window_skipped": 0,
+    "window_no_date": 0,
+    "soft_time_limit": true,
+    "identity_conflicts": 0,
+    "identity_clones": 0
+  },
+  "expected_empty_sources": [
+    "swiss_schools_inspired",
+    "swiss_schools_zis",
+    "swiss_schools_isb"
+  ]
+}

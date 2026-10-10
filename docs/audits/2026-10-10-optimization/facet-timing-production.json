@@ -1,0 +1,22 @@
+[
+  {
+    "profile_index": 1,
+    "total": 573,
+    "loaded": 573,
+    "full_feed_s": 21.369,
+    "facet_s": 16.007,
+    "category_total": 49,
+    "category_loaded": 49,
+    "category_page_s": 19.663
+  },
+  {
+    "profile_index": 2,
+    "total": 641,
+    "loaded": 641,
+    "full_feed_s": 19.83,
+    "facet_s": 4.566,
+    "category_total": 71,
+    "category_loaded": 50,
+    "category_page_s": 55.474
+  }
+]

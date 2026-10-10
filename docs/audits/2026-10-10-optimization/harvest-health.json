@@ -1,0 +1,121 @@
+[
+  {
+    "name": "arbeitnow",
+    "scope_id": "8a299ac7-700a-4637-8e55-577f21b68f0c",
+    "last_complete_at": "2026-10-09T16:19:32.258435+00:00",
+    "consecutive_failures": 0,
+    "recent": false
+  },
+  {
+    "name": "euremotejobs",
+    "scope_id": "d4ce8e1d-71d6-4ab3-ad4b-d8e3a69fc46a",
+    "last_complete_at": "2026-10-10T10:29:00.767488+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "financejobs",
+    "scope_id": "7eac32f6-5a9e-4a9a-a19c-0642b1d51558",
+    "last_complete_at": "2026-10-10T10:18:35.057672+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "globaljobs",
+    "scope_id": "4316fa1e-cd53-4122-9510-b10759767225",
+    "last_complete_at": "2026-10-10T10:10:39.782819+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "irishjobs",
+    "scope_id": "4af2f10e-259d-49d4-8f8d-f9d56cd178ef",
+    "last_complete_at": "2026-10-01T10:12:17.99564+00:00",
+    "consecutive_failures": 72,
+    "recent": false
+  },
+  {
+    "name": "jobgether",
+    "scope_id": "32c9fa21-bf17-4bc0-bafd-58c174f1608f",
+    "last_complete_at": "2026-10-10T10:10:16.4717+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "jobspresso",
+    "scope_id": "62984bfa-9241-4349-84bf-fc439d054f26",
+    "last_complete_at": "2026-10-10T10:16:47.386378+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "nav_arbeidsplassen",
+    "scope_id": "6aea217a-a379-49c3-8e8a-5b9a0034d421",
+    "last_complete_at": "2026-10-10T10:16:53.073141+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "nav_arbeidsplassen",
+    "scope_id": "48601911-65e2-4357-83a1-dada1ad68237",
+    "last_complete_at": "2026-10-10T10:11:17.103685+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "ostjob",
+    "scope_id": "39bedcdc-886a-4690-a82f-7ee8aab5302b",
+    "last_complete_at": "2026-10-10T10:11:12.021073+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "publicjobs",
+    "scope_id": "f15394b1-7e9a-4f5c-85a9-85d02957e208",
+    "last_complete_at": "2026-10-10T10:30:56.614848+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "remotive",
+    "scope_id": "f7d08bd3-7654-463d-abd6-4a0e26101caf",
+    "last_complete_at": "2026-10-10T10:31:05.333986+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "thehub",
+    "scope_id": "4edcf6e7-e5b1-46f7-a244-5c99fa11b759",
+    "last_complete_at": "2026-10-10T10:16:35.017112+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "weworkremotely",
+    "scope_id": "faccefaa-37f4-4647-9dec-3a1f7b26bf5d",
+    "last_complete_at": "2026-10-10T10:31:14.027477+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "workingnomads",
+    "scope_id": "49232928-5e43-4c3a-bb65-c1d1c4fa0e24",
+    "last_complete_at": "2026-10-10T10:15:18.063072+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "zebis",
+    "scope_id": "704c4780-7c09-4ae7-be78-c6078d4b1c63",
+    "last_complete_at": "2026-10-10T10:17:57.718357+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  },
+  {
+    "name": "zentraljob",
+    "scope_id": "ed4339b9-bb52-422c-98bc-594f6d3ae135",
+    "last_complete_at": "2026-10-10T10:29:34.963532+00:00",
+    "consecutive_failures": 0,
+    "recent": true
+  }
+]
