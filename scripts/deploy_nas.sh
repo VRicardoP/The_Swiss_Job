@@ -140,8 +140,7 @@ done
 ssh nas "$D ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | grep -E 'swissjob-(backend|core-api|core-worker|core-harvest-worker|core-ops-worker|core-capture)'"
 if [[ "$SERVICIO" == core ]]; then
   echo "== coherencia de release remota"
-  ready="$(ssh nas "$D exec $CONTENEDOR_API wget -qO- http://127.0.0.1:8000/v1/ready")"
-  release="$(python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status") == "ready" and d.get("authoritative") is True; print(d.get("release", ""))' <<<"$ready")"
+  release="$(ssh nas "$D exec $CONTENEDOR_API python -c 'import json,urllib.request; d=json.load(urllib.request.urlopen(\"http://127.0.0.1:8000/v1/ready\",timeout=5)); assert d.get(\"status\")==\"ready\" and d.get(\"authoritative\") is True; print(d.get(\"release\",\"\"))'")"
   [[ "$release" == "$SHA" ]] || { echo "ABORTA: /v1/ready publica $release, esperado $SHA" >&2; exit 1; }
   for contenedor in swissjob-core-api-r5 swissjob-core-worker-r5 swissjob-core-harvest-worker-r5 swissjob-core-ops-worker-r5; do
     ejecutada="$(ssh nas "$D inspect $contenedor --format '{{.Config.Image}}'")"
