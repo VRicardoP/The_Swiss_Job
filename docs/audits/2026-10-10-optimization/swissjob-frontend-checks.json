@@ -1,0 +1,30 @@
+{
+  "observed_at": "2026-10-10T23:08:00Z",
+  "working_tree": "frontend",
+  "checks": {
+    "lint": {
+      "command": "npm run lint",
+      "status": "passed"
+    },
+    "tests": {
+      "command": "npm exec vitest run",
+      "files_passed": 12,
+      "tests_passed": 57,
+      "status": "passed"
+    },
+    "build": {
+      "command": "npm run build -- --outDir /tmp/swissjob-frontend-build-codex",
+      "duration_seconds": 3.38,
+      "status": "passed"
+    }
+  },
+  "bundle": {
+    "css_bytes": 45240,
+    "css_gzip_bytes": 8510,
+    "main_bytes": 302890,
+    "main_gzip_bytes": 95060,
+    "html2pdf_lazy_chunk_bytes": 975750,
+    "html2pdf_lazy_chunk_gzip_bytes": 281170
+  },
+  "note": "The repository dist directory was not changed because its existing assets are owned by another user; the same production build completed in a writable temporary directory."
+}

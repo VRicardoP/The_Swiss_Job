@@ -68,6 +68,8 @@ hubiera en cada instante.
 - `frontend-before-final.json` y `frontend-after-final.json` comprueban las doce
   ventanas con fixtures deterministas y miden tres arrastres de dos segundos.
 - `frontend-checks.json` reúne lint, pruebas, build y E2E.
+- `swissjob-frontend-checks.json` registra lint, las 57 pruebas y el build del
+  cliente que consume las facetas paginadas.
 - `portfolio-backend-suite.json` y `core-suite-after-facets.json` resumen las
   suites completas de los dos backends.
 
