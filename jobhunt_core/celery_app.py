@@ -84,11 +84,11 @@ celery_app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     # LÍMITE DE TIEMPO (auditoría G11 P1-1). No había ninguno: una tarea dormida —el
-    # barrido obedecía `Retry-After` sin techo— no podía ser interrumpida, y el
-    # `core-worker` corre con `--concurrency=2` escuchando TODAS las colas del core,
-    # incluida `core.default`, que es donde vive el beat: dos tareas así paraban el core
-    # entero (outbox, proyector, salud del slot, archivado…). El soft manda SoftTimeLimit
-    # (la tarea puede cerrar), el hard mata el proceso hijo. Los dos POR DEBAJO del
+    # barrido obedecía `Retry-After` sin techo— no podía ser interrumpida y agotaba
+    # indefinidamente el único proceso de su cola. La topología de producción separa
+    # matching, harvest y operaciones en workers de concurrencia 1, pero cada cola sigue
+    # necesitando una cota. El soft manda SoftTimeLimit (la tarea puede cerrar), el hard
+    # mata el proceso hijo. Los dos quedan POR DEBAJO del
     # `visibility_timeout` de 3600 s del canal Redis de kombu: por encima, el mensaje de
     # una tarea VIVA vuelve a la cola y se ejecuta dos veces contra la misma fuente. El
     # presupuesto del barrido (SWEEP_BUDGET_S=1500 + 184 s de peor caso) cabe debajo.

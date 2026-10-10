@@ -7,16 +7,16 @@ core.default y NO a core.harvest — son observabilidad y mantenimiento, no
 ingesta: no tocan los locks del sink ni necesitan serializar con la
 proyección, y el muestreador (cadencia 5 min) no puede esperar detrás de un
 lote largo del proyector en core.harvest (con prefetch=1 y acks_late un
-lote de proyección monopoliza esa cola). `run_cycle` (B-05) SÍ es ingesta
-(drena el staging) y va a core.harvest.
+lote de proyección monopoliza esa cola). `run_cycle` (B-05) drena el
+staging y puede cargar el bi-encoder, por lo que va a core.matching.
 
 CADENCIAS (B-05 + P1-1): cableadas en el beat_schedule de celery_app.py —
 muestreador, salud del slot, PROYECTOR (P1-1: sin cadencia los lotes
 acumulaban ~20h y latencia_p95<=600s era imposible) y despacho del outbox
 cada 5 min; run_cycle diario 06:05 Europe/Zurich; ajustables por settings
-CORE_SHADOW_* / CORE_DELIVERY_DISPATCH_EVERY_S. El beat corre en el
-core-worker LOCAL (shadow/RUNBOOK.md). Convención del repo: `def` +
-asyncio.run.
+CORE_SHADOW_* / CORE_DELIVERY_DISPATCH_EVERY_S. El beat corre en el proceso
+worker que lleva `-B` (`core-ops-worker` en producción). Convención del
+repo: `def` + asyncio.run.
 """
 
 import asyncio
