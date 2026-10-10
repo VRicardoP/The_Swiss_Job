@@ -2340,7 +2340,13 @@ def test_task_registered_routed_and_runs(db, monkeypatch):
     # por lote y latencia_p95<=600s (§6) era imposible. El single-flight
     # tolera el solape con run_cycle (already_running sale limpio).
     by_task = {e["task"]: e for e in celery_app.conf.beat_schedule.values()}
-    assert by_task["jobhunt.shadow.project"]["schedule"] == float(
+    project_entry = by_task["jobhunt.shadow.project"]
+    assert project_entry["schedule"] == float(
+        core_settings.CORE_SHADOW_PROJECT_EVERY_S
+    )
+    # Con un único proceso del modelo, una evaluación puede durar más que la
+    # cadencia. Los ticks ya obsoletos deben caducar en vez de acumularse.
+    assert project_entry["options"]["expires"] == float(
         core_settings.CORE_SHADOW_PROJECT_EVERY_S
     )
 

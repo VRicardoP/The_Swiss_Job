@@ -292,7 +292,7 @@ enumerando `celery_app.conf.beat_schedule` en el contenedor vivo). SOLO colas `c
 |---|---|---|---|
 | 5 min | `jobhunt.shadow.sample_outbox_lag` | — | `CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S=300` |
 | 5 min | `jobhunt.shadow.check_slot_health` | — | `CORE_SHADOW_SLOT_HEALTH_EVERY_S=300` |
-| 5 min | `jobhunt.shadow.project` | P1-1: sin cadencia, la proyección solo al cierre del ciclo acumulaba ~20 h de latencia | `CORE_SHADOW_PROJECT_EVERY_S=300` |
+| 5 min | `jobhunt.shadow.project` | P1-1: sin cadencia, la proyección solo al cierre acumulaba ~20 h; cada mensaje caduca al siguiente tick para no acumular ejecuciones obsoletas si el único proceso del modelo sigue ocupado | `CORE_SHADOW_PROJECT_EVERY_S=300` |
 | 5 min | `jobhunt.delivery.dispatch_outbox` | — | `CORE_DELIVERY_DISPATCH_EVERY_S=300` |
 | **1 h** | `jobhunt.shadow.preview_cycle` | Pre-gate del ciclo abierto; revierte su transacción y **no** sella ni altera el 7/7 | `CORE_SHADOW_PRE_GATE_EVERY_S=3600` |
 | **1 h** | `jobhunt.idempotency.purge_expired` | **NO son 5 min** — el valor es 3600 s | `CORE_IDEMPOTENCY_PURGE_EVERY_S=3600` |
