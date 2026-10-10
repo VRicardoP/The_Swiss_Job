@@ -2382,82 +2382,91 @@ async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=No
     return rows, next_cursor
 
 
-async def _facet_rows(session, profile_id, consumer_id):
-    """Minimal presentable feed rows used by facets and category paging."""
+def _facet_feed_sql(profile_id, consumer_id):
+    """Canonical visible feed with category and school-watchlist annotations."""
     from jobhunt_core.feedback import effective_feedback_batch_sql
+    from jobhunt_core.match_categories import sql_case
 
-    rows = await session.execute(
-        sa.text(
-            f"WITH fb AS ({effective_feedback_batch_sql(':pid')}) "
-            "SELECT e.vacancy_id, e.score_final, e.id AS eval_id, e.scores, "
-            "e.offer_revision_id, v.current_offer_revision_id, "
-            "v.primary_incarnation_id, s.updated_at, s.saved_at, "
-            "fb.feedback, s.notes, o.content, "
-            "EXISTS (SELECT 1 FROM school_monitors sm "
-            "        WHERE sm.consumer_id=:cid "
-            "          AND jsonb_exists(COALESCE(o.content->'tags','[]'::jsonb), "
-            "                           sm.external_ref)) AS watchlist "
-            "FROM profile_vacancy_state s "
-            "JOIN profiles p ON p.id=s.profile_id AND p.consumer_id=:cid "
-            "JOIN match_evaluations e ON e.id=s.current_eval_id "
-            "  AND e.profile_id=s.profile_id AND e.vacancy_id=s.vacancy_id "
-            "JOIN vacancies v ON v.id=s.vacancy_id "
-            "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
-            "JOIN offer_revisions o ON o.id=v.current_offer_revision_id "
-            "LEFT JOIN fb ON fb.vacancy_id=s.vacancy_id "
-            "WHERE s.profile_id=:pid AND s.current_eval_id IS NOT NULL "
-            "AND COALESCE(fb.feedback,'') NOT IN ('thumbs_down','dismissed') "
-            "ORDER BY e.score_final DESC, e.vacancy_id ASC"
-        ),
-        {"pid": profile_id, "cid": consumer_id},
+    category_case, category_params = sql_case()
+    params = {"pid": profile_id, "cid": consumer_id, **category_params}
+    sql = (
+        f"WITH fb AS ({effective_feedback_batch_sql(':pid')}), "
+        "raw AS MATERIALIZED ("
+        "SELECT e.vacancy_id, e.score_final, e.id AS eval_id, e.scores, "
+        "e.offer_revision_id, v.current_offer_revision_id, "
+        "v.primary_incarnation_id, s.updated_at, s.saved_at, "
+        "fb.feedback, s.notes, o.content, "
+        "lower(concat_ws(' ', COALESCE(o.content->>'title',''), "
+        "  (SELECT string_agg(tag #>> '{}', ' ' ORDER BY ordinal) "
+        "   FROM jsonb_array_elements(CASE "
+        "     WHEN jsonb_typeof(o.content->'tags')='array' "
+        "     THEN o.content->'tags' ELSE '[]'::jsonb END) "
+        "     WITH ORDINALITY AS tags(tag, ordinal) "
+        "   WHERE jsonb_typeof(tag)='string'))) AS search_text, "
+        "EXISTS (SELECT 1 FROM school_monitors sm "
+        "        WHERE sm.consumer_id=:cid "
+        "          AND jsonb_exists(COALESCE(o.content->'tags','[]'::jsonb), "
+        "                           sm.external_ref)) AS watchlist "
+        "FROM profile_vacancy_state s "
+        "JOIN profiles p ON p.id=s.profile_id AND p.consumer_id=:cid "
+        "JOIN match_evaluations e ON e.id=s.current_eval_id "
+        "  AND e.profile_id=s.profile_id AND e.vacancy_id=s.vacancy_id "
+        "JOIN vacancies v ON v.id=s.vacancy_id "
+        "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
+        "JOIN offer_revisions o ON o.id=v.current_offer_revision_id "
+        "LEFT JOIN fb ON fb.vacancy_id=s.vacancy_id "
+        "WHERE s.profile_id=:pid AND s.current_eval_id IS NOT NULL "
+        "AND COALESCE(fb.feedback,'') NOT IN ('thumbs_down','dismissed')"
+        "), feed AS MATERIALIZED ("
+        f"SELECT raw.*, {category_case} AS category FROM raw"
+        ") "
     )
-    return rows.all()
-
-
-def _row_category(row) -> str:
-    from jobhunt_core.match_categories import classify
-
-    content = row.content if isinstance(row.content, dict) else {}
-    return classify(content.get("title"), content.get("tags"))
+    return sql, params
 
 
 async def feed_facets(session, profile_id, consumer_id) -> dict:
-    """Aggregate the canonical feed without constructing thousands of DTOs."""
+    """Aggregate the canonical feed in PostgreSQL and return one compact row."""
     from jobhunt_core.match_categories import categories
 
-    rows = await _facet_rows(session, profile_id, consumer_id)
+    prefix, params = _facet_feed_sql(profile_id, consumer_id)
     metadata = categories()
-    counts = {category["id"]: 0 for category in metadata}
-    counts["otros"] = 0
-    version_rows = []
-    for row in rows:
-        category = _row_category(row)
-        counts[category] += 1
-        version_rows.append(
-            (
-                str(row.vacancy_id),
-                str(row.eval_id),
-                str(row.current_offer_revision_id),
-                str(row.primary_incarnation_id or "-"),
-                str(row.updated_at),
-                str(row.score_final),
-                bool(row.saved_at),
-                row.feedback or "",
-                row.notes or "",
-                category,
-                bool(row.watchlist),
-            )
+    category_ids = [category["id"] for category in metadata] + ["otros"]
+    count_sql = []
+    for index, category_id in enumerate(category_ids):
+        params[f"facet_category_{index}"] = category_id
+        count_sql.append(
+            "count(*) FILTER (WHERE category=:facet_category_"
+            f"{index}) AS category_count_{category_id.lower()}"
         )
-    version = hashlib.md5(
-        json.dumps(version_rows, separators=(",", ":")).encode(),
-        usedforsecurity=False,
-    ).hexdigest()
+    row = (
+        await session.execute(
+            sa.text(
+                prefix
+                + "SELECT count(*) AS total, "
+                "COALESCE(max(score_final),0) AS top_score, "
+                "count(*) FILTER (WHERE score_final>=70) AS strong_count, "
+                "count(*) FILTER (WHERE watchlist) AS watchlist_count, "
+                "md5(COALESCE(string_agg(jsonb_build_array("
+                " vacancy_id, eval_id, current_offer_revision_id, "
+                " primary_incarnation_id, updated_at, score_final, "
+                " saved_at IS NOT NULL, feedback, notes, category, watchlist"
+                ")::text, ',' ORDER BY vacancy_id),'')) AS version, "
+                + ", ".join(count_sql)
+                + " FROM feed"
+            ),
+            params,
+        )
+    ).one()
+    counts = {
+        category_id: int(getattr(row, f"category_count_{category_id.lower()}"))
+        for category_id in category_ids
+    }
     return {
-        "version": version,
-        "total": len(rows),
-        "top_score": max((float(row.score_final) for row in rows), default=0.0),
-        "strong_count": sum(float(row.score_final) >= 70 for row in rows),
-        "watchlist_count": sum(bool(row.watchlist) for row in rows),
+        "version": row.version,
+        "total": int(row.total),
+        "top_score": float(row.top_score),
+        "strong_count": int(row.strong_count),
+        "watchlist_count": int(row.watchlist_count),
         "categories": [
             {**category, "count": counts[category["id"]]} for category in metadata
         ]
@@ -2475,33 +2484,40 @@ async def feed_facets(session, profile_id, consumer_id) -> dict:
 async def feed_category(
     session, profile_id, category: str, limit: int = 20, cursor=None, consumer_id=None
 ):
-    """One keyset page of a category, using the authoritative taxonomy."""
+    """One SQL-filtered keyset page using the authoritative taxonomy."""
     from jobhunt_core.match_categories import CATEGORY_IDS
 
     if category != "__watchlist" and category not in CATEGORY_IDS:
         raise ValueError("unknown match category")
-    all_rows = await _facet_rows(session, profile_id, consumer_id)
-    selected = [
-        row
-        for row in all_rows
-        if (
-            bool(row.watchlist)
-            if category == "__watchlist"
-            else _row_category(row) == category
-        )
-    ]
-    total = len(selected)
+    prefix, params = _facet_feed_sql(profile_id, consumer_id)
+    predicate = "watchlist" if category == "__watchlist" else "category=:category"
+    if category != "__watchlist":
+        params["category"] = category
+    cursor_sql = ""
     if cursor is not None:
         score, vacancy_id = cursor
-        selected = [
-            row
-            for row in selected
-            if row.score_final < score
-            or (row.score_final == score and row.vacancy_id > vacancy_id)
-        ]
-    page = selected[: limit + 1]
-    has_more = len(page) > limit
-    page = page[:limit]
+        params.update(cursor_score=score, cursor_vacancy_id=vacancy_id)
+        cursor_sql = (
+            "WHERE (score_final < :cursor_score OR "
+            "(score_final = :cursor_score AND vacancy_id > :cursor_vacancy_id)) "
+        )
+    params["limit"] = limit + 1
+    rows = (
+        await session.execute(
+            sa.text(
+                prefix
+                + f", selected AS MATERIALIZED (SELECT * FROM feed WHERE {predicate}) "
+                "SELECT selected.*, totals.category_total FROM selected "
+                "CROSS JOIN (SELECT count(*) AS category_total FROM selected) totals "
+                + cursor_sql
+                + "ORDER BY score_final DESC, vacancy_id ASC LIMIT :limit"
+            ),
+            params,
+        )
+    ).all()
+    total = int(rows[0].category_total) if rows else 0
+    has_more = len(rows) > limit
+    page = rows[:limit]
     next_cursor = (
         (page[-1].score_final, page[-1].vacancy_id) if has_more and page else None
     )

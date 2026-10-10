@@ -47,3 +47,24 @@ def classify(title: str | None, tags: list | None) -> str:
             if matches:
                 return category["id"]
     return "otros"
+
+
+def sql_case(search_text: str = "search_text") -> tuple[str, dict[str, str]]:
+    """Return the ordered taxonomy as a parameterized PostgreSQL CASE."""
+    params: dict[str, str] = {}
+    clauses = []
+    for category_index, category in enumerate(_CATEGORIES):
+        conditions = []
+        for keyword_index, keyword in enumerate(category["keywords"]):
+            name = f"category_{category_index}_{keyword_index}"
+            params[name] = keyword
+            operator = "~" if ".*" in keyword else None
+            conditions.append(
+                f"{search_text} {operator} :{name}"
+                if operator
+                else f"strpos({search_text}, :{name}) > 0"
+            )
+        clauses.append(
+            f"WHEN {' OR '.join(conditions)} THEN '{category['id']}'"
+        )
+    return "CASE " + " ".join(clauses) + " ELSE 'otros' END", params

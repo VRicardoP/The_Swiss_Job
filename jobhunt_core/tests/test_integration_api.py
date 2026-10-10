@@ -437,6 +437,45 @@ def test_matches_dto_pagination_and_errors(db):
     assert "details" in r.json() and "message" in r.json()
 
 
+def test_taxonomy_sql_case_matches_python_for_every_category(db):
+    factory, _created = db
+    from jobhunt_core.match_categories import classify, sql_case
+
+    texts = [
+        "Senior Content Editor",
+        "Appen AI evaluator",
+        "Office Manager",
+        "HR Generalist",
+        "Customer Success Specialist",
+        "United Nations Policy Officer",
+        "Digital Marketing Manager",
+        "Standort Zurich Betreuung",
+        "Business Development Manager",
+        "Research Analyst",
+        "Financial Controller",
+        "Managing Director",
+        "Springer Senior Heim",
+        "Unclassified Quantum Role",
+    ]
+    sql, params = sql_case("sample.search_text")
+
+    async def compare():
+        async with factory() as session:
+            rows = (
+                await session.execute(
+                    sa.text(
+                        f"SELECT sample.ordinal, {sql} AS category "
+                        "FROM unnest(CAST(:texts AS text[])) WITH ORDINALITY "
+                        "AS sample(search_text, ordinal) ORDER BY sample.ordinal"
+                    ),
+                    {**params, "texts": [text.lower() for text in texts]},
+                )
+            ).all()
+        return [row.category for row in rows]
+
+    assert asyncio.run(compare()) == [classify(text, []) for text in texts]
+
+
 def test_match_facets_and_category_page_share_the_authoritative_taxonomy(db):
     factory, created = db
     pid, vacs, token = _seed_matches(
