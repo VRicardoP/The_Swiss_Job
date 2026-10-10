@@ -439,7 +439,7 @@ def test_matches_dto_pagination_and_errors(db):
 
 def test_match_facets_and_category_page_share_the_authoritative_taxonomy(db):
     factory, created = db
-    pid, _vacs, token = _seed_matches(
+    pid, vacs, token = _seed_matches(
         factory,
         created,
         titles=(
@@ -450,6 +450,51 @@ def test_match_facets_and_category_page_share_the_authoritative_taxonomy(db):
     )
     base = f"/v1/profiles/{pid}/matches"
 
+    # La watchlist visible se reconoce por el tag del monitor. No exige una
+    # school_job_details: una oferta legacy etiquetada ya era visible como
+    # colegio en el BFF antes de que el productor Core la observara.
+    async def tag_watchlist():
+        async with factory() as session:
+            consumer_id = (
+                await session.execute(
+                    sa.text("SELECT consumer_id FROM profiles WHERE id=:pid"),
+                    {"pid": pid},
+                )
+            ).scalar_one()
+            school_id, monitor_id = uuid.uuid4(), uuid.uuid4()
+            ref = "facet-school-" + uuid.uuid4().hex
+            await session.execute(
+                sa.text(
+                    "INSERT INTO schools(id,school_key,name,country) "
+                    "VALUES (:id,:ref,'Facet School','CH')"
+                ),
+                {"id": school_id, "ref": ref},
+            )
+            await session.execute(
+                sa.text(
+                    "INSERT INTO school_monitors"
+                    "(id,consumer_id,school_id,external_ref,settings) "
+                    "VALUES (:id,:cid,:school,:ref,'{}'::jsonb)"
+                ),
+                {
+                    "id": monitor_id,
+                    "cid": consumer_id,
+                    "school": school_id,
+                    "ref": ref,
+                },
+            )
+            await session.execute(
+                sa.text(
+                    "UPDATE offer_revisions SET content=jsonb_set(content,'{tags}',"
+                    "to_jsonb(ARRAY[:ref]::text[])) WHERE id=(SELECT "
+                    "current_offer_revision_id FROM vacancies WHERE id=:vid)"
+                ),
+                {"ref": ref, "vid": vacs["International School Teacher"]},
+            )
+            await session.commit()
+
+    asyncio.run(tag_watchlist())
+
     facets = _api(factory, base + "/facets", token=token)
     assert facets.status_code == 200
     body = facets.json()
@@ -457,7 +502,7 @@ def test_match_facets_and_category_page_share_the_authoritative_taxonomy(db):
     assert body["total"] == 3
     assert (counts["A"], counts["H"], counts["otros"]) == (1, 1, 1)
     assert sum(counts.values()) == body["total"]
-    assert body["watchlist_count"] == 0 and body["version"]
+    assert body["watchlist_count"] == 1 and body["version"]
 
     page = _api(factory, base + "?category=A&limit=50", token=token)
     assert page.status_code == 200
@@ -465,6 +510,13 @@ def test_match_facets_and_category_page_share_the_authoritative_taxonomy(db):
     assert [item["vacancy"]["title"] for item in page.json()["items"]] == [
         "Senior Content Editor"
     ]
+
+    watchlist = _api(factory, base + "?category=__watchlist&limit=50", token=token)
+    assert watchlist.status_code == 200
+    assert watchlist.json()["total"] == 1
+    assert watchlist.json()["items"][0]["vacancy"]["title"] == (
+        "International School Teacher"
+    )
 
     invalid = _api(factory, base + "?category=unknown", token=token)
     assert (invalid.status_code, invalid.json()["code"]) == (400, "invalid_request")

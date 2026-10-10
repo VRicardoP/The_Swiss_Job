@@ -17,8 +17,8 @@
 #    contenedor desechable de la imagen nueva en la red de la API. El código
 #    nuevo espera la cabeza nueva; recrear primero deja `/v1/ready` en 503.
 #    El BFF no lo necesita: su entrypoint corre `alembic upgrade head`.
-# 6. `core-worker` se recrea junto a `core-api`: es quien ejecuta el beat y las
-#    tareas, y la primera versión lo dejaba en la imagen anterior.
+# 6. Los tres workers se recrean junto a `core-api`: modelo, cosecha y el
+#    worker de operaciones que ejecuta el beat deben publicar la misma release.
 #
 # Uso:  scripts/deploy_nas.sh core|bff [--dry-run]
 set -euo pipefail
@@ -139,7 +139,14 @@ for _ in $(seq 1 30); do
 done
 ssh nas "$D ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | grep -E 'swissjob-(backend|core-api|core-worker|core-harvest-worker|core-ops-worker|core-capture)'"
 if [[ "$SERVICIO" == core ]]; then
-  python3 scripts/check_core_release.py || echo "AVISO: check_core_release en rojo — revisar antes de dar por bueno"
+  echo "== coherencia de release remota"
+  ready="$(ssh nas "$D exec $CONTENEDOR_API wget -qO- http://127.0.0.1:8000/v1/ready")"
+  release="$(python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status") == "ready" and d.get("authoritative") is True; print(d.get("release", ""))' <<<"$ready")"
+  [[ "$release" == "$SHA" ]] || { echo "ABORTA: /v1/ready publica $release, esperado $SHA" >&2; exit 1; }
+  for contenedor in swissjob-core-api-r5 swissjob-core-worker-r5 swissjob-core-harvest-worker-r5 swissjob-core-ops-worker-r5; do
+    ejecutada="$(ssh nas "$D inspect $contenedor --format '{{.Config.Image}}'")"
+    [[ "$ejecutada" == "$IMAGEN" ]] || { echo "ABORTA: $contenedor corre $ejecutada" >&2; exit 1; }
+  done
 fi
 echo "== listo: $IMAGEN"
 echo "   vuelta atrás: ssh nas 'cp $E/$COMPOSE.before-$SHA $E/$COMPOSE' && recrear"
