@@ -108,6 +108,22 @@ class MatchResultsResponse(BaseModel):
     weights_used: dict[str, float]
 
 
+class MatchFacetResponse(BaseModel):
+    id: str
+    label: str
+    short_label: str
+    count: int = Field(ge=0)
+
+
+class MatchFacetsResponse(BaseModel):
+    version: str
+    total: int = Field(ge=0)
+    top_score: float
+    strong_count: int = Field(ge=0)
+    watchlist_count: int = Field(ge=0)
+    categories: list[MatchFacetResponse]
+
+
 class MatchFeedbackRequest(BaseModel):
     """Request body for POST /api/v1/match/{job_hash}/feedback."""
 

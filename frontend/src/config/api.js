@@ -398,10 +398,15 @@ export const matchApi = {
     });
   },
 
+  getFacets() {
+    return authRequest("/match/facets");
+  },
+
   getResults(params = {}) {
     const qs = new URLSearchParams();
     if (params.limit) qs.set("limit", params.limit);
     if (params.offset !== undefined) qs.set("offset", params.offset);
+    if (params.category) qs.set("category", params.category);
     if (params.translate === false) qs.set("translate", "false");
     const query = qs.toString();
     return authRequest(`/match/results${query ? `?${query}` : ""}`);

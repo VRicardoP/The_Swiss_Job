@@ -428,6 +428,46 @@ async def test_core_walks_keyset_pages_and_preserves_order(seeded):
     assert scores == sorted(scores, reverse=True)
 
 
+async def test_core_category_feed_uses_server_filter_and_bounded_pages(seeded):
+    user_id, matchings, fake = seeded
+    items, total = await matchings["core"].results(user_id, category="A")
+
+    assert total == len(VISIBLE_ORDER)
+    assert len(items) == len(VISIBLE_ORDER)
+    pages = [request for request in fake.requests if "/matches" in request.url.path]
+    assert pages
+    assert all(request.url.params["category"] == "A" for request in pages)
+    assert all(request.url.params["limit"] == "50" for request in pages)
+
+
+async def test_core_facets_validates_the_strict_contract(db_session):
+    user_id = await seed_local(db_session)
+    core_profile_id = uuid.uuid4()
+    await set_profile_link(db_session, user_id, core_profile_id)
+    payload = {
+        "version": "facet-v1",
+        "total": 3,
+        "top_score": 92.5,
+        "strong_count": 2,
+        "watchlist_count": 1,
+        "categories": [
+            {
+                "id": "A",
+                "label": "Content & Communications",
+                "short_label": "Content",
+                "count": 3,
+            }
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith(f"/{core_profile_id}/matches/facets")
+        return httpx.Response(200, json=payload)
+
+    core = make_core_matching(db_session, httpx.MockTransport(handler))
+    assert await core.facets(user_id) == payload
+
+
 async def test_core_etag_second_pass_uses_304(seeded, db_session):
     """Paginacion con ETag REAL: la segunda pasada manda If-None-Match, el
     fake responde 304 sin cuerpo y el resultado es identico."""

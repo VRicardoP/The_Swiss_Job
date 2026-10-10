@@ -313,6 +313,8 @@ class Settings(BaseSettings):
     # Agotarlo da un 503, que el consumidor ya sabe tratar.
     CORE_FEED_TOTAL_BUDGET_S: float = 60.0
     CORE_HTTP_TIMEOUT_SECONDS: float = 5.0
+    # Opt-in after aggregate parity has been measured against the legacy UI.
+    CORE_MATCH_FACETS_ENABLED: bool = False
     # F writer cutover: enable ONLY after frozen feedback migration/reconciliation.
     # Once enabled there is no fallback to a local feedback writer or saved feed.
     CORE_FEEDBACK_ENABLED: bool = False

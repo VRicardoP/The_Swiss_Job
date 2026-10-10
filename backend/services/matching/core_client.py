@@ -231,6 +231,26 @@ class _FeedPageDTO(BaseModel):
     total: int | None = Field(default=None, ge=0)
 
 
+class _FacetDTO(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str
+    short_label: str
+    count: int = Field(ge=0)
+
+
+class _FacetsDTO(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: str
+    total: int = Field(ge=0)
+    top_score: FiniteFloat
+    strong_count: int = Field(ge=0)
+    watchlist_count: int = Field(ge=0)
+    categories: list[_FacetDTO]
+
+
 def default_client_factory() -> httpx.AsyncClient:
     """Cliente httpx contra el /v1 del core por la red interna de compose
     (plan §21: puerto dedicado, solo red interna, nunca ngrok)."""
@@ -481,8 +501,44 @@ class CoreMatching:
         items, _total = await self._fetch_full_feed(core_profile_id, None)
         return len(items)
 
+    async def facets(self, user_id: uuid.UUID) -> dict:
+        if settings.CORE_FEEDBACK_ENABLED:
+            from .feedback import require_core_feedback_route
+
+            await require_core_feedback_route(self._db, user_id)
+        core_profile_id = await resolve_core_profile_id(self._db, user_id)
+        if core_profile_id is None:
+            raise CoreUnavailableError(
+                f"usuario {user_id} sin vinculo en jobhunt_profile_map"
+            )
+        if (
+            self._client_factory is default_client_factory
+            and not settings.CORE_CONSUMER_KEY
+        ):
+            raise CoreUnavailableError("CORE_CONSUMER_KEY no configurada")
+        try:
+            async with self._client_factory() as client:
+                response = await client.get(
+                    f"/profiles/{core_profile_id}/matches/facets"
+                )
+        except httpx.HTTPError as exc:
+            raise CoreUnavailableError(f"core /v1 inaccesible: {exc}") from exc
+        if response.status_code != 200:
+            raise CoreUnavailableError(
+                f"core /v1 devolvio {response.status_code} para facetas de "
+                f"{core_profile_id}"
+            )
+        try:
+            return _FacetsDTO.model_validate(response.json()).model_dump(mode="json")
+        except _PAYLOAD_ERRORS as exc:
+            raise CoreUnavailableError("payload invalido de facetas del core") from exc
+
     async def results(
-        self, user_id: uuid.UUID, limit: int = 20, offset: int = 0
+        self,
+        user_id: uuid.UUID,
+        limit: int = 20,
+        offset: int = 0,
+        category: str | None = None,
     ) -> tuple[list[dict], int]:
         if settings.CORE_FEEDBACK_ENABLED:
             from .feedback import require_core_feedback_route
@@ -507,7 +563,9 @@ class CoreMatching:
         # las paginas que cubren la ventana pedida; la rama local si excluye
         # (accionabilidad y feedback negativo) y su total exige el recorrido.
         needed = offset + limit if settings.CORE_FEEDBACK_ENABLED else None
-        items, core_total = await self._fetch_full_feed(core_profile_id, needed)
+        items, core_total = await self._fetch_full_feed(
+            core_profile_id, needed, category=category
+        )
         # Identidad por item (candidatos DETERMINISTAS: cualquier listing
         # `legacy:*`, no solo el primary) + respaldo accionable + overlay
         # local en lotes. Los errores de FORMA del payload se traducen a
@@ -773,7 +831,10 @@ class CoreMatching:
         return [t for t in (it.get("vacancy", {}).get("title") for it in items) if t]
 
     async def _fetch_full_feed(
-        self, core_profile_id: uuid.UUID, needed: int | None = None
+        self,
+        core_profile_id: uuid.UUID,
+        needed: int | None = None,
+        category: str | None = None,
     ) -> tuple[list[dict], int | None]:
         """Recorre el feed con un presupuesto TOTAL de tiempo.
 
@@ -786,7 +847,9 @@ class CoreMatching:
         """
         try:
             async with asyncio.timeout(settings.CORE_FEED_TOTAL_BUDGET_S):
-                return await self._recorrer_feed(core_profile_id, needed)
+                return await self._recorrer_feed(
+                    core_profile_id, needed, category=category
+                )
         except TimeoutError as exc:
             raise CoreUnavailableError(
                 "recorrido del feed excede el presupuesto de "
@@ -794,7 +857,10 @@ class CoreMatching:
             ) from exc
 
     async def _recorrer_feed(
-        self, core_profile_id: uuid.UUID, needed: int | None = None
+        self,
+        core_profile_id: uuid.UUID,
+        needed: int | None = None,
+        category: str | None = None,
     ) -> tuple[list[dict], int | None]:
         """Recorre el feed por keyset; cache de paginas por ETag.
 
@@ -831,7 +897,7 @@ class CoreMatching:
             # cuesta 18 peticiones y 11,5 s: ahi compensa de sobra.
             version: str | None = None
             version_total: int | None = None
-            if needed is None or needed > FEED_PAGE_LIMIT:
+            if category is None and (needed is None or needed > FEED_PAGE_LIMIT):
                 declarada = await self._feed_version(client, core_profile_id)
                 if declarada is not None:
                     version, version_total = declarada
@@ -840,7 +906,9 @@ class CoreMatching:
                 if cacheado is not None and cacheado[0] == version:
                     return list(cacheado[1]), cacheado[2]
             for _ in range(MAX_FEED_PAGES):
-                page = await self._fetch_page(client, core_profile_id, cursor)
+                page = await self._fetch_page(
+                    client, core_profile_id, cursor, category=category
+                )
                 page_items = page.get("items") or []
                 if not isinstance(page_items, list):
                     # MatchesPageDTO.items es una lista: otra forma es
@@ -866,7 +934,7 @@ class CoreMatching:
                 if cursor is None:
                     # Recorrido COMPLETO: es el unico que se cachea. Uno
                     # cortado por `needed` no puede servir a quien pida mas.
-                    if version is not None:
+                    if category is None and version is not None:
                         await self._maybe_remember(
                             client,
                             core_profile_id,
@@ -1000,15 +1068,24 @@ class CoreMatching:
         _feed_cache[pid] = (version, _recortado(items), total)
 
     async def _fetch_page(
-        self, client: httpx.AsyncClient, core_profile_id: uuid.UUID, cursor: str | None
+        self,
+        client: httpx.AsyncClient,
+        core_profile_id: uuid.UUID,
+        cursor: str | None,
+        category: str | None = None,
     ) -> dict:
-        cache_key = (str(core_profile_id), cursor or "")
+        page_key = cursor or ""
+        if category is not None:
+            page_key = f"category:{category}:{page_key}"
+        cache_key = (str(core_profile_id), page_key)
         generation = (_cache_generation, _profile_generations.get(cache_key[0], 0))
         cached = _etag_cache.get(cache_key)
         headers = {"If-None-Match": cached[0]} if cached else {}
-        params: dict = {"limit": FEED_PAGE_LIMIT}
+        params: dict = {"limit": 50 if category is not None else FEED_PAGE_LIMIT}
         if cursor is not None:
             params["cursor"] = cursor
+        if category is not None:
+            params["category"] = category
         try:
             resp = await client.get(
                 f"/profiles/{core_profile_id}/matches",

@@ -5,15 +5,33 @@ export function useAnalyze() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => matchApi.analyze(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["match-results"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["match-results"] });
+      qc.invalidateQueries({ queryKey: ["match-facets"] });
+    },
   });
 }
 
-// Carga masiva sin traducciones — solo para categorizar y contar.
-export function useMatchResults(limit = 20, offset = 0) {
+export function useMatchFacets() {
   return useQuery({
-    queryKey: ["match-results", { limit, offset }],
-    queryFn: () => matchApi.getResults({ limit, offset, translate: false }),
+    queryKey: ["match-facets"],
+    queryFn: () => matchApi.getFacets(),
+    retry: false,
+  });
+}
+
+// Con facetas sirve una categoría paginada; sin ellas conserva el recorrido legacy.
+export function useMatchResults(
+  limit = 20,
+  offset = 0,
+  category = null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["match-results", { limit, offset, category }],
+    queryFn: () =>
+      matchApi.getResults({ limit, offset, category, translate: false }),
+    enabled,
   });
 }
 
@@ -29,6 +47,7 @@ export function useSubmitFeedback() {
       // match-results: "not for me" oculta la oferta de la vista de matches.
       // saved-jobs: "Good" la guarda y debe reflejarse al instante en Saved.
       qc.invalidateQueries({ queryKey: ["match-results"] });
+      qc.invalidateQueries({ queryKey: ["match-facets"] });
       qc.invalidateQueries({ queryKey: ["saved-jobs"] });
     },
   });
@@ -47,6 +66,7 @@ export function useClearFeedback() {
     mutationFn: ({ jobHash }) => matchApi.clearFeedback(jobHash),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["match-results"] });
+      qc.invalidateQueries({ queryKey: ["match-facets"] });
       qc.invalidateQueries({ queryKey: ["saved-jobs"] });
     },
   });

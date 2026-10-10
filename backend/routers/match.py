@@ -21,6 +21,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from core.rate_limit import limiter
 from core.security import get_current_user
 from database import get_db
@@ -32,6 +33,7 @@ from schemas.match import (
     MatchAnalyzeResponse,
     MatchFeedbackRequest,
     MatchFeedbackResponse,
+    MatchFacetsResponse,
     MatchResultResponse,
     MatchResultsResponse,
     MatchScoreBreakdown,
@@ -42,6 +44,7 @@ from services.gemini_service import GeminiService
 from services.groq_service import GroqService
 from services.job_matcher import DEFAULT_WEIGHTS
 from services import language_store
+from services.matching.core_client import CoreMatching
 from services.matching.feedback import feedback_writer
 from services.match_service import MatchService
 from services.matching import (
@@ -276,6 +279,19 @@ async def _build_results_response(
     )
 
 
+@router.get("/facets", response_model=MatchFacetsResponse)
+async def get_match_facets(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not settings.CORE_MATCH_FACETS_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    try:
+        return await CoreMatching(db).facets(current_user.id)
+    except MatchingError as exc:
+        raise _matching_http_error(exc) from exc
+
+
 @router.get("/results", response_model=MatchResultsResponse)
 async def get_match_results(
     request: Request,
@@ -284,19 +300,34 @@ async def get_match_results(
     limit: int = Query(20, ge=1, le=3000),
     offset: int = Query(0, ge=0),
     translate: bool = Query(True),
+    category: str | None = Query(None, pattern=r"^(?:[A-M]|otros|__watchlist)$"),
 ):
     """Get latest AI match results for the current user.
 
     translate=false omite la traducción de títulos (útil para carga masiva
     de categorización donde las traducciones no son necesarias).
     """
-    matching = await resolve_matching(db, current_user.id)
+    if category is not None and not settings.CORE_MATCH_FACETS_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    matching = (
+        CoreMatching(db)
+        if category is not None
+        else await resolve_matching(db, current_user.id)
+    )
     try:
-        results, total = await matching.results(
-            current_user.id,
-            limit=limit,
-            offset=offset,
-        )
+        if category is None:
+            results, total = await matching.results(
+                current_user.id,
+                limit=limit,
+                offset=offset,
+            )
+        else:
+            results, total = await matching.results(
+                current_user.id,
+                limit=limit,
+                offset=offset,
+                category=category,
+            )
     except MatchingError as exc:
         raise _matching_http_error(exc) from exc
 

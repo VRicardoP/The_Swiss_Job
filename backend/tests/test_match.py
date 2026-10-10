@@ -185,6 +185,16 @@ class TestMatchResults:
         resp = await client.get("/api/v1/match/results")
         assert resp.status_code == 401
 
+    async def test_facets_and_category_are_hidden_while_flag_is_off(
+        self, client: AsyncClient
+    ):
+        token, _email = await _register_and_get_token(client)
+        headers = _auth(token)
+        facets = await client.get("/api/v1/match/facets", headers=headers)
+        category = await client.get("/api/v1/match/results?category=A", headers=headers)
+        assert facets.status_code == 404
+        assert category.status_code == 404
+
     async def test_results_empty_before_analyze(self, client: AsyncClient):
         token, _email = await _register_and_get_token(client)
         resp = await client.get("/api/v1/match/results", headers=_auth(token))

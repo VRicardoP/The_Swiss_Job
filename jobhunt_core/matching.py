@@ -2382,6 +2382,107 @@ async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=No
     return rows, next_cursor
 
 
+async def _facet_rows(session, profile_id, consumer_id):
+    """Minimal presentable feed rows used by facets and category paging."""
+    from jobhunt_core.feedback import effective_feedback_batch_sql
+
+    rows = await session.execute(
+        sa.text(
+            f"WITH fb AS ({effective_feedback_batch_sql(':pid')}) "
+            "SELECT e.vacancy_id, e.score_final, e.id AS eval_id, e.scores, "
+            "e.offer_revision_id, s.saved_at, fb.feedback, s.notes, o.content, "
+            "EXISTS (SELECT 1 FROM school_job_details sj "
+            "        WHERE sj.vacancy_id=s.vacancy_id AND sj.consumer_id=:cid "
+            "          AND sj.quarantine_reason IS NULL) AS watchlist "
+            "FROM profile_vacancy_state s "
+            "JOIN profiles p ON p.id=s.profile_id AND p.consumer_id=:cid "
+            "JOIN match_evaluations e ON e.id=s.current_eval_id "
+            "  AND e.profile_id=s.profile_id AND e.vacancy_id=s.vacancy_id "
+            "JOIN vacancies v ON v.id=s.vacancy_id "
+            "  AND v.archived_at IS NULL AND v.merged_into IS NULL "
+            "JOIN offer_revisions o ON o.id=v.current_offer_revision_id "
+            "LEFT JOIN fb ON fb.vacancy_id=s.vacancy_id "
+            "WHERE s.profile_id=:pid AND s.current_eval_id IS NOT NULL "
+            "AND COALESCE(fb.feedback,'') NOT IN ('thumbs_down','dismissed') "
+            "ORDER BY e.score_final DESC, e.vacancy_id ASC"
+        ),
+        {"pid": profile_id, "cid": consumer_id},
+    )
+    return rows.all()
+
+
+def _row_category(row) -> str:
+    from jobhunt_core.match_categories import classify
+
+    content = row.content if isinstance(row.content, dict) else {}
+    return classify(content.get("title"), content.get("tags"))
+
+
+async def feed_facets(session, profile_id, consumer_id) -> dict:
+    """Aggregate the canonical feed without constructing thousands of DTOs."""
+    from jobhunt_core.match_categories import categories
+
+    rows = await _facet_rows(session, profile_id, consumer_id)
+    metadata = categories()
+    counts = {category["id"]: 0 for category in metadata}
+    counts["otros"] = 0
+    for row in rows:
+        counts[_row_category(row)] += 1
+    return {
+        "total": len(rows),
+        "top_score": max((float(row.score_final) for row in rows), default=0.0),
+        "strong_count": sum(float(row.score_final) >= 70 for row in rows),
+        "watchlist_count": sum(bool(row.watchlist) for row in rows),
+        "categories": [
+            {**category, "count": counts[category["id"]]} for category in metadata
+        ]
+        + [
+            {
+                "id": "otros",
+                "label": "Other",
+                "short_label": "Other",
+                "count": counts["otros"],
+            }
+        ],
+    }
+
+
+async def feed_category(
+    session, profile_id, category: str, limit: int = 20, cursor=None, consumer_id=None
+):
+    """One keyset page of a category, using the authoritative taxonomy."""
+    from jobhunt_core.match_categories import CATEGORY_IDS
+
+    if category != "__watchlist" and category not in CATEGORY_IDS:
+        raise ValueError("unknown match category")
+    all_rows = await _facet_rows(session, profile_id, consumer_id)
+    selected = [
+        row
+        for row in all_rows
+        if (
+            bool(row.watchlist)
+            if category == "__watchlist"
+            else _row_category(row) == category
+        )
+    ]
+    total = len(selected)
+    if cursor is not None:
+        score, vacancy_id = cursor
+        selected = [
+            row
+            for row in selected
+            if row.score_final < score
+            or (row.score_final == score and row.vacancy_id > vacancy_id)
+        ]
+    page = selected[: limit + 1]
+    has_more = len(page) > limit
+    page = page[:limit]
+    next_cursor = (
+        (page[-1].score_final, page[-1].vacancy_id) if has_more and page else None
+    )
+    return page, next_cursor, total
+
+
 def feed_total_sql(profile_id, consumer_id=None):
     """SQL del tamaño del feed y sus parámetros. Mismas tres reglas que `feed`.
 

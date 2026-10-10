@@ -80,6 +80,22 @@ class MatchesVersionDTO(BaseModel):
     total: int = Field(ge=0)
 
 
+class MatchFacetDTO(BaseModel):
+    id: str
+    label: str
+    short_label: str
+    count: int = Field(ge=0)
+
+
+class MatchFacetsDTO(BaseModel):
+    version: str
+    total: int = Field(ge=0)
+    top_score: float
+    strong_count: int = Field(ge=0)
+    watchlist_count: int = Field(ge=0)
+    categories: list[MatchFacetDTO]
+
+
 class VacanciesPageDTO(BaseModel):
     """Página del feed de catálogo (C-API-R): VacancyDTO reutilizado + cursor
     keyset OPACO. Con offset explícito incluye el total para el BFF existente."""

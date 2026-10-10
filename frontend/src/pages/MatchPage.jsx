@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import {
   useAnalyze,
+  useMatchFacets,
   useMatchResults,
   useSubmitFeedback,
   useClearFeedback,
@@ -32,19 +33,27 @@ import {
 
 export default function MatchPage() {
   const { data: profile, isLoading: profileLoading } = useProfile();
+  const [activeCategory, setActiveCategory] = useState(null);
+  const [categoryOffset, setCategoryOffset] = useState(0);
+  const facetsQuery = useMatchFacets();
+  const facetsEnabled = facetsQuery.isSuccess;
+  const legacyMode = facetsQuery.isError;
   const {
     data: results,
     isLoading: resultsLoading,
     isError,
     error,
-  } = useMatchResults(3000, 0);
+  } = useMatchResults(
+    facetsEnabled ? 50 : 3000,
+    facetsEnabled ? categoryOffset : 0,
+    facetsEnabled ? activeCategory : null,
+    legacyMode || (facetsEnabled && Boolean(activeCategory)),
+  );
 
   const analyze = useAnalyze();
   const submitFeedback = useSubmitFeedback();
   const clearFeedback = useClearFeedback();
   const submitImplicit = useSubmitImplicit();
-
-  const [activeCategory, setActiveCategory] = useState(null);
 
   // H12/T7 — RETIRADA la señal implícita `view_time`.
   //
@@ -58,9 +67,14 @@ export default function MatchPage() {
   // funcionalidad nueva, no el arreglo de un defecto, y se decide aparte.
 
   const hasCvEmbedding = profile?.has_cv_embedding;
+  const facets = facetsQuery.data;
   const allMatches = useMemo(() => results?.data ?? [], [results?.data]);
-  const total = results?.total ?? 0;
-  const isLoading = profileLoading || resultsLoading;
+  const total = facetsEnabled ? facets.total : (results?.total ?? 0);
+  const hasMatches = total > 0;
+  const isLoading =
+    profileLoading ||
+    facetsQuery.isLoading ||
+    (resultsLoading && (legacyMode || Boolean(activeCategory)));
 
   const grouped = useMemo(() => groupByCategory(allMatches), [allMatches]);
 
@@ -77,6 +91,29 @@ export default function MatchPage() {
   );
 
   const tabItems = useMemo(() => {
+    if (facetsEnabled) {
+      const items = [];
+      if (facets.watchlist_count > 0) {
+        items.push({
+          id: "__watchlist",
+          label: "Watchlist",
+          fullLabel: "Watchlist",
+          count: facets.watchlist_count,
+        });
+      }
+      items.push(
+        ...facets.categories
+          .filter((category) => category.count > 0)
+          .map((category) => ({
+            id: category.id,
+            label: category.short_label || category.label,
+            fullLabel: category.label,
+            shortLabel: category.short_label,
+            count: category.count,
+          })),
+      );
+      return items;
+    }
     const items = [];
     if (watchlistMatches.length > 0) {
       items.push({
@@ -101,27 +138,25 @@ export default function MatchPage() {
       items.push({ id: "otros", label: "Other", count: otrosCount });
     }
     return items;
-  }, [grouped, watchlistMatches.length]);
+  }, [facets, facetsEnabled, grouped, watchlistMatches.length]);
 
-  const visibleMatches =
-    activeCategory === "__watchlist"
+  const activeTab = tabItems.find((item) => item.id === activeCategory);
+  const visibleMatches = facetsEnabled
+    ? allMatches
+    : activeCategory === "__watchlist"
       ? watchlistMatches
       : activeCategory
         ? grouped.get(activeCategory) ?? []
         : [];
 
-  // Métricas: top score y matches > 70
-  const topScore = useMemo(
-    () =>
-      allMatches.length > 0
-        ? Math.round(Math.max(...allMatches.map((m) => m.score_final)))
-        : 0,
-    [allMatches],
-  );
-  const strongMatches = useMemo(
-    () => allMatches.filter((m) => m.score_final >= 70).length,
-    [allMatches],
-  );
+  const topScore = facetsEnabled
+    ? Math.round(facets.top_score)
+    : allMatches.length > 0
+      ? Math.round(Math.max(...allMatches.map((match) => match.score_final)))
+      : 0;
+  const strongMatches = facetsEnabled
+    ? facets.strong_count
+    : allMatches.filter((match) => match.score_final >= 70).length;
 
   // L4/T7: estos tres se recreaban en CADA render, así que cambiaban de
   // identidad y el `memo(MatchCard)` no servía de nada: se repintaban las
@@ -162,6 +197,7 @@ export default function MatchPage() {
             disabled={!hasCvEmbedding || analyze.isPending}
             onClick={() => {
               setActiveCategory(null);
+              setCategoryOffset(0);
               analyze.mutate();
             }}
           >
@@ -212,7 +248,7 @@ export default function MatchPage() {
       )}
 
       {/* Métricas */}
-      {allMatches.length > 0 && (
+      {hasMatches && (
         <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <MetricTile label="Total matches" value={total.toLocaleString()} />
           <MetricTile label="Strong (≥70)" value={strongMatches} tone="success" />
@@ -238,7 +274,7 @@ export default function MatchPage() {
       )}
 
       {/* Sin resultados */}
-      {!isLoading && !isError && allMatches.length === 0 && (
+      {!isLoading && !isError && !hasMatches && (
         <div className="mt-6">
           <EmptyState
             icon={Sparkles}
@@ -269,7 +305,7 @@ export default function MatchPage() {
       )}
 
       {/* Categorías */}
-      {allMatches.length > 0 && (
+      {hasMatches && (
         <section className="mt-6">
           <div className="mb-3 flex items-end justify-between gap-3">
             <h2 className="text-sm font-medium text-text-secondary">
@@ -278,7 +314,10 @@ export default function MatchPage() {
             {activeCategory && (
               <button
                 type="button"
-                onClick={() => setActiveCategory(null)}
+                onClick={() => {
+                  setActiveCategory(null);
+                  setCategoryOffset(0);
+                }}
                 className="text-xs font-medium text-text-tertiary hover:text-text-primary"
               >
                 Show all categories
@@ -288,7 +327,10 @@ export default function MatchPage() {
           <CategoryTabs
             categories={tabItems}
             activeId={activeCategory}
-            onChange={setActiveCategory}
+            onChange={(category) => {
+              setActiveCategory(category);
+              setCategoryOffset(0);
+            }}
           />
         </section>
       )}
@@ -298,9 +340,12 @@ export default function MatchPage() {
         <section className="mt-6">
           <header className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-semibold tracking-tight text-text-primary">
-              {CATEGORY_MAP[activeCategory]?.label ?? "Other"}{" "}
+              {activeTab?.fullLabel ??
+                activeTab?.label ??
+                CATEGORY_MAP[activeCategory]?.label ??
+                "Other"}{" "}
               <span className="text-text-tertiary font-normal">
-                · {visibleMatches.length}
+                · {activeTab?.count ?? visibleMatches.length}
               </span>
             </h2>
           </header>
@@ -315,10 +360,31 @@ export default function MatchPage() {
               />
             ))}
           </div>
+          {facetsEnabled &&
+            (categoryOffset > 0 ||
+              categoryOffset + visibleMatches.length <
+                (activeTab?.count ?? 0)) && (
+            <div className="mt-4 flex justify-center gap-3">
+              <Button
+                variant="outline"
+                disabled={categoryOffset === 0}
+                onClick={() => setCategoryOffset((offset) => Math.max(0, offset - 50))}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                disabled={categoryOffset + visibleMatches.length >= (activeTab?.count ?? 0)}
+                onClick={() => setCategoryOffset((offset) => offset + 50)}
+              >
+                Next
+              </Button>
+            </div>
+          )}
         </section>
       )}
 
-      {allMatches.length > 0 && !activeCategory && (
+      {hasMatches && !activeCategory && (
         <div className="mt-8 flex flex-col items-center gap-2 rounded-xl border border-dashed border-border bg-surface px-6 py-10 text-center">
           <Inbox className="h-5 w-5 text-text-quaternary" aria-hidden="true" />
           <p className="text-sm text-text-secondary">

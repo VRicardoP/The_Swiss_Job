@@ -846,6 +846,32 @@ async def get_matches_version(
 
 
 @router.get(
+    "/profiles/{profile_id}/matches/facets",
+    response_model=schemas.MatchFacetsDTO,
+)
+async def get_match_facets(
+    profile_id: uuid.UUID,
+    session=Depends(get_session),
+    principal: Principal = Depends(require_scope("matches:read")),
+):
+    owner = (
+        await session.execute(
+            sa.text("SELECT consumer_id FROM profiles WHERE id = :pid"),
+            {"pid": profile_id},
+        )
+    ).scalar_one_or_none()
+    if owner is None or owner != principal.consumer_id:
+        raise error_404("perfil")
+    aggregate = await matching.feed_facets(
+        session, profile_id, consumer_id=principal.consumer_id
+    )
+    version, _ = await matching.feed_version(
+        session, profile_id, consumer_id=principal.consumer_id
+    )
+    return schemas.MatchFacetsDTO(version=version, **aggregate)
+
+
+@router.get(
     "/profiles/{profile_id}/matches",
     response_model=schemas.MatchesPageDTO,
     responses={304: {"description": "Not Modified"}},
@@ -857,6 +883,7 @@ async def get_matches(
     principal: Principal = Depends(require_scope("matches:read")),
     limit: int = Query(20, ge=1, le=MAX_PAGE_LIMIT),
     cursor: str | None = Query(None),
+    category: str | None = Query(None, pattern=r"^(?:[A-M]|otros|__watchlist)$"),
 ):
     """Feed del perfil (§2/A-08): excluye dismissed y no-activas; orden
     score_final DESC; keyset opaco base64(score_final|vacancy_id). ETag de la
@@ -875,13 +902,24 @@ async def get_matches(
         raise error_404("perfil")
 
     cur = decode_cursor(cursor) if cursor else None
-    rows, next_cur = await matching.feed(
-        session,
-        profile_id,
-        limit=limit,
-        cursor=cur,
-        consumer_id=principal.consumer_id,
-    )
+    category_total = None
+    if category is None:
+        rows, next_cur = await matching.feed(
+            session,
+            profile_id,
+            limit=limit,
+            cursor=cur,
+            consumer_id=principal.consumer_id,
+        )
+    else:
+        rows, next_cur, category_total = await matching.feed_category(
+            session,
+            profile_id,
+            category,
+            limit=limit,
+            cursor=cur,
+            consumer_id=principal.consumer_id,
+        )
     eval_ids = [r.eval_id for r in rows]
     evals = (
         {
@@ -942,8 +980,12 @@ async def get_matches(
         # paginar, y contar en cada página pagaría el recuento N veces sin
         # que nadie lo lea. El tenant se filtra también aquí, en SQL.
         total=(
-            await matching.feed_total(
-                session, profile_id, consumer_id=principal.consumer_id
+            (
+                category_total
+                if category is not None
+                else await matching.feed_total(
+                    session, profile_id, consumer_id=principal.consumer_id
+                )
             )
             if cur is None
             else None

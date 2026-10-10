@@ -51,6 +51,7 @@ services:
       SCHOOL_WRITES_FROZEN: 'false'
       CORE_PROFILE_SYNC_ENABLED: 'true'
       CORE_FEEDBACK_ENABLED: 'true'
+      CORE_MATCH_FACETS_ENABLED: 'false'
       FEEDBACK_WRITES_FROZEN: 'false'
       LEGACY_DISABLED_PROVIDERS: '["arbeitnow", "euremotejobs", "globaljobs", "jobgether", "jobspresso", "nav_arbeidsplassen", "ostjob", "remotive", "thehub", "weworkremotely", "workingnomads", "zentraljob"]'
       LEGACY_DISABLED_SCRAPERS: '["financejobs", "irishjobs"]'

@@ -437,6 +437,39 @@ def test_matches_dto_pagination_and_errors(db):
     assert "details" in r.json() and "message" in r.json()
 
 
+def test_match_facets_and_category_page_share_the_authoritative_taxonomy(db):
+    factory, created = db
+    pid, _vacs, token = _seed_matches(
+        factory,
+        created,
+        titles=(
+            "Senior Content Editor",
+            "International School Teacher",
+            "Quantum Mechanic",
+        ),
+    )
+    base = f"/v1/profiles/{pid}/matches"
+
+    facets = _api(factory, base + "/facets", token=token)
+    assert facets.status_code == 200
+    body = facets.json()
+    counts = {item["id"]: item["count"] for item in body["categories"]}
+    assert body["total"] == 3
+    assert (counts["A"], counts["H"], counts["otros"]) == (1, 1, 1)
+    assert sum(counts.values()) == body["total"]
+    assert body["watchlist_count"] == 0 and body["version"]
+
+    page = _api(factory, base + "?category=A&limit=50", token=token)
+    assert page.status_code == 200
+    assert page.json()["total"] == 1
+    assert [item["vacancy"]["title"] for item in page.json()["items"]] == [
+        "Senior Content Editor"
+    ]
+
+    invalid = _api(factory, base + "?category=unknown", token=token)
+    assert (invalid.status_code, invalid.json()["code"]) == (400, "invalid_request")
+
+
 def test_profile_reassignment_never_leaks(db):
     """Rev. A-09 #1 (repro): el ownership va EN la query y en UNA sentencia.
     Tras reasignar el perfil al tenant B (con revisión nueva 'secreta'), el
