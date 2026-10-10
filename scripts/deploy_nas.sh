@@ -57,6 +57,7 @@ if [[ "$SERVICIO" == core ]]; then
   ETIQUETAR=(docker tag swissjob-core:dev "$IMAGEN")
   PATRON="swissjob-core:point5-"
   CONTENEDOR_API="swissjob-core-api-r5"
+  CONTENEDOR_SALUD="$CONTENEDOR_API"
 else
   IMAGEN="swissjob-backend:point5-$SHA"
   COMPOSE="swissjob.configured.yml"; PROYECTO="swissjob"
@@ -64,6 +65,7 @@ else
   CONSTRUIR=(docker build -f backend/Dockerfile.prod -t "$IMAGEN" backend/)
   ETIQUETAR=(true)
   PATRON="swissjob-backend:point5-"
+  CONTENEDOR_SALUD="swissjob-backend"
 fi
 
 echo "== servicio=$SERVICIO  imagen=$IMAGEN  compose=$COMPOSE  proyecto=$PROYECTO  recrea=${SERVICIOS[*]}"
@@ -124,9 +126,8 @@ echo "== recreando ${SERVICIOS[*]} (con el proyecto correcto: trampa 2)"
 ssh nas "cd $E && $C -p $PROYECTO -f $COMPOSE up -d --no-deps ${SERVICIOS[*]}"
 
 echo "== salud"
-UNIDAD="${SERVICIOS[0]}"
 for _ in $(seq 1 30); do
-  estado="$(ssh nas "$D inspect ${PROYECTO}-${UNIDAD}$([[ "$SERVICIO" == core ]] && echo -r5) --format '{{.State.Health.Status}}' 2>/dev/null || true")"
+  estado="$(ssh nas "$D inspect $CONTENEDOR_SALUD --format '{{.State.Health.Status}}' 2>/dev/null || true")"
   [[ "$estado" == healthy ]] && break
   sleep 10
 done
