@@ -35,9 +35,10 @@ logger = logging.getLogger(__name__)
 
 # La tarea de beat comparte el límite blando global de 30 min. Acotarla evita
 # que un backlog grande consuma todo ese presupuesto antes de la recuperación
-# post-lote; las siguientes cadencias continúan el drenado idempotente.
+# post-lote. Cada ronda persiste su avance y las siguientes cadencias continúan
+# el drenado idempotente; agrupar cuatro rondas excedió el límite en producción.
 PROJECT_BATCHES_PER_TASK = 20
-PROJECT_EMBEDDING_ROUNDS_PER_TASK = 4
+PROJECT_EMBEDDING_ROUNDS_PER_TASK = 1
 
 
 @celery_app.task(name="jobhunt.shadow.project", bind=True, max_retries=1)

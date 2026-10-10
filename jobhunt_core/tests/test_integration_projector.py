@@ -2352,6 +2352,7 @@ def test_task_registered_routed_and_runs(db, monkeypatch):
         "max_batches": shadow_tasks.PROJECT_BATCHES_PER_TASK,
         "max_embedding_rounds": shadow_tasks.PROJECT_EMBEDDING_ROUNDS_PER_TASK,
     }
+    assert shadow_tasks.PROJECT_EMBEDDING_ROUNDS_PER_TASK == 1
 
 
 def test_r6_apply_url_viaja_del_staging_a_la_encarnacion(db):
