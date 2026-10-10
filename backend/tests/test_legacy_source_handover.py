@@ -4,6 +4,9 @@ Startup configuration is not an in-flight cancellation: deployment must drain
 old workers before it activates the corresponding native core scopes.
 """
 
+import json
+import re
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -128,3 +131,37 @@ async def test_invalid_handover_aborts_startup_before_io(monkeypatch, field):
         async with main.lifespan(main.app):
             pytest.fail("invalid configuration started")
     no_io.assert_not_called()
+
+
+_REPO = Path(__file__).resolve().parents[2]
+_PROD_EXAMPLE = _REPO / "backend" / ".env.prod.example"
+_CONFIGURED_MANIFEST = _REPO / "deploy" / "nas" / "swissjob.configured.yml"
+
+
+def _example_list(key: str) -> set[str]:
+    prefix = f"{key}="
+    line = next(
+        line for line in _PROD_EXAMPLE.read_text().splitlines() if line.startswith(prefix)
+    )
+    raw = line[len(prefix) :].split("  #", 1)[0].strip()
+    return set(json.loads(raw.strip("'")))
+
+
+def _manifest_lists(key: str) -> list[set[str]]:
+    values = re.findall(
+        rf"^\s+{re.escape(key)}:\s+'([^']+)'\s*$",
+        _CONFIGURED_MANIFEST.read_text(),
+        flags=re.MULTILINE,
+    )
+    return [set(json.loads(value)) for value in values]
+
+
+@pytest.mark.parametrize(
+    "field", ["LEGACY_DISABLED_PROVIDERS", "LEGACY_DISABLED_SCRAPERS"]
+)
+def test_sanitized_manifest_matches_production_handover(field):
+    """The reviewable manifest cannot silently lag behind the production source list."""
+    expected = _example_list(field)
+    configured = _manifest_lists(field)
+    assert len(configured) == 2, f"{field}: expected backend and worker values"
+    assert configured == [expected, expected]
