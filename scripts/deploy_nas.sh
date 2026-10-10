@@ -62,7 +62,7 @@ else
   IMAGEN="swissjob-backend:point5-$SHA"
   COMPOSE="swissjob.configured.yml"; PROYECTO="swissjob"
   SERVICIOS=(backend)
-  CONSTRUIR=(docker build -f backend/Dockerfile.prod -t "$IMAGEN" backend/)
+  CONSTRUIR=(docker build --build-arg INSTALL_BROWSERS=false -f backend/Dockerfile.prod -t "$IMAGEN" backend/)
   ETIQUETAR=(true)
   PATRON="swissjob-backend:point5-"
   CONTENEDOR_SALUD="swissjob-backend"
