@@ -1,0 +1,53 @@
+{
+  "observed_at": "2026-10-10T20:55:00Z",
+  "method": "read-only GET /api/v1/<source>-jobs/health from portfolio_backend loopback",
+  "sources": {
+    "adzuna": {
+      "healthy": true,
+      "cached_jobs": 2
+    },
+    "dynamitejobs": {
+      "healthy": true,
+      "cached_jobs": 300
+    },
+    "himalayas": {
+      "healthy": true,
+      "cached_jobs": 60
+    },
+    "ictjobs": {
+      "healthy": true,
+      "cached_jobs": 100
+    },
+    "jobicy": {
+      "healthy": true,
+      "cached_jobs": 40
+    },
+    "jobroom": {
+      "healthy": true,
+      "cached_jobs": 300
+    },
+    "jobscout24": {
+      "healthy": true,
+      "cached_jobs": 177
+    },
+    "jsearch": {
+      "healthy": true,
+      "cached_jobs": 94
+    },
+    "remoteok": {
+      "healthy": true,
+      "cached_jobs": 97
+    },
+    "swissdevjobs": {
+      "healthy": true,
+      "cached_jobs": 158
+    },
+    "swisstechjobs": {
+      "healthy": true,
+      "cached_jobs": 11
+    }
+  },
+  "source_count": 11,
+  "cached_jobs_total": 1339,
+  "decision": "retain local scoring only for these exclusive sources until they have an authoritative Core producer; remove interactive local fallback and duplicated-source providers separately"
+}
