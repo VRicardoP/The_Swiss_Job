@@ -26,6 +26,7 @@ ENV SENTENCE_TRANSFORMERS_HOME=/home/app/.cache/huggingface/sentence-transformer
 # Python sin buffering para que los logs salgan al stdout en tiempo real
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONPATH=/app
 
 RUN useradd --create-home --shell /bin/bash app
 RUN mkdir -p ${HF_HOME} ${SENTENCE_TRANSFORMERS_HOME} \
