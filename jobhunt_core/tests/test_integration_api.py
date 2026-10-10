@@ -930,6 +930,32 @@ def test_catalog_filter_source_primary_ci(db):
     assert len(_api(factory, base + "&source=,%20,", token=auth).json()["items"]) == 3
 
 
+def test_catalog_source_filter_uses_source_first_index(db):
+    """La fuente escasa no recorre el keyset global: primero materializa sus
+    primaries y enlaza vacancies por el índice parcial de esa relación."""
+    from jobhunt_core.api.v1 import _catalog_filter_sql
+
+    factory, _ = db
+    join, where, params = _catalog_filter_sql(None, "REMOTIVE", None, None, None)
+    assert "source_primary AS MATERIALIZED" in join
+    assert "ps.name = ANY(:sources)" in join
+    assert where == [] and params == {"sources": ["remotive"]}
+
+    async def check_index():
+        async with factory() as session:
+            return await session.scalar(
+                sa.text(
+                    "SELECT i.indisvalid FROM pg_index i "
+                    "JOIN pg_class c ON c.oid=i.indexrelid "
+                    "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                    "WHERE n.nspname=current_schema() "
+                    "AND c.relname='ix_vacancies_primary_source_feed'"
+                )
+            )
+
+    assert asyncio.run(check_index()) is True
+
+
 def test_catalog_filter_remote_and_location(db):
     """`remote` = igualdad del booleano canónico (NULL —desconocido— no casa ni
     true ni false); `country`/`city` = substring ci sobre `location` (el content

@@ -156,12 +156,20 @@ def _catalog_filter_sql(
         params["q_pattern"] = "%" + literal + "%"
     names = [s.strip().lower() for s in (source or "").split(",") if s.strip()]
     if names:
+        # El keyset global es óptimo sin filtro, pero con una fuente escasa hacía
+        # un lookup aleatorio por cada vacante reciente hasta encontrarla
+        # (71.748 encarnaciones para 11 filas en producción). Materializar primero
+        # las encarnaciones de las fuentes pedidas permite usar sus índices y el
+        # índice parcial de vacancies por primary; ordenar el subconjunto es barato.
         join = (
-            "JOIN source_listing_incarnations pi ON pi.id = v.primary_incarnation_id "
-            "JOIN source_listings psl ON psl.id = pi.source_listing_id "
-            "JOIN sources ps ON ps.id = psl.source_id "
+            "JOIN (WITH source_primary AS MATERIALIZED ("
+            "  SELECT pi.id FROM sources ps "
+            "  JOIN source_listings psl ON psl.source_id=ps.id "
+            "  JOIN source_listing_incarnations pi ON pi.source_listing_id=psl.id "
+            "  WHERE ps.name = ANY(:sources)"
+            ") SELECT id FROM source_primary) matched_primary "
+            "ON matched_primary.id=v.primary_incarnation_id "
         )
-        where.append("lower(ps.name) = ANY(:sources)")
         params["sources"] = names
     if remote is not None:
         # ->> da 'true'/'false' o NULL; el cast a boolean respeta la igualdad
