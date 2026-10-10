@@ -20,13 +20,13 @@
 # 6. Los tres workers se recrean junto a `core-api`: modelo, cosecha y el
 #    worker de operaciones que ejecuta el beat deben publicar la misma release.
 #
-# Uso:  scripts/deploy_nas.sh core|bff [--dry-run]
+# Uso:  scripts/deploy_nas.sh core|bff|frontend [--dry-run]
 set -euo pipefail
 
 SERVICIO="${1:-}"
 DRY="${2:-}"
-[[ "$SERVICIO" =~ ^(core|bff)$ ]] || {
-  echo "uso: $0 core|bff [--dry-run]" >&2
+[[ "$SERVICIO" =~ ^(core|bff|frontend)$ ]] || {
+  echo "uso: $0 core|bff|frontend [--dry-run]" >&2
   exit 2
 }
 
@@ -37,7 +37,11 @@ done
 RAIZ="$(git rev-parse --show-toplevel)"
 cd "$RAIZ"
 
-ARBOL=$([[ "$SERVICIO" == core ]] && echo jobhunt_core || echo backend)
+case "$SERVICIO" in
+  core) ARBOL=jobhunt_core ;;
+  bff) ARBOL=backend ;;
+  frontend) ARBOL=frontend ;;
+esac
 if [[ -n "$(git status --short -- "$ARBOL")" ]]; then
   echo "ABORTA: $ARBOL tiene cambios sin commitear; RELEASE_SHA mentiría" >&2
   git status --short -- "$ARBOL" >&2
@@ -58,7 +62,7 @@ if [[ "$SERVICIO" == core ]]; then
   PATRON="swissjob-core:point5-"
   CONTENEDOR_API="swissjob-core-api-r5"
   CONTENEDOR_SALUD="$CONTENEDOR_API"
-else
+elif [[ "$SERVICIO" == bff ]]; then
   IMAGEN="swissjob-backend:point5-$SHA"
   COMPOSE="swissjob.configured.yml"; PROYECTO="swissjob"
   SERVICIOS=(backend)
@@ -66,6 +70,14 @@ else
   ETIQUETAR=(true)
   PATRON="swissjob-backend:point5-"
   CONTENEDOR_SALUD="swissjob-backend"
+else
+  IMAGEN="swissjob-frontend:point5-$SHA"
+  COMPOSE="swissjob.configured.yml"; PROYECTO="swissjob"
+  SERVICIOS=(frontend)
+  CONSTRUIR=(docker build -f frontend/Dockerfile.prod -t "$IMAGEN" frontend/)
+  ETIQUETAR=(true)
+  PATRON="swissjob-frontend:point5-"
+  CONTENEDOR_SALUD="swissjob-frontend"
 fi
 
 echo "== servicio=$SERVICIO  imagen=$IMAGEN  compose=$COMPOSE  proyecto=$PROYECTO  recrea=${SERVICIOS[*]}"
@@ -97,6 +109,9 @@ echo "== copia .before y cambio de etiqueta POR SERVICIO (trampa 4)"
 ssh nas "cp $E/$COMPOSE $E/$COMPOSE.before-$SHA"
 # El NAS no tiene python3: se edita en local sobre una copia y se sube.
 scp -q "nas:$E/$COMPOSE" "$TMP/compose.yml"
+if [[ "$SERVICIO" == frontend ]]; then
+  python3 scripts/ensure_swissjob_frontend.py "$TMP/compose.yml"
+fi
 if [[ "$SERVICIO" == core ]]; then
   # La primera adopción parte del compose vivo con un único core-worker.
   # Se clona localmente para conservar sus secretos sin imprimirlos ni
@@ -137,7 +152,8 @@ for _ in $(seq 1 30); do
   [[ "$estado" == healthy ]] && break
   sleep 10
 done
-ssh nas "$D ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | grep -E 'swissjob-(backend|core-api|core-worker|core-harvest-worker|core-ops-worker|core-capture)'"
+[[ "$estado" == healthy ]] || { echo "ABORTA: $CONTENEDOR_SALUD no alcanzó healthy" >&2; exit 1; }
+ssh nas "$D ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | grep -E 'swissjob-(frontend|backend|core-api|core-worker|core-harvest-worker|core-ops-worker|core-capture)'"
 if [[ "$SERVICIO" == core ]]; then
   echo "== coherencia de release remota"
   release="$(ssh nas "$D exec $CONTENEDOR_API python -c 'import json,urllib.request; d=json.load(urllib.request.urlopen(\"http://127.0.0.1:8000/v1/ready\",timeout=5)); assert d.get(\"status\")==\"ready\" and d.get(\"authoritative\") is True; print(d.get(\"release\",\"\"))'")"

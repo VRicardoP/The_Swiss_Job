@@ -180,6 +180,40 @@ services:
       nofile:
         soft: 65535
         hard: 65535
+  frontend:
+    image: swissjob-frontend:point5-0000000
+    mem_limit: 128m
+    container_name: swissjob-frontend
+    environment:
+      SWISSJOB_BACKEND_HOST: ${SWISSJOB_BACKEND_HOST:-swissjob-backend}
+    ports:
+    - target: 80
+      published: '4000'
+      protocol: tcp
+      mode: ingress
+    restart: unless-stopped
+    networks:
+      swissjob_swissjob-net:
+        aliases:
+        - swissjob-frontend
+        - frontend
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://127.0.0.1/nginx-health || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-file: '10'
+        max-size: 10m
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
 networks:
   swissjob_swissjob-net:
     external: true
