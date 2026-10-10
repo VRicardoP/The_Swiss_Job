@@ -19,14 +19,16 @@
 #    El BFF no lo necesita: su entrypoint corre `alembic upgrade head`.
 # 6. Los tres workers se recrean junto a `core-api`: modelo, cosecha y el
 #    worker de operaciones que ejecuta el beat deben publicar la misma release.
+# 7. El worker BFF usa la misma fuente que la API, pero otra imagen con Chromium.
+#    Se despliega explícitamente para no dejar código Celery antiguo en producción.
 #
-# Uso:  scripts/deploy_nas.sh core|bff|frontend [--dry-run]
+# Uso:  scripts/deploy_nas.sh core|bff|worker|frontend [--dry-run]
 set -euo pipefail
 
 SERVICIO="${1:-}"
 DRY="${2:-}"
-[[ "$SERVICIO" =~ ^(core|bff|frontend)$ ]] || {
-  echo "uso: $0 core|bff|frontend [--dry-run]" >&2
+[[ "$SERVICIO" =~ ^(core|bff|worker|frontend)$ ]] || {
+  echo "uso: $0 core|bff|worker|frontend [--dry-run]" >&2
   exit 2
 }
 
@@ -39,7 +41,7 @@ cd "$RAIZ"
 
 case "$SERVICIO" in
   core) ARBOL=jobhunt_core ;;
-  bff) ARBOL=backend ;;
+  bff|worker) ARBOL=backend ;;
   frontend) ARBOL=frontend ;;
 esac
 if [[ -n "$(git status --short -- "$ARBOL")" ]]; then
@@ -70,6 +72,14 @@ elif [[ "$SERVICIO" == bff ]]; then
   ETIQUETAR=(true)
   PATRON="swissjob-backend:point5-"
   CONTENEDOR_SALUD="swissjob-backend"
+elif [[ "$SERVICIO" == worker ]]; then
+  IMAGEN="swissjob-worker:point5-$SHA"
+  COMPOSE="swissjob.configured.yml"; PROYECTO="swissjob"
+  SERVICIOS=(worker)
+  CONSTRUIR=(docker build -f backend/Dockerfile.prod -t "$IMAGEN" backend/)
+  ETIQUETAR=(true)
+  PATRON="swissjob-worker:point5-"
+  CONTENEDOR_SALUD="swissjob-worker"
 else
   IMAGEN="swissjob-frontend:point5-$SHA"
   COMPOSE="swissjob.configured.yml"; PROYECTO="swissjob"
@@ -90,7 +100,7 @@ echo "== construyendo"
 "${CONSTRUIR[@]}"
 "${ETIQUETAR[@]}"
 
-if [[ "$SERVICIO" == bff ]]; then
+if [[ "$SERVICIO" == bff || "$SERVICIO" == worker ]]; then
   docker run --rm --entrypoint id "$IMAGEN" app >/dev/null 2>&1 || {
     echo "ABORTA: la imagen no tiene el usuario 'app' — ¿Dockerfile en vez de Dockerfile.prod?" >&2
     exit 1
@@ -147,12 +157,22 @@ echo "== recreando ${SERVICIOS[*]} (con el proyecto correcto: trampa 2)"
 ssh nas "cd $E && $C -p $PROYECTO -f $COMPOSE up -d --no-deps ${SERVICIOS[*]}"
 
 echo "== salud"
-for _ in $(seq 1 30); do
-  estado="$(ssh nas "$D inspect $CONTENEDOR_SALUD --format '{{.State.Health.Status}}' 2>/dev/null || true")"
-  [[ "$estado" == healthy ]] && break
-  sleep 10
-done
-[[ "$estado" == healthy ]] || { echo "ABORTA: $CONTENEDOR_SALUD no alcanzó healthy" >&2; exit 1; }
+if [[ "$SERVICIO" == worker ]]; then
+  respuesta=""
+  for _ in $(seq 1 30); do
+    respuesta="$(ssh nas "$D exec $CONTENEDOR_SALUD celery -A celery_app inspect ping --timeout 5" 2>/dev/null || true)"
+    [[ "$respuesta" == *pong* ]] && break
+    sleep 10
+  done
+  [[ "$respuesta" == *pong* ]] || { echo "ABORTA: $CONTENEDOR_SALUD no responde al ping Celery" >&2; exit 1; }
+else
+  for _ in $(seq 1 30); do
+    estado="$(ssh nas "$D inspect $CONTENEDOR_SALUD --format '{{.State.Health.Status}}' 2>/dev/null || true")"
+    [[ "$estado" == healthy ]] && break
+    sleep 10
+  done
+  [[ "$estado" == healthy ]] || { echo "ABORTA: $CONTENEDOR_SALUD no alcanzó healthy" >&2; exit 1; }
+fi
 ssh nas "$D ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | grep -E 'swissjob-(frontend|backend|core-api|core-worker|core-harvest-worker|core-ops-worker|core-capture)'"
 if [[ "$SERVICIO" == core ]]; then
   echo "== coherencia de release remota"
