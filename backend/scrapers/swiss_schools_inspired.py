@@ -14,8 +14,6 @@ Estrategia:
 """
 
 import logging
-from urllib.parse import quote_plus
-
 from bs4 import BeautifulSoup, Tag
 
 from scrapers.swiss_schools_config import WatchedSchool, schools_by_strategy
@@ -24,13 +22,6 @@ from scrapers.swiss_schools_base import SwissSchoolBaseScraper
 logger = logging.getLogger(__name__)
 
 INSPIRED_BASE = "https://jobs.inspirededu.com"
-
-# Mapa keyword → nombre canónico tal como aparece en el campo "facility".
-_SCHOOL_CANONICAL: dict[str, str] = {
-    "geneva english": "Geneva English School",
-    "george": "St. George's International School",
-}
-
 
 class SwissSchoolsInspiredScraper(SwissSchoolBaseScraper):
     SOURCE_NAME = "swiss_schools_inspired"
@@ -78,22 +69,19 @@ class SwissSchoolsInspiredScraper(SwissSchoolBaseScraper):
         return all_jobs
 
     def build_listing_url(self, page: int, query: str) -> str:
-        if getattr(self, "_core_school_configuration", False):
-            return self._current_school.careers_url
-        keyword = (self._current_school.params or {}).get("keyword", "")
-        return f"{INSPIRED_BASE}/search/?q={quote_plus(keyword)}"
+        # The generic `q` search matches job titles (for example every English
+        # teacher worldwide), not the school. Each configured URL uses the
+        # portal's exact facility facet so a vacancy cannot fall beyond page 1.
+        return self._current_school.careers_url
 
     def parse_listing_page(self, soup: BeautifulSoup) -> list[dict]:
         school = self._current_school
         if not school:
             return []
 
-        keyword = (school.params or {}).get("keyword", "")
-        canonical = _SCHOOL_CANONICAL.get(keyword, school.name)
-
         out: list[dict] = []
         for tile in soup.select("li.job-tile"):
-            stub = self._parse_tile(tile, canonical, school)
+            stub = self._parse_tile(tile, school.name, school)
             if stub:
                 out.append(stub)
         return out

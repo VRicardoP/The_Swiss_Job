@@ -71,6 +71,17 @@ def _resp(status_code: int, text: str = "") -> MagicMock:
 _EMPTY_SEARCH_HTML = "<html><body><p>No jobs match your search.</p></body></html>"
 
 
+def test_inspired_queries_each_school_by_exact_facility():
+    scraper = SwissSchoolsInspiredScraper()
+
+    for school in scraper._schools:
+        scraper._current_school = school
+        url = scraper.build_listing_url(1, "teacher")
+        assert url == school.careers_url
+        assert "optionsFacetsDD_facility=" in url
+        assert "?q=" not in url
+
+
 @pytest.mark.parametrize(
     "scraper_cls",
     [SwissSchoolsNAEScraper, SwissSchoolsInspiredScraper],

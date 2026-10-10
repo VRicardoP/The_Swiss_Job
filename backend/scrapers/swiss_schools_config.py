@@ -127,7 +127,10 @@ SCHOOLS: list[WatchedSchool] = [
         id="ges_versoix",
         name="Geneva English School",
         city="Versoix",
-        careers_url="https://jobs.inspirededu.com/search/?q=Geneva+English",
+        careers_url=(
+            "https://jobs.inspirededu.com/search/"
+            "?optionsFacetsDD_facility=Geneva+English+School"
+        ),
         strategy="inspired_sf",
         params={"keyword": "geneva english"},
         group_tier="B",
