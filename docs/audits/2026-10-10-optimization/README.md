@@ -54,6 +54,12 @@ hubiera en cada instante.
 - `facet-sql-optimization-production.json` compara el SQL vigente con la
   consulta optimizada sobre los mismos datos.
 
+## Simplificación de código
+
+- `code-simplification-baseline.json` fija con rutas y método reproducible las
+  líneas de los productores transferidos, las costuras CDC y las dos ventanas
+  de empleo antes de eliminarlas o extraer su presentación compartida.
+
 ## Frontend y regresión
 
 - `frontend-before-final.json` y `frontend-after-final.json` comprueban las doce

@@ -1,0 +1,265 @@
+{
+  "method": "physical lines from str.splitlines; Python class spans from ast lineno/end_lineno",
+  "observed_at": "2026-10-10T21:40:48.186967+00:00",
+  "portfolio_backend": {
+    "exclusive_sources_cached_jobs_production": 1339,
+    "local_matcher_retained_until_exclusive_source_path_exists": {
+      "lines": 524,
+      "path": "services/job_matcher.py"
+    },
+    "transferred_normalizer_classes": {
+      "classes": [
+        {
+          "class": "RemotiveProvider",
+          "end": 421,
+          "lines": 26,
+          "start": 396
+        },
+        {
+          "class": "ArbeitnowProvider",
+          "end": 451,
+          "lines": 28,
+          "start": 424
+        },
+        {
+          "class": "WeWorkRemotelyProvider",
+          "end": 617,
+          "lines": 26,
+          "start": 592
+        },
+        {
+          "class": "OstjobProvider",
+          "end": 645,
+          "lines": 26,
+          "start": 620
+        },
+        {
+          "class": "ZentraljobProvider",
+          "end": 673,
+          "lines": 26,
+          "start": 648
+        },
+        {
+          "class": "TheHubProvider",
+          "end": 870,
+          "lines": 27,
+          "start": 844
+        },
+        {
+          "class": "JobgetherProvider",
+          "end": 898,
+          "lines": 26,
+          "start": 873
+        },
+        {
+          "class": "NavProvider",
+          "end": 926,
+          "lines": 26,
+          "start": 901
+        },
+        {
+          "class": "IrishJobsProvider",
+          "end": 954,
+          "lines": 26,
+          "start": 929
+        }
+      ],
+      "path": "services/job_provider.py",
+      "total_lines": 237
+    },
+    "transferred_source_modules": {
+      "files": [
+        {
+          "lines": 82,
+          "path": "arbeitnow_config.py"
+        },
+        {
+          "lines": 67,
+          "path": "irishjobs_config.py"
+        },
+        {
+          "lines": 56,
+          "path": "jobgether_config.py"
+        },
+        {
+          "lines": 62,
+          "path": "nav_config.py"
+        },
+        {
+          "lines": 47,
+          "path": "ostjob_config.py"
+        },
+        {
+          "lines": 65,
+          "path": "remotive_config.py"
+        },
+        {
+          "lines": 45,
+          "path": "thehub_config.py"
+        },
+        {
+          "lines": 36,
+          "path": "weworkremotely_config.py"
+        },
+        {
+          "lines": 49,
+          "path": "zentraljob_config.py"
+        },
+        {
+          "lines": 225,
+          "path": "routers/arbeitnow_jobs.py"
+        },
+        {
+          "lines": 116,
+          "path": "routers/irishjobs_jobs.py"
+        },
+        {
+          "lines": 115,
+          "path": "routers/jobgether_jobs.py"
+        },
+        {
+          "lines": 113,
+          "path": "routers/nav_jobs.py"
+        },
+        {
+          "lines": 54,
+          "path": "routers/ostjob_jobs.py"
+        },
+        {
+          "lines": 297,
+          "path": "routers/remotive_jobs.py"
+        },
+        {
+          "lines": 115,
+          "path": "routers/thehub_jobs.py"
+        },
+        {
+          "lines": 116,
+          "path": "routers/weworkremotely_jobs.py"
+        },
+        {
+          "lines": 58,
+          "path": "routers/zentraljob_jobs.py"
+        },
+        {
+          "lines": 239,
+          "path": "services/arbeitnow_provider_impl.py"
+        },
+        {
+          "lines": 403,
+          "path": "services/irishjobs_provider_impl.py"
+        },
+        {
+          "lines": 254,
+          "path": "services/jobgether_provider_impl.py"
+        },
+        {
+          "lines": 291,
+          "path": "services/nav_provider_impl.py"
+        },
+        {
+          "lines": 232,
+          "path": "services/thehub_provider_impl.py"
+        },
+        {
+          "lines": 237,
+          "path": "services/weworkremotely_provider_impl.py"
+        },
+        {
+          "lines": 378,
+          "path": "services/chmedia_job_base.py"
+        }
+      ],
+      "total_lines": 3752
+    }
+  },
+  "portfolio_frontend": {
+    "existing_shared_extras": {
+      "lines": 129,
+      "path": "src/components/Dashboard/JobCardExtras.jsx"
+    },
+    "job_windows_before_extraction": {
+      "files": [
+        {
+          "lines": 469,
+          "path": "src/components/Dashboard/AIJobMatchWindow.jsx"
+        },
+        {
+          "lines": 303,
+          "path": "src/components/Dashboard/JobBoardTabbedWindow.jsx"
+        }
+      ],
+      "total_lines": 772
+    }
+  },
+  "repo_heads": {
+    "portfolio_backend": "b988049ffd3a08c85fb9070a55df11daa94470df",
+    "portfolio_frontend": "3680560f4ce7d49cf86e0b84ae6b459fd85c5972",
+    "swissjob": "f4b1f0f2e9771ec49f542e005ca83b22ab6e0f03"
+  },
+  "swissjob": {
+    "cdc_historical_docs": {
+      "files": [
+        {
+          "lines": 621,
+          "path": "jobhunt_core/shadow/RUNBOOK.md"
+        },
+        {
+          "lines": 774,
+          "path": "jobhunt_core/shadow/DEPLOY_NAS.md"
+        },
+        {
+          "lines": 275,
+          "path": "jobhunt_core/shadow/deploy_nas_composes.patch"
+        }
+      ],
+      "total_lines": 1670
+    },
+    "cdc_historical_runtime": {
+      "files": [
+        {
+          "lines": 1145,
+          "path": "jobhunt_core/shadow/capture.py"
+        },
+        {
+          "lines": 1138,
+          "path": "jobhunt_core/shadow/gate.py"
+        },
+        {
+          "lines": 2249,
+          "path": "jobhunt_core/shadow/metrics.py"
+        },
+        {
+          "lines": 401,
+          "path": "jobhunt_core/shadow/labels.py"
+        },
+        {
+          "lines": 136,
+          "path": "jobhunt_core/shadow/resync.py"
+        },
+        {
+          "lines": 382,
+          "path": "jobhunt_core/shadow/stratum.py"
+        },
+        {
+          "lines": 367,
+          "path": "jobhunt_core/shadow/canonical_refs.py"
+        },
+        {
+          "lines": 74,
+          "path": "jobhunt_core/shadow/identidad_destino.py"
+        }
+      ],
+      "total_lines": 5892
+    },
+    "mixed_shadow_tasks": {
+      "lines": 170,
+      "note": "contains both capture-only tasks and the live native postprocessor",
+      "path": "jobhunt_core/tasks/shadow.py"
+    },
+    "native_postprocessor_to_preserve_or_move": {
+      "lines": 1929,
+      "path": "jobhunt_core/shadow/projector.py"
+    }
+  }
+}
