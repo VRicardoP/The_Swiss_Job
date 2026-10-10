@@ -20,6 +20,14 @@ La comparación aislada es la medida causal del ahorro del modelo. Las muestras
 del contenedor completo son observaciones operativas y dependen de la carga que
 hubiera en cada instante.
 
+## Continuidad operativa
+
+- `core-observation-containers-start.json` fija identificadores, imágenes,
+  arranques y reinicios de los cinco contenedores observados, sin copiar su
+  entorno. Al cerrar la ventana se comparará con una segunda captura.
+- `core-observation-48h.jsonl` registra cada media hora la versión, la salud de
+  las 17 fuentes, las colas y el progreso de embeddings.
+
 ## Fuentes y autoridad
 
 - `harvest-health.json`, `irishjobs-candidate-live.json` y

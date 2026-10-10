@@ -1,0 +1,45 @@
+{
+  "observed_at": "2026-10-10T21:35:34.929Z",
+  "containers": [
+    {
+      "name": "/swissjob-core-api-r5",
+      "id": "253e85f112c4b465ac8bc4dad469d50318355a83b0839cd23e9690e0605ac169",
+      "image": "swissjob-core:point5-5a1241d",
+      "started_at": "2026-10-10T19:33:04.322610932Z",
+      "restart_count": 0,
+      "running": true
+    },
+    {
+      "name": "/swissjob-core-worker-r5",
+      "id": "140a40bc80301d4750a83082af92c57d05a708dea05c4340b4abb2572186181b",
+      "image": "swissjob-core:point5-5a1241d",
+      "started_at": "2026-10-10T19:33:03.75878488Z",
+      "restart_count": 0,
+      "running": true
+    },
+    {
+      "name": "/swissjob-core-harvest-worker-r5",
+      "id": "6402608f4e2ec143ed3ce35fff9d29a684011bffcd53ed839bc5bbc161525da2",
+      "image": "swissjob-core:point5-5a1241d",
+      "started_at": "2026-10-10T19:33:04.28839169Z",
+      "restart_count": 0,
+      "running": true
+    },
+    {
+      "name": "/swissjob-core-ops-worker-r5",
+      "id": "6b9aebd1f16e7af83cc21516d74ac49185b393bada9ebc202d0e46d317da2691",
+      "image": "swissjob-core:point5-5a1241d",
+      "started_at": "2026-10-10T19:33:04.034920657Z",
+      "restart_count": 0,
+      "running": true
+    },
+    {
+      "name": "/swissjob-core-capture-r5",
+      "id": "37ca9605cf6aaf8ae966f06e41c8586867106a7a5d5e2fd41a79cae23a5e1f03",
+      "image": "swissjob-core:point5-9d6b46e",
+      "started_at": "2026-09-30T22:13:23.784752174Z",
+      "restart_count": 0,
+      "running": true
+    }
+  ]
+}
