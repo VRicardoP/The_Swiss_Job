@@ -27,6 +27,8 @@ hubiera en cada instante.
   entorno. Al cerrar la ventana se comparará con una segunda captura.
 - `core-observation-48h.jsonl` registra cada media hora la versión, la salud de
   las 17 fuentes, las colas y el progreso de embeddings.
+- `capture-retirement-inventory.md` separa el proceso CDC que se retirará del
+  drenado de embeddings, matching y borrado de perfiles que siguen activos.
 
 ## Fuentes y autoridad
 
