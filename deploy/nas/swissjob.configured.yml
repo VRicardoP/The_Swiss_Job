@@ -104,7 +104,7 @@ services:
         soft: 65535
         hard: 65535
   worker:
-    image: swissjob-worker:point5-6096adc
+    image: swissjob-worker:point5-a76951c
     mem_limit: 1g
     container_name: swissjob-worker
     environment:
