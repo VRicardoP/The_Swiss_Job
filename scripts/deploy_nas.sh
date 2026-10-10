@@ -173,7 +173,7 @@ else
   done
   [[ "$estado" == healthy ]] || { echo "ABORTA: $CONTENEDOR_SALUD no alcanzó healthy" >&2; exit 1; }
 fi
-ssh nas "$D ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | grep -E 'swissjob-(frontend|backend|core-api|core-worker|core-harvest-worker|core-ops-worker|core-capture)'"
+ssh nas "$D ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | grep -E 'swissjob-(frontend|backend|worker|core-api|core-worker|core-harvest-worker|core-ops-worker|core-capture)'"
 if [[ "$SERVICIO" == core ]]; then
   echo "== coherencia de release remota"
   release="$(ssh nas "$D exec $CONTENEDOR_API python -c 'import json,urllib.request; d=json.load(urllib.request.urlopen(\"http://127.0.0.1:8000/v1/ready\",timeout=5)); assert d.get(\"status\")==\"ready\" and d.get(\"authoritative\") is True; print(d.get(\"release\",\"\"))'")"
