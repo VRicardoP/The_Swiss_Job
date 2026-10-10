@@ -54,31 +54,33 @@ class SwissSchoolsHautLacScraper(SwissSchoolBaseScraper):
         return out
 
     def _parse_widget(self, widget: Tag) -> dict | None:
-        # El título es el primer h3 con un span coloreado destacado
-        for h3 in widget.select("h3"):
-            span = h3.select_one("span[style*='background-color']")
-            if not span:
-                continue
-            title = span.get_text(strip=True)
-            if not title or len(title) < 5:
-                continue
-            # Filtrar h3 que son subapartados ("Profile", "Mission", etc.)
-            if title.lower() in {"profile", "profil", "mission", "responsibilities"}:
-                continue
-            source_id = title.lower().replace(" ", "-")[:80]
-            return {
-                "source": self.SOURCE_NAME,
-                "source_id": source_id,
-                "title": title,
-                "company": self._school.name,
-                "location": f"{self._school.city}, CH",
-                # G1/P1-2: URL sintética ESTABLE por vacante. `jobs.url` es
-                # UNIQUE y el upsert resuelve conflicto solo por hash: con la
-                # URL del listado compartida, la segunda vacante simultánea
-                # abortaba el savepoint y una vacante nueva quedaba invisible
-                # hasta la purga (60 días) de la que sustituía (clase VD.1).
-                "url": f"{HAUTLAC_URL}#{source_id}",
-                "tags": ["education", "international school", self._school.id],
-                "language": "en",  # mezcla EN/FR; el clasificador lo refina
-            }
-        return None
+        # Forma histórica: h3 con fondo destacado. La plantilla vigente usa
+        # una tarjeta gris y pone el título en el primer párrafo grande.
+        title_el = widget.select_one("h3 span[style*='background-color']")
+        if title_el is None:
+            card = widget.select_one("div[style*='background-color'][style*='padding']")
+            title_el = card.select_one("p[style*='font-size'] strong") if card else None
+        if title_el is None:
+            return None
+
+        title = title_el.get_text(strip=True)
+        if not title or len(title) < 5:
+            return None
+        if title.lower() in {"profile", "profil", "mission", "responsibilities"}:
+            return None
+        source_id = title.lower().replace(" ", "-")[:80]
+        return {
+            "source": self.SOURCE_NAME,
+            "source_id": source_id,
+            "title": title,
+            "company": self._school.name,
+            "location": f"{self._school.city}, CH",
+            # G1/P1-2: URL sintética ESTABLE por vacante. `jobs.url` es
+            # UNIQUE y el upsert resuelve conflicto solo por hash: con la
+            # URL del listado compartida, la segunda vacante simultánea
+            # abortaba el savepoint y una vacante nueva quedaba invisible
+            # hasta la purga (60 días) de la que sustituía (clase VD.1).
+            "url": f"{HAUTLAC_URL}#{source_id}",
+            "tags": ["education", "international school", self._school.id],
+            "language": "en",  # mezcla EN/FR; el clasificador lo refina
+        }

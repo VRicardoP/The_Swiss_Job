@@ -22,6 +22,12 @@ _HAUTLAC_HTML = """
     <h3><span style="background-color: #0b7992">Science Teacher (Secondary)</span></h3>
     <p>Mission text</p>
   </div>
+  <div class="hs_cos_wrapper_type_rich_text">
+    <div style="background-color: #f4f4f4; padding: 32px; border-radius: 8px">
+      <p style="font-size: 20px"><span><strong>Science Laboratory Technician</strong></span></p>
+      <p><strong>About this role</strong></p>
+    </div>
+  </div>
 </body></html>
 """
 
@@ -41,9 +47,14 @@ class TestP12UrlPorVacante:
         scraper = SwissSchoolsHautLacScraper()
         soup = BeautifulSoup(_HAUTLAC_HTML, "html.parser")
         stubs = scraper.parse_listing_page(soup)
-        assert len(stubs) == 2
+        assert len(stubs) == 3
+        assert {stub["title"] for stub in stubs} == {
+            "Primary Class Teacher",
+            "Science Teacher (Secondary)",
+            "Science Laboratory Technician",
+        }
         urls = {stub["url"] for stub in stubs}
-        assert len(urls) == 2, "cada vacante necesita su propia URL (jobs.url UNIQUE)"
+        assert len(urls) == 3, "cada vacante necesita su propia URL (jobs.url UNIQUE)"
         # La URL del listado a secas ya no identifica a ninguna vacante.
         assert HAUTLAC_URL not in urls
         # Estable entre runs: mismo HTML → mismas URLs.
