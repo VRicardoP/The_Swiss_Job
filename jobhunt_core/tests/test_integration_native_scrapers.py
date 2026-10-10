@@ -9,6 +9,7 @@ not just the parser.
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -28,6 +29,16 @@ def _bodies(source, date):
     return (ij_page([{**ITEM, "datePosted": date}]), ij_page([]))
 
 
+def _response(source, request, first_page, empty):
+    if source == "irishjobs":
+        payload = json.loads(request.content)
+        page = int(parse_qs(urlsplit(payload["url"]).query)["page"][0])
+        return httpx.Response(200, json=first_page if page == 1 else empty)
+    return httpx.Response(
+        200, content=first_page if int(request.url.params["page"]) == 1 else empty
+    )
+
+
 @pytest.mark.parametrize("source", ["financejobs", "irishjobs"])
 def test_admission_raw_and_canonical_roundtrip(db, source, monkeypatch):  # noqa: F811  (la fixture, no una redefinición)
     monkeypatch.setattr(
@@ -39,9 +50,7 @@ def test_admission_raw_and_canonical_roundtrip(db, source, monkeypatch):  # noqa
     first_page, empty = _bodies(source, date)
 
     def transport(request):
-        return httpx.Response(
-            200, content=first_page if int(request.url.params["page"]) == 1 else empty
-        )
+        return _response(source, request, first_page, empty)
 
     async def run():
         async with factory() as s:
@@ -128,12 +137,7 @@ def test_offer_outside_the_window_is_not_admitted(db, source, monkeypatch):  # n
             await s.commit()
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    content=first_page
-                    if int(request.url.params["page"]) == 1
-                    else empty,
-                )
+                lambda request: _response(source, request, first_page, empty)
             )
         ) as http:
             result = await run_scope(

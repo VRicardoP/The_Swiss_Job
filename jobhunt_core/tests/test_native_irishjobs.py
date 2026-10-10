@@ -1,10 +1,8 @@
-"""IrishJobs handover keeps the identity, host and failure rules of its scraper.
-
-Every case is a defect the retiring scraper already paid for in production.
-"""
+"""IrishJobs handover keeps identity, host, budget and failure guarantees."""
 
 import asyncio
 import json
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -25,23 +23,15 @@ ITEM = {
     "textSnippet": "<p>Azure &amp; Fabric</p>",
     "salary": "€60,000 - €70,000 per year",
     "datePosted": "2026-09-20T08:00:00Z",
-    "companyLogoUrl": "/CompanyLogos/",
 }
 
 
-def page(items, extra_script=""):
-    blob = json.dumps({"searchResults": {"items": items, "total": len(items)}})
-    return (
-        b"<html><script>var x = 1;</script>"
-        + extra_script.encode()
-        + b'<script>window.__PRELOADED_STATE__["app-unifiedResultlist"] = '
-        + blob.encode()
-        + b";</script></html>"
-    )
+def page(items):
+    return {"items": items, "meta": {"total": len(items)}}
 
 
 def fetch(pages_by_host, params=None, monkeypatch=None):
-    """`pages_by_host` maps hostname -> list of page bodies (or Responses)."""
+    """Map each hostname to result-list JSON objects or httpx responses."""
     if monkeypatch:
         monkeypatch.setattr(
             "jobhunt_core.harvest.providers.native_irishjobs.PAGE_PAUSE_S", 0
@@ -51,14 +41,16 @@ def fetch(pages_by_host, params=None, monkeypatch=None):
     async def run():
         def transport(request):
             seen.append(request)
-            bodies = pages_by_host.get(request.url.host, [page([])])
-            index = int(request.url.params["page"]) - 1
+            payload = json.loads(request.content)
+            search_url = urlsplit(payload["url"])
+            bodies = pages_by_host.get(search_url.hostname, [page([])])
+            index = int(parse_qs(search_url.query)["page"][0]) - 1
             value = bodies[index] if index < len(bodies) else page([])
-            return (
-                value
-                if isinstance(value, httpx.Response)
-                else httpx.Response(200, content=value)
-            )
+            if isinstance(value, httpx.Response):
+                return value
+            if isinstance(value, bytes):
+                return httpx.Response(200, content=value)
+            return httpx.Response(200, json=value)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
             return await IrishJobsProvider().fetch_new(
@@ -80,18 +72,13 @@ def test_offer_keeps_platform_identity_real_url_and_canonical_content(monkeypatc
     )
     assert listing.payload == ITEM
     content = normalize_offer("irishjobs", listing.payload)
-    assert (
-        content["title"] == "Lead MS Fabric Architect"
-        and content["company"] == "NTT Data"
-    )
+    assert content["title"] == "Lead MS Fabric Architect"
+    assert content["company"] == "NTT Data"
     assert content["location"] == "Dublin" and content["remote"] is True
-    assert content["salary"] == "€60,000 - €70,000 per year", (
-        "EUR text, never a CHF amount"
-    )
+    assert content["salary"] == "€60,000 - €70,000 per year"
 
 
 def test_reediting_the_slug_is_a_re_sighting_not_a_clone():
-    """Measured in production: 40 clone rows out of 919 before this rule."""
     before = (
         "https://www.irishjobs.ie/job/lead-ms-fabric-architect/ntt-data-job107803777"
     )
@@ -99,31 +86,48 @@ def test_reediting_the_slug_is_a_re_sighting_not_a_clone():
     assert canonical_identity_url(before) == canonical_identity_url(after)
 
 
-def test_the_two_hosts_are_one_source_deduplicated_by_platform_id(monkeypatch):
-    other_host = {**ITEM, "url": "/job/lead-architect/ntt-data-job107803777"}
+def test_two_sites_use_public_json_contract_and_deduplicate_platform_id(monkeypatch):
+    other_site = {**ITEM, "url": "/job/lead-architect/ntt-data-job107803777"}
     result, seen = fetch(
         {
             "www.irishjobs.ie": [page([ITEM]), page([])],
-            "www.jobs.ie": [page([other_host]), page([])],
+            "www.jobs.ie": [page([other_site]), page([])],
         },
         monkeypatch=monkeypatch,
     )
-    assert len(result.listings) == 1, "one opening, not two rows"
-    assert {request.url.host for request in seen} == {"www.irishjobs.ie", "www.jobs.ie"}
+    assert len(result.listings) == 1
+    assert {request.url.host for request in seen} == {
+        "www.irishjobs.ie",
+        "www.jobs.ie",
+    }
+    assert {request.url.path for request in seen} == {
+        "/public-api/resultlist/unifiedResultlist"
+    }
+    assert all(request.method == "POST" for request in seen)
+    assert all(request.headers["accept"] == "application/json" for request in seen)
+    contracts = {
+        (urlsplit(body["url"]).hostname, body["siteId"])
+        for body in (json.loads(request.content) for request in seen)
+    }
+    assert contracts == {("www.irishjobs.ie", 301), ("www.jobs.ie", 302)}
+    assert all(
+        set(body) == {"url", "lang", "siteId", "userData"} and body["userData"] == {}
+        for body in (json.loads(request.content) for request in seen)
+    )
 
 
 @pytest.mark.parametrize(
     "url",
     [
-        "https://evil.example/job/x",  # foreign host
-        "https://evil.example\\@www.irishjobs.ie/job/x",  # urllib vs browser parsing
+        "https://evil.example/job/x",
+        "https://evil.example\\@www.irishjobs.ie/job/x",
         "https://evil.example%5C@www.irishjobs.ie/job/x",
-        "https://user@www.irishjobs.ie/job/x",  # visual spoofing
-        "https://www.irishjobs.ie:8443/job/x",  # port the portal never emits
-        "https://[evil/job/x",  # malformed IPv6: urlsplit raises
+        "https://user@www.irishjobs.ie/job/x",
+        "https://www.irishjobs.ie:8443/job/x",
+        "https://[evil/job/x",
         "javascript:alert(1)",
-        "https://www.irishjobs.ie/",  # no real path
-        "/job/x\tbreak",  # control characters
+        "https://www.irishjobs.ie/",
+        "/job/x\tbreak",
     ],
 )
 def test_unusable_url_drops_only_that_offer(url, monkeypatch):
@@ -138,7 +142,6 @@ def test_unusable_url_drops_only_that_offer(url, monkeypatch):
 
 
 def test_url_is_rebuilt_without_query_or_fragment(monkeypatch):
-    """Each variant of the same URL used to become another row."""
     result, _ = fetch(
         {
             "www.irishjobs.ie": [
@@ -159,50 +162,21 @@ def test_unexpected_scalar_in_a_field_degrades_that_offer_only(monkeypatch):
     assert len(result.listings) == 1
 
 
-def test_anchor_ignores_read_only_references_and_the_other_blob(monkeypatch):
-    noise = (
-        '<script>var a = window.__PRELOADED_STATE__["app-unifiedResultlist"];'
-        'window.__PRELOADED_STATE__["google-onetap"] = {"searchResults": '
-        '{"items": [{"title": "WRONG", "url": "/job/wrong-job9"}]}};</script>'
-    )
-    result, _ = fetch(
-        {"www.irishjobs.ie": [page([ITEM], noise), page([])]}, monkeypatch=monkeypatch
-    )
-    assert [listing.payload["title"] for listing in result.listings] == [
-        "Lead MS Fabric Architect"
-    ]
-
-
-def test_brace_inside_a_json_string_does_not_truncate_the_literal(monkeypatch):
-    result, _ = fetch(
-        {
-            "www.irishjobs.ie": [
-                page([{**ITEM, "title": "Architect } with brace"}]),
-                page([]),
-            ]
-        },
-        monkeypatch=monkeypatch,
-    )
-    assert result.listings[0].payload["title"] == "Architect } with brace"
-
-
 @pytest.mark.parametrize(
     "body",
     [
-        b"<html><script>var x = 1;</script></html>",  # no state script
-        b'<html><script>window.__PRELOADED_STATE__["app-unifiedResultlist"] = {"a":</script></html>',
-        b'<html><script>window.__PRELOADED_STATE__["app-unifiedResultlist"] = {not json}</script></html>',
-        b'<html><script>window.__PRELOADED_STATE__["app-unifiedResultlist"] = {"searchResults": []}</script></html>',
-        b'<html><script>window.__PRELOADED_STATE__["app-unifiedResultlist"] = {"searchResults": {"items": null}}</script></html>',
+        b"<html>not JSON</html>",
+        b"{not json}",
+        json.dumps([]).encode(),
+        json.dumps({"items": None}).encode(),
     ],
 )
-def test_unreadable_blob_is_a_visible_failure_not_an_empty_harvest(body, monkeypatch):
+def test_unreadable_result_is_a_visible_failure_not_empty_harvest(body, monkeypatch):
     with pytest.raises(ProviderResponseError):
         fetch({"www.irishjobs.ie": [body]}, monkeypatch=monkeypatch)
 
 
 def test_empty_items_is_a_legitimate_empty_page(monkeypatch):
-    """Verified live on both hosts: a search with no results ships items: []."""
     result, _ = fetch(
         {"www.irishjobs.ie": [page([])], "www.jobs.ie": [page([])]},
         monkeypatch=monkeypatch,
@@ -231,25 +205,25 @@ def test_late_failure_preserves_the_valid_prefix(monkeypatch):
     assert len(result.listings) == 1 and result.complete is False
 
 
-@pytest.mark.parametrize(
-    "first_page", [httpx.Response(403), b"<html>invalid state</html>"]
-)
-def test_first_host_failure_still_harvests_second_host(first_page, monkeypatch):
+def test_first_site_failure_still_harvests_second_site(monkeypatch):
     result, seen = fetch(
         {
-            "www.irishjobs.ie": [first_page],
+            "www.irishjobs.ie": [httpx.Response(403)],
             "www.jobs.ie": [page([ITEM]), page([])],
         },
         {"max_pages": 3},
         monkeypatch,
     )
-    assert {request.url.host for request in seen} == {"www.irishjobs.ie", "www.jobs.ie"}
+    assert {request.url.host for request in seen} == {
+        "www.irishjobs.ie",
+        "www.jobs.ie",
+    }
     assert len(result.listings) == 1
     assert result.listings[0].url.startswith("https://www.jobs.ie/")
     assert result.complete is False and result.error is not None
 
 
-def test_both_hosts_failing_does_not_become_an_empty_success(monkeypatch):
+def test_both_sites_failing_does_not_become_an_empty_success(monkeypatch):
     with pytest.raises(httpx.HTTPStatusError):
         fetch(
             {
@@ -260,7 +234,7 @@ def test_both_hosts_failing_does_not_become_an_empty_success(monkeypatch):
         )
 
 
-def test_declared_budget_bounds_each_host(monkeypatch):
+def test_declared_budget_bounds_each_site(monkeypatch):
     many = [page([{**ITEM, "id": i, "url": f"/job/x-job{i}"}]) for i in range(5)]
     result, seen = fetch(
         {"www.irishjobs.ie": many, "www.jobs.ie": many}, {"max_pages": 2}, monkeypatch
@@ -268,20 +242,20 @@ def test_declared_budget_bounds_each_host(monkeypatch):
     assert len(seen) == 4 and result.complete is True and result.error is None
 
 
+def test_response_byte_budget_is_enforced(monkeypatch):
+    monkeypatch.setattr(
+        "jobhunt_core.harvest.providers.native_irishjobs.MAX_RESPONSE_BYTES", 10
+    )
+    with pytest.raises(ProviderResponseError, match="byte budget"):
+        fetch(BOTH, monkeypatch=monkeypatch)
+
+
 def test_unknown_parameter_is_a_configuration_error():
     with pytest.raises(ProviderConfigError):
         fetch(BOTH, {"query": "architect"})
 
 
-def test_page_ceiling_matches_the_retiring_scraper():
-    """Same safety ceiling and pace as irishjobs.py:271-272.
-
-    The operating budget is smaller and lives in the scope: measured live, the
-    platform slows down progressively (page 1 in 1.3 s, eight pages in 105 s,
-    the ninth over 40 s). The retiring scraper never feels it because its
-    incremental cursor stops at already-known pages; the native producer always
-    starts at page one, so it declares a 3-page budget instead.
-    """
+def test_page_ceiling_and_pacing_match_retiring_scraper():
     from jobhunt_core.harvest.providers import native_irishjobs
 
     assert native_irishjobs.MAX_PAGES == 8
@@ -289,8 +263,7 @@ def test_page_ceiling_matches_the_retiring_scraper():
     assert native_irishjobs.REQUEST_TIMEOUT_S == 40
 
 
-def test_a_pause_separates_the_two_hosts(monkeypatch):
-    """Jumping to the second host right after the first is what timed out."""
+def test_a_pause_separates_the_two_sites(monkeypatch):
     slept = []
     monkeypatch.setattr(
         "jobhunt_core.harvest.providers.native_irishjobs.PAGE_PAUSE_S", 0.01
@@ -306,4 +279,4 @@ def test_a_pause_separates_the_two_hosts(monkeypatch):
         {"www.irishjobs.ie": [page([ITEM])], "www.jobs.ie": [page([])]},
         {"max_pages": 1},
     )
-    assert 0.02 in slept, "the host switch must be paced, not immediate"
+    assert 0.02 in slept

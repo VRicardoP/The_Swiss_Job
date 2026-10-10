@@ -1,23 +1,9 @@
-"""IrishJobs/Jobs.ie native producer — the StepStone blob parse of its scraper.
+"""IrishJobs/Jobs.ie native producer using StepStone's public result-list API.
 
-IrishJobs.ie and Jobs.ie are one StepStone platform on two hosts, harvested as
-a single source and deduplicated by platform id. Rules copied, not imported
-(see backend/scrapers/irishjobs.py); each one is a defect already paid for:
-
-- The state anchor demands `] = ` so it cannot match the read-only references
-  or the unrelated "google-onetap" blob living on the same page.
-- The literal is read by BALANCED braces, respecting JSON strings: a `}` inside
-  a string used to truncate it.
-- Identity is the platform id, not the URL: the portal re-edits the slug of a
-  live posting (measured: 40 clone rows out of 919) and URL identity turned each
-  edit into a clone whose original stopped refreshing. The published URL stays
-  the real one.
-- Item URLs are re-resolved and rebuilt: an absolute URL to any other host used
-  to reach the user as a clickable link, and every URL variant was a new row.
-- A 200 whose blob we cannot read is a FAILURE, never "0 offers". Only
-  `items: []` is a legitimate empty page (verified live on both hosts).
-- Salary amounts stay in the raw payload in EUR/GBP: pre-filling the CHF fields
-  would store them unconverted (€22/h becoming 22 CHF/year).
+Both sites expose ``POST /public-api/resultlist/unifiedResultlist``. The JSON
+contract avoids the HTML route that rejects datacentre addresses while keeping
+the same listings, stable platform identity, page budget and pacing as the
+retiring scraper.
 """
 
 import asyncio
@@ -32,35 +18,26 @@ from jobhunt_core.harvest.provider import (
     ProviderConfigError,
     ProviderResponseError,
 )
-from jobhunt_core.harvest.providers.browser_headers import (
-    BROWSER_HEADERS,
-    MAX_PAGES_PARAM,
-    page_budget,
-)
+from jobhunt_core.harvest.providers.browser_headers import MAX_PAGES_PARAM, page_budget
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 SOURCE_NAME = "irishjobs"
-HOSTS = ("https://www.irishjobs.ie", "https://www.jobs.ie")
+SITES = (
+    ("https://www.irishjobs.ie", 301),
+    ("https://www.jobs.ie", 302),
+)
 LISTING_PATH = "/jobs/work-from-home"
-# Eight pages per host and a 2 s pause, exactly like the retiring scraper
-# (irishjobs.py:271-272). Asking for a ninth is what made the portal stop
-# answering: the live sweep read 8 pages and then timed out, twice.
+API_PATH = "/public-api/resultlist/unifiedResultlist"
+API_HEADERS = {"Accept": "application/json"}
 MAX_PAGES = 8
 PAGE_PAUSE_S = 2.0
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 SWEEP_BUDGET_S = 300
-# Pages weigh ~1 MB and the platform slows down after a run of them.
-# Measured from the NAS: a single page takes 0.4-1.3 s, so this is head
-# room for that slowdown, not a way around it.
 REQUEST_TIMEOUT_S = 40
 
-_ALLOWED_HOSTNAMES = frozenset(urlsplit(host).hostname or "" for host in HOSTS)
-_STATE_ANCHOR = re.compile(
-    r"""window\.__PRELOADED_STATE__\[\s*["']app-unifiedResultlist["']\s*\]\s*=\s*"""
-)
+_ALLOWED_HOSTNAMES = frozenset(urlsplit(site).hostname or "" for site, _ in SITES)
 _PLATFORM_ID = re.compile(r"-job(\d+)/?$")
-_SCRIPT = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
 
 
 def _s(value):
@@ -68,31 +45,23 @@ def _s(value):
 
 
 def canonical_identity_url(url):
-    """URL reduced to the platform id, for a STABLE identity.
-
-    The host is normalised to HOSTS[0]: the StepStone id is global, not
-    per-host (verified: 0 ids repeated across hosts over 919 live rows).
-    Without a recognisable `-job<id>` the URL is returned as-is — a volatile
-    identity is preferable to an ambiguous one.
-    """
+    """Reduce a listing URL to its stable StepStone platform id."""
     url = url.strip()
     match = _PLATFORM_ID.search(url)
-    return f"{HOSTS[0]}/job/job{match.group(1)}" if match else url
+    return f"{SITES[0][0]}/job/job{match.group(1)}" if match else url
 
 
-def _resolve_job_url(raw, host):
-    """Absolute, rebuilt offer URL, or None. Never a link to a foreign host."""
+def _resolve_job_url(raw, site):
+    """Return a rebuilt offer URL on one of the two declared sites."""
     if not raw:
         return None
-    # urllib only breaks the netloc on / ? # ; browsers also on \ (and %5C),
-    # so `https://evil.com\@www.irishjobs.ie/x` would navigate to evil.com.
     if "\\" in raw or "%5c" in raw.lower():
         return None
     if any(ord(char) < 0x20 or ord(char) == 0x7F for char in raw):
         return None
     try:
-        parts = urlsplit(urljoin(f"{host}/", raw))
-        port = parts.port  # validated on access; raises on a bad port
+        parts = urlsplit(urljoin(f"{site}/", raw))
+        port = parts.port
     except ValueError:
         return None
     if (
@@ -104,67 +73,25 @@ def _resolve_job_url(raw, host):
     hostname = parts.hostname or ""
     if hostname not in _ALLOWED_HOSTNAMES or not parts.path or parts.path == "/":
         return None
-    # Rebuilt without query/fragment/port: each variant would be another row.
     return f"https://{hostname}{parts.path}"
 
 
-def _balanced_object(text, start):
-    """The balanced `{...}` literal starting at `start`, respecting strings."""
-    if start >= len(text) or text[start] != "{":
-        return None
-    depth, in_str, escaped = 0, False, False
-    for i in range(start, len(text)):
-        char = text[i]
-        if in_str:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_str = False
-            continue
-        if char == '"':
-            in_str = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : i + 1]
-    return None
-
-
-def _state(body):
-    for script in _SCRIPT.findall(body):
-        match = _STATE_ANCHOR.search(script)
-        if match is None:
-            continue
-        literal = _balanced_object(script, match.end())
-        if literal is None:
-            raise ProviderResponseError("irishjobs: truncated state literal")
-        try:
-            return json.loads(literal)
-        except (ValueError, RecursionError) as exc:
-            raise ProviderResponseError("irishjobs: unreadable state literal") from exc
-    raise ProviderResponseError("irishjobs: no state script found")
-
-
 def _items(body):
-    data = _state(body)
-    results = data.get("searchResults") if isinstance(data, dict) else None
-    if not isinstance(results, dict):
-        raise ProviderResponseError("irishjobs: searchResults is not an object")
-    items = results.get("items")
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise ProviderResponseError("irishjobs: unreadable result-list JSON") from exc
+    items = data.get("items") if isinstance(data, dict) else None
     if not isinstance(items, list):
-        raise ProviderResponseError("irishjobs: searchResults.items is not a list")
+        raise ProviderResponseError("irishjobs: result-list items is not a list")
     return items
 
 
-def _listing(item, host):
+def _listing(item, site):
     if not isinstance(item, dict):
         return None
     title = _s(item.get("title")).strip()
-    url = _resolve_job_url(_s(item.get("url")).strip(), host)
+    url = _resolve_job_url(_s(item.get("url")).strip(), site)
     if not title or url is None:
         return None
     return RawListing("url:" + canonical_identity_url(url), url, item)
@@ -178,10 +105,8 @@ def _content(raw):
         "company": _s(raw.get("companyName")).strip() or "Unknown",
         "description": description,
         "location": _s(raw.get("location")).strip() or "Ireland",
-        # Derived from the /jobs/work-from-home scope, not from the item.
         "remote": True,
         "tags": extract_job_skills(title, description)[:15],
-        # EUR/GBP text only; no CHF amount is invented at this boundary.
         "salary": _s(raw.get("salary")).strip() or None,
     }
 
@@ -197,15 +122,15 @@ def register_handlers():
     )
 
 
-async def _page(http, host, page):
-    url = f"{host}{LISTING_PATH}"
+async def _page(http, site, site_id, page):
+    search_url = f"{site}{LISTING_PATH}?page={page}"
     async with http.stream(
-        "GET",
-        url,
-        params={"page": page},
+        "POST",
+        f"{site}{API_PATH}",
+        json={"url": search_url, "lang": "en", "siteId": site_id, "userData": {}},
         timeout=REQUEST_TIMEOUT_S,
         follow_redirects=True,
-        headers=BROWSER_HEADERS,
+        headers=API_HEADERS,
     ) as response:
         response.raise_for_status()
         chunks, size = [], 0
@@ -214,7 +139,7 @@ async def _page(http, host, page):
             if size > MAX_RESPONSE_BYTES:
                 raise ProviderResponseError("irishjobs response exceeds byte budget")
             chunks.append(chunk)
-    return _items(b"".join(chunks).decode("utf-8", "replace"))
+    return _items(b"".join(chunks))
 
 
 class IrishJobsProvider(BaseProvider):
@@ -233,16 +158,14 @@ class IrishJobsProvider(BaseProvider):
         first_failure = None
         loop = asyncio.get_running_loop()
         started = loop.time()
-        for host in HOSTS:
+        for site, site_id in SITES:
             for page in range(1, budget + 1):
                 if loop.time() - started >= SWEEP_BUDGET_S:
                     error, exhausted = error or "time_budget", False
                     break
                 try:
-                    items = await _page(http, host, page)
+                    items = await _page(http, site, site_id, page)
                 except Exception as exc:
-                    # Los hosts fallan de forma independiente: conservar el
-                    # fallo, pero consultar también el siguiente dominio.
                     if first_failure is None:
                         first_failure = exc
                     error, exhausted = error or type(exc).__name__, False
@@ -252,22 +175,16 @@ class IrishJobsProvider(BaseProvider):
                 if not items:
                     break
                 for item in items:
-                    listing = _listing(item, host)
+                    listing = _listing(item, site)
                     if listing is None:
                         invalid += 1
                     else:
-                        # One platform id, one listing: the two hosts publish
-                        # the same opening. First host seen wins, as before.
                         by_identity.setdefault(listing.external_id, listing)
                 if page < budget:
                     await asyncio.sleep(PAGE_PAUSE_S)
                 else:
                     exhausted = False
-            # Both hosts are one platform. Moving to the second one straight
-            # after eight pages of the first is what timed out twice live; the
-            # retiring scraper rarely asks for sixteen in a row because its
-            # incremental cursor stops it earlier.
-            if host != HOSTS[-1]:
+            if site != SITES[-1][0]:
                 await asyncio.sleep(PAGE_PAUSE_S * 2)
         listings = tuple(by_identity.values())
         if not listings and first_failure is not None:
