@@ -440,6 +440,15 @@ async def test_core_category_feed_uses_server_filter_and_bounded_pages(seeded):
     assert all(request.url.params["limit"] == "50" for request in pages)
 
 
+async def test_core_category_feed_expands_pages_for_deep_windows(seeded):
+    user_id, matchings, fake = seeded
+    await matchings["core"].results(user_id, limit=3000, category="A")
+
+    pages = [request for request in fake.requests if "/matches" in request.url.path]
+    assert pages
+    assert all(request.url.params["limit"] == "500" for request in pages)
+
+
 async def test_core_facets_validates_the_strict_contract(db_session):
     user_id = await seed_local(db_session)
     core_profile_id = uuid.uuid4()

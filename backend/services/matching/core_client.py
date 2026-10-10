@@ -564,7 +564,10 @@ class CoreMatching:
         # (accionabilidad y feedback negativo) y su total exige el recorrido.
         needed = offset + limit if settings.CORE_FEEDBACK_ENABLED else None
         items, core_total = await self._fetch_full_feed(
-            core_profile_id, needed, category=category
+            core_profile_id,
+            needed,
+            category=category,
+            category_window=offset + limit if category is not None else None,
         )
         # Identidad por item (candidatos DETERMINISTAS: cualquier listing
         # `legacy:*`, no solo el primary) + respaldo accionable + overlay
@@ -835,6 +838,7 @@ class CoreMatching:
         core_profile_id: uuid.UUID,
         needed: int | None = None,
         category: str | None = None,
+        category_window: int | None = None,
     ) -> tuple[list[dict], int | None]:
         """Recorre el feed con un presupuesto TOTAL de tiempo.
 
@@ -848,7 +852,10 @@ class CoreMatching:
         try:
             async with asyncio.timeout(settings.CORE_FEED_TOTAL_BUDGET_S):
                 return await self._recorrer_feed(
-                    core_profile_id, needed, category=category
+                    core_profile_id,
+                    needed,
+                    category=category,
+                    category_window=category_window,
                 )
         except TimeoutError as exc:
             raise CoreUnavailableError(
@@ -861,6 +868,7 @@ class CoreMatching:
         core_profile_id: uuid.UUID,
         needed: int | None = None,
         category: str | None = None,
+        category_window: int | None = None,
     ) -> tuple[list[dict], int | None]:
         """Recorre el feed por keyset; cache de paginas por ETag.
 
@@ -905,9 +913,21 @@ class CoreMatching:
                 cacheado = _feed_cache.get(pid)
                 if cacheado is not None and cacheado[0] == version:
                     return list(cacheado[1]), cacheado[2]
+            category_page_limit = None
+            if category is not None:
+                # La primera pantalla conserva 50 items. Para offsets o
+                # auditorías profundas, una página mayor evita repetir el
+                # filtrado Core de todo el feed hasta diez veces.
+                category_page_limit = min(
+                    FEED_PAGE_LIMIT, max(50, category_window or needed or 50)
+                )
             for _ in range(MAX_FEED_PAGES):
                 page = await self._fetch_page(
-                    client, core_profile_id, cursor, category=category
+                    client,
+                    core_profile_id,
+                    cursor,
+                    category=category,
+                    page_limit=category_page_limit,
                 )
                 page_items = page.get("items") or []
                 if not isinstance(page_items, list):
@@ -1073,15 +1093,17 @@ class CoreMatching:
         core_profile_id: uuid.UUID,
         cursor: str | None,
         category: str | None = None,
+        page_limit: int | None = None,
     ) -> dict:
         page_key = cursor or ""
         if category is not None:
-            page_key = f"category:{category}:{page_key}"
+            page_limit = page_limit or 50
+            page_key = f"category:{category}:limit:{page_limit}:{page_key}"
         cache_key = (str(core_profile_id), page_key)
         generation = (_cache_generation, _profile_generations.get(cache_key[0], 0))
         cached = _etag_cache.get(cache_key)
         headers = {"If-None-Match": cached[0]} if cached else {}
-        params: dict = {"limit": 50 if category is not None else FEED_PAGE_LIMIT}
+        params: dict = {"limit": page_limit if category is not None else FEED_PAGE_LIMIT}
         if cursor is not None:
             params["cursor"] = cursor
         if category is not None:
