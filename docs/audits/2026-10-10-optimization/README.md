@@ -59,6 +59,9 @@ hubiera en cada instante.
 - `code-simplification-baseline.json` fija con rutas y método reproducible las
   líneas de los productores transferidos, las costuras CDC y las dos ventanas
   de empleo antes de eliminarlas o extraer su presentación compartida.
+- `routing-cleanup-baseline.json` separa motores y costuras post-rollback del
+  catálogo y matching locales que deben conservar las fuentes exclusivas de
+  ReactPortfolio.
 
 ## Frontend y regresión
 

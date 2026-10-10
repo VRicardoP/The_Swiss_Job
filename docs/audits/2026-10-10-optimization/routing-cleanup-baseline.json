@@ -1,0 +1,191 @@
+{
+  "method": "physical lines from str.splitlines; candidates verified by import/reference search",
+  "observed_at": "2026-10-10T21:44:30.388270+00:00",
+  "portfolio": {
+    "exclusive_source_catalog_adapter_to_retain": {
+      "files": [
+        {
+          "lines": 272,
+          "path": "services/catalog/local.py"
+        }
+      ],
+      "total_lines": 272
+    },
+    "exclusive_source_matching_pipeline_to_retain": {
+      "files": [
+        {
+          "lines": 524,
+          "path": "services/job_matcher.py"
+        },
+        {
+          "lines": 394,
+          "path": "services/daily_match_report.py"
+        }
+      ],
+      "total_lines": 918
+    },
+    "note": "The retained catalog adapter and matching pipeline serve 11 Portfolio-only sources with 1339 cached jobs; narrow them to those sources instead of deleting them.",
+    "post_rollback_candidates": {
+      "files": [
+        {
+          "lines": 93,
+          "path": "models/jobhunt_routing.py"
+        },
+        {
+          "lines": 56,
+          "path": "routers/cutover.py"
+        },
+        {
+          "lines": 37,
+          "path": "routers/gate_c.py"
+        },
+        {
+          "lines": 327,
+          "path": "services/analysis_runner.py"
+        },
+        {
+          "lines": 145,
+          "path": "services/applications/local.py"
+        },
+        {
+          "lines": 65,
+          "path": "services/applications/seam.py"
+        },
+        {
+          "lines": 519,
+          "path": "services/catalog/seam.py"
+        },
+        {
+          "lines": 186,
+          "path": "services/gate_c.py"
+        },
+        {
+          "lines": 109,
+          "path": "services/matching/local.py"
+        },
+        {
+          "lines": 86,
+          "path": "services/matching/seam.py"
+        },
+        {
+          "lines": 182,
+          "path": "services/refresh_replay.py"
+        },
+        {
+          "lines": 436,
+          "path": "services/routing.py"
+        },
+        {
+          "lines": 82,
+          "path": "services/saved_searches/local.py"
+        },
+        {
+          "lines": 54,
+          "path": "services/saved_searches/seam.py"
+        },
+        {
+          "lines": 123,
+          "path": "services/worker_bridge.py"
+        },
+        {
+          "lines": 24,
+          "path": "services/write_freeze.py"
+        }
+      ],
+      "total_lines": 2524
+    }
+  },
+  "repo_heads": {
+    "portfolio_backend": "b988049ffd3a08c85fb9070a55df11daa94470df",
+    "swissjob_backend": "868c42d703e3c76d4caac083f3cebb54dee5ce45"
+  },
+  "swissjob": {
+    "local_matching_engine": {
+      "files": [
+        {
+          "lines": 232,
+          "path": "services/job_matcher.py"
+        },
+        {
+          "lines": 941,
+          "path": "services/match_service.py"
+        },
+        {
+          "lines": 193,
+          "path": "tasks/profile_tasks.py"
+        },
+        {
+          "lines": 267,
+          "path": "tasks/embedding_tasks.py"
+        }
+      ],
+      "total_lines": 1633
+    },
+    "note": "Core owns all SwissJob catalog and matching sources; remove only after core_primary is verified.",
+    "post_rollback_routing_seams": {
+      "files": [
+        {
+          "lines": 93,
+          "path": "models/jobhunt_routing.py"
+        },
+        {
+          "lines": 300,
+          "path": "services/applications/local.py"
+        },
+        {
+          "lines": 107,
+          "path": "services/applications/seam.py"
+        },
+        {
+          "lines": 202,
+          "path": "services/catalog/local.py"
+        },
+        {
+          "lines": 106,
+          "path": "services/catalog/seam.py"
+        },
+        {
+          "lines": 187,
+          "path": "services/documents/local.py"
+        },
+        {
+          "lines": 130,
+          "path": "services/documents/seam.py"
+        },
+        {
+          "lines": 36,
+          "path": "services/matching/local.py"
+        },
+        {
+          "lines": 128,
+          "path": "services/matching/seam.py"
+        },
+        {
+          "lines": 24,
+          "path": "services/profiles/local.py"
+        },
+        {
+          "lines": 99,
+          "path": "services/profiles/seam.py"
+        },
+        {
+          "lines": 264,
+          "path": "services/routing.py"
+        },
+        {
+          "lines": 33,
+          "path": "services/schools/local.py"
+        },
+        {
+          "lines": 60,
+          "path": "services/schools/seam.py"
+        },
+        {
+          "lines": 162,
+          "path": "services/search_handover.py"
+        }
+      ],
+      "total_lines": 1931
+    }
+  }
+}
