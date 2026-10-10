@@ -42,6 +42,8 @@ hubiera en cada instante.
   permisos y la preparación para transferir la autoridad.
 - `portfolio-unique-sources-production.json` demuestra qué fuentes exclusivas
   de ReactPortfolio deben conservarse durante la simplificación.
+- `portfolio-match-source-composition-production.json` demuestra que el feed de
+  Core no contiene esas once fuentes y cuantifica la coexistencia nativa/legacy.
 
 ## Facetas y categorías
 

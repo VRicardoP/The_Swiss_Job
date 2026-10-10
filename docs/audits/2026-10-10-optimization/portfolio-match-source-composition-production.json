@@ -1,0 +1,51 @@
+{
+  "observed_at": "2026-10-10T23:14:14Z",
+  "method": "ReactPortfolio production CoreMatching full feed; aggregate names and normalized URL counts only",
+  "core_feed": {
+    "results": 1800,
+    "sources": {
+      "arbeitnow": 578,
+      "financejobs": 2,
+      "irishjobs": 13,
+      "jobgether": 177,
+      "jobspresso": 2,
+      "legacy:arbeitnow": 745,
+      "legacy:irishjobs": 36,
+      "legacy:jobgether": 124,
+      "legacy:jobspresso": 2,
+      "legacy:nav_arbeidsplassen": 39,
+      "legacy:ostjob": 10,
+      "legacy:thehub": 1,
+      "legacy:weworkremotely": 19,
+      "legacy:workingnomads": 7,
+      "legacy:zentraljob": 2,
+      "nav_arbeidsplassen": 21,
+      "ostjob": 10,
+      "thehub": 2,
+      "weworkremotely": 7,
+      "zentraljob": 3
+    },
+    "portfolio_exclusive_sources_present": [],
+    "unique_nonempty_urls": 1732,
+    "duplicate_url_groups": 68,
+    "duplicate_rows_beyond_first": 68,
+    "legacy_native_same_source_family_url_groups": 68
+  },
+  "portfolio_exclusive_local": {
+    "sources": [
+      "adzuna",
+      "dynamitejobs",
+      "himalayas",
+      "ictjobs",
+      "jobicy",
+      "jobroom",
+      "jobscout24",
+      "jsearch",
+      "remoteok",
+      "swissdevjobs",
+      "swisstechjobs"
+    ],
+    "cached_jobs": 1339
+  },
+  "decision": "Keep the local catalog and matching/report path narrowed to Portfolio-exclusive sources. Frozen legacy Core listings remain data coverage until normal staleness retirement; do not bulk-close them because native admission windows do not recreate older still-live offers."
+}
