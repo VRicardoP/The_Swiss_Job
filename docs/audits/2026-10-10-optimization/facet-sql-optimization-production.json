@@ -1,0 +1,31 @@
+{
+  "measured_at": "2026-10-10T20:54:00Z",
+  "environment": "production PostgreSQL via swissjob-core-api-r5",
+  "method": "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON), read-only, same profile and query shape; candidate executed from stdin without deployment",
+  "dataset": {
+    "visible_matches": 1799,
+    "school_monitors": 18
+  },
+  "current": {
+    "facets_execution_ms": 17472.956,
+    "category_page_execution_ms": 5754.283,
+    "school_monitor_scan": {
+      "loops": 1799,
+      "total_time_ms_per_loop": 5.652,
+      "shared_hits": 86458
+    }
+  },
+  "candidate": {
+    "facets_execution_ms": 1489.177,
+    "category_page_execution_ms": 2676.985,
+    "school_monitor_aggregation": {
+      "loops": 1,
+      "total_time_ms": 0.221
+    }
+  },
+  "improvement_percent": {
+    "facets_execution": 91.48,
+    "category_page_execution": 53.48
+  },
+  "change": "aggregate tenant school monitor external_ref values once, then use jsonb_exists_any for each offer"
+}

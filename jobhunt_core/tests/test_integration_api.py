@@ -561,6 +561,45 @@ def test_match_facets_and_category_page_share_the_authoritative_taxonomy(db):
     assert (invalid.status_code, invalid.json()["code"]) == (400, "invalid_request")
 
 
+def test_facets_load_watchlist_refs_once_per_request(db):
+    """The monitor table must not be looked up once per visible vacancy."""
+    factory, created = db
+    pid, _vacs, _token = _seed_matches(
+        factory, created, titles=("Senior Content Editor", "Quantum Mechanic")
+    )
+
+    async def explain():
+        async with factory() as session:
+            consumer_id = await session.scalar(
+                sa.text("SELECT consumer_id FROM profiles WHERE id=:pid"),
+                {"pid": pid},
+            )
+            prefix, params = matching._facet_feed_sql(pid, consumer_id)
+            plan = await session.scalar(
+                sa.text(
+                    "EXPLAIN (FORMAT JSON) "
+                    + prefix
+                    + "SELECT count(*) FILTER (WHERE watchlist) FROM feed"
+                ),
+                params,
+            )
+
+        def walk(node):
+            yield node
+            for child in node.get("Plans", []):
+                yield from walk(child)
+
+        return [
+            node
+            for node in walk(plan[0]["Plan"])
+            if node.get("Relation Name") == "school_monitors"
+        ]
+
+    scans = asyncio.run(explain())
+    assert len(scans) == 1
+    assert scans[0].get("Parent Relationship") != "SubPlan"
+
+
 def test_profile_reassignment_never_leaks(db):
     """Rev. A-09 #1 (repro): el ownership va EN la query y en UNA sentencia.
     Tras reasignar el perfil al tenant B (con revisión nueva 'secreta'), el
