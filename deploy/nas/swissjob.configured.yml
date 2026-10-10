@@ -144,6 +144,7 @@ services:
       PYTHONDONTWRITEBYTECODE: '1'
       CORE_CONSUMER_KEY: ${CORE_CONSUMER_KEY}
       CORE_API_BASE_URL: ${CORE_API_BASE_URL}
+      CORE_HTTP_TIMEOUT_SECONDS: '120'
       SCHOOL_WRITES_FROZEN: 'false'
       LEGACY_DISABLED_PROVIDERS: '["arbeitnow", "euremotejobs", "globaljobs", "jobgether", "jobspresso", "nav_arbeidsplassen", "ostjob", "remotive", "thehub", "weworkremotely", "workingnomads", "zentraljob"]'
       LEGACY_DISABLED_SCRAPERS: '["financejobs", "irishjobs"]'
