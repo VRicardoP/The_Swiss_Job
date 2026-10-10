@@ -6,16 +6,18 @@ Por eso va la última, con 48 h de observación por delante y en este orden.
 
 ## Cuándo
 
-No antes de **23-09-2026 ~22:40 UTC** — 48 h desde el primer corte (21-09
-22:40). Durante esa ventana no debe haber incidencias: cuatro rondas del
-dispatcher nativo (00:10, 06:10, 12:10, 18:10 Europe/Zurich) con los 17 scopes
-completando y `harvest.check_health` devolviendo `alertas: []`.
+No antes de **12-10-2026 20:00 UTC**. La primera muestra conservada de la
+ventana actual es del 10-10 a las 19:59:56 UTC; redondear el final hacia arriba
+garantiza 48 horas completas. Durante la ventana deben completar las rondas del
+dispatcher nativo (00:10, 06:10, 12:10 y 18:10 Europe/Zurich) con los 17 scopes
+sanos y `harvest.check_health` devolviendo `alertas: []`.
 
-> **Aviso sobre la ventana, 2026-09-23.** El despliegue del punto 5 recreó los
-> tres servicios del core ese mismo día. No invalida las 48 h de cosecha —los
-> 17 scopes siguen a 0 fallos y `alertas: []` tras el despliegue— pero el
-> reinicio del beat es un evento nuevo: **vuelve a comprobar la precondición
-> completa el día que ejecutes esto**, no la des por heredada.
+Las muestras se guardan en
+`docs/audits/2026-10-10-optimization/core-observation-48h.jsonl`. Un reinicio de
+`core-api`, `core-worker`, `core-harvest-worker` o `core-ops-worker` invalida la
+continuidad y obliga a abrir una ventana nueva. **Vuelve a comprobar toda la
+precondición el
+día de la retirada**; el histórico no sustituye el estado vivo.
 
 ## Precondición, comprobada el mismo día
 
@@ -30,18 +32,24 @@ ssh nas "$PGC -c \"SET search_path=jobhunt; SELECT count(*) AS scopes,
   FROM harvest_scopes hs JOIN source_scope_state st ON st.scope_id=hs.id WHERE hs.enabled;\""
 #    esperado: 17 | 17 | 17
 
-# 2. salud de cosecha sin alertas en las ultimas 24 h
-ssh nas "$D logs swissjob-core-worker-r5 --since 24h | grep check_health | grep -c \"'alertas': \[\]\""
-#    esperado: >= 20 lineas, ninguna con alertas no vacias
+# 2. oraculo oficial de salud, ejecutado contra el estado vivo
+ssh nas "$D exec -e PYTHONPATH=/app swissjob-core-api-r5 python -c \
+  'import asyncio,json; from jobhunt_core.tasks.harvest import _check_harvest_health_impl as check; print(json.dumps(asyncio.run(check()),sort_keys=True))'"
+#    esperado: alertas=[], scopes=17 y censo.habilitados=17
 
-# 3. CDC drenado y sin nada nuevo que capturar
+# 3. CDC drenado; el slot sigue activo durante la ventana
 ssh nas "$PGC -c \"SET search_path=jobhunt; SELECT count(*) FROM shadow_change_log WHERE applied_at IS NULL;\""
 #    esperado: 0
-ssh nas "$D ps --format '{{.Names}}' | grep -c swissjob-worker-r5"
-#    esperado: 0 (el escritor de esa base sigue parado)
+ssh nas "$PGC -c \"SELECT slot_name,active FROM pg_replication_slots WHERE slot_name='jobhunt_shadow_r5_rehearsal';\""
+#    esperado: jobhunt_shadow_r5_rehearsal | t
 ```
 
-Si cualquiera de las tres falla: **parar**, anotar y no continuar.
+`swissjob-worker` debe seguir vivo: conserva CV, documentos, alertas y la
+cosecha escolar. Su ausencia ya no demuestra que el catálogo legacy esté
+quieto y no es una precondición válida.
+
+Si cualquiera de las tres comprobaciones falla, o el JSONL contiene
+`probe_failed`: **parar**, anotar y no continuar.
 
 ## Secuencia
 
@@ -59,34 +67,33 @@ ssh nas "$D inspect swissjob-core-capture-r5 --format 'exit={{.State.ExitCode}} 
 `shadow-check-slot-health`, `shadow-preview-cycle` y `shadow-run-cycle`, **y sólo
 esas tres**.
 
-> ✅ **Precondición RESUELTA el 2026-09-23.** Los tres servicios del core corren
-> `swissjob-core:point5-9d6b46e` y el interruptor existe **en el proceso vivo**,
-> comprobado ahí y no en HEAD:
+> ✅ **Precondición RESUELTA el 2026-10-10.** El interruptor existe en el
+> release vivo `5a1241d`. El beat ya no está en el worker del bi-encoder: la
+> topología dividida lo ejecuta únicamente en `core-ops-worker`, comprobado por
+> su comando `worker ... -Q core.default,core.notifications --concurrency=1 -B`.
+> Verificarlo otra vez antes de usarlo:
 >
 > ```sh
-> ssh nas "$D exec swissjob-core-worker-r5 python -c \
+> ssh nas "$D exec swissjob-core-ops-worker-r5 python -c \
 >   'from jobhunt_core.config import settings; print(settings.CORE_CAPTURE_ENABLED)'"
-> # 2026-09-23 → True  (valor por defecto: la captura SIGUE programada)
+> # 2026-10-10 → True  (valor por defecto: la captura SIGUE programada)
 > ```
 >
-> Hasta ese día el worker seguía en `point4-51be757`, anterior al commit que lo
-> añade, y apoyarse en el interruptor no habría hecho nada. **Vuelve a
-> comprobarlo antes de usarlo**: si algún día responde `AttributeError`, el
-> proceso no tiene el código y poner la variable en el compose es inofensivo y
-> también inútil. Es la regla de oro del proyecto — verifica ejecutando.
+> Si responde `AttributeError`, el proceso no contiene el interruptor y poner la
+> variable en Compose sería inútil. No continuar.
 
 > **`shadow-project` se queda.** Pese al nombre, ES el postprocesado del ciclo
 > nativo: drena embeddings y reevalúa perfiles tras cada cosecha. Apagar la
 > familia `shadow.*` por prefijo apagaría el motor de matching con todos los
 > indicadores en verde. Lo fija `test_capture_retirement.py`.
 
-En `core.configured.yml`, servicios `core-api` y `core-worker`, añadir
-`CORE_CAPTURE_ENABLED: 'false'`; recrear **uno a uno** (copia `.before` antes).
-Comprobar después:
+En `core.configured.yml`, añadir `CORE_CAPTURE_ENABLED: 'false'` al servicio
+`core-ops-worker`, que es el único que ejecuta beat; guardar una copia `.before`
+y recrear sólo ese servicio. Esperar seis minutos y comprobar después:
 
 ```sh
-ssh nas "$D logs swissjob-core-worker-r5 --since 10m | grep -c check_slot_health"   # 0
-ssh nas "$D logs swissjob-core-worker-r5 --since 10m | grep -c shadow.project"      # >= 1
+ssh nas "$D logs swissjob-core-ops-worker-r5 --since 6m | grep -c 'Sending due task shadow-check-slot-health'"  # 0
+ssh nas "$D logs swissjob-core-ops-worker-r5 --since 6m | grep -c 'Sending due task shadow-project'"            # >= 1
 ```
 
 **3. Observar una ronda más** (la siguiente ventana del dispatcher) con la
@@ -105,9 +112,11 @@ ssh nas "$PGC -c \"SELECT pg_drop_replication_slot('jobhunt_shadow_r5_rehearsal'
 ```
 
 **5. Limpiar la definición.** Quitar el servicio `core-capture` de
-`core.configured.yml` y `CORE_CAPTURE_SLOT` de los otros dos; recrear `core-api`
-y `core-worker`. Verificar `/v1/ready` con el mismo `release` y
-`authoritative: true`.
+`core.configured.yml` y `CORE_CAPTURE_SLOT` de `core-api`, `core-worker`,
+`core-harvest-worker` y `core-ops-worker`. Quitar también la captura de los
+inventarios operativos (`check_core_release.py` y supervisor del NAS), recrear
+los cuatro servicios uno a uno y verificar `/v1/ready` con el mismo `release`
+y `authoritative: true`.
 
 ## Qué NO se borra
 
@@ -118,7 +127,9 @@ y `core-worker`. Verificar `/v1/ready` con el mismo `release` y
 - `swissjob-erasure-cdc`: es borrado de perfiles, otra capacidad, con una
   solicitud registrada.
 - `swissjob-backend` y `swissjob-worker`: sirven el BFF, CV, documentos, la
-  alerta de profesor de primaria y los 8 scrapers escolares.
+  alerta de profesor de primaria y los 12 scrapers escolares.
+- `core-harvest-worker` y `core-ops-worker`: ejecutan respectivamente la cosecha
+  nativa y las cadencias operativas; no son parte de la captura CDC.
 
 ## Después
 

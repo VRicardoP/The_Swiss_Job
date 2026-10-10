@@ -106,8 +106,9 @@ celery_app.conf.update(
     task_soft_time_limit=1800,
     task_time_limit=2100,
     # CADENCIAS de la sombra (B-05, §5/§6) — SOLO tareas de colas core.*.
-    # El beat va EMBEBIDO en el command del core-worker (`worker ... -B`,
-    # docker-compose.yml — decisión del propietario 2026-07-25): sobrevive
+    # El beat va EMBEBIDO en el proceso worker que lleva `-B`
+    # (`core-ops-worker` en producción; decisión del propietario
+    # 2026-07-25): sobrevive
     # a recreates/restarts, cosa que un `exec -d ... beat` no hacía
     # (moría en silencio con cada `up -d`). Cadencias ajustables
     # por settings CORE_SHADOW_*; el crontab usa timezone Europe/Zurich (la
