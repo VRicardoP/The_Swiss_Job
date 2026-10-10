@@ -865,10 +865,7 @@ async def get_match_facets(
     aggregate = await matching.feed_facets(
         session, profile_id, consumer_id=principal.consumer_id
     )
-    version, _ = await matching.feed_version(
-        session, profile_id, consumer_id=principal.consumer_id
-    )
-    return schemas.MatchFacetsDTO(version=version, **aggregate)
+    return schemas.MatchFacetsDTO(**aggregate)
 
 
 @router.get(

@@ -2390,7 +2390,9 @@ async def _facet_rows(session, profile_id, consumer_id):
         sa.text(
             f"WITH fb AS ({effective_feedback_batch_sql(':pid')}) "
             "SELECT e.vacancy_id, e.score_final, e.id AS eval_id, e.scores, "
-            "e.offer_revision_id, s.saved_at, fb.feedback, s.notes, o.content, "
+            "e.offer_revision_id, v.current_offer_revision_id, "
+            "v.primary_incarnation_id, s.updated_at, s.saved_at, "
+            "fb.feedback, s.notes, o.content, "
             "EXISTS (SELECT 1 FROM school_monitors sm "
             "        WHERE sm.consumer_id=:cid "
             "          AND jsonb_exists(COALESCE(o.content->'tags','[]'::jsonb), "
@@ -2427,9 +2429,31 @@ async def feed_facets(session, profile_id, consumer_id) -> dict:
     metadata = categories()
     counts = {category["id"]: 0 for category in metadata}
     counts["otros"] = 0
+    version_rows = []
     for row in rows:
-        counts[_row_category(row)] += 1
+        category = _row_category(row)
+        counts[category] += 1
+        version_rows.append(
+            (
+                str(row.vacancy_id),
+                str(row.eval_id),
+                str(row.current_offer_revision_id),
+                str(row.primary_incarnation_id or "-"),
+                str(row.updated_at),
+                str(row.score_final),
+                bool(row.saved_at),
+                row.feedback or "",
+                row.notes or "",
+                category,
+                bool(row.watchlist),
+            )
+        )
+    version = hashlib.md5(
+        json.dumps(version_rows, separators=(",", ":")).encode(),
+        usedforsecurity=False,
+    ).hexdigest()
     return {
+        "version": version,
         "total": len(rows),
         "top_score": max((float(row.score_final) for row in rows), default=0.0),
         "strong_count": sum(float(row.score_final) >= 70 for row in rows),
