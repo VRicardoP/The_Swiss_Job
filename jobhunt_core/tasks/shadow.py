@@ -1,6 +1,6 @@
-"""Tareas Celery de la sombra: proyector (B-02, cola core.harvest),
+"""Tareas Celery de la sombra: proyector (B-02, cola core.matching),
 métricas/muestreo/purga (B-04, cola core.default) y harness GATE-SOMBRA
-(B-05: run_cycle en core.harvest, check_slot_health en core.default).
+(B-05: run_cycle en core.matching, check_slot_health en core.default).
 
 COLAS (decisión B-04, justificada): las tareas de métricas van a
 core.default y NO a core.harvest — son observabilidad y mantenimiento, no

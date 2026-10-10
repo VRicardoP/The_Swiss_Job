@@ -105,11 +105,8 @@ services:
     - -l
     - info
     - -Q
-    - core.default,core.harvest,core.embedding,core.matching,core.notifications
+    - core.embedding,core.matching
     - --concurrency=1
-    - -B
-    - -s
-    - /tmp/celerybeat-schedule
     working_dir: /app
     user: core
     networks:
@@ -126,6 +123,129 @@ services:
       source: swissjob-r5_core-hf-cache
       target: /tmp/hf-cache
       read_only: false
+    shm_size: 67108864
+    logging:
+      driver: json-file
+      options:
+        max-file: '10'
+        max-size: 10m
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+  core-harvest-worker:
+    image: swissjob-core:point5-4995e87
+    mem_limit: 768m
+    container_name: swissjob-core-harvest-worker-r5
+    environment:
+      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
+        "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
+      CORE_SHADOW_RUN_CYCLE_HOUR: '11'
+      CORE_ENV: prod
+      CORE_SHADOW_CYCLE_START_MINUTE: '30'
+      CORE_SHADOW_CYCLE_START_HOUR: '11'
+      CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
+      CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
+      CORE_DATABASE_URL: ${CORE_DATABASE_URL}
+      CORE_SHADOW_PRE_GATE_EVERY_S: '1800'
+      CORE_BROKER_URL: ${CORE_BROKER_URL}
+      CORE_SHADOW_RUN_CYCLE_MINUTE: '35'
+      CORE_CAPTURE_SLOT: jobhunt_shadow_r5_rehearsal
+      PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      LANG: C.UTF-8
+      GPG_KEY: ${GPG_KEY}
+      PYTHON_VERSION: 3.12.14
+      PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
+      PYTHONDONTWRITEBYTECODE: '1'
+      HF_HOME: /tmp/hf-cache
+      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'true'
+    restart: unless-stopped
+    entrypoint: null
+    command:
+    - celery
+    - -A
+    - jobhunt_core.celery_app
+    - worker
+    - -l
+    - info
+    - -Q
+    - core.harvest
+    - --concurrency=1
+    working_dir: /app
+    user: core
+    networks:
+      swissjob-r5_core-net:
+        aliases:
+        - swissjob-core-harvest-worker-r5
+        - core-harvest-worker
+      swissjob_swissjob-net:
+        aliases:
+        - swissjob-core-harvest-worker-r5
+        - core-harvest-worker
+    volumes: []
+    shm_size: 67108864
+    logging:
+      driver: json-file
+      options:
+        max-file: '10'
+        max-size: 10m
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+  core-ops-worker:
+    image: swissjob-core:point5-4995e87
+    mem_limit: 768m
+    container_name: swissjob-core-ops-worker-r5
+    environment:
+      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
+        "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
+      CORE_SHADOW_RUN_CYCLE_HOUR: '11'
+      CORE_ENV: prod
+      CORE_SHADOW_CYCLE_START_MINUTE: '30'
+      CORE_SHADOW_CYCLE_START_HOUR: '11'
+      CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
+      CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
+      CORE_DATABASE_URL: ${CORE_DATABASE_URL}
+      CORE_SHADOW_PRE_GATE_EVERY_S: '1800'
+      CORE_BROKER_URL: ${CORE_BROKER_URL}
+      CORE_SHADOW_RUN_CYCLE_MINUTE: '35'
+      CORE_CAPTURE_SLOT: jobhunt_shadow_r5_rehearsal
+      PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      LANG: C.UTF-8
+      GPG_KEY: ${GPG_KEY}
+      PYTHON_VERSION: 3.12.14
+      PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
+      PYTHONDONTWRITEBYTECODE: '1'
+      HF_HOME: /tmp/hf-cache
+      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'true'
+    restart: unless-stopped
+    entrypoint: null
+    command:
+    - celery
+    - -A
+    - jobhunt_core.celery_app
+    - worker
+    - -l
+    - info
+    - -Q
+    - core.default,core.notifications
+    - --concurrency=1
+    - -B
+    - -s
+    - /tmp/celerybeat-schedule
+    working_dir: /app
+    user: core
+    networks:
+      swissjob-r5_core-net:
+        aliases:
+        - swissjob-core-ops-worker-r5
+        - core-ops-worker
+      swissjob_swissjob-net:
+        aliases:
+        - swissjob-core-ops-worker-r5
+        - core-ops-worker
+    volumes: []
     shm_size: 67108864
     logging:
       driver: json-file

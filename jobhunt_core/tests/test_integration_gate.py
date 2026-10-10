@@ -864,10 +864,10 @@ def test_tasks_registered_beat_cadences_and_core_queues(db):
     assert "jobhunt.shadow.run_cycle" in celery_app.tasks
     assert "jobhunt.shadow.preview_cycle" in celery_app.tasks
     assert "jobhunt.shadow.check_slot_health" in celery_app.tasks
-    # run_cycle es ingesta (drena el staging): core.harvest, serializa con
-    # el proyector; la vigilancia del slot es ligera: core.default.
+    # run_cycle llama al proyector y puede cargar el bi-encoder: comparte la
+    # cola del modelo. La vigilancia del slot es ligera: core.default.
     assert celery_app.conf.task_routes["jobhunt.shadow.run_cycle"] == {
-        "queue": "core.harvest"
+        "queue": "core.matching"
     }
     assert celery_app.conf.task_routes["jobhunt.shadow.check_slot_health"] == {
         "queue": "core.default"

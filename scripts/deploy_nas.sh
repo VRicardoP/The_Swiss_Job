@@ -52,7 +52,7 @@ E=/share/CACHEDEV1_DATA/Public/unification-e15-20260914
 if [[ "$SERVICIO" == core ]]; then
   IMAGEN="swissjob-core:point5-$SHA"
   COMPOSE="core.configured.yml"; PROYECTO="swissjob-r5"
-  SERVICIOS=(core-api core-worker)          # core-capture NO: ver trampa 4
+  SERVICIOS=(core-api core-worker core-harvest-worker core-ops-worker)  # core-capture NO: ver trampa 4
   CONSTRUIR=(env "RELEASE_SHA=$SHA" docker compose build core-api)
   ETIQUETAR=(docker tag swissjob-core:dev "$IMAGEN")
   PATRON="swissjob-core:point5-"
@@ -131,7 +131,7 @@ for _ in $(seq 1 30); do
   [[ "$estado" == healthy ]] && break
   sleep 10
 done
-ssh nas "$D ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | grep -E 'swissjob-(backend|core-api|core-worker|core-capture)'"
+ssh nas "$D ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | grep -E 'swissjob-(backend|core-api|core-worker|core-harvest-worker|core-ops-worker|core-capture)'"
 if [[ "$SERVICIO" == core ]]; then
   python3 scripts/check_core_release.py || echo "AVISO: check_core_release en rojo — revisar antes de dar por bueno"
 fi

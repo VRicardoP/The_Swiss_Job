@@ -54,14 +54,11 @@ celery_app.conf.update(
         "jobhunt.maintenance.dedup_lex_backfill": {"queue": "core.default"},
         "jobhunt.maintenance.dedup_revalidate_by_rule": {"queue": "core.default"},
         "jobhunt.maintenance.purge_retention": {"queue": "core.default"},
-        # Proyector de la sombra (B-02, contrato §3): comparte la cola de
-        # cosecha — es ingesta, y serializa con los locks del sink.
-        # H7/T11: el MATCHING no es ingesta. Compartía `core.harvest` con el
-        # abanico de la cosecha —16 fuentes por ventana— y quedaba detrás de
-        # ella en la misma cola: una ventana lenta retrasaba el matching de
-        # todos los perfiles. `shadow.project` es el motor de matching nativo
-        # (no una tarea de sombra, pese al nombre heredado).
-        "jobhunt.shadow.project": {"queue": "core.default"},
+        # El proyector drena embeddings y ejecuta matching. Mantenerlo en la
+        # misma cola que esas tareas garantiza que sólo el worker de modelo
+        # carga el bi-encoder; en core.default bloqueaba durante minutos la
+        # salud, el outbox y el beat cuando la concurrencia bajó a uno.
+        "jobhunt.shadow.project": {"queue": "core.matching"},
         # Métricas/muestreo/purga de la sombra (B-04): observabilidad y
         # mantenimiento, NO ingesta — cola general core.default. En
         # core.harvest el muestreador (cadencia 5 min vía B-05) quedaría
@@ -72,10 +69,10 @@ celery_app.conf.update(
         "jobhunt.shadow.preview_cycle": {"queue": "core.default"},
         "jobhunt.shadow.purge_staging": {"queue": "core.default"},
         "jobhunt.idempotency.purge_expired": {"queue": "core.default"},
-        # Harness GATE-SOMBRA (B-05): el ciclo orquestado es ingesta (drena
-        # el staging vía el proyector) — serializa en core.harvest; la
-        # vigilancia del slot es observabilidad ligera — core.default.
-        "jobhunt.shadow.run_cycle": {"queue": "core.harvest"},
+        # El ciclo llama al mismo proyector y por tanto también puede cargar
+        # el bi-encoder. Se serializa con el resto del matching para conservar
+        # una única copia del modelo. La vigilancia sigue siendo ligera.
+        "jobhunt.shadow.run_cycle": {"queue": "core.matching"},
         "jobhunt.shadow.check_slot_health": {"queue": "core.default"},
         # Salud de la COSECHA (G9 P2-C): observabilidad de solo lectura — misma
         # decisión que la vigilancia del slot, cola core.default para no quedar

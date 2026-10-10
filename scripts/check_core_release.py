@@ -34,7 +34,13 @@ import sys
 import urllib.error
 import urllib.request
 
-SERVICIOS_DEL_CORE = ("core-api", "core-worker", "core-capture")
+SERVICIOS_DEL_CORE = (
+    "core-api",
+    "core-worker",
+    "core-harvest-worker",
+    "core-ops-worker",
+    "core-capture",
+)
 
 
 def _compose_json(*args: str) -> dict:
