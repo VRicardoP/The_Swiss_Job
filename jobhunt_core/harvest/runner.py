@@ -49,16 +49,17 @@ async def _still_claim_owner(session, scope_id: str, token) -> bool:
     """True si el scope sigue reclamado por ESTE `token` y en 'running'. Un worker cuyo lease venció
     y fue RE-ARMADO por otro (claim_token sobrescrito en claim_scope_run) ya NO es dueño: no debe
     mutar `source_scope_state` (cursor / consecutive_failures) porque pisaría el estado del worker
-    VIGENTE (P1 rev. externa integral ronda 2). `FOR UPDATE` bloquea un re-arm concurrente entre la
-    comprobación y la escritura → check+write atómico. `token` None (llamada directa/legacy)
-    preserva el comportamiento previo (sin fencing)."""
+    VIGENTE (P1 rev. externa integral ronda 2). El llamador ya bloquea harvest_scopes, igual que
+    claim_scope_run: ningún re-arm puede pasar hasta el commit. No bloquear aquí la fila del claim:
+    el heartbeat la renueva en otra sesión durante la persistencia. `token` None (llamada
+    directa/legacy) preserva el comportamiento previo (sin fencing)."""
     if token is None:
         return True
     row = (
         await session.execute(
             sa.text(
                 "SELECT 1 FROM source_harvest_runs WHERE scope_id = :sid "
-                "AND claim_token = :tok AND status = 'running' FOR UPDATE"
+                "AND claim_token = :tok AND status = 'running'"
             ),
             {"sid": scope_id, "tok": token},
         )
@@ -185,7 +186,7 @@ async def run_scope(
                 return ScopeRunResult(scope_id=scope_id, status="stale")
             # FENCING: si el lease venció y otro worker re-armó el scope, este run YA NO es dueño —
             # NO debe escribir cursor/consecutive_failures pisando al vigente (P1 rev. externa
-            # integral ronda 2). El FOR UPDATE del guard es de la MISMA tx que la persistencia.
+            # integral ronda 2). El lock del scope se mantiene en la MISMA tx que la persistencia.
             if not await _still_claim_owner(session, scope_id, claim_token):
                 await session.rollback()
                 logger.info(
@@ -290,7 +291,7 @@ _NO_SNAPSHOT = (
 
 async def _still_authoritative(session, scope_id: str, token, state_snapshot) -> bool:
     """True si este run sigue siendo AUTORITATIVO sobre el scope para mutar su estado:
-    - CON token (vía run_all): el claim sigue vigente (_still_claim_owner, FOR UPDATE).
+    - CON token (vía run_all): el claim sigue vigente (_still_claim_owner, bajo el lock del scope).
     - SIN token pero CON state_snapshot=(cursor, last_complete_at) (llamadas directas al runner;
       la tarea individual YA reclama): el ESTADO no cambió desde el fetch. La clave es
       `last_complete_at`: recibe un now() FRESCO (≠ el previo) en cada cosecha COMPLETA — que es

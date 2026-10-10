@@ -11,6 +11,43 @@ from jobhunt_core.harvest.runner import _still_claim_owner
 from jobhunt_core.tests.test_integration_runs import db, _seed_scopes, pytestmark  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
+def test_persistence_allows_heartbeat_but_blocks_a_new_claim(db):  # noqa: F811
+    from jobhunt_core.harvest.runner import run_scope
+    from jobhunt_core.tests.test_integration_harvest import FakeProvider
+
+    factory, created = db
+    (sid,) = _seed_scopes(factory, created, n=1)
+
+    async def check():
+        async with factory() as s:
+            first = await runs.start_run(s, "persist-a-" + str(uuid.uuid4()))
+            second = await runs.start_run(s, "persist-b-" + str(uuid.uuid4()))
+            created["runs"].extend([first, second])
+            token = await runs.claim_scope_run(s, first, sid)
+            await s.commit()
+
+        class Sink:
+            async def handle(self, session, scope_id, listings):
+                # A separate heartbeat connection must be able to renew while
+                # the sink holds the transaction, even for a large batch.
+                async with factory() as heartbeat:
+                    assert await asyncio.wait_for(
+                        runs.beat_scope_run(heartbeat, first, sid, token), 2
+                    )
+                    await heartbeat.commit()
+                # Removing the claim-row lock must not remove scope fencing.
+                async with factory() as contender:
+                    await contender.execute(sa.text("SET LOCAL lock_timeout='100ms'"))
+                    with pytest.raises(sa.exc.DBAPIError, match="lock timeout"):
+                        await runs.claim_scope_run(contender, second, sid)
+                    await contender.rollback()
+
+        result = await run_scope(str(sid), FakeProvider(), Sink(), None, factory, token)
+        assert result.status == "ok", result.error
+
+    asyncio.run(check())
+
+
 def test_different_run_keys_share_scope_exclusion(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, created = db
     (sid,) = _seed_scopes(factory, created, n=1)

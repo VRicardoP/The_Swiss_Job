@@ -230,6 +230,7 @@ class IrishJobsProvider(BaseProvider):
         budget = page_budget(params, MAX_PAGES) or MAX_PAGES
         by_identity, invalid, pages, seen = {}, 0, 0, 0
         error, exhausted = None, True
+        first_failure = None
         loop = asyncio.get_running_loop()
         started = loop.time()
         for host in HOSTS:
@@ -240,9 +241,11 @@ class IrishJobsProvider(BaseProvider):
                 try:
                     items = await _page(http, host, page)
                 except Exception as exc:
-                    if not by_identity:
-                        raise
-                    error, exhausted = type(exc).__name__, False
+                    # Los hosts fallan de forma independiente: conservar el
+                    # fallo, pero consultar también el siguiente dominio.
+                    if first_failure is None:
+                        first_failure = exc
+                    error, exhausted = error or type(exc).__name__, False
                     break
                 pages += 1
                 seen += len(items)
@@ -267,6 +270,8 @@ class IrishJobsProvider(BaseProvider):
             if host != HOSTS[-1]:
                 await asyncio.sleep(PAGE_PAUSE_S * 2)
         listings = tuple(by_identity.values())
+        if not listings and first_failure is not None:
+            raise first_failure
         if seen and not listings:
             raise ProviderResponseError(
                 "irishjobs: nonempty feed has no usable identities"

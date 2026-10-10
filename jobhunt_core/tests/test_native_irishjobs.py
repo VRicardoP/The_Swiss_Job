@@ -231,6 +231,35 @@ def test_late_failure_preserves_the_valid_prefix(monkeypatch):
     assert len(result.listings) == 1 and result.complete is False
 
 
+@pytest.mark.parametrize(
+    "first_page", [httpx.Response(403), b"<html>invalid state</html>"]
+)
+def test_first_host_failure_still_harvests_second_host(first_page, monkeypatch):
+    result, seen = fetch(
+        {
+            "www.irishjobs.ie": [first_page],
+            "www.jobs.ie": [page([ITEM]), page([])],
+        },
+        {"max_pages": 3},
+        monkeypatch,
+    )
+    assert {request.url.host for request in seen} == {"www.irishjobs.ie", "www.jobs.ie"}
+    assert len(result.listings) == 1
+    assert result.listings[0].url.startswith("https://www.jobs.ie/")
+    assert result.complete is False and result.error is not None
+
+
+def test_both_hosts_failing_does_not_become_an_empty_success(monkeypatch):
+    with pytest.raises(httpx.HTTPStatusError):
+        fetch(
+            {
+                "www.irishjobs.ie": [httpx.Response(403)],
+                "www.jobs.ie": [httpx.Response(503)],
+            },
+            monkeypatch=monkeypatch,
+        )
+
+
 def test_declared_budget_bounds_each_host(monkeypatch):
     many = [page([{**ITEM, "id": i, "url": f"/job/x-job{i}"}]) for i in range(5)]
     result, seen = fetch(
