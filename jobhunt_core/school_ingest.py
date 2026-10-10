@@ -288,3 +288,79 @@ async def record_observation(
         },
     )
     return jid, True
+
+
+def _scored_observation(monitor, values):
+    """Apply the authoritative public-job scores for one consumer monitor."""
+    from jobhunt_core.school_role import classify_role
+    from jobhunt_core.school_urgency import score_urgency
+
+    settings = monitor["settings"]
+    description = values.get("description_snippet") or ""
+    return {
+        **values,
+        "role_score": classify_role(values["title"], description),
+        "urgency_score": score_urgency(
+            settings,
+            job_text=f"{values['title']} {description}",
+            deadline=values.get("deadline"),
+        ),
+        "template": settings.get("template_letter"),
+    }
+
+
+async def record_shared_observation(session, monitor, values, *, publish_missing=False):
+    """Record one live extraction for every active monitor of the same school.
+
+    The authenticated monitor remains the response identity. Other consumers
+    receive only the public observation and their own monitor-derived scores;
+    contact and alert settings never cross the tenant boundary.
+    """
+    await session.execute(
+        sa.text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
+        {"key": f"school-observation:{monitor['school_id']}"},
+    )
+    monitors = (
+        (
+            await session.execute(
+                sa.text(
+                    "SELECT * FROM school_monitors WHERE school_id=:school AND "
+                    "(id=:source OR (COALESCE((settings->>'is_active')::boolean,false) "
+                    "AND settings->>'monitoring_mode'='scrape')) "
+                    "ORDER BY (id=:source) DESC,id"
+                ),
+                {"school": monitor["school_id"], "source": monitor["id"]},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    source_result = None
+    vacancy_id = None
+    for target in monitors:
+        is_source = target["id"] == monitor["id"]
+        if not is_source and vacancy_id is not None:
+            existing = await session.scalar(
+                sa.text(
+                    "SELECT id FROM school_job_details "
+                    "WHERE monitor_id=:monitor AND vacancy_id=:vacancy LIMIT 1"
+                ),
+                {"monitor": target["id"], "vacancy": vacancy_id},
+            )
+            if existing is not None:
+                continue
+        result = await record_observation(
+            session,
+            target,
+            _scored_observation(target, values),
+            publish_missing=publish_missing if is_source else False,
+        )
+        if is_source:
+            source_result = result
+            vacancy_id = await session.scalar(
+                sa.text("SELECT vacancy_id FROM school_job_details WHERE id=:id"),
+                {"id": result[0]},
+            )
+    if source_result is None:
+        raise RuntimeError("source school monitor disappeared during observation")
+    return source_result

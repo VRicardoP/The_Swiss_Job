@@ -333,3 +333,74 @@ def test_school_reused_url_different_title_is_not_a_false_link(school_db):
         v=uuid.UUID(first["vacancy_id"]),
     )
     assert content == [("IT Technician",)]
+
+
+def test_live_school_observation_is_shared_with_active_monitors_and_rescored(school_db):
+    f, made = school_db
+    source_token, _, _ = _seed_profile(f, made, SCOPES)
+    target_token, _, _ = _seed_profile(f, made, SCOPES)
+    slug = "shared-school-" + uuid.uuid4().hex[:12]
+    source = _create(
+        f,
+        source_token,
+        slug,
+        is_active=True,
+        monitoring_mode="scrape",
+        group_tier="B",
+        policy="portal_only",
+        template_letter="A",
+    ).json()
+    target = _create(
+        f,
+        target_token,
+        slug,
+        is_active=True,
+        monitoring_mode="scrape",
+        group_tier="A",
+        policy="direct_email_ok",
+        template_letter="B",
+    ).json()
+    body = _observation(
+        title="Digital Specialist",
+        description_snippet="Start immediately",
+        role_score=-1,
+        urgency_score=99,
+        template=None,
+    )
+    response = _request(
+        f,
+        source_token,
+        "/v1/schools/" + source["id"] + "/jobs",
+        "POST",
+        body,
+        "shared-observation",
+    )
+    assert response.status_code == 201, response.text
+    source_job = response.json()["item"]
+    target_jobs = _request(f, target_token, "/v1/school-jobs").json()["items"]
+    assert len(target_jobs) == 1
+    target_job = target_jobs[0]
+    assert target_job["monitor_id"] == target["id"]
+    assert target_job["source_ref"] == source_job["source_ref"]
+    assert target_job["vacancy_id"] == source_job["vacancy_id"]
+    assert (
+        source_job["metadata"]["role_score"]
+        == target_job["metadata"]["role_score"]
+        == 0.5
+    )
+    assert source_job["metadata"]["urgency_score"] == 15
+    assert target_job["metadata"]["urgency_score"] == 70
+    assert source_job["metadata"]["template"] == "A"
+    assert target_job["metadata"]["template"] == "B"
+    assert "contact_name" not in target_job["metadata"]
+
+    repeat = _request(
+        f,
+        source_token,
+        "/v1/schools/" + source["id"] + "/jobs",
+        "POST",
+        body,
+        "shared-observation-retry",
+    )
+    assert repeat.status_code == 200 and repeat.json()["created"] is False
+    assert len(_request(f, target_token, "/v1/school-jobs").json()["items"]) == 1

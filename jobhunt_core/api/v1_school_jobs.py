@@ -82,7 +82,7 @@ async def observe(
         raise error_404("monitor")
 
     async def handler():
-        jid, created = await school_ingest.record_observation(
+        jid, created = await school_ingest.record_shared_observation(
             session, monitor, values, publish_missing=body.publish_missing
         )
         return (201 if created else 200), {"id": str(jid), "created": created}
