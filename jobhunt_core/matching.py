@@ -2443,8 +2443,7 @@ async def feed_facets(session, profile_id, consumer_id) -> dict:
     row = (
         await session.execute(
             sa.text(
-                prefix
-                + "SELECT count(*) AS total, "
+                prefix + "SELECT count(*) AS total, "
                 "COALESCE(max(score_final),0) AS top_score, "
                 "count(*) FILTER (WHERE score_final>=70) AS strong_count, "
                 "count(*) FILTER (WHERE watchlist) AS watchlist_count, "
