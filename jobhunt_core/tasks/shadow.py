@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 # el drenado idempotente; agrupar cuatro rondas excedió el límite en producción.
 PROJECT_BATCHES_PER_TASK = 20
 PROJECT_EMBEDDING_ROUNDS_PER_TASK = 1
+PROJECT_PROFILES_PER_TASK = 1
 
 
 @celery_app.task(name="jobhunt.shadow.project", bind=True, max_retries=1)
@@ -53,6 +54,7 @@ def project_task(
                 batch_size=batch_size,
                 max_batches=max_batches,
                 max_embedding_rounds=PROJECT_EMBEDDING_ROUNDS_PER_TASK,
+                max_profiles=PROJECT_PROFILES_PER_TASK,
             )
         )
     except Exception as exc:

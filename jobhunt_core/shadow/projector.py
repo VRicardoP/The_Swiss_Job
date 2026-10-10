@@ -244,6 +244,7 @@ async def project_pending(
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_batches: int | None = None,
     max_embedding_rounds: int = 50,
+    max_profiles: int | None = None,
 ) -> dict:
     """Drena `shadow_change_log` por lotes y dispara el flujo normal del core.
 
@@ -302,6 +303,7 @@ async def project_pending(
                     max_batches,
                     still_leader=_still_leader,
                     max_embedding_rounds=max_embedding_rounds,
+                    max_profiles=max_profiles,
                 )
             finally:
                 try:
@@ -328,6 +330,7 @@ async def _project_all(
     max_batches,
     still_leader=None,
     max_embedding_rounds=50,
+    max_profiles=None,
 ) -> None:
     """Cuerpo de la proyección (YA bajo el single-flight): drenado del
     staging por lotes + recuperación del flujo post-lote a la SALIDA (tras
@@ -386,14 +389,23 @@ async def _project_all(
             or aggregate.affected_profiles
         )
         evaluated = set(
-            await _after_batch(session_factory, aggregate, max_embedding_rounds)
+            await _after_batch(
+                session_factory,
+                aggregate,
+                max_embedding_rounds,
+                max_profiles=max_profiles,
+            )
         )
         totals["profiles_evaluated"] += len(evaluated)
+        remaining_profiles = (
+            None if max_profiles is None else max(max_profiles - len(evaluated), 0)
+        )
         totals["recovery_evaluated"] = await _replay_after_batch(
             session_factory,
             evaluated,
             drain_embeddings=not has_aggregate_work,
             max_embedding_rounds=max_embedding_rounds,
+            max_profiles=remaining_profiles,
         )
 
 
@@ -1663,6 +1675,7 @@ async def _replay_after_batch(
     *,
     drain_embeddings: bool = True,
     max_embedding_rounds: int = 50,
+    max_profiles: int | None = None,
 ) -> int:
     """Re-garantiza el disparo post-lote a la SALIDA (bajo el single-flight,
     DESPUÉS del while de drenado): un crash tras el commit de un lote pero
@@ -1684,10 +1697,14 @@ async def _replay_after_batch(
     distinta de la de ese intento. La evaluación de recuperación
     sigue siendo dedup por eval_key (jamás duplica).
     Devuelve los perfiles evaluados en la recuperación."""
+    if max_profiles == 0:
+        return 0
     if drain_embeddings:
         await _drain_embeddings(session_factory, max_rounds=max_embedding_rounds)
     async with session_factory() as session:
-        targets = await _recovery_targets(session, evaluated)
+        targets = await _recovery_targets(
+            session, evaluated, limit=max_profiles or RECOVERY_MAX_PROFILES
+        )
     for pid in targets:
         await _evaluate_and_record(session_factory, pid)
     return len(targets)
@@ -1724,7 +1741,9 @@ async def _evaluate_and_record(session_factory, pid) -> None:
     )
 
 
-async def _recovery_targets(session, evaluated: set) -> list:
+async def _recovery_targets(
+    session, evaluated: set, limit: int = RECOVERY_MAX_PROFILES
+) -> list:
     """Perfiles (de CUALQUIER consumer) NO evaluados en esta invocación cuya señal de recuperación
     está encendida, hasta RECOVERY_MAX_PROFILES por pasada. Cubre TODOS los perfiles —no solo los
     sombra— para que un perfil cuyo CV cambió (p.ej. PUT /profiles del piloto, que activa una
@@ -1755,21 +1774,24 @@ async def _recovery_targets(session, evaluated: set) -> list:
                 "excluded": excluded or [_NO_PROFILE],
                 "evaluated": sorted(evaluated, key=str) or [_NO_PROFILE],
                 "dim": EMBED_DIM,
-                "cap": RECOVERY_MAX_PROFILES,
+                "cap": min(limit, RECOVERY_MAX_PROFILES),
             },
         )
     ).all()
-    if len(rows) == RECOVERY_MAX_PROFILES:
+    if len(rows) == min(limit, RECOVERY_MAX_PROFILES):
         logger.info(
             "projector: recuperación acotada a %d perfiles en esta pasada (el resto sigue en "
             "cola, orden por evaluación más antigua)",
-            RECOVERY_MAX_PROFILES,
+            min(limit, RECOVERY_MAX_PROFILES),
         )
     return sorted((r.id for r in rows), key=str)
 
 
 async def _after_batch(
-    session_factory, result: _BatchResult, max_embedding_rounds: int = 50
+    session_factory,
+    result: _BatchResult,
+    max_embedding_rounds: int = 50,
+    max_profiles: int | None = None,
 ) -> list:
     """Embeddings pendientes + evaluate_profile del flujo NORMAL del core.
     Eficiencia (§3): solo perfiles afectados — o todos los activos del
@@ -1781,6 +1803,8 @@ async def _after_batch(
     await _drain_embeddings(session_factory, max_rounds=max_embedding_rounds)
     async with session_factory() as session:
         targets = await _eval_targets(session, result)
+    if max_profiles is not None:
+        targets = targets[:max_profiles]
     for pid in targets:
         # Mismo top-K canónico que la tarea jobhunt.matching.run_profile. El intento se registra
         # también aquí: si no, la recuperación de salida volvería a coger cada perfil ya evaluado

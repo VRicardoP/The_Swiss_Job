@@ -1317,10 +1317,17 @@ def test_replay_recovers_after_batch_crash(db, monkeypatch):
         state = {"boom": True}
         orig = projector._after_batch
 
-        async def maybe_boom(session_factory, result, max_embedding_rounds=50):
+        async def maybe_boom(
+            session_factory, result, max_embedding_rounds=50, max_profiles=None
+        ):
             if state["boom"]:
                 raise RuntimeError("crash simulado en _after_batch")
-            return await orig(session_factory, result, max_embedding_rounds)
+            return await orig(
+                session_factory,
+                result,
+                max_embedding_rounds,
+                max_profiles=max_profiles,
+            )
 
         monkeypatch.setattr(projector, "_after_batch", maybe_boom)
         _seed(
@@ -2351,8 +2358,10 @@ def test_task_registered_routed_and_runs(db, monkeypatch):
         "batch_size": shadow_tasks.DEFAULT_BATCH_SIZE,
         "max_batches": shadow_tasks.PROJECT_BATCHES_PER_TASK,
         "max_embedding_rounds": shadow_tasks.PROJECT_EMBEDDING_ROUNDS_PER_TASK,
+        "max_profiles": shadow_tasks.PROJECT_PROFILES_PER_TASK,
     }
     assert shadow_tasks.PROJECT_EMBEDDING_ROUNDS_PER_TASK == 1
+    assert shadow_tasks.PROJECT_PROFILES_PER_TASK == 1
 
 
 def test_r6_apply_url_viaja_del_staging_a_la_encarnacion(db):
