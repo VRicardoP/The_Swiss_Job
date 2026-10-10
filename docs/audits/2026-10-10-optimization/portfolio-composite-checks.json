@@ -1,0 +1,49 @@
+{
+  "observed_at": "2026-10-10T23:47:38Z",
+  "backend": {
+    "head": "ba3f886f0cc7d861c329f2419967d305af8ae54e",
+    "commits": {
+      "owned_source_filter": "cc2e9a2e68d48a8ff5702d2fcfcffcd9f84aacd0",
+      "matching_composition": "b4e152b8da902ced2c37a49ba33c81abd2fae4b1",
+      "catalog_composition": "ba3f886f0cc7d861c329f2419967d305af8ae54e"
+    },
+    "full_suite": {
+      "command": "venv/bin/pytest -q",
+      "passed": 2106,
+      "skipped": 1,
+      "warnings": 115,
+      "duration_s": 203.15
+    },
+    "release_image": {
+      "tag": "portfolio-backend:board-ba3f886",
+      "id": "sha256:178b06f765845c5a04a7d79e11c874514b32bafb9f9dfbe22108bdafee46c589",
+      "size_bytes": 3467383614,
+      "critical_file_hashes_match_checkout": true
+    },
+    "behavior": {
+      "retained_local_sources": 11,
+      "transferred_local_caches_read": false,
+      "core_outage_after_handover": "503; no partial fallback",
+      "catalog_order": "global parsed posting date descending",
+      "matching_order": "global ai_score descending",
+      "deduplication": "exact non-empty URL; native row wins equal-rank ties",
+      "daily_report_rescores_core_matches": false
+    }
+  },
+  "frontend": {
+    "head": "07ac81bc52b8443e9fd8de5b0784a57864f09999",
+    "lint": "passed",
+    "tests": {
+      "files": 46,
+      "passed": 422,
+      "duration_s": 10.65
+    },
+    "build": {
+      "output": "/tmp/reactportfolio-build-ba3f886",
+      "duration_s": 3.06,
+      "main_chunk_bytes": 233730,
+      "main_chunk_gzip_bytes": 72910
+    },
+    "composite_provenance_languages": 6
+  }
+}

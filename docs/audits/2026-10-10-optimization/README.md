@@ -74,6 +74,8 @@ hubiera en cada instante.
   cliente que consume las facetas paginadas.
 - `portfolio-backend-suite.json` y `core-suite-after-facets.json` resumen las
   suites completas de los dos backends.
+- `portfolio-composite-checks.json` fija los commits, la imagen y las pruebas de
+  la unión Core + once fuentes exclusivas sin reactivar productores transferidos.
 
 Los datos de arrastre anteriores a este protocolo (43,25 ms de media y 100,1 ms
 de p95) no son directamente comparables con las muestras deterministas de este
