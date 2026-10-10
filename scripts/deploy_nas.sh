@@ -97,6 +97,12 @@ echo "== copia .before y cambio de etiqueta POR SERVICIO (trampa 4)"
 ssh nas "cp $E/$COMPOSE $E/$COMPOSE.before-$SHA"
 # El NAS no tiene python3: se edita en local sobre una copia y se sube.
 scp -q "nas:$E/$COMPOSE" "$TMP/compose.yml"
+if [[ "$SERVICIO" == core ]]; then
+  # La primera adopción parte del compose vivo con un único core-worker.
+  # Se clona localmente para conservar sus secretos sin imprimirlos ni
+  # sustituirlos por los marcadores de la copia versionada.
+  python3 scripts/split_core_workers.py "$TMP/compose.yml"
+fi
 python3 - <<PYEOF
 import re, sys
 ruta = "$TMP/compose.yml"
