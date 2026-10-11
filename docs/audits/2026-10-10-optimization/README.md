@@ -55,6 +55,9 @@ hubiera en cada instante.
   producción.
 - `facet-sql-optimization-production.json` compara el SQL vigente con la
   consulta optimizada sobre los mismos datos.
+- `swissjob-facets-deployment-production.json` demuestra que el bundle servido
+  contiene la ruta de facetas y que producción atendió tanto facetas como
+  páginas por categoría con HTTP 200, conservando sólo recuentos agregados.
 
 ## Simplificación de código
 

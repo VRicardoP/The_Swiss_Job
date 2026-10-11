@@ -1,0 +1,22 @@
+{
+  "observed_at": "2026-10-11T00:12:19Z",
+  "frontend": {
+    "container": "swissjob-frontend",
+    "image": "swissjob-frontend:point5-3986b4a",
+    "image_id": "sha256:b659c50da3bad5b1cd483a98862d206e984957b40e38434e6126bd3bb1c5d84e",
+    "started_at": "2026-10-10T15:36:05.534631032Z",
+    "restart_count": 0,
+    "asset_with_facets_route": "/usr/share/nginx/html/assets/index-DvnHqulx.js"
+  },
+  "backend_access_log_last_24h": {
+    "match_facets": {
+      "requests": 3,
+      "http_statuses": {"200": 3}
+    },
+    "match_results_with_category": {
+      "requests": 3,
+      "http_statuses": {"200": 3}
+    }
+  },
+  "privacy": "Only aggregate route counts and status codes were retained; no client addresses, identities, tokens or response bodies were recorded."
+}
