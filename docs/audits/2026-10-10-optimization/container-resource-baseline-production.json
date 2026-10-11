@@ -81,5 +81,20 @@
     "bi_encoder_memory_saving_mib": 605.64,
     "bi_encoder_memory_saving_percent": 43.08,
     "note": "The controlled one-versus-two-process encoder probe is the causal RAM result; container snapshots include unrelated workload."
+  },
+  "reproduction": {
+    "script": "scripts/measure_nas_resources.py",
+    "sha256": "52a11604b3cb53854c7b4ef4ea7c845bfac7c5ebc6e62b1fe12d42557fe719fa",
+    "baseline_command": "python3 scripts/measure_nas_resources.py --samples 3 --interval 8 --output <baseline.json>",
+    "final_command": "python3 scripts/measure_nas_resources.py --samples 3 --interval 8 --capture-retired --output <final.json>",
+    "behavior": "fails on a missing or unexpected container; parses binary Docker memory units and computes per-container medians plus aggregate sums",
+    "validation": "PyCompile, Ruff check/format and 4 focused tests passed",
+    "live_parser_smoke": {
+      "observed_at": "2026-10-11T07:14:02.558315Z",
+      "containers": 9,
+      "result": "passed",
+      "performance_retained": false,
+      "reason": "one sample overlapped active Portfolio work; it validates transport and parsing only"
+    }
   }
 }
