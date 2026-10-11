@@ -6,5 +6,21 @@
   "pending_staging_rows": 0,
   "slot_active": true,
   "retained_wal": "133 kB",
-  "decision": "ready checkpoint only; do not stop capture before 2026-10-12T20:00:00Z and a final live probe"
+  "decision": "ready checkpoint only; do not stop capture before 2026-10-12T20:00:00Z and a final live probe",
+  "release_topology_probe": {
+    "observed_at": "2026-10-11T06:25:00Z",
+    "transport": "local Python -> SSH -> QNAP standalone Compose/Docker; ready via API container loopback",
+    "pre_cut": {
+      "expected_services": 5,
+      "result": "passed",
+      "release": "5a1241d",
+      "alembic": "core0053",
+      "authoritative": true
+    },
+    "post_cut_negative_control": {
+      "flag": "--capture-retired",
+      "result": "rejected as expected",
+      "reason": "core-capture is still declared by the live Compose"
+    }
+  }
 }
