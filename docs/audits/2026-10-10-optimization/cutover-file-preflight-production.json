@@ -17,5 +17,19 @@
   "retire_core_capture_tool_on_nas": false,
   "retire_tool_interpretation": "expected before cutover; the runbook copies it from the audited checkout and requires matching SHA-256 before execution",
   "result": "pass",
-  "reason": "Rollback copies exist and no stale .next-* compose candidate can be mistaken for the cutover candidate. Recheck immediately before creating the timestamped disable candidate."
+  "reason": "Rollback copies exist and no stale .next-* compose candidate can be mistaken for the cutover candidate. Recheck immediately before creating the timestamped disable candidate.",
+  "local_executable_hashes": {
+    "scripts/retire_core_capture.py": "bce07410b4f3b0fc1bd35de7affb01cc265b492d5c4725aac902af5c7583bad9",
+    "scripts/check_core_release.py": "2a0e451433f1dec271ea9c0ba226cbdb58607d59b39881f0a905af86b5364b22",
+    "scripts/nas/supervisor_contenedores.sh": "74d65131cb32150ebea4e074c7517cb373225e9a617c2bc91036ec9b754afce5"
+  },
+  "hash_rule": "recompute immediately before transfer or promotion and abort on any mismatch",
+  "execution_paths": {
+    "observed_at": "2026-10-11T07:26:50Z",
+    "staging_directory": "/share/Public/swissjob",
+    "staging_directory_writable": true,
+    "retire_tool_target_absent": true,
+    "compose_binary_executable": true,
+    "live_core_compose_present": true
+  }
 }
