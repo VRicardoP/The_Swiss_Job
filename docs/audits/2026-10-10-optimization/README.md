@@ -92,7 +92,7 @@ hubiera en cada instante.
 - `frontend-before-final.json` y `frontend-after-final.json` comprueban las doce
   ventanas con fixtures deterministas y miden tres arrastres de dos segundos.
 - `frontend-measurement-protocol.json` fija el medidor reproducible ya
-  versionado en ReactPortfolio frontend (`e2d2fec`). Su smoke headless cargó las
+  versionado en ReactPortfolio frontend (`1bed6c2`). Su smoke headless cargó las
   doce ventanas con contenido, cero excepciones y tres arrastres; la comparación
   final deberá repetir exactamente el mismo modo y entorno en ambas muestras.
 - `frontend-checks.json` reúne lint, pruebas, build y E2E.

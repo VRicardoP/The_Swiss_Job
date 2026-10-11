@@ -1,7 +1,7 @@
 {
   "measured_at": "2026-10-11T05:57:13.836Z",
   "repository": "ReactPortfolio/frontend",
-  "commit": "e2d2fec",
+  "commit": "1bed6c2",
   "runtime_commit": "07ac81b",
   "script": "e2e/measure-dashboard.mjs",
   "command": "HEADLESS=true OUTPUT=/tmp/reactportfolio-dashboard-repro.json npm run measure:dashboard",
@@ -33,5 +33,18 @@
     "functional_progress": "12/12 windows opened with content and zero recorded page errors before drag",
     "reason": "The desktop environment throttled the synthetic pointer gesture; no result JSON was produced after 163 seconds.",
     "performance_data_retained": false
+  },
+  "timeout_fix": {
+    "drag_timeout_seconds": 60,
+    "reason": "Bound runs affected by desktop pointer throttling instead of requiring manual interruption.",
+    "validated_at": "2026-10-11T06:14:53.121Z",
+    "headless_smoke": {
+      "load_ms": 535,
+      "windows_with_content": 12,
+      "page_errors": 0,
+      "drag_runs": 3,
+      "mean_frame_ms_across_runs": 24.684772043010753,
+      "maximum_p95_frame_ms": 33.399999999999636
+    }
   }
 }
