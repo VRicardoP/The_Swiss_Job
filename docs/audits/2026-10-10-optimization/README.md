@@ -80,6 +80,9 @@ hubiera en cada instante.
 - `delivery-transport-production.json` verifica que los dos consumidores usan
   destinos HTTP explícitos, con 25.405 entregas y cero pendientes o dead-letter;
   el fallback ejecutable al inbox sombra puede retirarse después del cierre.
+- `profile-authority-production.json` demuestra que todos los perfiles
+  SwissJob ya reciben snapshots nativos; la recuperación extraída podrá usar
+  `projection_active` sin consultar el staging CDC.
 
 ## Frontend y regresión
 

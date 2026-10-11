@@ -1,0 +1,29 @@
+{
+  "observed_at": "2026-10-11T01:17:41Z",
+  "scope": "aggregate profile authority counts; no profile content or external reference was read",
+  "consumers": [
+    {
+      "name": "portfolio",
+      "profiles": 1,
+      "legacy_projection_version_zero": 1,
+      "native_source_snapshots": 0,
+      "active": 1,
+      "inactive": 0
+    },
+    {
+      "name": "swissjob-shadow",
+      "profiles": 2,
+      "legacy_projection_version_zero": 0,
+      "native_source_snapshots": 2,
+      "active": 2,
+      "inactive": 0
+    }
+  ],
+  "conclusion": {
+    "swissjob_activity_authority_is_native": true,
+    "native_recovery_filter": "profiles.projection_active",
+    "legacy_staging_activity_filter_needed_after_cdc_closure": false,
+    "reason": "Every SwissJob profile has a native source snapshot; the Portfolio consumer was never subject to the legacy-user inactivity filter.",
+    "implementation_effect": "Do not move inactive_user_refs or any shadow_change_log query into the native recovery module."
+  }
+}
