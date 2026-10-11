@@ -22,6 +22,14 @@
       "ran_at": "2026-10-11T01:20:01Z",
       "state": "ok",
       "new_alert": false
+    },
+    "latest_live_confirmation": {
+      "checked_at": "2026-10-11T08:22:00Z",
+      "ran_at": "2026-10-11T08:20:00Z",
+      "state": "ok",
+      "new_alert": false,
+      "sha256": "74d65131cb32150ebea4e074c7517cb373225e9a617c2bc91036ec9b754afce5",
+      "matches_versioned_source": true
     }
   },
   "next_change": "Remove swissjob-core-capture-r5 from the versioned and live expected list immediately before or with the capture stop, preserving the two split workers."
