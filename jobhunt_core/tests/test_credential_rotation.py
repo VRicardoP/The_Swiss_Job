@@ -12,9 +12,10 @@ que faltaba era que alguna credencial llevara fecha que comprobar.
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import pytest
 import sqlalchemy as sa
 
-from jobhunt_core import credentials
+from jobhunt_core import credentials, rotate_credential
 from jobhunt_core.tests.test_integration_runs import db, pytestmark  # noqa: F401
 
 
@@ -199,3 +200,48 @@ def test_add_scope_rejects_invalid_vocabulary_before_database(db):  # noqa: F811
         raise AssertionError("scope inválido aceptado")
 
     assert "scope inválido" in asyncio.run(go())
+
+
+def test_authorize_command_updates_the_only_live_credential(db, monkeypatch):  # noqa: F811
+    factory, _ = db
+    cid = _consumer(factory, "scope-command")
+
+    async def seed_and_read():
+        async with factory() as session:
+            key_id, _ = await credentials.create_credential(
+                session, cid, ["vacancies:read"]
+            )
+            await session.commit()
+            return key_id
+
+    key_id = asyncio.run(seed_and_read())
+    monkeypatch.setattr(rotate_credential, "SessionLocal", factory)
+    asyncio.run(rotate_credential.autorizar("scope-command", "harvest:write"))
+    asyncio.run(rotate_credential.autorizar("scope-command", "harvest:write"))
+
+    async def read_scopes():
+        async with factory() as session:
+            return await session.scalar(
+                sa.text("SELECT scopes FROM consumer_credentials WHERE key_id=:key"),
+                {"key": key_id},
+            )
+
+    assert asyncio.run(read_scopes()) == ["vacancies:read", "harvest:write"]
+
+
+def test_authorize_command_refuses_overlapping_credentials(db, monkeypatch):  # noqa: F811
+    factory, _ = db
+    cid = _consumer(factory, "scope-command-overlap")
+
+    async def seed():
+        async with factory() as session:
+            await credentials.create_credential(session, cid, ["vacancies:read"])
+            await credentials.create_credential(session, cid, ["vacancies:read"])
+            await session.commit()
+
+    asyncio.run(seed())
+    monkeypatch.setattr(rotate_credential, "SessionLocal", factory)
+    with pytest.raises(SystemExit, match="exactamente una credencial viva"):
+        asyncio.run(
+            rotate_credential.autorizar("scope-command-overlap", "harvest:write")
+        )
