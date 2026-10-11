@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-11T08:41:39+00:00",
+  "observed_at": "2026-10-11T09:13:32+00:00",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; on a failed gate stop that sequence and leave rollback open",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -87,12 +87,14 @@
     {
       "id": 15,
       "status": "pending_after_12",
-      "action": "replace Portfolio transferred-source routers with the common Core adapter, remove 25 modules plus nine normalizer classes, fix routing consumers and preserve notification gates/exclusive-source runtime"
+      "action": "replace Portfolio transferred-source routers with the common Core adapter, remove 25 modules plus nine normalizer classes, fix routing consumers and preserve notification gates/exclusive-source runtime",
+      "plan": "portfolio-compatibility-adapter-plan.json"
     },
     {
       "id": 16,
       "status": "pending_after_12",
-      "action": "remove SwissJob transferred producers and local Core-owned engines, simplify every routing consumer, and preserve applications/profiles, MatchResult overlay, feedback, watchlist health and notification gates"
+      "action": "remove SwissJob transferred producers and local Core-owned engines, simplify every routing consumer, and preserve applications/profiles, MatchResult overlay, feedback, watchlist health and notification gates",
+      "plan": "swissjob-producer-retirement-plan.json"
     },
     {
       "id": 17,
@@ -116,6 +118,8 @@
     "deployment-command-provenance.json",
     "rollback-closure-baseline-production.json",
     "post-rollback-dependency-map.json",
-    "core-native-extraction-plan.json"
+    "core-native-extraction-plan.json",
+    "portfolio-compatibility-adapter-plan.json",
+    "swissjob-producer-retirement-plan.json"
   ]
 }
