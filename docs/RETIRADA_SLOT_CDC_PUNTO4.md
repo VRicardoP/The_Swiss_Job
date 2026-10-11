@@ -19,6 +19,27 @@ continuidad y obliga a abrir una ventana nueva. **Vuelve a comprobar toda la
 precondición el
 día de la retirada**; el histórico no sustituye el estado vivo.
 
+El observador termina antes de la frontera para no convertir un temporizador en
+autorización de corte. A las 20:00 UTC o después, añadir una última muestra con
+las mismas tres sondas y el mismo esquema. El bloque falla antes de escribir si
+cualquier sonda remota falla, y valida los tres JSON antes de anexarlos:
+
+```sh
+set -euo pipefail
+OUT=docs/audits/2026-10-10-optimization/core-observation-48h.jsonl
+OBSERVED=$(date -u -Iseconds)
+HEALTH=$(ssh nas "/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker exec -e PYTHONPATH=/app swissjob-core-api-r5 python /tmp/harvest_health_probe.py")
+OPERATIONAL=$(ssh nas "/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker exec -e PYTHONPATH=/app swissjob-core-api-r5 python /tmp/core_operational_probe.py")
+READY=$(ssh nas "/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker exec swissjob-core-api-r5 python -c 'import json,urllib.request; print(json.dumps(json.load(urllib.request.urlopen(\"http://127.0.0.1:8000/v1/ready\",timeout=5)),sort_keys=True))'")
+python3 -c 'import json,sys; print(json.dumps({"observed_at":sys.argv[1],"ready":json.loads(sys.argv[2]),"health":json.loads(sys.argv[3]),"operational":json.loads(sys.argv[4])},separators=(",",":")))' \
+  "$OBSERVED" "$READY" "$HEALTH" "$OPERATIONAL" >> "$OUT"
+```
+
+No ejecutar este bloque antes de `2026-10-12T20:00:00Z`. La fila añadida debe
+mantener `release=5a1241d`, `alembic=core0053`, `authoritative=true`, 17/17,
+`official_alerts=[]` y todas las colas a cero; además se vuelven a inspeccionar
+los cuatro contenedores nativos con `RestartCount=0` antes de parar captura.
+
 ## Precondición, comprobada el mismo día
 
 ```sh

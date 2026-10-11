@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 08:32 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 09:43 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1215,9 +1215,10 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 El propietario pidió simplificar y optimizar ambos proyectos sin perder ninguna
 funcionalidad, siguiendo el orden acordado hasta terminar todos los objetivos. Ha
 autorizado todos los commits necesarios y el cambio del worker Core de
-`concurrency=2` a `concurrency=1`. Un `git push` o publicación externa sigue
-requiriendo autorización específica; el push del frontend Portfolio está
-pendiente de esa respuesta.
+`concurrency=2` a `concurrency=1`. El 11-10 a las 09:14:55 UTC autorizó
+también la transferencia y ejecución de herramientas y sondas, el push a GitHub
+y GitLab y la publicación en Cloudflare Pages. Esas acciones siguen pendientes
+únicamente por el orden técnico y sus gates, no por permisos.
 
 Reglas de ejecución: comprobar el estado real antes de cada acción; SRP, cohesión
 alta, acoplamiento bajo, legibilidad y consistencia; aplicar el mínimo que cumpla
@@ -1390,6 +1391,50 @@ código ejecutable:
   restante de `public.*` fuera de `shadow`; tras cerrar rollback se borra y
   `migrate.py` deja de crear/verificar `jobhunt_capture` y de otorgar SELECT al
   esquema legacy. Sólo después de desplegar esa release se retira el rol.
+
+### Metodología obligatoria de ejecución y relevo
+
+Esta sesión usa un ciclo verificable y atómico para cada punto. El agente que la
+retome debe mantenerlo:
+
+1. Leer primero este bloque, el objetivo activo y
+   `remaining-execution-checklist.json`; ejecutar sus identificadores en orden.
+   El estado vivo comprobado prevalece sobre la documentación si difieren, y la
+   discrepancia se registra antes de continuar.
+2. Antes de cada acción, comprobar cabeza y suciedad de los repositorios, huellas
+   de scripts/imágenes, release y migración vivas, salud, colas, productores y
+   precondiciones temporales. No inferir un estado por una prueba anterior.
+3. Declarar el resultado esperado y la condición de aborto. Ante un gate fallido,
+   no compensar saltando pasos ni cerrar rollback; conservar el estado seguro,
+   registrar la evidencia y corregir la causa mínima.
+4. Aplicar el cambio más pequeño que resuelva el flujo trazado, reutilizando
+   patrones existentes. Mantener SRP, cohesión alta, acoplamiento bajo,
+   legibilidad y consistencia; YAGNI decide entre soluciones que ya satisfacen
+   esos principios, nunca los sustituye.
+5. Validar de dentro hacia fuera: prueba focal significativa, suite del
+   componente, comprobación de configuración o imagen y sonda viva. Para
+   frontend, exigir contenido en las doce ventanas y cero excepciones. Repetir
+   suites completas sólo cuando un cambio nuevo pueda afectar su resultado.
+6. Medir antes y después con el mismo protocolo, entorno, población y ventana.
+   Separar causalidad de observación, conservar fallos de medición y no mezclar
+   series incompatibles ni atribuir mejoras inexistentes.
+7. Crear evidencia reproducible sin secretos ni datos personales, actualizar
+   esta deuda inmediatamente con estado, versión, cifras y siguiente condición,
+   y hacer un commit de alcance único. Revisar `git diff --cached --check` y el
+   diff indexado antes de confirmar.
+8. Preservar todos los cambios ajenos. Cuando este fichero tenga ediciones del
+   propietario, construir su versión indexada desde `HEAD` y añadir sólo el
+   bloque de esta sesión mediante `git hash-object`/`git update-index`; nunca
+   indexar el fichero completo ni limpiar el árbol para facilitar un commit.
+9. Al terminar o perder contexto, dejar anotados: último punto y subpunto
+   cerrados, siguiente comando o gate, PID/proceso de observación, hora mínima,
+   cabezas e imágenes candidatas, estado de producción, pruebas pendientes y
+   artefactos sin versionar. El siguiente agente revalida todo antes de mutar.
+
+Durante la espera temporal sólo se permiten lectura, validación y preparación
+reversible. No se despliega, publica, cambia routing, retira un productor ni
+borra código antes del identificador correspondiente. El slot, roles, tablas y
+credenciales sólo se retiran en el paso que los nombra y con su condición viva.
 
 ### Checklist de reanudación
 
