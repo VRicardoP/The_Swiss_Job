@@ -1,0 +1,61 @@
+{
+  "core_current_contract": {
+    "celery_task": "jobhunt.harvest.run_scope",
+    "http_enqueue_endpoint": false,
+    "queue": "core.harvest",
+    "required_new_service_scope": "harvest:write",
+    "scope_wide_claim_and_heartbeat": true,
+    "stable_run_key_supported": true
+  },
+  "minimum_post_rollback_change": [
+    "Add one authenticated bounded Core enqueue endpoint requiring harvest:write.",
+    "Resolve only enabled scopes for the requested source and enqueue run_scope with a stable request key.",
+    "Have the shared Portfolio compatibility router call it after its existing admin boundary and preserve the current 200/409 envelopes.",
+    "Do not report success when Core did not accept work."
+  ],
+  "observed_at": "2026-10-11T02:47:59Z",
+  "portfolio_contract": {
+    "accepted_envelope": {
+      "message": "<Source> cache refresh initiated."
+    },
+    "accepted_status": 200,
+    "authorization": "get_current_admin_user",
+    "busy_status": 409,
+    "current_api_to_worker_cooldown_seconds": 60,
+    "route_suffix": "POST /refresh-cache",
+    "transferred_sources": {
+      "arbeitnow": "arbeitnow",
+      "irishjobs": "irishjobs",
+      "jobgether": "jobgether",
+      "nav": "nav_arbeidsplassen",
+      "ostjob": "ostjob",
+      "remotive": "remotive",
+      "thehub": "thehub",
+      "weworkremotely": "weworkremotely",
+      "zentraljob": "zentraljob"
+    }
+  },
+  "production_enabled_scope_counts": {
+    "arbeitnow": 1,
+    "irishjobs": 1,
+    "jobgether": 1,
+    "nav_arbeidsplassen": 2,
+    "ostjob": 1,
+    "remotive": 1,
+    "thehub": 1,
+    "total": 10,
+    "weworkremotely": 1,
+    "zentraljob": 1
+  },
+  "purpose": "Bound the Portfolio source-route compatibility refresh contract before post-rollback cleanup.",
+  "sources": [
+    "backend/services/job_router_helpers.py",
+    "backend/services/job_cache_updater.py",
+    "backend/services/worker_bridge.py",
+    "backend/tests/test_jobs.py",
+    "jobhunt_core/tasks/harvest.py",
+    "jobhunt_core/runs.py",
+    "jobhunt_core/api/v1.py",
+    "jobhunt_core/api/deps.py"
+  ]
+}
