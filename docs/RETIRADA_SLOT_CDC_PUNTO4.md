@@ -202,7 +202,7 @@ en el acta.
 - `swissjob-erasure-cdc`: es borrado de perfiles, otra capacidad, con una
   solicitud registrada.
 - `swissjob-backend` y `swissjob-worker`: sirven el BFF, CV, documentos, la
-  alerta de profesor de primaria y los 12 scrapers escolares.
+  alerta de profesor de primaria y los 8 colectores escolares registrados.
 - `core-harvest-worker` y `core-ops-worker`: ejecutan respectivamente la cosecha
   nativa y las cadencias operativas; no son parte de la captura CDC.
 
