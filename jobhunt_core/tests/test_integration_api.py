@@ -16,7 +16,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from jobhunt_core import credentials, matching, profiles
+from jobhunt_core import credentials, erasure, matching, profiles
 from jobhunt_core.api.v1 import MAX_PAGE_LIMIT
 from jobhunt_core.config import settings
 from jobhunt_core.tests import dbcleanup
@@ -1109,6 +1109,127 @@ def test_catalog_scope_required(db):
 # ---------- C-API-W: escritura del /v1 (PUT perfil + idempotency key) ----------
 
 WRITE_SCOPES = ALL_SCOPES + ["profiles:write"]
+
+
+def test_post_profile_enrolls_once_per_tenant(db):
+    factory, created = db
+    cid_a, _kid_a, token_a = _issue(factory, created, "enrollment-a", WRITE_SCOPES)
+    _cid_b, _kid_b, token_b = _issue(factory, created, "enrollment-b", WRITE_SCOPES)
+    body = {"external_ref": str(uuid.uuid4())}
+    headers = {"Idempotency-Key": "profile-enrollment-stable"}
+
+    first = _api(
+        factory,
+        "/v1/profiles",
+        token=token_a,
+        headers=headers,
+        method="POST",
+        json_body=body,
+    )
+    replay = _api(
+        factory,
+        "/v1/profiles",
+        token=token_a,
+        headers=headers,
+        method="POST",
+        json_body=body,
+    )
+    natural_retry = _api(
+        factory,
+        "/v1/profiles",
+        token=token_a,
+        headers={"Idempotency-Key": "profile-enrollment-second-key"},
+        method="POST",
+        json_body=body,
+    )
+    other_tenant = _api(
+        factory,
+        "/v1/profiles",
+        token=token_b,
+        headers=headers,
+        method="POST",
+        json_body=body,
+    )
+
+    assert first.status_code == replay.status_code == natural_retry.status_code == 200
+    assert first.content == replay.content == natural_retry.content
+    assert other_tenant.status_code == 200
+    assert other_tenant.json()["profile_id"] != first.json()["profile_id"]
+
+    async def count_owned():
+        async with factory() as session:
+            return await session.scalar(
+                sa.text(
+                    "SELECT count(*) FROM profiles "
+                    "WHERE consumer_id=:cid AND external_ref=:ref"
+                ),
+                {"cid": cid_a, "ref": body["external_ref"]},
+            )
+
+    assert asyncio.run(count_owned()) == 1
+
+
+def test_post_profile_cannot_recreate_erased_identity(db):
+    factory, created = db
+    consumer_id, _kid, token = _issue(
+        factory, created, "enrollment-erasure", WRITE_SCOPES
+    )
+    external_ref = str(uuid.uuid4())
+    first = _api(
+        factory,
+        "/v1/profiles",
+        token=token,
+        headers={"Idempotency-Key": "profile-before-erasure"},
+        method="POST",
+        json_body={"external_ref": external_ref},
+    )
+    assert first.status_code == 200
+
+    async def erase():
+        async with factory() as session:
+            await erasure.erase_external_identity(session, consumer_id, external_ref)
+            await session.commit()
+
+    asyncio.run(erase())
+    retry = _api(
+        factory,
+        "/v1/profiles",
+        token=token,
+        headers={"Idempotency-Key": "profile-after-erasure"},
+        method="POST",
+        json_body={"external_ref": external_ref},
+    )
+    assert (retry.status_code, retry.json()["code"]) == (409, "profile_erased")
+
+
+def test_post_profile_requires_scope_and_idempotency_key(db):
+    factory, created = db
+    _cid, _kid, writable = _issue(factory, created, "enrollment-guard", WRITE_SCOPES)
+    _cid_ro, _kid_ro, read_only = _issue(
+        factory, created, "enrollment-read-only", ALL_SCOPES
+    )
+    body = {"external_ref": str(uuid.uuid4())}
+
+    missing_key = _api(
+        factory, "/v1/profiles", token=writable, method="POST", json_body=body
+    )
+    missing_scope = _api(
+        factory,
+        "/v1/profiles",
+        token=read_only,
+        headers={"Idempotency-Key": "profile-enrollment-scope"},
+        method="POST",
+        json_body=body,
+    )
+
+    assert (missing_key.status_code, missing_key.json()["code"]) == (
+        400,
+        "idempotency_key_required",
+    )
+    assert (
+        missing_scope.status_code,
+        missing_scope.json()["details"]["required_scope"],
+    ) == (403, "profiles:write")
 
 
 def _seed_writable(factory, created):

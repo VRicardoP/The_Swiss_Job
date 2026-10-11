@@ -1,7 +1,7 @@
 """Durable profile delivery: delayed ACKs, outages, restore mismatch and opt-in."""
 
 import uuid
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 from sqlalchemy import text
@@ -16,6 +16,8 @@ class Core:
     def __init__(self):
         self.version = 0
         self.calls = []
+        self.post_calls = []
+        self.enrollment_id = uuid.uuid4()
         self.body = None
         self.fail = False
         self.on_put = None
@@ -26,6 +28,24 @@ class Core:
 
     async def __aexit__(self, *args):
         return None
+
+    async def post(self, url, json, headers):
+        self.post_calls.append((url, json, headers))
+        if self.fail:
+            raise ConnectionError("PRIVATE CV MUST NOT ENTER DIAGNOSTICS")
+        enrollment_id = self.enrollment_id
+        external_ref = json["external_ref"]
+
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {
+                    "profile_id": str(enrollment_id),
+                    "external_ref": external_ref,
+                }
+
+        return Response()
 
     async def put(self, url, json):
         self.calls.append(json)
@@ -133,15 +153,66 @@ async def test_invalid_or_ahead_ack_never_silently_marks_delivered(
     ]
 
 
-async def test_missing_credentials_or_enrollment_send_nothing(
-    client, core, monkeypatch
-):
+async def test_missing_credentials_send_nothing(client, core, monkeypatch):
     _, uid = await _auth(client)
     monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "")
     assert (await _deliver(uid))["error"] == "not_configured"
-    monkeypatch.setattr(sync, "resolve_core_profile_id", AsyncMock(return_value=None))
-    assert (await _deliver(uid))["error"] == "not_enrolled"
+    assert core.post_calls == []
     assert core.calls == []
+
+
+async def test_missing_enrollment_is_provisioned_before_snapshot(
+    client, core, monkeypatch
+):
+    _, uid = await _auth(client)
+    monkeypatch.setattr(sync, "resolve_core_profile_id", AsyncMock(return_value=None))
+    linked = AsyncMock()
+    monkeypatch.setattr(sync, "set_profile_link", linked)
+
+    assert (await _deliver(uid))["status"] == "ok"
+    assert core.post_calls == [
+        (
+            "/profiles",
+            {"external_ref": str(uid)},
+            {"Idempotency-Key": f"profile-enrollment:{uid}"},
+        )
+    ]
+    linked.assert_awaited_once_with(
+        ANY, uid, core.enrollment_id, updated_by="profile_snapshot_delivery"
+    )
+    assert core.body["content"] is not None
+
+
+async def test_local_profile_moves_to_core_only_after_snapshot_ack(
+    client, core, monkeypatch
+):
+    _, uid = await _auth(client)
+    monkeypatch.setattr(sync, "resolve_mode", AsyncMock(return_value="local"))
+    route = AsyncMock()
+    monkeypatch.setattr(sync, "set_routing", route)
+
+    assert (await _deliver(uid))["status"] == "ok"
+    route.assert_awaited_once_with(
+        ANY,
+        sync.CAPABILITY_MATCHING,
+        sync.MODE_CORE_PRIMARY,
+        profile_id=uid,
+        updated_by="profile_snapshot_delivery",
+    )
+
+
+async def test_failed_snapshot_does_not_move_local_profile(client, core, monkeypatch):
+    headers, uid = await _auth(client)
+    monkeypatch.setattr(sync, "resolve_mode", AsyncMock(return_value="local"))
+    route = AsyncMock()
+    monkeypatch.setattr(sync, "set_routing", route)
+    core.fail = True
+
+    assert (await _deliver(uid))["status"] == "pending"
+    route.assert_not_awaited()
+    assert (await client.get("/api/v1/profile/sync-status", headers=headers)).json()[
+        "pending"
+    ]
 
 
 async def test_status_requires_authentication(client):

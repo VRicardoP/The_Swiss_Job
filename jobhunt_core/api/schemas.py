@@ -222,6 +222,17 @@ class ProfileWriteDTO(BaseModel):
     target_roles: list[str] = Field(default=[], max_length=10)
 
 
+class ProfileEnrollmentWriteDTO(BaseModel):
+    """Identidad externa que un consumer asegura antes de enviar snapshots."""
+
+    external_ref: str = Field(min_length=1, max_length=100)
+
+
+class ProfileEnrollmentDTO(BaseModel):
+    profile_id: uuid.UUID
+    external_ref: str
+
+
 # ---------------------------------------------------------------- C-4 (v2.1)
 
 # Enum del core (8 estados, core0011); el del portfolio (6) es subconjunto.

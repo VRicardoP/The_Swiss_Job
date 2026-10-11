@@ -1,21 +1,28 @@
 """Deliver committed full profile snapshots; never perform HTTP in a mutation tx.
 
 Triggers capture every retained writer (CRUD, CV tasks and activity changes).
-This worker is independent of harvest, opt-in only after provisioning/core0049.
+This worker is independent of harvest and provisions a missing Core identity idempotently.
 It coalesces backlog to the latest snapshot; core fences delayed older requests.
 """
 
 import asyncio
 import logging
+import uuid
 
 from sqlalchemy import func, select, update
 
 from config import settings
 from database import async_session
 from models.profile_sync_state import ProfileSyncState
-from services.matching.identity import resolve_core_profile_id
+from services.matching.identity import resolve_core_profile_id, set_profile_link
 from services.profiles.core_client import default_client_factory
-from services.routing import CAPABILITY_MATCHING, legacy_owns, resolve_mode
+from services.routing import (
+    CAPABILITY_MATCHING,
+    MODE_CORE_PRIMARY,
+    legacy_owns,
+    resolve_mode,
+    set_routing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +48,33 @@ async def profile_sync_status(db, user_id):
     }
 
 
+async def _ensure_core_profile_id(db, user_id, client_factory):
+    profile_id = await resolve_core_profile_id(db, user_id)
+    if profile_id is not None:
+        return profile_id
+
+    external_ref = str(user_id)
+    async with client_factory() as client:
+        response = await client.post(
+            "/profiles",
+            json={"external_ref": external_ref},
+            headers={"Idempotency-Key": f"profile-enrollment:{external_ref}"},
+        )
+    if response.status_code != 200:
+        raise ValueError(f"core_http_{response.status_code}")
+    payload = response.json()
+    try:
+        profile_id = uuid.UUID(payload["profile_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("invalid_enrollment") from exc
+    if payload.get("external_ref") != external_ref:
+        raise ValueError("invalid_enrollment")
+    await set_profile_link(
+        db, user_id, profile_id, updated_by="profile_snapshot_delivery"
+    )
+    return profile_id
+
+
 async def sync_profile_snapshot(db, user_id, client_factory=None):
     if not settings.CORE_PROFILE_SYNC_ENABLED:
         return {"status": "disabled"}
@@ -61,12 +95,11 @@ async def sync_profile_snapshot(db, user_id, client_factory=None):
             return {"status": "idle"}
         sent_version = row.version
         body = {"version": sent_version, "active": row.active, "content": row.content}
+        factory = client_factory or default_client_factory
+        if factory is default_client_factory and not settings.CORE_CONSUMER_KEY:
+            raise ValueError("not_configured")
         mode = await resolve_mode(db, CAPABILITY_MATCHING, user_id)
-        pid = (
-            await resolve_core_profile_id(db, user_id)
-            if not legacy_owns(mode)
-            else None
-        )
+        pid = await _ensure_core_profile_id(db, user_id, factory)
         await db.execute(
             update(ProfileSyncState)
             .where(
@@ -75,13 +108,7 @@ async def sync_profile_snapshot(db, user_id, client_factory=None):
             .values(last_attempt_at=func.clock_timestamp())
         )
         await db.commit()
-        if legacy_owns(mode):
-            return {"status": "local"}
-        if pid is None:
-            raise ValueError("not_enrolled")
-        if not settings.CORE_CONSUMER_KEY:
-            raise ValueError("not_configured")
-        async with (client_factory or default_client_factory)() as client:
+        async with factory() as client:
             response = await client.put(f"/profiles/{pid}/source-snapshot", json=body)
         if response.status_code != 200:
             raise ValueError(f"core_http_{response.status_code}")
@@ -91,6 +118,14 @@ async def sync_profile_snapshot(db, user_id, client_factory=None):
             raise ValueError("invalid_ack")
         if ack > sent_version:
             raise ValueError("core_version_ahead")
+        if legacy_owns(mode):
+            await set_routing(
+                db,
+                CAPABILITY_MATCHING,
+                MODE_CORE_PRIMARY,
+                profile_id=user_id,
+                updated_by="profile_snapshot_delivery",
+            )
         await db.execute(
             update(ProfileSyncState)
             .where(
@@ -104,8 +139,8 @@ async def sync_profile_snapshot(db, user_id, client_factory=None):
     except Exception as exc:
         # Never log/persist exception bodies, CVs, HTTP credentials or URLs.
         safe_errors = {
-            "not_enrolled",
             "not_configured",
+            "invalid_enrollment",
             "invalid_ack",
             "core_version_ahead",
         }

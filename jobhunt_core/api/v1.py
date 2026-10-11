@@ -2,6 +2,7 @@
 
 Matriz ruta→scope→ownership del contrato:
 - GET /v1/vacancies/{id}        vacancies:read   GLOBAL (corpus compartido)
+- POST /v1/profiles             profiles:write   tenant (alta idempotente)
 - GET /v1/profiles/{pid}        profiles:read    tenant (404 cross)
 - GET /v1/profiles/{pid}/matches matches:read    tenant (404 cross)
 
@@ -27,6 +28,7 @@ from jobhunt_core.api.deps import (
     ApiError,
     Principal,
     ensure_json_storable,
+    ensure_text_storable,
     error_404,
     get_session,
     require_scope,
@@ -37,6 +39,7 @@ from jobhunt_core.api.http_contract import (
     with_etag as _with_etag,
 )
 from jobhunt_core.api.idempotency import run_idempotent
+from jobhunt_core.erasure import ProfileErasedError
 
 # Los errores del contrato quedan DOCUMENTADOS en OpenAPI (auditoría A-09:
 # ErrorDTO debe aparecer en components, no ser código muerto).
@@ -492,6 +495,57 @@ async def _profile_dto(session, profile_id, consumer_id) -> schemas.ProfileDTO |
             if row.content_hash is not None
             else None
         ),
+    )
+
+
+@router.post(
+    "/profiles",
+    response_model=schemas.ProfileEnrollmentDTO,
+    responses={409: {"model": schemas.ErrorDTO}},
+)
+async def enroll_profile(
+    body: schemas.ProfileEnrollmentWriteDTO,
+    request: Request,
+    session=Depends(get_session),
+    principal: Principal = Depends(require_scope("profiles:write")),
+):
+    """Ensure one tenant-owned profile identity for native snapshot delivery."""
+    idem_key = request.headers.get("idempotency-key")
+    if idem_key is None:
+        raise ApiError(
+            400,
+            "idempotency_key_required",
+            "la provisión exige Idempotency-Key",
+        )
+    ensure_text_storable(body.external_ref, "external_ref", code="invalid_request")
+    values = body.model_dump(mode="json")
+    req_hash = hashlib.sha256(
+        json.dumps(values, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()
+
+    async def handler():
+        try:
+            profile_id = await profiles.upsert_profile(
+                session, principal.consumer_id, body.external_ref
+            )
+        except ProfileErasedError as exc:
+            raise ApiError(
+                409,
+                "profile_erased",
+                "la identidad fue borrada y no puede recrearse",
+            ) from exc
+        return 200, {
+            "profile_id": str(profile_id),
+            "external_ref": body.external_ref,
+        }
+
+    status, payload = await run_idempotent(
+        session, principal, "POST /v1/profiles", req_hash, idem_key, handler
+    )
+    return Response(
+        content=json.dumps(payload, sort_keys=True, ensure_ascii=False),
+        media_type="application/json",
+        status_code=status,
     )
 
 

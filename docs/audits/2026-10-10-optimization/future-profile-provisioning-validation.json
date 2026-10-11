@@ -1,0 +1,37 @@
+{
+  "observed_at": "2026-10-11T04:27:42Z",
+  "production_baseline": {
+    "swissjob_users": 2,
+    "active_users": 2,
+    "linked_profiles": 2,
+    "unlinked_profiles": 0,
+    "matching_profile_routes_core_primary": 2,
+    "matching_wildcard_routes": 0,
+    "registration_gap": "new registrations created a local profile without a Core identity or matching route",
+    "live_credential_count": 1,
+    "all_live_credentials_have_profiles_write": true
+  },
+  "candidate_behavior": {
+    "core_endpoint": "POST /v1/profiles",
+    "scope": "profiles:write",
+    "idempotency_key_required": true,
+    "tenant_natural_identity_reused": true,
+    "erasure_fence_preserved": true,
+    "swissjob_missing_link_is_provisioned": true,
+    "snapshot_sent_before_route_change": true,
+    "matching_route_after_ack": "core_primary",
+    "failed_snapshot_keeps_legacy_route": true
+  },
+  "validation": {
+    "core_integration_api": "47 passed",
+    "swissjob_profile_delivery": "11 passed",
+    "ruff": "passed",
+    "ruff_format": "passed",
+    "py_compile": "passed",
+    "diff_check": "passed"
+  },
+  "deployment": {
+    "deployed": false,
+    "gate": "deploy after the capture observation and producer handover gates, then require zero unlinked active users before formal rollback closure"
+  }
+}
