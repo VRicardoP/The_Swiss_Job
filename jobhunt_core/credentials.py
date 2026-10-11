@@ -217,7 +217,7 @@ async def active_credential_alerts(
                     f"consumer {fila.consumer}: {fila.vivas} credenciales vivas "
                     f"{edad:.0f} d después de emitir la última (> {margen} d) — "
                     "la rotación quedó a medias y la credencial vieja sigue "
-                    "autorizando; revocarla con scripts/rotate_credential.py"
+                    "autorizando; revocarla con `python -m jobhunt_core.rotate_credential`"
                 ),
             }
         )
