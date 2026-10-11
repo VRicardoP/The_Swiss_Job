@@ -31,6 +31,8 @@ hubiera en cada instante.
   17 scopes distintos, 17 cursores confirmados y cero errores de tarea.
 - `capture-retirement-inventory.md` separa el proceso CDC que se retirará del
   drenado de embeddings, matching y borrado de perfiles que siguen activos.
+- `capture-retirement-readiness-production.json` conserva el checkpoint vivo
+  previo al corte: staging drenado, slot activo y WAL retenido acotado.
 
 ## Fuentes y autoridad
 

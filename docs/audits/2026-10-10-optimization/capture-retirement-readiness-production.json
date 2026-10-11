@@ -1,0 +1,10 @@
+{
+  "checkpoint_at": "2026-10-11T01:14:16Z",
+  "phase": "observation_before_48h_cut",
+  "database": "swissjobhunter_r5_rehearsal",
+  "slot": "jobhunt_shadow_r5_rehearsal",
+  "pending_staging_rows": 0,
+  "slot_active": true,
+  "retained_wal": "133 kB",
+  "decision": "ready checkpoint only; do not stop capture before 2026-10-12T20:00:00Z and a final live probe"
+}
