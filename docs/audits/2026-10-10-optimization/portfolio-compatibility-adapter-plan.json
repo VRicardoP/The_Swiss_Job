@@ -1,0 +1,141 @@
+{
+  "observed_at": "2026-10-11T09:06:09Z",
+  "method": "offline route extraction from the immutable image with network disabled, source inspection on the clean backend worktree, and frontend consumer scan",
+  "repo_heads": {
+    "portfolio_backend": "a292ef4b56341e61f6c2778a23b23bb89f807319",
+    "portfolio_frontend": "1bed6c23c9485722d40ebc15bbff235ceb28fe82",
+    "swissjob_core": "f29fd441396e1c80633ca3127ccc8395c6405443"
+  },
+  "route_surface": {
+    "image": "portfolio-backend:board-a292ef4",
+    "network": "none",
+    "total": 56,
+    "get": 47,
+    "post": 9,
+    "by_source": {
+      "arbeitnow": [
+        "GET by-location",
+        "GET by-tag",
+        "GET by-category",
+        "GET by-company",
+        "GET remote-stats",
+        "GET recent",
+        "POST refresh-cache",
+        "GET stats",
+        "GET health"
+      ],
+      "remotive": [
+        "GET by-category",
+        "GET by-location",
+        "GET by-tag",
+        "GET recent",
+        "POST refresh-cache",
+        "GET stats",
+        "GET health"
+      ],
+      "irishjobs": [
+        "GET recent",
+        "GET stats",
+        "GET by-tag",
+        "GET by-location",
+        "POST refresh-cache",
+        "GET health"
+      ],
+      "jobgether": [
+        "GET recent",
+        "GET stats",
+        "GET by-tag",
+        "GET by-location",
+        "POST refresh-cache",
+        "GET health"
+      ],
+      "nav": [
+        "GET recent",
+        "GET stats",
+        "GET by-tag",
+        "GET by-location",
+        "POST refresh-cache",
+        "GET health"
+      ],
+      "thehub": [
+        "GET recent",
+        "GET stats",
+        "GET by-tag",
+        "GET by-location",
+        "POST refresh-cache",
+        "GET health"
+      ],
+      "weworkremotely": [
+        "GET recent",
+        "GET stats",
+        "GET by-tag",
+        "GET by-location",
+        "POST refresh-cache",
+        "GET health"
+      ],
+      "ostjob": [
+        "GET recent",
+        "GET stats",
+        "GET by-location",
+        "POST refresh-cache",
+        "GET health"
+      ],
+      "zentraljob": [
+        "GET recent",
+        "GET stats",
+        "GET by-location",
+        "POST refresh-cache",
+        "GET health"
+      ]
+    }
+  },
+  "verified_consumers": {
+    "frontend": "useDashboardData selects /api/v1/jobs/search for every key present in CORE_SOURCE_BY_KEY; the nine historical urlPath values remain in configuration but are not selected",
+    "backend_runtime": "main.py is the only versioned runtime registrar of the nine historical routers",
+    "other_versioned_clients": "none found outside routers, main.py and tests",
+    "external_clients": "not disproved by runtime logs; preserve all 56 HTTP routes until an explicit deprecation decision"
+  },
+  "core_contracts_already_implemented": {
+    "aggregate": "GET /v1/harvest/sources/{source}/aggregate, vacancies:read, ETag, item_limit 1..500, top_n 1..500",
+    "dispatch": "POST /v1/harvest/sources/{source}/runs, harvest:write, required Idempotency-Key, 202 accepted, 409 while a scope lease is live",
+    "source_mapping": {
+      "arbeitnow": "arbeitnow",
+      "irishjobs": "irishjobs",
+      "jobgether": "jobgether",
+      "nav": "nav_arbeidsplassen",
+      "ostjob": "ostjob",
+      "remotive": "remotive",
+      "thehub": "thehub",
+      "weworkremotely": "weworkremotely",
+      "zentraljob": "zentraljob"
+    }
+  },
+  "minimum_implementation_after_formal_rollback": {
+    "module": "one cohesive Portfolio router module backed by services.core_http.default_client_factory",
+    "registration": "include one compatibility router from main.py and remove the nine source-specific imports/registrations",
+    "configuration": "one immutable per-source mapping containing public key, Core key, display name, route families and the existing 200/300 recent-item cap",
+    "transport": "reuse the existing authenticated Core client factory; do not add a dependency or a new port hierarchy",
+    "recent": "map bounded aggregate items to the existing public job keys; prefer apply_url over url and published_at over first_seen_at, retaining source-specific job_type/job_types fields",
+    "counts": "shape locations, tags, companies, categories, job_types, cantons and remote/onsite directly from aggregate.counts with existing top_n bounds",
+    "refresh": "retain get_current_admin_user, forward or generate a per-request Idempotency-Key, translate Core 202 to the established 200 message and preserve 409",
+    "age": "format corpus_updated_at with the existing Never updated / minutes / hours / days vocabulary",
+    "health": "derive status from enabled/observed scopes, last_complete_at and max_consecutive_failures; preserve the existing key set without exposing provider or credential details"
+  },
+  "honest_contract_limits": {
+    "success_rate": "the legacy value measured page-request success inside an in-memory scraper and has no exact native equivalent; do not label a different ratio as the same measurement",
+    "last_error": "Core deliberately stores failure state without a raw provider error on source_harvest_runs; expose null when healthy and a stable generic failure code/message when failing",
+    "top_n": "Core caps each dimension at 500; production cardinality must be measured after deployment before claiming exact parity for unbounded historical by-location responses",
+    "recent_identity": "external_id is the compatible source identity; the public URL is apply_url when present, otherwise url"
+  },
+  "validation_before_deleting_old_modules": [
+    "run contract tests for every one of the 56 method/path pairs and their query bounds",
+    "compare old fixture responses with the adapter for data and metadata keys, allowing only the documented native health semantics",
+    "prove POST requires an admin and maps accepted, busy, unavailable and malformed Core responses",
+    "prove the adapter performs no provider network request",
+    "probe all nine deployed sources after Core f29fd44 and require non-empty recent data where the source aggregate is non-empty",
+    "run the 12-window frontend check and confirm the dashboard still uses /api/v1/jobs/search",
+    "only then remove the 25 full modules and nine shared normalizer classes listed in code-simplification-baseline.json"
+  ],
+  "frontend_cleanup_after_adapter_validation": "remove the nine unreachable historical urlPath values while retaining urlPath for the eleven locally owned sources; CORE_SOURCE_BY_KEY remains the single routing map",
+  "status": "design verified; implementation prohibited until formal rollback closure by the agreed order"
+}

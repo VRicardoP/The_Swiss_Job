@@ -1323,10 +1323,12 @@ código ejecutable:
   sus propios routers y pruebas, pero los logs del contenedor no registran
   accesos HTTP (29 líneas/0 solicitudes en 48 h) y no prueban ausencia de
   clientes externos. La superficie son 25 módulos eliminables completos: nueve configuraciones, nueve routers, seis implementaciones y `services/chmedia_job_base.py`; este último sólo tiene como importadores de runtime los routers transferidos de Ostjob y Zentraljob. Además se retiran selectivamente nueve clases normalizadoras (237 líneas) del `services/job_provider.py` compartido. Tras rollback se
-  sustituyen por un único router de compatibilidad apoyado en
-  `CompositeCatalog`, que ya pagina y filtra por las nueve fuentes (`nav` se
-  traduce a `nav_arbeidsplassen`); se preservan los sobres GET y se eliminan los
-  fetchers externos. `refresh-cache` no puede fingir éxito: Core ya dispone de
+  sustituyen por un único router de compatibilidad que reutiliza
+  `services.core_http.default_client_factory`: los GET consumen el agregado
+  acotado de Core y el POST despacha la fuente; `CompositeCatalog` sigue siendo
+  la ruta del buscador unificado. `nav` se traduce a
+  `nav_arbeidsplassen`, se preservan los sobres y se eliminan los fetchers
+  externos. `refresh-cache` no puede fingir éxito: Core ya dispone de
   `jobhunt.harvest.run_scope`, con exclusión, heartbeat e idempotencia por run,
   pero la revisión confirmó que todavía no existe una operación HTTP que la
   encole. Los nueve nombres Portfolio mapean a nueve fuentes Core y diez scopes
@@ -1340,8 +1342,16 @@ código ejecutable:
   `category/job_type` de Remotive sólo viven en las revisiones raw retenidas.
   Para no volver a descargar miles de vacantes al BFF, Core ya implementa localmente
   un único agregado por fuente acotado; el router Portfolio común dará forma a
-  los sobres históricos después del cierre de rollback. Evidencias
-  `portfolio-refresh-compatibility.json` y `source-aggregate-validation.json`.
+  los sobres históricos después del cierre de rollback. La superficie se
+  extrajo de la imagen inmutable sin red: el frontend vivo ya deriva esas nueve
+  pestañas a `/api/v1/jobs/search`, pero no se presupone que no haya clientes
+  externos y se mantienen los 56 contratos. El plan mínimo usa un solo módulo y
+  una tabla inmutable de fuentes, conserva admin/200/409 e identifica dos límites
+  honestos: el `success_rate` de peticiones del scraper no tiene equivalente
+  nativo exacto y las dimensiones Core están acotadas a 500. Ambos se validarán
+  en producción antes de borrar módulos, sin inventar paridad. Evidencias
+  `portfolio-refresh-compatibility.json`, `source-aggregate-validation.json`
+  y `portfolio-compatibility-adapter-plan.json`.
 - Tras el cierre formal, Portfolio deja una topología fija: catálogo y matching
   resuelven siempre a `CompositeCatalog` y `CompositeMatching` (Core más las
   once fuentes exclusivas); candidaturas, búsquedas guardadas, documentos y
