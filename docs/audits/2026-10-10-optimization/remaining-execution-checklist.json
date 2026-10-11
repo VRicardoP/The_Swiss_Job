@@ -41,7 +41,8 @@
     {
       "id": 6,
       "status": "pending_after_5",
-      "action": "deploy Core f29fd44, verify authoritative ready/routes/dedup batching, then grant portfolio harvest:write exactly once"
+      "action": "deploy Core f29fd44, verify authoritative ready/routes/dedup batching, then grant portfolio harvest:write exactly once",
+      "plan": "core-postdeploy-verification-plan.json"
     },
     {
       "id": 7,

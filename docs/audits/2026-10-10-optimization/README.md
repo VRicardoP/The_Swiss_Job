@@ -158,6 +158,8 @@ hubiera en cada instante.
   de Cloudflare Pages y fija cómo demostrar que el dominio realmente cambió.
 - `deployment-command-provenance.json` fija el checkout y la huella del
   comando que ejecuta cada despliegue posterior a capture.
+- `core-postdeploy-verification-plan.json` fija las sondas inmutables para
+  los nueve agregados, el permiso de despacho y la cadena dedup fragmentada.
 - `formal-closure-probes-validation.json` documenta las tres sondas fail-closed
   de Core, SwissJob y Portfolio y las autorizaciones externas aún necesarias
   para ejecutarlas en producción.

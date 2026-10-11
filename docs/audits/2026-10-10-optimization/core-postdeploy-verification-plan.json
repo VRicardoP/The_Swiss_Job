@@ -1,0 +1,48 @@
+{
+  "observed_at": "2026-10-11T10:02:36+00:00",
+  "status": "verified procedure; execution deferred to checklist item 6",
+  "candidate": "swissjob-core:point5-f29fd44",
+  "route_probe": {
+    "path": "probe_core_candidate_routes.py",
+    "sha256": "b426a56f11a51864fa765f9696819527d7791141dfdaa34d87e4c2a28118585d",
+    "execution_context": "stdin inside the live portfolio_backend; reuses its configured Core base URL and credential without printing either",
+    "before_scope_grant": "ssh nas \"$D exec -i portfolio_backend python -\" < docs/audits/2026-10-10-optimization/probe_core_candidate_routes.py",
+    "after_scope_grant": "ssh nas \"$D exec -i portfolio_backend python - --after-grant\" < docs/audits/2026-10-10-optimization/probe_core_candidate_routes.py",
+    "coverage": [
+      "ready and authoritative",
+      "HTTP 200 for all nine source aggregates with item_limit=500 and top_n=500",
+      "bounded items, exact count dimensions, enabled scopes all observed and zero consecutive failures",
+      "ETag revalidation returns 304",
+      "after harvest:write grant, a missing-source dispatch reaches the handler and returns code=not_found without enqueueing work"
+    ],
+    "predeploy_transport_test": {
+      "mode": "--ready-only",
+      "result": "passed from live portfolio_backend against Core 5a1241d/core0053",
+      "elapsed_ms": 40.916,
+      "failures": []
+    },
+    "discarded_attempt": "the first ad-hoc inline async Python expression was syntactically invalid and never opened a request; it produced no measurement or production mutation",
+    "validation": "PyCompile and Ruff passed"
+  },
+  "dedup_probe": {
+    "trigger_precondition": "Core f29fd44 is healthy, core.default and core.notifications are zero, and the 05:20 Europe/Zurich scheduled invocation cannot overlap",
+    "trigger": "ssh nas \"$D exec swissjob-core-ops-worker-r5 celery -A jobhunt_core.celery_app call jobhunt.maintenance.dedup_scan\"",
+    "trigger_cli_validation": "celery call --help passed offline inside swissjob-core:point5-f29fd44 with network disabled",
+    "log_verifier": {
+      "path": "verify_dedup_batch_log.py",
+      "sha256": "465ddf3ec3acf34aa0eac7e22ac71e9b5b737311b3efc944240be30c135a4d83",
+      "input": "core-ops-worker logs starting immediately before the single trigger",
+      "validation": "PyCompile, Ruff, positive partial-plus-terminal fixture and fail-closed error fixture passed"
+    },
+    "success_gate": [
+      "at least one 250-row partial fragment with a complete cursor",
+      "exactly one terminal fragment with next_cursor=null",
+      "exact and lexical arms appear only on the terminal fragment",
+      "one Celery success duration per fragment and every duration is below 1800 seconds",
+      "no fragment failure, SoftTimeLimitExceeded or traceback",
+      "core.default and core.notifications drain to zero after the chain"
+    ],
+    "abort_rule": "do not grant authority or continue the deployment sequence if either probe fails; preserve the live logs and keep rollback open"
+  },
+  "production_changed": false
+}
