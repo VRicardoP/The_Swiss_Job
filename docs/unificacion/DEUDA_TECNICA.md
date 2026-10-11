@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 02:17 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 02:24 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1261,12 +1261,19 @@ código ejecutable:
   expirar ticks solapados y filtrar únicamente por `profiles.projection_active`.
   El worker vivo no define `CORE_SHADOW_PROJECT_EVERY_S`, así que usa ese valor
   por defecto; la limpieza lo renombra a configuración nativa, sin trasladar las
-  demás variables `CORE_SHADOW_*`.
+  demás variables `CORE_SHADOW_*`. Reutilizará `_run_pending_impl` y
+  `_run_profile_impl`; sólo se trasladan la consulta de señal y el registro
+  transaccional del intento, eliminando el filtro legacy
+  `_shadow_inactive_profiles`.
 - `_erase_profile_graph` y su orden FK-safe pasan directamente a
   `erasure.py`, que ya es su único llamador productivo. No se crea una capa
   intermedia.
 - La salud del outbox pasa a `tasks/delivery.py` reutilizando
   `delivery.stats`, el límite ratificado de 900 s y `dead_total=0`.
+- El arranque de `tasks/delivery.py` deja de importar el inbox sombra. Los dos
+  destinos HTTP productivos ya están configurados explícitamente; se conserva
+  el comportamiento seguro actual: sin configuración no se reclama trabajo y
+  un destino desconocido falla sin marcar la entrega como completada.
 - Tras borrar `shadow.metrics`, `NDCG_K=10` y la pequeña función DCG quedan
   locales a `dev_eval.py`, su único consumidor; no se añade un módulo de una
   sola función.
