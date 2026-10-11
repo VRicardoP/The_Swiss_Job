@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 02:13 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 02:17 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1257,8 +1257,11 @@ código ejecutable:
 
 - La recuperación periódica es necesaria porque no existe otro planificador.
   Debe vivir en el módulo cohesivo `tasks/matching.py`, conservar la cadencia de
-  cinco minutos y las cotas vivas de una ronda de embeddings y un perfil por
-  tarea, y filtrar únicamente por `profiles.projection_active`.
+  300 s y las cotas vivas de una ronda de embeddings y un perfil por tarea,
+  expirar ticks solapados y filtrar únicamente por `profiles.projection_active`.
+  El worker vivo no define `CORE_SHADOW_PROJECT_EVERY_S`, así que usa ese valor
+  por defecto; la limpieza lo renombra a configuración nativa, sin trasladar las
+  demás variables `CORE_SHADOW_*`.
 - `_erase_profile_graph` y su orden FK-safe pasan directamente a
   `erasure.py`, que ya es su único llamador productivo. No se crea una capa
   intermedia.
@@ -1277,6 +1280,12 @@ código ejecutable:
   por lo que no demuestran ausencia de clientes externos: al retirar colectores
   se conservan esos contratos o se sustituyen por adaptadores Core; no se borran
   declarándolos «sin uso» sin evidencia.
+- `retention.py` y `erasure_restore.py` se conservan: siguen purgando el inbox
+  histórico y aplicando recibos de borrado sobre `shadow_change_log`, tablas que
+  expresamente no se eliminan. `search_cutover.py` es el único lector ejecutable
+  restante de `public.*` fuera de `shadow`; tras cerrar rollback se borra y
+  `migrate.py` deja de crear/verificar `jobhunt_capture` y de otorgar SELECT al
+  esquema legacy. Sólo después de desplegar esa release se retira el rol.
 
 ### Estado vivo y artefactos exactos
 
