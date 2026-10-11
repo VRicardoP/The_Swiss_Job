@@ -1,0 +1,85 @@
+{
+  "sample_window": {
+    "started_at": "2026-10-11T01:16:08Z",
+    "ended_at": "2026-10-11T01:16:25Z",
+    "samples": 3,
+    "method": "docker stats --no-stream at approximately 8 second intervals",
+    "interpretation": "Point-in-time operational baseline. Compare with the same method after cutover; use medians because request and scheduled-task spikes are expected."
+  },
+  "containers": {
+    "swissjob-core-api-r5": {
+      "cpu_percent": [0.23, 0.24, 11.99],
+      "memory_mib": [112.8, 112.4, 114.2],
+      "pids": 2,
+      "median_cpu_percent": 0.24,
+      "median_memory_mib": 112.8
+    },
+    "swissjob-core-worker-r5": {
+      "cpu_percent": [0.44, 0.50, 0.36],
+      "memory_mib": [610.3, 610.3, 610.3],
+      "pids": 9,
+      "median_cpu_percent": 0.44,
+      "median_memory_mib": 610.3
+    },
+    "swissjob-core-harvest-worker-r5": {
+      "cpu_percent": [0.49, 0.46, 0.18],
+      "memory_mib": [350.2, 350.2, 350.2],
+      "pids": 2,
+      "median_cpu_percent": 0.46,
+      "median_memory_mib": 350.2
+    },
+    "swissjob-core-ops-worker-r5": {
+      "cpu_percent": [0.43, 0.51, 0.08],
+      "memory_mib": [139.0, 139.0, 139.0],
+      "pids": 3,
+      "median_cpu_percent": 0.43,
+      "median_memory_mib": 139.0
+    },
+    "swissjob-core-capture-r5": {
+      "cpu_percent": [0.01, 0.01, 0.02],
+      "memory_mib": [19.26, 18.99, 19.25],
+      "pids": 1,
+      "median_cpu_percent": 0.01,
+      "median_memory_mib": 19.25
+    },
+    "swissjob-backend": {
+      "cpu_percent": [0.38, 0.76, 3.10],
+      "memory_mib": [860.5, 860.5, 861.2],
+      "pids": 18,
+      "median_cpu_percent": 0.76,
+      "median_memory_mib": 860.5
+    },
+    "swissjob-worker": {
+      "cpu_percent": [0.28, 0.24, 0.39],
+      "memory_mib": [263.0, 263.0, 263.0],
+      "pids": 6,
+      "median_cpu_percent": 0.28,
+      "median_memory_mib": 263.0
+    },
+    "portfolio_backend": {
+      "cpu_percent": [0.18, 0.25, 0.22],
+      "memory_mib": [164.6, 164.6, 164.6],
+      "pids": 7,
+      "median_cpu_percent": 0.22,
+      "median_memory_mib": 164.6
+    },
+    "portfolio_worker": {
+      "cpu_percent": [0.24, 0.16, 0.15],
+      "memory_mib": [147.7, 147.7, 147.7],
+      "pids": 7,
+      "median_cpu_percent": 0.16,
+      "median_memory_mib": 147.7
+    }
+  },
+  "aggregate_medians": {
+    "container_count": 9,
+    "cpu_percent_sum": 3.0,
+    "memory_mib_sum": 2667.35,
+    "pids_sum": 55
+  },
+  "causal_measurements_kept_separate": {
+    "bi_encoder_memory_saving_mib": 605.64,
+    "bi_encoder_memory_saving_percent": 43.08,
+    "note": "The controlled one-versus-two-process encoder probe is the causal RAM result; container snapshots include unrelated workload."
+  }
+}

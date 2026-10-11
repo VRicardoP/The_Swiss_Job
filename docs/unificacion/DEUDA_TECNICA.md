@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 01:15 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 01:17 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1248,6 +1248,7 @@ Orden obligatorio:
 | 6. Simplificación | **INVENTARIADA; PENDIENTE POR ORDEN** | `runtime-cleanup-inventory.json` (`7179959`) fija la superficie real: 8.093 líneas Python en shadow+tareas, 3.374 en 24 módulos independientes de las nueve fuentes Portfolio y 3.294 en 16 productores legacy SwissJob. El transporte HTTP ya quedó verificado en producción: destinos explícitos para Portfolio y SwissJob, token presente, 25.405 entregas, cero pendientes/dead-letter y fallback sombra fuera del camino activo (`delivery-transport-production.json`). Antes de borrar shadow aún hay que extraer recuperación nativa de embeddings/matching, borrado de grafo a `erasure.py`, salud de outbox desde `delivery.stats` y utilidad nDCG; `import_search_corpus` se elimina tras rollback. El runtime escolar (1.515 líneas) no se borra en bloque: conserva refresco manual, store Core, dashboard y alertas. Mantener catálogo/matcher Portfolio para sus 11 fuentes exclusivas y estados locales aún autoritativos. |
 | Frontend Portfolio | **ARTEFACTO LISTO; PUBLICACIÓN PENDIENTE** | `07ac81b`: lint, 46 ficheros/422 tests, build 3,13 s; bundle principal 233.734 B (gzip 72.900 B). GitHub y GitLab se volvieron a consultar a las 01:00 UTC: ambos siguen en `a711c26`, cinco commits por detrás. Hace falta autorización explícita para push a ambos y publicación Cloudflare Pages. |
 | Validación visual | **BASE POSTCAMBIO LOCAL SUPERADA; REPETIR AL FINAL** | Con el mismo Chromium, fixtures y gesto, `a711c26` y `07ac81b` cargan las 12 ventanas con contenido; la excepción Leaflet baja de 1 a 0 y la carga de 711 a 592 ms (-16,74 %). El arrastre queda igual (~16,66 ms/frame, p95 16,7–16,8 ms): no se atribuye una mejora inexistente. 18 E2E superadas. La medida antigua 43,25 ms/p95 100,1 ms usa otro protocolo. Repetir después de todos los despliegues. |
+| Recursos producción | **LÍNEA BASE FIJADA; REPETIR AL FINAL** | Tres muestras homogéneas de los nueve contenedores afectados: suma de medianas 3,00 % CPU, 2.667,35 MiB y 55 PIDs. Es observación operativa, no causal; repetir el mismo protocolo tras retirar capture y productores duplicados. Evidencia `container-resource-baseline-production.json`; el ahorro causal del bi-encoder permanece separado. |
 
 ### Estado vivo y artefactos exactos
 

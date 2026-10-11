@@ -15,6 +15,9 @@ credenciales.
   `worker-after-observation.json` registran la memoria de los contenedores antes
   y después de limitar el worker a una sola copia del modelo.
 - `worker-tasks.json` identifica las tareas asignadas al worker medido.
+- `container-resource-baseline-production.json` fija tres muestras homogéneas
+  de CPU, memoria y PIDs para los nueve contenedores afectados; se repetirá con
+  el mismo protocolo después del corte.
 
 La comparación aislada es la medida causal del ahorro del modelo. Las muestras
 del contenedor completo son observaciones operativas y dependen de la carga que
