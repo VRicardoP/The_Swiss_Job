@@ -25,6 +25,7 @@
 #    cambiar sólo la imagen dejaría activos productores que ya pertenecen a Core.
 # 9. El respaldo incluye el servicio: BFF y worker comparten SHA y no deben
 #    sobrescribir el punto de vuelta atrás del otro al desplegarse por separado.
+# 10. El compose transformado se valida como candidato antes de sustituir el vivo.
 #
 # Uso:  scripts/deploy_nas.sh core|bff|worker|frontend [--dry-run]
 set -euo pipefail
@@ -213,7 +214,10 @@ print(f"etiquetas cambiadas: {len(etiquetadas)} (esperadas {len(servicios)})")
 if sincronizar_productores:
     print("política de productores aplicada:", sorted(aplicadas))
 PYEOF
-scp -q "$TMP/compose.yml" "nas:$E/$COMPOSE"
+CANDIDATO="$E/$COMPOSE.next-$SERVICIO-$SHA"
+scp -q "$TMP/compose.yml" "nas:$CANDIDATO"
+ssh nas "$C -p $PROYECTO -f $CANDIDATO config --quiet"
+ssh nas "mv $CANDIDATO $E/$COMPOSE"
 ssh nas "grep -n '$PATRON' $E/$COMPOSE"
 
 if [[ "$SERVICIO" == core ]]; then
