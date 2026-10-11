@@ -1,31 +1,46 @@
 {
-  "method": "physical lines from str.splitlines; candidates verified by import/reference search",
-  "observed_at": "2026-10-10T21:44:30.388270+00:00",
+  "method": "physical lines from str.splitlines; candidates verified against current clean deployment worktrees by import/reference search",
+  "observed_at": "2026-10-11T08:31:42+00:00",
   "portfolio": {
-    "exclusive_source_catalog_adapter_to_retain": {
+    "fixed_post_rollback_topology": "CompositeCatalog and CompositeMatching remain because eleven Portfolio-only sources stay local; applications, saved searches, documents and schools resolve directly to Core",
+    "exclusive_source_runtime_to_retain": {
       "files": [
         {
           "lines": 272,
           "path": "services/catalog/local.py"
-        }
-      ],
-      "total_lines": 272
-    },
-    "exclusive_source_matching_pipeline_to_retain": {
-      "files": [
+        },
+        {
+          "lines": 109,
+          "path": "services/matching/local.py"
+        },
         {
           "lines": 524,
           "path": "services/job_matcher.py"
         },
         {
-          "lines": 394,
+          "lines": 448,
           "path": "services/daily_match_report.py"
+        },
+        {
+          "lines": 335,
+          "path": "services/analysis_runner.py"
+        },
+        {
+          "lines": 123,
+          "path": "services/worker_bridge.py"
         }
       ],
-      "total_lines": 918
+      "total_lines": 1811,
+      "reason": "Local catalog, matching, scheduled reports and API-to-worker delegation still serve the eleven exclusive sources after shared producers are disabled"
     },
-    "note": "The retained catalog adapter and matching pipeline serve 11 Portfolio-only sources with 1339 cached jobs; narrow them to those sources instead of deleting them.",
-    "post_rollback_candidates": {
+    "unrelated_security_runtime_to_retain": [
+      {
+        "lines": 182,
+        "path": "services/refresh_replay.py",
+        "reason": "refresh-token rotation race protection; unrelated to cutover rollback"
+      }
+    ],
+    "delete_after_rollback": {
       "files": [
         {
           "lines": 93,
@@ -40,10 +55,6 @@
           "path": "routers/gate_c.py"
         },
         {
-          "lines": 327,
-          "path": "services/analysis_runner.py"
-        },
-        {
           "lines": 145,
           "path": "services/applications/local.py"
         },
@@ -52,24 +63,8 @@
           "path": "services/applications/seam.py"
         },
         {
-          "lines": 519,
-          "path": "services/catalog/seam.py"
-        },
-        {
           "lines": 186,
           "path": "services/gate_c.py"
-        },
-        {
-          "lines": 109,
-          "path": "services/matching/local.py"
-        },
-        {
-          "lines": 86,
-          "path": "services/matching/seam.py"
-        },
-        {
-          "lines": 182,
-          "path": "services/refresh_replay.py"
         },
         {
           "lines": 436,
@@ -84,108 +79,179 @@
           "path": "services/saved_searches/seam.py"
         },
         {
-          "lines": 123,
-          "path": "services/worker_bridge.py"
-        },
-        {
           "lines": 24,
           "path": "services/write_freeze.py"
         }
       ],
-      "total_lines": 2524
-    }
-  },
-  "repo_heads": {
-    "portfolio_backend": "b988049ffd3a08c85fb9070a55df11daa94470df",
-    "swissjob_backend": "868c42d703e3c76d4caac083f3cebb54dee5ce45"
-  },
-  "swissjob": {
-    "local_matching_engine": {
+      "total_lines": 1178
+    },
+    "simplify_in_place_after_rollback": {
       "files": [
         {
-          "lines": 232,
-          "path": "services/job_matcher.py"
+          "lines": 536,
+          "path": "services/catalog/seam.py",
+          "result": "fixed CompositeCatalog assembly without routing or fallback modes"
         },
         {
-          "lines": 941,
-          "path": "services/match_service.py"
-        },
-        {
-          "lines": 193,
-          "path": "tasks/profile_tasks.py"
-        },
-        {
-          "lines": 267,
-          "path": "tasks/embedding_tasks.py"
+          "lines": 94,
+          "path": "services/matching/seam.py",
+          "result": "fixed CompositeMatching assembly without routing or fallback modes"
         }
       ],
-      "total_lines": 1633
+      "current_lines": 630,
+      "reason": "The routers still need narrow constructors for the retained composite implementations; deleting the files wholesale would remove live functionality"
     },
-    "note": "Core owns all SwissJob catalog and matching sources; remove only after core_primary is verified.",
-    "post_rollback_routing_seams": {
+    "measured_candidate_surface_lines": 1808
+  },
+  "repo_heads": {
+    "portfolio_backend": "a292ef4b56341e61f6c2778a23b23bb89f807319",
+    "swissjob_backend": "f29fd441396e1c80633ca3127ccc8395c6405443"
+  },
+  "swissjob": {
+    "fixed_post_rollback_topology": "catalog, matching, documents, saved searches and schools use Core; authentication, profiles and applications remain local",
+    "local_capability_runtime_to_retain": {
       "files": [
         {
-          "lines": 93,
-          "path": "models/jobhunt_routing.py"
-        },
-        {
           "lines": 300,
-          "path": "services/applications/local.py"
-        },
-        {
-          "lines": 107,
-          "path": "services/applications/seam.py"
-        },
-        {
-          "lines": 202,
-          "path": "services/catalog/local.py"
-        },
-        {
-          "lines": 106,
-          "path": "services/catalog/seam.py"
-        },
-        {
-          "lines": 187,
-          "path": "services/documents/local.py"
-        },
-        {
-          "lines": 130,
-          "path": "services/documents/seam.py"
-        },
-        {
-          "lines": 36,
-          "path": "services/matching/local.py"
-        },
-        {
-          "lines": 128,
-          "path": "services/matching/seam.py"
+          "path": "backend/services/applications/local.py"
         },
         {
           "lines": 24,
-          "path": "services/profiles/local.py"
+          "path": "backend/services/profiles/local.py"
+        }
+      ],
+      "total_lines": 324
+    },
+    "delete_after_rollback": {
+      "files": [
+        {
+          "lines": 202,
+          "path": "backend/services/catalog/local.py"
         },
         {
-          "lines": 99,
-          "path": "services/profiles/seam.py"
+          "lines": 187,
+          "path": "backend/services/documents/local.py"
         },
         {
-          "lines": 264,
-          "path": "services/routing.py"
+          "lines": 36,
+          "path": "backend/services/matching/local.py"
         },
         {
           "lines": 33,
-          "path": "services/schools/local.py"
+          "path": "backend/services/schools/local.py"
         },
         {
-          "lines": 60,
-          "path": "services/schools/seam.py"
+          "lines": 264,
+          "path": "backend/services/routing.py"
+        },
+        {
+          "lines": 93,
+          "path": "backend/models/jobhunt_routing.py"
         },
         {
           "lines": 162,
-          "path": "services/search_handover.py"
+          "path": "backend/services/search_handover.py"
+        },
+        {
+          "lines": 232,
+          "path": "backend/services/job_matcher.py"
+        },
+        {
+          "lines": 941,
+          "path": "backend/services/match_service.py"
+        },
+        {
+          "lines": 267,
+          "path": "backend/tasks/embedding_tasks.py"
+        },
+        {
+          "lines": 99,
+          "path": "backend/tasks/matching_tasks.py"
         }
       ],
-      "total_lines": 1931
-    }
+      "total_lines": 2516
+    },
+    "replace_routing_seams_with_fixed_selection": {
+      "files": [
+        {
+          "lines": 107,
+          "path": "backend/services/applications/seam.py",
+          "result": "direct LocalApplications selection"
+        },
+        {
+          "lines": 99,
+          "path": "backend/services/profiles/seam.py",
+          "result": "direct LocalProfile selection"
+        },
+        {
+          "lines": 106,
+          "path": "backend/services/catalog/seam.py",
+          "result": "direct Core catalog selection"
+        },
+        {
+          "lines": 130,
+          "path": "backend/services/documents/seam.py",
+          "result": "direct Core documents selection"
+        },
+        {
+          "lines": 128,
+          "path": "backend/services/matching/seam.py",
+          "result": "direct Core matching selection"
+        },
+        {
+          "lines": 60,
+          "path": "backend/services/schools/seam.py",
+          "result": "direct Core schools selection"
+        }
+      ],
+      "current_lines": 630
+    },
+    "selective_edits_required": [
+      {
+        "lines": 193,
+        "path": "backend/tasks/profile_tasks.py",
+        "preserve": "CV extraction, profile autofill and SSE progress",
+        "remove_after_core_primary": "local sentence-transformer embedding work only"
+      },
+      {
+        "lines": 391,
+        "path": "backend/routers/profile.py",
+        "preserve": "local profile and authentication API",
+        "extract_before_job_matcher_removal": "DEFAULT_WEIGHTS into a profile-owned module"
+      },
+      {
+        "lines": 568,
+        "path": "backend/services/job_repository.py",
+        "preserve": "legacy job/history access while retained",
+        "extract_before_job_matcher_removal": "EMBEDDING_TAGS_VISIBLE_MAX_CHARS if still required"
+      },
+      {
+        "lines": 258,
+        "path": "backend/services/match_result_service.py",
+        "preserve": "feedback and retained legacy match state until their explicit retention gate closes"
+      },
+      {
+        "lines": 295,
+        "path": "backend/services/matching/feedback.py",
+        "preserve": "feedback authority and synchronization"
+      },
+      {
+        "lines": 135,
+        "path": "backend/tasks/pipeline_tasks.py",
+        "remove": "local embedding and matching links while preserving unrelated task flow"
+      },
+      {
+        "lines": 59,
+        "path": "backend/celery_app.py",
+        "remove": "registrations for deleted embedding/matching tasks only"
+      },
+      {
+        "lines": 341,
+        "path": "backend/main.py",
+        "remove": "local JobMatcher warmup only"
+      }
+    ],
+    "measured_candidate_surface_lines": 3146,
+    "warning": "Do not delete profile_tasks.py, applications/local.py, profiles/local.py, MatchResultService or feedback code in bulk; each retains a separate live responsibility"
   }
 }

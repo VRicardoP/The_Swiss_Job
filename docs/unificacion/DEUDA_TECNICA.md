@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 08:29 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 08:32 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1298,7 +1298,11 @@ código ejecutable:
   `applications/local.py`. La limpieza elimina los motores locales de las
   cinco capacidades migradas y las tareas legacy de matching/embeddings, pero
   mantiene sincronización de perfil, feedback, alertas y los colectores
-  escolares que aún cumplen responsabilidades BFF.
+  escolares que aún cumplen responsabilidades BFF. La revisión sobre `f29fd44`
+  corrigió el inventario: `profile_tasks.py` no se borra en bloque porque también
+  hace extracción/autocompletado de CV y progreso SSE; sólo pierde su embedding
+  local. `DEFAULT_WEIGHTS` y la cota de tags se extraen antes de borrar
+  `job_matcher.py`, y el estado/feedback legacy se conserva hasta su propio gate.
 - Las nueve pestañas Portfolio transferidas ya llaman a `/api/v1/jobs/search`
   con filtro Core; sus `urlPath` antiguos no se ejecutan desde el frontend. La
   búsqueda global no encuentra consumidores versionados de esas rutas fuera de
@@ -1331,7 +1335,12 @@ código ejecutable:
   runtime `services/routing.py`, el modelo de routing, los endpoints
   `cutover`/`gate_c`, los fallbacks y repositorios locales usados sólo para
   rollback. Se conserva la tabla histórica y se conservan `LocalCatalog` y
-  `LocalMatching`, necesarios para los productores exclusivos.
+  `LocalMatching`, necesarios para los productores exclusivos. La revisión sobre
+  `a292ef4` confirmó que también permanecen `analysis_runner.py` y
+  `worker_bridge.py` para ejecutar y delegar ese matching local;
+  `refresh_replay.py` se conserva por seguridad de rotación de sesión. Las
+  costuras de catálogo/matching se simplifican a constructores compuestos fijos,
+  no se borran como ficheros completos.
 - En el frontend, `FreshnessBadge` y `CompanyResearchName` ya están
   compartidos. La extracción posterior se limita a presentación: resumen de
   tres estados, fecha/frescura y badges; cabe en el módulo cohesivo
