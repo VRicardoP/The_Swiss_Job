@@ -101,6 +101,19 @@ hubiera en cada instante.
 - `profile-authority-production.json` demuestra que todos los perfiles
   SwissJob ya reciben snapshots nativos; la recuperación extraída podrá usar
   `projection_active` sin consultar el staging CDC.
+- `runtime-cleanup-inventory.json` y `core-native-extraction-plan.json`
+  separan lo eliminable de las cuatro responsabilidades nativas que deben
+  extraerse antes de borrar `shadow`.
+- `post-rollback-dependency-map.json` enumera los consumidores directos de
+  routing y los gates independientes de notificaciones y `MatchResult`.
+- `swissjob-producer-retirement-plan.json` fija la retirada atómica de los
+  productores transferidos y su control de entrega, conservando todos los
+  productores locales y los ocho colectores escolares.
+- `portfolio-compatibility-adapter-plan.json` conserva las 56 rutas históricas
+  con un único adaptador Core y documenta los límites que aún necesitan
+  comparación viva.
+- `remaining-execution-checklist.json` ordena los gates restantes, las cabezas
+  inmutables y las autorizaciones externas; es el punto de entrada para reanudar.
 
 ## Frontend y regresión
 
