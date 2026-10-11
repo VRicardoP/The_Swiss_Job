@@ -1,0 +1,42 @@
+{
+  "observed_at": "2026-10-11T01:28:30Z",
+  "source": "swissjob-core-worker-r5 logs available since current container start",
+  "task": "jobhunt.shadow.project",
+  "bounds": {
+    "beat_cadence_s": 300,
+    "expires_s": 300,
+    "profiles_per_task": 1,
+    "embedding_rounds_per_task": 1,
+    "soft_time_limit_s": 1800,
+    "hard_time_limit_s": 2100
+  },
+  "counts": {
+    "received": 66,
+    "succeeded": 23,
+    "revoked_expired": 42,
+    "failed": 0,
+    "active_derived": 1,
+    "successes_with_recovery": 23,
+    "successes_without_recovery": 0
+  },
+  "successful_duration_s": {
+    "min": 478.945,
+    "median": 813.57,
+    "p95_nearest_rank": 1103.054,
+    "max": 1454.252
+  },
+  "corpus_checkpoint": {
+    "total_embeddings": 99499,
+    "eligible_embeddings": 68101,
+    "historical_or_noneligible_embeddings": 31398,
+    "pending_offer_embeddings_at_2026_10_11T01_09_25Z": 0,
+    "hnsw_index_valid": true,
+    "hnsw_index_size": "162 MB"
+  },
+  "interpretation": {
+    "queue_is_bounded": true,
+    "reason": "Expired five-minute ticks are revoked while the single worker evaluates one profile; no task failure was observed.",
+    "within_soft_limit": true,
+    "next_gate": "After the embedding backlog reached zero, observe a successful task with recovery_evaluated=0 and a drained core.matching queue before changing or deleting the scheduler."
+  }
+}

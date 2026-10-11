@@ -18,6 +18,9 @@ credenciales.
 - `container-resource-baseline-production.json` fija tres muestras homogéneas
   de CPU, memoria y PIDs para los nueve contenedores afectados; se repetirá con
   el mismo protocolo después del corte.
+- `matching-recovery-baseline-production.json` cuantifica el trabajo con un
+  solo proceso: duraciones, ticks caducados, límites y el gate de convergencia
+  después de drenar el backlog de embeddings.
 
 La comparación aislada es la medida causal del ahorro del modelo. Las muestras
 del contenedor completo son observaciones operativas y dependen de la carga que
