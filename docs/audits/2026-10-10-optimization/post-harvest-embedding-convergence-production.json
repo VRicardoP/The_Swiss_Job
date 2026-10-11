@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-11T11:32:30Z",
+  "release": "5a1241d",
+  "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "worker_concurrency": 1,
+  "trigger": "native harvest round started 2026-10-11T10:10:03.205029Z",
+  "initial_offer_embeddings": 100592,
+  "final_offer_embeddings": 101137,
+  "embedded_offer_delta": 545,
+  "pending_milestones": [
+    {
+      "observed_at": "2026-10-11T10:57:59Z",
+      "pending_offers": 545
+    },
+    {
+      "observed_at": "2026-10-11T11:00:12Z",
+      "pending_offers": 345
+    },
+    {
+      "observed_at": "2026-10-11T11:11:55Z",
+      "pending_offers": 145
+    },
+    {
+      "observed_at": "2026-10-11T11:24:14Z",
+      "pending_offers": 0
+    }
+  ],
+  "bounded_recovery_tasks": [
+    {
+      "task_id": "75452edb-9073-41e8-ade5-a0c9441572e8",
+      "duration_seconds": 788.6632608789951,
+      "pending_before": 545,
+      "pending_after": 345,
+      "embedded": 200,
+      "status": "ok"
+    },
+    {
+      "task_id": "b1fdc069-120a-4159-86fe-a3f555e4aa39",
+      "duration_seconds": 842.1977601919789,
+      "pending_before": 345,
+      "pending_after": 145,
+      "embedded": 200,
+      "status": "ok"
+    },
+    {
+      "task_id": "dd4adcb1-6ba4-48bd-a2b1-69fd60dffb68",
+      "duration_seconds": 835.4091895869933,
+      "pending_before": 145,
+      "pending_after": 0,
+      "embedded": 145,
+      "status": "ok"
+    }
+  ],
+  "soft_time_limit_seconds": 1800,
+  "all_tasks_below_soft_limit": true,
+  "expired_ticks_discarded_during_sequence": 5,
+  "final_operational": {
+    "pending_offers": 0,
+    "pending_profiles": 0,
+    "queues": {
+      "core.default": 0,
+      "core.embedding": 0,
+      "core.harvest": 0,
+      "core.matching": 0,
+      "core.notifications": 0
+    }
+  },
+  "final_health": {
+    "enabled": 17,
+    "healthy_8h": 17,
+    "official_alerts": []
+  },
+  "native_container_restart_counts": {
+    "core-api": 0,
+    "core-worker": 0,
+    "core-harvest-worker": 0,
+    "core-ops-worker": 0
+  },
+  "interpretation": "The single bi-encoder worker converged the 545-offer post-harvest backlog in deterministic batches of at most 200, stayed below the existing soft limit, discarded expired scheduler ticks, and drained all queues without a restart."
+}
