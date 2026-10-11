@@ -23,6 +23,10 @@ credenciales.
   real de capture. `container-resource-scheduled-window-baseline-production.json`
   mantiene aparte la carga real del informe diario Portfolio para compararla
   únicamente con la misma ventana tras el traspaso.
+- `portfolio-daily-report-baseline.jsonl` conserva el seguimiento por minuto
+  hasta el evento terminal agregado: 26 muestras válidas, una sonda fallida
+  cerrada, 3.667,17 s de ejecución y envío final de 8 empleos. No contiene
+  ofertas, URLs ni datos de usuarios.
 - `matching-recovery-baseline-production.json` cuantifica el trabajo con un
   solo proceso: duraciones, ticks caducados, límites y el gate de convergencia
   después de drenar el backlog de embeddings.

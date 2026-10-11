@@ -205,6 +205,32 @@
     "container_clock_checked_at": "2026-10-11T07:24:53Z",
     "container_local_clock_matches_utc": true,
     "current_guarded_script_sha256": "0f38bd64f90a6b868d740945c62303af8c727a220e3bfd0ebecac7870bb3d1b3",
+    "daily_report_completion": {
+      "artifact": "portfolio-daily-report-baseline.jsonl",
+      "artifact_sha256": "2bc44d03e501de521ca3a4b26383269e52761fbf36ff32c5bd5ca2cb05b011ab",
+      "cpu_percent": {
+        "max": 111.3,
+        "median": 71.315,
+        "min": 0.17,
+        "p95_nearest_rank": 103.23
+      },
+      "duration_seconds": 3667.174757,
+      "ended_at": "2026-10-11T08:01:27.178511+00:00",
+      "failed_samples": 1,
+      "memory_mib": {
+        "max": 784.6,
+        "median": 722.4,
+        "min": 670.6,
+        "p95_nearest_rank": 779.0
+      },
+      "pids": 13,
+      "result": {
+        "jobs_sent": 8,
+        "school_matches": 0
+      },
+      "started_at": "2026-10-11T07:00:20.003754+00:00",
+      "valid_samples": 26
+    },
     "daily_report_workload": {
       "cached_offers_considered": 2476,
       "new_offers": 2377
