@@ -1291,7 +1291,20 @@ código ejecutable:
   candidatas a retirada tras rollback. Se conservan los ocho colectores
   escolares y todos los productores no transferidos; la limpieza incluye
   registros, manifiestos de desactivación y pruebas que ya no describan el
-  runtime.
+  runtime. La inspección completa del control de entrega confirmó que el cambio
+  debe ser atómico: `disabled_sources` rechaza cualquier nombre configurado que
+  ya no figure en el registro, por lo que borrar primero las 16 entradas y dejar
+  las listas 14+2 impediría arrancar BFF y worker. La misma release retirará las
+  entradas y sus 17 módulos, `legacy_sources.py`, los dos campos de `Settings`,
+  la guardia de arranque, las cuatro entradas de los manifiestos, la generación
+  del ejemplo y la validación correspondiente de `deploy_nas.sh`; los registros
+  restantes se construirán directamente. También se quitarán las 16 políticas
+  ya inalcanzables de `harvest_window.py`, después de drenar tareas en vuelo, y
+  sólo los casos de prueba de productores retirados. Se preservan 12 providers,
+  cinco scrapers generales, los ocho escolares, el mantenimiento de URLs, las
+  migraciones históricas y la normalización compartida. El mapa reproducible,
+  los consumidores y los gates están en
+  `swissjob-producer-retirement-plan.json`.
 - En SwissJob la topología fija Core abarca catálogo, matching, documentos,
   búsquedas guardadas y colegios. Perfil/autenticación siguen locales por
   diseño, y candidaturas no tienen fila de routing; el frontend usa activamente

@@ -1,0 +1,134 @@
+{
+  "observed_at": "2026-10-11T09:00:23Z",
+  "method": "targeted runtime import and literal-reference scan on the clean deployment worktree, followed by execution-flow inspection",
+  "repo_head": "f29fd441396e1c80633ca3127ccc8395c6405443",
+  "scope": {
+    "transferred_providers": [
+      "arbeitnow",
+      "euremotejobs",
+      "globaljobs",
+      "jobgether",
+      "jobspresso",
+      "nav_arbeidsplassen",
+      "ostjob",
+      "publicjobs",
+      "remotive",
+      "thehub",
+      "weworkremotely",
+      "workingnomads",
+      "zebis",
+      "zentraljob"
+    ],
+    "transferred_scrapers": ["financejobs", "irishjobs"],
+    "implementation_modules": 16,
+    "implementation_lines": 3294,
+    "support_module": {
+      "path": "backend/providers/base_chmedia.py",
+      "lines": 94,
+      "only_runtime_importers": [
+        "backend/providers/ostjob.py",
+        "backend/providers/zentraljob.py"
+      ]
+    },
+    "full_delete_modules": 17,
+    "full_delete_lines": 3388
+  },
+  "verified_runtime_flow": {
+    "class_importers": {
+      "providers": "backend/providers/__init__.py is the only runtime importer of the fourteen transferred provider classes",
+      "scrapers": "backend/scrapers/__init__.py is the only runtime importer of FinancejobsScraper and IrishJobsScraper"
+    },
+    "generic_consumers": [
+      "backend/tasks/fetch_tasks.py obtains producers through the provider registry",
+      "backend/tasks/scraping_tasks.py obtains producers through the scraper registry",
+      "backend/tasks/watchlist_tasks.py derives school health sources from the scraper registry",
+      "backend/services/harvest_window.py is consulted only by the legacy fetch and scrape persistence paths"
+    ],
+    "public_jobs_api": "reads persisted jobs and does not import any transferred producer class",
+    "database_history": "existing jobs, compliance rows and immutable Alembic migrations do not require producer implementations to remain importable"
+  },
+  "atomic_control_plane_dependency": {
+    "finding": "disabled_sources rejects configured names that are absent from a registry; deleting registry entries while preserving the 14+2 environment lists would abort BFF startup and producer construction",
+    "runtime_files": [
+      "backend/services/legacy_sources.py",
+      "backend/config.py",
+      "backend/main.py",
+      "backend/providers/__init__.py",
+      "backend/scrapers/__init__.py",
+      "backend/tasks/watchlist_tasks.py"
+    ],
+    "deployment_files": [
+      "deploy/nas/swissjob.configured.yml",
+      "scripts/deploy_nas.sh",
+      "backend/scripts/gen_env_example.py",
+      "backend/.env.prod.example"
+    ],
+    "tests": [
+      "backend/tests/test_legacy_source_handover.py",
+      "backend/tests/test_startup_guards.py"
+    ],
+    "required_change": "remove the registry entries, 14+2 environment values, handover settings/helper/startup guard and deployment enforcement in one release; simplify the remaining registries to direct construction"
+  },
+  "retain": {
+    "providers": [
+      "adzuna",
+      "careerjet",
+      "jooble",
+      "jsearch",
+      "remoteco",
+      "proz",
+      "jobcloud_partner",
+      "linkedin_authorized",
+      "indeed_partner",
+      "glassdoor_partner",
+      "xing_partner",
+      "jobicy"
+    ],
+    "general_scrapers": [
+      "gastrojob",
+      "stelle_admin",
+      "tes",
+      "schuljobs",
+      "myscience"
+    ],
+    "school_scrapers": [
+      "swiss_schools_nae",
+      "swiss_schools_isp",
+      "swiss_schools_inspired",
+      "swiss_schools_zis",
+      "swiss_schools_isb",
+      "swiss_schools_ecolint",
+      "swiss_schools_hautlac",
+      "swiss_schools_iscs"
+    ],
+    "shared_behavior": [
+      "generic persisted-job normalization and repository behavior still used by retained producers or historical rows",
+      "URL maintenance over persisted jobs",
+      "school watchlist health, manual refresh and alerts",
+      "immutable migrations and historical audit records"
+    ]
+  },
+  "delete_or_edit_after_formal_rollback": {
+    "delete": [
+      "the seventeen full-delete modules enumerated in code-simplification-baseline.json",
+      "backend/services/legacy_sources.py",
+      "tests dedicated only to retired producer implementations or handover configuration"
+    ],
+    "edit": [
+      "remove transferred imports and registry entries while retaining all producers listed above",
+      "remove transferred entries from backend/services/harvest_window.py and update its registry-completeness tests",
+      "remove only transferred-producer cases from mixed test modules",
+      "make backend/tasks/watchlist_tasks.py derive all swiss_schools_* entries directly",
+      "remove the obsolete 14+2 configuration fields, generated example values, manifest entries and deploy-script enforcement"
+    ]
+  },
+  "execution_gates": [
+    "formal rollback closure is green",
+    "legacy producer queues and in-flight tasks are drained before worker recreation",
+    "Core remains healthy for all sixteen transferred sources",
+    "post-release registries contain exactly the retained producers and all eight school collectors",
+    "BFF and worker start without LEGACY_DISABLED_PROVIDERS or LEGACY_DISABLED_SCRAPERS",
+    "no transferred producer starts network I/O and retained producers still do"
+  ],
+  "conclusion": "The producer cleanup is a single cohesive removal after rollback closure. Splitting registry deletion from its handover control plane is unsafe; retaining the control plane after its last use is unnecessary."
+}
