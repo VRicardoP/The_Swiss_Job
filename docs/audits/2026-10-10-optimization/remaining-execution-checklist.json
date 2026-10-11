@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-11T09:13:32+00:00",
+  "observed_at": "2026-10-11T09:14:55+00:00",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; on a failed gate stop that sequence and leave rollback open",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -50,7 +50,7 @@
     },
     {
       "id": 8,
-      "status": "requires_explicit_external_authorization",
+      "status": "authorized_pending_order",
       "action": "publish Portfolio frontend 1bed6c2 to configured remotes/Cloudflare and verify the public asset plus 12-window probe"
     },
     {
@@ -62,7 +62,7 @@
       "id": 10,
       "status": "pending_after_9",
       "action": "run final immutable probes for Core, SwissJob and Portfolio",
-      "authorization": "probe_swissjob_final.py and probe_portfolio_final.py transfer was rejected by automatic approval review as unapproved source export; explicit authorization is required"
+      "authorization": "explicitly authorized by the user; execute unchanged only after item 9"
     },
     {
       "id": 11,
@@ -110,8 +110,9 @@
   "permission_state": {
     "commits": "authorized",
     "core_worker_concurrency_change": "authorized and completed",
-    "frontend_remote_publication": "not explicitly authorized",
-    "remote_probe_source_transfer": "explicit authorization required after automatic-review rejection"
+    "ssh_scp_script_and_probe_transfer": "authorized at 2026-10-11T09:14:55+00:00",
+    "remote_probe_execution": "authorized at 2026-10-11T09:14:55+00:00",
+    "frontend_remote_publication": "GitHub, GitLab and Cloudflare Pages authorized at 2026-10-11T09:14:55+00:00"
   },
   "references": [
     "docs/RETIRADA_SLOT_CDC_PUNTO4.md",

@@ -36,7 +36,8 @@
       "sha256": "f3913d359a59104d46802176ecf8b222516f744644414aaca1c92faa3e63530a",
       "static_validation": "py_compile and Ruff passed",
       "checks": "profile sync flag, active-user floor, identity links, pending/error snapshots, effective matching and wildcard routing, exact 14+2 handover, provider registry and eight retained school collectors",
-      "live_pre_cut": "not executed: automatic approval review rejected sending the audit source over SSH to the NAS"
+      "live_pre_cut": "not executed: automatic approval review rejected sending the audit source over SSH to the NAS",
+      "authorization": "authorized; execute unchanged after the SwissJob deployment"
     },
     "portfolio": {
       "path": "probe_portfolio_final.py",
@@ -44,10 +45,12 @@
       "static_validation": "py_compile and Ruff passed",
       "checks": "scheduler enabled, exact nine-source handover, exactly eleven retained sources, six exact wildcard core_primary modes and zero overrides",
       "discarded_live_attempt": "the live pre-release image lacks locally_owned_source_names; the probe was corrected to use the equivalent registered-minus-disabled rule",
-      "live_retry": "not executed: automatic approval review rejected sending the corrected audit source over SSH to the NAS"
+      "live_retry": "not executed: automatic approval review rejected sending the corrected audit source over SSH to the NAS",
+      "authorization": "authorized; execute unchanged after the Portfolio deployment"
     }
   },
   "privacy": "no profile identifiers, email addresses, credentials, payloads, URLs or secrets are emitted",
-  "execution_gate": "SwissJob and Portfolio live stdin execution requires explicit user authorization for that source transfer; do not circumvent with another remote code path",
-  "post_deploy_pass_rule": "all three exit 0 unchanged; additionally verify container topology, queues, logs, HTTP responses and the twelve frontend windows"
+  "execution_gate": "source transfer and live execution are explicitly authorized; execute the immutable probes only at checklist item 10, after their corresponding deployments",
+  "post_deploy_pass_rule": "all three exit 0 unchanged; additionally verify container topology, queues, logs, HTTP responses and the twelve frontend windows",
+  "authorization_received_at": "2026-10-11T09:14:55+00:00"
 }
