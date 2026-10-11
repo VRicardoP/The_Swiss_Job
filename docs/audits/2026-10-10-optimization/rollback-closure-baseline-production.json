@@ -85,5 +85,12 @@
     "re-read both routing tables and require zero local, shadow, core_read or rollback_pending rows",
     "verify no fallback log path, single writers, healthy readers, queues and outbox before declaring closure"
   ],
-  "status": "open"
+  "status": "open",
+  "portfolio_frontend": {
+    "local_head": "07ac81b",
+    "github_main": "a711c26c2f9ddc490069f988e1673b9389352b34",
+    "gitlab_main": "a711c26c2f9ddc490069f988e1673b9389352b34",
+    "ahead": 5,
+    "publication": "pending explicit authorization"
+  }
 }
