@@ -192,7 +192,11 @@
         "issue catalog and matching requests after the settling period",
         "require zero local_fallback response source and zero capability-specific fallback log signals since the flip"
       ],
-      "partial_failure": "keep rollback formally open, re-read both rows, and retry only the missing idempotent set_routing call; never infer completion from one successful call"
+      "partial_failure": "keep rollback formally open, re-read both rows, and retry only the missing idempotent set_routing call; never infer completion from one successful call",
+      "validated_invocation": "portfolio-routing-flip-rehearsal.json production_invocation",
+      "stdin_sha256": "8feaec0f60235a5752b19b4674377f94126d389c31ef283289e576be51729991",
+      "fail_closed_resume_rule": "skip an exact [core_primary], change only exact [core_read], and abort on overrides or any other mode; verify both wildcard rows and audit actor after the fresh final read",
+      "rehearsal": "passed on PostgreSQL 15 from portfolio-backend:board-a292ef4, including partial retry and a second idempotent invocation"
     }
   },
   "scope_grant": {

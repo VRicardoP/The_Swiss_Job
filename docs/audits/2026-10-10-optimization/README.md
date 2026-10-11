@@ -119,6 +119,8 @@ hubiera en cada instante.
   al tamaño de las tres imágenes candidatas; debe repetirse justo antes de enviarlas.
 - `cutover-file-preflight-production.json` confirma respaldos y ausencia de
   candidatos `.next` ambiguos en el NAS antes de preparar la retirada de capture.
+- `portfolio-routing-flip-rehearsal.json` conserva el bloque exacto del flip
+  final y demuestra en PostgreSQL 15 que reanuda estados parciales sin doble cambio.
 
 Los datos de arrastre anteriores a este protocolo (43,25 ms de media y 100,1 ms
 de p95) no son directamente comparables con las muestras deterministas de este

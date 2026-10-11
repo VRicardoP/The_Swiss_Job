@@ -1,0 +1,58 @@
+{
+  "recorded_at": "2026-10-11T06:53:15Z",
+  "candidate_commit": "a292ef4",
+  "candidate_image": "portfolio-backend:board-a292ef4",
+  "candidate_image_id": "sha256:b929c50026b9ffca8f7ae122e771527e23438af60de30041004cac7ff1ed907b",
+  "candidate_size_bytes": 3464664725,
+  "database_dialect": "PostgreSQL 15 ephemeral local container with tmpfs storage",
+  "production_accessed": false,
+  "production_changed": false,
+  "production_invocation": {
+    "transport": "SSH stdin to Docker exec; run from the audited checkout host",
+    "command": "D=/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker; ssh nas \"$D exec -i portfolio_backend python -\"",
+    "stdin": "import asyncio\nfrom sqlalchemy import select\nfrom database import AsyncSessionLocal\nfrom models.jobhunt_routing import JobhuntRouting, PROFILE_WILDCARD\nfrom services.routing import (\n    CAPABILITY_CATALOG,\n    CAPABILITY_MATCHING,\n    MODE_CORE_PRIMARY,\n    MODE_CORE_READ,\n    read_all_modes_fresh,\n    set_routing,\n)\n\nACTOR = \"optimization-2026-10-12\"\nCAPABILITIES = (CAPABILITY_CATALOG, CAPABILITY_MATCHING)\n\nasync def main():\n    async with AsyncSessionLocal() as db:\n        before = await read_all_modes_fresh(db, list(CAPABILITIES))\n    for capability in CAPABILITIES:\n        modes = before[capability]\n        if modes == [MODE_CORE_PRIMARY]:\n            continue\n        if modes != [MODE_CORE_READ]:\n            raise SystemExit(\n                f\"ABORTA: {capability} tiene modos efectivos inesperados: {modes}\"\n            )\n        async with AsyncSessionLocal() as db:\n            await set_routing(\n                db, capability, MODE_CORE_PRIMARY, updated_by=ACTOR\n            )\n    async with AsyncSessionLocal() as db:\n        after = await read_all_modes_fresh(db, list(CAPABILITIES))\n        rows = (await db.execute(select(JobhuntRouting).where(\n            JobhuntRouting.profile_id == PROFILE_WILDCARD,\n            JobhuntRouting.capability.in_(CAPABILITIES),\n        ))).scalars().all()\n    expected = {capability: [MODE_CORE_PRIMARY] for capability in CAPABILITIES}\n    if after != expected:\n        raise SystemExit(f\"ABORTA: routing final inesperado: {after}\")\n    by_capability = {row.capability: row for row in rows}\n    if set(by_capability) != set(CAPABILITIES) or any(\n        row.mode != MODE_CORE_PRIMARY or row.updated_by != ACTOR\n        for row in by_capability.values()\n    ):\n        raise SystemExit(\"ABORTA: filas wildcard o auditoría final inesperadas\")\n    print(\"routing final verificado:\", after)\n\nasyncio.run(main())\n",
+    "stdin_sha256": "8feaec0f60235a5752b19b4674377f94126d389c31ef283289e576be51729991"
+  },
+  "preconditions": [
+    "Portfolio backend a292ef4 is deployed and healthy",
+    "catalog and matching functional probes are green in core_read",
+    "producer handover gates are green",
+    "the frontend publication is live and its twelve windows are green",
+    "Core queues and integration outbox are drained"
+  ],
+  "fail_closed_rules": [
+    "only [core_read] may be changed to [core_primary]",
+    "an already authoritative capability is skipped",
+    "any profile override or other effective mode aborts",
+    "the final fresh read must contain only core_primary for both capabilities",
+    "both wildcard rows must carry the expected audit actor"
+  ],
+  "rehearsal": {
+    "initial_state": {
+      "catalog": [
+        "core_primary"
+      ],
+      "matching": [
+        "core_read"
+      ]
+    },
+    "result": {
+      "catalog": [
+        "core_primary"
+      ],
+      "matching": [
+        "core_primary"
+      ]
+    },
+    "partial_retry_changed_only": "matching",
+    "catalog_revision_unchanged": true,
+    "second_run_changed_rows": 0,
+    "result_status": "pass"
+  },
+  "discarded_harness_attempts": [
+    "candidate config requires synthetic admin fields before imports; added only to the isolated container",
+    "full Base.metadata SQLite creation reaches an unrelated PostgreSQL INET column",
+    "single-table SQLite does not round-trip the PostgreSQL UUID wildcard on the second ORM read"
+  ],
+  "conclusion": "Use the PostgreSQL-validated stdin block only after every live gate is green. It uses services.routing.set_routing, never direct SQL, and is safe to repeat after a partial invocation."
+}
