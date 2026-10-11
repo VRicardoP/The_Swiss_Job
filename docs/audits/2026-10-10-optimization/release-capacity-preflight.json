@@ -1,0 +1,32 @@
+{
+  "observed_minute_utc": "2026-10-11T06:43Z",
+  "local": {
+    "filesystem": "/dev/nvme0n1p2",
+    "size_gib": 468,
+    "used_gib": 364,
+    "available_gib": 81,
+    "use_percent": 82,
+    "docker_images_gb": 104.7,
+    "docker_build_cache_gb": 80.38,
+    "docker_reclaimable_images_gb": 42.25,
+    "docker_reclaimable_build_cache_gb": 46.85
+  },
+  "nas": {
+    "filesystem": "/dev/mapper/cachedev1",
+    "mount": "/share/CACHEDEV1_DATA",
+    "size_tib": 1.8,
+    "used_tib": 1.3,
+    "available_gib": 440,
+    "use_percent": 76,
+    "docker_system_df": "did not return within the combined read-only probe; not used for the capacity decision"
+  },
+  "candidate_uncompressed_bytes": {
+    "core": 2196691010,
+    "bff": 2963149942,
+    "worker": 4451761388,
+    "total": 9611602340
+  },
+  "deployment_behavior": "deploy_nas.sh packages and transfers one selected service image per invocation",
+  "result": "pass",
+  "reason": "Both the local temporary filesystem and the NAS destination have substantially more free capacity than one sequential image archive and the combined uncompressed candidate size. Recheck immediately before deployment."
+}
