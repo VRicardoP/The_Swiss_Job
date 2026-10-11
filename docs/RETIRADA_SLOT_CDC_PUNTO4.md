@@ -161,13 +161,39 @@ ssh nas "$D run --rm --network none --user 0:0 --entrypoint python \
 ssh nas "$C -p swissjob-r5 -f $E/core.configured.yml.next-finalize-$STAMP config --quiet"
 ```
 
-Antes de promoverlo, quitar captura de los inventarios operativos
-(`check_core_release.py` y supervisor del NAS) y verificar el supervisor con
-su ciclo aislado. Después mover el candidato al nombre vivo, recrear los cuatro
-servicios uno a uno y verificar `/v1/ready` con la misma `release`,
-`authoritative: true`, colas drenadas y cero reinicios inesperados. El flag
-`CORE_CAPTURE_ENABLED=false` se conserva hasta que la release de limpieza
-elimine definitivamente esas tareas.
+Antes de promoverlo, quitar captura de los inventarios operativos y verificar
+el supervisor con su ciclo aislado. En `scripts/nas/supervisor_contenedores.sh`
+se elimina sólo `swissjob-core-capture-r5` de `ESPERADOS`, conservando los dos
+workers separados; después se ejecuta `sh -n`, se copia la fuente versionada al
+mismo `host_path` registrado en `supervisor-production.json`, se comparan ambas
+huellas SHA-256 y se repite el ciclo aislado antes de que el cron la use.
+
+El comprobador de release ya admite ambas fases de forma explícita. Sin opción
+sigue exigiendo los cinco servicios, para no ocultar una desaparición antes del
+corte; `--capture-retired` exige exactamente los cuatro procesos nativos y
+falla si el Compose aún declara captura. Copiarlo y comprobar su huella junto al
+supervisor:
+
+```sh
+CHECK=/share/Public/swissjob/check_core_release.py
+sha256sum scripts/check_core_release.py
+scp scripts/check_core_release.py nas:$CHECK
+ssh nas "sha256sum $CHECK"
+```
+
+Después mover el candidato al nombre vivo, eliminar el contenedor detenido de
+capture, recrear los cuatro servicios uno a uno y ejecutar el control desde el
+directorio del Compose final:
+
+```sh
+ssh nas "cd $E && DOCKER_BIN=$D COMPOSE_FILE=core.configured.yml \
+  python3 $CHECK --capture-retired --url http://127.0.0.1:8003"
+```
+
+Debe informar cuatro servicios coherentes, la misma `release`,
+`authoritative: true`; además verificar colas drenadas y cero reinicios
+inesperados. El flag `CORE_CAPTURE_ENABLED=false` se conserva hasta que la
+release de limpieza elimine definitivamente esas tareas.
 
 **6. Retirar el rol y la credencial, sólo tras desplegar la limpieza de
 código.** Este paso pertenece al cierre posterior de rollback, no a la primera
