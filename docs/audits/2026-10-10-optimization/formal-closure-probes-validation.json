@@ -1,0 +1,53 @@
+{
+  "recorded_at": "2026-10-11T07:09:00Z",
+  "purpose": "fail-closed, read-only final gates using aggregate data only",
+  "probes": {
+    "core": {
+      "path": "probe_core_final.py",
+      "sha256": "eb76af0914a7fb34c66e1a028f5dc4d510bfeda0ba0fc95c9720711ba932539a",
+      "static_validation": "py_compile and Ruff passed",
+      "live_pre_cut": {
+        "result": "failed_closed_as_expected",
+        "exit": 1,
+        "only_failure": "capture_slot_still_exists",
+        "ready": {
+          "release": "5a1241d",
+          "alembic": "core0053",
+          "authoritative": true
+        },
+        "harvest": {
+          "observed": 17,
+          "enabled": 17,
+          "with_state": 17,
+          "alerts": []
+        },
+        "delivery": {
+          "pending": 0,
+          "inflight": 0,
+          "dead_total": 0
+        },
+        "pending_staging": 0,
+        "executed_sha256": "8cead02db333f52fd28990206f3cbc1407037e50a1a049d0280e27e039f02c16",
+        "committed_difference": "Ruff formatting only; imports, queries, conditions and output are unchanged"
+      }
+    },
+    "swissjob": {
+      "path": "probe_swissjob_final.py",
+      "sha256": "f3913d359a59104d46802176ecf8b222516f744644414aaca1c92faa3e63530a",
+      "static_validation": "py_compile and Ruff passed",
+      "checks": "profile sync flag, active-user floor, identity links, pending/error snapshots, effective matching and wildcard routing, exact 14+2 handover, provider registry and eight retained school collectors",
+      "live_pre_cut": "not executed: automatic approval review rejected sending the audit source over SSH to the NAS"
+    },
+    "portfolio": {
+      "path": "probe_portfolio_final.py",
+      "sha256": "ccd9e10862223675b33dff4ba1768cff6e28eae2ea36deffb5f598634f82a779",
+      "static_validation": "py_compile and Ruff passed",
+      "checks": "scheduler enabled, exact nine-source handover, exactly eleven retained sources, six exact wildcard core_primary modes and zero overrides",
+      "discarded_live_attempt": "the live pre-release image lacks locally_owned_source_names; the probe was corrected to use the equivalent registered-minus-disabled rule",
+      "live_retry": "not executed: automatic approval review rejected sending the corrected audit source over SSH to the NAS"
+    }
+  },
+  "privacy": "no profile identifiers, email addresses, credentials, payloads, URLs or secrets are emitted",
+  "execution_gate": "SwissJob and Portfolio live stdin execution requires explicit user authorization for that source transfer; do not circumvent with another remote code path",
+  "post_deploy_pass_rule": "all three exit 0 unchanged; additionally verify container topology, queues, logs, HTTP responses and the twelve frontend windows"
+}
