@@ -53,3 +53,55 @@ def test_rejects_capture_missing_before_retirement(monkeypatch):
     failures, _ = check._revisa_imagenes(capture_retirado=False)
 
     assert failures == ["core-capture: el compose no declara imagen"]
+
+
+def test_remote_compose_uses_standalone_binary_and_live_file(monkeypatch):
+    called = []
+
+    def run(command, **kwargs):
+        called.append(command)
+        return check.subprocess.CompletedProcess(command, 0, '{"services": {}}', "")
+
+    monkeypatch.setattr(check, "SSH_HOST", "nas")
+    monkeypatch.setattr(check, "COMPOSE_BIN", "/qnap/docker-compose")
+    monkeypatch.setattr(check, "COMPOSE_FILE", "/deploy/core.configured.yml")
+    monkeypatch.setattr(check, "COMPOSE_PROJECT_NAME", "swissjob-r5")
+    monkeypatch.setattr(check.subprocess, "run", run)
+
+    assert check._compose_json("config", "--format", "json") == {"services": {}}
+    assert called == [
+        [
+            "ssh",
+            "nas",
+            "/qnap/docker-compose -p swissjob-r5 -f /deploy/core.configured.yml config --format json",
+        ]
+    ]
+
+
+def test_remote_ready_is_fetched_inside_api_container(monkeypatch):
+    called = []
+
+    def run(command):
+        called.append(command)
+        return check.subprocess.CompletedProcess(
+            command,
+            0,
+            '{"status":"ready","release":"abc","authoritative":true}',
+            "",
+        )
+
+    monkeypatch.setattr(check, "SSH_HOST", "nas")
+    monkeypatch.setattr(check, "DOCKER_BIN", "/qnap/docker")
+    monkeypatch.setattr(check, "READY_CONTAINER", "core-api")
+    monkeypatch.setattr(check, "REMOTE_READY_URL", "http://127.0.0.1:8000")
+    monkeypatch.setattr(check, "_run", run)
+
+    assert check._ready_json("http://unused")["status"] == "ready"
+    assert called[0][:5] == [
+        "/qnap/docker",
+        "exec",
+        "core-api",
+        "python",
+        "-c",
+    ]
+    assert "http://127.0.0.1:8000/v1/ready" in called[0][5]

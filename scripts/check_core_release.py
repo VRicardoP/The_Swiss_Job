@@ -22,8 +22,12 @@ Tres condiciones, cada una con su propio motivo de fallo:
    `release: unknown` la comparación «todos publican el mismo SHA» se cumpliría
    entre `unknown`s sin significar nada (auditoría G9 P2-A/P2-B).
 
-Uso:  python3 scripts/check_core_release.py [--url http://127.0.0.1:8003]
-      python3 scripts/check_core_release.py --capture-retired
+Uso local:
+  python3 scripts/check_core_release.py [--url http://127.0.0.1:8003]
+Uso contra un host remoto con Compose independiente:
+  SSH_HOST=nas DOCKER_BIN=/ruta/docker COMPOSE_BIN=/ruta/docker-compose \
+  COMPOSE_FILE=/ruta/core.yml COMPOSE_PROJECT_NAME=swissjob-r5 \
+  python3 scripts/check_core_release.py [--capture-retired]
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import urllib.error
@@ -44,6 +49,12 @@ SERVICIOS_OBLIGATORIOS = (
 )
 SERVICIO_CAPTURE = "core-capture"
 DOCKER_BIN = os.environ.get("DOCKER_BIN", "docker")
+COMPOSE_BIN = os.environ.get("COMPOSE_BIN")
+COMPOSE_FILE = os.environ.get("COMPOSE_FILE")
+COMPOSE_PROJECT_NAME = os.environ.get("COMPOSE_PROJECT_NAME")
+SSH_HOST = os.environ.get("SSH_HOST")
+READY_CONTAINER = os.environ.get("READY_CONTAINER", "swissjob-core-api-r5")
+REMOTE_READY_URL = os.environ.get("REMOTE_READY_URL", "http://127.0.0.1:8000")
 
 
 def _servicios_a_revisar(capture_retirado: bool) -> tuple[str, ...]:
@@ -53,30 +64,31 @@ def _servicios_a_revisar(capture_retirado: bool) -> tuple[str, ...]:
     return (*SERVICIOS_OBLIGATORIOS, SERVICIO_CAPTURE)
 
 
+def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
+    if SSH_HOST:
+        command = ["ssh", SSH_HOST, shlex.join(command)]
+    return subprocess.run(command, capture_output=True, text=True)
+
+
 def _compose_json(*args: str) -> dict:
-    salida = subprocess.run(
-        [DOCKER_BIN, "compose", *args], capture_output=True, text=True
-    )
+    command = [COMPOSE_BIN] if COMPOSE_BIN else [DOCKER_BIN, "compose"]
+    if COMPOSE_PROJECT_NAME:
+        command.extend(("-p", COMPOSE_PROJECT_NAME))
+    if COMPOSE_FILE:
+        command.extend(("-f", COMPOSE_FILE))
+    salida = _run([*command, *args])
     if salida.returncode != 0:
         sys.exit(f"no se pudo hablar con compose:\n{salida.stderr}")
     return json.loads(salida.stdout)
 
 
 def _id_de_imagen(referencia: str) -> str | None:
-    salida = subprocess.run(
-        [DOCKER_BIN, "image", "inspect", referencia, "--format", "{{.Id}}"],
-        capture_output=True,
-        text=True,
-    )
+    salida = _run([DOCKER_BIN, "image", "inspect", referencia, "--format", "{{.Id}}"])
     return salida.stdout.strip() if salida.returncode == 0 else None
 
 
 def _id_de_contenedor(nombre: str) -> str | None:
-    salida = subprocess.run(
-        [DOCKER_BIN, "inspect", nombre, "--format", "{{.Image}}"],
-        capture_output=True,
-        text=True,
-    )
+    salida = _run([DOCKER_BIN, "inspect", nombre, "--format", "{{.Image}}"])
     return salida.stdout.strip() if salida.returncode == 0 else None
 
 
@@ -109,11 +121,26 @@ def _revisa_imagenes(capture_retirado: bool) -> tuple[list[str], int]:
     return fallos, len(revisados)
 
 
+def _ready_json(url: str) -> dict:
+    endpoint = f"{url}/v1/ready"
+    if SSH_HOST:
+        remote_endpoint = f"{REMOTE_READY_URL}/v1/ready"
+        code = (
+            "import json,urllib.request; "
+            f"print(json.dumps(json.load(urllib.request.urlopen({remote_endpoint!r},timeout=10))))"
+        )
+        salida = _run([DOCKER_BIN, "exec", READY_CONTAINER, "python", "-c", code])
+        if salida.returncode != 0:
+            raise RuntimeError(salida.stderr.strip() or "sonda ready remota falló")
+        return json.loads(salida.stdout)
+    with urllib.request.urlopen(endpoint, timeout=10) as response:
+        return json.load(response)
+
+
 def _revisa_ready(url: str) -> list[str]:
     """Condiciones 2 y 3: la base casa con el código, y la release se puede nombrar."""
     try:
-        with urllib.request.urlopen(f"{url}/v1/ready", timeout=10) as r:
-            cuerpo = json.load(r)
+        cuerpo = _ready_json(url)
     except urllib.error.HTTPError as e:
         try:
             cuerpo = json.load(e)
@@ -160,8 +187,7 @@ def main() -> int:
         for fallo in fallos:
             print(f"  - {fallo}", file=sys.stderr)
         return 1
-    with urllib.request.urlopen(f"{args.url}/v1/ready", timeout=10) as r:
-        cuerpo = json.load(r)
+    cuerpo = _ready_json(args.url)
     print(
         f"Core coherente: release {cuerpo['release']}, alembic "
         f"{cuerpo['alembic']}, authoritative, y los "
