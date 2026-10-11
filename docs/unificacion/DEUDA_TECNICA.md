@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 02:28 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 02:31 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1281,6 +1281,14 @@ código ejecutable:
   `legacy:*`: admisión nativa consulta ese historial, las búsquedas guardadas
   unifican el nombre público y el sink necesita su normalizador para reconstruir
   la canónica. Sólo podrá borrarse cuando el corpus ya no contenga esas fuentes.
+- En SwissJob, los 14 providers y los scrapers `financejobs` e `irishjobs`
+  transferidos sólo entran al runtime por los registros de cosecha; el router
+  público de empleos lee la base y no importa sus clases. Junto con
+  `base_chmedia.py` —usado sólo por Ostjob y Zentraljob— son 3.388 líneas
+  candidatas a retirada tras rollback. Se conservan los ocho colectores
+  escolares y todos los productores no transferidos; la limpieza incluye
+  registros, manifiestos de desactivación y pruebas que ya no describan el
+  runtime.
 - Las nueve pestañas Portfolio transferidas ya llaman a `/api/v1/jobs/search`
   con filtro Core; sus `urlPath` antiguos no se ejecutan desde el frontend. La
   búsqueda global no encuentra consumidores versionados de esas rutas fuera de
