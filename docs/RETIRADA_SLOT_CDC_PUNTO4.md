@@ -181,11 +181,17 @@ scp scripts/check_core_release.py nas:$CHECK
 ssh nas "sha256sum $CHECK"
 ```
 
-Después mover el candidato al nombre vivo, eliminar el contenedor detenido de
-capture, recrear los cuatro servicios uno a uno y ejecutar el control desde el
-directorio del Compose final:
+Después promover el candidato, eliminar sólo el contenedor detenido —la imagen
+se conserva— y recrear los cuatro servicios uno a uno. Los nombres son
+explícitos para no depender de que el Compose final ya no conozca
+`core-capture`:
 
 ```sh
+ssh nas "mv $E/core.configured.yml.next-finalize-$STAMP $E/core.configured.yml"
+ssh nas "$D rm swissjob-core-capture-r5"
+for service in core-api core-worker core-harvest-worker core-ops-worker; do
+  ssh nas "$C -p swissjob-r5 -f $E/core.configured.yml up -d --no-deps $service"
+done
 ssh nas "cd $E && DOCKER_BIN=$D COMPOSE_FILE=core.configured.yml \
   python3 $CHECK --capture-retired --url http://127.0.0.1:8003"
 ```
