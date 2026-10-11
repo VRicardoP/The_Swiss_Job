@@ -87,9 +87,39 @@ esas tres**.
 > familia `shadow.*` por prefijo apagaría el motor de matching con todos los
 > indicadores en verde. Lo fija `test_capture_retirement.py`.
 
-En `core.configured.yml`, añadir `CORE_CAPTURE_ENABLED: 'false'` al servicio
-`core-ops-worker`, que es el único que ejecuta beat; guardar una copia `.before`
-y recrear sólo ese servicio. Esperar seis minutos y comprobar después:
+La transformación está versionada en
+`scripts/retire_core_capture.py`: falla ante cualquier deriva, conserva el
+texto y no lee ni imprime valores. El Compose vivo contiene secretos y **no sale
+del NAS**. Copiar sólo la herramienta y comparar sus huellas:
+
+```sh
+R=/share/Public/swissjob/retire_core_capture.py
+sha256sum scripts/retire_core_capture.py
+scp scripts/retire_core_capture.py nas:$R
+ssh nas "sha256sum $R"
+# las dos huellas deben coincidir
+```
+
+Crear respaldo y candidato en el NAS, ejecutar la herramienta con la propia
+imagen Core sin red, validar el candidato y sólo entonces promoverlo. La fase
+`disable` añade `CORE_CAPTURE_ENABLED: 'false'` exclusivamente a
+`core-ops-worker` y exige que sigan presentes los cinco servicios y las cinco
+referencias al slot:
+
+```sh
+IMAGE=swissjob-core:point5-5a1241d
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+ssh nas "cp $E/core.configured.yml $E/core.configured.yml.before-capture-$STAMP"
+ssh nas "cp $E/core.configured.yml $E/core.configured.yml.next-disable-$STAMP"
+ssh nas "$D run --rm --network none --user 0:0 --entrypoint python \
+  -v $E:/work -v $R:/tool.py:ro $IMAGE /tool.py \
+  /work/core.configured.yml.next-disable-$STAMP disable"
+ssh nas "$C -p swissjob-r5 -f $E/core.configured.yml.next-disable-$STAMP config --quiet"
+ssh nas "mv $E/core.configured.yml.next-disable-$STAMP $E/core.configured.yml"
+ssh nas "cd $E && $C -p swissjob-r5 -f core.configured.yml up -d --no-deps core-ops-worker"
+```
+
+Esperar seis minutos y comprobar después:
 
 ```sh
 ssh nas "$D logs swissjob-core-ops-worker-r5 --since 6m | grep -c 'Sending due task shadow-check-slot-health'"  # 0
@@ -111,12 +141,27 @@ ssh nas "$PGC -c \"SELECT slot_name, active,
 ssh nas "$PGC -c \"SELECT pg_drop_replication_slot('jobhunt_shadow_r5_rehearsal');\""
 ```
 
-**5. Limpiar la definición.** Quitar el servicio `core-capture` de
-`core.configured.yml` y `CORE_CAPTURE_SLOT` de `core-api`, `core-worker`,
-`core-harvest-worker` y `core-ops-worker`. Quitar también la captura de los
-inventarios operativos (`check_core_release.py` y supervisor del NAS), recrear
-los cuatro servicios uno a uno y verificar `/v1/ready` con el mismo `release`
-y `authoritative: true`.
+**5. Limpiar la definición.** Crear otro candidato desde el Compose vivo ya
+desactivado. La fase `finalize` exige el flag falso sólo en operaciones,
+elimina el servicio `core-capture` y las cinco claves `CORE_CAPTURE_SLOT`, y
+conserva redes, volúmenes y los cuatro servicios Core:
+
+```sh
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+ssh nas "cp $E/core.configured.yml $E/core.configured.yml.next-finalize-$STAMP"
+ssh nas "$D run --rm --network none --user 0:0 --entrypoint python \
+  -v $E:/work -v $R:/tool.py:ro $IMAGE /tool.py \
+  /work/core.configured.yml.next-finalize-$STAMP finalize"
+ssh nas "$C -p swissjob-r5 -f $E/core.configured.yml.next-finalize-$STAMP config --quiet"
+```
+
+Antes de promoverlo, quitar captura de los inventarios operativos
+(`check_core_release.py` y supervisor del NAS) y verificar el supervisor con
+su ciclo aislado. Después mover el candidato al nombre vivo, recrear los cuatro
+servicios uno a uno y verificar `/v1/ready` con la misma `release`,
+`authoritative: true`, colas drenadas y cero reinicios inesperados. El flag
+`CORE_CAPTURE_ENABLED=false` se conserva hasta que la release de limpieza
+elimine definitivamente esas tareas.
 
 **6. Retirar el rol y la credencial, sólo tras desplegar la limpieza de
 código.** Este paso pertenece al cierre posterior de rollback, no a la primera
