@@ -160,6 +160,33 @@
       ],
       "interpretation": "these capability-specific strings exclude unrelated Gemini/Groq provider fallback logs; authoritative modes should never construct their CoreRead fallback adapters"
     },
-    "functional_response_signals": "during final browser/API probes no Portfolio catalog or matching response may report source=local_fallback"
+    "functional_response_signals": "during final browser/API probes no Portfolio catalog or matching response may report source=local_fallback",
+    "portfolio_routing_flip": {
+      "implementation": "backend/services/routing.py:set_routing",
+      "production_callers_found": 0,
+      "execution_context": "one-off Python process inside portfolio_backend using database.AsyncSessionLocal; no direct SQL",
+      "changes": [
+        {
+          "capability": "catalog",
+          "profile": "wildcard",
+          "mode": "core_primary"
+        },
+        {
+          "capability": "matching",
+          "profile": "wildcard",
+          "mode": "core_primary"
+        }
+      ],
+      "audit_actor": "optimization-2026-10-12",
+      "transaction_scope": "set_routing commits and increments revision once per capability; the two calls are intentionally observable as separate audited changes",
+      "cache_rule": "the one-off process invalidates only its own memory; live backend and worker caches expire after ROUTING_CACHE_TTL_SECONDS=5.0",
+      "settling_period_seconds": 10,
+      "verification": [
+        "re-read both wildcard rows and every explicit override from the Portfolio database",
+        "issue catalog and matching requests after the settling period",
+        "require zero local_fallback response source and zero capability-specific fallback log signals since the flip"
+      ],
+      "partial_failure": "keep rollback formally open, re-read both rows, and retry only the missing idempotent set_routing call; never infer completion from one successful call"
+    }
   }
 }
