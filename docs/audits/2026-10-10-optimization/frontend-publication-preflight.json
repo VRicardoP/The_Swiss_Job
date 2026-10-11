@@ -11,7 +11,9 @@
     "gitlab": "git@gitlab.com:lotharsan/reactportfolio-front.git",
     "github_main_observed": "a711c26c2f9ddc490069f988e1673b9389352b34",
     "gitlab_main_observed": "a711c26c2f9ddc490069f988e1673b9389352b34",
-    "local_commits_ahead": 7
+    "local_commits_ahead": 7,
+    "rechecked_at": "2026-10-11T08:24:00Z",
+    "both_heads_unchanged": true
   },
   "repository_automation": {
     "github_workflow": ".github/workflows/ci.yml",
