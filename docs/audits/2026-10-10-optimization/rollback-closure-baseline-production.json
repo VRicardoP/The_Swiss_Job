@@ -92,5 +92,74 @@
     "gitlab_main": "a711c26c2f9ddc490069f988e1673b9389352b34",
     "ahead": 5,
     "publication": "pending explicit authorization"
+  },
+  "formal_closure_gate": {
+    "defined_at": "2026-10-11T05:56:00+00:00",
+    "mode_rule": "verify effective routing, not only stored rows: an absent row resolves to local and therefore blocks closure",
+    "portfolio": {
+      "wildcard_core_primary": [
+        "applications",
+        "catalog",
+        "documents",
+        "matching",
+        "saved_searches",
+        "schools"
+      ],
+      "required_change": [
+        "catalog",
+        "matching"
+      ],
+      "overrides": "zero profile overrides in local, shadow, core_read or rollback_pending for the six in-scope capabilities",
+      "excluded_capabilities": []
+    },
+    "swissjob": {
+      "wildcard_core_primary": [
+        "catalog",
+        "documents",
+        "saved_searches",
+        "schools"
+      ],
+      "per_active_user_core_primary": [
+        "matching"
+      ],
+      "identity": "every active user has a Core profile link and an exact matching row acknowledged by snapshot delivery",
+      "overrides": "zero in-scope rows in local, shadow, core_read or rollback_pending",
+      "excluded_capabilities": {
+        "applications": "no routing row; local authority remains outside this closure",
+        "profiles": "profile edits remain local; Core receives idempotent snapshots and owns matching only after ACK"
+      }
+    },
+    "positive_runtime_evidence": [
+      "Core /v1/ready is ready and authoritative on the deployed release and schema head",
+      "all 17 harvest scopes remain healthy with no official alerts",
+      "Portfolio serves Core plus all eleven retained local sources; transferred producers satisfy the producer handover gate",
+      "SwissJob BFF and worker satisfy their exact provider/scraper handover gate",
+      "integration outbox has zero pending and dead-letter deliveries and Core queues drain",
+      "core-capture and its replication slot are absent after the post-stop native round",
+      "the twelve Portfolio windows load their real contents and the relevant BFF routes return successful responses"
+    ],
+    "single_writer_proof": {
+      "catalog": "Core produces every transferred source; Portfolio produces only its eleven exclusive sources",
+      "matching": "Core owns SwissJob active profiles; Portfolio composes Core results with matching for only its exclusive source set",
+      "durable_capabilities": "core_primary seams have no local write fallback; SwissJob applications/profiles remain explicitly local and excluded",
+      "cdc": "no replication consumer or slot remains to create a second projection writer"
+    },
+    "closure_action": "change Portfolio catalog and matching wildcard rows with services.routing.set_routing, re-read both databases and all active-user effective modes, then record the live evidence before deleting any fallback implementation",
+    "failure": "any missing authoritative row, non-authoritative override, unlinked active user, fallback signal, duplicate producer, pending/dead outbox item, unhealthy Core source or failed functional probe keeps rollback open",
+    "fallback_log_signals_since_final_deploy": {
+      "portfolio_zero": [
+        "catalogo core_read:",
+        "matching core_read:",
+        "background matching core_read: using explicit local fallback"
+      ],
+      "swissjob_zero": [
+        "catalogo core_read:",
+        "matching core_read:",
+        "documentos core_read:",
+        "colegios core_read:"
+      ],
+      "interpretation": "these capability-specific strings exclude unrelated Gemini/Groq provider fallback logs; authoritative modes should never construct their CoreRead fallback adapters"
+    },
+    "functional_response_signals": "during final browser/API probes no Portfolio catalog or matching response may report source=local_fallback"
   }
 }
