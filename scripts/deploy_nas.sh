@@ -32,6 +32,11 @@
 # Uso:  scripts/deploy_nas.sh core|bff|worker|frontend [--dry-run|--config-only]
 set -euo pipefail
 
+if (( $# > 2 )); then
+  echo "uso: $0 core|bff|worker|frontend [--dry-run|--config-only]" >&2
+  exit 2
+fi
+
 SERVICIO="${1:-}"
 MODO="${2:-}"
 [[ "$SERVICIO" =~ ^(core|bff|worker|frontend)$ ]] || {
