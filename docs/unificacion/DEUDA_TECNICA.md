@@ -1372,7 +1372,7 @@ Cabezas locales relevantes:
   SwissJob frontend 57 tests; Portfolio frontend 422. Validación focal posterior:
   47 API Core y 11 entregas de perfil SwissJob.
 
-Evidencias: `docs/audits/2026-10-10-optimization/README.md`. El JSONL de 48 h es
+Evidencias: `docs/audits/2026-10-10-optimization/README.md`; el índice ya enlaza el medidor, la ventana Portfolio, las huellas de corte, la procedencia de despliegue y las sondas finales. El JSONL de 48 h es
 un artefacto vivo y no se versiona hasta terminar la ventana. No guardar logs con
 URLs, tokens, credenciales ni datos de usuario.
 

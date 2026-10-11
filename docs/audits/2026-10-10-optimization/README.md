@@ -18,6 +18,11 @@ credenciales.
 - `container-resource-baseline-production.json` fija tres muestras homogéneas
   de CPU, memoria y PIDs para los nueve contenedores afectados; se repetirá con
   el mismo protocolo después del corte.
+- `scripts/measure_nas_resources.py` versiona ese protocolo, valida el conjunto
+  exacto de contenedores y selecciona explícitamente la topología posterior sin
+  captura. `container-resource-scheduled-window-baseline-production.json`
+  mantiene aparte la carga real del informe diario Portfolio para compararla
+  únicamente con la misma ventana tras el traspaso.
 - `matching-recovery-baseline-production.json` cuantifica el trabajo con un
   solo proceso: duraciones, ticks caducados, límites y el gate de convergencia
   después de drenar el backlog de embeddings.
@@ -42,6 +47,11 @@ hubiera en cada instante.
 - `supervisor-production.json` registra la reparación de la deriva del
   supervisor QTS: vuelve a vigilar los dos workers Core divididos y conserva
   capture hasta el corte.
+- `supervisor-postcapture-preflight.json` demuestra que la variante final
+  elimina sólo capture y conserva ambos workers; no se promueve antes de la
+  ronda nativa posterior al stop.
+- `cutover-file-preflight-production.json` fija respaldos, rutas y huellas de
+  los tres ejecutables que deben recalcularse justo antes del corte.
 
 ## Fuentes y autoridad
 
@@ -124,6 +134,11 @@ hubiera en cada instante.
   final y demuestra en PostgreSQL 15 que reanuda estados parciales sin doble cambio.
 - `frontend-publication-preflight.json` separa los pushes del despliegue externo
   de Cloudflare Pages y fija cómo demostrar que el dominio realmente cambió.
+- `deployment-command-provenance.json` fija el checkout y la huella del
+  comando que ejecuta cada despliegue posterior a capture.
+- `formal-closure-probes-validation.json` documenta las tres sondas fail-closed
+  de Core, SwissJob y Portfolio y las autorizaciones externas aún necesarias
+  para ejecutarlas en producción.
 
 Los datos de arrastre anteriores a este protocolo (43,25 ms de media y 100,1 ms
 de p95) no son directamente comparables con las muestras deterministas de este
