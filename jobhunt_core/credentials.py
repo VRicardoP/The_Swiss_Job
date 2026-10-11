@@ -3,8 +3,7 @@
 Formato del token: `Authorization: Bearer <key_id>.<secret>` — el secreto solo
 existe en el momento de la emisión; en BD queda su sha256 (`hash`). La
 verificación es en tiempo constante (hmac.compare_digest). Scopes = lista
-JSONB — vocabulario: `vacancies:read`, `matches:read`, `profiles:read` y
-`profiles:write` (escritura del CV push, C-API-W).
+JSONB; `_VALID_SCOPES` refleja los permisos exigidos por las rutas de Core.
 """
 
 import hashlib
@@ -60,6 +59,64 @@ async def create_credential(
         },
     )
     return key_id, secret
+
+
+_VALID_SCOPES = frozenset(
+    {
+        "applications:read",
+        "applications:write",
+        "documents:read",
+        "documents:write",
+        "harvest:write",
+        "matches:read",
+        "profiles:read",
+        "profiles:write",
+        "saved_searches:read",
+        "saved_searches:write",
+        "schools:read",
+        "schools:write",
+        "vacancies:read",
+    }
+)
+
+
+async def add_scope(session, key_id: str, scope: str) -> bool:
+    """Add one validated scope to a live credential, idempotently.
+
+    Scope changes stay separate from credential rotation. The row lock makes
+    expiry/revocation checks and the update one operation.
+    """
+    scope = scope.strip()
+    if scope not in _VALID_SCOPES:
+        raise ValueError(f"scope inválido: {scope!r}")
+    row = (
+        await session.execute(
+            sa.text(
+                "SELECT scopes FROM consumer_credentials "
+                "WHERE key_id=:kid AND revoked_at IS NULL "
+                "AND (expires_at IS NULL OR expires_at>clock_timestamp()) "
+                "FOR UPDATE"
+            ),
+            {"kid": key_id},
+        )
+    ).one_or_none()
+    if row is None:
+        raise ValueError(f"credencial no viva: {key_id}")
+    scopes = row.scopes
+    if not isinstance(scopes, list) or not all(
+        isinstance(existing, str) for existing in scopes
+    ):
+        raise ValueError(f"scopes corruptos en credencial: {key_id}")
+    if scope in scopes:
+        return False
+    await session.execute(
+        sa.text(
+            "UPDATE consumer_credentials SET scopes=CAST(:scopes AS jsonb) "
+            "WHERE key_id=:kid"
+        ),
+        {"kid": key_id, "scopes": json.dumps([*scopes, scope])},
+    )
+    return True
 
 
 async def revoke_credential(session, key_id: str) -> None:

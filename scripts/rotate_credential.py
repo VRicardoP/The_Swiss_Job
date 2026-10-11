@@ -8,8 +8,12 @@ cuando se confirma que el consumidor la usa se revoca la vieja.
 Dos pasos, dos invocaciones, a propósito — entre ellas hay un despliegue que
 este script no puede hacer ni verificar:
 
-    python -m scripts.rotate_credential emitir  <consumer>      # paso 1
-    python -m scripts.rotate_credential cerrar  <consumer> <key_id_viejo>
+    python -m scripts.rotate_credential emitir <consumer>          # paso 1
+    python -m scripts.rotate_credential cerrar <consumer> <key_id> # paso 2
+
+La concesión independiente de un permiso no rota el secreto:
+
+    python -m scripts.rotate_credential autorizar <consumer> <scope>
 
 `emitir` imprime el secreto UNA vez: no vuelve a ser recuperable. `cerrar` se
 niega a revocar si es la única credencial viva del consumer —eso no es cerrar
@@ -29,10 +33,12 @@ from jobhunt_core import credentials
 from jobhunt_core.database import SessionLocal
 
 
-async def _consumer_id(session, nombre: str):
+async def _consumer_id(session, nombre: str, *, for_update: bool = False):
+    lock = " FOR UPDATE" if for_update else ""
     fila = (
         await session.execute(
-            sa.text("SELECT id, active FROM consumers WHERE name = :n"), {"n": nombre}
+            sa.text("SELECT id, active FROM consumers WHERE name = :n" + lock),
+            {"n": nombre},
         )
     ).one_or_none()
     if fila is None:
@@ -42,7 +48,8 @@ async def _consumer_id(session, nombre: str):
     return fila.id
 
 
-async def _vivas(session, consumer_id) -> list:
+async def _vivas(session, consumer_id, *, for_update: bool = False) -> list:
+    lock = " FOR UPDATE" if for_update else ""
     return (
         await session.execute(
             sa.text(
@@ -50,7 +57,7 @@ async def _vivas(session, consumer_id) -> list:
                 "FROM consumer_credentials "
                 "WHERE consumer_id = :cid AND revoked_at IS NULL "
                 "  AND (expires_at IS NULL OR expires_at > clock_timestamp()) "
-                "ORDER BY created_at"
+                "ORDER BY created_at" + lock
             ),
             {"cid": consumer_id},
         )
@@ -81,7 +88,7 @@ async def emitir(nombre: str) -> None:
     falle no se sabrá cuál de los dos fue.
     """
     async with SessionLocal() as session:
-        consumer_id = await _consumer_id(session, nombre)
+        consumer_id = await _consumer_id(session, nombre, for_update=True)
         vivas = await _vivas(session, consumer_id)
         if not vivas:
             sys.exit(
@@ -106,9 +113,28 @@ async def emitir(nombre: str) -> None:
     print(f"  python -m scripts.rotate_credential cerrar {nombre} {vivas[0].key_id}")
 
 
+async def autorizar(nombre: str, scope: str) -> None:
+    """Añade un permiso sin mezclarlo con una rotación de secreto."""
+    async with SessionLocal() as session:
+        consumer_id = await _consumer_id(session, nombre, for_update=True)
+        vivas = await _vivas(session, consumer_id, for_update=True)
+        if len(vivas) != 1:
+            sys.exit(
+                f"{nombre} debe tener exactamente una credencial viva para cambiar "
+                f"permisos; tiene {len(vivas)}"
+            )
+        try:
+            changed = await credentials.add_scope(session, vivas[0].key_id, scope)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        await session.commit()
+    estado = "añadido" if changed else "ya presente"
+    print(f"{nombre}: scope {scope} {estado} en {vivas[0].key_id}")
+
+
 async def cerrar(nombre: str, key_id: str) -> None:
     async with SessionLocal() as session:
-        consumer_id = await _consumer_id(session, nombre)
+        consumer_id = await _consumer_id(session, nombre, for_update=True)
         vivas = await _vivas(session, consumer_id)
         claves = {fila.key_id for fila in vivas}
         if key_id not in claves:
@@ -130,14 +156,18 @@ async def cerrar(nombre: str, key_id: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("accion", choices=["listar", "emitir", "cerrar"])
+    parser.add_argument("accion", choices=["listar", "emitir", "autorizar", "cerrar"])
     parser.add_argument("consumer")
-    parser.add_argument("key_id", nargs="?")
+    parser.add_argument("target", nargs="?")
     args = parser.parse_args()
     if args.accion == "cerrar":
-        if not args.key_id:
+        if not args.target:
             parser.error("cerrar exige el key_id de la credencial que se revoca")
-        asyncio.run(cerrar(args.consumer, args.key_id))
+        asyncio.run(cerrar(args.consumer, args.target))
+    elif args.accion == "autorizar":
+        if not args.target:
+            parser.error("autorizar exige el scope que se añade")
+        asyncio.run(autorizar(args.consumer, args.target))
     elif args.accion == "emitir":
         asyncio.run(emitir(args.consumer))
     else:

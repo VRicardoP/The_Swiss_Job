@@ -161,3 +161,41 @@ def test_el_solape_olvidado_alerta_y_el_reciente_no(db):  # noqa: F811
     assert "rotacion-solape" in nombres(viejo)
     assert [a for a in viejo if a["consumer"] == "rotacion-solape"][0]["vivas"] == 2
     assert "rotacion-solape" not in nombres(cerrado)
+
+
+def test_add_scope_is_separate_idempotent_and_immediate(db):  # noqa: F811
+    factory, _ = db
+    cid = _consumer(factory, "scope-aditivo")
+
+    async def go():
+        async with factory() as session:
+            key_id, secret = await credentials.create_credential(
+                session, cid, ["vacancies:read"]
+            )
+            await session.commit()
+            first = await credentials.add_scope(session, key_id, "harvest:write")
+            second = await credentials.add_scope(session, key_id, "harvest:write")
+            await session.commit()
+            authenticated = await credentials.authenticate(
+                session, f"{key_id}.{secret}"
+            )
+            return first, second, authenticated
+
+    first, second, authenticated = asyncio.run(go())
+    assert first is True and second is False
+    assert authenticated is not None
+    assert authenticated[1] == ["vacancies:read", "harvest:write"]
+
+
+def test_add_scope_rejects_invalid_vocabulary_before_database(db):  # noqa: F811
+    factory, _ = db
+
+    async def go():
+        async with factory() as session:
+            try:
+                await credentials.add_scope(session, "unused", "harvest:admin")
+            except ValueError as exc:
+                return str(exc)
+        raise AssertionError("scope inválido aceptado")
+
+    assert "scope inválido" in asyncio.run(go())
