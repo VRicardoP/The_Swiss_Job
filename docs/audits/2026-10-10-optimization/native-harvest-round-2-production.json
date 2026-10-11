@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-11T05:04:04Z",
+  "source": "aggregated source_harvest_runs query",
+  "release": "5a1241d",
+  "round_started_at": "2026-10-11T04:10:09.507457+00:00",
+  "round_finished_at": "2026-10-11T04:36:18.747995+00:00",
+  "duration_seconds": 1569.240538,
+  "completed_scopes": 17,
+  "status_counts": {
+    "ok": 17
+  },
+  "error_scopes": 0,
+  "post_round_observer": {
+    "observed_at": "2026-10-11T04:43:24+00:00",
+    "healthy_sources": 17,
+    "enabled_sources": 17,
+    "official_alerts": [],
+    "harvest_queue": 0,
+    "pending_offer_embeddings": 1026
+  }
+}

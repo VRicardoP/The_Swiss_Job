@@ -28,7 +28,19 @@
     "ruff": "passed",
     "ruff_format": "passed",
     "py_compile": "passed",
-    "diff_check": "passed"
+    "diff_check": "passed",
+    "core_full_suite": "1912 passed, 1 skipped",
+    "swissjob_backend_full_suite": "2667 passed, 3 skipped, 4 xfailed",
+    "backend_runtime_versions": {
+      "fastapi": "0.141.1",
+      "slowapi": "0.1.10",
+      "starlette": "1.7.0"
+    },
+    "discarded_runs": [
+      "backend run with local Redis stopped",
+      "backend run with a partial repository mount",
+      "backend run in an older dependency image"
+    ]
   },
   "deployment": {
     "deployed": false,
