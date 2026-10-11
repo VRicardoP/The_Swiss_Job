@@ -118,6 +118,36 @@ inventarios operativos (`check_core_release.py` y supervisor del NAS), recrear
 los cuatro servicios uno a uno y verificar `/v1/ready` con el mismo `release`
 y `authoritative: true`.
 
+**6. Retirar el rol y la credencial, sólo tras desplegar la limpieza de
+código.** Este paso pertenece al cierre posterior de rollback, no a la primera
+ventana de retirada del slot. Antes, la release viva debe haber eliminado el
+bootstrap y la verificación de `jobhunt_capture`, y la configuración resuelta no
+debe contener `CAPTURE_DSN` ni `CORE_CAPTURE_PASSWORD`.
+
+Comprobar nombres de variables sin imprimir sus valores, y que no haya sesiones:
+
+```sh
+for c in swissjob-core-api-r5 swissjob-core-worker-r5 \
+  swissjob-core-harvest-worker-r5 swissjob-core-ops-worker-r5; do
+  if ssh nas "$D inspect $c --format '{{range .Config.Env}}{{println .}}{{end}}'" \
+    | cut -d= -f1 | grep -Eq '^(CAPTURE_DSN|CORE_CAPTURE_PASSWORD)$'; then
+    echo "ABORTA: $c conserva una credencial de captura" >&2
+    exit 1
+  fi
+done
+ssh nas "$PGC -c \"SELECT count(*) FROM pg_stat_activity WHERE usename='jobhunt_capture';\""
+# esperado: 0
+```
+
+Conectar como administrador y ejecutar `DROP ROLE jobhunt_capture;` **sin
+`CASCADE`**. Si PostgreSQL informa de una dependencia, detenerse e inventariarla;
+no borrar objetos para forzar el comando. Verificar después que
+`SELECT count(*) FROM pg_roles WHERE rolname='jobhunt_capture';` devuelve `0`.
+Sólo entonces retirar `CORE_CAPTURE_PASSWORD` del fichero administrativo y
+borrar los ficheros dedicados `.env.core.capture.prod` y
+`rehearsal-r5/.env.core.capture.r5` del NAS. No registrar nunca sus contenidos
+en el acta.
+
 ## Qué NO se borra
 
 - La base `swissjobhunter_r5_rehearsal`: contiene el esquema `jobhunt`, que
