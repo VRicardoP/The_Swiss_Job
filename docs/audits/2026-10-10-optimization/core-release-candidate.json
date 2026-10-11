@@ -1,27 +1,31 @@
 {
-  "built_at": "2026-10-11T03:31:27.049115042Z",
-  "commit": "3561fc7",
-  "image": "swissjob-core:point5-3561fc7",
-  "image_id": "sha256:b70b9f1c03bd31cdd8f8371a50a50582c23399902f8182ea4906a5ff7e568e56",
-  "size_bytes": 2196667488,
+  "built_at": "2026-10-11T04:07:05.138192102Z",
+  "commit": "0d612c9",
+  "image": "swissjob-core:point5-0d612c9",
+  "image_id": "sha256:b4823f0a72a636317552f843774da64bdf947bdc90296e2fbc46798fc420213f",
+  "size_bytes": 2196686086,
   "runtime_user": "core",
-  "release_marker": "3561fc7",
+  "release_marker": "0d612c9",
   "local_only": true,
   "sent_to_nas": false,
   "deployed": false,
   "runtime_preflight": {
     "credential_cli_present": true,
     "credential_cli_help_includes_authorize": true,
+    "bytecode_compiles_with_tmp_cache": true,
     "network_used": false
   },
   "source_image_hashes_match": {
     "jobhunt_core/api/v1_harvest.py": "b2434d087c613b0004c0af6ab4d8a05d6278efdccb3e62f2448d85368ca1c0bf",
     "jobhunt_core/source_aggregate.py": "71154fd61dc73a524a2f91ee50f619cf13d7c29b88e27fe8e4cdb7ecb896f810",
     "jobhunt_core/credentials.py": "a4708fb0a7de783e5dcb3823d23e381bf13a00ac0b8aa2dd785713bd5a7dfefb",
-    "jobhunt_core/rotate_credential.py": "224a540285ab3cca031bf6a7b6a12ee4571c3ce25ac53cfd2e53645ce2e8a8f8"
+    "jobhunt_core/rotate_credential.py": "224a540285ab3cca031bf6a7b6a12ee4571c3ce25ac53cfd2e53645ce2e8a8f8",
+    "jobhunt_core/dedup.py": "e8242e7c780d57e72e5e29caa5c72f688da86d3a7d81896b8292f7ee610fa9b3",
+    "jobhunt_core/tasks/maintenance.py": "2fea1260953a5fed03a2775c12798163acc22d9f4acb289ceae44009474a4f1b"
   },
   "validation": {
     "credential_integration_tests": "8 passed",
+    "dedup_integration_and_orchestration_tests": "39 passed",
     "ruff": "passed",
     "py_compile": "passed",
     "historical_and_runtime_cli_help_identical": true,
