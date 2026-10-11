@@ -1,0 +1,43 @@
+{
+  "observed_at": "2026-10-11T01:12:38Z",
+  "scope": "read-only production aggregate; no token or event payload was read",
+  "core_container": "swissjob-core-ops-worker-r5",
+  "configured_destinations": {
+    "portfolio": {
+      "scheme": "http",
+      "host": "portfolio_backend",
+      "path": "/api/v1/integration/inbox"
+    },
+    "swissjob-shadow": {
+      "scheme": "http",
+      "host": "swissjob-backend",
+      "path": "/api/v1/integration/events"
+    }
+  },
+  "token_configured": true,
+  "delivery_states": [
+    {
+      "destination": "portfolio",
+      "state": "delivered",
+      "count": 9470
+    },
+    {
+      "destination": "swissjob-shadow",
+      "state": "delivered",
+      "count": 15935
+    }
+  ],
+  "delivery_stats": {
+    "by_state": {
+      "delivered": 25405
+    },
+    "oldest_pending_s": 0.0,
+    "dead_total": 0
+  },
+  "conclusion": {
+    "http_transport_complete": true,
+    "shadow_inbox_fallback_used_for_current_destinations": false,
+    "reason": "Both active destination keys have explicit HTTP URLs; HttpDestinationTransport only calls the shadow fallback when swissjob-shadow has no configured URL.",
+    "cleanup_gate": "The executable shadow inbox fallback can be removed after formal rollback closure; historical table and migrations remain as evidence."
+  }
+}

@@ -69,6 +69,9 @@ hubiera en cada instante.
 - `routing-cleanup-baseline.json` separa motores y costuras post-rollback del
   catálogo y matching locales que deben conservar las fuentes exclusivas de
   ReactPortfolio.
+- `delivery-transport-production.json` verifica que los dos consumidores usan
+  destinos HTTP explícitos, con 25.405 entregas y cero pendientes o dead-letter;
+  el fallback ejecutable al inbox sombra puede retirarse después del cierre.
 
 ## Frontend y regresión
 
