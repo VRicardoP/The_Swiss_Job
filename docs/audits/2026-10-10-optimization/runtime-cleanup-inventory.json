@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-11T00:57:42.742142+00:00",
+  "observed_at": "2026-10-11T05:36:00+00:00",
   "status": "verified inventory; deletion deferred until rollback is formally closed",
   "swissjob_shadow_runtime": {
     "python_lines": 8093,
@@ -61,5 +61,58 @@
     "provider_and_scraper_modules": 16,
     "python_lines": 3294,
     "decision": "delete registry entries and implementations only after production handover and rollback closure; preserve historical migrations and evidence"
+  },
+  "capture_cleanup_surface": {
+    "during_capture_retirement": {
+      "deploy/nas/core.configured.yml": "phase disable keeps five services and disables only the three capture schedules; phase finalize removes core-capture and all five CORE_CAPTURE_SLOT keys",
+      "scripts/check_core_release.py": "remove core-capture from the expected release set immediately before promoting the finalized production manifest",
+      "scripts/nas/supervisor_contenedores.sh": "remove swissjob-core-capture-r5 from the live expected-container inventory before the service disappears; validate an isolated cycle first"
+    },
+    "after_rollback_closure": {
+      "runtime_remove": [
+        "jobhunt_core/shadow/",
+        "jobhunt_core/tasks/shadow.py",
+        "jobhunt_core/config.py: CORE_CAPTURE_ENABLED and obsolete CORE_SHADOW_* settings",
+        "jobhunt_core/celery_app.py: capture schedules and retirement switch",
+        "jobhunt_core/migrate.py: jobhunt_capture role/password bootstrap",
+        "jobhunt_core/tasks/delivery.py: shadow_inbox fallback registration",
+        "jobhunt_core/retention.py: shadow_inbox retention path after the fallback is gone",
+        "jobhunt_core/import_search_corpus.py after its rollback-only purpose expires"
+      ],
+      "extract_before_remove": [
+        "jobhunt_core/erasure.py and erasure_restore.py: retain graph erasure while removing shadow_change_log scrubbing only after the retention decision",
+        "jobhunt_core/dev_eval.py: move NDCG_K and _dcg to a neutral ranking metrics module",
+        "jobhunt_core/tasks/shadow.py: move bounded embedding drain and matching recovery to native matching tasks",
+        "jobhunt_core/tasks/delivery.py: keep HTTP delivery and delivery.stats health, remove only the inbox fallback"
+      ],
+      "compose_and_credentials": [
+        ".env.core.admin.prod.example",
+        ".env.core.capture.prod.example",
+        ".env.example",
+        "deploy/nas/rehearsal-r5.yml",
+        "docker-compose.yml",
+        "docker-compose.dev.yml",
+        "docker-compose.prod.yml",
+        "docker-compose.qnap.yml",
+        "docker-compose.rehearsal.qnap.yml",
+        "docker-compose.core-local.yml"
+      ],
+      "obsolete_operational_tools": [
+        "backend/scripts/nas_cutover.sh and its capture-specific fail-closed tests",
+        "scripts/nas_deploy_rehearsal_r5.sh",
+        "scripts/rehearse_profile_recovery.py",
+        "scripts/split_core_workers.py capture boundary assumption",
+        "scripts/retire_core_capture.py and its tests after the one-time retirement is evidenced",
+        "scripts/check_no_secrets.py capture allow-list entry",
+        "scripts/deploy_nas.sh capture-specific inventory/comment paths"
+      ],
+      "ci_and_tests": "remove capture/gate/projector suites and CORE_CAPTURE_PASSWORD; preserve coverage for extracted matching recovery, erasure, HTTP delivery, compose validity and release coherence",
+      "postgres_follow_up": "wal2json and wal_level=logical become unused after the slot and role are gone; simplify docker/postgres-core and compose/CI only in a controlled database maintenance change, without coupling that restart to the application cutover"
+    },
+    "preserve_as_history": [
+      "applied Alembic migrations and their tables until the ratified retention decision",
+      "audit receipts and cutover evidence",
+      "historical SQL canonization records when needed to explain already-applied data changes"
+    ]
   }
 }
