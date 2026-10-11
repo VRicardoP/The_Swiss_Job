@@ -17,7 +17,12 @@
     "expected_containers": 17,
     "includes_core_capture_until_cut": true,
     "shell_syntax": "passed",
-    "isolated_healthy_cycle": "passed"
+    "isolated_healthy_cycle": "passed",
+    "live_cron_confirmation": {
+      "ran_at": "2026-10-11T01:20:01Z",
+      "state": "ok",
+      "new_alert": false
+    }
   },
   "next_change": "Remove swissjob-core-capture-r5 from the versioned and live expected list immediately before or with the capture stop, preserving the two split workers."
 }
