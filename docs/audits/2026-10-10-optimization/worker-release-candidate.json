@@ -1,0 +1,41 @@
+{
+  "built_at": "2026-10-11T06:34:38Z",
+  "commit": "f29fd44",
+  "image": "swissjob-worker:point5-f29fd44",
+  "image_id": "sha256:2cada33d28891d7968f7fa4ca3df2acbac68af1377872a4e5ce81c0a21401f70",
+  "size_bytes": 4451761388,
+  "runtime_user": "app",
+  "entrypoint": [
+    "./scripts/entrypoint.sh"
+  ],
+  "local_only": true,
+  "sent_to_nas": false,
+  "deployed": false,
+  "browser_runtime": {
+    "installed": true,
+    "playwright": "1.63.0",
+    "chromium": "chromium-1243",
+    "chromium_headless_shell": "chromium_headless_shell-1243",
+    "ffmpeg": "ffmpeg-1011"
+  },
+  "source_image_hashes_match": {
+    "backend/services/profile_sync.py": "7ec40c60b69038a29912eebd49f84b3ed7b416732739e3b0f304610b7d27ae62",
+    "backend/tasks/pipeline_tasks.py": "07230529c82f3216b6b4404d10327604385a458802a1a4d5722047ee9fad1305"
+  },
+  "validation": {
+    "full_backend_suite_on_same_source": "2667 passed, 3 skipped, 4 xfailed",
+    "profile_delivery_focused": "11 passed",
+    "celery_import": "passed",
+    "profile_enrollment_and_drain_imports": "passed",
+    "playwright_runtime_as_app_user": "passed",
+    "dry_run": "scripts/deploy_nas.sh worker --dry-run passed"
+  },
+  "deployment_worktree": {
+    "path": "/tmp/swissjob-deploy-f29fd44",
+    "head": "f29fd44",
+    "detached": true,
+    "clean": true,
+    "recreate_command": "git worktree add --detach /tmp/swissjob-deploy-f29fd44 f29fd44"
+  },
+  "deployment_gate": "deploy after Core f29fd44 exposes POST /v1/profiles; this full worker image is required because profile delivery runs in the worker, and its deployment also applies the final provider/scraper handover policy"
+}

@@ -78,11 +78,14 @@
   ],
   "closure_sequence_after_live_gates": [
     "retire capture and slot per RETIRADA_SLOT_CDC_PUNTO4.md",
+    "deploy swissjob-core:point5-f29fd44 and verify POST /v1/profiles, bounded dedup, dispatch and aggregate routes",
+    "grant harvest:write only after the deployed Core route exists",
+    "deploy full swissjob-backend:point5-f29fd44 and swissjob-worker:point5-f29fd44 images; both receive the final producer handover policy",
     "publish and verify the Portfolio frontend",
-    "deploy portfolio-backend:board-a292ef4 and verify composite catalog/matching plus 11 retained sources",
-    "apply SwissJob worker and BFF handover with --config-only and unchanged live image tags",
+    "deploy portfolio-backend:board-a292ef4 and verify composite catalog/matching plus eleven retained sources",
+    "verify both producer handover gates and zero active SwissJob users without Core identity",
     "set Portfolio catalog and matching wildcard routing to core_primary through services.routing.set_routing",
-    "re-read both routing tables and require zero local, shadow, core_read or rollback_pending rows",
+    "re-read both routing tables and require zero local, shadow, core_read or rollback_pending rows in scope",
     "verify no fallback log path, single writers, healthy readers, queues and outbox before declaring closure"
   ],
   "status": "open",

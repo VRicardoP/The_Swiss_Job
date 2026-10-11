@@ -109,6 +109,9 @@ hubiera en cada instante.
   byte a byte, la salud posterior y el control que impide repetirlo.
 - `reactportfolio-frontend-release.json` fija el commit publicable y repite lint,
   las 422 pruebas y el build aislado que se desplegará en Cloudflare Pages.
+- `worker-release-candidate.json` fija la imagen worker completa `f29fd44`,
+  incluido Chromium, el entregador que da de alta perfiles y el dry-run exacto;
+  `--config-only` no sirve para este corte porque conservaría código antiguo.
 
 Los datos de arrastre anteriores a este protocolo (43,25 ms de media y 100,1 ms
 de p95) no son directamente comparables con las muestras deterministas de este
