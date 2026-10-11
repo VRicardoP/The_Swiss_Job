@@ -26,5 +26,12 @@
     "hardcoded_workspace_paths": 0,
     "new_dependencies": 0
   },
-  "comparison_scope": "This headless smoke proves that the versioned protocol runs. Final before/after performance claims must use the same headless setting and environment for both samples."
+  "comparison_scope": "This headless smoke proves that the versioned protocol runs. Final before/after performance claims must use the same headless setting and environment for both samples.",
+  "headed_retry": {
+    "started_at": "2026-10-11T06:00:27.426Z",
+    "result": "discarded",
+    "functional_progress": "12/12 windows opened with content and zero recorded page errors before drag",
+    "reason": "The desktop environment throttled the synthetic pointer gesture; no result JSON was produced after 163 seconds.",
+    "performance_data_retained": false
+  }
 }
