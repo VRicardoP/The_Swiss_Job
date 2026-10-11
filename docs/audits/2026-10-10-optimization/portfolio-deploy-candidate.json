@@ -1,0 +1,31 @@
+{
+  "observed_at": "2026-10-11T00:41:58.142987+00:00",
+  "repository": "ReactPortfolio/backend",
+  "commit": "10eb0d432e1dae24fa098d669b7682eff92642b1",
+  "runtime_base_commit": "ba3f886f0cc7d861c329f2419967d305af8ae54e",
+  "worktree": "/tmp/reactportfolio-backend-deploy-10eb0d4",
+  "worktree_clean": true,
+  "image": {
+    "tag": "portfolio-backend:board-10eb0d4",
+    "id": "sha256:afcd10e47d8a7177fdd9d370c699b13bc10236c95c45df98c6a148885f70dcf8",
+    "size_bytes": 3464664949,
+    "user": "appuser",
+    "working_dir": "/release",
+    "critical_file_hashes_match_checkout": true,
+    "critical_file_sha256": {
+      "services/catalog/composite.py": "92763a7875b8f090b59afc04b6a5572abb711747fb078f970c19b5072f945d67",
+      "services/matching/composite.py": "a7a64cf617750e49acd3ae78f68848895a62efa7c34cd88408caccc8fac4a756",
+      "services/job_provider.py": "42f41d7263cbb2eb1858adb2c1b4bc7ee1d13c8b89e0b617ab50e9c684013dab",
+      "scripts/deploy_nas.sh": "6af3dc56d88971f2434f5e48f8136164687ee986cadc98aa910f26682ea43aff"
+    }
+  },
+  "validation": {
+    "deploy_dry_run": "passed",
+    "resolved_image": "portfolio-backend:board-10eb0d4",
+    "compose_transform": "2 services, 9 disabled shared sources, idempotent",
+    "compose_config": "passed on the sanitized candidate; only expected unset-secret warnings",
+    "source_handover_tests": "24 passed",
+    "full_runtime_suite": "2106 passed, 1 skipped at runtime_base_commit; later commits only modify scripts/deploy_nas.sh"
+  },
+  "deployment_state": "local candidate only; NAS still runs portfolio-backend:board-4ce76a7"
+}
