@@ -1,0 +1,56 @@
+{
+  "already_shared": [
+    "FreshnessBadge",
+    "CompanyResearchName"
+  ],
+  "decision": "Extend the cohesive JobCardExtras presentation module after rollback; do not introduce a configurable full-card shell or merge either window/hook.",
+  "must_remain_window_specific": {
+    "actions": "AI open mutates opened state and has interested/save actions; Board uses an external anchor and treats opened as saved.",
+    "board": "tag preview, sorting and tab layout belong only to JobBoardTabbedWindow.",
+    "hooks": [
+      "useAIJobMatch",
+      "useJobBoardControls",
+      "useJobApplication",
+      "useSkillsGap"
+    ],
+    "matching": "score, fit, skill expansion and reason belong only to AIJobMatchWindow.",
+    "title": "AI supports manual translation and score layout; Board title is an external link with background title_en."
+  },
+  "observed_at": "2026-10-11T03:03:59Z",
+  "purpose": "Bound the post-rollback frontend card extraction with verified behavior.",
+  "safe_shared_presentation": [
+    {
+      "component": "JobSummary",
+      "contract": "summary -> description_snippet -> translated no-description fallback",
+      "current_consumers": [
+        "AIJobMatchWindow",
+        "JobBoardTabbedWindow"
+      ]
+    },
+    {
+      "component": "JobDate",
+      "contract": "localized date plus FreshnessBadge",
+      "current_consumers": [
+        "AIJobMatchWindow",
+        "JobBoardTabbedWindow",
+        "AdvancedFilterPanel"
+      ]
+    },
+    {
+      "component": "JobBadges",
+      "contract": "remote/source/employment labels only; caller keeps layout and source color",
+      "current_consumers": [
+        "AIJobMatchWindow",
+        "JobBoardTabbedWindow",
+        "AdvancedFilterPanel"
+      ]
+    }
+  ],
+  "sources": [
+    "frontend/src/components/Dashboard/AIJobMatchWindow.jsx",
+    "frontend/src/components/Dashboard/JobBoardTabbedWindow.jsx",
+    "frontend/src/components/Dashboard/JobSearchWindow/AdvancedFilterPanel.jsx",
+    "frontend/src/components/Dashboard/JobSearchWindow/SavedSearchesPanel.jsx",
+    "frontend/src/components/Dashboard/JobCardExtras.jsx"
+  ]
+}

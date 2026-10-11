@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 03:01 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 03:04 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1329,6 +1329,14 @@ código ejecutable:
   `cutover`/`gate_c`, los fallbacks y repositorios locales usados sólo para
   rollback. Se conserva la tabla histórica y se conservan `LocalCatalog` y
   `LocalMatching`, necesarios para los productores exclusivos.
+- En el frontend, `FreshnessBadge` y `CompanyResearchName` ya están
+  compartidos. La extracción posterior se limita a presentación: resumen de
+  tres estados, fecha/frescura y badges; cabe en el módulo cohesivo
+  `JobCardExtras`. Título, score, skills y acciones permanecen en cada
+  ventana: AI abre mediante una mutación y separa interesado/guardado, mientras
+  Board usa enlace externo y considera abierto como guardado. No se crea una
+  tarjeta configurable ni se mezclan ventanas/hooks. Evidencia
+  `frontend-card-simplification.json`.
 - `retention.py` y `erasure_restore.py` se conservan: siguen purgando el inbox
   histórico y aplicando recibos de borrado sobre `shadow_change_log`, tablas que
   expresamente no se eliminan. `search_cutover.py` es el único lector ejecutable
@@ -1355,7 +1363,7 @@ Comprobado el 2026-10-11 00:22 UTC en el NAS:
 
 Cabezas locales relevantes:
 
-- SwissJob `feat/fase-a-core`: cabeza comprobada `cb70aa3` antes de esta actualización; la utilidad y el runbook seguro de retirada se añaden en el commit siguiente.
+- SwissJob `feat/fase-a-core`: cabeza comprobada `bbb70f8` antes de esta actualización; el límite verificado de la tarjeta compartida se añade en el commit siguiente.
 - ReactPortfolio backend `main`: `a292ef4`, doce commits por delante del remoto; conserva el cambio previo del propietario en `README.md` fuera de nuestros commits.
 - ReactPortfolio frontend `main`: `07ac81b`, cinco commits por delante del remoto.
 - Suites completas ya ejecutadas: Core 1.896 passed/1 skipped; Portfolio backend
