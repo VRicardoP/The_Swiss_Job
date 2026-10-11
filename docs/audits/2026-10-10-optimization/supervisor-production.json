@@ -1,0 +1,23 @@
+{
+  "observed_at": "2026-10-11T01:15:32Z",
+  "host_path": "/share/Public/swissjob/supervisor_contenedores.sh",
+  "cron": "*/5 * * * *",
+  "before": {
+    "sha256": "d0c5fc88050b883b94dde54e01893b77aff471844853de089b5d2c30af10db98",
+    "expected_containers": 15,
+    "missing_from_monitoring": [
+      "swissjob-core-harvest-worker-r5",
+      "swissjob-core-ops-worker-r5"
+    ],
+    "backup": "/share/Public/swissjob/supervisor_contenedores.sh.before-20261011T0115Z"
+  },
+  "after": {
+    "sha256": "74d65131cb32150ebea4e074c7517cb373225e9a617c2bc91036ec9b754afce5",
+    "matches_versioned_source": true,
+    "expected_containers": 17,
+    "includes_core_capture_until_cut": true,
+    "shell_syntax": "passed",
+    "isolated_healthy_cycle": "passed"
+  },
+  "next_change": "Remove swissjob-core-capture-r5 from the versioned and live expected list immediately before or with the capture stop, preserving the two split workers."
+}

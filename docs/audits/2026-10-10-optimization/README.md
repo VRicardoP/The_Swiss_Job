@@ -33,6 +33,9 @@ hubiera en cada instante.
   drenado de embeddings, matching y borrado de perfiles que siguen activos.
 - `capture-retirement-readiness-production.json` conserva el checkpoint vivo
   previo al corte: staging drenado, slot activo y WAL retenido acotado.
+- `supervisor-production.json` registra la reparación de la deriva del
+  supervisor QTS: vuelve a vigilar los dos workers Core divididos y conserva
+  capture hasta el corte.
 
 ## Fuentes y autoridad
 
