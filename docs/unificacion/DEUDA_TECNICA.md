@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 02:24 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 02:28 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1282,11 +1282,18 @@ código ejecutable:
   unifican el nombre público y el sink necesita su normalizador para reconstruir
   la canónica. Sólo podrá borrarse cuando el corpus ya no contenga esas fuentes.
 - Las nueve pestañas Portfolio transferidas ya llaman a `/api/v1/jobs/search`
-  con filtro Core; sus `urlPath` antiguos no se ejecutan desde el frontend. Los
-  logs del contenedor no registran accesos HTTP (29 líneas/0 solicitudes en 48 h),
-  por lo que no demuestran ausencia de clientes externos: al retirar colectores
-  se conservan esos contratos o se sustituyen por adaptadores Core; no se borran
-  declarándolos «sin uso» sin evidencia.
+  con filtro Core; sus `urlPath` antiguos no se ejecutan desde el frontend. La
+  búsqueda global no encuentra consumidores versionados de esas rutas fuera de
+  sus propios routers y pruebas, pero los logs del contenedor no registran
+  accesos HTTP (29 líneas/0 solicitudes en 48 h) y no prueban ausencia de
+  clientes externos. La superficie son 23 módulos específicos. Tras rollback se
+  sustituyen por un único router de compatibilidad apoyado en
+  `CompositeCatalog`, que ya pagina y filtra por las nueve fuentes (`nav` se
+  traduce a `nav_arbeidsplassen`); se preservan los sobres GET y se eliminan los
+  fetchers externos. `refresh-cache` no puede fingir éxito: Core ya dispone de
+  `jobhunt.harvest.run_scope`, con exclusión e idempotencia por run; el adaptador
+  sólo se conserva si puede encolar esa tarea mediante una operación Core
+  autenticada y acotada.
 - `retention.py` y `erasure_restore.py` se conservan: siguen purgando el inbox
   histórico y aplicando recibos de borrado sobre `shadow_change_log`, tablas que
   expresamente no se eliminan. `search_cutover.py` es el único lector ejecutable
