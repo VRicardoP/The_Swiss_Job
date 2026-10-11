@@ -1,0 +1,33 @@
+{
+  "observed_at": "2026-10-11T00:55:19.317721+00:00",
+  "window": {
+    "requested": "24h",
+    "first_structured_log": "2026-10-10T20:16:15.831490+00:00",
+    "last_structured_log": "2026-10-11T00:16:34.240518+00:00"
+  },
+  "production": {
+    "portfolio_worker_image": "portfolio-backend:board-4ce76a7",
+    "portfolio_worker_restarts": 0,
+    "core_harvest_worker_image": "swissjob-core:point5-5a1241d",
+    "core_harvest_worker_restarts": 0
+  },
+  "portfolio_shared_source_cycles_started": {
+    "arbeitnow": 1,
+    "irishjobs": 1,
+    "jobgether": 1,
+    "nav": 1,
+    "ostjob": 1,
+    "remotive": 1,
+    "thehub": 2,
+    "weworkremotely": 1,
+    "zentraljob": 1
+  },
+  "shared_sources_with_a_scheduled_cycle": 9,
+  "portfolio_school_scheduler": {
+    "delegated_wakeups": 1,
+    "message": "school_scraper: live collection delegated to Core",
+    "outbound_school_fetch": "not executed by this path; pinned by test_core_scrape_all_never_lists_or_fetches"
+  },
+  "core_native_round_evidence": "native-harvest-round-production.json",
+  "interpretation": "The same nine shared sources have a Portfolio scheduled cycle while Core is their native authority. The Portfolio school loop still wakes, but its authority guard delegates before network I/O. After handover, the nine start counts and the school wakeup must be zero while the 11 exclusive Portfolio sources remain active."
+}
