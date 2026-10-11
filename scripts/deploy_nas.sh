@@ -21,6 +21,8 @@
 #    worker de operaciones que ejecuta el beat deben publicar la misma release.
 # 7. El worker BFF usa la misma fuente que la API, pero otra imagen con Chromium.
 #    Se despliega explícitamente para no dejar código Celery antiguo en producción.
+# 8. BFF y worker reciben del manifiesto versionado las listas LEGACY_DISABLED_*;
+#    cambiar sólo la imagen dejaría activos productores que ya pertenecen a Core.
 #
 # Uso:  scripts/deploy_nas.sh core|bff|worker|frontend [--dry-run]
 set -euo pipefail
@@ -129,19 +131,85 @@ if [[ "$SERVICIO" == core ]]; then
   python3 scripts/split_core_workers.py "$TMP/compose.yml"
 fi
 python3 - <<PYEOF
-import re, sys
-ruta = "$TMP/compose.yml"
+import re
+import sys
+from pathlib import Path
+
+ruta = Path("$TMP/compose.yml")
 servicios = "${SERVICIOS[*]}".split()
-lineas = open(ruta).read().split("\n")
-actual = None; cambiadas = 0
-for i, l in enumerate(lineas):
-    m = re.match(r"^  ([a-z_-]+):\s*$", l)
-    if m: actual = m.group(1)
-    if actual in servicios and re.match(r"^    image: $PATRON[a-f0-9]+\s*$", l):
-        lineas[i] = "    image: $IMAGEN"; cambiadas += 1
-open(ruta, "w").write("\n".join(lineas))
-print(f"etiquetas cambiadas: {cambiadas} (esperadas {len(servicios)})")
-sys.exit(0 if cambiadas == len(servicios) else 1)
+sincronizar_productores = "$SERVICIO" in {"bff", "worker"}
+claves_productores = ("LEGACY_DISABLED_PROVIDERS", "LEGACY_DISABLED_SCRAPERS")
+politicas = {}
+
+if sincronizar_productores:
+    manifiesto = Path("deploy/nas/swissjob.configured.yml")
+    actual = None
+    for linea in manifiesto.read_text().splitlines():
+        servicio = re.match(r"^  ([a-z_-]+):\s*$", linea)
+        if servicio:
+            actual = servicio.group(1)
+        if actual in servicios:
+            valor = re.match(
+                r"^      (LEGACY_DISABLED_PROVIDERS|LEGACY_DISABLED_SCRAPERS):\s+(.+)$",
+                linea,
+            )
+            if valor:
+                politicas.setdefault(actual, {})[valor.group(1)] = valor.group(2)
+    esperadas = {(servicio, clave) for servicio in servicios for clave in claves_productores}
+    encontradas = {
+        (servicio, clave)
+        for servicio, valores in politicas.items()
+        for clave in valores
+    }
+    if encontradas != esperadas:
+        sys.exit("ABORTA: política LEGACY_DISABLED_* incompleta en el manifiesto")
+
+lineas = ruta.read_text().splitlines()
+salida = []
+actual = None
+entornos = set()
+etiquetadas = set()
+aplicadas = {servicio: set() for servicio in servicios}
+for linea in lineas:
+    servicio = re.match(r"^  ([a-z_-]+):\s*$", linea)
+    if servicio:
+        actual = servicio.group(1)
+    if actual in servicios and re.match(r"^    image: $PATRON[a-f0-9]+\s*$", linea):
+        linea = "    image: $IMAGEN"
+        etiquetadas.add(actual)
+    if actual in servicios and linea == "    environment:":
+        entornos.add(actual)
+    if sincronizar_productores and actual in servicios:
+        valor = re.match(
+            r"^      (LEGACY_DISABLED_PROVIDERS|LEGACY_DISABLED_SCRAPERS):",
+            linea,
+        )
+        if valor:
+            clave = valor.group(1)
+            linea = f"      {clave}: {politicas[actual][clave]}"
+            aplicadas[actual].add(clave)
+        if re.match(r"^    restart:", linea):
+            if actual not in entornos:
+                sys.exit(f"ABORTA: {actual} no tiene environment en el compose remoto")
+            for clave in claves_productores:
+                if clave not in aplicadas[actual]:
+                    salida.append(f"      {clave}: {politicas[actual][clave]}")
+                    aplicadas[actual].add(clave)
+    salida.append(linea)
+
+if etiquetadas != set(servicios):
+    sys.exit(
+        f"ABORTA: etiquetas incompletas; cambiadas={sorted(etiquetadas)}, "
+        f"esperadas={sorted(servicios)}"
+    )
+if sincronizar_productores and any(
+    aplicadas[servicio] != set(claves_productores) for servicio in servicios
+):
+    sys.exit("ABORTA: política LEGACY_DISABLED_* no aplicada a todos los servicios")
+ruta.write_text("\n".join(salida) + "\n")
+print(f"etiquetas cambiadas: {len(etiquetadas)} (esperadas {len(servicios)})")
+if sincronizar_productores:
+    print("política de productores aplicada:", sorted(aplicadas))
 PYEOF
 scp -q "$TMP/compose.yml" "nas:$E/$COMPOSE"
 ssh nas "grep -n '$PATRON' $E/$COMPOSE"
