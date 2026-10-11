@@ -30,6 +30,7 @@ from jobhunt_core.api.v1_school_feedback import router as school_feedback_router
 from jobhunt_core.api.v1_listing_references import router as listing_references_router
 from jobhunt_core.database import engine
 from jobhunt_core.api.v1_profile_snapshot import router as profile_snapshot_router
+from jobhunt_core.api.v1_harvest import router as harvest_router
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ app.include_router(feedback_router)
 app.include_router(school_feedback_router)
 app.include_router(listing_references_router)
 app.include_router(profile_snapshot_router)
+app.include_router(harvest_router)
 
 
 @app.exception_handler(ApiError)

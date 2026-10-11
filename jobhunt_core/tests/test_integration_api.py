@@ -41,12 +41,14 @@ def db():
         "consumers": [],
         "policies": [],
         "extra_vacs": [],
+        "runs": [],
     }
     yield factory, created
 
     async def cleanup():
         async with factory() as s:
             await dbcleanup.purge_consumer_graph(s, created["consumers"])
+            await dbcleanup.purge_runs(s, created["runs"])
             await dbcleanup.purge_source_graph(s, created["sources"], created["scopes"])
             # Winners de merged_into: DESPUÉS del grafo (las vacantes de fuente
             # que los referencian deben caer antes).
