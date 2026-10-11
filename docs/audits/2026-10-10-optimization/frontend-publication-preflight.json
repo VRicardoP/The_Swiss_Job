@@ -58,6 +58,11 @@
     "gitlab_push": "git push gitlab 1bed6c23c9485722d40ebc15bbff235ceb28fe82:refs/heads/main",
     "github_ci_probe": "GET https://api.github.com/repos/VRicardoP/ReactPortfolio/actions/runs?head_sha=1bed6c23c9485722d40ebc15bbff235ceb28fe82",
     "publication_proof": "poll https://vicentepau.is-a.dev until the JavaScript asset differs from /assets/index-D1neE1-1.js, then run the unchanged twelve-window browser probe",
-    "dirty_tree_rule": "push the immutable commit SHA directly; do not stage or commit the owner README.md change"
+    "dirty_tree_rule": "push the immutable commit SHA directly; do not stage or commit the owner README.md change",
+    "dry_run": {
+      "observed_at": "2026-10-11T09:37:00Z",
+      "github": "passed; reports a711c26..1bed6c2 fast-forward without writing",
+      "gitlab": "passed; reports a711c26..1bed6c2 fast-forward without writing"
+    }
   }
 }
