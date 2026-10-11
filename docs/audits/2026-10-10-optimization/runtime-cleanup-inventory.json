@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-11T08:35:21+00:00",
+  "observed_at": "2026-10-11T08:40:31+00:00",
   "status": "verified inventory; deletion deferred until rollback is formally closed",
   "swissjob_shadow_runtime": {
     "python_lines": 8093,
@@ -25,9 +25,9 @@
       "jobhunt_core/erasure_restore.py": "shadow_change_log restore scrub"
     },
     "native_responsibilities_to_preserve": {
-      "matching_recovery": "extract embedding drain and bounded all-consumer matching recovery from projector into a native task",
+      "matching_recovery": "move the existing attempt-watermark recovery into tasks/matching.py, bounded to one embedding round and one profile per 300-second tick; filter every tenant only by profiles.projection_active",
       "profile_erasure": "move the graph deletion implementation into erasure.py; explicit API erasure remains authoritative",
-      "delivery_health": "reuse delivery.stats for native outbox lag/dead-letter health before removing shadow metric persistence",
+      "delivery_health": "add a native delivery check task around delivery.stats with oldest_pending_s <= 900 and dead_total = 0; do not retain shadow metric persistence",
       "ndcg": "after shadow.metrics is removed, keep NDCG_K and _dcg local to dev_eval, their sole remaining consumer; do not create a one-use module",
       "delivery_transport": "verify configured HTTP consumer transports before removing shadow.inbox fallback"
     },
@@ -134,5 +134,6 @@
       "audit receipts and cutover evidence",
       "historical SQL canonization records when needed to explain already-applied data changes"
     ]
-  }
+  },
+  "native_extraction_plan": "core-native-extraction-plan.json"
 }

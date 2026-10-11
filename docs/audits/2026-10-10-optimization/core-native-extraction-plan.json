@@ -1,0 +1,60 @@
+{
+  "observed_at": "2026-10-11T08:40:31+00:00",
+  "status": "verified design; executable extraction deferred until rollback closure",
+  "repo_head": "f29fd441396e1c80633ca3127ccc8395c6405443",
+  "matching_recovery": {
+    "source": {
+      "module": "jobhunt_core/shadow/projector.py",
+      "constants_and_sql_lines": "1573-1669",
+      "functions": {
+        "_replay_after_batch": "1672-1710",
+        "_evaluate_and_record": "1713-1741",
+        "_recovery_targets": "1744-1787",
+        "_drain_embeddings": "1816-1824"
+      }
+    },
+    "target": "jobhunt_core/tasks/matching.py",
+    "minimal_shape": "one native Celery recovery task reusing _run_pending_impl and _run_profile_impl; no new service layer",
+    "semantic_change": "select every tenant only through profiles.projection_active; remove swissjob-shadow consumer lookup, legacy users lookup, inactive_user_refs and shadow_change_log dependence",
+    "bounds": {
+      "embedding_rounds_per_tick": 1,
+      "profiles_per_tick": 1,
+      "cadence_seconds": 300,
+      "expires_at_next_tick": true
+    },
+    "configuration": "rename CORE_SHADOW_PROJECT_EVERY_S to CORE_MATCHING_RECOVERY_EVERY_S; do not retain unrelated CORE_SHADOW settings",
+    "tests_to_rehome": "recovery signal by revision and corpus generation, attempt watermark, no-vector skip, deterministic fairness, all-consumer coverage, bounded drain and expired ticks"
+  },
+  "profile_erasure": {
+    "source": {
+      "tables_constant": "jobhunt_core/shadow/projector.py:203-216",
+      "function": "jobhunt_core/shadow/projector.py:_erase_profile_graph lines 1507-1563"
+    },
+    "target": "jobhunt_core/erasure.py",
+    "minimal_shape": "move the FK-safe implementation and table tuple directly beside erase_owned_profile; remove its lazy shadow import",
+    "preserve": "scrub_capture while retained shadow_change_log exists; scrub_portfolio_manifests; lock and receipt order",
+    "tests_to_reuse": "jobhunt_core/tests/test_integration_profile_erasure.py through the public erasure API"
+  },
+  "delivery_health": {
+    "source": "jobhunt_core/shadow/metrics.py:sample_outbox_lag and shadow Celery wrapper",
+    "target": "jobhunt_core/tasks/delivery.py",
+    "minimal_shape": "a cheap check_health task opens one session, calls jobhunt_core.delivery.stats, logs alert records and returns current values; no historical metric table or percentile machinery",
+    "thresholds": {
+      "oldest_pending_seconds_max": 900,
+      "dead_total_max": 0
+    },
+    "cadence_seconds": 300,
+    "tests_to_reuse": "delivery.stats pending-age and dead-letter tests plus one native task alert/no-alert test"
+  },
+  "ndcg": {
+    "source": "jobhunt_core/shadow/metrics.py:NDCG_K and _dcg",
+    "target": "jobhunt_core/dev_eval.py",
+    "minimal_shape": "keep the constant and three-line helper local to their sole remaining consumer"
+  },
+  "deletion_gate": "only after capture/slot retirement, post-stop native 17/17 round, production releases, formal rollback closure and the native replacements above are green",
+  "non_goals": [
+    "do not move capture projection code",
+    "do not create generic recovery, health or erasure service layers",
+    "do not drop historical tables in the application cleanup release"
+  ]
+}
