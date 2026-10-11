@@ -46,5 +46,21 @@
       "mean_frame_ms_across_runs": 24.684772043010753,
       "maximum_p95_frame_ms": 33.399999999999636
     }
+  },
+  "headless_recheck": {
+    "measured_at": "2026-10-11T07:12:19.571Z",
+    "commit": "1bed6c2",
+    "protocol_changed": false,
+    "preview_stopped_after_run": true,
+    "elapsed_seconds": 16.48,
+    "load_ms": 512,
+    "windows_expected": 12,
+    "windows_with_content": 12,
+    "page_errors": 0,
+    "drag_runs": 3,
+    "frames_total": 384,
+    "weighted_mean_frame_ms": 23.913802083333334,
+    "maximum_p95_frame_ms": 33.399999999999636,
+    "interpretation": "the bounded headless protocol remains reliable; this is a repeatability check, not a new before/after claim"
   }
 }
