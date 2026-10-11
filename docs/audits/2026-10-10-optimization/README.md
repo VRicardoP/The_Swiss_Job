@@ -121,6 +121,8 @@ hubiera en cada instante.
   candidatos `.next` ambiguos en el NAS antes de preparar la retirada de capture.
 - `portfolio-routing-flip-rehearsal.json` conserva el bloque exacto del flip
   final y demuestra en PostgreSQL 15 que reanuda estados parciales sin doble cambio.
+- `frontend-publication-preflight.json` separa los pushes del despliegue externo
+  de Cloudflare Pages y fija cómo demostrar que el dominio realmente cambió.
 
 Los datos de arrastre anteriores a este protocolo (43,25 ms de media y 100,1 ms
 de p95) no son directamente comparables con las muestras deterministas de este

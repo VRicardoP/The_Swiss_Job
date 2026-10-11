@@ -1,0 +1,43 @@
+{
+  "observed_at": "2026-10-11T06:54:37Z",
+  "local": {
+    "head": "1bed6c2",
+    "runtime_head": "07ac81b",
+    "changes_after_runtime_head": "measurement script and timeout only",
+    "owner_dirty_file_preserved": "README.md"
+  },
+  "remotes": {
+    "github": "git@github.com:VRicardoP/ReactPortfolio.git",
+    "gitlab": "git@gitlab.com:lotharsan/reactportfolio-front.git",
+    "github_main_observed": "a711c26c2f9ddc490069f988e1673b9389352b34",
+    "gitlab_main_observed": "a711c26c2f9ddc490069f988e1673b9389352b34",
+    "local_commits_ahead": 7
+  },
+  "repository_automation": {
+    "github_workflow": ".github/workflows/ci.yml",
+    "github_workflow_actions": [
+      "npm ci",
+      "lint",
+      "unit and integration tests",
+      "build",
+      "Playwright E2E"
+    ],
+    "deploy_action_present": false,
+    "wrangler_config_present": false,
+    "gitlab_ci_present": false,
+    "readme_instruction": "Cloudflare Pages owns VITE_API_BASE_URL and a deployment must be triggered there"
+  },
+  "local_cloudflare_access": {
+    "wrangler_binary_present": false,
+    "cloudflare_environment_variable_names_present": false
+  },
+  "public_site": {
+    "url": "https://vicentepau.is-a.dev",
+    "status": 200,
+    "server": "cloudflare",
+    "javascript_asset": "/assets/index-D1neE1-1.js",
+    "css_asset": "/assets/index-ipQldt2A.css"
+  },
+  "conclusion": "The repository does not prove which remote, if any, triggers the external Cloudflare Pages integration. After explicit authorization, push the exact head to both configured remotes, wait for their checks, and poll the public asset plus the twelve-window browser probe. If the asset does not change, use the externally configured Cloudflare Pages integration; do not claim deployment from a successful push alone.",
+  "external_write_gate": "pending explicit authorization for both pushes and Cloudflare Pages publication"
+}
