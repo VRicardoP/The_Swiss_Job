@@ -1,0 +1,30 @@
+{
+  "measured_at": "2026-10-11T05:57:13.836Z",
+  "repository": "ReactPortfolio/frontend",
+  "commit": "e2d2fec",
+  "runtime_commit": "07ac81b",
+  "script": "e2e/measure-dashboard.mjs",
+  "command": "HEADLESS=true OUTPUT=/tmp/reactportfolio-dashboard-repro.json npm run measure:dashboard",
+  "target": "http://127.0.0.1:4173/dashboard",
+  "viewport": [
+    1440,
+    1000
+  ],
+  "backend": "deterministic fixtures",
+  "result": {
+    "load_ms": 541,
+    "windows_expected": 12,
+    "windows_with_content": 12,
+    "page_errors": 0,
+    "drag_runs": 3,
+    "mean_frame_ms_across_runs": 23.926771653543312,
+    "maximum_p95_frame_ms": 33.399999999999636
+  },
+  "validation": {
+    "node_check": "passed",
+    "eslint": "passed",
+    "hardcoded_workspace_paths": 0,
+    "new_dependencies": 0
+  },
+  "comparison_scope": "This headless smoke proves that the versioned protocol runs. Final before/after performance claims must use the same headless setting and environment for both samples."
+}

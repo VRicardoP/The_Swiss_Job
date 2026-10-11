@@ -91,6 +91,10 @@ hubiera en cada instante.
 
 - `frontend-before-final.json` y `frontend-after-final.json` comprueban las doce
   ventanas con fixtures deterministas y miden tres arrastres de dos segundos.
+- `frontend-measurement-protocol.json` fija el medidor reproducible ya
+  versionado en ReactPortfolio frontend (`e2d2fec`). Su smoke headless cargó las
+  doce ventanas con contenido, cero excepciones y tres arrastres; la comparación
+  final deberá repetir exactamente el mismo modo y entorno en ambas muestras.
 - `frontend-checks.json` reúne lint, pruebas, build y E2E.
 - `swissjob-frontend-checks.json` registra lint, las 57 pruebas y el build del
   cliente que consume las facetas paginadas.
