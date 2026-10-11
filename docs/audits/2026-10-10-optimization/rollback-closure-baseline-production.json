@@ -74,7 +74,7 @@
     "core-capture and its replication slot remain active during the 48-hour observation",
     "Portfolio catalog and matching remain explicitly core_read",
     "Portfolio and SwissJob producer handover configuration is prepared but not deployed",
-    "Portfolio frontend commit 07ac81b is not published to either configured remote"
+    "Portfolio frontend runtime commit 07ac81b and local tooling head 1bed6c2 are not published to either configured remote"
   ],
   "closure_sequence_after_live_gates": [
     "retire capture and slot per RETIRADA_SLOT_CDC_PUNTO4.md",
@@ -90,10 +90,13 @@
   ],
   "status": "open",
   "portfolio_frontend": {
-    "local_head": "07ac81b",
-    "github_main": "a711c26c2f9ddc490069f988e1673b9389352b34",
-    "gitlab_main": "a711c26c2f9ddc490069f988e1673b9389352b34",
-    "ahead": 5,
+    "local_head": "1bed6c2",
+    "runtime_head": "07ac81b",
+    "github_main_observed": "a711c26c2f9ddc490069f988e1673b9389352b34",
+    "gitlab_main_observed": "a711c26c2f9ddc490069f988e1673b9389352b34",
+    "remote_observed_at": "2026-10-11T01:00:00Z",
+    "ahead": 7,
+    "changes_after_runtime_head": "measurement script and its 60-second gesture timeout only; no application runtime files",
     "publication": "pending explicit authorization"
   },
   "formal_closure_gate": {
@@ -191,5 +194,20 @@
       ],
       "partial_failure": "keep rollback formally open, re-read both rows, and retry only the missing idempotent set_routing call; never infer completion from one successful call"
     }
+  },
+  "scope_grant": {
+    "consumer": "portfolio",
+    "scope": "harvest:write",
+    "live_preflight_observed_at": "2026-10-10T20:36:57Z",
+    "live_active_credentials": 1,
+    "must_follow": "deployed Core f29fd44 route POST /v1/harvest/sources/{source}/runs",
+    "command": "ssh nas \"/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker exec swissjob-core-api-r5 python -m jobhunt_core.rotate_credential autorizar portfolio harvest:write\"",
+    "properties": [
+      "idempotent",
+      "requires exactly one live credential under a row lock",
+      "validates the scope vocabulary",
+      "does not rotate or print the credential secret"
+    ],
+    "verification": "re-read the single live portfolio credential scopes without printing its secret and require harvest:write exactly once"
   }
 }
