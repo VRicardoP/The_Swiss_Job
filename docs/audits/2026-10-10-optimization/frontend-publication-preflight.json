@@ -28,7 +28,8 @@
     "wrangler_config_present": false,
     "gitlab_ci_present": false,
     "readme_instruction": "Cloudflare Pages owns VITE_API_BASE_URL and a deployment must be triggered there",
-    "github_public_deployments": []
+    "github_public_deployments": [],
+    "github_workflow_id": 239351652
   },
   "local_cloudflare_access": {
     "wrangler_binary_present": false,
@@ -50,5 +51,13 @@
   },
   "conclusion": "The repository does not prove which remote, if any, triggers the external Cloudflare Pages integration. At checklist item 8, push the exact head to both configured remotes, wait for their checks, and poll the public asset plus the twelve-window browser probe. If the asset does not change, use the externally configured Cloudflare Pages integration; do not claim deployment from a successful push alone.",
   "external_write_gate": "authorized; pending numeric order after checklist item 7",
-  "authorization_received_at": "2026-10-11T09:14:55Z"
+  "authorization_received_at": "2026-10-11T09:14:55Z",
+  "publication_plan": {
+    "precondition": "re-read both refs/heads/main and require a711c26c2f9ddc490069f988e1673b9389352b34; plain pushes must remain fast-forward",
+    "github_push": "git push github 1bed6c23c9485722d40ebc15bbff235ceb28fe82:refs/heads/main",
+    "gitlab_push": "git push gitlab 1bed6c23c9485722d40ebc15bbff235ceb28fe82:refs/heads/main",
+    "github_ci_probe": "GET https://api.github.com/repos/VRicardoP/ReactPortfolio/actions/runs?head_sha=1bed6c23c9485722d40ebc15bbff235ceb28fe82",
+    "publication_proof": "poll https://vicentepau.is-a.dev until the JavaScript asset differs from /assets/index-D1neE1-1.js, then run the unchanged twelve-window browser probe",
+    "dirty_tree_rule": "push the immutable commit SHA directly; do not stage or commit the owner README.md change"
+  }
 }
