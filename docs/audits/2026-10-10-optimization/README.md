@@ -104,6 +104,9 @@ hubiera en cada instante.
   la unión Core + once fuentes exclusivas sin reactivar productores transferidos.
 - `portfolio-deploy-candidate.json` fija el worktree limpio, la imagen final y
   los guardas que aplicarán las nueve fuentes transferidas sin tocar secretos.
+- `premature-worker-config-rollback-production.json` registra el despliegue
+  `--config-only` adelantado por un tercer argumento ignorado, su reversión
+  byte a byte, la salud posterior y el control que impide repetirlo.
 - `reactportfolio-frontend-release.json` fija el commit publicable y repite lint,
   las 422 pruebas y el build aislado que se desplegará en Cloudflare Pages.
 

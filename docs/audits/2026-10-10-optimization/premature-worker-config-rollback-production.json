@@ -1,0 +1,42 @@
+{
+  "detected_at": "2026-10-11T06:28:00Z",
+  "resolved_at": "2026-10-11T06:30:28Z",
+  "cause": "scripts/deploy_nas.sh accepted a third argument; worker --config-only --dry-run therefore executed as config-only instead of a dry run",
+  "affected_service": "swissjob-worker",
+  "scope": {
+    "core_containers_changed": false,
+    "backend_changed": false,
+    "database_or_schema_changed": false,
+    "image_changed": false,
+    "worker_recreated": true,
+    "temporary_change": "the prepared LEGACY_DISABLED_* handover policy was applied to the worker Compose before its gate"
+  },
+  "rollback": {
+    "backup": "swissjob.configured.yml.before-worker-f29fd44",
+    "backup_sha256": "eb6355373c4fa01772d21f38214dd83261d7e7b28d1eef040c74968a88c968f5",
+    "restored_live_sha256": "eb6355373c4fa01772d21f38214dd83261d7e7b28d1eef040c74968a88c968f5",
+    "compose_validation": "passed",
+    "worker_image": "swissjob-worker:point5-84853cf",
+    "worker_restart_count": 0,
+    "worker_ping": "pong",
+    "worker_ready_log_at": "2026-10-11T06:30:28.105Z",
+    "worker_startup_errors": 0,
+    "restored_disabled_providers": 12,
+    "restored_disabled_scrapers": 2
+  },
+  "core_continuity": {
+    "release": "5a1241d",
+    "api_started_at": "2026-10-10T19:33:04.322610932Z",
+    "model_worker_started_at": "2026-10-10T19:33:03.758784880Z",
+    "harvest_worker_started_at": "2026-10-10T19:33:04.288391690Z",
+    "ops_worker_started_at": "2026-10-10T19:33:04.034920657Z",
+    "capture_started_at": "2026-09-30T22:13:23.784752174Z",
+    "restart_counts": 0
+  },
+  "preventive_fix": {
+    "commit": "840ab13",
+    "behavior": "more than two CLI arguments now exits 2 before dependency checks or NAS access",
+    "negative_control": "worker --config-only --dry-run exits 2 and prints usage"
+  },
+  "result": "fully rolled back before continuing; the observation window for Core remains valid"
+}
