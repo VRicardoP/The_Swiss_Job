@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 02:48 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 02:55 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1313,8 +1313,14 @@ código ejecutable:
   habilitados —`nav → nav_arbeidsplassen` tiene dos—. Antes de retirar los
   motores locales se añade un único endpoint acotado con scope
   `harvest:write`; el adaptador mantiene la frontera admin y los sobres 200/409,
-  y nunca responde éxito si Core no aceptó el trabajo. Evidencia
-  `portfolio-refresh-compatibility.json`.
+  y nunca responde éxito si Core no aceptó el trabajo. La imagen candidata,
+  ejecutada sin red y con configuración sintética, expone exactamente 56 rutas
+  que deben conservarse: 47 GET y 9 POST. La mayoría de sus agregados sale de
+  los ocho campos canónicos observados; `job_types` de Arbeitnow y
+  `category/job_type` de Remotive sólo viven en las revisiones raw retenidas.
+  Para no volver a descargar miles de vacantes al BFF, Core servirá un único
+  agregado por fuente acotado y el router Portfolio común dará forma a los
+  sobres históricos. Evidencia `portfolio-refresh-compatibility.json`.
 - Tras el cierre formal, Portfolio deja una topología fija: catálogo y matching
   resuelven siempre a `CompositeCatalog` y `CompositeMatching` (Core más las
   once fuentes exclusivas); candidaturas, búsquedas guardadas, documentos y
@@ -1349,7 +1355,7 @@ Comprobado el 2026-10-11 00:22 UTC en el NAS:
 
 Cabezas locales relevantes:
 
-- SwissJob `feat/fase-a-core`: cabeza comprobada `8fc47f9` antes de esta actualización; la evidencia del refresco compatible se añade en el commit siguiente.
+- SwissJob `feat/fase-a-core`: cabeza comprobada `a658d4e` antes de esta actualización; el inventario completo de rutas y agregados se añade en el commit siguiente.
 - ReactPortfolio backend `main`: `a292ef4`, doce commits por delante del remoto; conserva el cambio previo del propietario en `README.md` fuera de nuestros commits.
 - ReactPortfolio frontend `main`: `07ac81b`, cinco commits por delante del remoto.
 - Suites completas ya ejecutadas: Core 1.896 passed/1 skipped; Portfolio backend

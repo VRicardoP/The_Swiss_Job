@@ -1,4 +1,27 @@
 {
+  "aggregate_data_boundary": {
+    "canonical_fields_observed": [
+      "canton",
+      "company",
+      "description",
+      "location",
+      "remote",
+      "salary",
+      "tags",
+      "title"
+    ],
+    "decision": "Core owns one bounded source aggregate operation; Portfolio shapes the legacy envelopes from that response instead of downloading the full catalog.",
+    "legacy_only_raw_fields_observed": {
+      "arbeitnow": [
+        "job_types"
+      ],
+      "remotive": [
+        "category",
+        "job_type"
+      ]
+    },
+    "raw_values_read": false
+  },
   "core_current_contract": {
     "celery_task": "jobhunt.harvest.run_scope",
     "http_enqueue_endpoint": false,
@@ -9,11 +32,13 @@
   },
   "minimum_post_rollback_change": [
     "Add one authenticated bounded Core enqueue endpoint requiring harvest:write.",
+    "Add one bounded Core source-aggregate operation that uses canonical fields and the retained raw revisions for legacy-only category/job-type counts.",
     "Resolve only enabled scopes for the requested source and enqueue run_scope with a stable request key.",
+    "Replace the 23 source-specific Portfolio modules with one declarative compatibility router covering all 56 routes.",
     "Have the shared Portfolio compatibility router call it after its existing admin boundary and preserve the current 200/409 envelopes.",
     "Do not report success when Core did not accept work."
   ],
-  "observed_at": "2026-10-11T02:47:59Z",
+  "observed_at": "2026-10-11T02:55:05Z",
   "portfolio_contract": {
     "accepted_envelope": {
       "message": "<Source> cache refresh initiated."
@@ -48,6 +73,35 @@
     "zentraljob": 1
   },
   "purpose": "Bound the Portfolio source-route compatibility refresh contract before post-rollback cleanup.",
+  "route_surface": {
+    "by_source": {
+      "arbeitnow": 9,
+      "irishjobs": 6,
+      "jobgether": 6,
+      "nav": 6,
+      "ostjob": 5,
+      "remotive": 7,
+      "thehub": 6,
+      "weworkremotely": 6,
+      "zentraljob": 5
+    },
+    "families": [
+      "recent",
+      "stats",
+      "health",
+      "by-location",
+      "by-tag",
+      "by-category",
+      "by-company",
+      "remote-stats",
+      "refresh-cache"
+    ],
+    "get": 47,
+    "inspected_image": "portfolio-backend:board-a292ef4",
+    "network_disabled": true,
+    "post": 9,
+    "total": 56
+  },
   "sources": [
     "backend/services/job_router_helpers.py",
     "backend/services/job_cache_updater.py",
