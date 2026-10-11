@@ -171,15 +171,12 @@ huellas SHA-256 y se repite el ciclo aislado antes de que el cron la use.
 El comprobador de release ya admite ambas fases de forma explícita. Sin opción
 sigue exigiendo los cinco servicios, para no ocultar una desaparición antes del
 corte; `--capture-retired` exige exactamente los cuatro procesos nativos y
-falla si el Compose aún declara captura. Copiarlo y comprobar su huella junto al
-supervisor:
-
-```sh
-CHECK=/share/Public/swissjob/check_core_release.py
-sha256sum scripts/check_core_release.py
-scp scripts/check_core_release.py nas:$CHECK
-ssh nas "sha256sum $CHECK"
-```
+falla si el Compose aún declara captura. Se ejecuta desde este checkout por SSH:
+el host QNAP no tiene `python3` y su Docker no incorpora el plugin Compose; el
+binario correcto es el Compose independiente `$C`. La sonda ready entra en
+`swissjob-core-api-r5` y consulta su loopback `:8000`, porque el API no publica
+puerto en el host. Esta ruta se comprobó en vivo antes del corte y devolvió los
+cinco servicios coherentes de `5a1241d`/`core0053`.
 
 Después promover el candidato, eliminar sólo el contenedor detenido —la imagen
 se conserva— y recrear los cuatro servicios uno a uno. Los nombres son
@@ -192,8 +189,9 @@ ssh nas "$D rm swissjob-core-capture-r5"
 for service in core-api core-worker core-harvest-worker core-ops-worker; do
   ssh nas "$C -p swissjob-r5 -f $E/core.configured.yml up -d --no-deps $service"
 done
-ssh nas "cd $E && DOCKER_BIN=$D COMPOSE_FILE=core.configured.yml \
-  python3 $CHECK --capture-retired --url http://127.0.0.1:8003"
+SSH_HOST=nas DOCKER_BIN="$D" COMPOSE_BIN="$C" \
+  COMPOSE_FILE="$E/core.configured.yml" COMPOSE_PROJECT_NAME=swissjob-r5 \
+  python3 scripts/check_core_release.py --capture-retired
 ```
 
 Debe informar cuatro servicios coherentes, la misma `release`,

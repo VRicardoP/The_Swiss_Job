@@ -12,7 +12,9 @@ Estos elementos representan al proceso CDC o lo exigen como servicio vivo:
   `CORE_CAPTURE_SLOT` en los cuatro procesos Core.
 - `scripts/check_core_release.py`: exige `core-capture` antes del corte y,
   únicamente con `--capture-retired`, exige la topología final de cuatro
-  servicios y rechaza que el Compose aún declare captura (`5a6bcab`, `ce45e7a`).
+  servicios y rechaza que el Compose aún declare captura. Se ejecuta localmente
+  contra el NAS por SSH, separando Docker del Compose independiente y leyendo
+  ready dentro del API sin puerto publicado (`5a6bcab`, `ce45e7a`, `09e168c`).
 - `scripts/nas/supervisor_contenedores.sh`: contenedor de captura dentro de
   `ESPERADOS`.
 - `core-ops-worker`: `CORE_CAPTURE_ENABLED=false` debe retirar del beat sólo
