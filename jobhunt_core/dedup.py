@@ -35,6 +35,7 @@ Idempotente: `uq_dedup_pair` (LEAST/GREATEST) + ON CONFLICT DO NOTHING.
 import hashlib
 import logging
 import uuid
+from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,7 +58,7 @@ logger = logging.getLogger(__name__)
 # condición de elegibilidad («tiene vector del modelo activo»), no un
 # transporte.
 _CORPUS_SQL = (
-    "SELECT v.id, sl.source_id, "
+    "SELECT v.id, sl.source_id, orv.created_at, "
     "       coalesce(orv.content->>'title', '') AS title, "
     "       coalesce(orv.content->>'location', '') AS loc "
     "FROM vacancies v "
@@ -605,18 +606,87 @@ async def exact_intra_backfill(session: AsyncSession) -> int:
     return (await session.execute(sa.text(_EXACT_INTRA_HISTORY_SQL))).rowcount
 
 
+DEDUP_SCAN_BATCH_SIZE = 250
+
+
+async def _scan_ann_rows(
+    session: AsyncSession, rows, *, model_id, sim_min: float, k: int
+) -> int:
+    """Scan one already-bounded set of vacancies with the existing ANN rules."""
+    # UNDERFILL del HNSW (auditoría Nº2, IMPORTANTE 1): pgvector aplica el
+    # WHERE después de sacar candidatos aproximados. El scan iterativo sigue
+    # hasta llenar el límite, con el mismo fallback exacto conservador.
+    ef_search = min(max(k, 40), 1000)
+    await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(ef_search)}"))
+    await session.execute(sa.text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
+    await session.execute(
+        sa.text(f"SET LOCAL hnsw.max_scan_tuples = {int(MAX_SCAN_TUPLES)}")
+    )
+
+    inserted = 0
+    for row in rows:
+        knn_params = {
+            "mid": model_id,
+            "k": k,
+            "vid": row.id,
+            "src": row.source_id,
+            "loc": row.loc,
+            "titulo": row.title,
+        }
+        vecinos = (await session.execute(sa.text(_KNN_SQL), knn_params)).all()
+        # Si el kNN llenó k, el conteo es matemáticamente redundante.
+        if len(vecinos) < k:
+            objetivo = (
+                await session.execute(sa.text(_KNN_COUNT_SQL), knn_params)
+            ).scalar_one()
+            if len(vecinos) < objetivo:
+                await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
+                await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
+                vecinos = (await session.execute(sa.text(_KNN_SQL), knn_params)).all()
+                await session.execute(sa.text("SET LOCAL enable_indexscan = on"))
+                await session.execute(sa.text("SET LOCAL enable_bitmapscan = on"))
+        for neighbor in vecinos:
+            if neighbor.sim is None or float(neighbor.sim) < sim_min:
+                break
+            result = await session.execute(
+                sa.text(_INSERT_SQL),
+                {
+                    "id": uuid.uuid4(),
+                    "a": row.id,
+                    "b": neighbor.vacancy_id,
+                    "sim": round(float(neighbor.sim), 3),
+                },
+            )
+            inserted += result.rowcount
+    return inserted
+
+
+async def _finish_scan(session: AsyncSession, window_hours: int) -> tuple[int, int]:
+    """Run the two set-based arms once, after the last ANN fragment."""
+    exact = (await session.execute(sa.text(_EXACT_INTRA_SQL))).rowcount
+    lex_params = {
+        "trgm": float(settings.CORE_DEDUP_LEX_TRGM_MIN),
+        "trgm_intra": float(settings.CORE_DEDUP_LEX_TRGM_INTRA_MIN),
+        "maxfreq": int(settings.CORE_DEDUP_LEX_TOKEN_MAX_FREQ),
+    }
+    if window_hours > 0:
+        lex_params["ventana"] = window_hours
+    lexical = (
+        await session.execute(sa.text(_lex_sql(window=window_hours > 0)), lex_params)
+    ).rowcount
+    return int(exact), int(lexical)
+
+
 async def scan_semantic_candidates(
     session: AsyncSession, window_hours: int | None = None
 ) -> dict:
-    """Una pasada del generador. Devuelve conteos JSON-serializables.
-    `window_hours=None` ⇒ ventana CONFIGURADA (CORE_DEDUP_SCAN_WINDOW_H,
-    el camino del beat); `window_hours=0` ⇒ pasada COMPLETA (P1-1: el
-    docstring anterior decía lo contrario que el código)."""
+    """Run the complete generator, primarily for explicit backfills and tests.
+
+    The daily Celery path uses `scan_semantic_candidates_batch` so every
+    transaction stays below the broker and worker time limits.
+    """
     if window_hours is None:
         window_hours = int(settings.CORE_DEDUP_SCAN_WINDOW_H)
-    sim_min = float(settings.CORE_DEDUP_SIM_MIN)
-    k = int(settings.CORE_DEDUP_KNN)
-
     models = await embeddings.active_models(session)
     if not models:
         return {"status": "sin_modelo", "escaneadas": 0, "candidatos_nuevos": 0}
@@ -627,96 +697,103 @@ async def scan_semantic_candidates(
     if window_hours > 0:
         sql += "AND orv.created_at >= now() - make_interval(hours => :ventana) "
         params["ventana"] = window_hours
-    nuevos = (await session.execute(sa.text(sql), params)).all()
-
-    # UNDERFILL del HNSW (auditoría Nº2, IMPORTANTE 1): pgvector aplica el
-    # WHERE DESPUÉS de sacar candidatos del índice aproximado — sin scan
-    # iterativo, "LIMIT :k" puede devolver < k vecinos cross-source aunque
-    # existan (reproducido: 2 de 5 con el GUC por defecto). MISMO patrón ya
-    # probado en matching: ef_search acotado + iterative_scan strict_order
-    # (sigue escaneando hasta llenar el LIMIT tras el filtro, con tope
-    # MAX_SCAN_TUPLES) + FALLBACK EXACTO si aun así llegan menos filas que
-    # el objetivo REAL (nº de vacantes elegibles de OTRAS fuentes, acotado
-    # por k — un corpus pequeño no dispara el exacto en cada fila).
-    ef_search = min(max(k, 40), 1000)
-    await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(ef_search)}"))
-    await session.execute(sa.text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
-    await session.execute(
-        sa.text(f"SET LOCAL hnsw.max_scan_tuples = {int(MAX_SCAN_TUPLES)}")
+    rows = (await session.execute(sa.text(sql), params)).all()
+    inserted = await _scan_ann_rows(
+        session,
+        rows,
+        model_id=model_id,
+        sim_min=float(settings.CORE_DEDUP_SIM_MIN),
+        k=int(settings.CORE_DEDUP_KNN),
     )
-
-    inserted = 0
-    for row in nuevos:
-        knn_params = {
-            "mid": model_id,
-            "k": k,
-            "vid": row.id,
-            "src": row.source_id,
-            "loc": row.loc,
-            "titulo": row.title,
-        }
-        vecinos = (await session.execute(sa.text(_KNN_SQL), knn_params)).all()
-        # OPT-ALTA-2 (auditoría de optimización 2026-08-25): si el kNN llenó
-        # su k, el conteo es matemáticamente redundante — por el LIMIT :k del
-        # propio conteo, objetivo <= k, luego len(vecinos) == k implica
-        # len(vecinos) >= objetivo y el fallback no puede dispararse. Solo
-        # con < k vecinos el conteo aporta información (−30% del bucle ANN).
-        if len(vecinos) < k:
-            # Objetivo = elegibles REALES bajo el MISMO predicado (incl.
-            # ubicación — P2-3 de la revisión: contar sin el guard disparaba
-            # el fallback exacto cuando 0 era el resultado completo correcto).
-            objetivo = (
-                await session.execute(sa.text(_KNN_COUNT_SQL), knn_params)
-            ).scalar_one()
-            if len(vecinos) < objetivo:
-                # Inanición REAL del scan acotado: el exacto responde siempre.
-                await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
-                await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
-                vecinos = (await session.execute(sa.text(_KNN_SQL), knn_params)).all()
-                await session.execute(sa.text("SET LOCAL enable_indexscan = on"))
-                await session.execute(sa.text("SET LOCAL enable_bitmapscan = on"))
-        for n in vecinos:
-            # `sim is None` solo puede ocurrir si la sonda del vector (O-3) no
-            # resuelve nada —la vacante perdió su revisión vigente o su
-            # embedding entre el corpus y este kNN, en otra transacción—: sin
-            # vector no hay similitud que afirmar, y la fila se salta entera.
-            if n.sim is None or float(n.sim) < sim_min:
-                break  # ordenados por distancia: los siguientes son peores
-            r = await session.execute(
-                sa.text(_INSERT_SQL),
-                {
-                    "id": uuid.uuid4(),
-                    "a": row.id,
-                    "b": n.vacancy_id,
-                    # Numeric(4,3): la similitud cabe siempre (0..1)
-                    "sim": round(float(n.sim), 3),
-                },
-            )
-            inserted += r.rowcount
-
-    # Exactos intra-fuente: pase completo siempre (barato: un join indexado;
-    # la idempotencia la da uq_dedup_pair).
-    exactos = (await session.execute(sa.text(_EXACT_INTRA_SQL))).rowcount
-
-    # Léxico cross-portal (R.2b): misma ventana incremental que el ANN.
-    lex_params = {
-        "trgm": float(settings.CORE_DEDUP_LEX_TRGM_MIN),
-        "trgm_intra": float(settings.CORE_DEDUP_LEX_TRGM_INTRA_MIN),
-        "maxfreq": int(settings.CORE_DEDUP_LEX_TOKEN_MAX_FREQ),
-    }
-    if window_hours > 0:
-        lex_params["ventana"] = window_hours
-    lexicos = (
-        await session.execute(sa.text(_lex_sql(window=window_hours > 0)), lex_params)
-    ).rowcount
-
+    exact, lexical = await _finish_scan(session, window_hours)
     result = {
         "status": "ok",
-        "escaneadas": len(nuevos),
+        "escaneadas": len(rows),
         "candidatos_nuevos": inserted,
-        "candidatos_exactos_intra": int(exactos),
-        "candidatos_lexicos": int(lexicos),
+        "candidatos_exactos_intra": exact,
+        "candidatos_lexicos": lexical,
     }
-    if inserted or exactos or lexicos:  # P3: el éxito SOLO-léxico también
+    if inserted or exact or lexical:
         logger.info("dedup_scan: %s", result)
+    return result
+
+
+async def scan_semantic_candidates_batch(
+    session: AsyncSession,
+    *,
+    window_start: datetime,
+    window_end: datetime,
+    after_created_at: datetime | None = None,
+    after_id: uuid.UUID | None = None,
+    batch_size: int = DEDUP_SCAN_BATCH_SIZE,
+) -> dict:
+    """Persist one deterministic fragment of the daily semantic scan.
+
+    The frozen half-open window plus `(created_at, vacancy_id)` cursor makes a
+    retry repeat the same fragment. Candidate inserts are already idempotent.
+    The set-based exact and lexical arms run only after the final fragment.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size debe ser positivo")
+    if (after_created_at is None) != (after_id is None):
+        raise ValueError("cursor dedup incompleto")
+    if window_start >= window_end:
+        raise ValueError("ventana dedup inválida")
+
+    models = await embeddings.active_models(session)
+    if not models:
+        return {
+            "status": "sin_modelo",
+            "complete": True,
+            "escaneadas": 0,
+            "candidatos_nuevos": 0,
+            "next_cursor": None,
+        }
+    model_id = models[0].id
+    sql = (
+        _CORPUS_SQL
+        + "AND orv.created_at >= :window_start "
+        + "AND orv.created_at < :window_end "
+    )
+    params: dict = {
+        "mid": model_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "batch_size": batch_size,
+    }
+    if after_created_at is not None:
+        sql += (
+            "AND (orv.created_at, v.id) > (:after_created_at, CAST(:after_id AS uuid)) "
+        )
+        params.update({"after_created_at": after_created_at, "after_id": str(after_id)})
+    sql += "ORDER BY orv.created_at, v.id LIMIT :batch_size"
+    rows = (await session.execute(sa.text(sql), params)).all()
+    inserted = await _scan_ann_rows(
+        session,
+        rows,
+        model_id=model_id,
+        sim_min=float(settings.CORE_DEDUP_SIM_MIN),
+        k=int(settings.CORE_DEDUP_KNN),
+    )
+
+    complete = len(rows) < batch_size
+    result = {
+        "status": "ok" if complete else "partial",
+        "complete": complete,
+        "escaneadas": len(rows),
+        "candidatos_nuevos": inserted,
+        "next_cursor": None,
+    }
+    if complete:
+        window_hours = round((window_end - window_start).total_seconds() / 3600)
+        exact, lexical = await _finish_scan(session, window_hours)
+        result["candidatos_exactos_intra"] = exact
+        result["candidatos_lexicos"] = lexical
+    else:
+        last = rows[-1]
+        result["next_cursor"] = {
+            "created_at": last.created_at.isoformat(),
+            "vacancy_id": str(last.id),
+        }
+    logger.info("dedup_scan_batch: %s", result)
     return result

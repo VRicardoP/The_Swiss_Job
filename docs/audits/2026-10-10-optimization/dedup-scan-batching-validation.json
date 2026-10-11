@@ -1,0 +1,66 @@
+{
+  "observed_at": "2026-10-11T03:59:29Z",
+  "production_incident": {
+    "release": "5a1241d",
+    "task": "jobhunt.maintenance.dedup_scan",
+    "started_at": "2026-10-11T03:20:00Z",
+    "soft_limit_at": "2026-10-11T03:50:00Z",
+    "soft_limit_seconds": 1800,
+    "outcome": "SoftTimeLimitExceeded; transaction rolled back",
+    "eligible_vacancies_48h": 7078,
+    "queues_at_2026-10-11T03:42:14Z": {
+      "core.default": 17,
+      "core.notifications": 4
+    },
+    "largest_manual_queue_sample": {
+      "core.default": 20,
+      "core.notifications": 5
+    },
+    "queues_at_2026-10-11T03:51:56Z": {
+      "core.default": 0,
+      "core.notifications": 0
+    },
+    "container_restarts": 0,
+    "harvest_health_during_backlog": "17/17, zero alerts"
+  },
+  "candidate": {
+    "deployed": false,
+    "batch_size": 250,
+    "worker_concurrency": 1,
+    "behavior": [
+      "freeze a half-open 48-hour window for the whole chain",
+      "page deterministically by offer revision created_at and vacancy UUID",
+      "commit every ANN fragment",
+      "enqueue the exact cursor as the next message",
+      "run exact and lexical set-based arms once after the final fragment",
+      "retry a fragment if database work or continuation publication fails"
+    ],
+    "idempotency": "dedup pair unique constraint plus ON CONFLICT DO NOTHING"
+  },
+  "rejected_alternative": {
+    "change": "increase core-ops-worker concurrency from 1 to 2",
+    "reason": "it drains short queues concurrently but does not prevent the 1800-second rollback",
+    "isolated_memory_mib": {
+      "concurrency_1": 86.11,
+      "concurrency_2": 93.28,
+      "delta": 7.17
+    },
+    "isolated_pids": {
+      "concurrency_1": 6,
+      "concurrency_2": 7
+    },
+    "containers_removed_after_probe": true
+  },
+  "validation": {
+    "integration_and_orchestration_tests": "39 passed",
+    "ruff": "passed",
+    "py_compile": "passed",
+    "diff_check": "passed"
+  },
+  "production_follow_up": [
+    "deploy only after the 48-hour capture observation gate",
+    "confirm every fragment stays below 1800 seconds",
+    "confirm the chain reaches complete=true and runs the final arms once",
+    "confirm core.default and core.notifications remain bounded while it runs"
+  ]
+}

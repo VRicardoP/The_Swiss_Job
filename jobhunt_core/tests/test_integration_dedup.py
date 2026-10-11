@@ -11,6 +11,7 @@ import asyncio
 import os
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import sqlalchemy as sa
@@ -19,7 +20,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from jobhunt_core import embeddings
 from jobhunt_core.config import settings
 from jobhunt_core.harvest import normalize as normalize_mod
-from jobhunt_core.dedup import scan_semantic_candidates
+from jobhunt_core.dedup import (
+    scan_semantic_candidates,
+    scan_semantic_candidates_batch,
+)
 from jobhunt_core.harvest.sink import RawListing, RawListingSink
 from jobhunt_core.tests import dbcleanup
 
@@ -231,6 +235,52 @@ def test_cross_source_igual_titulo_genera_candidato_e_intra_no(db):
     # idempotencia: segunda pasada no duplica (uq_dedup_pair)
     r2 = _scan(factory)
     assert r2["candidatos_nuevos"] == 0 and r2["candidatos_exactos_intra"] == 0
+    assert len(_pairs(factory, created)) == 3
+
+
+def test_daily_scan_commits_deterministic_fragments_and_finishes_once(db):
+    factory, created = db
+    _setup(factory, created, [["python dev"], ["python dev"], ["python dev"]])
+
+    async def go():
+        end = datetime.now(timezone.utc) + timedelta(minutes=1)
+        start = end - timedelta(hours=1)
+        cursor = None
+        results = []
+        async with factory() as session:
+            for _ in range(10):
+                result = await scan_semantic_candidates_batch(
+                    session,
+                    window_start=start,
+                    window_end=end,
+                    after_created_at=(
+                        datetime.fromisoformat(cursor["created_at"])
+                        if cursor is not None
+                        else None
+                    ),
+                    after_id=(
+                        uuid.UUID(cursor["vacancy_id"]) if cursor is not None else None
+                    ),
+                    batch_size=1,
+                )
+                await session.commit()
+                results.append(result)
+                cursor = result["next_cursor"]
+                if result["complete"]:
+                    break
+        return results
+
+    results = asyncio.run(go())
+    assert [result["status"] for result in results] == [
+        "partial",
+        "partial",
+        "partial",
+        "ok",
+    ]
+    assert sum(result["escaneadas"] for result in results) == 3
+    assert results[-1]["next_cursor"] is None
+    assert "candidatos_exactos_intra" not in results[0]
+    assert "candidatos_exactos_intra" in results[-1]
     assert len(_pairs(factory, created)) == 3
 
 
