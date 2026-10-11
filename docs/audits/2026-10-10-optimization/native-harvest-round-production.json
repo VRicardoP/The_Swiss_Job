@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "source": "swissjob-core-harvest-worker-r5 logs",
+  "release": "5a1241d",
+  "scheduled_at": "2026-10-11T00:10:00+02:00",
+  "first_completed_at": "2026-10-10T22:11:05.891254496Z",
+  "last_completed_at": "2026-10-10T22:38:24.089685514Z",
+  "completed_scopes": 17,
+  "unique_scopes": 17,
+  "failed_or_error_lines": 0,
+  "total_listings": 14037,
+  "total_pages": 210,
+  "scopes": [
+    {
+      "completed_at": "2026-10-10T22:11:05.891254496Z",
+      "scope_id": "32c9fa21-bf17-4bc0-bafd-58c174f1608f",
+      "listings": 149,
+      "pages": 3
+    },
+    {
+      "completed_at": "2026-10-10T22:15:21.843406845Z",
+      "scope_id": "39bedcdc-886a-4690-a82f-7ee8aab5302b",
+      "listings": 3257,
+      "pages": 64
+    },
+    {
+      "completed_at": "2026-10-10T22:15:40.854504871Z",
+      "scope_id": "4316fa1e-cd53-4122-9510-b10759767225",
+      "listings": 241,
+      "pages": 1
+    },
+    {
+      "completed_at": "2026-10-10T22:16:12.873881726Z",
+      "scope_id": "48601911-65e2-4357-83a1-dada1ad68237",
+      "listings": 300,
+      "pages": 3
+    },
+    {
+      "completed_at": "2026-10-10T22:16:27.739092066Z",
+      "scope_id": "49232928-5e43-4c3a-bb65-c1d1c4fa0e24",
+      "listings": 40,
+      "pages": 1
+    },
+    {
+      "completed_at": "2026-10-10T22:16:51.438071071Z",
+      "scope_id": "4af2f10e-259d-49d4-8f8d-f9d56cd178ef",
+      "listings": 142,
+      "pages": 6
+    },
+    {
+      "completed_at": "2026-10-10T22:17:50.850120222Z",
+      "scope_id": "4edcf6e7-e5b1-46f7-a244-5c99fa11b759",
+      "listings": 36,
+      "pages": 4
+    },
+    {
+      "completed_at": "2026-10-10T22:17:54.978238432Z",
+      "scope_id": "62984bfa-9241-4349-84bf-fc439d054f26",
+      "listings": 15,
+      "pages": 1
+    },
+    {
+      "completed_at": "2026-10-10T22:18:01.713122107Z",
+      "scope_id": "6aea217a-a379-49c3-8e8a-5b9a0034d421",
+      "listings": 69,
+      "pages": 1
+    },
+    {
+      "completed_at": "2026-10-10T22:18:05.810533774Z",
+      "scope_id": "704c4780-7c09-4ae7-be78-c6078d4b1c63",
+      "listings": 45,
+      "pages": 1
+    },
+    {
+      "completed_at": "2026-10-10T22:19:30.523907862Z",
+      "scope_id": "7eac32f6-5a9e-4a9a-a19c-0642b1d51558",
+      "listings": 100,
+      "pages": 10
+    },
+    {
+      "completed_at": "2026-10-10T22:33:12.487572876Z",
+      "scope_id": "8a299ac7-700a-4637-8e55-577f21b68f0c",
+      "listings": 8684,
+      "pages": 92
+    },
+    {
+      "completed_at": "2026-10-10T22:33:25.880885303Z",
+      "scope_id": "d4ce8e1d-71d6-4ab3-ad4b-d8e3a69fc46a",
+      "listings": 15,
+      "pages": 1
+    },
+    {
+      "completed_at": "2026-10-10T22:35:24.002843650Z",
+      "scope_id": "ed4339b9-bb52-422c-98bc-594f6d3ae135",
+      "listings": 843,
+      "pages": 19
+    },
+    {
+      "completed_at": "2026-10-10T22:38:01.997754338Z",
+      "scope_id": "f15394b1-7e9a-4f5c-85a9-85d02957e208",
+      "listings": 24,
+      "pages": 1
+    },
+    {
+      "completed_at": "2026-10-10T22:38:12.692580184Z",
+      "scope_id": "f7d08bd3-7654-463d-abd6-4a0e26101caf",
+      "listings": 10,
+      "pages": 1
+    },
+    {
+      "completed_at": "2026-10-10T22:38:24.089685514Z",
+      "scope_id": "faccefaa-37f4-4647-9dec-3a1f7b26bf5d",
+      "listings": 67,
+      "pages": 1
+    }
+  ]
+}

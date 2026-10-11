@@ -1203,6 +1203,139 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 
 ---
 
+## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
+
+> **Documento de relevo de esta sesión.** Actualizado por última vez el
+> **2026-10-11 00:22 UTC**. Debe actualizarse después de cada punto cerrado,
+> despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
+> por tener código local: exige la evidencia de producción indicada aquí.
+
+### Solicitud, objetivo y reglas que siguen vigentes
+
+El propietario pidió simplificar y optimizar ambos proyectos sin perder ninguna
+funcionalidad, siguiendo el orden acordado hasta terminar todos los objetivos. Ha
+autorizado todos los commits necesarios y el cambio del worker Core de
+`concurrency=2` a `concurrency=1`. Un `git push` o publicación externa sigue
+requiriendo autorización específica; el push del frontend Portfolio está
+pendiente de esa respuesta.
+
+Reglas de ejecución: comprobar el estado real antes de cada acción; SRP, cohesión
+alta, acoplamiento bajo, legibilidad y consistencia; aplicar el mínimo que cumpla
+también YAGNI; no retirar respaldos antes de cerrar formalmente rollback; probar
+las doce ventanas y sus contenidos; medir antes y después; no mezclar ni descartar
+cambios previos del propietario.
+
+Orden obligatorio:
+
+1. Una sola copia del bi-encoder y ajuste de límites.
+2. Sanear las 17 fuentes y retirar `core-capture` tras su ventana real.
+3. Desactivar fuentes duplicadas y la cosecha automática duplicada de colegios.
+4. Servir facetas/categorías desde Core bajo bandera y demostrar paridad.
+5. Cerrar formalmente rollback.
+6. Sólo después retirar motores, costuras y código histórico; extraer antes las
+   responsabilidades nativas que aún viven en el paquete `shadow`.
+
+### Estado de relevo
+
+| Punto | Estado comprobado | Evidencia / siguiente condición |
+|---|---|---|
+| 1. Bi-encoder | **CERRADO Y DESPLEGADO** | Una copia en `swissjob-core-worker-r5`, `concurrency=1`; ahorro causal 605,64 MiB (43,08 %) en la prueba aislada y PSS del contenedor aproximadamente 14 % menor. Release Core `5a1241d`, cero reinicios. |
+| 2a. Salud de cosecha | **CERRADO** | IrishJobs prueba los dos dominios sin abortar tras el 403; 17/17 scopes saludables y sin alertas. La ronda de las 00:10 Europe/Zurich del 11-10 cerró 17/17 cursores, 14.037 listings, 210 páginas y cero errores; `native-harvest-round-production.json`. |
+| 2b. Retirada CDC | **EN OBSERVACIÓN; NO CORTAR TODAVÍA** | Primera muestra conservada `2026-10-10T19:59:56Z`; no actuar antes del **2026-10-12 20:00 UTC**. Observador vivo: sesión de herramienta `12953`, PID `701361`, script `/tmp/observe_core_48h.sh`, salida `core-observation-48h.jsonl`. Debe añadirse una sonda manual posterior a las 20:00 porque el script termina cerca de las 19:40. |
+| 3. Cosecha duplicada | **PREPARADO, NO DESPLEGADO** | Portfolio `ba3f886` conserva 11 fuentes exclusivas y compone sus resultados con Core; las 9 compartidas se desactivarán sólo al desplegar. La configuración viva de Portfolio aún no define `LEGACY_DISABLED_SOURCES`; SwissJob mantiene 14 desactivadas y la configuración final preparada tiene 16. La cosecha escolar periódica debe retirarse conservando el refresco manual. Cerrar sólo tras verificar ausencia de peticiones duplicadas y presencia de los productores exclusivos. |
+| 4. Facetas/categorías Core | **CERRADO Y DESPLEGADO** | Bandera activa, paridad exacta, frontend SwissJob servido desde `point5-3986b4a`; logs agregados prueban HTTP 200 para `/match/facets` y páginas por categoría. SQL: facetas 17.472,956 → 1.489,177 ms (-91,48 %); categoría 5.754,283 → 2.676,985 ms (-53,48 %). |
+| 5. Cierre de rollback | **PENDIENTE** | Exige completar el corte CDC, desplegar el traspaso de productores, comprobar lectores/escritores y ratificar la autoridad sin fallbacks necesarios. No cerrar por documentos o tests locales. |
+| 6. Simplificación | **PENDIENTE POR ORDEN** | Después del punto 5: retirar modos `shadow`, `core_read`, `rollback_pending`, clientes y motores inalcanzables, herramientas CDC/gate/reconciliación y productores transferidos. Conservar el catálogo/matcher local del Portfolio para sus 11 fuentes exclusivas y los estados locales que sigan teniendo autoridad. |
+| Frontend Portfolio | **ARTEFACTO LISTO; PUBLICACIÓN PENDIENTE** | `07ac81b`: lint, 46 ficheros/422 tests, build 3,13 s; bundle principal 233.734 B (gzip 72.900 B). Cinco commits por delante de ambos remotos (`a711c26`). Hace falta autorización explícita para push a GitHub y GitLab/Cloudflare Pages. |
+| Validación visual | **BASE POSTCAMBIO LOCAL SUPERADA; REPETIR AL FINAL** | 12 ventanas con contenido, 18 E2E, sin excepciones JS. Arrastre determinista alrededor de 16,7 ms/frame; la base antigua 43,25 ms/p95 100,1 ms no es comparable por protocolo. Repetir después de todos los despliegues. |
+
+### Estado vivo y artefactos exactos
+
+Comprobado el 2026-10-11 00:22 UTC en el NAS:
+
+- `core-api`, `core-worker`, `core-harvest-worker` y `core-ops-worker`:
+  `swissjob-core:point5-5a1241d`, `running`, cero reinicios.
+- `core-capture`: `swissjob-core:point5-9d6b46e`, aún `running`, cero reinicios.
+- SwissJob frontend `point5-3986b4a`, BFF `point5-aa36c5e`, worker
+  `point5-84853cf`; todos `running`, cero reinicios.
+- Portfolio backend/worker siguen en `portfolio-backend:board-4ce76a7`; la imagen
+  candidata ya validada es `portfolio-backend:board-ba3f886` y aún no está viva.
+- Core responde `ready`, `authoritative=true`, Alembic `core0053`, release
+  `5a1241d`. Las diez primeras muestras del observador mantienen 17/17 fuentes,
+  cero alertas y ninguna `probe_failed`.
+
+Cabezas locales relevantes:
+
+- SwissJob `feat/fase-a-core`: `a6e38a8` antes de esta actualización.
+- ReactPortfolio backend `main`: `ba3f886`, nueve commits por delante del remoto.
+- ReactPortfolio frontend `main`: `07ac81b`, cinco commits por delante del remoto.
+- Suites completas ya ejecutadas: Core 1.896 passed/1 skipped; Portfolio backend
+  2.106 passed/1 skipped; SwissJob frontend 57 tests; Portfolio frontend 422.
+
+Evidencias: `docs/audits/2026-10-10-optimization/README.md`. El JSONL de 48 h es
+un artefacto vivo y no se versiona hasta terminar la ventana. No guardar logs con
+URLs, tokens, credenciales ni datos de usuario.
+
+### Siguiente secuencia operativa exacta
+
+1. Mantener el observador sin reiniciarlo; revisar cada nueva muestra. Si aparece
+   `probe_failed`, cambia la release, reinicia cualquiera de los cuatro procesos
+   Core o deja de haber 17/17 fuentes sanas, no retirar CDC y abrir una ventana
+   nueva desde una muestra válida.
+2. Después del 12-10 a las 20:00 UTC, ejecutar la sonda final y las precondiciones
+   vivas de `docs/RETIRADA_SLOT_CDC_PUNTO4.md`.
+3. Parar sólo `core-capture`; poner `CORE_CAPTURE_ENABLED=false` únicamente en
+   `core-ops-worker`; recrear sólo ese worker; esperar seis minutos y demostrar
+   que desaparecen las tres tareas de slot mientras `shadow-project` continúa.
+4. Observar una ronda nativa completa adicional con capture parado y 17/17
+   saludables. Confirmar staging drenado y slot inactivo; sólo entonces borrar
+   `jobhunt_shadow_r5_rehearsal`.
+5. Quitar servicio/variable/inventarios de captura y actualizar antes el
+   supervisor QTS para que no genere una falsa alarma. Recrear los cuatro
+   servicios Core de uno en uno y revalidar release/ready/colas.
+6. Desplegar el traspaso de productores en el orden que preserve cobertura:
+   Core sano → frontend Portfolio publicado → backend Portfolio compuesto →
+   desactivar sólo las fuentes compartidas → comprobar las 11 exclusivas y el
+   refresco manual escolar.
+7. Cerrar rollback con evidencia viva. Después ejecutar la eliminación de código,
+   extraer drenado de embeddings, recuperación de matching, borrado de perfiles,
+   métrica de outbox y utilidad NDCG fuera de `shadow` antes de borrar ese paquete.
+8. Desplegar la limpieza, retirar el rol `jobhunt_capture` sin `CASCADE` y sus
+   ficheros de credenciales sólo tras comprobar cero sesiones y cero referencias
+   ejecutables. Mantener tablas/migraciones/actas históricas como evidencia.
+9. Ejecutar suites completas, E2E de las 12 ventanas, mediciones finales de RAM,
+   CPU, tiempos SQL, peticiones externas, número de contenedores (objetivo 8→7)
+   y líneas netas retiradas; registrar comparativa antes/después.
+
+### Límites y cautelas para el siguiente agente
+
+- No suplantar usuarios construyendo JWT desde la base o la clave de firma: la
+  revisión automática rechazó esa sonda. La prueba de facetas en producción se
+  resolvió de forma segura con logs HTTP agregados; no repetir el intento.
+- `shadow-project` no es CDC: hoy drena embeddings y recupera matching nativo.
+  Tampoco borrar desde `projector.py` el borrado de perfiles sin extraerlo.
+- No cerrar 28.767 ofertas legacy en bloque: la admisión nativa de siete días no
+  repone de inmediato el histórico. Se apagan productores y sus filas envejecen.
+- No borrar presentación/normalizadores de fuentes del frontend mientras Core
+  siga devolviendo esas fuentes. La extracción compartida entre
+  `AIJobMatchWindow` y `JobBoardTabbedWindow` debe ser una tarjeta base pequeña;
+  mantener ventanas y hooks separados.
+- Hay cambios de documentación previos no pertenecientes a esta sesión en
+  `CLAUDE.md`, varios documentos históricos/unificación y este mismo fichero.
+  No incluirlos en commits de optimización. En ambos repos Portfolio, `README.md`
+  también está modificado previamente. Comprobar siempre el índice antes de
+  cada commit.
+
+### Protocolo de actualización de esta bitácora
+
+Después de cada punto o subpunto realizado: actualizar fecha, estado, evidencia,
+commit/release, medición y siguiente acción concreta; después crear un commit que
+incluya únicamente esa actualización y sus evidencias. Si la sesión termina, el
+primer paso del siguiente agente es comprobar NAS, repositorios y el PID/sesión
+del observador contra esta foto; el estado vivo prevalece sobre el texto.
+
+---
+
 ## Mantenimiento
 
 Este documento se actualiza **al cerrar cada fase**, junto con el backlog. Reglas:
