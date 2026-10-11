@@ -23,6 +23,8 @@
 #    Se despliega explícitamente para no dejar código Celery antiguo en producción.
 # 8. BFF y worker reciben del manifiesto versionado las listas LEGACY_DISABLED_*;
 #    cambiar sólo la imagen dejaría activos productores que ya pertenecen a Core.
+# 9. El respaldo incluye el servicio: BFF y worker comparten SHA y no deben
+#    sobrescribir el punto de vuelta atrás del otro al desplegarse por separado.
 #
 # Uso:  scripts/deploy_nas.sh core|bff|worker|frontend [--dry-run]
 set -euo pipefail
@@ -118,7 +120,7 @@ ssh nas "gunzip -c /share/Public/swissjob/$SERVICIO-$SHA.tar.gz | $D load"
 
 echo "== copia .before y cambio de etiqueta POR SERVICIO (trampa 4)"
 # Se edita con python para tocar sólo la línea `image:` de cada servicio listado.
-ssh nas "cp $E/$COMPOSE $E/$COMPOSE.before-$SHA"
+ssh nas "cp $E/$COMPOSE $E/$COMPOSE.before-$SERVICIO-$SHA"
 # El NAS no tiene python3: se edita en local sobre una copia y se sube.
 scp -q "nas:$E/$COMPOSE" "$TMP/compose.yml"
 if [[ "$SERVICIO" == frontend ]]; then
@@ -252,5 +254,5 @@ if [[ "$SERVICIO" == core ]]; then
   done
 fi
 echo "== listo: $IMAGEN"
-echo "   vuelta atrás: ssh nas 'cp $E/$COMPOSE.before-$SHA $E/$COMPOSE' && recrear"
+echo "   vuelta atrás: ssh nas 'cp $E/$COMPOSE.before-$SERVICIO-$SHA $E/$COMPOSE' && recrear"
 echo "   y RECUERDA: copiar el compose a deploy/nas/ con los secretos sustituidos (T13 §7)"
