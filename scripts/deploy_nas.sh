@@ -26,16 +26,26 @@
 # 9. El respaldo incluye el servicio: BFF y worker comparten SHA y no deben
 #    sobrescribir el punto de vuelta atrás del otro al desplegarse por separado.
 # 10. El compose transformado se valida como candidato antes de sustituir el vivo.
+# 11. `--config-only` conserva la imagen viva de BFF/worker y recrea sólo para
+#     aplicar la política de productores; no publica código sin necesidad.
 #
-# Uso:  scripts/deploy_nas.sh core|bff|worker|frontend [--dry-run]
+# Uso:  scripts/deploy_nas.sh core|bff|worker|frontend [--dry-run|--config-only]
 set -euo pipefail
 
 SERVICIO="${1:-}"
-DRY="${2:-}"
+MODO="${2:-}"
 [[ "$SERVICIO" =~ ^(core|bff|worker|frontend)$ ]] || {
-  echo "uso: $0 core|bff|worker|frontend [--dry-run]" >&2
+  echo "uso: $0 core|bff|worker|frontend [--dry-run|--config-only]" >&2
   exit 2
 }
+[[ -z "$MODO" || "$MODO" == "--dry-run" || "$MODO" == "--config-only" ]] || {
+  echo "modo no válido: $MODO" >&2
+  exit 2
+}
+if [[ "$MODO" == "--config-only" && ! "$SERVICIO" =~ ^(bff|worker)$ ]]; then
+  echo "--config-only sólo se admite para bff o worker" >&2
+  exit 2
+fi
 
 for req in docker ssh scp git python3; do
   command -v "$req" >/dev/null || { echo "falta $req" >&2; exit 2; }
@@ -95,29 +105,43 @@ else
   CONTENEDOR_SALUD="swissjob-frontend"
 fi
 
-echo "== servicio=$SERVICIO  imagen=$IMAGEN  compose=$COMPOSE  proyecto=$PROYECTO  recrea=${SERVICIOS[*]}"
-if [[ "$DRY" == "--dry-run" ]]; then
-  echo "(dry-run: no se construye ni se toca el NAS)"
-  exit 0
-fi
-
-echo "== construyendo"
-"${CONSTRUIR[@]}"
-"${ETIQUETAR[@]}"
-
-if [[ "$SERVICIO" == bff || "$SERVICIO" == worker ]]; then
-  docker run --rm --entrypoint id "$IMAGEN" app >/dev/null 2>&1 || {
-    echo "ABORTA: la imagen no tiene el usuario 'app' — ¿Dockerfile en vez de Dockerfile.prod?" >&2
+if [[ "$MODO" == "--config-only" ]]; then
+  IMAGEN="$(ssh nas "$D inspect $CONTENEDOR_SALUD --format '{{.Config.Image}}'")"
+  [[ "$IMAGEN" =~ ^${PATRON}[a-f0-9]+$ ]] || {
+    echo "ABORTA: imagen viva inesperada para $SERVICIO: $IMAGEN" >&2
     exit 1
   }
 fi
 
+echo "== servicio=$SERVICIO  modo=${MODO:---release}  imagen=$IMAGEN  compose=$COMPOSE  proyecto=$PROYECTO  recrea=${SERVICIOS[*]}"
+if [[ "$MODO" == "--dry-run" ]]; then
+  echo "(dry-run: no se construye ni se toca el NAS)"
+  exit 0
+fi
+
+if [[ "$MODO" != "--config-only" ]]; then
+  echo "== construyendo"
+  "${CONSTRUIR[@]}"
+  "${ETIQUETAR[@]}"
+
+  if [[ "$SERVICIO" == bff || "$SERVICIO" == worker ]]; then
+    docker run --rm --entrypoint id "$IMAGEN" app >/dev/null 2>&1 || {
+      echo "ABORTA: la imagen no tiene el usuario 'app' — ¿Dockerfile en vez de Dockerfile.prod?" >&2
+      exit 1
+    }
+  fi
+fi
+
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-echo "== empaquetando"
-docker save "$IMAGEN" | gzip -1 > "$TMP/imagen.tar.gz"
-echo "== enviando ($(du -h "$TMP/imagen.tar.gz" | cut -f1))"
-scp -q "$TMP/imagen.tar.gz" "nas:/share/Public/swissjob/$SERVICIO-$SHA.tar.gz"
-ssh nas "gunzip -c /share/Public/swissjob/$SERVICIO-$SHA.tar.gz | $D load"
+if [[ "$MODO" != "--config-only" ]]; then
+  echo "== empaquetando"
+  docker save "$IMAGEN" | gzip -1 > "$TMP/imagen.tar.gz"
+  echo "== enviando ($(du -h "$TMP/imagen.tar.gz" | cut -f1))"
+  scp -q "$TMP/imagen.tar.gz" "nas:/share/Public/swissjob/$SERVICIO-$SHA.tar.gz"
+  ssh nas "gunzip -c /share/Public/swissjob/$SERVICIO-$SHA.tar.gz | $D load"
+else
+  echo "== config-only: se conserva la imagen viva $IMAGEN"
+fi
 
 echo "== copia .before y cambio de etiqueta POR SERVICIO (trampa 4)"
 # Se edita con python para tocar sólo la línea `image:` de cada servicio listado.
