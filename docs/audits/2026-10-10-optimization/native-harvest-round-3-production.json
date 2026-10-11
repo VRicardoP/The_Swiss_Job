@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-11T10:39:00Z",
+  "source": "aggregated source_harvest_runs and source_scope_state queries plus official probes",
+  "release": "5a1241d",
+  "round_started_at": "2026-10-11T10:10:03.205029+00:00",
+  "round_finished_at": "2026-10-11T10:36:59.915692+00:00",
+  "duration_seconds": 1616.710663,
+  "completed_scopes": 17,
+  "cursor_count_after_cutoff": 17,
+  "zero_failure_cursors": 17,
+  "status_counts": {
+    "ok": 17
+  },
+  "error_scopes": 0,
+  "unfinished_runs": 0,
+  "post_round_probe": {
+    "enabled_sources": 17,
+    "healthy_sources": 17,
+    "official_alerts": [],
+    "harvest_queue": 0,
+    "pending_offer_embeddings": 545,
+    "matching_queue": 3
+  },
+  "interpretation": "The native harvest round is complete and healthy. Matching work created from the harvested catalogue is recorded separately and must converge; it is not counted as a harvest failure."
+}
