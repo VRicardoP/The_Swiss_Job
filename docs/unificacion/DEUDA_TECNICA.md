@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 00:56 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 00:58 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1245,7 +1245,7 @@ Orden obligatorio:
 | 3. Cosecha duplicada | **PREPARADO, NO DESPLEGADO** | Portfolio `ba3f886` conserva 11 fuentes exclusivas y compone sus resultados con Core; las 9 compartidas se desactivarán sólo al desplegar. La configuración viva de Portfolio aún no define `LEGACY_DISABLED_SOURCES`; SwissJob mantiene 14 desactivadas y la configuración final preparada tiene 16. La cosecha escolar periódica debe retirarse conservando el refresco manual. El commit Portfolio `787ce44` corrige el despliegue: copia la política versionada a `backend` y `worker`, aborta si queda incompleta y pasó una sonda idempotente con 2 servicios y 9 fuentes. El commit SwissJob `e54051e` hace lo mismo al desplegar BFF/worker; la sonda confirmó 16 fuentes transferidas, 2 scrapers y dos transformaciones idempotentes. Regresiones focales: Portfolio 24/24; SwissJob 12/12 dentro del contenedor con los manifiestos montados en solo lectura. El commit SwissJob `1f33ba9` separa los respaldos remotos por servicio para que BFF y worker no sobrescriban el rollback del otro al compartir SHA. Portfolio `10eb0d4` y SwissJob `7973c15` suben el Compose como candidato, exigen `compose config --quiet` y sólo después lo promueven al nombre vivo. El worktree limpio `/tmp/reactportfolio-backend-deploy-10eb0d4` queda fijado a `10eb0d4`; `scripts/deploy_nas.sh --dry-run` resolvió `portfolio-backend:board-10eb0d4` sin cambios locales. La imagen final ya está construida localmente (`sha256:afcd10e…`, 3.464.664.949 B, `appuser`, `/release`) y sus cuatro hashes críticos coinciden; sigue sin desplegar. SwissJob `95a5d33` añade `--config-only` sólo para BFF/worker: valida y conserva la imagen viva, omite build/carga y aplica únicamente la política versionada más la recreación. Pasó `bash -n`, `diff --check`, los rechazos de servicio/modo (exit 2) y el modo seco de BFF sin tocar el NAS. ReactPortfolio `a292ef4` sustituye el colector escolar diario por un ciclo que sólo reintenta alertas pendientes: School Core conserva la cosecha programada y los endpoints de refresco manual mantienen el colector local. Las 48 regresiones de ciclo de vida, autoridad Core y scraper pasaron; Black y `diff --check`, limpios. La suite completa de `a292ef4` cerró 2.107 passed/1 skipped en 203,02 s. El worktree limpio `/tmp/reactportfolio-backend-deploy-a292ef4`, el modo seco y la imagen `portfolio-backend:board-a292ef4` quedaron verificados; ID `sha256:b929c500…`, 3.464.664.725 B, `appuser`, `/release`, bytecode y cinco hashes críticos idénticos al checkout. Evidencia `portfolio-deploy-candidate.json` en `35cd4ae`. La línea base viva `harvest-overlap-baseline-production.json` (`e688834`) demuestra una ronda programada Portfolio en las nueve fuentes compartidas (dos arranques para TheHub) durante la ventana disponible. El ciclo escolar se despertó una vez, pero delegó antes de red; tras el corte ambos contadores deben ser cero y las 11 fuentes exclusivas deben seguir activas. Cerrar sólo tras desplegar y verificar ausencia de peticiones duplicadas y presencia de los productores exclusivos. |
 | 4. Facetas/categorías Core | **CERRADO Y DESPLEGADO** | Bandera activa, paridad exacta, frontend SwissJob servido desde `point5-3986b4a`; logs agregados prueban HTTP 200 para `/match/facets` y páginas por categoría. SQL: facetas 17.472,956 → 1.489,177 ms (-91,48 %); categoría 5.754,283 → 2.676,985 ms (-53,48 %). |
 | 5. Cierre de rollback | **PENDIENTE** | Exige completar el corte CDC, desplegar el traspaso de productores, comprobar lectores/escritores y ratificar la autoridad sin fallbacks necesarios. No cerrar por documentos o tests locales. |
-| 6. Simplificación | **PENDIENTE POR ORDEN** | Después del punto 5: retirar modos `shadow`, `core_read`, `rollback_pending`, clientes y motores inalcanzables, herramientas CDC/gate/reconciliación y productores transferidos. Conservar el catálogo/matcher local del Portfolio para sus 11 fuentes exclusivas y los estados locales que sigan teniendo autoridad. |
+| 6. Simplificación | **INVENTARIADA; PENDIENTE POR ORDEN** | `runtime-cleanup-inventory.json` (`7179959`) fija la superficie real: 8.093 líneas Python en shadow+tareas, 3.374 en 24 módulos independientes de las nueve fuentes Portfolio y 3.294 en 16 productores legacy SwissJob. Antes de borrar shadow hay que extraer recuperación nativa de embeddings/matching, borrado de grafo a `erasure.py`, salud de outbox desde `delivery.stats`, utilidad nDCG y verificar el transporte HTTP; `import_search_corpus` se elimina tras rollback. El runtime escolar (1.515 líneas) no se borra en bloque: conserva refresco manual, store Core, dashboard y alertas. Mantener catálogo/matcher Portfolio para sus 11 fuentes exclusivas y estados locales aún autoritativos. |
 | Frontend Portfolio | **ARTEFACTO LISTO; PUBLICACIÓN PENDIENTE** | `07ac81b`: lint, 46 ficheros/422 tests, build 3,13 s; bundle principal 233.734 B (gzip 72.900 B). Cinco commits por delante de ambos remotos (`a711c26`). Hace falta autorización explícita para push a GitHub y GitLab/Cloudflare Pages. |
 | Validación visual | **BASE POSTCAMBIO LOCAL SUPERADA; REPETIR AL FINAL** | 12 ventanas con contenido, 18 E2E, sin excepciones JS. Arrastre determinista alrededor de 16,7 ms/frame; la base antigua 43,25 ms/p95 100,1 ms no es comparable por protocolo. Repetir después de todos los despliegues. |
 
@@ -1268,7 +1268,7 @@ Comprobado el 2026-10-11 00:22 UTC en el NAS:
 
 Cabezas locales relevantes:
 
-- SwissJob `feat/fase-a-core`: `e688834` tras versionar la línea base agregada de cosecha duplicada.
+- SwissJob `feat/fase-a-core`: `7179959` tras versionar el inventario comprobado de limpieza posterior al rollback.
 - ReactPortfolio backend `main`: `a292ef4`, doce commits por delante del remoto; conserva el cambio previo del propietario en `README.md` fuera de nuestros commits.
 - ReactPortfolio frontend `main`: `07ac81b`, cinco commits por delante del remoto.
 - Suites completas ya ejecutadas: Core 1.896 passed/1 skipped; Portfolio backend
@@ -1318,8 +1318,10 @@ el orden de corte y disponer de la publicación frontend autorizada.
 - No suplantar usuarios construyendo JWT desde la base o la clave de firma: la
   revisión automática rechazó esa sonda. La prueba de facetas en producción se
   resolvió de forma segura con logs HTTP agregados; no repetir el intento.
-- `shadow-project` no es CDC: hoy drena embeddings y recupera matching nativo.
-  Tampoco borrar desde `projector.py` el borrado de perfiles sin extraerlo.
+- `shadow-project` no es sólo CDC: hoy drena embeddings y recupera matching nativo.
+  `erasure.py`, `tasks/delivery.py`, `dev_eval.py`, `import_search_corpus.py`,
+  `retention.py` y `erasure_restore.py` tienen dependencias ejecutables exactas
+  registradas en `runtime-cleanup-inventory.json`; resolverlas antes de borrar el paquete.
 - No cerrar 28.767 ofertas legacy en bloque: la admisión nativa de siete días no
   repone de inmediato el histórico. Se apagan productores y sus filas envejecen.
 - No borrar presentación/normalizadores de fuentes del frontend mientras Core
