@@ -1,0 +1,21 @@
+{
+  "observed_at": "2026-10-11T06:44:59Z",
+  "access": "read-only filename inventory",
+  "nas_root": "/share/CACHEDEV1_DATA/Public/unification-e15-20260914",
+  "core_compose_backups": 15,
+  "swissjob_compose_backups": 15,
+  "stale_next_candidates": 0,
+  "required_rollback_files_present": [
+    "core.configured.yml.before-5a1241d",
+    "swissjob.configured.yml.before-worker-f29fd44",
+    "supervisor_contenedores.sh.before-20261011T0115Z"
+  ],
+  "supervisor": {
+    "live_source_present": true,
+    "backup_count": 2
+  },
+  "retire_core_capture_tool_on_nas": false,
+  "retire_tool_interpretation": "expected before cutover; the runbook copies it from the audited checkout and requires matching SHA-256 before execution",
+  "result": "pass",
+  "reason": "Rollback copies exist and no stale .next-* compose candidate can be mistaken for the cutover candidate. Recheck immediately before creating the timestamped disable candidate."
+}

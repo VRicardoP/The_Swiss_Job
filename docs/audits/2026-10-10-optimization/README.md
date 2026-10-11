@@ -117,6 +117,8 @@ hubiera en cada instante.
   reintroduce captura ni las claves del slot retirado.
 - `release-capacity-preflight.json` fija el espacio libre local y del NAS frente
   al tamaño de las tres imágenes candidatas; debe repetirse justo antes de enviarlas.
+- `cutover-file-preflight-production.json` confirma respaldos y ausencia de
+  candidatos `.next` ambiguos en el NAS antes de preparar la retirada de capture.
 
 Los datos de arrastre anteriores a este protocolo (43,25 ms de media y 100,1 ms
 de p95) no son directamente comparables con las muestras deterministas de este
