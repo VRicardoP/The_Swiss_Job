@@ -22,5 +22,21 @@
       "result": "rejected as expected",
       "reason": "core-capture is still declared by the live Compose"
     }
+  },
+  "latest_revalidation": {
+    "observed_at": "2026-10-11T07:01:11Z",
+    "pre_cut_remote_release_check": {
+      "result": "passed",
+      "services": 5,
+      "release": "5a1241d",
+      "alembic": "core0053",
+      "authoritative": true
+    },
+    "focal_regressions": {
+      "command": "PYTHONPATH=. pytest -q scripts/test_retire_core_capture.py scripts/test_check_core_release.py",
+      "result": "11 passed in 0.03s",
+      "discarded_attempt": "plain host pytest collected 0 tests because repository root was absent from sys.path; no test body ran"
+    },
+    "decision": "keep observing; the 48-hour gate remains 2026-10-12T20:00:00Z"
   }
 }
