@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 01:17 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 01:19 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1249,6 +1249,24 @@ Orden obligatorio:
 | Frontend Portfolio | **ARTEFACTO LISTO; PUBLICACIÓN PENDIENTE** | `07ac81b`: lint, 46 ficheros/422 tests, build 3,13 s; bundle principal 233.734 B (gzip 72.900 B). GitHub y GitLab se volvieron a consultar a las 01:00 UTC: ambos siguen en `a711c26`, cinco commits por detrás. Hace falta autorización explícita para push a ambos y publicación Cloudflare Pages. |
 | Validación visual | **BASE POSTCAMBIO LOCAL SUPERADA; REPETIR AL FINAL** | Con el mismo Chromium, fixtures y gesto, `a711c26` y `07ac81b` cargan las 12 ventanas con contenido; la excepción Leaflet baja de 1 a 0 y la carga de 711 a 592 ms (-16,74 %). El arrastre queda igual (~16,66 ms/frame, p95 16,7–16,8 ms): no se atribuye una mejora inexistente. 18 E2E superadas. La medida antigua 43,25 ms/p95 100,1 ms usa otro protocolo. Repetir después de todos los despliegues. |
 | Recursos producción | **LÍNEA BASE FIJADA; REPETIR AL FINAL** | Tres muestras homogéneas de los nueve contenedores afectados: suma de medianas 3,00 % CPU, 2.667,35 MiB y 55 PIDs. Es observación operativa, no causal; repetir el mismo protocolo tras retirar capture y productores duplicados. Evidencia `container-resource-baseline-production.json`; el ahorro causal del bi-encoder permanece separado. |
+
+### Diseño mínimo comprobado para la simplificación posterior
+
+Este diseño se aplicará sólo después de cerrar rollback; todavía no se elimina
+código ejecutable:
+
+- La recuperación periódica es necesaria porque no existe otro planificador.
+  Debe vivir en el módulo cohesivo `tasks/matching.py`, conservar la cadencia de
+  cinco minutos y las cotas vivas de una ronda de embeddings y un perfil por
+  tarea, y filtrar únicamente por `profiles.projection_active`.
+- `_erase_profile_graph` y su orden FK-safe pasan directamente a
+  `erasure.py`, que ya es su único llamador productivo. No se crea una capa
+  intermedia.
+- La salud del outbox pasa a `tasks/delivery.py` reutilizando
+  `delivery.stats`, el límite ratificado de 900 s y `dead_total=0`.
+- Tras borrar `shadow.metrics`, `NDCG_K=10` y la pequeña función DCG quedan
+  locales a `dev_eval.py`, su único consumidor; no se añade un módulo de una
+  sola función.
 
 ### Estado vivo y artefactos exactos
 
