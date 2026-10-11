@@ -86,9 +86,7 @@ def _revisa_imagenes(capture_retirado: bool) -> tuple[list[str], int]:
     revisados = _servicios_a_revisar(capture_retirado)
     fallos = []
     if capture_retirado and SERVICIO_CAPTURE in servicios:
-        fallos.append(
-            f"{SERVICIO_CAPTURE}: el compose aún declara la captura retirada"
-        )
+        fallos.append(f"{SERVICIO_CAPTURE}: el compose aún declara la captura retirada")
     for servicio in revisados:
         declarada = (servicios.get(servicio) or {}).get("image")
         if not declarada:

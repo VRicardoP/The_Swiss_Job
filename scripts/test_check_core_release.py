@@ -44,9 +44,7 @@ def test_rejects_capture_still_declared_after_retirement(monkeypatch):
 
     failures, _ = check._revisa_imagenes(capture_retirado=True)
 
-    assert failures == [
-        "core-capture: el compose aún declara la captura retirada"
-    ]
+    assert failures == ["core-capture: el compose aún declara la captura retirada"]
 
 
 def test_rejects_capture_missing_before_retirement(monkeypatch):
