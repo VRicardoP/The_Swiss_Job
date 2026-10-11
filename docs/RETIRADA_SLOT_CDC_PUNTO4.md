@@ -136,6 +136,42 @@ posterior es el de las **00:10 Europe/Zurich del 13-10**, equivalente a las
 los 17 cursores tengan `last_complete_at` posterior a esa ventana,
 `core.harvest=0` y la sonda oficial siga con `alertas: []`.
 
+La frontera se compara con el instante fijo del disparo, no con una ventana
+móvil de ocho horas. La segunda consulta enumera cualquier scope que impida el
+cierre; debe devolver cero filas:
+
+```sh
+POST_STOP_CUTOFF=2026-10-12T22:10:00+00:00
+ssh nas "$PGC -c \"SET search_path=jobhunt; SELECT count(*) AS scopes,
+  count(*) FILTER (WHERE st.last_complete_at > timestamptz '$POST_STOP_CUTOFF') AS posteriores,
+  count(*) FILTER (WHERE st.consecutive_failures = 0) AS sin_fallos,
+  min(st.last_complete_at) AS primera_terminacion
+  FROM harvest_scopes hs JOIN source_scope_state st ON st.scope_id=hs.id
+  WHERE hs.enabled;\""
+# esperado: 17 | 17 | 17 | una fecha posterior al cutoff
+
+ssh nas "$PGC -c \"SET search_path=jobhunt; SELECT s.name,hs.id,
+  st.last_complete_at,st.consecutive_failures
+  FROM harvest_scopes hs JOIN sources s ON s.id=hs.source_id
+  LEFT JOIN source_scope_state st ON st.scope_id=hs.id
+  WHERE hs.enabled AND (st.last_complete_at IS NULL
+    OR st.last_complete_at <= timestamptz '$POST_STOP_CUTOFF'
+    OR st.consecutive_failures <> 0)
+  ORDER BY s.name,hs.id;\""
+# esperado: 0 filas
+
+ssh nas "$D exec swissjob-core-api-r5 python -c \
+  'from redis import Redis; from jobhunt_core.config import settings; r=Redis.from_url(settings.CORE_BROKER_URL); print(r.llen("core.harvest")); r.close()'"
+# esperado: 0
+
+ssh nas "$D exec -e PYTHONPATH=/app swissjob-core-api-r5 python -c \
+  'import asyncio,json; from jobhunt_core.tasks.harvest import _check_harvest_health_impl as check; print(json.dumps(asyncio.run(check()),sort_keys=True))'"
+# esperado: alertas=[], scopes=17 y censo.habilitados=17
+```
+
+Si cualquiera de los cuatro valores difiere, esperar y repetir; no avanzar al
+borrado del slot.
+
 **4. Borrar el slot.** Irreversible.
 
 ```sh
