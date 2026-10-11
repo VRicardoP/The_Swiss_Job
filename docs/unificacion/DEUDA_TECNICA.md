@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 08:28 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 08:29 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1342,7 +1342,10 @@ código ejecutable:
   `frontend-card-simplification.json`.
 - `retention.py` y `erasure_restore.py` se conservan: siguen purgando el inbox
   histórico y aplicando recibos de borrado sobre `shadow_change_log`, tablas que
-  expresamente no se eliminan. `search_cutover.py` es el único lector ejecutable
+  expresamente no se eliminan. La búsqueda actual confirmó el llamador periódico
+  en `tasks/maintenance.py`, el CLI de restauración y sus saneados de datos; el
+  inventario ya no propone retirar esas garantías mientras existan las tablas.
+  `search_cutover.py` es el único lector ejecutable
   restante de `public.*` fuera de `shadow`; tras cerrar rollback se borra y
   `migrate.py` deja de crear/verificar `jobhunt_capture` y de otorgar SELECT al
   esquema legacy. Sólo después de desplegar esa release se retira el rol.

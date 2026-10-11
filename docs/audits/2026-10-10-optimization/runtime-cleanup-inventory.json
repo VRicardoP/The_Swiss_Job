@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-11T08:27:02+00:00",
+  "observed_at": "2026-10-11T08:28:12+00:00",
   "status": "verified inventory; deletion deferred until rollback is formally closed",
   "swissjob_shadow_runtime": {
     "python_lines": 8093,
@@ -76,14 +76,17 @@
         "jobhunt_core/celery_app.py: capture schedules and retirement switch",
         "jobhunt_core/migrate.py: jobhunt_capture role/password bootstrap",
         "jobhunt_core/tasks/delivery.py: shadow_inbox fallback registration",
-        "jobhunt_core/retention.py: shadow_inbox retention path after the fallback is gone",
         "jobhunt_core/import_search_corpus.py after its rollback-only purpose expires"
       ],
       "extract_before_remove": [
-        "jobhunt_core/erasure.py and erasure_restore.py: retain graph erasure while removing shadow_change_log scrubbing only after the retention decision",
+        "jobhunt_core/erasure.py: move the profile graph deletion implementation out of shadow.projector; keep capture-table scrubbing while shadow_change_log is retained",
         "jobhunt_core/dev_eval.py: keep NDCG_K and _dcg local after shadow.metrics is removed; it is their sole remaining consumer",
         "jobhunt_core/tasks/shadow.py: move bounded embedding drain and matching recovery to native matching tasks",
         "jobhunt_core/tasks/delivery.py: keep HTTP delivery and delivery.stats health, remove only the inbox fallback"
+      ],
+      "preserve_runtime": [
+        "jobhunt_core/retention.py and its maintenance schedule: keep purging the retained historical shadow_inbox table alongside native outbox and matching tables",
+        "jobhunt_core/erasure_restore.py: keep offline receipt reconciliation and shadow_change_log payload scrubbing while that historical table is retained"
       ],
       "compose_and_credentials": [
         ".env.core.admin.prod.example",
