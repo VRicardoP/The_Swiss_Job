@@ -23,6 +23,7 @@ Tres condiciones, cada una con su propio motivo de fallo:
    entre `unknown`s sin significar nada (auditoría G9 P2-A/P2-B).
 
 Uso:  python3 scripts/check_core_release.py [--url http://127.0.0.1:8003]
+      python3 scripts/check_core_release.py --capture-retired
 """
 
 from __future__ import annotations
@@ -34,13 +35,20 @@ import sys
 import urllib.error
 import urllib.request
 
-SERVICIOS_DEL_CORE = (
+SERVICIOS_OBLIGATORIOS = (
     "core-api",
     "core-worker",
     "core-harvest-worker",
     "core-ops-worker",
-    "core-capture",
 )
+SERVICIO_CAPTURE = "core-capture"
+
+
+def _servicios_a_revisar(capture_retirado: bool) -> tuple[str, ...]:
+    """Return the exact service set expected for the declared phase."""
+    if capture_retirado:
+        return SERVICIOS_OBLIGATORIOS
+    return (*SERVICIOS_OBLIGATORIOS, SERVICIO_CAPTURE)
 
 
 def _compose_json(*args: str) -> dict:
@@ -70,11 +78,16 @@ def _id_de_contenedor(nombre: str) -> str | None:
     return salida.stdout.strip() if salida.returncode == 0 else None
 
 
-def _revisa_imagenes() -> list[str]:
+def _revisa_imagenes(capture_retirado: bool) -> tuple[list[str], int]:
     """Condición 1: compose y contenedores, la misma imagen."""
     servicios = _compose_json("config", "--format", "json").get("services", {})
+    revisados = _servicios_a_revisar(capture_retirado)
     fallos = []
-    for servicio in SERVICIOS_DEL_CORE:
+    if capture_retirado and SERVICIO_CAPTURE in servicios:
+        fallos.append(
+            f"{SERVICIO_CAPTURE}: el compose aún declara la captura retirada"
+        )
+    for servicio in revisados:
         declarada = (servicios.get(servicio) or {}).get("image")
         if not declarada:
             fallos.append(f"{servicio}: el compose no declara imagen")
@@ -93,7 +106,7 @@ def _revisa_imagenes() -> list[str]:
                 f"«{declarada}» = {esperada[7:19]}; un `up -d` lo cambiaría "
                 "bajo tus pies"
             )
-    return fallos
+    return fallos, len(revisados)
 
 
 def _revisa_ready(url: str) -> list[str]:
@@ -133,9 +146,15 @@ def _revisa_ready(url: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="http://127.0.0.1:8003")
+    parser.add_argument(
+        "--capture-retired",
+        action="store_true",
+        help="expect the final four-service topology without core-capture",
+    )
     args = parser.parse_args()
 
-    fallos = _revisa_imagenes() + _revisa_ready(args.url)
+    fallos_imagenes, cantidad_servicios = _revisa_imagenes(args.capture_retired)
+    fallos = fallos_imagenes + _revisa_ready(args.url)
     if fallos:
         print("La release del core NO es coherente:", file=sys.stderr)
         for fallo in fallos:
@@ -146,7 +165,7 @@ def main() -> int:
     print(
         f"Core coherente: release {cuerpo['release']}, alembic "
         f"{cuerpo['alembic']}, authoritative, y los "
-        f"{len(SERVICIOS_DEL_CORE)} servicios sobre la imagen del compose"
+        f"{cantidad_servicios} servicios sobre la imagen del compose"
     )
     return 0
 
