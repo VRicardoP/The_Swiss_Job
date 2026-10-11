@@ -1,0 +1,29 @@
+{
+  "validated_at": "2026-10-11T06:38:34Z",
+  "commit": "f29fd44",
+  "scope": "local rehearsal over the sanitized versioned Core compose",
+  "production_accessed": false,
+  "production_changed": false,
+  "sequence": [
+    "retire_core_capture.py disable",
+    "retire_core_capture.py finalize",
+    "split_core_workers.py on the already split final topology",
+    "docker compose config --quiet"
+  ],
+  "result": {
+    "services": [
+      "core-api",
+      "core-harvest-worker",
+      "core-ops-worker",
+      "core-worker"
+    ],
+    "capture_service_present": false,
+    "capture_slot_keys": 0,
+    "capture_enabled_false_occurrences": 1,
+    "capture_enabled_false_service": "core-ops-worker",
+    "split_transform_idempotent": true,
+    "compose_config_valid": true,
+    "rendered_sha256": "0688d08259216c98502faa4ddffd9dbeb03c3ac31e39350ea8374b1c0d7ce519"
+  },
+  "conclusion": "The full Core deployment starts from the live post-retirement compose and changes only the four Core image references. Its worker split transform is a no-op once the three workers already exist, so it does not recreate core-capture or CORE_CAPTURE_SLOT. The production compose must still be revalidated immediately before promotion."
+}

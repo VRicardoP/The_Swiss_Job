@@ -112,6 +112,9 @@ hubiera en cada instante.
 - `worker-release-candidate.json` fija la imagen worker completa `f29fd44`,
   incluido Chromium, el entregador que da de alta perfiles y el dry-run exacto;
   `--config-only` no sirve para este corte porque conservaría código antiguo.
+- `post-capture-core-deploy-validation.json` demuestra en un ensayo local que el
+  despliegue Core completo conserva la topología final de cuatro servicios y no
+  reintroduce captura ni las claves del slot retirado.
 
 Los datos de arrastre anteriores a este protocolo (43,25 ms de media y 100,1 ms
 de p95) no son directamente comparables con las muestras deterministas de este
