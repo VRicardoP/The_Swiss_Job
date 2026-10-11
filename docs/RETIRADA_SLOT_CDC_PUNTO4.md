@@ -130,6 +130,12 @@ ssh nas "$D logs swissjob-core-ops-worker-r5 --since 6m | grep -c 'Sending due t
 captura ya parada: los 17 scopes deben seguir completando y el proyector
 seguir evaluando. Sólo entonces el paso 4.
 
+Con el corte previsto después del 12-10 a las 20:00 UTC, el primer disparo
+posterior es el de las **00:10 Europe/Zurich del 13-10**, equivalente a las
+**22:10 UTC del 12-10**. El disparo no cierra la condición: esperar hasta que
+los 17 cursores tengan `last_complete_at` posterior a esa ventana,
+`core.harvest=0` y la sonda oficial siga con `alertas: []`.
+
 **4. Borrar el slot.** Irreversible.
 
 ```sh
