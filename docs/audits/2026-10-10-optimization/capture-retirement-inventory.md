@@ -50,6 +50,12 @@ conjunto coherente:
   `compute_cycle` y `purge_staging`, junto con sus entradas de beat.
 - Los perfiles Compose de captura, el despliegue rehearsal, el parche histórico
   de Compose, los runbooks de CDC y el ejemplo de entorno de captura.
+- El bootstrap y la verificación del rol `jobhunt_capture` en el migrador. Sólo
+  después de desplegar ese cambio y comprobar que no quedan sesiones ni
+  referencias a `CAPTURE_DSN`, revocar sus privilegios, borrar el rol de
+  replicación y retirar el fichero de credenciales del NAS. Dejar el rol con
+  `LOGIN REPLICATION` mantendría una superficie operativa que ya no tiene
+  consumidor.
 - Los tests exclusivos de captura/gate y las costuras antiguas del cutover.
 - El fallback `shadow_inbox`, sólo después de demostrar que todos los destinos
   activos usan el transporte HTTP.
