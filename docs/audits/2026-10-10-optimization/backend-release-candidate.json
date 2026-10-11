@@ -5,7 +5,9 @@
   "image_id": "sha256:1444ec06d132aeb2b6dd6942991ed8c7f6ece761716f7b22a2a21f6036cb3ee7",
   "size_bytes": 2963149942,
   "runtime_user": "app",
-  "entrypoint": ["./scripts/entrypoint.sh"],
+  "entrypoint": [
+    "./scripts/entrypoint.sh"
+  ],
   "local_only": true,
   "sent_to_nas": false,
   "deployed": false,
@@ -29,5 +31,13 @@
     "ruff": "passed",
     "py_compile": "passed"
   },
-  "deployment_gate": "deploy only after Core f29fd44 exposes POST /v1/profiles; then require snapshot ACK before each automatic matching route change"
+  "deployment_gate": "deploy only after Core f29fd44 exposes POST /v1/profiles; then require snapshot ACK before each automatic matching route change",
+  "deployment_worktree": {
+    "path": "/tmp/swissjob-deploy-f29fd44",
+    "head": "f29fd44",
+    "detached": true,
+    "clean": true,
+    "dry_run": "scripts/deploy_nas.sh bff --dry-run passed",
+    "recreate_command": "git worktree add --detach /tmp/swissjob-deploy-f29fd44 f29fd44"
+  }
 }

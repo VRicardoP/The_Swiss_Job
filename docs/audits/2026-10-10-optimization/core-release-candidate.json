@@ -33,5 +33,13 @@
     "py_compile": "passed",
     "runtime_smoke": "passed"
   },
-  "deployment_gate": "after the capture observation and retirement sequence; deploy Core before any BFF that calls POST /v1/profiles"
+  "deployment_gate": "after the capture observation and retirement sequence; deploy Core before any BFF that calls POST /v1/profiles",
+  "deployment_worktree": {
+    "path": "/tmp/swissjob-deploy-f29fd44",
+    "head": "f29fd44",
+    "detached": true,
+    "clean": true,
+    "dry_run": "scripts/deploy_nas.sh core --dry-run passed",
+    "recreate_command": "git worktree add --detach /tmp/swissjob-deploy-f29fd44 f29fd44"
+  }
 }
