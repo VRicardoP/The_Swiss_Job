@@ -1,0 +1,26 @@
+{
+  "observed_at": "2026-10-11T07:10:44Z",
+  "phase": "preflight_only_before_capture_retirement",
+  "source": {
+    "path": "scripts/nas/supervisor_contenedores.sh",
+    "sha256": "74d65131cb32150ebea4e074c7517cb373225e9a617c2bc91036ec9b754afce5",
+    "matches_live": true,
+    "expected_containers": 17,
+    "includes_capture": true
+  },
+  "post_capture_candidate": {
+    "temporary_path": "/tmp/supervisor-postcapture.sh",
+    "sha256": "b3db3b7bb4a9247049a806d1d9a10bfe6bfe70020819800a7dcce1a06e8f8e56",
+    "expected_containers": 16,
+    "change": "remove exactly the swissjob-core-capture-r5 token from ESPERADOS",
+    "preserves": [
+      "swissjob-core-harvest-worker-r5",
+      "swissjob-core-ops-worker-r5"
+    ],
+    "shell_syntax": "passed",
+    "isolated_positive_cycle": "ok",
+    "isolated_negative_control": "missing-control produced mal and the exact NO EXISTE diagnostic"
+  },
+  "deployment_gate": "do not edit or copy the post-capture candidate until the post-stop native round is green and the replication slot has been dropped",
+  "application": "regenerate from the then-current versioned source, assert the same one-token diff and hash, commit it, copy to the live host_path, compare hashes and run an isolated cycle before promoting the final Core Compose"
+}
