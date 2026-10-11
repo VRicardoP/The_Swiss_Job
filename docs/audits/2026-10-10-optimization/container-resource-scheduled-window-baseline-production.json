@@ -214,7 +214,9 @@
         "min": 0.17,
         "p95_nearest_rank": 103.23
       },
-      "duration_seconds": 3667.174757,
+      "sampling_ended_at": "2026-10-11T08:01:25.758199Z",
+      "sampling_seconds": 1548.944749,
+      "sampling_started_at": "2026-10-11T07:35:36.813450Z",
       "ended_at": "2026-10-11T08:01:27.178511+00:00",
       "failed_samples": 1,
       "memory_mib": {
@@ -229,7 +231,8 @@
         "school_matches": 0
       },
       "started_at": "2026-10-11T07:00:20.003754+00:00",
-      "valid_samples": 26
+      "valid_samples": 26,
+      "workload_duration_seconds": 3667.174757
     },
     "daily_report_workload": {
       "cached_offers_considered": 2476,

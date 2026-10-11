@@ -25,8 +25,9 @@ credenciales.
   únicamente con la misma ventana tras el traspaso.
 - `portfolio-daily-report-baseline.jsonl` conserva el seguimiento por minuto
   hasta el evento terminal agregado: 26 muestras válidas, una sonda fallida
-  cerrada, 3.667,17 s de ejecución y envío final de 8 empleos. No contiene
-  ofertas, URLs ni datos de usuarios.
+  cerrada y envío final de 8 empleos. Los eventos agregados delimitan 3.667,17 s
+  de ejecución; las muestras de recursos cubren sus últimos 1.548,94 s. No
+  contiene ofertas, URLs ni datos de usuarios.
 - `matching-recovery-baseline-production.json` cuantifica el trabajo con un
   solo proceso: duraciones, ticks caducados, límites y el gate de convergencia
   después de drenar el backlog de embeddings.
