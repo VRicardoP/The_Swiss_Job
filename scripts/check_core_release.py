@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import urllib.error
@@ -42,6 +43,7 @@ SERVICIOS_OBLIGATORIOS = (
     "core-ops-worker",
 )
 SERVICIO_CAPTURE = "core-capture"
+DOCKER_BIN = os.environ.get("DOCKER_BIN", "docker")
 
 
 def _servicios_a_revisar(capture_retirado: bool) -> tuple[str, ...]:
@@ -53,7 +55,7 @@ def _servicios_a_revisar(capture_retirado: bool) -> tuple[str, ...]:
 
 def _compose_json(*args: str) -> dict:
     salida = subprocess.run(
-        ["docker", "compose", *args], capture_output=True, text=True
+        [DOCKER_BIN, "compose", *args], capture_output=True, text=True
     )
     if salida.returncode != 0:
         sys.exit(f"no se pudo hablar con compose:\n{salida.stderr}")
@@ -62,7 +64,7 @@ def _compose_json(*args: str) -> dict:
 
 def _id_de_imagen(referencia: str) -> str | None:
     salida = subprocess.run(
-        ["docker", "image", "inspect", referencia, "--format", "{{.Id}}"],
+        [DOCKER_BIN, "image", "inspect", referencia, "--format", "{{.Id}}"],
         capture_output=True,
         text=True,
     )
@@ -71,7 +73,7 @@ def _id_de_imagen(referencia: str) -> str | None:
 
 def _id_de_contenedor(nombre: str) -> str | None:
     salida = subprocess.run(
-        ["docker", "inspect", nombre, "--format", "{{.Image}}"],
+        [DOCKER_BIN, "inspect", nombre, "--format", "{{.Image}}"],
         capture_output=True,
         text=True,
     )
