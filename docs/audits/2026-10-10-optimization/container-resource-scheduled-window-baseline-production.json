@@ -1,0 +1,220 @@
+{
+  "aggregate_medians": {
+    "container_count": 9,
+    "cpu_percent_sum": 48.32,
+    "memory_mib_sum": 3098.69,
+    "pids_sum": 58
+  },
+  "containers": {
+    "portfolio_backend": {
+      "cpu_percent": [
+        0.23,
+        7.06,
+        0.2
+      ],
+      "median_cpu_percent": 0.23,
+      "median_memory_mib": 166.5,
+      "median_pids": 7,
+      "memory_mib": [
+        166.7,
+        166.5,
+        166.5
+      ],
+      "pids": [
+        7,
+        7,
+        7
+      ]
+    },
+    "portfolio_worker": {
+      "cpu_percent": [
+        50.56,
+        23.61,
+        46.29
+      ],
+      "median_cpu_percent": 46.29,
+      "median_memory_mib": 697.6,
+      "median_pids": 13,
+      "memory_mib": [
+        697.4,
+        697.6,
+        751.6
+      ],
+      "pids": [
+        13,
+        13,
+        13
+      ]
+    },
+    "swissjob-backend": {
+      "cpu_percent": [
+        6.43,
+        0.4,
+        0.4
+      ],
+      "median_cpu_percent": 0.4,
+      "median_memory_mib": 880.0,
+      "median_pids": 19,
+      "memory_mib": [
+        880.0,
+        880.0,
+        880.0
+      ],
+      "pids": [
+        19,
+        19,
+        19
+      ]
+    },
+    "swissjob-core-api-r5": {
+      "cpu_percent": [
+        11.69,
+        0.26,
+        0.22
+      ],
+      "median_cpu_percent": 0.26,
+      "median_memory_mib": 142.3,
+      "median_pids": 2,
+      "memory_mib": [
+        142.3,
+        142.3,
+        142.2
+      ],
+      "pids": [
+        2,
+        2,
+        2
+      ]
+    },
+    "swissjob-core-capture-r5": {
+      "cpu_percent": [
+        0.01,
+        0.01,
+        0.01
+      ],
+      "median_cpu_percent": 0.01,
+      "median_memory_mib": 24.09,
+      "median_pids": 1,
+      "memory_mib": [
+        24.09,
+        24.09,
+        24.09
+      ],
+      "pids": [
+        1,
+        1,
+        1
+      ]
+    },
+    "swissjob-core-harvest-worker-r5": {
+      "cpu_percent": [
+        0.14,
+        0.51,
+        0.12
+      ],
+      "median_cpu_percent": 0.14,
+      "median_memory_mib": 346.7,
+      "median_pids": 2,
+      "memory_mib": [
+        346.7,
+        346.7,
+        346.7
+      ],
+      "pids": [
+        2,
+        2,
+        2
+      ]
+    },
+    "swissjob-core-ops-worker-r5": {
+      "cpu_percent": [
+        0.61,
+        0.55,
+        0.09
+      ],
+      "median_cpu_percent": 0.55,
+      "median_memory_mib": 127.8,
+      "median_pids": 3,
+      "memory_mib": [
+        127.8,
+        127.8,
+        127.8
+      ],
+      "pids": [
+        3,
+        3,
+        3
+      ]
+    },
+    "swissjob-core-worker-r5": {
+      "cpu_percent": [
+        0.08,
+        0.55,
+        0.08
+      ],
+      "median_cpu_percent": 0.08,
+      "median_memory_mib": 504.4,
+      "median_pids": 8,
+      "memory_mib": [
+        504.4,
+        504.4,
+        504.5
+      ],
+      "pids": [
+        8,
+        8,
+        8
+      ]
+    },
+    "swissjob-worker": {
+      "cpu_percent": [
+        0.36,
+        0.17,
+        0.46
+      ],
+      "median_cpu_percent": 0.36,
+      "median_memory_mib": 209.3,
+      "median_pids": 3,
+      "memory_mib": [
+        209.4,
+        209.3,
+        209.2
+      ],
+      "pids": [
+        3,
+        3,
+        3
+      ]
+    }
+  },
+  "context": {
+    "attribution": "confirmed by an aggregate daily_match_report log at 2026-10-11T07:00:20Z; no URLs, offer contents or user data were retained",
+    "classification": "scheduled_07_utc_window",
+    "comparison_rule": "compare only with the same scheduled window after cutover; keep the separate idle baseline for idle comparisons",
+    "container_clock_checked_at": "2026-10-11T07:24:53Z",
+    "container_local_clock_matches_utc": true,
+    "daily_report_workload": {
+      "cached_offers_considered": 2476,
+      "new_offers": 2377
+    },
+    "follow_up_at": "2026-10-11T07:23:50Z",
+    "live_settings": {
+      "daily_harvest_enabled": true,
+      "daily_harvest_hour_utc": 12,
+      "daily_harvest_jitter_hours": 4.0,
+      "daily_match_report_enabled": true,
+      "daily_match_report_hour_utc": 7,
+      "process_role": "worker"
+    },
+    "portfolio_worker_follow_up_cpu_percent": 66.99,
+    "script_sha256": "52a11604b3cb53854c7b4ef4ea7c845bfac7c5ebc6e62b1fe12d42557fe719fa"
+  },
+  "sample_window": {
+    "capture_retired": false,
+    "ended_at": "2026-10-11T07:21:10.829589Z",
+    "interval_seconds": 8.0,
+    "method": "docker stats --no-stream over SSH",
+    "samples": 3,
+    "started_at": "2026-10-11T07:20:46.426225Z"
+  }
+}
