@@ -29,5 +29,86 @@
     "outbound_school_fetch": "not executed by this path; pinned by test_core_scrape_all_never_lists_or_fetches"
   },
   "core_native_round_evidence": "native-harvest-round-production.json",
-  "interpretation": "The same nine shared sources have a Portfolio scheduled cycle while Core is their native authority. The Portfolio school loop still wakes, but its authority guard delegates before network I/O. After handover, the nine start counts and the school wakeup must be zero while the 11 exclusive Portfolio sources remain active."
+  "interpretation": "The same nine shared sources have a Portfolio scheduled cycle while Core is their native authority. The Portfolio school loop still wakes, but its authority guard delegates before network I/O. After handover, the nine start counts and the school wakeup must be zero while the 11 exclusive Portfolio sources remain active.",
+  "effective_disabled_configuration": {
+    "portfolio_backend": {
+      "LEGACY_DISABLED_SOURCES": null
+    },
+    "portfolio_worker": {
+      "LEGACY_DISABLED_SOURCES": null
+    },
+    "swissjob_backend": {
+      "LEGACY_DISABLED_PROVIDERS": [
+        "arbeitnow",
+        "euremotejobs",
+        "globaljobs",
+        "jobgether",
+        "jobspresso",
+        "nav_arbeidsplassen",
+        "ostjob",
+        "remotive",
+        "thehub",
+        "weworkremotely",
+        "workingnomads",
+        "zentraljob"
+      ],
+      "LEGACY_DISABLED_SCRAPERS": [
+        "financejobs",
+        "irishjobs"
+      ]
+    },
+    "swissjob_worker": {
+      "LEGACY_DISABLED_PROVIDERS": [
+        "arbeitnow",
+        "euremotejobs",
+        "globaljobs",
+        "jobgether",
+        "jobspresso",
+        "nav_arbeidsplassen",
+        "ostjob",
+        "remotive",
+        "thehub",
+        "weworkremotely",
+        "workingnomads",
+        "zentraljob"
+      ],
+      "LEGACY_DISABLED_SCRAPERS": [
+        "financejobs",
+        "irishjobs"
+      ]
+    }
+  },
+  "post_handover_expected": {
+    "portfolio_disabled_sources": [
+      "arbeitnow",
+      "irishjobs",
+      "jobgether",
+      "nav",
+      "ostjob",
+      "remotive",
+      "thehub",
+      "weworkremotely",
+      "zentraljob"
+    ],
+    "swissjob_disabled_providers": [
+      "arbeitnow",
+      "euremotejobs",
+      "globaljobs",
+      "jobgether",
+      "jobspresso",
+      "nav_arbeidsplassen",
+      "ostjob",
+      "publicjobs",
+      "remotive",
+      "thehub",
+      "weworkremotely",
+      "workingnomads",
+      "zebis",
+      "zentraljob"
+    ],
+    "swissjob_disabled_scrapers": [
+      "financejobs",
+      "irishjobs"
+    ]
+  }
 }
