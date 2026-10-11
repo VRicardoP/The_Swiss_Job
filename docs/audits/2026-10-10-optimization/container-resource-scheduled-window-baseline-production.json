@@ -189,6 +189,17 @@
   },
   "context": {
     "attribution": "confirmed by an aggregate daily_match_report log at 2026-10-11T07:00:20Z; no URLs, offer contents or user data were retained",
+    "candidate_contract_validation": {
+      "checkout": "/tmp/reactportfolio-backend-deploy-a292ef4",
+      "discarded_attempts": [
+        "host pytest did not collect because its Python 3.12 environment lacks aiosqlite",
+        "the runtime image does not contain tests until the candidate checkout is mounted",
+        "the first read-only mount used a nonexistent nested backend directory"
+      ],
+      "image": "portfolio-backend:board-a292ef4",
+      "network": "none",
+      "result": "4 passed in 0.18s"
+    },
     "classification": "scheduled_07_utc_window",
     "comparison_rule": "compare only with the same scheduled window after cutover; keep the separate idle baseline for idle comparisons",
     "container_clock_checked_at": "2026-10-11T07:24:53Z",
@@ -206,7 +217,22 @@
       "daily_match_report_hour_utc": 7,
       "process_role": "worker"
     },
+    "observed_peak_follow_up": {
+      "at": "2026-10-11T07:29:52Z",
+      "portfolio_worker_cpu_percent": 154.5
+    },
     "portfolio_worker_follow_up_cpu_percent": 66.99,
+    "post_handover_contract": {
+      "deduplication": "merge Core and local results by exact URL",
+      "exclusive_sources": "remain locally matched",
+      "shared_sources": "reuse existing Core scores without the local matcher"
+    },
+    "pre_handover_source_ownership": {
+      "checked_at": "2026-10-11T07:30:00Z",
+      "effect": "daily report embeds and reranks the locally cached shared and exclusive sources",
+      "portfolio_backend_disabled_sources": 0,
+      "portfolio_worker_disabled_sources": 0
+    },
     "script_sha256": "52a11604b3cb53854c7b4ef4ea7c845bfac7c5ebc6e62b1fe12d42557fe719fa"
   },
   "sample_window": {
