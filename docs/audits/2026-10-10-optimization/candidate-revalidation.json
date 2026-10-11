@@ -1,0 +1,42 @@
+{
+  "observed_at": "2026-10-11T08:54:14+00:00",
+  "remote_mutation": false,
+  "worktrees": {
+    "swissjob": {
+      "path": "/tmp/swissjob-deploy-f29fd44",
+      "head": "f29fd441396e1c80633ca3127ccc8395c6405443",
+      "clean": true,
+      "deploy_script_sha256": "ec6be2aa43fe7a0c163bb9e64fe1341cd1122aaa148a98bfad904c9be9f77729"
+    },
+    "portfolio_backend": {
+      "path": "/tmp/reactportfolio-backend-deploy-a292ef4",
+      "head": "a292ef4b56341e61f6c2778a23b23bb89f807319",
+      "clean": true,
+      "deploy_script_sha256": "6af3dc56d88971f2434f5e48f8136164687ee986cadc98aa910f26682ea43aff"
+    }
+  },
+  "images": {
+    "swissjob-core:point5-f29fd44": {
+      "id": "sha256:ba57dfbd4259cbdcabf35a7d83cd2297543b0d0a9f6da10fa91ee6af605ce498",
+      "size_bytes": 2196691010,
+      "user": "core"
+    },
+    "swissjob-backend:point5-f29fd44": {
+      "id": "sha256:1444ec06d132aeb2b6dd6942991ed8c7f6ece761716f7b22a2a21f6036cb3ee7",
+      "size_bytes": 2963149942,
+      "user": "app"
+    },
+    "portfolio-backend:board-a292ef4": {
+      "id": "sha256:b929c50026b9ffca8f7ae122e771527e23438af60de30041004cac7ff1ed907b",
+      "size_bytes": 3464664725,
+      "user": "appuser"
+    }
+  },
+  "operational_scripts": {
+    "scripts/deploy_nas.sh": "695f6be53d689a4d35c573aafd2e5debc82651799d6986417d89650181050e6a",
+    "scripts/check_core_release.py": "2a0e451433f1dec271ea9c0ba226cbdb58607d59b39881f0a905af86b5364b22",
+    "scripts/retire_core_capture.py": "bce07410b4f3b0fc1bd35de7affb01cc265b492d5c4725aac902af5c7583bad9",
+    "scripts/nas/supervisor_contenedores.sh": "74d65131cb32150ebea4e074c7517cb373225e9a617c2bc91036ec9b754afce5"
+  },
+  "result": "all pinned worktrees, images and operational script hashes remain available and unchanged"
+}
