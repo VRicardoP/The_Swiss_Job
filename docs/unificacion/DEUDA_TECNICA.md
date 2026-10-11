@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 02:31 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 02:33 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1302,6 +1302,14 @@ código ejecutable:
   `jobhunt.harvest.run_scope`, con exclusión e idempotencia por run; el adaptador
   sólo se conserva si puede encolar esa tarea mediante una operación Core
   autenticada y acotada.
+- Tras el cierre formal, Portfolio deja una topología fija: catálogo y matching
+  resuelven siempre a `CompositeCatalog` y `CompositeMatching` (Core más las
+  once fuentes exclusivas); candidaturas, búsquedas guardadas, documentos y
+  colegios resuelven directamente a sus clientes Core. Así se retiran del
+  runtime `services/routing.py`, el modelo de routing, los endpoints
+  `cutover`/`gate_c`, los fallbacks y repositorios locales usados sólo para
+  rollback. Se conserva la tabla histórica y se conservan `LocalCatalog` y
+  `LocalMatching`, necesarios para los productores exclusivos.
 - `retention.py` y `erasure_restore.py` se conservan: siguen purgando el inbox
   histórico y aplicando recibos de borrado sobre `shadow_change_log`, tablas que
   expresamente no se eliminan. `search_cutover.py` es el único lector ejecutable
