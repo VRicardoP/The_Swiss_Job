@@ -37,5 +37,7 @@
     "clean": true,
     "recreate_command": "git worktree add --detach /tmp/swissjob-deploy-f29fd44 f29fd44"
   },
-  "deployment_gate": "deploy after Core f29fd44 exposes POST /v1/profiles; this full worker image is required because profile delivery runs in the worker, and its deployment also applies the final provider/scraper handover policy"
+  "deployment_gate": "do not deploy this image: profile delivery runs in the BFF lifespan, and 84853cf..f29fd44 has no executable Celery-worker change; use scripts/deploy_nas.sh worker --config-only to apply the final provider/scraper handover while preserving the live image",
+  "deployment_decision": "not_required",
+  "decision_evidence": "worker-deployment-decision.json"
 }

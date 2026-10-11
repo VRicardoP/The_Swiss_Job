@@ -28,5 +28,14 @@
   },
   "deployment_behavior": "deploy_nas.sh packages and transfers one selected service image per invocation",
   "result": "pass",
-  "reason": "Both the local temporary filesystem and the NAS destination have substantially more free capacity than one sequential image archive and the combined uncompressed candidate size. Recheck immediately before deployment."
+  "reason": "Both filesystems have substantially more free capacity than the sequential Core and BFF archives. The 4.45 GB worker candidate is not transferred because its executable diff is unused by Celery; worker handover is config-only. Recheck immediately before deployment.",
+  "required_candidate_uncompressed_bytes": {
+    "core": 2196691010,
+    "bff": 2963149942,
+    "total": 5159840952
+  },
+  "excluded_from_transfer": {
+    "worker": 4451761388,
+    "reason": "worker-deployment-decision.json proves config-only is sufficient"
+  }
 }

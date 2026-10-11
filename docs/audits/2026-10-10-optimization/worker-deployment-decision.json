@@ -1,0 +1,76 @@
+{
+  "observed_at": "2026-10-11T06:56:57Z",
+  "live_worker": {
+    "image": "swissjob-worker:point5-84853cf",
+    "entrypoint": [],
+    "command": [
+      "celery",
+      "-A",
+      "celery_app",
+      "worker",
+      "-Q",
+      "default,scraping,ai",
+      "--concurrency=2",
+      "--loglevel=info"
+    ],
+    "restart_count": 0
+  },
+  "live_bff": {
+    "image": "swissjob-backend:point5-aa36c5e",
+    "entrypoint": [
+      "./scripts/entrypoint.sh"
+    ],
+    "command": [
+      "gunicorn",
+      "main:app",
+      "-w",
+      "2",
+      "-k",
+      "uvicorn.workers.UvicornWorker",
+      "--bind",
+      "0.0.0.0:8000",
+      "--access-logfile",
+      "-",
+      "--error-logfile",
+      "-",
+      "--timeout",
+      "420"
+    ],
+    "restart_count": 0
+  },
+  "source_trace": {
+    "profile_delivery_entrypoint": "backend/main.py lifespan imports and starts services.profile_sync.run_profile_delivery",
+    "celery_profile_sync_imports": 0,
+    "celery_included_modules_changed_between_84853cf_and_f29fd44": false,
+    "production_profile_sync_importers": [
+      "backend/main.py"
+    ],
+    "diff_84853cf_to_f29fd44": [
+      "backend/.env.prod.example",
+      "backend/services/profile_sync.py",
+      "backend/tests/test_legacy_source_handover.py",
+      "backend/tests/test_profile_snapshot_delivery.py"
+    ],
+    "worker_executable_diff": []
+  },
+  "decision": {
+    "bff": "full image swissjob-backend:point5-f29fd44 is required for idempotent future profile enrollment",
+    "worker": "keep live image swissjob-worker:point5-84853cf and apply scripts/deploy_nas.sh worker --config-only",
+    "reason": "The only executable source change is profile_sync.py, which runs in the FastAPI/Gunicorn lifespan. The Celery worker neither imports it nor registers a task for it. The final 14-provider plus 2-scraper handover is configuration and is exactly the purpose of --config-only.",
+    "preferred_order_after_core": "apply worker --config-only first to stop its scheduled duplicate producers, then deploy the full BFF image and its same final handover policy",
+    "full_worker_candidate": "built and validated locally but not required or to be transferred/deployed"
+  },
+  "transfer_bytes": {
+    "core": 2196691010,
+    "bff": 2963149942,
+    "required_uncompressed_total": 5159840952,
+    "excluded_worker_candidate": 4451761388
+  },
+  "safety": {
+    "config_only_preserves_live_image": true,
+    "config_only_validates_candidate_compose_before_promotion": true,
+    "config_only_recreates_only_worker": true,
+    "worker_ping_required": true
+  },
+  "supersedes": "the earlier conclusion in worker-release-candidate.json that full worker deployment was required for profile delivery"
+}

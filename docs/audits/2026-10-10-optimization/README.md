@@ -109,9 +109,10 @@ hubiera en cada instante.
   byte a byte, la salud posterior y el control que impide repetirlo.
 - `reactportfolio-frontend-release.json` fija el commit publicable y repite lint,
   las 422 pruebas y el build aislado que se desplegará en Cloudflare Pages.
-- `worker-release-candidate.json` fija la imagen worker completa `f29fd44`,
-  incluido Chromium, el entregador que da de alta perfiles y el dry-run exacto;
-  `--config-only` no sirve para este corte porque conservaría código antiguo.
+- `worker-release-candidate.json` conserva la construcción validada del worker
+  `f29fd44`; `worker-deployment-decision.json` demuestra después que no debe
+  desplegarse: la entrega de perfiles corre en el BFF y el worker usa
+  `--config-only` para aplicar únicamente la política final 14+2.
 - `post-capture-core-deploy-validation.json` demuestra en un ensayo local que el
   despliegue Core completo conserva la topología final de cuatro servicios y no
   reintroduce captura ni las claves del slot retirado.

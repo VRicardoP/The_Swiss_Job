@@ -80,7 +80,7 @@
     "retire capture and slot per RETIRADA_SLOT_CDC_PUNTO4.md",
     "deploy swissjob-core:point5-f29fd44 and verify POST /v1/profiles, bounded dedup, dispatch and aggregate routes",
     "grant harvest:write only after the deployed Core route exists",
-    "deploy full swissjob-backend:point5-f29fd44 and swissjob-worker:point5-f29fd44 images; both receive the final producer handover policy",
+    "apply SwissJob worker --config-only first, preserving swissjob-worker:point5-84853cf while installing the final producer handover policy; then deploy full swissjob-backend:point5-f29fd44 with the same policy and the new profile delivery code",
     "publish and verify the Portfolio frontend",
     "deploy portfolio-backend:board-a292ef4 and verify composite catalog/matching plus eleven retained sources",
     "verify both producer handover gates and zero active SwissJob users without Core identity",
@@ -213,5 +213,6 @@
       "does not rotate or print the credential secret"
     ],
     "verification": "re-read the single live portfolio credential scopes without printing its secret and require harvest:write exactly once"
-  }
+  },
+  "worker_deployment_decision": "worker-deployment-decision.json: config-only, because profile delivery runs in the BFF lifespan and the worker executable diff from 84853cf to f29fd44 is empty"
 }
