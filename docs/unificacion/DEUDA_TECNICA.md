@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 08:26 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 08:28 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1276,7 +1276,9 @@ código ejecutable:
   un destino desconocido falla sin marcar la entrega como completada.
 - Tras borrar `shadow.metrics`, `NDCG_K=10` y la pequeña función DCG quedan
   locales a `dev_eval.py`, su único consumidor; no se añade un módulo de una
-  sola función.
+  sola función. La búsqueda actual de referencias volvió a confirmar ese único
+  consumidor externo y se corrigió la propuesta antigua del inventario que aún
+  pedía un módulo neutral de un solo uso.
 - `harvest/providers/legacy_shadow.py` no se retira mientras existan listings
   `legacy:*`: admisión nativa consulta ese historial, las búsquedas guardadas
   unifican el nombre público y el sink necesita su normalizador para reconstruir

@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-11T05:36:00+00:00",
+  "observed_at": "2026-10-11T08:27:02+00:00",
   "status": "verified inventory; deletion deferred until rollback is formally closed",
   "swissjob_shadow_runtime": {
     "python_lines": 8093,
@@ -28,7 +28,7 @@
       "matching_recovery": "extract embedding drain and bounded all-consumer matching recovery from projector into a native task",
       "profile_erasure": "move the graph deletion implementation into erasure.py; explicit API erasure remains authoritative",
       "delivery_health": "reuse delivery.stats for native outbox lag/dead-letter health before removing shadow metric persistence",
-      "ndcg": "move NDCG_K and _dcg to a neutral ranking-metrics module used by dev_eval",
+      "ndcg": "after shadow.metrics is removed, keep NDCG_K and _dcg local to dev_eval, their sole remaining consumer; do not create a one-use module",
       "delivery_transport": "verify configured HTTP consumer transports before removing shadow.inbox fallback"
     },
     "delete_instead_of_extract": {
@@ -81,7 +81,7 @@
       ],
       "extract_before_remove": [
         "jobhunt_core/erasure.py and erasure_restore.py: retain graph erasure while removing shadow_change_log scrubbing only after the retention decision",
-        "jobhunt_core/dev_eval.py: move NDCG_K and _dcg to a neutral ranking metrics module",
+        "jobhunt_core/dev_eval.py: keep NDCG_K and _dcg local after shadow.metrics is removed; it is their sole remaining consumer",
         "jobhunt_core/tasks/shadow.py: move bounded embedding drain and matching recovery to native matching tasks",
         "jobhunt_core/tasks/delivery.py: keep HTTP delivery and delivery.stats health, remove only the inbox fallback"
       ],
