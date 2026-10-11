@@ -1,6 +1,6 @@
 {
   "method": "physical lines from str.splitlines; candidates verified against current clean deployment worktrees by import/reference search",
-  "observed_at": "2026-10-11T08:31:42+00:00",
+  "observed_at": "2026-10-11T08:39:08+00:00",
   "portfolio": {
     "fixed_post_rollback_topology": "CompositeCatalog and CompositeMatching remain because eleven Portfolio-only sources stay local; applications, saved searches, documents and schools resolve directly to Core",
     "exclusive_source_runtime_to_retain": {
@@ -101,7 +101,10 @@
       "current_lines": 630,
       "reason": "The routers still need narrow constructors for the retained composite implementations; deleting the files wholesale would remove live functionality"
     },
-    "measured_candidate_surface_lines": 1808
+    "measured_candidate_surface_lines": 1808,
+    "functionality_gate": {
+      "services/saved_search_runner.py": "preserve until Core saved-search notifications are materialized in the Portfolio inbox or explicitly retired"
+    }
   },
   "repo_heads": {
     "portfolio_backend": "a292ef4b56341e61f6c2778a23b23bb89f807319",
@@ -252,6 +255,11 @@
       }
     ],
     "measured_candidate_surface_lines": 3146,
-    "warning": "Do not delete profile_tasks.py, applications/local.py, profiles/local.py, MatchResultService or feedback code in bulk; each retains a separate live responsibility"
-  }
+    "warning": "Do not delete profile_tasks.py, applications/local.py, profiles/local.py, MatchResultService or feedback code in bulk; each retains a separate live responsibility",
+    "functionality_gates": {
+      "daily_and_watchlist_digests": "preserve until Core match events provide equivalent notifications or the feature is explicitly retired",
+      "match_result_overlay": "preserve MatchResultService, local application state and feedback while CoreMatching and watchlist/application flows still consume them"
+    }
+  },
+  "dependency_map": "post-rollback-dependency-map.json"
 }

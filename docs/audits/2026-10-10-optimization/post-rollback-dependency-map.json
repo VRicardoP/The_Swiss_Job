@@ -1,0 +1,102 @@
+{
+  "observed_at": "2026-10-11T08:39:08+00:00",
+  "method": "AST import scan plus targeted execution-flow inspection on clean deployment worktrees",
+  "repo_heads": {
+    "portfolio_backend": "a292ef4b56341e61f6c2778a23b23bb89f807319",
+    "swissjob": "f29fd441396e1c80633ca3127ccc8395c6405443"
+  },
+  "portfolio": {
+    "direct_runtime_consumers": {
+      "main.py": 1083,
+      "routers/ai_match.py": 277,
+      "routers/gate_c.py": 37,
+      "services/applications/seam.py": 65,
+      "services/catalog/seam.py": 536,
+      "services/daily_match_report.py": 448,
+      "services/document_store.py": 50,
+      "services/gate_c.py": 186,
+      "services/matching/seam.py": 94,
+      "services/routing.py": 436,
+      "services/saved_search_runner.py": 253,
+      "services/saved_searches/seam.py": 54,
+      "services/school_store.py": 43
+    },
+    "fixed_authority_edits": {
+      "main.py": "remove routing preload/error handler, cutover and gate routers, and write-freeze middleware; keep local analysis for the eleven exclusive sources",
+      "routers/ai_match.py": "resolve the retained CompositeMatching directly and remove core_read fallback branches",
+      "services/daily_match_report.py": "compose Core feed with locally owned exclusive sources directly, without routing lookup",
+      "services/document_store.py": "return the configured CoreDocuments authority directly while retaining owner validation",
+      "services/school_store.py": "return CoreSchools directly; retain manual refresh, dashboard and alerts",
+      "services/applications/seam.py": "select Core applications directly",
+      "services/catalog/seam.py": "construct CompositeCatalog directly",
+      "services/matching/seam.py": "construct CompositeMatching directly",
+      "services/saved_searches/seam.py": "select Core saved searches directly"
+    },
+    "delete_after_edits": [
+      "models/jobhunt_routing.py",
+      "routers/cutover.py",
+      "routers/gate_c.py",
+      "services/gate_c.py",
+      "services/routing.py",
+      "services/write_freeze.py",
+      "services/applications/local.py",
+      "services/saved_searches/local.py"
+    ],
+    "functionality_gate": {
+      "services/saved_search_runner.py": "preserve until Portfolio inbox turns Core saved_search.matches events into the existing user notification contract, or an explicit product decision retires those alerts",
+      "verified_current_gap": "under core_primary the local runner already disables itself; Portfolio integration inbox records arbitrary events and validates document.changed but does not create saved-search notifications"
+    }
+  },
+  "swissjob": {
+    "direct_runtime_consumers": {
+      "backend/main.py": 341,
+      "backend/routers/match.py": 508,
+      "backend/routers/profile.py": 391,
+      "backend/services/applications/seam.py": 107,
+      "backend/services/catalog/seam.py": 106,
+      "backend/services/documents/seam.py": 130,
+      "backend/services/exclusions_sync.py": 217,
+      "backend/services/job_repository.py": 568,
+      "backend/services/matching/feedback.py": 295,
+      "backend/services/matching/seam.py": 128,
+      "backend/services/profile_sync.py": 219,
+      "backend/services/profiles/seam.py": 99,
+      "backend/services/saved_searches.py": 207,
+      "backend/services/schools/seam.py": 60,
+      "backend/services/schools/state.py": 61,
+      "backend/models/__init__.py": 64,
+      "backend/tasks/digest_tasks.py": 175,
+      "backend/tasks/fetch_tasks.py": 500,
+      "backend/tasks/pipeline_tasks.py": 135,
+      "backend/tasks/profile_tasks.py": 193,
+      "backend/tasks/scraping_tasks.py": 564,
+      "backend/tasks/watchlist_tasks.py": 358
+    },
+    "fixed_authority_edits": {
+      "backend/services/profile_sync.py": "always provision/deliver the Core profile snapshot; remove routing flip after ACK",
+      "backend/services/exclusions_sync.py": "deliver exclusions to the already linked Core profile directly",
+      "backend/services/saved_searches.py": "select Core saved searches directly",
+      "backend/services/schools/state.py": "select CoreWatchlist directly",
+      "backend/services/matching/feedback.py": "remove the routing assertion but retain feedback authority and local overlay until its separate gate closes",
+      "backend/tasks/fetch_tasks.py": "remove the local embedding dispatch after harvest",
+      "backend/tasks/scraping_tasks.py": "remove the local embedding dispatch after harvest",
+      "backend/main.py": "remove local JobMatcher warmup",
+      "backend/models/__init__.py": "remove the historical routing model export"
+    },
+    "functionality_gates": {
+      "daily_and_watchlist_digests": "retain until Core matching notifications are materialized or explicitly retired; both tasks currently gate Core profiles out and read local match_results",
+      "match_result_overlay": "retain MatchResultService, applications/local.py and feedback state because CoreMatching and the watchlist/application state machine still call them",
+      "match_event_delivery": "Core emits match.evaluated and the BFF stores the receipt, but integration_inbox only materializes saved_search.matches notifications",
+      "watchlist_health": "retain independently of matching; it monitors school collectors and user preferences"
+    },
+    "delete_or_simplify_only_after_gates": [
+      "backend/services/match_service.py",
+      "backend/tasks/embedding_tasks.py",
+      "backend/tasks/matching_tasks.py",
+      "backend/tasks/pipeline_tasks.py local embedding/matching stages",
+      "backend/routers/match.py local analysis branch",
+      "backend/services/job_matcher.py after constants move"
+    ]
+  },
+  "conclusion": "The routing model can be removed only after every direct consumer above is changed. Notification and match-result overlays have independent live responsibilities and are outside a blanket rollback cleanup."
+}
