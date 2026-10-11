@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-11T08:28:12+00:00",
+  "observed_at": "2026-10-11T08:35:21+00:00",
   "status": "verified inventory; deletion deferred until rollback is formally closed",
   "swissjob_shadow_runtime": {
     "python_lines": 8093,
@@ -48,14 +48,31 @@
       "weworkremotely",
       "zentraljob"
     ],
-    "standalone_production_modules": 24,
-    "standalone_python_lines": 3374,
+    "standalone_production_modules": 25,
+    "standalone_python_lines": 3752,
     "shared_files_requiring_selective_edits": {
-      "services/job_provider.py": 1049,
-      "services/chmedia_job_base.py": 378
+      "services/job_provider.py": 1049
     },
     "school_runtime_python_lines": 1515,
-    "school_decision": "retain manual refresh, Core store, dashboard and alert delivery; only scheduled collection is retired"
+    "school_decision": "retain manual refresh, Core store, dashboard and alert delivery; only scheduled collection is retired",
+    "selective_removal": {
+      "services/job_provider.py": {
+        "classes": 9,
+        "lines": 237,
+        "reason": "remove only transferred source normalizers; preserve the shared provider contract and exclusive-source normalizers"
+      }
+    },
+    "full_delete_verification": {
+      "services/chmedia_job_base.py": {
+        "lines": 378,
+        "runtime_importers": [
+          "routers/ostjob_jobs.py",
+          "routers/zentraljob_jobs.py"
+        ],
+        "other_references": "tests and comments/docstrings only",
+        "decision": "delete with its two transferred routers after rollback closure"
+      }
+    }
   },
   "swissjob_transferred_legacy_producers": {
     "provider_and_scraper_modules": 16,

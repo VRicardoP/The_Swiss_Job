@@ -1,6 +1,6 @@
 {
   "method": "physical lines from str.splitlines; Python class spans from ast lineno/end_lineno",
-  "observed_at": "2026-10-10T21:40:48.186967+00:00",
+  "observed_at": "2026-10-11T08:35:21+00:00",
   "portfolio_backend": {
     "exclusive_sources_cached_jobs_production": 1339,
     "local_matcher_retained_until_exclusive_source_path_exists": {
@@ -11,57 +11,57 @@
       "classes": [
         {
           "class": "RemotiveProvider",
-          "end": 421,
+          "end": 422,
           "lines": 26,
-          "start": 396
+          "start": 397
         },
         {
           "class": "ArbeitnowProvider",
-          "end": 451,
+          "end": 452,
           "lines": 28,
-          "start": 424
+          "start": 425
         },
         {
           "class": "WeWorkRemotelyProvider",
-          "end": 617,
+          "end": 618,
           "lines": 26,
-          "start": 592
+          "start": 593
         },
         {
           "class": "OstjobProvider",
-          "end": 645,
+          "end": 646,
           "lines": 26,
-          "start": 620
+          "start": 621
         },
         {
           "class": "ZentraljobProvider",
-          "end": 673,
+          "end": 674,
           "lines": 26,
-          "start": 648
+          "start": 649
         },
         {
           "class": "TheHubProvider",
-          "end": 870,
+          "end": 871,
           "lines": 27,
-          "start": 844
+          "start": 845
         },
         {
           "class": "JobgetherProvider",
-          "end": 898,
+          "end": 899,
           "lines": 26,
-          "start": 873
+          "start": 874
         },
         {
           "class": "NavProvider",
-          "end": 926,
+          "end": 927,
           "lines": 26,
-          "start": 901
+          "start": 902
         },
         {
           "class": "IrishJobsProvider",
-          "end": 954,
+          "end": 955,
           "lines": 26,
-          "start": 929
+          "start": 930
         }
       ],
       "path": "services/job_provider.py",
@@ -170,7 +170,31 @@
           "path": "services/chmedia_job_base.py"
         }
       ],
-      "total_lines": 3752
+      "total_lines": 3752,
+      "classification": {
+        "full_delete_after_rollback": {
+          "modules": 25,
+          "lines": 3752,
+          "includes": "services/chmedia_job_base.py because its only runtime importers are the transferred Ostjob and Zentraljob routers"
+        },
+        "shared_selective_edit": {
+          "path": "services/job_provider.py",
+          "classes": 9,
+          "lines": 237
+        }
+      },
+      "chmedia_reference_verification": {
+        "runtime_importers": [
+          "routers/ostjob_jobs.py",
+          "routers/zentraljob_jobs.py"
+        ],
+        "excluded_from_runtime_importers": [
+          "tests/test_cache_updates.py",
+          "tests/test_g7_fidelity_audit.py",
+          "services/job_cache_updater.py",
+          "services/wordpress_job_base.py"
+        ]
+      }
     }
   },
   "portfolio_frontend": {
@@ -193,9 +217,9 @@
     }
   },
   "repo_heads": {
-    "portfolio_backend": "b988049ffd3a08c85fb9070a55df11daa94470df",
-    "portfolio_frontend": "3680560f4ce7d49cf86e0b84ae6b459fd85c5972",
-    "swissjob": "f4b1f0f2e9771ec49f542e005ca83b22ab6e0f03"
+    "portfolio_backend": "a292ef4b56341e61f6c2778a23b23bb89f807319",
+    "portfolio_frontend": "1bed6c23c9485722d40ebc15bbff235ceb28fe82",
+    "swissjob": "9122354b4029a7a8e8fdf0c7ad566180f34d560c"
   },
   "swissjob": {
     "cdc_historical_docs": {
