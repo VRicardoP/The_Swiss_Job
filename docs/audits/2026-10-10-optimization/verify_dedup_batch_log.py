@@ -11,6 +11,8 @@ BATCH_MARKER = "dedup_scan_batch: "
 ERROR_MARKERS = (
     "dedup_scan fragment failed",
     "SoftTimeLimitExceeded",
+    "ERROR/",
+    "CRITICAL/",
     "Traceback (most recent call last)",
 )
 DURATION_RE = re.compile(
@@ -51,6 +53,8 @@ def main() -> int:
         if batch.get("complete") is False:
             if batch.get("status") != "partial" or scanned != 250:
                 failures.append(f"batch_{index}:invalid_partial")
+            if {"candidatos_exactos_intra", "candidatos_lexicos"} & set(batch):
+                failures.append(f"batch_{index}:early_final_arms")
             cursor = batch.get("next_cursor")
             if not isinstance(cursor, dict) or set(cursor) != {
                 "created_at",

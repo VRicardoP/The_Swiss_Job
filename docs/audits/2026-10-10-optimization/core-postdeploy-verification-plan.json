@@ -30,9 +30,9 @@
     "trigger_cli_validation": "celery call --help passed offline inside swissjob-core:point5-f29fd44 with network disabled",
     "log_verifier": {
       "path": "verify_dedup_batch_log.py",
-      "sha256": "465ddf3ec3acf34aa0eac7e22ac71e9b5b737311b3efc944240be30c135a4d83",
+      "sha256": "06ddc44f94060547e2a6a836f10a032764269bc472dab2095b82fa623460a28c",
       "input": "core-ops-worker logs starting immediately before the single trigger",
-      "validation": "PyCompile, Ruff, positive partial-plus-terminal fixture and fail-closed error fixture passed"
+      "validation": "PyCompile, Ruff, positive partial-plus-terminal fixture, fail-closed error fixture and early-final-arms negative fixture passed"
     },
     "success_gate": [
       "at least one 250-row partial fragment with a complete cursor",
