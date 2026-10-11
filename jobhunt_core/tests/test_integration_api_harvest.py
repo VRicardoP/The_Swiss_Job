@@ -1,6 +1,7 @@
 """Manual source harvest dispatch through the authenticated Core API."""
 
 import asyncio
+import json
 import uuid
 from unittest.mock import patch
 
@@ -44,6 +45,96 @@ def _seed_source(factory, created, *, enabled=True, scopes=2):
             return scope_ids
 
     return source, asyncio.run(go())
+
+
+def _seed_listing(factory, created, source, *, content, raw, age_seconds=0):
+    async def go():
+        async with factory() as session:
+            source_id = await session.scalar(
+                sa.text("SELECT id FROM sources WHERE name=:name"), {"name": source}
+            )
+            ids = {
+                name: uuid.uuid4()
+                for name in ("listing", "vacancy", "inc", "raw", "offer")
+            }
+            external_id = "ext-" + ids["listing"].hex[:12]
+            url = f"https://example.test/{external_id}"
+            digest = ids["listing"].hex
+            await session.execute(
+                sa.text(
+                    "INSERT INTO source_listings "
+                    "(id, source_id, external_id, url_normalized) "
+                    "VALUES (:id, :source, :external, :url)"
+                ),
+                {
+                    "id": ids["listing"],
+                    "source": source_id,
+                    "external": external_id,
+                    "url": url,
+                },
+            )
+            await session.execute(
+                sa.text("INSERT INTO vacancies (id) VALUES (:id)"),
+                {"id": ids["vacancy"]},
+            )
+            await session.execute(
+                sa.text(
+                    "INSERT INTO source_listing_incarnations "
+                    "(id, source_listing_id, vacancy_id, seq, url, first_seen_at, last_seen_at) "
+                    "VALUES (:id, :listing, :vacancy, 1, :url, "
+                    "clock_timestamp()-make_interval(secs => :age), "
+                    "clock_timestamp()-make_interval(secs => :age))"
+                ),
+                {
+                    "id": ids["inc"],
+                    "listing": ids["listing"],
+                    "vacancy": ids["vacancy"],
+                    "url": url,
+                    "age": age_seconds,
+                },
+            )
+            await session.execute(
+                sa.text(
+                    "INSERT INTO source_listing_revisions "
+                    "(id, incarnation_id, content_hash, raw) "
+                    "VALUES (:id, :inc, :hash, CAST(:raw AS jsonb))"
+                ),
+                {
+                    "id": ids["raw"],
+                    "inc": ids["inc"],
+                    "hash": digest,
+                    "raw": json.dumps(raw),
+                },
+            )
+            await session.execute(
+                sa.text(
+                    "INSERT INTO offer_revisions "
+                    "(id, vacancy_id, content_hash, text_hash, content) "
+                    "VALUES (:id, :vacancy, :hash, :text_hash, CAST(:content AS jsonb))"
+                ),
+                {
+                    "id": ids["offer"],
+                    "vacancy": ids["vacancy"],
+                    "hash": digest,
+                    "text_hash": "text-" + digest,
+                    "content": json.dumps(content),
+                },
+            )
+            await session.execute(
+                sa.text(
+                    "UPDATE vacancies SET current_offer_revision_id=:offer, "
+                    "primary_incarnation_id=:inc WHERE id=:vacancy"
+                ),
+                {
+                    "offer": ids["offer"],
+                    "inc": ids["inc"],
+                    "vacancy": ids["vacancy"],
+                },
+            )
+            await session.commit()
+            return external_id, ids["inc"]
+
+    return asyncio.run(go())
 
 
 def test_dispatch_is_scoped_and_idempotent(db):  # noqa: F811
@@ -167,3 +258,141 @@ def test_dispatch_does_not_cache_success_when_broker_rejects(db):  # noqa: F811
         retried = _api(factory, url, token=token, method="POST", headers=headers)
     assert retried.status_code == 202
     enqueue.assert_called_once()
+
+
+def test_source_aggregate_is_bounded_and_uses_latest_raw(db):  # noqa: F811
+    factory, created = db
+    source, (scope_id,) = _seed_source(factory, created, scopes=1)
+    newest_external, newest_inc = _seed_listing(
+        factory,
+        created,
+        source,
+        content={
+            "title": "Python Engineer",
+            "company": "ACME",
+            "description": "x" * 700,
+            "location": "Berlin",
+            "remote": True,
+            "tags": ["Python", "API"],
+        },
+        raw={
+            "category": "Software Development",
+            "job_type": "full_time",
+            "job_types": ["Old"],
+            "publication_date": "2026-10-10T12:00:00Z",
+        },
+    )
+    _seed_listing(
+        factory,
+        created,
+        source,
+        content={
+            "title": "Platform Engineer",
+            "company": "Beta",
+            "location": "Zurich",
+            "remote": False,
+            "tags": ["Python"],
+            "canton": "ZH",
+        },
+        raw={"job_types": ["Contract"]},
+        age_seconds=60,
+    )
+
+    async def update_state_and_raw():
+        async with factory() as session:
+            await session.execute(
+                sa.text(
+                    "INSERT INTO source_scope_state "
+                    "(scope_id, cursor, last_complete_at, consecutive_failures) "
+                    "VALUES (:scope, '{}'::jsonb, clock_timestamp(), 0)"
+                ),
+                {"scope": uuid.UUID(scope_id)},
+            )
+            await session.execute(
+                sa.text(
+                    "INSERT INTO source_listing_revisions "
+                    "(incarnation_id, content_hash, raw, fetched_at) "
+                    "VALUES (:inc, :hash, CAST(:raw AS jsonb), "
+                    "clock_timestamp()+interval '1 second')"
+                ),
+                {
+                    "inc": newest_inc,
+                    "hash": uuid.uuid4().hex,
+                    "raw": json.dumps(
+                        {
+                            "category": "Software Development",
+                            "job_type": "full_time",
+                            "job_types": ["Full-time", 4, {"invalid": True}],
+                            "publication_date": "2026-10-10T12:00:00Z",
+                        }
+                    ),
+                },
+            )
+            await session.commit()
+
+    asyncio.run(update_state_and_raw())
+    _cid, _kid, token = _issue(factory, created, "aggregate-reader", ["vacancies:read"])
+    url = f"/v1/harvest/sources/{source}/aggregate?item_limit=2&top_n=10"
+    response = _api(factory, url, token=token)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == source
+    assert body["total"] == 2
+    assert body["enabled_scopes"] == body["observed_scopes"] == 1
+    assert body["max_consecutive_failures"] == 0
+    assert body["update_in_progress"] is False
+    assert body["counts"] == {
+        "locations": {"Berlin": 1, "Zurich": 1},
+        "tags": {"API": 1, "Python": 2},
+        "companies": {"ACME": 1, "Beta": 1},
+        "categories": {"software-development": 1},
+        "job_types": {"Contract": 1, "Full-time": 1},
+        "cantons": {"ZH": 1},
+        "remote": 1,
+        "onsite": 1,
+    }
+    newest = next(
+        item for item in body["items"] if item["external_id"] == newest_external
+    )
+    assert newest["job_types"] == ["Full-time"]
+    assert newest["job_type"] == "full_time"
+    assert newest["category"] == "Software Development"
+    assert len(newest["description"]) == 500
+
+    bounded = _api(
+        factory,
+        f"/v1/harvest/sources/{source}/aggregate?item_limit=1&top_n=1",
+        token=token,
+    )
+    assert bounded.status_code == 200
+    assert bounded.json()["total"] == 2
+    assert len(bounded.json()["items"]) == 1
+    assert all(
+        len(counts) <= 1
+        for key, counts in bounded.json()["counts"].items()
+        if isinstance(counts, dict)
+    )
+
+    unchanged = _api(
+        factory,
+        url,
+        token=token,
+        headers={"If-None-Match": response.headers["etag"]},
+    )
+    assert unchanged.status_code == 304
+
+
+def test_source_aggregate_requires_read_scope_and_known_source(db):  # noqa: F811
+    factory, created = db
+    source, _scope_ids = _seed_source(factory, created, scopes=1)
+    _cid, _kid, writer = _issue(factory, created, "aggregate-writer", ["harvest:write"])
+    denied = _api(factory, f"/v1/harvest/sources/{source}/aggregate", token=writer)
+    assert denied.status_code == 403
+
+    _cid2, _kid2, reader = _issue(
+        factory, created, "aggregate-missing", ["vacancies:read"]
+    )
+    missing = _api(
+        factory, "/v1/harvest/sources/no_such_source/aggregate", token=reader
+    )
+    assert (missing.status_code, missing.json()["code"]) == (404, "not_found")

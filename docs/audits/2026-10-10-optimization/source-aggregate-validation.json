@@ -1,0 +1,50 @@
+{
+  "endpoint": "GET /v1/harvest/sources/{source}/aggregate",
+  "limits": {
+    "item_limit_default": 200,
+    "item_limit_max": 500,
+    "top_n_default": 100,
+    "top_n_max": 500
+  },
+  "local_validation": {
+    "api_integration_tests": 50,
+    "api_integration_tests_passed": 50,
+    "database": "PostgreSQL via core-migrate container",
+    "local_probe_elapsed_ms_range": [
+      0.27,
+      5.89
+    ],
+    "local_probe_has_target_sources": false,
+    "performance_conclusion": "not representative; production measurement remains required after deployment",
+    "ruff": "passed"
+  },
+  "observed_at": "2026-10-11T03:22:05Z",
+  "production_predeployment_probe": {
+    "attempted": false,
+    "reason": "automatic approval review rejected copying the candidate module and read-only probe to NAS as an unauthorized private-code export",
+    "required_follow_up": "measure the deployed immutable release against all nine production sources without copying workspace code to NAS"
+  },
+  "raw_allowlist": [
+    "category",
+    "job_type",
+    "job_types",
+    "publication_date|created_at|dateFirstPublished|date"
+  ],
+  "security_and_behavior": {
+    "authentication_scope": "vacancies:read",
+    "etag": true,
+    "full_raw_returned": false,
+    "unknown_source_status": 404
+  },
+  "sources": [
+    "arbeitnow",
+    "irishjobs",
+    "jobgether",
+    "nav_arbeidsplassen",
+    "ostjob",
+    "remotive",
+    "thehub",
+    "weworkremotely",
+    "zentraljob"
+  ]
+}
