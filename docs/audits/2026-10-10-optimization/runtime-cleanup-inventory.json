@@ -1,0 +1,65 @@
+{
+  "observed_at": "2026-10-11T00:57:42.742142+00:00",
+  "status": "verified inventory; deletion deferred until rollback is formally closed",
+  "swissjob_shadow_runtime": {
+    "python_lines": 8093,
+    "files": {
+      "canonical_refs.py": 367,
+      "capture.py": 1145,
+      "gate.py": 1138,
+      "identidad_destino.py": 74,
+      "inbox.py": 96,
+      "labels.py": 401,
+      "metrics.py": 2249,
+      "projector.py": 1929,
+      "resync.py": 136,
+      "stratum.py": 382,
+      "tasks/shadow.py": 170
+    },
+    "external_production_dependencies": {
+      "jobhunt_core/tasks/delivery.py": "shadow.inbox fallback transport",
+      "jobhunt_core/erasure.py": "projector._erase_profile_graph plus capture staging scrub",
+      "jobhunt_core/import_search_corpus.py": "JOB_PAYLOAD_MAP, projector lock and legacy-source setup",
+      "jobhunt_core/dev_eval.py": "NDCG_K and _dcg",
+      "jobhunt_core/retention.py": "shadow_inbox retention",
+      "jobhunt_core/erasure_restore.py": "shadow_change_log restore scrub"
+    },
+    "native_responsibilities_to_preserve": {
+      "matching_recovery": "extract embedding drain and bounded all-consumer matching recovery from projector into a native task",
+      "profile_erasure": "move the graph deletion implementation into erasure.py; explicit API erasure remains authoritative",
+      "delivery_health": "reuse delivery.stats for native outbox lag/dead-letter health before removing shadow metric persistence",
+      "ndcg": "move NDCG_K and _dcg to a neutral ranking-metrics module used by dev_eval",
+      "delivery_transport": "verify configured HTTP consumer transports before removing shadow.inbox fallback"
+    },
+    "delete_instead_of_extract": {
+      "import_search_corpus.py": "one-shot rollback migration utility; remove after rollback closure",
+      "capture_gate_and_staging": "remove executable capture/gate/projector paths, schedules and checks; keep migrations/tables/audit history"
+    }
+  },
+  "reactportfolio_transferred_producers": {
+    "shared_sources": [
+      "arbeitnow",
+      "irishjobs",
+      "jobgether",
+      "nav",
+      "ostjob",
+      "remotive",
+      "thehub",
+      "weworkremotely",
+      "zentraljob"
+    ],
+    "standalone_production_modules": 24,
+    "standalone_python_lines": 3374,
+    "shared_files_requiring_selective_edits": {
+      "services/job_provider.py": 1049,
+      "services/chmedia_job_base.py": 378
+    },
+    "school_runtime_python_lines": 1515,
+    "school_decision": "retain manual refresh, Core store, dashboard and alert delivery; only scheduled collection is retired"
+  },
+  "swissjob_transferred_legacy_producers": {
+    "provider_and_scraper_modules": 16,
+    "python_lines": 3294,
+    "decision": "delete registry entries and implementations only after production handover and rollback closure; preserve historical migrations and evidence"
+  }
+}
