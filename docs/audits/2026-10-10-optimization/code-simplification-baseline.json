@@ -1,6 +1,6 @@
 {
   "method": "physical lines from str.splitlines; Python class spans from ast lineno/end_lineno",
-  "observed_at": "2026-10-11T08:35:21+00:00",
+  "observed_at": "2026-10-11T08:55:37+00:00",
   "portfolio_backend": {
     "exclusive_sources_cached_jobs_production": 1339,
     "local_matcher_retained_until_exclusive_source_path_exists": {
@@ -284,6 +284,86 @@
     "native_postprocessor_to_preserve_or_move": {
       "lines": 1929,
       "path": "jobhunt_core/shadow/projector.py"
+    },
+    "transferred_legacy_producers": {
+      "implementation_files": [
+        {
+          "path": "backend/providers/arbeitnow.py",
+          "lines": 121
+        },
+        {
+          "path": "backend/providers/euremotejobs.py",
+          "lines": 170
+        },
+        {
+          "path": "backend/providers/globaljobs.py",
+          "lines": 179
+        },
+        {
+          "path": "backend/providers/jobgether.py",
+          "lines": 200
+        },
+        {
+          "path": "backend/providers/jobspresso.py",
+          "lines": 169
+        },
+        {
+          "path": "backend/providers/nav_arbeidsplassen.py",
+          "lines": 268
+        },
+        {
+          "path": "backend/providers/ostjob.py",
+          "lines": 70
+        },
+        {
+          "path": "backend/providers/publicjobs.py",
+          "lines": 210
+        },
+        {
+          "path": "backend/providers/remotive.py",
+          "lines": 88
+        },
+        {
+          "path": "backend/providers/thehub.py",
+          "lines": 296
+        },
+        {
+          "path": "backend/providers/weworkremotely.py",
+          "lines": 132
+        },
+        {
+          "path": "backend/providers/workingnomads.py",
+          "lines": 149
+        },
+        {
+          "path": "backend/providers/zebis.py",
+          "lines": 222
+        },
+        {
+          "path": "backend/providers/zentraljob.py",
+          "lines": 69
+        },
+        {
+          "path": "backend/scrapers/financejobs.py",
+          "lines": 276
+        },
+        {
+          "path": "backend/scrapers/irishjobs.py",
+          "lines": 675
+        }
+      ],
+      "implementation_modules": 16,
+      "implementation_lines": 3294,
+      "support_full_delete": {
+        "path": "backend/providers/base_chmedia.py",
+        "lines": 94,
+        "runtime_importers": [
+          "backend/providers/ostjob.py",
+          "backend/providers/zentraljob.py"
+        ]
+      },
+      "full_delete_modules": 17,
+      "full_delete_lines": 3388
     }
   }
 }
