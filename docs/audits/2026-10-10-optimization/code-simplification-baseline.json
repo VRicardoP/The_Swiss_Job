@@ -205,7 +205,7 @@
     "job_windows_before_extraction": {
       "files": [
         {
-          "lines": 469,
+          "lines": 471,
           "path": "src/components/Dashboard/AIJobMatchWindow.jsx"
         },
         {
@@ -213,7 +213,7 @@
           "path": "src/components/Dashboard/JobBoardTabbedWindow.jsx"
         }
       ],
-      "total_lines": 772
+      "total_lines": 774
     }
   },
   "repo_heads": {

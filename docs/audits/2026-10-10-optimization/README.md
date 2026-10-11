@@ -112,6 +112,10 @@ hubiera en cada instante.
 - `portfolio-compatibility-adapter-plan.json` conserva las 56 rutas históricas
   con un único adaptador Core y documenta los límites que aún necesitan
   comparación viva.
+- `cleanup-plan-revalidation.json` vuelve a contrastar esos tres planes con
+  las cabezas candidatas: 17 módulos SwissJob, 25 módulos Portfolio, nueve
+  clases normalizadoras y todas las costuras Core siguen presentes sin deriva.
+  Corrige además el censo documental de `AIJobMatchWindow` a 471 líneas.
 - `remaining-execution-checklist.json` ordena los gates restantes, las cabezas
   inmutables y las autorizaciones externas; es el punto de entrada para reanudar.
 

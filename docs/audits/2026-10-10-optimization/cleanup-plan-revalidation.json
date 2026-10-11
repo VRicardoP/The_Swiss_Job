@@ -1,0 +1,65 @@
+{
+  "observed_at": "2026-10-11T09:54:38+00:00",
+  "status": "plans still match immutable candidate heads; implementation remains gated by formal rollback closure",
+  "method": "clean-worktree identity check, exact file and line census, AST class census, runtime importer scan and Core symbol scan",
+  "heads": {
+    "swissjob": "f29fd441396e1c80633ca3127ccc8395c6405443",
+    "portfolio_backend": "a292ef4b56341e61f6c2778a23b23bb89f807319",
+    "portfolio_frontend": "1bed6c23c9485722d40ebc15bbff235ceb28fe82"
+  },
+  "worktrees": {
+    "swissjob_candidate_clean": true,
+    "portfolio_backend_candidate_clean": true,
+    "portfolio_frontend_runtime_clean": true,
+    "portfolio_frontend_owner_change_preserved": "README.md"
+  },
+  "core": {
+    "recovery_symbols_present": [
+      "_replay_after_batch",
+      "_evaluate_and_record",
+      "_recovery_targets",
+      "_drain_embeddings"
+    ],
+    "erasure_symbol_present": "_erase_profile_graph with _ERASE_TABLES",
+    "delivery_health_source_present": "shadow.metrics.sample_outbox_lag",
+    "ndcg_source_present": "shadow.metrics.NDCG_K and _dcg",
+    "external_runtime_dependencies_confirmed": [
+      "erasure.py",
+      "import_search_corpus.py",
+      "tasks/delivery.py",
+      "tasks/shadow.py",
+      "dev_eval.py"
+    ]
+  },
+  "swissjob": {
+    "full_delete_modules": 17,
+    "full_delete_lines": 3388,
+    "missing_modules": 0,
+    "line_drift_modules": 0,
+    "runtime_importers": "provider and scraper registries only; base_chmedia only from ostjob and zentraljob",
+    "atomic_control_plane_removal_still_required": true
+  },
+  "portfolio_backend": {
+    "full_delete_modules": 25,
+    "full_delete_lines": 3752,
+    "missing_modules": 0,
+    "line_drift_modules": 0,
+    "selective_normalizer_classes": 9,
+    "selective_normalizer_lines": 237,
+    "historical_router_registrations_still_present": 9
+  },
+  "portfolio_frontend": {
+    "JobCardExtras.jsx_lines": 129,
+    "AIJobMatchWindow.jsx_lines": 471,
+    "JobBoardTabbedWindow.jsx_lines": 303,
+    "combined_window_lines": 774,
+    "shared_consumers_confirmed": [
+      "AIJobMatchWindow",
+      "JobBoardTabbedWindow",
+      "AdvancedFilterPanel",
+      "SavedSearchesPanel"
+    ],
+    "baseline_correction": "code-simplification-baseline.json said 469 and 772; the immutable HEAD and working file are identical and contain 471 and 774 split lines, so only those documentary counts were corrected"
+  },
+  "conclusion": "No deletion list or execution boundary changed. The three cleanup plans remain executable after checklist item 12; no cleanup code was written early."
+}
