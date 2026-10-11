@@ -1,0 +1,121 @@
+{
+  "observed_at": "2026-10-11T08:41:39+00:00",
+  "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; on a failed gate stop that sequence and leave rollback open",
+  "immutable_inputs": {
+    "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
+    "portfolio_backend_worktree": "/tmp/reactportfolio-backend-deploy-a292ef4 @ a292ef4b56341e61f6c2778a23b23bb89f807319",
+    "portfolio_frontend": "1bed6c23c9485722d40ebc15bbff235ceb28fe82 (runtime 07ac81b)",
+    "live_core": "5a1241d / core0053 / four native services plus capture",
+    "cut_not_before": "2026-10-12T20:00:00Z",
+    "first_post_stop_native_round": "2026-10-12T22:10:00Z"
+  },
+  "items": [
+    {
+      "id": 1,
+      "status": "active",
+      "action": "finish the 48-hour Core observation and add the manual sample at or after 20:00 UTC",
+      "gate": "all samples one release/head, 17/17 healthy, alerts empty, native containers RestartCount=0"
+    },
+    {
+      "id": 2,
+      "status": "pending_time_gate",
+      "action": "re-run all same-day CDC retirement preconditions and stop only core-capture",
+      "runbook": "docs/RETIRADA_SLOT_CDC_PUNTO4.md"
+    },
+    {
+      "id": 3,
+      "status": "pending_after_2",
+      "action": "disable exactly the three capture beat entries and prove shadow-project still runs",
+      "wait_seconds": 360
+    },
+    {
+      "id": 4,
+      "status": "pending_after_3",
+      "action": "wait for the 22:10 UTC native round to finish all 17 cursors; require core.harvest=0 and alerts=[]"
+    },
+    {
+      "id": 5,
+      "status": "pending_after_4_irreversible",
+      "action": "require inactive slot, record retained WAL, drop only jobhunt_shadow_r5_rehearsal, finalize four-service Compose and supervisor"
+    },
+    {
+      "id": 6,
+      "status": "pending_after_5",
+      "action": "deploy Core f29fd44, verify authoritative ready/routes/dedup batching, then grant portfolio harvest:write exactly once"
+    },
+    {
+      "id": 7,
+      "status": "pending_after_6",
+      "action": "apply SwissJob worker config-only preserving point5-84853cf, then deploy BFF f29fd44 and verify profile delivery plus 14 providers and 2 scrapers disabled"
+    },
+    {
+      "id": 8,
+      "status": "requires_explicit_external_authorization",
+      "action": "publish Portfolio frontend 1bed6c2 to configured remotes/Cloudflare and verify the public asset plus 12-window probe"
+    },
+    {
+      "id": 9,
+      "status": "pending_after_7_and_8",
+      "action": "deploy Portfolio backend a292ef4; verify nine transferred sources skip before network, eleven exclusive sources work, scheduled school collection is absent and manual refresh remains"
+    },
+    {
+      "id": 10,
+      "status": "pending_after_9",
+      "action": "run final immutable probes for Core, SwissJob and Portfolio",
+      "authorization": "probe_swissjob_final.py and probe_portfolio_final.py transfer was rejected by automatic approval review as unapproved source export; explicit authorization is required"
+    },
+    {
+      "id": 11,
+      "status": "pending_after_10",
+      "action": "flip only Portfolio catalog and matching wildcard core_read rows through services.routing.set_routing; wait 10 seconds; prove every effective in-scope mode and single-writer gate"
+    },
+    {
+      "id": 12,
+      "status": "pending_after_11",
+      "action": "record formal rollback closure only if capture/slot absent, all functional probes pass, outbox/queues drain, no fallback signals and no duplicate producers"
+    },
+    {
+      "id": 13,
+      "status": "pending_after_12",
+      "action": "extract native Core recovery, erasure, outbox health and nDCG per core-native-extraction-plan.json; run focused and full Core suites"
+    },
+    {
+      "id": 14,
+      "status": "pending_after_13",
+      "action": "remove Core shadow runtime/config/tools while preserving migrations, historical tables, retention and erasure restore; deploy and verify before dropping the capture role"
+    },
+    {
+      "id": 15,
+      "status": "pending_after_12",
+      "action": "replace Portfolio transferred-source routers with the common Core adapter, remove 25 modules plus nine normalizer classes, fix routing consumers and preserve notification gates/exclusive-source runtime"
+    },
+    {
+      "id": 16,
+      "status": "pending_after_12",
+      "action": "remove SwissJob transferred producers and local Core-owned engines, simplify every routing consumer, and preserve applications/profiles, MatchResult overlay, feedback, watchlist health and notification gates"
+    },
+    {
+      "id": 17,
+      "status": "pending_after_15_and_16",
+      "action": "apply only the verified JobCardExtras presentation extraction; run all repository suites and build release images from clean heads"
+    },
+    {
+      "id": 18,
+      "status": "pending_after_final_deploys",
+      "action": "repeat production resource sampling, Portfolio scheduled-window measurement, 12-window browser checks and identical frontend performance protocol; report attributable before/after deltas"
+    }
+  ],
+  "permission_state": {
+    "commits": "authorized",
+    "core_worker_concurrency_change": "authorized and completed",
+    "frontend_remote_publication": "not explicitly authorized",
+    "remote_probe_source_transfer": "explicit authorization required after automatic-review rejection"
+  },
+  "references": [
+    "docs/RETIRADA_SLOT_CDC_PUNTO4.md",
+    "deployment-command-provenance.json",
+    "rollback-closure-baseline-production.json",
+    "post-rollback-dependency-map.json",
+    "core-native-extraction-plan.json"
+  ]
+}

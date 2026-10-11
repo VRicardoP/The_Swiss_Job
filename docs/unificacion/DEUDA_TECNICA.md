@@ -1368,6 +1368,14 @@ código ejecutable:
   `migrate.py` deja de crear/verificar `jobhunt_capture` y de otorgar SELECT al
   esquema legacy. Sólo después de desplegar esa release se retira el rol.
 
+### Checklist de reanudación
+
+El orden ejecutable, los gates, las cabezas inmutables y las autorizaciones aún
+pendientes están consolidados en
+`docs/audits/2026-10-10-optimization/remaining-execution-checklist.json`. Debe
+seguirse por `id`, revalidando cada estado vivo antes de mutarlo; ningún punto
+posterior convierte en verde un gate anterior fallido.
+
 ### Estado vivo y artefactos exactos
 
 Comprobado el 2026-10-11 00:22 UTC en el NAS:
