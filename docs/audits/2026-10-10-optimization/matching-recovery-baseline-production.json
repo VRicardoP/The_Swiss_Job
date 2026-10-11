@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-11T01:28:30Z",
+  "observed_at": "2026-10-11T01:35:19Z",
   "source": "swissjob-core-worker-r5 logs available since current container start",
   "task": "jobhunt.shadow.project",
   "bounds": {
@@ -11,19 +11,13 @@
     "hard_time_limit_s": 2100
   },
   "counts": {
-    "received": 66,
-    "succeeded": 23,
-    "revoked_expired": 42,
+    "received": 72,
+    "succeeded": 26,
+    "revoked_expired": 46,
     "failed": 0,
-    "active_derived": 1,
-    "successes_with_recovery": 23,
-    "successes_without_recovery": 0
-  },
-  "successful_duration_s": {
-    "min": 478.945,
-    "median": 813.57,
-    "p95_nearest_rank": 1103.054,
-    "max": 1454.252
+    "active_derived": 0,
+    "successes_with_recovery": 24,
+    "successes_without_recovery": 2
   },
   "corpus_checkpoint": {
     "total_embeddings": 99499,
@@ -37,6 +31,27 @@
     "queue_is_bounded": true,
     "reason": "Expired five-minute ticks are revoked while the single worker evaluates one profile; no task failure was observed.",
     "within_soft_limit": true,
-    "next_gate": "After the embedding backlog reached zero, observe a successful task with recovery_evaluated=0 and a drained core.matching queue before changing or deleting the scheduler."
+    "next_gate": "Satisfied at 2026-10-11T01:33:11Z: the first post-drain pass reported recovery_evaluated=0 and core.matching was empty."
+  },
+  "successful_recovery_duration_s": {
+    "min": 478.945,
+    "median": 816.63,
+    "p95_nearest_rank": 1454.252,
+    "max": 1531.939
+  },
+  "convergence": {
+    "last_recovery_finished_at": "2026-10-11T01:31:46Z",
+    "last_recovery_duration_s": 1531.939,
+    "first_post_drain_pass_finished_at": "2026-10-11T01:33:11Z",
+    "first_post_drain_pass_duration_s": 84.797,
+    "first_post_drain_recovery_evaluated": 0,
+    "latest_stable_pass_finished_at": "2026-10-11T01:34:26Z",
+    "latest_stable_pass_duration_s": 14.03,
+    "latest_stable_pass_recovery_evaluated": 0,
+    "offer_embeddings": 99499,
+    "pending_offer_embeddings": 0,
+    "pending_profile_embeddings": 0,
+    "matching_queue": 0,
+    "proved": true
   }
 }
