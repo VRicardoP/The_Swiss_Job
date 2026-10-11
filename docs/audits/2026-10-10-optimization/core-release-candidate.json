@@ -1,35 +1,37 @@
 {
-  "built_at": "2026-10-11T04:07:05.138192102Z",
-  "commit": "0d612c9",
-  "image": "swissjob-core:point5-0d612c9",
-  "image_id": "sha256:b4823f0a72a636317552f843774da64bdf947bdc90296e2fbc46798fc420213f",
-  "size_bytes": 2196686086,
+  "built_at": "2026-10-11T05:16:00Z",
+  "commit": "f29fd44",
+  "image": "swissjob-core:point5-f29fd44",
+  "image_id": "sha256:ba57dfbd4259cbdcabf35a7d83cd2297543b0d0a9f6da10fa91ee6af605ce498",
+  "size_bytes": 2196691010,
   "runtime_user": "core",
-  "release_marker": "0d612c9",
+  "release_marker": "f29fd44",
   "local_only": true,
   "sent_to_nas": false,
   "deployed": false,
   "runtime_preflight": {
     "credential_cli_present": true,
-    "credential_cli_help_includes_authorize": true,
-    "bytecode_compiles_with_tmp_cache": true,
-    "network_used": false
+    "profile_enrollment_route_present": true,
+    "harvest_dispatch_route_present": true,
+    "source_aggregate_route_present": true,
+    "network_used_by_smoke": false
   },
   "source_image_hashes_match": {
+    "jobhunt_core/api/schemas.py": "4648979df46fea0a057c9ad6b3f66ac1e6531644aba598ba26eb69781245bf78",
+    "jobhunt_core/api/v1.py": "659ec67b2ae0f08f2edc9d065148ab10b9ed6056e299f3888d15a633b4c94b9c",
     "jobhunt_core/api/v1_harvest.py": "b2434d087c613b0004c0af6ab4d8a05d6278efdccb3e62f2448d85368ca1c0bf",
     "jobhunt_core/source_aggregate.py": "71154fd61dc73a524a2f91ee50f619cf13d7c29b88e27fe8e4cdb7ecb896f810",
-    "jobhunt_core/credentials.py": "a4708fb0a7de783e5dcb3823d23e381bf13a00ac0b8aa2dd785713bd5a7dfefb",
-    "jobhunt_core/rotate_credential.py": "224a540285ab3cca031bf6a7b6a12ee4571c3ce25ac53cfd2e53645ce2e8a8f8",
     "jobhunt_core/dedup.py": "e8242e7c780d57e72e5e29caa5c72f688da86d3a7d81896b8292f7ee610fa9b3",
     "jobhunt_core/tasks/maintenance.py": "2fea1260953a5fed03a2775c12798163acc22d9f4acb289ceae44009474a4f1b"
   },
   "validation": {
-    "credential_integration_tests": "8 passed",
-    "dedup_integration_and_orchestration_tests": "39 passed",
+    "full_core_suite": "1912 passed, 1 skipped",
+    "profile_enrollment_integration": "3 passed",
+    "credential_integration": "8 passed",
+    "dedup_integration_and_orchestration": "39 passed",
     "ruff": "passed",
     "py_compile": "passed",
-    "historical_and_runtime_cli_help_identical": true,
-    "credential_cli_single_live_and_overlap": "passed"
+    "runtime_smoke": "passed"
   },
-  "deployment_gate": "after capture retirement, duplicate-producer cutover, and rollback closure in the documented order"
+  "deployment_gate": "after the capture observation and retirement sequence; deploy Core before any BFF that calls POST /v1/profiles"
 }

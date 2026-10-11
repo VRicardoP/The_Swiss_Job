@@ -1,0 +1,33 @@
+{
+  "built_at": "2026-10-11T05:19:00Z",
+  "commit": "f29fd44",
+  "image": "swissjob-backend:point5-f29fd44",
+  "image_id": "sha256:1444ec06d132aeb2b6dd6942991ed8c7f6ece761716f7b22a2a21f6036cb3ee7",
+  "size_bytes": 2963149942,
+  "runtime_user": "app",
+  "entrypoint": ["./scripts/entrypoint.sh"],
+  "local_only": true,
+  "sent_to_nas": false,
+  "deployed": false,
+  "browser_runtime_installed": false,
+  "runtime_versions": {
+    "fastapi": "0.141.1",
+    "slowapi": "0.1.10",
+    "starlette": "1.7.0"
+  },
+  "source_image_hashes_match": {
+    "backend/services/profile_sync.py": "7ec40c60b69038a29912eebd49f84b3ed7b416732739e3b0f304610b7d27ae62",
+    "backend/.env.prod.example": "c2dd7d1d6995f86e5eff6b867ee918479562c81919e43a2d91a05096a9011ed9",
+    "backend/core/rate_limit.py": "fcea9a3b2f8f3f889ba1e6fa89ab3ce8ee9f073d29cbf9faeb32f080ebba2928",
+    "backend/requirements.txt": "1dc2a712fe10cf57b7b1e14d46366d553ac0654da909a44e61061b8ca0820724"
+  },
+  "validation": {
+    "full_backend_suite": "2667 passed, 3 skipped, 4 xfailed",
+    "profile_delivery_focused": "11 passed",
+    "fixed_dependency_contracts": "28 passed",
+    "runtime_import_smoke": "passed",
+    "ruff": "passed",
+    "py_compile": "passed"
+  },
+  "deployment_gate": "deploy only after Core f29fd44 exposes POST /v1/profiles; then require snapshot ACK before each automatic matching route change"
+}
