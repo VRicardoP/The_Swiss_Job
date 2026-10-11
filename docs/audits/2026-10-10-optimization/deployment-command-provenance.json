@@ -1,0 +1,53 @@
+{
+  "observed_at": "2026-10-11T07:03:00Z",
+  "purpose": "pin which checkout and script perform each post-capture deployment step",
+  "runtime_source_identity": {
+    "base": "f29fd44",
+    "compared_to": "642e3e1",
+    "paths": [
+      "jobhunt_core",
+      "backend",
+      "deploy/nas/swissjob.configured.yml"
+    ],
+    "diff": "empty"
+  },
+  "image_deployments": {
+    "worktree": "/tmp/swissjob-deploy-f29fd44",
+    "head": "f29fd44",
+    "clean": true,
+    "script_sha256": "ec6be2aa43fe7a0c163bb9e64fe1341cd1122aaa148a98bfad904c9be9f77729",
+    "commands": [
+      "cd /tmp/swissjob-deploy-f29fd44 && scripts/deploy_nas.sh core",
+      "cd /tmp/swissjob-deploy-f29fd44 && scripts/deploy_nas.sh bff"
+    ],
+    "dry_runs": "both passed and resolved point5-f29fd44 without NAS access"
+  },
+  "worker_config_only": {
+    "checkout": "/home/lothar/Public/SwissJob",
+    "minimum_commit": "840ab13",
+    "verified_head": "642e3e1",
+    "script_sha256": "695f6be53d689a4d35c573aafd2e5debc82651799d6986417d89650181050e6a",
+    "command": "cd /home/lothar/Public/SwissJob && scripts/deploy_nas.sh worker --config-only",
+    "why_current_script": "the five-line post-f29fd44 hardening rejects a third argument before any command or NAS access",
+    "negative_control": "worker --config-only --dry-run exited 2 with usage; no NAS access",
+    "image_behavior": "reads and preserves the live point5-84853cf image; current SHA is used only in backup/candidate filenames"
+  },
+  "post_core_release_checker": {
+    "path": "/home/lothar/Public/SwissJob/scripts/check_core_release.py",
+    "sha256": "2a0e451433f1dec271ea9c0ba226cbdb58607d59b39881f0a905af86b5364b22",
+    "reason": "the post-f29fd44 checker supports QNAP standalone Compose, remote container-loopback ready probe and --capture-retired"
+  },
+  "strict_order": [
+    "retire capture and validate the four-service topology",
+    "deploy Core from f29fd44 and verify its new routes and ready state",
+    "grant portfolio harvest:write with the deployed Core CLI",
+    "apply worker config-only using the pinned hardened script",
+    "deploy BFF from f29fd44 and verify profile delivery"
+  ],
+  "abort_conditions": [
+    "any runtime-source diff between f29fd44 and the checkout used to build an image",
+    "any script hash mismatch",
+    "dirty jobhunt_core or backend tree in the f29fd44 worktree",
+    "worker live image not matching swissjob-worker:point5-[a-f0-9]+"
+  ]
+}
