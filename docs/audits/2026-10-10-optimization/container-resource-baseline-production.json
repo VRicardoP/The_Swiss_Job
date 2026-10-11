@@ -84,11 +84,16 @@
   },
   "reproduction": {
     "script": "scripts/measure_nas_resources.py",
-    "sha256": "52a11604b3cb53854c7b4ef4ea7c845bfac7c5ebc6e62b1fe12d42557fe719fa",
+    "sha256": "0f38bd64f90a6b868d740945c62303af8c727a220e3bfd0ebecac7870bb3d1b3",
     "baseline_command": "python3 scripts/measure_nas_resources.py --samples 3 --interval 8 --output <baseline.json>",
     "final_command": "python3 scripts/measure_nas_resources.py --samples 3 --interval 8 --capture-retired --output <final.json>",
-    "behavior": "fails on a missing or unexpected container; parses binary Docker memory units and computes per-container medians plus aggregate sums",
-    "validation": "PyCompile, Ruff check/format and 4 focused tests passed",
+    "behavior": "fails on the wrong capture topology or a missing/unexpected sampled container; parses binary Docker memory units and computes per-container medians plus aggregate sums",
+    "validation": "PyCompile, Ruff check/format and 8 focused tests passed",
+    "topology_guard_live_control": {
+      "observed_at": "2026-10-11T07:39:03Z",
+      "capture_present_mode": "passed with nine containers",
+      "capture_retired_mode": "rejected before sampling: swissjob-core-capture-r5 still exists"
+    },
     "live_parser_smoke": {
       "observed_at": "2026-10-11T07:14:02.558315Z",
       "containers": 9,

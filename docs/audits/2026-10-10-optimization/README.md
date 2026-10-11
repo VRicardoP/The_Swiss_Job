@@ -19,8 +19,8 @@ credenciales.
   de CPU, memoria y PIDs para los nueve contenedores afectados; se repetirá con
   el mismo protocolo después del corte.
 - `scripts/measure_nas_resources.py` versiona ese protocolo, valida el conjunto
-  exacto de contenedores y selecciona explícitamente la topología posterior sin
-  captura. `container-resource-scheduled-window-baseline-production.json`
+  exacto de contenedores y falla si el modo solicitado contradice la presencia
+  real de capture. `container-resource-scheduled-window-baseline-production.json`
   mantiene aparte la carga real del informe diario Portfolio para compararla
   únicamente con la misma ventana tras el traspaso.
 - `matching-recovery-baseline-production.json` cuantifica el trabajo con un

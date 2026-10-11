@@ -204,11 +204,13 @@
     "comparison_rule": "compare only with the same scheduled window after cutover; keep the separate idle baseline for idle comparisons",
     "container_clock_checked_at": "2026-10-11T07:24:53Z",
     "container_local_clock_matches_utc": true,
+    "current_guarded_script_sha256": "0f38bd64f90a6b868d740945c62303af8c727a220e3bfd0ebecac7870bb3d1b3",
     "daily_report_workload": {
       "cached_offers_considered": 2476,
       "new_offers": 2377
     },
     "follow_up_at": "2026-10-11T07:23:50Z",
+    "historical_script_note": "the measurement predates the capture-state guard; sampled values are unchanged and the final run must use the guarded script",
     "live_settings": {
       "daily_harvest_enabled": true,
       "daily_harvest_hour_utc": 12,
@@ -217,6 +219,7 @@
       "daily_match_report_hour_utc": 7,
       "process_role": "worker"
     },
+    "measurement_script_sha256": "52a11604b3cb53854c7b4ef4ea7c845bfac7c5ebc6e62b1fe12d42557fe719fa",
     "observed_peak_follow_up": {
       "at": "2026-10-11T07:29:52Z",
       "portfolio_worker_cpu_percent": 154.5
@@ -232,8 +235,7 @@
       "effect": "daily report embeds and reranks the locally cached shared and exclusive sources",
       "portfolio_backend_disabled_sources": 0,
       "portfolio_worker_disabled_sources": 0
-    },
-    "script_sha256": "52a11604b3cb53854c7b4ef4ea7c845bfac7c5ebc6e62b1fe12d42557fe719fa"
+    }
   },
   "sample_window": {
     "capture_retired": false,

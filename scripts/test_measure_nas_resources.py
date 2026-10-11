@@ -2,7 +2,12 @@ import json
 
 import pytest
 
-from scripts.measure_nas_resources import memory_mib, parse_stats
+from scripts.measure_nas_resources import (
+    CAPTURE_CONTAINER,
+    memory_mib,
+    parse_stats,
+    validate_capture_state,
+)
 
 
 @pytest.mark.parametrize(
@@ -26,3 +31,18 @@ def test_parse_stats_uses_current_usage_and_numeric_fields():
     assert parse_stats(output) == {
         "core": {"cpu_percent": 1.25, "memory_mib": 1536, "pids": 9}
     }
+
+
+@pytest.mark.parametrize("capture_retired", [False, True])
+def test_validate_capture_state_accepts_matching_topology(capture_retired):
+    names = set() if capture_retired else {CAPTURE_CONTAINER}
+
+    validate_capture_state(names, capture_retired)
+
+
+@pytest.mark.parametrize("capture_retired", [False, True])
+def test_validate_capture_state_rejects_opposite_topology(capture_retired):
+    names = {CAPTURE_CONTAINER} if capture_retired else set()
+
+    with pytest.raises(RuntimeError):
+        validate_capture_state(names, capture_retired)

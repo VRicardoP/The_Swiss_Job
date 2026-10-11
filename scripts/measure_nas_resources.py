@@ -86,7 +86,27 @@ def sample(host: str, containers: tuple[str, ...]) -> dict[str, dict[str, float 
     return rows
 
 
+def validate_capture_state(container_names: set[str], capture_retired: bool) -> None:
+    capture_present = CAPTURE_CONTAINER in container_names
+    if capture_retired and capture_present:
+        raise RuntimeError(f"{CAPTURE_CONTAINER} still exists")
+    if not capture_retired and not capture_present:
+        raise RuntimeError(f"{CAPTURE_CONTAINER} is already absent")
+
+
+def check_capture_state(host: str, capture_retired: bool) -> None:
+    command = [DOCKER_BIN, "ps", "-a", "--format", "{{.Names}}"]
+    result = subprocess.run(
+        ["ssh", host, shlex.join(command)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    validate_capture_state(set(result.stdout.splitlines()), capture_retired)
+
+
 def measure(host: str, count: int, interval: float, capture_retired: bool) -> dict:
+    check_capture_state(host, capture_retired)
     containers = tuple(
         name for name in CONTAINERS if not capture_retired or name != CAPTURE_CONTAINER
     )
