@@ -1,0 +1,89 @@
+{
+  "observed_at": "2026-10-11T01:00:01.674152+00:00",
+  "portfolio_routing": [
+    {
+      "capability": "applications",
+      "mode": "core_primary",
+      "scope": "wildcard",
+      "rows": 1
+    },
+    {
+      "capability": "catalog",
+      "mode": "core_read",
+      "scope": "wildcard",
+      "rows": 1
+    },
+    {
+      "capability": "documents",
+      "mode": "core_primary",
+      "scope": "wildcard",
+      "rows": 1
+    },
+    {
+      "capability": "matching",
+      "mode": "core_read",
+      "scope": "wildcard",
+      "rows": 1
+    },
+    {
+      "capability": "saved_searches",
+      "mode": "core_primary",
+      "scope": "wildcard",
+      "rows": 1
+    },
+    {
+      "capability": "schools",
+      "mode": "core_primary",
+      "scope": "wildcard",
+      "rows": 1
+    }
+  ],
+  "swissjob_routing": [
+    {
+      "capability": "catalog",
+      "mode": "core_primary",
+      "scope": "wildcard",
+      "rows": 1
+    },
+    {
+      "capability": "documents",
+      "mode": "core_primary",
+      "scope": "wildcard",
+      "rows": 1
+    },
+    {
+      "capability": "matching",
+      "mode": "core_primary",
+      "scope": "profile",
+      "rows": 2
+    },
+    {
+      "capability": "saved_searches",
+      "mode": "core_primary",
+      "scope": "wildcard",
+      "rows": 1
+    },
+    {
+      "capability": "schools",
+      "mode": "core_primary",
+      "scope": "wildcard",
+      "rows": 1
+    }
+  ],
+  "closure_blockers": [
+    "core-capture and its replication slot remain active during the 48-hour observation",
+    "Portfolio catalog and matching remain explicitly core_read",
+    "Portfolio and SwissJob producer handover configuration is prepared but not deployed",
+    "Portfolio frontend commit 07ac81b is not published to either configured remote"
+  ],
+  "closure_sequence_after_live_gates": [
+    "retire capture and slot per RETIRADA_SLOT_CDC_PUNTO4.md",
+    "publish and verify the Portfolio frontend",
+    "deploy portfolio-backend:board-a292ef4 and verify composite catalog/matching plus 11 retained sources",
+    "apply SwissJob worker and BFF handover with --config-only and unchanged live image tags",
+    "set Portfolio catalog and matching wildcard routing to core_primary through services.routing.set_routing",
+    "re-read both routing tables and require zero local, shadow, core_read or rollback_pending rows",
+    "verify no fallback log path, single writers, healthy readers, queues and outbox before declaring closure"
+  ],
+  "status": "open"
+}
