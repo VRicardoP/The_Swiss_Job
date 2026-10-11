@@ -1206,7 +1206,7 @@ campos de identidad; VD.11 y VD.13 son los barridos de garantías.
 ## 7 · Bitácora viva de optimización ReactPortfolio + SwissJob — 2026-10-10/11
 
 > **Documento de relevo de esta sesión.** Actualizado por última vez el
-> **2026-10-11 00:22 UTC**. Debe actualizarse después de cada punto cerrado,
+> **2026-10-11 00:29 UTC**. Debe actualizarse después de cada punto cerrado,
 > despliegue, medición o cambio de siguiente acción. No declarar un punto cerrado
 > por tener código local: exige la evidencia de producción indicada aquí.
 
@@ -1242,7 +1242,7 @@ Orden obligatorio:
 | 1. Bi-encoder | **CERRADO Y DESPLEGADO** | Una copia en `swissjob-core-worker-r5`, `concurrency=1`; ahorro causal 605,64 MiB (43,08 %) en la prueba aislada y PSS del contenedor aproximadamente 14 % menor. Release Core `5a1241d`, cero reinicios. |
 | 2a. Salud de cosecha | **CERRADO** | IrishJobs prueba los dos dominios sin abortar tras el 403; 17/17 scopes saludables y sin alertas. La ronda de las 00:10 Europe/Zurich del 11-10 cerró 17/17 cursores, 14.037 listings, 210 páginas y cero errores; `native-harvest-round-production.json`. |
 | 2b. Retirada CDC | **EN OBSERVACIÓN; NO CORTAR TODAVÍA** | Primera muestra conservada `2026-10-10T19:59:56Z`; no actuar antes del **2026-10-12 20:00 UTC**. Observador vivo: sesión de herramienta `12953`, PID `701361`, script `/tmp/observe_core_48h.sh`, salida `core-observation-48h.jsonl`. Debe añadirse una sonda manual posterior a las 20:00 porque el script termina cerca de las 19:40. |
-| 3. Cosecha duplicada | **PREPARADO, NO DESPLEGADO** | Portfolio `ba3f886` conserva 11 fuentes exclusivas y compone sus resultados con Core; las 9 compartidas se desactivarán sólo al desplegar. La configuración viva de Portfolio aún no define `LEGACY_DISABLED_SOURCES`; SwissJob mantiene 14 desactivadas y la configuración final preparada tiene 16. La cosecha escolar periódica debe retirarse conservando el refresco manual. Cerrar sólo tras verificar ausencia de peticiones duplicadas y presencia de los productores exclusivos. |
+| 3. Cosecha duplicada | **PREPARADO, NO DESPLEGADO** | Portfolio `ba3f886` conserva 11 fuentes exclusivas y compone sus resultados con Core; las 9 compartidas se desactivarán sólo al desplegar. La configuración viva de Portfolio aún no define `LEGACY_DISABLED_SOURCES`; SwissJob mantiene 14 desactivadas y la configuración final preparada tiene 16. La cosecha escolar periódica debe retirarse conservando el refresco manual. El commit Portfolio `787ce44` corrige el despliegue: copia la política versionada a `backend` y `worker`, aborta si queda incompleta y pasó una sonda idempotente con 2 servicios y 9 fuentes. Cerrar sólo tras desplegar y verificar ausencia de peticiones duplicadas y presencia de los productores exclusivos. |
 | 4. Facetas/categorías Core | **CERRADO Y DESPLEGADO** | Bandera activa, paridad exacta, frontend SwissJob servido desde `point5-3986b4a`; logs agregados prueban HTTP 200 para `/match/facets` y páginas por categoría. SQL: facetas 17.472,956 → 1.489,177 ms (-91,48 %); categoría 5.754,283 → 2.676,985 ms (-53,48 %). |
 | 5. Cierre de rollback | **PENDIENTE** | Exige completar el corte CDC, desplegar el traspaso de productores, comprobar lectores/escritores y ratificar la autoridad sin fallbacks necesarios. No cerrar por documentos o tests locales. |
 | 6. Simplificación | **PENDIENTE POR ORDEN** | Después del punto 5: retirar modos `shadow`, `core_read`, `rollback_pending`, clientes y motores inalcanzables, herramientas CDC/gate/reconciliación y productores transferidos. Conservar el catálogo/matcher local del Portfolio para sus 11 fuentes exclusivas y los estados locales que sigan teniendo autoridad. |
@@ -1251,7 +1251,7 @@ Orden obligatorio:
 
 ### Estado vivo y artefactos exactos
 
-Comprobado el 2026-10-11 00:22 UTC en el NAS:
+Comprobado el 2026-10-11 00:29 UTC en el NAS:
 
 - `core-api`, `core-worker`, `core-harvest-worker` y `core-ops-worker`:
   `swissjob-core:point5-5a1241d`, `running`, cero reinicios.
@@ -1266,8 +1266,8 @@ Comprobado el 2026-10-11 00:22 UTC en el NAS:
 
 Cabezas locales relevantes:
 
-- SwissJob `feat/fase-a-core`: `a6e38a8` antes de esta actualización.
-- ReactPortfolio backend `main`: `ba3f886`, nueve commits por delante del remoto.
+- SwissJob `feat/fase-a-core`: `80b18d7` antes de esta actualización.
+- ReactPortfolio backend `main`: `787ce44`, diez commits por delante del remoto; el cambio posterior a `ba3f886` sólo corrige el procedimiento de despliegue.
 - ReactPortfolio frontend `main`: `07ac81b`, cinco commits por delante del remoto.
 - Suites completas ya ejecutadas: Core 1.896 passed/1 skipped; Portfolio backend
   2.106 passed/1 skipped; SwissJob frontend 57 tests; Portfolio frontend 422.
