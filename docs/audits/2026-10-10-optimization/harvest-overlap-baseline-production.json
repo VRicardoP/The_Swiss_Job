@@ -110,5 +110,24 @@
       "financejobs",
       "irishjobs"
     ]
+  },
+  "post_handover_verification_gate": {
+    "portfolio": {
+      "window": "from portfolio_worker StartedAt until its first Background: [All APIs] completed line",
+      "why_one_startup_cycle_is_sufficient": "startup, circadian and delegated/manual refreshes call the same registered update functions; run_cache_update checks harvest_source_enabled before constructing aiohttp.ClientSession",
+      "effective_configuration": "backend and worker must expose exactly the nine post_handover_expected.portfolio_disabled_sources values",
+      "transferred_sources": "each of the nine sources must emit at least one cache update SKIPPED — quiesced or transferred to core message and zero Starting <source> job data cache update messages; additional skips from concurrent user requests are allowed",
+      "exclusive_sources": "all eleven retained sources must emit a completed update attempt in the startup sweep and their health endpoints must remain HTTP 200 with content after the sweep",
+      "school_scheduler": "the periodic task must be _periodic_school_alerts calling retry_pending_alerts; no scheduled run_all_scrapeable or outbound school fetch; manual refresh remains covered separately",
+      "failure": "any transferred Starting message, missing disabled value, missing exclusive source, failed health/content check, or scheduled school collector keeps point 3 open"
+    },
+    "swissjob": {
+      "window": "startup of both recreated swissjob-backend and swissjob-worker",
+      "effective_configuration": "both containers must contain exactly fourteen disabled providers and two disabled scrapers from post_handover_expected",
+      "registry": "log_provider_status must report every transferred provider as disabled (core handover); get_all_providers/get_all_scrapers must exclude every transferred implementation while retaining non-transferred producers, including eight swiss_schools_* collectors",
+      "failure": "configuration mismatch between BFF/worker, a transferred registry instance, or loss of a non-transferred producer keeps point 3 open"
+    },
+    "shared_postcondition": "Core remains 17/17 healthy and serves the transferred sources while legacy producers are absent; do not infer success only from quiet logs",
+    "defined_at": "2026-10-11T05:49:00+00:00"
   }
 }
