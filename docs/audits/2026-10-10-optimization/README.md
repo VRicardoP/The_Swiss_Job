@@ -79,6 +79,8 @@ hubiera en cada instante.
   suites completas de los dos backends.
 - `portfolio-composite-checks.json` fija los commits, la imagen y las pruebas de
   la unión Core + once fuentes exclusivas sin reactivar productores transferidos.
+- `reactportfolio-frontend-release.json` fija el commit publicable y repite lint,
+  las 422 pruebas y el build aislado que se desplegará en Cloudflare Pages.
 
 Los datos de arrastre anteriores a este protocolo (43,25 ms de media y 100,1 ms
 de p95) no son directamente comparables con las muestras deterministas de este
