@@ -1692,6 +1692,16 @@ el orden de corte y disponer de la publicación frontend autorizada.
   manifiesto saneado; el script pasó `bash -n`. Los secretos del Compose vivo no
   salen del NAS. El archivo de 954 MiB sigue sin transferir ni desplegar.
 
+### Checkpoint operativo — 2026-10-12 23:32 UTC
+
+- Cuarto fragmento dedup verde: 250 filas, 32 candidatos nuevos y 957,323 s.
+  Acumulado: 1.000 filas, 157 candidatos, cuatro parciales, cero errores y
+  máximo 1.451,184 s. La quinta tarea
+  `90113586-184b-41f4-b69d-17cb0924d682` está activa.
+- Las tareas periódicas pendientes se drenaron en el límite entre fragmentos;
+  outbox siguió en cero. Se mantiene la misma ventana congelada y no se dispara
+  una segunda cadena raíz.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
