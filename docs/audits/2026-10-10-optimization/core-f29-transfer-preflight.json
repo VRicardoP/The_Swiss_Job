@@ -1,0 +1,46 @@
+{
+  "observed_at": "2026-10-12T21:20:00+00:00",
+  "phase": "core_f29_transfer_prepared_not_sent",
+  "candidate": {
+    "worktree": "/tmp/swissjob-deploy-f29fd44",
+    "head": "f29fd441396e1c80633ca3127ccc8395c6405443",
+    "clean": true,
+    "image": "swissjob-core:point5-f29fd44",
+    "image_id": "sha256:ba57dfbd4259cbdcabf35a7d83cd2297543b0d0a9f6da10fa91ee6af605ce498",
+    "size_bytes": 2196691010,
+    "user": "core"
+  },
+  "archive": {
+    "local_path": "/tmp/swissjob-core-point5-f29fd44.tar.gz",
+    "size": "454 MiB",
+    "sha256": "72d5230734eb16ec9278764b38b1c2ca7f829b90808344f6f8426079f99893f6",
+    "remote_path": "/share/Public/swissjob/core-f29fd44.tar.gz",
+    "remote_present": false
+  },
+  "attempts": [
+    {
+      "action": "scripts/deploy_nas.sh core",
+      "result": "failed closed before packaging or NAS mutation",
+      "reason": "local docker compose build required POSTGRES_PASSWORD and REDIS_PASSWORD interpolation"
+    },
+    {
+      "action": "retry with local build-only interpolation values",
+      "result": "rejected by automatic approval review; not executed",
+      "reason": "review could not prove dummy interpolation values would never reach remote configuration"
+    },
+    {
+      "action": "transfer already verified image archive",
+      "result": "rejected by automatic approval review; no bytes sent",
+      "reason": "review requires explicit authorization to export this concrete potentially private-code payload to nas"
+    }
+  ],
+  "production": {
+    "release": "5a1241d",
+    "alembic": "core0053",
+    "authoritative": true,
+    "services": 4,
+    "capture_retired": true,
+    "unchanged_by_attempts": true
+  },
+  "required_user_authorization": "explicitly authorize transfer of the named 454 MiB archive with the stated SHA-256 to the named NAS path for deployment"
+}

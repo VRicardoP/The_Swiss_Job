@@ -1568,6 +1568,22 @@ el orden de corte y disponer de la publicación frontend autorizada.
   ejecutar las sondas de ready, rutas agregadas y dedup por lotes, y conceder
   `harvest:write` sólo después de verificar que el endpoint existe.
 
+### Checkpoint operativo — 2026-10-12 21:20 UTC
+
+- Punto 6 preparado, pendiente de autorización específica de egress: worktree
+  limpio `f29fd44`, imagen `ba57dfbd…` y archivo local de 454 MiB con SHA-256
+  `72d52307…`. El NAS no contiene la imagen ni el archivo; producción sigue
+  sana en `5a1241d/core0053` con cuatro servicios y captura retirada.
+- El despliegue normal falló cerrado antes de mutar porque el build local pedía
+  interpolar dos variables. La revisión automática rechazó usar valores
+  ficticios y también bloqueó transferir la imagen ya verificada por tratarla
+  como posible código privado. No se intentará una ruta indirecta.
+- Reanudación exacta tras autorización explícita: transferir
+  `/tmp/swissjob-core-point5-f29fd44.tar.gz` a
+  `nas:/share/Public/swissjob/core-f29fd44.tar.gz`, comparar SHA-256, cargar la
+  imagen y continuar con candidato Compose, migración, recreación y sondas.
+  Evidencia `core-f29-transfer-preflight.json`.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con

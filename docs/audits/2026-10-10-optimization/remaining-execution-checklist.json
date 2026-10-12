@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-12T21:16:30+00:00",
+  "observed_at": "2026-10-12T21:20:00+00:00",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -46,9 +46,12 @@
     },
     {
       "id": 6,
-      "status": "active",
+      "status": "awaiting_explicit_image_transfer_authorization",
       "action": "deploy Core f29fd44, verify authoritative ready/routes/dedup batching, then grant portfolio harvest:write exactly once",
-      "plan": "core-postdeploy-verification-plan.json"
+      "plan": "core-postdeploy-verification-plan.json",
+      "blocker": "automatic approval review rejected transfer of /tmp/swissjob-core-point5-f29fd44.tar.gz to nas:/share/Public/swissjob/core-f29fd44.tar.gz as export of potentially private code; no payload transferred",
+      "prepared_archive": "454 MiB, sha256 72d5230734eb16ec9278764b38b1c2ca7f829b90808344f6f8426079f99893f6; source image ba57dfbd4259cbdcabf35a7d83cd2297543b0d0a9f6da10fa91ee6af605ce498",
+      "resume_command": "scp -q /tmp/swissjob-core-point5-f29fd44.tar.gz nas:/share/Public/swissjob/core-f29fd44.tar.gz; verify SHA-256 before docker load"
     },
     {
       "id": 7,
