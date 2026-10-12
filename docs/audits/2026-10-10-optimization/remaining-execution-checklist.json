@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-12T22:50:00+00:00",
+  "observed_at": "2026-10-12T23:17:00+00:00",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -55,12 +55,14 @@
       "scope_grant_applied": false,
       "remediation_commit": "e535e45",
       "validation": "focused 10/10; Core full 1912 passed, 1 skipped in 972.98 s; Ruff and py_compile green",
-      "dedup": "2557 eligible / 11 expected batches; first partial passed: 250 rows, 36 new candidates, complete cursor, continuation enqueued, 1121.915 s < 1800; second task a292006e-bc05-49cd-9184-397faf36c4ea active"
+      "dedup": "3 partials passed; 750 rows, 125 new candidates, durations 1121.915/926.413/1451.184 s all <1800; fourth bc1991b0-fcaf-450e-b19c-e719ebe94327 active; 0 errors",
+      "resume_observation": "read ops-worker logs since 2026-10-12T22:16:12Z and run verify_dedup_batch_log.py only after one terminal; do not trigger another root chain"
     },
     {
       "id": 7,
       "status": "pending_after_6",
-      "action": "apply SwissJob worker config-only preserving point5-84853cf, then deploy BFF f29fd44 and verify profile delivery plus 14 providers and 2 scrapers disabled"
+      "action": "apply SwissJob worker config-only preserving point5-84853cf, then deploy BFF f29fd44 and verify profile delivery plus 14 providers and 2 scrapers disabled",
+      "prepared": "BFF archive 638 MiB sha256 4110915f...0803; NAS-only idempotent transformer and worker/BFF scripts syntax-valid; not transferred or executed"
     },
     {
       "id": 8,
@@ -71,7 +73,8 @@
     {
       "id": 9,
       "status": "pending_after_7_and_8",
-      "action": "deploy Portfolio backend a292ef4; verify nine transferred sources skip before network, eleven exclusive sources work, scheduled school collection is absent and manual refresh remains"
+      "action": "deploy Portfolio backend a292ef4; verify nine transferred sources skip before network, eleven exclusive sources work, scheduled school collection is absent and manual refresh remains",
+      "prepared": "Portfolio backend archive 954 MiB sha256 52435279...a06e; not transferred or executed"
     },
     {
       "id": 10,

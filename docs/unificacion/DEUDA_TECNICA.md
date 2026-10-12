@@ -1669,6 +1669,20 @@ el orden de corte y disponer de la publicación frontend autorizada.
   headed sin HEADLESS=true. Dedup sigue bajo el observador gestionado; no se
   adelantó publicación ni despliegue.
 
+### Checkpoint operativo — 2026-10-12 23:17 UTC
+
+- Dedup lleva 3 parciales verdes: 750 filas, 125 candidatos nuevos y duraciones
+  1.121,915 / 926,413 / 1.451,184 s, todas inferiores a 1.800 s. La cuarta
+  tarea bc1991b0-fcaf-450e-b19c-e719ebe94327 está activa; cero errores. Si se
+  reanuda, leer logs desde 22:16:12 UTC y no disparar otra cadena raíz.
+- Artefactos siguientes preparados sólo en local: BFF f29fd44, 638 MiB,
+  SHA-256 4110915f...0803; Portfolio backend a292ef4, 954 MiB, SHA-256
+  52435279...a06e. Ninguno se ha transferido ni desplegado.
+- El transformador temporal NAS-only pasó compilación y doble aplicación
+  idempotente sobre el manifiesto saneado para worker y backend. La ruta evita
+  copiar secretos del Compose al host y conserva respaldo/candidato/config
+  antes de promover.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con

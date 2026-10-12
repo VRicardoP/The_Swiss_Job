@@ -165,7 +165,7 @@
       0
     ],
     "precondition_active_tasks": 0,
-    "status": "continuation_active",
+    "status": "fourth_continuation_active",
     "scope_grant_applied": false,
     "eligible": 2557,
     "expected_batches": 11,
@@ -177,8 +177,47 @@
         "duration_s": 1121.9151898180135,
         "continuation_enqueued": true,
         "next_cursor_complete": true
+      },
+      {
+        "task_id": "a292006e-bc05-49cd-9184-397faf36c4ea",
+        "scanned": 250,
+        "new_candidates": 48,
+        "duration_s": 926.4132214069832,
+        "continuation_enqueued": true,
+        "next_cursor_complete": true
+      },
+      {
+        "task_id": "5c12dc82-f749-4b8b-8c10-6f858d3c0874",
+        "scanned": 250,
+        "new_candidates": 41,
+        "duration_s": 1451.1835395360831,
+        "continuation_enqueued": true,
+        "next_cursor_complete": true
       }
     ],
-    "active_continuation_task_id": "a292006e-bc05-49cd-9184-397faf36c4ea"
+    "active_continuation_task_id": "bc1991b0-fcaf-450e-b19c-e719ebe94327",
+    "scanned_total": 750,
+    "new_candidates_total": 125,
+    "max_fragment_seconds": 1451.1835395360831,
+    "errors": 0,
+    "resume": "read swissjob-core-ops-worker-r5 logs since 2026-10-12T22:16:12Z; never trigger a second root chain"
+  },
+  "prepared_next_artifacts": {
+    "swissjob_bff": {
+      "path": "/tmp/swissjob-backend-point5-f29fd44.tar.gz",
+      "sha256": "4110915fd639d852a94c173fcca30faec1d8581206a478f1d9f6fb687ebb0803",
+      "size_mib": 638,
+      "transferred": false
+    },
+    "portfolio_backend": {
+      "path": "/tmp/portfolio-backend-board-a292ef4.tar.gz",
+      "sha256": "52435279efbbbcbae1eb31149f61447876ff3d58c35f07e28cca8c5ab185a06e",
+      "size_mib": 954,
+      "transferred": false
+    },
+    "nas_only_compose_transform": {
+      "path": "/tmp/transform_swissjob_compose.py",
+      "validation": "py_compile, sanitized manifest twice for worker and backend, idempotent; secrets never copied from NAS"
+    }
   }
 }
