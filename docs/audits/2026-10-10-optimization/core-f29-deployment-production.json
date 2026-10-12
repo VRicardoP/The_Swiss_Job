@@ -90,10 +90,82 @@
         "discarded": "runtime Core image has no Ruff executable; style was rerun successfully with the installed host Ruff"
       },
       "status": "validated_locally_pending_immutable_build_and_deploy"
+    },
+    "post_remediation": {
+      "explain_execution_ms": 47035.977,
+      "isolated_arbeitnow_http_ms": 35382.782,
+      "isolated_improvement_percent": 78.58,
+      "full_probe": {
+        "failures": [],
+        "ready_ms": 68.531,
+        "source_ms": {
+          "arbeitnow": 37139.339,
+          "irishjobs": 948.005,
+          "jobgether": 2888.931,
+          "nav_arbeidsplassen": 888.36,
+          "ostjob": 6094.729,
+          "remotive": 322.986,
+          "thehub": 575.556,
+          "weworkremotely": 4880.477,
+          "zentraljob": 3805.467
+        },
+        "all_status_200": true,
+        "all_contracts_valid": true,
+        "all_sources_healthy": true,
+        "etag_status": 304,
+        "etag_elapsed_ms": 44224.967
+      },
+      "status": "passed"
     }
   },
   "discarded_observations": [
     "the first release check ran while the API was still starting and was repeated successfully",
     "pg_stat_activity queried through a non-statistics role could not expose the Core session and was not used to infer SQL duration"
-  ]
+  ],
+  "optimized_deployment": {
+    "observed_at": "2026-10-12T22:16:12Z",
+    "release": "19efe49",
+    "archive_sha256": "77db714dbed932f9720c13694e70d162dbfa2354c206b6f0b16ebbb698cf5d48",
+    "archive_size_mib": 454,
+    "remote_hash_matches": true,
+    "image_local_id": "sha256:d35ff4ddc55c8fdc69bd50b56a830a079c67573be89c2af201dd57be53f84b04",
+    "compose_backup": "core.configured.yml.before-core-19efe49-20261012T220835Z",
+    "migration": "core0053 -> core0054",
+    "services": 4,
+    "all_running": true,
+    "all_restart_count": 0,
+    "release_check": "four services coherent; authoritative ready",
+    "ready": {
+      "status": "ready",
+      "release": "19efe49",
+      "alembic": "core0054",
+      "authoritative": true
+    },
+    "harvest": {
+      "enabled": 17,
+      "observed": 17,
+      "with_state": 17,
+      "alerts": []
+    },
+    "capture_slot_exists": false,
+    "pending_staging": 0,
+    "critical_file_hashes": {
+      "source_aggregate.py": "2174734f913a78e657e183072a98abe9257734a586532538e441ffb7d3a35506",
+      "core0054_source_revision_latest_index.py": "d2c65928e507e9f5491b51fd795cf182b4b7d34313b8b2176e2aee8cd8c93a30"
+    }
+  },
+  "dedup_gate": {
+    "triggered_at": "2026-10-12T22:16:12Z",
+    "root_task_id": "a241e370-c422-437d-b981-ebdd00703cdf",
+    "precondition_queues": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "precondition_active_tasks": 0,
+    "status": "first_fragment_active",
+    "scope_grant_applied": false
+  }
 }

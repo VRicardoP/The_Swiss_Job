@@ -1625,6 +1625,24 @@ el orden de corte y disponer de la publicación frontend autorizada.
   protocolo, corregir la causa mínima, validar de dentro hacia fuera, desplegar
   con release inmutable y comparar antes/después antes de continuar.
 
+### Checkpoint operativo — 2026-10-12 22:25 UTC
+
+- Release optimizada 19efe49 desplegada: archivo remoto verificado, core0054
+  aplicado y cuatro servicios coherentes, running, sin reinicios. Readiness,
+  autoridad, captura retirada, entregas y salud 17/17 permanecen verdes.
+- El gate de rutas está cerrado: las nueve fuentes devolvieron 200, contrato
+  completo, ETag/304 y cero fallos. Arbeitnow bajó de 165,2 s a 35,4 s en la
+  medición aislada equivalente (78,58 %); en el probe completo tardó 37,1 s y
+  el siguiente máximo fue Ostjob con 6,1 s.
+- Dedup se disparó una sola vez a las 22:16:12 UTC tras demostrar cinco colas y
+  tareas activas a cero. El primer fragmento de 250 sigue activo sin error; no
+  se ha concedido harvest:write. Siguiente acción: esperar parcial más terminal,
+  validar el log fijado y colas drenadas, conceder el scope y repetir el probe
+  con --after-grant.
+- Metodología vigente: estado vivo antes de mutar, misma carga para comparar,
+  evidencia de fallos y éxitos, cambio mínimo, gates secuenciales y bitácora
+  inmediata sin indexar ediciones ajenas.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
