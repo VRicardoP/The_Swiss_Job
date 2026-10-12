@@ -175,12 +175,19 @@ corpus cosechado por los productores nativos.
 
 ## 8. Lo que queda abierto
 
-1. **Retirada del slot `jobhunt_shadow_r5_rehearsal`.** Requiere 48 h de
-   dispatcher nativo sin incidencias. Es la única acción sin vuelta atrás
-   barata: reanudar el legacy después exigiría un snapshot CDC nuevo. Orden:
-   parar `core-capture`, quitar del beat `shadow.check_slot_health`,
-   `preview_cycle`, `run_cycle` y `purge_staging` — **nunca `shadow.project`** —
-   y sólo entonces `pg_drop_replication_slot`.
+1. **CERRADO 2026-10-12 — retirada del slot
+   `jobhunt_shadow_r5_rehearsal`.** La observación cubrió 96 muestras entre
+   2026-10-10 19:59:56 y 2026-10-12 20:00:23 UTC, sin fallos de sonda,
+   readiness ni alertas oficiales. Se detuvo `core-capture` con salida 0; el
+   beat dejó de enviar exactamente `shadow-check-slot-health`,
+   `shadow-preview-cycle` y `shadow-run-cycle`, mientras `shadow-project`
+   continuó. Una ronda nativa posterior cerró 17/17 `ok`, cero errores y cola
+   de cosecha drenada. El slot, inactivo, retenía 374 MB y se borró a las
+   20:45:18 UTC; la consulta posterior devolvió cero. Reanudar el legacy exige
+   desde este punto un snapshot CDC nuevo. Evidencias versionadas:
+   `2026-10-10-optimization/core-observation-48h.jsonl`,
+   `capture-beat-disable-production.json` y
+   `native-harvest-postcapture-production.json`.
 3. **Fuentes excluidas del alcance, con causa medida** (decisión D1):
    `myscience` 15 ofertas/7 d, `gastrojob` 7, `tes` 4 — bajo volumen;
    `stelle_admin` sin altas desde el 27-08 y `schuljobs` desde el 25-08 —

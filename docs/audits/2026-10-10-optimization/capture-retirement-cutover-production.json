@@ -1,6 +1,6 @@
 {
   "observed_at": "2026-10-12T20:02:23+00:00",
-  "phase": "capture_stopped_slot_retained",
+  "phase": "slot_dropped_compose_not_yet_finalized",
   "observation": {
     "rows": 96,
     "first": "2026-10-10T19:59:56+00:00",
@@ -65,5 +65,20 @@
     "live compose",
     "timestamped backups"
   ],
-  "next_gate": "disable exactly shadow-check-slot-health, shadow-preview-cycle and shadow-run-cycle via CORE_CAPTURE_ENABLED=false on core-ops-worker; prove shadow-project remains scheduled"
+  "next_gate": "finalize four-service Compose and supervisor, remove only the stopped capture container while preserving its image",
+  "slot_drop": {
+    "dropped_at": "2026-10-12T20:45:18+00:00",
+    "name": "jobhunt_shadow_r5_rehearsal",
+    "active_before": false,
+    "retained_wal": "374 MB",
+    "remaining_named_slots": 0,
+    "failed_closed_attempt": {
+      "role": "jobhunt_core",
+      "result": "permission denied to use replication slots",
+      "mutation": false
+    },
+    "successful_role": "swissjob",
+    "role_basis": "existing local cluster role with superuser and replication attributes",
+    "permission_or_schema_changes": false
+  }
 }

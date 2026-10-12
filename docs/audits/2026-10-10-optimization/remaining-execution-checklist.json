@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-12T20:40:06+00:00",
+  "observed_at": "2026-10-12T20:45:18+00:00",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -40,8 +40,9 @@
     },
     {
       "id": 5,
-      "status": "active_irreversible",
-      "action": "require inactive slot, record retained WAL, drop only jobhunt_shadow_r5_rehearsal, finalize four-service Compose and supervisor"
+      "status": "active_slot_dropped",
+      "action": "require inactive slot, record retained WAL, drop only jobhunt_shadow_r5_rehearsal, finalize four-service Compose and supervisor",
+      "evidence": "slot inactive with 374 MB retained WAL; jobhunt_core attempt failed closed; existing local swissjob admin role dropped only jobhunt_shadow_r5_rehearsal at 20:45:18Z; remaining count 0; Compose/supervisor finalization pending"
     },
     {
       "id": 6,
