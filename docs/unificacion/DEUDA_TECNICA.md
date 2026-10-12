@@ -1683,6 +1683,15 @@ el orden de corte y disponer de la publicación frontend autorizada.
   copiar secretos del Compose al host y conserva respaldo/candidato/config
   antes de promover.
 
+### Checkpoint operativo — 2026-10-12 23:21 UTC
+
+- Preparado el despliegue NAS-only de Portfolio a292ef4 sin tocar producción:
+  transforma únicamente las imágenes `backend`/`worker` y su política exacta de
+  nueve fuentes transferidas, valida el candidato y sólo entonces lo promueve.
+- El transformador pasó `py_compile` y dos aplicaciones idénticas sobre el
+  manifiesto saneado; el script pasó `bash -n`. Los secretos del Compose vivo no
+  salen del NAS. El archivo de 954 MiB sigue sin transferir ni desplegar.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con

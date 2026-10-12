@@ -213,7 +213,13 @@
       "path": "/tmp/portfolio-backend-board-a292ef4.tar.gz",
       "sha256": "52435279efbbbcbae1eb31149f61447876ff3d58c35f07e28cca8c5ab185a06e",
       "size_mib": 954,
-      "transferred": false
+      "transferred": false,
+      "nas_only_deploy": {
+        "transformer": "/tmp/transform_portfolio_compose.py",
+        "script": "/tmp/deploy_portfolio_backend_safe.sh",
+        "validation": "py_compile, bash -n and two idempotent transforms on sanitized manifest passed",
+        "behavior": "updates only backend and worker images plus exact nine-source handover policy; validates candidate on NAS before promotion; live secrets never leave NAS"
+      }
     },
     "nas_only_compose_transform": {
       "path": "/tmp/transform_swissjob_compose.py",
