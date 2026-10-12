@@ -1710,6 +1710,13 @@ el orden de corte y disponer de la publicación frontend autorizada.
 - Outbox siguió drenado en el límite. Continuar leyendo la cadena existente desde
   22:16:12 UTC; no volver a invocar la tarea raíz.
 
+### Checkpoint operativo — 2026-10-12 23:53 UTC
+
+- Sexto fragmento dedup verde: 250 filas, 52 candidatos nuevos y 535,023 s.
+  Acumulado: 1.500 filas, 260 candidatos, seis parciales, cero errores y máximo
+  1.451,184 s. La séptima tarea `3a5d5e5e-2fda-4ef1-b7e3-af3f0a15ed80`
+  está activa; la ventana congelada no cambia.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
