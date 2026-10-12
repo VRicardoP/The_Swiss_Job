@@ -165,7 +165,20 @@
       0
     ],
     "precondition_active_tasks": 0,
-    "status": "first_fragment_active",
-    "scope_grant_applied": false
+    "status": "continuation_active",
+    "scope_grant_applied": false,
+    "eligible": 2557,
+    "expected_batches": 11,
+    "partial_batches": [
+      {
+        "task_id": "a241e370-c422-437d-b981-ebdd00703cdf",
+        "scanned": 250,
+        "new_candidates": 36,
+        "duration_s": 1121.9151898180135,
+        "continuation_enqueued": true,
+        "next_cursor_complete": true
+      }
+    ],
+    "active_continuation_task_id": "a292006e-bc05-49cd-9184-397faf36c4ea"
   }
 }

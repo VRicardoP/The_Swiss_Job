@@ -1643,6 +1643,19 @@ el orden de corte y disponer de la publicación frontend autorizada.
   evidencia de fallos y éxitos, cambio mínimo, gates secuenciales y bitácora
   inmediata sin indexar ediciones ajenas.
 
+### Checkpoint operativo — 2026-10-12 22:36 UTC
+
+- Primer fragmento dedup cerrado: 250 filas, 36 candidatos nuevos, cursor
+  completo y continuación encolada; duración 1.121,915 s, inferior al límite
+  de 1.800 s. La ventana tiene 2.557 filas y 11 lotes previstos.
+- La segunda tarea a292006e-bc05-49cd-9184-397faf36c4ea está activa sobre la
+  misma ventana congelada. No lanzar otra cadena. harvest:write sigue sin
+  conceder; el siguiente gate exige un único terminal, ausencia de errores y
+  todas las colas drenadas.
+- Metodología vigente: observar la cadena por sus IDs, ventana/cursor y logs
+  propios; conservar cada duración real; no inferir éxito desde Redis vacío ni
+  interrumpir un fragmento sano.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
