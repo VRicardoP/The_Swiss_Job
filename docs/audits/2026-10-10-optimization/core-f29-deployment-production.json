@@ -74,7 +74,23 @@
       "shared_read_blocks": 193645,
       "root_cause": "latest revision lookup lacks an ordered incarnation/fetched/id index and the materialized CTE carries full offer JSON through every facet scan"
     },
-    "next_action": "add the missing ordered index, project only bounded aggregate fields, run focused/full tests, rebuild and redeploy before granting harvest:write"
+    "next_action": "build and deploy immutable e535e45 Core image; apply core0054; rerun identical explain, nine-source route probe and dedup before granting harvest:write",
+    "remediation": {
+      "commit": "e535e45",
+      "changes": [
+        "index source_listing_revisions by incarnation_id, fetched_at DESC, id DESC",
+        "materialize only bounded response and facet fields instead of full offer JSON",
+        "filter raw job_types at the two consumers while preserving the response contract"
+      ],
+      "validation": {
+        "focused": "10 passed in 3.48s",
+        "core_full": "1912 passed, 1 skipped in 972.98s",
+        "ruff": "check and format-check passed on both changed files",
+        "py_compile": "passed",
+        "discarded": "runtime Core image has no Ruff executable; style was rerun successfully with the installed host Ruff"
+      },
+      "status": "validated_locally_pending_immutable_build_and_deploy"
+    }
   },
   "discarded_observations": [
     "the first release check ran while the API was still starting and was repeated successfully",

@@ -1609,6 +1609,22 @@ el orden de corte y disponer de la publicación frontend autorizada.
   rollback; registrar evidencia y commit de alcance único sin indexar cambios
   ajenos. El estado vivo prevalece siempre sobre esta bitácora.
 
+### Checkpoint operativo — 2026-10-12 22:05 UTC
+
+- La corrección de rendimiento está implementada en e535e45: índice ordenado
+  de última revisión y proyección acotada del CTE, sin caché, dependencia ni
+  abstracción nueva. Conserva filtrado de job_types, límites, conteos y ETag.
+- Validación local cerrada: 10/10 pruebas focales de ruta/migración; suite Core
+  completa 1.912 passed y 1 skipped en 972,98 s; Ruff, formato y compilación
+  verdes. El intento de Ruff dentro de la imagen runtime se descarta porque esa
+  imagen no lo instala; se repitió correctamente con el ejecutable del host.
+- Siguiente acción exacta: construir y desplegar imagen inmutable e535e45,
+  aplicar core0054, repetir EXPLAIN ANALYZE, las nueve rutas, ETag y dedup;
+  mantener harvest:write sin conceder hasta que todos esos gates pasen.
+- Metodología vigente: comprobar estado vivo, medir por etapas con el mismo
+  protocolo, corregir la causa mínima, validar de dentro hacia fuera, desplegar
+  con release inmutable y comparar antes/después antes de continuar.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con

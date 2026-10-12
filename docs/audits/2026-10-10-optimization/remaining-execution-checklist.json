@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-12T21:45:17+00:00",
+  "observed_at": "2026-10-12T22:04:52+00:00",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -46,13 +46,15 @@
     },
     {
       "id": 6,
-      "status": "active_route_performance_fix",
+      "status": "active_build_optimized_core",
       "action": "deploy Core f29fd44, verify authoritative ready/routes/dedup batching, then grant portfolio harvest:write exactly once",
       "plan": "core-postdeploy-verification-plan.json",
       "evidence": "transfer explicitly authorized and remote sha256 matched; four f29fd44 services running with restart 0; ready/authoritative core0053, 17/17 healthy, no alerts, capture slot absent, delivery drained; first aggregate route returns the correct contract but Arbeitnow took 165214.579 ms and failed the 60 s gate",
       "diagnosis": "EXPLAIN ANALYZE 49716.035 ms: 21402 lateral latest-revision lookups consume 27447.213 ms; 1,953,864 shared hits and 193,645 reads because the materialized source_rows CTE also carries full offer JSON through every facet scan",
-      "next_action": "add the ordered latest-revision index and narrow the CTE projection; verify tests, immutable redeploy, all nine routes and dedup; only then grant harvest:write",
-      "scope_grant_applied": false
+      "next_action": "build/deploy immutable e535e45 image, migrate core0054, repeat explain and all route/dedup gates, then grant harvest:write",
+      "scope_grant_applied": false,
+      "remediation_commit": "e535e45",
+      "validation": "focused 10/10; Core full 1912 passed, 1 skipped in 972.98 s; Ruff and py_compile green"
     },
     {
       "id": 7,
