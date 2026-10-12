@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-12T20:11:38+00:00",
+  "observed_at": "2026-10-12T20:40:06+00:00",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -33,13 +33,14 @@
     },
     {
       "id": 4,
-      "status": "active",
+      "status": "complete",
       "action": "dispatch one full native round immediately with an explicit unique post-stop window; require all 17 cursors after dispatch, core.harvest=0 and alerts=[]",
-      "authorization": "user requested a cheap workaround rather than waiting hours; explicit run key preserves idempotency and exercises the same native dispatcher"
+      "authorization": "user requested a cheap workaround rather than waiting hours; explicit run key preserves idempotency and exercises the same native dispatcher",
+      "evidence": "explicit window postcapture-2026-10-12T20:13:39+00:00 dispatched 17; all 17 ok from 20:13:56Z to 20:39:31Z in 1535 s; 17 cursors after cutoff, failures 0, unfinished 0, core.harvest 0, alerts=[]"
     },
     {
       "id": 5,
-      "status": "pending_after_4_irreversible",
+      "status": "active_irreversible",
       "action": "require inactive slot, record retained WAL, drop only jobhunt_shadow_r5_rehearsal, finalize four-service Compose and supervisor"
     },
     {

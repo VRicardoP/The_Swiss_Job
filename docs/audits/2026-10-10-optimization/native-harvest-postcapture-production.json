@@ -1,0 +1,60 @@
+{
+  "observed_at": "2026-10-12T20:40:06+00:00",
+  "phase": "post_capture_native_round_complete",
+  "dispatcher": {
+    "task_id": "5c04428d-0681-4563-89e1-7acca28e0017",
+    "window": "postcapture-2026-10-12T20:13:39+00:00",
+    "cutoff": "2026-10-12T20:13:39+00:00",
+    "dispatched": 17,
+    "dispatch_duration_seconds": 0.8295414040330797
+  },
+  "round": {
+    "started_at": "2026-10-12T20:13:56.259482+00:00",
+    "finished_at": "2026-10-12T20:39:31.209776+00:00",
+    "duration_seconds": 1535,
+    "started_scopes": 17,
+    "finished_scopes": 17,
+    "status_counts": {
+      "ok": 17,
+      "error": 0
+    },
+    "unfinished_runs": 0,
+    "cursors_after_cutoff": 17,
+    "zero_failure_cursors": 17,
+    "earliest_completion": "2026-10-12T20:14:06.702691+00:00"
+  },
+  "post_round": {
+    "healthy": "17/17",
+    "official_alerts": [],
+    "unhealthy": [],
+    "pending_staging_rows": 0,
+    "ready": {
+      "status": "ready",
+      "release": "5a1241d",
+      "alembic": "core0053",
+      "authoritative": true
+    },
+    "queues": {
+      "core.default": 0,
+      "core.embedding": 0,
+      "core.harvest": 0,
+      "core.matching": 3,
+      "core.notifications": 0
+    },
+    "offer_embeddings": 102912,
+    "pending_offer_embeddings": 159,
+    "pending_profiles": 0
+  },
+  "derived_work_interpretation": "three matching messages and 159 offer embeddings were created by the successful harvest; harvest is complete and shadow-project remains enabled to drain derived work",
+  "slot_before_drop": {
+    "name": "jobhunt_shadow_r5_rehearsal",
+    "active": false,
+    "retained_wal": "374 MB"
+  },
+  "capture": {
+    "running": false,
+    "exit_code": 0,
+    "oom_killed": false
+  },
+  "next_gate": "record retained WAL and drop only jobhunt_shadow_r5_rehearsal, then finalize four-service Compose and supervisor"
+}
