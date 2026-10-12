@@ -1,6 +1,6 @@
 {
   "observed_at": "2026-10-12T20:02:23+00:00",
-  "phase": "slot_dropped_compose_not_yet_finalized",
+  "phase": "complete_capture_and_slot_retired_four_service_topology",
   "observation": {
     "rows": 96,
     "first": "2026-10-10T19:59:56+00:00",
@@ -65,7 +65,7 @@
     "live compose",
     "timestamped backups"
   ],
-  "next_gate": "finalize four-service Compose and supervisor, remove only the stopped capture container while preserving its image",
+  "next_gate": "deploy Core f29fd44 and run the pinned postdeploy route and dedup probes",
   "slot_drop": {
     "dropped_at": "2026-10-12T20:45:18+00:00",
     "name": "jobhunt_shadow_r5_rehearsal",
@@ -80,5 +80,6 @@
     "successful_role": "swissjob",
     "role_basis": "existing local cluster role with superuser and replication attributes",
     "permission_or_schema_changes": false
-  }
+  },
+  "finalization_evidence": "capture-retirement-finalization-production.json"
 }

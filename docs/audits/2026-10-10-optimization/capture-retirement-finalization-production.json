@@ -1,0 +1,87 @@
+{
+  "observed_at": "2026-10-12T21:16:30+00:00",
+  "phase": "capture_retirement_finalized",
+  "compose": {
+    "services": [
+      "core-api",
+      "core-worker",
+      "core-harvest-worker",
+      "core-ops-worker"
+    ],
+    "capture_service_declared": false,
+    "capture_slot_variables": 0,
+    "capture_enabled_variable": {
+      "service": "core-ops-worker",
+      "value": false
+    },
+    "stale_next_candidates": 0,
+    "validation": "config --quiet passed"
+  },
+  "capture": {
+    "container_present": false,
+    "image_retained": "sha256:e77555d72fab3951c469133729ba6e41ee0056846b82c3fa2dd8a49f9340a84f"
+  },
+  "slot": {
+    "name": "jobhunt_shadow_r5_rehearsal",
+    "present": false
+  },
+  "supervisor": {
+    "source_commit": "677d23a",
+    "live_sha256": "b3db3b7bb4a9247049a806d1d9a10bfe6bfe70020819800a7dcce1a06e8f8e56",
+    "expected_containers": 16,
+    "isolated_cycle": "ok",
+    "live_state": "ok",
+    "transition": "old inventory reported stopped capture at 20:45; new inventory emitted recovery at 20:50"
+  },
+  "derived_work_drain": {
+    "initial_pending_offer_embeddings": 159,
+    "final_pending_offer_embeddings": 0,
+    "initial_matching_queue": 3,
+    "final_matching_queue": 0,
+    "model_active_tasks_final": 0,
+    "completed_at": "2026-10-12T21:15:14+00:00",
+    "reason": "core-worker was recreated last to avoid interrupting one-copy bi-encoder work"
+  },
+  "services": [
+    {
+      "name": "swissjob-core-api-r5",
+      "started_at": "2026-10-12T20:51:10.958863073Z",
+      "restart_count": 0
+    },
+    {
+      "name": "swissjob-core-worker-r5",
+      "started_at": "2026-10-12T21:15:40.806550231Z",
+      "restart_count": 0,
+      "concurrency": 1
+    },
+    {
+      "name": "swissjob-core-harvest-worker-r5",
+      "started_at": "2026-10-12T20:51:33.480228078Z",
+      "restart_count": 0
+    },
+    {
+      "name": "swissjob-core-ops-worker-r5",
+      "started_at": "2026-10-12T20:51:55.079441613Z",
+      "restart_count": 0
+    }
+  ],
+  "release_check": {
+    "result": "passed",
+    "release": "5a1241d",
+    "alembic": "core0053",
+    "authoritative": true,
+    "services": 4
+  },
+  "postcheck": {
+    "health": "17/17",
+    "official_alerts": [],
+    "queues": {
+      "core.default": 0,
+      "core.embedding": 0,
+      "core.harvest": 0,
+      "core.matching": 0,
+      "core.notifications": 0
+    }
+  },
+  "next_gate": "deploy Core f29fd44, verify ready/routes/dedup batching, then grant harvest:write exactly once"
+}
