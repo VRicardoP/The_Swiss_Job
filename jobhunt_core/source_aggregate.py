@@ -6,8 +6,18 @@ _SOURCE_AGGREGATE_SQL = sa.text(
     """
     WITH source_rows AS MATERIALIZED (
       SELECT i.id AS incarnation_id, sl.external_id, i.url, i.apply_url,
-             i.first_seen_at, i.last_seen_at, o.content,
-             latest.category, latest.job_type, latest.job_types,
+             i.first_seen_at, i.last_seen_at,
+             o.content->>'title' AS title,
+             o.content->>'company' AS company,
+             left(o.content->>'description', 500) AS description,
+             o.content->>'location' AS location,
+             o.content->>'salary' AS salary,
+             CASE WHEN jsonb_typeof(o.content->'remote')='boolean'
+                  THEN (o.content->>'remote')::boolean END AS remote,
+             CASE WHEN jsonb_typeof(o.content->'tags')='array'
+                  THEN o.content->'tags' ELSE '[]'::jsonb END AS tags,
+             o.content->>'canton' AS canton,
+             latest.category, latest.job_type, latest.job_types_raw,
              latest.published_at
       FROM sources s
       JOIN source_listings sl ON sl.source_id=s.id
@@ -21,13 +31,8 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                     THEN r.raw->>'category' END AS category,
                CASE WHEN jsonb_typeof(r.raw->'job_type')='string'
                     THEN r.raw->>'job_type' END AS job_type,
-               COALESCE((
-                 SELECT jsonb_agg(value) FROM jsonb_array_elements(
-                   CASE WHEN jsonb_typeof(r.raw->'job_types')='array'
-                        THEN r.raw->'job_types' ELSE '[]'::jsonb END
-                 ) AS item(value)
-                 WHERE jsonb_typeof(value)='string'
-               ), '[]'::jsonb) AS job_types,
+               CASE WHEN jsonb_typeof(r.raw->'job_types')='array'
+                    THEN r.raw->'job_types' ELSE '[]'::jsonb END AS job_types_raw,
                COALESCE(
                  CASE WHEN jsonb_typeof(r.raw->'publication_date')='string'
                       THEN r.raw->>'publication_date' END,
@@ -62,18 +67,21 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                'apply_url', apply_url,
                'first_seen_at', first_seen_at,
                'last_seen_at', last_seen_at,
-               'title', content->>'title',
-               'company', content->>'company',
-               'description', left(content->>'description', 500),
-               'location', content->>'location',
-               'salary', content->>'salary',
-               'remote', content->'remote',
-               'tags', CASE WHEN jsonb_typeof(content->'tags')='array'
-                            THEN content->'tags' ELSE '[]'::jsonb END,
-               'canton', content->>'canton',
+               'title', title,
+               'company', company,
+               'description', description,
+               'location', location,
+               'salary', salary,
+               'remote', remote,
+               'tags', tags,
+               'canton', canton,
                'category', category,
                'job_type', job_type,
-               'job_types', COALESCE(job_types, '[]'::jsonb),
+               'job_types', COALESCE((
+                 SELECT jsonb_agg(value) FROM jsonb_array_elements(job_types_raw)
+                   AS item(value)
+                 WHERE jsonb_typeof(value)='string'
+               ), '[]'::jsonb),
                'published_at', published_at
              ) AS item,
              last_seen_at, incarnation_id
@@ -83,22 +91,21 @@ _SOURCE_AGGREGATE_SQL = sa.text(
     ),
     location_counts AS (
       SELECT value, count(*)::int AS n FROM (
-        SELECT content->>'location' AS value FROM source_rows
+        SELECT location AS value FROM source_rows
       ) values_ WHERE value IS NOT NULL AND btrim(value)<>''
       GROUP BY value ORDER BY n DESC, value LIMIT :top_n
     ),
     tag_counts AS (
       SELECT tag.value, count(*)::int AS n FROM source_rows
       CROSS JOIN LATERAL jsonb_array_elements_text(
-        CASE WHEN jsonb_typeof(content->'tags')='array'
-             THEN content->'tags' ELSE '[]'::jsonb END
+        tags
       ) AS tag(value)
       WHERE btrim(tag.value)<>''
       GROUP BY tag.value ORDER BY n DESC, tag.value LIMIT :top_n
     ),
     company_counts AS (
       SELECT value, count(*)::int AS n FROM (
-        SELECT content->>'company' AS value FROM source_rows
+        SELECT company AS value FROM source_rows
       ) values_ WHERE value IS NOT NULL AND btrim(value)<>''
       GROUP BY value ORDER BY n DESC, value LIMIT :top_n
     ),
@@ -111,15 +118,17 @@ _SOURCE_AGGREGATE_SQL = sa.text(
     ),
     job_type_counts AS (
       SELECT job_type.value, count(*)::int AS n FROM source_rows
-      CROSS JOIN LATERAL jsonb_array_elements_text(
-        COALESCE(job_types, '[]'::jsonb)
-      ) AS job_type(value)
+      CROSS JOIN LATERAL (
+        SELECT value #>> '{}' AS value
+        FROM jsonb_array_elements(job_types_raw) AS item(value)
+        WHERE jsonb_typeof(value)='string'
+      ) AS job_type
       WHERE btrim(job_type.value)<>''
       GROUP BY job_type.value ORDER BY n DESC, job_type.value LIMIT :top_n
     ),
     canton_counts AS (
       SELECT value, count(*)::int AS n FROM (
-        SELECT content->>'canton' AS value FROM source_rows
+        SELECT canton AS value FROM source_rows
       ) values_ WHERE value IS NOT NULL AND btrim(value)<>''
       GROUP BY value ORDER BY n DESC, value LIMIT :top_n
     )
@@ -151,9 +160,9 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                     '{}'::jsonb) AS job_types,
            COALESCE((SELECT jsonb_object_agg(value, n) FROM canton_counts),
                     '{}'::jsonb) AS cantons,
-           (SELECT count(*) FILTER (WHERE content->>'remote'='true')::int
+           (SELECT count(*) FILTER (WHERE remote IS TRUE)::int
             FROM source_rows) AS remote,
-           (SELECT count(*) FILTER (WHERE content->>'remote'='false')::int
+           (SELECT count(*) FILTER (WHERE remote IS FALSE)::int
             FROM source_rows) AS onsite
     FROM source_meta meta
     """
