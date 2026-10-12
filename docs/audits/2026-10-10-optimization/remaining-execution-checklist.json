@@ -1,6 +1,6 @@
 {
-  "observed_at": "2026-10-11T09:14:55+00:00",
-  "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; on a failed gate stop that sequence and leave rollback open",
+  "observed_at": "2026-10-12T20:02:23+00:00",
+  "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
     "portfolio_backend_worktree": "/tmp/reactportfolio-backend-deploy-a292ef4 @ a292ef4b56341e61f6c2778a23b23bb89f807319",
@@ -12,19 +12,21 @@
   "items": [
     {
       "id": 1,
-      "status": "active",
+      "status": "complete",
       "action": "finish the 48-hour Core observation and add the manual sample at or after 20:00 UTC",
-      "gate": "all samples one release/head, 17/17 healthy, alerts empty, native containers RestartCount=0"
+      "gate": "all samples one release/head, 17/17 healthy, alerts empty, native containers RestartCount=0",
+      "evidence": "96 samples from 2026-10-10T19:59:56Z through manual terminal sample 2026-10-12T20:00:23Z; one release/alembic, no probe_failed, no official alerts, native RestartCount=0"
     },
     {
       "id": 2,
-      "status": "pending_time_gate",
+      "status": "complete",
       "action": "re-run all same-day CDC retirement preconditions and stop only core-capture",
-      "runbook": "docs/RETIRADA_SLOT_CDC_PUNTO4.md"
+      "runbook": "docs/RETIRADA_SLOT_CDC_PUNTO4.md",
+      "evidence": "same-day preflight 17/17/17, staging 0, slot active before stop; only core-capture stopped at 2026-10-12T20:02:23Z with exit 0, oom false; native services unchanged; slot retained inactive"
     },
     {
       "id": 3,
-      "status": "pending_after_2",
+      "status": "active",
       "action": "disable exactly the three capture beat entries and prove shadow-project still runs",
       "wait_seconds": 360
     },

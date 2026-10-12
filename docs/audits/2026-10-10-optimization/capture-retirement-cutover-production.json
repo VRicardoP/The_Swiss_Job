@@ -1,0 +1,69 @@
+{
+  "observed_at": "2026-10-12T20:02:23+00:00",
+  "phase": "capture_stopped_slot_retained",
+  "observation": {
+    "rows": 96,
+    "first": "2026-10-10T19:59:56+00:00",
+    "last": "2026-10-12T20:00:23+00:00",
+    "release": "5a1241d",
+    "alembic": "core0053",
+    "authoritative": true,
+    "probe_failed": 0,
+    "ready_failures": 0,
+    "official_alert_samples": 0,
+    "recovery_samples": 12,
+    "recovery_source": "nav_arbeidsplassen",
+    "continuous_green_from": "2026-10-12T16:24:19+00:00",
+    "continuous_green_samples": 8,
+    "stderr_lines": 285,
+    "stderr_classification": "three identical Docker config permission warnings per automatic sample; no probe errors"
+  },
+  "same_day_preflight": {
+    "release_topology": "five services coherent",
+    "native_restart_counts": {
+      "core-api": 0,
+      "core-worker": 0,
+      "core-harvest-worker": 0,
+      "core-ops-worker": 0
+    },
+    "enabled_recent_failure_free": "17|17|17",
+    "official_alerts": [],
+    "pending_staging_rows": 0,
+    "slot_before_stop": {
+      "name": "jobhunt_shadow_r5_rehearsal",
+      "active": true,
+      "retained_wal": "384 bytes"
+    },
+    "capture_flag_before_stop": true,
+    "stale_next_candidates": 0,
+    "hashes": {
+      "scripts/retire_core_capture.py": "bce07410b4f3b0fc1bd35de7affb01cc265b492d5c4725aac902af5c7583bad9",
+      "scripts/check_core_release.py": "2a0e451433f1dec271ea9c0ba226cbdb58607d59b39881f0a905af86b5364b22",
+      "scripts/nas/supervisor_contenedores.sh": "74d65131cb32150ebea4e074c7517cb373225e9a617c2bc91036ec9b754afce5"
+    }
+  },
+  "capture_stop": {
+    "container": "swissjob-core-capture-r5",
+    "image": "swissjob-core:point5-9d6b46e",
+    "finished_at": "2026-10-12T20:02:23.806810932Z",
+    "running": false,
+    "exit_code": 0,
+    "oom_killed": false,
+    "restart_count": 0,
+    "native_services_running": true,
+    "native_services_restarted": false,
+    "slot_after_stop": {
+      "name": "jobhunt_shadow_r5_rehearsal",
+      "active": false,
+      "retained_wal": "1016 bytes"
+    }
+  },
+  "rollback_preserved": [
+    "stopped capture container",
+    "capture image",
+    "replication slot",
+    "live compose",
+    "timestamped backups"
+  ],
+  "next_gate": "disable exactly shadow-check-slot-health, shadow-preview-cycle and shadow-run-cycle via CORE_CAPTURE_ENABLED=false on core-ops-worker; prove shadow-project remains scheduled"
+}
