@@ -1,0 +1,58 @@
+{
+  "observed_at": "2026-10-12T20:11:38+00:00",
+  "phase": "capture_beat_disabled_slot_retained",
+  "tool": {
+    "path": "scripts/retire_core_capture.py",
+    "sha256": "bce07410b4f3b0fc1bd35de7affb01cc265b492d5c4725aac902af5c7583bad9",
+    "remote_hash_match": true
+  },
+  "compose": {
+    "backup": "core.configured.yml.before-capture-20261012T200442Z",
+    "candidate_validated": true,
+    "candidate_promoted": true,
+    "stale_next_candidates": 0
+  },
+  "ops_worker": {
+    "image": "swissjob-core:point5-5a1241d",
+    "started_at": "2026-10-12T20:05:15.235623211Z",
+    "restart_count": 0,
+    "capture_enabled": false,
+    "queue": "core.default,core.notifications",
+    "concurrency": 1,
+    "beat": true
+  },
+  "six_minute_beat_window": {
+    "from": "2026-10-12T20:05:15Z",
+    "through": "2026-10-12T20:11:38Z",
+    "shadow-check-slot-health": 0,
+    "shadow-preview-cycle": 0,
+    "shadow-run-cycle": 0,
+    "shadow-project": 1,
+    "errors": 0
+  },
+  "postcheck": {
+    "healthy": "17/17",
+    "official_alerts": [],
+    "queues": {
+      "core.default": 0,
+      "core.embedding": 0,
+      "core.harvest": 0,
+      "core.matching": 0,
+      "core.notifications": 0
+    },
+    "pending_offers": 0,
+    "pending_profiles": 0,
+    "pending_staging_rows": 0,
+    "slot": {
+      "name": "jobhunt_shadow_r5_rehearsal",
+      "active": false,
+      "retained_wal": "107 kB"
+    }
+  },
+  "capture_container": {
+    "running": false,
+    "exit_code": 0,
+    "oom_killed": false
+  },
+  "next_gate": "dispatch and complete a unique explicit post-stop native round across all 17 enabled scopes before dropping the slot"
+}

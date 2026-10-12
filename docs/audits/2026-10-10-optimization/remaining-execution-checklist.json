@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-12T20:02:23+00:00",
+  "observed_at": "2026-10-12T20:11:38+00:00",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -26,14 +26,16 @@
     },
     {
       "id": 3,
-      "status": "active",
+      "status": "complete",
       "action": "disable exactly the three capture beat entries and prove shadow-project still runs",
-      "wait_seconds": 360
+      "wait_seconds": 360,
+      "evidence": "CORE_CAPTURE_ENABLED=false only on core-ops-worker; six-minute window after 2026-10-12T20:05:15Z: capture beat entries 0/0/0, shadow-project 1, errors 0; 17/17 and all queues zero"
     },
     {
       "id": 4,
-      "status": "pending_after_3",
-      "action": "wait for the 22:10 UTC native round to finish all 17 cursors; require core.harvest=0 and alerts=[]"
+      "status": "active",
+      "action": "dispatch one full native round immediately with an explicit unique post-stop window; require all 17 cursors after dispatch, core.harvest=0 and alerts=[]",
+      "authorization": "user requested a cheap workaround rather than waiting hours; explicit run key preserves idempotency and exercises the same native dispatcher"
     },
     {
       "id": 5,
