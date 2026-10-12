@@ -1,0 +1,41 @@
+{
+  "observed_at": "2026-10-12T22:49:43.438Z",
+  "status": "candidate_predeployment_validation",
+  "frontend_commit": "1bed6c23c9485722d40ebc15bbff235ceb28fe82",
+  "runtime_commit": "07ac81b",
+  "owner_change_preserved": "README.md remains modified and unstaged",
+  "validation": {
+    "lint": "passed",
+    "unit": "46 files, 422 tests passed",
+    "build": "passed in 3.20 s",
+    "e2e": "18 passed in 11.6 s"
+  },
+  "measurement": {
+    "protocol": "HEADLESS=true; 1440x1000; deterministic fixtures; three 120-step drags",
+    "load_ms": 559,
+    "windows_with_content": 12,
+    "javascript_errors": 0,
+    "drag_mean_ms": [
+      25.953435114503815,
+      25.924603174603174,
+      26.44462809917355
+    ],
+    "drag_mean_average_ms": 26.10755546276018,
+    "drag_p95_ms": [
+      33.400000000000546,
+      33.399999999999636,
+      33.400000000001455
+    ],
+    "drag_p95_representative_ms": 33.4,
+    "baseline_mean_ms": 43.25,
+    "baseline_p95_ms": 100.1,
+    "mean_improvement_percent": 39.64,
+    "p95_improvement_percent": 66.63,
+    "artifact": "/tmp/reactportfolio-dashboard-after-local.json"
+  },
+  "discarded_attempts": [
+    "preview absent: ERR_CONNECTION_REFUSED before measurement",
+    "HEADLESS unset: headed drag exceeded 60 seconds; not the documented comparable protocol"
+  ],
+  "final_gate": "repeat after public deployment against the final release"
+}

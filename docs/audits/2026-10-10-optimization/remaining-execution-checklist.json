@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-12T22:36:00+00:00",
+  "observed_at": "2026-10-12T22:50:00+00:00",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -65,7 +65,8 @@
     {
       "id": 8,
       "status": "authorized_pending_order",
-      "action": "publish Portfolio frontend 1bed6c2 to configured remotes/Cloudflare and verify the public asset plus 12-window probe"
+      "action": "publish Portfolio frontend 1bed6c2 to configured remotes/Cloudflare and verify the public asset plus 12-window probe",
+      "predeployment_validation": "lint; 422/422 tests; build 3.20 s; 18/18 E2E; both remotes still a711c26 and target 1bed6c2 is a linear advance"
     },
     {
       "id": 9,
@@ -118,7 +119,8 @@
     {
       "id": 18,
       "status": "pending_after_final_deploys",
-      "action": "repeat production resource sampling, Portfolio scheduled-window measurement, 12-window browser checks and identical frontend performance protocol; report attributable before/after deltas"
+      "action": "repeat production resource sampling, Portfolio scheduled-window measurement, 12-window browser checks and identical frontend performance protocol; report attributable before/after deltas",
+      "candidate_measurement": "12/12 content, 0 JS errors, load 559 ms; drag mean 26.11 ms and p95 33.4 ms versus baseline 43.25/100.1 ms; repeat after deploy"
     }
   ],
   "permission_state": {

@@ -1656,6 +1656,19 @@ el orden de corte y disponer de la publicación frontend autorizada.
   propios; conservar cada duración real; no inferir éxito desde Redis vacío ni
   interrumpir un fragmento sano.
 
+### Checkpoint operativo — 2026-10-12 22:50 UTC
+
+- Frontend Portfolio 1bed6c2 revalidado sin publicar: lint, 422/422 pruebas,
+  build en 3,20 s y 18/18 E2E. Ambas ramas remotas siguen en a711c26 y el
+  README previo del propietario permanece fuera de commits.
+- Medición candidata con el protocolo fijado: 12/12 ventanas con contenido,
+  cero errores JS, carga 559 ms, arrastre medio 26,11 ms/frame y p95 33,4 ms.
+  Frente a 43,25/100,1 ms son mejoras de 39,64 % y 66,63 %. Repetir tras el
+  despliegue público; evidencia portfolio-frontend-candidate-revalidation.json.
+- Se descartan dos intentos sin dato comparable: preview ausente y ejecución
+  headed sin HEADLESS=true. Dedup sigue bajo el observador gestionado; no se
+  adelantó publicación ni despliegue.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
