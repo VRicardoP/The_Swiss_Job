@@ -1,0 +1,83 @@
+{
+  "observed_at": "2026-10-12T21:45:17Z",
+  "release": "f29fd44",
+  "archive": {
+    "local_path": "/tmp/swissjob-core-point5-f29fd44.tar.gz",
+    "remote_path": "/share/Public/swissjob/core-f29fd44.tar.gz",
+    "sha256": "72d5230734eb16ec9278764b38b1c2ca7f829b90808344f6f8426079f99893f6",
+    "size_mib": 454,
+    "transfer_authorized": true,
+    "remote_hash_matches": true
+  },
+  "deployment": {
+    "compose_backup": "core.configured.yml.before-core-f29fd44-20261012T212944Z",
+    "compose_capture_references": 0,
+    "migration": "core0053 already at head",
+    "services": [
+      "swissjob-core-api-r5",
+      "swissjob-core-worker-r5",
+      "swissjob-core-harvest-worker-r5",
+      "swissjob-core-ops-worker-r5"
+    ],
+    "image": "swissjob-core:point5-f29fd44",
+    "all_running": true,
+    "all_restart_count": 0,
+    "api_health": "healthy"
+  },
+  "postdeploy": {
+    "ready": {
+      "status": "ready",
+      "release": "f29fd44",
+      "alembic": "core0053",
+      "authoritative": true
+    },
+    "harvest": {
+      "enabled": 17,
+      "observed": 17,
+      "with_state": 17,
+      "alerts": []
+    },
+    "capture_slot_exists": false,
+    "pending_staging": 0,
+    "delivery": {
+      "delivered": 25408,
+      "dead_total": 0,
+      "oldest_pending_s": 0.0
+    },
+    "final_probe_failures": []
+  },
+  "route_gate": {
+    "status": "failed_performance_gate",
+    "scope_grant_applied": false,
+    "initial_probe": "httpx.ReadTimeout on first aggregate request with a 60 second budget",
+    "arbeitnow_http": {
+      "status_code": 200,
+      "elapsed_ms": 165214.579,
+      "total": 21402,
+      "items": 500,
+      "response_contract_valid": true
+    },
+    "profile": {
+      "fetch_ms": 57883.075,
+      "validate_ms": 12.297,
+      "dump_ms": 15.679,
+      "etag_ms": 30.517,
+      "json_ms": 13.994,
+      "response_bytes": 614676
+    },
+    "explain_analyze": {
+      "execution_ms": 49716.035,
+      "source_rows": 21402,
+      "latest_revision_lateral_loops": 21402,
+      "latest_revision_lateral_total_ms": 27447.213,
+      "shared_hit_blocks": 1953864,
+      "shared_read_blocks": 193645,
+      "root_cause": "latest revision lookup lacks an ordered incarnation/fetched/id index and the materialized CTE carries full offer JSON through every facet scan"
+    },
+    "next_action": "add the missing ordered index, project only bounded aggregate fields, run focused/full tests, rebuild and redeploy before granting harvest:write"
+  },
+  "discarded_observations": [
+    "the first release check ran while the API was still starting and was repeated successfully",
+    "pg_stat_activity queried through a non-statistics role could not expose the Core session and was not used to infer SQL duration"
+  ]
+}

@@ -1584,6 +1584,31 @@ el orden de corte y disponer de la publicación frontend autorizada.
   imagen y continuar con candidato Compose, migración, recreación y sondas.
   Evidencia `core-f29-transfer-preflight.json`.
 
+### Checkpoint operativo — 2026-10-12 21:45 UTC
+
+- La transferencia autorizada y el despliegue Core `f29fd44` están cerrados:
+  SHA-256 remoto idéntico, cuatro servicios sobre la etiqueta inmutable,
+  `running`, cero reinicios y API `healthy`. Readiness publica `f29fd44`,
+  `core0053` y autoridad activa; la sonda final mantiene 17/17, cero alertas,
+  slot ausente, staging cero y entregas drenadas.
+- El gate de rutas permanece abierto y `harvest:write` **no se ha concedido**.
+  Arbeitnow devuelve contrato correcto para 21.402 ofertas, pero tardó 165,2 s
+  y superó el límite de 60 s. El perfilado atribuye 57,9 s al fetch SQL frente
+  a 72 ms combinados de validación, ETag y JSON.
+- `EXPLAIN ANALYZE` confirma la causa: 21.402 búsquedas laterales de la última
+  revisión consumen 27,4 s sin índice ordenado y el CTE materializado arrastra
+  el JSON completo de oferta por todas las facetas (1.953.864 bloques hit y
+  193.645 leídos). Evidencia `core-f29-deployment-production.json`.
+- Siguiente acción exacta: índice `(incarnation_id, fetched_at DESC, id DESC)` y
+  proyección acotada en `source_rows`; ejecutar pruebas focales y completas,
+  construir/desplegar una release inmutable, repetir las nueve fuentes y dedup,
+  y sólo entonces conceder el scope.
+- Metodología vigente: comprobar el estado vivo antes de mutar; medir y aislar
+  cada etapa; aplicar el cambio mínimo que elimina la causa raíz; validar de
+  dentro hacia fuera; mantener los gates de funcionalidad, rendimiento y
+  rollback; registrar evidencia y commit de alcance único sin indexar cambios
+  ajenos. El estado vivo prevalece siempre sobre esta bitácora.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
