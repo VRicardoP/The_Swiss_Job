@@ -1740,6 +1740,16 @@ el orden de corte y disponer de la publicación frontend autorizada.
 - El chequeo horario intermedio volvió a dar 17/17 y alertas de cosecha y
   credenciales vacías; el outbox siguió drenado.
 
+### Checkpoint operativo — 2026-10-13 00:24 UTC
+
+- Décimo fragmento dedup verde: 250 filas, 72 candidatos nuevos y 425,554 s.
+  Acumulado: 2.500 filas, 476 candidatos, diez parciales, cero errores y máximo
+  1.451,184 s. El único lote terminal esperado, de 57 filas, está activo con ID
+  `097b3c62-22fe-4b60-93bf-b2a0f1bea7e0`.
+- Al terminar: recuperar logs desde 22:16:12 UTC, ejecutar el verificador, exigir
+  un único terminal y cinco colas a cero; sólo entonces conceder `harvest:write`
+  y repetir la sonda `--after-grant`.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
