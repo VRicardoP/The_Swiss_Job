@@ -8,11 +8,10 @@ El acta del punto 5 (§10.2) exige tres cosas que este script hace explícitas:
 
 - **≥100 muestras** por recorrido. Con n=20 el p95 ES el máximo y un solo pico
   decide el veredicto.
-- **Frío y caliente separados.** El frío no es un adorno: la caché del recorrido
-  del feed vive EN PROCESO, así que sólo es frío la primera petición tras
-  reiniciar el BFF. Por eso `--frio` sólo tiene sentido justo después de un
-  `docker compose restart backend`; medir sólo en caliente esconde el coste real
-  de la primera carga.
+- **Frío y caliente separados.** El calentador de fondo verifica por versión el
+  recorrido y las facetas. `--frio` mide la primera petición tras reiniciar el
+  BFF; la matriz normal mide el camino que ve el usuario cuando el calentador ya
+  hizo su primera pasada.
 - **Veredicto por escenario**, contra el presupuesto predeclarado y no contra
   una mejora porcentual.
 
@@ -36,27 +35,31 @@ BASE = "http://localhost:8000/api/v1"
 
 # Presupuesto PREDECLARADO (no se renegocia al ver el resultado).
 P95_LECTURA_HABITUAL = 2.0
-UTIL_EN_PANTALLA = 3.0
 
-# `limit=3000` es lo que pide MatchPage en CADA entrada a la pantalla principal:
-# es la lectura habitual, no una exportación. Bajarlo rompería las categorías y
-# sus contadores, la Watchlist, el top score y el recuento de matches >= 70.
+# Contrato actual de MatchPage: al entrar sólo solicita los agregados compactos;
+# tras elegir una categoría pide 50 tarjetas. El antiguo `limit=3000` queda fuera
+# de la interacción normal y sólo se conserva en actas históricas.
 RECORRIDOS = {
-    "pantalla-principal": {
-        "ruta": "/match/results",
-        "params": {"limit": 3000, "offset": 0, "translate": "false"},
-        "presupuesto": UTIL_EN_PANTALLA,
-        "nota": "lectura habitual: el lote completo alimenta 5 agregados",
-    },
-    "pagina-20": {
-        "ruta": "/match/results",
-        "params": {"limit": 20, "offset": 0, "translate": "false"},
+    "facetas": {
+        "ruta": "/match/facets",
+        "params": {},
         "presupuesto": P95_LECTURA_HABITUAL,
-        "nota": "una página de tarjetas",
+        "nota": "agregados y categorías de la entrada a MatchPage",
+    },
+    "categoria-50": {
+        "ruta": "/match/results",
+        "params": {
+            "limit": 50,
+            "offset": 0,
+            "translate": "false",
+            "category": "A",
+        },
+        "presupuesto": P95_LECTURA_HABITUAL,
+        "nota": "primera página de la categoría elegida",
     },
     "guardados": {
         "ruta": "/match/saved",
-        "params": {"limit": 50},
+        "params": {"limit": 50, "translate": "false"},
         "presupuesto": P95_LECTURA_HABITUAL,
         "nota": "estado del usuario, no el feed",
     },
@@ -129,6 +132,12 @@ async def principal() -> int:
         help="una sola muestra, sin calentar: úsalo JUSTO tras reiniciar el BFF",
     )
     parser.add_argument("--recorridos", default=",".join(RECORRIDOS))
+    parser.add_argument(
+        "--categoria",
+        default="A",
+        choices=[*"ABCDEFGHIJKLM", "otros"],
+        help="categoría que se mide en categoria-50 (por defecto A)",
+    )
     parser.add_argument("--json", help="fichero donde volcar el resultado")
     args = parser.parse_args()
 
@@ -138,6 +147,7 @@ async def principal() -> int:
         "Authorization": "Bearer " + create_access_token(uuid.UUID(args.usuario))
     }
     nombres = [n for n in args.recorridos.split(",") if n in RECORRIDOS]
+    RECORRIDOS["categoria-50"]["params"]["category"] = args.categoria
     muestras = 1 if args.frio else args.muestras
 
     filas = []
