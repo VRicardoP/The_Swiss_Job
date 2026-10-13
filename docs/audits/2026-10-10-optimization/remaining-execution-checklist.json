@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T11:49:59Z",
+  "observed_at": "2026-10-13T12:00:00Z",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -159,15 +159,20 @@
     },
     {
       "id": 17,
-      "status": "in_progress",
+      "status": "complete",
       "action": "apply only the verified JobCardExtras presentation extraction; run all repository suites and build release images from clean heads",
-      "checkpoint": "numeric-order gate opened after item 16 production validation"
+      "checkpoint": "numeric-order gate opened after item 16 production validation",
+      "evidence": "ReactPortfolio frontend 49ca7ba; JobSummary/JobDate/JobBadges only; 423/423 tests, lint, build 8.62 s and 18/18 E2E from clean detached worktree; artifact 6,650,151 bytes; README owner change excluded",
+      "record": "portfolio-job-card-extraction-validation.json",
+      "publication": "dry-run fast-forward green for both main remotes; actual push rejected before execution by automatic review, refs remain 1bed6c2",
+      "next_action": "item 18: publish exact 49ca7ba after destination-specific approval, then run final production resource/browser/performance protocol"
     },
     {
       "id": 18,
-      "status": "pending_after_final_deploys",
+      "status": "in_progress",
       "action": "repeat production resource sampling, Portfolio scheduled-window measurement, 12-window browser checks and identical frontend performance protocol; report attributable before/after deltas",
-      "candidate_measurement": "12/12 content, 0 JS errors, load 559 ms; drag mean 26.11 ms and p95 33.4 ms versus baseline 43.25/100.1 ms; repeat after deploy"
+      "candidate_measurement": "12/12 content, 0 JS errors, load 559 ms; drag mean 26.11 ms and p95 33.4 ms versus baseline 43.25/100.1 ms; repeat after deploy",
+      "checkpoint": "all local gates complete; final production measurement waits only for publication of immutable frontend 49ca7ba"
     }
   ],
   "permission_state": {

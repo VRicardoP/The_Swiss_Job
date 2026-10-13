@@ -1,0 +1,39 @@
+{
+  "observed_at": "2026-10-13T12:00:00Z",
+  "frontend_commit": "49ca7bae80ae6e6875845f3992d03b82f93bf6c2",
+  "scope": {
+    "decision": "Extend JobCardExtras only with JobSummary, JobDate and JobBadges.",
+    "files_changed": 6,
+    "insertions": 111,
+    "deletions": 93,
+    "preserved_window_specific": [
+      "titles",
+      "scores",
+      "skills",
+      "actions",
+      "hooks",
+      "tabs",
+      "sorting"
+    ],
+    "owner_change_excluded": "README.md"
+  },
+  "clean_head_validation": {
+    "worktree": "/tmp/reactportfolio-frontend-item17",
+    "lint": "passed",
+    "unit_and_component_tests": "423 passed, 0 failed",
+    "build": "passed in 8.62 s",
+    "e2e": "18 passed, 0 failed in 11.0 s",
+    "artifact_bytes": 6650151,
+    "index_sha256": "1823b99491991e2abce96a664bea2e9fe4c8cc670843b864d2dfad29b7a5dc53",
+    "job_card_asset": "JobCardExtras-NbFkOQD7.js",
+    "job_card_asset_sha256": "3a48f8b5796cd25bb37057f492b98270839e758ec8e4c70b61a7ac5e77310f4e"
+  },
+  "publication": {
+    "github_main_before_and_after": "1bed6c23c9485722d40ebc15bbff235ceb28fe82",
+    "gitlab_main_before_and_after": "1bed6c23c9485722d40ebc15bbff235ceb28fe82",
+    "dry_run": "fast-forward 1bed6c2..49ca7ba on both remotes",
+    "actual_push": "rejected before execution by automatic approval review",
+    "review_reason": "requires explicit approval naming github/main and gitlab/main; general project authorization was not accepted"
+  },
+  "next_action": "After exact approval, push immutable 49ca7ba to github/main and gitlab/main, wait for Cloudflare asset, then execute item 18 final production measurements."
+}
