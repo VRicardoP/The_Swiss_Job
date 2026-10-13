@@ -1,0 +1,142 @@
+{
+  "captured_at": "2026-10-14T01:14:18+02:00",
+  "scope": "DT-144 Phase 0 read-only production revalidation",
+  "mutations": [],
+  "core": {
+    "database": "swissjobhunter_r5_rehearsal",
+    "enabled_scope_count": 17,
+    "enabled_source_count": 16,
+    "all_enabled_consecutive_failures": 0,
+    "scheduler": "00:10, 06:10, 12:10 and 18:10 Europe/Zurich",
+    "jobicy_source_present": false,
+    "jobicy_scope_present": false,
+    "enabled_scopes": {
+      "arbeitnow": ["8a299ac7-700a-4637-8e55-577f21b68f0c"],
+      "euremotejobs": ["d4ce8e1d-71d6-4ab3-ad4b-d8e3a69fc46a"],
+      "financejobs": ["7eac32f6-5a9e-4a9a-a19c-0642b1d51558"],
+      "globaljobs": ["4316fa1e-cd53-4122-9510-b10759767225"],
+      "irishjobs": ["4af2f10e-259d-49d4-8f8d-f9d56cd178ef"],
+      "jobgether": ["32c9fa21-bf17-4bc0-bafd-58c174f1608f"],
+      "jobspresso": ["62984bfa-9241-4349-84bf-fc439d054f26"],
+      "nav_arbeidsplassen": [
+        "48601911-65e2-4357-83a1-dada1ad68237",
+        "6aea217a-a379-49c3-8e8a-5b9a0034d421"
+      ],
+      "ostjob": ["39bedcdc-886a-4690-a82f-7ee8aab5302b"],
+      "publicjobs": ["f15394b1-7e9a-4f5c-85a9-85d02957e208"],
+      "remotive": ["f7d08bd3-7654-463d-abd6-4a0e26101caf"],
+      "thehub": ["4edcf6e7-e5b1-46f7-a244-5c99fa11b759"],
+      "weworkremotely": ["faccefaa-37f4-4647-9dec-3a1f7b26bf5d"],
+      "workingnomads": ["49232928-5e43-4c3a-bb65-c1d1c4fa0e24"],
+      "zebis": ["704c4780-7c09-4ae7-be78-c6078d4b1c63"],
+      "zentraljob": ["ed4339b9-bb52-422c-98bc-594f6d3ae135"]
+    },
+    "last_complete_window_utc": {
+      "first": "2026-10-13T22:10:14.781030+00:00",
+      "last": "2026-10-13T22:39:08.969058+00:00"
+    }
+  },
+  "reactportfolio": {
+    "containers": {
+      "api": "portfolio_backend",
+      "worker": "portfolio_worker",
+      "image": "portfolio-backend:board-444f072"
+    },
+    "scheduler": "daily circadian harvest, defaults 12:00 +/-4h",
+    "legacy_disabled_sources": [
+      "arbeitnow",
+      "irishjobs",
+      "jobgether",
+      "nav",
+      "ostjob",
+      "remotive",
+      "thehub",
+      "weworkremotely",
+      "zentraljob"
+    ],
+    "credential_presence": {
+      "ADZUNA_APP_ID": true,
+      "ADZUNA_APP_KEY": true,
+      "JSEARCH_RAPIDAPI_KEY": true
+    },
+    "active_local_sources": {
+      "adzuna": {"status": "healthy", "entries": 6, "cache_age": "6 hours"},
+      "dynamitejobs": {"status": "healthy", "entries": 300, "cache_age": "6 hours"},
+      "himalayas": {"status": "healthy", "entries": 60, "cache_age": "6 hours"},
+      "ictjobs": {"status": "healthy", "entries": 100, "cache_age": "6 hours"},
+      "jobicy": {"status": "healthy", "entries": 40, "cache_age": "6 hours"},
+      "jobroom": {"status": "healthy", "entries": 300, "cache_age": "6 hours"},
+      "jobscout24": {"status": "healthy", "entries": 187, "cache_age": "6 hours"},
+      "jsearch": {"status": "healthy", "entries": 95, "cache_age": "13 hours"},
+      "remoteok": {"status": "healthy", "entries": 97, "cache_age": "6 hours"},
+      "swissdevjobs": {"status": "healthy", "entries": 155, "cache_age": "6 hours"},
+      "swisstechjobs": {"status": "healthy", "entries": 11, "cache_age": "6 hours"}
+    },
+    "active_local_entries_total": 1351
+  },
+  "swissjob": {
+    "database": "swissjobhunter",
+    "containers": {
+      "api": "swissjob-backend",
+      "worker": "swissjob-worker",
+      "image": "swissjob-backend:point5-4017081"
+    },
+    "scheduler": {
+      "enabled": true,
+      "daily_harvest_enabled": true,
+      "base_hour_europe_zurich": 12,
+      "jitter_hours": 4
+    },
+    "optional_provider_credentials_present": [],
+    "optional_provider_credentials_absent": [
+      "ADZUNA_APP_ID",
+      "ADZUNA_APP_KEY",
+      "CAREERJET_AFFID",
+      "GLASSDOOR_PARTNER_KEY",
+      "INDEED_PARTNER_KEY",
+      "JOBCLOUD_PARTNER_API_KEY",
+      "JOOBLE_API_KEY",
+      "JSEARCH_RAPIDAPI_KEY",
+      "LINKEDIN_PARTNER_TOKEN",
+      "XING_PARTNER_TOKEN"
+    ],
+    "active_provider_sources": ["jobicy", "proz", "remoteco"],
+    "active_scraper_sources": [
+      "gastrojob",
+      "myscience",
+      "schuljobs",
+      "stelle_admin",
+      "swiss_schools_ecolint",
+      "swiss_schools_hautlac",
+      "swiss_schools_inspired",
+      "swiss_schools_isb",
+      "swiss_schools_iscs",
+      "swiss_schools_isp",
+      "swiss_schools_nae",
+      "swiss_schools_zis",
+      "tes"
+    ],
+    "exceptions": {
+      "jobicy": {
+        "last_attempt_utc": "2026-10-13T10:25:16.951307+00:00",
+        "outcome": "ok",
+        "fetched": 69,
+        "stored": 0,
+        "consecutive_unstored": 17
+      },
+      "proz": {"outcome": "error", "consecutive_errors": 46},
+      "remoteco": {"outcome": "error", "consecutive_errors": 54},
+      "schuljobs": {
+        "last_attempt_utc": "2026-10-13T10:28:43.405562+00:00",
+        "outcome": null,
+        "last_success_utc": "2026-08-29T13:44:14.594729+00:00"
+      }
+    }
+  },
+  "conclusion": {
+    "active_local_publisher_instances": 27,
+    "jobicy_active_publishers": ["reactportfolio", "swissjob"],
+    "phase_minus_1_gate_passed": false,
+    "reason": "GitHub main protection with required CI and CODEOWNER review cannot be verified or configured without authenticated administrative access."
+  }
+}

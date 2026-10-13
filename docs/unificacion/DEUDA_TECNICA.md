@@ -75,6 +75,54 @@ continuar sin rediseñarlo.
   repositorios, ejecutar CI sobre los commits de esta fase y sólo entonces
   iniciar la sombra de Jobicy.
 
+### Checkpoint 2026-10-14 · quality gates publicados y Fase 0 revalidada
+
+- Commits publicados en `feat/fase-a-core`: `37a0c6e` restaura los quality
+  gates ejecutables y `7315b5d` satisface el formato que el propio CI exige a
+  `scripts/` y `docs/`. No se han desplegado: son control y pruebas, no una
+  migración de fuente.
+- Se reprodujeron los fallos del commit anterior antes de decidir: formato en
+  ocho ficheros, plantilla/variable ausentes en `compose-config`, creación de
+  `pg_trgm` con el rol mínimo, pruebas que asumían `/app` o `redis-core` en el
+  checkout de CI, URLs Redis heredadas por tests unitarios, centinela SlowAPI
+  contrario a FastAPI 0.141.1 y deriva de Alembic por la tabla histórica
+  `jobhunt_routing`.
+- La solución conserva los seis registros `core_primary` de
+  `jobhunt_routing` como evidencia de rollback y excluye únicamente esa tabla
+  retirada del autogenerate; no se borró ni migró ningún dato productivo.
+- Evidencia local: Ruff y formato, 714 ficheros; guardas Core, 29/29; gate A,
+  1/1; cadena Core desde base vacía, 54 migraciones; suite Core completa antes
+  de la corrección, 1.540 verdes y sólo los ocho fallos corregidos; backend,
+  `alembic upgrade head`, `alembic check` sin operaciones y 1.916 verdes + 4
+  `xfail` previstas; los seis aparentes fallos de la segunda suite Core fueron
+  reproducidos y cerrados 6/6 con el Alembic del entorno que aporta psycopg2.
+  `compose config` pasa para base, dev, prod y core-local.
+- Evidencia productiva saneada:
+  [`2026-10-14-dt144-phase0-snapshot.json`](../audits/2026-10-14-dt144-phase0-snapshot.json).
+  Las consultas fueron de sólo lectura y el fichero no contiene secretos.
+- Revalidación productiva de sólo lectura: Core mantiene 17 scopes habilitados
+  de 16 fuentes, todos con `consecutive_failures=0` y último ciclo correcto el
+  2026-10-13 UTC; Jobicy continúa sin fuente ni scope Core. ReactPortfolio
+  mantiene exactamente 11 productores locales sanos: diez cachés actualizadas
+  hace 6 h y JSearch hace 13 h, con 1.351 entradas totales; sus credenciales de
+  Adzuna y JSearch están presentes y nueve fuentes ya transferidas figuran en
+  `LEGACY_DISABLED_SOURCES`. SwissJob conserva tres providers efectivos
+  (Jobicy, ProZ y RemoteCo) y 13 scrapers; las diez credenciales opcionales de
+  otros providers están ausentes. Su scheduler productivo ejecuta la cadena
+  diaria a las 12:00 Europe/Zurich con ±4 h.
+- La consulta de la base efectiva `swissjobhunter` confirmó Jobicy correcto el
+  2026-10-13 (69 descargadas) pero 17 ciclos consecutivos sin persistencia;
+  ProZ y RemoteCo continúan en error y SchulJobs conserva un intento sin
+  desenlace. Son datos de paridad/bloqueo de Fase 0, no razones para saltarse la
+  puerta ni retirar productores.
+- No cambian propietarios ni estados: 58 fuentes, 16 Core, 26 pendientes, 16
+  retiradas y 27 instancias locales. La puerta de Fase -1 sigue **NO SUPERADA**.
+- CI remoto de `7315b5d`: 9/9 jobs terminados en `success` (`source-ownership`,
+  lint y test de backend/Core/frontend, `compose-config` y `docker-build`).
+- Siguiente paso exacto: con acceso administrativo autenticado,
+  activar/verificar protección de `main` con esos nueve checks y revisión
+  CODEOWNER en ambos repositorios.
+
 **Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
 un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden
 productores, credenciales, conexiones ni persistencia de ofertas locales y las
