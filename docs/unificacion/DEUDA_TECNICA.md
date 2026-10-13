@@ -1772,6 +1772,16 @@ el orden de corte y disponer de la publicación frontend autorizada.
   stdin ya probado, devolvió el JSON anterior y no imprimió credenciales ni
   payloads de ofertas.
 
+### Checkpoint operativo — 2026-10-13 00:36 UTC
+
+- Duodécimo fragmento dedup verde: 250 filas, 70 candidatos nuevos y 500,553 s.
+  Acumulado: 3.000 filas, 579 candidatos, doce parciales, cero errores y máximo
+  1.451,184 s. La decimotercera tarea
+  `5678995f-6441-48b4-9921-5f30b7aa256e` está activa.
+- Según el recuento idéntico quedan 359 filas tras el cursor del duodécimo:
+  previsiblemente un parcial de 250 y un terminal de 109. Verificar por la señal
+  real, sin usar la predicción como gate.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con

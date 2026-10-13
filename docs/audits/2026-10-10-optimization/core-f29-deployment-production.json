@@ -165,7 +165,7 @@
       0
     ],
     "precondition_active_tasks": 0,
-    "status": "twelfth_continuation_active",
+    "status": "thirteenth_continuation_active",
     "scope_grant_applied": false,
     "partial_batches": [
       {
@@ -255,18 +255,26 @@
         "duration_s": 265.67464201396797,
         "continuation_enqueued": true,
         "next_cursor_complete": true
+      },
+      {
+        "task_id": "8e2cf04b-4f5c-43cb-958a-7a4f74d30a20",
+        "scanned": 250,
+        "new_candidates": 70,
+        "duration_s": 500.55264401994646,
+        "continuation_enqueued": true,
+        "next_cursor_complete": true
       }
     ],
-    "active_continuation_task_id": "8e2cf04b-4f5c-43cb-958a-7a4f74d30a20",
-    "scanned_total": 2750,
-    "new_candidates_total": 509,
+    "active_continuation_task_id": "5678995f-6441-48b4-9921-5f30b7aa256e",
+    "scanned_total": 3000,
+    "new_candidates_total": 579,
     "max_fragment_seconds": 1451.1835395360831,
     "errors": 0,
     "resume": "read swissjob-core-ops-worker-r5 logs since 2026-10-12T22:16:12Z; never trigger a second root chain",
     "preflight_eligible": 2557,
     "preflight_expected_batches": 11,
     "preflight_count_disproved_by_chain": true,
-    "actual_batches_at_least": 12,
+    "actual_batches_at_least": 13,
     "count_mismatch_note": "preflight count was not the same set as the frozen keyset query; chain cursor/window remain valid, so observe until complete=true without estimating a terminal batch",
     "same_query_recount": {
       "observed_at": "2026-10-13T00:31:00+00:00",
