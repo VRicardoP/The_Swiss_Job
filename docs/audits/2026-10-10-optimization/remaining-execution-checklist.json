@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T00:29:00+00:00",
+  "observed_at": "2026-10-13T00:31:00+00:00",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -57,7 +57,7 @@
       "validation": "focused 10/10; Core full 1912 passed, 1 skipped in 972.98 s; Ruff and py_compile green",
       "dedup": "11 partials passed; 2750 rows, 509 new candidates; latest 265.675 s and maximum 1451.184 s <1800; twelfth 8e2cf04b-4f5c-43cb-958a-7a4f74d30a20 active; 0 errors",
       "resume_observation": "read ops-worker logs since 2026-10-12T22:16:12Z and run verify_dedup_batch_log.py only after one terminal; do not trigger another root chain",
-      "count_correction": "the 2557 preflight count is disproved by the frozen keyset chain and must not be used for ETA; keep following the same cursor until complete=true"
+      "count_correction": "exact read-only _CORPUS_SQL recount at 00:31 UTC: 3359 total, 609 after the eleventh cursor; likely two more 250 partials and a 109 terminal, but complete=true is the sole closure condition"
     },
     {
       "id": 7,

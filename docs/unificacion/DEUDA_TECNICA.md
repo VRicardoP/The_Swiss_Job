@@ -1761,6 +1761,17 @@ el orden de corte y disponer de la publicación frontend autorizada.
   terminal. La cadena es válida porque ventana y cursor keyset siguen avanzando;
   observar hasta `complete=true`, sin lanzar otra raíz ni inventar un total.
 
+### Checkpoint operativo — 2026-10-13 00:31 UTC
+
+- Recuento read-only con los mismos joins de `_CORPUS_SQL`, la ventana congelada
+  y el cursor del undécimo fragmento: 3.359 filas totales y 609 restantes.
+  Probablemente quedan dos parciales de 250 y un terminal de 109 si el conjunto
+  de revisiones actuales permanece igual; `complete=true` sigue siendo la única
+  condición válida de cierre.
+- El primer intento de sonda no emitió JSON y fue descartado; el segundo usó
+  stdin ya probado, devolvió el JSON anterior y no imprimió credenciales ni
+  payloads de ofertas.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con

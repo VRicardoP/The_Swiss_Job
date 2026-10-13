@@ -267,7 +267,14 @@
     "preflight_expected_batches": 11,
     "preflight_count_disproved_by_chain": true,
     "actual_batches_at_least": 12,
-    "count_mismatch_note": "preflight count was not the same set as the frozen keyset query; chain cursor/window remain valid, so observe until complete=true without estimating a terminal batch"
+    "count_mismatch_note": "preflight count was not the same set as the frozen keyset query; chain cursor/window remain valid, so observe until complete=true without estimating a terminal batch",
+    "same_query_recount": {
+      "observed_at": "2026-10-13T00:31:00+00:00",
+      "total_now": 3359,
+      "remaining_after_eleventh_cursor_now": 609,
+      "method": "read-only count over the exact _CORPUS_SQL joins, frozen half-open window and current keyset cursor",
+      "interpretation": "likely two additional 250 partials plus one terminal of 109 if the current-revision set remains unchanged; complete=true remains the only closure condition"
+    }
   },
   "prepared_next_artifacts": {
     "swissjob_bff": {
