@@ -40,6 +40,7 @@ from services.catalog import (
     CoreCatalog,
     CoreUnavailableError,
 )
+from services.catalog import core_client as catalog_core
 from services.catalog.core_client import clear_catalog_feed_cache
 
 # ---------------------------------------------------------------------------
@@ -566,10 +567,11 @@ async def test_core_search_cache_is_scoped_to_offset_and_limit():
     assert [inm for _, inm in calls] == [None, None]
 
 
-async def test_core_search_reuses_etag_cached_pages():
-    """Refresco barato: la pagina cacheada por ETag se reutiliza con el 304
-    del core (sin cuerpo)."""
+async def test_core_search_reuses_fresh_page_then_revalidates_etag(monkeypatch):
+    """La pagina vigente no toca Core; al caducar se revalida por ETag."""
     sent_inm: list[str | None] = []
+    now = 1000.0
+    monkeypatch.setattr(catalog_core.time, "monotonic", lambda: now)
 
     def handler(request: httpx.Request) -> httpx.Response:
         inm = request.headers.get("if-none-match")
@@ -589,6 +591,9 @@ async def test_core_search_reuses_etag_cached_pages():
     catalog = make_core_catalog(transport=httpx.MockTransport(handler))
     first = await catalog.search(CatalogSearchParams())
     second = await catalog.search(CatalogSearchParams())
+    now += catalog_core._PAGE_FRESH_SECONDS + 1
+    third = await catalog.search(CatalogSearchParams())
     assert first.total == second.total == 1
+    assert third.total == 1
     assert second.data[0].title == CASES["python_zurich"]["title"]
     assert sent_inm == [None, '"v1"']

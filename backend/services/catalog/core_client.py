@@ -6,6 +6,7 @@ Legacy 32-character links resolve through Core listing references.
 """
 
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Callable
@@ -53,11 +54,13 @@ _PAYLOAD_ERRORS = (
     ValidationError,
 )
 
-# Cache de paginas del feed por ETag: clave (filtros, cursor) -> (etag, body).
-# En proceso y acotada (mismo espiritu que la del feed de matching): en el
-# refresco tipico el core responde 304 sin cuerpo y se reutiliza la pagina.
+# Cache de paginas del feed por ETag: clave (filtros, cursor) ->
+# (etag, body, comprobada_en). En proceso y acotada (mismo espiritu que la del
+# feed de matching): durante 60 s se sirve la pagina ya comprobada; despues se
+# revalida y el core puede responder 304 sin cuerpo.
 _ETAG_CACHE_MAX = 512
-_etag_cache: dict[tuple[tuple, str], tuple[str, dict]] = {}
+_PAGE_FRESH_SECONDS = 60
+_etag_cache: dict[tuple, tuple[str, dict, float]] = {}
 
 
 def clear_catalog_feed_cache() -> None:
@@ -241,7 +244,7 @@ def _cache_page(cache_key: tuple, resp: httpx.Response, body: dict) -> None:
         return
     if len(_etag_cache) >= _ETAG_CACHE_MAX:
         _etag_cache.clear()
-    _etag_cache[cache_key] = (etag, body)
+    _etag_cache[cache_key] = (etag, body, time.monotonic())
 
 
 class CoreCatalog:
@@ -399,11 +402,14 @@ class CoreCatalog:
     async def _fetch_page(self, client: httpx.AsyncClient, query: dict) -> dict:
         cache_key = tuple(sorted(query.items()))
         cached = _etag_cache.get(cache_key)
+        if cached and time.monotonic() - cached[2] <= _PAGE_FRESH_SECONDS:
+            return cached[1]
         headers = {"If-None-Match": cached[0]} if cached else {}
         resp = await _request_page(client, query, headers)
         if resp.status_code == 304:
             if cached is None:  # defensivo: 304 sin haber mandado If-None-Match
                 raise CoreUnavailableError("core /v1 devolvio 304 sin cache previa")
+            _etag_cache[cache_key] = (cached[0], cached[1], time.monotonic())
             return cached[1]
         body = _parse_page_body(resp)
         _cache_page(cache_key, resp, body)
