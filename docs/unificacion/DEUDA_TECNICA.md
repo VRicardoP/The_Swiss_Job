@@ -1731,6 +1731,15 @@ el orden de corte y disponer de la publicación frontend autorizada.
   1.451,184 s. La novena tarea `e824fe4c-c950-4ee6-9b90-f1d71d0d82e0`
   está activa; quedan tres fragmentos contando el actual.
 
+### Checkpoint operativo — 2026-10-13 00:16 UTC
+
+- Noveno fragmento dedup verde: 250 filas, 42 candidatos nuevos y 338,439 s.
+  Acumulado: 2.250 filas, 404 candidatos, nueve parciales, cero errores y máximo
+  1.451,184 s. La décima tarea `e29bc07a-ebe8-43fa-bd51-3bb2021381da`
+  está activa; después sólo queda el lote terminal de 57 filas previsto.
+- El chequeo horario intermedio volvió a dar 17/17 y alertas de cosecha y
+  credenciales vacías; el outbox siguió drenado.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
