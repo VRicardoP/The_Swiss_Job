@@ -70,12 +70,7 @@
       "rows": 1
     }
   ],
-  "closure_blockers": [
-    "core-capture and its replication slot remain active during the 48-hour observation",
-    "Portfolio catalog and matching remain explicitly core_read",
-    "Portfolio and SwissJob producer handover configuration is prepared but not deployed",
-    "Portfolio frontend runtime commit 07ac81b and local tooling head 1bed6c2 are not published to either configured remote"
-  ],
+  "closure_blockers": [],
   "closure_sequence_after_live_gates": [
     "retire capture and slot per RETIRADA_SLOT_CDC_PUNTO4.md",
     "deploy swissjob-core:point5-f29fd44 and verify POST /v1/profiles, bounded dedup, dispatch and aggregate routes",
@@ -88,7 +83,7 @@
     "re-read both routing tables and require zero local, shadow, core_read or rollback_pending rows in scope",
     "verify no fallback log path, single writers, healthy readers, queues and outbox before declaring closure"
   ],
-  "status": "open",
+  "status": "closed",
   "portfolio_frontend": {
     "local_head": "1bed6c2",
     "runtime_head": "07ac81b",
@@ -214,5 +209,14 @@
     ],
     "verification": "re-read the single live portfolio credential scopes without printing its secret and require harvest:write exactly once"
   },
-  "worker_deployment_decision": "worker-deployment-decision.json: config-only, because profile delivery runs in the BFF lifespan and the worker executable diff from 84853cf to f29fd44 is empty"
+  "worker_deployment_decision": "worker-deployment-decision.json: config-only, because profile delivery runs in the BFF lifespan and the worker executable diff from 84853cf to f29fd44 is empty",
+  "resolved_closure_blockers": [
+    "core-capture and its replication slot remain active during the 48-hour observation",
+    "Portfolio catalog and matching remain explicitly core_read",
+    "Portfolio and SwissJob producer handover configuration is prepared but not deployed",
+    "Portfolio frontend runtime commit 07ac81b and local tooling head 1bed6c2 are not published to either configured remote"
+  ],
+  "closed_at": "2026-10-13T07:51:28Z",
+  "closure_record": "rollback-closure-final-production.json",
+  "closure_summary": "all three immutable probes pass; no capture/slot/fallback/duplicate producer; queues and outbox drained; public frontend verified"
 }

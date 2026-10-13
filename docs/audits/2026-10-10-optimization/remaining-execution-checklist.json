@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T07:46:10Z",
+  "observed_at": "2026-10-13T07:51:28Z",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -113,12 +113,15 @@
     },
     {
       "id": 12,
-      "status": "ready_to_execute",
-      "action": "record formal rollback closure only if capture/slot absent, all functional probes pass, outbox/queues drain, no fallback signals and no duplicate producers"
+      "status": "complete",
+      "action": "record formal rollback closure only if capture/slot absent, all functional probes pass, outbox/queues drain, no fallback signals and no duplicate producers",
+      "evidence": "capture container count 0 and slot absent; all three immutable probes failures=[]; five queues and integration delivery drained; eight relevant containers running with restart 0; fallback signals 0/0 since final deployments; catalog 200 core_plus_local without fallback; matching core_primary feed available with 1800 results; exact producer policies prove single writer",
+      "record": "rollback-closure-final-production.json",
+      "next_action": "item 13: extract native Core recovery, erasure, delivery health and nDCG from shadow-project dependencies, preserving behavior and running focused plus full Core suites"
     },
     {
       "id": 13,
-      "status": "pending_after_12",
+      "status": "ready_to_execute",
       "action": "extract native Core recovery, erasure, outbox health and nDCG per core-native-extraction-plan.json; run focused and full Core suites"
     },
     {
@@ -128,13 +131,13 @@
     },
     {
       "id": 15,
-      "status": "pending_after_12",
+      "status": "authorized_pending_numeric_order",
       "action": "replace Portfolio transferred-source routers with the common Core adapter, remove 25 modules plus nine normalizer classes, fix routing consumers and preserve notification gates/exclusive-source runtime",
       "plan": "portfolio-compatibility-adapter-plan.json"
     },
     {
       "id": 16,
-      "status": "pending_after_12",
+      "status": "authorized_pending_numeric_order",
       "action": "remove SwissJob transferred producers and local Core-owned engines, simplify every routing consumer, and preserve applications/profiles, MatchResult overlay, feedback, watchlist health and notification gates",
       "plan": "swissjob-producer-retirement-plan.json"
     },

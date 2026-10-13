@@ -1,0 +1,70 @@
+{
+  "observed_at": "2026-10-13T07:51:28Z",
+  "status": "closed",
+  "decision": "rollback formally closed; cleanup and historical code retirement may begin in checklist order",
+  "core": {
+    "release": "19efe49",
+    "alembic": "core0054",
+    "authoritative": true,
+    "harvest_enabled": 17,
+    "harvest_observed": 17,
+    "harvest_with_state": 17,
+    "harvest_alerts": [],
+    "capture_containers": 0,
+    "capture_slot_exists": false,
+    "pending_staging": 0,
+    "delivery_dead": 0,
+    "delivery_oldest_pending_s": 0.0,
+    "queue_lengths": {
+      "core.default": 0,
+      "core.embedding": 0,
+      "core.harvest": 0,
+      "core.matching": 0,
+      "core.notifications": 0
+    }
+  },
+  "routing": {
+    "portfolio_all_six_effective_modes": "core_primary",
+    "portfolio_overrides": 0,
+    "swissjob_wildcards": "core_primary",
+    "swissjob_matching_active_profiles_core_primary": "2/2",
+    "swissjob_in_scope_non_primary_rows": 0
+  },
+  "single_writer": {
+    "core_transferred_sources": "17/17 healthy",
+    "swissjob_disabled_providers": 14,
+    "swissjob_disabled_scrapers": 2,
+    "portfolio_disabled_sources": 9,
+    "portfolio_retained_sources": 11,
+    "cdc_projection_writer": "absent"
+  },
+  "runtime": {
+    "relevant_services": 8,
+    "all_running": true,
+    "all_restart_count": 0,
+    "portfolio_catalog": {
+      "status_code": 200,
+      "items": 5,
+      "metadata_source": "core_plus_local",
+      "local_fallback": false
+    },
+    "portfolio_matching": {
+      "mode": "core_primary",
+      "feed_available": true,
+      "results": 1800,
+      "local_fallback": false
+    },
+    "portfolio_fallback_signals_since_deploy": 0,
+    "swissjob_fallback_signals_since_deploy": 0
+  },
+  "functional": {
+    "core_probe_failures": [],
+    "swissjob_probe_failures": [],
+    "portfolio_probe_failures": [],
+    "frontend_commit": "1bed6c23c9485722d40ebc15bbff235ceb28fe82",
+    "frontend_asset": "/assets/index-V0q6T-Bl.js",
+    "frontend_windows_with_content": "12/12",
+    "frontend_javascript_errors": 0
+  },
+  "preserved_until_following_gates": "rollback images, backups, migrations and historical tables remain available until their specific cleanup/deploy verification; formal closure authorizes code-path removal but is not itself physical deletion"
+}

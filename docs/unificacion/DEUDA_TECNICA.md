@@ -1947,6 +1947,25 @@ el orden de corte y disponer de la publicación frontend autorizada.
   mismas sondas post-cambio y evidencia estrecha. El punto 12 debe cerrar
   formalmente rollback sólo tras una última auditoría conjunta del estado vivo.
 
+### Checkpoint operativo — 2026-10-13 07:51 UTC
+
+- Punto 12 y rollback formal cerrados. `core-capture` y el slot están ausentes;
+  las cinco colas, staging y outbox están drenados; los ocho servicios relevantes
+  ejecutan las releases previstas con cero reinicios, y las tres sondas finales
+  devuelven `failures=[]`.
+- Desde los despliegues finales hay cero señales específicas de fallback en
+  Portfolio y SwissJob. El catálogo real respondió 200, cinco elementos y
+  `core_plus_local` sin fallback; matching resolvió `core_primary` y obtuvo el
+  feed persistente de 1.800 resultados sin suplantar usuarios.
+- El single-writer queda cerrado: Core 17/17, SwissJob omite 14 proveedores y dos
+  scrapers, Portfolio omite nueve y conserva once, todas las capacidades dentro
+  del alcance son autoritativas y no existe consumidor CDC de proyección.
+- Las imágenes, respaldos, migraciones y tablas históricas se conservan hasta
+  superar sus gates de retirada física. Metodología siguiente: extraer primero
+  las cuatro dependencias nativas de Core con pruebas, desplegar/verificar y sólo
+  entonces borrar runtime/config/herramientas shadow y el rol capture; después
+  continuar con Portfolio, SwissJob y frontend en orden numérico.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
