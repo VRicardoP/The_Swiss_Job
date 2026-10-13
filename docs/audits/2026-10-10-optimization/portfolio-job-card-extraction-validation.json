@@ -29,11 +29,14 @@
     "job_card_asset_sha256": "3a48f8b5796cd25bb37057f492b98270839e758ec8e4c70b61a7ac5e77310f4e"
   },
   "publication": {
-    "github_main_before_and_after": "1bed6c23c9485722d40ebc15bbff235ceb28fe82",
-    "gitlab_main_before_and_after": "1bed6c23c9485722d40ebc15bbff235ceb28fe82",
-    "dry_run": "fast-forward 1bed6c2..49ca7ba on both remotes",
-    "actual_push": "rejected before execution by automatic approval review",
-    "review_reason": "requires explicit approval naming github/main and gitlab/main; general project authorization was not accepted"
+    "github_main_before": "1bed6c23c9485722d40ebc15bbff235ceb28fe82",
+    "github_main_after": "49ca7bae80ae6e6875845f3992d03b82f93bf6c2",
+    "gitlab_main_before": "1bed6c23c9485722d40ebc15bbff235ceb28fe82",
+    "gitlab_main_after": "49ca7bae80ae6e6875845f3992d03b82f93bf6c2",
+    "actual_push": "completed after destination-specific authorization",
+    "github_ci": "completed/success, run 38406372899",
+    "cloudflare_asset": "/assets/index-DmwHqaRA.js",
+    "job_card_asset": "/assets/JobCardExtras-C_UhG9nf.js"
   },
-  "next_action": "After exact approval, push immutable 49ca7ba to github/main and gitlab/main, wait for Cloudflare asset, then execute item 18 final production measurements."
+  "next_action": "Completed by item 18 production browser, resource and live-runtime validation."
 }

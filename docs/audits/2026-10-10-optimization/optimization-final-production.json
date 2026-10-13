@@ -1,0 +1,516 @@
+{
+  "checklist": "18/18 complete",
+  "frontend_measurement": {
+    "combined": {
+      "baseline_mean_ms": 43.25,
+      "baseline_p95_ms": 100.1,
+      "delta_vs_previous_public_mean_percent": 8.89,
+      "delta_vs_previous_public_p95_percent": 49.7,
+      "drag_mean_ms_across_six": 31.12,
+      "drag_p95_worst_ms": 50,
+      "javascript_errors": 0,
+      "load_ms": [
+        1003,
+        968
+      ],
+      "mean_improvement_percent": 28.05,
+      "p95_improvement_percent": 50.05,
+      "previous_public_mean_ms": 28.579,
+      "previous_public_p95_ms": 33.4,
+      "windows_with_content": "12/12 in both runs"
+    },
+    "protocol": "HEADLESS=true; 1440x1000; deterministic fixtures; public HTTPS; two retained executions of three 120-step drags",
+    "runs": [
+      {
+        "at": "2026-10-13T13:39:00.575Z",
+        "drag_mean_average_ms": 31.755,
+        "drag_means_ms": [
+          30.214,
+          33.097,
+          31.954
+        ],
+        "drag_p95_max_ms": 50,
+        "drag_p95_ms": [
+          33.4,
+          50,
+          33.4
+        ],
+        "javascript_errors": 0,
+        "load_ms": 1003,
+        "record": "portfolio-frontend-public-final.json",
+        "windows_total": 12,
+        "windows_with_content": 12
+      },
+      {
+        "at": "2026-10-13T13:39:48.522Z",
+        "drag_mean_average_ms": 30.485,
+        "drag_means_ms": [
+          28.402,
+          29.584,
+          33.467
+        ],
+        "drag_p95_max_ms": 50,
+        "drag_p95_ms": [
+          33.4,
+          33.4,
+          50
+        ],
+        "javascript_errors": 0,
+        "load_ms": 968,
+        "record": "portfolio-frontend-public-final-recheck.json",
+        "windows_total": 12,
+        "windows_with_content": 12
+      }
+    ]
+  },
+  "frontend_publication": {
+    "asset": {
+      "bytes": 233429,
+      "path": "/assets/index-DmwHqaRA.js",
+      "sha256": "915634f6265075311e9d2ac915a61d47db9bfa66e640ff0b2e9ef3864fcc4da1"
+    },
+    "combined_main_and_job_card_bytes": {
+      "after": 237261,
+      "before": 236762,
+      "delta_bytes": 499
+    },
+    "github_ci": {
+      "conclusion": "success",
+      "run_id": 38406372899,
+      "status": "completed",
+      "url": "https://github.com/VRicardoP/ReactPortfolio/actions/runs/38406372899"
+    },
+    "job_card_chunk": {
+      "bytes": 3832,
+      "path": "/assets/JobCardExtras-C_UhG9nf.js",
+      "sha256": "30572fcaa5432f8483207f33ef11e502176c41a635dbf6fb4555b9d177ce8476"
+    },
+    "previous_asset": {
+      "bytes": 233782,
+      "job_card_chunk": "/assets/JobCardExtras-DF1AzurD.js",
+      "job_card_chunk_bytes": 2980,
+      "path": "/assets/index-V0q6T-Bl.js"
+    },
+    "site": "https://vicentepau.is-a.dev"
+  },
+  "interpretation_and_limits": [
+    "The idle comparison uses the same eight retained containers and excludes capture memory from the baseline.",
+    "The controlled one-versus-two encoder probe is the causal model-memory measurement; per-container idle shifts are not all causal.",
+    "The final scheduled workload kept calculation and matching but neutralized email delivery and ledger writes; those excluded effects make duration asymmetric with the natural baseline.",
+    "The public deterministic browser protocol proves rendering, content and interaction independently of external API variability; current Core, SwissJob and Portfolio runtime contracts are covered by the separate live probes.",
+    "The final public drag remains materially faster than the original 43.25/100.1 ms baseline, while it is 8.89% slower in mean and 49.70% higher in worst p95 than the earlier 1bed6c2 public sample; both final runs are retained and no sample was discarded.",
+    "JobCardExtras improves code cohesion; it increases the combined main plus shared chunk by 499 bytes, so no transfer-size saving is claimed."
+  ],
+  "observed_at": "2026-10-13T13:49:01Z",
+  "production_gates": {
+    "all_oom_killed_false": true,
+    "all_restart_count_zero": true,
+    "all_running": true,
+    "core_queues": {
+      "core.default": 0,
+      "core.embedding": 0,
+      "core.harvest": 0,
+      "core.matching": 0,
+      "core.notifications": 0
+    },
+    "live_probes": {
+      "core": {
+        "capture_slot_exists": false,
+        "delivery": {
+          "by_state": {
+            "delivered": 25375
+          },
+          "dead_total": 0,
+          "oldest_pending_s": 0.0
+        },
+        "failures": [],
+        "harvest": {
+          "alerts": [],
+          "enabled": 17,
+          "observed": 17,
+          "with_state": 17
+        },
+        "pending_staging": 0,
+        "ready": {
+          "alembic": "core0054",
+          "authoritative": true,
+          "release": "3ed6462",
+          "status": "ready"
+        }
+      },
+      "portfolio": {
+        "background_schedulers_enabled": true,
+        "disabled_sources": [
+          "arbeitnow",
+          "irishjobs",
+          "jobgether",
+          "nav",
+          "ostjob",
+          "remotive",
+          "thehub",
+          "weworkremotely",
+          "zentraljob"
+        ],
+        "failures": [],
+        "owned_sources": [
+          "adzuna",
+          "dynamitejobs",
+          "himalayas",
+          "ictjobs",
+          "jobicy",
+          "jobroom",
+          "jobscout24",
+          "jsearch",
+          "remoteok",
+          "swissdevjobs",
+          "swisstechjobs"
+        ],
+        "registered_sources": [
+          "adzuna",
+          "dynamitejobs",
+          "himalayas",
+          "ictjobs",
+          "jobicy",
+          "jobroom",
+          "jobscout24",
+          "jsearch",
+          "remoteok",
+          "swissdevjobs",
+          "swisstechjobs"
+        ],
+        "routing_modes": {
+          "applications": [
+            "core_primary"
+          ],
+          "catalog": [
+            "core_primary"
+          ],
+          "documents": [
+            "core_primary"
+          ],
+          "matching": [
+            "core_primary"
+          ],
+          "saved_searches": [
+            "core_primary"
+          ],
+          "schools": [
+            "core_primary"
+          ]
+        }
+      },
+      "swissjob": {
+        "active_snapshot_errors": 0,
+        "active_users": 2,
+        "authorities": {
+          "applications": "services.applications.local.LocalApplications",
+          "catalog": "services.catalog.core_client.CoreCatalog",
+          "documents": "services.documents.core_client.CoreDocuments",
+          "matching": "services.matching.core_client.CoreMatching",
+          "profiles": "services.profiles.local.LocalProfile",
+          "schools": "services.schools.core_client.CoreSchools"
+        },
+        "failures": [],
+        "linked_active_users": 2,
+        "pending_snapshots": 0,
+        "providers": [
+          "adzuna",
+          "careerjet",
+          "glassdoor_partner",
+          "indeed_partner",
+          "jobcloud_partner",
+          "jobicy",
+          "jooble",
+          "jsearch",
+          "linkedin_authorized",
+          "proz",
+          "remoteco",
+          "xing_partner"
+        ],
+        "retired_environment_present": [],
+        "retired_modules_present": [],
+        "school_scrapers": [
+          "swiss_schools_ecolint",
+          "swiss_schools_hautlac",
+          "swiss_schools_inspired",
+          "swiss_schools_isb",
+          "swiss_schools_iscs",
+          "swiss_schools_isp",
+          "swiss_schools_nae",
+          "swiss_schools_zis"
+        ],
+        "scrapers": [
+          "gastrojob",
+          "myscience",
+          "schuljobs",
+          "stelle_admin",
+          "swiss_schools_ecolint",
+          "swiss_schools_hautlac",
+          "swiss_schools_inspired",
+          "swiss_schools_isb",
+          "swiss_schools_iscs",
+          "swiss_schools_isp",
+          "swiss_schools_nae",
+          "swiss_schools_zis",
+          "tes"
+        ]
+      }
+    },
+    "relevant_containers": 8,
+    "temporary_item16_resources_removed": true,
+    "temporary_report_runner_removed": true
+  },
+  "releases": {
+    "core": {
+      "alembic": "core0054",
+      "image": "swissjob-core:point5-3ed6462",
+      "release": "3ed6462"
+    },
+    "portfolio_backend": {
+      "commit": "8a5a323",
+      "image": "portfolio-backend:board-8a5a323"
+    },
+    "portfolio_frontend": {
+      "commit": "49ca7bae80ae6e6875845f3992d03b82f93bf6c2",
+      "github_main": "49ca7bae80ae6e6875845f3992d03b82f93bf6c2",
+      "gitlab_main": "49ca7bae80ae6e6875845f3992d03b82f93bf6c2"
+    },
+    "swissjob": {
+      "bff_image": "swissjob-backend:point5-d54b2ec",
+      "deployed_artifact": "d54b2ec",
+      "integrated_commits": [
+        "42ecf96",
+        "8acb043"
+      ],
+      "worker_image": "swissjob-worker:point5-d54b2ec"
+    }
+  },
+  "requirements": {
+    "core_aggregates_categories_and_parity": {
+      "aggregate_contracts": "nine production sources; ETag 304; safe unknown source; 50/50 integration tests",
+      "evidence": [
+        "source-aggregate-validation.json",
+        "facet-transfer-production.json",
+        "facet-sql-optimization-production.json",
+        "swissjob-facets-deployment-production.json"
+      ],
+      "facet_totals_vs_full_feed": [
+        {
+          "equal": true,
+          "facet_total": 1800,
+          "full_feed_items": 1800
+        },
+        {
+          "equal": true,
+          "facet_total": 1799,
+          "full_feed_items": 1799
+        }
+      ],
+      "flag_was_enabled_in_authoritative_release": "authority-readiness-production.json",
+      "sql_improvement_percent": {
+        "category_page_execution": 53.48,
+        "facets_execution": 91.48
+      },
+      "status": "proven_then_flag_retired_after_formal_closure"
+    },
+    "healthy_sources_and_capture_retirement": {
+      "alerts": [],
+      "capture_container_present": false,
+      "capture_slot_exists": false,
+      "evidence": [
+        "capture-retirement-finalization-production.json",
+        "final-live-probes-production.json"
+      ],
+      "pending_staging": 0,
+      "sources": "17/17 with state",
+      "status": "proven_current"
+    },
+    "historical_runtime_cleanup": {
+      "core_shadow_runtime_removed": true,
+      "evidence": [
+        "core-shadow-runtime-removal-production.json",
+        "swissjob-runtime-retirement-production.json",
+        "portfolio-job-card-extraction-validation.json"
+      ],
+      "portfolio_shared_presentation_commit": "49ca7ba",
+      "status": "proven_current",
+      "swissjob_image_reduction_percent": 59.43,
+      "swissjob_removed_lines": 23454,
+      "swissjob_retired_environment_present": [],
+      "swissjob_retired_modules_present": []
+    },
+    "rollback_closure": {
+      "evidence": "rollback-closure-final-production.json",
+      "status": "formally_closed_before_cleanup"
+    },
+    "single_bi_encoder_and_limits": {
+      "controlled_memory_saving_mib": 605.64,
+      "controlled_memory_saving_percent": 43.08,
+      "convergence": "545 pending offers drained in three batches of 200/200/145; maximum 842.20 s below 1800 s soft limit",
+      "evidence": [
+        "container-resource-baseline-production.json",
+        "post-harvest-embedding-convergence-production.json"
+      ],
+      "live_worker_command": "core.embedding,core.matching --concurrency=1",
+      "other_core_worker_concurrency": 1,
+      "status": "proven"
+    },
+    "single_writer_harvest_per_tenant": {
+      "evidence": [
+        "portfolio-core-adapter-production.json",
+        "swissjob-runtime-retirement-production.json",
+        "final-live-probes-production.json"
+      ],
+      "portfolio_disabled_transferred": 9,
+      "portfolio_retained_owned": 11,
+      "routing_modes": {
+        "applications": [
+          "core_primary"
+        ],
+        "catalog": [
+          "core_primary"
+        ],
+        "documents": [
+          "core_primary"
+        ],
+        "matching": [
+          "core_primary"
+        ],
+        "saved_searches": [
+          "core_primary"
+        ],
+        "schools": [
+          "core_primary"
+        ]
+      },
+      "status": "proven_current",
+      "swissjob_providers": 12,
+      "swissjob_school_scrapers": 8,
+      "swissjob_scrapers": 13
+    }
+  },
+  "resource_results": {
+    "idle_comparable": {
+      "after_mib": 2381.29,
+      "before_mib": 2648.1,
+      "containers": {
+        "portfolio_backend": {
+          "after_mib": 84.0,
+          "before_mib": 164.6,
+          "delta_mib": -80.6,
+          "delta_percent": -48.97
+        },
+        "portfolio_worker": {
+          "after_mib": 351.3,
+          "before_mib": 147.7,
+          "delta_mib": 203.6,
+          "delta_percent": 137.85
+        },
+        "swissjob-backend": {
+          "after_mib": 364.2,
+          "before_mib": 860.5,
+          "delta_mib": -496.3,
+          "delta_percent": -57.68
+        },
+        "swissjob-core-api-r5": {
+          "after_mib": 149.7,
+          "before_mib": 112.8,
+          "delta_mib": 36.9,
+          "delta_percent": 32.71
+        },
+        "swissjob-core-harvest-worker-r5": {
+          "after_mib": 433.5,
+          "before_mib": 350.2,
+          "delta_mib": 83.3,
+          "delta_percent": 23.79
+        },
+        "swissjob-core-ops-worker-r5": {
+          "after_mib": 83.79,
+          "before_mib": 139.0,
+          "delta_mib": -55.21,
+          "delta_percent": -39.72
+        },
+        "swissjob-core-worker-r5": {
+          "after_mib": 747.1,
+          "before_mib": 610.3,
+          "delta_mib": 136.8,
+          "delta_percent": 22.42
+        },
+        "swissjob-worker": {
+          "after_mib": 167.7,
+          "before_mib": 263.0,
+          "delta_mib": -95.3,
+          "delta_percent": -36.24
+        }
+      },
+      "delta_mib": -266.81,
+      "delta_percent": -10.08,
+      "interpretation": "Three point-in-time medians; per-container workload shifts are not treated as causal. The controlled encoder probe remains the causal model-memory result.",
+      "rule": "same eight retained containers; baseline capture memory excluded before comparison"
+    },
+    "scheduled_workload": {
+      "duration_delta": {
+        "percent": -95.43,
+        "seconds": -3499.676
+      },
+      "memory_delta": {
+        "max": {
+          "mib": -319.4,
+          "percent": -40.71
+        },
+        "median": {
+          "mib": -278.45,
+          "percent": -38.55
+        },
+        "p95_nearest_rank": {
+          "mib": -313.8,
+          "percent": -40.28
+        }
+      },
+      "summary": {
+        "cpu_percent": {
+          "max": 54.07,
+          "median": 0.255,
+          "min": 0.17,
+          "p95_nearest_rank": 54.07
+        },
+        "memory_mib": {
+          "max": 465.2,
+          "median": 443.95,
+          "min": 368.0,
+          "p95_nearest_rank": 465.2
+        },
+        "pids": {
+          "max": 18,
+          "median": 18,
+          "min": 16
+        }
+      },
+      "workload": {
+        "delivery_neutralized": true,
+        "digest_jobs": 1674,
+        "duration_seconds": 167.499,
+        "ledger_writes_neutralized": true,
+        "record_calls": 1,
+        "record_candidates": 8,
+        "returned": false,
+        "school_jobs": 0
+      }
+    }
+  },
+  "status": "complete",
+  "validation": {
+    "core_full_suites": [
+      "1924 passed, 1 skipped before historical cleanup",
+      "1547 passed, 1 skipped after historical cleanup"
+    ],
+    "current_live_probe_failures": {
+      "core": [],
+      "portfolio": [],
+      "swissjob": []
+    },
+    "portfolio_backend_full_suite": "2128 passed, 1 skipped",
+    "portfolio_frontend": "423 passed; lint; build; 18/18 E2E from clean 49ca7ba",
+    "swissjob_full_suite": "1912 passed, 4 xfailed, 0 failed"
+  }
+}

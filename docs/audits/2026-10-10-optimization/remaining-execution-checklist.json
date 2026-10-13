@@ -1,11 +1,11 @@
 {
-  "observed_at": "2026-10-13T12:00:00Z",
+  "observed_at": "2026-10-13T13:49:01Z",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
     "portfolio_backend_worktree": "/tmp/reactportfolio-backend-deploy-a292ef4 @ a292ef4b56341e61f6c2778a23b23bb89f807319",
-    "portfolio_frontend": "1bed6c23c9485722d40ebc15bbff235ceb28fe82 (runtime 07ac81b)",
-    "live_core": "19efe49 / core0054 / four native services; capture and slot absent",
+    "portfolio_frontend": "49ca7bae80ae6e6875845f3992d03b82f93bf6c2 published to GitHub/GitLab main; Cloudflare /assets/index-DmwHqaRA.js",
+    "live_core": "3ed6462 / core0054 / four native services; capture and slot absent",
     "cut_not_before": "2026-10-12T20:00:00Z",
     "first_post_stop_native_round": "2026-10-12T22:10:00Z"
   },
@@ -164,20 +164,30 @@
       "checkpoint": "numeric-order gate opened after item 16 production validation",
       "evidence": "ReactPortfolio frontend 49ca7ba; JobSummary/JobDate/JobBadges only; 423/423 tests, lint, build 8.62 s and 18/18 E2E from clean detached worktree; artifact 6,650,151 bytes; README owner change excluded",
       "record": "portfolio-job-card-extraction-validation.json",
-      "publication": "dry-run fast-forward green for both main remotes; actual push rejected before execution by automatic review, refs remain 1bed6c2",
-      "next_action": "item 18: publish exact 49ca7ba after destination-specific approval, then run final production resource/browser/performance protocol"
+      "publication": "GitHub main and GitLab main exact 49ca7ba; GitHub CI success; Cloudflare /assets/index-DmwHqaRA.js with /assets/JobCardExtras-C_UhG9nf.js",
+      "next_action": "item 18 completed"
     },
     {
       "id": 18,
-      "status": "in_progress",
+      "status": "complete",
       "action": "repeat production resource sampling, Portfolio scheduled-window measurement, 12-window browser checks and identical frontend performance protocol; report attributable before/after deltas",
       "candidate_measurement": "12/12 content, 0 JS errors, load 559 ms; drag mean 26.11 ms and p95 33.4 ms versus baseline 43.25/100.1 ms; repeat after deploy",
-      "checkpoint": "all local gates complete; final production measurement waits only for publication of immutable frontend 49ca7ba",
+      "checkpoint": "all final production resource, scheduled-workload, live-runtime and browser gates complete",
       "resource_checkpoint": "final idle protocol complete: same eight retained containers 2648.10 -> 2381.29 MiB median sum (-266.81 MiB, -10.08%); SwissJob BFF 860.5 -> 364.2 MiB (-57.68%); SwissJob worker 263.0 -> 167.7 MiB (-36.24%)",
       "resource_record": "container-resource-final-production.json",
-      "next_action": "publish exact 49ca7ba after destination-specific approval; verify Cloudflare; repeat public 12-window/drag protocol, then report final deltas and close",
       "scheduled_workload_checkpoint": "safe equivalent run complete with delivery and ledger writes neutralized: duration 3667.175 -> 167.499 s (-95.43%); worker median memory 722.4 -> 443.95 MiB (-38.55%); maximum 784.6 -> 465.2 MiB (-40.71%); final processed Core pre-scored feed and only 8 local record candidates",
-      "scheduled_workload_record": "container-resource-scheduled-window-final-production.json"
+      "scheduled_workload_record": "container-resource-scheduled-window-final-production.json",
+      "publication": "GitHub/GitLab main exact 49ca7ba; GitHub CI success; Cloudflare /assets/index-DmwHqaRA.js references /assets/JobCardExtras-C_UhG9nf.js",
+      "browser_evidence": "two retained public runs: 12/12 content and 0 JS errors in both; loads 1003/968 ms; six-drag mean 31.120 ms and worst p95 50.0 ms versus baseline 43.25/100.1 (28.05% and 50.05% improvements)",
+      "live_evidence": "Core/SwissJob/Portfolio probes failures=[]; 17/17; five queues zero; eight relevant containers running with restart 0 and OOM false; capture absent",
+      "records": [
+        "container-resource-final-production.json",
+        "container-resource-scheduled-window-final-production.json",
+        "portfolio-frontend-public-final.json",
+        "portfolio-frontend-public-final-recheck.json",
+        "final-live-probes-production.json",
+        "optimization-final-production.json"
+      ]
     }
   ],
   "permission_state": {
@@ -185,7 +195,7 @@
     "core_worker_concurrency_change": "authorized and completed",
     "ssh_scp_script_and_probe_transfer": "authorized at 2026-10-11T09:14:55+00:00",
     "remote_probe_execution": "authorized at 2026-10-11T09:14:55+00:00",
-    "frontend_remote_publication": "GitHub, GitLab and Cloudflare Pages authorized at 2026-10-11T09:14:55+00:00",
+    "frontend_remote_publication": "destination-specific authorization received and 49ca7ba published to GitHub/GitLab main on 2026-10-13",
     "portfolio_harvest_write": "explicitly authorized and granted once at 2026-10-13T06:17:00Z; verified by safe after-grant probe"
   },
   "references": [
@@ -196,5 +206,11 @@
     "core-native-extraction-plan.json",
     "portfolio-compatibility-adapter-plan.json",
     "swissjob-producer-retirement-plan.json"
-  ]
+  ],
+  "completion": {
+    "status": "complete",
+    "items_complete": 18,
+    "items_total": 18,
+    "record": "optimization-final-production.json"
+  }
 }

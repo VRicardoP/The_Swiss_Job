@@ -1,0 +1,99 @@
+{
+  "url": "https://vicentepau.is-a.dev",
+  "at": "2026-10-13T13:39:48.522Z",
+  "viewport": [
+    1440,
+    1000
+  ],
+  "backend": "deterministic fixtures",
+  "loadMs": 968,
+  "windows": [
+    {
+      "id": "stats-window-title",
+      "characters": 74,
+      "hasContent": true
+    },
+    {
+      "id": "recent-visitors-window-title",
+      "characters": 95,
+      "hasContent": true
+    },
+    {
+      "id": "map-window-title",
+      "characters": 30,
+      "hasContent": true
+    },
+    {
+      "id": "chat-analytics-window-title",
+      "characters": 148,
+      "hasContent": true
+    },
+    {
+      "id": "job-analytics-window-title",
+      "characters": 60,
+      "hasContent": true
+    },
+    {
+      "id": "heatmap-window-title",
+      "characters": 56,
+      "hasContent": true
+    },
+    {
+      "id": "job-board-window-title",
+      "characters": 2119,
+      "hasContent": true
+    },
+    {
+      "id": "selected-offers-panel-title",
+      "characters": 125,
+      "hasContent": true
+    },
+    {
+      "id": "job-search-window-title",
+      "characters": 236,
+      "hasContent": true
+    },
+    {
+      "id": "ai-match-window-title",
+      "characters": 296,
+      "hasContent": true
+    },
+    {
+      "id": "school-jobs-window-title",
+      "characters": 170,
+      "hasContent": true
+    },
+    {
+      "id": "school-manual-contacts-window-title",
+      "characters": 179,
+      "hasContent": true
+    }
+  ],
+  "errors": [],
+  "drag": [
+    {
+      "durationMs": 4068,
+      "frames": 142,
+      "meanFrameMs": 28.40211267605634,
+      "p95FrameMs": 33.399999999999636,
+      "layouts": 8,
+      "taskMs": 3661.5260000000003
+    },
+    {
+      "durationMs": 3854,
+      "frames": 129,
+      "meanFrameMs": 29.58449612403102,
+      "p95FrameMs": 33.400000000001455,
+      "layouts": 1,
+      "taskMs": 3367.227
+    },
+    {
+      "durationMs": 4213,
+      "frames": 124,
+      "meanFrameMs": 33.46693548387098,
+      "p95FrameMs": 50,
+      "layouts": 1,
+      "taskMs": 3602.054
+    }
+  ]
+}

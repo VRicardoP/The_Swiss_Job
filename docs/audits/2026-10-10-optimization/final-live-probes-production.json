@@ -1,0 +1,226 @@
+{
+  "core": {
+    "capture_slot_exists": false,
+    "delivery": {
+      "by_state": {
+        "delivered": 25375
+      },
+      "dead_total": 0,
+      "oldest_pending_s": 0.0
+    },
+    "failures": [],
+    "harvest": {
+      "alerts": [],
+      "enabled": 17,
+      "observed": 17,
+      "with_state": 17
+    },
+    "pending_staging": 0,
+    "ready": {
+      "alembic": "core0054",
+      "authoritative": true,
+      "release": "3ed6462",
+      "status": "ready"
+    }
+  },
+  "observed_at": "2026-10-13T13:41:00Z",
+  "portfolio": {
+    "background_schedulers_enabled": true,
+    "disabled_sources": [
+      "arbeitnow",
+      "irishjobs",
+      "jobgether",
+      "nav",
+      "ostjob",
+      "remotive",
+      "thehub",
+      "weworkremotely",
+      "zentraljob"
+    ],
+    "failures": [],
+    "owned_sources": [
+      "adzuna",
+      "dynamitejobs",
+      "himalayas",
+      "ictjobs",
+      "jobicy",
+      "jobroom",
+      "jobscout24",
+      "jsearch",
+      "remoteok",
+      "swissdevjobs",
+      "swisstechjobs"
+    ],
+    "registered_sources": [
+      "adzuna",
+      "dynamitejobs",
+      "himalayas",
+      "ictjobs",
+      "jobicy",
+      "jobroom",
+      "jobscout24",
+      "jsearch",
+      "remoteok",
+      "swissdevjobs",
+      "swisstechjobs"
+    ],
+    "routing_modes": {
+      "applications": [
+        "core_primary"
+      ],
+      "catalog": [
+        "core_primary"
+      ],
+      "documents": [
+        "core_primary"
+      ],
+      "matching": [
+        "core_primary"
+      ],
+      "saved_searches": [
+        "core_primary"
+      ],
+      "schools": [
+        "core_primary"
+      ]
+    }
+  },
+  "swissjob": {
+    "active_snapshot_errors": 0,
+    "active_users": 2,
+    "authorities": {
+      "applications": "services.applications.local.LocalApplications",
+      "catalog": "services.catalog.core_client.CoreCatalog",
+      "documents": "services.documents.core_client.CoreDocuments",
+      "matching": "services.matching.core_client.CoreMatching",
+      "profiles": "services.profiles.local.LocalProfile",
+      "schools": "services.schools.core_client.CoreSchools"
+    },
+    "failures": [],
+    "linked_active_users": 2,
+    "pending_snapshots": 0,
+    "providers": [
+      "adzuna",
+      "careerjet",
+      "glassdoor_partner",
+      "indeed_partner",
+      "jobcloud_partner",
+      "jobicy",
+      "jooble",
+      "jsearch",
+      "linkedin_authorized",
+      "proz",
+      "remoteco",
+      "xing_partner"
+    ],
+    "retired_environment_present": [],
+    "retired_modules_present": [],
+    "school_scrapers": [
+      "swiss_schools_ecolint",
+      "swiss_schools_hautlac",
+      "swiss_schools_inspired",
+      "swiss_schools_isb",
+      "swiss_schools_iscs",
+      "swiss_schools_isp",
+      "swiss_schools_nae",
+      "swiss_schools_zis"
+    ],
+    "scrapers": [
+      "gastrojob",
+      "myscience",
+      "schuljobs",
+      "stelle_admin",
+      "swiss_schools_ecolint",
+      "swiss_schools_hautlac",
+      "swiss_schools_inspired",
+      "swiss_schools_isb",
+      "swiss_schools_iscs",
+      "swiss_schools_isp",
+      "swiss_schools_nae",
+      "swiss_schools_zis",
+      "tes"
+    ]
+  },
+  "topology": {
+    "capture_container_present": false,
+    "containers": [
+      {
+        "image": "swissjob-core:point5-3ed6462",
+        "name": "swissjob-core-api-r5",
+        "oom_killed": false,
+        "restart_count": 0,
+        "running": true
+      },
+      {
+        "concurrency": 1,
+        "image": "swissjob-core:point5-3ed6462",
+        "name": "swissjob-core-worker-r5",
+        "oom_killed": false,
+        "queues": [
+          "core.embedding",
+          "core.matching"
+        ],
+        "restart_count": 0,
+        "running": true
+      },
+      {
+        "concurrency": 1,
+        "image": "swissjob-core:point5-3ed6462",
+        "name": "swissjob-core-harvest-worker-r5",
+        "oom_killed": false,
+        "queues": [
+          "core.harvest"
+        ],
+        "restart_count": 0,
+        "running": true
+      },
+      {
+        "concurrency": 1,
+        "image": "swissjob-core:point5-3ed6462",
+        "name": "swissjob-core-ops-worker-r5",
+        "oom_killed": false,
+        "queues": [
+          "core.default",
+          "core.notifications"
+        ],
+        "restart_count": 0,
+        "running": true
+      },
+      {
+        "image": "swissjob-backend:point5-d54b2ec",
+        "name": "swissjob-backend",
+        "oom_killed": false,
+        "restart_count": 0,
+        "running": true
+      },
+      {
+        "image": "swissjob-worker:point5-d54b2ec",
+        "name": "swissjob-worker",
+        "oom_killed": false,
+        "restart_count": 0,
+        "running": true
+      },
+      {
+        "image": "portfolio-backend:board-8a5a323",
+        "name": "portfolio_backend",
+        "oom_killed": false,
+        "restart_count": 0,
+        "running": true
+      },
+      {
+        "image": "portfolio-backend:board-8a5a323",
+        "name": "portfolio_worker",
+        "oom_killed": false,
+        "restart_count": 0,
+        "running": true
+      }
+    ],
+    "core_queues": {
+      "core.default": 0,
+      "core.embedding": 0,
+      "core.harvest": 0,
+      "core.matching": 0,
+      "core.notifications": 0
+    }
+  }
+}
