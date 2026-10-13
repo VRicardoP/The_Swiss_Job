@@ -59,6 +59,9 @@ def test_identity_content_and_raw(monkeypatch):
     assert content["company"] == "School" and content["remote"] is True
     assert content["location"] == "Norway" and content["salary"] == "80-120 EUR"
     assert content["tags"] == ["TEFL", "english"]
+    assert content["description"] == (
+        "Full Remote. Location: Norway. Skills: TEFL, english."
+    )
 
 
 def test_relisting_keeps_identity_but_real_url_changes(monkeypatch):

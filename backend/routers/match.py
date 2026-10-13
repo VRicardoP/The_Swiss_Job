@@ -41,6 +41,7 @@ from services.matching import (
     resolve_matching,
 )
 from services.translation_service import TranslationService
+from utils.text import strip_html_tags
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,20 @@ async def analyze_matches(
             "corpus changes. Local analysis is disabled."
         ),
     )
+
+
+def _presentation_description(job) -> str | None:
+    """Plain, useful card text for historical rows lacking normalized prose."""
+    description = strip_html_tags(job.description_snippet or "").strip()
+    if description:
+        return description
+    facts = []
+    if job.location:
+        facts.append(f"Location: {job.location}")
+    tags = [str(tag).strip() for tag in (job.tags or []) if str(tag).strip()]
+    if tags:
+        facts.append("Skills: " + ", ".join(tags[:8]))
+    return ". ".join(facts) + "." if facts else None
 
 
 def _to_match_response(
@@ -161,7 +176,7 @@ def _to_match_response(
         job_company=job.company,
         job_location=job.location,
         job_url=job.url,
-        job_description=job.description_snippet,
+        job_description=_presentation_description(job),
         job_salary_min=job.salary_min_chf,
         job_salary_max=job.salary_max_chf,
         job_tags=job.tags or [],
@@ -400,7 +415,11 @@ async def get_saved_jobs(
 
     `translate=false` (A20-09): títulos del MGET calentado en fondo, sin LLM.
     """
-    matching = await resolve_matching(db, current_user.id)
+    matching = (
+        feedback_writer(db)
+        if settings.CORE_FEEDBACK_ENABLED
+        else await resolve_matching(db, current_user.id)
+    )
     try:
         results, total = await matching.saved(
             current_user.id,

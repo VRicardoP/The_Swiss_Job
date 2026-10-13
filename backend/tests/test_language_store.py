@@ -161,6 +161,22 @@ async def test_encolar_ignora_titulos_vacios(db_session):
 # --- El camino de respuesta -------------------------------------------------
 
 
+def test_presentacion_limpia_html_historico():
+    item = _item("Editor")
+    item["job"].description_snippet = "<p>Clean <strong>copy</strong></p>"
+    assert _to_match_response(item, {}, {}).job_description == "Clean copy"
+
+
+def test_presentacion_resume_una_oferta_sin_descripcion():
+    item = _item("Engineer")
+    item["job"].description_snippet = None
+    item["job"].location = "Europe"
+    item["job"].tags = ["Python", "FastAPI"]
+    assert _to_match_response(item, {}, {}).job_description == (
+        "Location: Europe. Skills: Python, FastAPI."
+    )
+
+
 def test_servir_no_detecta_aunque_el_titulo_sea_desconocido(detector_que_estalla):
     resp = _to_match_response(
         _item("Título jamás visto"), translations={}, languages={}

@@ -6,6 +6,7 @@ import httpx
 import pytest
 from sqlalchemy import func, select
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 from config import settings
 from models.match_result import MatchResult
@@ -74,6 +75,33 @@ async def test_feedback_router_never_falls_back_after_write_failure(
         )
     ).status_code == 503
     assert await db_session.scalar(select(func.count()).select_from(MatchResult)) == 0
+
+
+@pytest.mark.asyncio
+async def test_saved_route_selects_the_core_feedback_reader_at_composition(
+    client, db_session, monkeypatch
+):
+    from routers import match as router
+
+    monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
+    uid, headers = await _register(client)
+    saved = AsyncMock(return_value=([], 0))
+    monkeypatch.setattr(
+        router,
+        "feedback_writer",
+        lambda db: SimpleNamespace(saved=saved),
+    )
+
+    async def forbidden_resolver(*_args):
+        raise AssertionError("the Core feedback reader must bypass matching routing")
+
+    monkeypatch.setattr(router, "resolve_matching", forbidden_resolver)
+    response = await client.get(
+        "/api/v1/match/saved?translate=false",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    saved.assert_awaited_once_with(uid, limit=100, offset=0)
 
 
 @pytest.mark.asyncio

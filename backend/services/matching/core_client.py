@@ -326,7 +326,7 @@ def _job_view(vacancy: dict, job_ref_source: str | None) -> CoreJobView:
         # sirve la description completa de la revision vigente.
         description_snippet=description[:500] if description else None,
         tags=vacancy.get("tags") or [],
-        source=job_ref_source,
+        source=job_ref_source or primary.get("source"),
         # El core lo sirve desde la canonica (VacancyDTO.language). Sin esta
         # linea el campo existia y era SIEMPRE None, y el router detectaba el
         # idioma por titulo en cada oferta servida.
@@ -734,18 +734,9 @@ class CoreMatching:
     async def saved(
         self, user_id: uuid.UUID, limit: int = 100, offset: int = 0
     ) -> tuple[list[dict], int]:
-        # Proyeccion PURA del estado del escritor LOCAL (feedback positivo):
-        if settings.CORE_FEEDBACK_ENABLED:
-            from .feedback import CoreFeedback
-
-            return await CoreFeedback(self._db, self._client_factory).saved(
-                user_id,
-                limit=limit,
-                offset=offset,
-            )
-        # se sirve de local en TODOS los modos (criterio unificador — ningun
-        # estado local puede ser inaccesible por el routing). Sin red: no
-        # depende de que el core este arriba.
+        # El lector Core se selecciona en el router junto al escritor de
+        # feedback. Este adaptador conserva sólo el estado local y no depende
+        # del módulo de feedback (evita el ciclo core_client <-> feedback).
         return await MatchResultService(self._db).get_saved_jobs(
             user_id=user_id, limit=limit, offset=offset
         )

@@ -70,6 +70,21 @@ def _salary(raw):
     return ("-".join(amounts) + " " + _text(value.get("currency"))).strip()
 
 
+def _description(raw, tags):
+    # Jobgether's public API exposes structured facts but no narrative body.
+    facts = [
+        _text(raw.get("contractType")),
+        _text(raw.get("experience")),
+        _text(raw.get("remoteOfferType")),
+    ]
+    location = _text(raw.get("requiredLocations"))
+    if location:
+        facts.append(f"Location: {location}")
+    if tags:
+        facts.append("Skills: " + ", ".join(tags[:8]))
+    return ". ".join(value.strip(" .") for value in facts if value) + "."
+
+
 def _content(raw):
     title = _text(raw.get("title"))
     skills = raw.get("skills")
@@ -86,7 +101,7 @@ def _content(raw):
         "title": title,
         "company": _text(_object(raw.get("companyData")).get("name")),
         "location": _text(raw.get("requiredLocations")),
-        "description": "",
+        "description": _description(raw, tags),
         "tags": tags[:15],
         "salary": _salary(raw),
         "remote": bool(remote) and remote not in _NON_REMOTE,

@@ -5,10 +5,8 @@
  *    `job_title_en`, así que con `job_language` nulo o vacío —que es el 96,9 %
  *    del feed mientras el almacén derivado no lo resuelve— se leía la frase a
  *    medias, con el hueco donde iba el idioma.
- * 2. Tres keywords de categoría escritas como comodines (`springer.*heim`) se
- *    comparaban con `includes`, que es literal: ningún título contiene los
- *    caracteres `.*`. Comprobado contra el corpus real: como literal casaban
- *    0 ofertas; como expresión regular, 1.
+ * 2. La categoría calculada por Core debe viajar hasta el navegador sin una
+ *    segunda taxonomía JavaScript que pueda divergir de las facetas.
  */
 
 import { renderToStaticMarkup } from "react-dom/server";
@@ -60,21 +58,13 @@ describe("la etiqueta de traducción", () => {
   });
 });
 
-describe("clasificación por keywords", () => {
-  it("una keyword con comodín casa como expresión regular", () => {
-    const antes = classifyMatch({ job_title: "Springer Pflegeheim Zürich" });
-    expect(antes).not.toBe("otros");
+describe("clasificación canónica", () => {
+  it("usa la categoría servida aunque el título sugiera otra", () => {
+    expect(classifyMatch({ job_title: "Teacher", job_category: "A" })).toBe("A");
   });
 
-  it("y NO casa el literal '.*', que es lo que se comparaba antes", () => {
-    expect(classifyMatch({ job_title: "springer.*heim" })).toBe(
-      classifyMatch({ job_title: "springer pflegeheim" }),
-    );
-  });
-
-  it("las keywords normales siguen siendo literales", () => {
-    expect(classifyMatch({ job_title: "Zzzz puesto inventado sin categoría" })).toBe(
-      "otros",
-    );
+  it("degrada categorías ausentes o desconocidas a otros", () => {
+    expect(classifyMatch({ job_title: "Teacher" })).toBe("otros");
+    expect(classifyMatch({ job_category: "Z" })).toBe("otros");
   });
 });
