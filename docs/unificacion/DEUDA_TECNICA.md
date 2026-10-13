@@ -1750,6 +1750,17 @@ el orden de corte y disponer de la publicación frontend autorizada.
   un único terminal y cinco colas a cero; sólo entonces conceder `harvest:write`
   y repetir la sonda `--after-grant`.
 
+### Checkpoint operativo — 2026-10-13 00:29 UTC
+
+- El undécimo fragmento también fue parcial: 250 filas, 33 candidatos nuevos y
+  265,675 s. Acumulado: 2.750 filas, 509 candidatos, once parciales y cero
+  errores. La duodécima tarea `8e2cf04b-4f5c-43cb-958a-7a4f74d30a20` está activa.
+- Corrección de evidencia: el recuento previo de 2.557 no representa el mismo
+  conjunto que pagina la consulta real `_CORPUS_SQL` bajo la ventana congelada;
+  queda conservado como preflight refutado y deja de usarse para estimar el
+  terminal. La cadena es válida porque ventana y cursor keyset siguen avanzando;
+  observar hasta `complete=true`, sin lanzar otra raíz ni inventar un total.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
