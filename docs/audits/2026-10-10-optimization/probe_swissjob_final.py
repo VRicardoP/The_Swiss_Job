@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Read-only final SwissJob identity, routing and producer gate."""
+"""Read-only final SwissJob authority, profile delivery and source gate."""
 
 import asyncio
+import importlib.util
 import json
 
 from sqlalchemy import func, select
@@ -11,45 +12,70 @@ import scrapers
 from config import settings
 from database import async_session
 from models.jobhunt_profile_map import JobhuntProfileMap
-from models.jobhunt_routing import CONSUMER_SWISSJOB, JobhuntRouting, PROFILE_WILDCARD
 from models.profile_sync_state import ProfileSyncState
 from models.user import User
-from services.legacy_sources import disabled_sources
-from services.routing import CAPABILITY_MATCHING, MODE_CORE_PRIMARY, resolve_modes
+from services.catalog import CoreCatalog, resolve_catalog
+from services.matching import CoreMatching, resolve_matching
+from services.profiles import LocalProfile, resolve_profiles
+from services.schools import CoreSchools, resolve_schools
 
 
 EXPECTED_PROVIDERS = {
-    "arbeitnow",
-    "euremotejobs",
-    "globaljobs",
-    "jobgether",
-    "jobspresso",
-    "nav_arbeidsplassen",
-    "ostjob",
-    "publicjobs",
-    "remotive",
-    "thehub",
-    "weworkremotely",
-    "workingnomads",
-    "zebis",
-    "zentraljob",
+    "adzuna",
+    "careerjet",
+    "glassdoor_partner",
+    "indeed_partner",
+    "jobcloud_partner",
+    "jobicy",
+    "jooble",
+    "jsearch",
+    "linkedin_authorized",
+    "proz",
+    "remoteco",
+    "xing_partner",
 }
-EXPECTED_SCRAPERS = {"financejobs", "irishjobs"}
-EXPECTED_WILDCARD_CAPABILITIES = {"catalog", "documents", "saved_searches", "schools"}
+EXPECTED_SCRAPERS = {
+    "gastrojob",
+    "myscience",
+    "schuljobs",
+    "stelle_admin",
+    "tes",
+    "swiss_schools_ecolint",
+    "swiss_schools_hautlac",
+    "swiss_schools_inspired",
+    "swiss_schools_isb",
+    "swiss_schools_iscs",
+    "swiss_schools_isp",
+    "swiss_schools_nae",
+    "swiss_schools_zis",
+}
+RETIRED_MODULES = {
+    *(f"providers.{name}" for name in (
+        "arbeitnow",
+        "euremotejobs",
+        "globaljobs",
+        "jobgether",
+        "jobspresso",
+        "nav",
+        "ostjob",
+        "publicjobs",
+        "remotive",
+        "thehub",
+        "weworkremotely",
+        "workingnomads",
+        "zebis",
+        "zentraljob",
+    )),
+    "scrapers.financejobs",
+    "scrapers.irishjobs",
+    "services.legacy_sources",
+}
 
 
 async def main() -> int:
-    configured_providers = disabled_sources(
-        settings.LEGACY_DISABLED_PROVIDERS, providers._PROVIDER_CLASSES
-    )
-    configured_scrapers = disabled_sources(
-        settings.LEGACY_DISABLED_SCRAPERS, scrapers._SCRAPER_CLASSES
-    )
-    provider_status = providers.log_provider_status()
-    active_scrapers = set(scrapers._SCRAPER_CLASSES) - configured_scrapers
-    school_scrapers = {
-        name for name in active_scrapers if name.startswith("swiss_schools_")
-    }
+    provider_names = set(providers.get_provider_names())
+    scraper_names = set(scrapers.get_scraper_names())
+    school_scrapers = {name for name in scraper_names if name.startswith("swiss_schools_")}
 
     async with async_session() as session:
         active_ids = list(
@@ -93,74 +119,51 @@ async def main() -> int:
                 )
             ).scalar_one()
         )
-        matching_modes = await resolve_modes(session, CAPABILITY_MATCHING, active_ids)
-        routing_rows = (
-            await session.execute(
-                select(
-                    JobhuntRouting.profile_id,
-                    JobhuntRouting.capability,
-                    JobhuntRouting.mode,
-                ).where(JobhuntRouting.consumer_id == CONSUMER_SWISSJOB)
-            )
-        ).all()
+        sample_user = active_ids[0] if active_ids else None
+        authorities = {
+            "catalog": type(await resolve_catalog(session)).__name__,
+            "matching": type(await resolve_matching(session, sample_user)).__name__,
+            "profiles": type(await resolve_profiles(session, sample_user)).__name__,
+            "schools": type(await resolve_schools(session, sample_user)).__name__,
+        }
 
-    wildcard = {
-        row.capability: row.mode
-        for row in routing_rows
-        if row.profile_id == PROFILE_WILDCARD
-        and row.capability in EXPECTED_WILDCARD_CAPABILITIES
-    }
-    in_scope_non_primary = sum(
-        1
-        for row in routing_rows
-        if (
-            row.capability in EXPECTED_WILDCARD_CAPABILITIES
-            or (row.capability == CAPABILITY_MATCHING and row.profile_id in active_ids)
-        )
-        and row.mode != MODE_CORE_PRIMARY
+    present_retired = sorted(
+        module for module in RETIRED_MODULES if importlib.util.find_spec(module) is not None
     )
     result = {
-        "profile_sync_enabled": settings.CORE_PROFILE_SYNC_ENABLED,
+        "flags": {
+            "profile_sync": settings.CORE_PROFILE_SYNC_ENABLED,
+            "feedback": settings.CORE_FEEDBACK_ENABLED,
+            "facets": settings.CORE_MATCH_FACETS_ENABLED,
+        },
         "active_users": len(active_ids),
         "linked_active_users": linked,
         "pending_snapshots": pending_snapshots,
         "active_snapshot_errors": snapshot_errors,
-        "matching_core_primary": sum(
-            mode == MODE_CORE_PRIMARY for mode in matching_modes.values()
-        ),
-        "wildcard_modes": wildcard,
-        "in_scope_non_primary_rows": in_scope_non_primary,
-        "disabled_providers": sorted(configured_providers),
-        "disabled_scrapers": sorted(configured_scrapers),
-        "disabled_provider_status_count": sum(
-            provider_status.get(name) == "disabled (core handover)"
-            for name in EXPECTED_PROVIDERS
-        ),
-        "retained_school_scrapers": sorted(school_scrapers),
+        "authorities": authorities,
+        "registered_providers": sorted(provider_names),
+        "registered_scrapers": sorted(scraper_names),
+        "school_scrapers": len(school_scrapers),
+        "retired_modules_present": present_retired,
     }
     failures = []
-    if settings.CORE_PROFILE_SYNC_ENABLED is not True:
-        failures.append("profile_sync_disabled")
-    if len(active_ids) < 2:
-        failures.append("active_user_count_below_baseline")
-    if linked != len(active_ids) or pending_snapshots or snapshot_errors:
+    if result["flags"] != {"profile_sync": True, "feedback": True, "facets": True}:
+        failures.append("core_flags_not_enabled")
+    if not active_ids or linked != len(active_ids) or pending_snapshots or snapshot_errors:
         failures.append("active_profile_delivery_incomplete")
-    if any(mode != MODE_CORE_PRIMARY for mode in matching_modes.values()):
-        failures.append("active_matching_not_core_primary")
-    if wildcard != {
-        capability: MODE_CORE_PRIMARY for capability in EXPECTED_WILDCARD_CAPABILITIES
+    if authorities != {
+        "catalog": CoreCatalog.__name__,
+        "matching": CoreMatching.__name__,
+        "profiles": LocalProfile.__name__,
+        "schools": CoreSchools.__name__,
     }:
-        failures.append("wildcard_routing_not_core_primary")
-    if in_scope_non_primary:
-        failures.append("in_scope_non_primary_rows")
-    if configured_providers != EXPECTED_PROVIDERS:
-        failures.append("disabled_provider_set_mismatch")
-    if configured_scrapers != EXPECTED_SCRAPERS:
-        failures.append("disabled_scraper_set_mismatch")
-    if result["disabled_provider_status_count"] != len(EXPECTED_PROVIDERS):
-        failures.append("provider_registry_not_quiesced")
-    if len(school_scrapers) != 8:
-        failures.append("retained_school_scrapers_not_eight")
+        failures.append("authority_seams_not_fixed")
+    if provider_names != EXPECTED_PROVIDERS:
+        failures.append("provider_registry_mismatch")
+    if scraper_names != EXPECTED_SCRAPERS or len(school_scrapers) != 8:
+        failures.append("scraper_registry_mismatch")
+    if present_retired:
+        failures.append("retired_modules_still_importable")
     result["failures"] = failures
     print(json.dumps(result, sort_keys=True))
     return int(bool(failures))

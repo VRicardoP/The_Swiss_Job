@@ -1,5 +1,12 @@
 # Deuda técnica — proyecto jobhunting (SwissJob + jobhunt-core)
 
+> **Lectura vigente — 2026-10-09.** Este fichero es un ledger técnico
+> cronológico. Para estado global y releases manda
+> [MEMORIA_PROYECTO.md](MEMORIA_PROYECTO.md); aquí mandan las marcas
+> **ABIERTO/PARCIAL/COTA** más recientes de cada identificador. Los bloques
+> «prevalentes» fechados se conservan como evidencia de su sesión y no son una
+> memoria paralela.
+>
 > **22-09-2026 — punto 4, cosecha nativa.** Las 16 fuentes del corpus core las
 > cosechan productores nativos; ver `SwissJob/docs/audits/POINT4_CUTOVER_2026-09-22.md`.
 > A18-06 (configuración de proveedores divergente) queda comprobada para el core:
@@ -9,7 +16,7 @@
 > canónicas por un campo que hoy consume una sola búsqueda semanal); lo nuevo sí
 > lo lleva.
 
-## Estado prevalente — 2026-09-21: punto 4, pendientes y evidencia
+## Foto histórica — 2026-09-21: punto 4, pendientes y evidencia
 
 Consolidación documental de las actas hasta 21-09 16:53 UTC; **no es una nueva
 auditoría NAS ni un cierre global**. Punto 4 abierto y trabajo funcional pausado;
@@ -23,10 +30,10 @@ Búsquedas preservaron IDs/contadores y 277 pendientes; WorkingNomads produjo
 40 ofertas con replay sin segundo fetch. Falta evidencia de entrega natural de
 las búsquedas: barridos sin vencidas no equivalen a aviso entregado.
 
-Actas: [perfiles](SwissJob/docs/audits/PROFILE_DEPLOYMENT_NAS_2026-09-20.md),
-[feedback](SwissJob/docs/audits/FEEDBACK_DEPLOYMENT_NAS_2026-09-20.md),
-[búsquedas](SwissJob/docs/audits/SEARCH_CUTOVER_OPERATOR_2026-09-21.md) y
-[WorkingNomads](SwissJob/docs/audits/WORKINGNOMADS_CUTOVER_2026-09-21.md).
+Actas: [perfiles](../audits/PROFILE_DEPLOYMENT_NAS_2026-09-20.md),
+[feedback](../audits/FEEDBACK_DEPLOYMENT_NAS_2026-09-20.md),
+[búsquedas](../audits/SEARCH_CUTOVER_OPERATOR_2026-09-21.md) y
+[WorkingNomads](../audits/WORKINGNOMADS_CUTOVER_2026-09-21.md).
 
 **Abierto para punto 4:** censo de fuentes activas y cobertura entre ambos
 proyectos; traspasos restantes; lectores/avisos/digest Portfolio dependientes de
@@ -43,7 +50,7 @@ conciliar cada caso con código/prueba/acta actual antes de reabrirlo o eliminar
 La estimación inicial de horas omitió dependencias; el rango posterior tampoco
 es una cota sin inventario efectivo. Desglose, supuestos, deuda clasificada y
 criterios para que el revisor refute trabajo innecesario en el
-[informe de pendientes](SwissJob/docs/PENDIENTES_PUNTO4_REVISION_EXTERNA_2026-09-21.md).
+[informe de pendientes](../PENDIENTES_PUNTO4_REVISION_EXTERNA_2026-09-21.md).
 
 > **Qué es este documento.** El inventario único de la deuda técnica **reconocida y no abordada**
 > del proyecto. Hasta ahora vivía dispersa entre mensajes de commit, residuales sueltos por track y
@@ -84,7 +91,7 @@ la funcionalidad completa; no prueban por sí solos que toda la plataforma esté
 | A18-02 | P2 · bug/eficiencia | **CERRADO 2026-09-28** — el camino escolar ya no pagina: `CoreWatchlist.get_match` resuelve por `GET /school-jobs?dedup_key=<hash>&limit=2` (una petición, ambigüedad = error) y `services/schools/core_client.list()` es una sola llamada. No queda ningún bucle de 100 páginas en `backend/services/matching` ni `services/schools` |
 | A18-03 | P2 · funcionalidad/UX | **CERRADO 2026-09-28** — la pantalla principal pide `limit=3000` (≥ corpus) y la pestaña Watchlist filtra sobre ese lote, así que el corte a 500 no aplica; `MatchPage` renderiza `isError` aparte del vacío. Residuo aceptado: un fallo del corpus ESCOLAR degrada a «sin `school_id`» con `logger.warning` (M5/T12), no con aviso en la UI |
 | A18-04 | P2 · concurrencia | **CERRADO 2026-09-28** — `claim_deliveries` usa `FOR UPDATE OF d SKIP LOCKED` + lease; `test_g7_dos_dispatchers_solapados_retiran_UNA_fila_habiendo_dos_candidatos` lo prueba. Suite del núcleo en verde el 2026-09-28 |
-| A18-05 | P2 · escalabilidad | **PARCIALMENTE ATENDIDO 2026-09-22, no cerrado.** El recorrido está corregido y verificado: servir 20 ofertas pasó de 18 peticiones internas y 9,3-12,9 s a **1 petición**, con ids, orden, scores y total idénticos en 8/8 casos sobre datos reales. Pero el **endpoint servido** `/api/v1/match/results` da p50 1,924 s sin traducción y 2,586 s con ella, con p95 de 4,0-5,4 s: **no cumple el p95 ≤ 2 s** que fija la predeclaración. Una primera acta lo declaró cerrado apoyándose en el p50 del método intermedio; una revalidación externa lo corrigió. Una segunda revalidación encontró el cuello REAL, que estaba fuera de ese recorrido: la pantalla principal pide `limit=3000` y **el 83 % del tiempo era serializar** —detectar el idioma de cada oferta servida, 50,1 ms x 1.800 ≈ 90 s—. Memoizado: **79,3 s → 10,3 s**. Reparado además el transporte de `language`, roto en tres capas (DTO del core, `_vacancy_dtos`, `_job_view`), aunque eso sólo recupera el **3,1 %** del coste: medido, el corpus casi no trae el dato, así que la memoización sigue sosteniendo el recorrido y **no cubre la primera carga**. Desplegado el 2026-09-23 en los cinco servicios: la pantalla principal pasa de **79,3 s a p50 2,147 s** (p95 2,554 s) gracias a cachear el recorrido del feed por VERSIÓN declarada por el core — recorrerlo era el **87-89 %** del coste y un `If-None-Match` no lo evitaba, porque el ETag se deriva del payload. **Sigue ABIERTO**: ninguna lectura habitual baja del p95 de 2 s (catálogo 2,420 s; feed 20 3,040 s) y la primera carga de 3.000 cuesta 10,196 s contra un presupuesto de 5 s. Matriz con veredicto por escenario en §9-bis del acta; lo que falta, en §10. [Acta](SwissJob/docs/audits/ACTA_CIERRE_PUNTO5_2026-09-22.md) · [Revalidación](SwissJob/docs/audits/REVALIDACION_INFORME_DESPLIEGUE_2026-09-22.md). |
+| A18-05 | P2 · escalabilidad | **CERRADO 2026-10-13.** La UI actual entra por facetas compactas y pide 50 tarjetas por categoría; Core calcula categoría/facetas, el BFF sirve el feed calentado, cachea joins escolares y mantiene 60 s las páginas de catálogo antes de revalidar ETag. Con 100 muestras en el NAS: facetas p50/p95 0,088/0,180 s; categoría 0,371/1,033 s; guardados 0,564/1,551 s; catálogo 0,186/0,838 s. Las cuatro cumplen el presupuesto predeclarado p95 <= 2 s. Evidencia y protocolo en el checkpoint A18-05 al final. |
 | A18-06 | P2 · operación/configuración | **CERRADO 2026-09-28** — el backend de producción (`2b59a92`) resuelve `GROQ_MODEL=openai/gpt-oss-120b`, `GROQ_RERANK_MODEL=qwen/qwen3.8-27b`, `GEMINI_MODEL=gemini-3.6-flash` (leído con `settings` dentro del contenedor del NAS); el compose del NAS no los sobreescribe, así que los defaults verificados el 09-15 son los efectivos |
 
 ### A18-01 · El buscador ofrece opciones que la ruta canónica rechaza
@@ -184,26 +191,21 @@ del receptor no permite prometer exactamente una entrega ante caída post-envío
 fallo antes del envío recuperable; reinicio/lease vencido y caída tras SMTP
 documentados y probados sin ocultar el riesgo residual.
 
-### A18-05 · El coste de una página depende del feed y del inventario completos
+### A18-05 · Lecturas habituales dentro del presupuesto
 
-**Ubicación:** `SwissJob/backend/services/matching/core_client.py:390,496,542`;
-`backend/services/schools/presentation.py:20,51`.
+El defecto estructural quedó eliminado sin cambiar resultados: Core calcula la
+categoría y las facetas, el BFF reutiliza el recorrido completo verificado por
+versión, resuelve categorías sobre esa copia, cachea los joins escolares y
+sirve las páginas de catálogo comprobadas durante 60 s antes de revalidarlas por
+ETag. La UI ya no pide 3.000 ofertas para construir sus pestañas: entra por
+facetas y solicita 50 tarjetas de la categoría elegida.
 
-Se recorre todo el feed, resuelven identidades y overlays, y solo después se
-aplica offset/limit. Los apoyos escolares también recorren colecciones completas
-para resolver un subconjunto. Es un coste estructural comprobado; **no** se ha
-medido hoy un p95 ni se atribuye al catálogo el antiguo tiempo >30 s, corregido
-en E.12. La caché ETag no elimina por sí sola todo el recorrido/hidratación.
-
-**Acción mínima:** instrumentar peticiones core, filas, bytes, tiempo SQL y
-memoria por consulta con tamaños representativos y caché fría/caliente. Llevar
-filtros/accionabilidad y paginación a una frontera que conserve total, orden,
-exclusiones, alias y estados; acotar consultas auxiliares al lote cuando el
-contrato lo permita. No añadir índices sin EXPLAIN ni cachear entre usuarios.
-
-**Cierre del punto 5:** presupuesto predeclarado y medición NAS del recorrido
-completo, incluyendo concurrencia, reinicio y backlog; demostrar mejora sin
-variar resultados/aislamiento. Evitar una refactorización global antes de medir.
+La comparación usa 100 muestras secuenciales por ruta en el mismo NAS y separa
+arranque de régimen caliente. Línea base p50/p95: facetas 2,943/5,991 s,
+categoría 5,152/10,876 s, guardados 0,689/1,723 s, catálogo 1,530/7,579 s.
+Final: 0,088/0,180; 0,371/1,033; 0,564/1,551; 0,186/0,838 s,
+respectivamente. Todas cumplen el presupuesto predeclarado p95 <= 2 s. El
+checkpoint A18-05 al final conserva commits, despliegue, rollback y límites.
 
 ### A18-06 · Configuración de proveedores divergente entre repositorio y NAS
 
@@ -229,7 +231,7 @@ resultado válido y evidencia de versión. No publicar claves ni prompts persona
 
 ### Verificación, límites y deuda ya reconocida
 
-- Evidencias y comandos: [auditoría reproducible](SwissJob/docs/audits/2026-09-18/README.md).
+- Evidencias y comandos: [auditoría reproducible](../audits/2026-09-18/README.md).
   **39 pruebas core sin BD y 16 frontend verdes**, ejecutadas en serie; cuatro
   defectos reproducidos con tres scripts sintéticos. No confundir scripts que
   confirman el defecto con regresiones verdes del comportamiento deseado.
@@ -253,7 +255,7 @@ resultado válido y evidencia de versión. No publicar claves ni prompts persona
   días no estaban vencidos el 18-09; no se declara incumplimiento sin inventario.
 - La búsqueda >30 s citada en la foto E.10 es **histórica**, sustituida para ese
   canary por E.12. Los documentos retirados se consultan en Git mediante
-  [índice histórico](SwissJob/docs/ARCHIVO_HISTORICO.md); no restaurarlos todos.
+  [índice histórico](../ARCHIVO_HISTORICO.md); no restaurarlos todos.
 
 ### Orden de corrección y prevención de regresiones
 
@@ -293,16 +295,16 @@ se repiten.
 | A19-10 | Alto · core | Matching (`shadow.project`) comparte cola con el abanico de 16 cosechas; ventana del dispatcher en UTC con beat en Zurich; pérdida silenciosa por fecha ausente | T11 | **CERRADO 2026-09-25 (T11)** — `shadow.project` en `core.default`; ventana anclada a Europe/Zurich (11:59 y 12:00 daban la misma etiqueta en UTC, medido); alerta `cosecha_sin_fechas` sobre los contadores de admisión. Desplegado en `2b59a92`; I-F4 CUMPLE |
 | A19-11 | Alto · infra | Sin límites de recursos ni rotación de logs; `restart` no reacciona a `unhealthy`; workers sin healthcheck; `core-local` 9 migraciones atrasado; `prebuilt` rompe la CDC | T13 | **CERRADO 2026-09-28 (T13)** — límites de memoria en los 9 servicios del NAS con margen sobre el consumo medido (postgres 2g/1,09 usado, core-worker 2g/1,15, backend 1536m/794, portfolio 1g/610, core-api 512m/114, capture 256m/25, redis 256m cada uno); los de postgres/redis van en el `resource.yml` de Container Station, que pisa al compose. Rotación de logs ya existía (json-file 10m). `restart` frente a `unhealthy` y healthchecks de workers se resuelven con el SUPERVISOR (A19-17) en vez de más healthchecks: la máquina ya arrancaba ~60 procesos/min para vigilarse (A19-25). `core-local` pide `CORE_IMAGE_TAG`; `prebuilt` retirado. Todo recreado y verificado sano, sin OOM ni reinicios |
 | A19-12 | Alto · frontend | **CERRADO 2026-09-24 (T7)** — «Translated from » con idioma nulo; «Cover letter» reenvía la operación de CV; recuperación con `userId` indefinido; `crypto.randomUUID` en contexto no seguro; `memo` anulado con 1.800 tarjetas; token en la query del SSE | T7, T10 | **CERRADO 2026-09-27 (T7, T10 + fecd21c)** — los seis puntos atendidos; el último, el token en la query del SSE, se dio por cerrado en T10 pero `useCvAnalysis` quedó fuera de la migración y el servidor respondía 422 (barra de progreso muerta). Arreglado con prueba de forma de URL (I-D1, control negativo ejecutado) |
-| A19-13 | Alto · mantenibilidad | 275 funciones con CC > 10 (estándar 10; 6 de grado F); sin capa `repositories/`; ciclos de import; 4.869 LOC de scripts `import_*` como dependencia de runtime; taxonomía de categorías duplicada Python/JS | T16 | **PARCIAL 2026-09-28** — radon sin grado E/F en el código VIVO: en el BFF `_fetch_providers_async` (E 37→D 24) y `_fetch_scrapers_async` (F 47→D 23) reparten el bucle por oferta en `tasks/harvest_persist.py` (`persist_harvested_job`, `persist_batch`, `record_lost_batch`, `identity_drift_notes`: antes duplicado línea a línea), `routers/documents.py`, `job_repository.upsert_job`, `watchlist_state.get_match` y `core_client.results` van a C; en el núcleo `sink._canonicalize` (F 49) y `_resolve_new_incarnations` (E 34), `matching.compute_policy_feed` (E 36), `school_source.reverse_sync` (F 41), `admission.admit_listings`, los tres `fetch_new`/`_content` nativos y `backup_retention.expire` bajan a ≤ D con el orden de sentencias SQL intacto (suites: 330 + 150 + BFF completa). **Cota aceptada**: los siete E/F que quedan son las herramientas de corte de la Fase E (`import_portfolio_manifest/durables/verify`, `import_swissjob_searches/feedback`), de un solo uso, ya ejecutadas y fijadas por sus tests de integración; reescribirlas no protege nada que corra. Siguen abiertos: capa `repositories/`, ciclos de import y la taxonomía duplicada |
+| A19-13 | Alto · mantenibilidad | Complejidad alta histórica, costuras/ciclos y taxonomía duplicada | T16 | **CERRADO 2026-10-13 con cotas explícitas.** Cero ciclos de import de carga en 185 módulos BFF/558 aristas y 116 Core/342; ningún E/F de radon en runtime. Los siete E/F restantes son herramientas de corte ya ejecutadas y no importadas por API/workers. Core es autoridad de clasificación; el frontend conserva 99 líneas de presentación sin keywords. No se creó una capa repositories redundante: ya existen JobRepository y puertos estrechos por capacidad. Detalle en el checkpoint A19-13. |
 | A19-14 | Producto | Feature 3 del producto (móvil/PWA) no existe: ni manifest, ni SW, ni shells; `VITE_*` cero; 7 dependencias Capacitor y 3 hooks muertos | T15 | **CERRADO 2026-09-27 (T15, vía A)** — vía móvil retirada: hooks sin consumidores, 8 dependencias Capacitor, `capacitor.config.ts` y 4 meta de app instalable. `PORTALES_EMPLEO_SUIZA.md` §11 marcada como descartada |
-| A19-15 | Datos · UX | `arbeitnow` nativo guarda HTML crudo (111/111); `jobgether` sin descripción en ninguna fuente (27 % del feed); tarjeta de colegios sin descripción ni «View details»; SwissJob `/match` sin títulos traducidos ni resumen | Diagnóstico del panel, bloques A/B/D | **PARCIAL 2026-09-28** — §D hecho: la pantalla principal de SwissJob (`translate=false`, 3.000 ofertas) sirve los títulos traducidos que el calentamiento de fondo deja en Redis (`TranslationService.cached_translations`, un MGET; `warm._traducir_en_fondo` traduce sólo lo que falta, ≤ `TRANSLATION_WARMUP_MAX_PER_PASS`=100 por pasada, con el Redis de la app). El camino de respuesta NO llama al LLM: `tests/test_translation_warmup.py` instala un Groq que LANZA si se le pide algo. B sigue siendo decisión del propietario; A (HTML de `arbeitnow`, tarjeta de colegios) abierto |
+| A19-15 | Datos · UX | HTML/descripciones ausentes, tarjetas escolares sin contenido/detalle y traducción en petición | Diagnóstico del panel, bloques A/B/D | **CERRADO 2026-10-13.** Productores nuevos normalizan Arbeitnow y generan hechos oficiales para Jobgether; la presentación limpia revisiones históricas y da fallback factual. En 1.800 matches vivos: Arbeitnow 975/975 y Jobgether 484/484 con descripción, cero HTML; cuatro tarjetas escolares con descripción/URL y detalle HTTP 200. Las traducciones se leen de Redis calentado, sin LLM en la petición. Frontend 57/57, lint y build verdes. |
 | A19-17 | Crítico · operación | **Nada avisa de que los contenedores estén PARADOS.** El 23-09 los 42 del NAS se pararon (reinicio del daemon de Docker) y `restart: unless-stopped` no levantó ninguno; se descubrió al desplegar. Acta: `SwissJob/docs/audits/INCIDENTE_NAS_2026-09-23.md` | T13 (amplía H10: el supervisor debe cubrir «parado», no sólo «unhealthy») | **CERRADO 2026-10-07** — el supervisor corre por el **crontab del QTS** (que sí estaba armado: `/etc/config/crontab` línea 33) y **entrega correo** usando el `sendmail`/ssmtp del QTS, así que la entrega ya no depende de la credencial de Gmail de A19-31. El contenedor `swissjob-supervisor` se RETIRÓ el 2026-10-07 por duplicado: los dos caminos compartían el fichero de estado, cada uno tomaba por cambio lo que escribía el otro y avisaba — **3.729 correos en 24 h**, con el agravante de que la copia del host era anterior a la retirada de `swissjob-redis-r5` y pedía un contenedor que ya no existe (falso positivo permanente). Arreglado: script del repo subido al host, un solo supervisor y **guard de ejecución única** (240 s) que impide la duplicación aunque se rearme el otro camino; verificado con control negativo (`EXTRA_ESPERADOS` con un nombre inexistente sigue dando MAL). Antes decía: supervisor DESPLEGADO como contenedor (`restart: always`, socket en solo lectura, 64 MB) que cada 5 min comprueba los 15 contenedores esperados (`portfolio_worker` entre ellos desde el 2026-09-30) (15 hasta la limpieza del 2026-09-28: se retiraron `swissjob-redis-r5` —sin clientes ni claves, solo en una red vacía del ensayo r5—, 10 contenedores parados del ensayo r5 y de retrocesos del Portfolio, y `estrato_mineria3`, una minería de estratos del dedup de agosto) y escribe estado y log en `/share/Public/swissjob/supervisor/`. Probado en el NAS con un esperado inexistente (alerta) y con recuperación. Lo que falta NO depende del código: el correo está bloqueado por la credencial SMTP (A19-31), y el crontab del QTS exige suid (la entrada queda en `/etc/config/crontab`). Fuente: `scripts/nas/` |
 | A19-18 | Alto · operación | Volumen de sistema de QTS (`/`) al **84 %, 64 MB libres**; Container Station vive ahí. Sospecha no confirmada del reinicio del daemon | — | **COTA DE PLATAFORMA 2026-09-28** — el volumen `/` del QTS es un rootfs de 400 MB con el firmware (`/usr` 124 MB, `/lib` 87 MB, `/home` 76 MB); nada nuestro vive ahí (`/tmp` 3,5 MB, ningún fichero >5 MB). Docker está en `/share/CACHEDEV1_DATA` (1,8 TB, 75 %). El 84 % es el estado normal de ese volumen; no hay nada que liberar |
 | A19-16 | Despliegue | Frontend del Portfolio con título traducido y resumen (`a0bf889`) y con «Me interesa» (`0a8b8a8`) **sin publicar**: Cloudflare Pages despliega desde GitHub y no hay push | El **backend** ya está desplegado (`board-45d6ec4`, 2026-09-25) y su base tiene el estado `interested`, así que el push del frontend funciona en cuanto se haga — antes habría dado error | **CERRADO 2026-09-28** — push del frontend hecho el 25-09 a GitHub y GitLab; Cloudflare Pages sirve `index-D6v4vXBE.js` con las claves `interested`/`interestedDone`/«Me interesa» (comprobado con `curl` sobre https://vicentepau.is-a.dev) |
 | A19-19 | Crítico · seguridad | **La base de PRODUCCIÓN del Portfolio (`portfolio_db`) publica `0.0.0.0:5435`** y se comprobó alcanzable desde otro equipo de la LAN. Es el único contenedor del NAS que publica puerto alguno. Contraseña de 20 caracteres, no trivial: el riesgo es la superficie. Hallazgo H15 de la auditoría del 23-09, descubierto el 24-09 al verificar T5 | Compose del Portfolio en el NAS → `127.0.0.1:5435` | **COTA ACEPTADA 2026-09-27** — el propietario no se conecta hoy con cliente gráfico pero quiere conservar la posibilidad. Se deja abierto A PROPÓSITO: la contraseña es de 20 caracteres y el riesgo asumido es la superficie, no la fuerza bruta. Si algún día se cierra, es una línea en el compose |
 | A19-21 | Alto · entorno local | El compose base fija `image: swissjob-core:dev`, etiqueta **mutable** que apuntaba a un build del **04-09** mientras los contenedores del core corrían el del **08-09**: un `docker compose up -d core-api` lo dejaba `not_ready` | Imagen reconstruida del árbol con `RELEASE_SHA` real (`d63f74b`, antes `unknown`) + pin `swissjob-core:d63f74b`; `core-migrate` **core0042 → core0051** (9 migraciones, todas aditivas, ya probadas en producción); recreados los tres servicios. Costura: `scripts/check_core_release.py` (compose vs lo que corre, `ready`, release nombrable, `authoritative`), 4 controles negativos | **CERRADO 2026-09-24** — `ready`, `core0051`, `release d63f74b`, `authoritative: true`, CDC 0 pendientes |
 | A19-23 | Bajo · calidad | **`scripts/` (20) y los .py de `docs/` (5) nunca se habían pasado por el linter**: `backend-lint` corre con `working-directory: backend`, así que su `ruff check .` no los alcanzaba. 22 y 31 avisos. Sumados a los 358 de `jobhunt_core`, **411** | **411 → 0**, sin silenciar nada en bloque: 263 sitios eran fixtures de pytest, 39 `pytestmark` (un `skipif` re-exportado) y uno import por efecto lateral — todos anotados con su motivo tras **comprobar ejecutando** que quitarlos rompe los tests; 21 imports muertos y 4 avisos en código de producción, arreglados de verdad. Core formateado (251 ficheros, AST idéntico en los 335). CI: `core-lint` pasa a bloqueante y `backend-lint` gana un paso para `scripts`+`docs`; los 799 .py del repo quedan cubiertos | **CERRADO 2026-09-24** — los 6 pasos de lint salen con código 0 |
-| A19-25 | **Crítico · capacidad** | **El NAS no da para el contrato del punto 5**: 2 CPUs, `load average` 9,43-14,91, y el mayor consumidor de CPU es `tinymediamanager` (**71,55 %**), ajeno al proyecto. El mismo recorrido cuesta **0,084 s en copia y 1,45-3,09 s allí**. `pantalla-principal` y `página-20` NO cumplen y no los arregla el software | Límites/reservas de CPU, mover el contenedor ajeno, rediseñar la carga (§10.5) o aprobar otro presupuesto | **PARCIAL 2026-09-28** — además de limitar `tinymediamanager` (80→17 %), los cuatro healthchecks de infraestructura nuestros pasan de 5-10 s a 60 s (postgres, redis, redis-r5, redis-core-r5): de ~40 arranques de proceso por minuto a 4. Quedan los de `portfolio_db`/`portfolio_redis` (contenedores sin compose, creados a mano: 10 s) y los 34 % de `hal_daemon`+`gpuhal_app` de QTS, que no son nuestros. La RAM disponible subió de 243 MB a 3,6 GB tras recrear con límites. Sigue siendo una máquina de 2 núcleos con carga ~10 |
+| A19-25 | **Crítico · capacidad** | NAS de 2 CPU y carga global alta; el contrato p95 <= 2 s no se cumplía | Rediseñar carga, limitar procesos y medir extremo a extremo | **CERRADO 2026-10-13 dentro del alcance del proyecto.** Aun con load average 9,52/10,50/11,27 y picos de demonios QTS, las cuatro rutas habituales cumplen p95 <= 2 s. Cinco muestras/40 s de los ocho contenedores afectados suman 2,89 % CPU mediana y 2.830 MiB. Bi-encoder único, límites y cachés por versión eliminan el bloqueo; la carga de QTS queda como restricción del host. |
 | A19-26 | Medio · despliegue | **CERRADO 2026-09-24** (`scripts/deploy_nas.sh`) — **El BFF de producción se construye con `backend/Dockerfile.prod`, no con `backend/Dockerfile`**: sólo el primero crea el usuario `app` que exige el compose del NAS. Con el otro el contenedor ni arranca. Y recrear en producción necesita `-p swissjob` / `-p swissjob-r5`, o choca con el nombre | Documentado en CLAUDE.md; falta un script de despliegue que no permita equivocarse | **CERRADO 2026-09-28** — `scripts/deploy_nas.sh` ya existía desde el 24-09 con las tres trampas, pero al usarlo el 25-09 se vio que retagueaba `core-capture` sin recrearlo (deriva A19-21 por construcción) y no corría `core-migrate` ni recreaba `core-worker`. Reescrito: retag por servicio, migración con contenedor desechable en la red de la API antes de recrear, y `core-api`+`core-worker` juntos |
 | A19-27 | Alto · reproducibilidad | **31 de 32 dependencias eran RANGOS**, así que cada reconstrucción de la imagen era una lotería. En una sola tarde mordió dos veces: ruff saltó de 0.15 a 0.16 (**917 «errores»** sin cambiar una línea) y pgvector/numpy pasaron a devolver `list` donde daban ndarray (**3 pruebas de fencing rojas solas**) | Todas fijadas a la versión instalada y verificada; `pip install --dry-run` resuelve; `ruff` a la MISMA versión que CI | **CERRADO 2026-09-24** |
 | A19-24 | Bajo · tests | ~~Flaky~~ **CERRADO 2026-09-24**: espera a que el latido AVANCE, no a que pase un segundo de reloj. `test_heartbeat_advances_on_keepalive_without_traffic` era flaky bajo carga: transmite 1 s con `status_interval=0.1` y exige que el latido avance. Falló una vez en una suite completa de 20 min y pasó **3/3 aislado**; el fichero tenía AST idéntico, así que no era regresión | Dar holgura al intervalo o esperar al latido en vez de a un reloj de pared | **CERRADO 2026-09-24** — `test_heartbeat_advances_on_keepalive_without_traffic` espera a que el latido avance en vez de a un reloj de pared; la suite del núcleo pasó dos veces íntegra el 2026-09-27/28 (1817 passed) sin reproducirlo |
@@ -311,7 +313,7 @@ se repiten.
 | A19-28 | **Alto · seguridad** | **Dos credenciales PERPETUAS abandonadas en producción.** El consumer `portfolio` del core tiene 3 credenciales vivas y sin caducidad; sólo `48c26fe326c924f4` la usa `portfolio_backend`. Las otras dos (`a02cbff1481dee59` sólo lectura, `de7924a343980d97` **con `profiles:write`, `applications:write` y `saved_searches:write`**) no las usa ningún contenedor. Descubierto el 2026-09-25 con `scripts/rotate_credential.py listar`, que se escribió para T9 | **Revocadas con autorización el 2026-09-25**: queda viva una sola credencial, `48c26fe326c924f4`, que es exactamente la que declara `portfolio_backend`. Verificado después de revocar que el Portfolio sigue leyendo el core. Revocar pone fecha, no borra la fila: la vuelta atrás es un UPDATE | **CERRADO 2026-09-25** |
 | A19-29 | Bajo · documentación | **`CLAUDE.md` documentaba `pytest --timeout=30` y `pytest-timeout` no está instalado NI LO ESTUVO NUNCA** (`git log -S` sobre `requirements.txt` no devuelve nada): el comando canónico de tests fallaba al arrancar, no al probar. Descubierto al intentar usarlo. Misma clase que la regla de oro del proyecto | Corregido el comando en `CLAUDE.md` y añadido el aviso de que la imagen puede traer un `ruff` distinto al que fija `requirements.txt` (la local tenía 0.16.8 frente al 0.15.14 del CI: 48 rojos que el CI no ve) | **CERRADO 2026-09-25** |
 | A19-30 | Medio · tests | **Una prueba de migración usaba el modelo ORM de HOY contra una base clavada en una revisión de AYER** (`test_profile_snapshot_migration`): cada columna nueva en `users` la rompía con un `UndefinedColumnError` ajeno a lo que medía. Saltó al añadir `users.token_version` (T9) | INSERT explícito con las columnas de esa revisión; la prueba queda inmune a las columnas futuras y además es honesta sobre qué esquema mide | **CERRADO 2026-09-25** |
-| A19-31 | **Crítico · operación** | **El correo de producción está MUERTO**: desde `swissjob-backend`, `smtplib` contra `smtp.gmail.com:587` cierra la conexión tras `STARTTLS` (`SMTPServerDisconnected`) con el usuario configurado (`lotharsan`) y con la dirección completa; desde el contenedor supervisor, `curl` llega al login y Gmail responde «Login denied». La contraseña almacenada tiene **14 caracteres** y las de aplicación de Gmail tienen 16. Consecuencia: los cuatro avisos por email (profesor de primaria cada 6 h, resumen diario, digest de watchlist, fin de cosecha) y el supervisor (A19-17) no entregan nada, y como `alert_tasks` retira los marcadores al fallar, lo reintenta cada vez sin ruido visible | Crear una contraseña de aplicación de Gmail (o cambiar de relay) y ponerla en `swissjob.configured.yml`, `portfolio.configured.yml` y `supervisor.env`; verificar con `python -c` de `smtplib` desde el contenedor. Es acción del propietario (cuenta de Google) | **ABIERTO — requiere al propietario** |
+| A19-31 | **Crítico · operación** | SMTP SwissJob autentica con una clave antigua de 14 caracteres; sus cuatro correos no se entregan. Portfolio sí completó un envío SMTP real y el supervisor usa sendmail de QTS, independiente de Gmail | Instalar una contraseña de aplicación válida para la cuenta SwissJob o autorizar literalmente reutilizar la cuenta SMTP de Portfolio; probar envío real desde BFF y worker sin revelar secretos | **ABIERTO — único dato externo pendiente.** La revisión automática rechazó copiar la credencial de otra cuenta con la autorización genérica; exige permiso exacto entre cuentas. |
 
 ## 0.C · Análisis profundo de código — 2026-09-28
 
@@ -370,7 +372,7 @@ restantes conservan cuarentena visible, sin fabricar vacantes.
 Catálogo público comprobado después de recargar Nginx tras recrear el BFF.
 Esta recarga y el canary por el proxy son obligatorios en futuros reemplazos.
 No se certifica una nueva campaña de extracción ni rendimiento global.
-[Acta E.15](SwissJob/docs/DESPLIEGUE_E15_2026-09-14.md).
+[Acta E.15](../DESPLIEGUE_E15_2026-09-14.md).
 
 Retirados dos clústeres privados y tres dumps del ensayo E.15; evidencias
 restantes con retención 48 h y nueve artefactos NAS con siete días.
@@ -388,7 +390,7 @@ Portfolio pasó generación/lectura/PDF/replay/baja en 28,16 s bajo ecf1c0a.
 Cuatro eventos nuevos recibidos, históricos intactos y journals vacíos.
 Esta evidencia HTTP real sustituye el pendiente de autorización anterior.
 Core 1162/1 skipped; Portfolio 1979/1 skipped. Acta:
-[DESPLIEGUE E.14](SwissJob/docs/DESPLIEGUE_E14_2026-09-13.md).
+[DESPLIEGUE E.14](../DESPLIEGUE_E14_2026-09-13.md).
 Las fotos anteriores de despliegue de este §0 son históricas donde contradigan
 esta actualización. Cron continúa diferido por el propietario; no está instalado.
 
@@ -402,13 +404,13 @@ por el plan elegido con relallvisible=0; VACUUM (ANALYZE) acotado, sin FULL,
 permitió usar el índice. Incorporado al control posterior a restore/índices.
 Core 1143 passed/1 skipped; BFF 2374/3 skipped/4 xfailed. UUID documental
 compatible desplegado, pero la autoridad documental sigue local. Estado
-prevalente: ESTADO §36 y [acta E.12](SwissJob/docs/DESPLIEGUE_E12_2026-09-13.md).
+prevalente: ESTADO §36 y [acta E.12](../DESPLIEGUE_E12_2026-09-13.md).
 Las cifras de E.10 que siguen debajo se conservan como historial, no como
 estado ejecutable actual. Rendimiento cerrado solo para el canary indicado.
 
 > **Prevalece esta actualización sobre las tablas históricas de abajo.**
 > Estado ejecutable: ESTADO §34 y
-> [acta de despliegue E.10](SwissJob/docs/DESPLIEGUE_E10_2026-09-09.md).
+> [acta de despliegue E.10](../DESPLIEGUE_E10_2026-09-09.md).
 > Calidad sigue sin examen independiente válido; no citar 0.5856/0.7438 como certificación.
 
 **Desplegado y comprobado:** Portfolio 715c347/rr11s0042u18; core
@@ -2101,3 +2103,551 @@ Este documento se actualiza **al cerrar cada fase**, junto con el backlog. Regla
   la corrección. El punto 15 queda habilitado; aplicar su plan ya verificado,
   mantener adaptador común y fuentes exclusivas, ejecutar pruebas y desplegar
   antes de avanzar al punto 16.
+
+### Checkpoint operativo — 2026-10-13 09:33 UTC
+
+- Punto 15 en validación integral. ReactPortfolio backend parte del SHA exacto
+  `a292ef4` y frontend de `1bed6c2`; los `README.md` y toda la documentación
+  previa del propietario permanecen fuera del alcance. Se verificó antes de
+  editar que las nueve fuentes transferidas sólo tenían como consumidor runtime
+  sus routers históricos y que el frontend ya seleccionaba Core mediante
+  `CORE_SOURCE_BY_KEY`.
+- Se añadió un único adaptador cohesivo hacia los contratos Core ya existentes:
+  `GET /v1/harvest/sources/{source}/aggregate` y
+  `POST /v1/harvest/sources/{source}/runs`. Conserva las 56 parejas método/ruta,
+  límites, formas públicas, autenticación admin e idempotencia; `nav` se traduce
+  a `nav_arbeidsplassen`. La salud usa señales nativas y deja `success_rate=null`
+  porque Core no tiene una medida equivalente. La cota de facetas sigue siendo
+  la ya documentada de 500 valores.
+- Tras 99/99 pruebas contractuales se retiraron exactamente nueve configs, nueve
+  routers y siete implementaciones de proveedor compartidas (25 módulos), además
+  de nueve normalizadores, nueve circuit breakers y nueve `urlPath` frontend
+  inalcanzables. El registro conserva exactamente once productores locales; no
+  quedan imports o símbolos activos del código borrado y `compileall` pasa.
+- Validación provisional: 356/356 pruebas backend focalizadas; frontend 423/423,
+  ESLint verde y build de producción en 9,20 s. Ruff pasa sobre los cuatro
+  módulos nuevos; el barrido ampliado sólo reproduce E402/F841 históricos fuera
+  de la lógica nueva. La suite backend completa está ejecutándose y debe quedar
+  verde antes de commit, despliegue y cierre del punto.
+- Metodología vigente para retomar: comprobar estado y consumidores reales con
+  `rg`/AST; caracterizar primero todo contrato observable; implementar la mínima
+  frontera común reutilizando `core_http`; probar cada ruta, límites, auth,
+  idempotencia y fallos; retirar dependencias desde hojas a raíz; compilar y
+  buscar referencias tras cada grupo; ejecutar pruebas focalizadas y suites
+  completas; medir diff y runtime; crear commits estrechos por repositorio sin
+  documentación ajena; desplegar artefactos de SHA exacto; comprobar las nueve
+  fuentes, once productores locales, workers, colas y 12 ventanas; sólo entonces
+  cerrar evidencia/checklist y avanzar al punto 16.
+- Reanudación exacta: esperar el resultado de la suite backend en curso; corregir
+  sólo fallos atribuibles. Después revisar el diff, registrar recuentos netos,
+  hacer commits separados de backend/frontend, desplegar ambos servicios del
+  backend y verificar producción antes de marcar el punto 15 completo.
+
+### Checkpoint operativo — 2026-10-13 10:06 UTC
+
+- Punto 15 cerrado. Backend ReactPortfolio `8a5a323` y frontend `59507c8`: un adaptador común conserva las 56 rutas históricas; se retiraron 25 módulos, nueve normalizadores, nueve circuit breakers y nueve rutas frontend inalcanzables. La suite backend terminó con 2.128 pruebas aprobadas y una omitida; frontend mantiene 423/423, lint y build verdes.
+- Producción: `portfolio_backend` y `portfolio_worker` ejecutan la imagen exacta `portfolio-backend:board-8a5a323`, sin reinicios. Las nueve fuentes devuelven 200 y al menos una oferta cuando el agregado no está vacío; los registros conservan exactamente once productores locales. Core continúa 17/17 saludable, 46 scopes, cero alertas y tres workers sin tareas activas o reservadas.
+- Playwright público: 12/12 ventanas con contenido, cero errores JavaScript, carga determinista en 1.043 ms; arrastre medio 26,17 ms y p95 33,4 ms frente a la línea base 43,25/100,1. Arbeitnow tarda 83,819 s sólo en la ruta histórica de compatibilidad; el dashboard usa `/api/v1/jobs/search` para las fuentes Core, por lo que esa latencia no interviene en la carga de sus ventanas. Queda registrada sin ocultarla en `portfolio-core-adapter-production.json`.
+- La publicación del commit frontend a GitHub y GitLab no se realizó: la revisión automática rechazó modificar ambas ramas `main` sin autorización específica por destino. El cambio sólo elimina configuración inalcanzable y el frontend público conserva el mismo camino activo ya validado, así que este gate aislado no bloquea la simplificación autorizada.
+- Punto 16 abierto en orden numérico: retirar atómicamente los catorce proveedores y dos scrapers transferidos de SwissJob junto con su control de handover; conservar productores exclusivos, ocho colectores escolares, historial persistido, aplicaciones/perfiles, overlay MatchResult, feedback, digests y salud/notificaciones de watchlist.
+- Metodología vigente para retomar: comprobar primero cabeza, estado, imports, consumidores, configuración efectiva, colas y producción; comparar cada hallazgo con el plan; caracterizar contratos y responsabilidades retenidas; editar desde las hojas hacia los registros y el control de despliegue en una sola unidad coherente; ejecutar pruebas focalizadas, búsqueda de referencias, compilación y suite completa; construir y desplegar sólo desde una cabeza limpia y exacta; repetir registros, ausencia de red transferida, salud, workers y funciones preservadas; documentar evidencia y checkpoint tras cada punto. No ampliar abstracciones ni borrar código con una responsabilidad viva.
+- Reanudación exacta: revalidar `swissjob-producer-retirement-plan.json` contra la cabeza `bbaf8b3` y el Compose vivo; verificar colas drenadas; retirar los 17 módulos completos, `backend/services/legacy_sources.py`, entradas de registros y las 14+2 variables de configuración/despliegue; adaptar watchlist para derivar directamente los ocho `swiss_schools_*`; después probar y desplegar antes de abrir el punto 17.
+
+### Checkpoint operativo — 2026-10-13 11:50 UTC
+
+- Punto 16 cerrado en producción. SwissJob BFF y worker ejecutan las imágenes
+  `swissjob-backend:point5-d54b2ec` y `swissjob-worker:point5-d54b2ec`, ambas
+  con cero reinicios y sin OOM. Los cambios quedaron integrados localmente como
+  `42ecf96` y `8acb043`; la diferencia de SHA se debe al cherry-pick desde el
+  worktree aislado y el contenido desplegado es el validado.
+- Se retiraron los catorce providers y dos scrapers transferidos, su control de
+  handover, el routing dinámico cerrado y los motores locales de catálogo,
+  matching, documentos, colegios y búsquedas ya propiedad de Core. Se conservan
+  aplicaciones, perfil editable, overlay `MatchResult`, feedback, digests,
+  salud/notificaciones de watchlist, cinco scrapers generales, ocho escolares y
+  doce providers registrados. El diff del commit principal elimina 23.454 líneas
+  y añade 686 en 181 ficheros.
+- Validación local: 1.912 pruebas aprobadas, cuatro `xfail` declarados y cero
+  fallos en 213,92 s; Ruff, `compileall`, `bash -n` y `diff --check` verdes. La
+  imagen BFF baja de 2.963.149.942 a 1.202.129.754 bytes (-59,43 %) y ya no
+  contiene `numpy`, `sentence_transformers` ni `torch`.
+- Validación viva: la sonda fija devuelve `failures=[]`, 2/2 perfiles enlazados,
+  cero snapshots pendientes/erróneos, autoridades local para aplicaciones y
+  perfiles y Core para catálogo, documentos, matching y colegios. No quedan
+  módulos ni variables retiradas; los registros contienen exactamente doce
+  providers, trece scrapers y ocho colegios. El worker responde `pong`, sin
+  tareas activas/reservadas; una consulta Jobicy sin persistencia devolvió 13
+  ofertas. Core terminó 17/17, sin alertas, con 25.284 entregas realizadas y
+  cero pendientes/dead letters. Evidencia:
+  `swissjob-runtime-retirement-production.json`.
+- Incidencia y solución: la primera sonda posterior encontró `HF_HOME` y
+  `SENTENCE_TRANSFORMERS_HOME` heredadas en el Compose vivo aunque la imagen ya
+  no tenía el modelo. Se amplió el transformador existente y se reaplicó sólo
+  configuración a BFF/worker; la misma sonda pasó después. Dos lecturas Core
+  captaron 21 pendientes y 13 entregas en vuelo, que drenaron sin intervención;
+  no se ocultaron como verdes.
+- Metodología vigente para retomar: verificar primero cabeza, cambios ajenos y
+  flujo ejecutable; caracterizar responsabilidades vivas; retirar desde hojas a
+  raíz en una unidad cohesiva; usar la mínima frontera fija y no crear capas de
+  transición nuevas; ejecutar pruebas focales, suite total y controles
+  estáticos; construir por SHA exacto; comprobar colas/estado vivo antes de
+  mutar; desplegar con candidato, respaldo y rollback; repetir exactamente la
+  sonda que detecte cualquier desviación; registrar evidencia, checklist y deuda
+  antes de abrir el punto siguiente. Un gate transitorio se vuelve a medir y se
+  continúa cuando drena; una desviación barata se corrige y se repite el gate.
+- Punto 17 abierto en orden numérico. Reanudación exacta: comprobar la cabeza y
+  los cambios ajenos de ReactPortfolio frontend, releer el plan verificado de
+  `JobCardExtras`, trazar sus dos consumidores, aplicar sólo la extracción de
+  presentación prevista, ejecutar lint, pruebas, build y E2E desde cabeza
+  limpia, construir el artefacto de release y verificar las 12 ventanas antes
+  de habilitar el muestreo final del punto 18.
+
+### Checkpoint operativo — 2026-10-13 12:00 UTC
+
+- Punto 17 cerrado en el commit frontend `49ca7ba`. `JobCardExtras` incorpora
+  únicamente `JobSummary`, `JobDate` y `JobBadges`; AI, bolsa y filtros conservan
+  sus contenedores y colores, y título, score, skills, acciones, hooks, tabs y
+  ordenación siguen siendo responsabilidad de cada ventana. El cambio afecta a
+  seis ficheros, añade 111 líneas y elimina 93. El `README.md` previo quedó fuera.
+- Validación repetida desde el worktree limpio y detached
+  `/tmp/reactportfolio-frontend-item17`: ESLint verde, 423/423 pruebas, build de
+  producción en 8,62 s y 18/18 E2E. El artefacto ocupa 6.650.151 bytes;
+  `dist/index.html` tiene SHA-256 `1823b994…a5dc53` y el chunk compartido es
+  `JobCardExtras-NbFkOQD7.js` (`3a48f8b5…310f4e`). Evidencia:
+  `portfolio-job-card-extraction-validation.json`.
+- Metodología vigente: releer el plan y trazar duplicación real antes de editar;
+  compartir sólo presentación con el mismo contrato observable; dejar estado y
+  acciones en sus dueños; convertir primero los consumidores y eliminar sus
+  bloques duplicados; usar las pruebas existentes contra el componente real;
+  ejecutar lint, suite, build y E2E; repetirlos desde el SHA limpio; excluir
+  cambios ajenos; registrar evidencia y avanzar sólo en orden numérico.
+- Publicación preparada: GitHub `main` y GitLab `main` siguen exactamente en
+  `1bed6c2`; ambos `push --dry-run` prueban avance rápido `1bed6c2..49ca7ba`.
+  La revisión automática rechazó el push real antes de ejecutarlo porque exige
+  una autorización que nombre expresamente ambos destinos; ningún remoto cambió.
+- Punto 18 abierto. Reanudación exacta: tras autorización literal para publicar
+  `49ca7ba` en `github/main` y `gitlab/main`, ejecutar esos dos push sin variar el
+  SHA, comprobar ambos refs y el workflow/asset de Cloudflare, repetir muestreo
+  de recursos, ventana programada, sonda pública de 12 ventanas y protocolo de
+  arrastre idéntico; calcular deltas contra las líneas base y cerrar checklist,
+  deuda y reporte final.
+
+### Checkpoint operativo — 2026-10-13 12:03 UTC
+
+- Punto 18 en curso, con el muestreo final de reposo ya cerrado. Tres lecturas
+  separadas por ocho segundos sobre los mismos ocho contenedores retenidos dan
+  2.381,29 MiB frente a 2.648,10 MiB en la línea base comparable: -266,81 MiB
+  (-10,08 %). La base excluye los 19,25 MiB de `core-capture`, por lo que el
+  ahorro no atribuye artificialmente la retirada del contenedor al runtime que
+  permanece.
+- SwissJob BFF baja de 860,5 a 364,2 MiB (-496,3 MiB; -57,68 %) y su worker de
+  263,0 a 167,7 MiB (-95,3 MiB; -36,24 %). Las variaciones aisladas de otros
+  contenedores no se declaran causales porque la carga puntual difiere. La sonda
+  controlada del encoder sigue siendo la medida causal: -605,64 MiB (-43,08 %).
+  Evidencia: `container-resource-final-production.json`.
+- Metodología vigente para el cierre: mantener idénticos conjunto, intervalo y
+  número de muestras; separar comparaciones de reposo de mediciones bajo carga;
+  declarar causalidad sólo cuando la variable se aisló; publicar exclusivamente
+  el SHA validado; comprobar el SHA remoto y el activo público; repetir el mismo
+  recorrido de 12 ventanas y el mismo gesto de arrastre; ejecutar la carga
+  programada sin enviar correo ni alterar su ledger; registrar límites y deltas;
+  cerrar el punto únicamente tras validar evidencia, checklist y producción.
+- Bloqueo externo restante: la revisión automática detuvo, antes de ejecutarlo,
+  el push del commit inmutable `49ca7ba` a `github/main` y `gitlab/main`. Ambos
+  remotos siguen en `1bed6c2` y los dos dry-runs confirman avance rápido. La
+  revisión exige autorización literal con repositorio y destino, pese a la
+  autorización general de la sesión; no se intentará una vía alternativa.
+- Reanudación exacta: obtener esa autorización específica, publicar el mismo
+  SHA en `github.com:VRicardoP/ReactPortfolio.git` y
+  `gitlab.com:lotharsan/reactportfolio-front.git`, verificar el despliegue de
+  Cloudflare y repetir la sonda pública. Después ejecutar la medición equivalente
+  de la carga diaria con entrega y escrituras neutralizadas, calcular todos los
+  deltas, marcar el punto 18 completo y emitir el informe final.
+
+### Checkpoint operativo — 2026-10-13 12:13 UTC
+
+- Punto 18 avanza con la ventana de carga final cerrada. Se ejecutó el cálculo
+  real de `daily_match_report` dentro de `portfolio_worker`, sustituyendo antes
+  de entrar al flujo únicamente `_record_outcomes` y `_build_and_deliver`; así
+  conserva carga de fuentes, matching local, consumo del feed Core y consultas
+  de colegios, pero no envía correo, no modifica el ledger y revierte la sesión.
+  Procesó 1.674 resultados Core ya puntuados y sólo ocho candidatos locales.
+- La ejecución duró 167,499 s frente a 3.667,175 s en la corrida programada base
+  (-95,43 %). En 14 muestras cada 15 s, el worker tuvo 443,95 MiB de mediana y
+  465,2 MiB de máximo frente a 722,4 y 784,6 MiB (-38,55 % y -40,71 %). El p95
+  fue 465,2 frente a 779,0 MiB (-40,28 %). Evidencia:
+  `container-resource-scheduled-window-final-production.json`.
+- Límite comparativo explícito: la base fue una corrida natural con entrega y
+  ledger, mientras la final neutralizó esos dos efectos para evitar mensajes y
+  mutaciones fuera de horario. La reducción refleja sobre todo que las fuentes
+  transferidas llegan puntuadas desde Core y sólo ocho candidatos conservaron
+  matching local; no se atribuye el coste trivial de composición/SMTP al nuevo
+  flujo. Un primer intento no importó `services` y terminó antes de ejecutar la
+  carga; se corrigió `sys.path` a `/release` y sólo se conserva la corrida válida.
+- Metodología vigente: aislar efectos externos antes de disparar una carga,
+  conservar el cálculo costoso, muestrear durante toda su vida, guardar el hash
+  del arnés y la imagen, fallar si la neutralización no está activa, comparar
+  percentiles y duración con la base y declarar cualquier asimetría del
+  protocolo. Validar el JSON y `diff --check`, actualizar checklist/deuda y
+  hacer un commit de evidencia estrecho sin incluir documentación ajena.
+- Reanudación exacta: queda únicamente publicar el SHA frontend `49ca7ba` en los
+  dos destinos ya verificados, esperar el activo Cloudflare, repetir allí las
+  12 ventanas y el arrastre idéntico, consolidar deltas y cerrar formalmente el
+  punto 18. La revisión automática aún exige autorización literal por destino.
+
+### Cierre de optimización — 2026-10-13
+
+- Objetivo completo, 18/18 puntos. El commit frontend inmutable `49ca7ba` quedó
+  publicado en `github/main` y `gitlab/main`; GitHub Frontend CI terminó en
+  `success` (run 38406372899) y Cloudflare sirve `/assets/index-DmwHqaRA.js`, que referencia
+  `/assets/JobCardExtras-C_UhG9nf.js`. Los dos refs remotos coinciden exactamente con el SHA local.
+- Validación pública final conservada íntegra en dos corridas: 12/12 ventanas
+  con contenido y cero errores JavaScript en ambas, cargas de 1003 y
+  968 ms, media de 31.120 ms/frame sobre seis arrastres y peor
+  p95 de 50.0 ms. Frente a 43,25/100,1 ms mejora un
+  28.05 %/50.05 %. Frente a la muestra pública anterior de
+  1bed6c2 empeora un 8.89 % en media y un
+  49.70 % en peor p95; no se descartó la muestra alta. El main más el
+  chunk compartido crece 499 bytes, por lo que la extracción se declara mejora
+  de cohesión y eliminación de duplicación, no ahorro de transferencia.
+- Las sondas vivas finales de Core, SwissJob y Portfolio devuelven
+  `failures=[]`: Core 17/17, sin alertas, staging, slot ni delivery pendiente;
+  Portfolio conserva nueve fuentes transferidas desactivadas, once propias y
+  seis capacidades en `core_primary`; SwissJob conserva doce providers, trece
+  scrapers y ocho escolares, sin módulos ni variables retiradas. Las cinco
+  colas están a cero; los ocho contenedores relevantes están vivos, sin
+  reinicios ni OOM; `core-capture` no existe.
+- Resultados antes/después consolidados: encoder controlado -605,64 MiB
+  (-43,08 %); reposo comparable -266,81 MiB (-10,08 %); SwissJob BFF -57,68 %
+  y worker -36,24 %; carga diaria equivalente 3.667,175 -> 167,499 s (-95,43 %)
+  y memoria mediana 722,4 -> 443,95 MiB (-38,55 %); SQL de facetas -91,48 % y
+  página por categoría -53,48 %. Los límites causales y la neutralización de
+  correo/ledger quedan explícitos en `optimization-final-production.json`.
+- Limpieza de sesión completada: contenedores `item16-postgres`/`item16-redis`,
+  sus volúmenes anónimos, la red `item16-test-net`, el arnés temporal del worker
+  y los artefactos transitorios de Playwright fueron retirados. Los cambios
+  previos del propietario permanecen fuera de los commits de esta sesión.
+- Metodología aplicada hasta el cierre: comprobar estado real antes de cada
+  mutación; ejecutar estrictamente en orden; caracterizar contratos; elegir la
+  mínima solución cohesiva; medir una línea base comparable; aislar causalidad;
+  desplegar SHA exactos con rollback; repetir sondas después de cada corrección;
+  conservar también resultados desfavorables; no dar por verde un gate por
+  ausencia de errores; cerrar sólo al demostrar cada requisito con estado vivo,
+  pruebas, artefactos reproducibles y evidencia versionada.
+- Reanudación futura: no queda trabajo del objetivo original. Si aparece una
+  regresión, partir de `optimization-final-production.json`, repetir primero la
+  sonda afectada sin mutar producción y comparar con el protocolo y los límites
+  documentados antes de decidir cualquier cambio.
+
+### Corrección de indicadores de carga — 2026-10-13 14:09 UTC
+
+- Solicitud: corregir el cuadrado mostrado junto a «Fetching analytics data».
+  Se comprobó en JSX y Chromium que el carácter previsto era `⏳` (`U+23F3`),
+  que el estilo inline calculaba sólo `Courier New` y que el render correcto
+  dependía de una fuente emoji instalada localmente (`Noto Color Emoji` en el
+  entorno de prueba). El proyecto no distribuía ese glifo, por lo que otros
+  sistemas podían mostrar tofu.
+- Solución mínima aplicada en ReactPortfolio frontend `82ade98`: los tres
+  loaders que usaban `⏳` o `📊` comparten ahora un spinner CSS sin fuentes ni
+  dependencias. El principal mide 42 px y los loaders lazy 24 px; conservan
+  textos y colores, exponen `role=status`, `aria-live=polite`, `aria-busy=true`,
+  ocultan el dibujo a lectores de pantalla y desactivan la animación con
+  `prefers-reduced-motion`.
+- Validación: ESLint verde; 423/423 pruebas; build Vite en 3,56 s; 18/18 E2E.
+  La sonda Playwright del build demoró analytics y el chunk de Stats por
+  separado: ambos estados mostraron sólo su texto, tamaños 42/24, animación
+  `app-loading-spin`, atributos accesibles completos, cero errores JavaScript y
+  `animation-name=none` bajo movimiento reducido. El preview temporal se cerró.
+- Publicación completada: el SHA exacto
+  `82ade985df71df182d30780b32c9bdb468ffc35b` está en `github/main` y
+  `gitlab/main`; Frontend CI terminó en `success` (run 38411087414) y Cloudflare
+  sustituyó `/assets/index-DmwHqaRA.js` por `/assets/index-UWDdC0xO.js`, con
+  `/assets/index-7XmNGod8.css`. El `README.md` modificado previamente por el
+  propietario quedó fuera del commit.
+- Verificación pública final: Playwright reprodujo por separado la espera de
+  analytics y la carga diferida de Stats. Los spinners desplegados miden 42/24
+  px, usan `app-loading-spin`, no contienen glifos, mantienen los textos
+  accesibles exactos, declaran `aria-hidden=true` y `aria-busy=true`, se detienen
+  bajo movimiento reducido y no generan errores JavaScript.
+- Metodología aplicada y reanudación: identificar primero el punto Unicode y la
+  fuente efectiva, reproducir el fallo potencial en navegador, reutilizar CSS
+  sin crear componentes o dependencias, validar estado normal y movimiento
+  reducido, ejecutar todas las puertas locales, publicar un commit estrecho y
+  repetir la sonda contra el activo realmente servido. El punto queda cerrado;
+  ante una regresión futura, partir del SHA y de los activos anteriores, demorar
+  las dos rutas de carga por separado y aplicar el mismo contrato medible antes
+  de modificar código.
+
+### Ejecución de deuda restante — 2026-10-13
+
+- Solicitud y alcance autorizado: cerrar A19-31, DT-54, A18-05/A19-25,
+  A19-13, A19-15, DT-72, DT-102 y DT-115; reconciliar después la deuda
+  documental inmediata. Quedan expresamente fuera DT-47, A19-19 y A19-20.
+- Objetivo verificable: no marcar un identificador cerrado por una edición
+  documental; comprobar primero código, datos y producción, aplicar la mínima
+  corrección completa, ejecutar regresiones del contrato afectado y la suite
+  apropiada, desplegar cuando cambie el comportamiento vivo y repetir la sonda
+  sobre la release exacta. Rendimiento exige línea base y medición posterior con
+  el mismo protocolo.
+- Metodología de continuidad: trabajar un identificador cada vez; conservar los
+  cambios previos del propietario; caracterizar el recorrido y sus consumidores;
+  preferir borrar o reutilizar límites/helpers existentes; mantener SRP, cohesión
+  alta, acoplamiento bajo, legibilidad y consistencia; evitar abstracciones sin
+  consumidor; crear commits estrechos; y añadir aquí un checkpoint tras cada
+  punto con causa, cambio, pruebas, SHA, despliegue, límites y reanudación exacta.
+- Estado inicial: optimización 18/18 e indicador CSS cerrados. Los ledgers tienen
+  estados históricos que pueden estar superados; `MEMORIA_PROYECTO.md` (09-10) y
+  el acta inicial de optimización aún describen captura y salud antiguas. No se
+  reconciliarán hasta cerrar los puntos funcionales para que la foto final use
+  evidencia nueva.
+- Reanudación exacta inicial: auditar en orden A19-31 y DT-54, medir después
+  A18-05/A19-25, revisar el saldo real de A19-13/A19-15, resolver DT-72/DT-115,
+  comprobar DT-102 contra la configuración viva y finalizar reconciliando todos
+  los documentos autoritativos.
+
+
+#### Checkpoint DT-54 — implementación validada y backend en producción (2026-10-13)
+
+- Causa comprobada: el frontend conservaba `accessToken`, `refreshToken` y
+  `tokenType` en `sessionStorage`; SSE reconstruía además `Authorization` desde
+  ese estado. El backend ya soportaba cookies HttpOnly, pero producción
+  devolvía el refresh en JSON y usaba cookies no seguras.
+- Cambio mínimo: frontend `5045a28` determina la sesión con `/users/me`, usa
+  `credentials=include`, comparte un único refresh concurrente, serializa
+  login/logout y elimina el almacenamiento y lectura de JWT; SSE reutiliza
+  `authenticatedFetch`. Backend `a63df1f` deja de exponer el secreto refresh,
+  fija cookies `HttpOnly; Secure; SameSite=None`, rechaza escrituras de
+  orígenes no autorizados y hace que el despliegue propague esas políticas.
+- Validación local: frontend lint, build, 413/413 unitarias y 18/18 E2E;
+  backend 2.129 pruebas pasadas, una omitida, y `py_compile` verde. Producción
+  ejecuta `portfolio-backend:board-a63df1f`: login, `/users/me` y refresh
+  devuelven 200; las dos cookies son HttpOnly/Secure/SameSite=None; ningún body
+  contiene el secreto refresh; un origen ajeno recibe 403; logout responde 200.
+  El acceso con una copia deliberadamente retenida del JWT sigue válido hasta
+  su expiración, propiedad del access token stateless y fuera del contrato de
+  borrado de cookies del navegador.
+- Rollback backend:
+  `portfolio.configured.yml.before-a63df1f`; la base permanece en
+  `uu44v3375x21 (head)`. Los README preexistentes quedaron fuera de los commits.
+- Estado y reanudación exacta: el backend está cerrado; falta publicar
+  `5045a28` en los remotos frontend y esperar/verificar el activo Cloudflare
+  para cerrar DT-54 de extremo a extremo. La revisión automática bloqueó el
+  push por exigir autorización literal de cada destino, por lo que no se ha
+  intentado una vía indirecta. Mientras se obtiene esa autorización se continúa
+  con todos los puntos independientes.
+
+#### Checkpoint DT-72 — cerrado (2026-10-13)
+
+- Inventario comprobado: los 11 providers activos pasan
+  `cache_update_interval` desde su módulo de configuración. La única duración
+  local restante era el valor por defecto literal de `BaseJobCache`; la
+  constante `DEFAULT_JOB_CACHE_DURATION` creada para centralizarlo no tenía
+  consumidores.
+- Cambio mínimo: `895a724` sustituye el literal por esa constante. No añade
+  configuración, capas ni dependencias y no altera los intervalos específicos.
+- Validación: Black y `git diff --check` verdes; 51/51 pruebas focalizadas de
+  caché, edad, motores y matcher superadas. No requiere despliegue separado: se
+  incorporará a la siguiente imagen backend junto con los demás cierres.
+- Reanudación exacta: DT-72 queda cerrado. Continúa la matriz A18-05/A19-25 y,
+  después, DT-115; el cambio del propietario en `README.md` sigue excluido.
+
+#### Checkpoint DT-115 — cerrado (2026-10-13)
+
+- Causa comprobada: dos pruebas demostraban una cota de cinco solicitudes
+  enviando 1.000 peticiones cada una. El resultado funcional era correcto, pero
+  la amplificación consumía tiempo de CPU y agotaba el presupuesto bajo carga.
+- Cambio mínimo: `d44d152` envía seis solicitudes por bucket: cinco deben pasar
+  y la sexta debe devolver 429. Mantiene la separación entre tráfico anónimo y
+  propietario y la cota conjunta de diez verificaciones.
+- Validación: 10 repeticiones consecutivas de los dos casos, 20/20 en verde
+  (0,14–0,17 s por pareja); fichero G10 completo, 25/25 en 2,65 s; Black y
+  `git diff --check` verdes.
+- Reanudación exacta: DT-115 queda cerrado y no requiere despliegue de runtime.
+  Continúa la medición A18-05/A19-25; DT-72 y DT-115 viajarán en la próxima
+  release backend.
+
+#### Checkpoint DT-102 — cerrado (2026-10-13)
+
+- Método aplicado: comprobar primero el estado efectivo con `docker inspect`,
+  comparar la topología viva con el compose y repartir el presupuesto original
+  entre los procesos en que hoy está dividido el backend; cambio mínimo,
+  despliegue reproducible, sonda de salud y verificación posterior.
+- Evidencia previa: DB, Redis y ngrok ya tenían exactamente sus límites; API y
+  worker tenían 1 GiB cada uno pero CPU ilimitada. El NAS dispone de dos CPU.
+- Realizado: commit Portfolio backend `444f072`; `portfolio_backend` y
+  `portfolio_worker` declaran y propagan `cpus: 1.0`. Desplegada imagen
+  `portfolio-backend:board-444f072`, con rollback
+  `portfolio.configured.yml.before-444f072`.
+- Verificado en vivo: ambos contenedores muestran 1 GiB, `NanoCpus=1000000000`,
+  cero reinicios; `/health` responde `healthy` y Alembic permanece en
+  `uu44v3375x21 (head)`.
+- Reanudación exacta: DT-102 queda cerrado. Continúa A18-05/A19-25 con el
+  benchmark actual ya finalizado y el caché calentado en preparación; después
+  se validan/despliegan A19-13/A19-15 y se cierra A19-31 hasta donde permita la
+  credencial externa.
+
+#### Checkpoint A18-05 — cerrado por contrato servido (2026-10-13)
+
+- Metodología aplicada: fijar primero el recorrido que ejecuta hoy la UI
+  (facetas al entrar, 50 tarjetas al elegir categoría, guardados y catálogo),
+  conservar el presupuesto predeclarado de p95 <= 2 s, medir 100 muestras
+  secuenciales por ruta dentro del BFF del NAS, separar arranque de régimen
+  caliente y no atribuir como mejora una muestra tomada durante calentamiento.
+- Línea base comparable de 100 muestras: facetas p50/p95 2,943/5,991 s;
+  categoría 5,152/10,876 s; guardados 0,689/1,723 s; catálogo 1,530/7,579 s.
+  Sólo guardados cumplía.
+- Realizado: Core publica la categoría autoritativa; el BFF sirve facetas y
+  categorías desde el recorrido calentado y cachea los joins de presentación de
+  colegios. El commit 4017081 añade 60 s de vigencia a la caché ETag del
+  catálogo: mientras está vigente evita pedir a Core una página que éste debía
+  reconstruir incluso para responder 304; al caducar conserva la revalidación
+  ETag. Prueba focalizada: 41/41.
+- Producción: BFF y worker ejecutan point5-4017081, saludables y con rollback
+  swissjob.configured.yml.before-bff-4017081 y
+  swissjob.configured.yml.before-worker-4017081. Medición final, 100 muestras
+  y estados 200: facetas 0,088/0,180 s; categoría 0,371/1,033 s; guardados
+  0,564/1,551 s; catálogo 0,186/0,838 s. Las cuatro rutas cumplen p95 <= 2 s.
+  El catálogo había dado 5,166/9,731 s justo antes del cambio, control que
+  confirma que la reconstrucción remota seguía siendo el coste dominante.
+- Reanudación exacta: A18-05 queda cerrado. Tomar una muestra final de recursos
+  y carga del NAS para cerrar A19-25 sin confundir latencia de producto con
+  capacidad del host; después validar en producción A19-13/A19-15, registrar sus
+  checkpoints y continuar con A19-31, DT-54 y la reconciliación documental.
+
+#### Checkpoint A19-25 — cerrado dentro del alcance del proyecto (2026-10-13)
+
+- Metodología aplicada: medir el contrato extremo a extremo sobre el NAS real y
+  tomar después una ventana independiente de recursos; no rebajar el presupuesto,
+  no atribuir al proyecto procesos del QTS y declarar la capacidad física que no
+  controla el repositorio.
+- Evidencia: el NAS conserva dos CPU y, tras las mediciones verdes, mostraba
+  carga 9,52/10,50/11,27. Una instantánea ocupada tuvo 60 % user y 40 % system;
+  los mayores procesos eran API.pyc de red de QTS (36,6 %) y gpuhal_app
+  (26,6 %). Aun con esa restricción, las cuatro rutas de producto cumplen el
+  p95 de 2 s documentado en A18-05.
+- Ventana de cinco muestras/40 s de los ocho contenedores afectados: suma de
+  medianas 2,89 % CPU, 2.830,06 MiB y 55 procesos. Medianas principales:
+  Core API 0,24 %/135,5 MiB; Core bi-encoder 0,11 %/829,5 MiB; BFF
+  0,40 %/360,4 MiB; worker SwissJob 0,36 %/190,7 MiB; Portfolio API
+  0,21 %/95,36 MiB; Portfolio worker 1,11 %/570,5 MiB. Hubo picos breves
+  (Core API 53,25 %, BFF 17,57 %, Portfolio worker 6,86 %) sin romper el
+  contrato medido.
+- Resultado: el rediseño de carga, las cachés verificadas por versión, el
+  bi-encoder único y los límites de CPU eliminan el bloqueo del producto en este
+  hardware. Los demonios QTS y la carga global alta quedan como restricción del
+  host, no como deuda accionable de SwissJob.
+- Reanudación exacta: A19-25 queda cerrado. Validar ahora A19-13/A19-15 en el
+  código y los datos vivos, añadir un checkpoint por cada uno y seguir con
+  A19-31, DT-54 y la reconciliación documental.
+
+#### Checkpoint A19-13 — cerrado con límites explícitos (2026-10-13)
+
+- Metodología aplicada: medir sólo módulos de runtime, distinguir imports de
+  carga de imports diferidos, comprobar consumidores antes de borrar o crear
+  capas y rechazar una abstracción sin segundo uso. El cierre exige resolver el
+  problema concreto, no crear una carpeta por su nombre.
+- Complejidad: radon no encuentra grados E/F en API, workers ni productores.
+  Los siete E/F restantes pertenecen a cinco herramientas de corte de Fase E ya
+  ejecutadas. Ninguna es importada por API o workers; feedback_cutover sólo
+  compone una de ellas y tampoco tiene consumidores de runtime. Se conserva la
+  cota histórica en vez de reescribir herramientas de un solo uso.
+- Acoplamiento: análisis AST de imports de carga, excluyendo tests, migraciones,
+  scripts e imports locales/TYPE_CHECKING, recorrió 185 módulos y 558 aristas en
+  BFF, y 116 módulos y 342 aristas en Core: cero componentes cíclicos en ambos.
+  El ciclo matching/core_client <-> feedback fue eliminado en bf88f3e al dejar
+  la selección del lector en el router.
+- Responsabilidades: no se añadió una carpeta repositories. El repositorio ya
+  tiene JobRepository para persistencia local y puertos estrechos para catálogo,
+  matching, perfiles y colegios; envolverlos de nuevo añadiría costuras de un
+  solo uso. La clasificación y las facetas presentadas son autoridad de Core
+  mediante match_categories.json. El frontend pasó de 359 líneas de reglas a
+  99 de metadatos/agrupación y consume job_category; no conserva keywords. El
+  clasificador Python del BFF queda acotado a la ingesta local retenida y a la
+  alerta persistida, no decide la categoría de la UI.
+- Validación acumulada de los cambios: Core 1.547 pruebas pasadas y una omitida;
+  BFF 1.919 pasadas y cuatro xfail esperados; frontend lint, 56 pruebas y build
+  verdes. Los cambios funcionales están desplegados en Core 254e826 y
+  BFF/worker 4017081.
+- Reanudación exacta: A19-13 queda cerrado. Añadir la aserción de aceptación de
+  descripción y enlace de detalle para tarjetas escolares, ejecutar frontend y
+  cerrar A19-15 con los agregados vivos ya obtenidos; después continuar A19-31.
+
+#### Checkpoint A19-15 — cerrado en productor y presentación (2026-10-13)
+
+- Metodología aplicada: separar el contenido canónico histórico del contenido
+  realmente servido, medir ambos con agregados sin extraer ofertas ni identidad,
+  corregir en el productor para lo nuevo y conservar una normalización defensiva
+  en la frontera de presentación para revisiones históricas inmutables.
+- Datos vivos: entre vacantes activas cuya fuente primaria es la indicada, la
+  canónica conserva 22.138 Arbeitnow (2.350 revisiones históricas con HTML) y
+  3.504 Jobgether históricas sin narración. No se reescriben revisiones
+  inmutables. El productor Arbeitnow elimina HTML antes de normalizar y el
+  productor Jobgether crea desde los campos oficiales un resumen factual de
+  contrato, experiencia, modalidad, ubicación y skills; no inventa texto.
+- Contrato servido sobre 1.800 matches reales: Arbeitnow 975/975 con
+  descripción no vacía y 0 HTML; Jobgether 484/484 con descripción no vacía y
+  0 HTML. La presentación limpia el HTML heredado y, cuando falta narración,
+  construye sólo hechos ya presentes (ubicación y etiquetas). Hay 58 títulos
+  traducidos desde la caché calentada; el camino de respuesta con
+  translate=false no llama al LLM.
+- Colegios: cuatro tarjetas reales, 4/4 con descripción y URL, y su ruta de
+  detalle respondió 200. MatchCard muestra la descripción y conserva siempre
+  View details. La nueva prueba de aceptación f72eb8b fija ambos requisitos;
+  frontend queda con ESLint verde, 57/57 pruebas y build Vite correcto. La
+  primera compilación no pudo vaciar dist por propiedad root heredada; el mismo
+  build pasó hacia /tmp sin cambiar permisos ni borrar artefactos ajenos.
+- Reanudación exacta: A19-15 queda cerrado. A19-31 sigue bloqueado únicamente
+  por una credencial SMTP válida para la cuenta SwissJob o una autorización
+  literal para reutilizar la cuenta Portfolio. Completar mientras tanto la
+  validación de salud/fuentes, DT-54 publicable y la reconciliación documental.
+
+#### Checkpoint operativo final previo a publicación — 2026-10-13
+
+- Core: ready/authoritative, release 254e826, Alembic core0054; 17/17 scopes
+  activos con estado y cero alertas; 25.382 entregas, cero dead/pending/inflight;
+  staging cero, slot de captura ausente y core-capture retirado.
+- SwissJob: dos usuarios activos, ambos vinculados y sin snapshots pendientes ni
+  errores; catálogo/matching/colegios resuelven siempre a Core y el perfil
+  editable permanece local. Banderas de perfil, feedback y facetas activas;
+  12 providers, 13 scrapers (ocho escolares) y ningún módulo retirado importable.
+- Portfolio: schedulers activos; nueve fuentes transferidas desactivadas, once
+  fuentes propias, y applications/catalog/documents/matching/saved_searches/
+  schools exactamente en core_primary; sonda sin fallos.
+- La sonda SwissJob original importaba el modelo de routing ya eliminado y
+  falló antes de medir. Se actualizó al contrato fijo vigente y el nuevo control
+  pasó; esto forma parte de la deuda documental inmediata.
+- Reanudación exacta: reconciliar MEMORIA_PROYECTO, acta de optimización y hoja
+  de ruta; sincronizar copias saneadas de compose. Después quedan sólo A19-31,
+  publicar/verificar DT-54, validación final de navegador y pushes exactos.
+
+#### Checkpoint de deuda documental inmediata — cerrado (2026-10-13)
+
+- Metodología aplicada: contrastar cada afirmación con código, commits, imágenes
+  vivas, sondas y mediciones; distinguir estado histórico de estado vigente;
+  conservar las restricciones y los fallos observados; actualizar primero las
+  fuentes autoritativas y después los resúmenes; versionar sólo los archivos de
+  esta sesión, sin absorber cambios preexistentes del propietario.
+- Realizado: `MEMORIA_PROYECTO.md` resume autoridades, topología, releases,
+  resultados y continuidad; el acta
+  `OPTIMIZACION_CORE_PORTFOLIO_2026-10-10.md` cierra 18/18 puntos y los seis
+  pasos en el orden autorizado; `ESTADO_Y_HOJA_DE_RUTA.md` incorpora la
+  fotografía vigente y marca como superados los estados parciales; esta deuda
+  deja A18-05, A19-13, A19-15 y A19-25 cerrados con límites explícitos.
+- Evidencia operativa: se actualizó la sonda SwissJob al contrato de autoridades
+  fijas y volvió a pasar junto con las sondas Core y Portfolio. Los manifiestos
+  saneados reflejan las imágenes vivas en SwissJob `da10e57` y Portfolio
+  backend `c5a2806`. El escáner permite únicamente el literal booleano seguro
+  `AUTH_REFRESH_TOKEN_IN_BODY=false`; rechaza `true` y cualquier literal en
+  otras claves sensibles. Sus tres pruebas pasan y los tres manifiestos dan
+  cero hallazgos.
+- Estado: aproximadamente **94 % del alcance de deuda autorizado**. La deuda de
+  código, rendimiento, arquitectura y documentación está cerrada. Quedan dos
+  efectos externos: A19-31 necesita la credencial/permiso SMTP exacto; DT-54
+  necesita publicar el frontend `5045a28`, esperar el activo Cloudflare y
+  ejecutar el recorrido autenticado final. Después se publican los commits
+  locales en los destinos autorizados y se registra el cierre total.
+- Reanudación exacta: no repetir diagnósticos ni benchmarks. Obtener primero el
+  dato SMTP permitido y la autorización literal de cada remoto; probar envío
+  real desde BFF y worker sin imprimir secretos; publicar `frontend@5045a28`;
+  verificar autenticación y las 12 ventanas en el activo público; comprobar
+  refs remotas; actualizar este checkpoint a 100 % con los SHA publicados.

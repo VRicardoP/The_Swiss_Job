@@ -1,19 +1,17 @@
 # Estado del proyecto y hoja de ruta — `jobhunt-core`
 
-> **Documento vivo.** Consolida en un solo sitio: dónde estamos, qué se ha decidido, qué está
-> roto y en qué orden se va a arreglar.
+> **Diario histórico cerrado como fuente operativa.** Conserva fotografías
+> fechadas y la secuencia de decisiones; no es la memoria vigente.
 >
-> **📍 SI CONTINÚAS EL PROYECTO, EMPIEZA POR EL §43 (lo último).**
+> **Para continuar el proyecto, empezar por
+> [MEMORIA_PROYECTO.md](MEMORIA_PROYECTO.md).** El §43 es sólo el último capítulo
+> de este diario.
+>
 > Última escritura: **2026-09-21, actualización documental; trabajo funcional pausado**.
-> ⚠ **Este documento es un DIARIO: cada sección es una foto fechada y NO se reescribe.** Las cifras
-> de una sección valen para su fecha y nada más — las de §0 y §1 son del **2026-08-06/07**, las de
-> §18.9 (`backend 1097`, `frontend 315`) del 25-08. **Para actuar manda §43 y sus actas
-> enlazadas. No reutilizar contadores de una foto anterior sin re-medirlos.**
-> §19 fue superado por §20; §21 corresponde a la mañana del 04-09 y fue superado
-> por §22–§25. Esas secciones se conservan como historial, no como instrucciones
-> operativas vigentes ni como certificación de calidad actual.
+> Cada sección vale para su fecha y no se reescribe. No reutilizar contadores ni
+> pendientes —incluidos los de §18.9, §20 o §43— sin re-medición.
 >
-> Complementa (no sustituye) a los documentos contractuales:
+> El diario complementa, pero no sustituye, los documentos contractuales:
 > `PLAN_UNIFICACION_JOBHUNTING.md` (qué se construye) · `ADR_JOBHUNTING.md` (por qué así) ·
 > `BACKLOG_UNIFICACION_JOBHUNTING.md` (tickets) · `RUNBOOK_CUTOVER_PILOTO.md` (cómo se corta) ·
 > `jobhunt_core/shadow/RUNBOOK.md` y `.../DEPLOY_NAS.md` (operación de la sombra).
@@ -2162,7 +2160,7 @@ Esta sección prevalece sobre las fotografías anteriores; no reescribe sus cifr
 **unificación completa**. No hay un examen de calidad nuevo ni una racha iniciada.
 El 0.5856/0.7438 histórico NO es certificable (véase §25).
 
-- Operación: el [acta del 08-09](SwissJob/docs/CIERRE_DESPLEGADO_2026-09-08_CODEX.md)
+- Operación: el [acta del 08-09](../CIERRE_DESPLEGADO_2026-09-08_CODEX.md)
   registra el despliegue posterior d908ea2/core0042. Las continuaciones E.1–E.3 son
   LOCALES: no despliegan documentos al NAS ni cambian sus escritores.
 - **E.1:** almacén/API de documentos inmutables y core0043 implementados y probados;
@@ -2172,26 +2170,26 @@ El 0.5856/0.7438 histórico NO es certificable (véase §25).
 - **E.3:** alta atómica CV+carta y adaptador de lote. La transacción incluye documentos,
   eventos y recibo; siguen pendientes orquestación recuperable, PDF, inbox,
   migración histórica/rollback y flip. Evidencia exacta de suites y commits en
-  [acta E.3](SwissJob/docs/CIERRE_LOCAL_E3_2026-09-08.md), no extrapolar los números
+  [acta E.3](../ARCHIVO_HISTORICO.md), no extrapolar los números
   de §25 a una release o despliegue nuevo.
 - Runtime LOCAL alineado a d908ea2/core0042 tras backup/restore estricto y ensayo;
   3.000 cambios drenados, staging pendiente 0 en la comprobación de cierre E.2.
   **Cuatro ofertas locales activas sin listing core** siguen pendientes de
   reconciliación dirigida, no resueltas por drenar la cola. Identidades y prueba:
-  [acta E.2](SwissJob/docs/CIERRE_LOCAL_E2_2026-09-08.md).
+  [acta E.2](../ARCHIVO_HISTORICO.md).
 
 Siguiente orden: identidad/body durable de generación → caché coherente y goldens
 JSON/PDF → inbox/retención → migración con manifiesto y vuelta ensayada → build,
 freeze/drenaje y corte por consumer. Colegios aparte; F solo tras verificar cada
 sustituto de tareas/fuentes legacy. La regla única y sus criterios están en
-[contrato de Fase E](SwissJob/docs/FASE_E_DOCUMENTOS_2026-09-08.md).
+[contrato de Fase E](../FASE_E_DOCUMENTOS_2026-09-08.md).
 
 ---
 
 ## 27. E.4 — correcciones locales y decisión previa al corte (2026-09-08)
 
 Prevalece sobre §26. **E/F no están cerradas; NAS sin cambios en este tramo.**
-Acta: [avance E.4](SwissJob/docs/AVANCE_E4_2026-09-08.md).
+Acta: [avance E.4](../ARCHIVO_HISTORICO.md).
 
 - SwissJob `eb70efd`: caché por inputs/receta, guarda solo UUID y confirma
   existencia/ownership en el almacén. Cierra borrado→SET tardío→generar y cambios
@@ -2238,7 +2236,7 @@ CV/carta al borrar candidatura, hasta borrado explícito o vencimiento de retenc
   CASCADE y de los dos accesos sin binding. Lint dirigido y build completados,
   con avisos de build local registrados en el acta.
 - Evidencia, alcance exacto de simulaciones y comandos:
-  [acta E.5](SwissJob/docs/AVANCE_E5_2026-09-08.md).
+  [acta E.5](../AVANCE_E5_2026-09-08.md).
   No se ha ejecutado canary de generación core en NAS en este tramo.
 
 **No desplegado. NAS sin cambios; E/F y unificación completa siguen pendientes.**
@@ -2265,7 +2263,7 @@ la vida del recibo core. Migración nueva `rr11s0042u18`, downgrade con filas pr
 
 Ensayo HTTP/auth/PG: tres procesos independientes prueban commit core→ACK perdido→
 reinicio→recuperación, sin duplicados; 3 pruebas del arnés pasan. Tres escenarios
-de migración PG reales pasan. Evidencia y suite final en [acta E.6](SwissJob/docs/AVANCE_E6_2026-09-08.md).
+de migración PG reales pasan. Evidencia y suite final en [acta E.6](../ARCHIVO_HISTORICO.md).
 **El journal NO está conectado todavía al generador, UI ni scheduler.**
 
 Preflight NAS: vínculo usuario Portfolio 1 comprobado contra external_ref del
@@ -2302,7 +2300,7 @@ Prevalece sobre §29. El propietario autorizó explícitamente la copia privada 
   retirada de harvesters. Se debe resolver el inventario de escritores al cerrar E/F.
 
 Acta completa, límites, hashes y procedimiento de recuperación:
-[despliegue Portfolio](SwissJob/docs/DESPLIEGUE_PORTFOLIO_E5_E6_2026-09-08.md).
+[despliegue Portfolio](../DESPLIEGUE_PORTFOLIO_E5_E6_2026-09-08.md).
 E/F siguen abiertos. SwissJob/core/modelos/holdout sin cambios; no GO de calidad nuevo.
 
 ---
@@ -2331,7 +2329,7 @@ del smoke público. Backend compatible confirmado; backup y contenedor anterior
 retenidos. Huellas de datos durables y estructura iguales tras relevo.
 
 Acta con evidencia, límites y siguiente secuencia:
-[E.7/matching/rendimiento](SwissJob/docs/AVANCE_E7_Y_MATCHING_OPERATIVO_2026-09-08.md).
+[E.7/matching/rendimiento](../ARCHIVO_HISTORICO.md).
 Corte documental SwissJob, inbox/erase/migración/rollback, colegios y F son trabajo
 abierto, no cubierto por el canary del feed. Logs de cosecha tienen errores de
 proveedores pendientes de clasificación/corrección. NO-GO de calidad sigue por
@@ -2359,12 +2357,12 @@ erase/export/backups y carga representativa. No sustituirlos por un GO de tests.
 La calidad exige examen independiente nuevo, y no se abre racha por estos cambios.
 
 Evidencia, límites y siguiente secuencia:
-[acta E.8](SwissJob/docs/AVANCE_E8_DOCUMENTOS_Y_FUENTES_2026-09-09.md).
+[acta E.8](../ARCHIVO_HISTORICO.md).
 
 ## 33. Continuación E.9 — portabilidad documental y recuperación (2026-09-09)
 
 **Local, sin despliegue ni cambio de routing NAS.** Evidencia:
-[acta E.9](SwissJob/docs/AVANCE_E9_EXPORTACION_Y_RECUPERACION_2026-09-09.md).
+[acta E.9](../ARCHIVO_HISTORICO.md).
 
 - SwissJob exporta documentos de la autoridad activa, copias locales retenidas y
   output preparado del journal; sin truncado silencioso ni transacción durante HTTP.
@@ -2422,7 +2420,7 @@ Colegios, productores/F, erase/acks/backups y carga representativa son además
 trabajo técnico abierto, no cinco trabajos terminados.
 
 Acta con imágenes, backups, mordidas, límites y secuencia:
-[despliegue E.10](SwissJob/docs/DESPLIEGUE_E10_2026-09-09.md).
+[despliegue E.10](../DESPLIEGUE_E10_2026-09-09.md).
 NO-GO de calidad: sin examen independiente válido; no hay promoción ni racha.
 
 ## 35. E.11 — alcance corregido y búsqueda desplegada (2026-09-09)
@@ -2472,7 +2470,7 @@ con paridad de productores. La exportación integral descartada no reaparece
 como requisito. La calidad sigue sin examen independiente válido; no hay racha.
 
 Evidencia, huellas, límites y recuperación:
-[E.12](SwissJob/docs/DESPLIEGUE_E12_2026-09-13.md).
+[E.12](../DESPLIEGUE_E12_2026-09-13.md).
 
 ## 37. E.13 — borrado coordinado en verificación; Portfolio recuperado (2026-09-13)
 
@@ -2504,7 +2502,7 @@ proceso dedicado, sin esos escritores. En el ensayo, el downgrade antiguo bloque
 correctamente una exclusión pendiente; no se ha vaciado ni falseado esa cola.
 
 Evidencia, decisiones y pendientes:
-[E.13](SwissJob/docs/BORRADO_COORDINADO_E13.md).
+[E.13](../BORRADO_COORDINADO_E13.md).
 
 ## 38. E.13 — borrado desplegado y confirmado; backups pendientes (2026-09-13)
 
@@ -2529,7 +2527,7 @@ La sonda de feed excedió 30 s dos veces. Comparación puntual en serie: consult
 anterior 21,436 s, nueva 9,970 s, mismo total 1533. Último canary HTTP: ambos
 perfiles 200, 20 ofertas, 10,939 s / 11,445 s. No se ocultan los timeouts ni se
 confunde esta muestra con un SLO universal. Evidencia y límites actuales:
-[Despliegue E.13](SwissJob/docs/DESPLIEGUE_E13_2026-09-13.md).
+[Despliegue E.13](../DESPLIEGUE_E13_2026-09-13.md).
 La vigilancia debe incluir contenedores esperados detenidos, no solo los activos.
 No cambia el estado del examen de calidad ni se abre una racha.
 
@@ -2547,7 +2545,7 @@ La retirada manual cierra el pendiente autorizado; NO acredita una tarea automá
 Cron, primera ejecución y alarma siguen como deuda explícita del cierre final.
 Se mantienen los límites de 7 días/48 horas; entretanto requieren operación manual.
 Esto no modifica calidad, racha ni los demás hitos. Evidencia:
-[Acta E.13](SwissJob/docs/DESPLIEGUE_E13_2026-09-13.md).
+[Acta E.13](../DESPLIEGUE_E13_2026-09-13.md).
 
 ## 40. E.14 — punto 2 cerrado y confirmado en operación (2026-09-13)
 
@@ -2582,7 +2580,7 @@ Biblioteca: 20 GET/BFF, todos 200; p95 683 ms SwissJob / 887 ms Portfolio.
 Muestra pequeña, no certificación de carga global. Copias locales del ensayo
 retiradas; dos sellos NAS registrados por siete días. Cron sigue diferido.
 Sin cambios a colegios, productores, modelos, calidad o racha; sin push.
-Evidencia y procedimiento: [Acta E.14](SwissJob/docs/DESPLIEGUE_E14_2026-09-13.md).
+Evidencia y procedimiento: [Acta E.14](../DESPLIEGUE_E14_2026-09-13.md).
 
 ## 41. E.15 — punto 3 cerrado y desplegado: colegios (2026-09-14)
 
@@ -2620,7 +2618,7 @@ registradas por 48 h y nueve artefactos NAS por siete días. Cron diferido por
 el propietario, operación manual hasta entonces. No se tocaron las bases
 originales con la retirada ni se hizo push. Productores/F, rendimiento global
 y examen de calidad conservan su alcance propio; no hay cambio de políticas.
-Acta y recuperación: [E.15](SwissJob/docs/DESPLIEGUE_E15_2026-09-14.md).
+Acta y recuperación: [E.15](../DESPLIEGUE_E15_2026-09-14.md).
 
 ## 42. Punto 4 — preparación verificada, corte todavía pendiente (2026-09-20)
 
@@ -2660,8 +2658,8 @@ drenado CDC y retirada de motores con canary por las rutas realmente servidas.
 El control por fuente exige drenar/recrear workers: no cancela tareas en vuelo.
 
 Detalle, evidencias y secuencia operativa:
-[avance](SwissJob/docs/CIERRE_PUNTOS_4_5_2026-09-19.md) y
-[runbook punto 4](SwissJob/docs/RUNBOOK_RETIRADA_PRODUCTORES_PUNTO4.md).
+[avance](../CIERRE_PUNTOS_4_5_2026-09-19.md) y
+[runbook punto 4](../RUNBOOK_RETIRADA_PRODUCTORES_PUNTO4.md).
 No hay push, eliminación de datos productivos ni certificación de cierre global.
 
 ### 42.1 Checkpoint worker NAS — 20-09, 02:11 Europe/Madrid
@@ -2678,7 +2676,7 @@ core0047 y los demás servicios E.15. Ninguna activación de fuentes nativas.
 **2.444 passed, 3 skipped, 4 xfailed**, suites en serie. La siguiente cosecha debe
 confirmar el progreso efectivo; el orden calculado por sí solo no acredita
 recuperación de cada portal. **Punto 4 abierto**, con los pendientes de §42.
-[Evidencia, límites y reversión](SwissJob/docs/audits/WORKER_PREPARACION_PUNTO4_NAS_2026-09-20.md).
+[Evidencia, límites y reversión](../audits/WORKER_PREPARACION_PUNTO4_NAS_2026-09-20.md).
 
 ## 43. Punto 4 — primeros cortes confirmados; revisión de pendientes (2026-09-21)
 
@@ -2689,17 +2687,17 @@ Esta sección consolida actas hasta el 21-09 16:53 UTC; no es una nueva sonda NA
 ### 43.1 Cerrado, sin repetir
 
 - Perfiles: canal durable desplegado y confirmado para ambos perfiles; entrega
-  posterior sin pendientes/errores. [Acta](SwissJob/docs/audits/PROFILE_DEPLOYMENT_NAS_2026-09-20.md).
+  posterior sin pendientes/errores. [Acta](../audits/PROFILE_DEPLOYMENT_NAS_2026-09-20.md).
 - Feedback: autoridad core activada, 112 cambios conciliados y recuperación
-  post-corte ensayada. [Acta](SwissJob/docs/audits/FEEDBACK_DEPLOYMENT_NAS_2026-09-20.md).
+  post-corte ensayada. [Acta](../audits/FEEDBACK_DEPLOYMENT_NAS_2026-09-20.md).
 - Diez búsquedas SwissJob: IDs/valores conservados, ejecutor core habilitado,
   legacy bloqueado por autoridad; 277 pendientes y 92 ofertas recuperadas.
   Barridos correctos sin búsquedas vencidas: aún no acreditan entrega natural.
-  [Acta](SwissJob/docs/audits/SEARCH_CUTOVER_OPERATOR_2026-09-21.md).
+  [Acta](../audits/SEARCH_CUTOVER_OPERATOR_2026-09-21.md).
 - WorkingNomads: primera fuente transferida; 40 ofertas, replay sin segundo
   fetch, cinco vacantes primarias nativas servidas por HTTP y feeds conservados.
   Core `3d5d67a/core0050`, suite registrada **1645 passed**, 2 warnings.
-  [Acta y límites](SwissJob/docs/audits/WORKINGNOMADS_CUTOVER_2026-09-21.md).
+  [Acta y límites](../audits/WORKINGNOMADS_CUTOVER_2026-09-21.md).
 
 ### 43.2 Pendientes reales y estimación
 
@@ -2707,7 +2705,7 @@ R1 avisos no vacuos; R2 fuentes ya portadas; R3 productores activos sin sustitut
 R4 lectores/avisos/digest Portfolio; R5 producción escolar; R6 postprocesado sin
 captura CDC; R7 retirada final y recuperación. Detalle, referencias, pruebas y
 encargo de validación/refutación en el
-[informe de revisión externa](SwissJob/docs/PENDIENTES_PUNTO4_REVISION_EXTERNA_2026-09-21.md).
+[informe de revisión externa](../PENDIENTES_PUNTO4_REVISION_EXTERNA_2026-09-21.md).
 
 La estimación inicial de unas horas omitió dependencias. El rango posterior no
 es una cota: falta conciliar el inventario efectivo de ambos proyectos. El
@@ -2730,7 +2728,7 @@ corpus vivo. Sin nuevos cambios funcionales, despliegues ni push en esta sesión
 del día y 0 fallos; replay 16/16 `skipped`; 45 vacantes nativas servidas por
 `CoreCatalog` a través del BFF desplegado, 0 fallos, solo lectura. Release core
 `51be757/core0050`, `authoritative: true`; suite 1732 passed.
-[Acta](SwissJob/docs/audits/POINT4_CUTOVER_2026-09-22.md).
+[Acta](../audits/POINT4_CUTOVER_2026-09-22.md).
 
 Portado lo que no existía: `irishjobs` (193 ofertas/7 d) y `financejobs` (144),
 ausentes del corpus core desde el 01-09. Paridad pública 25/25 y 10/10.
@@ -3052,11 +3050,11 @@ no convierte un incumplimiento en cumplimiento. Lo que queda está identificado:
 sigue recorriendo el feed en la cara del usuario en vez de calentarse en
 segundo plano; y la cola de latencia de las rutas de 20, **sin atribuir** (con
 n=20 el p95 es el máximo, y un solo pico decide). Detalle en §9-bis y §10 del
-acta. **A18-05 sigue abierto.**
+acta. **Estado histórico superado por §48: A18-05 cerró el 2026-10-13.**
 
 ## 47. Cierre del proyecto de unificación (2026-09-28)
 
-**Foto vigente; §46 y anteriores son historia.** Sesión única con Fable 5.1 al
+**FOTO HISTÓRICA DEL 28-09; superada por §48.** Sesión única con Fable 5.1 al
 mando de todas las tareas, tras la auditoría instrumentada del 27-09
 (`AUDITORIA-2026-09-27.md`: 20 CUMPLE, 3 NO_CUMPLE, 2 CHECK_ROTO — los cinco
 corregidos y el contrato `INVARIANTES.md` ampliado con el bloque G).
@@ -3096,12 +3094,12 @@ corregidos y el contrato `INVARIANTES.md` ampliado con el bloque G).
 
 | Qué | Quién | Por qué no lo cierra el código |
 |---|---|---|
-| Contraseña de aplicación de Gmail en `swissjob.configured.yml`, `portfolio.configured.yml` y `supervisor.env` (A19-31) | Propietario | Cuenta de Google |
-| Armar el crontab del QTS (entrada ya en `/etc/config/crontab`) | Propietario | Exige suid/root |
+| Contraseña de aplicación válida para la cuenta SMTP SwissJob, o autorización literal para reutilizar la cuenta Portfolio (A19-31) | Propietario | Único dato externo pendiente; Portfolio envía y el supervisor usa QTS sendmail |
+| Crontab del QTS | Cerrado | Armado y supervisor único operativo mediante QTS sendmail |
 | Remoto del repo raíz de `ReactPortfolio` (los de backend y frontend ya empujan a GitHub) | Propietario | Decisión de dónde alojarlo |
 | Rotación de la credencial del núcleo (DT-47, `scripts/rotate_credential.py`) | Propietario | Ventana de solape con producción |
-| Decisión B del panel (`jobgether` sin descripción en origen) | Propietario | Coste: descargar 27 % del feed |
-| Contrato del punto 5 en el NAS (A19-25) | Propietario | 2 núcleos con carga ~8 ajena al proyecto: `tinymediamanager` y los demonios de QTS |
+| Descripciones Jobgether/Arbeitnow y tarjetas escolares | Cerrado 2026-10-13 | Productor corregido y frontera histórica normalizada; agregados vivos sin vacíos ni HTML |
+| Contrato del punto 5 en el NAS (A18-05/A19-25) | Cerrado 2026-10-13 | Cuatro rutas habituales cumplen p95 <= 2 s con 100 muestras pese a la carga QTS |
 | Bundles de `Public/tmp/` | Propietario | Recomendación: conservar (304 documentos sólo viven ahí) |
 
 Fuera de esa tabla no hay tareas técnicas abiertas del plan T0–T16. La deuda
@@ -3167,7 +3165,7 @@ respuesta; no la hace correcta ni igual entre procesos. La docstring que
 prometía «función pura» está corregida.
 
 Lo que estaba mal en la primera acta, corregido tras una
-[revalidación externa](SwissJob/docs/audits/REVALIDACION_INFORME_DESPLIEGUE_2026-09-22.md):
+[revalidación externa](../audits/REVALIDACION_INFORME_DESPLIEGUE_2026-09-22.md):
 
 1. Se declaró **cerrado** un contrato que no se cumple: la predeclaración exige
    p95 ≤ 2 s y varios escenarios dan 2,1-3,0 s.
@@ -3206,4 +3204,36 @@ Falta para cerrar (§10 del acta): escenarios de **frío** (que es donde duele e
 separar la cola de latencia con observación correlacionada; **deducir el idioma
 al INGERIR** en vez de al servir; decidir si se rediseña la carga de 3.000
 conservando su semántica; presupuesto propio para la traducción; y decidir
-contra qué presupuesto se acepta. **A18-05 sigue abierto.**
+contra qué presupuesto se acepta. **Estado histórico superado por §48: A18-05 cerró el 2026-10-13.**
+
+## 48. Reconciliación vigente — optimización y deuda (2026-10-13)
+
+**Esta sección es la foto autoritativa; las secciones anteriores conservan la
+cronología y sus estados deben leerse como históricos.**
+
+Los seis pasos de optimización del 10 de octubre están completos: un único
+bi-encoder, 17/17 fuentes saludables, core-capture y su slot retirados,
+productores duplicados y scraper escolar duplicado desactivados, facetas y
+categorías autoritativas en Core, rollback cerrado y código histórico
+eliminado. Las sondas finales de Core, SwissJob y Portfolio devuelven
+failures=[].
+
+El contrato de lectura habitual se midió con 100 muestras en el NAS y p95:
+facetas 0,180 s, categoría de 50 tarjetas 1,033 s, guardados 1,551 s y catálogo
+0,838 s. Todas cumplen el presupuesto predeclarado de 2 s. A18-05 y A19-25
+quedan cerrados. A19-13 también queda cerrado: cero ciclos de import de carga,
+sin grados E/F en runtime y una sola taxonomía de decisión en Core. A19-15
+queda cerrado en productor/presentación: 975 Arbeitnow y 484 Jobgether servidas
+con descripción y sin HTML, y cuatro tarjetas escolares con descripción, URL y
+detalle 200.
+
+Releases vivas: Core 254e826/core0054; BFF y worker SwissJob 4017081; frontend
+SwissJob 254e826; Portfolio API/worker 444f072/uu44v3375x21. DT-72, DT-102 y
+DT-115 están cerrados. DT-54 está desplegado en backend y validado en frontend
+5045a28, pendiente de publicación/verificación Cloudflare.
+
+Trabajo restante autorizado: A19-31 necesita la credencial SMTP válida o permiso
+literal entre cuentas; publicar DT-54; recorrer el frontend autenticado final y
+publicar los commits locales en los remotos exactos. DT-47, A19-19 y A19-20
+quedan excluidos por instrucción del propietario. Método y punto exacto de
+reanudación están en DEUDA_TECNICA.md y MEMORIA_PROYECTO.md.
