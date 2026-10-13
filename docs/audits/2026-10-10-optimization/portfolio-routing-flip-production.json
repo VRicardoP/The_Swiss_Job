@@ -1,0 +1,81 @@
+{
+  "observed_at": "2026-10-13T07:46:10Z",
+  "status": "passed",
+  "actor": "optimization-2026-10-12",
+  "rehearsed_stdin_sha256": "8feaec0f60235a5752b19b4674377f94126d389c31ef283289e576be51729991",
+  "preconditions": {
+    "core_queue_lengths": {
+      "core.default": 0,
+      "core.embedding": 0,
+      "core.harvest": 0,
+      "core.matching": 0,
+      "core.notifications": 0
+    },
+    "core_active_tasks": 0,
+    "core_reserved_tasks": 0,
+    "portfolio_modes": {
+      "applications": [
+        "core_primary"
+      ],
+      "catalog": [
+        "core_read"
+      ],
+      "documents": [
+        "core_primary"
+      ],
+      "matching": [
+        "core_read"
+      ],
+      "saved_searches": [
+        "core_primary"
+      ],
+      "schools": [
+        "core_primary"
+      ]
+    },
+    "all_non_routing_probes_green": true
+  },
+  "mutation": {
+    "changed_capabilities": [
+      "catalog",
+      "matching"
+    ],
+    "from": "core_read",
+    "to": "core_primary",
+    "profile": "*",
+    "method": "services.routing.set_routing",
+    "other_capabilities_changed": false,
+    "final_rows_verified": true,
+    "updated_by_verified": true,
+    "propagation_wait_seconds": 10
+  },
+  "post_probes": {
+    "core": {
+      "failures": [],
+      "release": "19efe49",
+      "alembic": "core0054",
+      "authoritative": true,
+      "harvest": "17/17",
+      "capture_slot_exists": false,
+      "pending_staging": 0,
+      "delivery_dead": 0,
+      "delivery_oldest_pending_s": 0.0
+    },
+    "swissjob": {
+      "failures": [],
+      "active_profiles_linked": "2/2",
+      "in_scope_non_primary_rows": 0,
+      "disabled_providers": 14,
+      "disabled_scrapers": 2,
+      "retained_school_scrapers": 8
+    },
+    "portfolio": {
+      "failures": [],
+      "all_effective_modes": "core_primary",
+      "disabled_sources": 9,
+      "owned_sources": 11,
+      "background_schedulers_enabled": true
+    }
+  },
+  "single_writer_evidence": "Core owns the transferred harvest set and remains 17/17; SwissJob disables its exact 14+2 transferred producer set; Portfolio disables its exact nine transferred sources; all consumer capabilities resolve only to core_primary without overrides"
+}

@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T07:41:17Z",
+  "observed_at": "2026-10-13T07:46:10Z",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -103,13 +103,17 @@
     },
     {
       "id": 11,
-      "status": "ready_to_execute",
+      "status": "complete",
       "action": "flip only Portfolio catalog and matching wildcard core_read rows through services.routing.set_routing; wait 10 seconds; prove every effective in-scope mode and single-writer gate",
-      "precondition": "applications/documents/saved_searches/schools already exactly core_primary; catalog and matching exactly core_read; no overrides; all non-routing final probes green"
+      "precondition": "applications/documents/saved_searches/schools already exactly core_primary; catalog and matching exactly core_read; no overrides; all non-routing final probes green",
+      "evidence": "rehearsed block SHA 8feaec... executed after five queues, active and reserved tasks were zero; only wildcard catalog/matching changed core_read -> core_primary with audited actor; after 10s the three unchanged probes all returned failures=[] and every Portfolio effective mode was exactly core_primary",
+      "record": "portfolio-routing-flip-production.json",
+      "single_writer": "Core 17/17; SwissJob exact 14 providers+2 scrapers disabled; Portfolio exact 9 disabled and 11 retained; no routing overrides/non-primary rows",
+      "next_action": "item 12: audit every rollback closure condition from live state, record formal closure only if all remain green"
     },
     {
       "id": 12,
-      "status": "pending_after_11",
+      "status": "ready_to_execute",
       "action": "record formal rollback closure only if capture/slot absent, all functional probes pass, outbox/queues drain, no fallback signals and no duplicate producers"
     },
     {

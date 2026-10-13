@@ -1929,6 +1929,24 @@ el orden de corte y disponer de la publicación frontend autorizada.
   filas y valores previos, esperar propagación, verificar single-writer y crear
   evidencia/commit antes de cerrar rollback.
 
+### Checkpoint operativo — 2026-10-13 07:46 UTC
+
+- Punto 11 cerrado. El bloque ensayado conservó el SHA-256 `8feaec...` y se
+  ejecutó sólo después de comprobar cinco colas a cero y ausencia de tareas
+  activas/reservadas. Cambió únicamente las filas wildcard de `catalog` y
+  `matching`, de `core_read` a `core_primary`, y verificó actor y valor final.
+- Tras diez segundos, las tres sondas inmutables devolvieron `failures=[]`.
+  Portfolio resuelve las seis capacidades sólo a `core_primary`, mantiene nueve
+  fuentes transferidas desactivadas y once propias; SwissJob conserva 14+2
+  desactivadas, y Core sigue 17/17, autoritativo, sin slot ni entrega pendiente.
+- El single-writer queda probado por estado efectivo y productores: Core posee
+  el conjunto transferido, SwissJob y Portfolio lo omiten antes de red y no hay
+  overrides ni filas no primarias dentro del alcance.
+- Metodología vigente: bloque versionado y verificado por hash, precondiciones
+  fail-closed, mutación mediante el servicio de dominio, espera de propagación,
+  mismas sondas post-cambio y evidencia estrecha. El punto 12 debe cerrar
+  formalmente rollback sólo tras una última auditoría conjunta del estado vivo.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
