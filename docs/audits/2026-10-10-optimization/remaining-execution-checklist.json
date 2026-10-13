@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T09:16:20Z",
+  "observed_at": "2026-10-13T10:06:00Z",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -141,15 +141,19 @@
     },
     {
       "id": 15,
-      "status": "ready_to_execute",
+      "status": "complete",
       "action": "replace Portfolio transferred-source routers with the common Core adapter, remove 25 modules plus nine normalizer classes, fix routing consumers and preserve notification gates/exclusive-source runtime",
-      "plan": "portfolio-compatibility-adapter-plan.json"
+      "plan": "portfolio-compatibility-adapter-plan.json",
+      "checkpoint": "backend 8a5a323 and frontend 59507c8 committed; 56/56 routes, nine source probes, 11 local producers, 17/17 Core health, empty queues and 12/12 browser windows green; production evidence records the scoped historical Arbeitnow latency",
+      "evidence": "portfolio-core-adapter-production.json"
     },
     {
       "id": 16,
-      "status": "authorized_pending_numeric_order",
+      "status": "in_progress",
       "action": "remove SwissJob transferred producers and local Core-owned engines, simplify every routing consumer, and preserve applications/profiles, MatchResult overlay, feedback, watchlist health and notification gates",
-      "plan": "swissjob-producer-retirement-plan.json"
+      "plan": "swissjob-producer-retirement-plan.json",
+      "checkpoint": "numeric-order gate opened after item 15 production validation",
+      "next_action": "revalidate live registries, configuration, imports, queues and retained responsibilities; then remove the 14+2 transferred producers and obsolete handover control plane atomically"
     },
     {
       "id": 17,

@@ -1,0 +1,141 @@
+{
+  "observed_at": "2026-10-13T10:06:00Z",
+  "item": 15,
+  "status": "complete",
+  "method": "exact-SHA deployment, runtime route/registry inspection, sequential source probes, Core health/queue probes, deterministic 12-window Playwright protocol",
+  "commits": {
+    "portfolio_backend": "8a5a32348057dc699b99e9bd28064ddc7c7f5873",
+    "portfolio_frontend": "59507c8"
+  },
+  "deployment": {
+    "portfolio_image": "portfolio-backend:board-8a5a323",
+    "image_id": "sha256:654b0676341c8ac473e643f565451d55ff6b27d4f6d5f5554de2eb33ed1f3257",
+    "services": [
+      "portfolio_backend",
+      "portfolio_worker"
+    ],
+    "restart_counts": [
+      0,
+      0
+    ],
+    "core_image": "swissjob-core:point5-3ed6462"
+  },
+  "validation": {
+    "backend_tests": "2128 passed, 1 skipped",
+    "frontend_tests": "423 passed",
+    "frontend_lint": "passed",
+    "frontend_build_seconds": 3.44,
+    "compatibility_routes": 56,
+    "route_manifest": {
+      "arbeitnow": 9,
+      "remotive": 7,
+      "irishjobs": 6,
+      "jobgether": 6,
+      "nav": 6,
+      "thehub": 6,
+      "weworkremotely": 6,
+      "ostjob": 5,
+      "zentraljob": 5
+    },
+    "refresh_admin_guards": 9,
+    "local_producers": [
+      "adzuna",
+      "dynamitejobs",
+      "himalayas",
+      "ictjobs",
+      "jobicy",
+      "jobroom",
+      "jobscout24",
+      "jsearch",
+      "remoteok",
+      "swissdevjobs",
+      "swisstechjobs"
+    ],
+    "retired_files_present": [],
+    "source_probe": {
+      "arbeitnow": {
+        "status": 200,
+        "items": 1,
+        "total_cap": 200,
+        "seconds": 83.819
+      },
+      "irishjobs": {
+        "status": 200,
+        "items": 1,
+        "total_cap": 300,
+        "seconds": 1.375
+      },
+      "jobgether": {
+        "status": 200,
+        "items": 1,
+        "total_cap": 300,
+        "seconds": 4.722
+      },
+      "nav": {
+        "status": 200,
+        "items": 1,
+        "total_cap": 300,
+        "seconds": 3.134
+      },
+      "ostjob": {
+        "status": 200,
+        "items": 1,
+        "total_cap": 200,
+        "seconds": 12.015
+      },
+      "remotive": {
+        "status": 200,
+        "items": 1,
+        "total_cap": 11,
+        "seconds": 0.274
+      },
+      "thehub": {
+        "status": 200,
+        "items": 1,
+        "total_cap": 52,
+        "seconds": 0.343
+      },
+      "weworkremotely": {
+        "status": 200,
+        "items": 1,
+        "total_cap": 200,
+        "seconds": 2.362
+      },
+      "zentraljob": {
+        "status": 200,
+        "items": 1,
+        "total_cap": 200,
+        "seconds": 1.111
+      }
+    },
+    "core_harvest": {
+      "enabled": 17,
+      "healthy_8h": 17,
+      "scopes": 46,
+      "alerts": []
+    },
+    "core_workers": {
+      "workers": 3,
+      "active": 0,
+      "reserved": 0
+    },
+    "browser": {
+      "url": "https://vicentepau.is-a.dev",
+      "backend": "deterministic fixtures",
+      "windows_with_content": "12/12",
+      "javascript_errors": 0,
+      "load_ms": 1043,
+      "drag_mean_frame_ms": 26.173290384909706,
+      "drag_p95_frame_ms": 33.4,
+      "baseline_mean_frame_ms": 43.25,
+      "baseline_p95_frame_ms": 100.1
+    }
+  },
+  "scope_note": "The dashboard uses Core /api/v1/jobs/search for transferred sources. The 83.819 s Arbeitnow result belongs to the preserved historical compatibility route and remains inside the 120 s budget; it does not affect dashboard window loading.",
+  "publication": {
+    "backend_nas": "deployed",
+    "frontend_public_host": "unchanged at 1bed6c2 because 59507c8 only removes unreachable fallback configuration",
+    "remote_push": "not performed after automatic approval review rejected publishing to GitHub and GitLab main without destination-specific authorization"
+  },
+  "failures": []
+}
