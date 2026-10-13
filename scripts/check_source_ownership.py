@@ -23,6 +23,17 @@ VALID_STATES = {
     "retired",
 }
 LOCAL_PUBLISHERS = {"reactportfolio", "swissjob"}
+VERIFIED_INVENTORY_FIELDS = {
+    "aliases",
+    "current_harvesters",
+    "credentials",
+    "transport",
+    "external_identity",
+    "deduplication",
+    "last_success",
+    "core_scope_ids",
+    "blocker",
+}
 
 
 def _literal_assignments(path: Path, names: set[str]) -> list[object]:
@@ -178,6 +189,34 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
             errors.append(f"{name}: local_pending requires a local publisher")
         if state == "core_shadow" and "core" in publishers:
             errors.append(f"{name}: core_shadow must not publish from core")
+        if source.get("inventory_verified"):
+            missing = VERIFIED_INVENTORY_FIELDS - source.keys()
+            if missing:
+                errors.append(f"{name}: verified inventory missing {sorted(missing)}")
+                continue
+            for field in (
+                "aliases",
+                "current_harvesters",
+                "credentials",
+                "last_success",
+                "core_scope_ids",
+            ):
+                if not isinstance(source[field], list):
+                    errors.append(f"{name}: {field} must be a list")
+            harvesters = source["current_harvesters"]
+            if isinstance(harvesters, list):
+                harvester_products = {
+                    item.get("product") for item in harvesters if isinstance(item, dict)
+                }
+                if harvester_products != set(publishers):
+                    errors.append(
+                        f"{name}: current_harvesters must match active_publishers"
+                    )
+            for field in ("transport", "external_identity", "deduplication"):
+                if not isinstance(source[field], str) or not source[field]:
+                    errors.append(f"{name}: {field} must be a non-empty string")
+            if source["blocker"] is not None and not isinstance(source["blocker"], str):
+                errors.append(f"{name}: blocker must be a string or null")
 
     ratchet = manifest.get("ratchet", {})
     core_owned = sum(
@@ -191,6 +230,11 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
     )
     if core_owned < ratchet.get("min_core_owned_sources", 0):
         errors.append("ratchet regression: core-owned source count decreased")
+    inventory_verified = sum(
+        source.get("inventory_verified") is True for source in sources
+    )
+    if inventory_verified < ratchet.get("min_inventory_verified_sources", 0):
+        errors.append("ratchet regression: verified inventory count decreased")
     if local_pending > ratchet.get("max_local_pending_sources", local_pending):
         errors.append("ratchet regression: local-pending source count increased")
     if local_publishers > ratchet.get("max_active_local_publishers", local_publishers):

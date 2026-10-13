@@ -123,6 +123,32 @@ continuar sin rediseñarlo.
   activar/verificar protección de `main` con esos nueve checks y revisión
   CODEOWNER en ambos repositorios.
 
+### Checkpoint 2026-10-14 · inventario verificable del piloto Jobicy
+
+- El checkpoint `7471a1d` quedó publicado y sus nueve jobs remotos terminaron
+  en `success`; no contiene cambios de productores ni de producción.
+- La entrada única de Jobicy en `source_ownership.json` registra ahora los dos
+  módulos productores, todos sus triggers de arranque/cadencia/refresco, la API
+  JSON pública sin credenciales, la identidad externa, la deduplicación Core,
+  la última evidencia correcta de cada producto, la ausencia comprobada de
+  scopes Core y el bloqueo vigente. ReactPortfolio no expone el instante exacto
+  de finalización de su caché, por lo que se conserva explícitamente como
+  desconocido en vez de inferirlo a partir de su edad.
+- `inventory_verified=true` sólo se acepta cuando están presentes los campos
+  mínimos contractuales y los productos de `current_harvesters` coinciden con
+  `active_publishers`. El ratchet `min_inventory_verified_sources=1` impide
+  borrar silenciosamente la ficha o retirar su marca de verificación.
+- Verificación positiva: 58 fuentes, 16 Core y 26 pendientes. Controles
+  negativos: quitar `transport` falla con `verified inventory missing`; quitar
+  `inventory_verified` falla con `verified inventory count decreased`.
+- Pruebas focales sin tráfico real: Core 27 aprobadas y 3 integraciones
+  omitidas por su contrato; SwissJob Jobicy 4/4; ReactPortfolioServer limpio en
+  `5bf457a`, 5/5. La primera invocación SwissJob apuntó al hostname Compose
+  `postgres`; se repitió contra PostgreSQL/Redis temporales y quedó verde.
+- Estados sin cambio: Jobicy continúa `local_pending`, con dos publicadores
+  locales, cero scopes Core y sin credencial. La puerta de Fase -1 sigue
+  **NO SUPERADA**; no se ha provisionado ni ejecutado una sombra.
+
 **Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
 un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden
 productores, credenciales, conexiones ni persistencia de ofertas locales y las

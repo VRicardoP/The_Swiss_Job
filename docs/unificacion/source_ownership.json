@@ -4,6 +4,7 @@
   "verified_at": "2026-10-14",
   "ratchet": {
     "min_core_owned_sources": 16,
+    "min_inventory_verified_sources": 1,
     "max_local_pending_sources": 26,
     "max_active_local_publishers": 27
   },
@@ -174,9 +175,48 @@
     },
     {
       "name": "jobicy",
+      "aliases": [],
       "state": "local_pending",
       "target_owner": "core",
       "active_publishers": ["reactportfolio", "swissjob"],
+      "current_harvesters": [
+        {
+          "product": "reactportfolio",
+          "module": "services/jobicy_provider_impl.py",
+          "triggers": [
+            "worker startup sweep",
+            "daily circadian sweep at 12:00 container local time with +/-4h jitter",
+            "stale-cache and authenticated manual refresh routes"
+          ]
+        },
+        {
+          "product": "swissjob",
+          "module": "backend/providers/jobicy.py",
+          "triggers": [
+            "tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public JSON API over HTTPS",
+      "external_identity": "Core prefers Jobicy's upstream id and falls back to the validated offer URL when id is absent.",
+      "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
+      "last_success": [
+        {
+          "product": "reactportfolio",
+          "at": null,
+          "observed_at": "2026-10-14T01:14:18+02:00",
+          "evidence": "healthy cache with 40 entries and an observed age of 6 hours; the exact completion timestamp was not exposed"
+        },
+        {
+          "product": "swissjob",
+          "at": "2026-10-13T10:25:16.951307+00:00",
+          "evidence": "outcome ok, 69 fetched, 0 stored, 17 consecutive runs without persistence"
+        }
+      ],
+      "core_scope_ids": [],
+      "blocker": "Core has no production source or scope; Phase -1 branch protection with required CI and CODEOWNER review is not yet verified.",
+      "inventory_verified": true,
       "core_adapter": true,
       "swissjob_module": true,
       "swissjob_registry": true,
