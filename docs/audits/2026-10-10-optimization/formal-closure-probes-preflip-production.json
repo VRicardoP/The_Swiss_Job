@@ -1,0 +1,77 @@
+{
+  "observed_at": "2026-10-13T07:41:17Z",
+  "status": "passed_for_planned_routing_flip",
+  "core": {
+    "failures": [],
+    "ready": {
+      "release": "19efe49",
+      "alembic": "core0054",
+      "status": "ready",
+      "authoritative": true
+    },
+    "harvest": {
+      "enabled": 17,
+      "observed": 17,
+      "with_state": 17,
+      "alerts": []
+    },
+    "capture_slot_exists": false,
+    "pending_staging": 0,
+    "delivery": {
+      "delivered": 25160,
+      "dead_total": 0,
+      "oldest_pending_s": 0.0
+    }
+  },
+  "swissjob": {
+    "failures": [],
+    "active_users": 2,
+    "linked_active_users": 2,
+    "pending_snapshots": 0,
+    "active_snapshot_errors": 0,
+    "matching_core_primary": 2,
+    "in_scope_non_primary_rows": 0,
+    "wildcard_modes": {
+      "catalog": "core_primary",
+      "documents": "core_primary",
+      "saved_searches": "core_primary",
+      "schools": "core_primary"
+    },
+    "disabled_provider_status_count": 14,
+    "disabled_scrapers": [
+      "financejobs",
+      "irishjobs"
+    ],
+    "retained_school_scraper_count": 8
+  },
+  "portfolio": {
+    "failures": [
+      "routing_not_exactly_core_primary_without_overrides"
+    ],
+    "background_schedulers_enabled": true,
+    "disabled_source_count": 9,
+    "owned_source_count": 11,
+    "routing_modes": {
+      "applications": [
+        "core_primary"
+      ],
+      "catalog": [
+        "core_read"
+      ],
+      "documents": [
+        "core_primary"
+      ],
+      "matching": [
+        "core_read"
+      ],
+      "saved_searches": [
+        "core_primary"
+      ],
+      "schools": [
+        "core_primary"
+      ]
+    }
+  },
+  "interpretation": "the sole Portfolio failure is the deliberately preserved pre-flip state for catalog and matching; it proves the point-11 mutation is still required and bounded to exactly two wildcard rows",
+  "next_gate": "flip only Portfolio catalog and matching wildcard rows from core_read to core_primary, wait 10 seconds, rerun all three probes unchanged"
+}

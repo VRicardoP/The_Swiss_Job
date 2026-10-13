@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T07:38:54Z",
+  "observed_at": "2026-10-13T07:41:17Z",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -94,14 +94,18 @@
     },
     {
       "id": 10,
-      "status": "ready_to_execute",
+      "status": "complete",
       "action": "run final immutable probes for Core, SwissJob and Portfolio",
-      "authorization": "explicitly authorized by the user; execute unchanged only after item 9"
+      "authorization": "explicitly authorized by the user; execute unchanged only after item 9",
+      "evidence": "immutable Core probe failures=[] with 17/17, authoritative 19efe49/core0054, slot absent and delivery drained; SwissJob failures=[] with 2/2 profiles and exact producer policy; Portfolio producer contract passed and its only failure was the planned catalog/matching core_read pre-flip state",
+      "record": "formal-closure-probes-preflip-production.json",
+      "next_action": "item 11: mutate only Portfolio catalog and matching wildcard rows to core_primary, wait 10 seconds, rerun all three probes unchanged"
     },
     {
       "id": 11,
-      "status": "pending_after_10",
-      "action": "flip only Portfolio catalog and matching wildcard core_read rows through services.routing.set_routing; wait 10 seconds; prove every effective in-scope mode and single-writer gate"
+      "status": "ready_to_execute",
+      "action": "flip only Portfolio catalog and matching wildcard core_read rows through services.routing.set_routing; wait 10 seconds; prove every effective in-scope mode and single-writer gate",
+      "precondition": "applications/documents/saved_searches/schools already exactly core_primary; catalog and matching exactly core_read; no overrides; all non-routing final probes green"
     },
     {
       "id": 12,

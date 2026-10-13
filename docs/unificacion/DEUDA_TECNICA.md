@@ -1912,6 +1912,23 @@ el orden de corte y disponer de la publicación frontend autorizada.
   distinción entre fallos del despliegue y del verificador, y cierre documental
   antes de avanzar. El punto 10 queda listo para las tres sondas inmutables.
 
+### Checkpoint operativo — 2026-10-13 07:41 UTC
+
+- Punto 10 ejecutado con las tres sondas inmutables. Core dio `failures=[]`,
+  17/17, release `19efe49/core0054`, slot ausente y entrega drenada. SwissJob
+  dio `failures=[]`, 2/2 perfiles enlazados y política exacta de productores.
+- Portfolio validó schedulers, nueve fuentes desactivadas y once retenidas; su
+  único fallo fue `routing_not_exactly_core_primary_without_overrides` porque
+  `catalog` y `matching` siguen exactamente en `core_read`. Las otras cuatro
+  capacidades ya están en `core_primary` y no hay overrides.
+- Este fallo es la precondición delimitada del punto 11, no un gate omitido: la
+  siguiente mutación debe tocar sólo las filas wildcard de `catalog` y
+  `matching`, esperar diez segundos y repetir sin cambios las tres sondas.
+- Metodología vigente: sondas inmutables antes y después, conservar un fallo
+  esperado sólo cuando identifica exactamente la mutación planificada, acotar
+  filas y valores previos, esperar propagación, verificar single-writer y crear
+  evidencia/commit antes de cerrar rollback.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
