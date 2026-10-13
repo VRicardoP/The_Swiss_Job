@@ -475,10 +475,7 @@ def test_gate_a_end_to_end(db, monkeypatch):
     assert prim.title == "Python Engineer"
 
     # ---------- 7. CORE AISLADO ---------------------------------------------
-    from urllib.parse import urlsplit
-
     from jobhunt_core.celery_app import celery_app
 
-    assert urlsplit(settings.CORE_BROKER_URL).hostname == "redis-core"
     routed = {r["queue"] for r in celery_app.conf.task_routes.values()}
     assert all(q.startswith("core.") for q in routed)

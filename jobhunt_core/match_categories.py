@@ -64,7 +64,5 @@ def sql_case(search_text: str = "search_text") -> tuple[str, dict[str, str]]:
                 if operator
                 else f"strpos({search_text}, :{name}) > 0"
             )
-        clauses.append(
-            f"WHEN {' OR '.join(conditions)} THEN '{category['id']}'"
-        )
+        clauses.append(f"WHEN {' OR '.join(conditions)} THEN '{category['id']}'")
     return "CASE " + " ".join(clauses) + " ELSE 'otros' END", params

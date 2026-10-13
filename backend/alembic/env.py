@@ -25,6 +25,18 @@ config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 target_metadata = Base.metadata
 
 
+def _include_object(_object, name, type_, reflected, compare_to):
+    # The routing runtime was retired after every capability became Core-owned,
+    # but production retains its six core_primary rows as rollback evidence.
+    # Preserve only that historical table; every other schema drift stays gated.
+    return not (
+        type_ == "table"
+        and reflected
+        and compare_to is None
+        and name == "jobhunt_routing"
+    )
+
+
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
@@ -32,13 +44,18 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=_include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection):
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=_include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

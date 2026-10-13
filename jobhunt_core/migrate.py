@@ -116,10 +116,14 @@ def _bootstrap() -> None:
         # legacy. Los del pseudo-rol PUBLIC no se tocan: ver política arriba.
         conn.execute(sa.text(f"REVOKE ALL ON SCHEMA public FROM {_ROLE}"))
         conn.execute(
-            sa.text(f"REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM {_ROLE}")
+            sa.text(
+                f"REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM {_ROLE}"
+            )
         )
         conn.execute(
-            sa.text(f"REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM {_ROLE}")
+            sa.text(
+                f"REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM {_ROLE}"
+            )
         )
         # search_path = jobhunt, public: pgvector (tipo + operadores) vive en
         # public y A-02 lo necesita; las tablas legacy quedan protegidas por

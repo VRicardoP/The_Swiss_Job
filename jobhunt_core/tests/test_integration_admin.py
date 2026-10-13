@@ -29,8 +29,16 @@ def admin_conn():
     engine = sa.create_engine(_ADMIN, poolclass=sa.pool.NullPool)
     with engine.connect() as conn:  # transacción abierta; rollback al salir
         conn.execute(sa.text("REVOKE ALL ON SCHEMA public FROM jobhunt_core"))
-        conn.execute(sa.text("REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM jobhunt_core"))
-        conn.execute(sa.text("REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM jobhunt_core"))
+        conn.execute(
+            sa.text(
+                "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM jobhunt_core"
+            )
+        )
+        conn.execute(
+            sa.text(
+                "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM jobhunt_core"
+            )
+        )
         yield conn
         conn.rollback()
     engine.dispose()

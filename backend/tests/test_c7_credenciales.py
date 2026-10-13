@@ -32,22 +32,33 @@ def _ajustes(password: str, *, permiso: bool = False) -> Settings:
     return Settings(DATABASE_URL=_url(password), ALLOW_DEV_CREDENTIALS=permiso)
 
 
+def _redis_settings(**overrides) -> Settings:
+    """Isolate URL construction tests from the CI runner's Redis URLs."""
+    values = {
+        "REDIS_URL": "redis://redis:6379/0",
+        "CELERY_BROKER_URL": "redis://redis:6379/1",
+        "CELERY_RESULT_BACKEND": "redis://redis:6379/2",
+    }
+    values.update(overrides)
+    return Settings(**values)
+
+
 class TestInyeccionDeLaClaveDeRedis:
     def test_sin_clave_las_urls_quedan_intactas(self):
-        s = Settings(REDIS_PASSWORD="")
+        s = _redis_settings(REDIS_PASSWORD="")
         assert s.REDIS_URL == "redis://redis:6379/0"
         assert s.CELERY_BROKER_URL == "redis://redis:6379/1"
         assert s.CELERY_RESULT_BACKEND == "redis://redis:6379/2"
 
     def test_con_clave_la_llevan_las_tres(self):
-        s = Settings(REDIS_PASSWORD="s3cr3t")
+        s = _redis_settings(REDIS_PASSWORD="s3cr3t")
         assert s.REDIS_URL == "redis://:s3cr3t@redis:6379/0"
         assert s.CELERY_BROKER_URL == "redis://:s3cr3t@redis:6379/1"
         assert s.CELERY_RESULT_BACKEND == "redis://:s3cr3t@redis:6379/2"
 
     def test_una_url_con_credencial_propia_se_respeta(self):
         """Quien la escribe explícitamente manda sobre el atajo."""
-        s = Settings(
+        s = _redis_settings(
             REDIS_PASSWORD="s3cr3t",
             REDIS_URL="redis://usuario:otra@otro-redis:6379/9",
         )
@@ -56,11 +67,13 @@ class TestInyeccionDeLaClaveDeRedis:
 
     def test_los_caracteres_especiales_se_escapan(self):
         """Una clave con `@`, `/` o `:` rompería la URL si se pegara cruda."""
-        s = Settings(REDIS_PASSWORD="a@b/c:d")
+        s = _redis_settings(REDIS_PASSWORD="a@b/c:d")
         assert s.REDIS_URL == "redis://:a%40b%2Fc%3Ad@redis:6379/0"
 
     def test_no_toca_esquemas_ajenos(self):
-        s = Settings(REDIS_PASSWORD="s3cr3t", CELERY_BROKER_URL="amqp://conejo:5672")
+        s = _redis_settings(
+            REDIS_PASSWORD="s3cr3t", CELERY_BROKER_URL="amqp://conejo:5672"
+        )
         assert s.CELERY_BROKER_URL == "amqp://conejo:5672"
 
 

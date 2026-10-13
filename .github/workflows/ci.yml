@@ -177,8 +177,10 @@ jobs:
           for i in $(seq 1 30); do
             docker exec pgcore pg_isready -U swissjob -d swissjobhunter && break; sleep 2
           done
-      - name: Extensión pgvector (la crea el superusuario; el rol del core sólo la usa)
-        run: docker exec pgcore psql -U swissjob -d swissjobhunter -c "CREATE EXTENSION IF NOT EXISTS vector;"
+      - name: Extensiones (las crea el superusuario; el rol del core sólo las usa)
+        run: >-
+          docker exec pgcore psql -U swissjob -d swissjobhunter
+          -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
       - run: pip install -r jobhunt_core/requirements.txt
       - name: Bootstrap del rol y migraciones (lo que hace core-migrate al arrancar)
         run: python -m jobhunt_core.migrate
@@ -195,11 +197,13 @@ jobs:
     env:
       POSTGRES_PASSWORD: ci-validation-only
       REDIS_PASSWORD: ci-validation-only
+      CORE_IMAGE_TAG: ci-validation-only
     steps:
       - uses: actions/checkout@v4
       - run: cp .env.example .env
       - name: Ficheros de entorno desde sus plantillas
         run: |
+          cp backend/.env.prod.example .env.prod
           for e in .env.prod .env.core.prod .env.core.redis.prod \
                    .env.core.admin.prod; do
             [ -f "$e.example" ] && cp "$e.example" "$e"

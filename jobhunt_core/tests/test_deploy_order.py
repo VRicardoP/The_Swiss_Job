@@ -14,9 +14,10 @@ silenciosa de ofertas y duplicación del corpus. El auditor lo reprodujo con un 
 Un documento no se puede «testear» como el código, pero su ORDEN sí: es lo único que un
 operador ejecuta. Esto fija ese orden para que no se pueda invertir en silencio otra vez.
 
-Los ficheros se leen del árbol del repo montado en `/app` (perfil de dev, ver
-`docker-compose.yml`: `docs/` y `docker-compose.qnap.yml`, ambos en solo lectura). Si falta, la guarda FALLA en vez de saltarse: una comprobación que
-no corre es exactamente como el defecto sobrevivió a varias revisiones.
+Los ficheros se leen desde la raíz que contiene este módulo. Funciona igual en
+el checkout de CI y en `/app` dentro del perfil de desarrollo. Si faltan, la
+guarda FALLA en vez de saltarse: una comprobación que no corre es exactamente
+como el defecto sobrevivió a varias revisiones.
 """
 
 import re
@@ -25,7 +26,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-_REPO = Path("/app")
+_REPO = Path(__file__).resolve().parents[2]
 _DEPLOY_NAS = _REPO / "docs" / "DEPLOY_NAS.md"
 _QNAP = _REPO / "docker-compose.qnap.yml"
 

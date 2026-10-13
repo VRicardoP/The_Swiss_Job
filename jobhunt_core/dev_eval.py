@@ -43,6 +43,7 @@ import sqlalchemy as sa
 
 from jobhunt_core import matching
 from jobhunt_core.database import task_session_factory
+
 EVALUATOR_VERSION = "dev-eval-v3"
 NDCG_K = 10
 

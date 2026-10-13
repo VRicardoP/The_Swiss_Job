@@ -4,18 +4,24 @@ DoD: el worker legacy no cruza (colas disjuntas), broker en Redis dedicado,
 locks con namespace propio.
 """
 
+from urllib.parse import urlsplit
+
 from jobhunt_core.celery_app import celery_app
-from jobhunt_core.config import settings
+from jobhunt_core.config import CoreSettings, settings
 
 # Colas del backend legacy (celery_app del backend: default/scraping/ai).
 LEGACY_QUEUES = {"default", "scraping", "ai"}
 
 
-def test_broker_is_dedicated_redis():
-    # El broker/result-backend del core apuntan a redis-core (ADR-08), no al
-    # Redis de caché legacy (allkeys-lru expulsaría mensajes/locks).
-    assert "redis-core" in celery_app.conf.broker_url
-    assert "redis-core" in settings.CORE_RESULT_BACKEND
+def test_default_broker_is_dedicated_redis(monkeypatch):
+    # La topología por defecto apunta al servicio dedicado. CI puede sustituir
+    # el hostname por localhost para alcanzar el contenedor publicado; en prod,
+    # CoreSettings exige redis-core (cubierto por test_migrate_guards.py).
+    monkeypatch.delenv("CORE_BROKER_URL", raising=False)
+    monkeypatch.delenv("CORE_RESULT_BACKEND", raising=False)
+    defaults = CoreSettings(_env_file=None)
+    assert urlsplit(defaults.CORE_BROKER_URL).hostname == "redis-core"
+    assert urlsplit(defaults.CORE_RESULT_BACKEND).hostname == "redis-core"
 
 
 def test_all_queues_are_core_namespaced():

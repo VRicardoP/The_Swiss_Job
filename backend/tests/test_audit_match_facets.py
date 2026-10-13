@@ -4,7 +4,10 @@ from scripts.audit_match_facets import aggregate_comparison
 
 
 def _item(ref, school=False):
-    return {"match": SimpleNamespace(job_hash=ref), "school": object() if school else None}
+    return {
+        "match": SimpleNamespace(job_hash=ref),
+        "school": object() if school else None,
+    }
 
 
 def test_aggregate_comparison_reports_only_count_and_identity_differences():

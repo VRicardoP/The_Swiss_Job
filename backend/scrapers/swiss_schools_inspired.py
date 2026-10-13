@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 INSPIRED_BASE = "https://jobs.inspirededu.com"
 
+
 class SwissSchoolsInspiredScraper(SwissSchoolBaseScraper):
     SOURCE_NAME = "swiss_schools_inspired"
     LISTING_URL = f"{INSPIRED_BASE}/search/"

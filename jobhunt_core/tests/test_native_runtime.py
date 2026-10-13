@@ -44,9 +44,7 @@ def test_embedding_drain_never_exceeds_one_round(monkeypatch):
 
     monkeypatch.setattr(matching_tasks, "_run_pending_impl", still_busy)
     factory = object()
-    asyncio.run(
-        matching_tasks._drain_embeddings(factory, limit=17, max_rounds=50)
-    )
+    asyncio.run(matching_tasks._drain_embeddings(factory, limit=17, max_rounds=50))
     assert calls == [(17, factory)]
 
 

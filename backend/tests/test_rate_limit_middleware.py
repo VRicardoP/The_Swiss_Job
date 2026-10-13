@@ -82,14 +82,14 @@ async def test_con_el_limitador_apagado_no_estorba(limitador_activo):
 
 
 @pytest.mark.asyncio
-async def test_slowapi_ya_resuelve_el_router_incluido():
-    """Centinela de compatibilidad tras el cambio de FastAPI/SlowAPI.
+async def test_slowapi_no_resuelve_el_router_incluido():
+    """Keep the reason for the URL-based middleware executable.
 
-    El middleware propio se conserva porque ya fija el contrato global por URL,
-    la forma del 429 y Retry-After. Esta prueba registra que la limitación deja
-    de depender de la antigua carencia del enrutador.
+    FastAPI 0.141.1 still wraps included routes without an ``endpoint``
+    attribute. SlowAPI therefore exempts them; the three behavior tests above
+    prove that the project middleware closes that gap.
     """
-    from slowapi.middleware import _find_route_handler, _should_exempt
+    from slowapi.middleware import _find_route_handler
 
     app = _app_con_router("10/minute")
     scope = {
@@ -100,5 +100,4 @@ async def test_slowapi_ya_resuelve_el_router_incluido():
         "root_path": "",
     }
     handler = _find_route_handler(app.routes, scope)
-    assert handler is not None
-    assert _should_exempt(limiter, handler) is False
+    assert handler is None

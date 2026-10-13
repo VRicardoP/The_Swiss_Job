@@ -56,10 +56,14 @@ async def main() -> None:
     reports = []
     async with async_session() as db:
         users = (
-            await db.execute(
-                sa.text("SELECT user_id FROM jobhunt_profile_map ORDER BY user_id")
+            (
+                await db.execute(
+                    sa.text("SELECT user_id FROM jobhunt_profile_map ORDER BY user_id")
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for profile_index, user_id in enumerate(users, 1):
             started = time.perf_counter()
             matching = CoreMatching(db)
