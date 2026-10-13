@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T06:41:54Z",
+  "observed_at": "2026-10-13T07:25:27.712Z",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -73,15 +73,19 @@
     },
     {
       "id": 8,
-      "status": "waiting_exact_remote_publication_approval",
+      "status": "complete",
       "action": "publish Portfolio frontend 1bed6c2 to configured remotes/Cloudflare and verify the public asset plus 12-window probe",
       "predeployment_validation": "lint; 422/422 tests; build 3.20 s; 18/18 E2E; both remotes still a711c26 and target 1bed6c2 is a linear advance",
       "live_precondition": "HEAD 1bed6c2; owner README dirty and excluded; GitHub main and GitLab main both a711c26; fast-forward ancestry passed",
-      "automatic_review": "push rejected before execution; no remote changed; reviewer requires fresh exact approval to push immutable 1bed6c2 directly to main on github and gitlab because this mutates default branches and may disclose code publicly"
+      "automatic_review": "push rejected before execution; no remote changed; reviewer requires fresh exact approval to push immutable 1bed6c2 directly to main on github and gitlab because this mutates default branches and may disclose code publicly",
+      "evidence": "GitHub main and GitLab main both at exact 1bed6c2; GitHub Frontend CI completed success; Cloudflare asset changed D1neE1-1 -> V0q6T-Bl; public deterministic probe 12/12 content, 0 JS errors, load 900 ms, drag mean 28.58 ms and p95 33.4 ms, improving 33.92% and 66.63% over 43.25/100.1 baseline",
+      "production_record": "portfolio-frontend-public-production.json",
+      "authorization": "explicit user authorization received after automatic-review risk notice",
+      "next_action": "item 9: transfer and deploy immutable Portfolio backend a292ef4, then verify handover policy, exclusive sources, manual school refresh and absence of scheduled school scraping"
     },
     {
       "id": 9,
-      "status": "pending_after_7_and_8",
+      "status": "ready_to_execute",
       "action": "deploy Portfolio backend a292ef4; verify nine transferred sources skip before network, eleven exclusive sources work, scheduled school collection is absent and manual refresh remains",
       "prepared": "Portfolio backend archive 954 MiB sha256 52435279...a06e; NAS-only transformer and deployment script validated by py_compile, bash -n and idempotence; not transferred or executed"
     },

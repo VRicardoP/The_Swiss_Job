@@ -1870,6 +1870,27 @@ el orden de corte y disponer de la publicación frontend autorizada.
   SHA exacto, verificación independiente del ref y del sitio público, medición
   con el protocolo congelado, evidencia inmediata y commit estrecho.
 
+### Checkpoint operativo — 2026-10-13 07:25 UTC
+
+- Punto 8 cerrado tras autorización explícita posterior al aviso de riesgo.
+  GitHub y GitLab apuntan al SHA exacto `1bed6c2`; el workflow Frontend CI
+  terminó `success` y Cloudflare cambió el asset `D1neE1-1` por `V0q6T-Bl`.
+  El `README.md` local del propietario siguió fuera de la publicación.
+- La medición pública congelada cargó 12/12 ventanas con contenido y cero
+  errores JavaScript: 900 ms de carga, 28.58 ms/frame de media y p95
+  33.4 ms. Frente a la línea base 43,25/100,1 ms, el arrastre
+  mejora 33.92 % de media y
+  66.63 % en p95. La carga
+  pública se registra sin compararla con la preview local por incluir red/CDN.
+- Metodología vigente: publicar sólo el SHA validado, verificar refs remotos,
+  exigir CI verde y asset público distinto, ejecutar el mismo navegador con
+  fixtures y viewport congelados, conservar mediciones crudas y cerrar el gate
+  en evidencia/checklist/deuda antes del siguiente despliegue.
+- El punto 9 queda listo: backend Portfolio `a292ef4`, archivo local de 954 MiB
+  y SHA-256 `52435279...a06e`; transformar el Compose sólo dentro del NAS,
+  recrear `backend`/`worker` y probar política de nueve fuentes, once exclusivas
+  y escuelas manuales sin cosecha programada.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
