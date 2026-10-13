@@ -175,7 +175,9 @@
       "checkpoint": "all local gates complete; final production measurement waits only for publication of immutable frontend 49ca7ba",
       "resource_checkpoint": "final idle protocol complete: same eight retained containers 2648.10 -> 2381.29 MiB median sum (-266.81 MiB, -10.08%); SwissJob BFF 860.5 -> 364.2 MiB (-57.68%); SwissJob worker 263.0 -> 167.7 MiB (-36.24%)",
       "resource_record": "container-resource-final-production.json",
-      "next_action": "publish exact 49ca7ba after destination-specific approval; verify Cloudflare; run 12-window/drag protocol and a no-email scheduled-workload measurement, then report final deltas"
+      "next_action": "publish exact 49ca7ba after destination-specific approval; verify Cloudflare; repeat public 12-window/drag protocol, then report final deltas and close",
+      "scheduled_workload_checkpoint": "safe equivalent run complete with delivery and ledger writes neutralized: duration 3667.175 -> 167.499 s (-95.43%); worker median memory 722.4 -> 443.95 MiB (-38.55%); maximum 784.6 -> 465.2 MiB (-40.71%); final processed Core pre-scored feed and only 8 local record candidates",
+      "scheduled_workload_record": "container-resource-scheduled-window-final-production.json"
     }
   ],
   "permission_state": {

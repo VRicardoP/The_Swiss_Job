@@ -1,0 +1,198 @@
+{
+  "comparison": {
+    "baseline": {
+      "classification": "natural scheduled run before producer handover",
+      "cpu_percent": {
+        "max": 111.3,
+        "median": 71.315,
+        "min": 0.17,
+        "p95_nearest_rank": 103.23
+      },
+      "duration_seconds": 3667.174757,
+      "memory_mib": {
+        "max": 784.6,
+        "median": 722.4,
+        "min": 670.6,
+        "p95_nearest_rank": 779.0
+      },
+      "valid_samples": 26
+    },
+    "duration_delta": {
+      "percent": -95.43,
+      "seconds": -3499.676
+    },
+    "final": {
+      "classification": "equivalent manually triggered calculation with delivery and ledger writes neutralized",
+      "cpu_percent": {
+        "max": 54.07,
+        "median": 0.255,
+        "min": 0.17,
+        "p95_nearest_rank": 54.07
+      },
+      "duration_seconds": 167.499,
+      "memory_mib": {
+        "max": 465.2,
+        "median": 443.95,
+        "min": 368.0,
+        "p95_nearest_rank": 465.2
+      },
+      "pids": {
+        "max": 18,
+        "median": 18,
+        "min": 16
+      },
+      "valid_samples": 14
+    },
+    "memory_delta": {
+      "max": {
+        "mib": -319.4,
+        "percent": -40.71
+      },
+      "median": {
+        "mib": -278.45,
+        "percent": -38.55
+      },
+      "p95_nearest_rank": {
+        "mib": -313.8,
+        "percent": -40.28
+      }
+    }
+  },
+  "protocol": {
+    "comparison_limit": "baseline was a natural scheduled run; compare workload scale and resource envelope, while treating delivery/ledger overhead as excluded from the final run",
+    "container": "portfolio_worker",
+    "container_started_at": "2026-10-13T09:44:24.439240844Z",
+    "effects": {
+      "database_session": "read-only usage followed by explicit rollback",
+      "email": "neutralized by replacing _build_and_deliver before execution",
+      "ledger": "neutralized by replacing _record_outcomes before execution"
+    },
+    "image": "portfolio-backend:board-8a5a323",
+    "image_id": "sha256:654b0676341c8ac473e643f565451d55ff6b27d4f6d5f5554de2eb33ed1f3257",
+    "purpose": "measure the post-handover daily calculation without sending email or mutating the delivery ledger",
+    "runner_sha256": "5f73993a43d893f4908ffca51ed65b95fb2058aca4fbeb9f467ecde418cbfd7b",
+    "sample_interval_seconds": 15,
+    "timeout_seconds": 900
+  },
+  "sample_window": {
+    "ended_at": "2026-10-13T12:10:48.478264Z",
+    "method": "docker stats --no-stream over SSH while the runner process remained active",
+    "samples": 14,
+    "started_at": "2026-10-13T12:07:09.319330Z"
+  },
+  "samples": [
+    {
+      "cpu_percent": 54.07,
+      "memory_mib": 368.0,
+      "observed_at": "2026-10-13T12:07:11.040581Z",
+      "pids": 17
+    },
+    {
+      "cpu_percent": 10.12,
+      "memory_mib": 389.4,
+      "observed_at": "2026-10-13T12:07:27.672230Z",
+      "pids": 17
+    },
+    {
+      "cpu_percent": 6.46,
+      "memory_mib": 427.2,
+      "observed_at": "2026-10-13T12:07:44.276862Z",
+      "pids": 17
+    },
+    {
+      "cpu_percent": 0.18,
+      "memory_mib": 441.4,
+      "observed_at": "2026-10-13T12:08:01.258524Z",
+      "pids": 18
+    },
+    {
+      "cpu_percent": 0.17,
+      "memory_mib": 441.5,
+      "observed_at": "2026-10-13T12:08:17.858128Z",
+      "pids": 18
+    },
+    {
+      "cpu_percent": 0.17,
+      "memory_mib": 442.1,
+      "observed_at": "2026-10-13T12:08:34.740099Z",
+      "pids": 18
+    },
+    {
+      "cpu_percent": 0.17,
+      "memory_mib": 445.8,
+      "observed_at": "2026-10-13T12:08:51.317925Z",
+      "pids": 18
+    },
+    {
+      "cpu_percent": 0.26,
+      "memory_mib": 448.7,
+      "observed_at": "2026-10-13T12:09:08.022708Z",
+      "pids": 18
+    },
+    {
+      "cpu_percent": 0.17,
+      "memory_mib": 450.0,
+      "observed_at": "2026-10-13T12:09:24.714363Z",
+      "pids": 18
+    },
+    {
+      "cpu_percent": 0.25,
+      "memory_mib": 452.4,
+      "observed_at": "2026-10-13T12:09:41.404475Z",
+      "pids": 18
+    },
+    {
+      "cpu_percent": 4.04,
+      "memory_mib": 456.2,
+      "observed_at": "2026-10-13T12:09:58.096005Z",
+      "pids": 18
+    },
+    {
+      "cpu_percent": 3.87,
+      "memory_mib": 460.7,
+      "observed_at": "2026-10-13T12:10:14.879391Z",
+      "pids": 18
+    },
+    {
+      "cpu_percent": 26.75,
+      "memory_mib": 465.2,
+      "observed_at": "2026-10-13T12:10:31.580299Z",
+      "pids": 18
+    },
+    {
+      "cpu_percent": 0.18,
+      "memory_mib": 369.5,
+      "observed_at": "2026-10-13T12:10:48.477960Z",
+      "pids": 16
+    }
+  ],
+  "summary": {
+    "cpu_percent": {
+      "max": 54.07,
+      "median": 0.255,
+      "min": 0.17,
+      "p95_nearest_rank": 54.07
+    },
+    "memory_mib": {
+      "max": 465.2,
+      "median": 443.95,
+      "min": 368.0,
+      "p95_nearest_rank": 465.2
+    },
+    "pids": {
+      "max": 18,
+      "median": 18,
+      "min": 16
+    }
+  },
+  "workload": {
+    "delivery_neutralized": true,
+    "digest_jobs": 1674,
+    "duration_seconds": 167.499,
+    "ledger_writes_neutralized": true,
+    "record_calls": 1,
+    "record_candidates": 8,
+    "returned": false,
+    "school_jobs": 0
+  }
+}
