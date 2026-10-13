@@ -1782,6 +1782,16 @@ el orden de corte y disponer de la publicación frontend autorizada.
   previsiblemente un parcial de 250 y un terminal de 109. Verificar por la señal
   real, sin usar la predicción como gate.
 
+### Checkpoint operativo — 2026-10-13 00:41 UTC
+
+- Decimotercer fragmento dedup verde: 250 filas, 62 candidatos nuevos y
+  341,171 s. Acumulado: 3.250 filas, 641 candidatos, trece parciales, cero
+  errores y máximo 1.451,184 s.
+- El lote 14 `60e1a405-00dc-49e2-9b52-d6e4e1339323` está activo sobre las 109
+  filas restantes medidas y debe ejecutar los brazos exacto/léxico. Exigir que
+  aparezca como único `complete=true`; la cifra de 109 sigue siendo observación,
+  no sustituto del gate.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con

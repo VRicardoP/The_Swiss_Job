@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T00:36:00+00:00",
+  "observed_at": "2026-10-13T00:41:00+00:00",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -55,7 +55,7 @@
       "scope_grant_applied": false,
       "remediation_commit": "e535e45",
       "validation": "focused 10/10; Core full 1912 passed, 1 skipped in 972.98 s; Ruff and py_compile green",
-      "dedup": "12 partials passed; 3000 rows, 579 new candidates; latest 500.553 s and maximum 1451.184 s <1800; thirteenth 5678995f-6441-48b4-9921-5f30b7aa256e active; 0 errors",
+      "dedup": "13 partials passed; 3250 rows, 641 new candidates; latest 341.171 s and maximum 1451.184 s <1800; fourteenth 60e1a405-00dc-49e2-9b52-d6e4e1339323 active for measured 109 remaining plus final exact/lexical arms; 0 errors",
       "resume_observation": "read ops-worker logs since 2026-10-12T22:16:12Z and run verify_dedup_batch_log.py only after one terminal; do not trigger another root chain",
       "count_correction": "exact read-only _CORPUS_SQL recount at 00:31 UTC: 3359 total, 609 after the eleventh cursor; likely two more 250 partials and a 109 terminal, but complete=true is the sole closure condition"
     },
