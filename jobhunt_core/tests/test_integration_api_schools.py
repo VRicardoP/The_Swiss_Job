@@ -207,7 +207,7 @@ def test_school_preferences_roundtrip_and_profile_erasure(db):  # noqa: F811  (l
     assert stale.status_code == 412
 
     async def erase():
-        from jobhunt_core.shadow.projector import erase_shadow_profile
+        from jobhunt_core.erasure import _erase_profile_graph as erase_shadow_profile
 
         async with f() as s:
             assert await erase_shadow_profile(s, "user-1", tenant) == pid

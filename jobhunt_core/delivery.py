@@ -13,10 +13,7 @@
   `set_transport(fn)` con fn(destination, event_dict) síncrono que lanza si
   falla. Fase C dispone del transporte HTTP por consumer, activado solo con
   configuración completa; sin transporte los pendientes se conservan SIN
-  consumir intentos. En Fase B el worker registra al arrancar el transporte
-  SOMBRA (shadow/inbox.py → jobhunt.shadow_inbox, P1-1b) SOLO si nadie
-  inyectó otro: entrega real y continua sin efectos visibles (§8 del
-  contrato de Fase B).
+  consumir intentos.
 
 ORDEN DE LOCK (G8-N-2/G8-N-3, medido el 2026-08-26). Las tres sentencias que
 HOY pueden tocar varias filas toman los locks por `(event_id, destination)`

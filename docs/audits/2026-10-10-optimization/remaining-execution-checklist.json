@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T07:51:28Z",
+  "observed_at": "2026-10-13T09:03:00Z",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -130,8 +130,12 @@
     },
     {
       "id": 14,
-      "status": "ready_to_execute",
-      "action": "remove Core shadow runtime/config/tools while preserving migrations, historical tables, retention and erasure restore; deploy and verify before dropping the capture role"
+      "status": "local_validated_pending_deploy",
+      "action": "remove Core shadow runtime/config/tools while preserving migrations, historical tables, retention and erasure restore; deploy and verify before dropping the capture role",
+      "local_evidence": "shadow runtime/config/capture service and closed transition tools removed; historical migrations/tables, retention, erasure restore and scrub_capture preserved",
+      "validation": "focused 138 passed; full Core 1547 passed, 1 skipped in 460.41s; Ruff/compileall/bash/diff-check and eight Compose models green",
+      "record": "core-shadow-runtime-removal-validation.json",
+      "next_action": "commit exact tree, deploy immutable Core, verify four native services/delivery/17 sources/historical tables, then drop jobhunt_capture and prove absence"
     },
     {
       "id": 15,

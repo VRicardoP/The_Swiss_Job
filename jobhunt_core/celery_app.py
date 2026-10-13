@@ -54,28 +54,15 @@ celery_app.conf.update(
         "jobhunt.maintenance.dedup_lex_backfill": {"queue": "core.default"},
         "jobhunt.maintenance.dedup_revalidate_by_rule": {"queue": "core.default"},
         "jobhunt.maintenance.purge_retention": {"queue": "core.default"},
-        # El proyector drena embeddings y ejecuta matching. Mantenerlo en la
-        # misma cola que esas tareas garantiza que sólo el worker de modelo
+        # La recuperación nativa drena embeddings y ejecuta matching. La
+        # misma cola garantiza que sólo el worker de modelo
         # carga el bi-encoder; en core.default bloqueaba durante minutos la
         # salud, el outbox y el beat cuando la concurrencia bajó a uno.
         "jobhunt.matching.recover": {"queue": "core.matching"},
-        # Métricas/muestreo/purga de la sombra (B-04): observabilidad y
-        # mantenimiento, NO ingesta — cola general core.default. En
-        # core.harvest el muestreador (cadencia 5 min vía B-05) quedaría
-        # detrás de lotes largos del proyector (prefetch=1 + acks_late) y
-        # ninguna de estas tareas toca los locks del sink.
         "jobhunt.delivery.check_health": {"queue": "core.default"},
-        "jobhunt.shadow.compute_cycle": {"queue": "core.default"},
-        "jobhunt.shadow.preview_cycle": {"queue": "core.default"},
-        "jobhunt.shadow.purge_staging": {"queue": "core.default"},
         "jobhunt.idempotency.purge_expired": {"queue": "core.default"},
-        # El ciclo llama al mismo proyector y por tanto también puede cargar
-        # el bi-encoder. Se serializa con el resto del matching para conservar
-        # una única copia del modelo. La vigilancia sigue siendo ligera.
-        "jobhunt.shadow.run_cycle": {"queue": "core.matching"},
-        "jobhunt.shadow.check_slot_health": {"queue": "core.default"},
         # Salud de la COSECHA (G9 P2-C): observabilidad de solo lectura — misma
-        # decisión que la vigilancia del slot, cola core.default para no quedar
+        # cola core.default para no quedar
         # detrás de un lote de cosecha en core.harvest (donde la enviaría el
         # comodín "jobhunt.harvest.*").
         "jobhunt.harvest.check_health": {"queue": "core.default"},
@@ -105,14 +92,7 @@ celery_app.conf.update(
     # del visibility_timeout.
     task_soft_time_limit=1800,
     task_time_limit=2100,
-    # CADENCIAS de la sombra (B-05, §5/§6) — SOLO tareas de colas core.*.
-    # El beat va EMBEBIDO en el proceso worker que lleva `-B`
-    # (`core-ops-worker` en producción; decisión del propietario
-    # 2026-07-25): sobrevive
-    # a recreates/restarts, cosa que un `exec -d ... beat` no hacía
-    # (moría en silencio con cada `up -d`). Cadencias ajustables
-    # por settings CORE_SHADOW_*; el crontab usa timezone Europe/Zurich (la
-    # de este app): 06:05 = justo tras el cierre del ciclo (06:00, §5).
+    # El beat va embebido en core-ops-worker para sobrevivir a recreates.
     beat_schedule={
         "harvest-dispatch-native": {
             "task": "jobhunt.harvest.dispatch_native",
@@ -135,29 +115,8 @@ celery_app.conf.update(
             "task": "jobhunt.credentials.check_health",
             "schedule": float(settings.CORE_HARVEST_HEALTH_EVERY_S),
         },
-        "shadow-check-slot-health": {
-            "task": "jobhunt.shadow.check_slot_health",
-            "schedule": float(settings.CORE_SHADOW_SLOT_HEALTH_EVERY_S),
-        },
-        # Diagnóstico temprano del ciclo ABIERTO. Reutiliza el cómputo real
-        # dentro de una transacción revertida: no sella ni toca la racha 7/7.
-        "shadow-preview-cycle": {
-            "task": "jobhunt.shadow.preview_cycle",
-            "schedule": float(settings.CORE_SHADOW_PRE_GATE_EVERY_S),
-        },
-        "shadow-run-cycle": {
-            "task": "jobhunt.shadow.run_cycle",
-            "schedule": crontab(
-                hour=settings.CORE_SHADOW_RUN_CYCLE_HOUR,
-                minute=settings.CORE_SHADOW_RUN_CYCLE_MINUTE,
-            ),
-        },
-        # P1-1 (rev. externa parte 2): proyector y despacho del outbox EN
-        # CADENCIA — proyectar solo al cierre del ciclo producía ~20 h de
-        # latencia. Una evaluación puede durar más que la cadencia con el
-        # único proceso del bi-encoder: el mensaje caduca al llegar el siguiente
-        # tick para que los disparos obsoletos no formen una cola sin cota. El
-        # single-flight sigue protegiendo solapes con run_cycle.
+        # Una evaluación puede durar más que la cadencia con el único proceso
+        # del bi-encoder. Los ticks obsoletos caducan para no acumular trabajo.
         "matching-recovery": {
             "task": "jobhunt.matching.recover",
             "schedule": float(settings.CORE_MATCHING_RECOVERY_EVERY_S),
@@ -207,16 +166,6 @@ celery_app.conf.update(
     },
 )
 
-if not settings.CORE_CAPTURE_ENABLED:
-    # Retirada del slot: el harness de la captura pierde su objeto. Se quita
-    # POR ENTRADA, nunca por prefijo de nombre — `shadow-project` se queda.
-    for _entry in (
-        "shadow-check-slot-health",
-        "shadow-preview-cycle",
-        "shadow-run-cycle",
-    ):
-        celery_app.conf.beat_schedule.pop(_entry, None)
-
 if settings.CORE_SAVED_SEARCH_EXECUTION_ENABLED:
     celery_app.conf.beat_schedule["saved-searches-run-due"] = {
         "task": "jobhunt.searches.run_due",
@@ -233,5 +182,4 @@ celery_app.conf.include = [
     "jobhunt_core.tasks.delivery",
     "jobhunt_core.tasks.searches",
     "jobhunt_core.tasks.idempotency",
-    "jobhunt_core.tasks.shadow",
 ]

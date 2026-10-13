@@ -6,7 +6,7 @@ import uuid
 import pytest
 import sqlalchemy as sa
 
-from jobhunt_core.shadow.projector import erase_shadow_profile
+from jobhunt_core.erasure import _erase_profile_graph as erase_shadow_profile
 from jobhunt_core.tests.test_integration_api_saved_searches import _seed_profile
 from jobhunt_core.tests.test_integration_api_applications import db  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests import test_integration_api as api

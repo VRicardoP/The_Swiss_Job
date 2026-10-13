@@ -93,7 +93,7 @@ def test_school_draft_state_etag_replay_and_erase(db):  # noqa: F811  (la fixtur
     )
 
     async def erase():
-        from jobhunt_core.shadow.projector import erase_shadow_profile
+        from jobhunt_core.erasure import _erase_profile_graph as erase_shadow_profile
 
         async with f() as s:
             await erase_shadow_profile(s, "user-1", tenant)

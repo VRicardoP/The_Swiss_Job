@@ -32,7 +32,6 @@ CLAVES_LARGAS_LEGITIMAS = {
     "source",
     "target",
     "hostname",
-    "CORE_CAPTURE_SLOT",
     "condition",  # depends_on: service_completed_successfully
     "PATH",
     "HF_HOME",

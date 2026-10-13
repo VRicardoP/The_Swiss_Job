@@ -1795,10 +1795,10 @@ def test_idempotency_reservation_wait_bounded_by_lock_timeout(db, monkeypatch):
 
 
 def test_erase_gdpr_removes_applications_and_saved_searches(db):
-    """DoD C-API-W: con el escritor activo, el erase GDPR (erase_shadow_profile
+    """DoD C-API-W: con el escritor activo, el erase GDPR (_erase_profile_graph
     / _ERASE_TABLES) arrastra applications + saved_searches (FK a profiles SIN
     CASCADE) — si no, el DELETE del perfil fallaría."""
-    from jobhunt_core.shadow.projector import erase_shadow_profile
+    from jobhunt_core.erasure import _erase_profile_graph as erase_shadow_profile
 
     factory, created = db
     pid, vacs, _tok = _seed_matches(factory, created)

@@ -119,17 +119,12 @@ services:
       - swissjob-net
 
   # ---- jobhunt-core — SOMBRA EN PRODUCCIÓN (Fase B, autorización del
-  # propietario 2026-07-28: el equipo local no está 24h; contrato §0 "cero
-  # efectos visibles a usuarios" SIGUE VIGENTE — el outbox solo entrega al
-  # inbox sombra jobhunt.shadow_inbox).
   # SIN `profiles:`: Container Station ejecuta `up -d` sin --profile, así que
   # un servicio con profile jamás arrancaría — el core arranca con la app.
   # Imagen swissjob-core:prod cargada por tar (como worker).
   # AISLAMIENTO de secretos (revisión A-01 #1): el core NO recibe el .env.prod
-  # legacy. Runtime → /share/Public/swissjob/.env.core.prod; credencial admin
-  # (+ CORE_CAPTURE_PASSWORD, B-01) → SOLO core-migrate vía
-  # /share/Public/swissjob/.env.core.admin.prod; DSN de REPLICACIÓN
-  # (CAPTURE_DSN) → SOLO core-capture vía /share/Public/swissjob/.env.core.capture.prod.
+  # legacy. Runtime → /share/Public/swissjob/.env.core.prod; la credencial admin
+  # se entrega SOLO a core-migrate vía /share/Public/swissjob/.env.core.admin.prod.
 
   redis-core:
     image: redis:7-alpine
@@ -241,47 +236,6 @@ services:
     networks:
       - swissjob-net
       - core-net
-
-  core-capture:
-    # Consumidor CDC de la sombra (B-01): slot lógico `jobhunt_shadow` +
-    # wal2json v2 sobre el Postgres COMPARTIDO. Replica con el rol
-    # jobhunt_capture (CAPTURE_DSN — SOLO en .env.core.capture.prod: el
-    # privilegio REPLICATION lee TODO el WAL del clúster) y escribe SOLO en
-    # jobhunt.shadow_change_log/shadow_capture_state como jobhunt_core; ack
-    # al slot SIEMPRE tras el commit (RPO=0, §2). No necesita redis-core:
-    # proceso dedicado, no worker Celery.
-    image: swissjob-core:prod
-    container_name: swissjob-core-capture
-    restart: unless-stopped
-    command: python -m jobhunt_core.shadow.capture
-    env_file:
-      - /share/Public/swissjob/.env.core.prod
-      - /share/Public/swissjob/.env.core.capture.prod
-    environment:
-      - CORE_ENV=prod
-    healthcheck:
-      # Subcomando --health del propio módulo: conexión core OK + slot
-      # presente y ACTIVO (walsender conectado) + heartbeat < 26h.
-      # start_period MÁS generoso que en dev (600s vs 300s): el bootstrap
-      # hace el backfill COMPLETO del corpus REAL en la CPU del NAS antes de
-      # START_REPLICATION (slot aún INACTIVO — inactivo legítimo cubierto).
-      # timeout 60s (dev: 10s) e interval 120s (dev: 60s): MEDIDO en el NAS el
-      # 2026-08-06 — el subcomando tarda ~32s (arranque de Python + imports del
-      # paquete core con el NAS a load ~18). Con 10s daba `unhealthy` permanente
-      # con el CDC perfectamente sano (heartbeat de 0,05s, slot activo, streaming).
-      # El interval no debe ser menor que lo que tarda el propio comando.
-      test: ["CMD", "python", "-m", "jobhunt_core.shadow.capture", "--health"]
-      interval: 120s
-      timeout: 60s
-      retries: 3
-      start_period: 600s
-    depends_on:
-      postgres:
-        condition: service_healthy
-      core-migrate:
-        condition: service_completed_successfully
-    networks:
-      - swissjob-net
 
   frontend:
     image: swissjob-frontend:prod

@@ -9,16 +9,10 @@ services:
     mem_limit: 512m
     container_name: swissjob-core-api-r5
     environment:
-      CORE_SHADOW_RUN_CYCLE_MINUTE: '35'
-      CORE_SHADOW_RUN_CYCLE_HOUR: '11'
-      CORE_SHADOW_CYCLE_START_HOUR: '11'
       CORE_DATABASE_URL: ${CORE_DATABASE_URL}
-      CORE_CAPTURE_SLOT: jobhunt_shadow_r5_rehearsal
       CORE_ENV: prod
       CORE_BROKER_URL: ${CORE_BROKER_URL}
-      CORE_SHADOW_PRE_GATE_EVERY_S: '1800'
       CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
-      CORE_SHADOW_CYCLE_START_MINUTE: '30'
       PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       LANG: C.UTF-8
       GPG_KEY: ${GPG_KEY}
@@ -76,17 +70,11 @@ services:
     environment:
       CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
         "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
-      CORE_SHADOW_RUN_CYCLE_HOUR: '11'
       CORE_ENV: prod
-      CORE_SHADOW_CYCLE_START_MINUTE: '30'
-      CORE_SHADOW_CYCLE_START_HOUR: '11'
       CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
       CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
       CORE_DATABASE_URL: ${CORE_DATABASE_URL}
-      CORE_SHADOW_PRE_GATE_EVERY_S: '1800'
       CORE_BROKER_URL: ${CORE_BROKER_URL}
-      CORE_SHADOW_RUN_CYCLE_MINUTE: '35'
-      CORE_CAPTURE_SLOT: jobhunt_shadow_r5_rehearsal
       PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       LANG: C.UTF-8
       GPG_KEY: ${GPG_KEY}
@@ -140,17 +128,11 @@ services:
     environment:
       CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
         "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
-      CORE_SHADOW_RUN_CYCLE_HOUR: '11'
       CORE_ENV: prod
-      CORE_SHADOW_CYCLE_START_MINUTE: '30'
-      CORE_SHADOW_CYCLE_START_HOUR: '11'
       CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
       CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
       CORE_DATABASE_URL: ${CORE_DATABASE_URL}
-      CORE_SHADOW_PRE_GATE_EVERY_S: '1800'
       CORE_BROKER_URL: ${CORE_BROKER_URL}
-      CORE_SHADOW_RUN_CYCLE_MINUTE: '35'
-      CORE_CAPTURE_SLOT: jobhunt_shadow_r5_rehearsal
       PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       LANG: C.UTF-8
       GPG_KEY: ${GPG_KEY}
@@ -200,17 +182,11 @@ services:
     environment:
       CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
         "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
-      CORE_SHADOW_RUN_CYCLE_HOUR: '11'
       CORE_ENV: prod
-      CORE_SHADOW_CYCLE_START_MINUTE: '30'
-      CORE_SHADOW_CYCLE_START_HOUR: '11'
       CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
       CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
       CORE_DATABASE_URL: ${CORE_DATABASE_URL}
-      CORE_SHADOW_PRE_GATE_EVERY_S: '1800'
       CORE_BROKER_URL: ${CORE_BROKER_URL}
-      CORE_SHADOW_RUN_CYCLE_MINUTE: '35'
-      CORE_CAPTURE_SLOT: jobhunt_shadow_r5_rehearsal
       PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       LANG: C.UTF-8
       GPG_KEY: ${GPG_KEY}
@@ -247,64 +223,6 @@ services:
         - core-ops-worker
     volumes: []
     shm_size: 67108864
-    logging:
-      driver: json-file
-      options:
-        max-file: '10'
-        max-size: 10m
-    ulimits:
-      nofile:
-        soft: 65535
-        hard: 65535
-  core-capture:
-    image: swissjob-core:point5-9d6b46e
-    mem_limit: 256m
-    container_name: swissjob-core-capture-r5
-    environment:
-      CORE_CAPTURE_SLOT: jobhunt_shadow_r5_rehearsal
-      CORE_SHADOW_RUN_CYCLE_HOUR: '11'
-      CORE_BROKER_URL: ${CORE_BROKER_URL}
-      CORE_SHADOW_RUN_CYCLE_MINUTE: '35'
-      CORE_DATABASE_URL: ${CORE_DATABASE_URL}
-      CORE_SHADOW_CYCLE_START_HOUR: '11'
-      CORE_ENV: prod
-      CORE_SHADOW_PRE_GATE_EVERY_S: '1800'
-      CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
-      CAPTURE_DSN: ${CAPTURE_DSN}
-      CORE_SHADOW_CYCLE_START_MINUTE: '30'
-      PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-      LANG: C.UTF-8
-      GPG_KEY: ${GPG_KEY}
-      PYTHON_VERSION: 3.12.14
-      PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
-      PYTHONDONTWRITEBYTECODE: '1'
-      HF_HOME: /tmp/hf-cache
-    restart: unless-stopped
-    entrypoint: null
-    command:
-    - python
-    - -m
-    - jobhunt_core.shadow.capture
-    working_dir: /app
-    user: core
-    networks:
-      swissjob_swissjob-net:
-        aliases:
-        - swissjob-core-capture-r5
-        - core-capture
-    volumes: []
-    shm_size: 67108864
-    healthcheck:
-      test:
-      - CMD
-      - python
-      - -m
-      - jobhunt_core.shadow.capture
-      - --health
-      interval: 120000000000ns
-      timeout: 60000000000ns
-      start_period: 600000000000ns
-      retries: 3
     logging:
       driver: json-file
       options:

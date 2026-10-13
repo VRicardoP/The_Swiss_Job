@@ -11,7 +11,7 @@ from jobhunt_core.api.v1_profile_snapshot import (
     ProfileSnapshotWrite,
     put_source_snapshot,
 )
-from jobhunt_core.shadow import projector
+from jobhunt_core.tasks import matching as matching_tasks
 from jobhunt_core.tests.test_integration_api import db  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 from jobhunt_core.tests.test_profile_snapshot_delivery import _seed, _put, _snapshot
 from jobhunt_core.tests.test_review_closure_20260907 import _pending
@@ -69,7 +69,7 @@ def test_inactive_not_in_recovery_and_reactivation_rearms_same_revision(db):  # 
     pid, _, _, _ = _seed(factory, created)
 
     async def check():
-        await projector._evaluate_and_record(factory, pid)
+        await matching_tasks._evaluate_and_record(factory, pid)
         assert pid not in await _pending(factory)
         await _deliver(factory, pid, await _current_snapshot(factory, pid, False, 1))
         assert pid not in await _pending(factory)

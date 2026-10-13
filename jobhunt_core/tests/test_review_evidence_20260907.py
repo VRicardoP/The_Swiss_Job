@@ -104,7 +104,7 @@ def test_fragment_cannot_overrun_soft_limit_in_second_batch(monkeypatch):
 
 
 def test_delegated_ce_does_not_keep_projector_recovery_on_forever(db):  # noqa: F811  (la fixture, no una redefinición)
-    from jobhunt_core.shadow import projector
+    from jobhunt_core.tasks import matching as matching_tasks
 
     factory, created = db
     pid, mid, cosine, vacs = _setup(factory, created, ["python developer"])
@@ -114,22 +114,10 @@ def test_delegated_ce_does_not_keep_projector_recovery_on_forever(db):  # noqa: 
         async with factory() as s:
             await matching.declare_active_policies(s, [cosine, ce_pol])
             await s.commit()
-        await projector._evaluate_and_record(factory, pid)
-        await projector._evaluate_and_record(factory, pid)
+        await matching_tasks._evaluate_and_record(factory, pid)
+        await matching_tasks._evaluate_and_record(factory, pid)
         async with factory() as s:
-            result = await s.execute(
-                sa.text(projector._RECOVERY_NEEDED_SQL).bindparams(
-                    sa.bindparam("excluded", expanding=True),
-                    sa.bindparam("evaluated", expanding=True),
-                ),
-                {
-                    "excluded": [projector._NO_PROFILE],
-                    "evaluated": [projector._NO_PROFILE],
-                    "dim": 384,
-                    "cap": 200,
-                },
-            )
-            pending = [r.id for r in result.all()]
+            pending = await matching_tasks._recovery_targets(s, set())
         assert pid not in pending, (
             "El CE delegado mantiene permanentemente encendida la recuperación"
         )

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import sqlalchemy as sa
 
 from jobhunt_core import matching
-from jobhunt_core.shadow import projector
+from jobhunt_core.tasks import matching as matching_tasks
 from jobhunt_core.tests.test_integration_matching import db, _setup  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
@@ -25,19 +25,7 @@ async def _declare(factory, pid):
 
 async def _pending(factory):
     async with factory() as s:
-        result = await s.execute(
-            sa.text(projector._RECOVERY_NEEDED_SQL).bindparams(
-                sa.bindparam("excluded", expanding=True),
-                sa.bindparam("evaluated", expanding=True),
-            ),
-            {
-                "excluded": [projector._NO_PROFILE],
-                "evaluated": [projector._NO_PROFILE],
-                "dim": 384,
-                "cap": 200,
-            },
-        )
-        return [r.id for r in result.all()]
+        return await matching_tasks._recovery_targets(s, set())
 
 
 def test_exclusion_change_must_rearm_recovery(db):  # noqa: F811  (la fixture, no una redefinición)
@@ -45,7 +33,7 @@ def test_exclusion_change_must_rearm_recovery(db):  # noqa: F811  (la fixture, n
     pid, mid, pol, _ = _setup(factory, created, ["python developer", "python engineer"])
 
     async def check():
-        await projector._evaluate_and_record(factory, pid)
+        await matching_tasks._evaluate_and_record(factory, pid)
         assert pid not in await _pending(factory)
         await _declare(factory, pid)
         async with factory() as s:

@@ -27,7 +27,7 @@ Uso local:
 Uso contra un host remoto con Compose independiente:
   SSH_HOST=nas DOCKER_BIN=/ruta/docker COMPOSE_BIN=/ruta/docker-compose \
   COMPOSE_FILE=/ruta/core.yml COMPOSE_PROJECT_NAME=swissjob-r5 \
-  python3 scripts/check_core_release.py [--capture-retired]
+  python3 scripts/check_core_release.py
 """
 
 from __future__ import annotations
@@ -47,7 +47,6 @@ SERVICIOS_OBLIGATORIOS = (
     "core-harvest-worker",
     "core-ops-worker",
 )
-SERVICIO_CAPTURE = "core-capture"
 DOCKER_BIN = os.environ.get("DOCKER_BIN", "docker")
 COMPOSE_BIN = os.environ.get("COMPOSE_BIN")
 COMPOSE_FILE = os.environ.get("COMPOSE_FILE")
@@ -55,13 +54,6 @@ COMPOSE_PROJECT_NAME = os.environ.get("COMPOSE_PROJECT_NAME")
 SSH_HOST = os.environ.get("SSH_HOST")
 READY_CONTAINER = os.environ.get("READY_CONTAINER", "swissjob-core-api-r5")
 REMOTE_READY_URL = os.environ.get("REMOTE_READY_URL", "http://127.0.0.1:8000")
-
-
-def _servicios_a_revisar(capture_retirado: bool) -> tuple[str, ...]:
-    """Return the exact service set expected for the declared phase."""
-    if capture_retirado:
-        return SERVICIOS_OBLIGATORIOS
-    return (*SERVICIOS_OBLIGATORIOS, SERVICIO_CAPTURE)
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -92,13 +84,13 @@ def _id_de_contenedor(nombre: str) -> str | None:
     return salida.stdout.strip() if salida.returncode == 0 else None
 
 
-def _revisa_imagenes(capture_retirado: bool) -> tuple[list[str], int]:
+def _revisa_imagenes() -> tuple[list[str], int]:
     """Condición 1: compose y contenedores, la misma imagen."""
     servicios = _compose_json("config", "--format", "json").get("services", {})
-    revisados = _servicios_a_revisar(capture_retirado)
+    revisados = SERVICIOS_OBLIGATORIOS
     fallos = []
-    if capture_retirado and SERVICIO_CAPTURE in servicios:
-        fallos.append(f"{SERVICIO_CAPTURE}: el compose aún declara la captura retirada")
+    if "core-capture" in servicios:
+        fallos.append("core-capture: el compose aún declara la captura retirada")
     for servicio in revisados:
         declarada = (servicios.get(servicio) or {}).get("image")
         if not declarada:
@@ -173,14 +165,9 @@ def _revisa_ready(url: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="http://127.0.0.1:8003")
-    parser.add_argument(
-        "--capture-retired",
-        action="store_true",
-        help="expect the final four-service topology without core-capture",
-    )
     args = parser.parse_args()
 
-    fallos_imagenes, cantidad_servicios = _revisa_imagenes(args.capture_retired)
+    fallos_imagenes, cantidad_servicios = _revisa_imagenes()
     fallos = fallos_imagenes + _revisa_ready(args.url)
     if fallos:
         print("La release del core NO es coherente:", file=sys.stderr)

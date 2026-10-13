@@ -1183,7 +1183,7 @@ def test_erase_covers_v1_written_rows(db):
         == 201
     )
 
-    from jobhunt_core.shadow.projector import erase_shadow_profile
+    from jobhunt_core.erasure import _erase_profile_graph as erase_shadow_profile
 
     async def erase():
         async with factory() as s:

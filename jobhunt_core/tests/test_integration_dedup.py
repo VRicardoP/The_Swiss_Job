@@ -322,35 +322,6 @@ def test_b2_concentracion_intra_no_oculta_al_vecino_cross(db):
     )
 
 
-def test_la_metrica_cuenta_el_candidato_como_deteccion(db):
-    """El puente con el gate: un par en dedup_candidates con state='pending'
-    hace que _dedup_confusion cuente TP para un par etiquetado 'duplicate'
-    (es la definición de "core dice duplicado" que F-5 debía alcanzar)."""
-    from jobhunt_core.shadow.metrics import _dedup_candidate_pairs
-
-    factory, created = db
-    _setup(factory, created, [["python dev"], ["python dev"]])
-    _scan(factory)
-
-    async def go():
-        async with factory() as s:
-            vacs = (
-                await s.execute(
-                    sa.text(
-                        "SELECT DISTINCT i.vacancy_id FROM source_listing_incarnations i "
-                        "JOIN source_listings l ON l.id = i.source_listing_id "
-                        "WHERE l.source_id = ANY(:srcs)"
-                    ),
-                    {"srcs": created["sources"]},
-                )
-            ).all()
-            ids = sorted((r.vacancy_id for r in vacs), key=str)
-            return await _dedup_candidate_pairs(s, ids)
-
-    detected = asyncio.run(go())
-    assert len(detected) == 1  # el par cross-source, canónico
-
-
 def test_exacto_intra_respeta_multi_ciudad(db):
     """Regla ratificada (2026-08-23, curación D-34/D-40): contenido idéntico
     pero LOCATION distinta = publicación multi-ciudad legítima — NO candidato.
@@ -413,92 +384,6 @@ def test_exacto_intra_respeta_multi_ciudad(db):
     # multi-ciudad con l-c sigue fuera.
     assert first == 1
     assert second == 0
-
-
-def test_gate_puntua_solo_la_cohorte_holdout(db):
-    """Regresión auditoría Nº2 (2026-08-23, BLOQUEANTE 1): _dedup_rows y
-    _labels_ready_row puntúan SOLO la cohorte DEDUP_EVAL_COHORT. Con la
-    mezcla antigua, un TP de development absorbía el FN del holdout
-    (recall 1/2 = 0.5); filtrado, el holdout suspende solo: recall 0.0."""
-    from jobhunt_core.shadow.labels import DEDUP_EVAL_COHORT
-    from jobhunt_core.shadow.metrics import (
-        M_DEDUP_RECALL,
-        _dedup_rows,
-        _labels_ready_row,
-    )
-
-    factory, created = db
-    # 4 fuentes legacy:* — s0/s1 mismo título (candidato cross = detección);
-    # s2/s3 ortogonales (sin candidato). external_ids únicos por run.
-    _setup(
-        factory,
-        created,
-        [["python dev"], ["python dev"], ["python dev x"], ["guardabosques"]],
-        name_prefix="legacy:dedup-test",
-    )
-    _scan(factory)  # genera el candidato del par s0-s1
-
-    refs = {}
-
-    async def prepara():
-        async with factory() as s:
-            rows = (
-                await s.execute(
-                    sa.text(
-                        "SELECT l.external_id, s2.name FROM source_listings l "
-                        "JOIN sources s2 ON s2.id = l.source_id "
-                        "WHERE l.source_id = ANY(:srcs)"
-                    ),
-                    {"srcs": created["sources"]},
-                )
-            ).all()
-            for r in rows:
-                # name = legacy:dedup-test-<i>-<hex>: índice de fuente
-                refs[int(r.name.split("-")[2])] = r.external_id
-            ins = sa.text(
-                "INSERT INTO labeled_dedup_pairs "
-                "(job_ref_a, job_ref_b, verdict, source) "
-                "VALUES (:a, :b, 'duplicate', :src) "
-                "ON CONFLICT (LEAST(job_ref_a, job_ref_b), "
-                "GREATEST(job_ref_a, job_ref_b), source) DO NOTHING"
-            )
-            # development: el par DETECTADO (TP si contara)
-            await s.execute(ins, {"a": refs[0], "b": refs[1], "src": "curado-test"})
-            # holdout: par NO detectado (FN real del examen)
-            await s.execute(ins, {"a": refs[2], "b": refs[3], "src": DEDUP_EVAL_COHORT})
-            await s.commit()
-
-    asyncio.run(prepara())
-    try:
-
-        async def evalua():
-            async with factory() as s:
-                rows = await _dedup_rows(s)
-                ready = await _labels_ready_row(s, [])
-                return rows, ready
-
-        rows, ready = asyncio.run(evalua())
-        recall = next(r for r in rows if r[0] == M_DEDUP_RECALL)
-        # SOLO el holdout: tp=0, fn=1 ⇒ 0.0 (mezclado habría sido 0.5)
-        assert recall[1] == 0.0
-        assert recall[2]["cohorte"] == DEDUP_EVAL_COHORT
-        assert recall[2]["pares"] == 1
-        # la precondición cuenta lo que el gate puntúa: 1 par, no 2
-        assert ready[2]["pares_dedup"] == 1
-    finally:
-
-        async def limpia():
-            async with factory() as s:
-                await s.execute(
-                    sa.text(
-                        "DELETE FROM labeled_dedup_pairs "
-                        "WHERE job_ref_a = ANY(:refs) OR job_ref_b = ANY(:refs)"
-                    ),
-                    {"refs": list(refs.values())},
-                )
-                await s.commit()
-
-        asyncio.run(limpia())
 
 
 def test_hnsw_underfill_cae_al_scan_exacto(db, monkeypatch):
@@ -1387,72 +1272,6 @@ def test_el_vector_no_viaja_y_el_orden_kNN_sigue_siendo_una_constante(db):
     # El operando del <=> es un Param ($n), no una expresión correlacionada.
     assert re.search(r"<=> \$\d+", texto), texto
     assert "SubPlan" not in texto, texto
-
-
-def test_una_cohorte_de_evaluacion_ausente_se_dice_con_todas_las_letras(db):
-    """El gate publicaba `pares_dedup: 0` sin nombrar la cohorte, y ese cero se lee
-    como «aún llenándose» cuando puede significar «el examen que corrijo no existe».
-    Pasó de verdad: `DEDUP_EVAL_COHORT` apuntaba a un holdout perdido y el reloj de
-    los siete ciclos no podía arrancar, sin que ninguna métrica lo dijera. Un cero
-    que no distingue «todavía no» de «nunca» deja esperando indefinidamente."""
-    from jobhunt_core.shadow.labels import DEDUP_EVAL_COHORT
-    from jobhunt_core.shadow.metrics import _labels_ready_row
-
-    factory, _ = db
-
-    async def evalua():
-        async with factory() as s:
-            return await _labels_ready_row(s, [])
-
-    ready = asyncio.run(evalua())
-    detalles = ready[2]
-    # La cohorte se NOMBRA siempre: sin eso no se puede saber contra qué se puntúa.
-    assert detalles["cohorte"] == DEDUP_EVAL_COHORT
-    assert detalles["cohorte_existe"] is False
-    assert "NO existe" in detalles["diagnostico"]
-    assert "PROTOCOLO_HOLDOUT_DEDUP" in detalles["diagnostico"]
-    assert ready[1] == 0, "sin cohorte el gate no puede estar verde"
-
-
-def test_con_la_cohorte_cargada_el_diagnostico_desaparece(db):
-    """Y al revés: existiendo la cohorte, no se emite un diagnóstico que confunda.
-    Una guarda que grita siempre deja de leerse."""
-    from jobhunt_core.shadow.labels import DEDUP_EVAL_COHORT
-    from jobhunt_core.shadow.metrics import _labels_ready_row
-
-    factory, _ = db
-
-    async def prepara():
-        async with factory() as s:
-            await s.execute(
-                sa.text(
-                    "INSERT INTO labeled_dedup_cohorts (source, manifest) "
-                    "VALUES (:src, '{}'::jsonb) ON CONFLICT (source) DO NOTHING"
-                ),
-                {"src": DEDUP_EVAL_COHORT},
-            )
-            await s.commit()
-
-    async def evalua():
-        async with factory() as s:
-            return await _labels_ready_row(s, [])
-
-    asyncio.run(prepara())
-    try:
-        detalles = asyncio.run(evalua())[2]
-        assert detalles["cohorte_existe"] is True
-        assert "diagnostico" not in detalles
-    finally:
-
-        async def limpia():
-            async with factory() as s:
-                await s.execute(
-                    sa.text("DELETE FROM labeled_dedup_cohorts WHERE source = :src"),
-                    {"src": DEDUP_EVAL_COHORT},
-                )
-                await s.commit()
-
-        asyncio.run(limpia())
 
 
 def test_la_variante_historica_no_puede_quedar_igual_que_la_diaria():

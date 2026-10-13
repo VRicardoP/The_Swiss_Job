@@ -171,16 +171,10 @@ services:
     networks:
       - swissjob-net
 
-  # ---- jobhunt-core — SOMBRA EN PRODUCCIÓN (Fase B, autorización del
-  # propietario 2026-07-28; contrato §0 "cero efectos visibles a usuarios"
-  # SIGUE VIGENTE — el outbox solo entrega al inbox sombra).
-  # SIN `profiles:`: la sombra ya es producción y debe arrancar con `up -d`
-  # a secas (un profile la dejaría parada en silencio).
+  # ---- jobhunt-core en producción
+  # SIN `profiles:`: debe arrancar con `up -d` a secas.
   # AISLAMIENTO de secretos (revisión A-01 #1): los servicios core NO reciben
   # el .env.prod legacy. Runtime → .env.core.prod; credencial admin
-  # (+ CORE_CAPTURE_PASSWORD, B-01) → SOLO core-migrate vía .env.core.admin.prod;
-  # DSN de REPLICACIÓN (CAPTURE_DSN) → SOLO core-capture vía
-  # .env.core.capture.prod (plantillas .example en el repo).
 
   redis-core:
     image: redis:7-alpine
@@ -295,38 +289,6 @@ services:
     networks:
       - swissjob-net
       - core-net
-
-  core-capture:
-    # Consumidor CDC de la sombra (B-01): slot lógico `jobhunt_shadow` +
-    # wal2json v2. Replica con el rol jobhunt_capture (CAPTURE_DSN — SOLO en
-    # .env.core.capture.prod) y escribe SOLO en jobhunt.shadow_change_log/
-    # shadow_capture_state como jobhunt_core; ack al slot SIEMPRE tras el
-    # commit (RPO=0, §2). No necesita redis-core.
-    image: swissjob-core:prod
-    container_name: swissjob-core-capture
-    restart: unless-stopped
-    command: python -m jobhunt_core.shadow.capture
-    env_file:
-      - .env.core.prod
-      - .env.core.capture.prod
-    environment:
-      - CORE_ENV=prod
-    healthcheck:
-      # --health: conexión core OK + slot presente y ACTIVO + heartbeat < 26h.
-      # start_period generoso: el bootstrap hace el backfill COMPLETO del
-      # corpus real antes de START_REPLICATION (slot aún INACTIVO legítimo).
-      test: ["CMD", "python", "-m", "jobhunt_core.shadow.capture", "--health"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 600s
-    depends_on:
-      postgres:
-        condition: service_healthy
-      core-migrate:
-        condition: service_completed_successfully
-    networks:
-      - swissjob-net
 
   frontend:
     build:

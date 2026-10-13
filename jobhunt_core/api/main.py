@@ -345,12 +345,7 @@ def _expected_head() -> str:
     return _EXPECTED_HEAD
 
 
-# El `status` del readiness LISTO. Es contrato, no prosa: el smoke del Paso 7 de
-# `docs/DEPLOY_NAS.md` exigía `ok` mientras esta API devolvía `ready` desde siempre
-# (auditoría externa R3 P2-1), así que un cutover correcto habría terminado en falso
-# rojo DESPUÉS de la parte irreversible. `backend/scripts/nas_cutover.sh` lleva la
-# misma constante en `READY_STATUS_ESPERADO` y `test_deploy_order.py` comprueba que las
-# dos no puedan divergir.
+# Estado estable consumido por la sonda de despliegue.
 _READY_STATUS = "ready"
 
 

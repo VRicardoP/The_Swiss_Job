@@ -26,15 +26,9 @@ services:
   core-migrate:
     volumes:
       - ./jobhunt_core:/app/jobhunt_core
-      # SOLO LECTURA y solo en el perfil de tests: el cutover del NAS
-      # (`backend/scripts/nas_cutover.sh`) es el cuerpo ejecutable de
-      # `docs/DEPLOY_NAS.md` §5.3, y su guarda fail-closed lo ejecuta con dobles de
-      # `docker` y `psql` (auditoría externa R3 P1-1). Sin el montaje esa guarda no
-      # podría correr, que es justo como el defecto sobrevivió a dos revisiones. Los
-      # perfiles prod/qnap NO lo llevan: allí el script viaja por `scp` (§5.2).
-      - ./backend/scripts:/app/backend/scripts:ro
-      # Retention and rehearsal regression tests import the maintained scripts.
+      # Regression tests import maintained operational contracts only.
       - ./scripts:/app/scripts:ro
+      - ./backend/scripts:/app/backend/scripts:ro
 
   core-api:
     environment:
@@ -43,12 +37,6 @@ services:
       - ./jobhunt_core:/app/jobhunt_core
 
   core-worker:
-    environment:
-      - CORE_CODE_MUTABLE=1
-    volumes:
-      - ./jobhunt_core:/app/jobhunt_core
-
-  core-capture:
     environment:
       - CORE_CODE_MUTABLE=1
     volumes:

@@ -202,7 +202,7 @@ def test_batch_ownership_scope_and_required_key(db):  # noqa: F811  (la fixture,
 
 
 def test_batch_partial_deletion_never_resurrects_and_erase_purges_receipt(db):  # noqa: F811  (la fixture, no una redefinición)
-    from jobhunt_core.shadow.projector import erase_shadow_profile
+    from jobhunt_core.erasure import _erase_profile_graph as erase_shadow_profile
 
     f, made = db
     token, tenant, pid = _seed(f, made)

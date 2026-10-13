@@ -47,44 +47,20 @@ class CoreSettings(BaseSettings):
     # Namespace propio de locks/coordinación (leader-lock separado del legacy).
     CORE_LOCK_PREFIX: str = "jobhunt:"
 
-    # Embeddings (A-06, ADR-02): MISMO modelo multilingüe 384d que el legacy —
-    # los vectores deben ser comparables en la sombra de Fase B.
+    # Embeddings (A-06, ADR-02): modelo multilingüe 384d.
     CORE_EMBEDDING_MODEL_NAME: str = "paraphrase-multilingual-MiniLM-L12-v2"
     CORE_EMBEDDING_BATCH_SIZE: int = 32
 
-    # Cadencias del harness GATE-SOMBRA (B-05, §5/§6) — las consume el beat
-    # de celery_app.py (corre en el core-worker LOCAL, ver shadow/RUNBOOK.md).
-    # Captura CDC del legacy. En False el beat deja de programar el harness
-    # que SOLO existe para vigilar el slot y cerrar el ciclo de sombra
-    # (check_slot_health, preview_cycle, run_cycle). NO toca shadow.project,
-    # que pese al nombre ES el postprocesado del ciclo nativo: drena embeddings
-    # y reevalua perfiles tras cada cosecha. Apagar la familia shadow.* por su
-    # nombre apagaria el motor de matching con todos los indicadores en verde.
-    CORE_CAPTURE_ENABLED: bool = True
-
-    # M14/T11: cota mínima. Sin ella, un 0 o un 5 en el entorno convertía una
-    # cadencia de observabilidad en un martillo sobre dos núcleos.
-    CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S: int = Field(default=300, ge=60)  # §5
-    CORE_SHADOW_SLOT_HEALTH_EVERY_S: int = Field(default=300, ge=60)  # §6
-    CORE_SHADOW_PRE_GATE_EVERY_S: int = Field(default=3600, ge=300)
-    CORE_SHADOW_CYCLE_START_HOUR: int = Field(default=6, ge=0, le=23)
-    CORE_SHADOW_CYCLE_START_MINUTE: int = Field(default=0, ge=0, le=59)
-    CORE_SHADOW_RUN_CYCLE_HOUR: int = 6  # run_cycle diario 06:05
-    CORE_SHADOW_RUN_CYCLE_MINUTE: int = 5  # (Europe/Zurich, tras el
-    #                                              cierre del ciclo a las 06:00)
-    # P1-1 (rev. externa parte 2): proyección y despacho del outbox EN
-    # CADENCIA — con la proyección solo diaria (06:05) los lotes acumulaban
-    # ~20h de latencia y latencia_p95<=600s / outbox_lag_p99<=300s (§6) eran
-    # matemáticamente imposibles.
+    # Cadencias nativas. Un tick por debajo de 60 s convertiría una vigilancia
+    # o recuperación acotada en un martillo sobre el worker.
     CORE_MATCHING_RECOVERY_EVERY_S: int = Field(default=300, ge=60)
     CORE_DELIVERY_HEALTH_EVERY_S: int = Field(default=300, ge=60)
     CORE_DELIVERY_DISPATCH_EVERY_S: int = Field(default=300, ge=60)  # outbox
     # Transfer searches only after legacy drain and an inbox projection proof.
     # Off means no beat entry and manual tasks perform no database work.
     CORE_SAVED_SEARCH_EXECUTION_ENABLED: bool = False
-    # Fase C: destino HTTP por consumer. Vacío conserva el inbox sombra. Si
-    # existe al menos un destino, el token es obligatorio y los destinos no
-    # mapeados fallan (nunca se marcan delivered por un fallback accidental).
+    # Destinos HTTP por consumer. Vacío deja la entrega sin transporte; los
+    # destinos no mapeados fallan y nunca se marcan delivered.
     CORE_DELIVERY_HTTP_DESTINATIONS: dict[str, str] = Field(default_factory=dict)
     CORE_DELIVERY_HTTP_TOKEN: str = ""
     CORE_DELIVERY_HTTP_TIMEOUT_S: float = Field(default=10.0, gt=0, le=120)

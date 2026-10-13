@@ -12,5 +12,3 @@ services:
       - "127.0.0.1:${HOST_CORE_API_PORT:-8003}:8000"
   core-worker:
     image: swissjob-core:${CORE_IMAGE_TAG:?define CORE_IMAGE_TAG (p.ej. point5-2b59a92)}
-  core-capture:
-    image: swissjob-core:${CORE_IMAGE_TAG:?define CORE_IMAGE_TAG (p.ej. point5-2b59a92)}

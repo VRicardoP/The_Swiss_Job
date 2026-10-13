@@ -9,10 +9,7 @@
 #    (`-p swissjob` / `-p swissjob-r5`), o choca con el nombre y no recrea nada.
 # 3. `RELEASE_SHA` debe ser el SHA real: con `unknown`, la comprobación «todos
 #    publican el mismo SHA» se cumple entre `unknown`s sin significar nada.
-# 4. (2026-09-25) La etiqueta se cambia POR SERVICIO, nunca con un sed global:
-#    la primera versión de este script reescribía también `core-capture` sin
-#    recrearlo, dejando el compose apuntando a una imagen que no corría — la
-#    deriva A19-21 fabricada a mano.
+# 4. La etiqueta se cambia POR SERVICIO para no alterar otros contenedores.
 # 5. (2026-09-25) Las migraciones del núcleo se aplican ANTES de recrear, con un
 #    contenedor desechable de la imagen nueva en la red de la API. El código
 #    nuevo espera la cabeza nueva; recrear primero deja `/v1/ready` en 503.
@@ -78,7 +75,7 @@ E=/share/CACHEDEV1_DATA/Public/unification-e15-20260914
 if [[ "$SERVICIO" == core ]]; then
   IMAGEN="swissjob-core:point5-$SHA"
   COMPOSE="core.configured.yml"; PROYECTO="swissjob-r5"
-  SERVICIOS=(core-api core-worker core-harvest-worker core-ops-worker)  # core-capture NO: ver trampa 4
+  SERVICIOS=(core-api core-worker core-harvest-worker core-ops-worker)
   CONSTRUIR=(env "RELEASE_SHA=$SHA" docker compose build core-api)
   ETIQUETAR=(docker tag swissjob-core:dev "$IMAGEN")
   PATRON="swissjob-core:point5-"
@@ -251,9 +248,12 @@ ssh nas "grep -n '$PATRON' $E/$COMPOSE"
 
 if [[ "$SERVICIO" == core ]]; then
   echo "== migraciones del núcleo ANTES de recrear (trampa 5)"
-  URL=$(ssh nas "$D inspect $CONTENEDOR_API --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^CORE_DATABASE_URL='")
-  ssh nas "$D run --rm --network container:$CONTENEDOR_API -e '$URL' $IMAGEN python -m jobhunt_core.migrate" \
-    | grep -E "upgrade|al día|Error" || true
+  # El bootstrap necesita la credencial admin para converger grants y rol;
+  # pasar sólo CORE_DATABASE_URL ejecutaría Alembic pero omitiría aislamiento.
+  ssh nas "$D run --rm --network container:$CONTENEDOR_API \
+    --env-file /share/Public/swissjob/.env.core.prod \
+    --env-file /share/Public/swissjob/.env.core.admin.prod \
+    $IMAGEN python -m jobhunt_core.migrate"
 fi
 
 echo "== recreando ${SERVICIOS[*]} (con el proyecto correcto: trampa 2)"
@@ -276,7 +276,7 @@ else
   done
   [[ "$estado" == healthy ]] || { echo "ABORTA: $CONTENEDOR_SALUD no alcanzó healthy" >&2; exit 1; }
 fi
-ssh nas "$D ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | grep -E 'swissjob-(frontend|backend|worker|core-api|core-worker|core-harvest-worker|core-ops-worker|core-capture)'"
+ssh nas "$D ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | grep -E 'swissjob-(frontend|backend|worker|core-api|core-worker|core-harvest-worker|core-ops-worker)'"
 if [[ "$SERVICIO" == core ]]; then
   echo "== coherencia de release remota"
   release="$(ssh nas "$D exec $CONTENEDOR_API python -c 'import json,urllib.request; d=json.load(urllib.request.urlopen(\"http://127.0.0.1:8000/v1/ready\",timeout=5)); assert d.get(\"status\")==\"ready\" and d.get(\"authoritative\") is True; print(d.get(\"release\",\"\"))'")"

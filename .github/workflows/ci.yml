@@ -139,16 +139,14 @@ jobs:
 
   core-test:
     # T13 §9: la suite del nucleo no corria en CI — solo el lint. Necesita la
-    # imagen custom de postgres (pgvector + wal2json, wal_level=logical) porque
-    # la captura CDC la exige: se construye desde docker/postgres-core, como en
-    # el compose. Sin CORE_ADMIN_DATABASE_URL los tests de integracion se
+    # imagen custom de postgres con pgvector, como en el compose.
+    # Sin CORE_ADMIN_DATABASE_URL los tests de integracion se
     # saltan solos, asi que se pasa a proposito. Tarda ~15-20 min.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       POSTGRES_PASSWORD: swissjob_ci_2026
       CORE_DB_PASSWORD: jobhunt_core_ci
-      CORE_CAPTURE_PASSWORD: jobhunt_capture_ci
       CORE_DATABASE_URL: postgresql+asyncpg://jobhunt_core:jobhunt_core_ci@localhost:5432/swissjobhunter
       CORE_ADMIN_DATABASE_URL: postgresql://swissjob:swissjob_ci_2026@localhost:5432/swissjobhunter
       CORE_BROKER_URL: redis://localhost:6379/1
@@ -193,14 +191,13 @@ jobs:
       - name: Ficheros de entorno desde sus plantillas
         run: |
           for e in .env.prod .env.core.prod .env.core.redis.prod \
-                   .env.core.capture.prod .env.core.admin.prod; do
+                   .env.core.admin.prod; do
             [ -f "$e.example" ] && cp "$e.example" "$e"
           done
       - name: Validar cada compose
         run: |
           set -e
-          # `dev` es un OVERRIDE: por si solo no declara imagen para core-capture
-          # y `config` falla. Se valida combinado con la base, que es como se usa.
+          # `dev` es un OVERRIDE y se valida combinado con la base.
           docker compose -f docker-compose.yml config -q
           docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q
           for f in docker-compose.prod.yml \

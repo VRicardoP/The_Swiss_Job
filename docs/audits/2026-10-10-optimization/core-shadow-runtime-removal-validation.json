@@ -1,0 +1,44 @@
+{
+  "observed_at": "2026-10-13T09:03:00Z",
+  "point": 14,
+  "status": "local_validated_pending_deploy",
+  "removed": {
+    "runtime": [
+      "jobhunt_core/shadow/",
+      "jobhunt_core/tasks/shadow.py"
+    ],
+    "transition_commands": [
+      "jobhunt_core/import_search_corpus.py",
+      "jobhunt_core/search_cutover.py"
+    ],
+    "capture_service": "removed from all eight maintained Compose manifests",
+    "obsolete_tools": [
+      "backend/scripts/nas_cutover.sh",
+      "scripts/nas_deploy_rehearsal_r5.sh",
+      "scripts/rehearse_profile_recovery.py",
+      "scripts/retire_core_capture.py"
+    ]
+  },
+  "preserved": [
+    "all applied Alembic migrations and historical tables",
+    "jobhunt_core/retention.py and maintenance schedule",
+    "jobhunt_core/erasure_restore.py",
+    "jobhunt_core/erasure.py scrub_capture while shadow_change_log exists",
+    "wal_level logical and wal2json pending separate database-maintenance change"
+  ],
+  "isolation": "core-migrate now converges jobhunt_core to zero direct privileges on public tables and sequences; capture role is not dropped by application code",
+  "validation": {
+    "focused": "138 passed, 1 warning in 87.53s",
+    "full_core": "1547 passed, 1 skipped, 2 warnings in 460.41s",
+    "ruff": "all checks passed",
+    "static": "compileall, bash -n and git diff --check passed",
+    "compose": "base, base+dev, prod, qnap, rehearsal-qnap, core-local, rehearsal-r5 and core.configured validated",
+    "runtime_references": "no executable jobhunt_core.shadow/tasks.shadow/jobhunt.shadow references",
+    "local_capture": "orphan container removed after full-suite validation"
+  },
+  "automatic_review": [
+    "bulk deletion rejected while active shadow imports remained; dependencies were migrated first",
+    "generic test-function deletion rejected as too broad; six named shadow-only tests were removed explicitly while scrub_capture/restore coverage remained"
+  ],
+  "next_action": "commit the exact validated tree, build an immutable Core image, migrate/deploy four services, verify native runtime and delivery, then drop and verify absence of jobhunt_capture"
+}

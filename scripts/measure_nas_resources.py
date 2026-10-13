@@ -20,13 +20,11 @@ CONTAINERS = (
     "swissjob-core-worker-r5",
     "swissjob-core-harvest-worker-r5",
     "swissjob-core-ops-worker-r5",
-    "swissjob-core-capture-r5",
     "swissjob-backend",
     "swissjob-worker",
     "portfolio_backend",
     "portfolio_worker",
 )
-CAPTURE_CONTAINER = "swissjob-core-capture-r5"
 MEMORY_FACTORS = {
     "B": 1 / (1024 * 1024),
     "KiB": 1 / 1024,
@@ -86,30 +84,8 @@ def sample(host: str, containers: tuple[str, ...]) -> dict[str, dict[str, float 
     return rows
 
 
-def validate_capture_state(container_names: set[str], capture_retired: bool) -> None:
-    capture_present = CAPTURE_CONTAINER in container_names
-    if capture_retired and capture_present:
-        raise RuntimeError(f"{CAPTURE_CONTAINER} still exists")
-    if not capture_retired and not capture_present:
-        raise RuntimeError(f"{CAPTURE_CONTAINER} is already absent")
-
-
-def check_capture_state(host: str, capture_retired: bool) -> None:
-    command = [DOCKER_BIN, "ps", "-a", "--format", "{{.Names}}"]
-    result = subprocess.run(
-        ["ssh", host, shlex.join(command)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    validate_capture_state(set(result.stdout.splitlines()), capture_retired)
-
-
-def measure(host: str, count: int, interval: float, capture_retired: bool) -> dict:
-    check_capture_state(host, capture_retired)
-    containers = tuple(
-        name for name in CONTAINERS if not capture_retired or name != CAPTURE_CONTAINER
-    )
+def measure(host: str, count: int, interval: float) -> dict:
+    containers = CONTAINERS
     started = datetime.now(timezone.utc)
     samples = []
     for index in range(count):
@@ -139,7 +115,6 @@ def measure(host: str, count: int, interval: float, capture_retired: bool) -> di
             "samples": count,
             "interval_seconds": interval,
             "method": "docker stats --no-stream over SSH",
-            "capture_retired": capture_retired,
         },
         "containers": measured,
         "aggregate_medians": {
@@ -160,12 +135,11 @@ def main() -> int:
     parser.add_argument("--host", default="nas")
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--interval", type=float, default=8)
-    parser.add_argument("--capture-retired", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.samples < 1 or args.interval < 0:
         parser.error("--samples must be positive and --interval non-negative")
-    result = measure(args.host, args.samples, args.interval, args.capture_retired)
+    result = measure(args.host, args.samples, args.interval)
     rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.write_text(rendered)

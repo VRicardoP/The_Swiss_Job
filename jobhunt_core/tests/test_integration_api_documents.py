@@ -212,7 +212,7 @@ def test_documents_erase_profile_purges_content_events_and_receipts(db):  # noqa
     assert other_doc.status_code == 201
 
     async def erase():
-        from jobhunt_core.shadow.projector import erase_shadow_profile
+        from jobhunt_core.erasure import _erase_profile_graph as erase_shadow_profile
 
         async with f() as s:
             assert await erase_shadow_profile(s, "user-1", tenant) == pid

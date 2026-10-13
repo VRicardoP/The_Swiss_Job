@@ -43,7 +43,7 @@ def split(path: Path) -> bool:
     if "  core-harvest-worker:\n" in data and "  core-ops-worker:\n" in data:
         return False
     start = data.index("  core-worker:\n")
-    end = data.index("  core-capture:\n", start)
+    end = data.index("  frontend:\n", start)
     original = data[start:end]
     if ALL_QUEUES not in original or "    - --concurrency=1\n" not in original:
         raise ValueError("core-worker no tiene la topología esperada")

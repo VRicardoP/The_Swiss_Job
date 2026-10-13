@@ -53,15 +53,11 @@ def test_http_transport_propagates_non_success_for_retry():
         transport("portfolio", _event())
 
 
-def test_unknown_destination_fails_but_shadow_has_explicit_fallback():
-    fallback = []
+def test_unknown_destination_fails_closed():
     transport = HttpDestinationTransport(
         {"portfolio": "http://bff/inbox"},
         "secret",
         5,
-        fallback=lambda destination, event: fallback.append(
-            (destination, event["event_id"])
-        ),
         client=httpx.Client(
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(204, request=request)
@@ -69,7 +65,5 @@ def test_unknown_destination_fails_but_shadow_has_explicit_fallback():
         ),
     )
     event = _event()
-    transport("swissjob-shadow", event)
-    assert fallback == [("swissjob-shadow", event["event_id"])]
     with pytest.raises(RuntimeError, match="sin inbox HTTP"):
-        transport("consumer-sin-config", event)
+        transport("swissjob-shadow", event)

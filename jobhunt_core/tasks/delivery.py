@@ -24,12 +24,8 @@ sigue siendo necesario y correcto, pero para el veneno en posición K > 0, que
 es cuando sí hay 1..K-1 vecinos que salvar.
 G2-H-7: la MISMA costura renueva el lease del resto del lote.
 
-P1-1 (rev. externa parte 2): en el ARRANQUE del worker (señal
-worker_process_init — cada proceso del pool, jamás en tests con `.apply()`)
-se registra el transporte SOMBRA (shadow/inbox.py → jobhunt.shadow_inbox)
-SOLO si nadie inyectó otro: la entrega deja de ser un no-op permanente en
-Fase B, y los tests siguen inyectando el suyo con set_transport. La cadencia
-(beat cada 5 min) vive en celery_app.py.
+En el arranque de cada proceso del worker se registra el transporte HTTP si
+está configurado. Los tests pueden seguir inyectando el suyo con set_transport.
 """
 
 import asyncio
@@ -50,16 +46,11 @@ MAX_DEAD_TOTAL = 0
 
 
 @worker_process_init.connect
-def register_shadow_inbox_transport(**_kwargs) -> None:
-    """Arranque: HTTP por destino en Fase C; inbox sombra en Fase B.
-
-    Ambos respetan cualquier transporte ya inyectado por tests."""
+def register_http_transport(**_kwargs) -> None:
+    """Register configured HTTP destinations without replacing test transports."""
     from jobhunt_core import http_delivery
-    from jobhunt_core.shadow import inbox
 
-    if http_delivery.register_if_configured(fallback=inbox.shadow_inbox_transport):
-        return
-    inbox.register_if_unset()
+    http_delivery.register_if_configured()
 
 
 @celery_app.task(name="jobhunt.delivery.dispatch_outbox", bind=True, max_retries=1)

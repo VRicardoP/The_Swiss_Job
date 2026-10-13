@@ -15,8 +15,6 @@ from pydantic import ValidationError
 from jobhunt_core.config import CoreSettings as Settings
 
 CADENCIAS = [
-    "CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S",
-    "CORE_SHADOW_SLOT_HEALTH_EVERY_S",
     "CORE_MATCHING_RECOVERY_EVERY_S",
     "CORE_DELIVERY_HEALTH_EVERY_S",
     "CORE_DELIVERY_DISPATCH_EVERY_S",

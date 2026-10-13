@@ -2041,3 +2041,33 @@ Este documento se actualiza **al cerrar cada fase**, junto con el backlog. Regla
 3. Si el backlog y este documento se contradicen, **manda el código**: verifícalo antes de escribir.
 4. Los ítems marcados ★ son los que cambian decisiones de planificación; revísalos antes de cada
    fase nueva.
+
+### Checkpoint operativo — 2026-10-13 09:03 UTC
+
+- Punto 14 validado localmente y aún no cerrado en producción. Se retiraron el
+  paquete `jobhunt_core.shadow`, sus tareas, captura/gates/proyección, los
+  comandos de importación/cutover ya sin rollback, el servicio `core-capture`
+  de los ocho manifiestos y las herramientas de transición cerradas. El
+  bootstrap de `jobhunt_core` converge ahora a cero grants directos sobre
+  tablas y secuencias de `public`; el rol `jobhunt_capture` sólo se eliminará
+  después de desplegar y verificar la nueva release.
+- Se conservaron todas las migraciones/tablas históricas, la purga de
+  `shadow_inbox`, `erasure_restore` y `scrub_capture` mientras exista
+  `shadow_change_log`. `wal_level=logical` y wal2json quedan para un cambio de
+  mantenimiento de base separado, sin mezclar un reinicio de Postgres con este
+  despliegue de aplicación.
+- Verificación: 138 pruebas focalizadas y suite Core completa con 1.547 pasadas,
+  una omitida y cero fallos en 460,41 s; Ruff, `compileall`, `bash -n`,
+  `git diff --check` y ocho modelos Compose verdes. No quedan imports
+  ejecutables `jobhunt_core.shadow`; el contenedor local huérfano de captura se
+  eliminó después de la suite.
+- Metodología vigente: trazar dependencias antes de borrar; migrar primero cada
+  consumidor nativo; preservar datos y mecanismos de retención/restauración;
+  retirar por grupos huérfanos comprobados; usar pruebas focalizadas y suite
+  completa; construir una imagen desde un commit exacto; desplegar/migrar y
+  comprobar release, cuatro workers, colas, entrega, 17 fuentes y tablas
+  históricas; sólo entonces eliminar el rol de captura y cerrar evidencia.
+- Reanudación exacta: crear un commit estrecho que excluya cambios previos del
+  propietario, construir/desplegar ese SHA, ejecutar las sondas de producción y
+  retirar `jobhunt_capture` únicamente si todo sigue verde. Después marcar el
+  punto 14 completo y habilitar el punto 15.

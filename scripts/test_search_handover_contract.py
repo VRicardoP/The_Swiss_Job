@@ -1,8 +1,4 @@
-"""Stdlib-only check of the two runtime-isolated sides of the handover.
-
-Run: python scripts/test_search_handover_contract.py
-No BFF/core imports, databases, credentials, or application side effects.
-"""
+"""Stdlib-only checks for metadata and browser-header parity."""
 
 import ast
 from pathlib import Path
@@ -51,20 +47,6 @@ class SearchContract(unittest.TestCase):
         for name in ("DEFAULT_USER_AGENT", "DEFAULT_ACCEPT_LANGUAGE", "_CHROME_MAJOR"):
             self.assertEqual(literal(core, name), literal(legacy, name))
 
-    def test_source_fingerprint_is_identical_on_both_sides(self):
-        self.assertEqual(
-            literal("backend/services/search_handover.py", "JOBS_FINGERPRINT_SQL"),
-            literal("jobhunt_core/search_cutover.py", "JOBS_FINGERPRINT_SQL"),
-        )
-
-    def test_captured_content_covers_the_existing_projector_payload(self):
-        fields = set(literal("backend/services/search_handover.py", "OFFER_FIELDS"))
-        required = set(literal("jobhunt_core/shadow/projector.py", "JOB_PAYLOAD_MAP"))
-        required.update(
-            {"hash", "source", "url", "apply_url", "is_active", "duplicate_of"}
-        )
-        self.assertLessEqual(required, fields)
-        self.assertNotIn("embedding", fields)
 
 
 if __name__ == "__main__":
