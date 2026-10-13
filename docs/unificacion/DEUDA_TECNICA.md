@@ -149,6 +149,26 @@ continuar sin rediseñarlo.
   locales, cero scopes Core y sin credencial. La puerta de Fase -1 sigue
   **NO SUPERADA**; no se ha provisionado ni ejecutado una sombra.
 
+### Checkpoint 2026-10-14 · inventario de la oleada ya propiedad de Core
+
+- Se verificaron individualmente las 16 fuentes `local_removed` contra su
+  adaptador nativo, transporte e identidad: Arbeitnow, Euremotejobs,
+  Financejobs, Globaljobs, IrishJobs/Jobs.ie, Jobgether, Jobspresso, NAV,
+  Ostjob, Publicjobs, Remotive, The Hub, We Work Remotely, Working Nomads,
+  Zebis y Zentraljob.
+- Las fichas declaran el scheduler Core de cuatro ventanas, cero credenciales,
+  la estrategia común del sink y su identidad específica; no se generalizó una
+  identidad entre familias RSS, JSON, SvelteKit, Next.js o CH Media.
+- Los 17 UUID —NAV usa dos scopes— coinciden exactamente con
+  `2026-10-14-dt144-phase0-snapshot.json`. En la inspección productiva todos
+  estaban habilitados, con cero fallos consecutivos y finalización dentro de la
+  ventana UTC 22:10–22:39 del 2026-10-13; el inventario conserva esa ventana y
+  no inventa una hora individual que la consulta no capturó.
+- El ratchet de fichas completas avanza de 1 a 17. El verificador sigue dando
+  58 fuentes, 16 Core y 26 pendientes; JSON y `diff --check` pasan.
+- No cambió ningún estado, scope, productor o despliegue. La puerta de Fase -1
+  continúa **NO SUPERADA** a la espera de protección administrativa de ramas.
+
 **Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
 un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden
 productores, credenciales, conexiones ni persistencia de ofertas locales y las
