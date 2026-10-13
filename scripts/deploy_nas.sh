@@ -178,7 +178,7 @@ for linea in lineas:
         linea = "    image: $IMAGEN"
         etiquetadas.add(actual)
     if actual in servicios and re.match(
-        r"^      (?:LEGACY_DISABLED_(?:PROVIDERS|SCRAPERS)|ROUTING_CACHE_TTL_SECONDS):", linea
+        r"^      (?:LEGACY_DISABLED_(?:PROVIDERS|SCRAPERS)|ROUTING_CACHE_TTL_SECONDS|HF_HOME|SENTENCE_TRANSFORMERS_HOME):", linea
     ):
         continue
     salida.append(linea)
